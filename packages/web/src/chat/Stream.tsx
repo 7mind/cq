@@ -33,9 +33,11 @@
  * will replace these with proper tool cards.
  */
 
-import { useMemo } from "react";
+import { useMemo, createElement } from "react";
 import { Markdown } from "./Markdown";
 import { UnknownCard } from "./Cards/UnknownCard";
+import { SubagentCard } from "./Cards/SubagentCard";
+import type { SubagentTask } from "./Cards/SubagentCard";
 import { ToolCard } from "./Cards/index";
 import type { ToolUseBlock, ToolResultBlock } from "./Cards/index";
 import styles from "../styles/Stream.module.css";
@@ -49,7 +51,25 @@ import type { ChatEvent } from "@cq/shared";
 type RenderedMessage =
   | { kind: "assistant"; messageId: string; text: string }
   | { kind: "tool_use"; key: string; toolUse: ToolUseBlock; toolResult?: ToolResultBlock }
-  | { kind: "unknown"; key: string; sdkEvent: Record<string, unknown> };
+  | { kind: "unknown"; key: string; sdkEvent: Record<string, unknown> }
+  | { kind: "subagent"; key: string; task: SubagentTask; children: RenderedMessage[] };
+
+// ---------------------------------------------------------------------------
+// Sub-agent entry accumulator
+// ---------------------------------------------------------------------------
+
+/** Mutable state accumulated for one sub-agent task. */
+interface SubagentEntry {
+  task: SubagentTask;
+  /** Ordered child keys (same semantics as the top-level `order` array). */
+  childOrder: string[];
+  childTextByMessageId: Map<string, string>;
+  childFinalised: Set<string>;
+  childToolUseByKey: Map<string, { toolUse: ToolUseBlock; toolResult?: ToolResultBlock }>;
+  childToolUseIdToKey: Map<string, string>;
+  childUnknownByKey: Map<string, Record<string, unknown>>;
+  currentStreamMessageId: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // Text extraction helpers
@@ -154,6 +174,123 @@ function asToolResultBlock(block: unknown): ToolResultBlock | null {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Sub-agent entry helpers
+// ---------------------------------------------------------------------------
+
+function makeSubagentEntry(sdkEvent: Record<string, unknown>): SubagentEntry {
+  const task_id = typeof sdkEvent["task_id"] === "string" ? sdkEvent["task_id"] : "";
+  const rawToolUseId = sdkEvent["tool_use_id"];
+  const description = typeof sdkEvent["description"] === "string" ? sdkEvent["description"] : "";
+  const subagent_type = typeof sdkEvent["subagent_type"] === "string" ? sdkEvent["subagent_type"] : "Task";
+  const agent_name = subagent_type.charAt(0).toUpperCase() + subagent_type.slice(1);
+  const baseTask = { task_id, agent_name, task_description: description, status: "running" as const };
+  const task: SubagentTask =
+    typeof rawToolUseId === "string"
+      ? { ...baseTask, tool_use_id: rawToolUseId }
+      : baseTask;
+  return {
+    task,
+    childOrder: [],
+    childTextByMessageId: new Map(),
+    childFinalised: new Set(),
+    childToolUseByKey: new Map(),
+    childToolUseIdToKey: new Map(),
+    childUnknownByKey: new Map(),
+    currentStreamMessageId: null,
+  };
+}
+
+/** Accumulate an assistant-type sdkEvent into a SubagentEntry's child collections. */
+function accumulateChildAssistant(
+  entry: SubagentEntry,
+  sdkEvent: Record<string, unknown>,
+  index: number,
+): void {
+  const message = sdkEvent["message"] as Record<string, unknown> | undefined;
+  const messageId = typeof message?.["id"] === "string" ? (message["id"] as string) : null;
+  const content = Array.isArray(message?.["content"]) ? (message!["content"] as unknown[]) : [];
+
+  if (messageId !== null) {
+    const canonical = extractFinalText(message?.["content"]);
+    if (!entry.childTextByMessageId.has(messageId)) {
+      entry.childOrder.push(messageId);
+    }
+    entry.childTextByMessageId.set(messageId, canonical);
+    entry.childFinalised.add(messageId);
+    entry.currentStreamMessageId = null;
+  } else {
+    const key = `child-unknown-${index}`;
+    entry.childOrder.push(key);
+    entry.childUnknownByKey.set(key, sdkEvent);
+  }
+
+  for (let bi = 0; bi < content.length; bi++) {
+    const block = content[bi];
+    const toolUse = asToolUseBlock(block);
+    if (toolUse !== null) {
+      const key = `child-tool-${index}-${bi}`;
+      entry.childOrder.push(key);
+      entry.childToolUseByKey.set(key, { toolUse });
+      entry.childToolUseIdToKey.set(toolUse.id, key);
+      continue;
+    }
+    const toolResult = asToolResultBlock(block);
+    if (toolResult !== null) {
+      const partnerKey = entry.childToolUseIdToKey.get(toolResult.tool_use_id);
+      if (partnerKey !== undefined) {
+        const existing = entry.childToolUseByKey.get(partnerKey);
+        if (existing !== undefined) {
+          entry.childToolUseByKey.set(partnerKey, { ...existing, toolResult });
+        }
+      } else {
+        const key = `child-unknown-${index}-${bi}`;
+        entry.childOrder.push(key);
+        entry.childUnknownByKey.set(key, block as Record<string, unknown>);
+      }
+    }
+  }
+}
+
+/** Accumulate a stream_event (partial) sdkEvent into a SubagentEntry's child collections. */
+function accumulateChildStreamEvent(
+  entry: SubagentEntry,
+  sdkEvent: Record<string, unknown>,
+): void {
+  const parsed = parseStreamEvent(sdkEvent);
+  if (parsed.kind === "message_start") {
+    entry.currentStreamMessageId = parsed.messageId;
+    if (parsed.messageId !== "" && !entry.childTextByMessageId.has(parsed.messageId)) {
+      entry.childOrder.push(parsed.messageId);
+      entry.childTextByMessageId.set(parsed.messageId, "");
+    }
+  } else if (parsed.kind === "text_delta" && entry.currentStreamMessageId !== null) {
+    const existing = entry.childTextByMessageId.get(entry.currentStreamMessageId) ?? "";
+    entry.childTextByMessageId.set(entry.currentStreamMessageId, existing + parsed.text);
+  }
+}
+
+/** Materialise the accumulated children of a SubagentEntry into RenderedMessage[]. */
+function buildSubagentChildren(entry: SubagentEntry): RenderedMessage[] {
+  const children: RenderedMessage[] = [];
+  for (const id of entry.childOrder) {
+    if (entry.childUnknownByKey.has(id)) {
+      children.push({ kind: "unknown", key: id, sdkEvent: entry.childUnknownByKey.get(id)! });
+    } else if (entry.childToolUseByKey.has(id)) {
+      const e = entry.childToolUseByKey.get(id)!;
+      if (e.toolResult !== undefined) {
+        children.push({ kind: "tool_use", key: id, toolUse: e.toolUse, toolResult: e.toolResult });
+      } else {
+        children.push({ kind: "tool_use", key: id, toolUse: e.toolUse });
+      }
+    } else {
+      const text = entry.childTextByMessageId.get(id) ?? "";
+      children.push({ kind: "assistant", messageId: id, text });
+    }
+  }
+  return children;
+}
+
 export function computeRenderedMessages(events: ChatEvent[]): RenderedMessage[] {
   // Ordered list of message IDs (determines display order).
   const order: string[] = [];
@@ -169,12 +306,88 @@ export function computeRenderedMessages(events: ChatEvent[]): RenderedMessage[] 
   const toolUseByKey = new Map<string, { toolUse: ToolUseBlock; toolResult?: ToolResultBlock }>();
   // Index from tool_use_id → insertion key so tool_result can find its partner.
   const toolUseIdToKey = new Map<string, string>();
+  // Sub-agent entries keyed by task_id (insertion order preserved via Map).
+  const subagentByTaskId = new Map<string, SubagentEntry>();
+  // Map tool_use_id → task_id so nested events route into the right entry.
+  const toolUseIdToTaskId = new Map<string, string>();
 
   for (let i = 0; i < events.length; i++) {
     const evt = events[i]!;
     const sdkEvent = evt.sdkEvent as Record<string, unknown>;
     const sdkType = sdkEvent["type"] as string | undefined;
+    const sdkSubtype = sdkEvent["subtype"] as string | undefined;
 
+    // ------------------------------------------------------------------
+    // Sub-agent lifecycle events
+    // ------------------------------------------------------------------
+    if (sdkType === "system" && sdkSubtype === "task_started") {
+      const task_id = typeof sdkEvent["task_id"] === "string" ? sdkEvent["task_id"] : `task-${i}`;
+      if (!subagentByTaskId.has(task_id)) {
+        const entry = makeSubagentEntry(sdkEvent);
+        subagentByTaskId.set(task_id, entry);
+        // Register the tool_use_id → task_id mapping for routing nested events.
+        if (entry.task.tool_use_id !== undefined) {
+          toolUseIdToTaskId.set(entry.task.tool_use_id, task_id);
+        }
+        const key = `subagent-${task_id}`;
+        order.push(key);
+      }
+      continue;
+    }
+
+    if (sdkType === "system" && sdkSubtype === "task_progress") {
+      const task_id = typeof sdkEvent["task_id"] === "string" ? sdkEvent["task_id"] : "";
+      const entry = subagentByTaskId.get(task_id);
+      if (entry !== undefined) {
+        const summary = typeof sdkEvent["summary"] === "string" ? sdkEvent["summary"] : undefined;
+        if (summary !== undefined) {
+          entry.task = { ...entry.task, summary };
+        }
+      }
+      continue;
+    }
+
+    if (sdkType === "system" && sdkSubtype === "task_notification") {
+      const task_id = typeof sdkEvent["task_id"] === "string" ? sdkEvent["task_id"] : "";
+      const entry = subagentByTaskId.get(task_id);
+      if (entry !== undefined) {
+        const rawStatus = sdkEvent["status"];
+        const status =
+          rawStatus === "completed" ? "completed"
+          : rawStatus === "failed" ? "failed"
+          : rawStatus === "stopped" ? "stopped"
+          : entry.task.status;
+        entry.task = { ...entry.task, status };
+      }
+      continue;
+    }
+
+    // ------------------------------------------------------------------
+    // Nested events (parent_tool_use_id set → route into sub-agent entry)
+    // ------------------------------------------------------------------
+    const parentToolUseId = sdkEvent["parent_tool_use_id"];
+    if (typeof parentToolUseId === "string" && parentToolUseId !== "") {
+      // Walk up the chain: direct match or via toolUseIdToTaskId.
+      const task_id = toolUseIdToTaskId.get(parentToolUseId);
+      if (task_id !== undefined) {
+        const entry = subagentByTaskId.get(task_id)!;
+        if (sdkType === "assistant") {
+          accumulateChildAssistant(entry, sdkEvent, i);
+        } else if (sdkType === "stream_event") {
+          accumulateChildStreamEvent(entry, sdkEvent);
+        } else {
+          const key = `child-unknown-${i}`;
+          entry.childOrder.push(key);
+          entry.childUnknownByKey.set(key, sdkEvent);
+        }
+        continue;
+      }
+      // Unknown parent — fall through to top-level unknown rendering.
+    }
+
+    // ------------------------------------------------------------------
+    // Top-level events (no parent or unresolved parent)
+    // ------------------------------------------------------------------
     if (sdkType === "stream_event") {
       // SDKPartialAssistantMessage — streaming text.
       const parsed = parseStreamEvent(sdkEvent);
@@ -252,7 +465,12 @@ export function computeRenderedMessages(events: ChatEvent[]): RenderedMessage[] 
   // Build the output list preserving insertion order.
   const result: RenderedMessage[] = [];
   for (const id of order) {
-    if (unknownByKey.has(id)) {
+    if (id.startsWith("subagent-")) {
+      const task_id = id.slice("subagent-".length);
+      const entry = subagentByTaskId.get(task_id)!;
+      const children = buildSubagentChildren(entry);
+      result.push({ kind: "subagent", key: id, task: entry.task, children });
+    } else if (unknownByKey.has(id)) {
       result.push({ kind: "unknown", key: id, sdkEvent: unknownByKey.get(id)! });
     } else if (toolUseByKey.has(id)) {
       const entry = toolUseByKey.get(id)!;
@@ -270,6 +488,43 @@ export function computeRenderedMessages(events: ChatEvent[]): RenderedMessage[] 
 }
 
 // ---------------------------------------------------------------------------
+// Helper: render a list of RenderedMessage values (used recursively by SubagentCard)
+// ---------------------------------------------------------------------------
+
+function renderMessages(messages: RenderedMessage[]): React.ReactNode[] {
+  return messages.map((msg) => {
+    if (msg.kind === "assistant") {
+      return createElement(
+        "div",
+        { key: msg.messageId, className: styles.message, "data-testid": `stream-message-${msg.messageId}` },
+        createElement(Markdown, null, msg.text),
+      );
+    }
+    if (msg.kind === "tool_use") {
+      return createElement(
+        "div",
+        { key: msg.key, className: styles.message },
+        ToolCard(msg.toolUse, msg.toolResult),
+      );
+    }
+    if (msg.kind === "subagent") {
+      const nestedChildren = renderMessages(msg.children);
+      return createElement(
+        "div",
+        { key: msg.key, className: styles.message },
+        createElement(SubagentCard, { task: msg.task }, ...nestedChildren),
+      );
+    }
+    // unknown
+    return createElement(
+      "div",
+      { key: msg.key, className: styles.message },
+      createElement(UnknownCard, { sdkEvent: msg.sdkEvent }),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -282,28 +537,7 @@ export function Stream({ chatEvents }: StreamProps): React.ReactElement {
 
   return (
     <div className={styles.root} data-testid="stream-root">
-      {messages.map((msg) => {
-        if (msg.kind === "assistant") {
-          return (
-            <div key={msg.messageId} className={styles.message} data-testid={`stream-message-${msg.messageId}`}>
-              <Markdown>{msg.text}</Markdown>
-            </div>
-          );
-        }
-        if (msg.kind === "tool_use") {
-          return (
-            <div key={msg.key} className={styles.message}>
-              {ToolCard(msg.toolUse, msg.toolResult)}
-            </div>
-          );
-        }
-        // Unrecognised SDK events — render raw JSON via UnknownCard.
-        return (
-          <div key={msg.key} className={styles.message}>
-            <UnknownCard sdkEvent={msg.sdkEvent} />
-          </div>
-        );
-      })}
+      {renderMessages(messages)}
     </div>
   );
 }

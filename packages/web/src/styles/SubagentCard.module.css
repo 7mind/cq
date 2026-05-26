@@ -1,0 +1,102 @@
+/**
+ * SubagentCard.module.css — styles for sub-agent invocation cards.
+ *
+ * Boxed indentation distinguishes nested sub-agent content from the
+ * top-level stream. Status badge conveys running / completed / failed state.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Outer card shell
+ * --------------------------------------------------------------------------- */
+
+.card {
+  border: 1px solid #d0d7de;
+  border-left: 3px solid #0550ae;
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 0.5em 0;
+  font-size: 0.875rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Header
+ * --------------------------------------------------------------------------- */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: #ddf4ff;
+  border-bottom: 1px solid #d0d7de;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.75rem;
+  color: #0550ae;
+  user-select: none;
+  flex-wrap: wrap;
+}
+
+.agentLabel {
+  font-weight: 600;
+  color: #0550ae;
+}
+
+.description {
+  color: #57606a;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary {
+  color: #57606a;
+  font-style: italic;
+  font-size: 0.7rem;
+  flex-basis: 100%;
+  margin-top: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Status badges
+ * --------------------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.badgeRunning {
+  background: #fff8c5;
+  color: #9a6700;
+}
+
+.badgeCompleted {
+  background: #dcffe4;
+  color: #1a7f37;
+}
+
+.badgeFailed {
+  background: #ffebe9;
+  color: #cf222e;
+}
+
+.badgeStopped {
+  background: #f6f8fa;
+  color: #57606a;
+}
+
+/* ---------------------------------------------------------------------------
+ * Children area (nested messages)
+ * --------------------------------------------------------------------------- */
+
+.children {
+  padding: 8px 12px 8px 16px;
+  background: #f6f8fa;
+  border-left: 2px solid #d0d7de;
+  margin-left: 4px;
+}

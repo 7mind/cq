@@ -29,7 +29,7 @@ Total PR count: 56 (PR-01 … PR-54 + PR-09a + PR-22b; PR-22a replaces old PR-22
 
 Goal: every brief § 4 first-class affordance ticked — sub-agent nested cards, permission prompts, read-only overlay, MCP elicitation, AskUserQuestion, plan mode, thinking blocks, slash autocomplete, attachments, file-ref anchors, Grep/Web cards, TaskList sidebar.
 
-- [ ] **PR-27** — Sub-agent nested cards + `agentProgressSummaries`; bridge tracks invocation tree by `parent_tool_use_id`. Test: `subagent.test.ts`. Deps: PR-22b, PR-23.
+- [x] **PR-27** — Sub-agent nested cards + `agentProgressSummaries`; bridge tracks invocation tree by `parent_tool_use_id`. Test: `subagent.test.ts`. Deps: PR-22b, PR-23.
 - [ ] **PR-28** — Permission prompts (`canUseTool` → `chat.permission_request` ↔ `chat.permission_reply`). Test: `permission.test.ts`. Deps: PR-19.
 - [ ] **PR-29** — Read-only mode overlay via `canUseTool` (F-03). Test: `read-only.test.ts`. Deps: PR-28.
 - [ ] **PR-30** — MCP elicitation roundtrip (form + URL modes) (F-01). Tests: `elicitation.test.ts`, `elicitation-card.test.ts`. Deps: PR-19, PR-23.
@@ -46,10 +46,11 @@ Goal: every brief § 4 first-class affordance ticked — sub-agent nested cards,
 
 ## In-progress / recent
 
-- **PR-27** — about to dispatch.
+- **PR-28** — Permission prompts (`canUseTool` → `chat.permission_request` ↔ `chat.permission_reply`).
 
 ## Recent completions (this cycle's worth)
 
+- [x] **PR-27** — Sub-agent nested cards + `agentProgressSummaries`. `SubagentCard.tsx` + `SubagentCard.module.css` created. `Stream.tsx` extended: `computeRenderedMessages` routes `task_started/task_progress/task_notification` and nested events by `parent_tool_use_id`. `subagent.test.ts` added. 252 tests (was 251).
 - [x] **M2 closed + archived** to `docs/archive/tasks-M2.md`. 9 PRs (PR-19 … PR-26 incl. PR-22a/b). 251 tests across 33 files; M2 e2e (`chat-mvp.test.ts`) runtime 193 ms. Bridge + Chat shell + Markdown/Shiki + tool cards + interrupt + Header all in place. PR-20-D01 carries forward.
 - [x] **M1 closed + archived** to `docs/archive/tasks-M1.md`. 14 PRs; 210 tests; R2-R13 + V1-V10 full Part-3 coverage. PR-18-D01 carries forward.
 - [x] **M0 closed + archived** to `docs/archive/tasks-M0.md`. 5 PRs; 113 tests.
