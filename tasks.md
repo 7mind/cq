@@ -31,7 +31,7 @@ Goal: skeleton repo, shared protocol package, smoke server, logger, dev/HMR. Clo
 
 - [x] **PR-01** — Workspace skeleton + tsconfig — committed `78abb0d`. Acceptance: `bun install`, `bun x tsc -b`, `bun test --pass-with-no-tests`, `bun x eslint .` all exit 0. Surprises: bun lockfile is JSON-text (`bun.lock`) in 1.3.13 not binary; TS resolved to 5.9.3 from caret 5.7.x; `tsc -b --noEmit` is TS-incompatible with composite project references — `tsc -b` is the canonical command and is what the npm script calls.
 - [x] **PR-02** — Shared protocol package (Zod schemas) — committed HEAD. 76 tests pass including `ChatInput rejects oversize attachments` (F-08); discriminated unions `ClientFrame` / `ServerFrame` exported.
-- [ ] **PR-03** — `Bun.serve` smoke server + HTTP static assets — plan § 6 M0/PR-03.
+- [x] **PR-03** — `Bun.serve` smoke server + HTTP static assets — committed HEAD. args.test.ts (7 tests), smoke.test.ts (4 tests); tsc -b clean; eslint clean; curl + SIGINT exit 0 verified.
 - [ ] **PR-04** — Structured JSON logger — plan § 6 M0/PR-04.
 - [ ] **PR-05** — `bun run dev` with HMR via `Bun.serve({development:{hmr:true}})` — plan § 6 M0/PR-05 (F-12).
 
@@ -39,10 +39,11 @@ Goal: skeleton repo, shared protocol package, smoke server, logger, dev/HMR. Clo
 
 ## In-progress / recent
 
-- **PR-03** — `Bun.serve` smoke server + HTTP static assets — next up.
+- **PR-04** — Structured JSON logger — next up.
 
 ## Recent completions (this cycle's worth)
 
+- [x] **PR-03** — `Bun.serve` smoke server + HTTP static assets. Committed HEAD. Hand-rolled CLI parser (`--cwd --host --port --db`); `buildWeb()` via `Bun.build` on startup (option A); SIGINT/SIGTERM exit 0. 7 args unit tests + 4 smoke integration tests; tsc -b and eslint clean.
 - [x] **PR-02** — Shared protocol package (Zod schemas). Committed HEAD. 76 tests; all named acceptance tests pass; `ClientFrame`/`ServerFrame` discriminated unions; `ChatInput` 5 MB cap; `isRetriable()` close-code helper.
 - [x] **PR-01** — Workspace skeleton + tsconfig. Committed `78abb0d`. (See M0 stub above for surprises.)
 - [x] **M0.0** — Flake dev environment (bun 1.3.13, node 22, sqlite 3.51, dev tooling). Committed `9faab3c`.
