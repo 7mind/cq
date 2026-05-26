@@ -1,6 +1,7 @@
 import { ClientFrame, type ServerHbPong } from "@cq/shared";
 import { FRAME_VALIDATION_FAILED } from "@cq/shared";
 import type { Logger } from "../log/logger";
+import { createHeartbeat, type HeartbeatHandle } from "./heartbeat";
 
 // ---------------------------------------------------------------------------
 // Data attached to each WebSocket connection via ws.data
@@ -25,16 +26,24 @@ export class WsSession {
   private outboundSeq = 0;
   readonly sessionId: string;
   private readonly logger: Logger;
+  private readonly heartbeat: HeartbeatHandle;
 
   constructor(sessionId: string, logger: Logger) {
     this.sessionId = sessionId;
     this.logger = logger;
+    this.heartbeat = createHeartbeat({
+      buildFrame: (payload) => {
+        const seq = this.outboundSeq++;
+        const ts = Date.now();
+        return JSON.stringify({ ...payload, seq, ts });
+      },
+    });
   }
 
   /** Called by the Bun WS `open` handler. */
   open(ws: WsSocket): void {
     this.logger.info("ws.open", { sessionId: this.sessionId });
-    void ws; // no-op for now
+    this.heartbeat.start(ws);
   }
 
   /** Called by the Bun WS `message` handler. */
@@ -76,6 +85,10 @@ export class WsSession {
         this.sendFrame(ws, pong);
         break;
       }
+      case "hb.spong": {
+        this.heartbeat.onPong(ws, frame);
+        break;
+      }
       // All other client frames are accepted but not yet dispatched (PR-07+)
       default:
         // Accepted; no-op until later PRs wire the handlers.
@@ -84,8 +97,9 @@ export class WsSession {
   }
 
   /** Called by the Bun WS `close` handler. */
-  close(_ws: WsSocket, code: number, reason: string): void {
+  close(ws: WsSocket, code: number, reason: string): void {
     this.logger.info("ws.close", { sessionId: this.sessionId, code, reason });
+    this.heartbeat.stop(ws);
   }
 
   // ---------------------------------------------------------------------------
