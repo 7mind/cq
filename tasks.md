@@ -31,7 +31,7 @@ Goal: first end-to-end conversation. User types in browser, hits Cmd/Ctrl+Enter,
 
 - [x] **PR-19** — Server SDK bridge skeleton + streaming-input mode + MCP-inheritance test (F-14). Tests: `bridge.test.ts` (6 cases, all pass), `mcp-inheritance.test.ts` (1 test, skipped → defect PR-19-D01; requires PR-20 MockAnthropicHTTP). `tsc + eslint` clean. 73 server tests pass, 216 total. Commit: see M2/PR-19 commit.
 - [x] **PR-20** — `MockAnthropicHTTP` SSE stub + `sdk-stub.test.ts` (2 cases via fallback queryFactory fetching real SSE) + `mcp-inheritance.test.ts` un-skipped (PR-19-D01 closed via `loadMcpServers()` fallback in `agent/mcp.ts`). `tsc + eslint` clean. 65 server / 208 total passing; 0 skips; 3 pre-existing Bun-not-in-PATH failures unchanged. PR-20-D01 opened for deferred real-binary path. Deps: PR-19.
-- [ ] **PR-21** — Web `ChatTab` shell + `Input` component with cross-platform send chord + IME passthrough (F-16). Test: `input.test.ts` (6 named cases). Deps: PR-17, PR-02.
+- [x] **PR-21** — Web `ChatTab` shell + `Input` component with cross-platform send chord + IME passthrough (F-16). Test: `input.test.ts` (6 named cases). `tsc + eslint` clean. 111 web / 214 total passing; 3 pre-existing Bun-not-in-PATH fails unchanged. Deps: PR-17, PR-02.
 - [ ] **PR-22a** — Web `Markdown` (react-markdown + remark-gfm + Shiki static, 12-lang allow-list per F-20, lazy load for others) + `CodeBlock` card (lang label + copy button, F-07). Tests: `markdown.test.ts`, `code-block.test.ts`. Deps: PR-21.
 - [ ] **PR-22b** — `Stream` renderer + token-level reflow via `SDKPartialAssistantMessage`; code-block stable-identity invariant (F-07). Test: `stream-reflow.test.ts`. Deps: PR-22a.
 - [ ] **PR-23** — Tool cards for Read / Write / Edit / Bash with hand-rolled line-diff. Test: `cards.test.ts`. Deps: PR-22a.
@@ -43,10 +43,11 @@ Goal: first end-to-end conversation. User types in browser, hits Cmd/Ctrl+Enter,
 
 ## In-progress / recent
 
-- **PR-21** — Web `ChatTab` shell + `Input` component with cross-platform send chord + IME passthrough (F-16). Deps: PR-17, PR-02.
+- **PR-22a** — Web `Markdown` (react-markdown + remark-gfm + Shiki static, 12-lang allow-list per F-20, lazy load for others) + `CodeBlock` card (lang label + copy button, F-07). Tests: `markdown.test.ts`, `code-block.test.ts`. Deps: PR-21.
 
 ## Recent completions (this cycle's worth)
 
+- [x] **PR-21** — M2/PR-21: Web `ChatTab` shell + `Input` (uncontrolled textarea, cross-platform send chord, IME passthrough). `isSendChord()` exported; `isMacPlatform()` in `lib/platform.ts`. `ChatTab` builds `chat.input` frame, calls `manager.send()`. `input.test.ts` six F-16 cases pass. 111 web / 214 total; 3 pre-existing fails unchanged. `tsc + eslint` clean.
 - [x] **PR-20** — M2/PR-20: `MockAnthropicHTTP` SSE stub; `sdk-stub.test.ts` (2 cases); `mcp-inheritance.test.ts` un-skipped (PR-19-D01 closed via `loadMcpServers()` fallback). `agent/mcp.ts` implements `loadMcpServers(home?)`; Bridge merges result into `Options.mcpServers`. PR-20-D01 opened. 65 server / 208 total passing; 0 skips. `tsc + eslint` clean.
 - [x] **PR-19** — M2/PR-19: Server SDK bridge skeleton + streaming-input + MCP inheritance. `agent/bridge.ts` (single-Query pool, AsyncQueue streaming input, SDKMessage→chat.event mapping, SESSION_BUSY guard, chat.done). `agent/mcp.ts` (placeholder doc). Session routing in `ws/session.ts`. Bridge wired in `server.ts` + `devServer.ts`. Tests: `bridge.test.ts` (6/6 pass), `mcp-inheritance.test.ts` (skipped → PR-19-D01). 73 server / 216 total. `tsc + eslint` clean.
 - [x] **M1 closed + archived** to `docs/archive/tasks-M1.md`. 14 PRs (PR-06 … PR-18 incl. PR-09a). 210 tests across 22 files. R2-R13 + V1-V10 full Part-3 coverage; G2c F-04/F-10/F-17/F-18/F-19 applied. One defect (`PR-18-D01`, minor, deferred to PR-51).
