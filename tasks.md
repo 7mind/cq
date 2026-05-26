@@ -16,7 +16,7 @@
 
 ## Milestones — stubs
 
-- [ ] **M0 — Bring-up** — workspace, protocol, smoke server, logger, dev/HMR. *PRs PR-01 … PR-05 (5).*
+- [x] **M0 — Bring-up** (closed: 2026-05-26) — workspace, protocol, smoke server, logger, dev/HMR. *PRs PR-01 … PR-05 (5).*
 - [ ] **M1 — WebSocket spine** — full resilient-ws-ui Part 3 coverage. *PRs PR-06 … PR-18 (14, incl. PR-09a).*
 - [ ] **M2 — Agent SDK integration (Chat MVP)** — SDK bridge, Chat shell, markdown + Shiki, basic cards, interrupt, header. *PRs PR-19 … PR-26 (9, incl. PR-22a/b).*
 - [ ] **M3 — Chat full fidelity** — permission overlays, elicitation, AskUserQuestion, plan mode, thinking blocks, slash autocomplete, attachments, file-ref anchors, more tool cards, TaskList sidebar. *PRs PR-27 … PR-38 (12).*
@@ -33,16 +33,17 @@ Goal: skeleton repo, shared protocol package, smoke server, logger, dev/HMR. Clo
 - [x] **PR-02** — Shared protocol package (Zod schemas) — committed HEAD. 76 tests pass including `ChatInput rejects oversize attachments` (F-08); discriminated unions `ClientFrame` / `ServerFrame` exported.
 - [x] **PR-03** — `Bun.serve` smoke server + HTTP static assets — committed HEAD. args.test.ts (7 tests), smoke.test.ts (4 tests); tsc -b clean; eslint clean; curl + SIGINT exit 0 verified.
 - [x] **PR-04** — Structured JSON logger — committed HEAD. log.test.ts (22 tests); tsc -b clean; eslint clean; `bun test packages/server` (33 total) green; operational audit: log file present, tail -1 | jq exit 0.
-- [ ] **PR-05** — `bun run dev` with HMR via `Bun.serve({development:{hmr:true}})` — plan § 6 M0/PR-05 (F-12).
+- [x] **PR-05** — `bun run dev` with HMR via `Bun.serve({development:{hmr:true}})` — committed HEAD. `--dev` flag in args.ts; `startDevServer()` in devServer.ts uses html-import route + injectable `serve` for testability; main.ts branches on `args.dev`; README skeleton; 37 server tests pass.
 
 **Dispatch order:** strict serial PR-01 → 02 → 03 → 04 → 05. PR-02 has no PR-01 dep but the planner sequences it second to settle shared types early. PR-03/04 both depend on PR-01. PR-05 depends on PR-03 + PR-04.
 
 ## In-progress / recent
 
-- **PR-05** — `bun run dev` with HMR — next up.
+- **PR-06** (M1 starts) — Server WS endpoint + Zod inbound validation (G2c: F-19 origin check).
 
 ## Recent completions (this cycle's worth)
 
+- [x] **PR-05** — `bun run dev` with HMR. Committed HEAD. `--dev` flag; `startDevServer()` uses `Bun.serve({development:{hmr:true}})` with `index.html` route import; injectable `serve` for test options-passthrough assertion; README skeleton; `packages/server/src/types/html-import.d.ts` shim; 37 server tests (was 33); tsc -b and eslint clean; operational audit: both modes return 200 with `<div id="root">` and exit 0 on SIGINT.
 - [x] **PR-04** — Structured JSON logger. Committed HEAD. `createLogger(opts)` factory: JSON-lines to `./var/log/cq-YYYYMMDD.log` + stdout; level filter (debug/info/warn/error); daily rotation via mocked clock; no module globals; reserved-key collision protection. 22 log tests + smoke updated; bunfig.toml excludes dist/ from discovery; tsc -b and eslint clean; operational audit passes.
 - [x] **PR-03** — `Bun.serve` smoke server + HTTP static assets. Committed HEAD. Hand-rolled CLI parser (`--cwd --host --port --db`); `buildWeb()` via `Bun.build` on startup (option A); SIGINT/SIGTERM exit 0. 7 args unit tests + 4 smoke integration tests; tsc -b and eslint clean.
 - [x] **PR-02** — Shared protocol package (Zod schemas). Committed HEAD. 76 tests; all named acceptance tests pass; `ClientFrame`/`ServerFrame` discriminated unions; `ChatInput` 5 MB cap; `isRetriable()` close-code helper.

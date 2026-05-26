@@ -130,6 +130,18 @@ describe("parseArgs", () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it("--dev flag sets dev: true", async () => {
+    const parseArgs = await importParseArgs();
+    const result = parseArgs(["--dev"]);
+    expect(result.dev).toBe(true);
+  });
+
+  it("dev defaults to false when --dev is not passed", async () => {
+    const parseArgs = await importParseArgs();
+    const result = parseArgs([]);
+    expect(result.dev).toBe(false);
+  });
+
   afterEach(() => {
     exitCode = undefined;
   });

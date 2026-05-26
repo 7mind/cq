@@ -3,6 +3,7 @@ export type Args = Readonly<{
   host: string;
   port: number;
   db: string;
+  dev: boolean;
 }>;
 
 const USAGE = `\
@@ -13,6 +14,7 @@ Options:
   --host <host>  Bind host (default: 127.0.0.1)
   --port <port>  Bind port, integer (default: 5173)
   --db <path>    SQLite database path (default: ./var/db/cq.sqlite)
+  --dev          Enable HMR dev server (default: false)
   --help         Print this message and exit
 `;
 
@@ -21,6 +23,7 @@ export function parseArgs(argv: string[]): Args {
   let host: string = "127.0.0.1";
   let port: number = 5173;
   let db: string = "./var/db/cq.sqlite";
+  let dev: boolean = false;
 
   const args = argv.slice();
   while (args.length > 0) {
@@ -29,6 +32,11 @@ export function parseArgs(argv: string[]): Args {
     if (flag === "--help") {
       process.stdout.write(USAGE);
       process.exit(0);
+    }
+
+    if (flag === "--dev") {
+      dev = true;
+      continue;
     }
 
     if (
@@ -64,5 +72,5 @@ export function parseArgs(argv: string[]): Args {
     }
   }
 
-  return Object.freeze({ cwd, host, port, db });
+  return Object.freeze({ cwd, host, port, db, dev });
 }

@@ -9,7 +9,7 @@
     "format": "prettier --write .",
     "test": "bun test --pass-with-no-tests",
     "start": "bun run packages/server/src/main.ts --cwd /tmp --port 5173",
-    "dev": "bun run packages/server/src/main.ts"
+    "dev": "bun run packages/server/src/main.ts -- --dev --cwd . --port 5173"
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",
