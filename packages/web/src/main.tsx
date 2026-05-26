@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import { Manager } from "./ws/Manager";
 import { ConnectionProvider } from "./ws/ConnectionProvider";
 import App from "./App";
+import "./styles/global.css";
 
 /**
  * Application entry point (PR-17).

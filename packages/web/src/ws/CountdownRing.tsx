@@ -17,6 +17,14 @@
 
 import type React from "react";
 
+/** True when the user has requested reduced motion via the OS/browser setting. */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 export interface CountdownRingProps {
   /** Remaining time (ms). Clamped to [0, total]. */
   remaining: number;
@@ -42,7 +50,10 @@ export function CountdownRing({
   size = 32,
   strokeWidth = 3,
   ariaHidden = true,
-}: CountdownRingProps): React.ReactElement {
+}: CountdownRingProps): React.ReactElement | null {
+  // Respect the user's reduced-motion preference: skip the animated ring entirely.
+  if (prefersReducedMotion()) return null;
+
   const clampedRemaining = Math.max(0, Math.min(remaining, total));
   const fraction = total > 0 ? clampedRemaining / total : 0;
 

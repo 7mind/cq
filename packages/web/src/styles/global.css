@@ -1,0 +1,11 @@
+/**
+ * global.css — application-wide baseline styles (PR-50 a11y).
+ *
+ * Imported once from main.tsx. Applies to the entire document.
+ */
+
+/* Visible focus ring for keyboard navigation (WCAG 2.4.7). */
+:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}

@@ -190,6 +190,7 @@ export function Indicator({ ringOpts }: IndicatorProps): React.ReactElement {
         className={`${styles.indicator ?? ""} ${colorClass}`}
         data-state={ws}
         aria-label={ariaLabel}
+        aria-live="polite"
         role="status"
         title={ariaLabel}
         style={{ cursor: "pointer" }}

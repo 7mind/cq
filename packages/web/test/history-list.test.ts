@@ -257,13 +257,15 @@ describe("HistoryTab list view", () => {
       });
     });
 
-    // Find the "Duration" column header and click it.
+    // Find the "Duration" column header button and click it.
+    // The sortable <th> now contains a <button> for keyboard accessibility (PR-50).
     const ths = Array.from(container!.querySelectorAll("table thead th"));
     const durationTh = ths.find((th) => th.textContent?.trim() === "Duration");
     expect(durationTh).not.toBeNull();
+    const durationBtn = durationTh!.querySelector("button") ?? (durationTh as HTMLElement);
 
     act(() => {
-      (durationTh as HTMLElement).click();
+      (durationBtn as HTMLElement).click();
     });
 
     // A new history.list frame should have been sent.

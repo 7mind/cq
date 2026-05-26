@@ -263,12 +263,14 @@ export function Input({ onSubmit, onInterrupt, disabled, slashCommands = [] }: I
         onPaste={handlePaste}
         placeholder="Cmd+Enter to send"
         rows={3}
+        aria-label="Chat input"
       />
       {disabled === true && onInterrupt !== undefined && (
         <button
           className={styles.stopButton}
           onClick={onInterrupt}
           type="button"
+          aria-label="Stop generation"
         >
           Stop
         </button>

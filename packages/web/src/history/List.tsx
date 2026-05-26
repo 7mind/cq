@@ -194,7 +194,6 @@ export function List({ rows, sort, filter, loading, onSort, onFilter, onRowClick
                     <th
                       key={col.label}
                       className={`${styles.sortable}`}
-                      onClick={() => onSort(col.sortKey!)}
                       aria-sort={
                         sort.key === col.sortKey
                           ? sort.dir === "asc"
@@ -203,12 +202,19 @@ export function List({ rows, sort, filter, loading, onSort, onFilter, onRowClick
                           : "none"
                       }
                     >
-                      {col.label}
-                      {sort.key === col.sortKey && (
-                        <span className={styles.sortIndicator}>
-                          {sort.dir === "asc" ? "▲" : "▼"}
-                        </span>
-                      )}
+                      <button
+                        type="button"
+                        className={styles.sortButton}
+                        onClick={() => onSort(col.sortKey!)}
+                        aria-label={`Sort by ${col.label}`}
+                      >
+                        {col.label}
+                        {sort.key === col.sortKey && (
+                          <span className={styles.sortIndicator}>
+                            {sort.dir === "asc" ? "▲" : "▼"}
+                          </span>
+                        )}
+                      </button>
                     </th>
                   ) : (
                     <th key={col.label}>{col.label}</th>

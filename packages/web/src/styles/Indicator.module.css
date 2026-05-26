@@ -91,3 +91,12 @@
   /* bright white arc that depletes as the deadline approaches */
   stroke: rgba(255, 255, 255, 0.85);
 }
+
+/* --- Accessibility: suppress animations for users who prefer reduced motion --- */
+
+@media (prefers-reduced-motion: reduce) {
+  .indicator * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

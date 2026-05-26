@@ -95,11 +95,28 @@
 
 .sortable {
   cursor: pointer;
+  padding: 0;
 }
 
 .sortable:hover {
   color: var(--text-primary, #111);
   background: var(--hover, #f0f0f0);
+}
+
+/* Button inside sortable <th> — inherits all column-header styles */
+.sortButton {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  user-select: none;
 }
 
 .sortIndicator {

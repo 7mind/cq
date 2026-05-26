@@ -627,7 +627,7 @@ export function Stream({ chatEvents, onQuestionReply, mode = "live" }: StreamPro
   const effectiveReply = mode === "replay" ? undefined : onQuestionReply;
 
   return (
-    <div className={styles.root} data-testid="stream-root">
+    <div className={styles.root} data-testid="stream-root" aria-live="polite" aria-label="Chat messages">
       {renderMessages(messages, effectiveReply)}
     </div>
   );
