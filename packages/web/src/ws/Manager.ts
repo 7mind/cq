@@ -49,6 +49,12 @@ export interface ManagerStats {
     state: ConnectionState;
     rtt: number | null;
     uptimeMs: number;
+    /** PR-14: Epoch ms of the oldest in-flight ping; null if none pending. */
+    oldestPendingPingSentAt: number | null;
+    /** PR-14: Epoch ms when this connection entered STALE; null if not STALE. */
+    enteredStaleAt: number | null;
+    /** PR-14: Epoch ms when this connection entered NEW; null once it left NEW. */
+    connectedAt: number | null;
   }>;
   /** id of the connection currently routed for sends. */
   readonly activeConnectionId: string | null;
@@ -61,6 +67,12 @@ export interface ManagerStats {
   readonly lastCloseReason: string;
   /** Absolute ms timestamp of next scheduled retry; null when not scheduled. */
   readonly nextRetryAt: number | null;
+  /**
+   * PR-14: Epoch ms when the current backoff timer was armed.
+   * Paired with nextRetryAt; null when nextRetryAt is null.
+   * Allows the ring to display `remaining / total` for the reconnect phase.
+   */
+  readonly retryScheduledAt: number | null;
   /** PR-10 will toggle this; default false here. */
   readonly pendingReconnectOnVisible: boolean;
 }
@@ -160,6 +172,8 @@ export class Manager {
   private _lastCloseReason: string = "";
   private _backoffTimerId: unknown = null;
   private _nextRetryAt: number | null = null;
+  /** PR-14: epoch ms when the current backoff was scheduled. Paired with _nextRetryAt. */
+  private _retryScheduledAt: number | null = null;
 
   // --- PR-10: defer reconnect while hidden ----------------------------------
   private _pendingReconnectOnVisible: boolean = false;
@@ -721,7 +735,9 @@ export class Manager {
 
     const delay = this._backoffDelay();
     this._attempt += 1;
-    this._nextRetryAt = this._clock() + delay;
+    const scheduledAt = this._clock();
+    this._retryScheduledAt = scheduledAt;
+    this._nextRetryAt = scheduledAt + delay;
 
     this._backoffTimerId = this._setTimer(() => {
       this._backoffTimerId = null;
@@ -738,6 +754,7 @@ export class Manager {
       this._backoffTimerId = null;
     }
     this._nextRetryAt = null;
+    this._retryScheduledAt = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -750,6 +767,9 @@ export class Manager {
       state: e.stats.state,
       rtt: e.stats.rtt,
       uptimeMs: e.stats.uptimeMs,
+      oldestPendingPingSentAt: e.stats.oldestPendingPingSentAt,
+      enteredStaleAt: e.stats.enteredStaleAt,
+      connectedAt: e.stats.connectedAt,
     }));
 
     return {
@@ -765,6 +785,7 @@ export class Manager {
       lastCloseCode: this._lastCloseCode,
       lastCloseReason: this._lastCloseReason,
       nextRetryAt: this._nextRetryAt,
+      retryScheduledAt: this._retryScheduledAt,
       pendingReconnectOnVisible: this._pendingReconnectOnVisible,
     };
   }

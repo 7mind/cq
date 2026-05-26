@@ -36,6 +36,24 @@ export interface ConnectionStats {
   readonly lastCloseReason: string;
   /** Cumulative time (ms) spent in ALIVE state. */
   readonly uptimeMs: number;
+  /**
+   * PR-14: Epoch ms when the oldest in-flight ping was sent.
+   * Null when no pings are pending. Used by computeRingRemaining to derive
+   * the countdown for the pong-timeout phase.
+   */
+  readonly oldestPendingPingSentAt: number | null;
+  /**
+   * PR-14: Epoch ms when this connection first entered the STALE state in
+   * its current stint. Null when not STALE. Used by computeRingRemaining
+   * to derive the countdown for the stale-grace phase.
+   */
+  readonly enteredStaleAt: number | null;
+  /**
+   * PR-14: Epoch ms when this connection entered NEW and began waiting for
+   * the open event. Null once the connection leaves NEW. Used by
+   * computeRingRemaining to derive the countdown for the connect phase.
+   */
+  readonly connectedAt: number | null;
 }
 
 /**
@@ -114,6 +132,12 @@ export class Connection {
   private _aliveStart: number | null = null;      // when we entered ALIVE
   private _aliveAccumMs: number = 0;              // uptime before current ALIVE stint
 
+  // --- PR-14: ring countdown fields -----------------------------------------
+  /** Epoch ms when this connection first entered NEW (connect-timeout countdown). */
+  private readonly _newAt: number;
+  /** Epoch ms when this connection entered the STALE state (stale-grace countdown). Null if not yet stale. */
+  private _enteredStaleAt: number | null = null;
+
   // --- socket ---------------------------------------------------------------
   private readonly _socket: SocketLike;
 
@@ -147,6 +171,9 @@ export class Connection {
     this._connectTimeoutMs = opts.connectTimeoutMs ?? 10_000;
     this._socketFactory = opts.socketFactory ?? ((url) => new WebSocket(url) as SocketLike);
     this._clock = opts.clock ?? (() => Date.now());
+
+    // Record the epoch ms when this connection was created (start of NEW state).
+    this._newAt = this._clock();
 
     // Build handlers once so we can remove them later
     this._onOpen = () => this._handleOpen();
@@ -236,6 +263,8 @@ export class Connection {
     // Clear stale grace timer if recovering from STALE
     if (wasStale) {
       this._clearStaleGraceTimer();
+      // PR-14: no longer in STALE
+      this._enteredStaleAt = null;
     }
 
     // Record when we entered ALIVE (for uptime tracking)
@@ -259,6 +288,9 @@ export class Connection {
       this._aliveAccumMs += this._clock() - this._aliveStart;
       this._aliveStart = null;
     }
+
+    // PR-14: record when we entered STALE for ring countdown
+    this._enteredStaleAt = this._clock();
 
     this._state = "STALE";
     this._notify();
@@ -442,6 +474,15 @@ export class Connection {
     if (this._state === "ALIVE" && this._aliveStart !== null) {
       uptime += this._clock() - this._aliveStart;
     }
+
+    // PR-14: oldest pending ping sent-at (for pong-timeout countdown)
+    let oldestPendingPingSentAt: number | null = null;
+    for (const sentAt of this._pendingPings.values()) {
+      if (oldestPendingPingSentAt === null || sentAt < oldestPendingPingSentAt) {
+        oldestPendingPingSentAt = sentAt;
+      }
+    }
+
     return {
       state: this._state,
       rtt: this._rtt,
@@ -449,6 +490,10 @@ export class Connection {
       lastCloseCode: this._lastCloseCode,
       lastCloseReason: this._lastCloseReason,
       uptimeMs: uptime,
+      oldestPendingPingSentAt,
+      enteredStaleAt: this._enteredStaleAt,
+      // connectedAt is the creation time (when NEW state began); null once left NEW
+      connectedAt: this._state === "NEW" ? this._newAt : null,
     };
   }
 

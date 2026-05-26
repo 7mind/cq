@@ -20,6 +20,13 @@
   height: 32px;
   border-radius: 50%;
 
+  /* PR-14: relative so the SVG ring overlay (position:absolute) stays inside */
+  /* Note: `position:fixed` already establishes a containing block, but adding
+     `position:relative` here would reset it to the nearest positioned ancestor.
+     The SVG is positioned with `position:absolute` and `top:0;left:0`, which
+     works correctly inside a fixed container because fixed elements establish
+     their own stacking context. No extra wrapper needed. */
+
   display: flex;
   align-items: center;
   justify-content: center;
@@ -57,4 +64,30 @@
 
 .stateTerminal {
   background-color: #343a40; /* dark */
+}
+
+/* --- PR-14: Countdown ring overlay --- */
+
+/*
+ * The CountdownRing SVG uses `position:absolute; top:0; left:0` and is placed
+ * as a sibling of the glyph text node inside `.indicator`.  Because `.indicator`
+ * is `position:fixed`, it forms a containing block for absolutely-positioned
+ * children, so the SVG sits correctly at (0,0) of the 32×32 dot.
+ *
+ * .ring / .ringTrack / .ringIndicator are kept here for potential future use
+ * (e.g. theming via CSS variables) but the SVG uses inline styles directly.
+ */
+
+.ring {
+  pointer-events: none;
+}
+
+.ringTrack {
+  /* faint white arc behind the indicator arc */
+  stroke: rgba(255, 255, 255, 0.25);
+}
+
+.ringIndicator {
+  /* bright white arc that depletes as the deadline approaches */
+  stroke: rgba(255, 255, 255, 0.85);
 }

@@ -120,6 +120,13 @@ export class MockWebSocket implements SocketLike {
   }
 
   private _makeCloseEvent(code: number, reason: string): CloseEvent {
-    return new CloseEvent("close", { code, reason, wasClean: code === 1000 });
+    // CloseEvent init-dict support is absent in happy-dom (fields stay undefined).
+    // Assign the properties manually so the event works under both Bun native and
+    // happy-dom environments.
+    const evt = new CloseEvent("close");
+    Object.defineProperty(evt, "code", { value: code });
+    Object.defineProperty(evt, "reason", { value: reason });
+    Object.defineProperty(evt, "wasClean", { value: code === 1000 });
+    return evt;
   }
 }

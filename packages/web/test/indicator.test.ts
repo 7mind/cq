@@ -2,18 +2,23 @@
  * indicator.test.ts
  *
  * Tests for deriveWidgetState (pure function) and the <Indicator> React
- * component. Runs under happy-dom, registered here at module level so that
- * only this file gets DOM globals — the global bunfig.toml preload is
- * intentionally absent to avoid GlobalRegistrator.register() replacing
- * globalThis timers and breaking jest.useFakeTimers() in other test files.
+ * component. Runs under happy-dom, registered here at module level with a
+ * shared-global guard so that only the first file to evaluate (reverse-alpha
+ * order: ring.test.ts before indicator.test.ts) calls
+ * GlobalRegistrator.register().
  */
 
 // Must be first — registers DOM globals (document, window, etc.)
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-GlobalRegistrator.register();
+if (typeof globalThis.document === "undefined") {
+  GlobalRegistrator.register();
+}
 // Tell React 19 this environment supports act()
 // @ts-expect-error — IS_REACT_ACT_ENVIRONMENT is a React internal global not typed in bun-types
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+if (!globalThis.IS_REACT_ACT_ENVIRONMENT) {
+  // @ts-expect-error — IS_REACT_ACT_ENVIRONMENT is a React internal global not typed in bun-types
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+}
 
 import { describe, test, expect, afterEach } from "bun:test";
 import { createRoot } from "react-dom/client";
@@ -31,6 +36,19 @@ import { Indicator } from "../src/ws/Indicator";
 
 type UpdateCb = (stats: ManagerStats) => void;
 
+type ConnectionEntry = ManagerStats["connections"][number];
+
+function makeConn(overrides: Partial<ConnectionEntry> & { id: string; state: ConnectionEntry["state"] }): ConnectionEntry {
+  return {
+    rtt: null,
+    uptimeMs: 0,
+    oldestPendingPingSentAt: null,
+    enteredStaleAt: null,
+    connectedAt: null,
+    ...overrides,
+  };
+}
+
 function makeStats(overrides: Partial<ManagerStats> = {}): ManagerStats {
   return {
     connections: [],
@@ -41,6 +59,7 @@ function makeStats(overrides: Partial<ManagerStats> = {}): ManagerStats {
     lastCloseCode: null,
     lastCloseReason: "",
     nextRetryAt: null,
+    retryScheduledAt: null,
     pendingReconnectOnVisible: false,
     ...overrides,
   };
@@ -112,8 +131,8 @@ describe("deriveWidgetState", () => {
   test("ALIVE in any connection → alive", () => {
     const stats = makeStats({
       connections: [
-        { id: "a", state: "ALIVE", rtt: 42, uptimeMs: 1000 },
-        { id: "b", state: "STALE", rtt: null, uptimeMs: 500 },
+        makeConn({ id: "a", state: "ALIVE", rtt: 42, uptimeMs: 1000 }),
+        makeConn({ id: "b", state: "STALE", uptimeMs: 500 }),
       ],
     });
     expect(deriveWidgetState(stats)).toBe<WidgetState>("alive");
@@ -126,7 +145,7 @@ describe("deriveWidgetState", () => {
 
   test("NEW connection → connecting", () => {
     const stats = makeStats({
-      connections: [{ id: "c", state: "NEW", rtt: null, uptimeMs: 0 }],
+      connections: [makeConn({ id: "c", state: "NEW" })],
     });
     expect(deriveWidgetState(stats)).toBe<WidgetState>("connecting");
   });
@@ -148,7 +167,7 @@ describe("deriveWidgetState", () => {
 
   test("STALE but no ALIVE → stale", () => {
     const stats = makeStats({
-      connections: [{ id: "d", state: "STALE", rtt: null, uptimeMs: 200 }],
+      connections: [makeConn({ id: "d", state: "STALE", uptimeMs: 200 })],
     });
     expect(deriveWidgetState(stats)).toBe<WidgetState>("stale");
   });
@@ -161,7 +180,7 @@ describe("deriveWidgetState", () => {
 describe("Indicator component", () => {
   test("renders with data-state=alive when manager reports ALIVE", () => {
     const manager = new FakeManager(
-      makeStats({ connections: [{ id: "x", state: "ALIVE", rtt: 10, uptimeMs: 500 }] }),
+      makeStats({ connections: [makeConn({ id: "x", state: "ALIVE", rtt: 10, uptimeMs: 500 })] }),
     );
     setup();
     act(() => {
@@ -184,7 +203,7 @@ describe("Indicator component", () => {
 
   test("updates when manager.onUpdate fires — alive → dead", () => {
     const manager = new FakeManager(
-      makeStats({ connections: [{ id: "x", state: "ALIVE", rtt: 5, uptimeMs: 200 }] }),
+      makeStats({ connections: [makeConn({ id: "x", state: "ALIVE", rtt: 5, uptimeMs: 200 })] }),
     );
     setup();
     act(() => {
@@ -199,7 +218,7 @@ describe("Indicator component", () => {
 
   test("aria-label includes the human-readable state", () => {
     const manager = new FakeManager(
-      makeStats({ connections: [{ id: "y", state: "ALIVE", rtt: 77, uptimeMs: 1000 }] }),
+      makeStats({ connections: [makeConn({ id: "y", state: "ALIVE", rtt: 77, uptimeMs: 1000 })] }),
     );
     setup();
     act(() => {
@@ -212,7 +231,7 @@ describe("Indicator component", () => {
 
   test("aria-label changes when state transitions to connecting", () => {
     const manager = new FakeManager(
-      makeStats({ connections: [{ id: "z", state: "ALIVE", rtt: 10, uptimeMs: 300 }] }),
+      makeStats({ connections: [makeConn({ id: "z", state: "ALIVE", rtt: 10, uptimeMs: 300 })] }),
     );
     setup();
     act(() => {
@@ -243,7 +262,7 @@ describe("Indicator component", () => {
 
   test("renders the non-color glyph inside the circle (shape channel)", () => {
     const manager = new FakeManager(
-      makeStats({ connections: [{ id: "g", state: "ALIVE", rtt: null, uptimeMs: 0 }] }),
+      makeStats({ connections: [makeConn({ id: "g", state: "ALIVE" })] }),
     );
     setup();
     act(() => {
