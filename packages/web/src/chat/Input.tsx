@@ -35,6 +35,7 @@ import styles from "../styles/Input.module.css";
 
 export interface InputProps {
   onSubmit: (text: string) => void;
+  onInterrupt?: () => void;
   disabled?: boolean;
 }
 
@@ -52,7 +53,7 @@ export function isSendChord(e: KeyboardEvent | React.KeyboardEvent): boolean {
   return e.ctrlKey && !e.metaKey;
 }
 
-export function Input({ onSubmit, disabled }: InputProps): React.ReactElement {
+export function Input({ onSubmit, onInterrupt, disabled }: InputProps): React.ReactElement {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>): void {
@@ -89,6 +90,15 @@ export function Input({ onSubmit, disabled }: InputProps): React.ReactElement {
         placeholder="Cmd+Enter to send"
         rows={3}
       />
+      {disabled === true && onInterrupt !== undefined && (
+        <button
+          className={styles.stopButton}
+          onClick={onInterrupt}
+          type="button"
+        >
+          Stop
+        </button>
+      )}
     </div>
   );
 }

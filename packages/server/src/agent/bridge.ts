@@ -138,6 +138,8 @@ type ActiveSession = {
   readonly queue: AsyncQueue<SDKUserMessage>;
   /** The WS socket that started this session (best-effort; may be stale after reconnect). */
   ws: WsSocket;
+  /** Set to true once chat.interrupt has been received; suppresses late chat.event frames. */
+  aborting: boolean;
 };
 
 export class Bridge {
@@ -219,6 +221,7 @@ export class Bridge {
       query: activeQuery,
       queue,
       ws,
+      aborting: false,
     };
     this.active = session;
 
@@ -271,7 +274,8 @@ export class Bridge {
     }
 
     this.logger.info("bridge.chat_interrupt", { chatSessionId: session.chatSessionId });
-    // Stub: call interrupt(). Full abort-token tracking deferred to PR-24.
+    // Set abort flag first so the loop stops emitting chat.event frames immediately.
+    session.aborting = true;
     await session.query.interrupt();
   }
 
@@ -302,6 +306,9 @@ export class Bridge {
         // Always use the latest ws reference (updated by handleChatInput).
         ws = session.ws;
 
+        // If an interrupt was received, discard all further SDK events.
+        if (session.aborting) continue;
+
         if (isInitMessage(msg)) {
           if (!initSent) {
             initSent = true;
@@ -315,17 +322,22 @@ export class Bridge {
         this.sendEvent(ws, session, msg);
       }
 
-      // Normal completion.
+      // Iteration ended: choose reason based on whether an interrupt was requested.
       ws = session.ws;
-      this.sendDone(ws, session, "completed");
+      this.sendDone(ws, session, session.aborting ? "interrupted" : "completed");
     } catch (err: unknown) {
       ws = session.ws;
-      this.logger.error("bridge.sdk_error", {
-        chatSessionId: session.chatSessionId,
-        err: String(err),
-      });
-      this.sendDone(ws, session, "errored");
-      this.sendError(ws, session.chatSessionId, "SDK_ERROR", String(err));
+      // If the SDK throws after an interrupt, still report interrupted, not errored.
+      if (session.aborting) {
+        this.sendDone(ws, session, "interrupted");
+      } else {
+        this.logger.error("bridge.sdk_error", {
+          chatSessionId: session.chatSessionId,
+          err: String(err),
+        });
+        this.sendDone(ws, session, "errored");
+        this.sendError(ws, session.chatSessionId, "SDK_ERROR", String(err));
+      }
     } finally {
       if (this.active === session) {
         this.active = null;

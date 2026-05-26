@@ -32,3 +32,19 @@
   background-color: #f5f5f5;
   cursor: not-allowed;
 }
+
+.stopButton {
+  margin-top: 4px;
+  padding: 4px 12px;
+  background-color: #dc3545;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.stopButton:hover {
+  background-color: #b02a37;
+}
