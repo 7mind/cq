@@ -1,9 +1,9 @@
 # cq — active task ledger
 
-**Cycle:** outer-1 / inner M0 (PR-01 closed; PR-02 next).
+**Cycle:** outer-1 / inner M1 (M0 archived; PR-06 next).
 **Goal:** build cq — TypeScript Web UI for the Claude Agent SDK on Bun + React + WebSocket per [`./prompt.md`](./prompt.md). Discharge condition: all five milestones `[x]` and archived; `bun test` clean; `bun run start --cwd <real-dir>` launches; sample prompt round-trips Chat tab + History tab drill-down.
 **Accepted plan:** [`docs/drafts/20260526-0037-cq-plan.md`](docs/drafts/20260526-0037-cq-plan.md) (2294 lines, G2c-patched).
-**Defects:** [`./defects.md`](./defects.md).
+**Defects:** [`./defects.md`](./defects.md). _(none opened.)_
 
 ## Cross-cutting locks (non-negotiable, project-wide)
 
@@ -16,7 +16,7 @@
 
 ## Milestones — stubs
 
-- [x] **M0 — Bring-up** (closed: 2026-05-26) — workspace, protocol, smoke server, logger, dev/HMR. *PRs PR-01 … PR-05 (5).*
+- [x] **M0 — Bring-up** (closed: 2026-05-26; archive: [`./docs/archive/tasks-M0.md`](./docs/archive/tasks-M0.md)) — workspace, protocol, smoke server, logger, dev/HMR. *5 PRs.*
 - [ ] **M1 — WebSocket spine** — full resilient-ws-ui Part 3 coverage. *PRs PR-06 … PR-18 (14, incl. PR-09a).*
 - [ ] **M2 — Agent SDK integration (Chat MVP)** — SDK bridge, Chat shell, markdown + Shiki, basic cards, interrupt, header. *PRs PR-19 … PR-26 (9, incl. PR-22a/b).*
 - [ ] **M3 — Chat full fidelity** — permission overlays, elicitation, AskUserQuestion, plan mode, thinking blocks, slash autocomplete, attachments, file-ref anchors, more tool cards, TaskList sidebar. *PRs PR-27 … PR-38 (12).*
@@ -25,32 +25,36 @@
 
 Total PR count: 56 (PR-01 … PR-54 + PR-09a + PR-22b; PR-22a replaces old PR-22).
 
-## M0 — Bring-up (current milestone)
+## M1 — WebSocket spine (current milestone)
 
-Goal: skeleton repo, shared protocol package, smoke server, logger, dev/HMR. Close when all five PRs are `[x]`, `bun test` green, `bun run dev` exits cleanly on SIGINT.
+Goal: full resilient-ws-ui Part-3 reliability + indicator coverage on both server and client. Close when all 14 PRs are `[x]`, all named tests pass, and PR-18's E2E (freeze + IP-change + server-restart) is green.
 
-- [x] **PR-01** — Workspace skeleton + tsconfig — committed `78abb0d`. Acceptance: `bun install`, `bun x tsc -b`, `bun test --pass-with-no-tests`, `bun x eslint .` all exit 0. Surprises: bun lockfile is JSON-text (`bun.lock`) in 1.3.13 not binary; TS resolved to 5.9.3 from caret 5.7.x; `tsc -b --noEmit` is TS-incompatible with composite project references — `tsc -b` is the canonical command and is what the npm script calls.
-- [x] **PR-02** — Shared protocol package (Zod schemas) — committed HEAD. 76 tests pass including `ChatInput rejects oversize attachments` (F-08); discriminated unions `ClientFrame` / `ServerFrame` exported.
-- [x] **PR-03** — `Bun.serve` smoke server + HTTP static assets — committed HEAD. args.test.ts (7 tests), smoke.test.ts (4 tests); tsc -b clean; eslint clean; curl + SIGINT exit 0 verified.
-- [x] **PR-04** — Structured JSON logger — committed HEAD. log.test.ts (22 tests); tsc -b clean; eslint clean; `bun test packages/server` (33 total) green; operational audit: log file present, tail -1 | jq exit 0.
-- [x] **PR-05** — `bun run dev` with HMR via `Bun.serve({development:{hmr:true}})` — committed HEAD. `--dev` flag in args.ts; `startDevServer()` in devServer.ts uses html-import route + injectable `serve` for testability; main.ts branches on `args.dev`; README skeleton; 37 server tests pass.
+- [ ] **PR-06** — Server WS endpoint + Zod inbound validation + Origin check (F-19). Tests: `ws-basic.test.ts`, `ws-origin.test.ts`. Deps: PR-02, PR-03.
+- [ ] **PR-07** — Server heartbeat (`hb.sping`/`hb.spong`) with setImmediate defer + nonce current+previous lookback `[ws R11]`. Test: `heartbeat.test.ts`. Deps: PR-06.
+- [ ] **PR-08** — Client `Connection` class: state machine NEW/ALIVE/STALE/DEAD + per-nonce ping + connect timeout `[ws R2,R3,R4]`. Test: `connection.test.ts`. Deps: PR-02.
+- [ ] **PR-09** — Client `Manager`: backoff + overlapping reconnect + close-code classify + pool cap=3 `[ws R5,R6,R7]`. Test: `manager.test.ts`. Deps: PR-08.
+- [ ] **PR-09a** — Server-side seq replay buffer (last-500 / 5 MB ring per session) (F-04). Test: `replay-buffer.test.ts`. Deps: PR-06, PR-09.
+- [ ] **PR-10** — Page Lifecycle wiring + defer-while-hidden Phoenix pattern `[ws R9,R10]`. Test: `lifecycle.test.ts`. Deps: PR-09.
+- [ ] **PR-11** — Time-jump detector → proactive reconnect `[ws R8]`. Test: `time-jump.test.ts`. Deps: PR-09. **Serial after PR-10.**
+- [ ] **PR-12** — Destroyed-flag guard + terminal-state truth `[ws R12,R13]`. Test: `destroy.test.ts`. Deps: PR-09. **Serial after PR-11.**
+- [ ] **PR-13** — Indicator widget: derived state + non-color channels + CSS modules infra `[ws V1,V2,V3]`. Test: `indicator.test.ts`. Deps: PR-09, PR-10, PR-11, PR-12.
+- [ ] **PR-14** — Countdown ring + 10 Hz rAF + event-driven refresh `[ws V4,V5]`. Test: `ring.test.ts`. Deps: PR-13. **Serial after PR-13.**
+- [ ] **PR-15** — Tooltip with pool, RTT windows, loss %, backoff, last close `[ws V6]`. Tests: `tooltip.test.ts`, `rtt-windows.test.ts`. Deps: PR-13, PR-14. **Serial after PR-14.**
+- [ ] **PR-16** — `document.title` mirror + bounded event log + never-lie labels `[ws V7,V8,V9,V10]`. Tests: `title.test.ts`, `event-log.test.ts`. Deps: PR-15. **Serial after PR-15.**
+- [ ] **PR-17** — `useConnection` hook + `<ConnectionProvider>` context (F-18). Test: `app-mount.test.ts`. Deps: PR-13..PR-16, PR-06, PR-07.
+- [ ] **PR-18** — E2E: freeze + IP-change simulated + server restart. Test: `e2e/ws-resilience.test.ts`. Deps: PR-06 .. PR-17.
 
-**Dispatch order:** strict serial PR-01 → 02 → 03 → 04 → 05. PR-02 has no PR-01 dep but the planner sequences it second to settle shared types early. PR-03/04 both depend on PR-01. PR-05 depends on PR-03 + PR-04.
+**Dispatch order (plan § 9).** Mostly serial. Possible parallel split: PR-07 (server) vs PR-08 (client) can run concurrently in separate worktrees once PR-06 lands (disjoint write scopes: `packages/server/src/ws/` vs `packages/web/src/ws/`). PR-13 onward serialises on `Indicator.tsx` per the F-17 write-scope map.
 
 ## In-progress / recent
 
-- **PR-06** (M1 starts) — Server WS endpoint + Zod inbound validation (G2c: F-19 origin check).
+- **PR-06** — about to dispatch.
 
 ## Recent completions (this cycle's worth)
 
-- [x] **PR-05** — `bun run dev` with HMR. Committed HEAD. `--dev` flag; `startDevServer()` uses `Bun.serve({development:{hmr:true}})` with `index.html` route import; injectable `serve` for test options-passthrough assertion; README skeleton; `packages/server/src/types/html-import.d.ts` shim; 37 server tests (was 33); tsc -b and eslint clean; operational audit: both modes return 200 with `<div id="root">` and exit 0 on SIGINT.
-- [x] **PR-04** — Structured JSON logger. Committed HEAD. `createLogger(opts)` factory: JSON-lines to `./var/log/cq-YYYYMMDD.log` + stdout; level filter (debug/info/warn/error); daily rotation via mocked clock; no module globals; reserved-key collision protection. 22 log tests + smoke updated; bunfig.toml excludes dist/ from discovery; tsc -b and eslint clean; operational audit passes.
-- [x] **PR-03** — `Bun.serve` smoke server + HTTP static assets. Committed HEAD. Hand-rolled CLI parser (`--cwd --host --port --db`); `buildWeb()` via `Bun.build` on startup (option A); SIGINT/SIGTERM exit 0. 7 args unit tests + 4 smoke integration tests; tsc -b and eslint clean.
-- [x] **PR-02** — Shared protocol package (Zod schemas). Committed HEAD. 76 tests; all named acceptance tests pass; `ClientFrame`/`ServerFrame` discriminated unions; `ChatInput` 5 MB cap; `isRetriable()` close-code helper.
-- [x] **PR-01** — Workspace skeleton + tsconfig. Committed `78abb0d`. (See M0 stub above for surprises.)
-- [x] **M0.0** — Flake dev environment (bun 1.3.13, node 22, sqlite 3.51, dev tooling). Committed `9faab3c`.
-- [x] **G1/G2** — Brief read; planning subagent produced milestone plan; adversarial reviewer found 20 issues; G2c iteration applied all 20 in-place; one conditional escalation (Q-1) documented. Plan accepted. Committed `2181ae6`.
+- [x] **M0 closed + archived** to `docs/archive/tasks-M0.md`. 5 PRs, 113 tests total (76 shared + 37 server), 0 defects, 0 algedonic escalations. Both `start` and `dev` modes audit-green.
+- [x] **G1/G2** — Plan accepted (committed `2181ae6`); G2b found 20 issues; G2c patched all 20 in-place; one conditional escalation (Q-1) documented.
 
 ## Archive
 
-_None yet._ First archive lands when M0 closes → `./docs/archive/tasks-M0.md`.
+- M0 → [`./docs/archive/tasks-M0.md`](./docs/archive/tasks-M0.md)
