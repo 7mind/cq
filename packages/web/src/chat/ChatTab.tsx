@@ -2,8 +2,7 @@
  * ChatTab.tsx — top-level chat shell component.
  *
  * Renders:
- *   - A placeholder stream area for the assistant output (PR-22a/b will fill
- *     this in with Markdown / Stream renderers).
+ *   - <Stream> for assistant output, fed by accumulated chat.event frames.
  *   - The <Input> component for user text entry.
  *
  * On submit, builds a ChatInput frame and calls manager.send(). The sessionId
@@ -11,12 +10,15 @@
  * the chat.started server frame.
  *
  * Subscribes to useConnection() for the Manager instance.
+ * Subscribes to manager.onMessage() to accumulate chat.event frames.
+ * On chat.start, clears the accumulated event list.
  */
 
-import { useRef } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useConnection } from "../ws/useConnection";
 import { Input } from "./Input";
-import type { ChatInput } from "@cq/shared";
+import { Stream } from "./Stream";
+import type { ChatInput, ChatEvent } from "@cq/shared";
 
 /** Placeholder session id for PR-21. PR-25 will replace with a real value. */
 const PLACEHOLDER_SESSION_ID = "00000000-0000-0000-0000-000000000000";
@@ -24,9 +26,23 @@ const PLACEHOLDER_SESSION_ID = "00000000-0000-0000-0000-000000000000";
 export function ChatTab(): React.ReactElement {
   const manager = useConnection();
   const seqRef = useRef(0);
+  const [chatEvents, setChatEvents] = useState<ChatEvent[]>([]);
+
+  // Subscribe to incoming server frames and accumulate chat.event entries.
+  // Clear on a new chat.start (the user sending a new session).
+  useEffect(() => {
+    const unsub = manager.onMessage((frame) => {
+      if (frame.type === "chat.event") {
+        setChatEvents((prev) => [...prev, frame as ChatEvent]);
+      }
+    });
+    return unsub;
+  }, [manager]);
 
   function handleSubmit(text: string): void {
     const seq = seqRef.current++;
+    // Clear previous conversation on each new submission.
+    setChatEvents([]);
     const frame: ChatInput = {
       type: "chat.input",
       seq,
@@ -40,11 +56,7 @@ export function ChatTab(): React.ReactElement {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      {/* Stream area: PR-22a/b will replace this placeholder */}
-      <div
-        style={{ flex: 1, overflowY: "auto", padding: "16px" }}
-        aria-label="assistant output"
-      />
+      <Stream chatEvents={chatEvents} />
       <Input onSubmit={handleSubmit} />
     </div>
   );

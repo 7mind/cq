@@ -190,6 +190,9 @@ export class Bridge {
       cwd: this.cwd,
       forwardSubagentText: true,
       agentProgressSummaries: true,
+      // Emit SDKPartialAssistantMessage frames so the web UI can stream
+      // token-level text through Stream.tsx (PR-22b).
+      includePartialMessages: true,
       permissionMode: frame.permissionMode ?? "default",
       ...(hasMcpServers ? { mcpServers } : {}),
     };

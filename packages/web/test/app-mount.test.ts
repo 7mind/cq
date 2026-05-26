@@ -100,6 +100,16 @@ class FakeManager {
     for (const cb of this._subs) cb(stats);
   }
 
+  // No-op stub: ChatTab subscribes to onMessage; FakeManager emits no frames.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  onMessage(_cb: (frame: import("@cq/shared").ServerFrame) => void): () => void {
+    return () => {};
+  }
+
+  // No-op stub: ChatTab calls manager.send() on submit.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  send(_frame: import("@cq/shared").ClientFrame): void {}
+
   get subscriberCount(): number { return this._subs.length; }
 }
 

@@ -1,0 +1,16 @@
+/**
+ * Stream.module.css — layout for the streaming assistant message list.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.message {
+  width: 100%;
+}

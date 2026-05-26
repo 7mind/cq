@@ -33,7 +33,7 @@ Goal: first end-to-end conversation. User types in browser, hits Cmd/Ctrl+Enter,
 - [x] **PR-20** — `MockAnthropicHTTP` SSE stub + `sdk-stub.test.ts` (2 cases via fallback queryFactory fetching real SSE) + `mcp-inheritance.test.ts` un-skipped (PR-19-D01 closed via `loadMcpServers()` fallback in `agent/mcp.ts`). `tsc + eslint` clean. 65 server / 208 total passing; 0 skips; 3 pre-existing Bun-not-in-PATH failures unchanged. PR-20-D01 opened for deferred real-binary path. Deps: PR-19.
 - [x] **PR-21** — Web `ChatTab` shell + `Input` component with cross-platform send chord + IME passthrough (F-16). Test: `input.test.ts` (6 named cases). `tsc + eslint` clean. 111 web / 214 total passing; 3 pre-existing Bun-not-in-PATH fails unchanged. Deps: PR-17, PR-02.
 - [x] **PR-22a** — Web `Markdown` (react-markdown + remark-gfm + Shiki static, 12-lang allow-list per F-20, lazy load for others) + `CodeBlock` card (lang label + copy button, F-07). Tests: `markdown.test.ts`, `code-block.test.ts`. Deps: PR-21.
-- [ ] **PR-22b** — `Stream` renderer + token-level reflow via `SDKPartialAssistantMessage`; code-block stable-identity invariant (F-07). Test: `stream-reflow.test.ts`. Deps: PR-22a.
+- [x] **PR-22b** — `Stream` renderer + token-level reflow via `SDKPartialAssistantMessage`; code-block stable-identity invariant (F-07). Test: `stream-reflow.test.ts`. Deps: PR-22a.
 - [ ] **PR-23** — Tool cards for Read / Write / Edit / Bash with hand-rolled line-diff. Test: `cards.test.ts`. Deps: PR-22a.
 - [ ] **PR-24** — Interrupt path: `chat.interrupt` → `Query.interrupt()`; stop button in Input; abort-token guards late events; `chat.done reason=interrupted`. Test: `interrupt.test.ts`. Deps: PR-19, PR-21.
 - [ ] **PR-25** — Web `Header` (cwd, model picker, permission-mode toggle, live tokens + cost, session id, started-at, duration, new-session w/ mid-stream confirm). Test: `header.test.ts`. Deps: PR-22a.
@@ -43,10 +43,11 @@ Goal: first end-to-end conversation. User types in browser, hits Cmd/Ctrl+Enter,
 
 ## In-progress / recent
 
-- **PR-22b** — `Stream` renderer + token-level reflow via `SDKPartialAssistantMessage`; code-block stable-identity invariant (F-07). Test: `stream-reflow.test.ts`. Deps: PR-22a.
+- **PR-23** — Tool cards for Read / Write / Edit / Bash with hand-rolled line-diff. Test: `cards.test.ts`. Deps: PR-22a.
 
 ## Recent completions (this cycle's worth)
 
+- [x] **PR-22b** — M2/PR-22b: `Stream` renderer + token-level reflow. `Stream.tsx` accumulates `SDKPartialAssistantMessage` (type: `stream_event`) deltas per Anthropic `message.id`; on final `SDKAssistantMessage` replaces stitched text with canonical content. Each message renders through `<Markdown>` keyed by `messageId` — React positional reconciliation keeps `<CodeBlock>` fiber stable (approach B, F-07). `UnknownCard.tsx` placeholder for unrecognised SDK types. Bridge adds `includePartialMessages: true`. `stream-reflow.test.ts`: 3 cases (monotonic accumulation, final-replace, code-block stable identity). 122 web / 236 total; `tsc + eslint` clean.
 - [x] **PR-22a** — M2/PR-22a: Web `Markdown` (GFM + Shiki static) + `CodeBlock` card. `Markdown.tsx` wraps react-markdown with remark-gfm; fenced code blocks route to `CodeBlock.tsx` using Shiki `getSingletonHighlighter` with 12 bundled langs + github-light/dark themes. Non-bundled languages lazy-load and re-render. CodeBlock header: language label + Copy button (1.5 s "Copied!" feedback). `markdown.test.ts` (4 cases: GFM table, fenced code, task list, footnote); `code-block.test.ts` (4 cases: label+copy, clipboard stub, lazy-load, bundled-sync). 119 web / 233 total; `tsc + eslint` clean.
 - [x] **PR-21** — M2/PR-21: Web `ChatTab` shell + `Input` (uncontrolled textarea, cross-platform send chord, IME passthrough). `isSendChord()` exported; `isMacPlatform()` in `lib/platform.ts`. `ChatTab` builds `chat.input` frame, calls `manager.send()`. `input.test.ts` six F-16 cases pass. 111 web / 214 total; 3 pre-existing fails unchanged. `tsc + eslint` clean.
 - [x] **PR-20** — M2/PR-20: `MockAnthropicHTTP` SSE stub; `sdk-stub.test.ts` (2 cases); `mcp-inheritance.test.ts` un-skipped (PR-19-D01 closed via `loadMcpServers()` fallback). `agent/mcp.ts` implements `loadMcpServers(home?)`; Bridge merges result into `Options.mcpServers`. PR-20-D01 opened. 65 server / 208 total passing; 0 skips. `tsc + eslint` clean.
