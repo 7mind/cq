@@ -271,7 +271,7 @@ async function startChatMvpServer(): Promise<ChatMvpFixture> {
     fetch(req, srv) {
       const url = new URL(req.url);
       if (url.pathname === "/ws") {
-        if (!isOriginAllowed(req, host, port)) {
+        if (!isOriginAllowed(req)) {
           return new Response(null, { status: 403 });
         }
         const sessionId = crypto.randomUUID();

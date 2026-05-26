@@ -244,6 +244,20 @@ export class Manager {
   // id of the connection currently designated "active" for sends.
   private _activeConnectionId: string | null = null;
 
+  /**
+   * Memoized stats snapshot for `useSyncExternalStore` consumers.
+   *
+   * React's external-store hook compares `getSnapshot()` returns with `Object.is`
+   * to decide whether to re-render. If we returned a freshly-built object every
+   * call, React would see a new reference every render → infinite loop. The
+   * invariant: hold the same `ManagerStats` reference until something
+   * observable has actually changed, then invalidate.
+   *
+   * Invalidated by `_notify()`. Every state mutation funnels through `_notify()`,
+   * so the cache stays correct as long as that funnel is honored.
+   */
+  private _cachedStats: ManagerStats | null = null;
+
   // --- backoff state --------------------------------------------------------
   private _attempt: number = 0;
   private _isTerminal: boolean = false;
@@ -335,7 +349,10 @@ export class Manager {
   // ---------------------------------------------------------------------------
 
   get stats(): ManagerStats {
-    return this._deriveStats();
+    if (this._cachedStats === null) {
+      this._cachedStats = this._deriveStats();
+    }
+    return this._cachedStats;
   }
 
   /** PR-16: Most-recent displayed event log entries (up to 100), latest first. */
@@ -1023,8 +1040,15 @@ export class Manager {
   // ---------------------------------------------------------------------------
 
   private _notify(): void {
+    // Invalidate the memoized stats snapshot ALWAYS — even when _destroyed.
+    // Callers of `manager.stats` (including useSyncExternalStore's
+    // getSnapshot) must see the post-destroy values (isTerminal=true),
+    // otherwise they keep returning the pre-destroy snapshot. The
+    // _destroyed gate below only suppresses *subscriber dispatch*, not
+    // cache invalidation.
+    this._cachedStats = null;
     if (this._destroyed) return;
-    const s = this._deriveStats();
+    const s = this.stats;   // populates cache
     for (const cb of this._updateSubs) {
       cb(s);
     }

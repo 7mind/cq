@@ -131,6 +131,31 @@ describe("Manager", () => {
   });
 
   // -------------------------------------------------------------------------
+  // useSyncExternalStore stability: stats memoized between mutations
+  //
+  // React's external-store hook compares getSnapshot() returns with Object.is
+  // to decide whether to re-render. Manager.stats MUST return the same object
+  // reference until something observable changes; otherwise the consumer
+  // infinite-loops. Locks the fix discovered when dogfooding from vm:8733.
+  // -------------------------------------------------------------------------
+  it("manager.stats returns same reference between mutations, fresh reference after a notify", () => {
+    const m = new Manager(makeOpts());
+    const a = m.stats;
+    const b = m.stats;
+    expect(a).toBe(b); // identical reference — no infinite loop trigger
+
+    // Trigger a state change → _notify fires → cache invalidated
+    sockets[0]!.simulateOpen();
+
+    const c = m.stats;
+    expect(c).not.toBe(a); // fresh reference
+    const d = m.stats;
+    expect(d).toBe(c); // and stable again until the next mutation
+
+    m.destroy();
+  });
+
+  // -------------------------------------------------------------------------
   // Test 2: first Connection reaches ALIVE → activeConnectionId set, attempt reset
   // -------------------------------------------------------------------------
   it("first Connection reaches ALIVE → activeConnectionId set, attempt reset to 0", () => {

@@ -54,7 +54,7 @@ export function startDevServer(
     fetch(req: Request, srv: { upgrade(req: Request, opts: { data: WsSessionData }): boolean }) {
       const url = new URL(req.url);
       if (url.pathname === "/ws") {
-        if (!isOriginAllowed(req, host, port)) {
+        if (!isOriginAllowed(req)) {
           logger.info("ws.origin_rejected", {
             origin: req.headers.get("Origin") ?? "(none)",
             host,

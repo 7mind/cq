@@ -60,7 +60,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
           return new Response("Service Unavailable", { status: 503 });
         }
 
-        if (!isOriginAllowed(req, host, port)) {
+        if (!isOriginAllowed(req)) {
           logger.info("ws.origin_rejected", {
             origin: req.headers.get("Origin") ?? "(none)",
             host,
