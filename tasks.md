@@ -1,9 +1,9 @@
 # cq — active task ledger
 
 **Cycle:** outer-1 — **DISCHARGED**. G4 emitted 2026-05-26.
-**Goal:** ✓ build cq per [`./prompt.md`](./prompt.md). Discharge condition met: all five milestones `[x]` and archived; `bun run check` exits 0 (tsc + eslint + 396 tests); `bun run start --cwd <real-dir>` launches; sample prompt round-trips functionally verified via PR-51 e2e (live-browser path gated on missing SDK binary — `PR-20-D01`).
+**Goal:** ✓ build cq per [`./prompt.md`](./prompt.md). Discharge condition met: all five milestones `[x]` and archived; `bun run check` exits 0 (tsc + eslint + 399 tests); `bun run start --cwd <real-dir>` launches; sample prompt round-trips verified via PR-51 e2e + post-discharge real-SDK tests (`sdk-stub.test.ts`, `ask-question.test.ts`) running the bundled CLI binary against `MockAnthropicHTTP`. M1 E2E now drives a real client `Manager` in-process against the fixture server.
 **Accepted plan:** [`docs/drafts/20260526-0037-cq-plan.md`](docs/drafts/20260526-0037-cq-plan.md) (2294 lines, G2c-patched).
-**Defects:** [`./defects.md`](./defects.md). _(1 open: `PR-18-D01` — carries forward. 3 resolved: `PR-19-D01`, `PR-20-D01`, `PR-31-D01`.)_
+**Defects:** [`./defects.md`](./defects.md). _All 4 defects resolved (`PR-18-D01`, `PR-19-D01`, `PR-20-D01`, `PR-31-D01`) post-discharge. **No open defects.**_
 **Final session log:** [`docs/logs/20260526-final-log.md`](docs/logs/20260526-final-log.md).
 
 ## Milestones — final
@@ -15,7 +15,7 @@
 - [x] **M4 — Persistence + History tab** — archive: [`./docs/archive/tasks-M4.md`](./docs/archive/tasks-M4.md). 9 PRs.
 - [x] **M5 — Polish & harden** — archive: [`./docs/archive/tasks-M5.md`](./docs/archive/tasks-M5.md). 7 PRs.
 
-**56 PRs shipped. 396 tests passing. 0 fails, 0 skips, 0 algedonic escalations to the user.**
+**56 PRs shipped + 2 post-discharge defect fixes. 399 tests passing. 0 fails, 0 skips, 0 open defects, 0 algedonic escalations to the user.**
 
 ## Post-discharge fixes
 
