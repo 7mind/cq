@@ -29,7 +29,7 @@ import type { PermissionDecision } from "./PermissionPrompt";
 import { ElicitationCard } from "./Cards/ElicitationCard";
 import type { ElicitationReply } from "./Cards/ElicitationCard";
 import type { PermissionMode } from "./Header";
-import type { ChatInput, ChatInterrupt, ChatEvent, ChatStart, ChatStarted, ChatUsage, ChatPermissionRequest, ChatPermissionReply, ChatElicitationRequest, ChatElicitationReply, ChatQuestionReply } from "@cq/shared";
+import type { ChatInput, ChatInterrupt, ChatEvent, ChatStart, ChatStarted, ChatUsage, ChatPermissionRequest, ChatPermissionReply, ChatElicitationRequest, ChatElicitationReply, ChatQuestionReply, HistoryGet, HistoryReplayEvent } from "@cq/shared";
 import { ATTACHMENT_TOTAL_MAX_BYTES, base64DecodedByteLength } from "@cq/shared";
 import type { QuestionReplyPayload } from "./Cards/AskCard";
 import type { SlashCommand } from "./SlashPopover";
@@ -56,6 +56,8 @@ export function ChatTab(): React.ReactElement {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [invocationId, setInvocationId] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  // Invocation id from which to replay history after chat.started (set when resuming).
+  const pendingReplayInvocationIdRef = useRef<string | null>(null);
   // PR-28: pending permission requests, ordered by arrival.
   const [permissionRequests, setPermissionRequests] = useState<ChatPermissionRequest[]>([]);
   // PR-30: pending elicitation requests, ordered by arrival.
@@ -105,6 +107,39 @@ export function ChatTab(): React.ReactElement {
         setCostUsd(0);
         // Clear previous conversation.
         setChatEvents([]);
+        // If a resume replay was requested, fire history.get now.
+        const replayId = pendingReplayInvocationIdRef.current;
+        if (replayId !== null) {
+          pendingReplayInvocationIdRef.current = null;
+          const histGetFrame: HistoryGet = {
+            type: "history.get",
+            seq: Date.now(),
+            ts: Date.now(),
+            invocationId: replayId,
+            replay: true,
+          };
+          manager.send(histGetFrame);
+        }
+      } else if (frame.type === "history.replay_event") {
+        // Prepend replay events before live events (ordinal ordering guaranteed by server).
+        const replayEvt = frame as unknown as HistoryReplayEvent;
+        // Convert replay event to a synthetic ChatEvent so Stream can render it.
+        const synthetic: ChatEvent = {
+          type: "chat.event",
+          seq: replayEvt.ordinal,
+          ts: replayEvt.ts,
+          sessionId: replayEvt.invocationId, // use invocationId as placeholder sessionId
+          invocationId: replayEvt.invocationId,
+          parentInvocationId: null,
+          sdkEvent: replayEvt.sdkEvent,
+        };
+        setChatEvents((prev) => {
+          // Only prepend if this ordinal hasn't been added yet.
+          if (prev.some((e) => e.seq === replayEvt.ordinal && e.invocationId === replayEvt.invocationId)) {
+            return prev;
+          }
+          return [synthetic, ...prev];
+        });
       } else if (frame.type === "chat.done") {
         setActiveSessionId(null);
       } else if (frame.type === "chat.event") {
@@ -172,6 +207,24 @@ export function ChatTab(): React.ReactElement {
       ts: Date.now(),
       model,
       permissionMode,
+    };
+    manager.send(frame);
+  }
+
+  function handleResumeSession(invocationId: string): void {
+    // Store the invocationId to replay after chat.started arrives.
+    pendingReplayInvocationIdRef.current = invocationId;
+    // Interrupt any in-progress session before resuming.
+    if (activeSessionId !== null) {
+      handleInterrupt();
+    }
+    const frame: ChatStart = {
+      type: "chat.start",
+      seq: seqRef.current++,
+      ts: Date.now(),
+      model,
+      permissionMode,
+      resumeFromInvocationId: invocationId,
     };
     manager.send(frame);
   }
@@ -248,6 +301,7 @@ export function ChatTab(): React.ReactElement {
         startedAt={startedAt}
         inProgress={inProgress}
         onNewSession={handleNewSession}
+        onResumeSession={handleResumeSession}
       />
       <Stream chatEvents={chatEvents} onQuestionReply={handleQuestionReply} />
       {permissionRequests.map((req) => (

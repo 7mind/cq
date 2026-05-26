@@ -22,7 +22,7 @@
 - [ ] **M4 — Persistence + History tab** — DDL, adapters, bridge writes, list/detail/timing/export/delete, resume-from-history. *PRs PR-39 … PR-47 (9).*
 - [ ] **M5 — Polish & harden** — graceful shutdown, error toasts, a11y, E2E suite, README, type/lint clean, stop-condition verify. *PRs PR-48 … PR-54 (7).*
 
-Total PR count: 56 (PR-01 … PR-54 + PR-09a + PR-22b; PR-22a replaces old PR-22). 44 of 56 closed (372 tests passing).
+Total PR count: 56 (PR-01 … PR-54 + PR-09a + PR-22b; PR-22a replaces old PR-22). 45 of 56 closed (374 tests passing).
 
 ## M4 — Persistence + History tab (current milestone)
 
@@ -32,7 +32,7 @@ Goal: SQLite + JSONL persistence layer; live writes from the bridge; History tab
 - [x] **PR-40** — `SqlitePersistence` + `InMemoryPersistence` (dual-tests); CRUD + paginate + filter + FTS; JSONL event-log writer; FTS-update assertion (F-13). Test: `persist-crud.test.ts`. Deps: PR-39.
 - [x] **PR-41** — Bridge writes to persistence (live): chat.start → insert session+invocation; events → JSONL; task_started → child invocation; `history.update` live. Test: `bridge-persist.test.ts`. Deps: PR-26, PR-40.
 - [x] **PR-42** — Web `HistoryTab` list view (sortable, filterable, FTS search). Test: `history-list.test.ts`. Deps: PR-40.
-- [ ] **PR-43** — Resume-from-history (`resumeFromInvocationId` → SDK `resume:`; transcript replayed via `history.get?replay=true`). Test: `resume.test.ts`. Deps: PR-40, PR-42.
+- [x] **PR-43** — Resume-from-history (`resumeFromInvocationId` → SDK `resume:`; transcript replayed via `history.get?replay=true`). Test: `resume.test.ts`. Deps: PR-40, PR-42.
 - [ ] **PR-44** — Web `Detail` view (reuses Chat renderer; `Stream` gains `mode='live'|'replay'`). Test: `history-detail.test.ts`. Deps: PR-42 + many M3 cards.
 - [ ] **PR-45** — Web `Timing` strip (SVG horizontal time axis with tool-call rectangles). Test: `timing.test.ts`. Deps: PR-44.
 - [ ] **PR-46** — Export: copy-as-markdown + download-as-json. Test: `export.test.ts`. Deps: PR-44.
@@ -42,7 +42,7 @@ Goal: SQLite + JSONL persistence layer; live writes from the bridge; History tab
 
 ## In-progress / recent
 
-- **PR-43** — Resume-from-history (`resumeFromInvocationId` → SDK `resume:`; transcript replayed via `history.get?replay=true`). Test: `resume.test.ts`. Deps: PR-40, PR-42.
+- **PR-44** — Web `Detail` view (reuses Chat renderer; `Stream` gains `mode='live'|'replay'`). Test: `history-detail.test.ts`. Deps: PR-42 + many M3 cards.
 
 ## Recent completions (this cycle's worth)
 

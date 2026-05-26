@@ -88,6 +88,7 @@ function defaultProps(overrides: Partial<HeaderProps> = {}): HeaderProps {
     startedAt: STARTED_AT,
     inProgress: false,
     onNewSession: () => undefined,
+    onResumeSession: () => undefined,
     ...overrides,
   };
 }

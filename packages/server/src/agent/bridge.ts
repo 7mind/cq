@@ -301,8 +301,15 @@ export class Bridge {
       sdkOptions.model = frame.model;
     }
     if (frame.resumeFromInvocationId !== undefined) {
-      // resume is a sessionId in the SDK; PR-39 will wire real resume logic.
-      sdkOptions.resume = frame.resumeFromInvocationId;
+      // Resolve invocationId → sdk_session_id via persistence, then pass
+      // `resume: sdk_session_id` to the SDK so it can reload conversation state.
+      const invRow = this.persistence.invocations.get(frame.resumeFromInvocationId);
+      if (invRow !== undefined) {
+        const sessionRow = this.persistence.sessions.get(invRow.sessionId);
+        if (sessionRow?.sdkSessionId !== undefined && sessionRow.sdkSessionId !== null) {
+          sdkOptions.resume = sessionRow.sdkSessionId;
+        }
+      }
     }
 
     if (hasMcpServers) {

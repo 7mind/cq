@@ -1,4 +1,4 @@
-import { ClientFrame, type ServerHbPong, type SessionState, type ChatError, type HistoryListResult, type HistoryGetResult } from "@cq/shared";
+import { ClientFrame, type ServerHbPong, type SessionState, type ChatError, type HistoryListResult, type HistoryGetResult, type HistoryReplayEvent, type HistoryReplayDone } from "@cq/shared";
 import { FRAME_VALIDATION_FAILED } from "@cq/shared";
 import type { Logger } from "../log/logger";
 import { createHeartbeat, type HeartbeatHandle } from "./heartbeat";
@@ -23,6 +23,8 @@ type PongPayload = Omit<ServerHbPong, "seq" | "ts">;
 type SessionStatePayload = Omit<SessionState, "seq" | "ts">;
 type HistoryListResultPayload = Omit<HistoryListResult, "seq" | "ts">;
 type HistoryGetResultPayload = Omit<HistoryGetResult, "seq" | "ts">;
+type HistoryReplayEventPayload = Omit<HistoryReplayEvent, "seq" | "ts">;
+type HistoryReplayDonePayload = Omit<HistoryReplayDone, "seq" | "ts">;
 
 // ---------------------------------------------------------------------------
 // WsSession — per-connection state and message dispatch
@@ -222,6 +224,12 @@ export class WsSession {
           row: full,
         };
         this.sendFrame(ws, payload);
+        // replay:true — stream all persisted events for this invocation.
+        if (frame.replay === true) {
+          this.handleHistoryReplay(ws, frame.seq, frame.invocationId).catch((err: unknown) => {
+            this.logger.error("ws.replay_error", { invocationId: frame.invocationId, err: String(err) });
+          });
+        }
         break;
       }
       // All other client frames are accepted but not yet dispatched (PR-07+)
@@ -309,10 +317,33 @@ export class WsSession {
    * Sends a frame to the client, injecting `seq` and `ts` automatically.
    * `payload` must contain all fields except `seq` and `ts`.
    */
-  private sendFrame(ws: WsSocket, payload: PongPayload | SessionStatePayload | HistoryListResultPayload | HistoryGetResultPayload): void {
+  private sendFrame(ws: WsSocket, payload: PongPayload | SessionStatePayload | HistoryListResultPayload | HistoryGetResultPayload | HistoryReplayEventPayload | HistoryReplayDonePayload): void {
     const seq = this.outboundSeq++;
     const ts = Date.now();
     ws.send(JSON.stringify({ ...payload, seq, ts }));
+  }
+
+  /**
+   * Streams all persisted events for an invocation as `history.replay_event` frames,
+   * then emits a final `history.replay_done` frame.
+   */
+  private async handleHistoryReplay(ws: WsSocket, requestSeq: number, invocationId: string): Promise<void> {
+    let ordinal = 0;
+    for await (const event of this.persistence!.events.readAll(invocationId)) {
+      const evtPayload: HistoryReplayEventPayload = {
+        type: "history.replay_event",
+        requestSeq,
+        invocationId,
+        ordinal: ordinal++,
+        sdkEvent: event as import("@cq/shared").SDKMessageEnvelope,
+      };
+      this.sendFrame(ws, evtPayload);
+    }
+    const donePayload: HistoryReplayDonePayload = {
+      type: "history.replay_done",
+      requestSeq,
+    };
+    this.sendFrame(ws, donePayload);
   }
 
   /**

@@ -24,10 +24,12 @@
  *   startedAt        — epoch ms when the session started; null when no session.
  *   inProgress       — true while chat.started received but chat.done not yet.
  *   onNewSession     — called when user confirms starting a new session.
+ *   onResumeSession  — called with invocationId when user selects a session to resume.
  */
 
 import { useState, useEffect, useRef } from "react";
 import { NewSessionConfirm } from "./NewSessionConfirm";
+import { ResumePicker } from "./ResumePicker";
 import styles from "../styles/Header.module.css";
 
 /** Hard-coded model list (PR-25 scope: SDK does not expose supportedModels via init). */
@@ -54,6 +56,7 @@ export interface HeaderProps {
   startedAt: number | null;
   inProgress: boolean;
   onNewSession: () => void;
+  onResumeSession: (invocationId: string) => void;
 }
 
 /** Format epoch ms as "mm:ss" elapsed from startedAt to now. */
@@ -82,8 +85,10 @@ export function Header({
   startedAt,
   inProgress,
   onNewSession,
+  onResumeSession,
 }: HeaderProps): React.ReactElement {
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showResumePicker, setShowResumePicker] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -122,6 +127,19 @@ export function Header({
 
   function handleCancel(): void {
     setShowConfirm(false);
+  }
+
+  function handleResumeClick(): void {
+    setShowResumePicker(true);
+  }
+
+  function handleResumeSelect(invocationId: string): void {
+    setShowResumePicker(false);
+    onResumeSession(invocationId);
+  }
+
+  function handleResumeCancel(): void {
+    setShowResumePicker(false);
   }
 
   const durationText =
@@ -192,6 +210,15 @@ export function Header({
 
         <span className={styles.spacer} />
 
+        {/* resume from history button */}
+        <button
+          className={styles.newSessionBtn}
+          onClick={handleResumeClick}
+          data-testid="resume-session-btn"
+        >
+          Resume from history
+        </button>
+
         {/* new session button */}
         <button
           className={styles.newSessionBtn}
@@ -204,6 +231,10 @@ export function Header({
 
       {showConfirm && (
         <NewSessionConfirm onCancel={handleCancel} onConfirm={handleConfirm} />
+      )}
+
+      {showResumePicker && (
+        <ResumePicker onSelect={handleResumeSelect} onCancel={handleResumeCancel} />
       )}
     </>
   );
