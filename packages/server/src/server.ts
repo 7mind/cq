@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import type { Logger } from "./log/logger";
 import { WsSession, type WsSessionData } from "./ws/session";
 import { isOriginAllowed } from "./ws/origin";
+import { Bridge } from "./agent/bridge";
+import { SessionRegistry } from "./seq/sessionRegistry";
 
 export type ServerConfig = Readonly<{
   host: string;
@@ -19,6 +21,10 @@ export type RunningServer = {
 
 export async function startServer(config: ServerConfig): Promise<RunningServer> {
   const { host, port, webOutdir, cwd, dbPath, logger } = config;
+
+  // Shared registry and bridge (pool=1 across all connections).
+  const registry = new SessionRegistry();
+  const bridge = new Bridge({ logger, registry, cwd });
 
   const server = Bun.serve<WsSessionData>({
     hostname: host,
@@ -39,7 +45,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
         }
 
         const sessionId = crypto.randomUUID();
-        const session = new WsSession(sessionId, logger);
+        const session = new WsSession(sessionId, logger, registry, bridge);
         const upgraded = srv.upgrade(req, { data: { sessionId, session } });
         if (!upgraded) {
           // Bun returns false when the upgrade fails for non-WS requests

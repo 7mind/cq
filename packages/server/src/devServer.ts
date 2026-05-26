@@ -2,6 +2,8 @@ import type { Logger } from "./log/logger";
 import indexHtml from "../../web/index.html" with { type: "html" };
 import { WsSession, type WsSessionData } from "./ws/session";
 import { isOriginAllowed } from "./ws/origin";
+import { Bridge } from "./agent/bridge";
+import { SessionRegistry } from "./seq/sessionRegistry";
 
 export type DevServerConfig = Readonly<{
   host: string;
@@ -29,6 +31,10 @@ export function startDevServer(
 ): RunningDevServer {
   const { host, port, cwd, dbPath, logger } = config;
 
+  // Shared registry and bridge (pool=1 across all connections).
+  const registry = new SessionRegistry();
+  const bridge = new Bridge({ logger, registry, cwd });
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const server = (serve as (opts: any) => ReturnType<typeof Bun.serve>)({
     hostname: host,
@@ -50,7 +56,7 @@ export function startDevServer(
         }
 
         const sessionId = crypto.randomUUID();
-        const session = new WsSession(sessionId, logger);
+        const session = new WsSession(sessionId, logger, registry, bridge);
         const upgraded = srv.upgrade(req, { data: { sessionId, session } });
         if (!upgraded) {
           return new Response("Upgrade required", { status: 426 });

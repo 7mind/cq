@@ -1,8 +1,9 @@
-import { ClientFrame, type ServerHbPong, type SessionState } from "@cq/shared";
+import { ClientFrame, type ServerHbPong, type SessionState, type ChatError } from "@cq/shared";
 import { FRAME_VALIDATION_FAILED } from "@cq/shared";
 import type { Logger } from "../log/logger";
 import { createHeartbeat, type HeartbeatHandle } from "./heartbeat";
 import type { SessionRegistry } from "../seq/sessionRegistry";
+import type { Bridge, WsSocket as BridgeWsSocket } from "../agent/bridge";
 
 // ---------------------------------------------------------------------------
 // Data attached to each WebSocket connection via ws.data
@@ -36,11 +37,17 @@ export class WsSession {
   private readonly logger: Logger;
   private readonly heartbeat: HeartbeatHandle;
   private readonly registry: SessionRegistry | null;
+  /**
+   * Bridge instance — null in development/test mode where no SDK is wired.
+   * When null, chat.start/input/interrupt return chat.error{code:BRIDGE_UNAVAILABLE}.
+   */
+  private readonly bridge: Bridge | null;
 
-  constructor(sessionId: string, logger: Logger, registry?: SessionRegistry) {
+  constructor(sessionId: string, logger: Logger, registry?: SessionRegistry, bridge?: Bridge | null) {
     this.sessionId = sessionId;
     this.logger = logger;
     this.registry = registry ?? null;
+    this.bridge = bridge ?? null;
     this.heartbeat = createHeartbeat({
       buildFrame: (payload) => {
         const seq = this.outboundSeq++;
@@ -101,6 +108,36 @@ export class WsSession {
       }
       case "session.request_state": {
         this.handleRequestState(ws, frame.lastSeenServerSeq);
+        break;
+      }
+      case "chat.start": {
+        if (this.bridge === null) {
+          this.sendBridgeUnavailable(ws);
+        } else {
+          this.bridge.handleChatStart(ws as BridgeWsSocket, frame).catch((err: unknown) => {
+            this.logger.error("ws.bridge_error", { sessionId: this.sessionId, err: String(err) });
+          });
+        }
+        break;
+      }
+      case "chat.input": {
+        if (this.bridge === null) {
+          this.sendBridgeUnavailable(ws);
+        } else {
+          this.bridge.handleChatInput(ws as BridgeWsSocket, frame).catch((err: unknown) => {
+            this.logger.error("ws.bridge_error", { sessionId: this.sessionId, err: String(err) });
+          });
+        }
+        break;
+      }
+      case "chat.interrupt": {
+        if (this.bridge === null) {
+          this.sendBridgeUnavailable(ws);
+        } else {
+          this.bridge.handleChatInterrupt(ws as BridgeWsSocket, frame).catch((err: unknown) => {
+            this.logger.error("ws.bridge_error", { sessionId: this.sessionId, err: String(err) });
+          });
+        }
         break;
       }
       // All other client frames are accepted but not yet dispatched (PR-07+)
@@ -192,6 +229,21 @@ export class WsSession {
     const seq = this.outboundSeq++;
     const ts = Date.now();
     ws.send(JSON.stringify({ ...payload, seq, ts }));
+  }
+
+  /**
+   * Emits chat.error{code:'BRIDGE_UNAVAILABLE'} when no bridge is configured.
+   * Used in development/test mode.
+   */
+  private sendBridgeUnavailable(ws: WsSocket): void {
+    const frame: Omit<ChatError, "seq" | "ts"> = {
+      type: "chat.error",
+      code: "BRIDGE_UNAVAILABLE",
+      message: "No SDK bridge is configured on this server",
+    };
+    const seq = this.outboundSeq++;
+    const ts = Date.now();
+    ws.send(JSON.stringify({ ...frame, seq, ts }));
   }
 }
 

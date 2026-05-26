@@ -3,7 +3,7 @@
 **Cycle:** outer-1 / inner M2 (M1 archived; PR-19 next).
 **Goal:** build cq — TypeScript Web UI for the Claude Agent SDK on Bun + React + WebSocket per [`./prompt.md`](./prompt.md). Discharge condition: all five milestones `[x]` and archived; `bun test` clean; `bun run start --cwd <real-dir>` launches; sample prompt round-trips Chat tab + History tab drill-down.
 **Accepted plan:** [`docs/drafts/20260526-0037-cq-plan.md`](docs/drafts/20260526-0037-cq-plan.md) (2294 lines, G2c-patched).
-**Defects:** [`./defects.md`](./defects.md). _(1 open: `PR-18-D01` minor, deferred to PR-51.)_
+**Defects:** [`./defects.md`](./defects.md). _(2 open: `PR-18-D01` minor deferred to PR-51; `PR-19-D01` minor deferred to PR-20.)_
 
 ## Cross-cutting locks (non-negotiable, project-wide)
 
@@ -29,8 +29,8 @@ Total PR count: 56 (PR-01 … PR-54 + PR-09a + PR-22b; PR-22a replaces old PR-22
 
 Goal: first end-to-end conversation. User types in browser, hits Cmd/Ctrl+Enter, sees streamed markdown assistant output with syntax-highlighted code blocks and basic tool cards for Read/Write/Edit/Bash; can interrupt; can pick a model. Close when PR-26 e2e (`chat-mvp.test.ts`) is green.
 
-- [ ] **PR-19** — Server SDK bridge skeleton + streaming-input mode + MCP-inheritance test (F-14). Tests: `bridge.test.ts`, `mcp-inheritance.test.ts`. Deps: PR-06, PR-07.
-- [ ] **PR-20** — Real SDK invocation against `MockAnthropicHTTP` (`ANTHROPIC_BASE_URL` env override). Test: `sdk-stub.test.ts`. Deps: PR-19.
+- [x] **PR-19** — Server SDK bridge skeleton + streaming-input mode + MCP-inheritance test (F-14). Tests: `bridge.test.ts` (6 cases, all pass), `mcp-inheritance.test.ts` (1 test, skipped → defect PR-19-D01; requires PR-20 MockAnthropicHTTP). `tsc + eslint` clean. 73 server tests pass, 216 total. Commit: see M2/PR-19 commit.
+- [ ] **PR-20** — Real SDK invocation against `MockAnthropicHTTP` (`ANTHROPIC_BASE_URL` env override). Test: `sdk-stub.test.ts`. Also un-skip `mcp-inheritance.test.ts` (PR-19-D01). Deps: PR-19.
 - [ ] **PR-21** — Web `ChatTab` shell + `Input` component with cross-platform send chord + IME passthrough (F-16). Test: `input.test.ts` (6 named cases). Deps: PR-17, PR-02.
 - [ ] **PR-22a** — Web `Markdown` (react-markdown + remark-gfm + Shiki static, 12-lang allow-list per F-20, lazy load for others) + `CodeBlock` card (lang label + copy button, F-07). Tests: `markdown.test.ts`, `code-block.test.ts`. Deps: PR-21.
 - [ ] **PR-22b** — `Stream` renderer + token-level reflow via `SDKPartialAssistantMessage`; code-block stable-identity invariant (F-07). Test: `stream-reflow.test.ts`. Deps: PR-22a.
@@ -43,10 +43,11 @@ Goal: first end-to-end conversation. User types in browser, hits Cmd/Ctrl+Enter,
 
 ## In-progress / recent
 
-- **PR-19** — about to dispatch.
+- **PR-20** — Real SDK invocation against MockAnthropicHTTP; also un-skips mcp-inheritance.test.ts (PR-19-D01).
 
 ## Recent completions (this cycle's worth)
 
+- [x] **PR-19** — M2/PR-19: Server SDK bridge skeleton + streaming-input + MCP inheritance. `agent/bridge.ts` (single-Query pool, AsyncQueue streaming input, SDKMessage→chat.event mapping, SESSION_BUSY guard, chat.done). `agent/mcp.ts` (placeholder doc). Session routing in `ws/session.ts`. Bridge wired in `server.ts` + `devServer.ts`. Tests: `bridge.test.ts` (6/6 pass), `mcp-inheritance.test.ts` (skipped → PR-19-D01). 73 server / 216 total. `tsc + eslint` clean.
 - [x] **M1 closed + archived** to `docs/archive/tasks-M1.md`. 14 PRs (PR-06 … PR-18 incl. PR-09a). 210 tests across 22 files. R2-R13 + V1-V10 full Part-3 coverage; G2c F-04/F-10/F-17/F-18/F-19 applied. One defect (`PR-18-D01`, minor, deferred to PR-51).
 - [x] **M0 closed + archived** to `docs/archive/tasks-M0.md`. 5 PRs, 113 tests, 0 defects.
 
