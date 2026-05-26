@@ -1,6 +1,6 @@
 [test]
 # Exclude compiled JS output from test discovery; tests run from TypeScript source.
-pathIgnorePatterns = ["**/dist/**"]
+pathIgnorePatterns = ["**/dist/**", "result/**", "result-*/**"]
 # Preload happy-dom globals for indicator.test.ts (DOM environment for React rendering).
 # preload intentionally omitted: happy-dom is registered per-test-file
 # in indicator.test.ts to avoid interfering with jest.useFakeTimers() in

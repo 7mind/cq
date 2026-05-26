@@ -10,14 +10,12 @@ const WEB_SRC = path.resolve(
   import.meta.dir,
   "../../../packages/web/src/main.tsx",
 );
-const WEB_OUTDIR = path.resolve(
-  import.meta.dir,
-  "../../../packages/web/dist",
-);
-const WEB_INDEX = path.resolve(
-  import.meta.dir,
-  "../../../packages/web/dist/index.html",
-);
+// CQ_WEB_OUTDIR lets a Nix package (or any read-only deployment) redirect the
+// bundler output to a writable path (e.g. $HOME/.cache/cq/web-dist).
+const WEB_OUTDIR =
+  process.env["CQ_WEB_OUTDIR"] ??
+  path.resolve(import.meta.dir, "../../../packages/web/dist");
+const WEB_INDEX = path.join(WEB_OUTDIR, "index.html");
 
 export async function buildWeb(): Promise<WebBuild> {
   const result = await Bun.build({

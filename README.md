@@ -14,6 +14,37 @@ server is designed for local or trusted-network use only.
 - An `ANTHROPIC_API_KEY` environment variable (or a `~/.anthropic` credential
   file recognised by the Claude Agent SDK)
 
+## Nix
+
+A hermetic Nix build is provided. After pushing the repo, run directly without
+cloning:
+
+```sh
+nix run github:<owner>/cq -- --cwd /path/to/project --port 5173
+```
+
+Or build locally and inspect the closure:
+
+```sh
+nix build .#default
+./result/bin/cq --cwd /path/to/project --port 5173
+```
+
+The build fetches all npm dependencies (including the 228 MB
+`@anthropic-ai/claude-agent-sdk-linux-x64` native binary) via a
+fixed-output derivation keyed on the `bun.lock` hash.  The native
+binary is therefore included in the closure — no runtime `npm install`
+or network access required.
+
+> **Platform note:** the hermetic package is restricted to `x86_64-linux`
+> because the Claude Agent SDK ships a Linux-only native binary.  On other
+> platforms the `nix run` command will fail at evaluation with a clear error;
+> the `nix develop` devShell is still available on all platforms.
+
+The web frontend is bundled at server start-up (first request) and cached
+under `$XDG_CACHE_HOME/cq/web-dist` (default: `~/.cache/cq/web-dist`).
+Override the cache location with the `CQ_WEB_OUTDIR` environment variable.
+
 ## Install
 
 ```sh
