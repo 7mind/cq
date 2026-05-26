@@ -1,10 +1,14 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import type { Logger } from "./log/logger";
 
 export type ServerConfig = Readonly<{
   host: string;
   port: number;
   webOutdir: string;
+  cwd: string;
+  dbPath: string;
+  logger: Logger;
 }>;
 
 export type RunningServer = {
@@ -12,7 +16,7 @@ export type RunningServer = {
 };
 
 export async function startServer(config: ServerConfig): Promise<RunningServer> {
-  const { host, port, webOutdir } = config;
+  const { host, port, webOutdir, cwd, dbPath, logger } = config;
 
   const server = Bun.serve({
     hostname: host,
@@ -49,7 +53,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     },
   });
 
-  console.log(`cq listening on http://${host}:${port}`);
+  logger.info("cq listening", { host, port, cwd, dbPath });
 
   return {
     stop() {

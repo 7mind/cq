@@ -55,13 +55,13 @@ describe("smoke: server boot, static assets, SIGINT exit", () => {
       const { done, value } = await reader.read();
       if (done) break;
       output += decoder.decode(value);
-      if (output.includes(`cq listening on http://`)) {
+      if (output.includes(`"cq listening"`)) {
         reader.releaseLock();
         break outer;
       }
     }
 
-    if (!output.includes("cq listening on http://")) {
+    if (!output.includes('"cq listening"')) {
       proc.kill();
       throw new Error(`Server did not start within 10 s. stdout: ${output}`);
     }
