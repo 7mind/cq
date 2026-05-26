@@ -26,8 +26,10 @@ import { Stream } from "./Stream";
 import { Header } from "./Header";
 import { PermissionPrompt } from "./PermissionPrompt";
 import type { PermissionDecision } from "./PermissionPrompt";
+import { ElicitationCard } from "./Cards/ElicitationCard";
+import type { ElicitationReply } from "./Cards/ElicitationCard";
 import type { PermissionMode } from "./Header";
-import type { ChatInput, ChatInterrupt, ChatEvent, ChatStart, ChatStarted, ChatUsage, ChatPermissionRequest, ChatPermissionReply } from "@cq/shared";
+import type { ChatInput, ChatInterrupt, ChatEvent, ChatStart, ChatStarted, ChatUsage, ChatPermissionRequest, ChatPermissionReply, ChatElicitationRequest, ChatElicitationReply } from "@cq/shared";
 
 export function ChatTab(): React.ReactElement {
   const manager = useConnection();
@@ -48,6 +50,8 @@ export function ChatTab(): React.ReactElement {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   // PR-28: pending permission requests, ordered by arrival.
   const [permissionRequests, setPermissionRequests] = useState<ChatPermissionRequest[]>([]);
+  // PR-30: pending elicitation requests, ordered by arrival.
+  const [elicitationRequests, setElicitationRequests] = useState<ChatElicitationRequest[]>([]);
 
   // Subscribe to incoming server frames and accumulate chat.event entries.
   // Track session lifecycle via chat.started / chat.done.
@@ -80,6 +84,8 @@ export function ChatTab(): React.ReactElement {
         setCostUsd(usage.costUsd);
       } else if (frame.type === "chat.permission_request") {
         setPermissionRequests((prev) => [...prev, frame as ChatPermissionRequest]);
+      } else if (frame.type === "chat.elicitation_request") {
+        setElicitationRequests((prev) => [...prev, frame as ChatElicitationRequest]);
       }
     });
     return unsub;
@@ -142,6 +148,24 @@ export function ChatTab(): React.ReactElement {
     manager.send(frame);
   }
 
+  function handleElicitationReply(req: ChatElicitationRequest, reply: ElicitationReply): void {
+    // Remove the request from the pending list.
+    setElicitationRequests((prev) =>
+      prev.filter((r) => r.elicitationId !== req.elicitationId),
+    );
+    if (activeSessionId === null) return;
+    const frame: ChatElicitationReply = {
+      type: "chat.elicitation_reply",
+      seq: seqRef.current++,
+      ts: Date.now(),
+      sessionId: activeSessionId,
+      elicitationId: req.elicitationId,
+      action: reply.action,
+      ...(reply.content !== undefined ? { content: reply.content } : {}),
+    };
+    manager.send(frame);
+  }
+
   const inProgress = activeSessionId !== null;
 
   return (
@@ -166,6 +190,13 @@ export function ChatTab(): React.ReactElement {
           key={req.permissionRequestId}
           frame={req}
           onReply={(decision) => handlePermissionReply(req, decision)}
+        />
+      ))}
+      {elicitationRequests.map((req) => (
+        <ElicitationCard
+          key={req.elicitationId}
+          frame={req}
+          onReply={(reply) => handleElicitationReply(req, reply)}
         />
       ))}
       <Input

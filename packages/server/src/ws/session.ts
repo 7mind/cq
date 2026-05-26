@@ -146,6 +146,12 @@ export class WsSession {
         }
         break;
       }
+      case "chat.elicitation_reply": {
+        if (this.bridge !== null) {
+          this.bridge.handleChatElicitationReply(ws as BridgeWsSocket, frame);
+        }
+        break;
+      }
       // All other client frames are accepted but not yet dispatched (PR-07+)
       default:
         // Accepted; no-op until later PRs wire the handlers.

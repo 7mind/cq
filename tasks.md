@@ -32,7 +32,7 @@ Goal: every brief § 4 first-class affordance ticked — sub-agent nested cards,
 - [x] **PR-27** — Sub-agent nested cards + `agentProgressSummaries`; bridge tracks invocation tree by `parent_tool_use_id`. Test: `subagent.test.ts`. Deps: PR-22b, PR-23.
 - [x] **PR-28** — Permission prompts (`canUseTool` → `chat.permission_request` ↔ `chat.permission_reply`). Test: `permission.test.ts`. Deps: PR-19. Completed: `PermissionBroker` in `permission.ts`; bridge wired with `canUseTool`; `session.ts` routes `chat.permission_reply`; `PermissionPrompt.tsx` + CSS; 7 server tests + 4 web tests (255 total, 3 pre-existing PATH failures).
 - [x] **PR-29** — Read-only mode overlay via `canUseTool` (F-03). Test: `read-only.test.ts`. Deps: PR-28.
-- [ ] **PR-30** — MCP elicitation roundtrip (form + URL modes) (F-01). Tests: `elicitation.test.ts`, `elicitation-card.test.ts`. Deps: PR-19, PR-23.
+- [x] **PR-30** — MCP elicitation roundtrip (form + URL modes) (F-01). Tests: `elicitation.test.ts`, `elicitation-card.test.ts`. Deps: PR-19, PR-23.
 - [ ] **PR-31** — AskUserQuestion card with Candidate-A spike (F-02; Q-1 conditional escalation). Tests: `ask-question.test.ts` (web + server). Deps: PR-23, PR-28.
 - [ ] **PR-32** — Plan mode + ExitPlanMode card. Test: `plan-mode.test.ts`. Deps: PR-28.
 - [ ] **PR-33** — Thinking blocks (collapsed disclosure + token count). Test: `thinking.test.ts`. Deps: PR-22a.
@@ -46,9 +46,11 @@ Goal: every brief § 4 first-class affordance ticked — sub-agent nested cards,
 
 ## In-progress / recent
 
-- **PR-30** — MCP elicitation roundtrip (form + URL modes) (F-01). Tests: `elicitation.test.ts`, `elicitation-card.test.ts`. Deps: PR-19, PR-23.
+- **PR-31** — AskUserQuestion card with Candidate-A spike (F-02; Q-1 conditional escalation). Tests: `ask-question.test.ts` (web + server). Deps: PR-23, PR-28.
 
 ## Recent completions (this cycle's worth)
+
+- [x] **PR-30** — MCP elicitation roundtrip (`onElicitation` + ElicitationCard) (F-01). `ElicitationBroker` (`elicitation.ts`) parks Promises by elicitationId; uses SDK-provided `elicitationId` for URL-mode correlation. Bridge wires `onElicitation` callback; intercepts `SDKElicitationCompleteMessage` to resolve URL-mode elicitations via `completeUrl()`. `session.ts` routes `chat.elicitation_reply`. `ElicitationCard.tsx` supports form-mode (JSON-Schema → field mapper: string/number/boolean/enum → input/select/checkbox; fallback to textarea) and URL-mode ("Open in new tab" + "Waiting…"). CSS in `ElicitationCard.module.css`. 7 server tests + 6 web tests (274 total, 271 pass; 3 pre-existing PATH failures).
 
 - [x] **PR-29** — Read-only mode overlay via `canUseTool` (F-03). `readOnlyOverlay.ts` (`applyReadOnlyOverlay`) wraps broker's `canUseTool`: deny-set tools (Edit/Write/NotebookEdit/MultiEdit/Bash/TodoWrite + description heuristic) return `{behavior:'deny'}` immediately in read-only mode with no WS frame emitted. SDK always gets `permissionMode:'default'`; UI label stored as `uiMode` in `ActiveSession`. `protocol.ts` adds `"read-only"` to `ChatStart.permissionMode` enum; `Header.tsx` adds it to the picker. 6 new tests (3 unit + 3 integration) → 269 total.
 

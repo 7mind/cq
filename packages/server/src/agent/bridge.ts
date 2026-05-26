@@ -25,6 +25,8 @@ import type {
   SDKMessage,
   SDKSystemMessage,
   CanUseTool,
+  OnElicitation,
+  ElicitationRequest,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "../log/logger";
 import type { SessionRegistry } from "../seq/sessionRegistry";
@@ -33,14 +35,17 @@ import type {
   ChatInput,
   ChatInterrupt,
   ChatPermissionReply,
+  ChatElicitationReply,
   ChatEvent,
   ChatStarted,
   ChatDone,
   ChatError,
   ChatPermissionRequest,
+  ChatElicitationRequest,
 } from "@cq/shared";
 import { loadMcpServers } from "./mcp";
 import { PermissionBroker } from "./permission";
+import { ElicitationBroker } from "./elicitation";
 import { applyReadOnlyOverlay } from "./readOnlyOverlay";
 
 // ---------------------------------------------------------------------------
@@ -84,6 +89,11 @@ export interface BridgeOpts {
    * Defaults to a fresh PermissionBroker instance per Bridge.
    */
   permissionBroker?: PermissionBroker;
+  /**
+   * Override the ElicitationBroker for tests.
+   * Defaults to a fresh ElicitationBroker instance per Bridge.
+   */
+  elicitationBroker?: ElicitationBroker;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +177,7 @@ export class Bridge {
   private readonly home: string | undefined;
   private active: ActiveSession | null = null;
   readonly permissionBroker: PermissionBroker;
+  readonly elicitationBroker: ElicitationBroker;
 
   constructor(opts: BridgeOpts) {
     this.logger = opts.logger;
@@ -176,6 +187,7 @@ export class Bridge {
     this.cwd = opts.cwd;
     this.home = opts.home;
     this.permissionBroker = opts.permissionBroker ?? new PermissionBroker();
+    this.elicitationBroker = opts.elicitationBroker ?? new ElicitationBroker();
   }
 
   isBusy(): boolean {
@@ -236,6 +248,10 @@ export class Bridge {
       });
     };
 
+    const onElicitation: OnElicitation = async (req: ElicitationRequest) => {
+      return this.elicitationBroker.request(capturedChatSessionId, req);
+    };
+
     // Wrap with the read-only overlay. The overlay reads uiMode via a getter
     // so any future mid-session change to the session object is reflected.
     // We use a mutable box so the getter can reference the session object even
@@ -254,6 +270,7 @@ export class Bridge {
       // token-level text through Stream.tsx (PR-22b).
       includePartialMessages: true,
       canUseTool,
+      onElicitation,
       permissionMode: sdkPermissionMode,
       ...(hasMcpServers ? { mcpServers } : {}),
     };
@@ -288,6 +305,12 @@ export class Bridge {
     // Wire the permission broker's send callback to forward chat.permission_request
     // frames over the current WS connection.
     this.permissionBroker.setSendFrame((frame: ChatPermissionRequest) => {
+      session.ws.send(JSON.stringify(frame));
+    });
+
+    // Wire the elicitation broker's send callback to forward chat.elicitation_request
+    // frames over the current WS connection.
+    this.elicitationBroker.setSendFrame((frame: ChatElicitationRequest) => {
       session.ws.send(JSON.stringify(frame));
     });
 
@@ -359,6 +382,23 @@ export class Bridge {
   }
 
   // ---------------------------------------------------------------------------
+  // chat.elicitation_reply
+  // ---------------------------------------------------------------------------
+
+  handleChatElicitationReply(_ws: WsSocket, frame: ChatElicitationReply): void {
+    const session = this.active;
+    if (session === null || session.chatSessionId !== frame.sessionId) {
+      // Stale reply (session already ended) — ignore silently.
+      return;
+    }
+    this.elicitationBroker.reply(
+      frame.elicitationId,
+      frame.action,
+      frame.content,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // shutdown
   // ---------------------------------------------------------------------------
 
@@ -397,6 +437,14 @@ export class Bridge {
           continue;
         }
 
+        // Intercept SDKElicitationCompleteMessage to resolve URL-mode elicitations.
+        if (isElicitationCompleteMessage(msg)) {
+          this.elicitationBroker.completeUrl(
+            (msg as Record<string, unknown>)["elicitation_id"] as string,
+          );
+          // Still forward as a chat.event so the client can remove the card.
+        }
+
         // All other messages → chat.event via replay buffer.
         this.sendEvent(ws, session, msg);
       }
@@ -425,6 +473,9 @@ export class Bridge {
       // Reject any pending permission requests — the session is over.
       this.permissionBroker.rejectAll();
       this.permissionBroker.clearSendFrame();
+      // Cancel any pending elicitation requests — the session is over.
+      this.elicitationBroker.rejectAll();
+      this.elicitationBroker.clearSendFrame();
     }
   }
 
@@ -525,6 +576,14 @@ export class Bridge {
 
 function isInitMessage(msg: SDKMessage): msg is SDKSystemMessage {
   return msg.type === "system" && (msg as SDKSystemMessage).subtype === "init";
+}
+
+function isElicitationCompleteMessage(msg: SDKMessage): boolean {
+  return (
+    msg.type === "system" &&
+    (msg as Record<string, unknown>)["subtype"] === "elicitation_complete" &&
+    typeof (msg as Record<string, unknown>)["elicitation_id"] === "string"
+  );
 }
 
 /**
