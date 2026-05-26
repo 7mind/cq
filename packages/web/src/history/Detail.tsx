@@ -14,10 +14,11 @@
  *     suppressed (no onQuestionReply, mode="replay").
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { HistoryRowFull, ChatEvent } from "@cq/shared";
 import { useConnection } from "../ws/useConnection";
 import { Stream } from "../chat/Stream";
+import { Timing } from "./Timing";
 import styles from "../styles/History.module.css";
 
 // ---------------------------------------------------------------------------
@@ -140,6 +141,11 @@ export function Detail({ invocationId, onClose }: DetailProps): React.ReactEleme
   const [loadState, setLoadState] = useState<LoadState>({ phase: "loading" });
   const [events, setEvents] = useState<ChatEvent[]>([]);
 
+  const handleSeek = useCallback((toolUseId: string) => {
+    const el = document.querySelector(`[data-testid="tool-use-${toolUseId}"]`);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
+
   useEffect(() => {
     // Reset state when invocationId changes.
     setLoadState({ phase: "loading" });
@@ -244,6 +250,12 @@ export function Detail({ invocationId, onClose }: DetailProps): React.ReactEleme
   return (
     <div className={styles.detailOverlay} data-testid="detail-overlay">
       <DetailHeader row={row} onClose={onClose} />
+      <Timing
+        events={events}
+        invocationStartedAt={row.startedAt}
+        invocationEndedAt={row.endedAt}
+        onSeek={handleSeek}
+      />
       <div className={styles.detailBody} data-testid="detail-body">
         <Stream chatEvents={events} mode="replay" />
       </div>

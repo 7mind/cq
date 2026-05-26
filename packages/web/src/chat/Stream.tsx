@@ -573,7 +573,11 @@ function renderMessages(
     if (msg.kind === "tool_use") {
       return createElement(
         "div",
-        { key: msg.key, className: styles.message },
+        {
+          key: msg.key,
+          className: styles.message,
+          "data-testid": `tool-use-${msg.toolUse.id}`,
+        },
         ToolCard(msg.toolUse, msg.toolResult),
       );
     }
