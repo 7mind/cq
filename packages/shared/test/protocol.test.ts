@@ -646,6 +646,9 @@ test("close-codes isRetriable: 1012 yes, 4000 no, 1008 no, 4001 yes", () => {
   expect(isRetriable(4002)).toBe(false);
   expect(isRetriable(1001)).toBe(true);
   expect(isRetriable(1011)).toBe(true);
+  // 1006 = abnormal closure (synthesized locally, never sent as a real frame)
+  // — NAT drop, TCP reset, freeze → always retriable
+  expect(isRetriable(1006)).toBe(true);
 });
 
 // ---------------------------------------------------------------------------

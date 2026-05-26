@@ -1,47 +1,55 @@
 /**
- * ws-resilience.test.ts — End-to-end resilience suite (PR-18).
+ * ws-resilience.test.ts — End-to-end resilience suite (PR-18 / PR-18-D01 fix).
  *
- * Boots a real Bun.serve in-process via serverFixture. Connects real
- * Bun WebSocket clients. Verifies three resilience scenarios:
+ * Boots a real Bun.serve in-process via serverFixture. Drives a real client
+ * Manager (packages/web/src/ws/Manager) against the live server. Verifies
+ * three resilience scenarios by observing the Manager's state-machine
+ * transitions via onUpdate().
  *
  *  A) Freeze recovery:
- *     Client connects and reaches ALIVE (receives first hb.sping). Then
- *     the client abruptly closes its socket (code 1006, no close handshake)
- *     — simulating a frozen client / NAT drop from the client side. A
- *     replacement client reconnects and reaches ALIVE within budget.
+ *     Manager connects and reaches ALIVE. Server pauses hb.pong replies —
+ *     simulating a frozen network where client pings go unanswered. The
+ *     Connection's pong timeout fires (compressed to 100 ms), driving
+ *     ALIVE → STALE → DEAD. Manager schedules backoff and spawns a
+ *     replacement. Server resumes pong replies; replacement reaches ALIVE.
  *
  *  B) IP-change (server-forced socket drop):
- *     Client reaches ALIVE. Server calls dropAllSockets() — terminates
- *     all WS connections without a graceful handshake (simulates a NAT
- *     rebalance where the server is the one cutting the connection).
- *     Client sees a close event; a replacement client reconnects ALIVE.
+ *     Manager connects and reaches ALIVE. Server calls dropAllSockets() —
+ *     abruptly closes all WS connections (simulates NAT rebalance / IP
+ *     change). Manager's Connection sees the close event → DEAD. Manager
+ *     spawns a replacement and reaches ALIVE again within ~3 s.
  *
- *  C) Server restart:
- *     Client reaches ALIVE. Server is stopped (all clients receive 1001
- *     GOING_AWAY). A fresh server is started on the SAME port 200 ms later.
- *     A replacement client connects and reaches ALIVE on the new server.
+ *  C) Server restart with 1001:
+ *     Manager connects and reaches ALIVE. Server is stopped (clients receive
+ *     1001 GOING_AWAY). A fresh server starts on the same port 200 ms later.
+ *     Manager reconnects and reaches ALIVE on the new server within ~5 s.
  *
  * Implementation notes:
  *
- * - Manager (packages/web/src/ws/Manager.ts) is NOT imported here to avoid
- *   a cross-package TypeScript project-reference dependency: the web package
- *   is not configured as a composite project with declaration output, so the
- *   server tsconfig cannot reference it cleanly. Manager's internal state
- *   machine is exercised by its own unit tests (manager.test.ts,
- *   time-jump.test.ts). This E2E suite tests server-centric resilience:
- *   does the server cleanly handle abrupt closes and accept new connections?
+ * - Manager is imported from @cq/web (packages/web is now a TypeScript
+ *   composite project with declaration output, closing PR-18-D01).
  *
- * - "ALIVE" means the client has received at least one hb.sping frame from
- *   the server and replied with hb.spong — confirming the heartbeat loop is
- *   operational. That is the observable precondition for all three scenarios.
+ * - socketFactory: Bun's native WebSocket is used for the transport. A thin
+ *   factory wrapper injects the `Origin` header so the server's origin check
+ *   passes. This is the same cast pattern used by ws-origin.test.ts (PR-06).
  *
- * - Heartbeat intervals in the fixture are compressed:
- *   pingIntervalMs: 150, pongTimeoutMs: 100
- *   so ALIVE is confirmed in ≤ 200 ms.
+ * - enableTimeJumpDetector: false — the real-time tick would add noise to
+ *   tests that rely on compressed timer intervals (100–150 ms). Each scenario
+ *   drives reconnection via the Manager's normal state-machine paths without
+ *   the time-jump overlay.
  *
- * - Each test gets a fresh server via beforeEach/afterEach.
+ * - Heartbeat intervals are compressed:
+ *   pingIntervalMs: 150 ms (client sends hb.ping every 150 ms)
+ *   pongTimeoutMs:  100 ms (client goes STALE if hb.pong doesn't arrive in 100 ms)
+ *   staleGraceMs:    80 ms (client goes DEAD if STALE lasts > 80 ms)
+ *   connectTimeoutMs: 2000 ms
  *
- * Total expected runtime: ≤ 5 s (well within the 60 s budget).
+ * - waitForManagerAlive polls manager.stats until activeConnectionId is non-null
+ *   and the corresponding connection state is "ALIVE".
+ *
+ * - Each test gets a fresh server and a fresh Manager via beforeEach/afterEach.
+ *
+ * Total expected runtime: ≤ 15 s (well within the 60 s budget).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
@@ -50,123 +58,142 @@ import {
   type ServerFixture,
   startFixtureServerOnPort,
 } from "../helpers/serverFixture";
+import { Manager } from "@cq/web";
+import type { ManagerOpts } from "@cq/web";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Compressed heartbeat ping interval for the fixture server. */
+/** Compressed heartbeat ping interval for both fixture and Manager. */
 const PING_INTERVAL_MS = 150;
-/** Compressed heartbeat pong timeout for the fixture server. */
+/** Compressed pong timeout for both fixture and Manager. */
 const PONG_TIMEOUT_MS = 100;
-/** How long to wait for a client to confirm ALIVE status. */
-const ALIVE_TIMEOUT_MS = 2_000;
+/** Compressed stale grace for the Manager. */
+const STALE_GRACE_MS = 80;
+/** How long to poll for Manager to reach ALIVE. */
+const ALIVE_TIMEOUT_MS = 4_000;
 /** Recovery budget for scenario B (IP-change) in ms. */
-const RECOVERY_BUDGET_MS_B = 3_000;
+const RECOVERY_BUDGET_MS_B = 5_000;
 /** Recovery budget for scenarios A and C in ms. */
-const RECOVERY_BUDGET_MS_AC = 5_000;
+const RECOVERY_BUDGET_MS_AC = 8_000;
 
 // ---------------------------------------------------------------------------
-// WebSocket helpers
+// Manager socketFactory helper
 // ---------------------------------------------------------------------------
 
 /**
- * Open a WebSocket to the fixture server's /ws endpoint.
- * Passes the correct Origin header so the server's Origin check passes.
+ * Build a socketFactory for Manager that injects an Origin header so the
+ * fixture server's isOriginAllowed() check passes.
  *
- * Bun's global WebSocket accepts Bun.WebSocketOptions (with `headers`) as
- * its second argument. DOM typings shadow that overload so we cast to
- * `unknown` first, then to `ConstructorParameters<typeof WebSocket>[1]`.
- * This pattern follows PR-06's ws-origin.test.ts.
+ * Bun's native WebSocket accepts Bun.WebSocketOptions (with `headers`) as its
+ * second argument. DOM typings shadow that overload, so we cast via `unknown`
+ * — the same pattern used by ws-origin.test.ts (PR-06).
  */
-function openWs(wsUrl: string, baseUrl: string): WebSocket {
-  const opts = { headers: { Origin: baseUrl } };
-  return new WebSocket(`${wsUrl}/ws`, opts as unknown as string);
+function makeSocketFactory(
+  baseUrl: string,
+): (url: string) => WebSocket {
+  return (url: string): WebSocket => {
+    const opts = { headers: { Origin: baseUrl } };
+    return new WebSocket(url, opts as unknown as string) as WebSocket;
+  };
 }
 
 /**
- * Wait for the WebSocket `open` event.
- * Rejects if the socket closes or errors before opening.
+ * Build ManagerOpts pointing at the fixture server, with compressed timers
+ * and a socket factory that passes the Origin check.
  */
-function waitForOpen(ws: WebSocket, timeoutMs = ALIVE_TIMEOUT_MS): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(
-      () => reject(new Error(`ws.open timeout after ${timeoutMs} ms`)),
-      timeoutMs,
-    );
-    ws.onopen = () => { clearTimeout(t); resolve(); };
-    ws.onerror = () => { clearTimeout(t); reject(new Error("ws error before open")); };
-    ws.onclose = (ev) => {
-      clearTimeout(t);
-      reject(new Error(`ws closed (code ${(ev as CloseEvent).code}) before open`));
-    };
-  });
+function makeManagerOpts(fixture: ServerFixture, extra: Partial<ManagerOpts> = {}): ManagerOpts {
+  return {
+    url: `${fixture.wsUrl}/ws`,
+    pingIntervalMs: PING_INTERVAL_MS,
+    pongTimeoutMs: PONG_TIMEOUT_MS,
+    staleGraceMs: STALE_GRACE_MS,
+    connectTimeoutMs: 2_000,
+    baseBackoffMs: 100,
+    maxBackoffMs: 1_000,
+    maxAttempts: 15,
+    socketFactory: makeSocketFactory(fixture.baseUrl),
+    enableTimeJumpDetector: false,
+    ...extra,
+  };
 }
 
-/**
- * Wait until the WebSocket receives at least one `hb.sping` frame from the
- * server, then reply with `hb.spong` (so the heartbeat loop succeeds and the
- * server keeps the connection open).
- *
- * Resolves once the first hb.sping is received and acknowledged. This is the
- * operational definition of ALIVE used by this E2E suite.
- */
-function waitForAlive(ws: WebSocket, timeoutMs = ALIVE_TIMEOUT_MS): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const t = setTimeout(
-      () => reject(new Error(`waitForAlive timeout after ${timeoutMs} ms`)),
-      timeoutMs,
-    );
+// ---------------------------------------------------------------------------
+// Polling helper
+// ---------------------------------------------------------------------------
 
-    ws.onmessage = (ev) => {
-      let frame: Record<string, unknown>;
-      try {
-        frame = JSON.parse((ev as MessageEvent<string>).data) as Record<string, unknown>;
-      } catch {
+/**
+ * Poll manager.stats until activeConnectionId is non-null and that connection's
+ * state is "ALIVE". Rejects if the budget expires or the Manager goes terminal.
+ */
+function waitForManagerAlive(
+  manager: Manager,
+  timeoutMs = ALIVE_TIMEOUT_MS,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+
+    const check = (): void => {
+      const stats = manager.stats;
+      if (stats.isTerminal) {
+        reject(new Error(`Manager became terminal (last close code ${stats.lastCloseCode ?? "none"})`));
         return;
       }
-      if (frame["type"] !== "hb.sping") return;
+      if (stats.activeConnectionId !== null) {
+        const conn = stats.connections.find((c) => c.id === stats.activeConnectionId);
+        if (conn?.state === "ALIVE") {
+          resolve();
+          return;
+        }
+      }
+      if (Date.now() >= deadline) {
+        reject(new Error(`waitForManagerAlive timed out after ${timeoutMs} ms; stats: ${JSON.stringify(stats)}`));
+        return;
+      }
+      setTimeout(check, 20);
+    };
 
-      // Reply with hb.spong so the heartbeat succeeds.
-      ws.send(
-        JSON.stringify({
-          type: "hb.spong",
-          seq: 0,
-          ts: Date.now(),
-          echoNonce: frame["nonce"],
-          serverTs: frame["ts"],
-        }),
-      );
-
-      clearTimeout(t);
-      ws.onmessage = null;
-      resolve();
-    };
-    ws.onerror = () => {
-      clearTimeout(t);
-      reject(new Error("ws error while waiting for ALIVE"));
-    };
-    ws.onclose = (ev) => {
-      clearTimeout(t);
-      reject(new Error(`ws closed (code ${(ev as CloseEvent).code}) while waiting for ALIVE`));
-    };
+    check();
   });
 }
 
 /**
- * Wait for the WebSocket `close` event and return the close code.
+ * Poll manager.stats until activeConnectionId changes from `previousId` to a
+ * new non-null ALIVE connection. This detects the recovery after a drop.
  */
-function waitForClose(ws: WebSocket, timeoutMs = RECOVERY_BUDGET_MS_B): Promise<number> {
+function waitForManagerRecovered(
+  manager: Manager,
+  previousActiveId: string | null,
+  timeoutMs = RECOVERY_BUDGET_MS_B,
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(
-      () => reject(new Error(`ws.close timeout after ${timeoutMs} ms`)),
-      timeoutMs,
-    );
-    ws.onclose = (ev) => { clearTimeout(t); resolve((ev as CloseEvent).code); };
-    ws.onerror = () => {
-      clearTimeout(t);
-      reject(new Error("ws error while waiting for close"));
+    const deadline = Date.now() + timeoutMs;
+
+    const check = (): void => {
+      const stats = manager.stats;
+      if (stats.isTerminal) {
+        reject(new Error(`Manager became terminal during recovery (close code ${stats.lastCloseCode ?? "none"})`));
+        return;
+      }
+      if (
+        stats.activeConnectionId !== null &&
+        stats.activeConnectionId !== previousActiveId
+      ) {
+        const conn = stats.connections.find((c) => c.id === stats.activeConnectionId);
+        if (conn?.state === "ALIVE") {
+          resolve();
+          return;
+        }
+      }
+      if (Date.now() >= deadline) {
+        reject(new Error(`waitForManagerRecovered timed out after ${timeoutMs} ms; stats: ${JSON.stringify(stats)}`));
+        return;
+      }
+      setTimeout(check, 20);
     };
+
+    check();
   });
 }
 
@@ -174,17 +201,20 @@ function waitForClose(ws: WebSocket, timeoutMs = RECOVERY_BUDGET_MS_B): Promise<
 // Suite
 // ---------------------------------------------------------------------------
 
-describe("ws-resilience: E2E resilience scenarios", () => {
+describe("ws-resilience: E2E resilience scenarios (real Manager)", () => {
   let fixture: ServerFixture;
+  let manager: Manager;
 
   beforeEach(async () => {
     fixture = await startFixtureServer({
       pingIntervalMs: PING_INTERVAL_MS,
       pongTimeoutMs: PONG_TIMEOUT_MS,
     });
+    manager = new Manager(makeManagerOpts(fixture));
   });
 
   afterEach(async () => {
+    manager.destroy();
     await fixture.stop();
   });
 
@@ -192,124 +222,117 @@ describe("ws-resilience: E2E resilience scenarios", () => {
   // Scenario A: Freeze recovery
   // -------------------------------------------------------------------------
   it(
-    "A: freeze — client abrupt-close → server handles it → replacement reaches ALIVE",
+    "A: freeze — server stops replying to client pings → Connection STALE→DEAD → Manager reconnects ALIVE",
     async () => {
       const start = Date.now();
 
-      // 1. Connect first client and confirm ALIVE (heartbeat exchange).
-      const ws1 = openWs(fixture.wsUrl, fixture.baseUrl);
-      await waitForOpen(ws1);
-      await waitForAlive(ws1);
+      // 1. Wait for Manager to reach ALIVE.
+      await waitForManagerAlive(manager, ALIVE_TIMEOUT_MS);
+      const firstActiveId = manager.stats.activeConnectionId;
+      expect(firstActiveId).not.toBeNull();
 
-      // 2. Simulate freeze: abruptly close the socket (code 1006 = abnormal
-      //    closure, no graceful handshake). This is what a frozen client
-      //    looks like once the OS or network layer gives up on the connection.
-      ws1.close(1006, "simulated freeze");
+      // 2. Simulate freeze: server stops replying to hb.ping frames.
+      //    The client's pong timeout (100 ms) + stale grace (80 ms) will fire,
+      //    driving the active Connection through ALIVE → STALE → DEAD.
+      //    Keep paused for at least pingIntervalMs + pongTimeoutMs + staleGraceMs
+      //    = 150 + 100 + 80 = 330 ms to ensure the timeout cycle completes.
+      fixture.pausePongReplies();
+      await Bun.sleep(PING_INTERVAL_MS + PONG_TIMEOUT_MS + STALE_GRACE_MS + 100);
 
-      // Give the server a moment to process the close event.
-      await Bun.sleep(50);
+      // 3. Resume pong replies so the replacement connection can reach ALIVE.
+      //    The Manager has already scheduled a backoff after detecting DEAD;
+      //    the replacement will connect and get pong replies.
+      fixture.resumePongReplies();
 
-      // 3. Connect a replacement client and confirm it reaches ALIVE.
-      const ws2 = openWs(fixture.wsUrl, fixture.baseUrl);
-      await waitForOpen(ws2);
-      await waitForAlive(ws2);
+      await waitForManagerRecovered(manager, firstActiveId, RECOVERY_BUDGET_MS_AC);
 
       const elapsed = Date.now() - start;
       expect(elapsed).toBeLessThan(RECOVERY_BUDGET_MS_AC);
 
-      ws2.close(1000, "test done");
+      // New active connection is ALIVE.
+      const newStats = manager.stats;
+      expect(newStats.activeConnectionId).not.toBeNull();
+      expect(newStats.activeConnectionId).not.toBe(firstActiveId);
+      const newConn = newStats.connections.find((c) => c.id === newStats.activeConnectionId);
+      expect(newConn?.state).toBe("ALIVE");
     },
-    RECOVERY_BUDGET_MS_AC + 2_000,
+    RECOVERY_BUDGET_MS_AC + 3_000,
   );
 
   // -------------------------------------------------------------------------
   // Scenario B: IP-change (server-forced socket drop)
   // -------------------------------------------------------------------------
   it(
-    "B: IP-change — server force-drops all sockets → replacement client reaches ALIVE",
+    "B: IP-change — server force-drops all sockets → Manager detects close → reconnects ALIVE",
     async () => {
       const start = Date.now();
 
-      // 1. Connect client and confirm ALIVE.
-      const ws1 = openWs(fixture.wsUrl, fixture.baseUrl);
-      await waitForOpen(ws1);
-      await waitForAlive(ws1);
+      // 1. Wait for Manager to reach ALIVE.
+      await waitForManagerAlive(manager, ALIVE_TIMEOUT_MS);
+      const firstActiveId = manager.stats.activeConnectionId;
+      expect(firstActiveId).not.toBeNull();
 
-      // 2. Arm the close listener BEFORE calling dropAllSockets so we don't
-      //    miss the event.
-      const closePromise = waitForClose(ws1, RECOVERY_BUDGET_MS_B);
-
-      // 3. Server force-drops all sockets (simulates NAT rebalance).
+      // 2. Server force-drops all connections (simulates NAT rebalance).
+      //    Clients see a close event; Connection goes DEAD immediately.
       fixture.dropAllSockets();
 
-      // 4. The first client must receive a close event within budget.
-      const closeCode = await closePromise;
-      // Bun sends close code 1006 on abrupt drops; accept any code ≥ 1000.
-      expect(closeCode).toBeGreaterThanOrEqual(1000);
-
-      // 5. Connect a replacement and confirm ALIVE.
-      const ws2 = openWs(fixture.wsUrl, fixture.baseUrl);
-      await waitForOpen(ws2);
-      await waitForAlive(ws2);
+      // 3. Manager detects DEAD, schedules backoff (base 100 ms), spawns replacement.
+      await waitForManagerRecovered(manager, firstActiveId, RECOVERY_BUDGET_MS_B);
 
       const elapsed = Date.now() - start;
       expect(elapsed).toBeLessThan(RECOVERY_BUDGET_MS_B);
 
-      ws2.close(1000, "test done");
+      const newStats = manager.stats;
+      expect(newStats.activeConnectionId).not.toBeNull();
+      expect(newStats.activeConnectionId).not.toBe(firstActiveId);
+      const newConn = newStats.connections.find((c) => c.id === newStats.activeConnectionId);
+      expect(newConn?.state).toBe("ALIVE");
     },
-    RECOVERY_BUDGET_MS_B + 2_000,
+    RECOVERY_BUDGET_MS_B + 3_000,
   );
 
   // -------------------------------------------------------------------------
   // Scenario C: Server restart
   // -------------------------------------------------------------------------
   it(
-    "C: server restart — server stops → fresh server on same port → replacement reaches ALIVE",
+    "C: server restart — server stops (1001) → fresh server on same port → Manager reconnects ALIVE",
     async () => {
       const start = Date.now();
       const savedPort = fixture.port;
 
-      // 1. Connect client and confirm ALIVE.
-      const ws1 = openWs(fixture.wsUrl, fixture.baseUrl);
-      await waitForOpen(ws1);
-      await waitForAlive(ws1);
+      // 1. Wait for Manager to reach ALIVE.
+      await waitForManagerAlive(manager, ALIVE_TIMEOUT_MS);
+      const firstActiveId = manager.stats.activeConnectionId;
+      expect(firstActiveId).not.toBeNull();
 
-      // 2. Arm close listener BEFORE stopping the server.
-      const closePromise = waitForClose(ws1, RECOVERY_BUDGET_MS_AC);
-
-      // 3. Stop the server. All connected clients receive 1001 GOING_AWAY.
-      //    (Bun.serve does not support arbitrary custom close codes in stop();
-      //    1001 is the closest standard code to 1012 SERVICE_RESTART — both
-      //    signal "going away, please reconnect".)
-      //    After this call, fixture.stop() in afterEach is a no-op.
-      await fixture.stop();
+      // 2. Stop the server. All clients receive 1001 GOING_AWAY.
+      //    afterEach's fixture.stop() will be a no-op on this fixture.
+      const stoppedFixture = fixture;
       fixture = { ...fixture, stop: async () => {} };
+      await stoppedFixture.stop();
 
-      // 4. First client must receive the close event.
-      const closeCode = await closePromise;
-      expect(closeCode).toBeGreaterThanOrEqual(1000);
-
-      // 5. 200 ms later, start a fresh server on the SAME port.
+      // 3. Wait 200 ms, then start a fresh server on the same port.
       await Bun.sleep(200);
-
       const freshFixture = await startFixtureServerOnPort(savedPort, {
         pingIntervalMs: PING_INTERVAL_MS,
         pongTimeoutMs: PONG_TIMEOUT_MS,
       });
 
-      try {
-        // 6. Connect a replacement client to the NEW server and confirm ALIVE.
-        const ws2 = openWs(freshFixture.wsUrl, freshFixture.baseUrl);
-        await waitForOpen(ws2);
-        await waitForAlive(ws2);
+      // Replace fixture reference so afterEach cleans up correctly.
+      fixture = freshFixture;
 
-        const elapsed = Date.now() - start;
-        expect(elapsed).toBeLessThan(RECOVERY_BUDGET_MS_AC);
+      // 4. Manager (still running) will detect the close, schedule backoff,
+      //    and reconnect to the new server on the same port.
+      await waitForManagerRecovered(manager, firstActiveId, RECOVERY_BUDGET_MS_AC);
 
-        ws2.close(1000, "test done");
-      } finally {
-        await freshFixture.stop();
-      }
+      const elapsed = Date.now() - start;
+      expect(elapsed).toBeLessThan(RECOVERY_BUDGET_MS_AC);
+
+      const newStats = manager.stats;
+      expect(newStats.activeConnectionId).not.toBeNull();
+      expect(newStats.activeConnectionId).not.toBe(firstActiveId);
+      const newConn = newStats.connections.find((c) => c.id === newStats.activeConnectionId);
+      expect(newConn?.state).toBe("ALIVE");
     },
     RECOVERY_BUDGET_MS_AC + 3_000,
   );

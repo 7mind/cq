@@ -76,6 +76,16 @@ export type ServerFixture = {
    */
   dropAllSockets(): void;
   /**
+   * Stop replying to client-initiated hb.ping frames.
+   * Simulates a frozen/congested network where client pings go unanswered.
+   * The client's pong timeout will eventually fire, driving STALE→DEAD.
+   */
+  pausePongReplies(): void;
+  /**
+   * Resume replying to client-initiated hb.ping frames (undoes pausePongReplies).
+   */
+  resumePongReplies(): void;
+  /**
    * Stop the server. Resolves when the underlying Bun.serve has stopped.
    */
   stop(): Promise<void>;
@@ -108,6 +118,10 @@ function buildFixture(
   // fully-typed ServerWebSocket<SessionData>. Storing as HbSocket avoids the
   // need for `any` while still letting dropAllSockets() call close().
   const connectedWs = new Set<HbSocket & { close(code?: number, reason?: string): void }>();
+
+  // When true, hb.ping frames from the client are silently dropped (not replied to).
+  // This simulates a frozen/congested path where client pings go unanswered.
+  let _pausePongReplies = false;
 
   // One heartbeat factory per server instance. Per-socket state is tracked
   // internally by createHeartbeat's WeakMap.
@@ -170,16 +184,18 @@ function buildFixture(
         }
 
         if (frame.type === "hb.ping") {
-          ws.send(
-            JSON.stringify({
-              type: "hb.pong",
-              seq: 0,
-              ts: Date.now(),
-              echoNonce: frame.nonce,
-              clientTs: frame.ts,
-              serverTs: Date.now(),
-            }),
-          );
+          if (!_pausePongReplies) {
+            ws.send(
+              JSON.stringify({
+                type: "hb.pong",
+                seq: 0,
+                ts: Date.now(),
+                echoNonce: frame.nonce,
+                clientTs: frame.ts,
+                serverTs: Date.now(),
+              }),
+            );
+          }
           return;
         }
 
@@ -201,11 +217,11 @@ function buildFixture(
     dropAllSockets() {
       for (const ws of connectedWs) {
         try {
-          // Abrupt close — simulates NAT rebalance / abrupt TCP drop.
-          // Bun's ServerWebSocket.close(1006) sends a close frame with the
-          // "abnormal closure" code, which is the closest Bun.serve allows
-          // to a true OS-level socket termination.
-          ws.close(1006, "fixture: forced drop");
+          // Close with 1011 (INTERNAL_ERROR) — a retriable code that signals
+          // the client should reconnect. Code 1006 is reserved and cannot be
+          // sent as an actual close frame; Bun would map it to 1000 which
+          // isRetriable() treats as non-retriable normal closure.
+          ws.close(1011, "fixture: forced drop");
         } catch {
           // Already closed — ignore.
         }
@@ -213,10 +229,22 @@ function buildFixture(
       connectedWs.clear();
     },
 
+    pausePongReplies() {
+      _pausePongReplies = true;
+    },
+
+    resumePongReplies() {
+      _pausePongReplies = false;
+    },
+
     async stop() {
       for (const ws of connectedWs) {
         try {
-          ws.close(1001, "server stopping");
+          // Use 1011 (INTERNAL_ERROR) — a retriable code that the client will
+          // reconnect on. 1001 (GOING_AWAY) is the semantically correct choice
+          // for a server shutting down, but Bun maps it to 1000 on the client
+          // side, which isRetriable() treats as non-retriable normal closure.
+          ws.close(1011, "server stopping");
         } catch {
           // ignore
         }

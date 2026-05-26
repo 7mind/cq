@@ -1,9 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
     "jsx": "react-jsx",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "outDir": "./dist",
+    "rootDir": "./src",
     "types": ["bun-types"],
     "paths": {
       "@cq/shared": ["../shared/src/index.ts"]
@@ -12,5 +16,5 @@
   "references": [
     { "path": "../shared" }
   ],
-  "include": ["src", "test"]
+  "include": ["src"]
 }
