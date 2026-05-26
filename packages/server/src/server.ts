@@ -1,10 +1,12 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import { mkdirSync } from "node:fs";
 import type { Logger } from "./log/logger";
 import { WsSession, type WsSessionData } from "./ws/session";
 import { isOriginAllowed } from "./ws/origin";
 import { Bridge } from "./agent/bridge";
 import { SessionRegistry } from "./seq/sessionRegistry";
+import { SqlitePersistence } from "./persist/SqlitePersistence.js";
 
 export type ServerConfig = Readonly<{
   host: string;
@@ -24,7 +26,12 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
 
   // Shared registry and bridge (pool=1 across all connections).
   const registry = new SessionRegistry();
-  const bridge = new Bridge({ logger, registry, cwd });
+  // Ensure the parent directory exists for file-backed databases.
+  if (dbPath !== ":memory:") {
+    mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
+  }
+  const persistence = new SqlitePersistence(dbPath);
+  const bridge = new Bridge({ logger, registry, cwd, persistence });
 
   const server = Bun.serve<WsSessionData>({
     hostname: host,
@@ -100,6 +107,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   return {
     stop() {
       server.stop();
+      persistence.close();
     },
   };
 }

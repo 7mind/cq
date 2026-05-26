@@ -24,12 +24,16 @@ import type {
   SDKUserMessage,
   SDKMessage,
   SDKSystemMessage,
+  SDKTaskStartedMessage,
+  SDKTaskNotificationMessage,
   CanUseTool,
   OnElicitation,
   ElicitationRequest,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "../log/logger";
 import type { SessionRegistry } from "../seq/sessionRegistry";
+import type { Persistence } from "../persist/Persistence.js";
+import { InMemoryPersistence } from "../persist/InMemoryPersistence.js";
 import type {
   ChatStart,
   ChatInput,
@@ -44,7 +48,9 @@ import type {
   ChatError,
   ChatPermissionRequest,
   ChatElicitationRequest,
+  HistoryUpdate,
 } from "@cq/shared";
+import type { SessionRow, InvocationRow } from "@cq/shared";
 import { handleReadFile } from "./readFile";
 import { loadMcpServers } from "./mcp";
 import { PermissionBroker } from "./permission";
@@ -98,6 +104,12 @@ export interface BridgeOpts {
    * Defaults to a fresh ElicitationBroker instance per Bridge.
    */
   elicitationBroker?: ElicitationBroker;
+  /**
+   * Persistence adapter for recording sessions, invocations, and events.
+   * Defaults to InMemoryPersistence (for tests and standalone use).
+   * Wire SqlitePersistence in main.ts / server.ts for production.
+   */
+  persistence?: Persistence;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +183,10 @@ type ActiveSession = {
    * the UI label is "read-only" (SDK has no equivalent mode).
    */
   uiMode: string;
+  /** Wall-clock start time for duration_ms calculation at finalisation. */
+  readonly startedAt: number;
+  /** Map from SDK task_id to child InvocationRow.id (for task finalisation). */
+  readonly taskInvocationMap: Map<string, string>;
 };
 
 export class Bridge {
@@ -182,6 +198,7 @@ export class Bridge {
   private active: ActiveSession | null = null;
   readonly permissionBroker: PermissionBroker;
   readonly elicitationBroker: ElicitationBroker;
+  private readonly persistence: Persistence;
 
   constructor(opts: BridgeOpts) {
     this.logger = opts.logger;
@@ -192,6 +209,7 @@ export class Bridge {
     this.home = opts.home;
     this.permissionBroker = opts.permissionBroker ?? new PermissionBroker();
     this.elicitationBroker = opts.elicitationBroker ?? new ElicitationBroker();
+    this.persistence = opts.persistence ?? new InMemoryPersistence();
   }
 
   isBusy(): boolean {
@@ -215,6 +233,7 @@ export class Bridge {
     const { sessionId: chatSessionId } = this.registry.create();
     const invocationId = crypto.randomUUID();
     const queue = new AsyncQueue<SDKUserMessage>();
+    const startedAt = Date.now();
 
     // Load MCP servers from ~/.claude/mcp_servers.json (fallback path per PR-19-D01).
     // The bundled CLI binary would inherit these via HOME in a full installation;
@@ -293,6 +312,50 @@ export class Bridge {
       });
     }
 
+    // Insert session and top-level invocation rows before the query starts.
+    const sessionRow: SessionRow = {
+      id: chatSessionId,
+      startedAt,
+      endedAt: null,
+      cwd: this.cwd,
+      model: frame.model ?? "",
+      permissionMode: uiMode,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCacheRead: 0,
+      totalCacheCreate: 0,
+      totalCostUsd: 0,
+      endedReason: null,
+      title: "",
+      lastServerSeq: 0,
+      sdkSessionId: null,
+    };
+    const invocationEventLogPath = `${chatSessionId}/${invocationId}.jsonl`;
+    const invocationRow: InvocationRow = {
+      id: invocationId,
+      sessionId: chatSessionId,
+      parentInvocationId: null,
+      agentName: "main",
+      agentId: null,
+      taskId: null,
+      toolUseId: null,
+      model: frame.model ?? "",
+      startedAt,
+      endedAt: null,
+      durationMs: null,
+      status: "running",
+      toolCallCount: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      promptExcerpt: "",
+      eventLogPath: invocationEventLogPath,
+    };
+    this.persistence.withTx(() => {
+      this.persistence.sessions.insert(sessionRow);
+      this.persistence.invocations.insert(invocationRow);
+    });
+
     const activeQuery = this.queryFactory({ prompt: queue, options: sdkOptions });
 
     const session: ActiveSession = {
@@ -303,6 +366,8 @@ export class Bridge {
       ws,
       aborting: false,
       uiMode,
+      startedAt,
+      taskInvocationMap: new Map(),
     };
     this.active = session;
 
@@ -470,6 +535,7 @@ export class Bridge {
   private async runLoop(session: ActiveSession, initialWs: WsSocket): Promise<void> {
     let ws = initialWs;
     let initSent = false;
+    let doneReason: ChatDone["reason"] = "completed";
 
     try {
       for await (const msg of session.query) {
@@ -482,11 +548,25 @@ export class Bridge {
         if (isInitMessage(msg)) {
           if (!initSent) {
             initSent = true;
+            // Capture the SDK session_id from the init message for session row.
+            const sdkSessionId = (msg as Record<string, unknown>)["session_id"] as string | undefined;
+            if (sdkSessionId) {
+              this.persistence.sessions.update(session.chatSessionId, { sdkSessionId });
+            }
+            // Update model from init if not specified in ChatStart.
+            const initModel = msg.model;
+            if (initModel) {
+              this.persistence.sessions.update(session.chatSessionId, { model: initModel });
+              this.persistence.invocations.update(session.invocationId, { model: initModel });
+            }
             this.sendStarted(ws, session, msg);
           }
           // Don't also send as a chat.event — init is consumed by chat.started.
           continue;
         }
+
+        // Persist the raw SDK event to the JSONL log.
+        this.persistence.events.append(session.invocationId, msg);
 
         // Intercept SDKElicitationCompleteMessage to resolve URL-mode elicitations.
         if (isElicitationCompleteMessage(msg)) {
@@ -496,27 +576,66 @@ export class Bridge {
           // Still forward as a chat.event so the client can remove the card.
         }
 
+        // Handle task_started: insert a child invocation row.
+        if (isTaskStartedMessage(msg)) {
+          this.handleTaskStarted(session, ws, msg as SDKTaskStartedMessage);
+          // Still forward as a chat.event.
+        }
+
+        // Handle task_notification: finalise the child invocation row.
+        if (isTaskNotificationMessage(msg)) {
+          this.handleTaskNotification(session, ws, msg as SDKTaskNotificationMessage);
+          // Still forward as a chat.event.
+        }
+
         // All other messages → chat.event via replay buffer.
         this.sendEvent(ws, session, msg);
       }
 
       // Iteration ended: choose reason based on whether an interrupt was requested.
       ws = session.ws;
-      this.sendDone(ws, session, session.aborting ? "interrupted" : "completed");
+      doneReason = session.aborting ? "interrupted" : "completed";
+      this.sendDone(ws, session, doneReason);
     } catch (err: unknown) {
       ws = session.ws;
       // If the SDK throws after an interrupt, still report interrupted, not errored.
       if (session.aborting) {
-        this.sendDone(ws, session, "interrupted");
+        doneReason = "interrupted";
+        this.sendDone(ws, session, doneReason);
       } else {
         this.logger.error("bridge.sdk_error", {
           chatSessionId: session.chatSessionId,
           err: String(err),
         });
-        this.sendDone(ws, session, "errored");
+        doneReason = "errored";
+        this.sendDone(ws, session, doneReason);
         this.sendError(ws, session.chatSessionId, "SDK_ERROR", String(err));
       }
     } finally {
+      // Finalise the top-level invocation and session in persistence.
+      const endedAt = Date.now();
+      const durationMs = endedAt - session.startedAt;
+      const invStatus: InvocationRow["status"] = doneReason === "completed"
+        ? "completed"
+        : doneReason === "interrupted"
+          ? "stopped"
+          : "failed";
+      this.persistence.events.close(session.invocationId);
+      this.persistence.invocations.update(session.invocationId, {
+        endedAt,
+        durationMs,
+        status: invStatus,
+      });
+      this.persistence.sessions.update(session.chatSessionId, {
+        endedAt,
+        endedReason: doneReason,
+      });
+      this.sendHistoryUpdate(ws, session.invocationId, {
+        endedAt,
+        durationMs,
+        status: invStatus,
+      });
+
       if (this.active === session) {
         this.active = null;
         session.queue.end();
@@ -528,6 +647,82 @@ export class Bridge {
       this.elicitationBroker.rejectAll();
       this.elicitationBroker.clearSendFrame();
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Task sub-invocation helpers
+  // ---------------------------------------------------------------------------
+
+  private handleTaskStarted(
+    session: ActiveSession,
+    ws: WsSocket,
+    msg: SDKTaskStartedMessage,
+  ): void {
+    const childInvocationId = crypto.randomUUID();
+    session.taskInvocationMap.set(msg.task_id, childInvocationId);
+
+    const childRow: InvocationRow = {
+      id: childInvocationId,
+      sessionId: session.chatSessionId,
+      parentInvocationId: session.invocationId,
+      agentName: msg.subagent_type ?? msg.task_type ?? "subagent",
+      agentId: null,
+      taskId: msg.task_id,
+      toolUseId: msg.tool_use_id ?? null,
+      model: "",
+      startedAt: Date.now(),
+      endedAt: null,
+      durationMs: null,
+      status: "running",
+      toolCallCount: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      promptExcerpt: (msg.prompt ?? msg.description).slice(0, 500),
+      eventLogPath: `${session.chatSessionId}/${childInvocationId}.jsonl`,
+    };
+    this.persistence.invocations.insert(childRow);
+    this.sendHistoryUpdate(ws, childInvocationId, {
+      status: "running",
+      parentInvocationId: session.invocationId,
+      agentName: childRow.agentName,
+    });
+    this.logger.info("bridge.task_started", {
+      chatSessionId: session.chatSessionId,
+      taskId: msg.task_id,
+      childInvocationId,
+    });
+  }
+
+  private handleTaskNotification(
+    session: ActiveSession,
+    ws: WsSocket,
+    msg: SDKTaskNotificationMessage,
+  ): void {
+    const childInvocationId = session.taskInvocationMap.get(msg.task_id);
+    if (!childInvocationId) return;
+
+    const endedAt = Date.now();
+    const childRow = this.persistence.invocations.get(childInvocationId);
+    const durationMs = childRow ? endedAt - childRow.startedAt : null;
+    const status: InvocationRow["status"] = msg.status === "completed"
+      ? "completed"
+      : msg.status === "failed"
+        ? "failed"
+        : "stopped";
+
+    this.persistence.invocations.update(childInvocationId, {
+      endedAt,
+      durationMs: durationMs ?? null,
+      status,
+    });
+    this.sendHistoryUpdate(ws, childInvocationId, { endedAt, durationMs, status });
+    this.logger.info("bridge.task_notification", {
+      chatSessionId: session.chatSessionId,
+      taskId: msg.task_id,
+      childInvocationId,
+      status,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -619,6 +814,21 @@ export class Bridge {
     ws.send(JSON.stringify(frame));
     this.logger.warn("bridge.chat_error", { sessionId, code, message });
   }
+
+  private sendHistoryUpdate(
+    ws: WsSocket,
+    invocationId: string,
+    patch: Record<string, unknown>,
+  ): void {
+    const frame: HistoryUpdate = {
+      type: "history.update",
+      seq: 0,
+      ts: Date.now(),
+      invocationId,
+      patch,
+    };
+    ws.send(JSON.stringify(frame));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -635,6 +845,14 @@ function isElicitationCompleteMessage(msg: SDKMessage): boolean {
     (msg as Record<string, unknown>)["subtype"] === "elicitation_complete" &&
     typeof (msg as Record<string, unknown>)["elicitation_id"] === "string"
   );
+}
+
+function isTaskStartedMessage(msg: SDKMessage): msg is SDKTaskStartedMessage {
+  return msg.type === "system" && (msg as SDKTaskStartedMessage).subtype === "task_started";
+}
+
+function isTaskNotificationMessage(msg: SDKMessage): msg is SDKTaskNotificationMessage {
+  return msg.type === "system" && (msg as SDKTaskNotificationMessage).subtype === "task_notification";
 }
 
 /**

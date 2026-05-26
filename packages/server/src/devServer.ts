@@ -1,9 +1,12 @@
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import type { Logger } from "./log/logger";
 import indexHtml from "../../web/index.html" with { type: "html" };
 import { WsSession, type WsSessionData } from "./ws/session";
 import { isOriginAllowed } from "./ws/origin";
 import { Bridge } from "./agent/bridge";
 import { SessionRegistry } from "./seq/sessionRegistry";
+import { SqlitePersistence } from "./persist/SqlitePersistence.js";
 
 export type DevServerConfig = Readonly<{
   host: string;
@@ -33,7 +36,12 @@ export function startDevServer(
 
   // Shared registry and bridge (pool=1 across all connections).
   const registry = new SessionRegistry();
-  const bridge = new Bridge({ logger, registry, cwd });
+  // Ensure the parent directory exists for file-backed databases.
+  if (dbPath !== ":memory:") {
+    mkdirSync(dirname(resolve(dbPath)), { recursive: true });
+  }
+  const persistence = new SqlitePersistence(dbPath);
+  const bridge = new Bridge({ logger, registry, cwd, persistence });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const server = (serve as (opts: any) => ReturnType<typeof Bun.serve>)({
@@ -82,7 +90,9 @@ export function startDevServer(
 
   return {
     stop() {
-      return server.stop();
+      const result = server.stop();
+      persistence.close();
+      return result;
     },
     get url() {
       return server.url;
