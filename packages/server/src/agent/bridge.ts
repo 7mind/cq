@@ -522,6 +522,28 @@ export class Bridge {
   }
 
   // ---------------------------------------------------------------------------
+  // interruptActive — for graceful shutdown
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Signal the currently-active query (if any) to stop.
+   * Sets the aborting flag and calls Query.interrupt() so the SDK unblocks.
+   * Returns immediately — the caller should then wait for activeSessionId()
+   * to become null (i.e. the runLoop finally block fires).
+   */
+  interruptActive(): void {
+    const session = this.active;
+    if (session === null) return;
+    this.logger.info("bridge.interrupt_active", { chatSessionId: session.chatSessionId });
+    session.aborting = true;
+    // Fire-and-forget: interrupt() is async but we cannot await here because
+    // the caller (shutdown.ts) will race against the timeout independently.
+    session.query.interrupt().catch((err: unknown) => {
+      this.logger.warn("bridge.interrupt_active_error", { err: String(err) });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // shutdown
   // ---------------------------------------------------------------------------
 

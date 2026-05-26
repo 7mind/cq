@@ -19,6 +19,14 @@ export type ServerConfig = Readonly<{
 
 export type RunningServer = {
   stop(): void | Promise<void>;
+  /** Prevent new WebSocket upgrades (called at start of graceful shutdown). */
+  markDraining(): void;
+  /** Close all tracked WebSocket connections with code 1012 (service restart). */
+  closeAllSockets(code: number, reason: string): void;
+  /** The Bridge instance managing the active SDK query. */
+  readonly bridge: Bridge;
+  /** The Persistence adapter (needed for close() in shutdown). */
+  readonly persistence: SqlitePersistence;
 };
 
 export async function startServer(config: ServerConfig): Promise<RunningServer> {
@@ -33,6 +41,11 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   const persistence = new SqlitePersistence(dbPath);
   const bridge = new Bridge({ logger, registry, cwd, persistence });
 
+  // Track all open WS sockets for graceful close-with-code.
+  type WsHandle = { close(code?: number, reason?: string): void };
+  const openSockets = new Set<WsHandle>();
+  let draining = false;
+
   const server = Bun.serve<WsSessionData>({
     hostname: host,
     port,
@@ -42,6 +55,11 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
 
       // WebSocket upgrade — only on /ws
       if (pathname === "/ws") {
+        // Refuse new upgrades when draining.
+        if (draining) {
+          return new Response("Service Unavailable", { status: 503 });
+        }
+
         if (!isOriginAllowed(req, host, port)) {
           logger.info("ws.origin_rejected", {
             origin: req.headers.get("Origin") ?? "(none)",
@@ -91,12 +109,14 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
 
     websocket: {
       open(ws) {
+        openSockets.add(ws);
         ws.data.session.open(ws);
       },
       message(ws, raw) {
         ws.data.session.message(ws, raw);
       },
       close(ws, code, reason) {
+        openSockets.delete(ws);
         ws.data.session.close(ws, code, reason);
       },
     },
@@ -105,6 +125,24 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   logger.info("cq listening", { host, port, cwd, dbPath });
 
   return {
+    bridge,
+    persistence,
+
+    markDraining() {
+      draining = true;
+    },
+
+    closeAllSockets(code: number, reason: string) {
+      for (const ws of openSockets) {
+        try {
+          ws.close(code, reason);
+        } catch {
+          // Already closed — ignore.
+        }
+      }
+      openSockets.clear();
+    },
+
     stop() {
       server.stop();
       persistence.close();

@@ -3,12 +3,13 @@ import { buildWeb } from "./buildWeb";
 import { startServer } from "./server";
 import { startDevServer } from "./devServer";
 import { createLogger } from "./log/logger";
+import { startGracefulShutdown } from "./shutdown";
 
 const args = parseArgs(process.argv.slice(2));
 
 const logger = createLogger();
 
-let stop: () => void | Promise<void>;
+let shutdownFn: () => Promise<void>;
 
 if (args.dev) {
   const devServer = startDevServer({
@@ -18,7 +19,9 @@ if (args.dev) {
     dbPath: args.db,
     logger,
   });
-  stop = () => devServer.stop();
+  shutdownFn = async () => {
+    await devServer.stop();
+  };
 } else {
   const { outdir } = await buildWeb();
 
@@ -30,16 +33,25 @@ if (args.dev) {
     dbPath: args.db,
     logger,
   });
-  stop = () => server.stop();
+
+  shutdownFn = () =>
+    startGracefulShutdown({
+      server,
+      persistence: server.persistence,
+      bridge: server.bridge,
+      logger,
+      timeoutMs: args.shutdownTimeoutMs,
+    });
 }
 
+let shuttingDown = false;
+
 function shutdown(): void {
-  const result = stop();
-  if (result instanceof Promise) {
-    result.then(() => process.exit(0)).catch(() => process.exit(1));
-  } else {
-    process.exit(0);
-  }
+  if (shuttingDown) return;
+  shuttingDown = true;
+  shutdownFn()
+    .then(() => process.exit(0))
+    .catch(() => process.exit(1));
 }
 
 process.on("SIGINT", shutdown);

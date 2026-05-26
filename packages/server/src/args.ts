@@ -4,18 +4,20 @@ export type Args = Readonly<{
   port: number;
   db: string;
   dev: boolean;
+  shutdownTimeoutMs: number;
 }>;
 
 const USAGE = `\
 Usage: cq [options]
 
 Options:
-  --cwd <path>   Working directory (default: process.cwd())
-  --host <host>  Bind host (default: 127.0.0.1)
-  --port <port>  Bind port, integer (default: 5173)
-  --db <path>    SQLite database path (default: ./var/db/cq.sqlite)
-  --dev          Enable HMR dev server (default: false)
-  --help         Print this message and exit
+  --cwd <path>                  Working directory (default: process.cwd())
+  --host <host>                 Bind host (default: 127.0.0.1)
+  --port <port>                 Bind port, integer (default: 5173)
+  --db <path>                   SQLite database path (default: ./var/db/cq.sqlite)
+  --dev                         Enable HMR dev server (default: false)
+  --shutdown-timeout-ms <ms>    Graceful shutdown timeout in ms (default: 5000)
+  --help                        Print this message and exit
 `;
 
 export function parseArgs(argv: string[]): Args {
@@ -24,6 +26,7 @@ export function parseArgs(argv: string[]): Args {
   let port: number = 5173;
   let db: string = "./var/db/cq.sqlite";
   let dev: boolean = false;
+  let shutdownTimeoutMs: number = 5000;
 
   const args = argv.slice();
   while (args.length > 0) {
@@ -43,7 +46,8 @@ export function parseArgs(argv: string[]): Args {
       flag === "--cwd" ||
       flag === "--host" ||
       flag === "--port" ||
-      flag === "--db"
+      flag === "--db" ||
+      flag === "--shutdown-timeout-ms"
     ) {
       const value = args.shift();
       if (value === undefined) {
@@ -63,6 +67,15 @@ export function parseArgs(argv: string[]): Args {
           process.exit(1);
         }
         port = parsed;
+      } else if (flag === "--shutdown-timeout-ms") {
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          process.stderr.write(
+            `Error: --shutdown-timeout-ms must be a positive integer, got: ${value}\n${USAGE}`,
+          );
+          process.exit(1);
+        }
+        shutdownTimeoutMs = parsed;
       } else {
         db = value;
       }
@@ -72,5 +85,5 @@ export function parseArgs(argv: string[]): Args {
     }
   }
 
-  return Object.freeze({ cwd, host, port, db, dev });
+  return Object.freeze({ cwd, host, port, db, dev, shutdownTimeoutMs });
 }

@@ -1,6 +1,6 @@
 # cq — active task ledger
 
-**Cycle:** outer-1 / inner M5 (M4 archived; PR-48 next). **FINAL MILESTONE.**
+**Cycle:** outer-1 / inner M5 (M4 archived; PR-49 next). **FINAL MILESTONE.**
 **Goal:** build cq — TypeScript Web UI for the Claude Agent SDK on Bun + React + WebSocket per [`./prompt.md`](./prompt.md). Discharge condition: all five milestones `[x]` and archived; `bun test` clean; `bun run start --cwd <real-dir>` launches; sample prompt round-trips Chat tab + History tab drill-down.
 **Accepted plan:** [`docs/drafts/20260526-0037-cq-plan.md`](docs/drafts/20260526-0037-cq-plan.md) (2294 lines, G2c-patched).
 **Defects:** [`./defects.md`](./defects.md). _(3 open: `PR-18-D01` deferred to PR-51; `PR-20-D01` deferred (real SDK binary); `PR-31-D01` deferred to PR-51. 1 resolved: `PR-19-D01`.)_
@@ -22,13 +22,13 @@
 - [x] **M4 — Persistence + History tab** (closed: 2026-05-26; archive: [`./docs/archive/tasks-M4.md`](./docs/archive/tasks-M4.md)) — 9 PRs.
 - [ ] **M5 — Polish & harden** — graceful shutdown, error toasts, a11y, E2E suite, README, type/lint clean, stop-condition verify. *PRs PR-48 … PR-54 (7).*
 
-Total PR count: 56 (PR-01 … PR-54 + PR-09a + PR-22b). 49 of 56 closed (383 tests passing).
+Total PR count: 56 (PR-01 … PR-54 + PR-09a + PR-22b). 50 of 56 closed (385 tests passing).
 
 ## M5 — Polish & harden (current milestone — FINAL)
 
 Goal: ship. Graceful shutdown, error toasts, accessibility pass, true end-to-end suite (the brief § 7 one), README + screenshots, final `bun run check`, stop-condition verification per brief § 11.
 
-- [ ] **PR-48** — Graceful shutdown (SIGTERM/SIGINT, --shutdown-timeout-ms, 1012 close); F-05 timeout-exceeded test. Test: `shutdown.test.ts`. Deps: PR-19, PR-39.
+- [x] **PR-48** — Graceful shutdown (SIGTERM/SIGINT, --shutdown-timeout-ms, 1012 close); F-05 timeout-exceeded test. Test: `shutdown.test.ts`. Deps: PR-19, PR-39.
 - [ ] **PR-49** — Error toasts (bounded 50-entry queue; chat.error + 4xxx close surface). Test: `toast.test.ts`. Deps: PR-22a.
 - [ ] **PR-50** — Accessibility pass (aria-live, focus, reduced-motion, axe). Test: `a11y.test.ts`. Deps: PR-17, PR-22a, PR-22b, PR-25, PR-42.
 - [ ] **PR-51** — End-to-end suite (brief § 7 mandate; should resolve `PR-18-D01` if possible by driving Manager in-process; resolves `PR-31-D01` if real-SDK becomes feasible). Test: `e2e/full.test.ts`. Deps: PR-26, PR-44, PR-48.
@@ -38,7 +38,7 @@ Goal: ship. Graceful shutdown, error toasts, accessibility pass, true end-to-end
 
 ## In-progress / recent
 
-- **PR-48** — about to dispatch.
+- **PR-49** — Error toasts — next.
 
 ## Recent completions (this cycle's worth)
 
