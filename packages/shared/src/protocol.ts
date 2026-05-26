@@ -115,14 +115,14 @@ export const ServerHbPing = z.object({
 });
 export type ServerHbPing = z.infer<typeof ServerHbPing>;
 
-export const ClientHbPond = z.object({
+export const ClientHbPong = z.object({
   type: z.literal("hb.spong"),
   seq,
   ts,
   echoNonce: z.string().length(16),
   serverTs: z.number(),
 });
-export type ClientHbPond = z.infer<typeof ClientHbPond>;
+export type ClientHbPong = z.infer<typeof ClientHbPong>;
 
 // ---------------------------------------------------------------------------
 // § 3.3 Client → server application frames
@@ -416,7 +416,7 @@ export type SessionState = z.infer<typeof SessionState>;
  */
 export const ClientFrame = z.discriminatedUnion("type", [
   ClientHbPing,
-  ClientHbPond,
+  ClientHbPong,
   ChatStart,
   ChatInput,
   ChatInterrupt,

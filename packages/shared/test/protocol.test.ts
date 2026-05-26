@@ -3,7 +3,7 @@ import {
   ClientHbPing,
   ServerHbPong,
   ServerHbPing,
-  ClientHbPond,
+  ClientHbPong,
   ChatStart,
   ChatInput,
   ChatInterrupt,
@@ -66,7 +66,7 @@ describe("Heartbeats", () => {
     expect(ServerHbPing.parse(frame)).toEqual(frame);
   });
 
-  test("ClientHbPond round-trips", () => {
+  test("ClientHbPong round-trips", () => {
     const frame = {
       type: "hb.spong" as const,
       seq: 3,
@@ -74,7 +74,7 @@ describe("Heartbeats", () => {
       echoNonce: NONCE16,
       serverTs: NOW,
     };
-    expect(ClientHbPond.parse(frame)).toEqual(frame);
+    expect(ClientHbPong.parse(frame)).toEqual(frame);
   });
 
   test("ClientHbPing rejects nonce of wrong length", () => {

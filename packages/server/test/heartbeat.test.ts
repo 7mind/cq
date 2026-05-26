@@ -23,7 +23,7 @@ import {
   type HeartbeatOpts,
   type HbSocket,
 } from "../src/ws/heartbeat";
-import type { ClientHbPond } from "@cq/shared";
+import type { ClientHbPong } from "@cq/shared";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -48,8 +48,8 @@ function makeSocket(): HbSocket & {
   };
 }
 
-/** Build a ClientHbPond (hb.spong) frame. */
-function spong(echoNonce: string): ClientHbPond {
+/** Build a ClientHbPong (hb.spong) frame. */
+function spong(echoNonce: string): ClientHbPong {
   return {
     type: "hb.spong",
     seq: 0,

@@ -1,4 +1,4 @@
-import { type ClientHbPond, type ServerHbPing } from "@cq/shared";
+import { type ClientHbPong, type ServerHbPing } from "@cq/shared";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -48,7 +48,7 @@ export type HeartbeatOpts = {
 export type HeartbeatHandle = {
   start(ws: HbSocket): void;
   stop(ws: HbSocket): void;
-  onPong(ws: HbSocket, frame: ClientHbPond): void;
+  onPong(ws: HbSocket, frame: ClientHbPong): void;
   isAlive(ws: HbSocket): boolean;
 };
 
@@ -123,7 +123,7 @@ export function createHeartbeat(opts: HeartbeatOpts): HeartbeatHandle {
       states.delete(ws);
     },
 
-    onPong(ws: HbSocket, frame: ClientHbPond): void {
+    onPong(ws: HbSocket, frame: ClientHbPong): void {
       const state = states.get(ws);
       if (state === undefined) return;
 
