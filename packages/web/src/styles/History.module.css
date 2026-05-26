@@ -258,6 +258,51 @@
   background: var(--hover, #f0f0f0);
 }
 
+.deleteBtn {
+  padding: 4px 10px;
+  border: 1px solid var(--status-error, #991b1b);
+  border-radius: 4px;
+  background: var(--input-bg, #fff);
+  color: var(--status-error, #991b1b);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.deleteBtn:hover {
+  background: var(--hover, #fee2e2);
+}
+
+.deleteConfirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.deleteConfirmText {
+  font-size: 12px;
+  color: var(--status-error, #991b1b);
+  white-space: nowrap;
+}
+
+.deleteConfirmBtn {
+  padding: 4px 10px;
+  border: 1px solid var(--status-error, #991b1b);
+  border-radius: 4px;
+  background: var(--status-error, #991b1b);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.deleteConfirmBtn:hover {
+  opacity: 0.85;
+}
+
 .detailBody {
   flex: 1;
   overflow-y: auto;

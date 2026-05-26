@@ -24,6 +24,37 @@ import { headerFromRow } from "./exportFormats";
 import styles from "../styles/History.module.css";
 
 // ---------------------------------------------------------------------------
+// DeleteConfirm — inline confirm dialog for destructive action
+// ---------------------------------------------------------------------------
+
+interface DeleteConfirmProps {
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function DeleteConfirm({ onConfirm, onCancel }: DeleteConfirmProps): React.ReactElement {
+  return (
+    <div className={styles.deleteConfirm} data-testid="delete-confirm">
+      <span className={styles.deleteConfirmText}>Delete this invocation? This cannot be undone.</span>
+      <button
+        className={styles.deleteConfirmBtn}
+        onClick={onConfirm}
+        data-testid="delete-confirm-yes"
+      >
+        Delete
+      </button>
+      <button
+        className={styles.detailCloseBtn}
+        onClick={onCancel}
+        data-testid="delete-confirm-no"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -60,11 +91,14 @@ function fmtCost(usd: number): string {
 interface DetailHeaderProps {
   row: HistoryRowFull;
   onClose: () => void;
+  onDelete: () => void;
   exportHeader: HeaderInfo;
   events: ChatEvent[];
 }
 
-function DetailHeader({ row, onClose, exportHeader, events }: DetailHeaderProps): React.ReactElement {
+function DetailHeader({ row, onClose, onDelete, exportHeader, events }: DetailHeaderProps): React.ReactElement {
+  const [confirming, setConfirming] = useState(false);
+
   return (
     <div className={styles.detailHeader}>
       <div className={styles.detailHeaderRow}>
@@ -72,6 +106,21 @@ function DetailHeader({ row, onClose, exportHeader, events }: DetailHeaderProps)
           {row.agentName}
         </span>
         <Export events={events} header={exportHeader} />
+        {confirming ? (
+          <DeleteConfirm
+            onConfirm={() => { setConfirming(false); onDelete(); }}
+            onCancel={() => setConfirming(false)}
+          />
+        ) : (
+          <button
+            className={styles.deleteBtn}
+            onClick={() => setConfirming(true)}
+            aria-label="Delete invocation"
+            data-testid="detail-delete-btn"
+          >
+            Delete
+          </button>
+        )}
         <button
           className={styles.detailCloseBtn}
           onClick={onClose}
@@ -150,6 +199,17 @@ export function Detail({ invocationId, onClose }: DetailProps): React.ReactEleme
     const el = document.querySelector(`[data-testid="tool-use-${toolUseId}"]`);
     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, []);
+
+  const handleDelete = useCallback(() => {
+    manager.send({
+      type: "history.delete",
+      seq: Date.now(),
+      ts: Date.now(),
+      what: "invocation",
+      id: invocationId,
+    });
+    onClose();
+  }, [manager, invocationId, onClose]);
 
   useEffect(() => {
     // Reset state when invocationId changes.
@@ -254,7 +314,7 @@ export function Detail({ invocationId, onClose }: DetailProps): React.ReactEleme
 
   return (
     <div className={styles.detailOverlay} data-testid="detail-overlay">
-      <DetailHeader row={row} onClose={onClose} exportHeader={headerFromRow(row)} events={events} />
+      <DetailHeader row={row} onClose={onClose} onDelete={handleDelete} exportHeader={headerFromRow(row)} events={events} />
       <Timing
         events={events}
         invocationStartedAt={row.startedAt}

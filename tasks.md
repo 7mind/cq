@@ -19,7 +19,7 @@
 - [x] **M1 — WebSocket spine** (closed: 2026-05-26; archive: [`./docs/archive/tasks-M1.md`](./docs/archive/tasks-M1.md)) — 14 PRs.
 - [x] **M2 — Agent SDK / Chat MVP** (closed: 2026-05-26; archive: [`./docs/archive/tasks-M2.md`](./docs/archive/tasks-M2.md)) — 9 PRs.
 - [x] **M3 — Chat full fidelity** (closed: 2026-05-26; archive: [`./docs/archive/tasks-M3.md`](./docs/archive/tasks-M3.md)) — 12 PRs.
-- [ ] **M4 — Persistence + History tab** — DDL, adapters, bridge writes, list/detail/timing/export/delete, resume-from-history. *PRs PR-39 … PR-47 (9).*
+- [x] **M4 — Persistence + History tab** (closed: 2026-05-26; archive: [`./docs/archive/tasks-M4.md`](./docs/archive/tasks-M4.md)) — DDL, adapters, bridge writes, list/detail/timing/export/delete, resume-from-history. *PRs PR-39 … PR-47 (9).*
 - [ ] **M5 — Polish & harden** — graceful shutdown, error toasts, a11y, E2E suite, README, type/lint clean, stop-condition verify. *PRs PR-48 … PR-54 (7).*
 
 Total PR count: 56 (PR-01 … PR-54 + PR-09a + PR-22b; PR-22a replaces old PR-22). 45 of 56 closed (374 tests passing).
@@ -36,13 +36,13 @@ Goal: SQLite + JSONL persistence layer; live writes from the bridge; History tab
 - [x] **PR-44** — Web `Detail` view (reuses Chat renderer; `Stream` gains `mode='live'|'replay'`). Test: `history-detail.test.ts`. Deps: PR-42 + many M3 cards.
 - [x] **PR-45** — Web `Timing` strip (SVG horizontal time axis with tool-call rectangles). Test: `timing.test.ts`. Deps: PR-44.
 - [x] **PR-46** — Export: copy-as-markdown + download-as-json. Test: `export.test.ts`. Deps: PR-44.
-- [ ] **PR-47** — Delete invocation / delete session (`history.delete` wire frame + cascade + JSONL cleanup + confirm). Test: `history-delete.test.ts`. Deps: PR-40.
+- [x] **PR-47** — Delete invocation / delete session (`history.delete` wire frame + cascade + JSONL cleanup + confirm). Test: `history-delete.test.ts`. Deps: PR-40.
 
 **Dispatch order.** Serial through PR-41 (persistence stack), then mostly serial through history/. PR-43 sits between PR-42 and PR-44.
 
 ## In-progress / recent
 
-- **PR-47** — Delete invocation / delete session (`history.delete` wire frame + cascade + JSONL cleanup + confirm). Test: `history-delete.test.ts`. Deps: PR-40.
+- M4 close → orchestrator archives → M5 starts at PR-48.
 
 ## Recent completions (this cycle's worth)
 

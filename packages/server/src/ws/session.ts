@@ -1,4 +1,4 @@
-import { ClientFrame, type ServerHbPong, type SessionState, type ChatError, type HistoryListResult, type HistoryGetResult, type HistoryReplayEvent, type HistoryReplayDone } from "@cq/shared";
+import { ClientFrame, type ServerHbPong, type SessionState, type ChatError, type HistoryListResult, type HistoryGetResult, type HistoryReplayEvent, type HistoryReplayDone, type HistoryUpdate } from "@cq/shared";
 import { FRAME_VALIDATION_FAILED } from "@cq/shared";
 import type { Logger } from "../log/logger";
 import { createHeartbeat, type HeartbeatHandle } from "./heartbeat";
@@ -25,6 +25,7 @@ type HistoryListResultPayload = Omit<HistoryListResult, "seq" | "ts">;
 type HistoryGetResultPayload = Omit<HistoryGetResult, "seq" | "ts">;
 type HistoryReplayEventPayload = Omit<HistoryReplayEvent, "seq" | "ts">;
 type HistoryReplayDonePayload = Omit<HistoryReplayDone, "seq" | "ts">;
+type HistoryUpdatePayload = Omit<HistoryUpdate, "seq" | "ts">;
 
 // ---------------------------------------------------------------------------
 // WsSession — per-connection state and message dispatch
@@ -232,6 +233,22 @@ export class WsSession {
         }
         break;
       }
+      case "history.delete": {
+        if (this.persistence === null) break;
+        if (frame.what === "session") {
+          this.persistence.sessions.delete(frame.id);
+        } else {
+          this.persistence.invocations.delete(frame.id);
+        }
+        // Emit confirmation: history.update{patch:{deleted:true}} keyed by the id.
+        const confirmPayload: HistoryUpdatePayload = {
+          type: "history.update",
+          invocationId: frame.id,
+          patch: { deleted: true },
+        };
+        this.sendFrame(ws, confirmPayload);
+        break;
+      }
       // All other client frames are accepted but not yet dispatched (PR-07+)
       default:
         // Accepted; no-op until later PRs wire the handlers.
@@ -317,7 +334,7 @@ export class WsSession {
    * Sends a frame to the client, injecting `seq` and `ts` automatically.
    * `payload` must contain all fields except `seq` and `ts`.
    */
-  private sendFrame(ws: WsSocket, payload: PongPayload | SessionStatePayload | HistoryListResultPayload | HistoryGetResultPayload | HistoryReplayEventPayload | HistoryReplayDonePayload): void {
+  private sendFrame(ws: WsSocket, payload: PongPayload | SessionStatePayload | HistoryListResultPayload | HistoryGetResultPayload | HistoryReplayEventPayload | HistoryReplayDonePayload | HistoryUpdatePayload): void {
     const seq = this.outboundSeq++;
     const ts = Date.now();
     ws.send(JSON.stringify({ ...payload, seq, ts }));

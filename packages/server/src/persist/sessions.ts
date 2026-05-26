@@ -1,3 +1,4 @@
+import { unlinkSync } from "node:fs";
 import type { Database, Statement } from "bun:sqlite";
 import type { SessionRow } from "@cq/shared";
 import type { SessionFilter, SortSpec, PageSpec, PagedResult } from "./Persistence.js";
@@ -165,6 +166,16 @@ export class SessionStore {
   }
 
   delete(id: string): void {
+    // Collect all invocation event_log_paths for this session BEFORE the
+    // CASCADE delete removes the invocation rows.
+    const rows = this.db
+      .query<{ event_log_path: string }, [string]>(
+        "SELECT event_log_path FROM invocation WHERE session_id = ?",
+      )
+      .all(id);
     this.db.run("DELETE FROM session WHERE id = ?", [id]);
+    for (const r of rows) {
+      try { unlinkSync(r.event_log_path); } catch { /* best-effort */ }
+    }
   }
 }

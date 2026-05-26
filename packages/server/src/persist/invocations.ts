@@ -1,3 +1,4 @@
+import { unlinkSync } from "node:fs";
 import type { Database, Statement } from "bun:sqlite";
 import type { InvocationRow, HistoryRow, HistoryRowFull } from "@cq/shared";
 import type { InvocationFilter, InvocationSortSpec, PageSpec, PagedResult } from "./Persistence.js";
@@ -291,7 +292,31 @@ export class InvocationStore {
   }
 
   delete(id: string): void {
+    // Collect event_log_paths for this invocation and all its descendants
+    // (via ON DELETE CASCADE in SQLite) BEFORE the DELETE removes the rows.
+    const paths = this._collectDescendantPaths(id);
     this.db.run("DELETE FROM invocation WHERE id = ?", [id]);
+    for (const p of paths) {
+      try { unlinkSync(p); } catch { /* best-effort */ }
+    }
+  }
+
+  /**
+   * Collects event_log_path for the given invocation and all its transitive
+   * children (parent_invocation_id chain) using a recursive CTE.
+   */
+  private _collectDescendantPaths(rootId: string): string[] {
+    const rows = this.db
+      .query<{ event_log_path: string }, [string]>(`
+        WITH RECURSIVE desc(id) AS (
+          SELECT id FROM invocation WHERE id = ?
+          UNION ALL
+          SELECT i.id FROM invocation i JOIN desc d ON i.parent_invocation_id = d.id
+        )
+        SELECT event_log_path FROM invocation WHERE id IN (SELECT id FROM desc)
+      `)
+      .all(rootId);
+    return rows.map((r) => r.event_log_path);
   }
 
   searchFts(query: string, limit: number): InvocationRow[] {
