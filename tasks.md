@@ -34,7 +34,7 @@ Goal: every brief § 4 first-class affordance ticked — sub-agent nested cards,
 - [x] **PR-29** — Read-only mode overlay via `canUseTool` (F-03). Test: `read-only.test.ts`. Deps: PR-28.
 - [x] **PR-30** — MCP elicitation roundtrip (form + URL modes) (F-01). Tests: `elicitation.test.ts`, `elicitation-card.test.ts`. Deps: PR-19, PR-23.
 - [x] **PR-31** — AskUserQuestion card with Candidate-A spike (F-02). `askUserQuestion.ts` (`injectAnswer`) pushes synthetic `SDKUserMessage{tool_result}` onto the streaming-input queue. `AskCard.tsx` renders radio/checkbox questions with `preview` support; submits via `onReply` → `chat.question_reply` frame. Bridge handles `chat.question_reply` via `handleChatQuestionReply`; session.ts routes the frame. Stream.tsx detects `AskUserQuestion` tool_use → renders `AskCard` instead of UnknownCard; `onQuestionReply` prop wired through ChatTab. 6 new tests (2 web + 4 server). **Q-1 NOT FIRED** — implementation shipped against MockQuery; real-SDK verification deferred to PR-51 per PR-31-D01.
-- [ ] **PR-32** — Plan mode + ExitPlanMode card. Test: `plan-mode.test.ts`. Deps: PR-28.
+- [x] **PR-32** — Plan mode + ExitPlanMode card. Test: `plan-mode.test.ts`. Deps: PR-28.
 - [ ] **PR-33** — Thinking blocks (collapsed disclosure + token count). Test: `thinking.test.ts`. Deps: PR-22a.
 - [ ] **PR-34** — Slash-command autocomplete (`/` opens popover; fuzzy match init.slash_commands; IME-safe). Test: `slash-autocomplete.test.ts`. Deps: PR-21, PR-25.
 - [ ] **PR-35** — Attachments (clipboard image paste + drag-and-drop; 5 MB Zod refinement). Test: `attachments.test.ts`. Deps: PR-21.
@@ -46,9 +46,11 @@ Goal: every brief § 4 first-class affordance ticked — sub-agent nested cards,
 
 ## In-progress / recent
 
-- **PR-32** — Plan mode + ExitPlanMode card. Test: `plan-mode.test.ts`. Deps: PR-28.
+- **PR-33** — Thinking blocks (collapsed disclosure + token count). Test: `thinking.test.ts`. Deps: PR-22a.
 
 ## Recent completions (this cycle's worth)
+
+- [x] **PR-32** — Plan mode + ExitPlanMode card (F-06). `PlanModeCard.tsx` detects `EnterPlanMode`/`ExitPlanMode` tool_use blocks; renders orange/amber banner ("Plan Mode") with plan content; on `ExitPlanMode` surfaces approval status (Approved/Denied/Pending) from tool_result. `PlanModeCard.module.css` added. `index.ts` dispatches both names to `PlanModeCard`. 4 new tests → 292 total.
 
 - [x] **PR-31** — AskUserQuestion card with Candidate-A spike (F-02). `askUserQuestion.ts` (`injectAnswer`) pushes synthetic `SDKUserMessage{tool_result}` onto the streaming-input queue. `AskCard.tsx` renders radio/checkbox questions with `preview` support; submits via `onReply` → `chat.question_reply` frame. Bridge handles `chat.question_reply` via `handleChatQuestionReply`; session.ts routes the frame. Stream.tsx detects `AskUserQuestion` tool_use → renders `AskCard` instead of UnknownCard; `onQuestionReply` prop wired through ChatTab. 6 new tests (2 web + 4 server). **Q-1 NOT FIRED** — implementation shipped against MockQuery; real-SDK verification deferred to PR-51 per PR-31-D01. 288 tests total.
 

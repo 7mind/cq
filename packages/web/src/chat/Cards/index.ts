@@ -15,6 +15,7 @@ import { ReadCard } from "./ReadCard";
 import { WriteCard } from "./WriteCard";
 import { EditCard } from "./EditCard";
 import { BashCard } from "./BashCard";
+import { PlanModeCard } from "./PlanModeCard";
 import { UnknownCard } from "./UnknownCard";
 
 export type { ReadInput, ReadCardProps } from "./ReadCard";
@@ -125,6 +126,13 @@ export function ToolCard(
       return createElement(BashCard, {
         input: toolUse.input as import("./BashCard").BashInput,
         result: parseBashResult(resultContent),
+      });
+
+    case "EnterPlanMode":
+    case "ExitPlanMode":
+      return createElement(PlanModeCard, {
+        toolUse,
+        ...(toolResult !== undefined ? { toolResult } : {}),
       });
 
     default:
