@@ -1,0 +1,65 @@
+import type { SessionRow, InvocationRow } from "@cq/shared";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+
+// ---------------------------------------------------------------------------
+// Filter / sort / page helpers
+// ---------------------------------------------------------------------------
+
+export interface SessionFilter {
+  search?: string;
+  endedReason?: string;
+}
+
+export type SessionSortField = "startedAt" | "endedAt" | "totalCostUsd";
+export type SortDir = "asc" | "desc";
+
+export interface SortSpec {
+  field: SessionSortField;
+  dir: SortDir;
+}
+
+export interface PageSpec {
+  limit: number;
+  offset: number;
+}
+
+export interface PagedResult<T> {
+  rows: T[];
+  total: number;
+}
+
+// ---------------------------------------------------------------------------
+// Persistence interface
+// ---------------------------------------------------------------------------
+
+/**
+ * Type-only persistence interface. Implementations are provided by
+ * `SqlitePersistence` (PR-40) and `InMemoryPersistence` (PR-40).
+ */
+export interface Persistence {
+  sessions: {
+    insert(row: SessionRow): void;
+    update(id: string, patch: Partial<SessionRow>): void;
+    get(id: string): SessionRow | undefined;
+    list(filter: SessionFilter, sort: SortSpec, page: PageSpec): PagedResult<SessionRow>;
+    delete(id: string): void;
+  };
+
+  invocations: {
+    insert(row: InvocationRow): void;
+    update(id: string, patch: Partial<InvocationRow>): void;
+    get(id: string): InvocationRow | undefined;
+    listForSession(sessionId: string): InvocationRow[];
+    delete(id: string): void;
+    searchFts(query: string, limit: number): InvocationRow[];
+  };
+
+  events: {
+    append(invocationId: string, event: SDKMessage): void;
+    readAll(invocationId: string): AsyncIterable<SDKMessage>;
+    close(invocationId: string): void;
+  };
+
+  withTx<T>(fn: () => T): T;
+  close(): void;
+}

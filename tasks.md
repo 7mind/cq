@@ -22,13 +22,13 @@
 - [ ] **M4 — Persistence + History tab** — DDL, adapters, bridge writes, list/detail/timing/export/delete, resume-from-history. *PRs PR-39 … PR-47 (9).*
 - [ ] **M5 — Polish & harden** — graceful shutdown, error toasts, a11y, E2E suite, README, type/lint clean, stop-condition verify. *PRs PR-48 … PR-54 (7).*
 
-Total PR count: 56 (PR-01 … PR-54 + PR-09a + PR-22b; PR-22a replaces old PR-22). 40 of 56 closed (333 tests passing).
+Total PR count: 56 (PR-01 … PR-54 + PR-09a + PR-22b; PR-22a replaces old PR-22). 41 of 56 closed (338 tests passing).
 
 ## M4 — Persistence + History tab (current milestone)
 
 Goal: SQLite + JSONL persistence layer; live writes from the bridge; History tab with list view (sortable/filterable/FTS), detail view (reuses Chat renderer), timing strip, export, delete; resume-from-history end-to-end.
 
-- [ ] **PR-39** — Persistence layer: DDL + migrations + open; `Persistence.ts` interface; FTS triggers. Test: `persist-open.test.ts`. Deps: PR-04.
+- [x] **PR-39** — Persistence layer: DDL + migrations + open; `Persistence.ts` interface; FTS triggers. Test: `persist-open.test.ts`. Deps: PR-04.
 - [ ] **PR-40** — `SqlitePersistence` + `InMemoryPersistence` (dual-tests); CRUD + paginate + filter + FTS; JSONL event-log writer; FTS-update assertion (F-13). Test: `persist-crud.test.ts`. Deps: PR-39.
 - [ ] **PR-41** — Bridge writes to persistence (live): chat.start → insert session+invocation; events → JSONL; task_started → child invocation; `history.update` live. Test: `bridge-persist.test.ts`. Deps: PR-26, PR-40.
 - [ ] **PR-42** — Web `HistoryTab` list view (sortable, filterable, FTS search). Test: `history-list.test.ts`. Deps: PR-40.
@@ -42,7 +42,7 @@ Goal: SQLite + JSONL persistence layer; live writes from the bridge; History tab
 
 ## In-progress / recent
 
-- **PR-39** — about to dispatch.
+- **PR-40** — `SqlitePersistence` + `InMemoryPersistence` (dual-tests); CRUD + paginate + filter + FTS; JSONL event-log writer; FTS-update assertion (F-13). Test: `persist-crud.test.ts`. Deps: PR-39.
 
 ## Recent completions (this cycle's worth)
 
