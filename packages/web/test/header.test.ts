@@ -129,10 +129,11 @@ describe("Header — session metadata display", () => {
     expect(sessionEl).not.toBeNull();
     expect(sessionEl!.textContent).toBe(`#${SESSION_ID.slice(0, 8)}`);
 
-    // started-at ISO string
-    const startedEl = c.querySelector("[data-testid='started-at']");
-    expect(startedEl).not.toBeNull();
-    expect(startedEl!.textContent).toBe(new Date(STARTED_AT).toISOString());
+    // D44: ISO started-at was replaced with session-status badge.
+    const statusEl = c.querySelector("[data-testid='session-status']");
+    expect(statusEl).not.toBeNull();
+    // Has sessionId + !inProgress → IDLE
+    expect(statusEl!.textContent).toBe("IDLE");
   });
 
   test("2. usage event updates token/cost counters", () => {

@@ -58,6 +58,37 @@
   white-space: nowrap;
 }
 
+/* D44: status / subagent count badges. */
+.badge {
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: monospace;
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.badgeBusy {
+  background: #d97706;
+  color: #fff;
+}
+
+.badgeIdle {
+  background: #475569;
+  color: #fff;
+}
+
+.badgeNew {
+  background: #334155;
+  color: #cbd5e1;
+}
+
+.badgeSub {
+  background: #1e40af;
+  color: #dbeafe;
+}
+
 .spacer {
   flex: 1;
 }

@@ -43,6 +43,7 @@ import type { SlashCommand } from "./SlashPopover";
 import type { Attachment } from "../lib/attachment";
 import { showToast } from "../lib/toast";
 import { computeTasks } from "./computeTasks";
+import { computeSubagentCount } from "./computeSubagentCount";
 import { TaskListSidebar } from "./TaskListSidebar";
 import { isMacPlatform } from "../lib/platform";
 import { computeMatchIndices, computeRenderedMessages } from "./Stream";
@@ -513,6 +514,7 @@ export function ChatTab(): React.ReactElement {
   // The sidebar is always rendered when tasks are present; it is hidden (empty)
   // when the Map is empty — callers do not need to toggle it manually.
   const tasks = useMemo(() => computeTasks(chatEvents), [chatEvents]);
+  const subagentCounts = useMemo(() => computeSubagentCount(chatEvents), [chatEvents]);
 
   // `inProgress` is the explicit state set/cleared in the chat.input → chat.done
   // window above; activeSessionId is the persistent session handle.
@@ -537,6 +539,7 @@ export function ChatTab(): React.ReactElement {
         sessionId={sessionId}
         startedAt={startedAt}
         inProgress={inProgress}
+        runningSubagents={subagentCounts.running}
         onNewSession={handleNewSession}
         onResumeSession={handleResumeSession}
         hideSdkEvents={hideSdkEvents}

@@ -61,6 +61,9 @@ export interface HeaderProps {
   sessionId: string | null;
   startedAt: number | null;
   inProgress: boolean;
+  /** D44: count of subagents currently mid-flight (task_started without
+   *  matching task_notification). Driven by computeSubagentCount in ChatTab. */
+  runningSubagents?: number;
   onNewSession: () => void;
   onResumeSession: (invocationId: string) => void;
   hideSdkEvents: boolean;
@@ -92,6 +95,7 @@ export function Header({
   sessionId,
   startedAt,
   inProgress,
+  runningSubagents = 0,
   onNewSession,
   onResumeSession,
   hideSdkEvents,
@@ -155,8 +159,9 @@ export function Header({
   const durationText =
     startedAt !== null ? formatDuration(startedAt, now) : "--:--";
 
-  const startedAtText =
-    startedAt !== null ? new Date(startedAt).toISOString() : "—";
+  // D44: session status badge — "BUSY" while a turn is in flight (inProgress),
+  // "IDLE" once chat.done landed and we're waiting for next input.
+  const statusBadge = sessionId === null ? "NEW" : inProgress ? "BUSY" : "IDLE";
 
   return (
     <>
@@ -223,8 +228,28 @@ export function Header({
           <span className={styles.sessionId} data-testid="session-id">—</span>
         )}
 
-        {/* started-at */}
-        <span className={styles.meta} data-testid="started-at">{startedAtText}</span>
+        {/* D44: session status + subagent count badges (replaces the ISO
+            startup timestamp which was visually noisy). */}
+        <span
+          className={`${styles.badge} ${
+            statusBadge === "BUSY" ? styles.badgeBusy :
+            statusBadge === "IDLE" ? styles.badgeIdle :
+            styles.badgeNew
+          }`}
+          data-testid="session-status"
+          title={`Session status: ${statusBadge.toLowerCase()}`}
+        >
+          {statusBadge}
+        </span>
+        {runningSubagents > 0 && (
+          <span
+            className={`${styles.badge} ${styles.badgeSub}`}
+            data-testid="subagent-count"
+            title={`${runningSubagents} subagent${runningSubagents === 1 ? "" : "s"} running`}
+          >
+            {runningSubagents} sub
+          </span>
+        )}
 
         {/* duration */}
         <span className={styles.meta} data-testid="duration">{durationText}</span>
