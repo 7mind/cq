@@ -38,7 +38,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   if (dbPath !== ":memory:") {
     mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
   }
-  const persistence = new SqlitePersistence(dbPath);
+  const persistence = new SqlitePersistence(dbPath, undefined, logger);
   const bridge = new Bridge({ logger, registry, cwd, persistence });
 
   // Track all open WS sockets for graceful close-with-code.
