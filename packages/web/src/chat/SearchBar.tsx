@@ -67,8 +67,15 @@ export function SearchBar({
         ? "No results"
         : `${currentMatch} / ${matchCount}`;
 
+  function handleBarKeyDown(e: React.KeyboardEvent<HTMLDivElement>): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      onClose();
+    }
+  }
+
   return (
-    <div className={styles.bar} role="search" aria-label="Search messages" data-testid="search-bar">
+    <div className={styles.bar} role="search" aria-label="Search messages" data-testid="search-bar" onKeyDown={handleBarKeyDown}>
       <input
         ref={inputRef}
         className={styles.input}
