@@ -53,8 +53,25 @@ export default function App(): React.ReactElement {
         </button>
       </nav>
       <SessionProvider>
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          {activeTab === "chat" ? <ChatTab /> : <HistoryTab />}
+        <div
+          style={{
+            flex: 1,
+            overflow: "hidden",
+            display: activeTab === "chat" ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
+          <ChatTab />
+        </div>
+        <div
+          style={{
+            flex: 1,
+            overflow: "hidden",
+            display: activeTab === "history" ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
+          <HistoryTab />
         </div>
       </SessionProvider>
     </div>
