@@ -65,6 +65,7 @@ function makeInvocation(sessionId: string, overrides: Partial<InvocationRow> = {
     costUsd: 0,
     promptExcerpt: "test prompt",
     eventLogPath: "events/test.jsonl",
+    ownerPid: null,
     ...overrides,
   };
 }
@@ -522,11 +523,16 @@ function runSuite(label: string, factory: () => Persistence): void {
     });
 
     // -----------------------------------------------------------------------
-    // 15. reapOrphans: running rows become stopped; completed rows unchanged
+    // 15. reapOrphans: running rows with a dead ownerPid become stopped;
+    //     completed rows unchanged
     // -----------------------------------------------------------------------
     test("reapOrphans transitions running rows to stopped, leaves completed unchanged", () => {
       const session = makeSession();
       p.sessions.insert(session);
+
+      // D42: use a deliberately-dead PID so the reaper picks this row up.
+      // PID 999999999 is far above the Linux/macOS max PID (~4M) — guaranteed ESRCH.
+      const deadPid = 999999999;
 
       const now = Date.now();
       const runningInv = makeInvocation(session.id, {
@@ -534,12 +540,14 @@ function runSuite(label: string, factory: () => Persistence): void {
         startedAt: now - 5000,
         endedAt: null,
         durationMs: null,
+        ownerPid: deadPid,
       });
       const completedInv = makeInvocation(session.id, {
         status: "completed",
         startedAt: now - 3000,
         endedAt: now - 1000,
         durationMs: 2000,
+        ownerPid: deadPid,
       });
       p.invocations.insert(runningInv);
       p.invocations.insert(completedInv);
@@ -559,6 +567,44 @@ function runSuite(label: string, factory: () => Persistence): void {
       expect(unchanged?.status).toBe("completed");
       expect(unchanged?.endedAt).toBe(now - 1000);
       expect(unchanged?.durationMs).toBe(2000);
+    });
+
+    // -----------------------------------------------------------------------
+    // D42. reapOrphans: rows with ownerPid=null are never reaped
+    // -----------------------------------------------------------------------
+    test("D42: reapOrphans leaves running row with ownerPid=null untouched", () => {
+      const session = makeSession();
+      p.sessions.insert(session);
+
+      const inv = makeInvocation(session.id, {
+        status: "running",
+        ownerPid: null,
+      });
+      p.invocations.insert(inv);
+
+      p.reapOrphans?.();
+
+      const row = p.invocations.get(inv.id);
+      expect(row?.status).toBe("running");
+    });
+
+    // -----------------------------------------------------------------------
+    // D42. reapOrphans: rows owned by our own (alive) PID are never reaped
+    // -----------------------------------------------------------------------
+    test("D42: reapOrphans leaves running row owned by alive PID untouched", () => {
+      const session = makeSession();
+      p.sessions.insert(session);
+
+      const inv = makeInvocation(session.id, {
+        status: "running",
+        ownerPid: process.pid,
+      });
+      p.invocations.insert(inv);
+
+      p.reapOrphans?.();
+
+      const row = p.invocations.get(inv.id);
+      expect(row?.status).toBe("running");
     });
   });
 }
@@ -638,7 +684,13 @@ describe("D29: tryAcquireDbLock", () => {
     const persA = new SqlitePersistence(dbFile);
     const session = makeSession();
     persA.sessions.insert(session);
-    const runningInv = makeInvocation(session.id, { status: "running", endedAt: null, durationMs: null });
+    // D42: use a dead ownerPid so the reaper (when it runs) will pick this row up.
+    const runningInv = makeInvocation(session.id, {
+      status: "running",
+      endedAt: null,
+      durationMs: null,
+      ownerPid: 999999999,
+    });
     persA.invocations.insert(runningInv);
 
     // Open B on the same file. A still holds the lock so B must skip reaping.
@@ -651,10 +703,42 @@ describe("D29: tryAcquireDbLock", () => {
     // Close A — releases the lock.
     persA.close();
 
-    // Open C — reclaims the stale lock and reaps.
+    // Open C — reclaims the stale lock and reaps (ownerPid 999999999 is dead).
     const persC = new SqlitePersistence(dbFile);
     const reaped = persC.invocations.get(runningInv.id);
     expect(reaped?.status).toBe("stopped");
+    persC.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // D42. SqlitePersistence with runReaper:false skips the reaper entirely
+  // -------------------------------------------------------------------------
+  test("D42: SqlitePersistence with runReaper=false skips reaper; default reopening reaps", () => {
+    const dbFile = join(tmpDir, "noreaper.db");
+
+    // Open with runReaper=false — insert a running row with a dead ownerPid.
+    const persA = new SqlitePersistence(dbFile, undefined, undefined, false);
+    const session = makeSession();
+    persA.sessions.insert(session);
+    const runningInv = makeInvocation(session.id, {
+      status: "running",
+      endedAt: null,
+      durationMs: null,
+      ownerPid: 999999999,
+    });
+    persA.invocations.insert(runningInv);
+    persA.close();
+
+    // Reopen with runReaper=false — row must still be 'running' (no reap).
+    const persB = new SqlitePersistence(dbFile, undefined, undefined, false);
+    const rowB = persB.invocations.get(runningInv.id);
+    expect(rowB?.status).toBe("running");
+    persB.close();
+
+    // Reopen with default runReaper=true — reaper fires and marks row 'stopped'.
+    const persC = new SqlitePersistence(dbFile);
+    const rowC = persC.invocations.get(runningInv.id);
+    expect(rowC?.status).toBe("stopped");
     persC.close();
   });
 });

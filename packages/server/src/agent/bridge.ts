@@ -426,6 +426,7 @@ export class Bridge {
       costUsd: 0,
       promptExcerpt: "",
       eventLogPath: invocationEventLogPath,
+      ownerPid: process.pid,
     };
     this.persistence.withTx(() => {
       if (isResumption) {
@@ -1003,6 +1004,7 @@ export class Bridge {
       costUsd: 0,
       promptExcerpt: (msg.prompt ?? msg.description).slice(0, 500),
       eventLogPath: `${session.chatSessionId}/${childInvocationId}.jsonl`,
+      ownerPid: process.pid,
     };
     this.persistence.invocations.insert(childRow);
     this.sendHistoryUpdate(ws, childInvocationId, {

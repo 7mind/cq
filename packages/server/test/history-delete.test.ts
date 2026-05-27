@@ -75,6 +75,7 @@ function makeInvocation(
     promptExcerpt: "test",
     // The SqliteEventLog resolves paths as `${eventsDir}/${invocationId}.jsonl`
     eventLogPath: join(eventsDir, `${id}.jsonl`),
+    ownerPid: null,
     ...overrides,
   };
 }

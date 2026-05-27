@@ -220,6 +220,7 @@ describe("Resume-from-history", () => {
       costUsd: 0,
       promptExcerpt: "prior session prompt",
       eventLogPath: `${existingSessionId}/${existingInvocationId}.jsonl`,
+      ownerPid: null,
     };
     persistence.sessions.insert(sessionRow);
     persistence.invocations.insert(invocationRow);
@@ -298,6 +299,7 @@ describe("Resume-from-history", () => {
       costUsd: 0,
       promptExcerpt: "replay test",
       eventLogPath: `${sessionId}/${invocationId}.jsonl`,
+      ownerPid: null,
     };
     persistence.sessions.insert(sessionRow);
     persistence.invocations.insert(invocationRow);

@@ -43,4 +43,6 @@ export interface InvocationRow {
   costUsd: number;
   promptExcerpt: string; // truncated 500ch
   eventLogPath: string; // relative path to JSONL file
+  /** D42: PID of the cq process that owns this row. NULL means unknown — never reaped. */
+  ownerPid: number | null;
 }

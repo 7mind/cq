@@ -34,7 +34,18 @@ export class SqlitePersistence implements Persistence {
   /** Lock held by this instance; only set for file-backed DBs. */
   private _lock: CqLock | null = null;
 
-  constructor(path: string, eventsDir?: string, logger?: Logger) {
+  /**
+   * @param path       SQLite file path or `:memory:`.
+   * @param eventsDir  Directory for JSONL event logs (auto-derived when omitted).
+   * @param logger     Optional structured logger.
+   * @param runReaper  When `false`, skip both the PID-file lock acquisition and
+   *                   the orphan reaper entirely. Pass `false` for any
+   *                   non-production opener — diagnostic scripts, tests that
+   *                   probe a shared file-backed DB — to avoid clobbering live
+   *                   'running' rows or racing with the production process.
+   *                   Defaults to `true`.
+   */
+  constructor(path: string, eventsDir?: string, logger?: Logger, runReaper = true) {
     const isMemory = path === ":memory:";
     this.db = isMemory ? this._openMemory() : openDb(path);
 
@@ -52,11 +63,13 @@ export class SqlitePersistence implements Persistence {
     this.eventLog = new SqliteEventLog(dir);
     this.settingsStore = new SettingsStore(this.db);
 
-    if (!isMemory) {
+    if (!isMemory && runReaper) {
       // D29: Use a PID-file lock so that only the process that owns the lock
       // runs the reaper. A second process opening the same DB (e.g. a diagnostic
       // script or a second cq instance) will see the lock held and skip reaping,
       // preventing it from clobbering live "running" rows.
+      // D42: per-row liveness check is now the primary defence; the PID-file
+      // lock remains as belt-and-suspenders to avoid concurrent reaper races.
       const lock = tryAcquireDbLock(path, logger);
       this._lock = lock;
       if (lock.acquired) {

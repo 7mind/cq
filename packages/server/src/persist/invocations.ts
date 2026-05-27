@@ -27,6 +27,7 @@ interface InvocationSqlRow {
   cost_usd: number;
   prompt_excerpt: string;
   event_log_path: string;
+  owner_pid: number | null;
 }
 
 function toRow(r: InvocationSqlRow): InvocationRow {
@@ -50,6 +51,7 @@ function toRow(r: InvocationSqlRow): InvocationRow {
     costUsd: r.cost_usd,
     promptExcerpt: r.prompt_excerpt,
     eventLogPath: r.event_log_path,
+    ownerPid: r.owner_pid,
   };
 }
 
@@ -124,12 +126,12 @@ export class InvocationStore {
         (id, session_id, parent_invocation_id, resumed_from_invocation_id,
          agent_name, agent_id, task_id, tool_use_id, model, started_at,
          ended_at, duration_ms, status, tool_call_count, input_tokens,
-         output_tokens, cost_usd, prompt_excerpt, event_log_path)
+         output_tokens, cost_usd, prompt_excerpt, event_log_path, owner_pid)
       VALUES
         ($id, $session_id, $parent_invocation_id, $resumed_from_invocation_id,
          $agent_name, $agent_id, $task_id, $tool_use_id, $model, $started_at,
          $ended_at, $duration_ms, $status, $tool_call_count, $input_tokens,
-         $output_tokens, $cost_usd, $prompt_excerpt, $event_log_path)
+         $output_tokens, $cost_usd, $prompt_excerpt, $event_log_path, $owner_pid)
     `);
 
     this.stmtGet = db.prepare<InvocationSqlRow, [string]>(
@@ -162,6 +164,7 @@ export class InvocationStore {
       $cost_usd: row.costUsd,
       $prompt_excerpt: row.promptExcerpt,
       $event_log_path: row.eventLogPath,
+      $owner_pid: row.ownerPid,
     });
   }
 
@@ -363,29 +366,51 @@ export class InvocationStore {
   }
 
   /**
-   * One-shot startup reaper: marks any invocation rows stuck at status='running'
-   * as 'stopped' (interrupted by server restart — no genuine SDK error
-   * occurred), setting ended_at + duration_ms. Idempotent.
+   * One-shot startup reaper: marks 'running' invocation rows whose owner
+   * process is no longer alive as 'stopped'. Status 'stopped' (not 'failed')
+   * because no SDK error occurred; only PIDs whose process is no longer alive
+   * are reaped.
    *
-   * Run once at SqlitePersistence construction (after migrations) so unclean
-   * shutdowns don't leave permanent "running" rows in the History tab.
+   * Per-row liveness check (D42):
+   * - Rows with owner_pid IS NULL are NEVER reaped — unknown owner, safest
+   *   to leave them in place.
+   * - Rows owned by this process (owner_pid === process.pid) are never reaped
+   *   (they are live by definition).
+   * - Rows whose owner_pid refers to a dead process (ESRCH from kill(pid,0))
+   *   are transitioned to 'stopped'.
    *
-   * Status choice: 'stopped' (not 'failed') because users observe their
-   * sessions continuing to work in the browser after a server restart — the
-   * row was just left in an inconsistent state, not produced by an SDK
-   * error. 'failed' triggers a red badge and implies an error the user can
-   * inspect; there is none to surface here.
+   * Idempotent — run once at SqlitePersistence construction (after migrations).
    */
   reapOrphans(now: number): number {
-    const result = this.db.run(
-      `UPDATE invocation
-         SET status='stopped',
-             ended_at=COALESCE(ended_at, ?),
-             duration_ms=COALESCE(duration_ms, ? - started_at)
-       WHERE status='running'`,
-      [now, now],
-    );
-    return result.changes;
+    const candidates = this.db
+      .query<{ id: string; owner_pid: number | null; started_at: number }, []>(
+        `SELECT id, owner_pid, started_at FROM invocation WHERE status='running'`,
+      )
+      .all();
+    let reaped = 0;
+    for (const c of candidates) {
+      if (c.owner_pid === null) continue; // unknown owner — never reap
+      if (c.owner_pid === process.pid) continue; // our own row — never reap
+      // Probe liveness.
+      let alive: boolean;
+      try {
+        process.kill(c.owner_pid, 0);
+        alive = true;
+      } catch {
+        alive = false;
+      }
+      if (alive) continue;
+      this.db.run(
+        `UPDATE invocation
+           SET status='stopped',
+               ended_at=COALESCE(ended_at, ?),
+               duration_ms=COALESCE(duration_ms, ? - started_at)
+         WHERE id = ?`,
+        [now, now, c.id],
+      );
+      reaped++;
+    }
+    return reaped;
   }
 
   searchFts(query: string, limit: number): InvocationRow[] {

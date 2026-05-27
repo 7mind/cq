@@ -119,6 +119,16 @@ CREATE TABLE IF NOT EXISTS ui_settings (
 INSERT OR IGNORE INTO ui_settings (id, model, permission_mode, hide_sdk_events) VALUES (1, NULL, NULL, 0);
 `,
   },
+  {
+    // D42: per-row owner PID so the reaper can distinguish orphaned rows from
+    // rows belonging to a live process. NULL means unknown owner — never reaped.
+    // Existing 'running' rows from before this migration keep NULL and are left
+    // alone (safest).
+    version: 5,
+    up: `
+ALTER TABLE invocation ADD COLUMN owner_pid INTEGER;
+`,
+  },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): void {
