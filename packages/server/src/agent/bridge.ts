@@ -780,6 +780,10 @@ export class Bridge {
     let ws = initialWs;
     let initSent = false;
     let doneReason: ChatDone["reason"] = "completed";
+    // Tracks whether we already emitted chat.done for the most recent turn.
+    // Prevents a second chat.done (reason='interrupted') from being emitted when
+    // the for-await ends or catches after a turn that already completed normally.
+    let turnDoneSent = false;
 
     try {
       for await (const msg of session.query) {
@@ -960,6 +964,7 @@ export class Bridge {
             ? "errored"
             : "completed";
           this.sendDone(session.ws, session, turnDone);
+          turnDoneSent = true;
 
           // D28b: when the SDK closes the turn with an error subtype, surface
           // a chat.error frame so the UI toast fires. Without this, the session
@@ -981,13 +986,22 @@ export class Bridge {
       // close the query.
       ws = session.ws;
       doneReason = session.aborting ? "interrupted" : "completed";
-      this.sendDone(ws, session, doneReason);
+      // Only emit if the current turn didn't already complete (avoids double chat.done
+      // when the for-await ends immediately after a result message sent turnDoneSent=true).
+      if (!turnDoneSent) {
+        this.sendDone(ws, session, doneReason);
+        turnDoneSent = true;
+      }
     } catch (err: unknown) {
       ws = session.ws;
       // If the SDK throws after an interrupt, still report interrupted, not errored.
       if (session.aborting) {
         doneReason = "interrupted";
-        this.sendDone(ws, session, doneReason);
+        // Suppress the duplicate chat.done when the last turn already completed.
+        if (!turnDoneSent) {
+          this.sendDone(ws, session, doneReason);
+          turnDoneSent = true;
+        }
       } else {
         this.logger.error("bridge.sdk_error", {
           chatSessionId: session.chatSessionId,
@@ -1003,7 +1017,10 @@ export class Bridge {
           error: errMessage,
           timestamp: Date.now(),
         } as unknown as SDKMessage);
-        this.sendDone(ws, session, doneReason);
+        if (!turnDoneSent) {
+          this.sendDone(ws, session, doneReason);
+          turnDoneSent = true;
+        }
         this.sendError(ws, session.chatSessionId, "SDK_ERROR", errMessage);
       }
     } finally {

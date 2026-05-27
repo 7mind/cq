@@ -571,6 +571,75 @@ describe("Bridge", () => {
   });
 
   // --------------------------------------------------------------------------
+  // R4: exactly ONE chat.done per session — no duplicate when preempt follows
+  //     a completed turn (result{success} already sent chat.done{completed})
+  // --------------------------------------------------------------------------
+  it("R4: only one chat.done emitted for session A when preempt follows a completed turn", async () => {
+    const resultMsg: SDKMessage = {
+      type: "result",
+      subtype: "success",
+      duration_ms: 100,
+      duration_api_ms: 90,
+      is_error: false,
+      num_turns: 1,
+      stop_reason: "end_turn",
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      modelUsage: {},
+      permission_denials: [],
+      uuid: "00000000-0000-4000-a000-000000000010",
+      session_id: "00000000-0000-4000-a000-000000000002",
+    } as unknown as SDKMessage;
+
+    // Session A: yields init + result{success}, then hangs waiting to be interrupted.
+    let resolveA!: () => void;
+    const hangA = new Promise<void>((r) => { resolveA = r; });
+    const genA = (async function* (): AsyncGenerator<SDKMessage, void> {
+      yield makeInitMessage();
+      yield resultMsg;
+      // Hang after the completed turn so session A is still alive when we preempt.
+      await hangA;
+    })();
+    const queryA = genA as unknown as MockQuery;
+    patchWithStubs(queryA);
+    queryA.interrupt = async () => { resolveA(); };
+    queryA.close = () => { resolveA(); };
+
+    // Session B: minimal — just emits init.
+    const queryB = makeMockQuery([makeInitMessage()]);
+
+    let call = 0;
+    const ws1 = new MockWsSocket();
+    const ws2 = new MockWsSocket();
+    const bridge = new Bridge({
+      logger: noopLogger,
+      registry: new SessionRegistry(),
+      queryFactory: () => (++call === 1 ? queryA : queryB),
+      cwd: "/tmp/test",
+    });
+
+    // Start session A and wait for the turn to complete (chat.done{completed}).
+    await bridge.handleChatStart(ws1, makeChatStart());
+    const [startedA] = await ws1.waitForFrames("chat.started", 1);
+    const sessionAId = startedA!.sessionId as string;
+    await ws1.waitForFrames("chat.done", 1);
+
+    // Preempt with session B.
+    await bridge.handleChatStart(ws2, makeChatStart());
+
+    // Give the old A runLoop's finally time to fire.
+    await Bun.sleep(50);
+
+    // Session A must have received exactly ONE chat.done (reason='completed').
+    const adonesAll = ws1.framesOfType("chat.done");
+    const adones = adonesAll.filter((f) => f.sessionId === sessionAId);
+    expect(adones).toHaveLength(1);
+    expect(adones[0]!.reason).toBe("completed");
+
+    await bridge.shutdown();
+  });
+
+  // --------------------------------------------------------------------------
   // R1: broker teardown is guarded by session identity — preempt does not
   //     clear the NEW session's broker wiring from the OLD runLoop's finally
   // --------------------------------------------------------------------------
