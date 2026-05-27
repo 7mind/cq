@@ -627,6 +627,90 @@ describe("Bridge persistence", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Test D36: child invocation event log populated from messages with parent_tool_use_id
+  // ---------------------------------------------------------------------------
+
+  it("D36: assistant messages with parent_tool_use_id are written to child event log; task control messages stay on parent only", async () => {
+    const persistence = new InMemoryPersistence();
+    const taskId = "task-d36-001";
+    const toolUseId = "tu_1";
+
+    // An assistant message attributed to the subagent (parent_tool_use_id = tu_1).
+    const subagentMsg: SDKMessage = {
+      type: "assistant",
+      message: {
+        id: "msg_child_d36",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "subagent output" }],
+        model: "claude-test",
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 5, output_tokens: 3 },
+      },
+      parent_tool_use_id: toolUseId,
+      uuid: "00000000-0000-4000-a000-d36000000001",
+      session_id: "00000000-0000-4000-a000-000000000002",
+    } as unknown as SDKMessage;
+
+    const script: SDKMessage[] = [
+      makeInitMessage(),
+      makeTaskStartedMessage(taskId, toolUseId),
+      subagentMsg,
+      makeTaskNotificationMessage(taskId, toolUseId),
+    ];
+    const { bridge, ws } = makeBridgeWithPersistence(script, persistence);
+
+    await bridge.handleChatStart(ws, makeChatStart());
+    await ws.waitForFrames("chat.done");
+
+    const sessions = persistence.sessions.list(
+      {},
+      { field: "startedAt", dir: "desc" },
+      { limit: 10, offset: 0 },
+    );
+    const sessionId = sessions.rows[0]!.id;
+    const invocations = persistence.invocations.listForSession(sessionId);
+
+    const topLevel = invocations.find((r) => r.agentName === "main");
+    const child = invocations.find((r) => r.agentName !== "main");
+    expect(topLevel).toBeDefined();
+    expect(child).toBeDefined();
+
+    // Child log must contain the assistant message with parent_tool_use_id.
+    const childEvents: SDKMessage[] = [];
+    for await (const e of persistence.events.readAll(child!.id)) {
+      childEvents.push(e);
+    }
+    const childAssistant = childEvents.find(
+      (e) => (e as Record<string, unknown>)["type"] === "assistant",
+    );
+    expect(childAssistant).toBeDefined();
+
+    // Parent log must contain ALL messages (task_started, subagent assistant, task_notification).
+    const parentEvents: SDKMessage[] = [];
+    for await (const e of persistence.events.readAll(topLevel!.id)) {
+      parentEvents.push(e);
+    }
+    const parentHasTaskStarted = parentEvents.some(
+      (e) =>
+        (e as Record<string, unknown>)["type"] === "system" &&
+        (e as Record<string, unknown>)["subtype"] === "task_started",
+    );
+    const parentHasAssistant = parentEvents.some(
+      (e) => (e as Record<string, unknown>)["type"] === "assistant",
+    );
+    const parentHasTaskNotification = parentEvents.some(
+      (e) =>
+        (e as Record<string, unknown>)["type"] === "system" &&
+        (e as Record<string, unknown>)["subtype"] === "task_notification",
+    );
+    expect(parentHasTaskStarted).toBe(true);
+    expect(parentHasAssistant).toBe(true);
+    expect(parentHasTaskNotification).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
   // Test 8 (D31): SDK iterator throws → system:error appended to event log
   // ---------------------------------------------------------------------------
 

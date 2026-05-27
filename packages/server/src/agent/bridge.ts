@@ -751,7 +751,25 @@ export class Bridge {
         }
 
         // Persist the raw SDK event to the JSONL log (with any augmentations).
-        this.persistence.events.append(session.invocationId, fwdMsg);
+        // D36: if parent_tool_use_id resolves to a known child invocation, append to
+        // the child log (and also to the parent for continuity). task_started and
+        // task_notification are control messages about the task lifecycle — they always
+        // go to the parent only (the child row doesn't exist yet at task_started time).
+        {
+          const rawParentToolUseId = (fwdMsg as Record<string, unknown>)["parent_tool_use_id"];
+          const parentToolUseId = typeof rawParentToolUseId === "string" ? rawParentToolUseId : null;
+          const childInvId = parentToolUseId !== null
+            ? session.toolUseInvocationMap.get(parentToolUseId)
+            : undefined;
+
+          if (childInvId !== undefined) {
+            // Write to child log + parent log for streaming UX continuity.
+            this.persistence.events.append(childInvId, fwdMsg);
+            this.persistence.events.append(session.invocationId, fwdMsg);
+          } else {
+            this.persistence.events.append(session.invocationId, fwdMsg);
+          }
+        }
 
         // All other messages → chat.event via replay buffer.
         this.sendEvent(ws, session, fwdMsg);
