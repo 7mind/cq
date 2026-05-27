@@ -11,6 +11,7 @@ declare global {
   var __e2e_mock_proc: ChildProcess | undefined;
   var __e2e_cq_proc: ChildProcess | undefined;
   var __e2e_tmp_home: string | undefined;
+  var __e2e_tmp_cwd: string | undefined;
 }
 
 function kill(proc: ChildProcess | undefined): Promise<void> {
@@ -54,6 +55,15 @@ export default async function globalTeardown(): Promise<void> {
   if (globalThis.__e2e_tmp_home) {
     try {
       fs.rmSync(globalThis.__e2e_tmp_home, { recursive: true, force: true });
+    } catch {
+      // Non-fatal cleanup failure.
+    }
+  }
+
+  // Clean up the per-run cwd (where docs/ledgers.yaml lives).
+  if (globalThis.__e2e_tmp_cwd) {
+    try {
+      fs.rmSync(globalThis.__e2e_tmp_cwd, { recursive: true, force: true });
     } catch {
       // Non-fatal cleanup failure.
     }

@@ -76,6 +76,7 @@ declare global {
   var __e2e_mock_proc: ChildProcess | undefined;
   var __e2e_cq_proc: ChildProcess | undefined;
   var __e2e_tmp_home: string | undefined;
+  var __e2e_tmp_cwd: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,9 +169,15 @@ export default async function globalSetup(): Promise<void> {
   const cqUrl = `http://127.0.0.1:${cqPort}`;
   const webDist = path.join(rootDir, "packages/web/dist");
 
+  // Build a tmp cwd for the cq server so it writes docs/ledgers.yaml etc.
+  // into an isolated directory we can inspect from tests (e.g. the ledger
+  // create_ledger E2E spec).
+  const tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), "cq-e2e-cwd-"));
+  globalThis.__e2e_tmp_cwd = tmpCwd;
+
   const cqProc = spawn(
     bun,
-    ["run", cqScript, "--", "--port", String(cqPort), "--db", ":memory:"],
+    ["run", cqScript, "--", "--port", String(cqPort), "--db", ":memory:", "--cwd", tmpCwd],
     {
       env: {
         ...process.env,
@@ -211,6 +218,7 @@ export default async function globalSetup(): Promise<void> {
 
   process.env["MOCK_ADMIN_URL"] = mockUrl;
   process.env["CQ_BASE_URL"] = cqUrl;
+  process.env["CQ_E2E_CWD"] = tmpCwd;
 
   globalThis.__e2e_mock_proc = mockProc;
   globalThis.__e2e_cq_proc = cqProc;

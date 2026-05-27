@@ -38,6 +38,20 @@ export class MockServerClient {
     if (!res.ok) throw new Error(`/__admin/script failed: ${res.status}`);
   }
 
+  /**
+   * Set the sticky response returned when the incoming /v1/messages body
+   * carries a tool_result block (i.e. a follow-up turn after a tool round-
+   * trip). Cleared by reset().
+   */
+  async scriptOnToolResult(events: SSEEvent[]): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/__admin/scriptOnToolResult`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sse: events }),
+    });
+    if (!res.ok) throw new Error(`/__admin/scriptOnToolResult failed: ${res.status}`);
+  }
+
   async reset(): Promise<void> {
     const res = await fetch(`${this.baseUrl}/__admin/reset`, {
       method: "POST",

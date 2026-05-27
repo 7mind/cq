@@ -117,6 +117,13 @@ async function getFreePort(): Promise<number> {
 
 const scriptQueue: SSEEvent[][] = [];
 const requestLog: LogEntry[] = [];
+/**
+ * Optional alternative sticky response returned when the incoming
+ * /v1/messages body contains a tool_result block. Lets a test script two
+ * distinct turns: the initial tool_use, then a confirmation after the
+ * tool returned. Cleared by /__admin/reset.
+ */
+let scriptOnToolResult: SSEEvent[] | null = null;
 
 // ---------------------------------------------------------------------------
 // Start server
@@ -145,9 +152,18 @@ const server = Bun.serve({
       });
     }
 
+    if (method === "POST" && pathname === "/__admin/scriptOnToolResult") {
+      const body = (await req.json()) as { sse: SSEEvent[] };
+      scriptOnToolResult = body.sse;
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     if (method === "POST" && pathname === "/__admin/reset") {
       scriptQueue.length = 0;
       requestLog.length = 0;
+      scriptOnToolResult = null;
       return new Response(JSON.stringify({ ok: true }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -171,7 +187,19 @@ const server = Bun.serve({
       // mocking ergonomic, the latest scripted response is treated as
       // "sticky" — returned to every request until `reset` clears it. Tests
       // that need per-request specificity can call reset between calls.
-      const events = scriptQueue.length > 0
+      //
+      // If a scriptOnToolResult was set and the body carries a tool_result,
+      // return that sticky response instead — this lets a test mock two
+      // distinct turns of a single tool round-trip.
+      let bodyText = "";
+      try {
+        bodyText = await req.text();
+      } catch {
+        /* ignore */
+      }
+      const events = (scriptOnToolResult !== null && bodyText.includes("tool_result"))
+        ? scriptOnToolResult
+        : scriptQueue.length > 0
         ? scriptQueue[scriptQueue.length - 1]!
         : DEFAULT_SSE_EVENTS;
       const sseBody = encodeSSEEvents(events);
