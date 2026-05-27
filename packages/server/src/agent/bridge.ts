@@ -891,11 +891,25 @@ export class Bridge {
           err: String(err),
         });
         doneReason = "errored";
+        // D31: persist the failure into the event log so History Detail shows
+        // the error reason when replaying a failed invocation.
+        const errMessage = err instanceof Error ? err.message : String(err);
+        this.persistence.events.append(session.invocationId, {
+          type: "system",
+          subtype: "error",
+          error: errMessage,
+          timestamp: Date.now(),
+        } as unknown as SDKMessage);
         this.sendDone(ws, session, doneReason);
-        this.sendError(ws, session.chatSessionId, "SDK_ERROR", String(err));
+        this.sendError(ws, session.chatSessionId, "SDK_ERROR", errMessage);
       }
     } finally {
       // Finalise the top-level invocation and session in persistence.
+      // Note: if the server is killed (SIGKILL) while a session is mid-flight,
+      // this finally block never runs and the row stays 'running'. On the next
+      // start, D29's PID-file lock ensures only the newly-started process runs
+      // the reaper, which marks that row 'failed'. This is the intended behaviour
+      // for genuine orphans — the D29 lock makes it safe.
       const endedAt = Date.now();
       const durationMs = endedAt - session.startedAt;
       const invStatus: InvocationRow["status"] = doneReason === "completed"

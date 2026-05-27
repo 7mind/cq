@@ -625,4 +625,100 @@ describe("Bridge persistence", () => {
     );
     expect(childModelUpdate).toBeDefined();
   });
+
+  // ---------------------------------------------------------------------------
+  // Test 8 (D31): SDK iterator throws → system:error appended to event log
+  // ---------------------------------------------------------------------------
+
+  it("D31: SDK iterator throw appends system:error event to JSONL log and emits chat.error WS frame", async () => {
+    const persistence = new InMemoryPersistence();
+
+    // A MockQuery that yields one init message then throws on the next next().
+    const sdkError = new Error("SDK subprocess crashed unexpectedly");
+    let callCount = 0;
+    const throwingQuery: import("@anthropic-ai/claude-agent-sdk").Query = {
+      [Symbol.asyncIterator]() { return this; },
+      next(): Promise<IteratorResult<SDKMessage, void>> {
+        callCount++;
+        if (callCount === 1) {
+          // First call: yield the init message.
+          return Promise.resolve({ value: makeInitMessage() as SDKMessage, done: false });
+        }
+        // Second call: throw.
+        return Promise.reject(sdkError);
+      },
+      return(): Promise<IteratorResult<SDKMessage, void>> {
+        return Promise.resolve({ value: undefined, done: true });
+      },
+      throw(err?: unknown): Promise<IteratorResult<SDKMessage, void>> {
+        return Promise.reject(err);
+      },
+      async interrupt(): Promise<void> {},
+      async setPermissionMode() {},
+      async setModel() {},
+      async setMaxThinkingTokens() {},
+      async applyFlagSettings() {},
+      async initializationResult() { throw new Error("not implemented"); },
+      async supportedCommands() { return []; },
+      async supportedModels() { return []; },
+      async supportedAgents() { return []; },
+      async mcpServerStatus() { return []; },
+      async getContextUsage() { throw new Error("not implemented"); },
+      async readFile() { return null; },
+      async reloadPlugins() { throw new Error("not implemented"); },
+      async accountInfo() { throw new Error("not implemented"); },
+      async rewindFiles() { throw new Error("not implemented"); },
+      async seedReadState() {},
+      async reconnectMcpServer() {},
+      async toggleMcpServer() {},
+      async setMcpServers() { throw new Error("not implemented"); },
+      async streamInput() {},
+      async stopTask() {},
+      async backgroundTasks() { return false; },
+      close() {},
+    } as unknown as import("@anthropic-ai/claude-agent-sdk").Query;
+
+    const registry = new SessionRegistry();
+    const ws = new MockWsSocket();
+    const bridge = new Bridge({
+      logger: noopLogger,
+      registry,
+      queryFactory: () => throwingQuery,
+      cwd: "/tmp/test",
+      persistence,
+    });
+
+    await bridge.handleChatStart(ws, makeChatStart());
+    // Wait for both chat.done and chat.error to arrive.
+    await ws.waitForFrames("chat.done");
+    await ws.waitForFrames("chat.error");
+
+    // Assert: chat.error frame was emitted with code "SDK_ERROR".
+    const errorFrames = ws.framesOfType("chat.error");
+    expect(errorFrames.length).toBeGreaterThanOrEqual(1);
+    const sdkErrorFrame = errorFrames.find((f) => f.code === "SDK_ERROR");
+    expect(sdkErrorFrame).toBeDefined();
+    expect(sdkErrorFrame?.message).toContain("SDK subprocess crashed");
+
+    // Assert: invocation status is 'failed'.
+    const sessions = persistence.sessions.list({}, { field: "startedAt", dir: "desc" }, { limit: 10, offset: 0 });
+    const sessionId = sessions.rows[0]!.id;
+    const invocations = persistence.invocations.listForSession(sessionId);
+    expect(invocations).toHaveLength(1);
+    const inv = invocations[0]!;
+    expect(inv.status).toBe("failed");
+
+    // Assert: system:error event appended to the JSONL event log.
+    const events: SDKMessage[] = [];
+    for await (const e of persistence.events.readAll(inv.id)) {
+      events.push(e);
+    }
+    const sysErrorEvent = events.find(
+      (e) =>
+        (e as Record<string, unknown>)["type"] === "system" &&
+        (e as Record<string, unknown>)["subtype"] === "error",
+    );
+    expect(sysErrorEvent).toBeDefined();
+    expect((sysErrorEvent as Record<string, unknown>)["error"]).toContain("SDK subprocess crashed");
+  });
 });
