@@ -26,6 +26,7 @@ import { createElement, act } from "react";
 import type { ManagerStats } from "../src/ws/Manager";
 import type { ServerFrame, ClientFrame, HistoryRow } from "@cq/shared";
 import { ConnectionProvider } from "../src/ws/ConnectionProvider";
+import { SessionProvider } from "../src/chat/SessionContext";
 import { HistoryTab } from "../src/history/HistoryTab";
 
 // ---------------------------------------------------------------------------
@@ -164,7 +165,11 @@ function renderTab(manager: FakeManager): void {
       createElement(
         ConnectionProvider,
         { value: manager as never },
-        createElement(HistoryTab, {}),
+        createElement(
+          SessionProvider,
+          null,
+          createElement(HistoryTab, {}),
+        ),
       ),
     );
   });
@@ -293,7 +298,11 @@ describe("HistoryTab list view", () => {
         createElement(
           ConnectionProvider,
           { value: manager as never },
-          createElement(HistoryTab, {}),
+          createElement(
+            SessionProvider,
+            null,
+            createElement(HistoryTab, {}),
+          ),
         ),
       );
     });
@@ -350,6 +359,59 @@ describe("HistoryTab list view", () => {
     expect(agentInput!.getAttribute("aria-label")).toBe("Filter by agent");
     // The filter will be sent when the user types — verified by integration.
     console.warn("React fiber access unavailable; structural fallback used for test (4).");
+  });
+
+  test("(PR-03) Resume button renders on finished main rows, absent on subagent / active / running rows", () => {
+    setup();
+    const manager = new FakeManager(makeStats());
+    renderTab(manager);
+
+    const finishedMain = makeHistoryRow({
+      agentName: "main",
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      endedAt: Date.now(),
+      status: "completed",
+    });
+    const subagent = makeHistoryRow({
+      agentName: "Task",
+      sessionId: "22222222-2222-4222-8222-222222222222",
+      endedAt: Date.now(),
+      status: "completed",
+    });
+    const stillRunning = makeHistoryRow({
+      agentName: "main",
+      sessionId: "33333333-3333-4333-8333-333333333333",
+      endedAt: null,
+      durationMs: null,
+      status: "running",
+    });
+
+    const sentFrame = manager.sent.find((f) => f.type === "history.list");
+    if (!sentFrame || sentFrame.type !== "history.list") throw new Error("no list frame");
+
+    act(() => {
+      manager.injectMessage({
+        type: "history.list_result",
+        seq: 1,
+        ts: Date.now(),
+        requestSeq: sentFrame.seq,
+        total: 3,
+        rows: [finishedMain, subagent, stillRunning],
+      });
+    });
+
+    // Finished main → button visible.
+    expect(
+      container!.querySelector(`[data-testid="resume-row-${finishedMain.invocationId}"]`),
+    ).not.toBeNull();
+    // Subagent → no button.
+    expect(
+      container!.querySelector(`[data-testid="resume-row-${subagent.invocationId}"]`),
+    ).toBeNull();
+    // Still-running main → no button (endedAt === null).
+    expect(
+      container!.querySelector(`[data-testid="resume-row-${stillRunning.invocationId}"]`),
+    ).toBeNull();
   });
 
   test("(PR-02) subagent rows render empty Cost/In/Out cells; main rows render numeric values", () => {

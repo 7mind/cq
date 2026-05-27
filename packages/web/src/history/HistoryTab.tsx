@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { HistoryRow, HistoryListResult } from "@cq/shared";
 import { useConnection } from "../ws/useConnection";
+import { useSession } from "../chat/SessionContext";
 import { List, EMPTY_FILTER } from "./List";
 import type { SortState, SortKey, FilterState } from "./List";
 import { Detail } from "./Detail";
@@ -41,6 +42,7 @@ function dateToMs(s: string, endOfDay = false): number | undefined {
 
 export function HistoryTab(): React.ReactElement {
   const manager = useConnection();
+  const { activeSessionId, requestResume } = useSession();
 
   const [rows, setRows] = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -177,6 +179,8 @@ export function HistoryTab(): React.ReactElement {
         onSort={handleSort}
         onFilter={handleFilter}
         onRowClick={(id) => setSelectedInvocationId(id)}
+        activeSessionId={activeSessionId}
+        onResumeSession={requestResume}
       />
       {selectedInvocationId !== null && (
         <Detail

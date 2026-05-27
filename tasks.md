@@ -69,7 +69,7 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 - [x] **PR-01** — Haiku-generated session titles (server-side + persist + tests).
 - [x] **PR-02** — Hide zero cost/token cells for subagent rows in `List.tsx`.
-- [ ] **PR-03** — Add Resume button column in History tab (top-level finished main only).
+- [x] **PR-03** — Add Resume button column in History tab (top-level finished main only).
 - [ ] **PR-04** — Delete `ResumePicker.tsx`, Header trigger, dialog tests.
 - [ ] **PR-05** — Use generated title in session/excerpt column with prompt-excerpt fallback.
 
@@ -79,6 +79,10 @@ Cross-cutting (locked):
 - [x] `@anthropic-ai/sdk` added to `packages/server` only.
 - [x] Subagent predicate in `List.tsx` = `agentName !== 'main'`.
 - [x] User-triggered rejoin (live session) goes away; only auto-refresh rejoin remains.
+
+### PR-03 completed (2026-05-28)
+
+Rightmost "Resume" column in the History tab. Button renders only when `agentName === 'main' && endedAt !== null && sessionId !== activeSessionId`. Cross-tab signal: `SessionContext.requestResume(invocationId)` → App effect flips active tab to chat; `ChatTab` effect calls existing `handleResumeSession` and clears the request. `data-testid="resume-row-<invId>"` for tests. CSS added in `History.module.css`. Test added in `history-list.test.ts` covers all three branches (visible / subagent / running). `bun run check` → 538 pass.
 
 ### PR-02 completed (2026-05-28)
 

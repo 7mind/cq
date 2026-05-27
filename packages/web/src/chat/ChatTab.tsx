@@ -54,7 +54,7 @@ export function ChatTab(): React.ReactElement {
   const stats = useConnectionStats();
   // activeSessionId and inProgress are lifted into SessionContext so they
   // survive Chat ↔ History tab switches (E2E-D04).
-  const { activeSessionId, setActiveSessionId, inProgress, setInProgress } = useSession();
+  const { activeSessionId, setActiveSessionId, inProgress, setInProgress, resumeRequest, clearResumeRequest } = useSession();
   const seqRef = useRef(0);
   const [chatEvents, setChatEvents] = useState<ChatEvent[]>([]);
   // D49: count of user messages submitted while a turn was already in progress
@@ -605,6 +605,18 @@ export function ChatTab(): React.ReactElement {
     };
     manager.send(frame);
   }
+
+  // PR-03: consume cross-tab resume requests posted by HistoryTab. The
+  // SessionContext.requestResume(invocationId) call sets a pending request;
+  // this effect fires once, drives the resume flow, and clears the request.
+  // handleResumeSession is defined inside the component so it is a fresh
+  // closure on every render; keeping the dep array narrow to `resumeRequest`
+  // is intentional — re-firing on other state changes would duplicate sends.
+  useEffect(() => {
+    if (resumeRequest === null) return;
+    handleResumeSession(resumeRequest.invocationId);
+    clearResumeRequest();
+  }, [resumeRequest, clearResumeRequest]);
 
   function handlePermissionReply(req: ChatPermissionRequest, decision: PermissionDecision): void {
     // Remove the request from the pending list.

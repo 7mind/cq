@@ -38,6 +38,15 @@ interface SessionState {
   setActiveSessionId: (id: string | null) => void;
   inProgress: boolean;
   setInProgress: (v: boolean) => void;
+  /**
+   * PR-03: cross-tab resume signal. HistoryTab sets this when the user
+   * clicks a row's Resume button; App switches to the chat tab on observing
+   * a non-null value; ChatTab consumes the value, fires `chat.start` with
+   * `resumeFromInvocationId`, and calls `clearResumeRequest()` to reset it.
+   */
+  resumeRequest: { invocationId: string } | null;
+  requestResume: (invocationId: string) => void;
+  clearResumeRequest: () => void;
 }
 
 const SessionContext = createContext<SessionState | null>(null);
@@ -46,14 +55,32 @@ export function SessionProvider({ children }: { children: ReactNode }): React.Re
   // Hydrate from localStorage on initial render (D47).
   const [activeSessionId, setActiveSessionIdState] = useState<string | null>(readStoredSessionId);
   const [inProgress, setInProgress] = useState(false);
+  const [resumeRequest, setResumeRequest] = useState<{ invocationId: string } | null>(null);
 
   const setActiveSessionId = useCallback((id: string | null) => {
     writeStoredSessionId(id);
     setActiveSessionIdState(id);
   }, []);
 
+  const requestResume = useCallback((invocationId: string) => {
+    setResumeRequest({ invocationId });
+  }, []);
+  const clearResumeRequest = useCallback(() => {
+    setResumeRequest(null);
+  }, []);
+
   return (
-    <SessionContext.Provider value={{ activeSessionId, setActiveSessionId, inProgress, setInProgress }}>
+    <SessionContext.Provider
+      value={{
+        activeSessionId,
+        setActiveSessionId,
+        inProgress,
+        setInProgress,
+        resumeRequest,
+        requestResume,
+        clearResumeRequest,
+      }}
+    >
       {children}
     </SessionContext.Provider>
   );

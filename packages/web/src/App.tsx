@@ -5,7 +5,7 @@ import { Indicator } from "./ws/Indicator";
 import { ChatTab } from "./chat/ChatTab";
 import { HistoryTab } from "./history/HistoryTab";
 import { ToastStack } from "./lib/ToastStack";
-import { SessionProvider } from "./chat/SessionContext";
+import { SessionProvider, useSession } from "./chat/SessionContext";
 import styles from "./styles/History.module.css";
 
 type TabId = "chat" | "history";
@@ -20,10 +20,13 @@ type TabId = "chat" | "history";
  * PR-21: Replaced "cq is up" placeholder with <ChatTab />.
  *
  * PR-42: Added Chat | History tab switcher.
+ *
+ * PR-03 (resume-rework): tab switcher reacts to SessionContext.resumeRequest:
+ * when HistoryTab requests a resume, we flip to the Chat tab so the user sees
+ * the resumed session.
  */
 export default function App(): React.ReactElement {
   const manager = useConnection();
-  const [activeTab, setActiveTab] = useState<TabId>("chat");
 
   useEffect(() => {
     const mirror = attachTitleMirror(manager);
@@ -33,6 +36,27 @@ export default function App(): React.ReactElement {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <ToastStack />
+      <SessionProvider>
+        <AppShell />
+      </SessionProvider>
+    </div>
+  );
+}
+
+function AppShell(): React.ReactElement {
+  const [activeTab, setActiveTab] = useState<TabId>("chat");
+  const { resumeRequest } = useSession();
+
+  // PR-03: when a resume is requested from anywhere (currently HistoryTab),
+  // switch to the Chat tab so the user sees the resumed session start.
+  useEffect(() => {
+    if (resumeRequest !== null) {
+      setActiveTab("chat");
+    }
+  }, [resumeRequest]);
+
+  return (
+    <>
       <nav className={styles.tabs} role="tablist" aria-label="Main navigation">
         <button
           role="tab"
@@ -54,28 +78,26 @@ export default function App(): React.ReactElement {
           <Indicator inline />
         </div>
       </nav>
-      <SessionProvider>
-        <div
-          style={{
-            flex: 1,
-            overflow: "hidden",
-            display: activeTab === "chat" ? "flex" : "none",
-            flexDirection: "column",
-          }}
-        >
-          <ChatTab />
-        </div>
-        <div
-          style={{
-            flex: 1,
-            overflow: "hidden",
-            display: activeTab === "history" ? "flex" : "none",
-            flexDirection: "column",
-          }}
-        >
-          <HistoryTab />
-        </div>
-      </SessionProvider>
-    </div>
+      <div
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          display: activeTab === "chat" ? "flex" : "none",
+          flexDirection: "column",
+        }}
+      >
+        <ChatTab />
+      </div>
+      <div
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          display: activeTab === "history" ? "flex" : "none",
+          flexDirection: "column",
+        }}
+      >
+        <HistoryTab />
+      </div>
+    </>
   );
 }
