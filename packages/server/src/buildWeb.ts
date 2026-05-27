@@ -40,9 +40,16 @@ export async function buildWeb(): Promise<WebBuild> {
   const scriptFile = path.basename(jsOutput.path);
   const scriptPath = `/${scriptFile}`;
 
-  // Write index.html with correct script src
+  // Bun.build emits CSS module output as a separate asset file alongside the JS
+  // entry point (e.g. main.css). Wire it into the HTML so the browser loads it.
+  const cssOutput = result.outputs.find((o) => o.kind === "asset" && o.path.endsWith(".css"));
+  const cssLink = cssOutput !== undefined
+    ? `<link rel="stylesheet" href="/${path.basename(cssOutput.path)}">`
+    : "";
+
+  // Write index.html with correct script src and optional CSS link
   const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>cq</title></head>
+<html><head><meta charset="utf-8"><title>cq</title>${cssLink}</head>
 <body><div id="root"></div><script type="module" src="${scriptPath}"></script></body></html>
 `;
   await fs.writeFile(WEB_INDEX, html, "utf8");
