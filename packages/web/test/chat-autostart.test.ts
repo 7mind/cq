@@ -30,6 +30,7 @@ import type { ManagerStats } from "../src/ws/Manager";
 import type { ServerFrame, ClientFrame } from "@cq/shared";
 import { ConnectionProvider } from "../src/ws/ConnectionProvider";
 import { ChatTab } from "../src/chat/ChatTab";
+import { SessionProvider } from "../src/chat/SessionContext";
 
 // ---------------------------------------------------------------------------
 // Helpers shared with app-mount.test.ts
@@ -168,7 +169,9 @@ describe("ChatTab auto-start (D-UX-1)", () => {
     act(() => {
       reactRoot!.render(
         createElement(ConnectionProvider, { value: manager as never },
-          createElement(ChatTab),
+          createElement(SessionProvider, null,
+            createElement(ChatTab),
+          ),
         ),
       );
     });
@@ -190,7 +193,9 @@ describe("ChatTab auto-start (D-UX-1)", () => {
     act(() => {
       reactRoot!.render(
         createElement(ConnectionProvider, { value: manager as never },
-          createElement(ChatTab),
+          createElement(SessionProvider, null,
+            createElement(ChatTab),
+          ),
         ),
       );
     });
@@ -242,7 +247,9 @@ describe("ChatTab auto-start (D-UX-1)", () => {
     act(() => {
       reactRoot!.render(
         createElement(ConnectionProvider, { value: manager as never },
-          createElement(ChatTab),
+          createElement(SessionProvider, null,
+            createElement(ChatTab),
+          ),
         ),
       );
     });
@@ -269,7 +276,9 @@ describe("ChatTab auto-start (D-UX-1)", () => {
     act(() => {
       reactRoot!.render(
         createElement(ConnectionProvider, { value: manager as never },
-          createElement(ChatTab),
+          createElement(SessionProvider, null,
+            createElement(ChatTab),
+          ),
         ),
       );
     });
@@ -291,7 +300,9 @@ describe("ChatTab auto-start (D-UX-1)", () => {
     act(() => {
       reactRoot!.render(
         createElement(ConnectionProvider, { value: manager as never },
-          createElement(ChatTab),
+          createElement(SessionProvider, null,
+            createElement(ChatTab),
+          ),
         ),
       );
     });

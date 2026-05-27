@@ -25,6 +25,7 @@
 
 import { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import { useConnection, useConnectionStats } from "../ws/useConnection";
+import { useSession } from "./SessionContext";
 import { Input } from "./Input";
 import { Stream } from "./Stream";
 import { Header } from "./Header";
@@ -49,17 +50,11 @@ import tabStyles from "../styles/ChatTab.module.css";
 export function ChatTab(): React.ReactElement {
   const manager = useConnection();
   const stats = useConnectionStats();
+  // activeSessionId and inProgress are lifted into SessionContext so they
+  // survive Chat ↔ History tab switches (E2E-D04).
+  const { activeSessionId, setActiveSessionId, inProgress, setInProgress } = useSession();
   const seqRef = useRef(0);
   const [chatEvents, setChatEvents] = useState<ChatEvent[]>([]);
-  // activeSessionId is the persistent session handle. Set once on the first
-  // chat.started (early stub) and cleared only on WS disconnect. Used as the
-  // sessionId field on outbound chat.input / chat.interrupt frames.
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  // inProgress is true only between sending a chat.input and receiving the
-  // corresponding chat.done. This gates the textarea (disabled while waiting)
-  // and the Stop button (visible only while waiting). Decoupled from
-  // activeSessionId so the textarea stays enabled when the session is idle.
-  const [inProgress, setInProgress] = useState(false);
   // True between sending chat.start and receiving chat.started — prevents duplicate starts.
   const chatStartPendingRef = useRef(false);
   // True when the user explicitly triggered new/resume session — prevents auto-start racing.

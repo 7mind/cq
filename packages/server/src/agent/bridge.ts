@@ -10,7 +10,8 @@
  *      - All other SDKMessage variants → `chat.event` (via replay buffer)
  *      - Stream end → `chat.done{reason:'completed'}`
  *      - SDK iteration error → `chat.done{reason:'errored'}` + `chat.error`
- *  - Rejects concurrent `chat.start` with `chat.error{code:'SESSION_BUSY'}`.
+ *  - Preempts any active session on concurrent `chat.start` (interruptActive + shutdown),
+ *    then starts the new session (E2E-D04).
  *
  * Pool size: 1 (one active Query at a time). PR-27 will revisit.
  * Abort/cancel beyond stub `handleChatInterrupt`: deferred to PR-24.
@@ -238,9 +239,14 @@ export class Bridge {
   // ---------------------------------------------------------------------------
 
   async handleChatStart(ws: WsSocket, frame: ChatStart): Promise<void> {
+    // Preempt any active session before starting a new one (E2E-D04).
     if (this.active !== null) {
-      this.sendError(ws, null, "SESSION_BUSY", "A session is already active");
-      return;
+      this.logger.info("bridge.chat_start_preempt", {
+        prior: this.active.chatSessionId,
+      });
+      this.interruptActive();
+      await this.shutdown(); // awaits runLoop's finally — emits chat.done{interrupted}
+      // this.active is now null
     }
 
     const { sessionId: chatSessionId } = this.registry.create();

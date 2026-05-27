@@ -7,7 +7,8 @@
  * Required cases (6):
  *  1. chat.start triggers chat.started with init info.
  *  2. chat.input pushes to the streaming queue; assistant text echoed as chat.event.
- *  3. Concurrent chat.start while busy → chat.error code=SESSION_BUSY.
+ *  3. Concurrent chat.start while busy → preempts old session (chat.done{interrupted})
+ *     and starts a new one (E2E-D04; old SESSION_BUSY behaviour removed).
  *  4. Query iteration end → chat.done reason='completed'.
  *  5. chat.interrupt calls Query.interrupt().
  *  6. bridge.shutdown() ends the active session cleanly.
@@ -348,53 +349,61 @@ describe("Bridge", () => {
   });
 
   // --------------------------------------------------------------------------
-  // Test 3: Concurrent chat.start while busy → chat.error code=SESSION_BUSY
+  // Test 3: Concurrent chat.start while busy → preempts old session (E2E-D04)
   // --------------------------------------------------------------------------
-  it("concurrent chat.start while busy returns chat.error SESSION_BUSY", async () => {
-    // Use an open-ended mock that never finishes (empty script → no done signal from the query,
-    // but the bridge loop will end quickly; we need to keep it alive during the second start).
-    // We'll use a mock that yields init and then hangs.
+  it("concurrent chat.start while busy preempts old session and starts a new one", async () => {
+    // First query hangs after emitting init; second query is a fast finisher.
     let resolveHang!: () => void;
     const hangPromise = new Promise<void>((r) => { resolveHang = r; });
 
-    const asyncGen = (async function* (): AsyncGenerator<SDKMessage, void> {
+    const firstGen = (async function* (): AsyncGenerator<SDKMessage, void> {
       yield makeInitMessage();
-      // Hang here to keep the session busy.
+      // Hang here to keep the first session busy.
       await hangPromise;
     })();
 
-    // Patch the generator to implement full Query interface.
-    const mockQuery = asyncGen as unknown as MockQuery;
-    patchWithStubs(mockQuery);
-    mockQuery.interrupt = async () => {};
-    mockQuery.close = () => { resolveHang(); };
+    const firstQuery = firstGen as unknown as MockQuery;
+    patchWithStubs(firstQuery);
+    firstQuery.interrupt = async () => { resolveHang(); };
+    firstQuery.close = () => { resolveHang(); };
 
+    const secondQuery = makeMockQuery([makeInitMessage()]);
+
+    let callCount = 0;
     const registry = new SessionRegistry();
     const bridge = new Bridge({
       logger: noopLogger,
       registry,
-      queryFactory: () => mockQuery,
+      queryFactory: () => {
+        callCount++;
+        return callCount === 1 ? firstQuery : secondQuery;
+      },
       cwd: "/tmp/test",
     });
 
     const ws1 = new MockWsSocket();
     const ws2 = new MockWsSocket();
 
-    // Start first session.
+    // Start first session and wait until it is active.
     await bridge.handleChatStart(ws1, makeChatStart());
-    // Wait for it to reach the busy state.
-    await ws1.waitForFrames("chat.started");
+    const [firstStarted] = await ws1.waitForFrames("chat.started");
+    const firstSessionId = firstStarted!.sessionId as string;
 
-    // Second chat.start should be rejected immediately.
+    // Second chat.start should preempt the first — no SESSION_BUSY error.
     await bridge.handleChatStart(ws2, makeChatStart());
 
-    const errors = ws2.framesOfType("chat.error");
-    expect(errors.length).toBeGreaterThanOrEqual(1);
-    const err = errors[0]!;
-    expect(err.code).toBe("SESSION_BUSY");
+    // The first socket must receive chat.done{reason:'interrupted'} for the old session.
+    const ws1Dones = await ws1.waitForFrames("chat.done");
+    expect(ws1Dones.some((f) => f.reason === "interrupted" && f.sessionId === firstSessionId)).toBe(true);
 
-    // Clean up — resolveHang lets the generator finish.
-    resolveHang();
+    // No chat.error on the second socket (the preempt path doesn't reject).
+    expect(ws2.framesOfType("chat.error")).toHaveLength(0);
+
+    // The second socket must receive chat.started with a NEW sessionId.
+    const [secondStarted] = await ws2.waitForFrames("chat.started");
+    expect(secondStarted).toBeDefined();
+    expect(secondStarted!.sessionId).not.toBe(firstSessionId);
+
     await bridge.shutdown();
   });
 

@@ -5,6 +5,7 @@ import { Indicator } from "./ws/Indicator";
 import { ChatTab } from "./chat/ChatTab";
 import { HistoryTab } from "./history/HistoryTab";
 import { ToastStack } from "./lib/ToastStack";
+import { SessionProvider } from "./chat/SessionContext";
 import styles from "./styles/History.module.css";
 
 type TabId = "chat" | "history";
@@ -51,9 +52,11 @@ export default function App(): React.ReactElement {
           History
         </button>
       </nav>
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        {activeTab === "chat" ? <ChatTab /> : <HistoryTab />}
-      </div>
+      <SessionProvider>
+        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          {activeTab === "chat" ? <ChatTab /> : <HistoryTab />}
+        </div>
+      </SessionProvider>
     </div>
   );
 }
