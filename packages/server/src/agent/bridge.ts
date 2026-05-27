@@ -60,7 +60,15 @@ import { loadMcpServers } from "./mcp";
 import { PermissionBroker } from "./permission";
 import { ElicitationBroker } from "./elicitation";
 import { applyReadOnlyOverlay } from "./readOnlyOverlay";
-import { AskBroker, createAskUserQuestionMcpServer } from "./askUserQuestion";
+import { AskBroker, createAskUserQuestionMcpServer, createAskUserQuestionTool } from "./askUserQuestion";
+import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import type { LedgerStore } from "@cq/ledger";
+import { createLedgerMcpTools } from "@cq/ledger";
+
+// Silence the "unused" warning for the legacy single-tool factory; we keep
+// it exported as a back-compat surface for callers that don't have a
+// LedgerStore yet (e.g. some existing tests).
+void createAskUserQuestionMcpServer;
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -119,6 +127,15 @@ export interface BridgeOpts {
    * Wire SqlitePersistence in main.ts / server.ts for production.
    */
   persistence?: Persistence;
+  /**
+   * Optional LedgerStore. When provided, exposes the ledger MCP tools
+   * (`mcp__cq__enumerate_ledgers`, `mcp__cq__fetch_ledger`, etc.) on the
+   * in-process "cq" MCP server alongside `ask_user_question`.
+   *
+   * The store must already be `init()`-ed by the caller; the bridge does
+   * not own its lifecycle. main.ts / server.ts construct and pass it.
+   */
+  ledgerStore?: LedgerStore;
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +244,7 @@ export class Bridge {
   readonly elicitationBroker: ElicitationBroker;
   readonly askBroker: AskBroker;
   private readonly persistence: Persistence;
+  private readonly ledgerStore: LedgerStore | null;
 
   constructor(opts: BridgeOpts) {
     this.logger = opts.logger;
@@ -244,6 +262,7 @@ export class Bridge {
     this.elicitationBroker.setLogger(this.logger);
     this.askBroker = opts.askBroker ?? new AskBroker();
     this.persistence = opts.persistence ?? new InMemoryPersistence();
+    this.ledgerStore = opts.ledgerStore ?? null;
   }
 
   isBusy(): boolean {
@@ -303,11 +322,23 @@ export class Bridge {
     const externalMcpServers = await loadMcpServers(this.home, this.logger);
     const hasMcpServers = Object.keys(externalMcpServers).length > 0;
 
-    // Build the in-process "cq" MCP server for AskUserQuestion interception.
-    const askMcpServer = createAskUserQuestionMcpServer(this.askBroker);
+    // Build the in-process "cq" MCP server. Always contains the
+    // AskUserQuestion tool; also exposes the @cq/ledger tools when a
+    // LedgerStore was wired into the bridge.
+    const cqTools: unknown[] = [createAskUserQuestionTool(this.askBroker)];
+    if (this.ledgerStore !== null) {
+      for (const t of createLedgerMcpTools(this.ledgerStore)) {
+        cqTools.push(t);
+      }
+    }
+    const cqMcpServer = createSdkMcpServer({
+      name: "cq",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      tools: cqTools as any,
+    });
     const mcpServers = {
       ...externalMcpServers,
-      cq: askMcpServer,
+      cq: cqMcpServer,
     };
 
     // Capture session identifiers for use inside the canUseTool closure.

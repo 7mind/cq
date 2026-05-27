@@ -5,11 +5,13 @@
     "outDir": "./dist",
     "paths": {
       "@cq/shared": ["../shared/src/index.ts"],
+      "@cq/ledger": ["../ledger/src/index.ts"],
       "@cq/web": ["../web/src/index.ts"]
     }
   },
   "references": [
     { "path": "../shared" },
+    { "path": "../ledger" },
     { "path": "../web" }
   ],
   "include": ["src", "test"]

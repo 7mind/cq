@@ -15,7 +15,7 @@ function makeNullLogger(): Logger {
 // Test 1: Config shape — assert that startDevServer passes the expected options
 // ---------------------------------------------------------------------------
 describe("startDevServer — config shape (options passthrough)", () => {
-  it("passes development:{hmr:true} and routes:'/' to Bun.serve", () => {
+  it("passes development:{hmr:true} and routes:'/' to Bun.serve", async () => {
     let capturedOptions: Serve.Options<unknown> | undefined;
 
     const stubServe: ServeFunction = (opts) => {
@@ -45,7 +45,7 @@ describe("startDevServer — config shape (options passthrough)", () => {
     };
 
     const logger = makeNullLogger();
-    startDevServer(
+    await startDevServer(
       { host: "127.0.0.1", port: 0, cwd: "/tmp", dbPath: "/tmp/cq.sqlite", logger },
       stubServe,
     );
@@ -74,7 +74,7 @@ describe("startDevServer — config shape (options passthrough)", () => {
 describe("startDevServer — operational (real Bun.serve)", () => {
   it("GET / returns 200 with <div id=\"root\"> in the body", async () => {
     const logger = makeNullLogger();
-    const devServer = startDevServer({
+    const devServer = await startDevServer({
       host: "127.0.0.1",
       port: 0,
       cwd: "/tmp",

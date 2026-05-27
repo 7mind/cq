@@ -7,6 +7,7 @@ import { isOriginAllowed } from "./ws/origin";
 import { Bridge } from "./agent/bridge";
 import { SessionRegistry } from "./seq/sessionRegistry";
 import { SqlitePersistence } from "./persist/SqlitePersistence.js";
+import { FsLedgerStore } from "@cq/ledger";
 
 export type ServerConfig = Readonly<{
   host: string;
@@ -39,7 +40,12 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
   }
   const persistence = new SqlitePersistence(dbPath, undefined, logger);
-  const bridge = new Bridge({ logger, registry, cwd, persistence });
+  // Ledger store rooted at the same cwd so docs/<ledger>.md sit next to
+  // the agent's working tree. init() loads docs/ledgers.yaml and every
+  // registered ledger; missing files are created with empty content.
+  const ledgerStore = new FsLedgerStore({ root: cwd });
+  await ledgerStore.init();
+  const bridge = new Bridge({ logger, registry, cwd, persistence, ledgerStore });
 
   // Track all open WS sockets for graceful close-with-code.
   type WsHandle = { close(code?: number, reason?: string): void };

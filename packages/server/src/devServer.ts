@@ -7,6 +7,7 @@ import { isOriginAllowed } from "./ws/origin";
 import { Bridge } from "./agent/bridge";
 import { SessionRegistry } from "./seq/sessionRegistry";
 import { SqlitePersistence } from "./persist/SqlitePersistence.js";
+import { FsLedgerStore } from "@cq/ledger";
 
 export type DevServerConfig = Readonly<{
   host: string;
@@ -28,10 +29,10 @@ export type RunningDevServer = {
  */
 export type ServeFunction = typeof Bun.serve;
 
-export function startDevServer(
+export async function startDevServer(
   config: DevServerConfig,
   serve: ServeFunction = Bun.serve,
-): RunningDevServer {
+): Promise<RunningDevServer> {
   const { host, port, cwd, dbPath, logger } = config;
 
   // Shared registry and bridge (pool=1 across all connections).
@@ -41,7 +42,9 @@ export function startDevServer(
     mkdirSync(dirname(resolve(dbPath)), { recursive: true });
   }
   const persistence = new SqlitePersistence(dbPath);
-  const bridge = new Bridge({ logger, registry, cwd, persistence });
+  const ledgerStore = new FsLedgerStore({ root: cwd });
+  await ledgerStore.init();
+  const bridge = new Bridge({ logger, registry, cwd, persistence, ledgerStore });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const server = (serve as (opts: any) => ReturnType<typeof Bun.serve>)({

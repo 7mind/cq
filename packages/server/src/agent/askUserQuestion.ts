@@ -194,14 +194,13 @@ const askUserQuestionSchema = {
 } as const;
 
 /**
- * Build and return an in-process MCP server named "cq" that owns the
- * `ask_user_question` tool. Wire it into `Options.mcpServers` and pair with
- * `Options.toolAliases = { AskUserQuestion: 'mcp__cq__ask_user_question' }`.
+ * Build just the `ask_user_question` tool. Exposed so the bridge can
+ * combine it with sibling tools (e.g. the @cq/ledger tools) into one
+ * `cq` MCP server, instead of registering multiple servers.
  */
-export function createAskUserQuestionMcpServer(
-  broker: AskBroker,
-): McpSdkServerConfigWithInstance {
-  const askUserQuestionTool = tool(
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function createAskUserQuestionTool(broker: AskBroker): any {
+  return tool(
     "ask_user_question",
     "Ask the user one or more multiple-choice questions and await their answers.",
     askUserQuestionSchema,
@@ -233,9 +232,18 @@ export function createAskUserQuestionMcpServer(
       };
     },
   );
+}
 
+/**
+ * Build and return an in-process MCP server named "cq" that owns the
+ * `ask_user_question` tool. Wire it into `Options.mcpServers` and pair with
+ * `Options.toolAliases = { AskUserQuestion: 'mcp__cq__ask_user_question' }`.
+ */
+export function createAskUserQuestionMcpServer(
+  broker: AskBroker,
+): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
     name: "cq",
-    tools: [askUserQuestionTool],
+    tools: [createAskUserQuestionTool(broker)],
   });
 }

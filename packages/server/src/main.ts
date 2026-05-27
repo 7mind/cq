@@ -12,7 +12,7 @@ const logger = createLogger();
 let shutdownFn: () => Promise<void>;
 
 if (args.dev) {
-  const devServer = startDevServer({
+  const devServer = await startDevServer({
     host: args.host,
     port: args.port,
     cwd: args.cwd,
