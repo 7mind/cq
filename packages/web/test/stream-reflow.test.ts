@@ -106,6 +106,29 @@ function makeTextDelta(text: string): ChatEvent {
   };
 }
 
+/** Build an assistant chat.event whose content contains only a tool_use block (no text). */
+function makeAssistantToolUseOnly(messageId: string, toolId: string, toolName: string): ChatEvent {
+  return {
+    ...baseFrame(),
+    sdkEvent: {
+      type: "assistant",
+      uuid: "00000000-0000-0000-0000-000000000099",
+      session_id: "sess1",
+      parent_tool_use_id: null,
+      message: {
+        id: messageId,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "tool_use", id: toolId, name: toolName, input: { path: "/tmp" } }],
+        model: "claude-sonnet-4-6",
+        stop_reason: "tool_use",
+        stop_sequence: null,
+        usage: { input_tokens: 5, output_tokens: 5 },
+      },
+    },
+  };
+}
+
 /** Build an assistant chat.event (final SDKAssistantMessage). */
 function makeAssistantFinal(messageId: string, text: string): ChatEvent {
   return {
@@ -283,6 +306,22 @@ describe("Stream — streaming reflow and stable identity", () => {
   });
 
   // D24 — user messages render as user bubbles
+  // D25 — empty assistant bubbles suppressed
+  test("D25: assistant message with only tool_use block — no empty assistant bubble, tool card present", () => {
+    const msgId = "msg-tool-only-01";
+    const toolId = "tool-d25-01";
+    const events: ChatEvent[] = [makeAssistantToolUseOnly(msgId, toolId, "Read")];
+    const c = renderStream(events);
+
+    // No assistant bubble should appear (it would be empty).
+    const assistantBubble = c.querySelector("[data-role='assistant']");
+    expect(assistantBubble).toBeNull();
+
+    // The tool card itself must render.
+    const toolCard = c.querySelector(`[data-testid='tool-use-${toolId}']`);
+    expect(toolCard).not.toBeNull();
+  });
+
   test("D24: SDKUserMessage with text renders as a user role bubble", () => {
     const events: ChatEvent[] = [makeUserMessage("what is this project")];
     const c = renderStream(events);

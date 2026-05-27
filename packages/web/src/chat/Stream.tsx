@@ -686,6 +686,12 @@ function renderMessages(
 ): React.ReactNode[] {
   return messages.map((msg) => {
     if (msg.kind === "assistant") {
+      // D25: skip assistant bubbles with no text and no thinking blocks — they
+      // arise when a message contains only tool_use content blocks (no prose).
+      // The tool_use itself is rendered as a ToolCard further down in the list.
+      if (msg.text.trim() === "" && msg.thinkingBlocks.length === 0) {
+        return null;
+      }
       const thinkingNodes = msg.thinkingBlocks.map((block, i) =>
         createElement(Thinking, { key: `thinking-${i}`, block }),
       );
