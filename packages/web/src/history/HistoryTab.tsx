@@ -106,11 +106,26 @@ export function HistoryTab(): React.ReactElement {
     return unsub;
   }, [manager]);
 
-  // Send on mount.
+  // Send on mount, and re-send whenever the WS transitions to ALIVE (so we
+  // recover from the case where HistoryTab mounted before the connection came
+  // up — D10 always-mounts the panel, so the initial send may have raced the
+  // connection).
   useEffect(() => {
     sendList(sort, filter, page);
     // Intentional: only run on mount; sort/filter/page are intentionally excluded.
   }, []);
+
+  useEffect(() => {
+    let lastWasAlive = manager.stats.connections.some((c) => c.state === "ALIVE");
+    const unsub = manager.onUpdate((stats) => {
+      const aliveNow = stats.connections.some((c) => c.state === "ALIVE");
+      if (aliveNow && !lastWasAlive) {
+        sendList(sort, filter, page);
+      }
+      lastWasAlive = aliveNow;
+    });
+    return unsub;
+  }, [manager]);
 
   const handleSort = useCallback(
     (key: SortKey) => {

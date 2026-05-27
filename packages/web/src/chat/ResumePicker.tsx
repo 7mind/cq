@@ -33,29 +33,50 @@ export function ResumePicker({ onSelect, onCancel }: ResumePickerProps): React.R
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Request main-agent invocations (most recent first).
-    const reqSeq = Date.now();
+    let activeSeq = -1;
     const unsub = manager.onMessage((frame) => {
       if (frame.type === "history.list_result") {
         const result = frame as unknown as HistoryListResult;
-        if (result.requestSeq === reqSeq) {
+        if (result.requestSeq === activeSeq) {
           setRows(result.rows);
           setLoading(false);
         }
       }
     });
 
-    manager.send({
-      type: "history.list",
-      seq: reqSeq,
-      ts: Date.now(),
-      filter: { agentName: "main" },
-      sort: { key: "startedAt", dir: "desc" },
-      page: 0,
-      pageSize: 50,
+    function fire(): void {
+      const reqSeq = Date.now();
+      activeSeq = reqSeq;
+      const sent = manager.send({
+        type: "history.list",
+        seq: reqSeq,
+        ts: Date.now(),
+        filter: { agentName: "main" },
+        sort: { key: "startedAt", dir: "desc" },
+        page: 0,
+        pageSize: 50,
+      });
+      return; void sent;
+    }
+
+    // Fire immediately if alive; otherwise wait for the ALIVE edge.
+    const aliveNow = manager.stats.connections.some((c) => c.state === "ALIVE");
+    if (aliveNow) {
+      fire();
+    }
+    let lastWasAlive = aliveNow;
+    const unsubUpdate = manager.onUpdate((stats) => {
+      const isAlive = stats.connections.some((c) => c.state === "ALIVE");
+      if (isAlive && !lastWasAlive) {
+        fire();
+      }
+      lastWasAlive = isAlive;
     });
 
-    return unsub;
+    return () => {
+      unsub();
+      unsubUpdate();
+    };
   }, [manager]);
 
   return (
