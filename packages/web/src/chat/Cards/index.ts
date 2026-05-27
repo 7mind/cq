@@ -155,6 +155,20 @@ export function ToolCard(
         resultContent,
       });
 
+    case "Task": {
+      // Compact label for subagent dispatch; the full transcript is reachable
+      // via the SubagentCard's "View transcript →" link rendered elsewhere.
+      const input = toolUse.input as { subagent_type?: string; description?: string; prompt?: string };
+      const subType = input.subagent_type ?? "subagent";
+      const descr = input.description ?? input.prompt?.slice(0, 80) ?? "";
+      return createElement(
+        "div",
+        { style: { fontFamily: "monospace", fontSize: 13 } },
+        createElement("strong", null, `subagent: ${subType}`),
+        descr.length > 0 ? createElement("div", { style: { opacity: 0.75, marginTop: 4 } }, descr) : null,
+      );
+    }
+
     default:
       // Unknown tool — render the raw tool_use as JSON.
       return createElement(UnknownCard, {
