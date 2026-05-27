@@ -322,33 +322,9 @@ export function ChatTab(): React.ReactElement {
       attachments: attachments.length > 0 ? attachments : undefined,
     };
     manager.send(frame);
-
-    // The SDK does NOT echo the user's typed input back through the event
-    // stream — only tool_result wrapper "user" messages appear there. To
-    // render the user's bubble in the chat, synthesize a local ChatEvent
-    // carrying an SDKUserMessage with a text content block. Stream's D24
-    // user-handling branch then renders it as a role="user" bubble.
-    if (text.length > 0 && invocationId !== null) {
-      const localUserEvent: ChatEvent = {
-        type: "chat.event",
-        seq: -1 - seq, // negative so it never collides with server-assigned seqs
-        ts: Date.now(),
-        sessionId: activeSessionId,
-        invocationId,
-        parentInvocationId: null,
-        sdkEvent: {
-          type: "user",
-          message: {
-            role: "user",
-            content: [{ type: "text", text }],
-            // id helps Stream key the bubble; use a deterministic local id.
-            id: `local-user-${seq}`,
-          },
-          parent_tool_use_id: null,
-        } as unknown as ChatEvent["sdkEvent"],
-      };
-      setChatEvents((prev) => [...prev, localUserEvent]);
-    }
+    // The server echoes the user's input as a chat.event (synthesized SDK
+    // user message) on handleChatInput so the bubble appears in the live
+    // stream AND in the JSONL log → preserved for resume/history replay.
   }
 
   function handleInterrupt(): void {

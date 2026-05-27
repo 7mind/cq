@@ -34,6 +34,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "../log/logger";
 import type { SessionRegistry } from "../seq/sessionRegistry";
+import path from "node:path";
 import type { Persistence } from "../persist/Persistence.js";
 import { InMemoryPersistence } from "../persist/InMemoryPersistence.js";
 import type {
@@ -231,7 +232,10 @@ export class Bridge {
     this.registry = opts.registry;
     this.queryFactory = opts.queryFactory ?? (({ prompt, options }) =>
       options !== undefined ? sdkQuery({ prompt, options }) : sdkQuery({ prompt }));
-    this.cwd = opts.cwd;
+    // Resolve cwd to an absolute path so the UI's path indicator shows
+    // something meaningful (e.g. "/home/user/project") rather than the
+    // literal CLI argument ("." or "./foo"). D-CWD.
+    this.cwd = path.resolve(opts.cwd);
     this.home = opts.home;
     this.permissionBroker = opts.permissionBroker ?? new PermissionBroker();
     this.elicitationBroker = opts.elicitationBroker ?? new ElicitationBroker();
@@ -527,6 +531,24 @@ export class Bridge {
       message: buildMessageParam(frame.text),
       parent_tool_use_id: null,
     };
+
+    // D24: persist the user's typed input as a chat.event so it (a) appears
+    // in the live stream and (b) is preserved in the JSONL log for replay on
+    // resume. The SDK does not echo typed-user input back through the
+    // iterator (only tool_result wrapper "user" frames are emitted there),
+    // so without this synthesis the user's bubble never renders.
+    const echoMsg = {
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: frame.text }],
+        id: `user-${session.chatSessionId}-${Date.now()}`,
+      },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage;
+    this.persistence.events.append(session.invocationId, echoMsg);
+    this.sendEvent(ws, session, echoMsg);
+
     session.queue.push(userMsg);
     this.logger.info("bridge.chat_input", {
       chatSessionId: session.chatSessionId,

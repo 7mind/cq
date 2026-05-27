@@ -360,11 +360,16 @@ describe("Bridge against MockAnthropicHTTP (PR-20 fallback path)", () => {
       // Send chat.input.
       await bridge.handleChatInput(ws, makeChatInput(sessionId, "echo hello"));
 
-      // Wait for at least one chat.event with assistant text.
-      const events = await ws.waitForFrames("chat.event", 1, 5000);
+      // Wait for at least one chat.event with assistant text. The bridge
+      // also emits a user-echo chat.event (D24) — skip past it.
+      const events = await ws.waitForFrames("chat.event", 2, 5000);
       expect(events.length).toBeGreaterThanOrEqual(1);
 
-      const evtFrame = events[0]!;
+      const evtFrame = events.find((f) => {
+        const sdk = f.sdkEvent as Record<string, unknown>;
+        return sdk?.type === "assistant";
+      })!;
+      expect(evtFrame).toBeDefined();
       expect(evtFrame.type).toBe("chat.event");
       const sdkEvt = evtFrame.sdkEvent as Record<string, unknown>;
       expect(sdkEvt.type).toBe("assistant");
