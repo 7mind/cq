@@ -98,13 +98,20 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
         return undefined;
       }
 
+      // Static asset cache policy: cq rebuilds the web bundle on every
+      // server start (buildWeb → fixed filename main.js / main.css), but
+      // without Cache-Control browsers happily serve the old bundle from
+      // memory/disk cache and the user never sees fresh UI code. For a
+      // local dev tool the safe default is no-store on every static asset.
+      const noStore = { "Cache-Control": "no-store, no-cache, must-revalidate" };
+
       // Serve index.html for root or unknown paths
       if (pathname === "/" || pathname === "") {
         const indexPath = path.join(webOutdir, "index.html");
         try {
           const content = await fs.readFile(indexPath, "utf8");
           return new Response(content, {
-            headers: { "Content-Type": "text/html; charset=utf-8" },
+            headers: { "Content-Type": "text/html; charset=utf-8", ...noStore },
           });
         } catch {
           return new Response("Not found", { status: 404 });
@@ -119,7 +126,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
         if (!exists) {
           return new Response("Not found", { status: 404 });
         }
-        return new Response(file);
+        return new Response(file, { headers: noStore });
       } catch {
         return new Response("Not found", { status: 404 });
       }
