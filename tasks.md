@@ -22,7 +22,7 @@
 Goal: Playwright suite all-green. Constraints from user: no bridge/Manager/SDK changes; UI handler or test-level corrections only; commit-per-fix; `bun run check` and `bun run e2e` both end green.
 
 - [x] **E2E-D01** — SearchBar Esc handler. `packages/web/src/chat/SearchBar.tsx`. Acceptance: `bun x playwright test search` exits 0. Resolved: added `onKeyDown` on the bar `<div>` so Esc fires `onClose` even when focus is on a navigation button (not just the input). Commit: `HEAD`. Result: `bun x playwright test search` → 1 passed; `bun run e2e` → 4/6 pass.
-- [ ] **E2E-D02** — Jump-to-latest visibility. `packages/e2e/tests/scroll-anchor.spec.ts` (test-level fix: scripted-multi-message setup). Acceptance: `bun x playwright test scroll-anchor` exits 0.
+- [x] **E2E-D02** — Jump-to-latest visibility. `packages/e2e/tests/scroll-anchor.spec.ts` + `packages/server/src/buildWeb.ts`. Root cause: buildWeb.ts omitted the CSS <link> from index.html, so stream-root had overflow-y:visible and was never scrollable. Fixed: (1) buildWeb.ts now injects `<link rel="stylesheet">` for the Bun CSS asset output; (2) test uses 60-line replies and asserts `scrollHeight > clientHeight + 80` before scrolling. Commit: `822bb04`. Result: `bun x playwright test scroll-anchor` → 1 passed; `bun run e2e` → 5/6 pass.
 - [ ] **E2E-D03** — Stop test timing. `packages/e2e/tests/stop.spec.ts` (test-level: wait for first chat.event before clicking Stop; bump post-Stop timeout). Acceptance: `bun x playwright test stop` exits 0.
 
 After all three: `bun run check` 0; `bun run e2e` 6/6 pass.
