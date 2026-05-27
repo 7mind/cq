@@ -32,7 +32,7 @@ After all three: `bun run check` 0; `bun run e2e` 6/6 pass.
 Goal: fix 6 issues surfaced by manual dogfooding. Constraint from /vsm-loop invocation: build-style fixes, commit-per-defect, `bun run check` + `bun run e2e` green after each, dispatch in difficulty order (easiest first to keep progress visible).
 
 - [x] **E2E-D07** — Default permission mode = `bypassPermissions`. `ChatTab.tsx:71`. Trivial.
-- [ ] **E2E-D08** — Model selector: add `claude-{opus-4-7,sonnet-4-6}[1m]` 1M-context entries. `Header.tsx:36`.
+- [x] **E2E-D08** — Model selector: add `claude-{opus-4-7,sonnet-4-6}[1m]` 1M-context entries. `Header.tsx:36`.
 - [ ] **E2E-D09** — Input keymap: bare Enter sends, Shift+Enter newline, IME-safe; add an explicit Send button. `Input.tsx`. Update `input.test.ts`.
 - [ ] **E2E-D05** — Server startup orphan reaper: UPDATE invocation SET status='errored' WHERE status='running' at Bridge construction.
 - [ ] **E2E-D06** — Cost/toolCount persistence: bridge updates invocation row on `tool_use` (increment count) and on `result` (set total cost + tokens). `bridge.ts`.

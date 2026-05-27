@@ -32,10 +32,16 @@ import { NewSessionConfirm } from "./NewSessionConfirm";
 import { ResumePicker } from "./ResumePicker";
 import styles from "../styles/Header.module.css";
 
-/** Hard-coded model list (PR-25 scope: SDK does not expose supportedModels via init). */
+/**
+ * Hard-coded model list. The SDK doesn't expose supportedModels via init,
+ * so this is curated by hand. The `[1m]` suffix selects Anthropic's 1M-token
+ * context tier; Opus and Sonnet have it, Haiku does not.
+ */
 const SUPPORTED_MODELS = [
   "claude-opus-4-7",
+  "claude-opus-4-7[1m]",
   "claude-sonnet-4-6",
+  "claude-sonnet-4-6[1m]",
   "claude-haiku-4-5",
 ] as const;
 
