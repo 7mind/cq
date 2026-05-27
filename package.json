@@ -2,7 +2,7 @@
   "name": "cq",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/shared", "packages/server", "packages/web", "packages/e2e"],
+  "workspaces": ["packages/shared", "packages/ledger", "packages/server", "packages/web", "packages/e2e"],
   "scripts": {
     "check": "tsc -b && eslint . && bun test",
     "typecheck": "tsc -b",
