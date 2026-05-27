@@ -23,14 +23,14 @@ if (!globalThis.IS_REACT_ACT_ENVIRONMENT) {
 
 import { describe, test, expect, afterEach } from "bun:test";
 import { createRoot } from "react-dom/client";
-import { createElement } from "react";
+import { createElement, useEffect } from "react";
 import { act } from "react";
 
 import type { ManagerStats } from "../src/ws/Manager";
 import type { ServerFrame, ClientFrame } from "@cq/shared";
 import { ConnectionProvider } from "../src/ws/ConnectionProvider";
 import { ChatTab } from "../src/chat/ChatTab";
-import { SessionProvider } from "../src/chat/SessionContext";
+import { SessionProvider, useSession } from "../src/chat/SessionContext";
 
 // ---------------------------------------------------------------------------
 // Helpers shared with app-mount.test.ts
@@ -466,5 +466,52 @@ describe("ChatTab auto-start (D-UX-1)", () => {
     expect(container!.querySelector("[data-testid='stream-thinking']")).toBeNull();
     // Empty-state hint is the correct affordance for "session ready, type below".
     expect(container!.querySelector("[data-testid='stream-empty-state']")).not.toBeNull();
+  });
+
+  test("(Q3) non-REJOIN chat.error clears inProgress so the UI does not stay busy", () => {
+    // Helper component: on mount, sets inProgress=true via SessionContext so we can
+    // observe the transition to false when chat.error{code:"SDK_ERROR"} arrives.
+    function InProgressSetter(): null {
+      const { setInProgress } = useSession();
+      useEffect(() => { setInProgress(true); }, []); // intentional: run once on mount
+      return null;
+    }
+
+    const manager = new FakeManager(makeStats());
+    setup();
+
+    act(() => {
+      reactRoot!.render(
+        createElement(ConnectionProvider, { value: manager as never },
+          createElement(SessionProvider, null,
+            createElement(InProgressSetter),
+            createElement(ChatTab),
+          ),
+        ),
+      );
+    });
+
+    // Bring the connection alive.
+    act(() => { manager.push(ALIVE_STATS); });
+
+    // InProgressSetter has set inProgress=true → stop button should be enabled.
+    const stopBtnBefore = container!.querySelector("button[aria-label='Stop generation']") as HTMLButtonElement | null;
+    expect(stopBtnBefore).not.toBeNull();
+    expect(stopBtnBefore!.disabled).toBe(false);
+
+    // Emit a non-REJOIN chat.error (SDK_ERROR) — must clear inProgress.
+    act(() => {
+      manager.emit({
+        type: "chat.error",
+        seq: 2,
+        ts: Date.now(),
+        code: "SDK_ERROR",
+        message: "An SDK error occurred",
+      } as ServerFrame);
+    });
+
+    // inProgress should now be false → stop button disabled.
+    const stopBtnAfter = container!.querySelector("button[aria-label='Stop generation']") as HTMLButtonElement | null;
+    expect(stopBtnAfter!.disabled).toBe(true);
   });
 });

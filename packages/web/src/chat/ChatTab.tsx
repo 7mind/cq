@@ -305,6 +305,7 @@ export function ChatTab(): React.ReactElement {
           manager.send(fallbackFrame);
           return;
         }
+        setInProgress(false);
         showToast({ level: "error", text: errFrame.message });
       } else if (frame.type === "settings.get_result") {
         const r = frame as SettingsGetResult;
