@@ -490,9 +490,9 @@ function runSuite(label: string, factory: () => Persistence): void {
     });
 
     // -----------------------------------------------------------------------
-    // 15. reapOrphans: running rows become failed; completed rows unchanged
+    // 15. reapOrphans: running rows become stopped; completed rows unchanged
     // -----------------------------------------------------------------------
-    test("reapOrphans transitions running rows to failed, leaves completed unchanged", () => {
+    test("reapOrphans transitions running rows to stopped, leaves completed unchanged", () => {
       const session = makeSession();
       p.sessions.insert(session);
 
@@ -517,7 +517,7 @@ function runSuite(label: string, factory: () => Persistence): void {
       // SQLite adapter reaps; InMemory no-op returns 0.
       if (reaped > 0) {
         const updated = p.invocations.get(runningInv.id);
-        expect(updated?.status).toBe("failed");
+        expect(updated?.status).toBe("stopped");
         expect(updated?.endedAt).toBeGreaterThanOrEqual(now);
         expect(updated?.durationMs).toBeGreaterThan(0);
       }
@@ -622,7 +622,7 @@ describe("D29: tryAcquireDbLock", () => {
     // Open C — reclaims the stale lock and reaps.
     const persC = new SqlitePersistence(dbFile);
     const reaped = persC.invocations.get(runningInv.id);
-    expect(reaped?.status).toBe("failed");
+    expect(reaped?.status).toBe("stopped");
     persC.close();
   });
 });

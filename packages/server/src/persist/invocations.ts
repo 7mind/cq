@@ -364,16 +364,22 @@ export class InvocationStore {
 
   /**
    * One-shot startup reaper: marks any invocation rows stuck at status='running'
-   * as 'failed' (the existing "didn't complete cleanly" semantic), setting
-   * ended_at + duration_ms. Idempotent. Returns the number of rows updated.
+   * as 'stopped' (interrupted by server restart — no genuine SDK error
+   * occurred), setting ended_at + duration_ms. Idempotent.
    *
    * Run once at SqlitePersistence construction (after migrations) so unclean
    * shutdowns don't leave permanent "running" rows in the History tab.
+   *
+   * Status choice: 'stopped' (not 'failed') because users observe their
+   * sessions continuing to work in the browser after a server restart — the
+   * row was just left in an inconsistent state, not produced by an SDK
+   * error. 'failed' triggers a red badge and implies an error the user can
+   * inspect; there is none to surface here.
    */
   reapOrphans(now: number): number {
     const result = this.db.run(
       `UPDATE invocation
-         SET status='failed',
+         SET status='stopped',
              ended_at=COALESCE(ended_at, ?),
              duration_ms=COALESCE(duration_ms, ? - started_at)
        WHERE status='running'`,
