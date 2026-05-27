@@ -36,7 +36,7 @@ Goal: fix 6 issues surfaced by manual dogfooding. Constraint from /vsm-loop invo
 - [x] **E2E-D09** — Input keymap: bare Enter sends, Shift+Enter newline, IME-safe; add an explicit Send button. `Input.tsx`. Update `input.test.ts`.
 - [ ] **E2E-D05** — Server startup orphan reaper: UPDATE invocation SET status='errored' WHERE status='running' at Bridge construction.
 - [x] **E2E-D06** — Cost/toolCount persistence: bridge updates invocation row on `tool_use` (increment count) and on `result` (set total cost + tokens). `bridge.ts`. Commit: `31d0e0d`.
-- [ ] **E2E-D04** — SESSION_BUSY on tab-switch / resume. Server-side: `handleChatStart` preempt-replaces an existing session. Client-side: lift `activeSessionId` above ChatTab so tab switches preserve it.
+- [x] **E2E-D04** — SESSION_BUSY on tab-switch / resume. Server-side: `handleChatStart` preempt-replaces an existing session via `interruptActive() + await shutdown()`. Client-side: `activeSessionId`/`inProgress` lifted to `SessionProvider` context above tab switcher. `bridge.test.ts` flipped; `chat-autostart.test.ts` wrapped. Commit: `efe35a2`. `bun run check` 456/456; `bun run e2e` 6/6.
 
 Acceptance for each: corresponding test/path described in defects.md; `bun run check` 0; `bun run e2e` still 6/6.
 
