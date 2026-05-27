@@ -82,6 +82,7 @@ function statusClass(status: HistoryRow["status"]): string {
     case "completed": return styles.statusCompleted!;
     case "failed": return styles.statusFailed!;
     case "stopped": return styles.statusStopped!;
+    case "errored": return styles.statusFailed!;
   }
 }
 

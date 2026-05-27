@@ -92,4 +92,6 @@ export interface Persistence {
 
   withTx<T>(fn: () => T): T;
   close(): void;
+  /** Reap orphaned 'running' invocations left by an unclean shutdown. No-op on in-memory adapters. */
+  reapOrphans?(): number;
 }

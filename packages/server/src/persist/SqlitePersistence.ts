@@ -10,6 +10,7 @@ import { SqliteEventLog } from "./events.js";
 import type { Persistence, SessionFilter, SortSpec, PageSpec, PagedResult } from "./Persistence.js";
 import type { SessionRow, InvocationRow } from "@cq/shared";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Logger } from "../log/logger.js";
 
 /**
  * SQLite-backed `Persistence` adapter using bun:sqlite.
@@ -26,12 +27,13 @@ export class SqlitePersistence implements Persistence {
   private readonly eventLog: SqliteEventLog;
   private _closed = false;
 
-  constructor(path: string, eventsDir?: string) {
-    this.db = path === ":memory:" ? this._openMemory() : openDb(path);
+  constructor(path: string, eventsDir?: string, logger?: Logger) {
+    const isMemory = path === ":memory:";
+    this.db = isMemory ? this._openMemory() : openDb(path);
 
     let dir = eventsDir;
     if (!dir) {
-      if (path === ":memory:") {
+      if (isMemory) {
         dir = mkdtempSync(join(tmpdir(), "cq-events-"));
       } else {
         dir = join(dirname(path), "events");
@@ -41,6 +43,13 @@ export class SqlitePersistence implements Persistence {
     this.sessionStore = new SessionStore(this.db);
     this.invocationStore = new InvocationStore(this.db);
     this.eventLog = new SqliteEventLog(dir);
+
+    if (!isMemory) {
+      const reaped = this.invocationStore.reapOrphans(Date.now());
+      if (reaped > 0 && logger) {
+        logger.info("persist.orphan_reap", { count: reaped });
+      }
+    }
   }
 
   private _openMemory(): Database {
@@ -89,6 +98,10 @@ export class SqlitePersistence implements Persistence {
 
   withTx<T>(fn: () => T): T {
     return this.db.transaction(fn)();
+  }
+
+  reapOrphans(): number {
+    return this.invocationStore.reapOrphans(Date.now());
   }
 
   close(): void {

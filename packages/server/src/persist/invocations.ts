@@ -19,7 +19,7 @@ interface InvocationSqlRow {
   started_at: number;
   ended_at: number | null;
   duration_ms: number | null;
-  status: "running" | "completed" | "failed" | "stopped";
+  status: "running" | "completed" | "failed" | "stopped" | "errored";
   tool_call_count: number;
   input_tokens: number;
   output_tokens: number;
@@ -317,6 +317,26 @@ export class InvocationStore {
       `)
       .all(rootId);
     return rows.map((r) => r.event_log_path);
+  }
+
+  /**
+   * One-shot startup reaper: marks any invocation rows stuck at status='running'
+   * as 'errored', setting ended_at + duration_ms. Idempotent.
+   * Returns the number of rows updated.
+   *
+   * Run once at SqlitePersistence construction (after migrations) so unclean
+   * shutdowns don't leave permanent "running" rows in the History tab.
+   */
+  reapOrphans(now: number): number {
+    const result = this.db.run(
+      `UPDATE invocation
+         SET status='errored',
+             ended_at=COALESCE(ended_at, ?),
+             duration_ms=COALESCE(duration_ms, ? - started_at)
+       WHERE status='running'`,
+      [now, now],
+    );
+    return result.changes;
   }
 
   searchFts(query: string, limit: number): InvocationRow[] {

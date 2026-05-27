@@ -273,4 +273,8 @@ export class InMemoryPersistence implements Persistence {
   close(): void {
     // No-op for in-memory adapter.
   }
+
+  reapOrphans(): number {
+    return 0;
+  }
 }

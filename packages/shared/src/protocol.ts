@@ -60,7 +60,7 @@ export const HistoryRow = z.object({
   startedAt: z.number(),
   endedAt: z.number().nullable(),
   durationMs: z.number().nullable(),
-  status: z.enum(["running", "completed", "failed", "stopped"]),
+  status: z.enum(["running", "completed", "failed", "stopped", "errored"]),
   toolCallCount: z.number(),
   inputTokens: z.number(),
   outputTokens: z.number(),

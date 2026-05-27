@@ -340,6 +340,46 @@ function runSuite(label: string, factory: () => Persistence): void {
         p.close(); // second call must not throw
       }).not.toThrow();
     });
+
+    // -----------------------------------------------------------------------
+    // 14. reapOrphans: running rows become errored; completed rows unchanged
+    // -----------------------------------------------------------------------
+    test("reapOrphans transitions running rows to errored, leaves completed unchanged", () => {
+      const session = makeSession();
+      p.sessions.insert(session);
+
+      const now = Date.now();
+      const runningInv = makeInvocation(session.id, {
+        status: "running",
+        startedAt: now - 5000,
+        endedAt: null,
+        durationMs: null,
+      });
+      const completedInv = makeInvocation(session.id, {
+        status: "completed",
+        startedAt: now - 3000,
+        endedAt: now - 1000,
+        durationMs: 2000,
+      });
+      p.invocations.insert(runningInv);
+      p.invocations.insert(completedInv);
+
+      const reaped = p.reapOrphans?.() ?? 0;
+
+      // SQLite adapter reaps; InMemory no-op returns 0.
+      if (reaped > 0) {
+        const updated = p.invocations.get(runningInv.id);
+        expect(updated?.status).toBe("errored");
+        expect(updated?.endedAt).toBeGreaterThanOrEqual(now);
+        expect(updated?.durationMs).toBeGreaterThan(0);
+      }
+
+      // Completed row must be unchanged regardless.
+      const unchanged = p.invocations.get(completedInv.id);
+      expect(unchanged?.status).toBe("completed");
+      expect(unchanged?.endedAt).toBe(now - 1000);
+      expect(unchanged?.durationMs).toBe(2000);
+    });
   });
 }
 
