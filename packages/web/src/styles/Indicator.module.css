@@ -24,7 +24,10 @@
 
 /* Inline variant: embedded in the tab bar at 2/3 size. */
 .indicatorInline {
-  position: static;
+  /* relative (not static) so the absolutely-positioned CountdownRing child
+     remains contained inside the dot instead of falling through to the
+     viewport — D17 fix for the ring drifting to top-left of the page. */
+  position: relative;
   top: auto;
   right: auto;
   z-index: auto;
