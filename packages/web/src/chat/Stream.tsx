@@ -656,13 +656,43 @@ export function computeRenderedMessages(events: ChatEvent[]): RenderedMessage[] 
 // ---------------------------------------------------------------------------
 
 /**
- * Extract plain text content from a RenderedMessage for search matching.
- * Returns empty string for non-text message kinds.
+ * Extract plain text content from a RenderedMessage for the Copy button and
+ * for search matching. Per-kind rules:
+ *   - assistant: raw markdown text
+ *   - user:      raw text
+ *   - tool_use:  for Bash tools, the literal command; for other tools,
+ *                pretty-printed JSON of the input object
+ *   - subagent:  the task description / prompt
+ *   - unknown:   pretty-printed JSON of the underlying SDK event
+ *   - ask:       empty (the bubble holds an interactive card)
  */
 function messagePlainText(msg: RenderedMessage): string {
   if (msg.kind === "assistant") return msg.text;
+  if (msg.kind === "user") return msg.text;
   if (msg.kind === "tool_use") {
-    return `${msg.toolUse.name} ${JSON.stringify(msg.toolUse.input)}`;
+    const name = msg.toolUse.name;
+    const input = msg.toolUse.input;
+    // Bash tool: copy the literal command for paste-into-shell convenience.
+    if (name === "Bash" && input !== null && typeof input === "object") {
+      const cmd = (input as Record<string, unknown>)["command"];
+      if (typeof cmd === "string") return cmd;
+    }
+    // Default: name + pretty-printed JSON of input.
+    try {
+      return `${name}\n${JSON.stringify(input, null, 2)}`;
+    } catch {
+      return name;
+    }
+  }
+  if (msg.kind === "subagent") {
+    return msg.task.task_description ?? "";
+  }
+  if (msg.kind === "unknown") {
+    try {
+      return JSON.stringify(msg.sdkEvent, null, 2);
+    } catch {
+      return "";
+    }
   }
   return "";
 }
@@ -807,7 +837,7 @@ function renderMessages(
         key: msg.key,
         role: "unknown" as MessageRole,
         timestamp: msg.ts,
-        plainText: "",
+        plainText: messagePlainText(msg),
         isActiveMatch: false,
       },
       createElement(UnknownCard, { sdkEvent: msg.sdkEvent }),
