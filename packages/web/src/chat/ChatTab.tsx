@@ -68,7 +68,7 @@ export function ChatTab(): React.ReactElement {
   // --- Header state (PR-25) ---
   const [cwd, setCwd] = useState<string>("");
   const [model, setModel] = useState<string>("claude-sonnet-4-6");
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>("default");
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>("bypassPermissions");
   const [inputTokens, setInputTokens] = useState(0);
   const [outputTokens, setOutputTokens] = useState(0);
   const [costUsd, setCostUsd] = useState(0);

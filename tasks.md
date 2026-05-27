@@ -1,9 +1,9 @@
 # cq — active task ledger
 
-**Cycle:** outer-2 / post-discharge E2E fixes (3 defects open).
+**Cycle:** outer-3 / second-round dogfooding fixes (6 defects open).
 **Goal:** ✓ build cq per [`./prompt.md`](./prompt.md). Discharge condition met: all five milestones `[x]` and archived; `bun run check` exits 0 (tsc + eslint + 399 tests); `bun run start --cwd <real-dir>` launches; sample prompt round-trips verified via PR-51 e2e + post-discharge real-SDK tests (`sdk-stub.test.ts`, `ask-question.test.ts`) running the bundled CLI binary against `MockAnthropicHTTP`. M1 E2E now drives a real client `Manager` in-process against the fixture server.
 **Accepted plan:** [`docs/drafts/20260526-0037-cq-plan.md`](docs/drafts/20260526-0037-cq-plan.md) (2294 lines, G2c-patched).
-**Defects:** [`./defects.md`](./defects.md). _3 open: `E2E-D01` (search/Esc), `E2E-D02` (scroll-anchor jump-button visibility), `E2E-D03` (stop test timing). All earlier defects resolved._
+**Defects:** [`./defects.md`](./defects.md). _6 open from user dogfooding: `E2E-D04` (SESSION_BUSY on tab switch / resume), `E2E-D05` (orphan "running" rows), `E2E-D06` (cost/toolCount=0), `E2E-D07` (default permission mode), `E2E-D08` (model 1M-context entries), `E2E-D09` (Enter to send + Send button). D01–D03 resolved._
 **Final session log:** [`docs/logs/20260526-final-log.md`](docs/logs/20260526-final-log.md).
 
 ## Milestones — final
@@ -26,6 +26,19 @@ Goal: Playwright suite all-green. Constraints from user: no bridge/Manager/SDK c
 - [x] **E2E-D03** — Stop test timing. `packages/e2e/tests/stop.spec.ts`. Root cause: clicking Stop within ~50ms of sendMessage fired query.interrupt() while the SDK subprocess was still in init/HTTP-roundtrip phase; interrupt did not take effect within the 10s toBeEnabled timeout, and natural completion was too fast (21ms) for Playwright to catch the Stop button before it disappeared. Fixed: (1) warm-up message ensures subprocess is initialised before the stop-test turn; (2) MutationObserver watches stream-root for reply text and clicks Stop in the microtask window between the chat.event browser macrotask (text visible, Stop shown) and the chat.done macrotask (Stop hidden); (3) post-Stop toBeEnabled timeout bumped to 25s. Even if the natural chat.done{completed} fires before the interrupt, the test assertions (toBeEnabled + Stop not visible) pass because both conditions are already satisfied. Commit: HEAD. Result: `bun x playwright test stop` → 1 passed (1.7s); `bun run e2e` → 6/6 pass.
 
 After all three: `bun run check` 0; `bun run e2e` 6/6 pass.
+
+## Active — outer-3 (second-round dogfooding fixes)
+
+Goal: fix 6 issues surfaced by manual dogfooding. Constraint from /vsm-loop invocation: build-style fixes, commit-per-defect, `bun run check` + `bun run e2e` green after each, dispatch in difficulty order (easiest first to keep progress visible).
+
+- [x] **E2E-D07** — Default permission mode = `bypassPermissions`. `ChatTab.tsx:71`. Trivial.
+- [ ] **E2E-D08** — Model selector: add `claude-{opus-4-7,sonnet-4-6}[1m]` 1M-context entries. `Header.tsx:36`.
+- [ ] **E2E-D09** — Input keymap: bare Enter sends, Shift+Enter newline, IME-safe; add an explicit Send button. `Input.tsx`. Update `input.test.ts`.
+- [ ] **E2E-D05** — Server startup orphan reaper: UPDATE invocation SET status='errored' WHERE status='running' at Bridge construction.
+- [ ] **E2E-D06** — Cost/toolCount persistence: bridge updates invocation row on `tool_use` (increment count) and on `result` (set total cost + tokens). `bridge.ts`.
+- [ ] **E2E-D04** — SESSION_BUSY on tab-switch / resume. Server-side: `handleChatStart` preempt-replaces an existing session. Client-side: lift `activeSessionId` above ChatTab so tab switches preserve it.
+
+Acceptance for each: corresponding test/path described in defects.md; `bun run check` 0; `bun run e2e` still 6/6.
 
 ## Post-discharge fixes
 
