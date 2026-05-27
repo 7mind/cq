@@ -10,3 +10,7 @@
  */
 
 export * from "./types.js";
+export * from "./parser/parse.js";
+export * from "./parser/serialize.js";
+export { parseFrontmatter, serializeFrontmatter } from "./parser/frontmatter.js";
+export type { ParsedFrontmatter } from "./parser/frontmatter.js";
