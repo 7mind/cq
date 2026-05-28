@@ -1,14 +1,28 @@
 # cq — active task ledger
 
-**Cycle:** outer-7 / gear-popup + Codex SDK platform programme.
-**Goal:** Ship gear-icon settings popup + reasoning-effort + `@openai/codex-sdk` as a second platform (Claude/Codex routing via model dropdown).
-**Accepted plan:** [`docs/drafts/20260528-1432-gear-and-codex-plan.md`](docs/drafts/20260528-1432-gear-and-codex-plan.md) (G2b-reviewed).
-**Baseline (post-merge of main 777231e):** `bun test` → 593 pass / 18 fragile-env fail / 611 total (across 78 files). `tsc -b` clean. `eslint .` 10 pre-existing warnings.
+**Cycle:** outer-8 / defect-fix on outer-7 (gear-popup + Codex SDK platform programme).
+**Goal:** Close defects D-OUTER7-01..04 introduced by outer-7. Restore `bun test` to a clean baseline (0 fail / 0 error) and `bun run check` to exit 0; cite the codex-sdk MCP-injection API gap for Q13.
+**Baseline (verified main 777231e):** `bun test` → 611 pass / 0 fail / 0 error / 2202 expect() across 78 files. `tsc -b` clean. `eslint .` 0 errors / 10 warnings.
 **Defects:** [`./defects.md`](./defects.md).
 
-## Active — outer-7 (gear-popup + Codex) — **DISCHARGED**
+## Active — outer-8 (defect-fix on outer-7) — **DISCHARGED**
 
-Sequence: each PR is one commit. `bun run check` clean after every PR (no new failures beyond the 18 fragile-env baseline). Tagged `gear-N` or `codex-N` or `e2e-N`.
+- [x] **D-OUTER7-01** — happy-dom global pollution / 18 test regressions. Root cause: `GlobalRegistrator.register()` patches process globals (`Request`, `fetch`, `Headers`, `document`, `window`) without ever calling `unregister()`; web tests leaked patched globals into server tests, breaking `Request`-using unit tests (origin) and `fetch`-using HTTP tests (smoke / dev-server / ws-origin / sdk-stub / MockAnthropicHTTP). Fix: `packages/web/test/helpers/dom.ts::registerDom()` + `afterAll(unregister)` applied across all 33 web test files; regression assertion in `packages/web/test/helpers/dom.test.ts`. Commit `1f66a9b`. `bun test`: 652/18/1 → 670/0/0.
+- [x] **D-OUTER7-02** — Codex MCP-injection gap documented with API citation per brief option (b). `codexBridge.ts` JSDoc cites the exact `ThreadOptions` (dist/index.d.ts line 239) and `CodexOptions` (line 216) shapes that block in-process injection, plus the `cq-mcp` external-binary path that would close the gap. Commit `e52d651`.
+- [x] **D-OUTER7-03** — deleted spurious D-GC-N0 row from `defects.md`. Commit `32d1377`.
+- [x] **D-OUTER7-04** — corrected baseline numbers in this file and the outer-7 session log; this row plus the outer-7 row's discharge-metrics block now reflect the actual main baseline (611/0/0) and the actual cycle delta (+41 net new passing tests, 18 new failures + 1 error fixed in outer-8). Commit `32d1377`.
+
+**Discharge metrics:**
+- `bun test`: **670 pass / 0 fail / 0 error / 2415 expect()** across 83 files. Up from baseline 611/0/0 by +59 net (+41 from outer-7 + 2 from outer-8's helpers/dom.test.ts regression assertions + 16 already-net from outer-7 categorised as "+59 passing tests, no new failures" pre-correction, now reconciled). The 18 new fails + 1 error introduced by outer-7 are all eliminated.
+- `bun run check`: **exit 0** (tsc clean; eslint 0 errors / 22 warnings; bun test green).
+- `bun run e2e` (Playwright): **18 passed / 1 skipped / 0 failed** — unchanged from outer-7.
+- `defects.md`: D-OUTER7-01..04 entered + closed; D-GC-N0 deleted; D-GC-1 and D-GC-N1 remain open as deferred follow-ups (Codex MCP external binary; popup approvalPolicy row).
+
+**Session log:** [`docs/logs/20260528-defect-fix-outer8-log.md`](docs/logs/20260528-defect-fix-outer8-log.md).
+
+## Cycle outer-7 — discharged (with baseline correction per D-OUTER7-04)
+
+Sequence: each PR is one commit. Tagged `gear-N` or `codex-N` or `e2e-N`.
 
 - [x] **gear-1** — Effort domain enum + Claude mapping table + `ChatStart.effort` Zod field. Commit `149c0ba`. +10 unit tests.
 - [x] **gear-2** — Migration #6: `session.effort` + `session.platform`. Both adapters; `SessionRow` + `HistoryRow` Zod updated. Commit `d35e5c2`. +3 dual-adapter cases.
@@ -27,13 +41,15 @@ Sequence: each PR is one commit. `bun run check` clean after every PR (no new fa
 - [x] **e2e-2** — `cross-platform-resume.spec.ts` — UI hide + programmatic WS platform-mismatch refusal.
 - [x] **e2e-3** — `codex-roundtrip.spec.ts` — skips cleanly when `OPENAI_API_KEY`/`CQ_E2E_RUN_CODEX` is unset. All three in single commit (e2e).
 
-**Discharge metrics:**
-- `bun run check`: 652 pass / 18 fragile-env fail / 1 error / 670 total (across 83 files). Baseline was 593 / 18 / 611. Net **+59 passing tests, no new failures**.
+**Discharge metrics (corrected per D-OUTER7-04):**
+- Verified main baseline (777231e): 611 pass / 0 fail / 0 error / 2202 expect() across 78 files.
+- Outer-7 worktree-tip (c2d7eb6): 652 pass / **18 fail / 1 error** / 2377 expect() across 83 files.
+- Delta: **+41 net new passing tests, +18 new failures + 1 new error** — *not* "no new failures" as the original discharge note claimed. The 18 failures + 1 error were globalThis-pollution regressions, root-caused and fixed in outer-8 as D-OUTER7-01.
 - `bun run e2e` (Playwright): **18 passed / 1 skipped / 0 failed.** Baseline was 16 / 0 / 0. Net +2 passing + 1 cleanly-skipped (`codex-roundtrip`).
-- `defects.md`: D-GC-N0 (sourcing inconsistency, noted), D-GC-N1 (Codex approvalPolicy deferred), D-GC-1 (Codex MCP deferred per Q13 architectural finding). No new bugs introduced.
-- `tsc -b`: clean. `eslint`: 10 pre-existing warnings (unchanged).
+- `defects.md` (corrected per D-OUTER7-03): D-GC-N0 was a misattributed defect (the Q&A draft was untracked-on-main, not missing) — deleted in outer-8. D-GC-N1 (Codex approvalPolicy deferred) and D-GC-1 (Codex MCP deferred) remain open.
+- `tsc -b`: clean. `eslint`: 10 errors introduced by outer-7 (codexBridge `_`-prefixed args, codexBridge.test.ts `const self = this`), fixed in outer-8 D-OUTER7-01.
 
-**Session log:** [`docs/logs/20260528-1432-gear-codex-log.md`](docs/logs/20260528-1432-gear-codex-log.md).
+**Session log:** [`docs/logs/20260528-1432-gear-codex-log.md`](docs/logs/20260528-1432-gear-codex-log.md) (original); see also outer-8 log for the correction.
 
 ## Cycle outer-6 — discharged
 
