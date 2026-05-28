@@ -180,6 +180,12 @@
               "$WORKSPACE/packages/server/node_modules/@anthropic-ai/claude-agent-sdk"
             ln -s ${bunNodeModules}/packages/server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64 \
               "$WORKSPACE/packages/server/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64"
+            # @anthropic-ai/sdk — used by titleGenerator.ts for the Haiku
+            # session-title call. Distinct package from claude-agent-sdk; was
+            # added in the resume-from-history rework (outer-4) but the closure
+            # spec wasn't updated, breaking `nix run` at runtime.
+            ln -s ${bunNodeModules}/packages/server/node_modules/@anthropic-ai/sdk \
+              "$WORKSPACE/packages/server/node_modules/@anthropic-ai/sdk"
             ln -s ${bunNodeModules}/packages/server/node_modules/zod \
               "$WORKSPACE/packages/server/node_modules/zod"
             ln -s ${bunNodeModules}/packages/server/node_modules/bun-types \
