@@ -250,13 +250,8 @@ const server = Bun.serve({
       //
       // If a scriptOnToolResult was set and the body carries a tool_result,
       // return that sticky response instead — this lets a test mock two
-      // distinct turns of a single tool round-trip.
-      let bodyText = "";
-      try {
-        bodyText = await req.text();
-      } catch {
-        /* ignore */
-      }
+      // distinct turns of a single tool round-trip. `bodyText` was already
+      // read above for title-derivation detection.
       const events = (scriptOnToolResult !== null && bodyText.includes("tool_result"))
         ? scriptOnToolResult
         : scriptQueue.length > 0
