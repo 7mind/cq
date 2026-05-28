@@ -21,10 +21,19 @@
  *   - `OPENAI_API_KEY` env var set
  *   Otherwise emit chat.error{code:'codex-not-authenticated'} and refuse.
  *
- * Ledger MCP + AskUserQuestion in-process MCP wiring is NOT available
- * in Codex sessions in v1 (see defects.md D-GC-1 and D-OUTER7-02).
+ * Ledger MCP tool surface (mcp__cq__*) is reached via the
+ * `packages/cq-mcp` standalone stdio binary (D-GC-1 close path). The
+ * bridge fills `CodexOptions.config.mcp_servers.cq = { command, args }`
+ * per session; the Codex CLI then spawns that binary and routes
+ * `mcp__cq__*` tool calls to it. The binary owns an `FsLedgerStore`
+ * rooted at `--cwd`, the same root the cq server reads from.
  *
- * Concrete API gap in `@openai/codex-sdk@0.134.0`:
+ * AskUserQuestion is intentionally NOT exposed through the cq-mcp
+ * binary because it requires a WebSocket round-trip to the user's
+ * browser that a standalone process cannot perform. Codex sessions use
+ * Codex's native approvalPolicy flow instead.
+ *
+ * Concrete API shape from `@openai/codex-sdk@0.134.0`:
  *
  *   ThreadOptions (dist/index.d.ts line 239) accepts only:
  *     { model, sandboxMode, workingDirectory, skipGitRepoCheck,
@@ -34,29 +43,21 @@
  *   CodexOptions (dist/index.d.ts line 216) accepts only:
  *     { codexPathOverride, baseUrl, apiKey, config: CodexConfigObject, env }
  *
- *   Neither type carries an `mcpServers` field, an in-process
- *   `createSdkMcpServer`-equivalent, an MCP transport, nor any callback
- *   hook through which cq could surface the in-process LedgerStore.
- *
- * The only path the SDK exposes is `CodexOptions.config`, which is
- * flattened into `--config key=value` overrides for the Codex CLI. To
- * reach the LedgerStore through that path would require:
- *   (a) shipping an external `cq-mcp` stdio binary that wraps the same
- *       `createLedgerMcpTools` + `@modelcontextprotocol/sdk` stdio
- *       transport already imported transitively via Claude SDK, then
- *   (b) writing `config.mcp_servers.cq = { command, args }` so the
- *       Codex CLI spawns it per session.
- *
- * That binary is a substantial follow-up feature, not a defect fix, and
- * is deferred. Codex sessions in v1 get the CLI's built-in tool surface
- * (file ops, bash, web search) only. Q13 (codex tool parity) is closed
- * as deferred-with-citation in defects.md.
+ *   `CodexOptions.config` is flattened into `--config key=value`
+ *   overrides for the Codex CLI by serializeConfigOverrides (dist/index.js
+ *   line 304), so the in-memory shape
+ *   `{ mcp_servers: { cq: { command, args: [...] } } }` becomes:
+ *     --config mcp_servers.cq.command="<path>"
+ *     --config mcp_servers.cq.args=["--cwd", "<abs>"]
+ *   which the Codex CLI then reads as a TOML mcp_servers.cq table and
+ *   uses to spawn the cq-mcp process.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import type { Codex, Thread, ThreadEvent, ThreadOptions } from "@openai/codex-sdk";
+import { fileURLToPath } from "node:url";
+import type { Codex, CodexOptions, Thread, ThreadEvent, ThreadOptions } from "@openai/codex-sdk";
 import type { Logger } from "../log/logger";
 import type { SessionRegistry } from "../seq/sessionRegistry";
 import type { Persistence } from "../persist/Persistence.js";
@@ -82,11 +83,25 @@ import type {
 import { effortToCodexEffort } from "@cq/shared";
 
 /**
- * Factory the bridge calls to obtain a `Codex` instance. Default
- * implementation imports the real SDK; tests inject a hand-written
- * dummy implementing the same interface (per the dual-tests skill).
+ * Factory the bridge calls to obtain a `Codex` instance. Receives the
+ * `CodexOptions` the bridge wants to apply (notably the
+ * `config.mcp_servers.cq` entry that points the Codex CLI at the
+ * `cq-mcp` stdio binary — D-GC-1). Default implementation imports the
+ * real SDK; tests inject a hand-written dummy implementing the same
+ * interface (per the dual-tests skill) and inspect the options it
+ * received to assert the wiring.
  */
-export type CodexFactory = () => Codex;
+export type CodexFactory = (options?: CodexOptions) => Codex;
+
+/**
+ * How the bridge launches the cq-mcp stdio binary. Allows tests to
+ * inject a stable absolute path that does not depend on the file system
+ * layout of node_modules at test time.
+ */
+export interface CqMcpBin {
+  command: string;
+  args: string[];
+}
 
 export interface CodexBridgeOpts {
   logger: Logger;
@@ -97,7 +112,9 @@ export interface CodexBridgeOpts {
   persistence: Persistence;
   /**
    * Override the Codex SDK constructor for tests. Defaults to
-   * `() => new Codex()`, which the SDK initialises from process env.
+   * `() => new Codex(options)`, which the SDK initialises from process
+   * env. The options carry the per-session `mcp_servers.cq` config
+   * pointing at the cq-mcp binary.
    */
   codexFactory?: CodexFactory;
   /**
@@ -105,6 +122,13 @@ export interface CodexBridgeOpts {
    * `defaultDetectCodexAuth` (checks ~/.codex/auth.json + OPENAI_API_KEY).
    */
   detectAuth?: () => boolean;
+  /**
+   * Override how the cq-mcp binary is invoked. Defaults to
+   * `defaultResolveCqMcpBin()` which looks up the workspace-linked
+   * `node_modules/.bin/cq-mcp` symlink and falls back to running the
+   * package source under bun directly.
+   */
+  cqMcpBin?: CqMcpBin;
 }
 
 /** Tracks one Codex session's runtime state. */
@@ -132,6 +156,63 @@ type ActiveCodexSession = {
 };
 
 /**
+ * Default resolution for the cq-mcp binary the Codex CLI must spawn so
+ * Codex sessions can reach the same ledger MCP tool surface Claude
+ * sessions get. Resolution order:
+ *
+ *   1. `node_modules/.bin/cq-mcp` walking up from this file's location.
+ *      The workspace install (`bun install`) symlinks the bin into the
+ *      nearest enclosing node_modules/.bin once `@cq/cq-mcp` is a
+ *      dependency of `@cq/server` (it is).
+ *   2. Fallback: `bun run <repo>/packages/cq-mcp/src/main.ts` — used
+ *      when the bin link is missing (e.g. a partial dev environment).
+ *      Discovered by walking up to the repo root and joining the
+ *      package path.
+ *
+ * The result is consumed by the bridge to fill
+ * `CodexOptions.config.mcp_servers.cq = { command, args }`. The
+ * SDK then surfaces those as `--config mcp_servers.cq.command=...`
+ * and `--config mcp_servers.cq.args=[...]` to the Codex CLI.
+ */
+export function defaultResolveCqMcpBin(startDir?: string): CqMcpBin {
+  const here = startDir ?? path.dirname(fileURLToPath(import.meta.url));
+  // Walk up looking for node_modules/.bin/cq-mcp.
+  let dir = here;
+  while (true) {
+    const candidate = path.join(dir, "node_modules", ".bin", "cq-mcp");
+    try {
+      if (fs.statSync(candidate).isFile() || fs.lstatSync(candidate).isSymbolicLink()) {
+        return { command: candidate, args: [] };
+      }
+    } catch {
+      /* not found at this level — keep walking */
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Fallback: locate packages/cq-mcp/src/main.ts walking up from `here`.
+  dir = here;
+  while (true) {
+    const candidate = path.join(dir, "packages", "cq-mcp", "src", "main.ts");
+    try {
+      if (fs.statSync(candidate).isFile()) {
+        return { command: process.execPath, args: ["run", candidate] };
+      }
+    } catch {
+      /* keep walking */
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Last resort: rely on PATH. Codex will report a spawn error if the
+  // bin is not on PATH; that is preferable to silently dropping the
+  // tool surface.
+  return { command: "cq-mcp", args: [] };
+}
+
+/**
  * Default auth detection. Returns true when either the codex login
  * state file exists OR the OPENAI_API_KEY env var is non-empty.
  */
@@ -156,7 +237,7 @@ export class CodexBridge implements BackendBridge {
   private readonly persistence: Persistence;
   private readonly codexFactory: CodexFactory;
   private readonly detectAuth: () => boolean;
-  private codex: Codex | null = null;
+  private readonly cqMcpBin: CqMcpBin;
   private active: ActiveCodexSession | null = null;
 
   constructor(opts: CodexBridgeOpts) {
@@ -164,14 +245,15 @@ export class CodexBridge implements BackendBridge {
     this.registry = opts.registry;
     this.cwd = path.resolve(opts.cwd);
     this.persistence = opts.persistence;
-    this.codexFactory = opts.codexFactory ?? ((): Codex => {
+    this.codexFactory = opts.codexFactory ?? ((options?: CodexOptions): Codex => {
       // Lazy require to avoid loading the SDK at import time in code paths
       // (e.g. tests) that never construct a CodexBridge.
       // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-      const { Codex } = require("@openai/codex-sdk") as { Codex: new () => Codex };
-      return new Codex();
+      const { Codex } = require("@openai/codex-sdk") as { Codex: new (o?: CodexOptions) => Codex };
+      return new Codex(options);
     });
     this.detectAuth = opts.detectAuth ?? ((): boolean => defaultDetectCodexAuth());
+    this.cqMcpBin = opts.cqMcpBin ?? defaultResolveCqMcpBin();
   }
 
   isBusy(): boolean {
@@ -239,10 +321,21 @@ export class CodexBridge implements BackendBridge {
       chatSessionId = this.registry.create().sessionId;
     }
 
-    // Lazy-construct Codex.
-    if (this.codex === null) {
-      this.codex = this.codexFactory();
-    }
+    // Construct a fresh Codex per session so the per-session
+    // CodexOptions.config (notably mcp_servers.cq pointing at our stdio
+    // bin) takes effect. The prior session has already been preempted
+    // and shut down above, so there is no contention.
+    const codexOptions: CodexOptions = {
+      config: {
+        mcp_servers: {
+          cq: {
+            command: this.cqMcpBin.command,
+            args: [...this.cqMcpBin.args, "--cwd", this.cwd],
+          },
+        },
+      },
+    };
+    const codex = this.codexFactory(codexOptions);
 
     const model = frame.model ?? "";
     const effort: Effort = frame.effort ?? "none";
@@ -268,8 +361,8 @@ export class CodexBridge implements BackendBridge {
     }
 
     const thread = priorThreadId !== null && isResumption
-      ? this.codex.resumeThread(priorThreadId, threadOptions)
-      : this.codex.startThread(threadOptions);
+      ? codex.resumeThread(priorThreadId, threadOptions)
+      : codex.startThread(threadOptions);
 
     const invocationId = crypto.randomUUID();
     const startedAt = Date.now();
