@@ -37,6 +37,8 @@ export interface ModelEntry {
  */
 export const MODELS: readonly ModelEntry[] = [
   // Claude — 1M context tier first, base second (matches existing Header order).
+  { id: "claude-opus-4-8[1m]",   label: "claude-opus-4-8 (1M)",   platform: "claude" },
+  { id: "claude-opus-4-8",       label: "claude-opus-4-8",        platform: "claude" },
   { id: "claude-opus-4-7[1m]",   label: "claude-opus-4-7 (1M)",   platform: "claude" },
   { id: "claude-opus-4-7",       label: "claude-opus-4-7",        platform: "claude" },
   { id: "claude-sonnet-4-6[1m]", label: "claude-sonnet-4-6 (1M)", platform: "claude" },
@@ -50,7 +52,7 @@ export const MODELS: readonly ModelEntry[] = [
 ] as const;
 
 /** Default model on a fresh tab (preserves prior behaviour). */
-export const DEFAULT_MODEL = "claude-opus-4-7[1m]";
+export const DEFAULT_MODEL = "claude-opus-4-8[1m]";
 
 /**
  * Decide which backend handles a given model id.
