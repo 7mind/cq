@@ -35,7 +35,6 @@ import type {
   UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
 
-const MILESTONE_ID_RE = /^M(\d+)$/;
 const ITEM_ID_RE = /^[A-Za-z]+(\d+)$/;
 
 /**
@@ -116,11 +115,6 @@ export function validateSchema(schema: {
       );
     }
   }
-}
-
-export function findMilestone(ledger: Ledger, milestoneId: string): Milestone {
-  for (const m of ledger.milestones) if (m.id === milestoneId) return m;
-  throw new MilestoneNotFoundError(ledger.id, milestoneId);
 }
 
 export function findItem(ledger: Ledger, itemId: string): { milestone: Milestone; item: Item } {
@@ -520,12 +514,6 @@ function itemIdExists(ledger: Ledger, id: string): boolean {
   // Don't check archived items — once a milestone is archived its ids are
   // out of the active namespace. The counter alone prevents reuse in
   // newly-issued ids.
-  return false;
-}
-
-function milestoneIdExists(ledger: Ledger, id: string): boolean {
-  for (const m of ledger.milestones) if (m.id === id) return true;
-  for (const p of ledger.archivePointers) if (p.id === id) return true;
   return false;
 }
 

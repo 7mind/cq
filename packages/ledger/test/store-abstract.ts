@@ -1,5 +1,5 @@
 /**
- * Abstract test suite for LedgerStore.
+ * Abstract test suite for LedgerStore (msunify shape).
  *
  * Same suite runs against:
  *   - FsLedgerStore (against a freshly-created tmp dir per test)
@@ -7,13 +7,22 @@
  *
  * Dual-tests principle: the production adapter and the in-memory dummy must
  * be observationally indistinguishable for the behaviours exercised here.
+ *
+ * The milestones ledger is bootstrapped automatically by `init()`; tests
+ * `createMilestone` into it as needed without seeding a `milestones`
+ * entry.
  */
 
 import { describe, it, expect } from "bun:test";
 import type { LedgerSchema, LedgerStore } from "../src/index.js";
+import {
+  MILESTONES_LEDGER,
+  MILESTONES_ACTIVE_GROUP_ID,
+  isIsoTimestamp,
+} from "../src/index.js";
 
 export interface AbstractStoreFactory {
-  /** Build a fresh store with the given pre-registered ledgers. */
+  /** Build a fresh store with the given pre-registered ledgers (besides milestones). */
   build(seed: Array<{ name: string; schema: LedgerSchema }>): Promise<LedgerStore>;
   /** Optional teardown hook (e.g. remove tmp dir). */
   teardown?(store: LedgerStore): Promise<void>;
@@ -42,54 +51,102 @@ const tasksSchema: LedgerSchema = {
 
 export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
   describe(`LedgerStore (abstract suite, ${factory.name})`, () => {
-    it("enumerate() lists seeded ledgers, sorted", async () => {
+    it("enumerate() lists seeded ledgers + the bootstrapped milestones ledger, sorted", async () => {
       const store = await factory.build([
         { name: "defects", schema: defectsSchema },
         { name: "tasks", schema: tasksSchema },
       ]);
       try {
-        expect(store.enumerate()).toEqual(["defects", "tasks"]);
+        // Bootstrapped: `milestones` always appears in enumerate().
+        expect(store.enumerate()).toEqual([MILESTONES_LEDGER, "defects", "tasks"].sort());
       } finally {
         await factory.teardown?.(store);
       }
     });
 
-    it("createMilestone + createItem + counters monotonic", async () => {
+    it("createMilestone allocates M<n> from milestones-ledger item counter", async () => {
+      const store = await factory.build([]);
+      try {
+        const m1 = await store.createMilestone({ title: "first" });
+        expect(m1.id).toBe("M1");
+        const m2 = await store.createMilestone({ title: "second" });
+        expect(m2.id).toBe("M2");
+        // Fields are persisted on the milestone-item.
+        expect(m1.fields["title"]).toBe("first");
+        expect(m1.status).toBe("open");
+        // createdAt / updatedAt are ISO strings.
+        expect(isIsoTimestamp(m1.createdAt)).toBe(true);
+        expect(isIsoTimestamp(m1.updatedAt)).toBe(true);
+      } finally {
+        await factory.teardown?.(store);
+      }
+    });
+
+    it("createItem auto-creates the depth-2 group in a non-milestones ledger on first reference", async () => {
       const store = await factory.build([{ name: "defects", schema: defectsSchema }]);
       try {
-        const m1 = await store.createMilestone("defects", { title: "first" });
-        expect(m1.id).toBe("M1");
-        const m2 = await store.createMilestone("defects", { title: "second" });
-        expect(m2.id).toBe("M2");
-        const item1 = await store.createItem("defects", "M1", {
+        const m = await store.createMilestone({ title: "x" });
+        const item1 = await store.createItem("defects", m.id, {
           status: "open",
           fields: { severity: "minor", location: "x.ts", description: "foo" },
         });
         expect(item1.id).toBe("D1");
-        const item2 = await store.createItem("defects", "M1", {
+        expect(item1.milestoneId).toBe(m.id);
+        const item2 = await store.createItem("defects", m.id, {
           status: "open",
           fields: { severity: "nit", location: "y.ts", description: "bar" },
         });
         expect(item2.id).toBe("D2");
         const ledger = store.fetch("defects");
-        expect(ledger.counters).toEqual({ milestone: 2, item: 2 });
+        // Counter only tracks items, never milestones in non-milestones ledgers.
+        expect(ledger.counters).toEqual({ milestone: 0, item: 2 });
+        // Resolved milestone metadata is filled from the milestones ledger.
+        expect(ledger.milestones).toHaveLength(1);
+        const g = ledger.milestones[0];
+        expect(g?.id).toBe(m.id);
+        expect(g?.milestone.title).toBe("x");
+        expect(g?.milestone.status).toBe("open");
       } finally {
         await factory.teardown?.(store);
       }
     });
 
-    it("caller-supplied id is honoured; duplicate is refused", async () => {
+    it("create_item refuses an absent / archived / terminal milestone id (strict existence)", async () => {
       const store = await factory.build([{ name: "defects", schema: defectsSchema }]);
       try {
-        const m = await store.createMilestone("defects", { id: "M5", title: "x" });
+        // Absent
+        await expect(
+          store.createItem("defects", "M99", {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "foo" },
+          }),
+        ).rejects.toThrow(/does not exist/);
+        // Terminal: milestone marked done refuses.
+        const m = await store.createMilestone({ title: "done-already" });
+        await store.updateMilestone(m.id, { status: "done" });
+        await expect(
+          store.createItem("defects", m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "foo" },
+          }),
+        ).rejects.toThrow(/terminal status/);
+      } finally {
+        await factory.teardown?.(store);
+      }
+    });
+
+    it("caller-supplied milestone id is honoured; duplicate is refused", async () => {
+      const store = await factory.build([]);
+      try {
+        const m = await store.createMilestone({ id: "M5", title: "x" });
         expect(m.id).toBe("M5");
-        // Counter advances past M5: counter was 0, supplied M5 sets next to 6,
-        // next auto-create increments to 7 then issues M7.
-        const m2 = await store.createMilestone("defects", { title: "y" });
+        // Counter was 0; supplied M5 sets next to 6; auto-create increments
+        // to 7 and issues "M7".
+        const m2 = await store.createMilestone({ title: "y" });
         expect(m2.id).toBe("M7");
         await expect(
-          store.createMilestone("defects", { id: "M5", title: "dup" }),
-        ).rejects.toThrow(/Duplicate milestone id/);
+          store.createMilestone({ id: "M5", title: "dup" }),
+        ).rejects.toThrow(/Duplicate item id/);
       } finally {
         await factory.teardown?.(store);
       }
@@ -98,11 +155,13 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
     it("updateItem mutates status + fields and bumps updatedAt", async () => {
       const store = await factory.build([{ name: "defects", schema: defectsSchema }]);
       try {
-        await store.createMilestone("defects", { title: "x" });
-        const created = await store.createItem("defects", "M1", {
+        const m = await store.createMilestone({ title: "x" });
+        const created = await store.createItem("defects", m.id, {
           status: "open",
           fields: { severity: "minor", location: "x.ts", description: "foo" },
         });
+        // Use a tiny delay so updatedAt strictly increases under wall clock.
+        await new Promise((r) => setTimeout(r, 2));
         const updated = await store.updateItem("defects", created.id, {
           status: "resolved",
           fields: { rootCause: "rc", relatedIds: ["D2"] },
@@ -110,8 +169,9 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
         expect(updated.status).toBe("resolved");
         expect(updated.fields["rootCause"]).toBe("rc");
         expect(updated.fields["relatedIds"]).toEqual(["D2"]);
-        // Pre-existing fields preserved.
         expect(updated.fields["severity"]).toBe("minor");
+        expect(isIsoTimestamp(updated.updatedAt)).toBe(true);
+        expect(updated.updatedAt >= created.updatedAt).toBe(true);
       } finally {
         await factory.teardown?.(store);
       }
@@ -120,21 +180,21 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
     it("invalid status / unknown field / missing required field are rejected", async () => {
       const store = await factory.build([{ name: "defects", schema: defectsSchema }]);
       try {
-        await store.createMilestone("defects", { title: "x" });
+        const m = await store.createMilestone({ title: "x" });
         await expect(
-          store.createItem("defects", "M1", {
+          store.createItem("defects", m.id, {
             status: "BOGUS",
             fields: { severity: "minor", location: "x.ts", description: "foo" },
           }),
         ).rejects.toThrow(/Invalid status/);
         await expect(
-          store.createItem("defects", "M1", {
+          store.createItem("defects", m.id, {
             status: "open",
             fields: { severity: "minor", location: "x.ts" /* missing description */ },
           }),
         ).rejects.toThrow(/Missing required field/);
         await expect(
-          store.createItem("defects", "M1", {
+          store.createItem("defects", m.id, {
             status: "open",
             fields: {
               severity: "minor",
@@ -152,16 +212,16 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
     it("search returns items matching status, string field, or array field", async () => {
       const store = await factory.build([{ name: "defects", schema: defectsSchema }]);
       try {
-        await store.createMilestone("defects", { title: "x" });
-        const a = await store.createItem("defects", "M1", {
+        const m = await store.createMilestone({ title: "x" });
+        const a = await store.createItem("defects", m.id, {
           status: "open",
           fields: { severity: "minor", location: "Stream.tsx", description: "scroll bug" },
         });
-        const b = await store.createItem("defects", "M1", {
+        const b = await store.createItem("defects", m.id, {
           status: "resolved",
           fields: { severity: "major", location: "Header.tsx", description: "badge order" },
         });
-        const c = await store.createItem("defects", "M1", {
+        const c = await store.createItem("defects", m.id, {
           status: "open",
           fields: {
             severity: "nit",
@@ -170,50 +230,86 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
             relatedIds: ["D1"],
           },
         });
-        // by status
         expect(store.search("defects", "resolved").map((i) => i.id)).toEqual([b.id]);
-        // by string field substring
         expect(store.search("defects", "stream").map((i) => i.id)).toEqual([a.id]);
-        // by array field
         expect(store.search("defects", "D1").map((i) => i.id)).toEqual([c.id]);
       } finally {
         await factory.teardown?.(store);
       }
     });
 
-    it("archiveMilestone refuses non-terminal items and succeeds when all terminal", async () => {
-      const store = await factory.build([{ name: "defects", schema: defectsSchema }]);
+    it("archiveMilestone (global) refuses non-terminal items in ANY ledger, succeeds when all terminal", async () => {
+      const store = await factory.build([
+        { name: "defects", schema: defectsSchema },
+        { name: "tasks", schema: tasksSchema },
+      ]);
       try {
-        await store.createMilestone("defects", { title: "M-one" });
-        const it1 = await store.createItem("defects", "M1", {
+        const m = await store.createMilestone({ title: "M-one" });
+        const it1 = await store.createItem("defects", m.id, {
           status: "open",
           fields: { severity: "minor", location: "x.ts", description: "foo" },
         });
-        await store.createItem("defects", "M1", {
+        await store.createItem("defects", m.id, {
           status: "resolved",
           fields: { severity: "minor", location: "y.ts", description: "bar" },
         });
+        // The milestone itself is non-terminal.
         await expect(
-          store.archiveMilestone("defects", "M1", "summary"),
+          store.archiveMilestone(m.id, "summary"),
         ).rejects.toThrow(/not in terminal status/);
+        // Resolve the open defect, but milestone-item still open.
         await store.updateItem("defects", it1.id, { status: "resolved" });
-        const ptr = await store.archiveMilestone("defects", "M1", "summary one");
-        expect(ptr.id).toBe("M1");
-        expect(ptr.path).toBe("./archive/defects/M1.md");
+        await expect(
+          store.archiveMilestone(m.id, "summary"),
+        ).rejects.toThrow(/terminal status/);
+        // Mark milestone done.
+        await store.updateMilestone(m.id, { status: "done" });
+        // Now succeeds.
+        const ptr = await store.archiveMilestone(m.id, "summary one");
+        expect(ptr.id).toBe(m.id);
+        expect(ptr.path).toBe(`./archive/${MILESTONES_LEDGER}/${m.id}.md`);
         expect(ptr.summary).toBe("summary one");
-        // Ledger no longer contains M1 in active milestones; pointer recorded.
-        const l = store.fetch("defects");
-        expect(l.milestones.map((m) => m.id)).toEqual([]);
-        expect(l.archivePointers.map((p) => p.id)).toEqual(["M1"]);
-        // Archive is readable.
-        const archived = await store.fetchArchive("defects", "M1");
-        expect(archived.items.length).toBe(2);
+        // Defects ledger: depth-2 group gone, archive pointer recorded.
+        const defects = store.fetch("defects");
+        expect(defects.milestones.map((g) => g.id)).toEqual([]);
+        expect(defects.archivePointers.map((p) => p.id)).toEqual([m.id]);
+        // Milestones ledger: milestone-item gone, archive pointer recorded.
+        const ms = store.fetch(MILESTONES_LEDGER);
+        const activeGroup = ms.milestones.find(
+          (g) => g.id === MILESTONES_ACTIVE_GROUP_ID,
+        );
+        expect(activeGroup?.items.map((i) => i.id)).toEqual([]);
+        expect(ms.archivePointers.map((p) => p.id)).toEqual([m.id]);
+        // Group archive in defects is readable.
+        const defectsArchive = await store.fetchArchive("defects", m.id);
+        expect(defectsArchive.kind).toBe("group");
+        if (defectsArchive.kind === "group") {
+          expect(defectsArchive.milestone.items.length).toBe(2);
+        }
+        // Milestone-item archive in the milestones ledger is readable.
+        const msArchive = await store.fetchArchive(MILESTONES_LEDGER, m.id);
+        expect(msArchive.kind).toBe("item");
+        if (msArchive.kind === "item") {
+          expect(msArchive.item.id).toBe(m.id);
+          expect(msArchive.item.fields["title"]).toBe("M-one");
+        }
       } finally {
         await factory.teardown?.(store);
       }
     });
 
-    it("createLedger adds a ledger and validates against schema", async () => {
+    it("archiveMilestone refuses the bootstrap group M0", async () => {
+      const store = await factory.build([]);
+      try {
+        await expect(
+          store.archiveMilestone(MILESTONES_ACTIVE_GROUP_ID, "no"),
+        ).rejects.toThrow(/bootstrap/);
+      } finally {
+        await factory.teardown?.(store);
+      }
+    });
+
+    it("createLedger adds a ledger and refuses the reserved name 'milestones'", async () => {
       const store = await factory.build([]);
       try {
         const l = await store.createLedger("todos", {
@@ -223,7 +319,6 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
         });
         expect(l.id).toBe("todos");
         expect(store.enumerate()).toContain("todos");
-        // Duplicate refused.
         await expect(
           store.createLedger("todos", {
             statusValues: ["a"],
@@ -231,17 +326,90 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
             fields: {},
           }),
         ).rejects.toThrow(/Duplicate ledger/);
+        await expect(
+          store.createLedger(MILESTONES_LEDGER, tasksSchema),
+        ).rejects.toThrow(/reserved/);
       } finally {
         await factory.teardown?.(store);
       }
     });
 
-    it("fetch / fetchMilestone / fetchItem throw typed errors when missing", async () => {
+    it("fetch / fetchItem throw typed errors when missing", async () => {
       const store = await factory.build([{ name: "defects", schema: defectsSchema }]);
       try {
         expect(() => store.fetch("nope")).toThrow(/Ledger not found/);
-        expect(() => store.fetchMilestone("defects", "M99")).toThrow(/Milestone not found/);
         expect(() => store.fetchItem("defects", "D99")).toThrow(/Item not found/);
+      } finally {
+        await factory.teardown?.(store);
+      }
+    });
+
+    it("fetchMilestone returns the resolved view + per-ledger reference counts", async () => {
+      const store = await factory.build([
+        { name: "defects", schema: defectsSchema },
+        { name: "tasks", schema: tasksSchema },
+      ]);
+      try {
+        const m = await store.createMilestone({
+          title: "thing",
+          description: "a thing",
+        });
+        await store.createItem("defects", m.id, {
+          status: "open",
+          fields: { severity: "minor", location: "x.ts", description: "d1" },
+        });
+        await store.createItem("defects", m.id, {
+          status: "open",
+          fields: { severity: "minor", location: "y.ts", description: "d2" },
+        });
+        await store.createItem("tasks", m.id, {
+          status: "open",
+          fields: { notes: "t1" },
+        });
+        const view = store.fetchMilestone(m.id);
+        expect(view.resolved.id).toBe(m.id);
+        expect(view.resolved.title).toBe("thing");
+        expect(view.resolved.description).toBe("a thing");
+        expect(view.resolved.status).toBe("open");
+        expect(view.references).toEqual({ defects: 2, tasks: 1 });
+      } finally {
+        await factory.teardown?.(store);
+      }
+    });
+
+    it("listMilestoneItems groups items by ledger", async () => {
+      const store = await factory.build([
+        { name: "defects", schema: defectsSchema },
+        { name: "tasks", schema: tasksSchema },
+      ]);
+      try {
+        const m = await store.createMilestone({ title: "x" });
+        await store.createItem("defects", m.id, {
+          status: "open",
+          fields: { severity: "minor", location: "x.ts", description: "d1" },
+        });
+        await store.createItem("tasks", m.id, {
+          status: "open",
+          fields: { notes: "t1" },
+        });
+        const grouped = store.listMilestoneItems(m.id);
+        expect(Object.keys(grouped).sort()).toEqual(["defects", "tasks"]);
+        expect(grouped["defects"]?.length).toBe(1);
+        expect(grouped["tasks"]?.length).toBe(1);
+      } finally {
+        await factory.teardown?.(store);
+      }
+    });
+
+    it("createItem refuses the milestones ledger directly (must use createMilestone)", async () => {
+      const store = await factory.build([]);
+      try {
+        await expect(
+          store.createItem(MILESTONES_LEDGER, MILESTONES_ACTIVE_GROUP_ID, {
+            status: "open",
+            fields: { title: "x" },
+          }),
+        ).rejects.toThrow(/use createMilestone/);
       } finally {
         await factory.teardown?.(store);
       }
@@ -256,7 +424,7 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
           await expect(
             store.createLedger("x", {
               statusValues: ["open"],
-              terminalStatuses: ["done"], // not in statusValues
+              terminalStatuses: ["done"],
               fields: {},
             }),
           ).rejects.toThrow(/terminalStatuses entry "done" is not in statusValues/);

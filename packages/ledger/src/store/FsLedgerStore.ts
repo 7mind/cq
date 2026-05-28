@@ -442,13 +442,28 @@ export class FsLedgerStore implements LedgerStore {
     const milestoneItem = group.items.find((it) => it.id === milestoneId);
     if (milestoneItem === undefined) {
       // Surface via applyDetachMilestoneItem so the error type is
-      // `MilestoneItemNotFoundError("absent")`.
+      // `MilestoneItemNotFoundError("absent")`. applyDetachMilestoneItem
+      // throws before any mutation when the item is absent.
       applyDetachMilestoneItem(
         milestonesLedger,
         milestoneId,
         summary,
         `./archive/${MILESTONES_LEDGER}/${milestoneId}.md`,
       );
+    } else {
+      // Item exists; refuse if non-terminal. (applyDetachMilestoneItem
+      // would throw NonTerminalItemsError here, but it mutates only
+      // AFTER the terminal check, so a synchronous throw is safe — we
+      // surface it the same way for type-consistency.)
+      const terminal = new Set(milestonesLedger.schema.terminalStatuses);
+      if (!terminal.has(milestoneItem.status)) {
+        applyDetachMilestoneItem(
+          milestonesLedger,
+          milestoneId,
+          summary,
+          `./archive/${MILESTONES_LEDGER}/${milestoneId}.md`,
+        );
+      }
     }
     // Phase 2 — for each non-milestones ledger with a matching group:
     // detach in-memory, write the archive file, write the ledger file.
