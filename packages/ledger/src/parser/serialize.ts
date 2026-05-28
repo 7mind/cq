@@ -6,16 +6,17 @@
  * use. The resulting file parses back via `parseLedger` (round-trip
  * property tested in `parser-roundtrip.test.ts`).
  *
- * Format:
+ * Format (msunify cycle):
  *   ---
  *   <YAML frontmatter>
  *   ---
  *
  *   # <ledger-id>
  *
- *   ## <milestone-id> — <title>
+ *   ## <milestone-id>                         (non-milestones ledgers)
+ *   ## M0 — active                            (milestones ledger only)
  *
- *   <optional description paragraph>
+ *   <optional description paragraph — milestones ledger only>
  *
  *   ### <item-id> — <status>
  *
@@ -24,6 +25,11 @@
  *     multi-line
  *     value
  *   - field: ["a", "b"]
+ *   - createdAt: 2026-05-28T20:30:00.000Z
+ *   - updatedAt: 2026-05-28T20:31:00.000Z
+ *
+ * The `isMilestonesLedger` flag is derived from `ledger.id === MILESTONES_LEDGER`;
+ * callers do not pass it explicitly.
  */
 
 import YAML from "yaml";
@@ -32,6 +38,12 @@ import {
   serializeFrontmatter,
   type ParsedFrontmatter,
 } from "./frontmatter.js";
+import {
+  ISO_TIMESTAMP_RE,
+  MILESTONES_ACTIVE_GROUP_ID,
+  MILESTONES_ACTIVE_GROUP_TITLE,
+  MILESTONES_LEDGER,
+} from "../constants.js";
 
 const EM_DASH = "—";
 
@@ -46,27 +58,50 @@ export function serializeLedger(ledger: Ledger): string {
   parts.push(serializeFrontmatter(fm));
   parts.push("---\n\n");
   parts.push(`# ${ledger.id}\n`);
+  const isMilestonesLedger = ledger.id === MILESTONES_LEDGER;
   for (const m of ledger.milestones) {
     parts.push("\n");
-    parts.push(serializeMilestone(m));
+    parts.push(serializeMilestone(m, isMilestonesLedger));
   }
   return parts.join("");
 }
 
 /**
- * Serialize a single milestone for an archive file (no frontmatter, no
- * ledger-level header).
+ * Serialize a single milestone-group for a per-milestone archive file
+ * (no frontmatter, no ledger-level header). Used for non-milestones
+ * ledgers' archived groups.
  */
 export function serializeArchive(milestone: Milestone): string {
-  return serializeMilestone(milestone);
+  return serializeMilestone(milestone, /*isMilestonesLedger*/ false);
 }
 
-function serializeMilestone(m: Milestone): string {
+/**
+ * Serialize a single archived milestone-item from the milestones ledger.
+ * Emits just the depth-3 `### M<n> — <status>` heading and its field
+ * list — no depth-2 wrapper, no frontmatter. Parses back via
+ * `parseMilestoneItemArchive`.
+ */
+export function serializeMilestoneItemArchive(item: Item): string {
+  return serializeItem(item);
+}
+
+function serializeMilestone(m: Milestone, isMilestonesLedger: boolean): string {
   const parts: string[] = [];
-  parts.push(`## ${m.id} ${EM_DASH} ${escapeHeadingText(m.title)}\n`);
-  if (m.description.length > 0) {
-    parts.push("\n");
-    parts.push(`${m.description}\n`);
+  if (isMilestonesLedger) {
+    // Bootstrap group: always `## M0 — active`. Defensive: assert the id
+    // matches; the store should never construct anything else.
+    const titleForHeading =
+      m.id === MILESTONES_ACTIVE_GROUP_ID
+        ? MILESTONES_ACTIVE_GROUP_TITLE
+        : escapeHeadingText(m.title);
+    parts.push(`## ${m.id} ${EM_DASH} ${titleForHeading}\n`);
+    if (m.description.length > 0) {
+      parts.push("\n");
+      parts.push(`${m.description}\n`);
+    }
+  } else {
+    // Non-milestones ledger: bare ID, no title, no description.
+    parts.push(`## ${m.id}\n`);
   }
   for (const item of m.items) {
     parts.push("\n");
@@ -92,14 +127,10 @@ function serializeFieldLine(key: string, value: FieldValue): string {
   // We render as a YAML key:value pair inside a `- ` list item.
   // For strings with newlines we use the YAML block-scalar form.
   // For arrays we emit JSON flow form (YAML.stringify with flow=true).
-  // For numbers we emit the bare number.
   if (Array.isArray(value)) {
     // JSON-style flow array: ["a", "b"]
     const flow = JSON.stringify(value);
     return `- ${key}: ${flow}\n`;
-  }
-  if (typeof value === "number") {
-    return `- ${key}: ${value}\n`;
   }
   // string
   if (value.includes("\n")) {
@@ -109,6 +140,13 @@ function serializeFieldLine(key: string, value: FieldValue): string {
       .map((line) => `    ${line}`)
       .join("\n");
     return `- ${key}: |\n${indented}\n`;
+  }
+  // ISO 8601 timestamps contain a `:` which would normally force JSON
+  // quoting via `needsQuoting`; emit them bare so the on-disk form stays
+  // human-readable and round-trips cleanly (the parser strips the bare
+  // value as a string).
+  if (ISO_TIMESTAMP_RE.test(value)) {
+    return `- ${key}: ${value}\n`;
   }
   // Inline string. Quote it if it contains characters that confuse YAML.
   if (needsQuoting(value)) {

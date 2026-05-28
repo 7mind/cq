@@ -1,8 +1,23 @@
 /**
- * Ledger MCP tool factory.
+ * Ledger MCP tool factory (msunify cycle).
  *
  * Returns an array of `tool()` instances ready to be passed to
  * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
+ *
+ * Tool surface (13 tools after msunify):
+ *
+ * Item / ledger surface (8):
+ *  - enumerate_ledgers, fetch_ledger, fetch_ledger_archive,
+ *    fetch_item (renamed from ledger_fetch),
+ *    update_item (renamed from ledger_update),
+ *    create_item, create_ledger, search_items.
+ *
+ * Milestone surface (5) — global, operate against the `milestones` ledger:
+ *  - create_milestone(title, description?, blocked?, depends?)
+ *  - update_milestone(milestone_id, { title?, description?, status?, blocked?, depends? })
+ *  - fetch_milestone(milestone_id) → { milestone, resolved, references }
+ *  - archive_milestone(milestone_id, summary) → { pointer }
+ *  - list_milestone_items(milestone_id) → { items: Record<ledger, Item[]> }
  *
  * Each handler turns the validated input into a single LedgerStore call,
  * serialises the result as JSON, and returns it as a text content block.
@@ -22,9 +37,6 @@ import type { FieldValue, LedgerSchema } from "../types.js";
  * The SDK's `tools?:` field on createSdkMcpServer is typed as
  * `Array<SdkMcpToolDefinition<any>>`. We alias that here so our factory
  * can return a heterogeneous list of tools without TS rejecting the union.
- *
- * The `any` in the schema generic is the SDK's own choice (see
- * `sdk.d.ts`); we re-use it intentionally as a typed-boundary escape hatch.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyTool = SdkMcpToolDefinition<any>;
@@ -50,8 +62,6 @@ const fieldSpecSchema = z.object({
 
 // D-LED-02: status values must round-trip through the markdown heading
 // `### <id> — <status>`; the em-dash separator forbids `—` inside the value.
-// Restricting to A-Za-z0-9, space, dash, underscore is the brief's
-// recommendation and also rejects other heading-corrupting characters.
 const statusValueSchema = z
   .string()
   .min(1)
@@ -88,39 +98,29 @@ const schemaSchema = z
   );
 
 /**
- * Field values may be string, string[], or number (timestamp). The MCP
- * subprocess passes them as raw JSON, so we accept the union here.
+ * Field values may be string or string[]. Timestamps are ISO 8601
+ * strings after the msunify cycle (numeric epoch ms is gone).
  */
-const fieldValueSchema = z.union([
-  z.string(),
-  z.array(z.string()),
-  z.number(),
-]);
+const fieldValueSchema = z.union([z.string(), z.array(z.string())]);
 
 const fieldsSchema = z.record(z.string(), fieldValueSchema);
 
 /**
  * D-LED-01: caller-supplied milestone/item ids cannot contain `/`, `.`, or
  * whitespace — anything that could escape the filesystem path
- * `FsLedgerStore` derives from them. Mirrors `SAFE_ID_RE` in `core.ts`; we
- * re-declare here so Zod surfaces the validation error at the MCP layer
- * before the call ever reaches the store.
+ * `FsLedgerStore` derives from them.
  */
 const safeIdSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]+$/, "id may only contain A-Za-z0-9_-");
-
-/**
- * The MCP SDK is strict about input schemas being plain Zod object shapes
- * (key → Zod type), not a full ZodObject. Each tool below declares its
- * input schema as such a record literal.
- */
 
 // ---------------------------------------------------------------------------
 // Tool builders
 // ---------------------------------------------------------------------------
 
 export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
+  // ---- Item / ledger surface (8) -----------------------------------------
+
   const enumerateLedgers = tool(
     "enumerate_ledgers",
     "List all known ledger names.",
@@ -130,54 +130,25 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
 
   const fetchLedger = tool(
     "fetch_ledger",
-    "Fetch a ledger: schema, active milestones (with their items), and archive pointers.",
+    "Fetch a ledger: schema, active milestone groups (each expanded with resolved milestone metadata { id, status, title, description }), and archive pointers.",
     { ledger_id: z.string() } as const,
     async (args) => jsonResult({ ledger: store.fetch(args.ledger_id) }),
   );
 
   const fetchLedgerArchive = tool(
     "fetch_ledger_archive",
-    "Fetch a specific archived milestone (full items).",
+    "Fetch a specific archived item (when ledger_id=milestones) or a whole archived milestone-group (otherwise).",
     {
       ledger_id: z.string(),
       archive_id: z.string(),
     } as const,
     async (args) =>
-      jsonResult({ milestone: await store.fetchArchive(args.ledger_id, args.archive_id) }),
+      jsonResult({ archive: await store.fetchArchive(args.ledger_id, args.archive_id) }),
   );
 
-  const fetchMilestone = tool(
-    "fetch_milestone",
-    "Fetch a single active milestone by id.",
-    {
-      ledger_id: z.string(),
-      milestone_id: z.string(),
-    } as const,
-    async (args) =>
-      jsonResult({ milestone: store.fetchMilestone(args.ledger_id, args.milestone_id) }),
-  );
-
-  const updateMilestone = tool(
-    "update_milestone",
-    "Update a milestone's title and/or description. Items are not affected.",
-    {
-      ledger_id: z.string(),
-      milestone_id: safeIdSchema,
-      title: z.string().optional(),
-      description: z.string().optional(),
-    } as const,
-    async (args) => {
-      const patch: { title?: string; description?: string } = {};
-      if (args.title !== undefined) patch.title = args.title;
-      if (args.description !== undefined) patch.description = args.description;
-      const milestone = await store.updateMilestone(args.ledger_id, args.milestone_id, patch);
-      return jsonResult({ milestone });
-    },
-  );
-
-  const ledgerFetch = tool(
-    "ledger_fetch",
-    "Fetch a single item by id.",
+  const fetchItem = tool(
+    "fetch_item",
+    "Fetch a single item by id from a specific ledger.",
     {
       ledger_id: z.string(),
       item_id: z.string(),
@@ -185,8 +156,8 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
     async (args) => jsonResult({ item: store.fetchItem(args.ledger_id, args.item_id) }),
   );
 
-  const ledgerUpdate = tool(
-    "ledger_update",
+  const updateItem = tool(
+    "update_item",
     "Update an item's status and/or fields. Provided fields replace existing values; omitted fields are preserved.",
     {
       ledger_id: z.string(),
@@ -205,7 +176,7 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
 
   const createItem = tool(
     "create_item",
-    "Create a new item under a milestone. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match).",
+    "Create a new item under a milestone in a ledger. milestone_id must resolve to an active (non-archived, non-terminal) milestone in the milestones ledger. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match). Auto-creates the depth-2 group on first reference.",
     {
       ledger_id: z.string(),
       milestone_id: safeIdSchema,
@@ -224,27 +195,9 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
     },
   );
 
-  const createMilestone = tool(
-    "create_milestone",
-    "Create a new milestone in a ledger. Returns the new milestone with its allocated id.",
-    {
-      ledger_id: z.string(),
-      title: z.string(),
-      description: z.string().optional(),
-      id: safeIdSchema.optional(),
-    } as const,
-    async (args) => {
-      const init: { id?: string; title: string; description?: string } = { title: args.title };
-      if (args.description !== undefined) init.description = args.description;
-      if (args.id !== undefined) init.id = args.id;
-      const milestone = await store.createMilestone(args.ledger_id, init);
-      return jsonResult({ milestone });
-    },
-  );
-
   const createLedger = tool(
     "create_ledger",
-    "Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries.",
+    "Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries. The name `milestones` is reserved.",
     {
       name: z.string(),
       schema: schemaSchema,
@@ -253,24 +206,6 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
       const schema = args.schema as LedgerSchema;
       const ledger = await store.createLedger(args.name, schema);
       return jsonResult({ ledger });
-    },
-  );
-
-  const archiveMilestone = tool(
-    "archive_milestone",
-    "Archive a milestone (move it to docs/archive/<ledger>/<id>.md). Refused if any item is not in a terminal status.",
-    {
-      ledger_id: z.string(),
-      milestone_id: safeIdSchema,
-      summary: z.string(),
-    } as const,
-    async (args) => {
-      const pointer = await store.archiveMilestone(
-        args.ledger_id,
-        args.milestone_id,
-        args.summary,
-      );
-      return jsonResult({ pointer });
     },
   );
 
@@ -284,23 +219,109 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
     async (args) => jsonResult({ items: store.search(args.ledger_id, args.query) }),
   );
 
-  // The handler input type is covariant in the schema parameter, so TS does
-  // not consider each concrete schema assignable to AnyTool's schema=any.
-  // Widen each one explicitly at the boundary; the SDK then validates the
-  // input at runtime against the per-tool inputSchema.
+  // ---- Milestone surface (5) ---------------------------------------------
+
+  const createMilestone = tool(
+    "create_milestone",
+    "Create a new milestone in the milestones ledger. Allocates an M<n> id from the milestones ledger's own item counter. The blocked/depends arrays are advisory cross-references (no FK enforcement).",
+    {
+      title: z.string(),
+      description: z.string().optional(),
+      blocked: z.array(z.string()).optional(),
+      depends: z.array(z.string()).optional(),
+      id: safeIdSchema.optional(),
+    } as const,
+    async (args) => {
+      const init: {
+        id?: string;
+        title: string;
+        description?: string;
+        blocked?: string[];
+        depends?: string[];
+      } = { title: args.title };
+      if (args.description !== undefined) init.description = args.description;
+      if (args.blocked !== undefined) init.blocked = args.blocked;
+      if (args.depends !== undefined) init.depends = args.depends;
+      if (args.id !== undefined) init.id = args.id;
+      const milestone = await store.createMilestone(init);
+      return jsonResult({ milestone });
+    },
+  );
+
+  const updateMilestone = tool(
+    "update_milestone",
+    "Update a milestone in the milestones ledger. status must be one of open/done/postponed/blocked.",
+    {
+      milestone_id: safeIdSchema,
+      status: z.string().optional(),
+      title: z.string().optional(),
+      description: z.string().optional(),
+      blocked: z.array(z.string()).optional(),
+      depends: z.array(z.string()).optional(),
+    } as const,
+    async (args) => {
+      const patch: {
+        status?: string;
+        title?: string;
+        description?: string;
+        blocked?: string[];
+        depends?: string[];
+      } = {};
+      if (args.status !== undefined) patch.status = args.status;
+      if (args.title !== undefined) patch.title = args.title;
+      if (args.description !== undefined) patch.description = args.description;
+      if (args.blocked !== undefined) patch.blocked = args.blocked;
+      if (args.depends !== undefined) patch.depends = args.depends;
+      const milestone = await store.updateMilestone(args.milestone_id, patch);
+      return jsonResult({ milestone });
+    },
+  );
+
+  const fetchMilestone = tool(
+    "fetch_milestone",
+    "Fetch a milestone from the milestones ledger; also returns a per-ledger count of active items referencing this milestone.",
+    {
+      milestone_id: safeIdSchema,
+    } as const,
+    async (args) => jsonResult(store.fetchMilestone(args.milestone_id)),
+  );
+
+  const archiveMilestone = tool(
+    "archive_milestone",
+    "Archive a milestone globally (2-level): sweeps every ledger's group with this id into ./archive/<ledger>/<id>.md, then moves the milestone-item itself to ./archive/milestones/<id>.md. Refused if any item in any ledger is non-terminal.",
+    {
+      milestone_id: safeIdSchema,
+      summary: z.string(),
+    } as const,
+    async (args) => {
+      const pointer = await store.archiveMilestone(args.milestone_id, args.summary);
+      return jsonResult({ pointer });
+    },
+  );
+
+  const listMilestoneItems = tool(
+    "list_milestone_items",
+    "Return all active items grouped by ledger that reference this milestone. Convenience read for orchestration before archive.",
+    {
+      milestone_id: safeIdSchema,
+    } as const,
+    async (args) => jsonResult({ items: store.listMilestoneItems(args.milestone_id) }),
+  );
+
   return [
     enumerateLedgers,
     fetchLedger,
     fetchLedgerArchive,
-    fetchMilestone,
-    updateMilestone,
-    ledgerFetch,
-    ledgerUpdate,
+    fetchItem,
+    updateItem,
     createItem,
-    createMilestone,
     createLedger,
-    archiveMilestone,
     searchItems,
+    createMilestone,
+    updateMilestone,
+    fetchMilestone,
+    archiveMilestone,
+    listMilestoneItems,
   ] as unknown as AnyTool[];
 }
 
@@ -309,14 +330,14 @@ export const LEDGER_TOOL_NAMES = [
   "enumerate_ledgers",
   "fetch_ledger",
   "fetch_ledger_archive",
-  "fetch_milestone",
-  "update_milestone",
-  "ledger_fetch",
-  "ledger_update",
+  "fetch_item",
+  "update_item",
   "create_item",
-  "create_milestone",
   "create_ledger",
-  "archive_milestone",
   "search_items",
+  "create_milestone",
+  "update_milestone",
+  "fetch_milestone",
+  "archive_milestone",
+  "list_milestone_items",
 ] as const;
-

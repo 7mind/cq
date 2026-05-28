@@ -1,6 +1,6 @@
 #!/usr/bin/env -S bun run
 /**
- * cq-mcp — standalone stdio MCP server exposing the 12 ledger tools
+ * cq-mcp — standalone stdio MCP server exposing the 13 ledger tools
  * (`mcp__cq__*` family) so that Codex sessions can reach the same
  * `FsLedgerStore` the cq server reads from.
  *
@@ -17,8 +17,9 @@
  *
  * Lifecycle:
  *   1. Parse CLI flags. `--cwd <abs>` is required.
- *   2. Construct `FsLedgerStore({ root: cwd })` and `init()` it.
- *   3. Register the 12 ledger tools on an `McpServer`.
+ *   2. Construct `FsLedgerStore({ root: cwd })` and `init()` it
+ *      (auto-bootstraps the milestones ledger on first run).
+ *   3. Register the 13 ledger tools on an `McpServer`.
  *   4. Connect a `StdioServerTransport` and run until the parent closes
  *      stdin (which the MCP SDK signals via the transport's onclose).
  *
@@ -95,11 +96,7 @@ const schemaSchema = z
     },
   );
 
-const fieldValueSchema = z.union([
-  z.string(),
-  z.array(z.string()),
-  z.number(),
-]);
+const fieldValueSchema = z.union([z.string(), z.array(z.string())]);
 
 const fieldsSchema = z.record(z.string(), fieldValueSchema);
 
@@ -120,16 +117,12 @@ function jsonResult(value: unknown): {
 }
 
 /**
- * Register the 12 ledger tools on the given MCP server. Each handler
- * forwards directly to a LedgerStore method, serialises the result as
- * JSON, and returns it as a text content block — identical semantics to
- * the Claude-side factory in `@cq/ledger`.
- *
- * Exported so the unit test can drive it without spawning a subprocess
- * if a future iteration wants a faster path; the standalone binary uses
- * it via main().
+ * Register the 13 ledger tools on the given MCP server. Identical
+ * semantics to the Claude-side factory in `@cq/ledger`.
  */
 export function registerLedgerTools(server: McpServer, store: LedgerStore): void {
+  // ---- Item / ledger surface (8) -----------------------------------------
+
   server.registerTool(
     "enumerate_ledgers",
     {
@@ -142,7 +135,8 @@ export function registerLedgerTools(server: McpServer, store: LedgerStore): void
   server.registerTool(
     "fetch_ledger",
     {
-      description: "Fetch a ledger: schema, active milestones (with their items), and archive pointers.",
+      description:
+        "Fetch a ledger: schema, active milestone groups (each expanded with resolved milestone metadata { id, status, title, description }), and archive pointers.",
       inputSchema: { ledger_id: z.string() },
     },
     async (args) => jsonResult({ ledger: store.fetch(args.ledger_id) }),
@@ -151,53 +145,21 @@ export function registerLedgerTools(server: McpServer, store: LedgerStore): void
   server.registerTool(
     "fetch_ledger_archive",
     {
-      description: "Fetch a specific archived milestone (full items).",
+      description:
+        "Fetch a specific archived item (when ledger_id=milestones) or a whole archived milestone-group (otherwise).",
       inputSchema: {
         ledger_id: z.string(),
         archive_id: z.string(),
       },
     },
     async (args) =>
-      jsonResult({ milestone: await store.fetchArchive(args.ledger_id, args.archive_id) }),
+      jsonResult({ archive: await store.fetchArchive(args.ledger_id, args.archive_id) }),
   );
 
   server.registerTool(
-    "fetch_milestone",
+    "fetch_item",
     {
-      description: "Fetch a single active milestone by id.",
-      inputSchema: {
-        ledger_id: z.string(),
-        milestone_id: z.string(),
-      },
-    },
-    async (args) =>
-      jsonResult({ milestone: store.fetchMilestone(args.ledger_id, args.milestone_id) }),
-  );
-
-  server.registerTool(
-    "update_milestone",
-    {
-      description: "Update a milestone's title and/or description. Items are not affected.",
-      inputSchema: {
-        ledger_id: z.string(),
-        milestone_id: safeIdSchema,
-        title: z.string().optional(),
-        description: z.string().optional(),
-      },
-    },
-    async (args) => {
-      const patch: { title?: string; description?: string } = {};
-      if (args.title !== undefined) patch.title = args.title;
-      if (args.description !== undefined) patch.description = args.description;
-      const milestone = await store.updateMilestone(args.ledger_id, args.milestone_id, patch);
-      return jsonResult({ milestone });
-    },
-  );
-
-  server.registerTool(
-    "ledger_fetch",
-    {
-      description: "Fetch a single item by id.",
+      description: "Fetch a single item by id from a specific ledger.",
       inputSchema: {
         ledger_id: z.string(),
         item_id: z.string(),
@@ -207,9 +169,10 @@ export function registerLedgerTools(server: McpServer, store: LedgerStore): void
   );
 
   server.registerTool(
-    "ledger_update",
+    "update_item",
     {
-      description: "Update an item's status and/or fields. Provided fields replace existing values; omitted fields are preserved.",
+      description:
+        "Update an item's status and/or fields. Provided fields replace existing values; omitted fields are preserved.",
       inputSchema: {
         ledger_id: z.string(),
         item_id: z.string(),
@@ -229,7 +192,8 @@ export function registerLedgerTools(server: McpServer, store: LedgerStore): void
   server.registerTool(
     "create_item",
     {
-      description: "Create a new item under a milestone. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match).",
+      description:
+        "Create a new item under a milestone in a ledger. milestone_id must resolve to an active (non-archived, non-terminal) milestone in the milestones ledger. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match). Auto-creates the depth-2 group on first reference.",
       inputSchema: {
         ledger_id: z.string(),
         milestone_id: safeIdSchema,
@@ -250,29 +214,10 @@ export function registerLedgerTools(server: McpServer, store: LedgerStore): void
   );
 
   server.registerTool(
-    "create_milestone",
-    {
-      description: "Create a new milestone in a ledger. Returns the new milestone with its allocated id.",
-      inputSchema: {
-        ledger_id: z.string(),
-        title: z.string(),
-        description: z.string().optional(),
-        id: safeIdSchema.optional(),
-      },
-    },
-    async (args) => {
-      const init: { id?: string; title: string; description?: string } = { title: args.title };
-      if (args.description !== undefined) init.description = args.description;
-      if (args.id !== undefined) init.id = args.id;
-      const milestone = await store.createMilestone(args.ledger_id, init);
-      return jsonResult({ milestone });
-    },
-  );
-
-  server.registerTool(
     "create_ledger",
     {
-      description: "Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries.",
+      description:
+        "Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries. The name `milestones` is reserved.",
       inputSchema: {
         name: z.string(),
         schema: schemaSchema,
@@ -281,26 +226,6 @@ export function registerLedgerTools(server: McpServer, store: LedgerStore): void
     async (args) => {
       const ledger = await store.createLedger(args.name, args.schema as LedgerSchema);
       return jsonResult({ ledger });
-    },
-  );
-
-  server.registerTool(
-    "archive_milestone",
-    {
-      description: "Archive a milestone (move it to docs/archive/<ledger>/<id>.md). Refused if any item is not in a terminal status.",
-      inputSchema: {
-        ledger_id: z.string(),
-        milestone_id: safeIdSchema,
-        summary: z.string(),
-      },
-    },
-    async (args) => {
-      const pointer = await store.archiveMilestone(
-        args.ledger_id,
-        args.milestone_id,
-        args.summary,
-      );
-      return jsonResult({ pointer });
     },
   );
 
@@ -314,6 +239,110 @@ export function registerLedgerTools(server: McpServer, store: LedgerStore): void
       },
     },
     async (args) => jsonResult({ items: store.search(args.ledger_id, args.query) }),
+  );
+
+  // ---- Milestone surface (5) ---------------------------------------------
+
+  server.registerTool(
+    "create_milestone",
+    {
+      description:
+        "Create a new milestone in the milestones ledger. Allocates an M<n> id from the milestones ledger's own item counter. The blocked/depends arrays are advisory cross-references (no FK enforcement).",
+      inputSchema: {
+        title: z.string(),
+        description: z.string().optional(),
+        blocked: z.array(z.string()).optional(),
+        depends: z.array(z.string()).optional(),
+        id: safeIdSchema.optional(),
+      },
+    },
+    async (args) => {
+      const init: {
+        id?: string;
+        title: string;
+        description?: string;
+        blocked?: string[];
+        depends?: string[];
+      } = { title: args.title };
+      if (args.description !== undefined) init.description = args.description;
+      if (args.blocked !== undefined) init.blocked = args.blocked;
+      if (args.depends !== undefined) init.depends = args.depends;
+      if (args.id !== undefined) init.id = args.id;
+      const milestone = await store.createMilestone(init);
+      return jsonResult({ milestone });
+    },
+  );
+
+  server.registerTool(
+    "update_milestone",
+    {
+      description:
+        "Update a milestone in the milestones ledger. status must be one of open/done/postponed/blocked.",
+      inputSchema: {
+        milestone_id: safeIdSchema,
+        status: z.string().optional(),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        blocked: z.array(z.string()).optional(),
+        depends: z.array(z.string()).optional(),
+      },
+    },
+    async (args) => {
+      const patch: {
+        status?: string;
+        title?: string;
+        description?: string;
+        blocked?: string[];
+        depends?: string[];
+      } = {};
+      if (args.status !== undefined) patch.status = args.status;
+      if (args.title !== undefined) patch.title = args.title;
+      if (args.description !== undefined) patch.description = args.description;
+      if (args.blocked !== undefined) patch.blocked = args.blocked;
+      if (args.depends !== undefined) patch.depends = args.depends;
+      const milestone = await store.updateMilestone(args.milestone_id, patch);
+      return jsonResult({ milestone });
+    },
+  );
+
+  server.registerTool(
+    "fetch_milestone",
+    {
+      description:
+        "Fetch a milestone from the milestones ledger; also returns a per-ledger count of active items referencing this milestone.",
+      inputSchema: {
+        milestone_id: safeIdSchema,
+      },
+    },
+    async (args) => jsonResult(store.fetchMilestone(args.milestone_id)),
+  );
+
+  server.registerTool(
+    "archive_milestone",
+    {
+      description:
+        "Archive a milestone globally (2-level): sweeps every ledger's group with this id into ./archive/<ledger>/<id>.md, then moves the milestone-item itself to ./archive/milestones/<id>.md. Refused if any item in any ledger is non-terminal.",
+      inputSchema: {
+        milestone_id: safeIdSchema,
+        summary: z.string(),
+      },
+    },
+    async (args) => {
+      const pointer = await store.archiveMilestone(args.milestone_id, args.summary);
+      return jsonResult({ pointer });
+    },
+  );
+
+  server.registerTool(
+    "list_milestone_items",
+    {
+      description:
+        "Return all active items grouped by ledger that reference this milestone. Convenience read for orchestration before archive.",
+      inputSchema: {
+        milestone_id: safeIdSchema,
+      },
+    },
+    async (args) => jsonResult({ items: store.listMilestoneItems(args.milestone_id) }),
   );
 }
 

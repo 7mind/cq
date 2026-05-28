@@ -10,16 +10,26 @@
  */
 
 export * from "./types.js";
+export {
+  MILESTONES_LEDGER,
+  MILESTONES_ACTIVE_GROUP_ID,
+  MILESTONES_ACTIVE_GROUP_TITLE,
+  MILESTONES_SCHEMA,
+  ISO_TIMESTAMP_RE,
+  isIsoTimestamp,
+} from "./constants.js";
 export * from "./parser/parse.js";
 export * from "./parser/serialize.js";
 export { parseFrontmatter, serializeFrontmatter } from "./parser/frontmatter.js";
 export type { ParsedFrontmatter } from "./parser/frontmatter.js";
 export type {
   LedgerStore,
+  ArchiveContent,
   CreateItemInit,
-  CreateMilestoneInit,
+  CreateMilestoneItemInit,
+  FetchedMilestoneItem,
   UpdateItemPatch,
-  UpdateMilestonePatch,
+  UpdateMilestoneItemPatch,
 } from "./store/LedgerStore.js";
 export { FsLedgerStore } from "./store/FsLedgerStore.js";
 export type { FsLedgerStoreOpts } from "./store/FsLedgerStore.js";

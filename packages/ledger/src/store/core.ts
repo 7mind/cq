@@ -13,25 +13,28 @@ import type {
   Item,
   Ledger,
   Milestone,
+  ResolvedMilestone,
 } from "../types.js";
 import {
+  BootstrapViolationError,
   DuplicateIdError,
   InvalidIdError,
   InvalidStatusError,
   ItemNotFoundError,
+  MilestoneItemNotFoundError,
   MilestoneNotFoundError,
   MissingRequiredFieldError,
   NonTerminalItemsError,
   SchemaValidationError,
 } from "../types.js";
+import { isIsoTimestamp, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_LEDGER } from "../constants.js";
 import type {
   CreateItemInit,
-  CreateMilestoneInit,
+  CreateMilestoneItemInit,
   UpdateItemPatch,
-  UpdateMilestonePatch,
+  UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
 
-const MILESTONE_ID_RE = /^M(\d+)$/;
 const ITEM_ID_RE = /^[A-Za-z]+(\d+)$/;
 
 /**
@@ -114,11 +117,6 @@ export function validateSchema(schema: {
   }
 }
 
-export function findMilestone(ledger: Ledger, milestoneId: string): Milestone {
-  for (const m of ledger.milestones) if (m.id === milestoneId) return m;
-  throw new MilestoneNotFoundError(ledger.id, milestoneId);
-}
-
 export function findItem(ledger: Ledger, itemId: string): { milestone: Milestone; item: Item } {
   for (const m of ledger.milestones) {
     for (const it of m.items) {
@@ -150,22 +148,11 @@ export function searchItems(ledger: Ledger, query: string): Item[] {
   return out;
 }
 
-export function applyUpdateMilestone(
-  ledger: Ledger,
-  milestoneId: string,
-  patch: UpdateMilestonePatch,
-): Milestone {
-  const m = findMilestone(ledger, milestoneId);
-  if (patch.title !== undefined) m.title = patch.title;
-  if (patch.description !== undefined) m.description = patch.description;
-  return m;
-}
-
 export function applyUpdateItem(
   ledger: Ledger,
   itemId: string,
   patch: UpdateItemPatch,
-  now: number,
+  now: string,
 ): Item {
   const { item } = findItem(ledger, itemId);
   if (patch.status !== undefined) {
@@ -182,13 +169,49 @@ export function applyUpdateItem(
   return item;
 }
 
+/**
+ * Apply a `createItem` operation against `ledger`.
+ *
+ * - In the milestones ledger: the only allowed `milestoneId` is the
+ *   bootstrap group `M0`. All milestone-items live there; the caller
+ *   (FsLedgerStore.createMilestone) routes here.
+ * - In every other ledger: if no depth-2 group with id === `milestoneId`
+ *   exists yet, one is auto-created (empty title, empty description).
+ *   This is the per-msunify-1 plan decision #1: the dropped
+ *   per-ledger `createMilestone` is replaced by lazy group materialisation
+ *   here. Strict existence of `milestoneId` against the milestones
+ *   ledger is checked at the LedgerStore layer (which has the cross-
+ *   ledger view); this pure helper trusts the caller.
+ *
+ * `now` is an ISO 8601 timestamp string supplied by the store.
+ */
 export function applyCreateItem(
   ledger: Ledger,
   milestoneId: string,
   init: CreateItemInit,
-  now: number,
+  now: string,
 ): Item {
-  const milestone = findMilestone(ledger, milestoneId);
+  let milestone: Milestone;
+  const existing = ledger.milestones.find((m) => m.id === milestoneId);
+  if (existing !== undefined) {
+    milestone = existing;
+  } else if (ledger.id === MILESTONES_LEDGER) {
+    // The milestones ledger only ever has the M0 group; anything else
+    // is a logic error.
+    throw new MilestoneNotFoundError(ledger.id, milestoneId);
+  } else {
+    // Non-milestones ledger: auto-create a bare group with the
+    // referenced id (plan decision #1). The caller is responsible for
+    // having verified existence in the milestones ledger first.
+    assertSafeId("milestone", milestoneId);
+    milestone = {
+      id: milestoneId,
+      title: "",
+      description: "",
+      items: [],
+    };
+    ledger.milestones.push(milestone);
+  }
   assertStatusAllowed(ledger, init.status);
   validateFields(ledger, init.fields, /*creating*/ true);
   let id: string;
@@ -223,46 +246,72 @@ export function applyCreateItem(
   return item;
 }
 
-export function applyCreateMilestone(
+/**
+ * Apply a `createMilestone` operation against the milestones ledger.
+ *
+ * Allocates an `M<n>` item id via the ledger's own item counter,
+ * places the item under the bootstrap `M0` group, and seeds the four
+ * milestone-item fields (`title`, `description?`, `blocked?`,
+ * `depends?`) via the standard `applyCreateItem` path.
+ *
+ * The caller must have validated that `ledger.id === MILESTONES_LEDGER`.
+ */
+export function applyCreateMilestoneItem(
   ledger: Ledger,
-  init: CreateMilestoneInit,
-): Milestone {
-  let id: string;
-  if (init.id !== undefined) {
-    assertSafeId("milestone", init.id);
-    if (milestoneIdExists(ledger, init.id)) throw new DuplicateIdError("milestone", init.id);
-    id = init.id;
-    const n = numericPart(init.id, MILESTONE_ID_RE);
-    if (n !== null && n >= ledger.counters.milestone) {
-      ledger.counters.milestone = n + 1;
-    }
-  } else {
-    ledger.counters.milestone += 1;
-    id = "M" + String(ledger.counters.milestone);
-    while (milestoneIdExists(ledger, id)) {
-      ledger.counters.milestone += 1;
-      id = "M" + String(ledger.counters.milestone);
-    }
-    // Defense-in-depth: the auto-generated id must also satisfy the safe regex.
-    assertSafeId("milestone", id);
+  init: CreateMilestoneItemInit,
+  now: string,
+): Item {
+  if (ledger.id !== MILESTONES_LEDGER) {
+    throw new BootstrapViolationError(
+      `applyCreateMilestoneItem invoked on non-milestones ledger ${ledger.id}`,
+    );
   }
-  const milestone: Milestone = {
-    id,
-    title: init.title,
-    description: init.description ?? "",
-    items: [],
-  };
-  ledger.milestones.push(milestone);
-  return milestone;
+  const fields: Record<string, FieldValue> = { title: init.title };
+  if (init.description !== undefined) fields["description"] = init.description;
+  if (init.blocked !== undefined) fields["blocked"] = init.blocked;
+  if (init.depends !== undefined) fields["depends"] = init.depends;
+  const innerInit: CreateItemInit = { status: "open", fields };
+  if (init.id !== undefined) innerInit.id = init.id;
+  return applyCreateItem(ledger, MILESTONES_ACTIVE_GROUP_ID, innerInit, now);
 }
 
 /**
- * Detach a milestone from the active ledger after verifying every item is in
- * a terminal status. Returns the detached milestone for the caller to
- * persist into the archive directory; the caller is also responsible for
- * appending the `ArchivePointer` returned alongside.
+ * Apply an `updateMilestone` patch against a milestone-item in the
+ * milestones ledger. Translates the four-key patch shape into the
+ * generic item-patch shape and routes through `applyUpdateItem`.
  */
-export function applyArchiveMilestone(
+export function applyUpdateMilestoneItem(
+  ledger: Ledger,
+  milestoneItemId: string,
+  patch: UpdateMilestoneItemPatch,
+  now: string,
+): Item {
+  if (ledger.id !== MILESTONES_LEDGER) {
+    throw new BootstrapViolationError(
+      `applyUpdateMilestoneItem invoked on non-milestones ledger ${ledger.id}`,
+    );
+  }
+  const itemPatch: UpdateItemPatch = {};
+  if (patch.status !== undefined) itemPatch.status = patch.status;
+  const fields: Record<string, FieldValue> = {};
+  if (patch.title !== undefined) fields["title"] = patch.title;
+  if (patch.description !== undefined) fields["description"] = patch.description;
+  if (patch.blocked !== undefined) fields["blocked"] = patch.blocked;
+  if (patch.depends !== undefined) fields["depends"] = patch.depends;
+  if (Object.keys(fields).length > 0) itemPatch.fields = fields;
+  return applyUpdateItem(ledger, milestoneItemId, itemPatch, now);
+}
+
+/**
+ * Detach a depth-2 milestone-group from `ledger` after verifying every
+ * item is in a terminal status. Returns the detached group for the
+ * caller to persist into the archive directory; the caller is also
+ * responsible for appending the `ArchivePointer` returned alongside.
+ *
+ * Used by `archiveMilestone` (the global, 2-level operation) to sweep
+ * each non-milestones ledger that has items under `milestoneId`.
+ */
+export function applyDetachMilestoneGroup(
   ledger: Ledger,
   milestoneId: string,
   summary: string,
@@ -281,6 +330,120 @@ export function applyArchiveMilestone(
   const pointer: ArchivePointer = { id: milestoneId, path: archiveRelPath, summary };
   ledger.archivePointers.push(pointer);
   return { milestone, pointer };
+}
+
+/**
+ * Detach a single milestone-item out of the milestones ledger's M0
+ * group, after verifying it is in a terminal status. Returns the
+ * detached item for the caller to persist as `./archive/milestones/<id>.md`,
+ * plus the archive pointer the caller is responsible for appending.
+ *
+ * Bootstrap invariant: the M0 group itself is never detached, only
+ * individual items under it.
+ */
+export function applyDetachMilestoneItem(
+  ledger: Ledger,
+  milestoneItemId: string,
+  summary: string,
+  archiveRelPath: string,
+): { item: Item; pointer: ArchivePointer } {
+  if (ledger.id !== MILESTONES_LEDGER) {
+    throw new BootstrapViolationError(
+      `applyDetachMilestoneItem invoked on non-milestones ledger ${ledger.id}`,
+    );
+  }
+  if (milestoneItemId === MILESTONES_ACTIVE_GROUP_ID) {
+    throw new BootstrapViolationError(
+      `the bootstrap group ${MILESTONES_ACTIVE_GROUP_ID} cannot be archived`,
+    );
+  }
+  const group = ledger.milestones.find((m) => m.id === MILESTONES_ACTIVE_GROUP_ID);
+  if (group === undefined) {
+    throw new BootstrapViolationError(
+      `milestones ledger is missing its bootstrap group ${MILESTONES_ACTIVE_GROUP_ID}`,
+    );
+  }
+  const itemIdx = group.items.findIndex((it) => it.id === milestoneItemId);
+  if (itemIdx < 0) {
+    throw new MilestoneItemNotFoundError(milestoneItemId, "absent");
+  }
+  const item = group.items[itemIdx];
+  if (item === undefined) {
+    throw new MilestoneItemNotFoundError(milestoneItemId, "absent");
+  }
+  const terminal = new Set(ledger.schema.terminalStatuses);
+  if (!terminal.has(item.status)) {
+    throw new NonTerminalItemsError(milestoneItemId, [item.id]);
+  }
+  group.items.splice(itemIdx, 1);
+  const pointer: ArchivePointer = {
+    id: milestoneItemId,
+    path: archiveRelPath,
+    summary,
+  };
+  ledger.archivePointers.push(pointer);
+  return { item, pointer };
+}
+
+/**
+ * Resolve a milestone-item id against the milestones ledger and return
+ * its `{ id, status, title, description }` view. Active items only —
+ * archived items (lookup via `archivePointers`) return null.
+ *
+ * Used by `fetch(ledgerId)` to expand each milestone-group's metadata
+ * in the FetchedLedger view (Q9).
+ */
+export function resolveMilestoneView(
+  milestonesLedger: Ledger,
+  milestoneId: string,
+): ResolvedMilestone | null {
+  if (milestonesLedger.id !== MILESTONES_LEDGER) {
+    throw new BootstrapViolationError(
+      `resolveMilestoneView expects the milestones ledger, got ${milestonesLedger.id}`,
+    );
+  }
+  const group = milestonesLedger.milestones.find(
+    (m) => m.id === MILESTONES_ACTIVE_GROUP_ID,
+  );
+  if (group === undefined) return null;
+  const item = group.items.find((it) => it.id === milestoneId);
+  if (item === undefined) return null;
+  const titleField = item.fields["title"];
+  const descriptionField = item.fields["description"];
+  return {
+    id: item.id,
+    status: item.status,
+    title: typeof titleField === "string" ? titleField : "",
+    description: typeof descriptionField === "string" ? descriptionField : "",
+  };
+}
+
+/**
+ * Verify the strict-existence rule (Q5) for `milestoneId`. Throws
+ * MilestoneItemNotFoundError if it is absent, archived, or terminal.
+ * Returns the resolved view on success.
+ */
+export function assertMilestoneActive(
+  milestonesLedger: Ledger,
+  milestoneId: string,
+): ResolvedMilestone {
+  if (milestonesLedger.id !== MILESTONES_LEDGER) {
+    throw new BootstrapViolationError(
+      `assertMilestoneActive expects the milestones ledger, got ${milestonesLedger.id}`,
+    );
+  }
+  // Archived?
+  if (milestonesLedger.archivePointers.some((p) => p.id === milestoneId)) {
+    throw new MilestoneItemNotFoundError(milestoneId, "archived");
+  }
+  const view = resolveMilestoneView(milestonesLedger, milestoneId);
+  if (view === null) {
+    throw new MilestoneItemNotFoundError(milestoneId, "absent");
+  }
+  if (milestonesLedger.schema.terminalStatuses.includes(view.status)) {
+    throw new MilestoneItemNotFoundError(milestoneId, "terminal");
+  }
+  return view;
 }
 
 // ---------------------------------------------------------------------------
@@ -329,8 +492,10 @@ function assertFieldType(name: string, spec: FieldSpec, value: FieldValue): void
       }
       return;
     case "timestamp":
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new SchemaValidationError(`field "${name}" must be a number (epoch ms)`);
+      if (typeof value !== "string" || !isIsoTimestamp(value)) {
+        throw new SchemaValidationError(
+          `field "${name}" must be an ISO 8601 UTC timestamp (YYYY-MM-DDTHH:mm:ss.sssZ)`,
+        );
       }
       return;
   }
@@ -349,12 +514,6 @@ function itemIdExists(ledger: Ledger, id: string): boolean {
   // Don't check archived items — once a milestone is archived its ids are
   // out of the active namespace. The counter alone prevents reuse in
   // newly-issued ids.
-  return false;
-}
-
-function milestoneIdExists(ledger: Ledger, id: string): boolean {
-  for (const m of ledger.milestones) if (m.id === id) return true;
-  for (const p of ledger.archivePointers) if (p.id === id) return true;
   return false;
 }
 

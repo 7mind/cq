@@ -6,10 +6,48 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## Milestones (high-level)
 
+- [x] **outer-12 / msunify** — Unified `milestones` ledger + drop per-ledger milestone tools + ISO 8601 timestamps. Plan: [`docs/drafts/20260528-2100-plan-msunify.md`](docs/drafts/20260528-2100-plan-msunify.md).
 - [x] **outer-11** — D-UNIFASYNC-01 + adversarial sweep for sync/async unions.
 - [x] **outer-10** — close D-CQMCP-E2E + D-CQMCP-NIX (outer-9 follow-ups).
 - [x] **outer-9** — D-GC-1 (Codex ledger MCP) + D-GC-N1 (approvalPolicy).
 - (older milestones in this file)
+
+---
+
+## Active — outer-12 / msunify
+
+**Cycle:** msunify (unified milestones + ISO timestamps).
+**Goal:** breaking refactor of `@cq/ledger` — single dedicated `milestones` ledger; per-ledger milestone tools dropped; non-milestones ledgers reference milestones by ID only; ISO 8601 timestamps everywhere; no migration of legacy data; test fixtures rewritten.
+**Baseline (verified d9eef2e):** `bun run check` 689 pass / 0 fail / 2469 expect() across 86 files.
+**Plan:** [`docs/drafts/20260528-2100-plan-msunify.md`](docs/drafts/20260528-2100-plan-msunify.md).
+
+Sequence (one commit per PR; tags `msunify-N`):
+
+- [x] **msunify-1** — types + constants + ISO timestamps + bootstrap manifest. Files: `packages/ledger/src/types.ts`, new `packages/ledger/src/constants.ts`. Commit `e3350ff`. `tsc -b packages/ledger`: package source types-only PR; deliberately non-compiling at this point (downstream consumers in core.ts/parser.ts/tests rewritten in PR-2/3/6).
+- [x] **msunify-2** — parser + serializer for new format. Files: `packages/ledger/src/parser/{parse,serialize}.ts`. Commit `451d1ca`. New `ParseOpts.isMilestonesLedger`. Bare-id depth-2 for non-milestones (em-dash REJECTED with /msunify/i error). ISO-string timestamps emitted bare; `needsQuoting` bypassed for ISO. New `parseMilestoneItemArchive` / `serializeMilestoneItemArchive` for the milestones-ledger single-item archive shape.
+- [x] **msunify-3** — core.ts + adapters for new milestone semantics. Files: `packages/ledger/src/store/{core,LedgerStore,FsLedgerStore,InMemoryLedgerStore}.ts`. Commit `8c191cc`. `LedgerStore` surface changed: per-ledger milestone tools dropped; global `createMilestone/updateMilestone/fetchMilestone/archiveMilestone/listMilestoneItems` added; `fetch(ledgerId)` returns `FetchedLedger` with resolved milestone metadata; `fetchArchive` returns `ArchiveContent` discriminated union. Global `__milestones__` lock + alphabetic per-ledger lock ordering in `archiveMilestone`. Bootstrap of milestones ledger in `FsLedgerStore.init()` (auto-add to ledgers.yaml; auto-create `docs/milestones.md` with `## M0 — active` group). Schema-divergence check refuses to start if a stale `milestones` entry has a different schema.
+- [x] **msunify-4** — MCP tool surface (rename + drop + add). Files: `packages/ledger/src/mcp/ledgerTools.ts`, `packages/cq-mcp/src/main.ts`. Commit `5a96a95`. Final count: **13 tools** (8 item/ledger + 5 milestone). Both Claude-side factory and Codex-side stdio binary mirror the same surface; `fetch_ledger_archive` response key renamed `milestone` → `archive` to accommodate the discriminated union.
+- [x] **msunify-5** — bridge + cq-mcp + server wiring. NO-OP for source: `claudeBridge.ts:381` calls `createLedgerMcpTools(this.ledgerStore)` opaquely; `server.ts`/`devServer.ts` construct `FsLedgerStore` and rely on auto-bootstrap. Folded into PR-6's commit `cd2efe2` along with test rewrites and the dead-code cleanup that emerged from the diff.
+- [x] **msunify-6** — test fixture rewrite + new tests. Files: `packages/ledger/test/{store-abstract,concurrency,mcp-tools,parser-roundtrip,path-traversal}.ts`, `packages/cq-mcp/test/main.test.ts`. Commit `cd2efe2`. Also: dead-code cleanup in `core.ts` (dropped orphan `MILESTONE_ID_RE`/`milestoneIdExists`/`findMilestone`); Phase-1b non-terminal milestone-item check fix in `FsLedgerStore.performArchive`; `.gitignore` extended for `docs/milestones.md` + `docs/.locks/`.
+- [x] **msunify-7** — end-to-end + nix build smoke. Verification only (no source). `bun run e2e` → **20 passed / 0 skipped / 0 failed** (1.2m). `nix build .#default` → exit 0. `./result/bin/cq-mcp --cwd /tmp/probe-msunify` JSON-RPC `tools/list` round-trip returns the 13 msunify tool names. Bootstrap-on-init verified: re-init against the same dir is idempotent; the second `enumerate()` returns `["milestones"]` and `createMilestone` allocates `M1`.
+
+**Inner-loop discipline:** Each PR is one commit. Each PR's verification is run before its commit. Full `bun run check` may transiently fail between PR-1 and PR-6 due to ordering of types vs tests; gate is green at PR-6 close. Adversarial review at the END of EACH PR was performed by the orchestrator (S3*) since no subagent dispatcher is available in this thread; the structured risk register in [`docs/drafts/20260528-2100-plan-msunify.md`](docs/drafts/20260528-2100-plan-msunify.md) §"Rollback / risk register" guides per-PR checks.
+
+**Discharge metrics:**
+- `bun run check`: **718 pass / 0 fail / 0 error / 2567 expect()** across 86 files. Up from baseline 689/0/2469 by +29 net tests, 0 new failures, +98 expect() calls.
+- `bun run e2e` (Playwright): **20 passed / 0 skipped / 0 failed** (1.2m). Unchanged from outer-10 baseline.
+- `nix build .#default`: exit 0. `./result/bin/cq-mcp --cwd /tmp/probe-msunify` serves 13 tools via JSON-RPC.
+- `tsc -b`: clean. `eslint .`: 0 errors / 23 warnings (unchanged).
+
+**Non-trivial design decisions made beyond the brief:**
+1. **Tool count is 13, not 15.** Brief said 15; recount gave 13 (8 item/ledger + 5 milestone). Brief acknowledged "pick the right number".
+2. **Auto-create depth-2 group on first `create_item`.** The brief drops per-ledger `createMilestone` from the tool surface but keeps `create_item(ledger, milestoneId, ...)`. The only way to ensure the group exists is to auto-create on first reference (`applyCreateItem` now does this for non-milestones ledgers; the strict-existence check fires BEFORE auto-create so typos still fail).
+3. **`fetch_ledger_archive` response shape.** Old: `{milestone:Milestone}`. New: `{archive: {kind:"group"|"item", milestone?:..., item?:...}}` to accommodate the milestones-ledger single-item archive.
+4. **`ArchiveContent` discriminated union** rather than two separate fetchArchive methods. Simpler client code; the kind discriminator is checked at the boundary.
+5. **`now()` injection switched from numeric to ISO string** — tests using a deterministic tick wrap via `new Date(tick++).toISOString()` so lexicographic ordering still matches numeric (preserving the D-LED-07 monotonicity assertions).
+6. **Schema-divergence guard in `init()`.** If a `milestones` entry exists in `ledgers.yaml` with a different schema than `MILESTONES_SCHEMA`, refuse to start. Defends against out-of-band tampering after the library is updated.
+
+**Session log:** [`docs/logs/20260528-2100-msunify-log.md`](docs/logs/20260528-2100-msunify-log.md) (to be written at session end).
 
 ---
 

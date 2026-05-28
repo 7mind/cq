@@ -1,5 +1,5 @@
 /**
- * MCP tool factory tests.
+ * MCP tool factory tests (msunify shape).
  *
  * We invoke each tool's handler directly (no SDK transport) and assert that
  * the returned CallToolResult has `content[0].text` that JSON-decodes to the
@@ -50,20 +50,21 @@ function decode<T>(result: { content: Array<{ type: string; text: string }> }): 
 }
 
 describe("ledger MCP tools", () => {
-  it("exports the expected tool names", async () => {
+  it("exports the expected tool names (13 tools)", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...LEDGER_TOOL_NAMES].sort());
+    expect(LEDGER_TOOL_NAMES.length).toBe(13);
   });
 
-  it("enumerate_ledgers + create_ledger + fetch_ledger round-trip", async () => {
+  it("enumerate_ledgers + create_ledger + fetch_ledger round-trip (includes bootstrapped milestones)", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
     const enum1 = decode<{ ledgers: string[] }>(
       await callTool(tools, "enumerate_ledgers", {}),
     );
-    expect(enum1.ledgers).toEqual(["todos"]);
+    expect(enum1.ledgers).toEqual(["milestones", "todos"]);
 
     await callTool(tools, "create_ledger", {
       name: "alpha",
@@ -76,25 +77,29 @@ describe("ledger MCP tools", () => {
     const enum2 = decode<{ ledgers: string[] }>(
       await callTool(tools, "enumerate_ledgers", {}),
     );
-    expect(enum2.ledgers).toEqual(["alpha", "todos"]);
+    expect(enum2.ledgers).toEqual(["alpha", "milestones", "todos"]);
 
-    const fetched = decode<{ ledger: { id: string; counters: { milestone: number; item: number } } }>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "alpha" }),
-    );
+    const fetched = decode<{
+      ledger: { id: string; counters: { milestone: number; item: number } };
+    }>(await callTool(tools, "fetch_ledger", { ledger_id: "alpha" }));
     expect(fetched.ledger.id).toBe("alpha");
     expect(fetched.ledger.counters).toEqual({ milestone: 0, item: 0 });
   });
 
-  it("create_milestone + create_item + ledger_fetch + ledger_update flow", async () => {
+  it("create_milestone + create_item + fetch_item + update_item flow", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    const m = decode<{ milestone: { id: string; title: string } }>(
-      await callTool(tools, "create_milestone", { ledger_id: "todos", title: "first" }),
+    const m = decode<{ milestone: { id: string; fields: Record<string, unknown> } }>(
+      await callTool(tools, "create_milestone", {
+        title: "first",
+        description: "the first milestone",
+      }),
     );
     expect(m.milestone.id).toBe("M1");
+    expect(m.milestone.fields["title"]).toBe("first");
 
-    const it = decode<{ item: { id: string; status: string } }>(
+    const it = decode<{ item: { id: string; status: string; milestoneId: string } }>(
       await callTool(tools, "create_item", {
         ledger_id: "todos",
         milestone_id: "M1",
@@ -104,14 +109,17 @@ describe("ledger MCP tools", () => {
     );
     expect(it.item.id).toBe("T1");
     expect(it.item.status).toBe("open");
+    expect(it.item.milestoneId).toBe("M1");
 
     const fetched = decode<{ item: { fields: Record<string, string> } }>(
-      await callTool(tools, "ledger_fetch", { ledger_id: "todos", item_id: "T1" }),
+      await callTool(tools, "fetch_item", { ledger_id: "todos", item_id: "T1" }),
     );
     expect(fetched.item.fields["note"]).toBe("buy milk");
 
-    const updated = decode<{ item: { status: string; fields: Record<string, string> } }>(
-      await callTool(tools, "ledger_update", {
+    const updated = decode<{
+      item: { status: string; fields: Record<string, string> };
+    }>(
+      await callTool(tools, "update_item", {
         ledger_id: "todos",
         item_id: "T1",
         status: "done",
@@ -122,10 +130,72 @@ describe("ledger MCP tools", () => {
     expect(updated.item.fields["note"]).toBe("bought milk");
   });
 
-  it("archive_milestone refuses non-terminal items, succeeds on terminal", async () => {
+  it("create_item refuses absent / terminal milestone (strict existence Q5)", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    await callTool(tools, "create_milestone", { ledger_id: "todos", title: "x" });
+
+    await expect(
+      callTool(tools, "create_item", {
+        ledger_id: "todos",
+        milestone_id: "M99",
+        status: "open",
+        fields: {},
+      }),
+    ).rejects.toThrow(/does not exist/);
+
+    await callTool(tools, "create_milestone", { title: "done-already" });
+    await callTool(tools, "update_milestone", { milestone_id: "M1", status: "done" });
+    await expect(
+      callTool(tools, "create_item", {
+        ledger_id: "todos",
+        milestone_id: "M1",
+        status: "open",
+        fields: {},
+      }),
+    ).rejects.toThrow(/terminal status/);
+  });
+
+  it("update_milestone + fetch_milestone + list_milestone_items", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+
+    await callTool(tools, "create_milestone", { title: "x", description: "the x" });
+    await callTool(tools, "create_item", {
+      ledger_id: "todos",
+      milestone_id: "M1",
+      status: "open",
+      fields: { note: "t1" },
+    });
+
+    const fm = decode<{
+      milestone: { id: string };
+      resolved: { id: string; title: string };
+      references: Record<string, number>;
+    }>(await callTool(tools, "fetch_milestone", { milestone_id: "M1" }));
+    expect(fm.milestone.id).toBe("M1");
+    expect(fm.resolved.title).toBe("x");
+    expect(fm.references).toEqual({ todos: 1 });
+
+    await callTool(tools, "update_milestone", {
+      milestone_id: "M1",
+      title: "renamed",
+    });
+    const fm2 = decode<{ resolved: { title: string } }>(
+      await callTool(tools, "fetch_milestone", { milestone_id: "M1" }),
+    );
+    expect(fm2.resolved.title).toBe("renamed");
+
+    const list = decode<{ items: Record<string, Array<{ id: string }>> }>(
+      await callTool(tools, "list_milestone_items", { milestone_id: "M1" }),
+    );
+    expect(list.items["todos"]?.[0]?.id).toBe("T1");
+  });
+
+  it("archive_milestone (global, 2-level): refuses non-terminal items, succeeds when all terminal", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+
+    await callTool(tools, "create_milestone", { title: "x" });
     await callTool(tools, "create_item", {
       ledger_id: "todos",
       milestone_id: "M1",
@@ -133,26 +203,19 @@ describe("ledger MCP tools", () => {
       fields: {},
     });
     await expect(
-      callTool(tools, "archive_milestone", {
-        ledger_id: "todos",
-        milestone_id: "M1",
-        summary: "no",
-      }),
+      callTool(tools, "archive_milestone", { milestone_id: "M1", summary: "no" }),
     ).rejects.toThrow(/not in terminal status/);
-    await callTool(tools, "ledger_update", {
+    await callTool(tools, "update_item", {
       ledger_id: "todos",
       item_id: "T1",
       status: "done",
     });
+    await callTool(tools, "update_milestone", { milestone_id: "M1", status: "done" });
     const ptr = decode<{ pointer: { id: string; path: string } }>(
-      await callTool(tools, "archive_milestone", {
-        ledger_id: "todos",
-        milestone_id: "M1",
-        summary: "done!",
-      }),
+      await callTool(tools, "archive_milestone", { milestone_id: "M1", summary: "done!" }),
     );
     expect(ptr.pointer.id).toBe("M1");
-    expect(ptr.pointer.path).toBe("./archive/todos/M1.md");
+    expect(ptr.pointer.path).toBe("./archive/milestones/M1.md");
   });
 
   // D-LED-02 — Zod-layer rejection of invalid schemas at create_ledger.
@@ -259,12 +322,11 @@ describe("ledger MCP tools", () => {
       return z.object(t.inputSchema).safeParse(args);
     }
 
-    it("create_milestone rejects unsafe ids at the Zod boundary", async () => {
+    it("create_milestone rejects unsafe explicit ids at the Zod boundary", async () => {
       const store = await buildStore();
       const tools = createLedgerMcpTools(store);
       for (const badId of badIds) {
         const r = parseInput(tools, "create_milestone", {
-          ledger_id: "todos",
           title: "x",
           id: badId,
         });
@@ -299,14 +361,10 @@ describe("ledger MCP tools", () => {
       const tools = createLedgerMcpTools(store);
       for (const badId of badIds) {
         expect(
-          parseInput(tools, "update_milestone", {
-            ledger_id: "todos",
-            milestone_id: badId,
-          }).success,
+          parseInput(tools, "update_milestone", { milestone_id: badId }).success,
         ).toBe(false);
         expect(
           parseInput(tools, "archive_milestone", {
-            ledger_id: "todos",
             milestone_id: badId,
             summary: "x",
           }).success,
@@ -318,7 +376,6 @@ describe("ledger MCP tools", () => {
       const store = await buildStore();
       const tools = createLedgerMcpTools(store);
       const r = parseInput(tools, "create_milestone", {
-        ledger_id: "todos",
         title: "x",
         id: "M-ok_1",
       });
@@ -329,7 +386,7 @@ describe("ledger MCP tools", () => {
   it("search_items returns items matching fields", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    await callTool(tools, "create_milestone", { ledger_id: "todos", title: "x" });
+    await callTool(tools, "create_milestone", { title: "x" });
     await callTool(tools, "create_item", {
       ledger_id: "todos",
       milestone_id: "M1",

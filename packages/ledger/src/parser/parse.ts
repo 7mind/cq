@@ -4,18 +4,28 @@
  * Uses unified + remark-parse + remark-frontmatter to build an mdast Root,
  * then walks the children to extract milestones and items.
  *
- * Recognised structure (all other nodes are ignored / preserved as no-op):
+ * Recognised structure (msunify cycle — all other nodes are ignored):
  *   - one `yaml` frontmatter node (required for active ledgers; absent for archives)
  *   - one `heading` depth=1 with the ledger id (optional; informational only)
- *   - zero or more `heading` depth=2 "## <id> — <title>" → milestones
- *       - optional one or more `paragraph` immediately after → description (joined by blank lines)
+ *   - zero or more `heading` depth=2 → milestone-groups
+ *       - In the bootstrapped `milestones` ledger (isMilestonesLedger=true):
+ *         exactly one depth-2 group `## M0 — active`. Em-dash separator
+ *         REQUIRED; the parser rejects any other shape.
+ *       - In every other ledger (isMilestonesLedger=false): the depth-2
+ *         heading is bare `## <id>` with NO title or description. Em-dash
+ *         is REJECTED (catches leftover legacy `## M3 — title` fixtures
+ *         with a clear error pointing at the msunify migration).
+ *       - optional `paragraph` immediately after → description (milestones
+ *         ledger only; ignored elsewhere).
  *       - zero or more `heading` depth=3 "### <id> — <status>" → items
  *           - one `list` (unordered) with `listItem` children of "key: value"
  *
  * Multi-line string values are decoded from YAML block-scalar form (|).
  * Array values are decoded from JSON flow form (["a","b"]).
- * The two synthetic fields `createdAt` / `updatedAt` are extracted out of the
- * field map onto `Item.createdAt` / `Item.updatedAt`.
+ * The two intrinsic fields `createdAt` / `updatedAt` are extracted out of
+ * the field map onto `Item.createdAt` / `Item.updatedAt`; both are ISO 8601
+ * UTC strings (ms precision). The parser validates the ISO shape via
+ * `ISO_TIMESTAMP_RE` + `Date.parse` round-trip and rejects everything else.
  */
 
 import { unified } from "unified";
@@ -42,12 +52,25 @@ import type {
 } from "../types.js";
 import { SchemaValidationError } from "../types.js";
 import { parseFrontmatter, type ParsedFrontmatter } from "./frontmatter.js";
+import {
+  MILESTONES_ACTIVE_GROUP_ID,
+  MILESTONES_ACTIVE_GROUP_TITLE,
+  isIsoTimestamp,
+} from "../constants.js";
 
 const EM_DASH = "—";
 
-interface ParseOpts {
+export interface ParseOpts {
   /** Schema for the ledger (sourced from ledgers.yaml). Required for active files. */
   schema: LedgerSchema;
+  /**
+   * True iff parsing the canonical `milestones` ledger. Switches the
+   * depth-2 header grammar:
+   *   - true  → exactly one group `## M0 — active`; em-dash REQUIRED.
+   *   - false → bare `## <id>`; em-dash REJECTED.
+   * Defaults to false for back-compat with callers that pass only `schema`.
+   */
+  isMilestonesLedger?: boolean;
 }
 
 const processor = unified().use(remarkParse).use(remarkFrontmatter, ["yaml"]);
@@ -66,7 +89,22 @@ export function parseLedger(source: string, opts: ParseOpts): Ledger {
   if (fm === null) {
     throw new SchemaValidationError("ledger file is missing YAML frontmatter");
   }
-  const milestones = extractMilestones(root);
+  const isMilestonesLedger = opts.isMilestonesLedger === true;
+  const milestones = extractMilestones(root, { isMilestonesLedger });
+  if (isMilestonesLedger) {
+    // Bootstrap-shape assertion: exactly one depth-2 group with id "M0".
+    if (milestones.length !== 1) {
+      throw new SchemaValidationError(
+        `milestones ledger must contain exactly one depth-2 group, got ${milestones.length}`,
+      );
+    }
+    const m = milestones[0];
+    if (m === undefined || m.id !== MILESTONES_ACTIVE_GROUP_ID) {
+      throw new SchemaValidationError(
+        `milestones ledger's depth-2 group must be "## ${MILESTONES_ACTIVE_GROUP_ID} — ${MILESTONES_ACTIVE_GROUP_TITLE}"`,
+      );
+    }
+  }
   return {
     id: fm.ledger,
     schema: opts.schema,
@@ -77,11 +115,14 @@ export function parseLedger(source: string, opts: ParseOpts): Ledger {
 }
 
 /**
- * Parse a single archived milestone file (no frontmatter).
+ * Parse a per-milestone archive file (one depth-2 group, no frontmatter).
+ * Used for archived milestone-groups in non-milestones ledgers: those
+ * carry items but the depth-2 header is bare `## <id>`.
  */
 export function parseArchive(source: string): Milestone {
   const root = parseMarkdown(source);
-  const milestones = extractMilestones(root);
+  // Archive files for non-milestones ledgers use the bare-id depth-2 shape.
+  const milestones = extractMilestones(root, { isMilestonesLedger: false });
   if (milestones.length === 0) {
     throw new SchemaValidationError("archive file contains no milestone");
   }
@@ -97,6 +138,38 @@ export function parseArchive(source: string): Milestone {
     throw new SchemaValidationError("archive file contains no milestone");
   }
   return m;
+}
+
+/**
+ * Parse a per-milestone-item archive file (single archived item from the
+ * milestones ledger). Shape: a single depth-3 heading `### M<n> — <status>`
+ * followed by the field list. No depth-2 wrapper, no frontmatter.
+ *
+ * Internally implemented by wrapping the body under a synthetic
+ * `## M0 — archived` group so the same extractor can be reused; the
+ * returned single Item carries milestoneId="M0".
+ */
+export function parseMilestoneItemArchive(source: string): Item {
+  // Inject the synthetic depth-2 wrapper so the extractor can recognise
+  // the depth-3 item heading. The synthetic group title `archived` is
+  // arbitrary; it does not appear anywhere on disk.
+  const wrapped = `## ${MILESTONES_ACTIVE_GROUP_ID} ${EM_DASH} archived\n\n${source}`;
+  const root = parseMarkdown(wrapped);
+  const milestones = extractMilestones(root, { isMilestonesLedger: true });
+  const group = milestones[0];
+  if (group === undefined) {
+    throw new SchemaValidationError("milestone-item archive file is empty");
+  }
+  if (group.items.length !== 1) {
+    throw new SchemaValidationError(
+      `milestone-item archive must contain exactly one item, got ${group.items.length}`,
+    );
+  }
+  const item = group.items[0];
+  if (item === undefined) {
+    throw new SchemaValidationError("milestone-item archive is empty");
+  }
+  return item;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +189,10 @@ function extractFrontmatter(root: Root): ParsedFrontmatter | null {
 // Milestones + Items
 // ---------------------------------------------------------------------------
 
-function extractMilestones(root: Root): Milestone[] {
+function extractMilestones(
+  root: Root,
+  opts: { isMilestonesLedger: boolean },
+): Milestone[] {
   const milestones: Milestone[] = [];
   let current: Milestone | null = null;
   let currentDescriptionParts: string[] = [];
@@ -132,7 +208,14 @@ function extractMilestones(root: Root): Milestone[] {
   const finalizeMilestone = (): void => {
     finalizeItem();
     if (current !== null) {
-      current.description = currentDescriptionParts.join("\n\n").trim();
+      // Description is only meaningful in the milestones ledger; for
+      // non-milestones ledgers the depth-2 heading is bare so any
+      // intervening paragraph is treated as inert prose (still ignored).
+      if (opts.isMilestonesLedger) {
+        current.description = currentDescriptionParts.join("\n\n").trim();
+      } else {
+        current.description = "";
+      }
       milestones.push(current);
       current = null;
       currentDescriptionParts = [];
@@ -149,13 +232,29 @@ function extractMilestones(root: Root): Milestone[] {
       }
       if (h.depth === 2) {
         finalizeMilestone();
-        const { id, rest } = splitHeading(headingText(h));
-        current = {
-          id,
-          title: rest,
-          description: "",
-          items: [],
-        };
+        const rawText = headingText(h);
+        if (opts.isMilestonesLedger) {
+          // Milestones ledger: em-dash REQUIRED. Parse via splitHeading
+          // and verify the em-dash was present.
+          if (!rawText.includes(EM_DASH)) {
+            throw new SchemaValidationError(
+              `milestones ledger depth-2 heading must use the em-dash form "## <id> — <title>"; got: "${rawText.trim()}"`,
+            );
+          }
+          const { id, rest } = splitHeading(rawText);
+          current = { id, title: rest, description: "", items: [] };
+        } else {
+          // Non-milestones ledger: bare ID; em-dash REJECTED with a
+          // clear migration-pointer error so leftover legacy fixtures
+          // surface immediately.
+          if (rawText.includes(EM_DASH)) {
+            throw new SchemaValidationError(
+              `non-milestones ledger depth-2 heading must be bare "## <id>" (no title); got: "${rawText.trim()}". The msunify cycle moved milestone titles + descriptions to the milestones ledger; rewrite the fixture.`,
+            );
+          }
+          const id = rawText.trim();
+          current = { id, title: "", description: "", items: [] };
+        }
         currentDescriptionParts = [];
         descriptionLocked = false;
         continue;
@@ -174,8 +273,8 @@ function extractMilestones(root: Root): Milestone[] {
           milestoneId: current.id,
           status: rest,
           fields: {},
-          createdAt: 0,
-          updatedAt: 0,
+          createdAt: "",
+          updatedAt: "",
         };
         continue;
       }
@@ -205,11 +304,21 @@ function applyItemFields(item: Item, list: List): void {
   for (const li of list.children) {
     if (li.type !== "listItem") continue;
     const { key, value } = parseFieldListItem(li as ListItem);
-    if (key === "createdAt" && typeof value === "number") {
+    if (key === "createdAt") {
+      if (typeof value !== "string" || !isIsoTimestamp(value)) {
+        throw new SchemaValidationError(
+          `field "createdAt" must be an ISO 8601 UTC timestamp (YYYY-MM-DDTHH:mm:ss.sssZ); got ${JSON.stringify(value)}`,
+        );
+      }
       item.createdAt = value;
       continue;
     }
-    if (key === "updatedAt" && typeof value === "number") {
+    if (key === "updatedAt") {
+      if (typeof value !== "string" || !isIsoTimestamp(value)) {
+        throw new SchemaValidationError(
+          `field "updatedAt" must be an ISO 8601 UTC timestamp (YYYY-MM-DDTHH:mm:ss.sssZ); got ${JSON.stringify(value)}`,
+        );
+      }
       item.updatedAt = value;
       continue;
     }
@@ -223,12 +332,19 @@ function applyItemFields(item: Item, list: List): void {
  *   - key: |
  *     multi-line
  *   - key: ["a","b"]
- *   - key: 1234567890
+ *   - key: 2026-05-28T20:30:00.000Z       (bare ISO; timestamps)
+ *   - key: "2026-05-28T20:30:00.000Z"     (JSON-quoted; accepted too)
  *
  * remark-parse parses the inline form as a paragraph child with text
  * "key: value". The block-scalar form is parsed as paragraph + code-or-text.
  * We extract the raw textual content of the list item, then split on the
  * first ":" and decode by leading char.
+ *
+ * Note: after the msunify cycle this returns `string | string[]` only.
+ * Numeric-bare timestamps from the old shape are no longer accepted
+ * (timestamps are ISO strings; epoch-ms numbers parse as strings here
+ * and fail downstream validation when the schema declares a `timestamp`
+ * field, surfacing the migration mismatch instead of silently coercing).
  */
 function parseFieldListItem(li: ListItem): { key: string; value: FieldValue } {
   // The list item's text — collapse all phrasing content from each child node.
@@ -257,9 +373,6 @@ function parseFieldListItem(li: ListItem): { key: string; value: FieldValue } {
     // Block scalar — the actual text lives in subsequent paragraphs of the list item.
     return { key, value: decodeBlockScalar(li) };
   }
-  if (/^-?\d+(?:\.\d+)?$/.test(valueText)) {
-    return { key, value: Number(valueText) };
-  }
   if (valueText.startsWith('"') && valueText.endsWith('"')) {
     try {
       const decoded = JSON.parse(valueText) as unknown;
@@ -268,6 +381,7 @@ function parseFieldListItem(li: ListItem): { key: string; value: FieldValue } {
       // fall through
     }
   }
+  // Bare inline string (covers ISO timestamps, plain strings, ids, …).
   return { key, value: valueText };
 }
 

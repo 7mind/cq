@@ -5,25 +5,40 @@
  * Lifecycle:
  *  1. Construct.
  *  2. `init()` — load all known ledgers (from ./docs/ledgers.yaml + their .md
- *     files) into memory. After init the store serves reads from memory.
- *  3. Read methods are synchronous (in-memory).
- *  4. Mutating methods are async (acquire mutex + lockfile + persist + release).
+ *     files) into memory. After init the store serves reads from memory. The
+ *     bootstrapped `milestones` ledger is created on first init if absent.
+ *  3. Read methods are synchronous (in-memory) unless they touch disk
+ *     (`fetchArchive`).
+ *  4. Mutating methods are async (acquire mutex(es) + lockfile(s) + persist).
  *  5. `dispose()` — release any in-process resources.
+ *
+ * Locking discipline (msunify cycle):
+ *  - Per-ledger mutex + lockfile for purely within-ledger ops.
+ *  - Global `__milestones__` mutex + lockfile for any operation that
+ *    mutates the milestones ledger OR creates/archives an item that
+ *    references the milestones ledger.
+ *  - Multi-lock acquisition order: `__milestones__` first; then per-ledger
+ *    locks in alphabetical order. Documented in FsLedgerStore.
  */
 
 import type {
   ArchivePointer,
+  FetchedLedger,
   FieldValue,
   Item,
-  Ledger,
   LedgerSchema,
   Milestone,
+  ResolvedMilestone,
 } from "../types.js";
 
-export interface UpdateMilestonePatch {
-  title?: string;
-  description?: string;
-}
+/**
+ * Result shape for `fetchArchive`. Discriminated by `kind`:
+ *  - `"group"` — a whole milestone-group archive (non-milestones ledgers).
+ *  - `"item"`  — a single milestone-item archive (milestones ledger).
+ */
+export type ArchiveContent =
+  | { kind: "group"; milestone: Milestone }
+  | { kind: "item"; item: Item };
 
 export interface UpdateItemPatch {
   status?: string;
@@ -36,49 +51,129 @@ export interface CreateItemInit {
   fields: Record<string, FieldValue>;
 }
 
-export interface CreateMilestoneInit {
+/**
+ * Init shape for `createMilestone` — the four canonical fields of a
+ * milestone-item in the milestones ledger. `blocked` / `depends` are
+ * advisory free-form id[] references.
+ */
+export interface CreateMilestoneItemInit {
   id?: string;
   title: string;
   description?: string;
+  blocked?: string[];
+  depends?: string[];
+}
+
+/**
+ * Patch shape for `updateMilestone`. All keys optional; `status` must
+ * be one of the milestones schema's statusValues
+ * (open/done/postponed/blocked).
+ */
+export interface UpdateMilestoneItemPatch {
+  status?: string;
+  title?: string;
+  description?: string;
+  blocked?: string[];
+  depends?: string[];
+}
+
+/**
+ * Return shape for `fetchMilestone(milestoneId)`. The `references` map
+ * counts active items in each ledger whose milestone-group id matches
+ * `milestoneId` (a quick cross-ledger view useful before archiving).
+ */
+export interface FetchedMilestoneItem {
+  milestone: Item;
+  resolved: ResolvedMilestone;
+  references: Record<string, number>;
 }
 
 export interface LedgerStore {
   init(): Promise<void>;
 
-  // --- reads (sync, in-memory) -------------------------------------------
+  // --- reads (sync in-memory unless noted) -------------------------------
+
   enumerate(): string[];
-  fetch(ledgerId: string): Ledger;
-  fetchArchive(ledgerId: string, archiveId: string): Promise<Milestone>;
-  fetchMilestone(ledgerId: string, milestoneId: string): Milestone;
+
+  /**
+   * Fetch a ledger as a resolved view: each milestone-group's metadata
+   * is expanded from the milestones ledger at read time. For the
+   * milestones ledger itself the resolution is the trivial self-resolution.
+   */
+  fetch(ledgerId: string): FetchedLedger;
+
+  fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent>;
+
   fetchItem(ledgerId: string, itemId: string): Item;
+
+  /**
+   * Global milestone lookup. Returns the milestone-item, the resolved
+   * view, and per-ledger counts of items referencing it.
+   */
+  fetchMilestone(milestoneId: string): FetchedMilestoneItem;
+
   search(ledgerId: string, query: string): Item[];
 
+  /**
+   * Group every active item in every ledger by its milestone-group id ===
+   * `milestoneId`. Returned object keys are ledger ids; values are item
+   * arrays. Empty values are omitted.
+   */
+  listMilestoneItems(milestoneId: string): Record<string, Item[]>;
+
   // --- mutations (async, write-through under lock) ------------------------
+
+  /**
+   * Update a milestone-item in the milestones ledger.
+   * Holds the `__milestones__` global lock.
+   */
   updateMilestone(
-    ledgerId: string,
     milestoneId: string,
-    patch: UpdateMilestonePatch,
-  ): Promise<Milestone>;
+    patch: UpdateMilestoneItemPatch,
+  ): Promise<Item>;
+
   updateItem(
     ledgerId: string,
     itemId: string,
     patch: UpdateItemPatch,
   ): Promise<Item>;
+
+  /**
+   * Create an item in `ledgerId` under depth-2 group `milestoneId`.
+   * STRICT existence check: `milestoneId` must resolve to an active,
+   * non-archived, non-terminal item in the milestones ledger. The
+   * depth-2 group in `ledgerId` is auto-created on first reference.
+   * Holds the `__milestones__` global lock AND the per-ledger lock for
+   * `ledgerId` (alphabetic order after `__milestones__`).
+   */
   createItem(
     ledgerId: string,
     milestoneId: string,
     init: CreateItemInit,
   ): Promise<Item>;
-  createMilestone(
-    ledgerId: string,
-    init: CreateMilestoneInit,
-  ): Promise<Milestone>;
-  createLedger(name: string, schema: LedgerSchema): Promise<Ledger>;
-  archiveMilestone(
-    ledgerId: string,
-    milestoneId: string,
-    summary: string,
-  ): Promise<ArchivePointer>;
+
+  /**
+   * Create a new milestone-item in the milestones ledger.
+   * Holds the `__milestones__` global lock.
+   */
+  createMilestone(init: CreateMilestoneItemInit): Promise<Item>;
+
+  createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger>;
+
+  /**
+   * Archive a milestone across all ledgers (Q6 — two-level atomic):
+   *  1. Acquire `__milestones__`.
+   *  2. For every ledger, find items whose milestone-group is `milestoneId`.
+   *     Refuse with `NonTerminalItemsError` if ANY non-terminal item exists
+   *     anywhere.
+   *  3. For each non-milestones ledger with such a group: detach the
+   *     group, write `./archive/<ledger>/<milestoneId>.md`, append the
+   *     pointer to that ledger.
+   *  4. In the milestones ledger: detach the milestone-item itself,
+   *     write `./archive/milestones/<milestoneId>.md`, append the pointer.
+   *  5. Refuse to archive the bootstrap group `M0`.
+   */
+  archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
 
   dispose(): Promise<void>;
 }

@@ -34,8 +34,10 @@ var/
 *.sqlite-wal
 *.sqlite-shm
 
-# @cq/ledger per-cwd registry (D-LED-04)
+# @cq/ledger per-cwd registry (D-LED-04) + bootstrap files (msunify)
 docs/ledgers.yaml
+docs/milestones.md
+docs/.locks/
 
 # scratch
 /debug/

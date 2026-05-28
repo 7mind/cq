@@ -34,27 +34,71 @@ export interface LedgerSchema {
  * - `string`: any string
  * - `string[]`: array of strings
  * - `id` / `id[]`: free-form id references (no FK enforcement in v1)
- * - `timestamp`: epoch millis as a number
+ * - `timestamp`: ISO-8601 timestamp string (UTC, ms precision).
+ *
+ * Note: `timestamp` values are STRINGS, not numbers. The msunify cycle
+ * removed numeric epoch-ms timestamps; everything stores ISO 8601 to
+ * keep human-readable diffs. See `constants.ts::ISO_TIMESTAMP_RE`.
  */
-export type FieldValue = string | string[] | number;
+export type FieldValue = string | string[];
 
 export interface Item {
   id: string;
   milestoneId: string;
   status: string;
   fields: Record<string, FieldValue>;
-  /** Epoch millis. Set on createItem; preserved across updates. */
-  createdAt: number;
-  /** Epoch millis. Bumped on every updateItem. */
-  updatedAt: number;
+  /** ISO 8601 UTC timestamp (ms precision). Set on createItem; preserved across updates. */
+  createdAt: string;
+  /** ISO 8601 UTC timestamp (ms precision). Bumped on every updateItem. */
+  updatedAt: string;
 }
 
 export interface Milestone {
   id: string;
+  /** Title — empty string for milestone-groups in non-milestones ledgers. */
   title: string;
-  /** Free-form markdown paragraph; empty string if none. */
+  /** Free-form markdown paragraph; empty string for non-milestones ledgers. */
   description: string;
   items: Item[];
+}
+
+/**
+ * A resolved milestone view — the metadata of a milestone-item in the
+ * `milestones` ledger, joined with the status it carries there. Returned
+ * by `fetch_ledger` for each milestone-group inside a non-milestones
+ * ledger (Q9 in the msunify brief).
+ *
+ * The fields mirror what callers used to read off `Milestone.title` /
+ * `.description` before unification; now those values live in the
+ * milestones ledger and the per-ledger group only carries the ID.
+ */
+export interface ResolvedMilestone {
+  id: string;
+  status: string;
+  title: string;
+  description: string;
+}
+
+/**
+ * View shape returned by `LedgerStore.fetch(ledgerId)`. Each
+ * milestone-group is paired with the resolved metadata of its
+ * corresponding milestone-item in the `milestones` ledger. For the
+ * milestones ledger itself the resolution is the trivial self-resolution
+ * (the group is `M0 — active`; the items resolve to themselves with
+ * `title` / `description` pulled from their own fields).
+ */
+export interface FetchedMilestoneGroup {
+  id: string;
+  milestone: ResolvedMilestone;
+  items: Item[];
+}
+
+export interface FetchedLedger {
+  id: string;
+  schema: LedgerSchema;
+  counters: LedgerCounters;
+  milestones: FetchedMilestoneGroup[];
+  archivePointers: ArchivePointer[];
 }
 
 export interface ArchivePointer {
@@ -185,5 +229,40 @@ export class SchemaValidationError extends LedgerError {
   constructor(reason: string) {
     super(`Schema validation failed: ${reason}`);
     this.name = "SchemaValidationError";
+  }
+}
+
+/**
+ * Thrown when a caller attempts to act on a milestone that does not
+ * exist in the `milestones` ledger, OR exists but is in a terminal
+ * status (e.g. `done`), OR has been archived. Used by `create_item`
+ * to enforce the strict-existence rule (Q5).
+ *
+ * Distinct from the existing `MilestoneNotFoundError` which is thrown
+ * for missing depth-2 groups inside a specific ledger.
+ */
+export class MilestoneItemNotFoundError extends LedgerError {
+  constructor(milestoneId: string, reason: "absent" | "archived" | "terminal") {
+    super(
+      reason === "absent"
+        ? `Milestone ${milestoneId} does not exist in the milestones ledger`
+        : reason === "archived"
+          ? `Milestone ${milestoneId} is archived; un-archive it or pick another milestone`
+          : `Milestone ${milestoneId} is in a terminal status; pick another milestone`,
+    );
+    this.name = "MilestoneItemNotFoundError";
+  }
+}
+
+/**
+ * Thrown when an operation would violate a bootstrapped invariant of
+ * the `milestones` ledger — e.g. attempting to archive the bootstrap
+ * group `M0`, or to re-create the milestones ledger with a different
+ * schema, or to delete it.
+ */
+export class BootstrapViolationError extends LedgerError {
+  constructor(reason: string) {
+    super(`Bootstrap invariant violated: ${reason}`);
+    this.name = "BootstrapViolationError";
   }
 }
