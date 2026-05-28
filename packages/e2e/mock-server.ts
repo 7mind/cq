@@ -182,6 +182,66 @@ const server = Bun.serve({
     }
 
     if (method === "POST" && pathname === "/v1/messages") {
+      // Read the body once so we can detect non-streaming requests (used by
+      // the cq server's title generator: a single non-streaming Haiku call
+      // per fresh session). The body is otherwise ignored.
+      const bodyText = await req.text();
+      let bodyJson: Record<string, unknown> | null = null;
+      try { bodyJson = JSON.parse(bodyText) as Record<string, unknown>; } catch { /* swallow */ }
+
+      // PR-01 title generator: non-streaming requests targeted at Haiku get a
+      // canned JSON Message response so the title shows up in the History tab.
+      // We key on `stream` being false/absent rather than on the model so the
+      // mock also works for any future non-streaming uses. The returned title
+      // is derived from the first user-content-line of the request so each
+      // test gets a distinguishable title — this matters when multiple
+      // sessions accumulate in the shared in-memory DB during an e2e run.
+      const isStreaming = bodyJson !== null && bodyJson["stream"] === true;
+      if (!isStreaming) {
+        let derivedTitle = "Mock generated title";
+        try {
+          const messages = (bodyJson?.["messages"] ?? []) as Array<{ role?: string; content?: unknown }>;
+          const userMsg = messages.find((m) => m.role === "user");
+          let content: string | null = null;
+          if (typeof userMsg?.content === "string") {
+            content = userMsg.content;
+          } else if (Array.isArray(userMsg?.content)) {
+            const textBlock = (userMsg.content as Array<{ type?: string; text?: string }>).find(
+              (b) => b.type === "text" && typeof b.text === "string",
+            );
+            content = textBlock?.text ?? null;
+          }
+          if (content !== null) {
+            // The titleGenerator's user prompt looks like
+            //   "User's first message:\n<TEXT>\n\nAssistant's first reply:\n..."
+            // Extract <TEXT> (first line after the marker) and use it as the
+            // mock's "title". Truncate to keep the title short.
+            const marker = "User's first message:\n";
+            const i = content.indexOf(marker);
+            if (i >= 0) {
+              const rest = content.slice(i + marker.length);
+              const firstLine = rest.split("\n", 1)[0]!.trim();
+              if (firstLine.length > 0) derivedTitle = `mock title: ${firstLine.slice(0, 40)}`;
+            }
+          }
+        } catch { /* fall back to canned title */ }
+
+        const messageBody = {
+          id: "msg_mock_title",
+          type: "message",
+          role: "assistant",
+          model: typeof bodyJson?.["model"] === "string" ? bodyJson["model"] : "claude-haiku-stub",
+          content: [{ type: "text", text: derivedTitle }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 5 },
+        };
+        return new Response(JSON.stringify(messageBody), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
       // The SDK fires multiple parallel /v1/messages requests per turn (one
       // for the user prompt, one for the system-reminder context). To keep
       // mocking ergonomic, the latest scripted response is treated as

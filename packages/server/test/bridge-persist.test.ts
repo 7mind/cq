@@ -658,4 +658,140 @@ describe("Bridge persistence", () => {
     expect(sysErrorEvent).toBeDefined();
     expect((sysErrorEvent as Record<string, unknown>)["error"]).toContain("SDK subprocess crashed");
   });
+
+  // ---------------------------------------------------------------------------
+  // PR-01: Haiku title generator wiring
+  // ---------------------------------------------------------------------------
+
+  it("PR-01: title generator is invoked exactly once after the first successful result; title is persisted", async () => {
+    const persistence = new InMemoryPersistence();
+    const resultWithText = {
+      ...(makeResultMessage(0.1, 5, 5) as Record<string, unknown>),
+      result: "A haiku has 5-7-5 syllable structure.",
+    } as unknown as SDKMessage;
+    const script: SDKMessage[] = [
+      makeInitMessage(),
+      makeAssistantMessage("haiku reply"),
+      resultWithText,
+    ];
+    let callCount = 0;
+    const calls: Array<{ firstUserMessage: string; firstAssistantText: string }> = [];
+    const titleGenerator = {
+      // eslint-disable-next-line @typescript-eslint/require-await
+      generate: async (input: { firstUserMessage: string; firstAssistantText: string }): Promise<string> => {
+        callCount += 1;
+        calls.push(input);
+        return "Writing haiku poems";
+      },
+    };
+    const bridge = new Bridge({
+      logger: noopLogger,
+      registry: new SessionRegistry(),
+      queryFactory: () => makeMockQuery(script),
+      cwd: "/tmp/test",
+      persistence,
+      titleGenerator,
+    });
+    const ws = new MockWsSocket();
+    await bridge.handleChatStart(ws, makeChatStart());
+    const started = ws.framesOfType("chat.started");
+    expect(started.length).toBeGreaterThanOrEqual(1);
+    const sessionId = started[0]!.sessionId as string;
+    await bridge.handleChatInput(ws, { type: "chat.input", seq: 1, ts: Date.now(), sessionId, text: "Tell me about haiku." });
+    await ws.waitForFrames("chat.done");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(callCount).toBe(1);
+    expect(calls[0]!.firstUserMessage).toBe("Tell me about haiku.");
+    expect(calls[0]!.firstAssistantText).toBe("A haiku has 5-7-5 syllable structure.");
+    const sess = persistence.sessions.get(sessionId)!;
+    expect(sess.title).toBe("Writing haiku poems");
+  });
+
+  it("PR-01: title generator is skipped when assistant text is empty (defensive gate)", async () => {
+    const persistence = new InMemoryPersistence();
+    const script: SDKMessage[] = [
+      makeInitMessage(),
+      makeAssistantMessage("hi"),
+      makeResultMessage(0.1, 5, 5), // no `result` field
+    ];
+    let callCount = 0;
+    const titleGenerator = {
+      // eslint-disable-next-line @typescript-eslint/require-await
+      generate: async (): Promise<string> => {
+        callCount += 1;
+        return "Should not be called";
+      },
+    };
+    const bridge = new Bridge({
+      logger: noopLogger,
+      registry: new SessionRegistry(),
+      queryFactory: () => makeMockQuery(script),
+      cwd: "/tmp/test",
+      persistence,
+      titleGenerator,
+    });
+    const ws = new MockWsSocket();
+    await bridge.handleChatStart(ws, makeChatStart());
+    const sessionId = (ws.framesOfType("chat.started")[0]!.sessionId) as string;
+    await bridge.handleChatInput(ws, { type: "chat.input", seq: 1, ts: Date.now(), sessionId, text: "Hello." });
+    await ws.waitForFrames("chat.done");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(callCount).toBe(0);
+    const sess = persistence.sessions.get(sessionId)!;
+    expect(sess.title).toBe("");
+  });
+
+  it("PR-01: title generator is NOT re-invoked on the second result of the same session", async () => {
+    const persistence = new InMemoryPersistence();
+    const resultMsg = {
+      ...(makeResultMessage(0.1, 5, 5) as Record<string, unknown>),
+      result: "First reply text.",
+    } as unknown as SDKMessage;
+    const resultMsg2 = {
+      ...(makeResultMessage(0.2, 6, 6) as Record<string, unknown>),
+      result: "Second reply text.",
+    } as unknown as SDKMessage;
+    const script: SDKMessage[] = [
+      makeInitMessage(),
+      makeAssistantMessage("first reply"),
+      resultMsg,
+      makeAssistantMessage("second reply"),
+      resultMsg2,
+    ];
+    let callCount = 0;
+    const titleGenerator = {
+      // eslint-disable-next-line @typescript-eslint/require-await
+      generate: async (): Promise<string> => {
+        callCount += 1;
+        return "Only one title";
+      },
+    };
+    const bridge = new Bridge({
+      logger: noopLogger,
+      registry: new SessionRegistry(),
+      queryFactory: () => makeMockQuery(script),
+      cwd: "/tmp/test",
+      persistence,
+      titleGenerator,
+    });
+    const ws = new MockWsSocket();
+    await bridge.handleChatStart(ws, makeChatStart());
+    const started = ws.framesOfType("chat.started");
+    const sessionId = started[0]!.sessionId as string;
+    await bridge.handleChatInput(ws, { type: "chat.input", seq: 1, ts: Date.now(), sessionId, text: "Hello." });
+
+    // Wait until both turns complete (the script has two result messages →
+    // two chat.done frames). Poll until two chat.done frames are seen.
+    await ws.waitForFrames("chat.done");
+    // Give the runLoop time to process the second result + chat.done.
+    for (let i = 0; i < 50 && ws.framesOfType("chat.done").length < 2; i += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(callCount).toBe(1);
+    const sess = persistence.sessions.get(sessionId)!;
+    expect(sess.title).toBe("Only one title");
+  });
 });

@@ -26,6 +26,7 @@ import { createElement, act } from "react";
 import type { ManagerStats } from "../src/ws/Manager";
 import type { ServerFrame, ClientFrame, HistoryRow } from "@cq/shared";
 import { ConnectionProvider } from "../src/ws/ConnectionProvider";
+import { SessionProvider } from "../src/chat/SessionContext";
 import { HistoryTab } from "../src/history/HistoryTab";
 
 // ---------------------------------------------------------------------------
@@ -164,7 +165,11 @@ function renderTab(manager: FakeManager): void {
       createElement(
         ConnectionProvider,
         { value: manager as never },
-        createElement(HistoryTab, {}),
+        createElement(
+          SessionProvider,
+          null,
+          createElement(HistoryTab, {}),
+        ),
       ),
     );
   });
@@ -293,7 +298,11 @@ describe("HistoryTab list view", () => {
         createElement(
           ConnectionProvider,
           { value: manager as never },
-          createElement(HistoryTab, {}),
+          createElement(
+            SessionProvider,
+            null,
+            createElement(HistoryTab, {}),
+          ),
         ),
       );
     });
@@ -350,5 +359,180 @@ describe("HistoryTab list view", () => {
     expect(agentInput!.getAttribute("aria-label")).toBe("Filter by agent");
     // The filter will be sent when the user types — verified by integration.
     console.warn("React fiber access unavailable; structural fallback used for test (4).");
+  });
+
+  test("(PR-05) main session/excerpt cell: title preferred, then prompt excerpt, then '(no prompt)'", () => {
+    setup();
+    const manager = new FakeManager(makeStats());
+    renderTab(manager);
+
+    const withTitle = makeHistoryRow({
+      agentName: "main",
+      title: "Generated Haiku Title",
+      promptExcerpt: "the user prompt text",
+    });
+    const withExcerptOnly = makeHistoryRow({
+      agentName: "main",
+      title: "",
+      promptExcerpt: "fallback prompt excerpt",
+    });
+    const withNothing = makeHistoryRow({
+      agentName: "main",
+      title: "",
+      promptExcerpt: "",
+    });
+    const subagent = makeHistoryRow({
+      agentName: "Task",
+      title: "", // even if a Haiku title slipped in, subagents render the old layout
+      promptExcerpt: "subagent prompt text",
+    });
+
+    const sentFrame = manager.sent.find((f) => f.type === "history.list");
+    if (!sentFrame || sentFrame.type !== "history.list") throw new Error("no list frame");
+
+    act(() => {
+      manager.injectMessage({
+        type: "history.list_result",
+        seq: 1,
+        ts: Date.now(),
+        requestSeq: sentFrame.seq,
+        total: 4,
+        rows: [withTitle, withExcerptOnly, withNothing, subagent],
+      });
+    });
+
+    const tbody = container!.querySelector("table tbody")!;
+    const trs = tbody.querySelectorAll("tr");
+
+    function sessionCellText(tr: Element): string {
+      // Session/Excerpt column is index 9.
+      const cell = tr.querySelectorAll("td")[9]!;
+      return (cell.textContent ?? "").trim();
+    }
+
+    const trByInv = (invId: string): Element =>
+      Array.from(trs).find((tr) => tr.getAttribute("data-testid") === `history-row-${invId}`)!;
+
+    expect(sessionCellText(trByInv(withTitle.invocationId))).toContain("Generated Haiku Title");
+    expect(sessionCellText(trByInv(withTitle.invocationId))).not.toContain("the user prompt text");
+
+    expect(sessionCellText(trByInv(withExcerptOnly.invocationId))).toContain("fallback prompt excerpt");
+
+    expect(sessionCellText(trByInv(withNothing.invocationId))).toContain("(no prompt)");
+
+    // Subagent row keeps the old two-line layout (session id slice + excerpt).
+    expect(sessionCellText(trByInv(subagent.invocationId))).toContain(subagent.sessionId.slice(0, 8));
+    expect(sessionCellText(trByInv(subagent.invocationId))).toContain("subagent prompt text");
+  });
+
+  test("(PR-03) Resume button renders on finished main rows, absent on subagent / active / running rows", () => {
+    setup();
+    const manager = new FakeManager(makeStats());
+    renderTab(manager);
+
+    const finishedMain = makeHistoryRow({
+      agentName: "main",
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      endedAt: Date.now(),
+      status: "completed",
+    });
+    const subagent = makeHistoryRow({
+      agentName: "Task",
+      sessionId: "22222222-2222-4222-8222-222222222222",
+      endedAt: Date.now(),
+      status: "completed",
+    });
+    const stillRunning = makeHistoryRow({
+      agentName: "main",
+      sessionId: "33333333-3333-4333-8333-333333333333",
+      endedAt: null,
+      durationMs: null,
+      status: "running",
+    });
+
+    const sentFrame = manager.sent.find((f) => f.type === "history.list");
+    if (!sentFrame || sentFrame.type !== "history.list") throw new Error("no list frame");
+
+    act(() => {
+      manager.injectMessage({
+        type: "history.list_result",
+        seq: 1,
+        ts: Date.now(),
+        requestSeq: sentFrame.seq,
+        total: 3,
+        rows: [finishedMain, subagent, stillRunning],
+      });
+    });
+
+    // Finished main → button visible.
+    expect(
+      container!.querySelector(`[data-testid="resume-row-${finishedMain.invocationId}"]`),
+    ).not.toBeNull();
+    // Subagent → no button.
+    expect(
+      container!.querySelector(`[data-testid="resume-row-${subagent.invocationId}"]`),
+    ).toBeNull();
+    // Still-running main → no button (endedAt === null).
+    expect(
+      container!.querySelector(`[data-testid="resume-row-${stillRunning.invocationId}"]`),
+    ).toBeNull();
+  });
+
+  test("(PR-02) subagent rows render empty Cost/In/Out cells; main rows render numeric values", () => {
+    setup();
+    const manager = new FakeManager(makeStats());
+    renderTab(manager);
+
+    const mainRow = makeHistoryRow({
+      agentName: "main",
+      costUsd: 0.1234,
+      inputTokens: 1500,
+      outputTokens: 2500,
+    });
+    const subRow = makeHistoryRow({
+      agentName: "Task",
+      costUsd: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
+
+    const sentFrame = manager.sent.find((f) => f.type === "history.list");
+    if (!sentFrame || sentFrame.type !== "history.list") throw new Error("no list frame");
+
+    act(() => {
+      manager.injectMessage({
+        type: "history.list_result",
+        seq: 1,
+        ts: Date.now(),
+        requestSeq: sentFrame.seq,
+        total: 2,
+        rows: [mainRow, subRow],
+      });
+    });
+
+    const trs = container!.querySelectorAll("table tbody tr");
+    expect(trs.length).toBe(2);
+
+    // Columns: When, Agent, Model, Duration, Tool calls, Status, Cost, In, Out, Session/Excerpt.
+    // Indices: 0..9. Cost=6, In=7, Out=8.
+    function cellText(row: Element, idx: number): string {
+      const cells = row.querySelectorAll("td");
+      return (cells[idx]?.textContent ?? "").trim();
+    }
+
+    const mainTr = Array.from(trs).find((tr) =>
+      (tr.querySelector("td:nth-child(2)")?.textContent ?? "").includes("main"),
+    )!;
+    const subTr = Array.from(trs).find((tr) =>
+      (tr.querySelector("td:nth-child(2)")?.textContent ?? "").includes("Task"),
+    )!;
+
+    expect(cellText(mainTr, 6)).toMatch(/\$/);
+    expect(cellText(mainTr, 7)).toBe("1500");
+    expect(cellText(mainTr, 8)).toBe("2500");
+
+    expect(cellText(subTr, 6)).toBe("");
+    expect(cellText(subTr, 7)).toBe("");
+    expect(cellText(subTr, 8)).toBe("");
   });
 });

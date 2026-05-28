@@ -24,12 +24,14 @@
  *   startedAt        — epoch ms when the session started; null when no session.
  *   inProgress       — true while chat.started received but chat.done not yet.
  *   onNewSession     — called when user confirms starting a new session.
- *   onResumeSession  — called with invocationId when user selects a session to resume.
+ *
+ * Resume entry point: the resume flow is triggered from the History tab
+ * (rightmost Resume column) via SessionContext.requestResume; ChatTab
+ * consumes that signal. The Header carries no resume affordance.
  */
 
 import { useState, useEffect, useRef } from "react";
 import { NewSessionConfirm } from "./NewSessionConfirm";
-import { ResumePicker } from "./ResumePicker";
 import styles from "../styles/Header.module.css";
 
 /**
@@ -65,9 +67,6 @@ export interface HeaderProps {
    *  matching task_notification). Driven by computeSubagentCount in ChatTab. */
   runningSubagents?: number;
   onNewSession: () => void;
-  onResumeSession: (invocationId: string) => void;
-  /** D48: called when the user selects a running session from history to rejoin it. */
-  onRejoinSession?: (sessionId: string) => void;
   hideSdkEvents: boolean;
   onHideSdkEventsChange: (value: boolean) => void;
 }
@@ -99,13 +98,10 @@ export function Header({
   inProgress,
   runningSubagents = 0,
   onNewSession,
-  onResumeSession,
-  onRejoinSession,
   hideSdkEvents,
   onHideSdkEventsChange,
 }: HeaderProps): React.ReactElement {
   const [showConfirm, setShowConfirm] = useState(false);
-  const [showResumePicker, setShowResumePicker] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -144,24 +140,6 @@ export function Header({
 
   function handleCancel(): void {
     setShowConfirm(false);
-  }
-
-  function handleResumeClick(): void {
-    setShowResumePicker(true);
-  }
-
-  function handleResumeSelect(invocationId: string): void {
-    setShowResumePicker(false);
-    onResumeSession(invocationId);
-  }
-
-  function handleRejoin(rejoinSessionId: string): void {
-    setShowResumePicker(false);
-    onRejoinSession?.(rejoinSessionId);
-  }
-
-  function handleResumeCancel(): void {
-    setShowResumePicker(false);
   }
 
   const durationText =
@@ -264,16 +242,6 @@ export function Header({
 
         <span className={styles.spacer} />
 
-        {/* resume from history button */}
-        <button
-          type="button"
-          className={styles.newSessionBtn}
-          onClick={handleResumeClick}
-          data-testid="resume-session-btn"
-        >
-          Resume from history
-        </button>
-
         {/* new session button */}
         <button
           type="button"
@@ -287,15 +255,6 @@ export function Header({
 
       {showConfirm && (
         <NewSessionConfirm onCancel={handleCancel} onConfirm={handleConfirm} />
-      )}
-
-      {showResumePicker && (
-        <ResumePicker
-          onSelect={handleResumeSelect}
-          onRejoin={handleRejoin}
-          activeSessionId={sessionId}
-          onCancel={handleResumeCancel}
-        />
       )}
     </>
   );

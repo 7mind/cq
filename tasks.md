@@ -42,6 +42,53 @@
 - [x] **L9** — Playwright e2e. `packages/e2e/tests/ledger-create.spec.ts`: scripts mock to issue `mcp__cq__create_ledger{name:'todos'}` then confirmation; asserts `./docs/todos.md` + `./docs/ledgers.yaml` on disk. Mock server gained `/__admin/scriptOnToolResult` for two-turn scripting.
 - [x] **L10** — Manual UI dogfood + discharge. Discharge condition met: `bun run check` 558/558, `bun run e2e` 16/16. Manual dogfood deferred to user's own session — L8 and L9 integration tests exercise the full code path through the real SDK subprocess against MockAnthropicHTTP, which is the only end-to-end coverage we can run without consuming the user's Anthropic API quota.
 
+## Active — outer-5 (resume-from-history rework)
+
+Goal: ship five UX fixes for the resume flow per
+[`docs/drafts/20260527-2330-resume-rework-plan.md`](docs/drafts/20260527-2330-resume-rework-plan.md).
+Discharge: `bun run check` 0; `bun run e2e` 0; zero `ResumePicker` refs.
+
+Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
+
+- [x] **PR-01** — Haiku-generated session titles (server-side + persist + tests).
+- [x] **PR-02** — Hide zero cost/token cells for subagent rows in `List.tsx`.
+- [x] **PR-03** — Add Resume button column in History tab (top-level finished main only).
+- [x] **PR-04** — Delete `ResumePicker.tsx`, Header trigger, dialog tests.
+- [x] **PR-05** — Use generated title in session/excerpt column with prompt-excerpt fallback.
+
+Cross-cutting (locked):
+
+- [x] `title` column stays `TEXT NOT NULL DEFAULT ''`; brief's "nullable" deviates from existing schema. Empty-string sentinel preserved.
+- [x] `@anthropic-ai/sdk` added to `packages/server` only.
+- [x] Subagent predicate in `List.tsx` = `agentName !== 'main'`.
+- [x] User-triggered rejoin (live session) goes away; only auto-refresh rejoin remains.
+
+### PR-05 completed (2026-05-28)
+
+`List.tsx` session/excerpt cell now branches on `agentName`. Main rows show `title || promptExcerpt || "(no prompt)"` on one line. Subagent rows keep the original two-line layout (`sessionId.slice(0,8)` + prompt excerpt) because their prompts are already meaningful and Q20 explicitly excludes them from Haiku titling. Unit test in `history-list.test.ts` covers the three main-row branches plus the subagent rendering invariance.
+
+Also added a new e2e spec `packages/e2e/tests/history-title-resume.spec.ts` covering the end-to-end flow: send message → Haiku title persisted → switch to History tab → click Resume → assert tab switches to Chat and prior user bubble survives (proves same chatSessionId reused). Extended `packages/e2e/mock-server.ts` to handle non-streaming `/v1/messages` calls (the title generator's path) by parsing the request body, extracting the user's first message from the title prompt, and returning a unique derived title per session so e2e rows are distinguishable in the shared in-memory DB.
+
+While testing the discharge condition, found that `bun run e2e` failed because `cd packages/e2e && playwright test` couldn't find `playwright` on PATH (it lives in `packages/e2e/node_modules/.bin`). Fixed the root `package.json` script to use `bun x playwright test` instead. This was a pre-existing project-script bug surfaced while validating PR-05; verified independent of these changes by reproducing on `git stash`.
+
+Final verification: `bun run check` → 539 pass; `bun run e2e` → 15 pass.
+
+### PR-04 completed (2026-05-28)
+
+Deleted `packages/web/src/chat/ResumePicker.tsx` and `packages/e2e/tests/resume-running-rejoin.spec.ts`. Stripped `Header.tsx` of the `Resume from history` button, the dialog mount, `showResumePicker` state, the `handleResume*`/`handleRejoin` helpers, and the `onResumeSession`/`onRejoinSession` props. `ChatTab.tsx`: dropped `handleRejoinSession` (its only caller was the deleted dialog branch; the D47 auto-refresh `chat.rejoin` send-path is inline and unaffected) and removed both props from the Header element. `header.test.ts`: dropped the deleted prop from defaultProps. `bun run check` → 538 pass. `grep -r ResumePicker|resume-picker|resume-session-btn packages/{web,server,e2e,shared}/{src,test,tests}` returns zero hits.
+
+### PR-03 completed (2026-05-28)
+
+Rightmost "Resume" column in the History tab. Button renders only when `agentName === 'main' && endedAt !== null && sessionId !== activeSessionId`. Cross-tab signal: `SessionContext.requestResume(invocationId)` → App effect flips active tab to chat; `ChatTab` effect calls existing `handleResumeSession` and clears the request. `data-testid="resume-row-<invId>"` for tests. CSS added in `History.module.css`. Test added in `history-list.test.ts` covers all three branches (visible / subagent / running). `bun run check` → 538 pass.
+
+### PR-02 completed (2026-05-28)
+
+`packages/web/src/history/List.tsx`: cost/in/out cells now render empty for any row where `agentName !== 'main'` (the SDK emits per-turn metrics only at the top-level boundary, so subagent rows always carried misleading zeros). Test added in `history-list.test.ts` asserts both the main-row and subagent-row paths. `bun run check` → 537 pass.
+
+### PR-01 completed (2026-05-28)
+
+Shipped `packages/server/src/agent/titleGenerator.ts` with `AnthropicTitleGenerator` + `TitleGenerator` interface + `buildTitleUserPrompt` + `sanitizeTitle` helpers. Added `@anthropic-ai/sdk@^0.69.0` dep. Wired into `Bridge`: `BridgeOpts.titleGenerator` (defaults to `AnthropicTitleGenerator`); `ActiveSession` gains `firstUserText`/`titleRequested`; `handleChatInput` captures the first user text; after the first `result{subtype:'success'}` with non-empty user+assistant text, generator runs async via `.then/.catch`, persists via `sessions.update({title})`, gated by both in-memory and persisted idempotency checks. Lazy client construction (no `ANTHROPIC_API_KEY` required for tests that don't trigger). Tests: 7 unit (`titleGenerator.test.ts`) + 2 bridge-integration (`bridge-persist.test.ts`). Verification: `bun run check` → 536 pass (was 524). Surprises: existing `session.title` column was `NOT NULL DEFAULT ''` already — no migration needed; empty string is the "not yet generated" sentinel (documented as cross-cutting note).
+
 ## Archive
 
 - M0 → [`./docs/archive/tasks-M0.md`](./docs/archive/tasks-M0.md)

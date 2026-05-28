@@ -157,6 +157,25 @@
   cursor: default;
 }
 
+/* PR-03: small Resume button in the rightmost column of finished main rows. */
+.resumeButton {
+  padding: 3px 10px;
+  background: #2d2d2d;
+  color: #d4d4d4;
+  border: 1px solid #555;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: sans-serif;
+}
+.resumeButton:hover {
+  background: #3a3a3a;
+}
+.resumeButton:focus-visible {
+  outline: 2px solid #0e639c;
+  outline-offset: 1px;
+}
+
 .mono {
   font-family: monospace;
   font-size: 12px;

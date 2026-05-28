@@ -106,6 +106,9 @@ const COLUMNS: ColDef[] = [
   { label: "In tokens" },
   { label: "Out tokens" },
   { label: "Session / Excerpt" },
+  // PR-03: rightmost Resume column. Empty cell on subagent / active /
+  // unfinished rows; a button on finished top-level main rows.
+  { label: "" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -121,9 +124,31 @@ export interface ListProps {
   onFilter: (patch: Partial<FilterState>) => void;
   /** Called when the user clicks a history row. Receives the invocationId. */
   onRowClick?: (invocationId: string) => void;
+  /**
+   * PR-03: the currently-active session id (from SessionContext). A row whose
+   * sessionId matches this value will not render the Resume button (you can't
+   * resume the live session — you're already in it).
+   */
+  activeSessionId?: string | null;
+  /**
+   * PR-03: called when the user clicks the Resume button. Receives the
+   * row's invocationId; the parent forwards to the cross-tab resume signal
+   * (SessionContext.requestResume).
+   */
+  onResumeSession?: (invocationId: string) => void;
 }
 
-export function List({ rows, sort, filter, loading, onSort, onFilter, onRowClick }: ListProps): React.ReactElement {
+export function List({
+  rows,
+  sort,
+  filter,
+  loading,
+  onSort,
+  onFilter,
+  onRowClick,
+  activeSessionId = null,
+  onResumeSession,
+}: ListProps): React.ReactElement {
   return (
     <div className={styles.historyTab}>
       {/* Filter bar */}
@@ -257,16 +282,54 @@ export function List({ rows, sort, filter, loading, onSort, onFilter, onRowClick
                       {row.status}
                     </span>
                   </td>
-                  <td className={styles.mono}>{fmtCost(row.costUsd)}</td>
-                  <td className={styles.mono}>{row.inputTokens}</td>
-                  <td className={styles.mono}>{row.outputTokens}</td>
+                  {/* PR-02: subagent rows have no per-row cost/token data
+                      (SDK emits result only at the top-level turn boundary),
+                      so render empty cells rather than misleading zeros. */}
+                  <td className={styles.mono}>{row.agentName === "main" ? fmtCost(row.costUsd) : ""}</td>
+                  <td className={styles.mono}>{row.agentName === "main" ? row.inputTokens : ""}</td>
+                  <td className={styles.mono}>{row.agentName === "main" ? row.outputTokens : ""}</td>
                   <td>
-                    <div className={styles.mono} style={{ fontSize: 11 }}>
-                      {row.title || row.sessionId.slice(0, 8)}
-                    </div>
-                    <div className={styles.excerpt} title={row.promptExcerpt}>
-                      {row.promptExcerpt}
-                    </div>
+                    {/* PR-05: main rows show Haiku-generated title (or first
+                        prompt excerpt as fallback, then "(no prompt)" if both
+                        are empty). Subagent rows keep the old layout: small
+                        session-id line + their existing prompt-excerpt body,
+                        because the subagent's prompt is already meaningful and
+                        we deliberately do not generate titles for them. */}
+                    {row.agentName === "main" ? (
+                      <div className={styles.mono} style={{ fontSize: 11 }}>
+                        {row.title || row.promptExcerpt || "(no prompt)"}
+                      </div>
+                    ) : (
+                      <>
+                        <div className={styles.mono} style={{ fontSize: 11 }}>
+                          {row.sessionId.slice(0, 8)}
+                        </div>
+                        <div className={styles.excerpt} title={row.promptExcerpt}>
+                          {row.promptExcerpt}
+                        </div>
+                      </>
+                    )}
+                  </td>
+                  {/* PR-03: Resume button — only on finished top-level main rows
+                      that are not the currently-active session. */}
+                  <td>
+                    {row.agentName === "main" &&
+                    row.endedAt !== null &&
+                    row.sessionId !== activeSessionId &&
+                    onResumeSession !== undefined ? (
+                      <button
+                        type="button"
+                        className={styles.resumeButton}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onResumeSession(row.invocationId);
+                        }}
+                        data-testid={`resume-row-${row.invocationId}`}
+                        aria-label={`Resume session ${row.sessionId.slice(0, 8)}`}
+                      >
+                        Resume
+                      </button>
+                    ) : null}
                   </td>
                 </tr>
               ))}

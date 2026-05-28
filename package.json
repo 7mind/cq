@@ -11,8 +11,8 @@
     "test": "bun test --pass-with-no-tests",
     "start": "bun run packages/server/src/main.ts --cwd /tmp --port 5173",
     "dev": "bun run packages/server/src/main.ts -- --dev --cwd . --port 5173",
-    "e2e": "cd packages/e2e && playwright test",
-    "e2e:headed": "cd packages/e2e && playwright test --headed"
+    "e2e": "cd packages/e2e && bun x playwright test",
+    "e2e:headed": "cd packages/e2e && bun x playwright test --headed"
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",
