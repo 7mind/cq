@@ -1,10 +1,11 @@
 /**
  * InMemoryLedgerStore — hand-written dummy adapter used by the dual-tests
- * pattern. Persistence is a Map; archived milestones live in a sibling Map
- * keyed by `<ledger>/<milestone-id>`. No locks, no I/O.
+ * pattern. Persistence is a Map; archived milestone-groups + milestone-items
+ * live in sibling Maps. No locks, no I/O.
  *
  * Concurrency: uses the same per-ledger AsyncMutex discipline as the real
- * adapter so tests that exercise concurrency behave the same way.
+ * adapter so tests that exercise concurrency behave the same way. The
+ * `__milestones__` global mutex is mirrored here as well.
  */
 
 import type {
@@ -15,59 +16,94 @@ import type {
   Milestone,
 } from "../types.js";
 import {
+  BootstrapViolationError,
   DuplicateIdError,
   LedgerError,
   LedgerNotFoundError,
 } from "../types.js";
 import {
-  applyArchiveMilestone,
   applyCreateItem,
-  applyCreateMilestone,
+  applyCreateMilestoneItem,
+  applyDetachMilestoneGroup,
+  applyDetachMilestoneItem,
   applyUpdateItem,
-  applyUpdateMilestone,
+  applyUpdateMilestoneItem,
+  assertMilestoneActive,
   findItem,
-  findMilestone,
+  resolveMilestoneView,
   searchItems,
   validateSchema,
 } from "./core.js";
 import type {
+  ArchiveContent,
   CreateItemInit,
-  CreateMilestoneInit,
+  CreateMilestoneItemInit,
+  FetchedMilestoneItem,
   LedgerStore,
   UpdateItemPatch,
-  UpdateMilestonePatch,
+  UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
+import type {
+  FetchedLedger,
+  FetchedMilestoneGroup,
+  ResolvedMilestone,
+} from "../types.js";
 import { AsyncMutex } from "./mutex.js";
+import {
+  MILESTONES_ACTIVE_GROUP_ID,
+  MILESTONES_ACTIVE_GROUP_TITLE,
+  MILESTONES_LEDGER,
+  MILESTONES_SCHEMA,
+} from "../constants.js";
 
 export interface InMemoryLedgerStoreOpts {
-  now?: () => number;
-  /** Pre-populate registered ledgers (empty by default). */
+  /** Returns an ISO 8601 UTC timestamp. Defaults to `new Date().toISOString()`. */
+  now?: () => string;
+  /** Pre-populate registered ledgers (the milestones ledger is added automatically on init). */
   seed?: Array<{ name: string; schema: LedgerSchema }>;
 }
 
+/** Lock key for the global milestones mutex. */
+const MILESTONES_MUTEX_KEY = "__milestones__";
+
 export class InMemoryLedgerStore implements LedgerStore {
   private readonly ledgers = new Map<string, Ledger>();
-  private readonly archives = new Map<string, Milestone>(); // key: `<ledger>/<id>`
+  private readonly archives = new Map<string, Milestone>(); // key: `<ledger>/<id>` (groups)
+  private readonly itemArchives = new Map<string, Item>(); // key: `milestones/<id>` (items)
   private readonly mutexes = new Map<string, AsyncMutex>();
-  private readonly now: () => number;
+  private readonly now: () => string;
   private initialised = false;
+  private readonly initialSeed: Array<{ name: string; schema: LedgerSchema }>;
 
   constructor(opts: InMemoryLedgerStoreOpts = {}) {
-    this.now = opts.now ?? Date.now;
-    if (opts.seed !== undefined) {
-      for (const { name, schema } of opts.seed) {
-        this.ledgers.set(name, freshLedger(name, schema));
-      }
-    }
+    this.now = opts.now ?? (() => new Date().toISOString());
+    this.initialSeed = opts.seed ?? [];
   }
 
   async init(): Promise<void> {
+    if (this.initialised) return;
+    // Seed user-supplied ledgers (refusing `milestones` here keeps the
+    // bootstrap path the single source of truth for the schema).
+    for (const { name, schema } of this.initialSeed) {
+      if (name === MILESTONES_LEDGER) {
+        throw new BootstrapViolationError(
+          `seed includes "${MILESTONES_LEDGER}"; that ledger is bootstrapped automatically`,
+        );
+      }
+      this.ledgers.set(name, freshLedger(name, schema));
+    }
+    this.bootstrapMilestonesLedger();
     this.initialised = true;
   }
 
   async dispose(): Promise<void> {
+    const drains = Array.from(this.mutexes.values()).map((m) =>
+      m.run(async () => undefined),
+    );
+    await Promise.all(drains);
     this.ledgers.clear();
     this.archives.clear();
+    this.itemArchives.clear();
     this.mutexes.clear();
     this.initialised = false;
   }
@@ -77,12 +113,11 @@ export class InMemoryLedgerStore implements LedgerStore {
     return Array.from(this.ledgers.keys()).sort();
   }
 
-  fetch(ledgerId: string): Ledger {
-    return cloneLedger(this.getLedger(ledgerId));
-  }
-
-  fetchMilestone(ledgerId: string, milestoneId: string): Milestone {
-    return cloneMilestone(findMilestone(this.getLedger(ledgerId), milestoneId));
+  fetch(ledgerId: string): FetchedLedger {
+    return materialiseFetchedLedger(
+      this.getLedger(ledgerId),
+      this.getLedger(MILESTONES_LEDGER),
+    );
   }
 
   fetchItem(ledgerId: string, itemId: string): Item {
@@ -93,22 +128,56 @@ export class InMemoryLedgerStore implements LedgerStore {
     return searchItems(this.getLedger(ledgerId), query).map(cloneItem);
   }
 
-  async fetchArchive(ledgerId: string, archiveId: string): Promise<Milestone> {
+  fetchMilestone(milestoneId: string): FetchedMilestoneItem {
+    const milestonesLedger = this.getLedger(MILESTONES_LEDGER);
+    const resolved = resolveMilestoneView(milestonesLedger, milestoneId);
+    if (resolved === null) {
+      throw new LedgerError(`milestone ${milestoneId} not found`);
+    }
+    const item = findItem(milestonesLedger, milestoneId).item;
+    const references = this.countReferences(milestoneId);
+    return { milestone: cloneItem(item), resolved, references };
+  }
+
+  listMilestoneItems(milestoneId: string): Record<string, Item[]> {
+    this.assertInit();
+    const out: Record<string, Item[]> = {};
+    for (const [name, ledger] of this.ledgers) {
+      if (name === MILESTONES_LEDGER) continue;
+      const group = ledger.milestones.find((m) => m.id === milestoneId);
+      if (group === undefined) continue;
+      if (group.items.length === 0) continue;
+      out[name] = group.items.map(cloneItem);
+    }
+    return out;
+  }
+
+  async fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
+    this.assertInit();
+    if (ledgerId === MILESTONES_LEDGER) {
+      const key = `${ledgerId}/${archiveId}`;
+      const item = this.itemArchives.get(key);
+      if (item === undefined) {
+        throw new LedgerError(`archive ${archiveId} not found in ledger ${ledgerId}`);
+      }
+      return { kind: "item", item: cloneItem(item) };
+    }
     const key = `${ledgerId}/${archiveId}`;
     const m = this.archives.get(key);
     if (m === undefined) {
       throw new LedgerError(`archive ${archiveId} not found in ledger ${ledgerId}`);
     }
-    return cloneMilestone(m);
+    return { kind: "group", milestone: cloneMilestone(m) };
   }
 
   async updateMilestone(
-    ledgerId: string,
     milestoneId: string,
-    patch: UpdateMilestonePatch,
-  ): Promise<Milestone> {
-    return this.withLock(ledgerId, async () => {
-      return cloneMilestone(applyUpdateMilestone(this.getLedger(ledgerId), milestoneId, patch));
+    patch: UpdateMilestoneItemPatch,
+  ): Promise<Item> {
+    return this.withMilestonesLock(async () => {
+      const ledger = this.getLedger(MILESTONES_LEDGER);
+      const item = applyUpdateMilestoneItem(ledger, milestoneId, patch, this.now());
+      return cloneItem(item);
     });
   }
 
@@ -123,60 +192,160 @@ export class InMemoryLedgerStore implements LedgerStore {
     milestoneId: string,
     init: CreateItemInit,
   ): Promise<Item> {
-    return this.withLock(ledgerId, async () => {
-      return cloneItem(applyCreateItem(this.getLedger(ledgerId), milestoneId, init, this.now()));
+    if (ledgerId === MILESTONES_LEDGER) {
+      throw new BootstrapViolationError(
+        `use createMilestone to add an item to the ${MILESTONES_LEDGER} ledger`,
+      );
+    }
+    // Acquire global milestones lock first (strict-existence check
+    // reads the milestones ledger), then per-ledger lock.
+    return this.withMilestonesLock(async () => {
+      assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
+      return this.withLock(ledgerId, async () => {
+        return cloneItem(
+          applyCreateItem(this.getLedger(ledgerId), milestoneId, init, this.now()),
+        );
+      });
     });
   }
 
-  async createMilestone(
-    ledgerId: string,
-    init: CreateMilestoneInit,
-  ): Promise<Milestone> {
-    return this.withLock(ledgerId, async () => {
-      return cloneMilestone(applyCreateMilestone(this.getLedger(ledgerId), init));
+  async createMilestone(init: CreateMilestoneItemInit): Promise<Item> {
+    return this.withMilestonesLock(async () => {
+      const ledger = this.getLedger(MILESTONES_LEDGER);
+      return cloneItem(applyCreateMilestoneItem(ledger, init, this.now()));
     });
   }
 
-  async createLedger(name: string, schema: LedgerSchema): Promise<Ledger> {
+  async createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger> {
     this.assertInit();
-    // D-LED-02: defensively validate the schema before storing it.
+    if (name === MILESTONES_LEDGER) {
+      throw new BootstrapViolationError(
+        `ledger name "${MILESTONES_LEDGER}" is reserved`,
+      );
+    }
     validateSchema(schema);
     if (this.ledgers.has(name)) throw new DuplicateIdError("ledger", name);
     const ledger = freshLedger(name, schema);
     this.ledgers.set(name, ledger);
-    return cloneLedger(ledger);
+    return materialiseFetchedLedger(ledger, this.getLedger(MILESTONES_LEDGER));
   }
 
   async archiveMilestone(
-    ledgerId: string,
     milestoneId: string,
     summary: string,
   ): Promise<ArchivePointer> {
-    return this.withLock(ledgerId, async () => {
-      const ledger = this.getLedger(ledgerId);
-      const relPath = `./archive/${ledgerId}/${milestoneId}.md`;
-      const { milestone, pointer } = applyArchiveMilestone(
+    return this.withMilestonesLock(async () => {
+      // Acquire every per-ledger lock in alphabetic order so we never
+      // race a concurrent updateItem on a participating ledger.
+      const otherLedgerIds = Array.from(this.ledgers.keys())
+        .filter((n) => n !== MILESTONES_LEDGER)
+        .sort();
+      return this.withLocksInOrder(otherLedgerIds, async () => {
+        return this.performArchive(milestoneId, summary);
+      });
+    });
+  }
+
+  // --- internals ---
+  private bootstrapMilestonesLedger(): void {
+    if (!this.ledgers.has(MILESTONES_LEDGER)) {
+      const ledger = freshLedger(MILESTONES_LEDGER, MILESTONES_SCHEMA);
+      ledger.milestones.push({
+        id: MILESTONES_ACTIVE_GROUP_ID,
+        title: MILESTONES_ACTIVE_GROUP_TITLE,
+        description: "",
+        items: [],
+      });
+      this.ledgers.set(MILESTONES_LEDGER, ledger);
+    }
+  }
+
+  private countReferences(milestoneId: string): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const [name, ledger] of this.ledgers) {
+      if (name === MILESTONES_LEDGER) continue;
+      const group = ledger.milestones.find((m) => m.id === milestoneId);
+      if (group === undefined) continue;
+      if (group.items.length > 0) out[name] = group.items.length;
+    }
+    return out;
+  }
+
+  private performArchive(milestoneId: string, summary: string): ArchivePointer {
+    if (milestoneId === MILESTONES_ACTIVE_GROUP_ID) {
+      throw new BootstrapViolationError(
+        `the bootstrap group ${MILESTONES_ACTIVE_GROUP_ID} cannot be archived`,
+      );
+    }
+    // Phase 1: verify no non-terminal items in ANY ledger.
+    for (const [name, ledger] of this.ledgers) {
+      if (name === MILESTONES_LEDGER) continue;
+      const group = ledger.milestones.find((m) => m.id === milestoneId);
+      if (group === undefined) continue;
+      const terminal = new Set(ledger.schema.terminalStatuses);
+      const offending = group.items.filter((it) => !terminal.has(it.status));
+      if (offending.length > 0) {
+        // Throw via applyDetachMilestoneGroup so the error type matches
+        // the real adapter path.
+        applyDetachMilestoneGroup(
+          ledger,
+          milestoneId,
+          summary,
+          `./archive/${name}/${milestoneId}.md`,
+        );
+      }
+    }
+    // Phase 2: archive each non-milestones ledger that has a group.
+    for (const [name, ledger] of this.ledgers) {
+      if (name === MILESTONES_LEDGER) continue;
+      const hasGroup = ledger.milestones.some((m) => m.id === milestoneId);
+      if (!hasGroup) continue;
+      const relPath = `./archive/${name}/${milestoneId}.md`;
+      const { milestone } = applyDetachMilestoneGroup(
         ledger,
         milestoneId,
         summary,
         relPath,
       );
-      this.archives.set(`${ledgerId}/${milestoneId}`, milestone);
-      return { ...pointer };
-    });
+      this.archives.set(`${name}/${milestoneId}`, milestone);
+    }
+    // Phase 3: archive the milestone-item itself.
+    const milestonesLedger = this.getLedger(MILESTONES_LEDGER);
+    const relPath = `./archive/${MILESTONES_LEDGER}/${milestoneId}.md`;
+    const { item, pointer } = applyDetachMilestoneItem(
+      milestonesLedger,
+      milestoneId,
+      summary,
+      relPath,
+    );
+    this.itemArchives.set(`${MILESTONES_LEDGER}/${milestoneId}`, item);
+    return { ...pointer };
   }
 
-  // --- internals ---
   private async withLock<T>(ledgerId: string, fn: () => Promise<T>): Promise<T> {
     if (!this.ledgers.has(ledgerId)) throw new LedgerNotFoundError(ledgerId);
     const mutex = this.mutexFor(ledgerId);
     return mutex.run(fn);
   }
-  private mutexFor(ledgerId: string): AsyncMutex {
-    let m = this.mutexes.get(ledgerId);
+  private async withMilestonesLock<T>(fn: () => Promise<T>): Promise<T> {
+    const mutex = this.mutexFor(MILESTONES_MUTEX_KEY);
+    return mutex.run(fn);
+  }
+  private async withLocksInOrder<T>(
+    ledgerIds: string[],
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    // Recurse so each lock is held for the duration of all inner work.
+    if (ledgerIds.length === 0) return fn();
+    const [head, ...tail] = ledgerIds;
+    if (head === undefined) return fn();
+    return this.withLock(head, () => this.withLocksInOrder(tail, fn));
+  }
+  private mutexFor(key: string): AsyncMutex {
+    let m = this.mutexes.get(key);
     if (m === undefined) {
       m = new AsyncMutex();
-      this.mutexes.set(ledgerId, m);
+      this.mutexes.set(key, m);
     }
     return m;
   }
@@ -191,7 +360,55 @@ export class InMemoryLedgerStore implements LedgerStore {
   }
 }
 
-// --- duplicated tiny helpers (avoid importing private symbols across stores) ---
+// --- shared materialiser + clone helpers ---
+
+export function materialiseFetchedLedger(
+  ledger: Ledger,
+  milestonesLedger: Ledger,
+): FetchedLedger {
+  const groups: FetchedMilestoneGroup[] = ledger.milestones.map((m) => {
+    let resolved: ResolvedMilestone;
+    if (ledger.id === MILESTONES_LEDGER) {
+      // Self-resolution: the M0 active group itself doesn't correspond
+      // to a milestone-item; expose a sentinel view so callers can rely
+      // on the field always being populated.
+      resolved = {
+        id: m.id,
+        status: "open",
+        title: m.title,
+        description: m.description,
+      };
+    } else {
+      const view = resolveMilestoneViewSafe(milestonesLedger, m.id);
+      // If the milestone is missing (e.g. archived, or the M0 caller is
+      // running before bootstrap), surface an empty view so the caller
+      // can still render the group. Errors here would hide the broken
+      // state from the UI.
+      resolved =
+        view ?? {
+          id: m.id,
+          status: "unknown",
+          title: "",
+          description: "",
+        };
+    }
+    return { id: m.id, milestone: resolved, items: m.items.map(cloneItem) };
+  });
+  return {
+    id: ledger.id,
+    schema: cloneSchema(ledger.schema),
+    counters: { ...ledger.counters },
+    milestones: groups,
+    archivePointers: ledger.archivePointers.map((p) => ({ ...p })),
+  };
+}
+
+function resolveMilestoneViewSafe(
+  milestonesLedger: Ledger,
+  milestoneId: string,
+): ResolvedMilestone | null {
+  return resolveMilestoneView(milestonesLedger, milestoneId);
+}
 
 function freshLedger(name: string, schema: LedgerSchema): Ledger {
   return {
@@ -203,17 +420,13 @@ function freshLedger(name: string, schema: LedgerSchema): Ledger {
   };
 }
 
-function cloneLedger(l: Ledger): Ledger {
+function cloneSchema(s: LedgerSchema): LedgerSchema {
   return {
-    id: l.id,
-    schema: {
-      statusValues: [...l.schema.statusValues],
-      terminalStatuses: [...l.schema.terminalStatuses],
-      fields: Object.fromEntries(Object.entries(l.schema.fields).map(([k, v]) => [k, { ...v }])),
-    },
-    counters: { ...l.counters },
-    milestones: l.milestones.map(cloneMilestone),
-    archivePointers: l.archivePointers.map((p) => ({ ...p })),
+    statusValues: [...s.statusValues],
+    terminalStatuses: [...s.terminalStatuses],
+    fields: Object.fromEntries(
+      Object.entries(s.fields).map(([k, v]) => [k, { ...v }]),
+    ),
   };
 }
 

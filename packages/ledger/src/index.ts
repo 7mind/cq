@@ -24,10 +24,12 @@ export { parseFrontmatter, serializeFrontmatter } from "./parser/frontmatter.js"
 export type { ParsedFrontmatter } from "./parser/frontmatter.js";
 export type {
   LedgerStore,
+  ArchiveContent,
   CreateItemInit,
-  CreateMilestoneInit,
+  CreateMilestoneItemInit,
+  FetchedMilestoneItem,
   UpdateItemPatch,
-  UpdateMilestonePatch,
+  UpdateMilestoneItemPatch,
 } from "./store/LedgerStore.js";
 export { FsLedgerStore } from "./store/FsLedgerStore.js";
 export type { FsLedgerStoreOpts } from "./store/FsLedgerStore.js";
