@@ -74,6 +74,12 @@ export const HistoryRow = z.object({
   platform: z.enum(["claude", "codex"]),
   /** Reasoning-effort tier the session was started with. Defaults to "none". */
   effort: EffortSchema,
+  /**
+   * Codex `approvalPolicy` the session was started with (one of
+   * `"never" | "on-request" | "on-failure" | "untrusted"`). Null on Claude
+   * rows and on Codex rows that pre-date migration #7.
+   */
+  approvalPolicy: z.string().nullable().optional(),
 });
 export type HistoryRow = z.infer<typeof HistoryRow>;
 
@@ -160,6 +166,21 @@ export type PermissionModeValue = z.infer<typeof PermissionModeSchema>;
 /** Backend platform the session should run on. */
 export const PlatformSchema = z.enum(["claude", "codex"]);
 
+/**
+ * Codex `approvalPolicy` knob. Mirrors `@openai/codex-sdk@0.134.0`'s
+ * `ApprovalMode` union exactly (see dist/index.d.ts line 235). Only
+ * meaningful for `platform === "codex"` sessions; the facade rejects
+ * non-null values on Claude sessions with `chat.error{code:
+ * 'approval-policy-on-claude'}`.
+ */
+export const ApprovalPolicySchema = z.enum([
+  "never",
+  "on-request",
+  "on-failure",
+  "untrusted",
+]);
+export type ApprovalPolicy = z.infer<typeof ApprovalPolicySchema>;
+
 export const ChatStart = z.object({
   type: z.literal("chat.start"),
   seq,
@@ -176,6 +197,12 @@ export const ChatStart = z.object({
    * work.
    */
   platform: PlatformSchema.optional(),
+  /**
+   * Codex `approvalPolicy` to apply to this session (only meaningful for
+   * `platform === "codex"`). The facade rejects non-null values for
+   * `platform === "claude"` with `chat.error{code:'approval-policy-on-claude'}`.
+   */
+  approvalPolicy: ApprovalPolicySchema.optional(),
   resumeFromInvocationId: uuidStr().optional(),
 });
 export type ChatStart = z.infer<typeof ChatStart>;

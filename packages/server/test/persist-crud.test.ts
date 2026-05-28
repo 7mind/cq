@@ -132,6 +132,36 @@ function runSuite(label: string, factory: () => Persistence): void {
     });
 
     // -----------------------------------------------------------------------
+    // gcn1-1: session.approvalPolicy round-trip + HistoryRow surface
+    // -----------------------------------------------------------------------
+    test("gcn1-1: approvalPolicy survives insert/get round-trip", () => {
+      const codex = makeSession({ platform: "codex", effort: "high", approvalPolicy: "on-request" });
+      const claude = makeSession({ platform: "claude", effort: "none", approvalPolicy: null });
+      p.sessions.insert(codex);
+      p.sessions.insert(claude);
+      expect(p.sessions.get(codex.id)).toMatchObject({ approvalPolicy: "on-request" });
+      expect(p.sessions.get(claude.id)).toMatchObject({ approvalPolicy: null });
+    });
+
+    test("gcn1-1: update can mutate approvalPolicy", () => {
+      const session = makeSession({ platform: "codex", effort: "high", approvalPolicy: "on-request" });
+      p.sessions.insert(session);
+      p.sessions.update(session.id, { approvalPolicy: "never" });
+      expect(p.sessions.get(session.id)).toMatchObject({ approvalPolicy: "never" });
+      p.sessions.update(session.id, { approvalPolicy: null });
+      expect(p.sessions.get(session.id)).toMatchObject({ approvalPolicy: null });
+    });
+
+    test("gcn1-1: HistoryRow surfaces approvalPolicy from the joined session", () => {
+      const session = makeSession({ platform: "codex", effort: "low", approvalPolicy: "untrusted" });
+      p.sessions.insert(session);
+      p.invocations.insert(makeInvocation(session.id));
+      const result = p.invocations.list({}, { field: "startedAt", dir: "desc" }, { offset: 0, limit: 10 });
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]!.approvalPolicy).toBe("untrusted");
+    });
+
+    // -----------------------------------------------------------------------
     // 1. Insert session + 3 invocations + 100 events each; retrieve by id
     // -----------------------------------------------------------------------
     test("insert session + 3 invocations + 100 events each; retrieve by id", async () => {

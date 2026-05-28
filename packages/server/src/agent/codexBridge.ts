@@ -414,6 +414,9 @@ export class CodexBridge implements BackendBridge {
           sdkSessionId: priorThreadId,
           platform: "codex",
           effort,
+          // gcn1-1: approvalPolicy is filled in by gcn1-2's ChatStart plumbing.
+          // Stored as NULL until the popup forwards a non-null value.
+          approvalPolicy: null,
         };
         this.persistence.sessions.insert(sessionRow);
       }

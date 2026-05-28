@@ -558,6 +558,9 @@ export class ClaudeBridge implements BackendBridge {
           platform: "claude",
           // gear-2: effort taken from ChatStart.effort or default "none".
           effort: frame.effort ?? "none",
+          // gcn1-1: Claude sessions never carry a Codex approvalPolicy.
+          // Stored as NULL so both adapters' shapes match on read.
+          approvalPolicy: null,
         };
         this.persistence.sessions.insert(sessionRow);
       }

@@ -244,6 +244,7 @@ export class InMemoryPersistence implements Persistence {
           resumedFromInvocationId: r.resumedFromInvocationId,
           platform: session?.platform ?? "claude",
           effort: (session?.effort ?? "none") as Effort,
+          approvalPolicy: session?.approvalPolicy ?? null,
         };
       });
 
@@ -281,6 +282,7 @@ export class InMemoryPersistence implements Persistence {
         totalCostUsd: session?.totalCostUsd ?? 0,
         platform: session?.platform ?? "claude",
         effort: (session?.effort ?? "none") as Effort,
+        approvalPolicy: session?.approvalPolicy ?? null,
       };
     },
   };

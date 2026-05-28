@@ -30,6 +30,14 @@ export interface SessionRow {
    * Persisted as a string; the bridge maps it to the platform-native form.
    */
   effort: string; // shape-equivalent to Effort from @cq/shared/effort
+  /**
+   * Codex `approvalPolicy` (one of `"never" | "on-request" | "on-failure" | "untrusted"`).
+   * New in migration #7. Nullable: NULL for Claude sessions and for Codex
+   * sessions started before this migration (those fall back to the codex-sdk
+   * default at session-start time). Optional on the TS shape because the
+   * in-memory persistence's seed helpers may omit it.
+   */
+  approvalPolicy?: string | null;
 }
 
 /** A row from the `invocation` table (§ 4 DDL). */

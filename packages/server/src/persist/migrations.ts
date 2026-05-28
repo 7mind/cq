@@ -145,6 +145,21 @@ ALTER TABLE session ADD COLUMN platform TEXT NOT NULL DEFAULT 'claude';
 ALTER TABLE session ADD COLUMN effort   TEXT NOT NULL DEFAULT 'none';
 `,
   },
+  {
+    // gcn1-1 (outer-9): per-session Codex approvalPolicy. Nullable because
+    // (a) Claude sessions have no approval policy and (b) Codex sessions
+    // started before this migration default to the codex-sdk default
+    // ("on-request") — leaving the column NULL preserves that meaning
+    // without overwriting historical intent.
+    //
+    // The column is plain TEXT rather than a CHECK-constrained enum so the
+    // single-source-of-truth for valid values stays in the protocol Zod
+    // schema (z.enum(["never","on-request","on-failure","untrusted"])).
+    version: 7,
+    up: `
+ALTER TABLE session ADD COLUMN approval_policy TEXT;
+`,
+  },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): void {

@@ -28,6 +28,7 @@ interface SessionSqlRow {
   sdk_session_id: string | null;
   platform: string;
   effort: string;
+  approval_policy: string | null;
 }
 
 function toRow(r: SessionSqlRow): SessionRow {
@@ -52,6 +53,7 @@ function toRow(r: SessionSqlRow): SessionRow {
     // sound by construction.
     platform: (r.platform === "codex" ? "codex" : "claude") as "claude" | "codex",
     effort: r.effort,
+    approvalPolicy: r.approval_policy,
   };
 }
 
@@ -75,12 +77,12 @@ export class SessionStore {
         (id, started_at, ended_at, cwd, model, permission_mode,
          total_input_tokens, total_output_tokens, total_cache_read,
          total_cache_create, total_cost_usd, ended_reason, title,
-         last_server_seq, sdk_session_id, platform, effort)
+         last_server_seq, sdk_session_id, platform, effort, approval_policy)
       VALUES
         ($id, $started_at, $ended_at, $cwd, $model, $permission_mode,
          $total_input_tokens, $total_output_tokens, $total_cache_read,
          $total_cache_create, $total_cost_usd, $ended_reason, $title,
-         $last_server_seq, $sdk_session_id, $platform, $effort)
+         $last_server_seq, $sdk_session_id, $platform, $effort, $approval_policy)
     `);
 
     this.stmtGet = db.prepare<SessionSqlRow, [string]>(
@@ -107,6 +109,7 @@ export class SessionStore {
       $sdk_session_id: row.sdkSessionId,
       $platform: row.platform,
       $effort: row.effort,
+      $approval_policy: row.approvalPolicy ?? null,
     });
   }
 
@@ -130,6 +133,7 @@ export class SessionStore {
     if (patch.sdkSessionId !== undefined) { sets.push("sdk_session_id = $sdk_session_id"); params.$sdk_session_id = patch.sdkSessionId; }
     if (patch.platform !== undefined) { sets.push("platform = $platform"); params.$platform = patch.platform; }
     if (patch.effort !== undefined) { sets.push("effort = $effort"); params.$effort = patch.effort; }
+    if (patch.approvalPolicy !== undefined) { sets.push("approval_policy = $approval_policy"); params.$approval_policy = patch.approvalPolicy; }
 
     if (sets.length === 0) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
