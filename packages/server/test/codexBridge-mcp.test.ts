@@ -46,7 +46,7 @@ class InertCodex {
 describe("CodexBridge MCP wiring (gc1-1)", () => {
   it("passes config.mcp_servers.cq.{command, args=[--cwd <cwd>]} to the codex factory", async () => {
     const captured: { options: CodexOptions | undefined } = { options: undefined };
-    const factory: CodexFactory = (options?: CodexOptions): Codex => {
+    const factory: CodexFactory = async (options?: CodexOptions): Promise<Codex> => {
       captured.options = options;
       return new InertCodex() as unknown as Codex;
     };
@@ -95,7 +95,7 @@ describe("CodexBridge MCP wiring (gc1-1)", () => {
     // carry it through. This guards against a default-path regression
     // in defaultResolveCqMcpBin (file-walking + bin-link lookup).
     const captured: { options: CodexOptions | undefined } = { options: undefined };
-    const factory: CodexFactory = (options?: CodexOptions): Codex => {
+    const factory: CodexFactory = async (options?: CodexOptions): Promise<Codex> => {
       captured.options = options;
       return new InertCodex() as unknown as Codex;
     };

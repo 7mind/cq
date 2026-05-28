@@ -77,6 +77,36 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
         }
       }
 
+      // ── E2E test hook ────────────────────────────────────────────────── //
+      // POST /__e2e/settings: synchronously sets ui_settings.{model,
+      // permissionMode, hideSdkEvents}. Mirrors the `settings.set` WS frame
+      // but lets test setup pre-stage server-side defaults BEFORE opening
+      // the cq page, so the very first auto-start chat.start carries the
+      // intended routing (e.g. Codex specs that need model=gpt-5.5 server-
+      // side so the auto-start picks it up via settings.get_result before
+      // the deferred chat.start fires). Body shape:
+      //   { model?: string|null, permissionMode?: string|null,
+      //     hideSdkEvents?: boolean }
+      if (pathname === "/__e2e/settings" && process.env["CQ_E2E_HOOKS"] === "1") {
+        if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+        try {
+          const body = (await req.json()) as {
+            model?: string | null;
+            permissionMode?: string | null;
+            hideSdkEvents?: boolean;
+          };
+          const patch: Partial<{ model: string | null; permissionMode: string | null; hideSdkEvents: boolean }> = {};
+          if (body.model !== undefined) patch.model = body.model;
+          if (body.permissionMode !== undefined) patch.permissionMode = body.permissionMode;
+          if (body.hideSdkEvents !== undefined) patch.hideSdkEvents = body.hideSdkEvents;
+          persistence.settings.set(patch);
+          return new Response("ok", { status: 200 });
+        } catch (err) {
+          logger.warn("e2e.settings_failed", { err: String(err) });
+          return new Response("settings failed", { status: 500 });
+        }
+      }
+
       // WebSocket upgrade — only on /ws
       if (pathname === "/ws") {
         // Refuse new upgrades when draining.

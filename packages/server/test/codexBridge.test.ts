@@ -117,7 +117,7 @@ function makeBridge(opts: { authed?: boolean; codex?: DummyCodex } = {}): {
   const persistence = new InMemoryPersistence();
   const registry = new SessionRegistry();
   const codex = opts.codex ?? new DummyCodex();
-  const codexFactory: CodexFactory = () => codex as unknown as Codex;
+  const codexFactory: CodexFactory = async (): Promise<Codex> => codex as unknown as Codex;
   const bridge = new CodexBridge({
     logger: noopLogger,
     registry,

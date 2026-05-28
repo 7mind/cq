@@ -116,6 +116,26 @@ function createHermeticHome(): string {
     fs.copyFileSync(realClaudeJson, path.join(tmpHome, ".claude.json"));
   }
 
+  // Symlink ~/.codex from the real HOME into the hermetic HOME when it
+  // exists. Required by the codex-roundtrip e2e: the CQ server runs with
+  // HOME=hermeticHome, and its CodexBridge spawns the codex CLI which
+  // reads auth from $HOME/.codex/auth.json + config from
+  // $HOME/.codex/config.toml. Without this symlink, codex auth detection
+  // (CodexBridge.defaultDetectCodexAuth) returns false even when the
+  // host machine has a valid codex login, causing codex sessions to
+  // refuse with "codex-not-authenticated". Skipped (rather than failing)
+  // when no real ~/.codex exists — the codex-roundtrip spec then skips
+  // cleanly per its own auth predicate.
+  const realCodexDir = path.join(os.homedir(), ".codex");
+  if (fs.existsSync(realCodexDir)) {
+    try {
+      fs.symlinkSync(realCodexDir, path.join(tmpHome, ".codex"), "dir");
+    } catch {
+      // Some sandboxes (e.g. containers without symlink permission)
+      // may refuse — non-fatal; the codex spec will then skip itself.
+    }
+  }
+
   return tmpHome;
 }
 
@@ -175,6 +195,17 @@ export default async function globalSetup(): Promise<void> {
   const tmpCwd = fs.mkdtempSync(path.join(os.tmpdir(), "cq-e2e-cwd-"));
   globalThis.__e2e_tmp_cwd = tmpCwd;
 
+  // Determine CODEX_HOME for the cq server: when the real HOME has a
+  // ~/.codex directory, point CODEX_HOME at it directly. The Codex CLI
+  // refuses to operate when codex_home is under /tmp (which it would be
+  // if we left it at the default $HOME/.codex with HOME=hermeticHome on
+  // a tmp path). Setting CODEX_HOME overrides that derivation and the
+  // CLI accepts the real user's codex install.
+  const realCodexDir = path.join(os.homedir(), ".codex");
+  const codexHomeEnv: Record<string, string> = fs.existsSync(realCodexDir)
+    ? { CODEX_HOME: realCodexDir }
+    : {};
+
   const cqProc = spawn(
     bun,
     ["run", cqScript, "--", "--port", String(cqPort), "--db", ":memory:", "--cwd", tmpCwd],
@@ -198,6 +229,11 @@ export default async function globalSetup(): Promise<void> {
         // CLAUDE_CODE_SIMPLE=1 skips the bidirectional MCP transport setup,
         // which causes the subprocess to hang when sdkMcpServers is non-empty.
         HOME: hermeticHome,
+        // Point the Codex CLI at the real user's ~/.codex when available
+        // (see comment above). When unset, the CLI falls through to
+        // $HOME/.codex (= hermeticHome/.codex which is a symlink — see
+        // createHermeticHome() — to realHome/.codex when that exists).
+        ...codexHomeEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },

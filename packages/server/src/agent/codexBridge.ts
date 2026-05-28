@@ -91,7 +91,7 @@ import { effortToCodexEffort } from "@cq/shared";
  * interface (per the dual-tests skill) and inspect the options it
  * received to assert the wiring.
  */
-export type CodexFactory = (options?: CodexOptions) => Codex;
+export type CodexFactory = (options?: CodexOptions) => Promise<Codex>;
 
 /**
  * How the bridge launches the cq-mcp stdio binary. Allows tests to
@@ -156,15 +156,50 @@ type ActiveCodexSession = {
 };
 
 /**
+ * Look up an executable on $PATH (POSIX `which` semantics: returns the
+ * first entry of $PATH that contains an executable file with the given
+ * name, or `null` if none match). Used by `defaultResolveCqMcpBin` so a
+ * system-installed cq-mcp (e.g. via `nix build .#default`) wins over a
+ * dev-checkout `node_modules/.bin/cq-mcp` symlink.
+ */
+function whichOnPath(name: string): string | null {
+  const pathEnv = process.env["PATH"];
+  if (pathEnv === undefined || pathEnv === "") return null;
+  const sep = process.platform === "win32" ? ";" : ":";
+  for (const dir of pathEnv.split(sep)) {
+    if (dir === "") continue;
+    const candidate = path.join(dir, name);
+    try {
+      const st = fs.statSync(candidate);
+      if (st.isFile()) {
+        // Best-effort: check the executable bit when available (POSIX).
+        // On platforms without mode bits we just trust the path.
+        // eslint-disable-next-line no-bitwise
+        if ((st.mode & 0o111) !== 0) return candidate;
+      }
+    } catch {
+      /* not in this dir */
+    }
+  }
+  return null;
+}
+
+/**
  * Default resolution for the cq-mcp binary the Codex CLI must spawn so
  * Codex sessions can reach the same ledger MCP tool surface Claude
  * sessions get. Resolution order:
  *
- *   1. `node_modules/.bin/cq-mcp` walking up from this file's location.
+ *   1. `which cq-mcp` on $PATH. A system-installed binary (e.g. the
+ *      Nix-built `./result/bin/cq-mcp` wrapper from `flake.nix`)
+ *      MUST win over a dev-checkout `node_modules/.bin/cq-mcp`
+ *      symlink, because a packaged install is the authoritative
+ *      deployment and the dev symlink would point into a source
+ *      tree the deployed binary may not see.
+ *   2. `node_modules/.bin/cq-mcp` walking up from this file's location.
  *      The workspace install (`bun install`) symlinks the bin into the
  *      nearest enclosing node_modules/.bin once `@cq/cq-mcp` is a
  *      dependency of `@cq/server` (it is).
- *   2. Fallback: `bun run <repo>/packages/cq-mcp/src/main.ts` — used
+ *   3. Fallback: `bun run <repo>/packages/cq-mcp/src/main.ts` — used
  *      when the bin link is missing (e.g. a partial dev environment).
  *      Discovered by walking up to the repo root and joining the
  *      package path.
@@ -175,8 +210,14 @@ type ActiveCodexSession = {
  * and `--config mcp_servers.cq.args=[...]` to the Codex CLI.
  */
 export function defaultResolveCqMcpBin(startDir?: string): CqMcpBin {
+  // 1. PATH lookup wins — a Nix-installed system bin must beat a dev
+  //    node_modules/.bin symlink that may point at the wrong tree.
+  const onPath = whichOnPath("cq-mcp");
+  if (onPath !== null) {
+    return { command: onPath, args: [] };
+  }
   const here = startDir ?? path.dirname(fileURLToPath(import.meta.url));
-  // Walk up looking for node_modules/.bin/cq-mcp.
+  // 2. Walk up looking for node_modules/.bin/cq-mcp.
   let dir = here;
   while (true) {
     const candidate = path.join(dir, "node_modules", ".bin", "cq-mcp");
@@ -191,7 +232,7 @@ export function defaultResolveCqMcpBin(startDir?: string): CqMcpBin {
     if (parent === dir) break;
     dir = parent;
   }
-  // Fallback: locate packages/cq-mcp/src/main.ts walking up from `here`.
+  // 3. Fallback: locate packages/cq-mcp/src/main.ts walking up from `here`.
   dir = here;
   while (true) {
     const candidate = path.join(dir, "packages", "cq-mcp", "src", "main.ts");
@@ -245,12 +286,15 @@ export class CodexBridge implements BackendBridge {
     this.registry = opts.registry;
     this.cwd = path.resolve(opts.cwd);
     this.persistence = opts.persistence;
-    this.codexFactory = opts.codexFactory ?? ((options?: CodexOptions): Codex => {
-      // Lazy require to avoid loading the SDK at import time in code paths
-      // (e.g. tests) that never construct a CodexBridge.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-      const { Codex } = require("@openai/codex-sdk") as { Codex: new (o?: CodexOptions) => Codex };
-      return new Codex(options);
+    this.codexFactory = opts.codexFactory ?? (async (options?: CodexOptions): Promise<Codex> => {
+      // Lazy ESM import (codex-sdk is ESM-only — has no `require` export
+      // so a sync `require()` would throw `Cannot find module` at runtime
+      // even though the package is installed). Cached in module scope via
+      // the dynamic import's own module cache.
+      const mod = await import("@openai/codex-sdk");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const Ctor = (mod as { Codex: new (o?: CodexOptions) => Codex }).Codex;
+      return new Ctor(options);
     });
     this.detectAuth = opts.detectAuth ?? ((): boolean => defaultDetectCodexAuth());
     this.cqMcpBin = opts.cqMcpBin ?? defaultResolveCqMcpBin();
@@ -335,7 +379,7 @@ export class CodexBridge implements BackendBridge {
         },
       },
     };
-    const codex = this.codexFactory(codexOptions);
+    const codex = await this.codexFactory(codexOptions);
 
     const model = frame.model ?? "";
     const effort: Effort = frame.effort ?? "none";

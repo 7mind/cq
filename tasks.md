@@ -1,5 +1,58 @@
 # cq — active task ledger
 
+Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
+
+---
+
+## Milestones (high-level)
+
+- [x] **outer-11** — D-UNIFASYNC-01 + adversarial sweep for sync/async unions.
+- [x] **outer-10** — close D-CQMCP-E2E + D-CQMCP-NIX (outer-9 follow-ups).
+- [x] **outer-9** — D-GC-1 (Codex ledger MCP) + D-GC-N1 (approvalPolicy).
+- (older milestones in this file)
+
+---
+
+## Milestone outer-11 — D-UNIFASYNC sweep — DISCHARGED
+
+- [x] **D-UNIFASYNC-01** — `CodexFactory` tightened from `Codex | Promise<Codex>` to `Promise<Codex>` per the user's `feedback-uniform-async` rule. Three test factories (`codexBridge.test.ts:120`, `codexBridge-mcp.test.ts:49,98`) updated to `async (...): Promise<Codex> => …`. Adversarial sweep across outer-7..outer-10 for 8 related smells (module-level singletons, lazy-init races, hidden globals, eager construction, dispose drain, `Promise.race` cleanup, sync I/O hot paths) — all candidates either cleared as not-a-smell with explicit citation in the session log or scoped out as pre-existing patterns. Commit `<this>`. `bun run check`: 689/0; `bun run e2e`: 20/0/0; `bun run typecheck`: exit 0.
+
+**Discharge metrics:** `bun run check` 689/0/2459 expect() (unchanged); `bun run e2e` 20/0/0 (unchanged); `bun run typecheck` exit 0; `defects.md` D-UNIFASYNC-01 flipped `[x] resolved`.
+
+**Session log:** [`docs/logs/20260528-1800-unifasync-log.md`](docs/logs/20260528-1800-unifasync-log.md).
+
+---
+
+## Milestone outer-10 — PR breakdown — DISCHARGED
+
+Sequence (one commit per PR; tags `cqmcp-nix-N`, `cqmcp-e2e-N`).
+
+- [x] **cqmcp-nix-1** — extend `flake.nix` to include `packages/cq-mcp` + `packages/ledger` (and `packages/e2e`) in the FOD source fileset; refresh `outputHash`; materialise per-workspace `node_modules` for ledger + cq-mcp; symlink `@cq/ledger`+`@cq/cq-mcp` into server's `node_modules` + `.bin/cq-mcp`; add `$out/bin/cq-mcp` wrapper via `makeWrapper`. Commit `b47aa42`. `nix build .#default`: exit 0; `./result/bin/cq-mcp --help`: exits 0 with `--cwd required` message; full MCP `initialize` round-trip works.
+- [x] **cqmcp-nix-2** — reorder `defaultResolveCqMcpBin` so `which cq-mcp` ($PATH lookup) wins over `node_modules/.bin/cq-mcp` (Nix-installed system bin must beat dev symlink). Added `whichOnPath()` helper (POSIX semantics: iterates `process.env.PATH`, stat+executable-bit check). Commit `5bddf76`. `bun run check`: 689/0.
+- [x] **cqmcp-e2e-1** — unblock the codex bridge for actual use + add `POST /__e2e/settings` admin endpoint. Default `CodexFactory` switched from sync `require("@openai/codex-sdk")` (which threw "Cannot find module" — codex-sdk is ESM-only) to async dynamic `import()`; factory return type widened to `Codex | Promise<Codex>`; single call site awaits. New admin endpoint writes `ui_settings` synchronously so specs can pre-stage server-side defaults before the page opens. Commit `fa64b6c`. `bun run check`: 689/0.
+- [x] **cqmcp-e2e-2** — ungate `codex-roundtrip.spec.ts` + add `codex-mcp-roundtrip.spec.ts`. `globalSetup.ts` symlinks `${realHome}/.codex` into the hermetic HOME AND sets `CODEX_HOME=${realHome}/.codex` on the cq-server subprocess (the codex CLI refuses `codex_home` under /tmp). New `fixtures/codexAuth.ts` exposes `hasCodexAuth()` (real auth check) and `pickCodexModel()` (reads `~/.codex/config.toml`'s top-level `model = "..."`, env override `CQ_E2E_CODEX_MODEL`). Both codex specs pre-stage server-side `ui_settings` + client `localStorage` (incl. `permissionMode=codex-danger-full-access` + `approvalPolicy=never` for the MCP spec so the CLI does not gate tool calls behind approval prompts) before opening the page. afterEach resets `ui_settings.model` to claude so subsequent specs do not inherit codex routing. The MCP spec asserts on-disk effect (`${CQ_E2E_CWD}/docs/codex-e2e-ledger.md` + `ledgers.yaml` entry) — authoritative signal that `cq-mcp` was actually spawned by the codex CLI and executed the tool call inside the cq server's --cwd. afterAll cleanup of the ledger file + registry entry keeps repeated runs green. Commit `<this>`.
+
+**Discharge metrics:**
+- `bun run check`: **689 pass / 0 fail / 0 error / 2459 expect()** across 86 files. Unchanged from outer-9 baseline.
+- `bun run e2e` (Playwright): **20 passed / 0 skipped / 0 failed** (1.2m). Up from outer-9 baseline 18/1/0 by +1 from the new MCP spec and +1 from ungating the previously-skipped codex-roundtrip spec.
+- `nix build .#default`: exit 0; `./result/bin/cq-mcp` is a working makeWrapper bin that serves the MCP stdio protocol (verified via JSON-RPC `initialize` round-trip).
+- `tsc -b` clean; `eslint .` 0 errors / 23 warnings.
+- `defects.md`: D-CQMCP-NIX + D-CQMCP-E2E flipped `[x] resolved` with shipping-artifact citations.
+
+**Surprises / constraints future work must respect:**
+- `@openai/codex-sdk@0.134.0` is ESM-only — never use sync `require()` to load it.
+- The codex CLI **refuses to operate when `codex_home` resolves under /tmp**. Any test that uses a tmp HOME must override via `CODEX_HOME`.
+- ChatGPT-account auth (the default on this machine) **rejects most explicit `--model <id>` values**. Tests should let the CLI pick its own default from `~/.codex/config.toml` rather than hard-coding `gpt-5.1`/`gpt-5` (which work only with API-key auth).
+- The codex CLI **cancels MCP tool calls in default approval/sandbox mode**. To exercise MCP tools non-interactively, set `permissionMode=codex-danger-full-access` AND `approvalPolicy=never` (or use `--dangerously-bypass-approvals-and-sandbox` directly).
+- `effort=none` → codex `reasoning.effort=minimal`, which the codex API rejects in combination with the default CLI tools (`image_gen`, `web_search`). Codex specs must set `effort >= low`.
+- The server-side `ui_settings.model` overrides client localStorage on every reconnect via `settings.get_result`. Tests that need a specific routing must stage server-side via `POST /__e2e/settings` (added in cqmcp-e2e-1), not just client localStorage.
+
+**Session log:** (orchestrator-only run; commits + this completed entry are the durable record.)
+
+---
+
+## Active — outer-9 (defect-closure: D-GC-1 + D-GC-N1) — DISCHARGED
+
 **Cycle:** outer-9 / defect-closure on D-GC-1 (Codex ledger MCP via external stdio binary) + D-GC-N1 (Codex approvalPolicy popup row).
 **Goal:** Ship `packages/cq-mcp` stdio MCP binary that exposes the 12 `mcp__cq__*` ledger tools; wire `CodexBridge` to spawn it per session through `CodexOptions.config.mcp_servers.cq`. Expose Codex `approvalPolicy` (4-value enum) as a second gear-popup row when platform=codex; persist on session row via migration #7; plumb through `ChatStart`; forward in `ThreadOptions.approvalPolicy`.
 **Baseline (verified worktree f5d02d7):** `bun test` → 672 pass / 0 fail / 0 error / 2418 expect() across 84 files. `tsc -b` clean. `bun run e2e` (per outer-8 ledger): 18 passed / 1 skipped.

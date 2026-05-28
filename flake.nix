@@ -42,6 +42,9 @@
               ./packages/shared/package.json
               ./packages/server/package.json
               ./packages/web/package.json
+              ./packages/ledger/package.json
+              ./packages/cq-mcp/package.json
+              ./packages/e2e/package.json
             ];
           };
 
@@ -88,10 +91,13 @@
             # We copy them here unchanged; the @cq/* symlinks are REWRITTEN in
             # the final `cq` derivation's installPhase to absolute paths so they
             # survive being placed in a different part of the store tree.
-            mkdir -p $out/packages/server $out/packages/web $out/packages/shared
+            mkdir -p $out/packages/server $out/packages/web $out/packages/shared \
+                     $out/packages/ledger $out/packages/cq-mcp
             cp -r packages/server/node_modules $out/packages/server/node_modules
             cp -r packages/web/node_modules    $out/packages/web/node_modules
             cp -r packages/shared/node_modules $out/packages/shared/node_modules
+            cp -r packages/ledger/node_modules $out/packages/ledger/node_modules
+            cp -r packages/cq-mcp/node_modules $out/packages/cq-mcp/node_modules
 
             runHook postInstall
           '';
@@ -100,7 +106,7 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           # Updated after the first build (see README § Nix for workflow).
-          outputHash = "sha256-/3DKEz4i6VdXAcczXpvL86MEYe3Nlb/E/uQTGpwdasg=";
+          outputHash = "sha256-qa7x+5dSTcZ/NfpdI6SL7wke8P9FtPiM8MvIZX3f1uM=";
         };
 
         # ------------------------------------------------------------------ #
@@ -132,7 +138,9 @@
               "$WORKSPACE/node_modules" \
               "$WORKSPACE/packages/server/node_modules" \
               "$WORKSPACE/packages/web/node_modules" \
-              "$WORKSPACE/packages/shared/node_modules"
+              "$WORKSPACE/packages/shared/node_modules" \
+              "$WORKSPACE/packages/ledger/node_modules" \
+              "$WORKSPACE/packages/cq-mcp/node_modules"
 
             # ── 2. Root node_modules ────────────────────────────────────── #
             # Create a real directory that mirrors the FOD's root node_modules
@@ -176,9 +184,18 @@
               "$WORKSPACE/packages/server/node_modules/zod"
             ln -s ${bunNodeModules}/packages/server/node_modules/bun-types \
               "$WORKSPACE/packages/server/node_modules/bun-types"
-            # workspace dep — absolute so it resolves to source, not FOD stub
+            # workspace deps — absolute so they resolve to source, not FOD stubs
             ln -s "$WORKSPACE/packages/shared" \
               "$WORKSPACE/packages/server/node_modules/@cq/shared"
+            ln -s "$WORKSPACE/packages/ledger" \
+              "$WORKSPACE/packages/server/node_modules/@cq/ledger"
+            ln -s "$WORKSPACE/packages/cq-mcp" \
+              "$WORKSPACE/packages/server/node_modules/@cq/cq-mcp"
+            # bin shim so node_modules/.bin/cq-mcp resolves via the workspace
+            # symlink to packages/cq-mcp/src/main.ts (executable Bun script).
+            mkdir -p "$WORKSPACE/packages/server/node_modules/.bin"
+            ln -s ../@cq/cq-mcp/src/main.ts \
+              "$WORKSPACE/packages/server/node_modules/.bin/cq-mcp"
 
             # web
             mkdir -p "$WORKSPACE/packages/web/node_modules/@types" \
@@ -213,6 +230,33 @@
             ln -s ${bunNodeModules}/packages/shared/node_modules/bun-types \
               "$WORKSPACE/packages/shared/node_modules/bun-types"
 
+            # ledger (npm deps used at runtime: anthropic-ai/claude-agent-sdk,
+            # remark-*, unified, yaml, zod; no @cq/* workspace deps).
+            mkdir -p "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai"
+            for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify bun-types; do
+              if [ -e "${bunNodeModules}/packages/ledger/node_modules/$dep" ]; then
+                ln -s "${bunNodeModules}/packages/ledger/node_modules/$dep" \
+                  "$WORKSPACE/packages/ledger/node_modules/$dep"
+              fi
+            done
+            ln -s ${bunNodeModules}/packages/ledger/node_modules/@anthropic-ai/claude-agent-sdk \
+              "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai/claude-agent-sdk"
+
+            # cq-mcp (runtime: @cq/ledger workspace, @modelcontextprotocol/sdk, zod)
+            mkdir -p "$WORKSPACE/packages/cq-mcp/node_modules/@modelcontextprotocol" \
+                     "$WORKSPACE/packages/cq-mcp/node_modules/@cq" \
+                     "$WORKSPACE/packages/cq-mcp/node_modules/.bin"
+            ln -s ${bunNodeModules}/packages/cq-mcp/node_modules/@modelcontextprotocol/sdk \
+              "$WORKSPACE/packages/cq-mcp/node_modules/@modelcontextprotocol/sdk"
+            ln -s ${bunNodeModules}/packages/cq-mcp/node_modules/zod \
+              "$WORKSPACE/packages/cq-mcp/node_modules/zod"
+            if [ -e "${bunNodeModules}/packages/cq-mcp/node_modules/bun-types" ]; then
+              ln -s "${bunNodeModules}/packages/cq-mcp/node_modules/bun-types" \
+                "$WORKSPACE/packages/cq-mcp/node_modules/bun-types"
+            fi
+            ln -s "$WORKSPACE/packages/ledger" \
+              "$WORKSPACE/packages/cq-mcp/node_modules/@cq/ledger"
+
             # ── 4. Wrapper ──────────────────────────────────────────────── #
             # CWD is left as-is (wherever the user invokes `cq`) so that the
             # log directory default (./var/log) lands somewhere writable.
@@ -223,6 +267,14 @@
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/cq \
               --add-flags "run $WORKSPACE/packages/server/src/main.ts --" \
               --run 'export CQ_WEB_OUTDIR="''${CQ_WEB_OUTDIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/cq/web-dist}"' \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
+
+            # cq-mcp: standalone stdio MCP binary used by Codex sessions to
+            # reach the same ledger tool surface as Claude sessions. The Codex
+            # CLI spawns it as an external process via mcp_servers.cq.command.
+            # Closure presence is required by D-CQMCP-NIX.
+            makeWrapper ${pkgs.bun}/bin/bun $out/bin/cq-mcp \
+              --add-flags "run $WORKSPACE/packages/cq-mcp/src/main.ts --" \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
 
             runHook postInstall

@@ -1,58 +1,83 @@
 /**
  * codex-roundtrip.spec.ts — e2e-3: REAL Codex API roundtrip.
  *
- * Skips cleanly when neither codex-login state nor OPENAI_API_KEY is
- * available in the sandbox. When auth is present, runs a minimal turn
- * through @openai/codex-sdk and asserts:
+ * Skips cleanly when neither codex-login state (~/.codex/auth.json) nor
+ * `OPENAI_API_KEY` is available in the sandbox. When auth is present,
+ * runs a minimal turn through @openai/codex-sdk and asserts:
  *   - the assistant bubble appears
  *   - the History tab shows the resulting row with platform=codex and
  *     effort populated
  *
- * Timeout: 60 s per the brief, since the SDK hits the real API.
+ * The codex CLI is gated by the user's auth tier — ChatGPT-account auth
+ * rejects most explicit `--model <id>` values. We therefore read the
+ * user's `~/.codex/config.toml` to discover an accepted model id and set
+ * `localStorage.cq.model` directly (bypassing the popup dropdown, which
+ * only offers the cq registry's pre-declared model ids). See
+ * `../fixtures/codexAuth.ts` for the picker.
+ *
+ * Timeout: 120 s per the brief, since the codex CLI is slower than
+ * Claude (especially on first invocation).
+ *
+ * afterEach resets the server-side `ui_settings.model` to a Claude id so
+ * subsequent specs in the same cq-server lifecycle do not inherit a
+ * Codex routing default they cannot satisfy.
  */
 
 import { test, expect } from "../fixtures/base.ts";
+import { hasCodexAuth, pickCodexModel } from "../fixtures/codexAuth.ts";
 
-/**
- * Auth detection for the e2e spec. Only `OPENAI_API_KEY` is checked because
- * the cq-server is spawned with the test runner's env (not necessarily the
- * caller's HOME), so probing `~/.codex/auth.json` from the test process
- * is not reliable signal that the server-side CodexBridge will authenticate.
- *
- * When OPENAI_API_KEY is not set, this spec skips cleanly so CI never
- * blocks on Codex API availability. To run locally with `codex login`
- * authentication, export `OPENAI_API_KEY` (or set `CQ_E2E_RUN_CODEX=1`
- * to bypass the gate when you have working login state).
- */
-function hasCodexAuth(): boolean {
-  if (process.env["OPENAI_API_KEY"] !== undefined && process.env["OPENAI_API_KEY"] !== "") {
-    return true;
-  }
-  if (process.env["CQ_E2E_RUN_CODEX"] === "1") {
-    return true;
-  }
-  return false;
-}
+const CODEX_MODEL = pickCodexModel();
+const RESET_MODEL = "claude-opus-4-7[1m]";
+
+test.afterEach(async () => {
+  // Reset server-side ui_settings so the next test does not auto-start
+  // codex chats with leftover state. The /__e2e/settings admin endpoint
+  // (server.ts) writes to ui_settings synchronously. Failures here are
+  // non-fatal — at worst the next test runs with stale state and
+  // surfaces its own failure.
+  const cqUrl = process.env["CQ_BASE_URL"] ?? "http://127.0.0.1:5173";
+  try {
+    await fetch(`${cqUrl}/__e2e/settings`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: RESET_MODEL, permissionMode: null }),
+      signal: AbortSignal.timeout(3_000),
+    });
+  } catch { /* ignore — best-effort cleanup */ }
+});
 
 test("codex-roundtrip: real Codex SDK answers 'say hello' and persists with platform=codex", async ({ cq, page }) => {
-  test.skip(!hasCodexAuth(), "codex login state not present and OPENAI_API_KEY unset");
-  test.setTimeout(60_000);
+  test.skip(
+    !hasCodexAuth(),
+    "codex login state (~/.codex/auth.json) not present and OPENAI_API_KEY unset",
+  );
+  test.setTimeout(120_000);
+
+  // Stage the server-side ui_settings BEFORE the page boots. The auto-
+  // start chat.start path is deferred until settings.get_result lands
+  // (ChatTab.tsx:516), and at that point the server's ui_settings.model
+  // OVERRIDES the client's localStorage if non-null. So setting only
+  // localStorage is insufficient — we must stage the server-side row.
+  const cqUrl = process.env["CQ_BASE_URL"] ?? "http://127.0.0.1:5173";
+  await fetch(`${cqUrl}/__e2e/settings`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: CODEX_MODEL }),
+    signal: AbortSignal.timeout(3_000),
+  });
+  // Also seed localStorage so cq.effort flows into the first chat.start
+  // (server-side ui_settings does NOT track effort — only model,
+  // permissionMode, hideSdkEvents — so localStorage IS authoritative for
+  // effort).
+  await page.addInitScript(
+    ({ model }) => {
+      localStorage.setItem("cq.model", model);
+      localStorage.setItem("cq.effort", "low");
+    },
+    { model: CODEX_MODEL },
+  );
 
   await cq.open();
-  await expect(cq.textarea).toBeEnabled({ timeout: 10_000 });
-
-  // Switch the model to a Codex id (gpt-5.1) and set effort=low via the
-  // popup so the History row has a non-default effort to assert against.
-  await page.locator("[data-testid='settings-gear-btn']").click();
-  await expect(page.locator("[data-testid='settings-popup']")).toBeVisible();
-  await page.locator("[data-testid='model-select']").selectOption("gpt-5.1");
-  await page.locator("[data-testid='effort-select']").selectOption("low");
-  await page.keyboard.press("Escape");
-
-  // Click "New session" so the next ChatStart uses the chosen model.
-  await page.locator("[data-testid='new-session-btn']").click();
-
-  // Wait for the new chat.started to land — the textarea re-enables.
   await expect(cq.textarea).toBeEnabled({ timeout: 30_000 });
 
   // Send a trivial prompt and wait for any assistant text.
@@ -72,12 +97,12 @@ test("codex-roundtrip: real Codex SDK answers 'say hello' and persists with plat
       }
       return false;
     },
-    { timeout: 50_000 },
+    { timeout: 100_000 },
   );
 
   // Wait for the textarea to be enabled again — the Codex turn has
   // emitted chat.done.
-  await expect(cq.textarea).toBeEnabled({ timeout: 60_000 });
+  await expect(cq.textarea).toBeEnabled({ timeout: 30_000 });
 
   // Switch to History and assert the new row has platform='codex' and
   // a non-empty Effort cell.
