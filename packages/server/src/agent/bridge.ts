@@ -504,6 +504,10 @@ export class Bridge {
           title: "",
           lastServerSeq: 0,
           sdkSessionId: null,
+          // gear-2: platform always "claude" until codex-3 wires platform routing.
+          platform: "claude",
+          // gear-2: effort taken from ChatStart.effort or default "none".
+          effort: frame.effort ?? "none",
         };
         this.persistence.sessions.insert(sessionRow);
       }

@@ -19,6 +19,17 @@ export interface SessionRow {
   title: string;
   lastServerSeq: number;
   sdkSessionId: string | null;
+  /**
+   * Backend platform this session ran on. New in migration #6.
+   * Pre-migration rows default-fill to "claude".
+   */
+  platform: "claude" | "codex";
+  /**
+   * Reasoning-effort tier sent in ChatStart. New in migration #6.
+   * Pre-migration rows default-fill to "none".
+   * Persisted as a string; the bridge maps it to the platform-native form.
+   */
+  effort: string; // shape-equivalent to Effort from @cq/shared/effort
 }
 
 /** A row from the `invocation` table (§ 4 DDL). */

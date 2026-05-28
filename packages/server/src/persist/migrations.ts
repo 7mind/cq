@@ -129,6 +129,22 @@ INSERT OR IGNORE INTO ui_settings (id, model, permission_mode, hide_sdk_events) 
 ALTER TABLE invocation ADD COLUMN owner_pid INTEGER;
 `,
   },
+  {
+    // gear-2 + codex-2 (outer-7): per-session platform routing label and
+    // reasoning-effort tier sent in ChatStart. Both columns are bundled in
+    // a single migration because they target the same table in the same
+    // cycle and are shipped together.
+    //
+    // platform — "claude" | "codex". Existing rows default-fill to "claude"
+    //   so the historical UI Resume button continues to work without backfill.
+    // effort   — "none" | "low" | "medium" | "high" | "max". Existing rows
+    //   default-fill to "none" preserving prior no-thinking behaviour.
+    version: 6,
+    up: `
+ALTER TABLE session ADD COLUMN platform TEXT NOT NULL DEFAULT 'claude';
+ALTER TABLE session ADD COLUMN effort   TEXT NOT NULL DEFAULT 'none';
+`,
+  },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): void {

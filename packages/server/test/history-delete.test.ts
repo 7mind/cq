@@ -44,6 +44,8 @@ function makeSession(overrides: Partial<SessionRow> = {}): SessionRow {
     title: "Test",
     lastServerSeq: 0,
     sdkSessionId: null,
+    platform: "claude" as const,
+    effort: "none" as const,
     ...overrides,
   };
 }

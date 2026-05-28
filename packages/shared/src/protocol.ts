@@ -70,6 +70,10 @@ export const HistoryRow = z.object({
   title: z.string(),
   /** Non-null when this invocation was created via "resume from history". */
   resumedFromInvocationId: uuidStr().nullable(),
+  /** Platform the session ran on. Defaults to "claude" for pre-migration rows. */
+  platform: z.enum(["claude", "codex"]),
+  /** Reasoning-effort tier the session was started with. Defaults to "none". */
+  effort: EffortSchema,
 });
 export type HistoryRow = z.infer<typeof HistoryRow>;
 

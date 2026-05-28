@@ -66,6 +66,9 @@ interface HistorySqlRow extends InvocationSqlRow {
   total_input_tokens: number;
   total_output_tokens: number;
   total_cost_usd: number;
+  // gear-2/codex-2: session-level platform + effort joined into history rows.
+  platform: string;
+  effort: string;
 }
 
 const INVOCATION_SORT_MAP: Record<string, string> = {
@@ -77,6 +80,9 @@ const INVOCATION_SORT_MAP: Record<string, string> = {
 };
 
 function toHistoryRow(r: HistorySqlRow): HistoryRow {
+  // Narrow platform string read from DB to the union; treat anything other
+  // than "codex" as "claude" so legacy rows (NULL or missing) stay routable.
+  const platform: "claude" | "codex" = r.platform === "codex" ? "codex" : "claude";
   return {
     invocationId: r.id,
     sessionId: r.session_id,
@@ -93,6 +99,11 @@ function toHistoryRow(r: HistorySqlRow): HistoryRow {
     promptExcerpt: r.prompt_excerpt,
     title: r.title,
     resumedFromInvocationId: r.resumed_from_invocation_id,
+    platform,
+    // The DB column has DEFAULT 'none' so this is non-null for any rows
+    // committed under migration #6+. Defensive fallback for tests using
+    // hand-rolled SQL.
+    effort: (r.effort ?? "none") as HistoryRow["effort"],
   };
 }
 
@@ -278,7 +289,7 @@ export class InvocationStore {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rows = this.db.query<HistorySqlRow, any>(
         `${ftsCte}
-         SELECT u.*, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd
+         SELECT u.*, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd, s.platform, s.effort
          FROM combined u
          LEFT JOIN session s ON s.id = u.session_id
          ORDER BY ${colDeduped} ${dir} LIMIT $limit OFFSET $offset`,
@@ -314,7 +325,7 @@ export class InvocationStore {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = this.db.query<HistorySqlRow, any>(
       `${unionCte}
-       SELECT u.*, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd
+       SELECT u.*, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd, s.platform, s.effort
        FROM combined u
        LEFT JOIN session s ON s.id = u.session_id
        ORDER BY ${colDeduped} ${dir} LIMIT $limit OFFSET $offset`,
@@ -326,7 +337,7 @@ export class InvocationStore {
   getFull(id: string): HistoryRowFull | undefined {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const r = this.db.query<HistorySqlRow, any>(
-      `SELECT i.*, i.resumed_from_invocation_id, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd
+      `SELECT i.*, i.resumed_from_invocation_id, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd, s.platform, s.effort
        FROM invocation i LEFT JOIN session s ON s.id = i.session_id
        WHERE i.id = ?`,
     ).get(id);

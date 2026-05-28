@@ -384,6 +384,8 @@ test("HistoryListResult round-trips", () => {
     promptExcerpt: "Hello",
     title: "My Chat",
     resumedFromInvocationId: null,
+    platform: "claude" as const,
+    effort: "none" as const,
   };
   const frame = {
     type: "history.list_result" as const,
@@ -422,6 +424,8 @@ test("HistoryGetResult round-trips", () => {
     totalInputTokens: 100,
     totalOutputTokens: 50,
     totalCostUsd: 0.001,
+    platform: "claude" as const,
+    effort: "none" as const,
   };
   const frame = {
     type: "history.get_result" as const,

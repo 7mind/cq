@@ -571,6 +571,8 @@ describe("Bridge", () => {
       title: "prior",
       lastServerSeq: 0,
       sdkSessionId: null,
+      platform: "claude" as const,
+      effort: "none" as const,
     };
     persistence.sessions.insert(sessionRow);
 

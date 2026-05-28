@@ -1,4 +1,4 @@
-import type { SessionRow, InvocationRow, HistoryRow, HistoryRowFull } from "@cq/shared";
+import type { SessionRow, InvocationRow, HistoryRow, HistoryRowFull, Effort } from "@cq/shared";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type {
   Persistence,
@@ -242,6 +242,8 @@ export class InMemoryPersistence implements Persistence {
           promptExcerpt: r.promptExcerpt,
           title: session?.title ?? "",
           resumedFromInvocationId: r.resumedFromInvocationId,
+          platform: session?.platform ?? "claude",
+          effort: (session?.effort ?? "none") as Effort,
         };
       });
 
@@ -277,6 +279,8 @@ export class InMemoryPersistence implements Persistence {
         totalInputTokens: session?.totalInputTokens ?? 0,
         totalOutputTokens: session?.totalOutputTokens ?? 0,
         totalCostUsd: session?.totalCostUsd ?? 0,
+        platform: session?.platform ?? "claude",
+        effort: (session?.effort ?? "none") as Effort,
       };
     },
   };

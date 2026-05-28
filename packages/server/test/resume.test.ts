@@ -141,6 +141,8 @@ describe("Resume-from-history", () => {
       title: "",
       lastServerSeq: 0,
       sdkSessionId: knownSdkSessionId,
+      platform: "claude",
+      effort: "none",
     };
     const invocationRow: InvocationRow = {
       id: existingInvocationId,
@@ -220,6 +222,8 @@ describe("Resume-from-history", () => {
       title: "",
       lastServerSeq: 0,
       sdkSessionId: null,
+      platform: "claude",
+      effort: "none",
     };
     const invocationRow: InvocationRow = {
       id: invocationId,

@@ -26,6 +26,8 @@ interface SessionSqlRow {
   title: string;
   last_server_seq: number;
   sdk_session_id: string | null;
+  platform: string;
+  effort: string;
 }
 
 function toRow(r: SessionSqlRow): SessionRow {
@@ -45,6 +47,11 @@ function toRow(r: SessionSqlRow): SessionRow {
     title: r.title,
     lastServerSeq: r.last_server_seq,
     sdkSessionId: r.sdk_session_id,
+    // Narrow the persisted string to the SessionRow union; rows stored before
+    // migration #6 will read as the default literal "claude" so the cast is
+    // sound by construction.
+    platform: (r.platform === "codex" ? "codex" : "claude") as "claude" | "codex",
+    effort: r.effort,
   };
 }
 
@@ -68,12 +75,12 @@ export class SessionStore {
         (id, started_at, ended_at, cwd, model, permission_mode,
          total_input_tokens, total_output_tokens, total_cache_read,
          total_cache_create, total_cost_usd, ended_reason, title,
-         last_server_seq, sdk_session_id)
+         last_server_seq, sdk_session_id, platform, effort)
       VALUES
         ($id, $started_at, $ended_at, $cwd, $model, $permission_mode,
          $total_input_tokens, $total_output_tokens, $total_cache_read,
          $total_cache_create, $total_cost_usd, $ended_reason, $title,
-         $last_server_seq, $sdk_session_id)
+         $last_server_seq, $sdk_session_id, $platform, $effort)
     `);
 
     this.stmtGet = db.prepare<SessionSqlRow, [string]>(
@@ -98,6 +105,8 @@ export class SessionStore {
       $title: row.title,
       $last_server_seq: row.lastServerSeq,
       $sdk_session_id: row.sdkSessionId,
+      $platform: row.platform,
+      $effort: row.effort,
     });
   }
 
@@ -119,6 +128,8 @@ export class SessionStore {
     if (patch.title !== undefined) { sets.push("title = $title"); params.$title = patch.title; }
     if (patch.lastServerSeq !== undefined) { sets.push("last_server_seq = $last_server_seq"); params.$last_server_seq = patch.lastServerSeq; }
     if (patch.sdkSessionId !== undefined) { sets.push("sdk_session_id = $sdk_session_id"); params.$sdk_session_id = patch.sdkSessionId; }
+    if (patch.platform !== undefined) { sets.push("platform = $platform"); params.$platform = patch.platform; }
+    if (patch.effort !== undefined) { sets.push("effort = $effort"); params.$effort = patch.effort; }
 
     if (sets.length === 0) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

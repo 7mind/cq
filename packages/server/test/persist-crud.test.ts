@@ -40,6 +40,8 @@ function makeSession(overrides: Partial<SessionRow> = {}): SessionRow {
     title: "Test Session",
     lastServerSeq: 0,
     sdkSessionId: null,
+    platform: "claude" as const,
+    effort: "none" as const,
     ...overrides,
   };
 }
@@ -88,6 +90,45 @@ function runSuite(label: string, factory: () => Persistence): void {
 
     afterEach(() => {
       p.close();
+    });
+
+    // -----------------------------------------------------------------------
+    // gear-2: session.platform + session.effort round-trip
+    // -----------------------------------------------------------------------
+    test("gear-2: platform + effort survive insert/get round-trip", () => {
+      const claudeSession = makeSession({ platform: "claude", effort: "high" });
+      const codexSession = makeSession({ platform: "codex", effort: "max" });
+      p.sessions.insert(claudeSession);
+      p.sessions.insert(codexSession);
+      expect(p.sessions.get(claudeSession.id)).toMatchObject({
+        platform: "claude",
+        effort: "high",
+      });
+      expect(p.sessions.get(codexSession.id)).toMatchObject({
+        platform: "codex",
+        effort: "max",
+      });
+    });
+
+    test("gear-2: update can mutate platform and effort fields", () => {
+      const session = makeSession({ platform: "claude", effort: "none" });
+      p.sessions.insert(session);
+      p.sessions.update(session.id, { platform: "codex", effort: "medium" });
+      expect(p.sessions.get(session.id)).toMatchObject({
+        platform: "codex",
+        effort: "medium",
+      });
+    });
+
+    test("gear-2: HistoryRow surfaces platform and effort from the joined session", () => {
+      const session = makeSession({ platform: "codex", effort: "low" });
+      p.sessions.insert(session);
+      p.invocations.insert(makeInvocation(session.id));
+      const result = p.invocations.list({}, { field: "startedAt", dir: "desc" }, { offset: 0, limit: 10 });
+      expect(result.rows).toHaveLength(1);
+      const row = result.rows[0]!;
+      expect(row.platform).toBe("codex");
+      expect(row.effort).toBe("low");
     });
 
     // -----------------------------------------------------------------------
