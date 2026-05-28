@@ -794,4 +794,35 @@ describe("Bridge persistence", () => {
     const sess = persistence.sessions.get(sessionId)!;
     expect(sess.title).toBe("Only one title");
   });
+
+  // ---------------------------------------------------------------------------
+  // gear-4: effort persistence on the session row
+  // ---------------------------------------------------------------------------
+  it("gear-4: ChatStart.effort lands on session.effort and platform='claude'", async () => {
+    const persistence = new InMemoryPersistence();
+    const registry = new SessionRegistry();
+    const mockQuery = makeMockQuery([makeInitMessage()]);
+    const queryFactory: QueryFactory = () => mockQuery;
+    const bridge = new Bridge({
+      logger: noopLogger,
+      registry,
+      queryFactory,
+      cwd: "/tmp/test",
+      persistence,
+    });
+
+    const ws = new MockWsSocket();
+    await bridge.handleChatStart(ws, {
+      type: "chat.start",
+      seq: 0,
+      ts: Date.now(),
+      model: "claude-opus-4-7",
+      effort: "medium",
+    });
+    const sessionId = (await ws.waitForFrames("chat.started"))[0]!.sessionId as string;
+    const row = persistence.sessions.get(sessionId)!;
+    expect(row.effort).toBe("medium");
+    expect(row.platform).toBe("claude");
+    await bridge.shutdown();
+  });
 });

@@ -879,6 +879,108 @@ describe("Bridge", () => {
   });
 
   // --------------------------------------------------------------------------
+  // gear-4: ChatStart.effort → SDK Options.thinking.budget_tokens
+  //   Pass effort='high' and assert the SDK query options carry the
+  //   { thinking: { type: 'enabled', budget_tokens: 16_000 } } shape.
+  //   Pass effort='none' (or omit) and assert no `thinking` key is set.
+  // --------------------------------------------------------------------------
+  it("gear-4: effort='high' forwards thinking.budget_tokens=16000 to SDK Options", async () => {
+    let capturedOpts: unknown = null;
+    const mockQuery = makeMockQuery([makeInitMessage()]);
+    const registry = new SessionRegistry();
+    const bridge = new Bridge({
+      logger: noopLogger,
+      registry,
+      queryFactory: ({ options }) => {
+        capturedOpts = options;
+        return mockQuery;
+      },
+      cwd: "/tmp/test",
+    });
+
+    const ws = new MockWsSocket();
+    await bridge.handleChatStart(ws, {
+      type: "chat.start",
+      seq: 0,
+      ts: Date.now(),
+      model: "claude-opus-4-7",
+      effort: "high",
+    });
+
+    const opts = capturedOpts as Record<string, unknown> | null;
+    expect(opts).not.toBeNull();
+    expect(opts!["thinking"]).toEqual({
+      type: "enabled",
+      budget_tokens: 16_000,
+    });
+
+    await bridge.shutdown();
+  });
+
+  it("gear-4: effort='none' omits the thinking key entirely", async () => {
+    let capturedOpts: unknown = null;
+    const mockQuery = makeMockQuery([makeInitMessage()]);
+    const registry = new SessionRegistry();
+    const bridge = new Bridge({
+      logger: noopLogger,
+      registry,
+      queryFactory: ({ options }) => {
+        capturedOpts = options;
+        return mockQuery;
+      },
+      cwd: "/tmp/test",
+    });
+
+    const ws = new MockWsSocket();
+    await bridge.handleChatStart(ws, {
+      type: "chat.start",
+      seq: 0,
+      ts: Date.now(),
+      model: "claude-opus-4-7",
+      effort: "none",
+    });
+
+    const opts = capturedOpts as Record<string, unknown> | null;
+    expect(opts).not.toBeNull();
+    expect(opts!["thinking"]).toBeUndefined();
+
+    await bridge.shutdown();
+  });
+
+  it("gear-4: effort='max' saturates at 31999 tokens (one below SDK cap)", async () => {
+    let capturedOpts: unknown = null;
+    const mockQuery = makeMockQuery([makeInitMessage()]);
+    const registry = new SessionRegistry();
+    const bridge = new Bridge({
+      logger: noopLogger,
+      registry,
+      queryFactory: ({ options }) => {
+        capturedOpts = options;
+        return mockQuery;
+      },
+      cwd: "/tmp/test",
+    });
+
+    const ws = new MockWsSocket();
+    await bridge.handleChatStart(ws, {
+      type: "chat.start",
+      seq: 0,
+      ts: Date.now(),
+      model: "claude-opus-4-7",
+      effort: "max",
+    });
+
+    const opts = capturedOpts as Record<string, unknown> | null;
+    expect(opts).not.toBeNull();
+    expect(opts!["thinking"]).toEqual({
+      type: "enabled",
+      budget_tokens: 31_999,
+    });
+
+    await bridge.shutdown();
+  });
+
+  // --------------------------------------------------------------------------
   // codex-3 / defense-in-depth: ClaudeBridge — constructed directly — refuses
   // platform='codex' on a fresh start. In production the facade (codex-4)
   // routes Codex frames to CodexBridge so this path is never hit, but the

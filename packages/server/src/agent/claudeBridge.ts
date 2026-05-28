@@ -37,6 +37,8 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "../log/logger";
 import type { SessionRegistry } from "../seq/sessionRegistry";
+import type { Effort } from "@cq/shared";
+import { effortToClaudeBudgetTokens } from "@cq/shared";
 import path from "node:path";
 import type { Persistence } from "../persist/Persistence.js";
 import { InMemoryPersistence } from "../persist/InMemoryPersistence.js";
@@ -450,6 +452,14 @@ export class ClaudeBridge implements BackendBridge {
     // SDK performs its own resolution unmodified.
     const nativeBinPath = resolveNativeBinaryPath();
 
+    // gear-4: map ChatStart.effort → SDK thinking config. `none` disables
+    // thinking entirely; the rest map to a numeric budget_tokens (see
+    // @cq/shared/effort.ts for the canonical table). The SDK's `thinking`
+    // option lives on its Options union — only present here when the
+    // user explicitly requested reasoning.
+    const requestedEffort: Effort = frame.effort ?? "none";
+    const thinkingBudget = effortToClaudeBudgetTokens(requestedEffort);
+
     const sdkOptions: SDKOptions = {
       cwd: this.cwd,
       forwardSubagentText: true,
@@ -469,6 +479,15 @@ export class ClaudeBridge implements BackendBridge {
       toolAliases: { AskUserQuestion: "mcp__cq__ask_user_question" },
       ...(nativeBinPath !== undefined ? { pathToClaudeCodeExecutable: nativeBinPath } : {}),
     };
+    if (thinkingBudget !== null) {
+      // The SDK's Options type does not export the `thinking` shape directly,
+      // so we add it via an assertion. The runtime shape is documented by the
+      // Anthropic SDK: `{ thinking: { type: 'enabled', budget_tokens: number } }`.
+      (sdkOptions as unknown as Record<string, unknown>)["thinking"] = {
+        type: "enabled",
+        budget_tokens: thinkingBudget,
+      };
+    }
     if (frame.model !== undefined) {
       sdkOptions.model = frame.model;
     }
