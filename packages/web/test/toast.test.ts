@@ -10,10 +10,8 @@
  */
 
 // Must be first — registers DOM globals.
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
-if (typeof globalThis.document === "undefined") {
-  GlobalRegistrator.register();
-}
+import { registerDom } from "./helpers/dom";
+registerDom();
 
 import { describe, test, expect, beforeEach } from "bun:test";
 

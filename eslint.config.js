@@ -16,6 +16,18 @@ export default tseslint.config(
   // Prettier disables conflicting style rules (must be last)
   prettierConfig,
   {
+    // Honour the conventional `_`-prefixed unused-args/vars pattern. Used in
+    // interface-implementation methods that must accept parameters they do
+    // not use (see e.g. CodexBridge stubs for permission/elicitation/question
+    // replies that the Codex CLI does not surface).
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
+    },
+  },
+  {
     // Server package: Node/Bun globals
     files: ["packages/server/**/*.{ts,js}"],
     languageOptions: {

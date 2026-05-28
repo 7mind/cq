@@ -70,11 +70,13 @@ class DummyThread implements Pick<Thread, "id" | "runStreamed" | "run"> {
     this.callLog.push({ input, turnOpts });
     const events = this.scriptedEvents;
     const hang = this.hangUntil;
-    const self = this;
+    const setId = (id: string): void => {
+      this._id = id;
+    };
     async function* gen(): AsyncGenerator<ThreadEvent> {
       for (const e of events) {
         if (hang !== null) await hang;
-        if (e.type === "thread.started") self._id = e.thread_id;
+        if (e.type === "thread.started") setId(e.thread_id);
         yield e;
       }
     }

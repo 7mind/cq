@@ -14,15 +14,8 @@
  */
 
 // Must be first — registers DOM globals.
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
-if (typeof globalThis.document === "undefined") {
-  GlobalRegistrator.register();
-}
-// @ts-expect-error — IS_REACT_ACT_ENVIRONMENT is a React internal global not typed in bun-types
-if (!globalThis.IS_REACT_ACT_ENVIRONMENT) {
-  // @ts-expect-error — IS_REACT_ACT_ENVIRONMENT is a React internal global not typed in bun-types
-  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-}
+import { registerDom } from "./helpers/dom";
+registerDom();
 
 import { describe, test, expect, afterEach } from "bun:test";
 import { createRoot } from "react-dom/client";
