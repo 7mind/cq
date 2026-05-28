@@ -6,10 +6,32 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## Milestones (high-level)
 
+- [~] **outer-12 / msunify** — Unified `milestones` ledger + drop per-ledger milestone tools + ISO 8601 timestamps. Plan: [`docs/drafts/20260528-2100-plan-msunify.md`](docs/drafts/20260528-2100-plan-msunify.md).
 - [x] **outer-11** — D-UNIFASYNC-01 + adversarial sweep for sync/async unions.
 - [x] **outer-10** — close D-CQMCP-E2E + D-CQMCP-NIX (outer-9 follow-ups).
 - [x] **outer-9** — D-GC-1 (Codex ledger MCP) + D-GC-N1 (approvalPolicy).
 - (older milestones in this file)
+
+---
+
+## Active — outer-12 / msunify
+
+**Cycle:** msunify (unified milestones + ISO timestamps).
+**Goal:** breaking refactor of `@cq/ledger` — single dedicated `milestones` ledger; per-ledger milestone tools dropped; non-milestones ledgers reference milestones by ID only; ISO 8601 timestamps everywhere; no migration of legacy data; test fixtures rewritten.
+**Baseline (verified d9eef2e):** `bun run check` 689 pass / 0 fail / 2469 expect() across 86 files.
+**Plan:** [`docs/drafts/20260528-2100-plan-msunify.md`](docs/drafts/20260528-2100-plan-msunify.md).
+
+Sequence (one commit per PR; tags `msunify-N`):
+
+- [ ] **msunify-1** — types + constants + ISO timestamps + bootstrap manifest. Files: `packages/ledger/src/types.ts`, new `packages/ledger/src/constants.ts`.
+- [ ] **msunify-2** — parser + serializer for new format. Files: `packages/ledger/src/parser/*.ts`.
+- [ ] **msunify-3** — core.ts + adapters for new milestone semantics. Files: `packages/ledger/src/store/*.ts`.
+- [ ] **msunify-4** — MCP tool surface (rename + drop + add). Files: `packages/ledger/src/mcp/ledgerTools.ts`, `packages/cq-mcp/src/main.ts`.
+- [ ] **msunify-5** — bridge wiring + cq-mcp binary smoke. Files: `packages/server/src/agent/claudeBridge.ts`, `packages/server/src/server.ts`, `packages/server/src/devServer.ts`.
+- [ ] **msunify-6** — test fixture rewrite + new tests. Files: `packages/ledger/test/*`, related server/cq-mcp test fixtures.
+- [ ] **msunify-7** — end-to-end + nix build smoke. Files: `packages/e2e/tests/codex-mcp-roundtrip.spec.ts`, `packages/cq-mcp/test/main.test.ts`, manual nix smoke.
+
+**Inner-loop discipline:** Each PR is one commit. Each PR's verification is run before its commit. Full `bun run check` may transiently fail between PR-1 and PR-6 due to ordering of types vs tests; gate is green at PR-6 close. Adversarial review at the END of EACH PR (not just at cycle end).
 
 ---
 
