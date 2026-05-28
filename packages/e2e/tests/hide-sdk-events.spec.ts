@@ -35,7 +35,10 @@ test("hide-sdk-events: toggle hides and restores unknown SDK event cards", async
   const sdkEventCard = cq.page.locator("details").filter({ hasText: "result: success" }).first();
   await expect(sdkEventCard).toBeVisible({ timeout: 5_000 });
 
-  // Check "Hide SDK events" — the card should disappear.
+  // gear-3: the "Hide SDK events" toggle now lives inside the SettingsPopup.
+  // Open the popup via the gear button first, then check the toggle.
+  await cq.page.locator("[data-testid='settings-gear-btn']").click();
+  await expect(cq.page.locator("[data-testid='settings-popup']")).toBeVisible();
   const toggle = cq.page.locator("[data-testid='hide-sdk-events-toggle']");
   await toggle.check();
   await expect(sdkEventCard).not.toBeVisible({ timeout: 3_000 });

@@ -81,6 +81,8 @@ function defaultProps(overrides: Partial<HeaderProps> = {}): HeaderProps {
     onModelChange: () => undefined,
     permissionMode: "default" as PermissionMode,
     onPermissionModeChange: () => undefined,
+    effort: "none",
+    onEffortChange: () => undefined,
     inputTokens: 0,
     outputTokens: 0,
     costUsd: 0,
@@ -246,8 +248,9 @@ describe("Header — session metadata display", () => {
     expect(newSessionCallCount).toBe(1);
   });
 
-  // D26 — hide SDK events toggle
-  test("D26: hide-sdk-events toggle renders and fires callback", () => {
+  // gear-3: hide-sdk-events toggle now lives in SettingsPopup, not the Header.
+  // We open the popup via the gear button, then assert the toggle behaviour.
+  test("gear-3: hide-sdk-events toggle in SettingsPopup renders and fires callback", () => {
     let toggleValue = false;
     const c = renderHeader(
       defaultProps({
@@ -256,14 +259,53 @@ describe("Header — session metadata display", () => {
       }),
     );
 
+    // Toggle is hidden until the gear opens the popup.
+    expect(c.querySelector("[data-testid='hide-sdk-events-toggle']")).toBeNull();
+
+    const gear = c.querySelector("[data-testid='settings-gear-btn']") as HTMLButtonElement;
+    expect(gear).not.toBeNull();
+    act(() => { gear.click(); });
+
     const checkbox = c.querySelector("[data-testid='hide-sdk-events-toggle']") as HTMLInputElement;
     expect(checkbox).not.toBeNull();
     expect(checkbox.checked).toBe(false);
 
-    // Simulate checking the checkbox.
-    act(() => {
-      checkbox.click();
-    });
+    act(() => { checkbox.click(); });
     expect(toggleValue).toBe(true);
+  });
+
+  // gear-3: model selector lives in the popup, not inline in the header.
+  test("gear-3: model selector is in the popup, not the header bar", () => {
+    const c = renderHeader(defaultProps());
+    // No inline model select in the header.
+    const header = c.querySelector("[data-testid='chat-header']");
+    expect(header).not.toBeNull();
+    expect(header!.querySelector("[data-testid='model-select']")).toBeNull();
+
+    // After opening the gear, the select appears.
+    const gear = c.querySelector("[data-testid='settings-gear-btn']") as HTMLButtonElement;
+    act(() => { gear.click(); });
+    expect(c.querySelector("[data-testid='model-select']")).not.toBeNull();
+  });
+
+  // gear-3: effort selector is reachable from the popup.
+  test("gear-3: effort selector renders and fires callback", () => {
+    let effortValue: string = "";
+    const c = renderHeader(
+      defaultProps({
+        effort: "none",
+        onEffortChange: (e) => { effortValue = e; },
+      }),
+    );
+    const gear = c.querySelector("[data-testid='settings-gear-btn']") as HTMLButtonElement;
+    act(() => { gear.click(); });
+    const effortSel = c.querySelector("[data-testid='effort-select']") as HTMLSelectElement;
+    expect(effortSel).not.toBeNull();
+    expect(effortSel.value).toBe("none");
+    act(() => {
+      effortSel.value = "high";
+      effortSel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(effortValue).toBe("high");
   });
 });

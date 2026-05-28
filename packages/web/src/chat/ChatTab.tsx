@@ -36,7 +36,8 @@ import { ElicitationCard } from "./Cards/ElicitationCard";
 import type { ElicitationReply } from "./Cards/ElicitationCard";
 import { Detail } from "../history/Detail";
 import type { PermissionMode } from "./Header";
-import type { ChatInput, ChatInterrupt, ChatEvent, ChatStart, ChatRejoin, ChatStarted, ChatUsage, ChatPermissionRequest, ChatPermissionReply, ChatElicitationRequest, ChatElicitationReply, ChatQuestionReply, HistoryGet, HistoryReplayEvent, ChatError, SettingsGet, SettingsSet, SettingsGetResult } from "@cq/shared";
+import type { ChatInput, ChatInterrupt, ChatEvent, ChatStart, ChatRejoin, ChatStarted, ChatUsage, ChatPermissionRequest, ChatPermissionReply, ChatElicitationRequest, ChatElicitationReply, ChatQuestionReply, HistoryGet, HistoryReplayEvent, ChatError, SettingsGet, SettingsSet, SettingsGetResult, Effort } from "@cq/shared";
+import { DEFAULT_EFFORT, modelToPlatform } from "@cq/shared";
 import { ATTACHMENT_TOTAL_MAX_BYTES, base64DecodedByteLength } from "@cq/shared";
 import type { QuestionReplyPayload } from "./Cards/AskCard";
 import type { SlashCommand } from "./SlashPopover";
@@ -48,6 +49,32 @@ import { TaskListSidebar } from "./TaskListSidebar";
 import { isMacPlatform } from "../lib/platform";
 import { computeMatchIndices, computeRenderedMessages } from "./Stream";
 import tabStyles from "../styles/ChatTab.module.css";
+
+// gear-3 localStorage helpers — small and isolated so unit tests can pass
+// a noop localStorage shim. Reads return the fallback when the key is
+// missing or the API is unavailable (SSR, private browsing, etc.).
+function lsReadString(key: string, fallback: string): string {
+  try {
+    const v = localStorage.getItem(key);
+    return v ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function lsReadEffort(key: string, fallback: Effort): Effort {
+  const raw = lsReadString(key, fallback);
+  const valid: readonly Effort[] = ["none", "low", "medium", "high", "max"];
+  return valid.includes(raw as Effort) ? (raw as Effort) : fallback;
+}
+
+function lsWrite(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // best-effort
+  }
+}
 
 export function ChatTab(): React.ReactElement {
   const manager = useConnection();
@@ -82,15 +109,22 @@ export function ChatTab(): React.ReactElement {
   // typed input) get wiped before the assistant reply lands.
   const clearedForSessionRef = useRef<string | null>(null);
 
-  // --- Header state (PR-25) ---
+  // --- Header state (PR-25 + gear-3) ---
+  // gear-3: defaults hydrate from localStorage so a fresh tab remembers
+  // the user's last choice. Server-side settings.get_result still merges
+  // when it arrives (D41 kept intact per plan G2b finding #2).
   const [cwd, setCwd] = useState<string>("");
-  const [model, setModel] = useState<string>("claude-opus-4-7[1m]");
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>("bypassPermissions");
-  // Refs that always hold the latest model/permissionMode so closures
+  const [model, setModel] = useState<string>(() => lsReadString("cq.model", "claude-opus-4-7[1m]"));
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>(
+    () => lsReadString("cq.permissionMode", "bypassPermissions") as PermissionMode,
+  );
+  const [effort, setEffort] = useState<Effort>(() => lsReadEffort("cq.effort", DEFAULT_EFFORT));
+  // Refs that always hold the latest model/permissionMode/effort so closures
   // in effects (e.g. REJOIN_FAILED handler) read fresh values. Same
   // pattern as sortRef/filterRef/pageRef in HistoryTab.
   const modelRef = useRef(model);
   const permissionModeRef = useRef(permissionMode);
+  const effortRef = useRef(effort);
   const [inputTokens, setInputTokens] = useState(0);
   const [outputTokens, setOutputTokens] = useState(0);
   const [costUsd, setCostUsd] = useState(0);
@@ -113,18 +147,23 @@ export function ChatTab(): React.ReactElement {
   ];
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>(DEFAULT_SLASH_COMMANDS);
 
-  // ---- D26: Hide SDK events toggle ----
-  const [hideSdkEvents, setHideSdkEvents] = useState(false);
+  // ---- D26: Hide SDK events toggle (default hydrated from localStorage) ----
+  const [hideSdkEvents, setHideSdkEvents] = useState<boolean>(
+    () => lsReadString("cq.hideSdkEvents", "0") === "1",
+  );
 
   // ---- D41: UI settings persistence ----
   // settingsLoadedRef guards against echoing defaults back to the server on
   // the very first render before settings.get_result has been received.
   const settingsLoadedRef = useRef(false);
 
-  // Keep modelRef/permissionModeRef in sync so closures (REJOIN_FAILED handler)
-  // always read the latest values without stale-closure capture.
-  useEffect(() => { modelRef.current = model; }, [model]);
-  useEffect(() => { permissionModeRef.current = permissionMode; }, [permissionMode]);
+  // Keep modelRef/permissionModeRef/effortRef in sync so closures (REJOIN_FAILED handler)
+  // always read the latest values without stale-closure capture. Each change
+  // also writes the new value into localStorage so it survives a page reload.
+  useEffect(() => { modelRef.current = model; lsWrite("cq.model", model); }, [model]);
+  useEffect(() => { permissionModeRef.current = permissionMode; lsWrite("cq.permissionMode", permissionMode); }, [permissionMode]);
+  useEffect(() => { effortRef.current = effort; lsWrite("cq.effort", effort); }, [effort]);
+  useEffect(() => { lsWrite("cq.hideSdkEvents", hideSdkEvents ? "1" : "0"); }, [hideSdkEvents]);
 
   // ---- D30: Subagent transcript overlay ----
   // When set, renders the Detail component as a modal over the chat stream.
@@ -337,6 +376,8 @@ export function ChatTab(): React.ReactElement {
             ts: Date.now(),
             model: modelRef.current,
             permissionMode: permissionModeRef.current,
+            effort: effortRef.current,
+            platform: modelToPlatform(modelRef.current),
           };
           manager.send(fallbackFrame);
           return;
@@ -367,6 +408,8 @@ export function ChatTab(): React.ReactElement {
             ts: Date.now(),
             model: newModel,
             permissionMode: newPermMode,
+            effort: effortRef.current,
+            platform: modelToPlatform(newModel),
           };
           manager.send(startFrame);
         }
@@ -458,6 +501,8 @@ export function ChatTab(): React.ReactElement {
         ts: Date.now(),
         model: modelRef.current,
         permissionMode: permissionModeRef.current,
+        effort: effortRef.current,
+        platform: modelToPlatform(modelRef.current),
       };
       manager.send(fallback);
     }, 3_000);
@@ -561,6 +606,8 @@ export function ChatTab(): React.ReactElement {
       ts: Date.now(),
       model,
       permissionMode,
+      effort,
+      platform: modelToPlatform(model),
     };
     manager.send(frame);
   }
@@ -581,6 +628,8 @@ export function ChatTab(): React.ReactElement {
       ts: Date.now(),
       model,
       permissionMode,
+      effort,
+      platform: modelToPlatform(model),
       resumeFromInvocationId: invocationId,
     };
     manager.send(frame);
@@ -675,6 +724,8 @@ export function ChatTab(): React.ReactElement {
         onModelChange={setModel}
         permissionMode={permissionMode}
         onPermissionModeChange={setPermissionMode}
+        effort={effort}
+        onEffortChange={setEffort}
         inputTokens={inputTokens}
         outputTokens={outputTokens}
         costUsd={costUsd}

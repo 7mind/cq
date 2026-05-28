@@ -1,62 +1,51 @@
 /**
- * Header.tsx — fixed top bar showing live session metadata.
+ * Header.tsx — fixed top bar showing live session metadata (gear-3 + codex-7).
  *
- * Displays:
- *   - cwd (read-only <code> element, from initInfo)
- *   - model picker (Opus/Sonnet/Haiku — set by parent or fallback list)
- *   - permission-mode toggle (4 modes: default/acceptEdits/bypassPermissions/plan)
- *   - live tokens (in/out) + cost in USD
- *   - session id (first 8 chars + title tooltip with full id)
- *   - started-at (ISO string)
- *   - duration ticking mm:ss (updates every second while in progress)
- *   - "New session" button (shows NewSessionConfirm if inProgress)
- *
- * Props:
- *   cwd              — working directory from initInfo; empty string when not yet received.
- *   model            — currently selected model; controlled by parent.
- *   onModelChange    — called when user picks a different model.
- *   permissionMode   — current permission mode; controlled by parent.
- *   onPermissionModeChange — called when user toggles the mode.
- *   inputTokens      — cumulative input token count from chat.usage.
- *   outputTokens     — cumulative output token count from chat.usage.
- *   costUsd          — cumulative cost in USD from chat.usage.
- *   sessionId        — active session UUID; null when no session started yet.
- *   startedAt        — epoch ms when the session started; null when no session.
- *   inProgress       — true while chat.started received but chat.done not yet.
- *   onNewSession     — called when user confirms starting a new session.
+ * After gear-3 the model/permissionMode/hideSdkEvents/effort controls live
+ * inside <SettingsPopup>. The Header retains:
+ *   - gear icon (top-LEFT) toggling the popup
+ *   - cwd (read-only <code>, from initInfo)
+ *   - usage badges (tokens + cost)
+ *   - session id, status badge, subagent badge
+ *   - duration ticking mm:ss
+ *   - "New session" button (with confirm if mid-stream)
  *
  * Resume entry point: the resume flow is triggered from the History tab
  * (rightmost Resume column) via SessionContext.requestResume; ChatTab
  * consumes that signal. The Header carries no resume affordance.
+ *
+ * Per-session settings semantics: the popup updates the controlled state
+ * but ChatTab only reads those values when building the NEXT ChatStart —
+ * changes do not affect the live session. See SettingsPopup.tsx for the
+ * "Changes apply to the next new chat" hint.
  */
 
 import { useState, useEffect, useRef } from "react";
 import { NewSessionConfirm } from "./NewSessionConfirm";
+import { SettingsPopup } from "./SettingsPopup";
+import type { Effort } from "@cq/shared";
 import styles from "../styles/Header.module.css";
 
-/**
- * Hard-coded model list. The SDK doesn't expose supportedModels via init,
- * so this is curated by hand. The `[1m]` suffix selects Anthropic's 1M-token
- * context tier; Opus and Sonnet have it, Haiku does not.
- */
-const SUPPORTED_MODELS = [
-  "claude-opus-4-7",
-  "claude-opus-4-7[1m]",
-  "claude-sonnet-4-6",
-  "claude-sonnet-4-6[1m]",
-  "claude-haiku-4-5",
-] as const;
-
-export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "read-only";
-
-const PERMISSION_MODES: PermissionMode[] = ["default", "acceptEdits", "bypassPermissions", "plan", "read-only"];
+export type PermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "bypassPermissions"
+  | "plan"
+  | "read-only"
+  | "codex-read-only"
+  | "codex-workspace-write"
+  | "codex-danger-full-access";
 
 export interface HeaderProps {
   cwd: string;
+  /** Currently-selected model — used by the popup, drives platform routing. */
   model: string;
   onModelChange: (model: string) => void;
   permissionMode: PermissionMode;
   onPermissionModeChange: (mode: PermissionMode) => void;
+  /** gear-3: reasoning-effort tier (per-session). */
+  effort: Effort;
+  onEffortChange: (effort: Effort) => void;
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
@@ -90,6 +79,8 @@ export function Header({
   onModelChange,
   permissionMode,
   onPermissionModeChange,
+  effort,
+  onEffortChange,
   inputTokens,
   outputTokens,
   costUsd,
@@ -102,8 +93,10 @@ export function Header({
   onHideSdkEventsChange,
 }: HeaderProps): React.ReactElement {
   const [showConfirm, setShowConfirm] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const gearBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // Tick every second while a session is in progress to update the duration counter.
   useEffect(() => {
@@ -142,6 +135,10 @@ export function Header({
     setShowConfirm(false);
   }
 
+  function handleGearClick(): void {
+    setSettingsOpen((prev) => !prev);
+  }
+
   const durationText =
     startedAt !== null ? formatDuration(startedAt, now) : "--:--";
 
@@ -152,49 +149,41 @@ export function Header({
   return (
     <>
       <header className={styles.header} data-testid="chat-header">
+        {/* gear button — anchors the SettingsPopup */}
+        <div className={styles.gearWrap}>
+          <button
+            ref={gearBtnRef}
+            type="button"
+            className={styles.gearBtn}
+            onClick={handleGearClick}
+            aria-label="Session settings"
+            aria-expanded={settingsOpen}
+            data-testid="settings-gear-btn"
+          >
+            {/* Inline SVG gear icon — no external dep. */}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          {settingsOpen && (
+            <SettingsPopup
+              model={model}
+              onModelChange={onModelChange}
+              permissionMode={permissionMode}
+              onPermissionModeChange={onPermissionModeChange}
+              effort={effort}
+              onEffortChange={onEffortChange}
+              hideSdkEvents={hideSdkEvents}
+              onHideSdkEventsChange={onHideSdkEventsChange}
+              onClose={() => setSettingsOpen(false)}
+              anchorRef={gearBtnRef}
+            />
+          )}
+        </div>
+
         {/* cwd */}
         <code className={styles.cwd} title={cwd}>{cwd || "—"}</code>
-
-        {/* model picker */}
-        <select
-          className={styles.select}
-          value={model}
-          onChange={(e) => onModelChange(e.currentTarget.value)}
-          aria-label="Model"
-          data-testid="model-select"
-        >
-          {SUPPORTED_MODELS.map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-          {/* If current model is not in the default list, add it */}
-          {!SUPPORTED_MODELS.includes(model as (typeof SUPPORTED_MODELS)[number]) && (
-            <option value={model}>{model}</option>
-          )}
-        </select>
-
-        {/* permission mode toggle */}
-        <select
-          className={styles.select}
-          value={permissionMode}
-          onChange={(e) => onPermissionModeChange(e.currentTarget.value as PermissionMode)}
-          aria-label="Permission mode"
-          data-testid="permission-mode-select"
-        >
-          {PERMISSION_MODES.map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
-
-        {/* hide SDK events toggle */}
-        <label className={styles.meta} data-testid="hide-sdk-events-label">
-          <input
-            type="checkbox"
-            checked={hideSdkEvents}
-            onChange={(e) => onHideSdkEventsChange(e.currentTarget.checked)}
-            data-testid="hide-sdk-events-toggle"
-          />
-          {" Hide SDK events"}
-        </label>
 
         {/* tokens + cost */}
         <span className={styles.usage} data-testid="usage">
@@ -214,8 +203,7 @@ export function Header({
           <span className={styles.sessionId} data-testid="session-id">—</span>
         )}
 
-        {/* D44: session status + subagent count badges (replaces the ISO
-            startup timestamp which was visually noisy). */}
+        {/* D44: session status + subagent count badges. */}
         <span
           className={`${styles.badge} ${
             statusBadge === "BUSY" ? styles.badgeBusy :

@@ -29,6 +29,11 @@ test("settings-persist-refresh: model and hideSdkEvents survive page reload", as
   await cq.waitForTextInStream("settings-warmup", 25_000);
   await expect(cq.textarea).toBeEnabled({ timeout: 25_000 });
 
+  // gear-3: model / hide-sdk-events live in the SettingsPopup. Open it first.
+  const gearBtn = page.locator("[data-testid='settings-gear-btn']");
+  await gearBtn.click();
+  await expect(page.locator("[data-testid='settings-popup']")).toBeVisible();
+
   // Change the model to "claude-sonnet-4-6".
   const modelSelect = page.locator("[data-testid='model-select']");
   await modelSelect.selectOption("claude-sonnet-4-6");
@@ -51,6 +56,10 @@ test("settings-persist-refresh: model and hideSdkEvents survive page reload", as
   // Wait for settings.get_result to be applied (deferred chat.start uses this).
   // After settings.get_result, chat.start fires — wait for the textarea to become enabled.
   await expect(cq.textarea).toBeEnabled({ timeout: 15_000 });
+
+  // Reopen the popup to inspect the restored values.
+  await page.locator("[data-testid='settings-gear-btn']").click();
+  await expect(page.locator("[data-testid='settings-popup']")).toBeVisible();
 
   // Assert: model select shows the saved value.
   await expect(modelSelect).toHaveValue("claude-sonnet-4-6", { timeout: 5_000 });
