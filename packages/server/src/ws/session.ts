@@ -60,6 +60,15 @@ export class WsSession {
    * frame so the client is not left waiting.
    */
   private readonly workflow: WorkflowRuntime | null;
+  /**
+   * Stable per-connection workflow lifecycle sink. Registered with the runtime
+   * fan-out on `open` and removed on `close`, so async loop phases and
+   * `question.answer`-triggered advances reach this connection even when they
+   * fire outside the original `/plan` request. Bound to `ws` lazily in `open`.
+   */
+  private workflowSink: ((event: WorkflowEventPayload) => void) | null = null;
+  /** The socket this session is bound to (set on open) for the fan-out sink. */
+  private boundWs: WsSocket | null = null;
 
   constructor(sessionId: string, logger: Logger, registry?: SessionRegistry, bridge?: Bridge | null, persistence?: Persistence | null, workflow?: WorkflowRuntime | null) {
     this.sessionId = sessionId;
@@ -81,6 +90,16 @@ export class WsSession {
   open(ws: WsSocket): void {
     this.logger.info("ws.open", { sessionId: this.sessionId });
     this.heartbeat.start(ws);
+    // Subscribe to workflow lifecycle frames so async loop phases (clarify /
+    // plan / review) and question.answer-triggered advances reach this client.
+    if (this.workflow !== null) {
+      this.boundWs = ws;
+      const sink = (event: WorkflowEventPayload): void => {
+        if (this.boundWs !== null) this.sendFrame(this.boundWs, event);
+      };
+      this.workflowSink = sink;
+      this.workflow.subscribe(sink);
+    }
   }
 
   /** Called by the Bun WS `message` handler. */
@@ -172,6 +191,10 @@ export class WsSession {
       }
       case "workflow.start": {
         this.handleWorkflowStart(ws, frame.kind, frame.text, frame.goalRef, frame.platform);
+        break;
+      }
+      case "question.answer": {
+        this.handleQuestionAnswer(frame.questionId, frame.answer);
         break;
       }
       case "chat.permission_reply": {
@@ -312,6 +335,11 @@ export class WsSession {
   close(ws: WsSocket, code: number, reason: string): void {
     this.logger.info("ws.close", { sessionId: this.sessionId, code, reason });
     this.heartbeat.stop(ws);
+    if (this.workflow !== null && this.workflowSink !== null) {
+      this.workflow.unsubscribe(this.workflowSink);
+      this.workflowSink = null;
+    }
+    this.boundWs = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -385,10 +413,11 @@ export class WsSession {
   /**
    * Routes a `/plan …` workflow command (Q7/Q9). The leading `/plan` token is
    * already stripped client-side; the registry classifies the remainder.
-   * Lifecycle frames are emitted on THIS WS connection (the interactive
-   * session that issued the command). The workflow runs in its own dispatch
-   * lane (the WorkflowRuntime + headless producer) — it does NOT occupy the
-   * pool=1 interactive Bridge session.
+   * Lifecycle frames fan out via the runtime to every subscribed connection
+   * (this session's `workflowSink` registered on open), so async loop phases
+   * reach the client even when they fire outside this request. The workflow
+   * runs in its own dispatch lane — it does NOT occupy the pool=1 interactive
+   * Bridge session.
    */
   private handleWorkflowStart(
     ws: WsSocket,
@@ -397,7 +426,7 @@ export class WsSession {
     goalRef: string | undefined,
     platform: "claude" | "codex" | undefined,
   ): void {
-    if (this.workflow === null) {
+    if (this.workflow === null || this.workflowSink === null) {
       // No runtime wired — emit an errored lifecycle frame so the client is
       // not left waiting. Mirrors BRIDGE_UNAVAILABLE for the chat path.
       const payload: WorkflowEventPayload = {
@@ -410,10 +439,7 @@ export class WsSession {
       this.sendFrame(ws, payload);
       return;
     }
-
-    const emit = (event: WorkflowEventPayload): void => {
-      this.sendFrame(ws, event);
-    };
+    const emit = this.workflowSink;
 
     const parsed = parsePlanCommand(text, goalRef);
     switch (parsed.kind) {
@@ -446,6 +472,23 @@ export class WsSession {
         return;
       }
     }
+  }
+
+  /**
+   * Handle a `question.answer` frame: the HARNESS writes the answer into the
+   * questions ledger (status open→answered) and the runtime auto-advances the
+   * relevant loop when this answer takes the goal's open-question count to zero.
+   * No-op when no runtime is wired.
+   */
+  private handleQuestionAnswer(questionId: string, answer: string): void {
+    if (this.workflow === null) return;
+    void this.workflow.submitAnswer(questionId, answer).catch((err: unknown) => {
+      this.logger.error("ws.question_answer_error", {
+        sessionId: this.sessionId,
+        questionId,
+        err: String(err),
+      });
+    });
   }
 
   /**

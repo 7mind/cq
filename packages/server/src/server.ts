@@ -9,7 +9,13 @@ import { SessionRegistry } from "./seq/sessionRegistry";
 import { SqlitePersistence } from "./persist/SqlitePersistence.js";
 import { FsLedgerStore } from "@cq/ledger";
 import { INTERNAL_WS_PATH, InternalWsService, type InternalWsConnData } from "./agent/internalWs";
-import { WorkflowRuntime, ClaudeProducer, CodexProducer } from "./workflow/index";
+import {
+  WorkflowRuntime,
+  ClaudeProducer,
+  CodexProducer,
+  ClaudePhaseSubagent,
+  CodexPhaseSubagent,
+} from "./workflow/index";
 
 export type ServerConfig = Readonly<{
   host: string;
@@ -116,7 +122,14 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       platform === "codex"
         ? new CodexProducer({ logger })
         : new ClaudeProducer({ logger, cwd }),
+    selectPhaseSubagent: (platform) =>
+      platform === "codex"
+        ? new CodexPhaseSubagent({ logger })
+        : new ClaudePhaseSubagent({ logger, cwd }),
   });
+  // Resume any goal mid-loop from ledger state (closes WF-D02). Goals waiting on
+  // open questions sit idle until a `question.answer` arrives.
+  await workflow.reconcile();
 
   // Inbound `ask.request` from a Codex session's cq-mcp drives the browser
   // ask UI for that session and proxies the answer back (askproxy / outer-14).
@@ -165,10 +178,90 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
           workflow.abortActive();
           bridge.interruptActive();
           await bridge.shutdown();
+          // Await actual workflow-subprocess teardown so no draining child
+          // leaks into the next serial spec (WFL-D02). abortActive() only
+          // signals the abort; whenDrained() blocks until the child is reaped.
+          await workflow.whenDrained();
           return new Response("ok", { status: 200 });
         } catch (err) {
           logger.warn("e2e.interrupt_failed", { err: String(err) });
           return new Response("interrupt failed", { status: 500 });
+        }
+      }
+
+      // ── E2E test hook ────────────────────────────────────────────────── //
+      // GET /__e2e/workflow-idle: report whether the workflow lane is idle, so a
+      // workflow-heavy spec can wait for its subprocesses to drain before the
+      // next spec starts (reduces cross-spec subprocess contention).
+      if (pathname === "/__e2e/workflow-idle" && process.env["CQ_E2E_HOOKS"] === "1") {
+        return new Response(JSON.stringify({ busy: workflow.isBusy() }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // ── E2E test hook ────────────────────────────────────────────────── //
+      // POST /__e2e/workflow-drain: await full teardown of every workflow SDK
+      // subprocess (producer + loop phases) so a workflow-heavy spec leaves NO
+      // lingering child processes before the next serial spec runs. Unlike the
+      // workflow-idle busy flag — which clears at submit-time, before
+      // query().close() finishes reaping the child — this blocks until the
+      // subprocesses are actually gone (WFL-D02). Only when CQ_E2E_HOOKS=1.
+      if (pathname === "/__e2e/workflow-drain" && process.env["CQ_E2E_HOOKS"] === "1") {
+        if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+        try {
+          await workflow.whenDrained();
+          return new Response(JSON.stringify({ drained: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err) {
+          logger.warn("e2e.workflow_drain_failed", { err: String(err) });
+          return new Response("drain failed", { status: 500 });
+        }
+      }
+
+      // ── E2E test hook ────────────────────────────────────────────────── //
+      // POST /__e2e/answer: answer one open question (with `questionId`), or —
+      // with no questionId — every open question belonging to the LATEST goal
+      // (highest G-id), sequentially, via the WorkflowRuntime so the
+      // clarify/plan/review loop auto-advances. Scoping to the latest goal keeps
+      // shared-cwd e2e runs from cross-answering an earlier test's goal. This is
+      // the cycle-3 stand-in for the Goals-tab `question.answer` frame (cycle 4).
+      // Body: { questionId?: string, answer?: string }.
+      if (pathname === "/__e2e/answer" && process.env["CQ_E2E_HOOKS"] === "1") {
+        if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+        try {
+          const body = (await req.json().catch(() => ({}))) as { questionId?: string; answer?: string };
+          const answer = body.answer ?? "yes (e2e)";
+          let ids: string[];
+          if (body.questionId !== undefined) {
+            ids = [body.questionId];
+          } else {
+            // Latest goal = highest numeric G-id; its open questions only.
+            const goals = ledgerStore.fetch("goals").milestones.flatMap((g) => g.items);
+            const latest = goals.sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1))).at(-1);
+            const milestoneIds =
+              latest !== undefined && Array.isArray(latest.fields["milestones"])
+                ? (latest.fields["milestones"] as string[])
+                : [];
+            ids = ledgerStore
+              .fetch("questions")
+              .milestones.filter((g) => milestoneIds.includes(g.id))
+              .flatMap((g) => g.items)
+              .filter((i) => i.status === "open")
+              .map((i) => i.id);
+          }
+          for (const id of ids) {
+            await workflow.submitAnswer(id, answer);
+          }
+          return new Response(JSON.stringify({ answered: ids }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err) {
+          logger.warn("e2e.answer_failed", { err: String(err) });
+          return new Response("answer failed", { status: 500 });
         }
       }
 

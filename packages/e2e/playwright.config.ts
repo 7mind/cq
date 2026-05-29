@@ -82,9 +82,36 @@ export default defineConfig({
     },
   },
 
+  // Two ordered projects (WFL-D02). A Codex spec drives a real Codex model that
+  // spawns a long-lived `cq-mcp` child (owned by the Codex CLI). Two distinct
+  // contention sources flow from that child and outlive the Codex spec for the
+  // shared server's lifetime:
+  //
+  //   1. Cross-process ledger lock race. The cq-mcp child opens its OWN
+  //      FsLedgerStore on the shared --cwd and issues ledger writes, holding
+  //      cross-process advisory lockfiles. A later `/plan` workflow producer
+  //      writes the goals ledger from the cq SERVER process; the two writers
+  //      race, and the lockfile fails fast with LedgerBusyError (no wait/retry)
+  //      → producer errors → questions_ready banner never appears → timeout.
+  //   2. Sustained CPU load. The lingering Codex CLI + cq-mcp child keep
+  //      consuming CPU, which tips the timing-sensitive `stop.spec`
+  //      (MutationObserver microtask race + a tight 5 s "Stop disabled after
+  //      drain" budget; see E2E-D03) into spurious failure.
+  //
+  // Running the two `/plan` workflow specs AND `stop.spec` FIRST — before any
+  // Codex spec exists — removes both: the cq server is the sole ledger writer
+  // at producer time, and stop.spec runs against a fresh, unloaded server.
+  // `dependencies` + workers:1 guarantees `prelude` finishes before `main`.
   projects: [
     {
-      name: "chromium",
+      name: "prelude",
+      testMatch: /(plan-workflow(-loop)?|stop)\.spec\.ts$/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "main",
+      testIgnore: /(plan-workflow(-loop)?|stop)\.spec\.ts$/,
+      dependencies: ["prelude"],
       use: { ...devices["Desktop Chrome"] },
     },
   ],

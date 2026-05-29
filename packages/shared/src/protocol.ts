@@ -232,6 +232,25 @@ export const WorkflowStart = z.object({
 });
 export type WorkflowStart = z.infer<typeof WorkflowStart>;
 
+/**
+ * `question.answer` — client → server. Submitted from the Goals tab (cycle 4)
+ * or, this cycle, programmatically in tests. The HARNESS writes the answer
+ * into the questions ledger item (status open→answered, `answer` field set).
+ * When the last open question for the goal's current batch flips to answered,
+ * the WorkflowRuntime AUTO-ADVANCES the relevant loop (Q5).
+ *
+ *  - `questionId` — the `questions`-ledger item id (e.g. "Q3").
+ *  - `answer` — the user's free-form answer text. Non-empty.
+ */
+export const QuestionAnswer = z.object({
+  type: z.literal("question.answer"),
+  seq,
+  ts,
+  questionId: z.string().min(1),
+  answer: z.string().min(1),
+});
+export type QuestionAnswer = z.infer<typeof QuestionAnswer>;
+
 export const ChatRejoin = z.object({
   type: z.literal("chat.rejoin"),
   seq,
@@ -500,9 +519,14 @@ export type ChatError = z.infer<typeof ChatError>;
  *  - `workflowId` — in-memory id of the active workflow run (UUID).
  *  - `goalId` — the `goals`-ledger id once the goal row exists (e.g. "G1").
  *    Absent before the goal is written (started/errored-early).
- *  - `phase` — coarse phase label ("produce" for phase 1).
- *  - `status` — lifecycle status. Ordered emission for a happy run:
- *    started → producing → questions_ready. Error path: → errored.
+ *  - `phase` — coarse phase label. "produce" for phase 1; "clarify",
+ *    "plan", "review" for the cycle-3 loops.
+ *  - `status` — lifecycle status. Ordered emission for a happy phase-1 run:
+ *    started → producing → questions_ready. Error path: → errored. Cycle-3
+ *    loop statuses: clarifying / planning / reviewing (work-in-progress for a
+ *    phase), questions_ready (a new batch awaits the user), planned + done
+ *    (terminal success), escalated (no-progress liveness guard fired — the
+ *    loop stopped and needs human input).
  *  - `detail` — human-readable detail (question count, error reason, …).
  */
 export const WorkflowEvent = z.object({
@@ -511,8 +535,19 @@ export const WorkflowEvent = z.object({
   ts,
   workflowId: uuidStr(),
   goalId: z.string().optional(),
-  phase: z.enum(["produce"]),
-  status: z.enum(["started", "producing", "questions_ready", "errored"]),
+  phase: z.enum(["produce", "clarify", "plan", "review"]),
+  status: z.enum([
+    "started",
+    "producing",
+    "questions_ready",
+    "clarifying",
+    "planning",
+    "reviewing",
+    "planned",
+    "escalated",
+    "done",
+    "errored",
+  ]),
   detail: z.string().optional(),
 });
 export type WorkflowEvent = z.infer<typeof WorkflowEvent>;
@@ -601,6 +636,7 @@ export const ClientFrame = z.discriminatedUnion("type", [
   ChatInput,
   ChatInterrupt,
   WorkflowStart,
+  QuestionAnswer,
   ChatPermissionReply,
   ChatQuestionReply,
   ChatElicitationReply,

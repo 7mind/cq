@@ -23,7 +23,6 @@ import type {
   Options as SDKOptions,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { createRequire } from "node:module";
 import { z } from "zod";
 import type { Logger } from "../log/logger";
 import {
@@ -33,6 +32,7 @@ import {
   type ProducerOutput,
   type WorkflowProducer,
 } from "./producer.js";
+import { SingleMessageQueue, resolveNativeBinaryPath } from "./headlessQuery.js";
 
 /** Same shape as ClaudeBridge.QueryFactory — injectable for tests. */
 export type QueryFactory = (opts: {
@@ -197,85 +197,16 @@ export class ClaudeProducer implements WorkflowProducer {
       } catch (err: unknown) {
         this.logger.warn("producer.close_error", { err: String(err) });
       }
-      void drain.catch(() => undefined);
+      // `drain` resolves when the async generator returns — which, after
+      // `q.close()`, happens once the SDK subprocess is fully reaped. Surface it
+      // as the teardown awaitable so the runtime can await real subprocess exit
+      // (the produce call still resolves at submit-time above — timing unchanged).
+      const teardown = drain.then(
+        () => undefined,
+        () => undefined,
+      );
+      if (req.registerTeardown !== undefined) req.registerTeardown(teardown);
+      else void teardown;
     }
   }
-}
-
-/**
- * A one-shot streaming-input queue: yields the single producer prompt, then
- * blocks until `end()` is called. The SDK requires an AsyncIterable<SDKUserMessage>.
- */
-class SingleMessageQueue implements AsyncIterator<SDKUserMessage>, AsyncIterable<SDKUserMessage> {
-  private emitted = false;
-  private done = false;
-  private waiter: ((r: IteratorResult<SDKUserMessage>) => void) | null = null;
-  private readonly text: string;
-
-  constructor(text: string) {
-    this.text = text;
-  }
-
-  end(): void {
-    if (this.done) return;
-    this.done = true;
-    if (this.waiter !== null) {
-      const resolve = this.waiter;
-      this.waiter = null;
-      resolve({ value: undefined as unknown as SDKUserMessage, done: true });
-    }
-  }
-
-  next(): Promise<IteratorResult<SDKUserMessage>> {
-    if (!this.emitted) {
-      this.emitted = true;
-      const msg: SDKUserMessage = {
-        type: "user",
-        message: { role: "user", content: this.text } as SDKUserMessage["message"],
-        parent_tool_use_id: null,
-      };
-      return Promise.resolve({ value: msg, done: false });
-    }
-    if (this.done) {
-      return Promise.resolve({ value: undefined as unknown as SDKUserMessage, done: true });
-    }
-    return new Promise((resolve) => {
-      this.waiter = resolve;
-    });
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
-    return this;
-  }
-}
-
-/**
- * Resolve the native Claude Code CLI binary path under Bun (mirror of
- * ClaudeBridge.resolveNativeBinaryPath). Returns undefined under Node so the
- * SDK does its own lookup. See claudeBridge.ts for the full rationale.
- */
-function resolveNativeBinaryPath(): string | undefined {
-  if (typeof (process.versions as Record<string, unknown>)["bun"] === "undefined") {
-    return undefined;
-  }
-  try {
-    const req = createRequire(import.meta.url);
-    const platform = process.platform;
-    const arch = process.arch;
-    const pkgCandidates = [
-      `@anthropic-ai/claude-agent-sdk-${platform}-${arch}/claude`,
-      `@anthropic-ai/claude-agent-sdk-${platform}-${arch}-musl/claude`,
-    ];
-    for (const pkg of pkgCandidates) {
-      try {
-        const resolved = req.resolve(pkg);
-        if (resolved) return resolved;
-      } catch {
-        // Not found — try next candidate.
-      }
-    }
-  } catch {
-    // Fallback: let the SDK do its own lookup.
-  }
-  return undefined;
 }

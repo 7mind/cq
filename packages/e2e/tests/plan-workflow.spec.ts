@@ -108,6 +108,11 @@ function confirmSse(): SSEEvent[] {
 }
 
 test("/plan: phase 1 writes goal + spec milestone + questions and surfaces a banner", async ({ cq, mock, page }) => {
+  // Raise the per-test budget above the default 60s: the producer's headless
+  // subprocess cold-start can be slow under full-suite CPU load (the server
+  // bounds it at 120s), and this spec runs adjacent to the workflow-loop spec
+  // which spawns several subprocesses of its own.
+  test.setTimeout(150_000);
   await cq.open();
   await expect(cq.textarea).toBeEnabled({ timeout: 10_000 });
   // Let the auto-started interactive chat session reach idle BEFORE dispatching
@@ -127,10 +132,10 @@ test("/plan: phase 1 writes goal + spec milestone + questions and surfaces a ban
   await page.keyboard.press("Enter");
 
   // Wait for the questions_ready banner. Generous timeout: the producer spawns
-  // its own SDK subprocess whose cold-start can be slow under load.
+  // its own SDK subprocess whose cold-start can be slow under full-suite load.
   const banner = page.locator("[data-testid='workflow-banner']");
-  await expect(banner).toBeVisible({ timeout: 40_000 });
-  await expect(banner).toHaveAttribute("data-status", "questions_ready", { timeout: 40_000 });
+  await expect(banner).toBeVisible({ timeout: 90_000 });
+  await expect(banner).toHaveAttribute("data-status", "questions_ready", { timeout: 90_000 });
 
   // Inspect the cq server's --cwd ledger files.
   const cqCwd = process.env["CQ_E2E_CWD"];

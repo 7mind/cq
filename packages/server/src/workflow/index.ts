@@ -19,6 +19,7 @@ export type {
   ProducerSelector,
   StartPlanInput,
   StartPlanResult,
+  WorkflowPosition,
 } from "./workflowRuntime.js";
 export {
   ProducerOutputSchema,
@@ -35,3 +36,37 @@ export { ClaudeProducer } from "./claudeProducer.js";
 export type { ClaudeProducerOpts, QueryFactory as ProducerQueryFactory } from "./claudeProducer.js";
 export { CodexProducer } from "./codexProducer.js";
 export type { CodexProducerOpts } from "./codexProducer.js";
+export {
+  CLARIFY_REVIEW_SPEC,
+  PLAN_SPEC,
+  PLAN_REVIEW_SPEC,
+  ClarifyReviewOutputSchema,
+  PlanOutputSchema,
+  PlanReviewOutputSchema,
+  buildClarifyReviewPrompt,
+  buildPlannerPrompt,
+  buildPlanReviewPrompt,
+} from "./phases.js";
+export type {
+  PhaseSubagent,
+  PhaseSpec,
+  PhaseRequest,
+  PhaseKind,
+  PhaseSubagentSelector,
+  ClarifyReviewOutput,
+  PlanOutput,
+  PlanReviewOutput,
+  PlanMilestone,
+  PlanTask,
+  PlanFinding,
+  ReviewQuestion,
+  QnA,
+  PlanArtifacts,
+} from "./phases.js";
+export { ClaudePhaseSubagent } from "./claudePhaseSubagent.js";
+export type {
+  ClaudePhaseSubagentOpts,
+  QueryFactory as PhaseQueryFactory,
+} from "./claudePhaseSubagent.js";
+export { CodexPhaseSubagent } from "./codexPhaseSubagent.js";
+export type { CodexPhaseSubagentOpts } from "./codexPhaseSubagent.js";

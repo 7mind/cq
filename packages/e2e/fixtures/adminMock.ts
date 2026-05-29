@@ -52,6 +52,21 @@ export class MockServerClient {
     if (!res.ok) throw new Error(`/__admin/scriptOnToolResult failed: ${res.status}`);
   }
 
+  /**
+   * Register a substring-keyed phase response: when a streaming /v1/messages
+   * body contains `key` (e.g. a phase submit-tool name), the mock returns
+   * `events`. Matched before the sticky queue; multiple keys may be registered
+   * (matched in registration order). Cleared by reset().
+   */
+  async scriptByKey(key: string, events: SSEEvent[]): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/__admin/scriptByKey`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, sse: events }),
+    });
+    if (!res.ok) throw new Error(`/__admin/scriptByKey failed: ${res.status}`);
+  }
+
   async reset(): Promise<void> {
     const res = await fetch(`${this.baseUrl}/__admin/reset`, {
       method: "POST",

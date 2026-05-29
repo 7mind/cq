@@ -23,13 +23,31 @@ function describe(event: WorkflowEvent): string {
       return `Planning${goal}: producing goal and questions…`;
     case "questions_ready":
       return event.detail ?? `Questions ready${goal} in the Goals tab.`;
+    case "clarifying":
+      return event.detail ?? `Reviewing answers${goal}…`;
+    case "planning":
+      return event.detail ?? `Planning${goal}: drafting milestones and tasks…`;
+    case "reviewing":
+      return event.detail ?? `Reviewing the plan${goal}…`;
+    case "planned":
+      return event.detail ?? `Plan ready${goal}.`;
+    case "done":
+      return event.detail ?? `Planning complete${goal}.`;
+    case "escalated":
+      return `Planning needs your input${goal}: ${event.detail ?? "no further progress without guidance"}`;
     case "errored":
       return `Planning failed${goal}: ${event.detail ?? "unknown error"}`;
   }
 }
 
 export function WorkflowBanner({ event, onDismiss }: WorkflowBannerProps): React.ReactElement {
-  const tone = event.status === "errored" ? "error" : event.status === "questions_ready" ? "success" : "info";
+  const successStatuses: ReadonlyArray<WorkflowEvent["status"]> = ["questions_ready", "planned", "done"];
+  const tone =
+    event.status === "errored" || event.status === "escalated"
+      ? "error"
+      : successStatuses.includes(event.status)
+        ? "success"
+        : "info";
   return (
     <div
       data-testid="workflow-banner"

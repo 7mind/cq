@@ -4,6 +4,29 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ---
 
+## Cycle: workflow-loops (cycle 3) — make `/plan` converge end-to-end
+
+Plan: [`docs/drafts/20260529-2000-plan-workflow-loops.md`](docs/drafts/20260529-2000-plan-workflow-loops.md).
+Authoritative design: [`docs/drafts/20260529-1710-questions-plan-workflow.md`](docs/drafts/20260529-1710-questions-plan-workflow.md).
+Baseline (verified 9f64579): `bun test` 885 pass / 0 fail. e2e target ≥ 22.
+
+### Milestone M-WFL — PR breakdown
+
+- [x] **wfl-1** — PhaseSubagent dispatch seam + phase schemas + Codex stub + protocol enum extensions + `question.answer` frame. `phases.ts` (generic `PhaseSubagent`/`PhaseSpec` + clarify-review/plan/plan-review Zod schemas + prompt builders), `headlessQuery.ts` (extracted `SingleMessageQueue`+`resolveNativeBinaryPath`, producer refactored to use), `claudePhaseSubagent.ts` (generic Claude impl), `codexPhaseSubagent.ts` (WF-D01 stub), protocol `question.answer` + extended `workflow.event` enums, `WorkflowBanner` new statuses. `workflow-phases.test.ts` (10). Commit `58e104a`.
+- [x] **wfl-2** — Loop engine in WorkflowRuntime: clarify + planner + plan-review loops, ledger-as-state `derivePosition`, no-progress liveness guard, lifecycle fan-out, `submitAnswer` auto-advance, `reconcile`. server.ts wires `selectPhaseSubagent` + `reconcile()`. `workflow-loops.test.ts` (6). Commit `75dfaad`.
+- [x] **wfl-3** — `question.answer` WS handler + auto-advance-exactly-once + runtime subscribe/unsubscribe on open/close; resume-on-startup reconcile exercised. `workflow-ws.test.ts` (+1), `workflow-loops.test.ts` (+2 resume). Pool=1 regression preserved. Commit `815953f`.
+- [x] **wfl-4** — Integration (real Claude SDK via MockAnthropicHTTP) one full clarify→plan→review→planned cycle (`workflow-loops-integration.test.ts`); e2e `plan-workflow-loop.spec.ts` (`/__admin/scriptByKey` per-phase mock + `/__e2e/answer`+`/__e2e/workflow-idle` hooks). e2e 23/23. Commit `02a8da9`.
+- [x] **wfl-5** — Discharge: `bun run check` x2 = 905/0 (deterministic); `nix build .#default` exit 0; `bun run e2e` 23/23; manual scenario captured (full lifecycle + populated ledgers); defects WF-D02→resolved, WFL-D01 (no-progress guard, user-veto), WFL-D02 (e2e load caveat); session log.
+
+### Cross-cutting decisions (workflow-loops, locked)
+- K-WFL-1: workflow position is derived from ledgers (goal.status + open-question count), not in-memory (closes WF-D02). In-memory state = global busy slot + per-goal in-flight latch only.
+- K-WFL-2: NO hard round cap (Q6); plan-review runaway bounded by a no-progress liveness guard (identical planner output + no new questions twice → `escalated` frame, loop stops).
+- K-WFL-3: every ledger write is HARNESS-owned; phase subagents return structured output via a harness-owned in-process submit tool and never touch ledgers.
+- K-WFL-4: plan-review newQuestions re-enter via the clarify-reviewer (re-validate clarity) before re-planning, so the clarity gate is never bypassed.
+- K-WFL-5: lifecycle frames fan out to all subscribed WS sessions (loops are async; `question.answer` may arrive on any connection).
+
+---
+
 ## Cycle: canon — Canonical ledger schemas
 
 Plan: [`docs/drafts/20260529-0000-canonical-ledgers-plan.md`](docs/drafts/20260529-0000-canonical-ledgers-plan.md).

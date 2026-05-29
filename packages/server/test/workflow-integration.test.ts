@@ -18,6 +18,7 @@ import * as pathNode from "node:path";
 import { FsLedgerStore, GOALS_LEDGER, QUESTIONS_LEDGER, MILESTONES_LEDGER } from "@cq/ledger";
 import { ClaudeProducer } from "../src/workflow/claudeProducer";
 import { WorkflowRuntime, SPEC_MILESTONE_TITLE } from "../src/workflow/index";
+import { FakePhaseSubagent } from "./helpers/fakePhaseSubagent";
 import type { WorkflowEvent } from "@cq/shared";
 import { noopLogger } from "./helpers/mockBridge";
 import { startMockAnthropic, type SSEEvent } from "./helpers/MockAnthropicHTTP";
@@ -140,7 +141,12 @@ describe("workflow phase 1 — REAL SDK subprocess via MockAnthropicHTTP", () =>
       process.env["HOME"] = tmpHome;
 
       const producer = new ClaudeProducer({ logger: noopLogger, cwd: tmpCwd, timeoutMs: 40_000 });
-      const rt = new WorkflowRuntime({ logger: noopLogger, store, selectProducer: () => producer });
+      const rt = new WorkflowRuntime({
+        logger: noopLogger,
+        store,
+        selectProducer: () => producer,
+        selectPhaseSubagent: () => new FakePhaseSubagent(),
+      });
       const events: Array<Omit<WorkflowEvent, "seq" | "ts">> = [];
 
       try {

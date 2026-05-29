@@ -11,9 +11,17 @@
 
 import { describe, test, expect } from "bun:test";
 import { WsSession, type WsSessionData } from "../src/ws/session.js";
-import { InMemoryLedgerStore, type LedgerStore } from "@cq/ledger";
-import { WorkflowRuntime, type WorkflowProducer, type ProducerOutput } from "../src/workflow/index.js";
+import { InMemoryLedgerStore, GOALS_LEDGER, QUESTIONS_LEDGER, type LedgerStore } from "@cq/ledger";
+import {
+  WorkflowRuntime,
+  CLARIFY_REVIEW_SPEC,
+  PLAN_SPEC,
+  PLAN_REVIEW_SPEC,
+  type WorkflowProducer,
+  type ProducerOutput,
+} from "../src/workflow/index.js";
 import { noopLogger } from "./helpers/mockBridge.js";
+import { FakePhaseSubagent } from "./helpers/fakePhaseSubagent.js";
 
 interface ParsedFrame {
   type: string;
@@ -34,6 +42,9 @@ function makeMockSocket(session: WsSession): MockSocket {
     close() {},
     data: { sessionId: session.sessionId, session },
   };
+  // Open so the session subscribes its workflow lifecycle sink to the runtime
+  // fan-out (mirrors the Bun WS open handler).
+  session.open(sock as Parameters<typeof session.open>[0]);
   return sock;
 }
 function send(wsSession: WsSession, socket: MockSocket, frame: Record<string, unknown>): void {
@@ -53,7 +64,12 @@ class FakeProducer implements WorkflowProducer {
   }
 }
 function makeRuntime(store: LedgerStore): WorkflowRuntime {
-  return new WorkflowRuntime({ logger: noopLogger, store, selectProducer: () => new FakeProducer() });
+  return new WorkflowRuntime({
+    logger: noopLogger,
+    store,
+    selectProducer: () => new FakeProducer(),
+    selectPhaseSubagent: () => new FakePhaseSubagent(),
+  });
 }
 
 async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<void> {
@@ -114,5 +130,48 @@ describe("WsSession /plan routing", () => {
     expect(evts).toHaveLength(1);
     expect(evts[0]!["status"]).toBe("errored");
     expect(evts[0]!["detail"]).toContain("No workflow runtime");
+  });
+
+  test("question.answer writes the answer, flips status, and auto-advances the loop", async () => {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    const phase = new FakePhaseSubagent();
+    phase
+      .enqueue(CLARIFY_REVIEW_SPEC, { clear: true, contradictions: [], newQuestions: [] })
+      .enqueue(PLAN_SPEC, {
+        milestones: [{ title: "Core", description: "c" }],
+        tasks: [{ milestoneRef: 0, headline: "T", description: "d" }],
+      })
+      .enqueue(PLAN_REVIEW_SPEC, { satisfied: true, findings: [], newQuestions: [] });
+    const rt = new WorkflowRuntime({
+      logger: noopLogger,
+      store,
+      selectProducer: () => new FakeProducer(),
+      selectPhaseSubagent: () => phase,
+    });
+    const ws = new WsSession("conn-5", noopLogger, undefined, null, null, rt);
+    const socket = makeMockSocket(ws);
+
+    // Phase 1 via the socket.
+    send(ws, socket, { type: "workflow.start", seq: 1, ts: Date.now(), kind: "plan", text: "build it", platform: "claude" });
+    await waitFor(() => statuses(socket).includes("questions_ready"));
+
+    const goalId = (socket.sent.find((f) => f.type === "workflow.event" && f["goalId"] !== undefined) as ParsedFrame)["goalId"] as string;
+    const specId = (store.fetchItem(GOALS_LEDGER, goalId).fields["milestones"] as string[])[0]!;
+    const q0 = (store.listMilestoneItems(specId)[QUESTIONS_LEDGER] ?? [])[0]!.id;
+
+    // Answer the only open question via the WS frame → write + flip + advance.
+    send(ws, socket, { type: "question.answer", seq: 2, ts: Date.now(), questionId: q0, answer: "web" });
+    await waitFor(() => statuses(socket).includes("planned"));
+
+    // The answer was written and the question flipped to answered.
+    const answered = store.fetchItem(QUESTIONS_LEDGER, q0);
+    expect(answered.status).toBe("answered");
+    expect(answered.fields["answer"]).toBe("web");
+    // The loop auto-advanced all the way to planned.
+    expect(store.fetchItem(GOALS_LEDGER, goalId).status).toBe("planned");
+    expect(statuses(socket)).toContain("done");
+
+    await store.dispose();
   });
 });

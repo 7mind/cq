@@ -37,6 +37,16 @@ export const ProducerOutputSchema = z.object({
 });
 export type ProducerOutput = z.infer<typeof ProducerOutputSchema>;
 
+/**
+ * A sink the dispatch calls EXACTLY ONCE with a promise that resolves when the
+ * underlying SDK `query()` subprocess has been fully torn down (its async
+ * generator returned after `close()`), i.e. the child process is gone. Lets the
+ * runtime expose a "fully drained" awaitable without changing when `produce`
+ * resolves to the caller (it still resolves at submit-time). Optional so
+ * existing callers/tests need not supply it.
+ */
+export type TeardownSink = (settled: Promise<void>) => void;
+
 /** Inputs to a single producer dispatch. */
 export interface ProduceRequest {
   /** The refined user goal text (already stripped of the `/plan` token). */
@@ -45,6 +55,8 @@ export interface ProduceRequest {
   readonly model?: string;
   /** Abort signal — the runtime aborts on busy-preempt or shutdown. */
   readonly signal?: AbortSignal;
+  /** Optional sink for the subprocess-teardown awaitable (see TeardownSink). */
+  readonly registerTeardown?: TeardownSink;
 }
 
 /**
