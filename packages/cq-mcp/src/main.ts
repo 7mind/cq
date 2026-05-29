@@ -39,6 +39,17 @@
  * standalone binary has no browser to ask — so `tools/list` stays at the
  * 13 ledger tools and the model never sees a tool it cannot fulfil.
  *
+ * `submit_workflow_phase` (codexwf — Codex `/plan` structured-output relay).
+ * Registered ONLY when the internal WS channel is up AND the workflow env
+ * (`CQ_WORKFLOW_SUBMIT_ID` + `CQ_WORKFLOW_PHASE`) is present — i.e. this cq-mcp
+ * child was spawned by a headless-Codex phase dispatch. The handler relays the
+ * model's structured `payload` upstream as `workflow.submit`, parks on the
+ * `CqMcpSubmitBroker` until cq-server validates + acks (`workflow.submit_ack`),
+ * then returns success (or the validation error) to the model. It NEVER writes
+ * a ledger — the HARNESS (WorkflowRuntime) owns every ledger write, exactly as
+ * on the Claude path. A regular Codex chat session (no workflow env) never sees
+ * this tool.
+ *
  * Schemas. The Zod shapes here mirror the Claude-facing factory in
  * `packages/ledger/src/mcp/ledgerTools.ts`. They are intentionally
  * duplicated rather than imported because the Claude-side factory
@@ -62,8 +73,10 @@ import {
   type FieldValue,
   type LedgerSchema,
 } from "@cq/ledger";
+import { WorkflowSubmitPhase } from "@cq/shared";
 import { InternalWsChannel } from "./internalWs.js";
 import { CqMcpAskBroker } from "./askBroker.js";
+import { CqMcpSubmitBroker } from "./submitBroker.js";
 
 // ---------------------------------------------------------------------------
 // Shared Zod fragments (mirror packages/ledger/src/mcp/ledgerTools.ts)
@@ -444,6 +457,83 @@ export function makeAskIdGenerator(pid: number): () => string {
 }
 
 // ---------------------------------------------------------------------------
+// submit_workflow_phase tool (Codex /plan structured-output relay; codexwf)
+// ---------------------------------------------------------------------------
+
+/**
+ * Input schema for the harness-owned `submit_workflow_phase` tool. The phase
+ * subagent passes its structured result as a single `payload` object. cq-mcp
+ * does NOT validate the per-phase shape — it relays `payload` verbatim and the
+ * server's `WorkflowSubmitProxy` validates it against the phase's Zod schema.
+ * The model sees a uniform single-arg tool whatever the active phase.
+ */
+const submitWorkflowPhaseInputSchema = {
+  payload: z.unknown(),
+} as const;
+
+/**
+ * Dependencies the relayed submit tool needs. `submitId` + `phase` are primed
+ * by the spawning headless-Codex lane (via env) so the server correlates the
+ * relayed submit to the exact in-flight phase dispatch. `sendSubmit` ships the
+ * `workflow.submit` envelope (the tool does not know about the channel).
+ * Injectable so the integration test can drive the handler with a fake
+ * transport.
+ */
+export interface SubmitToolDeps {
+  broker: CqMcpSubmitBroker;
+  /** The in-flight phase dispatch id (from CQ_WORKFLOW_SUBMIT_ID). */
+  submitId: string;
+  /** Which /plan phase this child serves (from CQ_WORKFLOW_PHASE). */
+  phase: WorkflowSubmitPhase;
+  /** Sends the workflow.submit envelope upstream over the channel. */
+  sendSubmit: (req: { submitId: string; phase: WorkflowSubmitPhase; payload: unknown }) => void;
+}
+
+/**
+ * Register the relayed `submit_workflow_phase` tool on the MCP server. Call
+ * this ONLY when the internal WS channel is up AND the workflow env (submitId +
+ * phase) is present — a standalone binary or a non-workflow Codex session has
+ * no harness waiting on a submit, so the tool must not appear in `tools/list`.
+ *
+ * The handler relays the model's payload upstream and parks on the broker until
+ * the server acks. On ack{ok:true} it returns success so the Codex turn ends
+ * cleanly; on ack{ok:false} it returns the validation error (isError) so the
+ * model can resubmit. It NEVER writes a ledger — the HARNESS does.
+ */
+export function registerSubmitWorkflowPhaseTool(
+  server: McpServer,
+  deps: SubmitToolDeps,
+): void {
+  server.registerTool(
+    "submit_workflow_phase",
+    {
+      description:
+        "Submit the structured result for the current /plan phase. Call exactly once " +
+        "with the `payload` object the phase requires. The harness validates and " +
+        "stores it; do NOT write any ledger.",
+      inputSchema: submitWorkflowPhaseInputSchema,
+    },
+    async (args) => {
+      const payload = (args as { payload: unknown }).payload;
+      deps.sendSubmit({ submitId: deps.submitId, phase: deps.phase, payload });
+      const outcome = await deps.broker.submit(deps.submitId);
+      if (outcome.ok) {
+        return jsonResult({ ok: true });
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `submit_workflow_phase rejected: ${outcome.error ?? "unknown error"}. Fix and resubmit.`,
+          },
+        ],
+        isError: true,
+      };
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // CLI entrypoint
 // ---------------------------------------------------------------------------
 
@@ -606,6 +696,53 @@ export async function main(argv: readonly string[]): Promise<void> {
           });
         },
       });
+    }
+  }
+
+  // submit_workflow_phase (Codex /plan structured-output relay; codexwf).
+  // Registered ONLY when the internal WS channel is up AND the workflow env
+  // (CQ_WORKFLOW_SUBMIT_ID + CQ_WORKFLOW_PHASE) is supplied — i.e. this cq-mcp
+  // child was spawned by a headless-Codex phase dispatch. A regular Codex chat
+  // session (no workflow env) does not see the tool. The tool relays the
+  // model's payload upstream; the HARNESS (WorkflowRuntime) validates + writes.
+  if (channel !== null) {
+    const submitId = process.env["CQ_WORKFLOW_SUBMIT_ID"];
+    const phaseRaw = process.env["CQ_WORKFLOW_PHASE"];
+    if (submitId !== undefined && submitId !== "" && phaseRaw !== undefined && phaseRaw !== "") {
+      const phaseParsed = WorkflowSubmitPhase.safeParse(phaseRaw);
+      if (!phaseParsed.success) {
+        process.stderr.write(
+          `cq-mcp: CQ_WORKFLOW_PHASE="${phaseRaw}" is not a known phase; submit_workflow_phase disabled\n`,
+        );
+      } else {
+        const wsChannel = channel;
+        const submitBroker = new CqMcpSubmitBroker();
+        // Inbound workflow.submit_ack (from cq-server) → resolve the parked submit.
+        wsChannel.registerHandler("workflow.submit_ack", async (msg) => {
+          const outcome: { ok: boolean; error?: string } = { ok: msg.ok };
+          if (msg.error !== undefined) outcome.error = msg.error;
+          submitBroker.ack(msg.submitId, outcome);
+        });
+        // On disconnect, reject the pending submit so the tool returns an error
+        // result instead of hanging (no reconnection by design).
+        wsChannel.registerOnClose(() => {
+          submitBroker.rejectAll("cq-mcp: internal WS channel closed");
+        });
+        registerSubmitWorkflowPhaseTool(server, {
+          broker: submitBroker,
+          submitId,
+          phase: phaseParsed.data,
+          sendSubmit: (req) => {
+            wsChannel.send({
+              type: "workflow.submit",
+              submitId: req.submitId,
+              phase: req.phase,
+              payload: req.payload,
+              sourcePid: process.pid,
+            });
+          },
+        });
+      }
     }
   }
 
