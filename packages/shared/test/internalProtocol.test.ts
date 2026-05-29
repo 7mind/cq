@@ -55,7 +55,7 @@ describe("internalProtocol — InternalWsMessage", () => {
 
   it("rejects unknown discriminant `type` values", () => {
     const result = InternalWsMessage.safeParse({
-      type: "ask.request",
+      type: "future.unknown",
       ledgerId: "x",
       op: "create",
       sourcePid: 1,
@@ -127,6 +127,107 @@ describe("internalProtocol — InternalWsMessage", () => {
         op: 7,
         sourcePid: 1,
       }).success,
+    ).toBe(false);
+  });
+});
+
+describe("internalProtocol — ask.request (askproxy outer-14)", () => {
+  const wellFormed = {
+    type: "ask.request" as const,
+    askId: "ask-1",
+    toolUseId: "tu-abc",
+    sessionId: "11111111-2222-3333-4444-555555555555",
+    questions: [{ question: "Pick one", options: ["a", "b"] }],
+    sourcePid: 4242,
+  };
+
+  it("round-trips a well-formed ask.request through JSON", () => {
+    const parsed = InternalWsMessage.parse(wellFormed);
+    expect(parsed).toEqual(wellFormed);
+    const decoded = InternalWsMessage.parse(JSON.parse(JSON.stringify(parsed)));
+    expect(decoded).toEqual(wellFormed);
+  });
+
+  it("accepts 1..4 questions and rejects empty / >4", () => {
+    expect(
+      InternalWsMessage.safeParse({ ...wellFormed, questions: [] }).success,
+    ).toBe(false);
+    expect(
+      InternalWsMessage.safeParse({
+        ...wellFormed,
+        questions: [1, 2, 3, 4],
+      }).success,
+    ).toBe(true);
+    expect(
+      InternalWsMessage.safeParse({
+        ...wellFormed,
+        questions: [1, 2, 3, 4, 5],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects missing or empty askId / toolUseId / sessionId", () => {
+    for (const key of ["askId", "toolUseId", "sessionId"] as const) {
+      const missing: Record<string, unknown> = { ...wellFormed };
+      delete missing[key];
+      expect(InternalWsMessage.safeParse(missing).success).toBe(false);
+      expect(
+        InternalWsMessage.safeParse({ ...wellFormed, [key]: "" }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("rejects a negative or non-integer sourcePid", () => {
+    expect(
+      InternalWsMessage.safeParse({ ...wellFormed, sourcePid: -1 }).success,
+    ).toBe(false);
+    expect(
+      InternalWsMessage.safeParse({ ...wellFormed, sourcePid: 1.5 }).success,
+    ).toBe(false);
+  });
+});
+
+describe("internalProtocol — ask.reply (askproxy outer-14)", () => {
+  const wellFormed = {
+    type: "ask.reply" as const,
+    askId: "ask-1",
+    answers: { "Pick one": "a" },
+    sourcePid: 99,
+  };
+
+  it("round-trips a well-formed ask.reply through JSON", () => {
+    const parsed = InternalWsMessage.parse(wellFormed);
+    expect(parsed).toEqual(wellFormed);
+    const decoded = InternalWsMessage.parse(JSON.parse(JSON.stringify(parsed)));
+    expect(decoded).toEqual(wellFormed);
+  });
+
+  it("accepts arbitrary answer value shapes (string / string[])", () => {
+    const r = InternalWsMessage.safeParse({
+      ...wellFormed,
+      answers: { q1: "x", q2: ["a", "b"] },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("accepts an empty answers map", () => {
+    expect(
+      InternalWsMessage.safeParse({ ...wellFormed, answers: {} }).success,
+    ).toBe(true);
+  });
+
+  it("rejects missing or empty askId", () => {
+    const missing: Record<string, unknown> = { ...wellFormed };
+    delete missing["askId"];
+    expect(InternalWsMessage.safeParse(missing).success).toBe(false);
+    expect(
+      InternalWsMessage.safeParse({ ...wellFormed, askId: "" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects answers that is not an object", () => {
+    expect(
+      InternalWsMessage.safeParse({ ...wellFormed, answers: "nope" }).success,
     ).toBe(false);
   });
 });

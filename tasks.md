@@ -6,12 +6,38 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## Milestones (high-level)
 
+- [~] **askproxy (outer-14)** — `ask_user_question` for Codex sessions via WS-back-proxy over the outer-13 internal WS channel. Plan: [`docs/drafts/20260529-1512-plan-askproxy.md`](docs/drafts/20260529-1512-plan-askproxy.md). Reopens the `ask_user_question` sub-aspect of D-GC-1 (closes ASKPROXY-D01). ClaudeBridge untouched.
 - [x] **outer-13 / coherence** — Cross-process cache coherence between cq-server and cq-mcp via per-process internal WebSocket channel (`ledger.changed` invalidation). Plan: [`docs/drafts/20260529-0050-plan-coherence.md`](docs/drafts/20260529-0050-plan-coherence.md).
 - [x] **outer-12 / msunify** — Unified `milestones` ledger + drop per-ledger milestone tools + ISO 8601 timestamps. Plan: [`docs/drafts/20260528-2100-plan-msunify.md`](docs/drafts/20260528-2100-plan-msunify.md).
 - [x] **outer-11** — D-UNIFASYNC-01 + adversarial sweep for sync/async unions.
 - [x] **outer-10** — close D-CQMCP-E2E + D-CQMCP-NIX (outer-9 follow-ups).
 - [x] **outer-9** — D-GC-1 (Codex ledger MCP) + D-GC-N1 (approvalPolicy).
 - (older milestones in this file)
+
+---
+
+## Milestone askproxy (outer-14) — PR breakdown
+
+Detail in [`docs/drafts/20260529-1512-plan-askproxy.md`](docs/drafts/20260529-1512-plan-askproxy.md).
+Intake baselines: `bun run check` 761/0, `bun run e2e` 20/0.
+
+- [x] **askproxy-1** — shared: `ask.request` + `ask.reply` variants on `InternalWsMessage` + round-trip/negative tests.
+- [ ] **askproxy-2** — cq-mcp: `CqMcpAskBroker` (two-slot race by askId) + `ask_user_question` tool + `ask.reply` handler + `channel.onClose`→rejectAll + `CQ_SESSION_ID` + broker tests.
+- [ ] **askproxy-3** — server: `AskProxy` collaborator + `ask.request` handler on `InternalWsService` + `buildAskUserQuestionEvent` helper + CodexBridge `handleChatQuestionReply` + `CQ_SESSION_ID` env + dispatch tests.
+- [ ] **askproxy-4** — integration: real cq-mcp subprocess ask round-trip + `tools/list` includes `ask_user_question` (channel up) / 13 ledger tools (standalone).
+- [ ] **askproxy-5** — discharge: ledgers, ASKPROXY-D01 resolved + D-GC-1 cross-ref, session log, manual scenario, check/e2e/nix.
+
+### Cross-cutting architectural notes (askproxy, locked)
+
+- [x] Dispatch decision = `Bridge.handleChatQuestionReply` already routes to `this.active` backend; a Codex-active reply lands in `CodexBridge.handleChatQuestionReply` (no redundant platform branch). Make it explicit by implementing that method + a test asserting Claude→broker, Codex→proxy.
+- [x] No "shared emit-ask-to-browser" between Claude and Codex: Claude gets the ask tool_use from the SDK's native assistant stream; the proxy SYNTHESIZES the identical assistant tool_use shape (`name:"AskUserQuestion"`, `id:toolUseId`, `input:{questions}`) via one factored helper `buildAskUserQuestionEvent`. Browser renders both identically (Stream.tsx:539).
+- [x] `ask.reply` uses `InternalWsService.broadcast` (unkeyed Set of sockets); askId discriminates across multiple connected cq-mcp children. Safe because askId is unique-per-ask.
+- [x] cq-mcp registers `ask_user_question` ONLY when the internal WS channel is up; standalone `tools/list` stays at 13 ledger tools.
+- [x] AskQuestion shape is `unknown` (no strict schema to factor); the wire mirror is `z.array(z.unknown()).min(1).max(4)`.
+
+### Completed (askproxy)
+
+- **askproxy-1** (2026-05-29) — Extended `packages/shared/src/internalProtocol.ts` `InternalWsMessage` discriminated union with `ask.request` (`{askId, toolUseId, sessionId, questions, sourcePid}`) and `ask.reply` (`{askId, answers, sourcePid}`). Added exported `AskQuestions` (`z.array(z.unknown()).min(1).max(4)`, mirrors the Claude tool's 1..4 bound) and `AskAnswers` (`z.record(z.string(), z.unknown())`, mirrors `ChatQuestionReply.answers`). Verification: `bun test packages/shared/test/internalProtocol.test.ts` → 19 pass (was 9; +10); `bun test packages/shared/` → 85 pass / 0 fail; `tsc -b packages/shared` exit 0. Surprise: the existing internalProtocol test used `type:"ask.request"` as its "unknown discriminant" example — repointed to `future.unknown` so it still asserts unknown-type rejection. Review: 1 round, 0 defects. Constraint for later PRs: `sessionId`/`askId`/`toolUseId` are `.min(1)` strings, not UUID-validated, to avoid coupling the internal protocol to the browser UUID format. Metrics: review rounds 1; defects 0; verification complete; scope delta none.
 
 ---
 
