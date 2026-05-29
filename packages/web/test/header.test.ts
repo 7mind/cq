@@ -12,7 +12,8 @@
  *   Cases 3 and 4 also render <Header> directly — they toggle inProgress and
  *   fire onNewSession/cancel callbacks, asserting the dialog lifecycle.
  *
- * DOM: happy-dom via GlobalRegistrator (see setup.ts preload).
+ * DOM: happy-dom via registerDom() (helpers/dom.ts) — registers at module
+ * load, unregisters in afterAll (D-OUTER7-01). No bunfig/setup.ts preload.
  * React 19 + react-dom/client + act().
  */
 

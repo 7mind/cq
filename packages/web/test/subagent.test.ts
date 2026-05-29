@@ -8,8 +8,9 @@
  *   Assert: one SubagentCard rendered; inner assistant text present; inner
  *           tool card present; status badge shows 'completed'.
  *
- * Test environment: happy-dom via GlobalRegistrator (preloaded by bunfig.toml).
- * React 19 + react-dom/client for rendering.
+ * Test environment: happy-dom via registerDom() (helpers/dom.ts) — registers
+ * at module load, unregisters in afterAll (D-OUTER7-01). No bunfig/setup.ts
+ * preload. React 19 + react-dom/client for rendering.
  */
 
 // Must be first — registers DOM globals (document, window, etc.)

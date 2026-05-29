@@ -9,8 +9,9 @@
  *  5. WebCard (WebFetch) — shows URL and truncated snippet.
  *  6. WebCard (WebSearch) — shows query and snippet.
  *
- * Test environment: happy-dom via GlobalRegistrator (preloaded by bunfig.toml).
- * React 19 + react-dom/client for rendering.
+ * Test environment: happy-dom via registerDom() (helpers/dom.ts) — registers
+ * at module load, unregisters in afterAll (D-OUTER7-01). No bunfig/setup.ts
+ * preload. React 19 + react-dom/client for rendering.
  */
 
 // Must be first — registers DOM globals.
