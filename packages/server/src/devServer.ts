@@ -8,6 +8,7 @@ import { Bridge } from "./agent/bridge";
 import { SessionRegistry } from "./seq/sessionRegistry";
 import { SqlitePersistence } from "./persist/SqlitePersistence.js";
 import { FsLedgerStore } from "@cq/ledger";
+import { INTERNAL_WS_PATH, InternalWsService, type InternalWsConnData } from "./agent/internalWs";
 
 export type DevServerConfig = Readonly<{
   host: string;
@@ -21,7 +22,13 @@ export type RunningDevServer = {
   stop(): void | Promise<void>;
   readonly url: URL;
   readonly development: boolean;
+  /** URL the spawned cq-mcp uses to dial the internal channel (D-COHERENCE). */
+  readonly internalWsUrl: string;
+  /** Token to pass to spawned cq-mcp via env (D-COHERENCE). */
+  readonly internalWsToken: string;
 };
+
+type DevWsData = WsSessionData | InternalWsConnData;
 
 /**
  * Injectable serve function type — matches the Bun.serve signature for our use.
@@ -42,8 +49,27 @@ export async function startDevServer(
     mkdirSync(dirname(resolve(dbPath)), { recursive: true });
   }
   const persistence = new SqlitePersistence(dbPath);
-  const ledgerStore = new FsLedgerStore({ root: cwd });
+  const internalWs = new InternalWsService({ logger });
+  const ledgerStore = new FsLedgerStore({
+    root: cwd,
+    onMutation: (ledgerId, op) => {
+      internalWs.broadcast({
+        type: "ledger.changed",
+        ledgerId,
+        op,
+        sourcePid: internalWs.selfPid(),
+      });
+    },
+  });
   await ledgerStore.init();
+  internalWs.registerHandler("ledger.changed", (msg) => {
+    void ledgerStore.invalidate(msg.ledgerId).catch((err: unknown) => {
+      logger.warn("ledger.invalidate_failed", {
+        ledgerId: msg.ledgerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  });
   const bridge = new Bridge({ logger, registry, cwd, persistence, ledgerStore });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -54,8 +80,19 @@ export async function startDevServer(
     routes: {
       "/": indexHtml,
     },
-    fetch(req: Request, srv: { upgrade(req: Request, opts: { data: WsSessionData }): boolean }) {
+    fetch(
+      req: Request,
+      srv: {
+        upgrade(
+          req: Request,
+          opts: { data: DevWsData; headers?: HeadersInit },
+        ): boolean;
+      },
+    ) {
       const url = new URL(req.url);
+      if (url.pathname === INTERNAL_WS_PATH) {
+        return internalWs.handleUpgrade(req, srv) ?? new Response("Upgrade required", { status: 426 });
+      }
       if (url.pathname === "/ws") {
         if (!isOriginAllowed(req)) {
           logger.info("ws.origin_rejected", {
@@ -77,19 +114,33 @@ export async function startDevServer(
       return new Response("Not found", { status: 404 });
     },
     websocket: {
-      open(ws: { data: WsSessionData; send(d: string): void; close(c?: number, r?: string): void }) {
-        ws.data.session.open(ws);
+      open(ws: { data: DevWsData; send(d: string): void; close(c?: number, r?: string): void }) {
+        if ("kind" in ws.data && ws.data.kind === "internal") {
+          internalWs.open(ws as never);
+          return;
+        }
+        (ws.data as WsSessionData).session.open(ws as never);
       },
-      message(ws: { data: WsSessionData; send(d: string): void; close(c?: number, r?: string): void }, raw: string | Buffer) {
-        ws.data.session.message(ws, raw);
+      message(ws: { data: DevWsData; send(d: string): void; close(c?: number, r?: string): void }, raw: string | Buffer) {
+        if ("kind" in ws.data && ws.data.kind === "internal") {
+          internalWs.message(ws as never, raw);
+          return;
+        }
+        (ws.data as WsSessionData).session.message(ws as never, raw);
       },
-      close(ws: { data: WsSessionData; send(d: string): void; close(c?: number, r?: string): void }, code: number, reason: string) {
-        ws.data.session.close(ws, code, reason);
+      close(ws: { data: DevWsData; send(d: string): void; close(c?: number, r?: string): void }, code: number, reason: string) {
+        if ("kind" in ws.data && ws.data.kind === "internal") {
+          internalWs.close(ws as never);
+          return;
+        }
+        (ws.data as WsSessionData).session.close(ws as never, code, reason);
       },
     },
   });
 
-  logger.info("cq dev listening", { host, port, cwd, dbPath, hmr: true });
+  const boundPort = server.port;
+  const internalWsUrl = `ws://127.0.0.1:${boundPort}${INTERNAL_WS_PATH}`;
+  logger.info("cq dev listening", { host, port: boundPort, cwd, dbPath, hmr: true, internalWsUrl });
 
   return {
     stop() {
@@ -103,5 +154,7 @@ export async function startDevServer(
     get development() {
       return server.development;
     },
+    internalWsUrl,
+    internalWsToken: internalWs.tokenForChild(),
   };
 }
