@@ -8,7 +8,7 @@
  *      follow-up (tool_result) return a confirmation text "Ledger created.".
  *   3. Send a user prompt asking the model to create the ledger.
  *   4. Wait for "Ledger created." to appear in the stream.
- *   5. Assert that the cq server's --cwd contains ./docs/todos.md with the
+ *   5. Assert that the cq server's --cwd contains ./docs/xenos.md with the
  *      expected frontmatter, and ./docs/ledgers.yaml lists the ledger.
  */
 
@@ -58,7 +58,7 @@ function createLedgerSseEvents(): SSEEvent[] {
         delta: {
           type: "input_json_delta",
           partial_json: JSON.stringify({
-            name: "todos",
+            name: "xenos",
             schema: {
               statusValues: ["open", "done"],
               terminalStatuses: ["done"],
@@ -136,23 +136,23 @@ test("ledger create: agent calls create_ledger and the file appears on disk", as
   await mock.script(createLedgerSseEvents());
   await mock.scriptOnToolResult(confirmSseEvents());
 
-  await cq.sendMessage("Create a ledger called 'todos' with statuses open/done.");
+  await cq.sendMessage("Create a ledger called 'xenos' with statuses open/done.");
   await cq.waitForTextInStream("Ledger created.", 25_000);
 
-  // Inspect the cq server's --cwd: docs/todos.md and docs/ledgers.yaml must
+  // Inspect the cq server's --cwd: docs/xenos.md and docs/ledgers.yaml must
   // both reflect the newly-created ledger.
   const cqCwd = process.env["CQ_E2E_CWD"];
   expect(cqCwd, "CQ_E2E_CWD must be set by globalSetup").toBeTruthy();
-  const todosMd = path.join(cqCwd!, "docs", "todos.md");
+  const xenosMd = path.join(cqCwd!, "docs", "xenos.md");
   const registryYaml = path.join(cqCwd!, "docs", "ledgers.yaml");
 
-  const todosText = await fs.readFile(todosMd, "utf8");
-  expect(todosText).toContain("ledger: todos");
-  expect(todosText).toContain("counters:");
-  expect(todosText).toContain("# todos");
+  const xenosText = await fs.readFile(xenosMd, "utf8");
+  expect(xenosText).toContain("ledger: xenos");
+  expect(xenosText).toContain("counters:");
+  expect(xenosText).toContain("# xenos");
 
   const registryText = await fs.readFile(registryYaml, "utf8");
-  expect(registryText).toContain("name: todos");
+  expect(registryText).toContain("name: xenos");
   expect(registryText).toContain("- open");
   expect(registryText).toContain("- done");
 });
