@@ -12,6 +12,7 @@ import {
   INTERNAL_WS_SUBPROTOCOL_PREFIX,
   InternalWsMessage,
   LedgerOp,
+  WorkflowSubmitPhase,
 } from "../src/internalProtocol.js";
 
 describe("internalProtocol — constants", () => {
@@ -228,6 +229,124 @@ describe("internalProtocol — ask.reply (askproxy outer-14)", () => {
   it("rejects answers that is not an object", () => {
     expect(
       InternalWsMessage.safeParse({ ...wellFormed, answers: "nope" }).success,
+    ).toBe(false);
+  });
+});
+
+describe("internalProtocol — WorkflowSubmitPhase (codexwf)", () => {
+  it("accepts the four /plan phases", () => {
+    for (const p of ["produce", "clarify_review", "plan", "plan_review"] as const) {
+      expect(WorkflowSubmitPhase.parse(p)).toBe(p);
+    }
+  });
+
+  it("rejects unknown phases", () => {
+    expect(() => WorkflowSubmitPhase.parse("review")).toThrow();
+    expect(() => WorkflowSubmitPhase.parse("")).toThrow();
+  });
+});
+
+describe("internalProtocol — workflow.submit (codexwf relay)", () => {
+  const wellFormed = {
+    type: "workflow.submit" as const,
+    submitId: "submit-7-1",
+    phase: "produce" as const,
+    payload: { goal: { description: "a notes app" }, questions: [{ question: "which platform?" }] },
+    sourcePid: 4242,
+  };
+
+  it("round-trips a well-formed workflow.submit through JSON", () => {
+    const parsed = InternalWsMessage.parse(wellFormed);
+    expect(parsed).toEqual(wellFormed);
+    const decoded = InternalWsMessage.parse(JSON.parse(JSON.stringify(parsed)));
+    expect(decoded).toEqual(wellFormed);
+  });
+
+  it("carries an arbitrary (schema-agnostic) payload — validated server-side", () => {
+    // The relay does NOT validate the per-phase shape; any JSON payload passes
+    // the channel boundary and is validated by WorkflowSubmitProxy.
+    for (const payload of [{}, { anything: 1 }, [1, 2], "str", 42, true, null]) {
+      expect(
+        InternalWsMessage.safeParse({ ...wellFormed, payload }).success,
+      ).toBe(true);
+    }
+  });
+
+  it("accepts each known phase discriminator", () => {
+    for (const phase of ["produce", "clarify_review", "plan", "plan_review"] as const) {
+      expect(InternalWsMessage.safeParse({ ...wellFormed, phase }).success).toBe(true);
+    }
+  });
+
+  it("rejects an unknown phase", () => {
+    expect(
+      InternalWsMessage.safeParse({ ...wellFormed, phase: "review" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects missing or empty submitId", () => {
+    const missing: Record<string, unknown> = { ...wellFormed };
+    delete missing["submitId"];
+    expect(InternalWsMessage.safeParse(missing).success).toBe(false);
+    expect(
+      InternalWsMessage.safeParse({ ...wellFormed, submitId: "" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a negative or non-integer sourcePid", () => {
+    expect(
+      InternalWsMessage.safeParse({ ...wellFormed, sourcePid: -1 }).success,
+    ).toBe(false);
+    expect(
+      InternalWsMessage.safeParse({ ...wellFormed, sourcePid: 1.5 }).success,
+    ).toBe(false);
+  });
+});
+
+describe("internalProtocol — workflow.submit_ack (codexwf relay)", () => {
+  const okAck = {
+    type: "workflow.submit_ack" as const,
+    submitId: "submit-7-1",
+    ok: true,
+    sourcePid: 99,
+  };
+  const errAck = {
+    type: "workflow.submit_ack" as const,
+    submitId: "submit-7-1",
+    ok: false,
+    error: "payload failed validation: questions: array must contain at least 1 element",
+    sourcePid: 99,
+  };
+
+  it("round-trips an ok ack (no error field) through JSON", () => {
+    const parsed = InternalWsMessage.parse(okAck);
+    expect(parsed).toEqual(okAck);
+    const decoded = InternalWsMessage.parse(JSON.parse(JSON.stringify(parsed)));
+    expect(decoded).toEqual(okAck);
+  });
+
+  it("round-trips an error ack (with error string) through JSON", () => {
+    const parsed = InternalWsMessage.parse(errAck);
+    expect(parsed).toEqual(errAck);
+    const decoded = InternalWsMessage.parse(JSON.parse(JSON.stringify(parsed)));
+    expect(decoded).toEqual(errAck);
+  });
+
+  it("requires the ok boolean", () => {
+    const missing: Record<string, unknown> = { ...okAck };
+    delete missing["ok"];
+    expect(InternalWsMessage.safeParse(missing).success).toBe(false);
+    expect(
+      InternalWsMessage.safeParse({ ...okAck, ok: "yes" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects missing or empty submitId", () => {
+    const missing: Record<string, unknown> = { ...okAck };
+    delete missing["submitId"];
+    expect(InternalWsMessage.safeParse(missing).success).toBe(false);
+    expect(
+      InternalWsMessage.safeParse({ ...okAck, submitId: "" }).success,
     ).toBe(false);
   });
 });
