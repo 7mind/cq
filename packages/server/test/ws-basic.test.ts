@@ -11,6 +11,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import net from "node:net";
 import path from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 const MAIN_TS = path.resolve(import.meta.dir, "../src/main.ts");
 const ORIGIN_HEADER = "Origin";
@@ -112,13 +114,18 @@ describe("ws-basic: /ws endpoint frame handling", () => {
   let proc: ReturnType<typeof Bun.spawn>;
   let port: number;
   let baseWsUrl: string;
+  let tmpCwd: string;
 
   beforeAll(async () => {
     port = await getFreePort();
     baseWsUrl = `ws://127.0.0.1:${port}`;
 
+    // Per-test fresh cwd so the server bootstraps ledgers in an isolated
+    // docs/ dir rather than the repo root. (TESTHYG-D01)
+    tmpCwd = await mkdtemp(path.join(tmpdir(), "cq-ws-basic-"));
+
     proc = Bun.spawn(
-      ["bun", "run", MAIN_TS, "--port", String(port), "--host", "127.0.0.1"],
+      ["bun", "run", MAIN_TS, "--port", String(port), "--host", "127.0.0.1", "--cwd", tmpCwd],
       { stdout: "pipe", stderr: "pipe" },
     );
 
@@ -151,6 +158,7 @@ describe("ws-basic: /ws endpoint frame handling", () => {
 
   afterAll(async () => {
     try { proc.kill(); } catch { /* already dead */ }
+    await rm(tmpCwd, { recursive: true, force: true });
   });
 
   // -------------------------------------------------------------------------

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import net from "node:net";
 import path from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 const MAIN_TS = path.resolve(import.meta.dir, "../src/main.ts");
 
@@ -27,13 +29,20 @@ describe("smoke: server boot, static assets, SIGINT exit", () => {
   let proc: ReturnType<typeof Bun.spawn>;
   let port: number;
   let baseUrl: string;
+  let tmpCwd: string;
 
   beforeAll(async () => {
     port = await getFreePort();
     baseUrl = `http://127.0.0.1:${port}`;
 
+    // Per-test fresh cwd: the server bootstraps ledgers under <cwd>/docs/ on
+    // boot. Without an explicit --cwd it would use process.cwd() (the repo
+    // root) and either trip the schema-divergence guard against a stale
+    // docs/ledgers.yaml or pollute the repo with bootstrap files. (TESTHYG-D01)
+    tmpCwd = await mkdtemp(path.join(tmpdir(), "cq-smoke-"));
+
     proc = Bun.spawn(
-      ["bun", "run", MAIN_TS, "--port", String(port), "--host", "127.0.0.1"],
+      ["bun", "run", MAIN_TS, "--port", String(port), "--host", "127.0.0.1", "--cwd", tmpCwd],
       {
         stdout: "pipe",
         stderr: "pipe",
@@ -74,6 +83,7 @@ describe("smoke: server boot, static assets, SIGINT exit", () => {
     } catch {
       // already dead
     }
+    await rm(tmpCwd, { recursive: true, force: true });
   });
 
   it("GET / returns 200 with <div id=\"root\">", async () => {

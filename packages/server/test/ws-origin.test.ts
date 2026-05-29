@@ -26,6 +26,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import net from "node:net";
 import path from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 const MAIN_TS = path.resolve(import.meta.dir, "../src/main.ts");
 
@@ -93,14 +95,19 @@ describe("ws-origin: Origin enforcement on /ws", () => {
   let port: number;
   let baseHttpUrl: string;
   let baseWsUrl: string;
+  let tmpCwd: string;
 
   beforeAll(async () => {
     port = await getFreePort();
     baseHttpUrl = `http://127.0.0.1:${port}`;
     baseWsUrl = `ws://127.0.0.1:${port}`;
 
+    // Per-test fresh cwd so the server bootstraps ledgers in an isolated
+    // docs/ dir rather than the repo root. (TESTHYG-D01)
+    tmpCwd = await mkdtemp(path.join(tmpdir(), "cq-ws-origin-"));
+
     proc = Bun.spawn(
-      ["bun", "run", MAIN_TS, "--port", String(port), "--host", "127.0.0.1"],
+      ["bun", "run", MAIN_TS, "--port", String(port), "--host", "127.0.0.1", "--cwd", tmpCwd],
       { stdout: "pipe", stderr: "pipe" },
     );
 
@@ -132,6 +139,7 @@ describe("ws-origin: Origin enforcement on /ws", () => {
 
   afterAll(async () => {
     try { proc.kill(); } catch { /* already dead */ }
+    await rm(tmpCwd, { recursive: true, force: true });
   });
 
   // -------------------------------------------------------------------------

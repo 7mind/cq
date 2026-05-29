@@ -1,7 +1,24 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import type { Serve } from "bun";
+import path from "node:path";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { startDevServer, type ServeFunction } from "../src/devServer";
 import type { Logger } from "../src/log/logger";
+
+// startDevServer constructs a real FsLedgerStore rooted at cwd and calls
+// init(), which bootstraps ledgers under <cwd>/docs/. A shared fixed cwd
+// (e.g. "/tmp") risks tripping the schema-divergence guard against
+// bootstrap files left by other runs. Each test gets a fresh cwd. (TESTHYG-D01)
+let tmpCwd: string;
+let dbPath: string;
+beforeEach(async () => {
+  tmpCwd = await mkdtemp(path.join(tmpdir(), "cq-dev-server-"));
+  dbPath = path.join(tmpCwd, "cq.sqlite");
+});
+afterEach(async () => {
+  await rm(tmpCwd, { recursive: true, force: true });
+});
 
 /**
  * Minimal logger that discards all output — avoids log file I/O in tests.
@@ -46,7 +63,7 @@ describe("startDevServer — config shape (options passthrough)", () => {
 
     const logger = makeNullLogger();
     await startDevServer(
-      { host: "127.0.0.1", port: 0, cwd: "/tmp", dbPath: "/tmp/cq.sqlite", logger },
+      { host: "127.0.0.1", port: 0, cwd: tmpCwd, dbPath, logger },
       stubServe,
     );
 
@@ -77,8 +94,8 @@ describe("startDevServer — operational (real Bun.serve)", () => {
     const devServer = await startDevServer({
       host: "127.0.0.1",
       port: 0,
-      cwd: "/tmp",
-      dbPath: "/tmp/cq.sqlite",
+      cwd: tmpCwd,
+      dbPath,
       logger,
     });
 
