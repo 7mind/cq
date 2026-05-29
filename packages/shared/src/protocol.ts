@@ -207,6 +207,31 @@ export const ChatStart = z.object({
 });
 export type ChatStart = z.infer<typeof ChatStart>;
 
+/**
+ * `workflow.start` — client → server. Replaces `chat.input` when the user
+ * types a `/plan …` line. Routed by the server CommandRegistry to the
+ * WorkflowRuntime (own dispatch lane, separate from pool=1 interactive chat).
+ *
+ *  - `kind` — the command kind. Only "plan" exists this cycle.
+ *  - `goalRef` — present for `/plan G<id> <text>` (continuation). Absent for
+ *    a new goal. Continuation returns a `workflow.event{status:"errored"}`
+ *    with a continuation-not-implemented detail this cycle (Q9/Q10).
+ *  - `text` — the free-text goal/feature description (already stripped of the
+ *    leading `/plan` token by the client).
+ *  - `platform` — the backend the producer dispatches on, chosen from the
+ *    model selection active at `/plan` time (Q8). Defaults to "claude".
+ */
+export const WorkflowStart = z.object({
+  type: z.literal("workflow.start"),
+  seq,
+  ts,
+  kind: z.literal("plan"),
+  goalRef: z.string().optional(),
+  text: z.string(),
+  platform: PlatformSchema.optional(),
+});
+export type WorkflowStart = z.infer<typeof WorkflowStart>;
+
 export const ChatRejoin = z.object({
   type: z.literal("chat.rejoin"),
   seq,
@@ -467,6 +492,31 @@ export const ChatError = z.object({
 });
 export type ChatError = z.infer<typeof ChatError>;
 
+/**
+ * `workflow.event` — server → client lifecycle notification (Q7). Surfaced
+ * minimally in the chat stream as a system-style banner this cycle; full
+ * Goals-tab rendering is cycle 4.
+ *
+ *  - `workflowId` — in-memory id of the active workflow run (UUID).
+ *  - `goalId` — the `goals`-ledger id once the goal row exists (e.g. "G1").
+ *    Absent before the goal is written (started/errored-early).
+ *  - `phase` — coarse phase label ("produce" for phase 1).
+ *  - `status` — lifecycle status. Ordered emission for a happy run:
+ *    started → producing → questions_ready. Error path: → errored.
+ *  - `detail` — human-readable detail (question count, error reason, …).
+ */
+export const WorkflowEvent = z.object({
+  type: z.literal("workflow.event"),
+  seq,
+  ts,
+  workflowId: uuidStr(),
+  goalId: z.string().optional(),
+  phase: z.enum(["produce"]),
+  status: z.enum(["started", "producing", "questions_ready", "errored"]),
+  detail: z.string().optional(),
+});
+export type WorkflowEvent = z.infer<typeof WorkflowEvent>;
+
 export const HistoryListResult = z.object({
   type: z.literal("history.list_result"),
   seq,
@@ -550,6 +600,7 @@ export const ClientFrame = z.discriminatedUnion("type", [
   ChatRejoin,
   ChatInput,
   ChatInterrupt,
+  WorkflowStart,
   ChatPermissionReply,
   ChatQuestionReply,
   ChatElicitationReply,
@@ -577,6 +628,7 @@ export const ServerFrame = z.discriminatedUnion("type", [
   ChatElicitationRequest,
   ChatDone,
   ChatError,
+  WorkflowEvent,
   ChatReadFileResult,
   HistoryListResult,
   HistoryGetResult,
