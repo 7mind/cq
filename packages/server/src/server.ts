@@ -186,6 +186,61 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       }
 
       // ── E2E test hook ────────────────────────────────────────────────── //
+      // GET /__e2e/workflow-idle: report whether the workflow lane is idle, so a
+      // workflow-heavy spec can wait for its subprocesses to drain before the
+      // next spec starts (reduces cross-spec subprocess contention).
+      if (pathname === "/__e2e/workflow-idle" && process.env["CQ_E2E_HOOKS"] === "1") {
+        return new Response(JSON.stringify({ busy: workflow.isBusy() }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      // ── E2E test hook ────────────────────────────────────────────────── //
+      // POST /__e2e/answer: answer one open question (with `questionId`), or —
+      // with no questionId — every open question belonging to the LATEST goal
+      // (highest G-id), sequentially, via the WorkflowRuntime so the
+      // clarify/plan/review loop auto-advances. Scoping to the latest goal keeps
+      // shared-cwd e2e runs from cross-answering an earlier test's goal. This is
+      // the cycle-3 stand-in for the Goals-tab `question.answer` frame (cycle 4).
+      // Body: { questionId?: string, answer?: string }.
+      if (pathname === "/__e2e/answer" && process.env["CQ_E2E_HOOKS"] === "1") {
+        if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+        try {
+          const body = (await req.json().catch(() => ({}))) as { questionId?: string; answer?: string };
+          const answer = body.answer ?? "yes (e2e)";
+          let ids: string[];
+          if (body.questionId !== undefined) {
+            ids = [body.questionId];
+          } else {
+            // Latest goal = highest numeric G-id; its open questions only.
+            const goals = ledgerStore.fetch("goals").milestones.flatMap((g) => g.items);
+            const latest = goals.sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1))).at(-1);
+            const milestoneIds =
+              latest !== undefined && Array.isArray(latest.fields["milestones"])
+                ? (latest.fields["milestones"] as string[])
+                : [];
+            ids = ledgerStore
+              .fetch("questions")
+              .milestones.filter((g) => milestoneIds.includes(g.id))
+              .flatMap((g) => g.items)
+              .filter((i) => i.status === "open")
+              .map((i) => i.id);
+          }
+          for (const id of ids) {
+            await workflow.submitAnswer(id, answer);
+          }
+          return new Response(JSON.stringify({ answered: ids }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err) {
+          logger.warn("e2e.answer_failed", { err: String(err) });
+          return new Response("answer failed", { status: 500 });
+        }
+      }
+
+      // ── E2E test hook ────────────────────────────────────────────────── //
       // POST /__e2e/settings: synchronously sets ui_settings.{model,
       // permissionMode, hideSdkEvents}. Mirrors the `settings.set` WS frame
       // but lets test setup pre-stage server-side defaults BEFORE opening

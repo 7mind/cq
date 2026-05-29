@@ -124,6 +124,15 @@ const requestLog: LogEntry[] = [];
  * tool returned. Cleared by /__admin/reset.
  */
 let scriptOnToolResult: SSEEvent[] | null = null;
+/**
+ * Substring-keyed responses for the multi-phase `/plan` loop. Each entry maps a
+ * substring that must appear in the streaming /v1/messages body (e.g. a phase's
+ * submit-tool name like `submit_clarify_review`) to the SSE to return. Matched
+ * in array order (most-specific first) BEFORE the sticky scriptQueue, so a test
+ * can drive several distinct phase subagents that each spawn their own request.
+ * Cleared by /__admin/reset.
+ */
+const scriptByKey: Array<{ key: string; sse: SSEEvent[] }> = [];
 
 // ---------------------------------------------------------------------------
 // Start server
@@ -160,10 +169,19 @@ const server = Bun.serve({
       });
     }
 
+    if (method === "POST" && pathname === "/__admin/scriptByKey") {
+      const body = (await req.json()) as { key: string; sse: SSEEvent[] };
+      scriptByKey.push({ key: body.key, sse: body.sse });
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     if (method === "POST" && pathname === "/__admin/reset") {
       scriptQueue.length = 0;
       requestLog.length = 0;
       scriptOnToolResult = null;
+      scriptByKey.length = 0;
       return new Response(JSON.stringify({ ok: true }), {
         headers: { "Content-Type": "application/json" },
       });
@@ -252,8 +270,15 @@ const server = Bun.serve({
       // return that sticky response instead — this lets a test mock two
       // distinct turns of a single tool round-trip. `bodyText` was already
       // read above for title-derivation detection.
-      const events = (scriptOnToolResult !== null && bodyText.includes("tool_result"))
+      // A tool_result re-entry ends the phase turn benignly (or via the sticky
+      // scriptOnToolResult). Otherwise, prefer a substring-keyed phase response
+      // (the multi-phase /plan loop), then the sticky scriptQueue, then default.
+      const isToolResult = bodyText.includes("tool_result");
+      const keyed = !isToolResult ? scriptByKey.find((e) => bodyText.includes(e.key)) : undefined;
+      const events = (scriptOnToolResult !== null && isToolResult)
         ? scriptOnToolResult
+        : keyed !== undefined
+        ? keyed.sse
         : scriptQueue.length > 0
         ? scriptQueue[scriptQueue.length - 1]!
         : DEFAULT_SSE_EVENTS;
