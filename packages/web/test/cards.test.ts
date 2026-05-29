@@ -8,8 +8,9 @@
  *                 deletions in red (diffDel), with correct line numbers.
  *  4. BashCard — shows command, stdout, stderr, exit code, run_in_background flag.
  *
- * Test environment: happy-dom via GlobalRegistrator (preloaded by bunfig.toml).
- * React 19 + react-dom/client for rendering.
+ * Test environment: happy-dom via registerDom() (helpers/dom.ts) — registers
+ * DOM globals at module load, unregisters in afterAll (D-OUTER7-01). No
+ * bunfig/setup.ts preload. React 19 + react-dom/client for rendering.
  */
 
 // Must be first — registers DOM globals (document, window, etc.)

@@ -6,8 +6,9 @@
  *   2. TaskUpdate flips status; same DOM node retained (isSameNode).
  *   3. TaskUpdate with status:'deleted' hides the card (CSS display:none).
  *
- * Test environment: happy-dom via GlobalRegistrator (preloaded by bunfig.toml).
- * React 19 + react-dom/client for DOM rendering.
+ * Test environment: happy-dom via registerDom() (helpers/dom.ts) — registers
+ * at module load, unregisters in afterAll (D-OUTER7-01). No bunfig/setup.ts
+ * preload. React 19 + react-dom/client for DOM rendering.
  */
 
 // Must be first — registers DOM globals (document, window, etc.)
