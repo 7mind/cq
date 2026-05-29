@@ -251,6 +251,46 @@ export const QuestionAnswer = z.object({
 });
 export type QuestionAnswer = z.infer<typeof QuestionAnswer>;
 
+/**
+ * `goals.list` — client → server request (Goals tab, cycle 4). Mirrors
+ * `history.list`: the server replies with a single `goals.snapshot` built by
+ * reading the goals/milestones/questions/tasks ledgers via the `@cq/ledger`
+ * store. The tab requests on mount and again on every `workflow.event` (the
+ * lightweight refresh signal) and after its own `question.answer` is sent.
+ */
+export const GoalsList = z.object({
+  type: z.literal("goals.list"),
+  seq,
+  ts,
+});
+export type GoalsList = z.infer<typeof GoalsList>;
+
+/**
+ * `workflow.escalation_reply` — client → server (Goals tab, cycle 4). Closes
+ * the WFL-D01 no-progress escalation loop. When a goal is in the `escalated`
+ * state (the no-progress guard emitted `workflow.event{status:"escalated"}`),
+ * the Goals tab offers three choices:
+ *
+ *  - `proceed`  — accept the current plan as-is → goal status `planned` + done.
+ *  - `guidance` — re-dispatch the planner with `guidance` appended; resume the
+ *    plan-review loop. `guidance` must be non-empty for this choice.
+ *  - `abandon`  — goal status `abandoned`.
+ */
+export const WorkflowEscalationReply = z
+  .object({
+    type: z.literal("workflow.escalation_reply"),
+    seq,
+    ts,
+    goalId: z.string().min(1),
+    choice: z.enum(["proceed", "guidance", "abandon"]),
+    guidance: z.string().optional(),
+  })
+  .refine(
+    (frame) => frame.choice !== "guidance" || (frame.guidance ?? "").trim().length > 0,
+    { message: "guidance choice requires non-empty guidance text", path: ["guidance"] },
+  );
+export type WorkflowEscalationReply = z.infer<typeof WorkflowEscalationReply>;
+
 export const ChatRejoin = z.object({
   type: z.literal("chat.rejoin"),
   seq,
@@ -552,6 +592,72 @@ export const WorkflowEvent = z.object({
 });
 export type WorkflowEvent = z.infer<typeof WorkflowEvent>;
 
+// ---------------------------------------------------------------------------
+// Goals snapshot (Goals tab read protocol, cycle 4)
+// ---------------------------------------------------------------------------
+
+/** One clarifying question as rendered in the Goals tab (Q4 structure). */
+export const GoalQuestion = z.object({
+  id: z.string(),
+  question: z.string(),
+  /** Muted background paragraph; absent when the question carries none. */
+  context: z.string().optional(),
+  /** Suggestion chips; clicking one PRE-FILLS the free-form field. */
+  suggestions: z.array(z.string()),
+  /** The suggestion the producer marks "recommended"; absent when none. */
+  recommendation: z.string().optional(),
+  /** Questions schema status: open / answered / withdrawn. */
+  status: z.string(),
+  /** The user's answer once submitted. */
+  answer: z.string().optional(),
+});
+export type GoalQuestion = z.infer<typeof GoalQuestion>;
+
+/** A planned task chip under its milestone (read-only). */
+export const GoalTask = z.object({
+  id: z.string(),
+  headline: z.string(),
+  status: z.string(),
+});
+export type GoalTask = z.infer<typeof GoalTask>;
+
+/** A milestone with its open/answered questions and (once planned) its tasks. */
+export const GoalMilestone = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: z.string(),
+  questions: z.array(GoalQuestion),
+  tasks: z.array(GoalTask),
+});
+export type GoalMilestone = z.infer<typeof GoalMilestone>;
+
+/** A goal with its milestones and an open-question count. */
+export const GoalSnapshot = z.object({
+  id: z.string(),
+  description: z.string(),
+  /** goals schema status: clarifying/planning/planned/building/done/abandoned. */
+  status: z.string(),
+  milestones: z.array(GoalMilestone),
+  /** Open questions across all of this goal's milestones. */
+  openQuestionCount: z.number().int().nonnegative(),
+});
+export type GoalSnapshot = z.infer<typeof GoalSnapshot>;
+
+/**
+ * `goals.snapshot` — server → client reply to `goals.list` (cycle 4). The
+ * complete read view of every goal. `totalOpenQuestions` is the badge value
+ * (Q13 — total open questions across all goals).
+ */
+export const GoalsSnapshot = z.object({
+  type: z.literal("goals.snapshot"),
+  seq,
+  ts,
+  requestSeq: z.number(),
+  goals: z.array(GoalSnapshot),
+  totalOpenQuestions: z.number().int().nonnegative(),
+});
+export type GoalsSnapshot = z.infer<typeof GoalsSnapshot>;
+
 export const HistoryListResult = z.object({
   type: z.literal("history.list_result"),
   seq,
@@ -637,6 +743,8 @@ export const ClientFrame = z.discriminatedUnion("type", [
   ChatInterrupt,
   WorkflowStart,
   QuestionAnswer,
+  GoalsList,
+  WorkflowEscalationReply,
   ChatPermissionReply,
   ChatQuestionReply,
   ChatElicitationReply,
@@ -665,6 +773,7 @@ export const ServerFrame = z.discriminatedUnion("type", [
   ChatDone,
   ChatError,
   WorkflowEvent,
+  GoalsSnapshot,
   ChatReadFileResult,
   HistoryListResult,
   HistoryGetResult,
