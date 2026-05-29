@@ -6,6 +6,7 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## Milestones (high-level)
 
+- [x] **askcard-freeform** — Free-form "Other…" answer affordance on every AskUserQuestion card question (radio + checkbox). Reply protocol/brokers UNCHANGED. Plan: [`docs/drafts/20260529-askcard-freeform-plan.md`](docs/drafts/20260529-askcard-freeform-plan.md). DISCHARGED: check 807/0 (+8), e2e 20/0/0, nix exit 0. Closed ASKCARD-D01; D02/D03 nits resolved by-design. Brokers/protocol untouched. Log: [`docs/logs/20260529-askcard-freeform-log.md`](docs/logs/20260529-askcard-freeform-log.md).
 - [x] **askproxy (outer-14)** — `ask_user_question` for Codex sessions via WS-back-proxy over the outer-13 internal WS channel. Plan: [`docs/drafts/20260529-1512-plan-askproxy.md`](docs/drafts/20260529-1512-plan-askproxy.md). DISCHARGED: check 799/0 (+38), e2e 20/0, nix exit 0. Closed ASKPROXY-D01; D-GC-1 cross-referenced. ClaudeBridge untouched. Log: [`docs/logs/20260529-1533-askproxy-log.md`](docs/logs/20260529-1533-askproxy-log.md).
 - [x] **outer-13 / coherence** — Cross-process cache coherence between cq-server and cq-mcp via per-process internal WebSocket channel (`ledger.changed` invalidation). Plan: [`docs/drafts/20260529-0050-plan-coherence.md`](docs/drafts/20260529-0050-plan-coherence.md).
 - [x] **outer-12 / msunify** — Unified `milestones` ledger + drop per-ledger milestone tools + ISO 8601 timestamps. Plan: [`docs/drafts/20260528-2100-plan-msunify.md`](docs/drafts/20260528-2100-plan-msunify.md).
@@ -13,6 +14,25 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 - [x] **outer-10** — close D-CQMCP-E2E + D-CQMCP-NIX (outer-9 follow-ups).
 - [x] **outer-9** — D-GC-1 (Codex ledger MCP) + D-GC-N1 (approvalPolicy).
 - (older milestones in this file)
+
+---
+
+## Milestone askcard-freeform — PR breakdown
+
+Detail in [`docs/drafts/20260529-askcard-freeform-plan.md`](docs/drafts/20260529-askcard-freeform-plan.md).
+Intake baselines: `bun run check` 799/0, `bun run e2e` 20/0/0.
+
+- [x] **askcard-1** — AskCard.tsx: append synthetic "Other…" option per question (radio + checkbox) + inline text field + completeness/payload logic; AskCard.module.css text-input styling; extend web unit tests; add custom-string passthrough tests to cq-mcp + server broker tests. Brokers/protocol unchanged.
+
+### Completed (askcard-freeform)
+
+- **askcard-1** (2026-05-29) — Shipped the free-form "Other…" affordance. `AskCard.tsx`: a synthetic "Other…" control is appended as the LAST option of every question (both radio and checkbox); selecting/checking it reveals an inline controlled `<input type="text">`. New `otherText: Record<number,string>` state holds the typed text independently of `selections`, so a radio switch-away-and-back restores the text (edge rule 2). An `OTHER_SENTINEL` constant (`" __cq_other__"` — NUL-bearing so it cannot collide with a real model label) marks Other-active inside `selections`; `handleSubmit` replaces the in-place sentinel with the trimmed text. `isComplete()` treats an active-but-empty (trimmed) Other as UNANSWERED even when other real checkboxes are checked (edge rule 1, code-commented); whitespace-only ⇒ empty (edge rule 3). No disabled-reason chrome existed; none added (edge rule 4). `AskCard.module.css` gained `.otherText` matching the module's existing vocabulary. **Reply protocol, `QuestionReplyPayload`, `ChatQuestionReply`, the WS protocol, and BOTH `normaliseAnswers` brokers are UNCHANGED** — the custom text rides the existing `answers["<qIdx>"]` labels array as a plain string; both brokers do `Array.isArray → map(String).join(", ")` else `String(val)`, so the string passes through byte-identically on Claude (`packages/server/src/agent/askUserQuestion.ts:163`) and Codex (`packages/cq-mcp/src/askBroker.ts:115`). Tests: 6 new web cases (radio-Other-submit, checkbox-real+Other-submit, empty-text guard with real box checked, keep-on-switch, whitespace-only-empty, trim-before-send) + 1 cq-mcp + 1 server passthrough case.
+  Verification: `bun run check` → 807 pass / 0 fail / 2778 expect across 93 files (baseline 799/0; +8). `bun run e2e` → 20 passed (unchanged). `nix build .#default` → exit 0 (remote builder SSH unreachable; built locally, `./result` produced). Discharge scenario (closest repro): AskCard checkbox-Other payload `{"0":["Markdown editor","a bespoke WYSIWYG editor"]}` → `normaliseAnswers` → `{"0":"Markdown editor, a bespoke WYSIWYG editor"}` (verified via throwaway test, removed).
+  Notes / surprises:
+  - happy-dom + React 19 + bun do NOT deliver a synthetically-dispatched `input`/`change` event to React's ChangeEventPlugin for **text** inputs (verified empirically — `<select>`/checkbox `change` propagates, text-input events do not, regardless of native-value-setter vs plain `el.value=`). The web test's `setText` helper therefore invokes the controlled input's React `onChange` directly off the fiber `__reactProps$*` key. Documented as ASKCARD-D03 (resolved by-design); the helper throws loudly if the internal key disappears.
+  - If a model emits a real option literally labeled "Other…", the card shows two "Other…" rows (cosmetic only; no data corruption — synthetic control keys on the sentinel). ASKCARD-D02, resolved note-only, de-dup deemed out of scope.
+  - Metrics: review rounds 1 (clean, no fix rounds); defects major:0(+1 pre-existing gap closed), minor:0, nit:2; verification complete; scope delta none (touched exactly the 5 planned files).
+  - Constraint future work must respect: the `OTHER_SENTINEL` must remain a value no real label can produce. The brokers MUST keep `normaliseAnswers` in lockstep across server + cq-mcp or the custom string would diverge between backends.
 
 ---
 

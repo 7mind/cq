@@ -121,4 +121,16 @@ describe("normaliseAnswers — lockstep with server AskBroker", () => {
       d: "",
     });
   });
+
+  it("passes a free-text custom answer through unchanged (AskCard 'Other…')", () => {
+    // The AskCard 'Other…' affordance puts the user's typed text into the
+    // labels array as a plain string. It must reach the model unchanged.
+    expect(
+      normaliseAnswers({ "0": ["Markdown editor", "a bespoke WYSIWYG editor"] }),
+    ).toEqual({ "0": "Markdown editor, a bespoke WYSIWYG editor" });
+    // Radio 'Other…' → single custom string in the array.
+    expect(normaliseAnswers({ "0": ["my entirely custom answer"] })).toEqual({
+      "0": "my entirely custom answer",
+    });
+  });
 });

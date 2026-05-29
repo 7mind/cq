@@ -122,6 +122,21 @@ describe("AskBroker (unit)", () => {
     expect(output.answers["Which features?"]).toBe("X, Z");
   });
 
+  it("free-text custom answer (AskCard 'Other…') passes through unchanged", async () => {
+    // The AskCard 'Other…' affordance carries the user's typed text as a plain
+    // string in the labels array. It must reach the model byte-identically to
+    // the cq-mcp (Codex) broker — both join string[] with ", " and pass strings
+    // through. See packages/cq-mcp/test/askBroker.test.ts for the lockstep case.
+    const broker = new AskBroker();
+    const questions = [{ question: "Editor?", header: "Q3", options: ["Markdown editor"] }];
+
+    const promise = broker.ask("tu-003", questions);
+    broker.reply("tu-003", { Editor: ["Markdown editor", "a bespoke WYSIWYG editor"] });
+
+    const output = await promise;
+    expect(output.answers["Editor"]).toBe("Markdown editor, a bespoke WYSIWYG editor");
+  });
+
   it("stale reply (no pending ask) returns false", () => {
     const broker = new AskBroker();
     const replied = broker.reply("tu-stale", { "Q?": "A" });
