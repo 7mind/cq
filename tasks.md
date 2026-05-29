@@ -6,7 +6,7 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## Milestones (high-level)
 
-- [~] **askproxy (outer-14)** — `ask_user_question` for Codex sessions via WS-back-proxy over the outer-13 internal WS channel. Plan: [`docs/drafts/20260529-1512-plan-askproxy.md`](docs/drafts/20260529-1512-plan-askproxy.md). Reopens the `ask_user_question` sub-aspect of D-GC-1 (closes ASKPROXY-D01). ClaudeBridge untouched.
+- [x] **askproxy (outer-14)** — `ask_user_question` for Codex sessions via WS-back-proxy over the outer-13 internal WS channel. Plan: [`docs/drafts/20260529-1512-plan-askproxy.md`](docs/drafts/20260529-1512-plan-askproxy.md). DISCHARGED: check 799/0 (+38), e2e 20/0, nix exit 0. Closed ASKPROXY-D01; D-GC-1 cross-referenced. ClaudeBridge untouched. Log: [`docs/logs/20260529-1533-askproxy-log.md`](docs/logs/20260529-1533-askproxy-log.md).
 - [x] **outer-13 / coherence** — Cross-process cache coherence between cq-server and cq-mcp via per-process internal WebSocket channel (`ledger.changed` invalidation). Plan: [`docs/drafts/20260529-0050-plan-coherence.md`](docs/drafts/20260529-0050-plan-coherence.md).
 - [x] **outer-12 / msunify** — Unified `milestones` ledger + drop per-ledger milestone tools + ISO 8601 timestamps. Plan: [`docs/drafts/20260528-2100-plan-msunify.md`](docs/drafts/20260528-2100-plan-msunify.md).
 - [x] **outer-11** — D-UNIFASYNC-01 + adversarial sweep for sync/async unions.
@@ -25,7 +25,7 @@ Intake baselines: `bun run check` 761/0, `bun run e2e` 20/0.
 - [x] **askproxy-2** — cq-mcp: `CqMcpAskBroker` (two-slot race by askId) + `ask_user_question` tool + `ask.reply` handler + `channel.onClose`→rejectAll + `CQ_SESSION_ID` + broker tests.
 - [x] **askproxy-3** — server: `AskProxy` collaborator + `ask.request` handler on `InternalWsService` + `buildAskUserQuestionEvent` helper + CodexBridge `handleChatQuestionReply` + `CQ_SESSION_ID` env + dispatch tests.
 - [x] **askproxy-4** — integration: real cq-mcp subprocess ask round-trip + `tools/list` includes `ask_user_question` (channel up) / 13 ledger tools (standalone).
-- [ ] **askproxy-5** — discharge: ledgers, ASKPROXY-D01 resolved + D-GC-1 cross-ref, session log, manual scenario, check/e2e/nix.
+- [x] **askproxy-5** — discharge: ledgers, ASKPROXY-D01 resolved + D-GC-1 cross-ref, session log, manual scenario, check/e2e/nix.
 
 ### Cross-cutting architectural notes (askproxy, locked)
 
@@ -36,6 +36,8 @@ Intake baselines: `bun run check` 761/0, `bun run e2e` 20/0.
 - [x] AskQuestion shape is `unknown` (no strict schema to factor); the wire mirror is `z.array(z.unknown()).min(1).max(4)`.
 
 ### Completed (askproxy)
+
+- **askproxy-5** (2026-05-29) — Discharge. defects.md: `ASKPROXY-D01` (major) resolved with full citation + commit list; one-line cross-ref note appended to the `D-GC-1` Fix cell (history unchanged per brief); `ASKPROXY-D02` (nit, broadcast-buffer-in-non-owning-child, resolved-by-design) + `ASKPROXY-D03` (minor, browser E2E deferred with a concrete follow-up spec) recorded. Session log `docs/logs/20260529-1533-askproxy-log.md`. Discharge gates: `bun run check` → **799 pass / 0 fail / 2757 expect() across 93 files** (baseline 761/0; **+38 net**); `bun run e2e` → **20 passed / 0 failed** (unchanged); `nix build .#default` → exit 0, standalone `./result/bin/cq-mcp` tools/list = 13 (no ask_user_question without channel; the 14-tool with-channel surface proved by the integration test); `tsc -b` exit 0; eslint 0 errors (2 pre-existing warnings untouched). Manual scenario: real-Codex+browser run not deterministically reproducible (no forcing function for the model to call the tool; auth-gated) — closest reproduction is the real-subprocess cross-process round-trip in `askProxy-integration.test.ts`; documented in the log + ASKPROXY-D03. Metrics: review rounds 1; defects <major:0, minor:0, nit:0> (PR-5 itself); verification complete; scope delta none.
 
 - **askproxy-4** (2026-05-29) — Cross-process integration. New `packages/server/test/askProxy-integration.test.ts` (mirrors `internalWs-integration.test.ts`): spawns a real cq-mcp subprocess via `bun run packages/cq-mcp/src/main.ts` against a real `Bun.serve` + `InternalWsService`. The test's `ask.request` handler stands in for the real `AskProxy` — it captures the request and broadcasts a synthetic `ask.reply` (the browser's answer). Three cases: (1) `tools/list` = 14 tools incl. `ask_user_question` when `CQ_INTERNAL_WS_URL`+`CQ_INTERNAL_WS_TOKEN`+`CQ_SESSION_ID` are set; (2) `tools/list` = 13 (no `ask_user_question`) in standalone mode; (3) full round-trip — invoke the tool, assert the server received one `ask.request` with `sessionId=CQ_SESSION_ID`, `askId` matching `^ask-\d+-\d+$`, `toolUseId=askId+"-tu"`, exact questions; assert the tool resolves with the Claude-identical `CallToolResult` (`{content:[{type:"text",text:JSON({questions,answers})}]}`) and `string[]` answers normalised to `"a, b"`. Verification: `bun test askProxy-integration.test.ts` → 3 pass; ran 3× consecutively, stable (no flake despite the inbound-reply-vs-park race — the two-slot broker handles both orderings); `tsc -b packages/server` exit 0; eslint clean. Review: 1 round, 0 defects. Metrics: review rounds 1; defects 0; verification complete; scope delta none.
 
