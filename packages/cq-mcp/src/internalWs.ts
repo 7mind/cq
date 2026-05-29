@@ -59,7 +59,10 @@ export class InternalWsChannel {
     InternalWsMessageType,
     (msg: InternalWsMessage) => Promise<void>
   >();
+  /** Callbacks fired exactly once when the channel transitions to closed. */
+  private readonly closeCallbacks: Array<() => void> = [];
   private closed = false;
+  private closeFanoutDone = false;
 
   private constructor(ws: WebSocket, logger: ChannelLogger) {
     this.ws = ws;
@@ -68,6 +71,7 @@ export class InternalWsChannel {
     this.ws.addEventListener("close", () => {
       this.closed = true;
       this.logger.info("internalWs.client_closed", {});
+      this.fireCloseCallbacks();
     });
     this.ws.addEventListener("error", (ev) => {
       // After open the WebSocket spec emits 'error' on transport
@@ -168,6 +172,36 @@ export class InternalWsChannel {
     this.handlers.set(type, fn as (msg: InternalWsMessage) => Promise<void>);
   }
 
+  /**
+   * Register a callback fired exactly once when the channel closes — for
+   * either reason (server-initiated `close` event OR a local `close()`
+   * call). Used by the ask-proxy to reject any pending asks so the
+   * `ask_user_question` tool handler returns an error result instead of
+   * hanging forever after the channel drops. If the channel is already
+   * closed, the callback fires synchronously.
+   */
+  registerOnClose(cb: () => void): void {
+    if (this.closeFanoutDone) {
+      cb();
+      return;
+    }
+    this.closeCallbacks.push(cb);
+  }
+
+  private fireCloseCallbacks(): void {
+    if (this.closeFanoutDone) return;
+    this.closeFanoutDone = true;
+    for (const cb of this.closeCallbacks) {
+      try {
+        cb();
+      } catch (err: unknown) {
+        this.logger.warn("internalWs.close_callback_threw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
   close(code = 1000, reason = "normal"): void {
     this.closed = true;
     try {
@@ -175,6 +209,9 @@ export class InternalWsChannel {
     } catch {
       /* already closed */
     }
+    // The 'close' event may not fire for an already-closed/again-closed
+    // socket; fan out here too so rejectAll-on-disconnect is guaranteed.
+    this.fireCloseCallbacks();
   }
 
   /** True after `close()` or after the server closed the channel. */

@@ -28,11 +28,16 @@
  * stdout that is not a JSON-RPC frame corrupts the protocol and the
  * Codex CLI's MCP client tears down the channel.
  *
- * Scope intentionally NOT included. `ask_user_question` is omitted. It
- * is a Claude-side feature that needs a WebSocket round-trip to the
- * user's browser; a standalone binary spawned by Codex has no such
- * channel and faking it would deadlock the model. Codex sessions that
- * need user input must use Codex's own approval-policy flow instead.
+ * `ask_user_question` (askproxy / outer-14). This tool IS registered —
+ * but only when the internal WS channel to cq-server is up (env vars
+ * present). The handler generates an `askId`, sends `ask.request` over
+ * the channel, parks on the `CqMcpAskBroker` until cq-server proxies the
+ * browser's answer back as `ask.reply`, then returns the answers in the
+ * exact `CallToolResult` shape the Claude in-process tool returns
+ * (`{content:[{type:"text",text:JSON.stringify({questions,answers})}]}`).
+ * In standalone mode (no channel) the tool is NOT registered — a
+ * standalone binary has no browser to ask — so `tools/list` stays at the
+ * 13 ledger tools and the model never sees a tool it cannot fulfil.
  *
  * Schemas. The Zod shapes here mirror the Claude-facing factory in
  * `packages/ledger/src/mcp/ledgerTools.ts`. They are intentionally
@@ -58,6 +63,7 @@ import {
   type LedgerSchema,
 } from "@cq/ledger";
 import { InternalWsChannel } from "./internalWs.js";
+import { CqMcpAskBroker } from "./askBroker.js";
 
 // ---------------------------------------------------------------------------
 // Shared Zod fragments (mirror packages/ledger/src/mcp/ledgerTools.ts)
@@ -354,6 +360,85 @@ export function registerLedgerTools(server: McpServer, store: LedgerStore): void
 }
 
 // ---------------------------------------------------------------------------
+// ask_user_question tool (askproxy / outer-14)
+// ---------------------------------------------------------------------------
+
+/**
+ * Input schema for the proxied `ask_user_question` tool. Mirrors the
+ * Claude in-process tool (`askUserQuestion.ts`): `z.array(z.any())` with
+ * a 1..4 bound so the model sees an identical signature whether it talks
+ * to Claude (in-process) or Codex (this binary).
+ */
+const askUserQuestionInputSchema = {
+  questions: z.array(z.any()).min(1).max(4),
+} as const;
+
+/**
+ * Dependencies the proxied ask tool needs. `sendAskRequest` ships the
+ * `ask.request` envelope (the tool does not know about the channel);
+ * `sessionId` is the cq chat session (from `CQ_SESSION_ID`). Injectable
+ * so the integration test can drive the handler with a fake transport.
+ */
+export interface AskToolDeps {
+  broker: CqMcpAskBroker;
+  sessionId: string;
+  /** Generates a unique-per-process askId. */
+  nextAskId: () => string;
+  /** Sends the ask.request envelope upstream over the channel. */
+  sendAskRequest: (req: {
+    askId: string;
+    toolUseId: string;
+    sessionId: string;
+    questions: unknown[];
+  }) => void;
+}
+
+/**
+ * Register the proxied `ask_user_question` tool on the MCP server. Call
+ * this ONLY when the internal WS channel is up — a standalone binary has
+ * no browser to ask, so the tool must not appear in `tools/list`.
+ */
+export function registerAskUserQuestionTool(
+  server: McpServer,
+  deps: AskToolDeps,
+): void {
+  server.registerTool(
+    "ask_user_question",
+    {
+      description:
+        "Ask the user one or more multiple-choice questions and await their answers.",
+      inputSchema: askUserQuestionInputSchema,
+    },
+    async (args) => {
+      const askId = deps.nextAskId();
+      // The MCP SDK does not expose a stable tool_use id to the handler,
+      // so cq-mcp mints one. The cq server uses it only as the browser
+      // ask-card render key + reply correlation; it need not match any
+      // Codex-internal id.
+      const toolUseId = `${askId}-tu`;
+      const questions = args.questions as unknown[];
+      deps.sendAskRequest({ askId, toolUseId, sessionId: deps.sessionId, questions });
+      const output = await deps.broker.ask(askId, questions);
+      return jsonResult(output);
+    },
+  );
+}
+
+/**
+ * Create a unique-per-process askId generator: `<pid>-<counter>`. The pid
+ * disambiguates across the multiple cq-mcp children a server may have
+ * spawned (one per Codex session); the counter disambiguates within one
+ * process.
+ */
+export function makeAskIdGenerator(pid: number): () => string {
+  let counter = 0;
+  return (): string => {
+    counter += 1;
+    return `ask-${pid}-${counter}`;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // CLI entrypoint
 // ---------------------------------------------------------------------------
 
@@ -479,6 +564,45 @@ export async function main(argv: readonly string[]): Promise<void> {
     { capabilities: { tools: {} } },
   );
   registerLedgerTools(server, store);
+
+  // ask_user_question (askproxy / outer-14). Registered ONLY when the
+  // internal WS channel is up AND CQ_SESSION_ID is supplied; otherwise a
+  // Codex session has no browser to reach and the tool must not appear.
+  if (channel !== null) {
+    const sessionId = process.env["CQ_SESSION_ID"];
+    if (sessionId === undefined || sessionId === "") {
+      process.stderr.write(
+        "cq-mcp: internal WS channel up but CQ_SESSION_ID unset; ask_user_question disabled\n",
+      );
+    } else {
+      const wsChannel = channel;
+      const askBroker = new CqMcpAskBroker();
+      // Inbound ask.reply (from cq-server) → resolve the parked tool call.
+      wsChannel.registerHandler("ask.reply", async (msg) => {
+        askBroker.reply(msg.askId, msg.answers);
+      });
+      // On disconnect, reject every pending ask so the tool returns an
+      // error result instead of hanging (no reconnection by design).
+      wsChannel.registerOnClose(() => {
+        askBroker.rejectAll("cq-mcp: internal WS channel closed");
+      });
+      registerAskUserQuestionTool(server, {
+        broker: askBroker,
+        sessionId,
+        nextAskId: makeAskIdGenerator(process.pid),
+        sendAskRequest: (req) => {
+          wsChannel.send({
+            type: "ask.request",
+            askId: req.askId,
+            toolUseId: req.toolUseId,
+            sessionId: req.sessionId,
+            questions: req.questions,
+            sourcePid: process.pid,
+          });
+        },
+      });
+    }
+  }
 
   // Graceful shutdown on SIGTERM / SIGINT. Closes the WS first so the
   // server sees a clean 1000 instead of a torn TCP.

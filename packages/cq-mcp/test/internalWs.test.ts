@@ -17,6 +17,7 @@ interface FakeServer {
   url: string;
   inbound: InternalWsMessage[];
   sendToClient: (msg: unknown) => void;
+  closeClient: () => void;
   stop: () => void;
   acceptedSubprotocol: string | null;
 }
@@ -29,6 +30,7 @@ function startFakeServer(opts: {
   const inbound: InternalWsMessage[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let sendBound: ((msg: any) => void) | null = null;
+  let closeBound: (() => void) | null = null;
   let acceptedSubprotocol: string | null = null;
   const server = Bun.serve<{ kind: "internal" }>({
     hostname: "127.0.0.1",
@@ -68,6 +70,9 @@ function startFakeServer(opts: {
         sendBound = (msg: unknown): void => {
           ws.send(JSON.stringify(msg));
         };
+        closeBound = (): void => {
+          ws.close(1000, "server-initiated");
+        };
         if (opts.closeImmediately === true) ws.close(1000, "test");
       },
       message(_ws, raw) {
@@ -79,6 +84,7 @@ function startFakeServer(opts: {
       },
       close() {
         sendBound = null;
+        closeBound = null;
       },
     },
   });
@@ -86,6 +92,7 @@ function startFakeServer(opts: {
     url: `ws://127.0.0.1:${server.port}${INTERNAL_WS_PATH}`,
     inbound,
     sendToClient: (msg): void => sendBound?.(msg),
+    closeClient: (): void => closeBound?.(),
     stop: (): void => {
       server.stop();
     },
@@ -125,8 +132,9 @@ describe("InternalWsChannel — happy path", () => {
     });
     // Allow the message to reach the server.
     await waitFor(() => fake.inbound.length === 1, 1000);
-    expect(fake.inbound[0]?.type).toBe("ledger.changed");
-    expect(fake.inbound[0]?.ledgerId).toBe("x");
+    const sent = fake.inbound[0];
+    expect(sent?.type).toBe("ledger.changed");
+    if (sent?.type === "ledger.changed") expect(sent.ledgerId).toBe("x");
 
     // Inbound — register a handler and have the fake server send.
     const received: InternalWsMessage[] = [];
@@ -140,7 +148,9 @@ describe("InternalWsChannel — happy path", () => {
       sourcePid: 99999, // not our pid → not loop-detected
     });
     await waitFor(() => received.length === 1, 1000);
-    expect(received[0]?.ledgerId).toBe("from-server");
+    const got = received[0];
+    if (got?.type === "ledger.changed") expect(got.ledgerId).toBe("from-server");
+    else throw new Error("expected a ledger.changed message");
 
     channel.close();
     expect(channel.isClosed()).toBe(true);
@@ -195,6 +205,60 @@ describe("InternalWsChannel — loop detection", () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(fired).toBe(0);
     channel.close();
+  });
+});
+
+describe("InternalWsChannel — registerOnClose (askproxy outer-14)", () => {
+  it("fires the close callback on a local close()", async () => {
+    const token = "0badf00d0badf00d0badf00d0badf00d";
+    const fake = track(startFakeServer({ expectedToken: token }));
+    const channel = await InternalWsChannel.connect({
+      url: fake.url,
+      token,
+      timeoutMs: 2000,
+    });
+    let fired = 0;
+    channel.registerOnClose(() => {
+      fired += 1;
+    });
+    channel.close();
+    expect(fired).toBe(1);
+    // Idempotent — closing again does not re-fire.
+    channel.close();
+    expect(fired).toBe(1);
+  });
+
+  it("fires the close callback when the server closes the channel", async () => {
+    const token = "abadcafeabadcafeabadcafeabadcafe";
+    const fake = track(startFakeServer({ expectedToken: token }));
+    const channel = await InternalWsChannel.connect({
+      url: fake.url,
+      token,
+      timeoutMs: 2000,
+    });
+    let fired = 0;
+    channel.registerOnClose(() => {
+      fired += 1;
+    });
+    fake.closeClient(); // server closes the socket cleanly
+    await waitFor(() => fired === 1, 1000);
+    expect(fired).toBe(1);
+  });
+
+  it("fires synchronously if registered after the channel already closed", async () => {
+    const token = "1234567812345678123456781234dead";
+    const fake = track(startFakeServer({ expectedToken: token }));
+    const channel = await InternalWsChannel.connect({
+      url: fake.url,
+      token,
+      timeoutMs: 2000,
+    });
+    channel.close();
+    let fired = 0;
+    channel.registerOnClose(() => {
+      fired += 1;
+    });
+    expect(fired).toBe(1);
   });
 });
 
