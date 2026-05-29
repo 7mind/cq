@@ -8,6 +8,7 @@ import { Bridge } from "./agent/bridge";
 import { SessionRegistry } from "./seq/sessionRegistry";
 import { SqlitePersistence } from "./persist/SqlitePersistence.js";
 import { FsLedgerStore } from "@cq/ledger";
+import { INTERNAL_WS_PATH, InternalWsService, type InternalWsConnData } from "./agent/internalWs";
 
 export type ServerConfig = Readonly<{
   host: string;
@@ -28,7 +29,17 @@ export type RunningServer = {
   readonly bridge: Bridge;
   /** The Persistence adapter (needed for close() in shutdown). */
   readonly persistence: SqlitePersistence;
+  /**
+   * URL the spawned cq-mcp uses to dial the internal channel. Built
+   * from the bound port (NOT the requested port — Bun's `port: 0`
+   * picks an ephemeral one).
+   */
+  readonly internalWsUrl: string;
+  /** Token to pass to spawned cq-mcp via env. */
+  readonly internalWsToken: string;
 };
+
+type WsData = WsSessionData | InternalWsConnData;
 
 export async function startServer(config: ServerConfig): Promise<RunningServer> {
   const { host, port, webOutdir, cwd, dbPath, logger } = config;
@@ -40,24 +51,76 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
   }
   const persistence = new SqlitePersistence(dbPath, undefined, logger);
+  // Internal WS service runs alongside the browser WS handler; it
+  // owns a per-process token used to authenticate spawned cq-mcp
+  // subprocesses. Constructed before the ledger store so we can wire
+  // its broadcast into `onMutation`.
+  const internalWs = new InternalWsService({ logger });
   // Ledger store rooted at the same cwd so docs/<ledger>.md sit next to
   // the agent's working tree. init() loads docs/ledgers.yaml and every
   // registered ledger; missing files are created with empty content.
-  const ledgerStore = new FsLedgerStore({ root: cwd });
+  // onMutation broadcasts every successful write to all connected
+  // cq-mcp clients so they invalidate their caches (D-COHERENCE).
+  const ledgerStore = new FsLedgerStore({
+    root: cwd,
+    onMutation: (ledgerId, op) => {
+      internalWs.broadcast({
+        type: "ledger.changed",
+        ledgerId,
+        op,
+        sourcePid: internalWs.selfPid(),
+      });
+    },
+  });
   await ledgerStore.init();
-  const bridge = new Bridge({ logger, registry, cwd, persistence, ledgerStore });
+  // Inbound `ledger.changed` from any cq-mcp triggers a local
+  // invalidate. Loop-detection (sourcePid === our pid) is enforced
+  // inside the service before the handler runs.
+  internalWs.registerHandler("ledger.changed", async (msg) => {
+    try {
+      await ledgerStore.invalidate(msg.ledgerId);
+    } catch (err: unknown) {
+      logger.warn("ledger.invalidate_failed", {
+        ledgerId: msg.ledgerId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+  // The internal WS URL depends on the bound port, which we only learn
+  // after Bun.serve(...) returns. Wire the bridge with a placeholder
+  // for now; we MUST refresh it before the first Codex session starts.
+  // Approach: a one-shot pre-bind handler that sets it on Bridge. See
+  // below — we mutate the bridge.opts after `server.url` resolves.
+  const bridge = new Bridge({
+    logger,
+    registry,
+    cwd,
+    persistence,
+    ledgerStore,
+    internalWsToken: internalWs.tokenForChild(),
+  });
 
   // Track all open WS sockets for graceful close-with-code.
   type WsHandle = { close(code?: number, reason?: string): void };
   const openSockets = new Set<WsHandle>();
   let draining = false;
 
-  const server = Bun.serve<WsSessionData>({
+  const server = Bun.serve<WsData>({
     hostname: host,
     port,
     async fetch(req, srv) {
       const url = new URL(req.url);
       const pathname = url.pathname;
+
+      // ── Internal WS upgrade ───────────────────────────────────────── //
+      // The cq-mcp subprocess dials `/__internal/cq-mcp` with a token
+      // in `Sec-WebSocket-Protocol`. NOT subject to the same-origin
+      // check (Node/Bun WS clients send no Origin header). Token check
+      // is constant-time. Refuses 503 while draining like /ws.
+      if (pathname === INTERNAL_WS_PATH) {
+        if (draining) return new Response("Service Unavailable", { status: 503 });
+        return internalWs.handleUpgrade(req, srv) ?? new Response("Upgrade required", { status: 426 });
+      }
 
       // ── E2E test hook ────────────────────────────────────────────────── //
       // POST /__e2e/interrupt: force-clears bridge.active so the next test
@@ -170,24 +233,43 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
 
     websocket: {
       open(ws) {
+        if ("kind" in ws.data && ws.data.kind === "internal") {
+          internalWs.open(ws as never);
+          return;
+        }
         openSockets.add(ws);
-        ws.data.session.open(ws);
+        (ws.data as WsSessionData).session.open(ws as never);
       },
       message(ws, raw) {
-        ws.data.session.message(ws, raw);
+        if ("kind" in ws.data && ws.data.kind === "internal") {
+          internalWs.message(ws as never, raw);
+          return;
+        }
+        (ws.data as WsSessionData).session.message(ws as never, raw);
       },
       close(ws, code, reason) {
+        if ("kind" in ws.data && ws.data.kind === "internal") {
+          internalWs.close(ws as never);
+          return;
+        }
         openSockets.delete(ws);
-        ws.data.session.close(ws, code, reason);
+        (ws.data as WsSessionData).session.close(ws as never, code, reason);
       },
     },
   });
 
-  logger.info("cq listening", { host, port, cwd, dbPath });
+  // Bind URL reflects the bound port; `Bun.serve` may pick an
+  // ephemeral one when port=0.
+  const boundPort = server.port;
+  const internalWsUrl = `ws://127.0.0.1:${boundPort}${INTERNAL_WS_PATH}`;
+  bridge.setInternalWsUrl(internalWsUrl);
+  logger.info("cq listening", { host, port: boundPort, cwd, dbPath, internalWsUrl });
 
   return {
     bridge,
     persistence,
+    internalWsUrl,
+    internalWsToken: internalWs.tokenForChild(),
 
     markDraining() {
       draining = true;

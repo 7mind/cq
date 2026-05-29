@@ -40,6 +40,22 @@ export type ArchiveContent =
   | { kind: "group"; milestone: Milestone }
   | { kind: "item"; item: Item };
 
+/**
+ * Operation that triggered a mutation. Used by the `onMutation` hook
+ * and by the internal-WS `ledger.changed` envelope. The mirror in
+ * `@cq/shared` (`LedgerOp` Zod enum) MUST stay in lockstep — if either
+ * drifts, cross-process notifications start dropping at the Zod
+ * boundary on receive.
+ */
+export type LedgerMutationOp = "create" | "update" | "archive";
+
+/**
+ * Hook fired after every successful write. Synchronous; the store does
+ * NOT await it. If the hook throws, the store logs to stderr and
+ * continues — write effects are preserved.
+ */
+export type OnMutation = (ledgerId: string, op: LedgerMutationOp) => void;
+
 export interface UpdateItemPatch {
   status?: string;
   fields?: Record<string, FieldValue>;
@@ -174,6 +190,24 @@ export interface LedgerStore {
    *  5. Refuse to archive the bootstrap group `M0`.
    */
   archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
+
+  /**
+   * Drop the in-memory cache for `ledgerId` and re-read it from the
+   * underlying source under the per-ledger lock. Used by the cross-
+   * process coherence channel (D-COHERENCE) when the OTHER process
+   * writes the same `docs/` tree.
+   *
+   * Contract:
+   *  - No-op when the ledger is not registered (graceful — the
+   *    receiver may be learning about a brand-new ledger; the FS
+   *    implementation falls back to a registry reload under the
+   *    registry lock in that case).
+   *  - Re-read happens under the per-ledger lock so it cannot
+   *    interleave with a local write.
+   *  - In-memory stores have no external source of truth, so the
+   *    method is a no-op there.
+   */
+  invalidate(ledgerId: string): Promise<void>;
 
   dispose(): Promise<void>;
 }

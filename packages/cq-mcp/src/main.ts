@@ -50,7 +50,14 @@ import * as path from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { FsLedgerStore, type LedgerStore, type FieldValue, type LedgerSchema } from "@cq/ledger";
+import {
+  FsLedgerStore,
+  type FsLedgerStoreOpts,
+  type LedgerStore,
+  type FieldValue,
+  type LedgerSchema,
+} from "@cq/ledger";
+import { InternalWsChannel } from "./internalWs.js";
 
 // ---------------------------------------------------------------------------
 // Shared Zod fragments (mirror packages/ledger/src/mcp/ledgerTools.ts)
@@ -378,20 +385,109 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   return { cwd };
 }
 
+/**
+ * Optional internal WS channel — established when the parent cq-server
+ * passes the connection details via env. Returns null when:
+ *   - both env vars are unset (standalone mode; cache invalidation
+ *     silently disabled),
+ * Throws an Error when:
+ *   - URL is set but TOKEN is missing (configuration error),
+ *   - the connect fails (timeout, refused, 401, malformed handshake).
+ * The caller (`main`) translates a thrown error into a stderr line +
+ * process.exit(2) per the brief's Decision 2.
+ */
+export async function maybeOpenInternalWs(): Promise<InternalWsChannel | null> {
+  const url = process.env["CQ_INTERNAL_WS_URL"];
+  const token = process.env["CQ_INTERNAL_WS_TOKEN"];
+  if (url === undefined || url === "") {
+    if (token !== undefined && token !== "") {
+      // Token without URL — log a notice but treat as standalone mode
+      // so the parent process can't accidentally enforce a half-config.
+      process.stderr.write(
+        "cq-mcp: CQ_INTERNAL_WS_TOKEN set but CQ_INTERNAL_WS_URL absent; running standalone\n",
+      );
+    }
+    return null;
+  }
+  if (token === undefined || token === "") {
+    throw new Error(
+      "CQ_INTERNAL_WS_URL is set but CQ_INTERNAL_WS_TOKEN is missing",
+    );
+  }
+  return await InternalWsChannel.connect({ url, token });
+}
+
 export async function main(argv: readonly string[]): Promise<void> {
   const { cwd } = parseArgs(argv);
+
+  // Open the internal channel BEFORE constructing the store so we can
+  // pass the broadcast hook into FsLedgerStore at construction time.
+  // Connect failures here are fatal (Decision 2); the parent sees
+  // exit(2) and surfaces the misconfiguration loudly.
+  let channel: InternalWsChannel | null = null;
+  try {
+    channel = await maybeOpenInternalWs();
+  } catch (err: unknown) {
+    const url = process.env["CQ_INTERNAL_WS_URL"] ?? "(unset)";
+    const reason = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `cq-mcp: failed to connect to cq internal WS at ${url}: ${reason}\n`,
+    );
+    process.exit(2);
+  }
+  if (channel === null) {
+    process.stderr.write(
+      "cq-mcp: running without internal WS channel; ledger cache invalidation disabled\n",
+    );
+  }
 
   // Construct the store, init it, then register tools. If init fails we
   // surface the error to stderr and exit non-zero — the parent MCP client
   // sees the channel close and treats the server as unhealthy.
-  const store = new FsLedgerStore({ root: cwd });
+  const storeOpts: FsLedgerStoreOpts = { root: cwd };
+  if (channel !== null) {
+    const wsChannel = channel;
+    storeOpts.onMutation = (ledgerId, op): void => {
+      wsChannel.send({
+        type: "ledger.changed",
+        ledgerId,
+        op,
+        sourcePid: process.pid,
+      });
+    };
+  }
+  const store = new FsLedgerStore(storeOpts);
   await store.init();
+
+  if (channel !== null) {
+    // Inbound ledger.changed (from cq-server) → invalidate our cache.
+    // Loop-detection (sourcePid === our pid) is enforced inside the
+    // channel before this handler runs.
+    channel.registerHandler("ledger.changed", async (msg) => {
+      try {
+        await store.invalidate(msg.ledgerId);
+      } catch (err: unknown) {
+        process.stderr.write(
+          `cq-mcp: invalidate(${msg.ledgerId}) failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    });
+  }
 
   const server = new McpServer(
     { name: "cq-mcp", version: "0.0.1" },
     { capabilities: { tools: {} } },
   );
   registerLedgerTools(server, store);
+
+  // Graceful shutdown on SIGTERM / SIGINT. Closes the WS first so the
+  // server sees a clean 1000 instead of a torn TCP.
+  const shutdown = (): void => {
+    channel?.close();
+    process.exit(0);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

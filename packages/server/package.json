@@ -10,6 +10,7 @@
     "@cq/ledger": "workspace:*",
     "@anthropic-ai/sdk": "^0.69.0",
     "@cq/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@openai/codex-sdk": "0.134.0",
     "zod": "^4.0.0"
   },

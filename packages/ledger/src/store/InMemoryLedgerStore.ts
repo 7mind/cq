@@ -40,6 +40,7 @@ import type {
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
   LedgerStore,
+  OnMutation,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
@@ -61,6 +62,12 @@ export interface InMemoryLedgerStoreOpts {
   now?: () => string;
   /** Pre-populate registered ledgers (the milestones ledger is added automatically on init). */
   seed?: Array<{ name: string; schema: LedgerSchema }>;
+  /**
+   * Same contract as `FsLedgerStoreOpts.onMutation`. Provided here so
+   * the dual-tests abstract suite can exercise the hook against both
+   * adapters uniformly. Fires AFTER every successful write.
+   */
+  onMutation?: OnMutation;
 }
 
 /** Lock key for the global milestones mutex. */
@@ -72,12 +79,34 @@ export class InMemoryLedgerStore implements LedgerStore {
   private readonly itemArchives = new Map<string, Item>(); // key: `milestones/<id>` (items)
   private readonly mutexes = new Map<string, AsyncMutex>();
   private readonly now: () => string;
+  private readonly onMutation: OnMutation | null;
   private initialised = false;
   private readonly initialSeed: Array<{ name: string; schema: LedgerSchema }>;
 
   constructor(opts: InMemoryLedgerStoreOpts = {}) {
     this.now = opts.now ?? (() => new Date().toISOString());
     this.initialSeed = opts.seed ?? [];
+    this.onMutation = opts.onMutation ?? null;
+  }
+
+  /**
+   * Synchronous, non-throwing wrapper around the user hook. Errors are
+   * written to stderr so the write completes — matches the FS adapter
+   * semantics so the dual-tests pattern stays observationally identical.
+   */
+  private fireMutation(
+    ledgerId: string,
+    op: "create" | "update" | "archive",
+  ): void {
+    if (this.onMutation === null) return;
+    try {
+      this.onMutation(ledgerId, op);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `InMemoryLedgerStore: onMutation hook threw for ${ledgerId} (${op}): ${msg}\n`,
+      );
+    }
   }
 
   async init(): Promise<void> {
@@ -174,17 +203,20 @@ export class InMemoryLedgerStore implements LedgerStore {
     milestoneId: string,
     patch: UpdateMilestoneItemPatch,
   ): Promise<Item> {
-    return this.withMilestonesLock(async () => {
+    const item = await this.withMilestonesLock(async () => {
       const ledger = this.getLedger(MILESTONES_LEDGER);
-      const item = applyUpdateMilestoneItem(ledger, milestoneId, patch, this.now());
-      return cloneItem(item);
+      return cloneItem(applyUpdateMilestoneItem(ledger, milestoneId, patch, this.now()));
     });
+    this.fireMutation(MILESTONES_LEDGER, "update");
+    return item;
   }
 
   async updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item> {
-    return this.withLock(ledgerId, async () => {
+    const item = await this.withLock(ledgerId, async () => {
       return cloneItem(applyUpdateItem(this.getLedger(ledgerId), itemId, patch, this.now()));
     });
+    this.fireMutation(ledgerId, "update");
+    return item;
   }
 
   async createItem(
@@ -199,7 +231,7 @@ export class InMemoryLedgerStore implements LedgerStore {
     }
     // Acquire global milestones lock first (strict-existence check
     // reads the milestones ledger), then per-ledger lock.
-    return this.withMilestonesLock(async () => {
+    const item = await this.withMilestonesLock(async () => {
       assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
       return this.withLock(ledgerId, async () => {
         return cloneItem(
@@ -207,13 +239,17 @@ export class InMemoryLedgerStore implements LedgerStore {
         );
       });
     });
+    this.fireMutation(ledgerId, "create");
+    return item;
   }
 
   async createMilestone(init: CreateMilestoneItemInit): Promise<Item> {
-    return this.withMilestonesLock(async () => {
+    const item = await this.withMilestonesLock(async () => {
       const ledger = this.getLedger(MILESTONES_LEDGER);
       return cloneItem(applyCreateMilestoneItem(ledger, init, this.now()));
     });
+    this.fireMutation(MILESTONES_LEDGER, "create");
+    return item;
   }
 
   async createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger> {
@@ -227,23 +263,43 @@ export class InMemoryLedgerStore implements LedgerStore {
     if (this.ledgers.has(name)) throw new DuplicateIdError("ledger", name);
     const ledger = freshLedger(name, schema);
     this.ledgers.set(name, ledger);
-    return materialiseFetchedLedger(ledger, this.getLedger(MILESTONES_LEDGER));
+    const result = materialiseFetchedLedger(ledger, this.getLedger(MILESTONES_LEDGER));
+    this.fireMutation(name, "create");
+    return result;
   }
 
   async archiveMilestone(
     milestoneId: string,
     summary: string,
   ): Promise<ArchivePointer> {
-    return this.withMilestonesLock(async () => {
+    let participatingLedgers: string[] = [];
+    const ptr = await this.withMilestonesLock(async () => {
       // Acquire every per-ledger lock in alphabetic order so we never
       // race a concurrent updateItem on a participating ledger.
       const otherLedgerIds = Array.from(this.ledgers.keys())
         .filter((n) => n !== MILESTONES_LEDGER)
         .sort();
       return this.withLocksInOrder(otherLedgerIds, async () => {
+        participatingLedgers = otherLedgerIds.filter((id) => {
+          const l = this.ledgers.get(id);
+          return l !== undefined && l.milestones.some((m) => m.id === milestoneId);
+        });
         return this.performArchive(milestoneId, summary);
       });
     });
+    for (const id of participatingLedgers) this.fireMutation(id, "archive");
+    this.fireMutation(MILESTONES_LEDGER, "archive");
+    return ptr;
+  }
+
+  /**
+   * In-memory adapter is the source of truth — there is no other
+   * writer for `invalidate` to consult. Provided so the interface
+   * shape is uniform with `FsLedgerStore` and the dual-tests suite
+   * can assert the no-op contract.
+   */
+  async invalidate(_ledgerId: string): Promise<void> {
+    // intentional no-op
   }
 
   // --- internals ---

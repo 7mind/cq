@@ -80,6 +80,7 @@ import type {
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
   LedgerStore,
+  OnMutation,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
@@ -102,6 +103,18 @@ export interface FsLedgerStoreOpts {
   now?: () => string;
   /** Lockfile injection points for tests (isPidAlive, selfPid, …). */
   lockfile?: LockfileOpts;
+  /**
+   * Fired AFTER every successful write — after the lockfile is
+   * released and after the in-memory map is updated. Used to broadcast
+   * cross-process cache-invalidation notifications via the internal
+   * WS channel (D-COHERENCE). MUST NOT block; if the hook throws, the
+   * store logs to stderr and continues so write effects survive.
+   *
+   * Fired for: createLedger, createMilestone, createItem, updateItem,
+   * updateMilestoneItem, archiveMilestone (once per participating
+   * ledger, including the milestones ledger). NOT fired for reads.
+   */
+  onMutation?: OnMutation;
 }
 
 /** Global lock key for the milestones-cross-ledger mutex/lockfile. */
@@ -118,6 +131,7 @@ export class FsLedgerStore implements LedgerStore {
   private readonly ledgers = new Map<string, Ledger>();
   private readonly now: () => string;
   private readonly lockfile: Lockfile;
+  private readonly onMutation: OnMutation | null;
   private registry: LedgerRegistry = { ...EMPTY_REGISTRY, ledgers: [] };
   private initialised = false;
 
@@ -129,6 +143,28 @@ export class FsLedgerStore implements LedgerStore {
     this.registryPath = path.join(this.docsDir, "ledgers.yaml");
     this.now = opts.now ?? (() => new Date().toISOString());
     this.lockfile = new Lockfile(opts.lockfile ?? {});
+    this.onMutation = opts.onMutation ?? null;
+  }
+
+  /**
+   * Invoke the user-supplied `onMutation` hook with the given
+   * (ledgerId, op) pair. Synchronous; never throws — if the user hook
+   * throws, the error is written to stderr so the write path completes
+   * uninterrupted. Called AFTER lockfile release.
+   */
+  private fireMutation(
+    ledgerId: string,
+    op: "create" | "update" | "archive",
+  ): void {
+    if (this.onMutation === null) return;
+    try {
+      this.onMutation(ledgerId, op);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `FsLedgerStore: onMutation hook threw for ${ledgerId} (${op}): ${msg}\n`,
+      );
+    }
   }
 
   async init(): Promise<void> {
@@ -289,12 +325,15 @@ export class FsLedgerStore implements LedgerStore {
     milestoneId: string,
     patch: UpdateMilestoneItemPatch,
   ): Promise<Item> {
-    return this.withMilestonesLock(async () => {
+    const item = await this.withMilestonesLock(async () => {
       const ledger = this.getLedger(MILESTONES_LEDGER);
-      const item = applyUpdateMilestoneItem(ledger, milestoneId, patch, this.now());
+      const it = applyUpdateMilestoneItem(ledger, milestoneId, patch, this.now());
       await this.writeLedgerFile(ledger);
-      return cloneItem(item);
+      return cloneItem(it);
     });
+    // Hook fires AFTER lockfile release per D-COHERENCE contract.
+    this.fireMutation(MILESTONES_LEDGER, "update");
+    return item;
   }
 
   async updateItem(
@@ -302,12 +341,14 @@ export class FsLedgerStore implements LedgerStore {
     itemId: string,
     patch: UpdateItemPatch,
   ): Promise<Item> {
-    return this.withLock(ledgerId, async () => {
+    const it = await this.withLock(ledgerId, async () => {
       const ledger = this.getLedger(ledgerId);
-      const it = applyUpdateItem(ledger, itemId, patch, this.now());
+      const x = applyUpdateItem(ledger, itemId, patch, this.now());
       await this.writeLedgerFile(ledger);
-      return cloneItem(it);
+      return cloneItem(x);
     });
+    this.fireMutation(ledgerId, "update");
+    return it;
   }
 
   async createItem(
@@ -320,24 +361,28 @@ export class FsLedgerStore implements LedgerStore {
         `use createMilestone to add an item to the ${MILESTONES_LEDGER} ledger`,
       );
     }
-    return this.withMilestonesLock(async () => {
+    const item = await this.withMilestonesLock(async () => {
       assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
       return this.withLock(ledgerId, async () => {
         const ledger = this.getLedger(ledgerId);
-        const item = applyCreateItem(ledger, milestoneId, init, this.now());
+        const x = applyCreateItem(ledger, milestoneId, init, this.now());
         await this.writeLedgerFile(ledger);
-        return cloneItem(item);
+        return cloneItem(x);
       });
     });
+    this.fireMutation(ledgerId, "create");
+    return item;
   }
 
   async createMilestone(init: CreateMilestoneItemInit): Promise<Item> {
-    return this.withMilestonesLock(async () => {
+    const item = await this.withMilestonesLock(async () => {
       const ledger = this.getLedger(MILESTONES_LEDGER);
-      const item = applyCreateMilestoneItem(ledger, init, this.now());
+      const x = applyCreateMilestoneItem(ledger, init, this.now());
       await this.writeLedgerFile(ledger);
-      return cloneItem(item);
+      return cloneItem(x);
     });
+    this.fireMutation(MILESTONES_LEDGER, "create");
+    return item;
   }
 
   async createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger> {
@@ -356,7 +401,7 @@ export class FsLedgerStore implements LedgerStore {
     if (this.ledgers.has(name)) {
       throw new DuplicateIdError("ledger", name);
     }
-    return this.withRegistryLock(async () => {
+    const result = await this.withRegistryLock(async () => {
       if (this.ledgers.has(name)) {
         throw new DuplicateIdError("ledger", name);
       }
@@ -367,22 +412,129 @@ export class FsLedgerStore implements LedgerStore {
       await this.writeRegistry();
       return materialiseFetchedLedger(ledger, this.getLedger(MILESTONES_LEDGER));
     });
+    this.fireMutation(name, "create");
+    return result;
   }
 
   async archiveMilestone(
     milestoneId: string,
     summary: string,
   ): Promise<ArchivePointer> {
-    return this.withMilestonesLock(async () => {
+    // Snapshot the set of ledgers that will be archived so we can fire
+    // per-participant hooks AFTER all writes complete + locks release.
+    // We compute it INSIDE the lock to avoid a TOCTOU race with a
+    // concurrent createItem on a participating ledger.
+    let participatingLedgers: string[] = [];
+    const ptr = await this.withMilestonesLock(async () => {
       // Acquire every per-ledger lock in alphabetic order BEFORE inspecting
       // any ledger, so we don't race a concurrent updateItem.
       const otherLedgerIds = Array.from(this.ledgers.keys())
         .filter((n) => n !== MILESTONES_LEDGER)
         .sort();
       return this.withLocksInOrder(otherLedgerIds, async () => {
+        // Determine the participants under lock so the hook list reflects
+        // what was actually mutated.
+        participatingLedgers = otherLedgerIds.filter((id) => {
+          const l = this.ledgers.get(id);
+          return l !== undefined && l.milestones.some((m) => m.id === milestoneId);
+        });
         return this.performArchive(milestoneId, summary);
       });
     });
+    // Fire per-participant hooks AFTER lockfile release. The milestones
+    // ledger is always archived (the milestone-item itself), so it
+    // always gets one hook.
+    for (const id of participatingLedgers) this.fireMutation(id, "archive");
+    this.fireMutation(MILESTONES_LEDGER, "archive");
+    return ptr;
+  }
+
+  /**
+   * Drop the in-memory cache for `ledgerId` and re-read it from disk
+   * under the per-ledger lock. Used by the cross-process coherence
+   * channel (D-COHERENCE) on inbound `ledger.changed` notifications.
+   *
+   * If the named ledger is not registered locally, attempt to reload
+   * the registry: another process may have just created it. The
+   * registry reload happens under the registry lock so it cannot
+   * interleave with a local `createLedger`. After reload, if the
+   * ledger is present in the registry, load its file under the per-
+   * ledger lock.
+   */
+  async invalidate(ledgerId: string): Promise<void> {
+    this.assertInit();
+    if (this.ledgers.has(ledgerId)) {
+      await this.withLock(ledgerId, async () => {
+        await this.reloadLedgerFromDisk(ledgerId);
+      });
+      return;
+    }
+    // Unknown ledger — reload registry and, if it's now there, load it.
+    await this.withRegistryLock(async () => {
+      let registryText: string | null = null;
+      try {
+        registryText = await fs.readFile(this.registryPath, "utf8");
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") throw e;
+      }
+      if (registryText === null) return; // no registry yet — nothing to learn
+      const fresh = parseRegistry(registryText);
+      // Adopt the fresh registry wholesale; any ledgers we already have
+      // are unaffected because their on-disk schema is the authority.
+      this.registry = fresh;
+      const entry = fresh.ledgers.find((e) => e.name === ledgerId);
+      if (entry === undefined) return; // still doesn't exist; nothing to do
+      // Load the new ledger from disk; the per-ledger lock isn't needed
+      // until the entry exists in `this.ledgers`, but acquiring it
+      // first means a parallel local creator can't race past us.
+      const isMilestones = entry.name === MILESTONES_LEDGER;
+      const filePath = this.ledgerPath(entry.name);
+      let text: string | null = null;
+      try {
+        text = await fs.readFile(filePath, "utf8");
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT") throw e;
+      }
+      if (text === null) {
+        // File missing — the other process registered but hasn't written
+        // the file yet. Don't fabricate; bail out and let a later
+        // invalidate retry once the file lands.
+        return;
+      }
+      const ledger = parseLedger(text, {
+        schema: entry.schema,
+        isMilestonesLedger: isMilestones,
+      });
+      this.ledgers.set(entry.name, ledger);
+    });
+  }
+
+  /**
+   * Re-read `<ledgerId>.md` under the assumption that the per-ledger
+   * lock is already held. Used by `invalidate` for known ledgers.
+   * Silent no-op if the file disappeared (the other process may have
+   * deleted it as part of a future feature).
+   */
+  private async reloadLedgerFromDisk(ledgerId: string): Promise<void> {
+    const entry = this.registry.ledgers.find((e) => e.name === ledgerId);
+    if (entry === undefined) return;
+    const isMilestones = entry.name === MILESTONES_LEDGER;
+    const filePath = this.ledgerPath(entry.name);
+    let text: string | null = null;
+    try {
+      text = await fs.readFile(filePath, "utf8");
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") throw e;
+    }
+    if (text === null) return;
+    const ledger = parseLedger(text, {
+      schema: entry.schema,
+      isMilestonesLedger: isMilestones,
+    });
+    this.ledgers.set(entry.name, ledger);
   }
 
   // ---------------------------------------------------------------------------

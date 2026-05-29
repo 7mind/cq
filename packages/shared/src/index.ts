@@ -5,3 +5,4 @@ export * from "./close-codes.js";
 export * from "./session.js";
 export * from "./effort.js";
 export * from "./models.js";
+export * from "./internalProtocol.js";

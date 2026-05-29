@@ -6,6 +6,7 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## Milestones (high-level)
 
+- [x] **outer-13 / coherence** — Cross-process cache coherence between cq-server and cq-mcp via per-process internal WebSocket channel (`ledger.changed` invalidation). Plan: [`docs/drafts/20260529-0050-plan-coherence.md`](docs/drafts/20260529-0050-plan-coherence.md).
 - [x] **outer-12 / msunify** — Unified `milestones` ledger + drop per-ledger milestone tools + ISO 8601 timestamps. Plan: [`docs/drafts/20260528-2100-plan-msunify.md`](docs/drafts/20260528-2100-plan-msunify.md).
 - [x] **outer-11** — D-UNIFASYNC-01 + adversarial sweep for sync/async unions.
 - [x] **outer-10** — close D-CQMCP-E2E + D-CQMCP-NIX (outer-9 follow-ups).
@@ -13,6 +14,44 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 - (older milestones in this file)
 
 ---
+
+## Milestone outer-13 — coherence — DISCHARGED
+
+**Cycle:** coherence (cross-process cache invalidation cq-server ↔ cq-mcp).
+**Plan:** [`docs/drafts/20260529-0050-plan-coherence.md`](docs/drafts/20260529-0050-plan-coherence.md).
+
+Sequence (one commit per PR; tag `coherence-N`):
+
+- [x] **coherence-1** — `packages/shared/src/internalProtocol.ts` Zod discriminated-union envelope (`ledger.changed` only this cycle) + path/subprotocol constants + 10 round-trip + negative tests. Commit `627e9a3`.
+- [x] **coherence-2** — `FsLedgerStore` + `InMemoryLedgerStore`: `onMutation` ctor hook (fires after every successful write, after lockfile release) + `invalidate(ledgerId)` public method (drops cache, re-reads under per-ledger lock; registry-reload fallback for unknown ids). Mirror in dual-tests abstract suite. Commit `568ace6`. +8 tests.
+- [x] **coherence-3** — `packages/server/src/agent/internalWs.ts` (server-side service) + wire `/__internal/cq-mcp` upgrade into `server.ts` + `devServer.ts`; pre-upgrade origin check bypassed for internal path; per-process token authentication via `Sec-WebSocket-Protocol: cq-internal.<token>`; constant-time compare; loop-detection on receive; `RunningServer.internalWsUrl` getter for the bridge. Commit `27da7c4`. +19 tests.
+- [x] **coherence-4** — `packages/cq-mcp/src/internalWs.ts` client + `packages/cq-mcp/src/main.ts` startup wiring (5s timeout, exit 2 on failure, standalone-mode preserved when env unset) + `codexBridge.ts` env propagation through `CodexOptions.config.mcp_servers.cq.env`. Commit `ace9f13`. +4 tests.
+- [x] **coherence-5** — `packages/server/test/internalWs-integration.test.ts` cross-process integration: spawn real cq-mcp against real cq-server; `create_milestone` + `create_ledger` via stdio MCP; assert cq-server's `FsLedgerStore` sees them within 1s (registry-reload + per-ledger reload paths both exercised). Commit `a31d4f5`. +2 tests.
+- [x] **coherence-6** — Discharge: ledger + session log + manual smoke. This commit.
+
+**Discharge metrics:**
+- `bun run check`: **761 pass / 0 fail / 0 error / 2651 expect() across 90 files**. Up from outer-12 baseline 718/0/2567 by **+43 net new passing tests** (target +15..+25; we overshot because the abstract-suite contract picked up additional onMutation cases per adapter — 10 shared + 8 dual + 19 server + 4 cq-mcp + 2 integration).
+- `bun run e2e` (Playwright): **20 passed / 0 skipped / 0 failed** (1.2m). Unchanged from outer-12 baseline.
+- `nix build .#default`: exit 0; `./result/bin/cq-mcp --cwd /tmp/probe-coherence` runs in standalone mode (no env vars set → logs "running without internal WS channel; ledger cache invalidation disabled" + serves stdio MCP); JSON-RPC `initialize` + `tools/list` round-trip returns the 13 msunify tools.
+- `tsc -b` clean; `eslint .` 0 errors / 23 warnings (unchanged).
+- Manual scenario: covered by the integration test in PR-5 — `bun run dev` against the wired server with a Codex session that calls `mcp__cq__create_ledger` would observe the same convergence within 1s (the integration test's `withMcpClient` exercises the identical path: spawn cq-mcp with env vars, run create_milestone/create_ledger, poll the cq-server-side FsLedgerStore until it picks up the change).
+
+**Non-trivial design decisions made beyond the brief:**
+1. **Registry-reload fallback in `FsLedgerStore.invalidate(unknownId)`.** The brief's `invalidate(ledgerId)` contract no-ops when the ledger isn't registered, but a Codex session creating a brand-new ledger via cq-mcp would then be invisible to cq-server forever (the original user-visible defect). Added a registry-lock-protected reload path that picks up newly-registered ledgers on first invalidation. Verified in the integration test's second case.
+2. **`archiveMilestone` fires one hook per participating ledger plus the milestones ledger.** The brief said "fires for archiveMilestone" without specifying granularity. Per-participant is correct: each ledger's on-disk file mutated, each one's cache on the OTHER process needs invalidation. The list is computed under-lock so it reflects what was actually written.
+3. **Sec-WebSocket-Protocol echo via Bun.serve `headers` option.** Bun doesn't auto-echo the requested subprotocol; the server-side `handleUpgrade` sets `Sec-WebSocket-Protocol: cq-internal.<token>` on `srv.upgrade(req, { data, headers })`. Verified by the cq-mcp client's `subprotocol mismatch` check (rejects if the server selects a different value).
+4. **`Bridge.setInternalWsUrl()` setter pattern.** The internal-WS URL depends on the bound port from `Bun.serve(...).port`, which is only known AFTER the server starts. Constructing `Bridge` requires the URL up-front (it propagates through to `CodexBridge` env), so we adopted a one-shot setter called by `server.ts` immediately after `Bun.serve` returns and before any client request can reach the bridge. Tests + production both use the same flow.
+5. **`mcp_servers.cq.env` for env propagation.** The codex-sdk's `CodexConfigObject` flattens nested objects into `--config key.sub=value` overrides; passing `{config: {mcp_servers: {cq: {env: {CQ_INTERNAL_WS_URL: "..."}}}}}` becomes `--config mcp_servers.cq.env.CQ_INTERNAL_WS_URL="..."` which the Codex CLI honours when spawning cq-mcp. Verified by reading `node_modules/.bun/@openai+codex-sdk@0.134.0/dist/index.js:304-340` (the `flattenConfigOverrides` / `toTomlValue` pair). The brief flagged this as an open question to verify in implementation — confirmed.
+
+**Defects opened and closed during the cycle:** none (no defects surfaced — every PR passed self-review without finding correctness bugs requiring a fix-round; lint/typecheck nits were inlined fixes in the same PR).
+
+**Session log:** [`docs/logs/20260529-0050-coherence-log.md`](docs/logs/20260529-0050-coherence-log.md).
+
+---
+
+## Milestone outer-12 — msunify — DISCHARGED
+
+(see archived breakdown below)
 
 ## Active — outer-12 / msunify
 

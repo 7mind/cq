@@ -129,6 +129,16 @@ export interface CodexBridgeOpts {
    * package source under bun directly.
    */
   cqMcpBin?: CqMcpBin;
+  /**
+   * Internal WS connection details forwarded to the spawned cq-mcp via
+   * the Codex CLI's `mcp_servers.cq.env` TOML table (D-COHERENCE).
+   * When undefined, cq-mcp falls back to standalone mode and skips the
+   * cross-process invalidation channel. Production callers pass both;
+   * tests usually leave them undefined so the standalone-mode codepath
+   * stays exercised.
+   */
+  internalWsUrl?: string;
+  internalWsToken?: string;
 }
 
 /** Tracks one Codex session's runtime state. */
@@ -279,6 +289,8 @@ export class CodexBridge implements BackendBridge {
   private readonly codexFactory: CodexFactory;
   private readonly detectAuth: () => boolean;
   private readonly cqMcpBin: CqMcpBin;
+  private readonly internalWsUrl: string | null;
+  private readonly internalWsToken: string | null;
   private active: ActiveCodexSession | null = null;
 
   constructor(opts: CodexBridgeOpts) {
@@ -298,6 +310,8 @@ export class CodexBridge implements BackendBridge {
     });
     this.detectAuth = opts.detectAuth ?? ((): boolean => defaultDetectCodexAuth());
     this.cqMcpBin = opts.cqMcpBin ?? defaultResolveCqMcpBin();
+    this.internalWsUrl = opts.internalWsUrl ?? null;
+    this.internalWsToken = opts.internalWsToken ?? null;
   }
 
   isBusy(): boolean {
@@ -369,13 +383,26 @@ export class CodexBridge implements BackendBridge {
     // CodexOptions.config (notably mcp_servers.cq pointing at our stdio
     // bin) takes effect. The prior session has already been preempted
     // and shut down above, so there is no contention.
+    //
+    // D-COHERENCE: when the internal-WS connection details are
+    // available (production code path), pass them through the codex
+    // CLI's `mcp_servers.cq.env` TOML table. The codex-sdk flattens
+    // this to `--config mcp_servers.cq.env.CQ_INTERNAL_WS_URL=...`
+    // overrides; the CLI honours those when spawning cq-mcp.
+    const cqMcpEntry: Record<string, string | string[] | Record<string, string>> = {
+      command: this.cqMcpBin.command,
+      args: [...this.cqMcpBin.args, "--cwd", this.cwd],
+    };
+    if (this.internalWsUrl !== null && this.internalWsToken !== null) {
+      cqMcpEntry["env"] = {
+        CQ_INTERNAL_WS_URL: this.internalWsUrl,
+        CQ_INTERNAL_WS_TOKEN: this.internalWsToken,
+      };
+    }
     const codexOptions: CodexOptions = {
       config: {
         mcp_servers: {
-          cq: {
-            command: this.cqMcpBin.command,
-            args: [...this.cqMcpBin.args, "--cwd", this.cwd],
-          },
+          cq: cqMcpEntry as unknown as Record<string, string | string[]>,
         },
       },
     };

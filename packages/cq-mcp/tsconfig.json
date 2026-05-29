@@ -7,9 +7,10 @@
     "outDir": "./dist",
     "types": ["bun-types"],
     "paths": {
-      "@cq/ledger": ["../ledger/src/index.ts"]
+      "@cq/ledger": ["../ledger/src/index.ts"],
+      "@cq/shared": ["../shared/src/index.ts"]
     }
   },
-  "references": [{ "path": "../ledger" }],
+  "references": [{ "path": "../ledger" }, { "path": "../shared" }],
   "include": ["src", "test"]
 }

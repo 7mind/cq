@@ -24,6 +24,14 @@ import {
 export interface AbstractStoreFactory {
   /** Build a fresh store with the given pre-registered ledgers (besides milestones). */
   build(seed: Array<{ name: string; schema: LedgerSchema }>): Promise<LedgerStore>;
+  /**
+   * Build a fresh store wiring an `onMutation` hook. Same seed contract
+   * as `build`. Used by D-COHERENCE coverage to assert hook firing.
+   */
+  buildWithHook(
+    seed: Array<{ name: string; schema: LedgerSchema }>,
+    onMutation: (ledgerId: string, op: "create" | "update" | "archive") => void,
+  ): Promise<LedgerStore>;
   /** Optional teardown hook (e.g. remove tmp dir). */
   teardown?(store: LedgerStore): Promise<void>;
   name: string;
@@ -487,6 +495,97 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
               fields: { "1bad": { type: "string", required: false } },
             }),
           ).rejects.toThrow(/must match/);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // D-COHERENCE — onMutation hook firing matrix + invalidate semantics
+    // -----------------------------------------------------------------------
+
+    describe("D-COHERENCE — onMutation hook firing", () => {
+      it("fires once per createLedger / createMilestone / createItem / updateItem / updateMilestone / archiveMilestone", async () => {
+        const events: Array<[string, string]> = [];
+        const store = await factory.buildWithHook(
+          [{ name: "defects", schema: defectsSchema }],
+          (ledgerId, op) => events.push([ledgerId, op]),
+        );
+        try {
+          // createMilestone fires once on the milestones ledger.
+          const m = await store.createMilestone({ title: "x" });
+          expect(events).toEqual([[MILESTONES_LEDGER, "create"]]);
+          events.length = 0;
+
+          // createItem fires on the target ledger.
+          const it = await store.createItem("defects", m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "d" },
+          });
+          expect(events).toEqual([["defects", "create"]]);
+          events.length = 0;
+
+          // updateItem fires update on the target ledger.
+          await store.updateItem("defects", it.id, { status: "resolved" });
+          expect(events).toEqual([["defects", "update"]]);
+          events.length = 0;
+
+          // updateMilestone fires update on the milestones ledger.
+          await store.updateMilestone(m.id, { status: "done" });
+          expect(events).toEqual([[MILESTONES_LEDGER, "update"]]);
+          events.length = 0;
+
+          // createLedger fires create on the new ledger.
+          await store.createLedger("notes", tasksSchema);
+          expect(events).toEqual([["notes", "create"]]);
+          events.length = 0;
+
+          // archiveMilestone fires once per participating ledger + once
+          // for the milestones ledger itself. Both `defects` (had a
+          // group) and the milestones ledger fire. `notes` had no group
+          // for `m.id`, so it does NOT fire.
+          await store.archiveMilestone(m.id, "summary");
+          // Order: participants in alphabetic order, then milestones.
+          expect(events).toEqual([
+            ["defects", "archive"],
+            [MILESTONES_LEDGER, "archive"],
+          ]);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("a throwing onMutation does not unwind the write", async () => {
+        const store = await factory.buildWithHook(
+          [{ name: "defects", schema: defectsSchema }],
+          () => {
+            throw new Error("simulated hook failure");
+          },
+        );
+        try {
+          const m = await store.createMilestone({ title: "x" });
+          // Item was created despite the hook throwing.
+          expect(m.id).toBe("M1");
+          const it = await store.createItem("defects", m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "d" },
+          });
+          expect(it.id).toBe("D1");
+          // Re-read confirms persisted state.
+          const fetched = store.fetchItem("defects", "D1");
+          expect(fetched.id).toBe("D1");
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("invalidate is a no-op for unknown ledger ids (no throw)", async () => {
+        const store = await factory.build([]);
+        try {
+          await store.invalidate("nope-not-here");
+          // Still resolvable: enumerate doesn't suddenly include it.
+          expect(store.enumerate()).not.toContain("nope-not-here");
         } finally {
           await factory.teardown?.(store);
         }

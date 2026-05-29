@@ -88,10 +88,18 @@ export interface BridgeOpts {
   codexFactory?: CodexFactory;
   /** Override Codex auth detection for tests. */
   detectCodexAuth?: () => boolean;
+  /**
+   * Internal WS URL forwarded to spawned cq-mcp via env (D-COHERENCE).
+   * Threaded through CodexBridge so each new Codex session's MCP child
+   * connects back to the cq server for cache invalidation.
+   */
+  internalWsUrl?: string;
+  /** Token paired with `internalWsUrl`. */
+  internalWsToken?: string;
 }
 
 export class Bridge implements BackendBridge {
-  private readonly opts: BridgeOpts;
+  private opts: BridgeOpts;
   private readonly persistence: Persistence;
   /** The Claude backend is constructed eagerly so the broker getters always have a target. */
   private readonly claude: ClaudeBridge;
@@ -119,6 +127,17 @@ export class Bridge implements BackendBridge {
       ...(opts.ledgerStore !== undefined ? { ledgerStore: opts.ledgerStore } : {}),
     };
     this.claude = new ClaudeBridge(claudeOpts);
+  }
+
+  /**
+   * Set the internal WS URL (D-COHERENCE). Must be called before the
+   * first Codex session starts; `server.ts` invokes it immediately
+   * after `Bun.serve(...)` returns the bound port. No-op if `CodexBridge`
+   * has already been constructed (rare; would only happen if a Codex
+   * frame raced server startup, which the caller serialises).
+   */
+  setInternalWsUrl(url: string): void {
+    this.opts = { ...this.opts, internalWsUrl: url };
   }
 
   // -- Broker accessors (proxy to ClaudeBridge) -------------------------------
@@ -155,6 +174,8 @@ export class Bridge implements BackendBridge {
           persistence: this.persistence,
           ...(this.opts.codexFactory !== undefined ? { codexFactory: this.opts.codexFactory } : {}),
           ...(this.opts.detectCodexAuth !== undefined ? { detectAuth: this.opts.detectCodexAuth } : {}),
+          ...(this.opts.internalWsUrl !== undefined ? { internalWsUrl: this.opts.internalWsUrl } : {}),
+          ...(this.opts.internalWsToken !== undefined ? { internalWsToken: this.opts.internalWsToken } : {}),
         });
       }
       return this.codex;
