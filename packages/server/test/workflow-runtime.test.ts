@@ -24,6 +24,7 @@ import {
 } from "../src/workflow/index";
 import type { WorkflowEvent } from "@cq/shared";
 import { noopLogger } from "./helpers/mockBridge";
+import { FakePhaseSubagent } from "./helpers/fakePhaseSubagent";
 
 const CANNED: ProducerOutput = {
   goal: { description: "A local-first encrypted notetaking webapp." },
@@ -45,6 +46,7 @@ function makeRuntime(store: LedgerStore, producer: WorkflowProducer): WorkflowRu
     logger: noopLogger,
     store,
     selectProducer: () => producer,
+    selectPhaseSubagent: () => new FakePhaseSubagent(),
   });
 }
 

@@ -25,11 +25,17 @@ import {
   makeAssistantMessage,
   MockWsSocket,
 } from "./helpers/mockBridge";
+import { FakePhaseSubagent } from "./helpers/fakePhaseSubagent";
 
 const CANNED: ProducerOutput = { goal: { description: "d" }, questions: [{ question: "q?" }] };
 
 function makeRuntime(store: LedgerStore, producer: WorkflowProducer): WorkflowRuntime {
-  return new WorkflowRuntime({ logger: noopLogger, store, selectProducer: () => producer });
+  return new WorkflowRuntime({
+    logger: noopLogger,
+    store,
+    selectProducer: () => producer,
+    selectPhaseSubagent: () => new FakePhaseSubagent(),
+  });
 }
 
 /** A chat-mock query: init + one assistant message + result, then ends. */

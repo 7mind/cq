@@ -14,6 +14,7 @@ import { WsSession, type WsSessionData } from "../src/ws/session.js";
 import { InMemoryLedgerStore, type LedgerStore } from "@cq/ledger";
 import { WorkflowRuntime, type WorkflowProducer, type ProducerOutput } from "../src/workflow/index.js";
 import { noopLogger } from "./helpers/mockBridge.js";
+import { FakePhaseSubagent } from "./helpers/fakePhaseSubagent.js";
 
 interface ParsedFrame {
   type: string;
@@ -53,7 +54,12 @@ class FakeProducer implements WorkflowProducer {
   }
 }
 function makeRuntime(store: LedgerStore): WorkflowRuntime {
-  return new WorkflowRuntime({ logger: noopLogger, store, selectProducer: () => new FakeProducer() });
+  return new WorkflowRuntime({
+    logger: noopLogger,
+    store,
+    selectProducer: () => new FakeProducer(),
+    selectPhaseSubagent: () => new FakePhaseSubagent(),
+  });
 }
 
 async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<void> {

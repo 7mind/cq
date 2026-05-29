@@ -9,7 +9,13 @@ import { SessionRegistry } from "./seq/sessionRegistry";
 import { SqlitePersistence } from "./persist/SqlitePersistence.js";
 import { FsLedgerStore } from "@cq/ledger";
 import { INTERNAL_WS_PATH, InternalWsService, type InternalWsConnData } from "./agent/internalWs";
-import { WorkflowRuntime, ClaudeProducer, CodexProducer } from "./workflow/index";
+import {
+  WorkflowRuntime,
+  ClaudeProducer,
+  CodexProducer,
+  ClaudePhaseSubagent,
+  CodexPhaseSubagent,
+} from "./workflow/index";
 
 export type ServerConfig = Readonly<{
   host: string;
@@ -116,7 +122,14 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       platform === "codex"
         ? new CodexProducer({ logger })
         : new ClaudeProducer({ logger, cwd }),
+    selectPhaseSubagent: (platform) =>
+      platform === "codex"
+        ? new CodexPhaseSubagent({ logger })
+        : new ClaudePhaseSubagent({ logger, cwd }),
   });
+  // Resume any goal mid-loop from ledger state (closes WF-D02). Goals waiting on
+  // open questions sit idle until a `question.answer` arrives.
+  await workflow.reconcile();
 
   // Inbound `ask.request` from a Codex session's cq-mcp drives the browser
   // ask UI for that session and proxies the answer back (askproxy / outer-14).

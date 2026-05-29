@@ -19,6 +19,7 @@ export type {
   ProducerSelector,
   StartPlanInput,
   StartPlanResult,
+  WorkflowPosition,
 } from "./workflowRuntime.js";
 export {
   ProducerOutputSchema,
