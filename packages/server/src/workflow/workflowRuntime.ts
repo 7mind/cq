@@ -36,8 +36,8 @@
 
 import type { Logger } from "../log/logger";
 import type { Item, LedgerStore } from "@cq/ledger";
-import { GOALS_LEDGER, QUESTIONS_LEDGER } from "@cq/ledger";
-import type { WorkflowEvent } from "@cq/shared";
+import { GOALS_LEDGER, QUESTIONS_LEDGER, TASKS_LEDGER } from "@cq/ledger";
+import type { WorkflowEvent, GoalSnapshot, GoalMilestone, GoalQuestion, GoalTask } from "@cq/shared";
 import type { WorkflowProducer, ProducerOutput } from "./producer.js";
 import {
   CLARIFY_REVIEW_SPEC,
@@ -314,6 +314,143 @@ export class WorkflowRuntime {
   }
 
   // ─────────────────────────────────────────────────────────────────────── //
+  // Escalation reply (closes the WFL-D01 no-progress loop, Q6 escalation).
+  // ─────────────────────────────────────────────────────────────────────── //
+
+  /**
+   * Handle the user's reply to a `workflow.event{status:"escalated"}` raised by
+   * the no-progress guard. The goal sits in `planning` with no open questions
+   * (the guard escalates only on an identical revise round). Choices:
+   *
+   *  - `proceed`  → accept the current plan as-is: goal status `planned` + a
+   *    planned/done lifecycle pair (mirrors a satisfied reviewer).
+   *  - `guidance` → re-dispatch the planner with the user's guidance appended,
+   *    then resume the plan-review loop (within the workflow dispatch slot).
+   *  - `abandon`  → goal status `abandoned` (terminal).
+   *
+   * Idempotent against a goal that has already left the escalated position: a
+   * terminal goal is a no-op; the guidance path is guarded by the busy slot +
+   * in-flight latch so a double reply cannot double-dispatch. Returns the
+   * outcome for the caller / tests. Uniform-async (always `Promise`).
+   */
+  async submitEscalationReply(
+    goalId: string,
+    choice: "proceed" | "guidance" | "abandon",
+    guidance?: string,
+  ): Promise<"planned" | "abandoned" | "dispatched" | "noop"> {
+    const pos = this.derivePosition(goalId);
+    if (pos.kind === "terminal") {
+      // Already resolved (proceed/abandon ran, or the loop converged) — no-op.
+      this.logger.info("workflow.escalation_reply_noop", { goalId, choice });
+      return "noop";
+    }
+
+    if (choice === "abandon") {
+      await this.store.updateItem(GOALS_LEDGER, goalId, { status: "abandoned" });
+      this.lastReviseFingerprint.delete(goalId);
+      const workflowId = crypto.randomUUID();
+      this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "done", detail: "goal abandoned" });
+      this.logger.info("workflow.escalation_abandon", { goalId });
+      return "abandoned";
+    }
+
+    if (choice === "proceed") {
+      await this.store.updateItem(GOALS_LEDGER, goalId, { status: "planned" });
+      this.lastReviseFingerprint.delete(goalId);
+      const workflowId = crypto.randomUUID();
+      this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "planned", detail: "plan accepted as-is" });
+      this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "done", detail: "planning complete" });
+      this.logger.info("workflow.escalation_proceed", { goalId });
+      return "planned";
+    }
+
+    // guidance — re-dispatch the planner with the user's guidance appended, then
+    // resume the plan-review loop. Routed through the same slot machinery as
+    // auto-advance so pool=1 + the in-flight latch hold.
+    const text = (guidance ?? "").trim();
+    if (text.length === 0) {
+      throw new Error("guidance escalation reply requires non-empty guidance text");
+    }
+    // Clear the fingerprint so the guided plan is not mistaken for no-progress.
+    this.lastReviseFingerprint.delete(goalId);
+    void this.advanceGoalWithGuidance(goalId, text).catch((err: unknown) => {
+      this.logger.warn("workflow.escalation_guidance_error", { goalId, err: String(err) });
+    });
+    return "dispatched";
+  }
+
+  // ─────────────────────────────────────────────────────────────────────── //
+  // Goals snapshot (Goals-tab read protocol, cycle 4).
+  // ─────────────────────────────────────────────────────────────────────── //
+
+  /**
+   * Build the Goals-tab read view from the ledgers: every goal with its
+   * milestones (in goal.milestones order), each milestone's questions and tasks,
+   * per-goal openQuestionCount and the total across all goals (Q13 badge).
+   *
+   * Pure read — synchronous in-memory store access, no locks, so a snapshot
+   * read during a concurrent workflow write cannot raise LedgerBusyError. The
+   * caller wraps the result in a `goals.snapshot` frame.
+   */
+  buildGoalsSnapshot(): { goals: GoalSnapshot[]; totalOpenQuestions: number } {
+    const goals: GoalSnapshot[] = [];
+    let totalOpenQuestions = 0;
+    for (const goalId of this.goalIds()) {
+      const goal = this.store.fetchItem(GOALS_LEDGER, goalId);
+      const milestoneIds = Array.isArray(goal.fields["milestones"])
+        ? (goal.fields["milestones"] as string[])
+        : [];
+      const milestones: GoalMilestone[] = [];
+      for (const mId of milestoneIds) {
+        const fetched = this.store.fetchMilestone(mId);
+        const grouped = this.store.listMilestoneItems(mId);
+        const questions: GoalQuestion[] = (grouped[QUESTIONS_LEDGER] ?? []).map((q) =>
+          this.toGoalQuestion(q),
+        );
+        const tasks: GoalTask[] = (grouped[TASKS_LEDGER] ?? []).map((t) => ({
+          id: t.id,
+          headline: String(t.fields["headline"] ?? ""),
+          status: t.status,
+        }));
+        milestones.push({
+          id: mId,
+          title: fetched.resolved.title,
+          status: fetched.resolved.status,
+          questions,
+          tasks,
+        });
+      }
+      const openQuestionCount = this.openQuestionCount(goalId);
+      totalOpenQuestions += openQuestionCount;
+      goals.push({
+        id: goalId,
+        description: String(goal.fields["description"] ?? ""),
+        status: goal.status,
+        milestones,
+        openQuestionCount,
+      });
+    }
+    return { goals, totalOpenQuestions };
+  }
+
+  /** Map a questions-ledger item to the wire `GoalQuestion` shape. */
+  private toGoalQuestion(q: Item): GoalQuestion {
+    const out: GoalQuestion = {
+      id: q.id,
+      question: String(q.fields["question"] ?? ""),
+      suggestions: Array.isArray(q.fields["suggestions"]) ? (q.fields["suggestions"] as string[]) : [],
+      status: q.status,
+    };
+    const ctx = q.fields["context"];
+    if (typeof ctx === "string") out.context = ctx;
+    const rec = q.fields["recommendation"];
+    if (typeof rec === "string") out.recommendation = rec;
+    const ans = q.fields["answer"];
+    if (typeof ans === "string") out.answer = ans;
+    return out;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────── //
   // Resume-on-startup reconcile (closes WF-D02).
   // ─────────────────────────────────────────────────────────────────────── //
 
@@ -393,6 +530,38 @@ export class WorkflowRuntime {
     }
   }
 
+  /**
+   * Re-dispatch the planner with the user's escalation guidance appended, then
+   * resume the plan-review loop. Uses the same slot/in-flight guards as
+   * `advanceGoal` so pool=1 holds and a double escalation reply cannot
+   * double-dispatch. Only valid for a goal sitting in a non-terminal,
+   * no-open-question position (the escalated state).
+   */
+  private async advanceGoalWithGuidance(goalId: string, guidance: string): Promise<void> {
+    if (this.inFlight.has(goalId)) {
+      this.logger.info("workflow.guidance_skipped_inflight", { goalId });
+      return;
+    }
+    if (this.active !== null) {
+      this.logger.info("workflow.guidance_skipped_busy", { goalId, active: this.active.workflowId });
+      return;
+    }
+    this.inFlight.add(goalId);
+    const workflowId = crypto.randomUUID();
+    const abort = new AbortController();
+    this.active = { workflowId, abort };
+    try {
+      await this.runPlanner(goalId, workflowId, abort.signal, guidance);
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "errored", detail: reason });
+      this.logger.warn("workflow.guidance_errored", { goalId, workflowId, reason });
+    } finally {
+      this.inFlight.delete(goalId);
+      if (this.active?.workflowId === workflowId) this.active = null;
+    }
+  }
+
   /** Phase 2: clarify-reviewer. Clear → planner; otherwise write new questions. */
   private async runClarifyReview(goalId: string, workflowId: string, signal: AbortSignal): Promise<void> {
     const goal = this.store.fetchItem(GOALS_LEDGER, goalId);
@@ -425,15 +594,19 @@ export class WorkflowRuntime {
     await this.runPlanner(goalId, workflowId, signal);
   }
 
-  /** Phase 3: planner. Writes planner milestones + tasks; goal → planning. */
-  private async runPlanner(goalId: string, workflowId: string, signal: AbortSignal): Promise<void> {
+  /**
+   * Phase 3: planner. Writes planner milestones + tasks; goal → planning. When
+   * `guidance` is supplied (escalation `guidance` reply) it is appended to the
+   * planner prompt so the user's steer reaches the planner.
+   */
+  private async runPlanner(goalId: string, workflowId: string, signal: AbortSignal, guidance?: string): Promise<void> {
     const goal = this.store.fetchItem(GOALS_LEDGER, goalId);
     const desc = String(goal.fields["description"] ?? "");
     this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "plan", status: "planning", detail: "drafting milestones and tasks" });
 
     const subagent = this.selectPhaseSubagent(this.platformFor(goalId));
     const plan = await subagent.dispatch(PLAN_SPEC, {
-      prompt: buildPlannerPrompt(desc, this.qnaFor(goalId)),
+      prompt: buildPlannerPrompt(desc, this.qnaFor(goalId)) + this.guidanceAddendum(guidance),
       signal,
       registerTeardown: this.trackTeardown,
     });
@@ -732,6 +905,16 @@ export class WorkflowRuntime {
 
   private platformFor(goalId: string): "claude" | "codex" {
     return this.goalPlatform.get(goalId) ?? "claude";
+  }
+
+  private guidanceAddendum(guidance?: string): string {
+    const text = (guidance ?? "").trim();
+    if (text.length === 0) return "";
+    return (
+      "\n\nThe plan-review loop stalled and the user provided this guidance — " +
+      "revise the plan to follow it:\n" +
+      text
+    );
   }
 
   private findingsAddendum(findings: readonly PlanFinding[]): string {

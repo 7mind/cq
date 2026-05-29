@@ -1,4 +1,4 @@
-import { ClientFrame, type ServerHbPong, type SessionState, type ChatError, type HistoryListResult, type HistoryGetResult, type HistoryReplayEvent, type HistoryReplayDone, type HistoryUpdate, type SettingsGetResult, type WorkflowEvent } from "@cq/shared";
+import { ClientFrame, type ServerHbPong, type SessionState, type ChatError, type HistoryListResult, type HistoryGetResult, type HistoryReplayEvent, type HistoryReplayDone, type HistoryUpdate, type SettingsGetResult, type WorkflowEvent, type GoalsSnapshot } from "@cq/shared";
 import { FRAME_VALIDATION_FAILED } from "@cq/shared";
 import type { Logger } from "../log/logger";
 import { createHeartbeat, type HeartbeatHandle } from "./heartbeat";
@@ -30,6 +30,7 @@ type HistoryReplayDonePayload = Omit<HistoryReplayDone, "seq" | "ts">;
 type HistoryUpdatePayload = Omit<HistoryUpdate, "seq" | "ts">;
 type SettingsGetResultPayload = Omit<SettingsGetResult, "seq" | "ts">;
 type WorkflowEventPayload = Omit<WorkflowEvent, "seq" | "ts">;
+type GoalsSnapshotPayload = Omit<GoalsSnapshot, "seq" | "ts">;
 
 // ---------------------------------------------------------------------------
 // WsSession — per-connection state and message dispatch
@@ -195,6 +196,14 @@ export class WsSession {
       }
       case "question.answer": {
         this.handleQuestionAnswer(frame.questionId, frame.answer);
+        break;
+      }
+      case "goals.list": {
+        this.handleGoalsList(ws, frame.seq);
+        break;
+      }
+      case "workflow.escalation_reply": {
+        this.handleEscalationReply(frame.goalId, frame.choice, frame.guidance);
         break;
       }
       case "chat.permission_reply": {
@@ -492,10 +501,52 @@ export class WsSession {
   }
 
   /**
+   * Handle a `goals.list` request: build the Goals-tab snapshot from the
+   * ledgers via the WorkflowRuntime and reply with a single `goals.snapshot`
+   * keyed by the request seq (mirrors history.list → history.list_result). The
+   * snapshot read is a pure in-memory store read (no lock), so it cannot raise
+   * LedgerBusyError even during a concurrent workflow write. No-op when no
+   * runtime is wired.
+   */
+  private handleGoalsList(ws: WsSocket, requestSeq: number): void {
+    if (this.workflow === null) return;
+    const { goals, totalOpenQuestions } = this.workflow.buildGoalsSnapshot();
+    const payload: GoalsSnapshotPayload = {
+      type: "goals.snapshot",
+      requestSeq,
+      goals,
+      totalOpenQuestions,
+    };
+    this.sendFrame(ws, payload);
+  }
+
+  /**
+   * Handle a `workflow.escalation_reply` frame: resolve the WFL-D01 no-progress
+   * escalation. proceed → planned+done; guidance → re-dispatch planner +
+   * resume the review loop; abandon → abandoned. Lifecycle frames fan out via
+   * the runtime to every subscribed connection. No-op when no runtime is wired.
+   */
+  private handleEscalationReply(
+    goalId: string,
+    choice: "proceed" | "guidance" | "abandon",
+    guidance: string | undefined,
+  ): void {
+    if (this.workflow === null) return;
+    void this.workflow.submitEscalationReply(goalId, choice, guidance).catch((err: unknown) => {
+      this.logger.error("ws.escalation_reply_error", {
+        sessionId: this.sessionId,
+        goalId,
+        choice,
+        err: String(err),
+      });
+    });
+  }
+
+  /**
    * Sends a frame to the client, injecting `seq` and `ts` automatically.
    * `payload` must contain all fields except `seq` and `ts`.
    */
-  private sendFrame(ws: WsSocket, payload: PongPayload | SessionStatePayload | HistoryListResultPayload | HistoryGetResultPayload | HistoryReplayEventPayload | HistoryReplayDonePayload | HistoryUpdatePayload | SettingsGetResultPayload | WorkflowEventPayload): void {
+  private sendFrame(ws: WsSocket, payload: PongPayload | SessionStatePayload | HistoryListResultPayload | HistoryGetResultPayload | HistoryReplayEventPayload | HistoryReplayDonePayload | HistoryUpdatePayload | SettingsGetResultPayload | WorkflowEventPayload | GoalsSnapshotPayload): void {
     const seq = this.outboundSeq++;
     const ts = Date.now();
     ws.send(JSON.stringify({ ...payload, seq, ts }));

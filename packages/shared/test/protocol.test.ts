@@ -31,6 +31,9 @@ import {
   SessionState,
   ClientFrame,
   ServerFrame,
+  GoalsList,
+  GoalsSnapshot,
+  WorkflowEscalationReply,
   SDKMessageEnvelope,
   base64DecodedByteLength,
   ATTACHMENT_TOTAL_MAX_BYTES,
@@ -635,6 +638,88 @@ describe("ChatReadFileResult", () => {
     };
     const parsed = ServerFrame.parse(frame);
     expect(parsed.type).toBe("chat.read_file_result");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Goals tab frames (cycle 4)
+// ---------------------------------------------------------------------------
+
+describe("Goals frames", () => {
+  test("GoalsList round-trips and is accepted by ClientFrame", () => {
+    const frame = { type: "goals.list" as const, seq: 5, ts: NOW };
+    expect(GoalsList.parse(frame)).toEqual(frame);
+    expect(ClientFrame.parse(frame).type).toBe("goals.list");
+  });
+
+  test("GoalsSnapshot round-trips and is accepted by ServerFrame", () => {
+    const frame = {
+      type: "goals.snapshot" as const,
+      seq: 6,
+      ts: NOW,
+      requestSeq: 5,
+      totalOpenQuestions: 1,
+      goals: [
+        {
+          id: "G1",
+          description: "A notes app.",
+          status: "clarifying",
+          openQuestionCount: 1,
+          milestones: [
+            {
+              id: "M1",
+              title: "produce an actionable specification",
+              status: "open",
+              questions: [
+                {
+                  id: "Q1",
+                  question: "Which platforms?",
+                  context: "scope",
+                  suggestions: ["web", "desktop"],
+                  recommendation: "web",
+                  status: "open",
+                },
+              ],
+              tasks: [],
+            },
+            {
+              id: "M2",
+              title: "Core build",
+              status: "open",
+              questions: [],
+              tasks: [{ id: "T1", headline: "Editor", status: "planned" }],
+            },
+          ],
+        },
+      ],
+    };
+    expect(GoalsSnapshot.parse(frame)).toEqual(frame);
+    expect(ServerFrame.parse(frame).type).toBe("goals.snapshot");
+  });
+
+  test("WorkflowEscalationReply: proceed/abandon need no guidance", () => {
+    for (const choice of ["proceed", "abandon"] as const) {
+      const frame = { type: "workflow.escalation_reply" as const, seq: 7, ts: NOW, goalId: "G1", choice };
+      expect(WorkflowEscalationReply.parse(frame)).toEqual(frame);
+      expect(ClientFrame.parse(frame).type).toBe("workflow.escalation_reply");
+    }
+  });
+
+  test("WorkflowEscalationReply: guidance requires non-empty guidance text", () => {
+    const ok = {
+      type: "workflow.escalation_reply" as const,
+      seq: 8,
+      ts: NOW,
+      goalId: "G1",
+      choice: "guidance" as const,
+      guidance: "prefer SQLite",
+    };
+    expect(WorkflowEscalationReply.parse(ok)).toEqual(ok);
+
+    const blankGuidance = { ...ok, guidance: "   " };
+    expect(WorkflowEscalationReply.safeParse(blankGuidance).success).toBe(false);
+    const missingGuidance = { type: "workflow.escalation_reply", seq: 8, ts: NOW, goalId: "G1", choice: "guidance" };
+    expect(WorkflowEscalationReply.safeParse(missingGuidance).success).toBe(false);
   });
 });
 

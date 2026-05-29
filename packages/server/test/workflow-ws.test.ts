@@ -132,6 +132,73 @@ describe("WsSession /plan routing", () => {
     expect(evts[0]!["detail"]).toContain("No workflow runtime");
   });
 
+  test("goals.list replies with a goals.snapshot keyed by request seq", async () => {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    const ws = new WsSession("conn-g1", noopLogger, undefined, null, null, makeRuntime(store));
+    const socket = makeMockSocket(ws);
+
+    // Empty store → snapshot with no goals, zero badge.
+    send(ws, socket, { type: "goals.list", seq: 42, ts: Date.now() });
+    const empty = socket.sent.find((f) => f.type === "goals.snapshot")!;
+    expect(empty["requestSeq"]).toBe(42);
+    expect(empty["goals"]).toEqual([]);
+    expect(empty["totalOpenQuestions"]).toBe(0);
+
+    // Produce a goal, then re-request: snapshot reflects it with the open question.
+    send(ws, socket, { type: "workflow.start", seq: 1, ts: Date.now(), kind: "plan", text: "build it", platform: "claude" });
+    await waitFor(() => statuses(socket).includes("questions_ready"));
+    send(ws, socket, { type: "goals.list", seq: 43, ts: Date.now() });
+    const snaps = socket.sent.filter((f) => f.type === "goals.snapshot");
+    const latest = snaps[snaps.length - 1]!;
+    expect(latest["requestSeq"]).toBe(43);
+    const goals = latest["goals"] as Array<Record<string, unknown>>;
+    expect(goals).toHaveLength(1);
+    expect(goals[0]!["status"]).toBe("clarifying");
+    expect(goals[0]!["openQuestionCount"]).toBe(1);
+    expect(latest["totalOpenQuestions"]).toBe(1);
+
+    await store.dispose();
+  });
+
+  test("workflow.escalation_reply: abandon flips the goal to abandoned", async () => {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    const phase = new FakePhaseSubagent();
+    phase.enqueue(CLARIFY_REVIEW_SPEC, { clear: true, contradictions: [], newQuestions: [] });
+    phase.setSticky(PLAN_SPEC, {
+      milestones: [{ title: "C", description: "c" }],
+      tasks: [{ milestoneRef: 0, headline: "T", description: "d" }],
+    });
+    phase.setSticky(PLAN_REVIEW_SPEC, {
+      satisfied: false,
+      findings: [{ severity: "major", issue: "thin", suggestion: "more" }],
+      newQuestions: [],
+    });
+    const rt = new WorkflowRuntime({
+      logger: noopLogger,
+      store,
+      selectProducer: () => new FakeProducer(),
+      selectPhaseSubagent: () => phase,
+    });
+    const ws = new WsSession("conn-g2", noopLogger, undefined, null, null, rt);
+    const socket = makeMockSocket(ws);
+
+    send(ws, socket, { type: "workflow.start", seq: 1, ts: Date.now(), kind: "plan", text: "build it", platform: "claude" });
+    await waitFor(() => statuses(socket).includes("questions_ready"));
+    const goalId = (socket.sent.find((f) => f.type === "workflow.event" && f["goalId"] !== undefined) as ParsedFrame)["goalId"] as string;
+    const specId = (store.fetchItem(GOALS_LEDGER, goalId).fields["milestones"] as string[])[0]!;
+    const q0 = (store.listMilestoneItems(specId)[QUESTIONS_LEDGER] ?? [])[0]!.id;
+    send(ws, socket, { type: "question.answer", seq: 2, ts: Date.now(), questionId: q0, answer: "web" });
+    await waitFor(() => statuses(socket).includes("escalated"));
+
+    send(ws, socket, { type: "workflow.escalation_reply", seq: 3, ts: Date.now(), goalId, choice: "abandon" });
+    await waitFor(() => store.fetchItem(GOALS_LEDGER, goalId).status === "abandoned");
+    expect(store.fetchItem(GOALS_LEDGER, goalId).status).toBe("abandoned");
+
+    await store.dispose();
+  });
+
   test("question.answer writes the answer, flips status, and auto-advances the loop", async () => {
     const store = new InMemoryLedgerStore();
     await store.init();
