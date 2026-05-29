@@ -63,6 +63,7 @@ import {
   applyCreateMilestoneItem,
   applyDetachMilestoneGroup,
   applyDetachMilestoneItem,
+  applyEnsureAmbientMilestone,
   applyUpdateItem,
   applyUpdateMilestoneItem,
   assertMilestoneActive,
@@ -91,6 +92,7 @@ import {
   CANONICAL_LEDGERS,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_ACTIVE_GROUP_TITLE,
+  MILESTONES_AMBIENT_ID,
   MILESTONES_LEDGER,
 } from "../constants.js";
 
@@ -219,21 +221,34 @@ export class FsLedgerStore implements LedgerStore {
         if (code !== "ENOENT") throw e;
       }
       let ledger: Ledger;
+      let needsWrite = false;
       if (text === null) {
         ledger = freshLedger(entry.name, entry.schema);
         if (isMilestones) seedBootstrapGroup(ledger);
-        await this.writeLedgerFile(ledger);
+        needsWrite = true;
       } else {
         ledger = parseLedger(text, {
           schema: entry.schema,
           isMilestonesLedger: isMilestones,
         });
         if (isMilestones && ledger.milestones.length === 0) {
-          // Empty milestones file (no M0 group). Seed it and rewrite.
+          // Empty milestones file (no active group). Seed it and rewrite.
           seedBootstrapGroup(ledger);
-          await this.writeLedgerFile(ledger);
+          needsWrite = true;
         }
       }
+      if (isMilestones) {
+        // Bootstrap the immortal M-AMBIENT milestone (§8b) if missing.
+        const before = ledger.milestones.find(
+          (m) => m.id === MILESTONES_ACTIVE_GROUP_ID,
+        )?.items.length;
+        applyEnsureAmbientMilestone(ledger, this.now());
+        const after = ledger.milestones.find(
+          (m) => m.id === MILESTONES_ACTIVE_GROUP_ID,
+        )?.items.length;
+        if (before !== after) needsWrite = true;
+      }
+      if (needsWrite) await this.writeLedgerFile(ledger);
       this.ledgers.set(entry.name, ledger);
     }
     this.initialised = true;
@@ -561,6 +576,11 @@ export class FsLedgerStore implements LedgerStore {
     if (milestoneId === MILESTONES_ACTIVE_GROUP_ID) {
       throw new BootstrapViolationError(
         `the bootstrap group ${MILESTONES_ACTIVE_GROUP_ID} cannot be archived`,
+      );
+    }
+    if (milestoneId === MILESTONES_AMBIENT_ID) {
+      throw new BootstrapViolationError(
+        `${MILESTONES_AMBIENT_ID} is immortal and cannot be archived`,
       );
     }
     // Phase 1 — verify no non-terminal items in ANY ledger. We dry-run

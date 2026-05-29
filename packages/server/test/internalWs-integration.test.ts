@@ -156,10 +156,11 @@ async function waitFor(
 
 describe("D-COHERENCE — cross-process cache invalidation", () => {
   it("cq-mcp creates a milestone; server's FsLedgerStore observes it within 1s", async () => {
-    // Sanity: server has no milestones beyond the bootstrap group.
+    // Sanity: server has no milestones beyond the immortal M-AMBIENT
+    // bootstrap milestone (§8b).
     {
       const view = serverLedgerStore!.fetch(MILESTONES_LEDGER);
-      expect(view.milestones[0]?.items.map((it) => it.id) ?? []).toEqual([]);
+      expect(view.milestones[0]?.items.map((it) => it.id) ?? []).toEqual(["M-AMBIENT"]);
     }
     await withMcpClient(async (client) => {
       await client.callTool({

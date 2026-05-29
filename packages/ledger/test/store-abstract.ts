@@ -18,6 +18,7 @@ import type { LedgerSchema, LedgerStore } from "../src/index.js";
 import {
   MILESTONES_LEDGER,
   MILESTONES_ACTIVE_GROUP_ID,
+  MILESTONES_AMBIENT_ID,
   CANONICAL_LEDGERS,
   isIsoTimestamp,
 } from "../src/index.js";
@@ -297,7 +298,9 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
         const activeGroup = ms.milestones.find(
           (g) => g.id === MILESTONES_ACTIVE_GROUP_ID,
         );
-        expect(activeGroup?.items.map((i) => i.id)).toEqual([]);
+        // Only the immortal M-AMBIENT bootstrap milestone remains (§8b);
+        // the archived m.id is gone.
+        expect(activeGroup?.items.map((i) => i.id)).toEqual([MILESTONES_AMBIENT_ID]);
         expect(ms.archivePointers.map((p) => p.id)).toEqual([m.id]);
         // Group archive in defects is readable.
         const defectsArchive = await store.fetchArchive(WIDGETS, m.id);
@@ -326,6 +329,66 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
       } finally {
         await factory.teardown?.(store);
       }
+    });
+
+    // -----------------------------------------------------------------------
+    // §8b — M-AMBIENT immortal bootstrap milestone
+    // -----------------------------------------------------------------------
+
+    describe("§8b — M-AMBIENT bootstrap milestone", () => {
+      it("is bootstrapped on init (title 'ambient', status open) and resolvable", async () => {
+        const store = await factory.build([]);
+        try {
+          const view = store.fetchMilestone(MILESTONES_AMBIENT_ID);
+          expect(view.milestone.id).toBe(MILESTONES_AMBIENT_ID);
+          expect(view.resolved.title).toBe("ambient");
+          expect(view.resolved.status).toBe("open");
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("archive is refused (immortal)", async () => {
+        const store = await factory.build([]);
+        try {
+          await expect(
+            store.archiveMilestone(MILESTONES_AMBIENT_ID, "no"),
+          ).rejects.toThrow(/immortal/);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("moving it to a terminal status is refused (immortal)", async () => {
+        const store = await factory.build([]);
+        try {
+          await expect(
+            store.updateMilestone(MILESTONES_AMBIENT_ID, { status: "done" }),
+          ).rejects.toThrow(/immortal/);
+          // A non-terminal update still works (e.g. a description edit).
+          const updated = await store.updateMilestone(MILESTONES_AMBIENT_ID, {
+            description: "reserved bootstrap milestone",
+          });
+          expect(updated.fields["description"]).toBe("reserved bootstrap milestone");
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("items in other ledgers can be filed under M-AMBIENT", async () => {
+        const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+        try {
+          const it = await store.createItem(WIDGETS, MILESTONES_AMBIENT_ID, {
+            status: "open",
+            fields: { severity: "nit", location: "x.ts", description: "ambient defect" },
+          });
+          expect(it.milestoneId).toBe(MILESTONES_AMBIENT_ID);
+          const grouped = store.listMilestoneItems(MILESTONES_AMBIENT_ID);
+          expect(grouped[WIDGETS]?.map((i) => i.id)).toEqual([it.id]);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
     });
 
     it("createLedger adds a ledger and refuses the reserved name 'milestones'", async () => {

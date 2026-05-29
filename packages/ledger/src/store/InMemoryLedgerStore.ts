@@ -26,6 +26,7 @@ import {
   applyCreateMilestoneItem,
   applyDetachMilestoneGroup,
   applyDetachMilestoneItem,
+  applyEnsureAmbientMilestone,
   applyUpdateItem,
   applyUpdateMilestoneItem,
   assertMilestoneActive,
@@ -55,6 +56,7 @@ import {
   CANONICAL_LEDGERS,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_ACTIVE_GROUP_TITLE,
+  MILESTONES_AMBIENT_ID,
   MILESTONES_LEDGER,
 } from "../constants.js";
 
@@ -323,6 +325,8 @@ export class InMemoryLedgerStore implements LedgerStore {
           description: "",
           items: [],
         });
+        // Bootstrap the immortal M-AMBIENT milestone (§8b).
+        applyEnsureAmbientMilestone(ledger, this.now());
       }
       this.ledgers.set(name, ledger);
     }
@@ -343,6 +347,11 @@ export class InMemoryLedgerStore implements LedgerStore {
     if (milestoneId === MILESTONES_ACTIVE_GROUP_ID) {
       throw new BootstrapViolationError(
         `the bootstrap group ${MILESTONES_ACTIVE_GROUP_ID} cannot be archived`,
+      );
+    }
+    if (milestoneId === MILESTONES_AMBIENT_ID) {
+      throw new BootstrapViolationError(
+        `${MILESTONES_AMBIENT_ID} is immortal and cannot be archived`,
       );
     }
     // Phase 1: verify no non-terminal items in ANY ledger.

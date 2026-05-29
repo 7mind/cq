@@ -336,9 +336,41 @@ export function applyCreateMilestoneItem(
 }
 
 /**
+ * Ensure the immortal `M-AMBIENT` bootstrap milestone exists in the
+ * milestones ledger's active group (§8b). Idempotent: a no-op once the
+ * item is present. Called on init by both adapters. `now` seeds the
+ * timestamps for a freshly-created item.
+ */
+export function applyEnsureAmbientMilestone(ledger: Ledger, now: string): void {
+  if (ledger.id !== MILESTONES_LEDGER) {
+    throw new BootstrapViolationError(
+      `applyEnsureAmbientMilestone invoked on non-milestones ledger ${ledger.id}`,
+    );
+  }
+  const group = ledger.milestones.find((m) => m.id === MILESTONES_ACTIVE_GROUP_ID);
+  if (group === undefined) {
+    throw new BootstrapViolationError(
+      `milestones ledger is missing its bootstrap group ${MILESTONES_ACTIVE_GROUP_ID}`,
+    );
+  }
+  if (group.items.some((it) => it.id === MILESTONES_AMBIENT_ID)) return;
+  group.items.push({
+    id: MILESTONES_AMBIENT_ID,
+    milestoneId: MILESTONES_ACTIVE_GROUP_ID,
+    status: "open",
+    fields: { title: "ambient" },
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+/**
  * Apply an `updateMilestone` patch against a milestone-item in the
  * milestones ledger. Translates the four-key patch shape into the
  * generic item-patch shape and routes through `applyUpdateItem`.
+ *
+ * `M-AMBIENT` is immortal (§8b): moving it to any terminal status is
+ * refused.
  */
 export function applyUpdateMilestoneItem(
   ledger: Ledger,
@@ -349,6 +381,15 @@ export function applyUpdateMilestoneItem(
   if (ledger.id !== MILESTONES_LEDGER) {
     throw new BootstrapViolationError(
       `applyUpdateMilestoneItem invoked on non-milestones ledger ${ledger.id}`,
+    );
+  }
+  if (
+    milestoneItemId === MILESTONES_AMBIENT_ID &&
+    patch.status !== undefined &&
+    ledger.schema.terminalStatuses.includes(patch.status)
+  ) {
+    throw new BootstrapViolationError(
+      `${MILESTONES_AMBIENT_ID} is immortal and cannot be moved to a terminal status`,
     );
   }
   const itemPatch: UpdateItemPatch = {};
@@ -415,6 +456,11 @@ export function applyDetachMilestoneItem(
   if (milestoneItemId === MILESTONES_ACTIVE_GROUP_ID) {
     throw new BootstrapViolationError(
       `the bootstrap group ${MILESTONES_ACTIVE_GROUP_ID} cannot be archived`,
+    );
+  }
+  if (milestoneItemId === MILESTONES_AMBIENT_ID) {
+    throw new BootstrapViolationError(
+      `${MILESTONES_AMBIENT_ID} is immortal and cannot be archived`,
     );
   }
   const group = ledger.milestones.find((m) => m.id === MILESTONES_ACTIVE_GROUP_ID);
