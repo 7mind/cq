@@ -55,7 +55,7 @@ export interface InternalWsSocket {
 /** Handler signature for an inbound message of a given type. */
 export type InternalWsHandler<T extends InternalWsMessageType> = (
   msg: Extract<InternalWsMessage, { type: T }>,
-) => void | Promise<void>;
+) => Promise<void>;
 
 export interface InternalWsServiceOpts {
   logger: Logger;
@@ -79,7 +79,7 @@ export class InternalWsService {
   private readonly pid: number;
   private readonly handlers = new Map<
     InternalWsMessageType,
-    (msg: InternalWsMessage) => void | Promise<void>
+    (msg: InternalWsMessage) => Promise<void>
   >();
   private readonly sockets = new Set<InternalWsSocket>();
 
@@ -109,7 +109,7 @@ export class InternalWsService {
     type: T,
     fn: InternalWsHandler<T>,
   ): void {
-    this.handlers.set(type, fn as (msg: InternalWsMessage) => void | Promise<void>);
+    this.handlers.set(type, fn as (msg: InternalWsMessage) => Promise<void>);
   }
 
   /**
@@ -243,22 +243,12 @@ export class InternalWsService {
       });
       return;
     }
-    try {
-      const ret = handler(msg);
-      if (ret !== undefined && typeof (ret as Promise<void>).catch === "function") {
-        (ret as Promise<void>).catch((err: unknown) => {
-          this.logger.warn("internalWs.handler_rejected", {
-            type: msg.type,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
-      }
-    } catch (err: unknown) {
-      this.logger.warn("internalWs.handler_threw", {
+    handler(msg).catch((err: unknown) => {
+      this.logger.warn("internalWs.handler_rejected", {
         type: msg.type,
         error: err instanceof Error ? err.message : String(err),
       });
-    }
+    });
   }
 
   /**

@@ -76,13 +76,15 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   // Inbound `ledger.changed` from any cq-mcp triggers a local
   // invalidate. Loop-detection (sourcePid === our pid) is enforced
   // inside the service before the handler runs.
-  internalWs.registerHandler("ledger.changed", (msg) => {
-    void ledgerStore.invalidate(msg.ledgerId).catch((err: unknown) => {
+  internalWs.registerHandler("ledger.changed", async (msg) => {
+    try {
+      await ledgerStore.invalidate(msg.ledgerId);
+    } catch (err: unknown) {
       logger.warn("ledger.invalidate_failed", {
         ledgerId: msg.ledgerId,
         error: err instanceof Error ? err.message : String(err),
       });
-    });
+    }
   });
   // The internal WS URL depends on the bound port, which we only learn
   // after Bun.serve(...) returns. Wire the bridge with a placeholder

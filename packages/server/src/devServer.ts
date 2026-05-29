@@ -62,13 +62,15 @@ export async function startDevServer(
     },
   });
   await ledgerStore.init();
-  internalWs.registerHandler("ledger.changed", (msg) => {
-    void ledgerStore.invalidate(msg.ledgerId).catch((err: unknown) => {
+  internalWs.registerHandler("ledger.changed", async (msg) => {
+    try {
+      await ledgerStore.invalidate(msg.ledgerId);
+    } catch (err: unknown) {
       logger.warn("ledger.invalidate_failed", {
         ledgerId: msg.ledgerId,
         error: err instanceof Error ? err.message : String(err),
       });
-    });
+    }
   });
   const bridge = new Bridge({
     logger,

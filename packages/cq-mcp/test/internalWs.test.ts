@@ -130,7 +130,7 @@ describe("InternalWsChannel — happy path", () => {
 
     // Inbound — register a handler and have the fake server send.
     const received: InternalWsMessage[] = [];
-    channel.registerHandler("ledger.changed", (msg) => {
+    channel.registerHandler("ledger.changed", async (msg) => {
       received.push(msg);
     });
     fake.sendToClient({
@@ -182,7 +182,7 @@ describe("InternalWsChannel — loop detection", () => {
       timeoutMs: 2000,
     });
     let fired = 0;
-    channel.registerHandler("ledger.changed", () => {
+    channel.registerHandler("ledger.changed", async () => {
       fired += 1;
     });
     fake.sendToClient({

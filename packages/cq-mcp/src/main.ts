@@ -463,12 +463,14 @@ export async function main(argv: readonly string[]): Promise<void> {
     // Inbound ledger.changed (from cq-server) → invalidate our cache.
     // Loop-detection (sourcePid === our pid) is enforced inside the
     // channel before this handler runs.
-    channel.registerHandler("ledger.changed", (msg) => {
-      void store.invalidate(msg.ledgerId).catch((err: unknown) => {
+    channel.registerHandler("ledger.changed", async (msg) => {
+      try {
+        await store.invalidate(msg.ledgerId);
+      } catch (err: unknown) {
         process.stderr.write(
           `cq-mcp: invalidate(${msg.ledgerId}) failed: ${err instanceof Error ? err.message : String(err)}\n`,
         );
-      });
+      }
     });
   }
 

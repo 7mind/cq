@@ -78,8 +78,8 @@ beforeAll(async () => {
     },
   });
   await serverLedgerStore.init();
-  internalWs.registerHandler("ledger.changed", (msg) => {
-    void serverLedgerStore!.invalidate(msg.ledgerId).catch(() => undefined);
+  internalWs.registerHandler("ledger.changed", async (msg) => {
+    await serverLedgerStore!.invalidate(msg.ledgerId).catch(() => undefined);
   });
 
   const bunServer = Bun.serve<{ kind?: "internal"; clientId?: string }>({

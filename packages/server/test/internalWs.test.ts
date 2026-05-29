@@ -162,7 +162,7 @@ describe("InternalWsService — inbound message routing", () => {
   it("routes a valid ledger.changed from a foreign pid to the registered handler", () => {
     const { svc, ws } = setup();
     const seen: InternalWsMessage[] = [];
-    svc.registerHandler("ledger.changed", (msg) => {
+    svc.registerHandler("ledger.changed", async (msg) => {
       seen.push(msg);
     });
     svc.message(ws, JSON.stringify({
@@ -178,7 +178,7 @@ describe("InternalWsService — inbound message routing", () => {
   it("drops a message whose sourcePid matches the service pid (loop-detection)", () => {
     const { svc, ws } = setup();
     let fired = 0;
-    svc.registerHandler("ledger.changed", () => {
+    svc.registerHandler("ledger.changed", async () => {
       fired += 1;
     });
     svc.message(ws, JSON.stringify({
@@ -193,7 +193,7 @@ describe("InternalWsService — inbound message routing", () => {
   it("drops malformed JSON without crashing", () => {
     const { svc, ws } = setup();
     let fired = 0;
-    svc.registerHandler("ledger.changed", () => {
+    svc.registerHandler("ledger.changed", async () => {
       fired += 1;
     });
     svc.message(ws, "not json");
@@ -203,7 +203,7 @@ describe("InternalWsService — inbound message routing", () => {
   it("drops a malformed envelope (missing required fields)", () => {
     const { svc, ws } = setup();
     let fired = 0;
-    svc.registerHandler("ledger.changed", () => {
+    svc.registerHandler("ledger.changed", async () => {
       fired += 1;
     });
     svc.message(ws, JSON.stringify({ type: "ledger.changed", ledgerId: "x" }));
@@ -213,7 +213,7 @@ describe("InternalWsService — inbound message routing", () => {
   it("drops an unknown discriminant (forward-compat)", () => {
     const { svc, ws } = setup();
     let fired = 0;
-    svc.registerHandler("ledger.changed", () => {
+    svc.registerHandler("ledger.changed", async () => {
       fired += 1;
     });
     svc.message(ws, JSON.stringify({
@@ -238,7 +238,7 @@ describe("InternalWsService — inbound message routing", () => {
 
   it("a throwing handler does not crash the WS layer", () => {
     const { svc, ws } = setup();
-    svc.registerHandler("ledger.changed", () => {
+    svc.registerHandler("ledger.changed", async () => {
       throw new Error("simulated handler crash");
     });
     expect(() =>
