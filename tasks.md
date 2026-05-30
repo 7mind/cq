@@ -4,6 +4,75 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ---
 
+## Cycle: phase-timeout — raise /plan phase-dispatch timeout to 300s + env override
+
+Plan: [`docs/drafts/20260530-1553-phase-timeout.md`](docs/drafts/20260530-1553-phase-timeout.md).
+Worktree `.claude/worktrees/phase-timeout`, branch `phase-timeout`, base `5d0408c`.
+Baseline (verified 5d0408c): `bun test` 1077 pass / 0 fail; e2e 28/28.
+Symptom fix only — explore-once optimization is a SEPARATE later cycle (out of scope).
+
+### Milestone M-PHASE-TIMEOUT — PR breakdown
+
+- [x] **pt-1** — shared `resolvePhaseTimeoutMs` helper (default 300_000, env
+  `CQ_WORKFLOW_PHASE_TIMEOUT_MS`); wire all three lanes (claudeProducer,
+  claudePhaseSubagent, codexHeadless); update doc-comments; tests (helper unit +
+  per-lane default/env/opt-precedence, env set/restore); discharge
+  (`bun run check` ×2, `bun run e2e` 28/28, `nix build .#default`).
+
+**M-PHASE-TIMEOUT CLOSED.** Discharge: `bun run check` exit 0 ×2 (1089/0 both;
+baseline 1077 + 12 new); `bun run e2e` 28/28 (mock injected timeouts unaffected,
+1.8m); `nix build .#default` exit 0 (cq-0.0.1; local fallback, remote SSH builder
+unreachable). Defect `PHASE-TIMEOUT-01` resolved (+ self-review
+`PHASE-TIMEOUT-01-D01` resolved same cycle). Session log:
+`docs/logs/20260530-1553-log.md`.
+
+### Cross-cutting architectural notes (locked)
+
+- [x] ENV-only override (no CLI flag / no `args.ts`/`main.ts`/`server.ts`) —
+  in-flight cq-reset cycle owns those; ENV avoids the merge conflict.
+- [x] Resolution order: explicit `opts.timeoutMs` → valid `CQ_WORKFLOW_PHASE_TIMEOUT_MS` → 300_000.
+- [x] No sync/async unions; helper is pure-synchronous (env read is sync).
+
+### Completed (M-PHASE-TIMEOUT)
+
+- **pt-1** (2026-05-30) — Raised the /plan phase-dispatch timeout 120_000 →
+  300_000 across all three headless lanes, centralized in a new shared
+  `resolvePhaseTimeoutMs(optTimeoutMs?, env=process.env)` helper
+  (`packages/server/src/workflow/phaseTimeout.ts`): `DEFAULT_PHASE_TIMEOUT_MS =
+  300_000`, `PHASE_TIMEOUT_ENV_VAR = "CQ_WORKFLOW_PHASE_TIMEOUT_MS"`. Resolution
+  order per dispatch: explicit `opts.timeoutMs` → valid env (positive integer;
+  `""`/whitespace/non-numeric/≤0/float/`1e3`/`0x10`/overflow → default) →
+  300_000. Wired `claudeProducer`, `claudePhaseSubagent`, and `codexHeadless`
+  (`dispatchCodexPhase`) to the helper; the two Codex wrappers
+  (`codexProducer`/`codexPhaseSubagent`) pass `timeoutMs` through to the shared
+  dispatch so resolution happens ONCE. Removed the dead `DEFAULT_CODEX_TIMEOUT_MS`
+  barrel re-export (no consumers). Doc-comments updated. Verification:
+  `bun run check` exit 0 ×2 (1089/0 both); `bun run e2e` 28/28; `nix build .#default`
+  exit 0. Metrics: review rounds 1 (self-review); defects major:1, minor:0, nit:1;
+  verification complete; scope delta: touched 2 extra files beyond the named three
+  (`codexProducer.ts`/`codexPhaseSubagent.ts` doc-comments + `index.ts` barrel) —
+  all within the workflow package, no forbidden files.
+  Notes / surprises:
+  - The two named-in-brief Codex files (`codexProducer`, `codexPhaseSubagent`)
+    only carried STALE doc-comments ("Defaults to 120_000"); the actual codex
+    timeout resolution lives in `dispatchCodexPhase` (codexHeadless) — they pass
+    `timeoutMs` through only when explicitly set, so the env/default resolution is
+    correct without touching their logic.
+  - e2e specs inject short `timeoutMs` via the mock, so the default bump does not
+    slow them (confirmed 28/28 in 1.8m) — do NOT add a wall-clock assertion on the
+    300_000 default in any test (the wiring tests prove resolution via a tiny env
+    value + a never-ending subagent, never by waiting out the default).
+  - **FOLLOW-UP (separate later cycle, OUT OF SCOPE here):** every phase
+    re-explores the repo from scratch (redundant latency + token cost). Real fix =
+    explore once in the producer, pass grounding context to later phases. This
+    cycle only raised the timeout (symptom fix). Documented in
+    `PHASE-TIMEOUT-01`.
+  - Self-review opened+closed `PHASE-TIMEOUT-01-D01` (nit): hardened the wiring
+    test's env snapshot from a per-`setEnv`-call snapshot to an unconditional
+    `beforeEach` snapshot (latent cross-test footgun, not a live leak).
+
+---
+
 ## Cycle: dark — real, app-wide dark theme (light/dark/auto, gear toggle)
 
 Plan: [`docs/drafts/20260530-1442-dark-theme.md`](docs/drafts/20260530-1442-dark-theme.md).

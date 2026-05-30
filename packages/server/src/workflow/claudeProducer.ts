@@ -12,8 +12,9 @@
  * `chat.*` frames. The pool=1 interactive-chat invariant is therefore held by
  * construction — the interactive `Bridge.active` is untouched.
  *
- * A default 120 s timeout bounds a producer that never submits; on timeout
- * (or abort) the dispatch rejects and the query is closed.
+ * A default 300 s timeout (overridable via `CQ_WORKFLOW_PHASE_TIMEOUT_MS`)
+ * bounds a producer that never submits; on timeout (or abort) the dispatch
+ * rejects and the query is closed.
  */
 
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
@@ -39,6 +40,7 @@ import {
   extractUsageFromResult,
 } from "./headlessQuery.js";
 import { closeAfterDrain } from "./claudePhaseSubagent.js";
+import { resolvePhaseTimeoutMs } from "./phaseTimeout.js";
 
 /** Same shape as ClaudeBridge.QueryFactory — injectable for tests. */
 export type QueryFactory = (opts: {
@@ -51,11 +53,12 @@ export interface ClaudeProducerOpts {
   cwd: string;
   /** Override `query()` for tests. Defaults to the real SDK `query`. */
   queryFactory?: QueryFactory;
-  /** Dispatch timeout in ms. Defaults to 120_000. */
+  /**
+   * Dispatch timeout in ms. When omitted, resolved by `resolvePhaseTimeoutMs`:
+   * `CQ_WORKFLOW_PHASE_TIMEOUT_MS` env override → 300_000 default.
+   */
   timeoutMs?: number;
 }
-
-const DEFAULT_TIMEOUT_MS = 120_000;
 
 /**
  * Zod schema for the `submit_plan` tool input. The producer fills this; the
@@ -88,7 +91,7 @@ export class ClaudeProducer implements WorkflowProducer {
       opts.queryFactory ??
       (({ prompt, options }) =>
         options !== undefined ? sdkQuery({ prompt, options }) : sdkQuery({ prompt }));
-    this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.timeoutMs = resolvePhaseTimeoutMs(opts.timeoutMs);
   }
 
   async produce(req: ProduceRequest): Promise<ProducerOutput> {

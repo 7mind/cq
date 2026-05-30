@@ -34,12 +34,10 @@ import type { CqMcpBin } from "../agent/codexBridge.js";
 import { defaultResolveCqMcpBin } from "../agent/codexBridge.js";
 import type { WorkflowSubmitProxy } from "./workflowSubmitProxy.js";
 import type { TeardownSink } from "./producer.js";
+import { resolvePhaseTimeoutMs } from "./phaseTimeout.js";
 
 /** Factory the headless lane calls to obtain a `Codex`. Injectable for tests. */
 export type CodexFactory = (options?: CodexOptions) => Promise<Codex>;
-
-/** Default 120 s dispatch timeout (matches the Claude headless lane). */
-export const DEFAULT_CODEX_TIMEOUT_MS = 120_000;
 
 /** Everything the shared dispatch needs that is constant across phases. */
 export interface CodexHeadlessDeps {
@@ -58,7 +56,10 @@ export interface CodexHeadlessDeps {
   codexFactory?: CodexFactory;
   /** How to launch cq-mcp (default: defaultResolveCqMcpBin()). */
   cqMcpBin?: CqMcpBin;
-  /** Dispatch timeout in ms (default 120_000). */
+  /**
+   * Dispatch timeout in ms. When omitted, resolved by `resolvePhaseTimeoutMs`:
+   * `CQ_WORKFLOW_PHASE_TIMEOUT_MS` env override → 300_000 default.
+   */
   timeoutMs?: number;
 }
 
@@ -127,7 +128,7 @@ export async function dispatchCodexPhase<O>(
   deps: CodexHeadlessDeps,
   input: CodexDispatchInput<O>,
 ): Promise<O> {
-  const timeoutMs = deps.timeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS;
+  const timeoutMs = resolvePhaseTimeoutMs(deps.timeoutMs);
   const submitId = deps.nextSubmitId();
 
   // Register the correlation FIRST so a fast relay is never orphaned.

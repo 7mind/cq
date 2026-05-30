@@ -24,6 +24,7 @@ import {
   extractUsageFromResult,
 } from "./headlessQuery.js";
 import type { PhaseSpec, PhaseRequest, PhaseSubagent } from "./phases.js";
+import { resolvePhaseTimeoutMs } from "./phaseTimeout.js";
 
 /** Same shape as ClaudeProducer.QueryFactory — injectable for tests. */
 export type QueryFactory = (opts: {
@@ -36,11 +37,12 @@ export interface ClaudePhaseSubagentOpts {
   cwd: string;
   /** Override `query()` for tests. Defaults to the real SDK `query`. */
   queryFactory?: QueryFactory;
-  /** Dispatch timeout in ms. Defaults to 120_000. */
+  /**
+   * Dispatch timeout in ms. When omitted, resolved by `resolvePhaseTimeoutMs`:
+   * `CQ_WORKFLOW_PHASE_TIMEOUT_MS` env override → 300_000 default.
+   */
   timeoutMs?: number;
 }
-
-const DEFAULT_TIMEOUT_MS = 120_000;
 
 export class ClaudePhaseSubagent implements PhaseSubagent {
   private readonly logger: Logger;
@@ -55,7 +57,7 @@ export class ClaudePhaseSubagent implements PhaseSubagent {
       opts.queryFactory ??
       (({ prompt, options }) =>
         options !== undefined ? sdkQuery({ prompt, options }) : sdkQuery({ prompt }));
-    this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.timeoutMs = resolvePhaseTimeoutMs(opts.timeoutMs);
   }
 
   async dispatch<O>(spec: PhaseSpec<O>, req: PhaseRequest): Promise<O> {

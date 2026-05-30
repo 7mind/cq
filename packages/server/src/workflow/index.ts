@@ -89,8 +89,12 @@ export {
   dispatchCodexPhase,
   makeSubmitIdGenerator,
   CODEX_SUBMIT_INSTRUCTION,
-  DEFAULT_CODEX_TIMEOUT_MS,
 } from "./codexHeadless.js";
+export {
+  resolvePhaseTimeoutMs,
+  DEFAULT_PHASE_TIMEOUT_MS,
+  PHASE_TIMEOUT_ENV_VAR,
+} from "./phaseTimeout.js";
 export type {
   CodexFactory,
   CodexHeadlessDeps,

@@ -37,7 +37,10 @@ export interface CodexPhaseSubagentOpts {
   codexFactory?: CodexFactory;
   /** Override the cq-mcp launch for tests. */
   cqMcpBin?: CqMcpBin;
-  /** Dispatch timeout in ms. Defaults to 120_000. */
+  /**
+   * Dispatch timeout in ms. When omitted, resolved by `resolvePhaseTimeoutMs`
+   * in the shared codex lane: `CQ_WORKFLOW_PHASE_TIMEOUT_MS` env override → 300_000 default.
+   */
   timeoutMs?: number;
 }
 
