@@ -166,17 +166,17 @@ describe("WorkflowRuntime phase 1", () => {
     await store.dispose();
   });
 
-  it("routes /plan G<id> continuation to a not-implemented lifecycle error", async () => {
+  it("rejects /plan G<id> continuation when the goal does not exist", async () => {
     const store = new InMemoryLedgerStore();
     await store.init();
     const rt = makeRuntime(store, new FakeProducer(CANNED));
     const { sink, events } = collector();
 
-    const result = rt.startContinuation("G1", sink);
+    const result = await rt.continueGoal("G1", "add encryption", "claude", sink);
     expect(result.outcome).toBe("errored");
     expect(events).toHaveLength(1);
     expect(events[0]!.status).toBe("errored");
-    expect(events[0]!.detail).toContain("not implemented");
+    expect(events[0]!.detail).toContain("does not exist");
 
     await store.dispose();
   });

@@ -5,7 +5,8 @@
  * a real WorkflowRuntime (InMemoryLedgerStore + FakeProducer). Asserts:
  *  - lifecycle frames stream to the issuing WS connection in order;
  *  - a malformed /plan emits a single errored frame;
- *  - /plan G<id> routes to continuation-not-implemented;
+ *  - /plan G<id> for an unknown goal errors; for a planned goal it appends an
+ *    increment and streams to questions_ready;
  *  - workflow === null emits an errored "no runtime" frame.
  */
 
@@ -15,6 +16,7 @@ import { InMemoryLedgerStore, GOALS_LEDGER, QUESTIONS_LEDGER, type LedgerStore }
 import {
   WorkflowRuntime,
   CLARIFY_REVIEW_SPEC,
+  CONTINUE_SPEC,
   PLAN_SPEC,
   PLAN_REVIEW_SPEC,
   type WorkflowProducer,
@@ -107,17 +109,54 @@ describe("WsSession /plan routing", () => {
     await store.dispose();
   });
 
-  test("/plan G<id> routes to continuation-not-implemented", async () => {
+  test("/plan G<id> for an unknown goal routes to an errored frame", async () => {
     const store = new InMemoryLedgerStore();
     await store.init();
     const ws = new WsSession("conn-3", noopLogger, undefined, null, null, makeRuntime(store));
     const socket = makeMockSocket(ws);
 
     send(ws, socket, { type: "workflow.start", seq: 1, ts: Date.now(), kind: "plan", goalRef: "G2", text: "add feature" });
+    await waitFor(() => statuses(socket).includes("errored"));
     const evts = socket.sent.filter((f) => f.type === "workflow.event");
-    expect(evts).toHaveLength(1);
-    expect(evts[0]!["status"]).toBe("errored");
-    expect(evts[0]!["detail"]).toContain("not implemented");
+    expect(evts.at(-1)!["status"]).toBe("errored");
+    expect(evts.at(-1)!["detail"]).toContain("does not exist");
+
+    await store.dispose();
+  });
+
+  test("/plan G<id> for a planned goal streams the continuation to questions_ready", async () => {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    const phase = new FakePhaseSubagent();
+    const rt = new WorkflowRuntime({
+      logger: noopLogger,
+      store,
+      selectProducer: () => new FakeProducer(),
+      selectPhaseSubagent: () => phase,
+    });
+    const ws = new WsSession("conn-3b", noopLogger, undefined, null, null, rt);
+    const socket = makeMockSocket(ws);
+
+    // Drive a fresh goal to `planned` first.
+    phase.enqueue(CLARIFY_REVIEW_SPEC, { clear: true, contradictions: [], newQuestions: [] });
+    phase.enqueue(PLAN_SPEC, { milestones: [{ title: "Core", description: "d" }], tasks: [{ milestoneRef: 0, headline: "T", description: "d" }] });
+    phase.enqueue(PLAN_REVIEW_SPEC, { satisfied: true, findings: [], newQuestions: [] });
+    send(ws, socket, { type: "workflow.start", seq: 1, ts: Date.now(), kind: "plan", text: "build it", platform: "claude" });
+    await waitFor(() => statuses(socket).includes("questions_ready"));
+    const goalId = (store.fetch(GOALS_LEDGER).milestones.flatMap((g) => g.items))[0]!.id;
+    const specId = (store.fetchItem(GOALS_LEDGER, goalId).fields["milestones"] as string[])[0]!;
+    const q0 = (store.listMilestoneItems(specId)[QUESTIONS_LEDGER] ?? [])[0]!.id;
+    send(ws, socket, { type: "question.answer", seq: 2, ts: Date.now(), questionId: q0, answer: "web" });
+    await waitFor(() => store.fetchItem(GOALS_LEDGER, goalId).status === "planned");
+
+    // Now continue: a new increment batch reaches questions_ready.
+    const before = socket.sent.length;
+    phase.enqueue(CONTINUE_SPEC, { goal: { description: "extended" }, questions: [{ question: "scope?" }] });
+    send(ws, socket, { type: "workflow.start", seq: 3, ts: Date.now(), kind: "plan", goalRef: goalId, text: "add feature", platform: "claude" });
+    await waitFor(() => socket.sent.slice(before).some((f) => f.type === "workflow.event" && f["status"] === "questions_ready"));
+    expect(store.fetchItem(GOALS_LEDGER, goalId).status).toBe("clarifying");
+    const ms = store.fetchItem(GOALS_LEDGER, goalId).fields["milestones"] as string[];
+    expect(ms.at(-1)).not.toBe(specId); // an increment milestone was appended
 
     await store.dispose();
   });

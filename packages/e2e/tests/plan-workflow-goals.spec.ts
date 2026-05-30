@@ -110,12 +110,14 @@ test("/plan: Goals tab renders, answers inline, and converges to planned", async
   await page.getByRole("tab", { name: "Goals" }).click();
 
   // The goal row + its open question render; the badge shows the open count.
-  const goal = page.locator("[data-testid^='goal-G']").first();
+  // Scope to the LATEST goal (highest G-id) so this spec stays robust against
+  // earlier prelude specs having created goals in the shared cwd (WFL-D02).
+  const goal = page.locator("[data-testid^='goal-G']").last();
   await expect(goal).toBeVisible({ timeout: 10_000 });
   await expect(page.locator("[data-testid='goals-badge']")).toHaveText("1", { timeout: 10_000 });
 
-  // Find the open question card + its answer input/submit (ids are G/Q-prefixed).
-  const questionCard = page.locator("[data-testid^='goal-question-Q'][data-answered='false']").first();
+  // Find this goal's open question card + its answer input/submit (G/Q-prefixed).
+  const questionCard = goal.locator("[data-testid^='goal-question-Q'][data-answered='false']").first();
   await expect(questionCard).toBeVisible({ timeout: 10_000 });
   const questionId = (await questionCard.getAttribute("data-testid"))!.replace("goal-question-", "");
 

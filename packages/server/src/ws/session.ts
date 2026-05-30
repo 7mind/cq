@@ -463,8 +463,18 @@ export class WsSession {
         return;
       }
       case "plan_continue": {
-        // Parse + route only this cycle (Q9/Q10): continuation-not-implemented.
-        this.workflow.startContinuation(parsed.goalRef, emit);
+        // Append an increment to an existing goal (Q9/Q10). Fire-and-forget:
+        // lifecycle frames stream as the continuation progresses, exactly like
+        // plan_new. The runtime gates on goal state (stable goals only).
+        void this.workflow
+          .continueGoal(parsed.goalRef, parsed.text, platform ?? "claude", emit)
+          .catch((err: unknown) => {
+            this.logger.error("ws.workflow_error", {
+              sessionId: this.sessionId,
+              kind,
+              err: String(err),
+            });
+          });
         return;
       }
       case "plan_new": {

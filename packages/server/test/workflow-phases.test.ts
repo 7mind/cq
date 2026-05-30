@@ -10,10 +10,14 @@
 import { describe, it, expect } from "bun:test";
 import {
   CLARIFY_REVIEW_SPEC,
+  CONTINUE_SPEC,
   ClarifyReviewOutputSchema,
+  ProducerOutputSchema,
   PlanOutputSchema,
   PlanReviewOutputSchema,
   buildClarifyReviewPrompt,
+  buildContinuationPrompt,
+  buildContinuationPlannerPrompt,
   buildPlannerPrompt,
   buildPlanReviewPrompt,
   type PhaseSubagent,
@@ -85,6 +89,35 @@ describe("phase prompt builders", () => {
     const p = buildPlannerPrompt("a notes app", qna);
     expect(p).toContain("submit_plan_doc");
     expect(p).toContain("milestoneRef");
+  });
+  it("continuation producer prompt carries existing scope, milestones, and the new feature", () => {
+    const p = buildContinuationPrompt("a notes app", ["produce an actionable specification", "Core"], qna, "add E2E attachments");
+    expect(p).toContain("submit_continuation");
+    expect(p).toContain("Do NOT write");
+    expect(p).toContain("a notes app");
+    expect(p).toContain("Core"); // existing milestone as read-only context
+    expect(p).toContain("add E2E attachments"); // the new feature
+    expect(p).toContain("READ-ONLY"); // append-only steer to the producer
+  });
+  it("continuation planner prompt steers append-only with existing milestones as immutable context", () => {
+    const p = buildContinuationPlannerPrompt(
+      "a notes app",
+      { milestones: [{ title: "Core", description: "core build" }], tasks: [{ milestone: "Core", headline: "Editor", description: "editor" }] },
+      qna,
+    );
+    expect(p).toContain("submit_plan_doc");
+    expect(p).toContain("immutable read-only context");
+    expect(p).toContain("Core");
+    expect(p).toContain("ONLY the NEW");
+  });
+  it("CONTINUE_SPEC reuses the producer output schema + the produce submit phase", () => {
+    expect(CONTINUE_SPEC.schema).toBe(ProducerOutputSchema);
+    expect(CONTINUE_SPEC.submitPhase).toBe("produce");
+    expect(CONTINUE_SPEC.toolName).toBe("submit_continuation");
+    // Validates the same {goal, questions} shape as the phase-1 producer.
+    expect(
+      CONTINUE_SPEC.schema.safeParse({ goal: { description: "x" }, questions: [{ question: "q?" }] }).success,
+    ).toBe(true);
   });
   it("plan-review prompt includes prior findings when present", () => {
     const p = buildPlanReviewPrompt(

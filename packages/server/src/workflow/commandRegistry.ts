@@ -12,9 +12,9 @@
  * error.
  *
  * Continuation semantics (Q9/Q10): `/plan G<id> <text>` parses to a
- * `continue` command. Phase 1 routes it to a continuation-not-implemented
- * lifecycle error (the WorkflowRuntime owns that refusal — the registry only
- * classifies).
+ * `plan_continue` command. The WorkflowRuntime's `continueGoal` appends an
+ * increment to the referenced goal (gating on goal state — the registry only
+ * classifies; it does not validate the goal exists or its status).
  */
 
 /** A new-goal `/plan <text>` command. */

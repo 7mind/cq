@@ -105,12 +105,12 @@ export default defineConfig({
   projects: [
     {
       name: "prelude",
-      testMatch: /(plan-workflow(-loop|-goals)?|stop)\.spec\.ts$/,
+      testMatch: /(plan-workflow(-loop|-goals|-continuation)?|stop)\.spec\.ts$/,
       use: { ...devices["Desktop Chrome"] },
     },
     {
       name: "main",
-      testIgnore: /(plan-workflow(-loop|-goals)?|stop)\.spec\.ts$/,
+      testIgnore: /(plan-workflow(-loop|-goals|-continuation)?|stop)\.spec\.ts$/,
       dependencies: ["prelude"],
       use: { ...devices["Desktop Chrome"] },
     },

@@ -26,6 +26,8 @@ import {
   WorkflowSubmitProxy,
   CodexProducer,
   CodexPhaseSubagent,
+  INCREMENT_MILESTONE_PREFIX,
+  SPEC_MILESTONE_TITLE,
   makeSubmitIdGenerator,
 } from "../src/workflow/index";
 import type { WorkflowEvent } from "@cq/shared";
@@ -189,4 +191,97 @@ describe("workflow Codex relay — full loop on platform=codex (fake codex + rea
 
     await store.dispose();
   }, 10_000);
+
+  it("continuation producer + append plan run on platform=codex through the relay (fake codex + real proxy)", async () => {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+
+    const acks: Array<{ ok: boolean }> = [];
+    const submitProxy = new WorkflowSubmitProxy({
+      logger: noopLogger,
+      sendAck: (_submitId, ok) => acks.push({ ok }),
+    });
+
+    // Seed a STABLE planned goal: spec + a planner milestone with a task.
+    const specM = await store.createMilestone({ title: SPEC_MILESTONE_TITLE, description: "spec" });
+    const coreM = await store.createMilestone({ title: "Core", description: "core build" });
+    await store.createItem(TASKS_LEDGER, coreM.id, { status: "planned", fields: { headline: "Editor", description: "editor" } });
+    const goalItem = await store.createItem(GOALS_LEDGER, specM.id, {
+      status: "planned",
+      fields: { description: "A notes app.", milestones: [specM.id, coreM.id] },
+    });
+    const goalId = goalItem.id;
+    const originalCoreTask = JSON.stringify(store.listMilestoneItems(coreM.id)[TASKS_LEDGER]);
+
+    // The continuation producer submits under phase "produce" (CONTINUE_SPEC
+    // reuses the producer schema + produce phase); the increment planner under
+    // "plan"; the clarify + review phases clear/satisfy.
+    const codexFactory = makeFakeCodexFactory({
+      relay: (submitId, phase, payload) => submitProxy.onSubmit({ submitId, phase, payload }),
+      payloads: {
+        produce: {
+          goal: { description: "A notes app with attachment E2E." },
+          questions: [{ question: "Which attachments?", recommendation: "any" }],
+        },
+        clarify_review: { clear: true, contradictions: [], newQuestions: [] },
+        plan: {
+          milestones: [{ title: "Attachment E2E", description: "encrypt attachments" }],
+          tasks: [{ milestoneRef: 0, headline: "Envelope", description: "key wrap", acceptance: "round-trips" }],
+        },
+        plan_review: { satisfied: true, findings: [], newQuestions: [] },
+      },
+    });
+
+    const codexDeps = {
+      logger: noopLogger,
+      cwd: "/tmp/codex-cont-test",
+      submitProxy,
+      internalWsUrl: "ws://127.0.0.1:1/__internal/cq-mcp",
+      internalWsToken: "tok",
+      nextSubmitId: makeSubmitIdGenerator(7000),
+      codexFactory,
+      timeoutMs: 10_000,
+    };
+
+    const rt = new WorkflowRuntime({
+      logger: noopLogger,
+      store,
+      selectProducer: () => new CodexProducer(codexDeps),
+      selectPhaseSubagent: () => new CodexPhaseSubagent(codexDeps),
+    });
+
+    const res = await rt.continueGoal(goalId, "add attachment E2E", "codex", () => {});
+    expect(res.outcome).toBe("questions_ready");
+    if (res.outcome !== "questions_ready") throw new Error("unreachable");
+
+    // Increment milestone appended via the Codex relay; originals preserved.
+    const goalAfter = store.fetchItem(GOALS_LEDGER, goalId);
+    expect(goalAfter.status).toBe("clarifying");
+    const ms = goalAfter.fields["milestones"] as string[];
+    expect(ms.slice(0, 2)).toEqual([specM.id, coreM.id]);
+    const incId = ms[2]!;
+    expect(store.fetchMilestone(incId).resolved.title.startsWith(INCREMENT_MILESTONE_PREFIX)).toBe(true);
+    const incQ = (store.listMilestoneItems(incId)[QUESTIONS_LEDGER] ?? [])[0]!;
+
+    // Answer → clarify clear → append plan → review satisfied → planned, on Codex.
+    await rt.submitAnswer(incQ.id, "any");
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      if (store.fetchItem(GOALS_LEDGER, goalId).status === "planned") break;
+      await Bun.sleep(10);
+    }
+    expect(store.fetchItem(GOALS_LEDGER, goalId).status).toBe("planned");
+
+    const finalMs = store.fetchItem(GOALS_LEDGER, goalId).fields["milestones"] as string[];
+    expect(finalMs.slice(0, 2)).toEqual([specM.id, coreM.id]); // originals still a prefix
+    expect(finalMs).toHaveLength(4); // spec, core, increment, increment-plan
+    const incPlanTasks = store.listMilestoneItems(finalMs[3]!)[TASKS_LEDGER] ?? [];
+    expect(incPlanTasks[0]!.fields["headline"]).toBe("Envelope");
+
+    // The original Core task is byte-identical (append-only proof on Codex).
+    expect(JSON.stringify(store.listMilestoneItems(coreM.id)[TASKS_LEDGER])).toBe(originalCoreTask);
+    expect(acks.every((a) => a.ok)).toBe(true);
+
+    await store.dispose();
+  }, 20_000);
 });

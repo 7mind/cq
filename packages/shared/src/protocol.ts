@@ -214,8 +214,9 @@ export type ChatStart = z.infer<typeof ChatStart>;
  *
  *  - `kind` — the command kind. Only "plan" exists this cycle.
  *  - `goalRef` — present for `/plan G<id> <text>` (continuation). Absent for
- *    a new goal. Continuation returns a `workflow.event{status:"errored"}`
- *    with a continuation-not-implemented detail this cycle (Q9/Q10).
+ *    a new goal. Continuation appends an increment to an existing STABLE goal
+ *    (`planned`/`done`); a mid-flight, abandoned, or unknown goal returns a
+ *    `workflow.event{status:"errored"}` with a clear reason (Q9/Q10).
  *  - `text` — the free-text goal/feature description (already stripped of the
  *    leading `/plan` token by the client).
  *  - `platform` — the backend the producer dispatches on, chosen from the

@@ -41,9 +41,12 @@ import type { WorkflowEvent, GoalSnapshot, GoalMilestone, GoalQuestion, GoalTask
 import type { WorkflowProducer, ProducerOutput } from "./producer.js";
 import {
   CLARIFY_REVIEW_SPEC,
+  CONTINUE_SPEC,
   PLAN_SPEC,
   PLAN_REVIEW_SPEC,
   buildClarifyReviewPrompt,
+  buildContinuationPrompt,
+  buildContinuationPlannerPrompt,
   buildPlannerPrompt,
   buildPlanReviewPrompt,
   type PhaseSubagentSelector,
@@ -54,6 +57,18 @@ import {
 
 /** The mandatory first milestone (Q11). Its deliverable is the converged Q&A + scope. */
 export const SPEC_MILESTONE_TITLE = "produce an actionable specification" as const;
+
+/**
+ * Title prefix for an increment milestone (`/plan G<id> <text>` continuation,
+ * Q10). The continuation's new clarifying questions are filed under a milestone
+ * titled `<prefix><feature>`; the prefix is the durable, on-disk boundary
+ * between the goal's PRE-EXISTING milestones (everything before the LAST
+ * increment milestone) and the CURRENT increment's plan (that milestone
+ * onward). It lets `appendPlan` replace the increment's plan across revise
+ * rounds without ever touching a pre-existing milestone — append-only by
+ * construction — and survives a restart because it is read from the ledger.
+ */
+export const INCREMENT_MILESTONE_PREFIX = "increment: " as const;
 
 /** A sink for outbound lifecycle frames (server wires this to WS sessions). */
 export type WorkflowEventSink = (event: Omit<WorkflowEvent, "seq" | "ts">) => void;
@@ -215,15 +230,106 @@ export class WorkflowRuntime {
   }
 
   /**
-   * `/plan G<id> <text>` continuation — not implemented this cycle (Q9/Q10).
+   * `/plan G<id> <text>` continuation — append an increment (Q10). The goal
+   * gains a NEW increment: the continuation producer (a phase subagent through
+   * the same backend-neutral seam as the loop phases) returns an extended goal
+   * description + a fresh question batch SCOPED to the added feature; the
+   * HARNESS files those under a NEW increment milestone, sets the goal back to
+   * `clarifying`, and emits `questions_ready`. The existing clarify/plan/review
+   * loops then run as-is — the planner, detecting a continuation, APPENDS new
+   * milestones/tasks and never touches the goal's existing ones.
+   *
+   * Gate: continuation is allowed only when the goal sits in a STABLE state
+   * (`planned` or `done`). A mid-flight goal (`clarifying`/`planning`/
+   * `building`) is refused so a continuation cannot preempt an in-flight plan;
+   * an `abandoned` or unknown goal is refused with a clear message.
    */
-  startContinuation(goalRef: string, emit: WorkflowEventSink): StartPlanResult {
+  async continueGoal(
+    goalRef: string,
+    text: string,
+    platform: "claude" | "codex",
+    emit: WorkflowEventSink,
+  ): Promise<StartPlanResult> {
     this.subscribe(emit);
     const workflowId = crypto.randomUUID();
-    const reason = `continuation of ${goalRef} is not implemented yet`;
-    this.emitAll({ type: "workflow.event", workflowId, phase: "produce", status: "errored", detail: reason });
-    this.logger.info("workflow.continuation_not_implemented", { workflowId, goalRef });
-    return { outcome: "errored", workflowId, reason };
+
+    // Gate 1: the goal must exist.
+    let goal: Item;
+    try {
+      goal = this.store.fetchItem(GOALS_LEDGER, goalRef);
+    } catch {
+      const reason = `goal ${goalRef} does not exist`;
+      this.emitAll({ type: "workflow.event", workflowId, phase: "produce", status: "errored", detail: reason });
+      this.logger.info("workflow.continuation_unknown_goal", { workflowId, goalRef });
+      return { outcome: "errored", workflowId, reason };
+    }
+
+    // Gate 2: the goal must be in a STABLE state (planned/done). A mid-flight
+    // goal is refused; continuation does not preempt an in-flight plan.
+    if (goal.status === "clarifying" || goal.status === "planning") {
+      const reason = `goal ${goalRef} is still being planned; wait until it reaches planned`;
+      this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "errored", detail: reason });
+      this.logger.info("workflow.continuation_in_flight", { workflowId, goalRef, status: goal.status });
+      return { outcome: "errored", workflowId, reason };
+    }
+    if (goal.status === "abandoned") {
+      const reason = `goal ${goalRef} is abandoned; cannot continue an abandoned goal`;
+      this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "errored", detail: reason });
+      this.logger.info("workflow.continuation_abandoned", { workflowId, goalRef });
+      return { outcome: "errored", workflowId, reason };
+    }
+    if (goal.status === "building") {
+      const reason = `goal ${goalRef} is building; cannot continue a goal mid-build`;
+      this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "errored", detail: reason });
+      this.logger.info("workflow.continuation_building", { workflowId, goalRef });
+      return { outcome: "errored", workflowId, reason };
+    }
+    // From here: status is `planned` or `done` (the stable states).
+
+    // Gate 3: the workflow lane is pool=1. Refuse if a phase is dispatching.
+    if (this.active !== null) {
+      const reason = "a planning workflow is already running; wait for it to finish";
+      this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "errored", detail: reason });
+      this.logger.info("workflow.continuation_busy", { workflowId, goalRef, active: this.active.workflowId });
+      return { outcome: "busy", workflowId };
+    }
+
+    const abort = new AbortController();
+    this.active = { workflowId, abort };
+    this.goalPlatform.set(goalRef, platform);
+    this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "started", detail: "continuing goal" });
+    this.logger.info("workflow.continuation_started", { workflowId, goalRef, platform });
+
+    try {
+      this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "producing", detail: "scoping the increment" });
+      const desc = String(goal.fields["description"] ?? "");
+      const subagent = this.selectPhaseSubagent(platform);
+      const output: ProducerOutput = await subagent.dispatch(CONTINUE_SPEC, {
+        prompt: buildContinuationPrompt(desc, this.milestoneTitles(goalRef), this.qnaFor(goalRef), text),
+        signal: abort.signal,
+        registerTeardown: this.trackTeardown,
+      });
+
+      await this.writeIncrement(goalRef, text, output);
+
+      this.emitAll({
+        type: "workflow.event",
+        workflowId,
+        goalId: goalRef,
+        phase: "produce",
+        status: "questions_ready",
+        detail: `${output.questions.length} question${output.questions.length === 1 ? "" : "s"} ready in the Goals tab`,
+      });
+      this.logger.info("workflow.continuation_questions_ready", { workflowId, goalId: goalRef, questionCount: output.questions.length });
+      return { outcome: "questions_ready", workflowId, goalId: goalRef };
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "errored", detail: reason });
+      this.logger.warn("workflow.continuation_errored", { workflowId, goalRef, reason });
+      return { outcome: "errored", workflowId, reason };
+    } finally {
+      if (this.active?.workflowId === workflowId) this.active = null;
+    }
   }
 
   /**
@@ -576,9 +682,9 @@ export class WorkflowRuntime {
     });
 
     if (!out.clear || out.newQuestions.length > 0) {
-      const specId = this.specMilestoneId(goalId);
+      const batchId = this.activeQuestionMilestoneId(goalId);
       for (const q of out.newQuestions) {
-        await this.writeQuestion(specId, q);
+        await this.writeQuestion(batchId, q);
       }
       this.emitAll({
         type: "workflow.event",
@@ -600,22 +706,45 @@ export class WorkflowRuntime {
    * planner prompt so the user's steer reaches the planner.
    */
   private async runPlanner(goalId: string, workflowId: string, signal: AbortSignal, guidance?: string): Promise<void> {
-    const goal = this.store.fetchItem(GOALS_LEDGER, goalId);
-    const desc = String(goal.fields["description"] ?? "");
     this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "plan", status: "planning", detail: "drafting milestones and tasks" });
 
-    const subagent = this.selectPhaseSubagent(this.platformFor(goalId));
-    const plan = await subagent.dispatch(PLAN_SPEC, {
-      prompt: buildPlannerPrompt(desc, this.qnaFor(goalId)) + this.guidanceAddendum(guidance),
-      signal,
-      registerTeardown: this.trackTeardown,
-    });
-
-    await this.writePlan(goalId, plan);
+    const plan = await this.dispatchPlanner(goalId, signal, this.guidanceAddendum(guidance));
+    await this.persistPlan(goalId, plan);
     // Reset the no-progress fingerprint for a fresh review loop.
     this.lastReviseFingerprint.delete(goalId);
     // Proceed straight into the plan-review loop within this dispatch slot.
     await this.runPlanReview(goalId, workflowId, signal);
+  }
+
+  /**
+   * Dispatch the planner phase for a goal. For a CONTINUATION goal (one with an
+   * increment milestone) the planner is given the goal's existing milestones +
+   * tasks as immutable read-only context and is told to emit ONLY the new
+   * increment milestones/tasks (append-only steer). For a fresh goal the
+   * standard from-scratch planner prompt is used. `addendum` carries findings or
+   * escalation guidance.
+   */
+  private async dispatchPlanner(goalId: string, signal: AbortSignal, addendum: string): Promise<PlanOutput> {
+    const goal = this.store.fetchItem(GOALS_LEDGER, goalId);
+    const desc = String(goal.fields["description"] ?? "");
+    const subagent = this.selectPhaseSubagent(this.platformFor(goalId));
+    const prompt = this.isContinuation(goalId)
+      ? buildContinuationPlannerPrompt(desc, this.preservedPlanArtifacts(goalId), this.qnaFor(goalId)) + addendum
+      : buildPlannerPrompt(desc, this.qnaFor(goalId)) + addendum;
+    return subagent.dispatch(PLAN_SPEC, { prompt, signal, registerTeardown: this.trackTeardown });
+  }
+
+  /**
+   * Persist a planner output: APPEND for a continuation (preserve every
+   * pre-existing milestone/task, replace only the current increment's plan),
+   * REPLACE for a fresh goal (the existing from-scratch re-plan semantics).
+   */
+  private async persistPlan(goalId: string, plan: PlanOutput): Promise<void> {
+    if (this.isContinuation(goalId)) {
+      await this.appendPlan(goalId, plan);
+    } else {
+      await this.writePlan(goalId, plan);
+    }
   }
 
   /**
@@ -647,9 +776,9 @@ export class WorkflowRuntime {
     }
 
     if (review.newQuestions.length > 0) {
-      const specId = this.specMilestoneId(goalId);
+      const batchId = this.activeQuestionMilestoneId(goalId);
       for (const q of review.newQuestions) {
-        await this.writeQuestion(specId, q);
+        await this.writeQuestion(batchId, q);
       }
       // Reopening scope re-enters the CLARIFY gate: moving the goal back to
       // `clarifying` means the next answer batch is re-validated for clarity
@@ -683,16 +812,9 @@ export class WorkflowRuntime {
     signal: AbortSignal,
     findings: readonly PlanFinding[],
   ): Promise<void> {
-    const goal = this.store.fetchItem(GOALS_LEDGER, goalId);
-    const desc = String(goal.fields["description"] ?? "");
     this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "plan", status: "planning", detail: "revising the plan" });
 
-    const subagent = this.selectPhaseSubagent(this.platformFor(goalId));
-    const plan = await subagent.dispatch(PLAN_SPEC, {
-      prompt: buildPlannerPrompt(desc, this.qnaFor(goalId)) + this.findingsAddendum(findings),
-      signal,
-      registerTeardown: this.trackTeardown,
-    });
+    const plan = await this.dispatchPlanner(goalId, signal, this.findingsAddendum(findings));
 
     const fingerprint = this.fingerprintPlan(plan);
     const prior = this.lastReviseFingerprint.get(goalId);
@@ -713,7 +835,7 @@ export class WorkflowRuntime {
     }
     this.lastReviseFingerprint.set(goalId, fingerprint);
 
-    await this.writePlan(goalId, plan);
+    await this.persistPlan(goalId, plan);
     // Re-run the reviewer against the revised plan.
     await this.runPlanReview(goalId, workflowId, signal);
   }
@@ -797,6 +919,159 @@ export class WorkflowRuntime {
       status: "planning",
       fields: { milestones: [specId, ...milestoneIds] },
     });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────── //
+  // Continuation writes (HARNESS-owned). `/plan G<id> <text>` — Q10.
+  // ─────────────────────────────────────────────────────────────────────── //
+
+  /**
+   * Continuation phase-1 write: create the increment milestone (titled
+   * `<INCREMENT_MILESTONE_PREFIX><feature>`), file the new clarifying questions
+   * under it, append it to the goal's milestone list (PRE-EXISTING milestones
+   * untouched), update the goal description to the producer's extended one, and
+   * set the goal status back to `clarifying`. APPEND-ONLY: this only creates a
+   * milestone + questions and appends the new id; it never edits or removes any
+   * existing milestone or task.
+   */
+  private async writeIncrement(goalId: string, featureText: string, output: ProducerOutput): Promise<void> {
+    const incrementMilestone = await this.store.createMilestone({
+      title: `${INCREMENT_MILESTONE_PREFIX}${featureText}`,
+      description:
+        "The clarified scope for this increment (its answered clarifying questions) is this milestone's deliverable (Q10/Q11).",
+    });
+    const incId = incrementMilestone.id;
+    for (const q of output.questions) {
+      await this.writeQuestion(incId, q);
+    }
+    const existing = this.milestoneIdsFor(goalId);
+    await this.store.updateItem(GOALS_LEDGER, goalId, {
+      status: "clarifying",
+      fields: { description: output.goal.description, milestones: [...existing, incId] },
+    });
+  }
+
+  /**
+   * Continuation planner write: APPEND the new increment milestones/tasks. Every
+   * milestone the goal had UP TO AND INCLUDING the current increment milestone
+   * is preserved byte-for-byte (its id stays in the list, its rows are never
+   * touched); only the milestones AFTER the increment milestone — this
+   * increment's own prior plan, if a revise round already wrote one — are
+   * replaced by the fresh planner output. Pre-existing (incl. `done`) milestones
+   * and tasks are therefore provably immutable across a continuation.
+   */
+  private async appendPlan(goalId: string, plan: PlanOutput): Promise<void> {
+    const all = this.milestoneIdsFor(goalId);
+    const boundary = this.incrementBoundaryIndex(goalId);
+    // Preserve [0 .. boundary] (pre-existing + the increment-spec milestone);
+    // everything after `boundary` is this increment's plan and is replaced.
+    const preserved = all.slice(0, boundary + 1);
+    const created: string[] = [];
+    for (const m of plan.milestones) {
+      const milestone = await this.store.createMilestone({ title: m.title, description: m.description });
+      created.push(milestone.id);
+    }
+    for (const t of plan.tasks) {
+      const idx = Math.min(t.milestoneRef, created.length - 1);
+      const mId = created[idx]!;
+      const fields: Record<string, string | string[]> = { headline: t.headline, description: t.description };
+      if (t.acceptance !== undefined) fields["acceptance"] = t.acceptance;
+      await this.store.createItem(TASKS_LEDGER, mId, { status: "planned", fields });
+    }
+    await this.store.updateItem(GOALS_LEDGER, goalId, {
+      status: "planning",
+      fields: { milestones: [...preserved, ...created] },
+    });
+  }
+
+  /**
+   * Index in `goal.milestones` of the LAST increment milestone (title prefixed
+   * with `INCREMENT_MILESTONE_PREFIX`). This is the durable, ledger-derived
+   * boundary between the goal's pre-existing milestones and the current
+   * increment's plan. Throws if no increment milestone exists (caller guards via
+   * `isContinuation`).
+   */
+  private incrementBoundaryIndex(goalId: string): number {
+    const ids = this.milestoneIdsFor(goalId);
+    for (let i = ids.length - 1; i >= 0; i--) {
+      const title = this.store.fetchMilestone(ids[i]!).resolved.title;
+      if (title.startsWith(INCREMENT_MILESTONE_PREFIX)) return i;
+    }
+    throw new Error(`goal ${goalId} has no increment milestone`);
+  }
+
+  /** True iff the goal has at least one increment milestone (a continuation). */
+  private isContinuation(goalId: string): boolean {
+    return this.milestoneIdsFor(goalId).some((mId) =>
+      this.store.fetchMilestone(mId).resolved.title.startsWith(INCREMENT_MILESTONE_PREFIX),
+    );
+  }
+
+  /**
+   * The milestone that owns the goal's CURRENTLY-ACTIVE question batch: the last
+   * milestone (in goal.milestones order) that holds any question. For a fresh
+   * goal that is the spec milestone; for a continuation it is the increment
+   * milestone the producer filed the new batch under. Follow-up clarify/review
+   * questions are written here so they join the active batch rather than an
+   * already-settled one. Falls back to the spec milestone when no milestone has
+   * questions yet (defensive; the active batch always exists when this is called
+   * from a clarify/review write).
+   */
+  private activeQuestionMilestoneId(goalId: string): string {
+    const ids = this.milestoneIdsFor(goalId);
+    for (let i = ids.length - 1; i >= 0; i--) {
+      const qs = this.store.listMilestoneItems(ids[i]!)[QUESTIONS_LEDGER] ?? [];
+      if (qs.length > 0) return ids[i]!;
+    }
+    return this.specMilestoneId(goalId);
+  }
+
+  /**
+   * The goal's PRESERVED plan artefacts for the continuation planner prompt:
+   * the milestones (and their tasks) from after the spec milestone up to AND
+   * INCLUDING the current increment milestone — i.e. everything the planner must
+   * NOT re-emit. Excludes the spec milestone (index 0, a scope deliverable, not
+   * a build milestone) and any prior increment-plan milestones after the
+   * boundary (those are this increment's own draft, which the new output
+   * replaces).
+   */
+  private preservedPlanArtifacts(goalId: string): {
+    milestones: Array<{ title: string; description: string }>;
+    tasks: Array<{ milestone: string; headline: string; description: string; acceptance?: string }>;
+  } {
+    const ids = this.milestoneIdsFor(goalId);
+    const boundary = this.incrementBoundaryIndex(goalId);
+    // Read-only context = build milestones [1 .. boundary] (skip spec at 0).
+    const contextIds = ids.slice(1, boundary + 1);
+    const milestones: Array<{ title: string; description: string }> = [];
+    const tasks: Array<{ milestone: string; headline: string; description: string; acceptance?: string }> = [];
+    for (const mId of contextIds) {
+      const fetched = this.store.fetchMilestone(mId);
+      milestones.push({ title: fetched.resolved.title, description: fetched.resolved.description });
+      const tItems = this.store.listMilestoneItems(mId)[TASKS_LEDGER] ?? [];
+      for (const t of tItems) {
+        const task: { milestone: string; headline: string; description: string; acceptance?: string } = {
+          milestone: fetched.resolved.title,
+          headline: String(t.fields["headline"] ?? ""),
+          description: String(t.fields["description"] ?? ""),
+        };
+        const acc = t.fields["acceptance"];
+        if (typeof acc === "string") task.acceptance = acc;
+        tasks.push(task);
+      }
+    }
+    return { milestones, tasks };
+  }
+
+  /** The titles of a goal's milestones, in goal.milestones order (read-only context). */
+  private milestoneTitles(goalId: string): string[] {
+    return this.milestoneIdsFor(goalId).map((mId) => this.store.fetchMilestone(mId).resolved.title);
+  }
+
+  /** The goal's milestone-id list (empty if unset). */
+  private milestoneIdsFor(goalId: string): string[] {
+    const goal = this.store.fetchItem(GOALS_LEDGER, goalId);
+    return Array.isArray(goal.fields["milestones"]) ? (goal.fields["milestones"] as string[]) : [];
   }
 
   // ─────────────────────────────────────────────────────────────────────── //

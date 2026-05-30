@@ -12,6 +12,7 @@ export type {
 export {
   WorkflowRuntime,
   SPEC_MILESTONE_TITLE,
+  INCREMENT_MILESTONE_PREFIX,
 } from "./workflowRuntime.js";
 export type {
   WorkflowRuntimeOpts,
@@ -38,12 +39,15 @@ export { CodexProducer } from "./codexProducer.js";
 export type { CodexProducerOpts } from "./codexProducer.js";
 export {
   CLARIFY_REVIEW_SPEC,
+  CONTINUE_SPEC,
   PLAN_SPEC,
   PLAN_REVIEW_SPEC,
   ClarifyReviewOutputSchema,
   PlanOutputSchema,
   PlanReviewOutputSchema,
   buildClarifyReviewPrompt,
+  buildContinuationPrompt,
+  buildContinuationPlannerPrompt,
   buildPlannerPrompt,
   buildPlanReviewPrompt,
 } from "./phases.js";

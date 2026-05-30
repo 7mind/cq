@@ -18,7 +18,7 @@
 
 import { z } from "zod";
 import type { WorkflowSubmitPhase } from "@cq/shared";
-import type { TeardownSink } from "./producer.js";
+import { ProducerOutputSchema, type ProducerOutput, type TeardownSink } from "./producer.js";
 
 // ---------------------------------------------------------------------------
 // Clarify-reviewer phase (Q5 auto-advance loop).
@@ -177,6 +177,26 @@ export const PLAN_REVIEW_SPEC: PhaseSpec<PlanReviewOutput> = {
   submitPhase: "plan_review",
 };
 
+/**
+ * Continuation producer spec (`/plan G<id> <text>` — Q10 append-increment).
+ *
+ * The continuation producer takes an existing goal (its description + answered
+ * Q&A + milestone titles) plus the new feature text and returns the SAME
+ * structured shape as the phase-1 producer: an extended goal `description` that
+ * folds in the increment, plus a fresh batch of clarifying questions SCOPED to
+ * the added feature. Reusing `ProducerOutput` lets the continuation dispatch
+ * through the generic phase-subagent seam on BOTH backends with no protocol or
+ * relay change: `submitPhase` is "produce" (the proxy validates against the
+ * registered schema, not a phase-name lookup), and a distinct `toolName`
+ * separates the Claude in-process submit tool from the phase-1 producer's.
+ */
+export const CONTINUE_SPEC: PhaseSpec<ProducerOutput> = {
+  toolName: "submit_continuation",
+  schema: ProducerOutputSchema,
+  label: "continuation-producer",
+  submitPhase: "produce",
+};
+
 // ---------------------------------------------------------------------------
 // Prompt builders. Each phase gets the goal + the relevant prior artefacts and
 // a strict instruction to call its submit tool exactly once and write nothing.
@@ -221,6 +241,53 @@ export function buildClarifyReviewPrompt(goalDescription: string, qna: readonly 
   ].join("\n");
 }
 
+/**
+ * The continuation producer prompt (`/plan G<id> <text>`). The producer sees the
+ * existing goal (its current description, the titles of its existing
+ * milestones as read-only context, and the answered Q&A so far) plus the new
+ * feature text, and returns an EXTENDED `goal.description` that incorporates the
+ * increment together with a fresh batch of clarifying questions SCOPED to the
+ * added feature. It must NOT re-ask anything the existing Q&A already settled
+ * and must NOT propose changes to the existing milestones — those are read-only
+ * context. Same `submit_*`-tool-once / write-nothing discipline as phase 1.
+ */
+export function buildContinuationPrompt(
+  goalDescription: string,
+  existingMilestoneTitles: readonly string[],
+  qna: readonly QnA[],
+  featureText: string,
+): string {
+  const milestoneBlock =
+    existingMilestoneTitles.length > 0
+      ? existingMilestoneTitles.map((t, i) => `${i + 1}. ${t}`).join("\n")
+      : "(none)";
+  return [
+    "You are a continuation producer for an EXISTING planning goal. The user",
+    "wants to ADD a new feature to a goal that has already been (partly) planned.",
+    "Produce an INCREMENT: do NOT restate or rework the existing scope.",
+    "",
+    `Existing goal: ${goalDescription}`,
+    "",
+    "Existing milestones (READ-ONLY context — do NOT propose changes to these):",
+    milestoneBlock,
+    "",
+    "Already-answered clarifying Q&A (do NOT re-ask what these settle):",
+    renderQnA(qna),
+    "",
+    `New feature to add: ${featureText}`,
+    "",
+    "Produce:",
+    "1. An updated one-paragraph goal `description` that folds in the new feature",
+    "   while preserving the existing scope (extend, do not replace).",
+    "2. A batch of clarifying `questions` SCOPED ONLY to the new feature, each",
+    "   with a `question` (required), optional `context`, optional `suggestions`,",
+    "   and an optional `recommendation`.",
+    "",
+    "You MUST call the `submit_continuation` tool exactly once. Do NOT write to",
+    "any ledger or file. Do NOT ask the user anything directly.",
+  ].join("\n");
+}
+
 export function buildPlannerPrompt(goalDescription: string, qna: readonly QnA[]): string {
   return [
     "You are a planner for a planning workflow. Given the clarified goal and",
@@ -248,6 +315,58 @@ export interface PlanArtifacts {
     description: string;
     acceptance?: string;
   }>;
+}
+
+/**
+ * The continuation planner prompt. Unlike `buildPlannerPrompt` (which plans a
+ * goal from scratch and whose harness write REPLACES the planner milestones),
+ * the continuation planner is told the goal's EXISTING milestones are immutable
+ * read-only context and that it must emit ONLY the NEW milestones/tasks for the
+ * increment. The harness write path (`appendPlan`) then CREATES those and
+ * APPENDS them to the goal's milestone list — it never edits or removes an
+ * existing milestone or task. Append-only is enforced on BOTH sides: the
+ * planner is asked to emit only new items, and the harness only creates.
+ */
+export function buildContinuationPlannerPrompt(
+  goalDescription: string,
+  existingPlan: PlanArtifacts,
+  qna: readonly QnA[],
+): string {
+  const existingMilestones =
+    existingPlan.milestones.length > 0
+      ? existingPlan.milestones.map((m, i) => `${i + 1}. ${m.title} — ${m.description}`).join("\n")
+      : "(none yet)";
+  const existingTasks =
+    existingPlan.tasks.length > 0
+      ? existingPlan.tasks.map((t, i) => `${i + 1}. [${t.milestone}] ${t.headline} — ${t.description}`).join("\n")
+      : "(none yet)";
+  return [
+    "You are a planner extending an EXISTING goal with a new increment. The goal",
+    "already has milestones and tasks from prior planning. You must ADD ONLY the",
+    "new milestones and tasks needed for the increment described by the answered",
+    "Q&A below. Do NOT restate, modify, renumber, or remove any existing milestone",
+    "or task — they are immutable read-only context shown only so you avoid",
+    "duplicating them.",
+    "",
+    `Goal: ${goalDescription}`,
+    "",
+    "EXISTING milestones (immutable — do NOT re-emit these):",
+    existingMilestones,
+    "",
+    "EXISTING tasks (immutable — do NOT re-emit these):",
+    existingTasks,
+    "",
+    "Increment Q&A (what the new milestones/tasks must cover):",
+    renderQnA(qna),
+    "",
+    "Return `milestones` (each `title` + `description`) and `tasks` (each with a",
+    "`milestoneRef` = the zero-based index into YOUR `milestones` array, a",
+    "`headline`, a `description`, and an optional `acceptance` criterion). Emit",
+    "ONLY the NEW increment milestones/tasks — at least one new milestone.",
+    "",
+    "You MUST call the `submit_plan_doc` tool exactly once. Do NOT write to any",
+    "ledger or file. Do NOT ask the user anything directly.",
+  ].join("\n");
 }
 
 export function buildPlanReviewPrompt(
