@@ -4,6 +4,21 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ---
 
+## Cycle: gtitle — add short `title` to goals alongside `description`
+
+Plan: [`docs/drafts/20260530-1310-goal-title.md`](docs/drafts/20260530-1310-goal-title.md).
+Baseline (verified 7d5dcd4): `bun test` 1032 pass / 0 fail; e2e 26/26.
+
+### Milestone M-GTITLE — PR breakdown
+
+- [x] **gtitle-1** — Thread `title` end-to-end: schema (GOALS_SCHEMA, title first + required) → producer output (ProducerOutputSchema.goal `{title,description}` + prompts) → harness write (writeArtifacts + writeIncrement) → goals.snapshot (GoalSnapshot Zod + buildGoalsSnapshot) → Goals tab (row=title, expand=description). Added `title` to every goal/producer fixture across ledger/server/web/shared/e2e/cq-mcp; new coverage for schema-rejects-missing-title, harness-writes-title, continuation-refines-title, snapshot-carries-title, row-renders-title + expand-renders-description.
+
+**M-GTITLE CLOSED.** Discharge: `bun run check` exit 0 ×2 (1032/0 both; baseline 1032/0); `bun run e2e` 26/26; `nix build .#default` exit 0 (local fallback; remote SSH builder unreachable). Defect `GOAL-TITLE-01` resolved. Session log: `docs/logs/20260530-1310-log.md`.
+
+**Completed — gtitle-1** (2026-05-30): shipped the goals `title` field end-to-end. What shipped: required `title` on `GOALS_SCHEMA` (first field, before `description`); `ProducerOutputSchema.goal={title,description}`; producer + continuation prompts ask for a short ≤8-word title + detailed description; harness `writeArtifacts`/`writeIncrement` persist title (continuation refines title + extends description in the same append, originals untouched); `GoalSnapshot` Zod + `buildGoalsSnapshot` carry title; GoalCard row shows the short title (`goal-title-<id>`), the expand shows the detailed description (`goal-description-<id>`, `.goalDescriptionBody`). Surprise/discovery: the Claude producer advertises a SEPARATE, looser SDK-tool input schema (`claudeProducer.submitPlanSchema`) than the strict `ProducerOutputSchema` it re-validates against; the SDK strips the model's tool input to the advertised schema BEFORE the handler sees it, so omitting `title` from `submitPlanSchema` silently dropped the title → strict re-validation failed → handler returned isError → model retried until the 40s dispatch timeout → `errored`. Caught by the two REAL-SDK MockAnthropic integration tests timing out; fixed by adding `title` to `submitPlanSchema`. The continuation phase subagent (`claudePhaseSubagent`) advertises `{payload:z.unknown()}` so it does NOT strip — no analogous fix needed there; the Codex path validates the relayed payload directly against `ProducerOutputSchema`/`spec.schema` (cq-mcp relay tool forwards an opaque payload) — also no fix needed. Constraint future work must respect: any goal-producing path that advertises a STRIPPING tool-input schema distinct from `ProducerOutputSchema` must keep the two field-sets in sync, or the SDK silently drops fields. Divergence-guard implication: an old-schema dev `docs/goals.md` (no title) now fails bootstrap (`BootstrapViolationError`); `rm docs/goals.md docs/ledgers.yaml` once (gitignored, regenerable) — none existed in this worktree. Verification: `bun run check` → exit 0, 1032 pass / 0 fail (×2); `bun run e2e` → 26 passed; `nix build .#default` → exit 0 (`result` → cq-0.0.1; local fallback after remote SSH builder unreachable). Metrics: review rounds 1 (self-review, no subagent dispatch tool in runtime); defects {major:0, minor:1 (GOAL-TITLE-01, the input-strip hazard), nit:0}; verification complete; scope delta: +1 file vs plan envelope (`claudeProducer.ts` — the SDK input-strip schema, not anticipated in the plan; and +`cq-mcp/test/submitRelay.e2e.test.ts` fixture).
+
+---
+
 ## Cycle: plan-usability — four /plan dogfood usability defects (PLAN-D01..D04)
 
 Plan: [`docs/drafts/20260530-1245-plan-usability.md`](docs/drafts/20260530-1245-plan-usability.md).

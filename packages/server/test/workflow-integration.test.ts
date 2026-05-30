@@ -28,7 +28,7 @@ const SUBMIT_TOOL_USE_ID = "toolu_wf_submit_001";
 
 // The structured payload the model "submits" via the submit_plan tool.
 const SUBMIT_INPUT = {
-  goal: { description: "A local-first encrypted notetaking webapp." },
+  goal: { title: "Local-first notes app", description: "A local-first encrypted notetaking webapp." },
   questions: [
     { question: "Which platforms?", context: "scope", suggestions: ["web", "desktop"], recommendation: "web" },
     { question: "What encryption scheme?", recommendation: "age" },
@@ -202,7 +202,7 @@ const CONT_TOOL_USE_ID = "toolu_wf_cont_001";
 // scoped question batch). The generic ClaudePhaseSubagent tool wraps it under
 // `{ payload }`, so the model calls submit_continuation with that shape.
 const CONT_SUBMIT_INPUT = {
-  goal: { description: "A local-first encrypted notetaking webapp with attachment E2E encryption." },
+  goal: { title: "Local-first notes app + attachment E2E", description: "A local-first encrypted notetaking webapp with attachment E2E encryption." },
   questions: [{ question: "Which attachment types need E2E?", suggestions: ["images", "any"], recommendation: "any" }],
 };
 
@@ -264,7 +264,7 @@ describe("workflow continuation producer — REAL SDK subprocess via MockAnthrop
       await store.createItem("tasks", coreM.id, { status: "planned", fields: { headline: "Editor", description: "editor" } });
       const goalItem = await store.createItem(GOALS_LEDGER, specM.id, {
         status: "planned",
-        fields: { description: "A local-first encrypted notetaking webapp.", milestones: [specM.id, coreM.id] },
+        fields: { title: "Local-first notes app", description: "A local-first encrypted notetaking webapp.", milestones: [specM.id, coreM.id] },
       });
       const goalId = goalItem.id;
 

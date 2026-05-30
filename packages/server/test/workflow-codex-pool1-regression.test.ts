@@ -88,7 +88,7 @@ describe("pool=1 invariant — Codex workflow lane does not disturb interactive 
     const { factory } = gatedCodexFactory(
       (submitId, phase, payload) => submitProxy.onSubmit({ submitId, phase: phase as never, payload }),
       gate,
-      { goal: { description: "d" }, questions: [{ question: "q?" }] },
+      { goal: { title: "D goal", description: "d" }, questions: [{ question: "q?" }] },
     );
 
     const codexDeps = {

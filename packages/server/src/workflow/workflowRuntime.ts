@@ -523,6 +523,7 @@ export class WorkflowRuntime {
       totalOpenQuestions += openQuestionCount;
       goals.push({
         id: goalId,
+        title: String(goal.fields["title"] ?? ""),
         description: String(goal.fields["description"] ?? ""),
         status: goal.status,
         milestones,
@@ -886,7 +887,7 @@ export class WorkflowRuntime {
 
     const goalItem = await this.store.createItem(GOALS_LEDGER, specId, {
       status: "clarifying",
-      fields: { description: output.goal.description },
+      fields: { title: output.goal.title, description: output.goal.description },
     });
     const goalId = goalItem.id;
 
@@ -974,7 +975,11 @@ export class WorkflowRuntime {
     const existing = this.milestoneIdsFor(goalId);
     await this.store.updateItem(GOALS_LEDGER, goalId, {
       status: "clarifying",
-      fields: { description: output.goal.description, milestones: [...existing, incId] },
+      fields: {
+        title: output.goal.title,
+        description: output.goal.description,
+        milestones: [...existing, incId],
+      },
     });
   }
 

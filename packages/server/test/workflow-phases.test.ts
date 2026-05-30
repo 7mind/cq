@@ -116,8 +116,15 @@ describe("phase prompt builders", () => {
     expect(CONTINUE_SPEC.toolName).toBe("submit_continuation");
     // Validates the same {goal, questions} shape as the phase-1 producer.
     expect(
-      CONTINUE_SPEC.schema.safeParse({ goal: { description: "x" }, questions: [{ question: "q?" }] }).success,
+      CONTINUE_SPEC.schema.safeParse({
+        goal: { title: "X goal", description: "x" },
+        questions: [{ question: "q?" }],
+      }).success,
     ).toBe(true);
+    // A goal without a `title` is rejected (title is required end-to-end).
+    expect(
+      CONTINUE_SPEC.schema.safeParse({ goal: { description: "x" }, questions: [{ question: "q?" }] }).success,
+    ).toBe(false);
   });
   it("plan-review prompt includes prior findings when present", () => {
     const p = buildPlanReviewPrompt(

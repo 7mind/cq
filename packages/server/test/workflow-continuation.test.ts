@@ -45,7 +45,7 @@ import { noopLogger } from "./helpers/mockBridge";
 import { FakePhaseSubagent } from "./helpers/fakePhaseSubagent";
 
 const PRODUCER_OUT: ProducerOutput = {
-  goal: { description: "A local-first encrypted notetaking webapp." },
+  goal: { title: "Local-first notes app", description: "A local-first encrypted notetaking webapp." },
   questions: [{ question: "Which platforms?", suggestions: ["web", "desktop"], recommendation: "web" }],
 };
 
@@ -80,7 +80,7 @@ const PLAN: PlanOutput = {
 const SATISFIED: PlanReviewOutput = { satisfied: true, findings: [], newQuestions: [] };
 
 const CONT_PRODUCER_OUT: ProducerOutput = {
-  goal: { description: "A local-first encrypted notetaking webapp WITH attachment E2E encryption." },
+  goal: { title: "Local-first notes app + E2E attachments", description: "A local-first encrypted notetaking webapp WITH attachment E2E encryption." },
   questions: [{ question: "Which attachment types?", suggestions: ["images", "any"], recommendation: "any" }],
 };
 const CONT_PLAN: PlanOutput = {
@@ -285,9 +285,11 @@ describe("continuation producer", () => {
     // Existing milestones (spec + Core) are byte-identical.
     expect(snapshotMilestones(store, before)).toEqual(beforeSnap);
 
-    // Goal description extended; status back to clarifying.
+    // Goal description extended AND title refined; status back to clarifying.
     const goal = store.fetchItem(GOALS_LEDGER, goalId);
     expect(goal.fields["description"]).toBe(CONT_PRODUCER_OUT.goal.description);
+    expect(goal.fields["title"]).toBe(CONT_PRODUCER_OUT.goal.title);
+    expect(goal.fields["title"]).not.toBe(PRODUCER_OUT.goal.title);
     expect(goal.status).toBe("clarifying");
 
     await store.dispose();

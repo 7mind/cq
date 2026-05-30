@@ -173,6 +173,7 @@ export const GOALS_SCHEMA: LedgerSchema = {
   terminalStatuses: ["done", "abandoned"],
   idPrefix: "G",
   fields: {
+    title: { type: "string", required: true },
     description: { type: "string", required: true },
     milestones: { type: "id[]", required: false },
     tags: { type: "string[]", required: false },

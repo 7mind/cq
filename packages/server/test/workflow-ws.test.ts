@@ -57,7 +57,7 @@ function statuses(socket: MockSocket): string[] {
 }
 
 const CANNED: ProducerOutput = {
-  goal: { description: "desc" },
+  goal: { title: "Desc goal", description: "desc" },
   questions: [{ question: "q1?" }],
 };
 class FakeProducer implements WorkflowProducer {
@@ -151,7 +151,7 @@ describe("WsSession /plan routing", () => {
 
     // Now continue: a new increment batch reaches questions_ready.
     const before = socket.sent.length;
-    phase.enqueue(CONTINUE_SPEC, { goal: { description: "extended" }, questions: [{ question: "scope?" }] });
+    phase.enqueue(CONTINUE_SPEC, { goal: { title: "Extended goal", description: "extended" }, questions: [{ question: "scope?" }] });
     send(ws, socket, { type: "workflow.start", seq: 3, ts: Date.now(), kind: "plan", goalRef: goalId, text: "add feature", platform: "claude" });
     await waitFor(() => socket.sent.slice(before).some((f) => f.type === "workflow.event" && f["status"] === "questions_ready"));
     expect(store.fetchItem(GOALS_LEDGER, goalId).status).toBe("clarifying");

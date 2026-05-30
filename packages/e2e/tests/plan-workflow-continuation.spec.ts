@@ -111,7 +111,7 @@ test("/plan G<id>: continuation appends an increment milestone + new questions; 
       "mcp__wf__submit_continuation",
       {
         payload: {
-          goal: { description: "A local-first notes app WITH attachment E2E encryption." },
+          goal: { title: "Local-first notes app + E2E attachments", description: "A local-first notes app WITH attachment E2E encryption." },
           questions: [{ question: "Which attachment types?", context: "scope", suggestions: ["images", "any"], recommendation: "any" }],
         },
       },
@@ -124,7 +124,7 @@ test("/plan G<id>: continuation appends an increment milestone + new questions; 
     toolUseSse(
       "mcp__wf__submit_plan",
       {
-        goal: { description: "A local-first notes app." },
+        goal: { title: "Local-first notes app", description: "A local-first notes app." },
         questions: [{ question: "Which platforms?", context: "surface", suggestions: ["web", "desktop"], recommendation: "web" }],
       },
       "pp",

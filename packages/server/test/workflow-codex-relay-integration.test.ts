@@ -58,7 +58,7 @@ describe("workflow Codex relay — full loop on platform=codex (fake codex + rea
       relay: (submitId, phase, payload) => submitProxy.onSubmit({ submitId, phase, payload }),
       payloads: {
         produce: {
-          goal: { description: "A notes app." },
+          goal: { title: "Notes app", description: "A notes app." },
           questions: [{ question: "Which platforms?", recommendation: "web" }],
         },
         clarify_review: { clear: true, contradictions: [], newQuestions: [] },
@@ -149,7 +149,7 @@ describe("workflow Codex relay — full loop on platform=codex (fake codex + rea
     const codexFactory = makeFakeCodexFactory({
       relay: (submitId, phase, payload) => submitProxy.onSubmit({ submitId, phase, payload }),
       payloads: {
-        produce: { goal: { description: "x" }, questions: [] },
+        produce: { goal: { title: "X", description: "x" }, questions: [] },
       },
     });
 
@@ -208,7 +208,7 @@ describe("workflow Codex relay — full loop on platform=codex (fake codex + rea
     await store.createItem(TASKS_LEDGER, coreM.id, { status: "planned", fields: { headline: "Editor", description: "editor" } });
     const goalItem = await store.createItem(GOALS_LEDGER, specM.id, {
       status: "planned",
-      fields: { description: "A notes app.", milestones: [specM.id, coreM.id] },
+      fields: { title: "Notes app", description: "A notes app.", milestones: [specM.id, coreM.id] },
     });
     const goalId = goalItem.id;
     const originalCoreTask = JSON.stringify(store.listMilestoneItems(coreM.id)[TASKS_LEDGER]);
@@ -220,7 +220,7 @@ describe("workflow Codex relay — full loop on platform=codex (fake codex + rea
       relay: (submitId, phase, payload) => submitProxy.onSubmit({ submitId, phase, payload }),
       payloads: {
         produce: {
-          goal: { description: "A notes app with attachment E2E." },
+          goal: { title: "Notes app + attachment E2E", description: "A notes app with attachment E2E." },
           questions: [{ question: "Which attachments?", recommendation: "any" }],
         },
         clarify_review: { clear: true, contradictions: [], newQuestions: [] },

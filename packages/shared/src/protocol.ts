@@ -635,6 +635,8 @@ export type GoalMilestone = z.infer<typeof GoalMilestone>;
 /** A goal with its milestones and an open-question count. */
 export const GoalSnapshot = z.object({
   id: z.string(),
+  /** SHORT crisp goal name shown as the row's primary label. */
+  title: z.string(),
   description: z.string(),
   /** goals schema status: clarifying/planning/planned/building/done/abandoned. */
   status: z.string(),

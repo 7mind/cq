@@ -131,7 +131,7 @@ describe("workflow full loop — REAL SDK via MockAnthropicHTTP", () => {
           if (body.includes("submit_plan")) {
             return toolUseSse(
               "mcp__wf__submit_plan",
-              { goal: { description: "A notes app." }, questions: [{ question: "Which platforms?", recommendation: "web" }] },
+              { goal: { title: "Notes app", description: "A notes app." }, questions: [{ question: "Which platforms?", recommendation: "web" }] },
               "pp",
             );
           }

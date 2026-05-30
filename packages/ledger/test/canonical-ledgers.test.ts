@@ -124,7 +124,7 @@ const CASES: LedgerCase[] = [
   {
     ledger: GOALS_LEDGER,
     prefix: "G",
-    create: { description: "Ship the canonical ledgers", milestones: ["M-AMBIENT"] },
+    create: { title: "Ship canonical ledgers", description: "Ship the canonical ledgers", milestones: ["M-AMBIENT"] },
     update: { status: "done", fields: { tags: ["open-ended"] } },
     searchNeedle: "canonical ledgers",
     terminalStatus: "done",
@@ -321,8 +321,9 @@ describe("§11 worked-example parser round-trips", () => {
     {
       name: GOALS_LEDGER,
       schema: GOALS_SCHEMA,
-      text: `---\nledger: goals\ncounters:\n  milestone: 0\n  item: 1\narchives: []\n---\n\n# goals\n\n## M13\n\n### G1 — planned\n\n- createdAt: 2026-05-28T20:30:00.000Z\n- updatedAt: 2026-05-28T20:30:00.000Z\n- description: Move the four skills onto the canonical ledgers\n- milestones: ["M13"]\n- tags: ["open-ended"]\n`,
+      text: `---\nledger: goals\ncounters:\n  milestone: 0\n  item: 1\narchives: []\n---\n\n# goals\n\n## M13\n\n### G1 — planned\n\n- createdAt: 2026-05-28T20:30:00.000Z\n- updatedAt: 2026-05-28T20:30:00.000Z\n- title: Skills onto canonical ledgers\n- description: Move the four skills onto the canonical ledgers\n- milestones: ["M13"]\n- tags: ["open-ended"]\n`,
       assertItem: (f) => {
+        expect(f["title"]).toContain("canonical ledgers");
         expect(f["description"]).toContain("canonical ledgers");
         expect(f["milestones"]).toEqual(["M13"]);
       },

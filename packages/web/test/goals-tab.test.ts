@@ -78,6 +78,7 @@ function snapshot(overrides: Partial<GoalsSnapshot> = {}): GoalsSnapshot {
     goals: [
       {
         id: "G1",
+        title: "Notes app",
         description: "A notes app.",
         status: "clarifying",
         openQuestionCount: 1,
@@ -178,6 +179,11 @@ describe("GoalsTab", () => {
     // Goal row + status chip.
     expect(q("goal-G1")).not.toBeNull();
     expect(q("goal-status-G1").textContent).toBe("clarifying");
+
+    // Row header shows the SHORT title; the expanded body shows the detailed
+    // description (the goal auto-expands because it has an open question).
+    expect(q("goal-title-G1").textContent).toBe("Notes app");
+    expect(q("goal-description-G1").textContent).toBe("A notes app.");
 
     // Open question rendered; answered one hidden until the toggle.
     expect(q("goal-question-Q1")).not.toBeNull();

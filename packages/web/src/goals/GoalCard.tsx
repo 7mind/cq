@@ -1,11 +1,11 @@
 /**
  * GoalCard.tsx — one expandable goal row.
  *
- * Collapsed: `G<id>` + truncated description + a status chip. Click to expand.
- * Expanded: milestones in order; under each, its OPEN questions (answered ones
- * collapsed behind a "show N answered" toggle); tasks as read-only chips once
- * planned. When the goal is escalated, the EscalationCard renders at the top of
- * the body.
+ * Collapsed: `G<id>` + truncated short title + a status chip. Click to expand.
+ * Expanded: the detailed goal description, then milestones in order; under each,
+ * its OPEN questions (answered ones collapsed behind a "show N answered"
+ * toggle); tasks as read-only chips once planned. When the goal is escalated,
+ * the EscalationCard renders at the top of the body.
  */
 
 import { useState } from "react";
@@ -52,7 +52,9 @@ export function GoalCard({
       >
         <span className={styles.caret}>{expanded ? "▼" : "▶"}</span>
         <span className={styles.goalId}>{goal.id}</span>
-        <span className={styles.goalDescription}>{goal.description}</span>
+        <span className={styles.goalDescription} data-testid={`goal-title-${goal.id}`}>
+          {goal.title}
+        </span>
         <span
           className={`${styles.statusChip} ${STATUS_CLASS[goal.status] ?? ""}`}
           data-testid={`goal-status-${goal.id}`}
@@ -62,6 +64,9 @@ export function GoalCard({
       </button>
       {expanded && (
         <div className={styles.goalBody}>
+          <div className={styles.goalDescriptionBody} data-testid={`goal-description-${goal.id}`}>
+            {goal.description}
+          </div>
           {isEscalated && (
             <EscalationCard goalId={goal.id} detail={escalationDetail} onReply={onEscalationReply} />
           )}

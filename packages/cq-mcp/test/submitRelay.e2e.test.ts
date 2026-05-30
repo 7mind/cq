@@ -134,7 +134,7 @@ describe("cq-mcp submit_workflow_phase relay (codexwf, real binary)", () => {
       expect(names.length).toBe(15); // 14 ledger tools (incl. fts_search) + the relay tool
 
       // 2. Calling it relays workflow.submit and resolves on the auto-ack.
-      const payload = { goal: { description: "x" }, questions: [{ question: "q?" }] };
+      const payload = { goal: { title: "X goal", description: "x" }, questions: [{ question: "q?" }] };
       const result = await client.callTool({
         name: "submit_workflow_phase",
         arguments: { payload },

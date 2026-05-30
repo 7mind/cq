@@ -22,7 +22,7 @@ import type { SSEEvent } from "../fixtures/adminMock.ts";
 const SUBMIT_TOOL_USE_ID = "toolu_wf_submit_e2e";
 
 const SUBMIT_INPUT = {
-  goal: { description: "A local-first encrypted notetaking webapp." },
+  goal: { title: "Local-first notes app", description: "A local-first encrypted notetaking webapp." },
   questions: [
     { question: "Which platforms should it target?", suggestions: ["web", "desktop"], recommendation: "web" },
     { question: "What encryption scheme?", recommendation: "age" },

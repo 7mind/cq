@@ -30,7 +30,7 @@ import { noopLogger } from "./helpers/mockBridge.js";
 import { FakePhaseSubagent } from "./helpers/fakePhaseSubagent.js";
 
 const CANNED: ProducerOutput = {
-  goal: { description: "A notes app." },
+  goal: { title: "Notes app", description: "A notes app." },
   questions: [
     { question: "Which platforms?", context: "scope", suggestions: ["web", "desktop"], recommendation: "web" },
   ],
@@ -84,6 +84,7 @@ describe("buildGoalsSnapshot", () => {
     expect(snap1.totalOpenQuestions).toBe(1);
     const g1 = snap1.goals[0]!;
     expect(g1.id).toBe(goalId);
+    expect(g1.title).toBe("Notes app");
     expect(g1.description).toBe("A notes app.");
     expect(g1.status).toBe("clarifying");
     expect(g1.openQuestionCount).toBe(1);

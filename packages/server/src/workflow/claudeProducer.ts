@@ -62,7 +62,7 @@ const DEFAULT_TIMEOUT_MS = 120_000;
  * is rejected at the harness boundary, not silently written.
  */
 const submitPlanSchema = {
-  goal: z.object({ description: z.string() }),
+  goal: z.object({ title: z.string(), description: z.string() }),
   questions: z.array(
     z.object({
       question: z.string(),

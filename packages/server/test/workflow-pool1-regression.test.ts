@@ -27,7 +27,7 @@ import {
 } from "./helpers/mockBridge";
 import { FakePhaseSubagent } from "./helpers/fakePhaseSubagent";
 
-const CANNED: ProducerOutput = { goal: { description: "d" }, questions: [{ question: "q?" }] };
+const CANNED: ProducerOutput = { goal: { title: "D goal", description: "d" }, questions: [{ question: "q?" }] };
 
 function makeRuntime(store: LedgerStore, producer: WorkflowProducer): WorkflowRuntime {
   return new WorkflowRuntime({

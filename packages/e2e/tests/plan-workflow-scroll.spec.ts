@@ -71,7 +71,7 @@ test("/plan: Goals tab scrolls when many questions overflow the viewport", async
     "submit_plan",
     toolUseSse(
       "mcp__wf__submit_plan",
-      { goal: { description: "A goal with many open questions." }, questions },
+      { goal: { title: "Many-questions goal", description: "A goal with many open questions." }, questions },
       "pp",
     ),
   );

@@ -662,6 +662,7 @@ describe("Goals frames", () => {
       goals: [
         {
           id: "G1",
+          title: "Notes app",
           description: "A notes app.",
           status: "clarifying",
           openQuestionCount: 1,

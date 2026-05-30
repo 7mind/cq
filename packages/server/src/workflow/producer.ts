@@ -31,6 +31,7 @@ export type ProducerQuestion = z.infer<typeof ProducerQuestionSchema>;
 /** The structured payload the producer must submit. */
 export const ProducerOutputSchema = z.object({
   goal: z.object({
+    title: z.string().min(1),
     description: z.string().min(1),
   }),
   questions: z.array(ProducerQuestionSchema).min(1),
@@ -99,8 +100,10 @@ export function buildProducerPrompt(text: string): string {
   return [
     EXPLORE_FIRST_INSTRUCTION,
     "You are a planning producer. Given a user's goal, produce:",
-    "1. A refined one-paragraph goal description.",
-    "2. A batch of clarifying questions that must be answered before the goal can be planned.",
+    "1. A SHORT goal `title` (≤ ~8 words, a crisp name for the goal — what it",
+    "   would read as in a one-line list).",
+    "2. A detailed multi-sentence goal `description` that refines the scope.",
+    "3. A batch of clarifying questions that must be answered before the goal can be planned.",
     "",
     "Each question must have: a `question` (required), optional `context`, optional",
     "`suggestions` (an array of candidate answers), and an optional `recommendation`.",

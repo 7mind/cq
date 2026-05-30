@@ -27,7 +27,7 @@ import { noopLogger } from "./helpers/mockBridge";
 import { FakePhaseSubagent } from "./helpers/fakePhaseSubagent";
 
 const CANNED: ProducerOutput = {
-  goal: { description: "A local-first encrypted notetaking webapp." },
+  goal: { title: "Local-first notes app", description: "A local-first encrypted notetaking webapp." },
   questions: [
     { question: "Which platforms?", context: "desktop/mobile", suggestions: ["web", "desktop"], recommendation: "web" },
     { question: "What encryption scheme?", recommendation: "age" },

@@ -134,6 +134,14 @@
   gap: 12px;
 }
 
+/* Full detailed goal description, shown at the top of the expanded body. */
+.goalDescriptionBody {
+  color: var(--text-secondary, #444444);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
 .milestone {
   display: flex;
   flex-direction: column;

@@ -33,7 +33,7 @@ import { noopLogger } from "./helpers/mockBridge";
 import { FakePhaseSubagent } from "./helpers/fakePhaseSubagent";
 
 const PRODUCER_OUT: ProducerOutput = {
-  goal: { description: "A local-first encrypted notetaking webapp." },
+  goal: { title: "Local-first notes app", description: "A local-first encrypted notetaking webapp." },
   questions: [{ question: "Which platforms?", suggestions: ["web", "desktop"], recommendation: "web" }],
 };
 
@@ -408,7 +408,7 @@ describe("auto-advance fires exactly once", () => {
       selectProducer: () => ({
         produce: () =>
           Promise.resolve<ProducerOutput>({
-            goal: { description: "g" },
+            goal: { title: "G goal", description: "g" },
             questions: [{ question: "Q1?" }, { question: "Q2?" }],
           }),
       }),

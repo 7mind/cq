@@ -91,7 +91,7 @@ test("/plan: Goals tab renders, answers inline, and converges to planned", async
     toolUseSse(
       "mcp__wf__submit_plan",
       {
-        goal: { description: "A local-first notes app." },
+        goal: { title: "Local-first notes app", description: "A local-first notes app." },
         questions: [{ question: "Which platforms?", context: "target surface", suggestions: ["web", "desktop"], recommendation: "web" }],
       },
       "pp",

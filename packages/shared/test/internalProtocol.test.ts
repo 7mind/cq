@@ -251,7 +251,7 @@ describe("internalProtocol — workflow.submit (codexwf relay)", () => {
     type: "workflow.submit" as const,
     submitId: "submit-7-1",
     phase: "produce" as const,
-    payload: { goal: { description: "a notes app" }, questions: [{ question: "which platform?" }] },
+    payload: { goal: { title: "Notes app", description: "a notes app" }, questions: [{ question: "which platform?" }] },
     sourcePid: 4242,
   };
 

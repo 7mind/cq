@@ -42,7 +42,7 @@ describe("WorkflowSubmitProxy — accept path", () => {
     expect(proxy.hasPending("s-1")).toBe(true);
 
     const payload = {
-      goal: { description: "a notes app" },
+      goal: { title: "Notes app", description: "a notes app" },
       questions: [{ question: "which platform?", recommendation: "web" }],
     };
     proxy.onSubmit({ submitId: "s-1", phase: "produce", payload });
@@ -81,7 +81,7 @@ describe("WorkflowSubmitProxy — reject (malformed) path", () => {
     proxy.onSubmit({
       submitId: "s-bad",
       phase: "produce",
-      payload: { goal: { description: "x" }, questions: [] },
+      payload: { goal: { title: "X", description: "x" }, questions: [] },
     });
 
     await Bun.sleep(0);
@@ -95,10 +95,10 @@ describe("WorkflowSubmitProxy — reject (malformed) path", () => {
     proxy.onSubmit({
       submitId: "s-bad",
       phase: "produce",
-      payload: { goal: { description: "x" }, questions: [{ question: "q?" }] },
+      payload: { goal: { title: "X", description: "x" }, questions: [{ question: "q?" }] },
     });
     const out = await p;
-    expect(out).toEqual({ goal: { description: "x" }, questions: [{ question: "q?" }] });
+    expect(out).toEqual({ goal: { title: "X", description: "x" }, questions: [{ question: "q?" }] });
     expect(acks[1]).toEqual({ submitId: "s-bad", ok: true });
   });
 });
@@ -142,7 +142,7 @@ describe("WorkflowSubmitProxy — teardown", () => {
     // Swallow the expected teardown rejection so it is not an unhandled reject.
     proxy.register("s-late", "produce", ProducerOutputSchema).catch(() => {});
     proxy.reject("s-late", "torn down");
-    proxy.onSubmit({ submitId: "s-late", phase: "produce", payload: { goal: { description: "x" }, questions: [{ question: "q" }] } });
+    proxy.onSubmit({ submitId: "s-late", phase: "produce", payload: { goal: { title: "X", description: "x" }, questions: [{ question: "q" }] } });
     expect(acks).toEqual([
       { submitId: "s-late", ok: false, error: "no in-flight phase dispatch for this submit" },
     ]);
@@ -153,7 +153,7 @@ describe("WorkflowSubmitProxy — teardown", () => {
     const p1 = proxy.register("dup", "produce", ProducerOutputSchema);
     const p2 = proxy.register("dup", "produce", ProducerOutputSchema);
     await expect(p1).rejects.toThrow("re-registered");
-    proxy.onSubmit({ submitId: "dup", phase: "produce", payload: { goal: { description: "x" }, questions: [{ question: "q" }] } });
+    proxy.onSubmit({ submitId: "dup", phase: "produce", payload: { goal: { title: "X", description: "x" }, questions: [{ question: "q" }] } });
     await expect(p2).resolves.toBeDefined();
   });
 });

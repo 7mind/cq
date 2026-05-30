@@ -93,7 +93,7 @@ test("/plan: full clarify→plan→review→planned loop populates the ledgers",
     "submit_plan",
     toolUseSse(
       "mcp__wf__submit_plan",
-      { goal: { description: "A local-first notes app." }, questions: [{ question: "Which platforms?", recommendation: "web" }] },
+      { goal: { title: "Local-first notes app", description: "A local-first notes app." }, questions: [{ question: "Which platforms?", recommendation: "web" }] },
       "pp",
     ),
   );
