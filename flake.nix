@@ -106,7 +106,7 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           # Updated after the first build (see README § Nix for workflow).
-          outputHash = "sha256-qa7x+5dSTcZ/NfpdI6SL7wke8P9FtPiM8MvIZX3f1uM=";
+          outputHash = "sha256-F1JSOq4Vyc53Wm6fDNf9KTVnW1OCg30/2bFHGHoww8A=";
         };
 
         # ------------------------------------------------------------------ #
@@ -237,9 +237,14 @@
               "$WORKSPACE/packages/shared/node_modules/bun-types"
 
             # ledger (npm deps used at runtime: anthropic-ai/claude-agent-sdk,
-            # remark-*, unified, yaml, zod; no @cq/* workspace deps).
+            # minisearch, remark-*, unified, yaml, zod; no @cq/* workspace deps).
+            # minisearch backs the in-memory FTS index (fts_search). It must be
+            # in the closure for BOTH @cq/ledger consumers — the cq server AND
+            # the cq-mcp stdio binary — but cq-mcp's @cq/ledger is a symlink to
+            # this same packages/ledger (see below), so symlinking it here once
+            # covers both.
             mkdir -p "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai"
-            for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify bun-types; do
+            for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify minisearch bun-types; do
               if [ -e "${bunNodeModules}/packages/ledger/node_modules/$dep" ]; then
                 ln -s "${bunNodeModules}/packages/ledger/node_modules/$dep" \
                   "$WORKSPACE/packages/ledger/node_modules/$dep"

@@ -53,11 +53,12 @@ function decode<T>(result: { content: Array<{ type: string; text: string }> }): 
 }
 
 describe("ledger MCP tools", () => {
-  it("exports the expected tool names (13 tools)", async () => {
+  it("exports the expected tool names (14 tools)", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...LEDGER_TOOL_NAMES].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(13);
+    expect(LEDGER_TOOL_NAMES.length).toBe(14);
+    expect(LEDGER_TOOL_NAMES).toContain("fts_search");
   });
 
   it("enumerate_ledgers + create_ledger + fetch_ledger round-trip (includes bootstrapped milestones)", async () => {
@@ -406,5 +407,59 @@ describe("ledger MCP tools", () => {
       await callTool(tools, "search_items", { ledger_id: "xenos", query: "milk" }),
     );
     expect(hits.items.map((i) => i.id)).toEqual(["X1"]);
+  });
+
+  it("fts_search returns the documented ranked JSON shape", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+    await callTool(tools, "create_milestone", { title: "x" });
+    await callTool(tools, "create_item", {
+      ledger_id: "xenos",
+      milestone_id: "M1",
+      status: "open",
+      fields: { note: "buy oat milk today" },
+    });
+    await callTool(tools, "create_item", {
+      ledger_id: "xenos",
+      milestone_id: "M1",
+      status: "open",
+      fields: { note: "wash the car" },
+    });
+    const out = decode<{
+      results: Array<{
+        ledgerId: string;
+        item: { id: string; fields: Record<string, string> };
+        score: number;
+        matchedFields: string[];
+      }>;
+    }>(await callTool(tools, "fts_search", { query: "milk" }));
+    expect(out.results.length).toBe(1);
+    const hit = out.results[0]!;
+    expect(hit.ledgerId).toBe("xenos");
+    expect(hit.item.id).toBe("X1");
+    expect(hit.score > 0).toBe(true);
+    expect(Array.isArray(hit.matchedFields)).toBe(true);
+  });
+
+  it("fts_search includes archived items only when include_archived=true", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+    await callTool(tools, "create_milestone", { title: "x" });
+    await callTool(tools, "create_item", {
+      ledger_id: "xenos",
+      milestone_id: "M1",
+      status: "done",
+      fields: { note: "quokka note" },
+    });
+    await callTool(tools, "update_milestone", { milestone_id: "M1", status: "done" });
+    await callTool(tools, "archive_milestone", { milestone_id: "M1", summary: "s" });
+    const def = decode<{ results: unknown[] }>(
+      await callTool(tools, "fts_search", { query: "quokka" }),
+    );
+    expect(def.results.length).toBe(0);
+    const incl = decode<{ results: Array<{ item: { id: string } }> }>(
+      await callTool(tools, "fts_search", { query: "quokka", include_archived: true }),
+    );
+    expect(incl.results.map((r) => r.item.id)).toEqual(["X1"]);
   });
 });

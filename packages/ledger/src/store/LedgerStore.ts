@@ -30,6 +30,9 @@ import type {
   Milestone,
   ResolvedMilestone,
 } from "../types.js";
+import type { FtsSearchHit, FtsSearchOpts } from "../search/LedgerSearchIndex.js";
+
+export type { FtsSearchHit, FtsSearchOpts } from "../search/LedgerSearchIndex.js";
 
 /**
  * Result shape for `fetchArchive`. Discriminated by `kind`:
@@ -129,6 +132,21 @@ export interface LedgerStore {
   fetchMilestone(milestoneId: string): FetchedMilestoneItem;
 
   search(ledgerId: string, query: string): Item[];
+
+  /**
+   * Ranked full-text search across ledger items, backed by the in-memory
+   * `LedgerSearchIndex` (a derived projection of this store, kept coherent by
+   * the same local-`onMutation` + remote-`invalidate` hooks that keep the
+   * stores coherent). Cross-ledger when `opts.ledger` is omitted; archived
+   * items are searchable only when `opts.includeArchived === true` (default
+   * false). Hits are ranked by descending score and carry the full `Item`.
+   *
+   * Async for interface uniformity (no sync/async union) even though the
+   * index lookup itself is synchronous; the index is always current by the
+   * time a caller reaches this method because the store keeps it in lockstep
+   * with its mutations.
+   */
+  ftsSearch(query: string, opts?: FtsSearchOpts): Promise<FtsSearchHit[]>;
 
   /**
    * Group every active item in every ledger by its milestone-group id ===

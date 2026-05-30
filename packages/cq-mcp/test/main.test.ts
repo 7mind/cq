@@ -4,7 +4,7 @@
  * Spawns the stdio binary as a subprocess, drives it through the
  * @modelcontextprotocol/sdk Client + StdioClientTransport pair, and
  * asserts that:
- *   1. tools/list returns the 13-tool msunify surface.
+ *   1. tools/list returns the 14-tool surface (msunify 13 + fts_search).
  *   2. enumerate_ledgers reflects the seeded list (incl. the
  *      bootstrapped milestones ledger).
  *   3. create_milestone mutates the docs/milestones.md file on disk.
@@ -72,7 +72,7 @@ async function withClient(
 }
 
 describe("cq-mcp stdio binary", () => {
-  it("lists the 13 ledger tools (msunify surface)", async () => {
+  it("lists the 14 ledger tools (msunify surface + fts_search)", async () => {
     await withClient(async (client) => {
       const list = await client.listTools();
       const names = list.tools.map((t) => t.name).sort();
@@ -87,6 +87,7 @@ describe("cq-mcp stdio binary", () => {
           "fetch_ledger",
           "fetch_ledger_archive",
           "fetch_milestone",
+          "fts_search",
           "list_milestone_items",
           "search_items",
           "update_item",

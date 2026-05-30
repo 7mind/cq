@@ -41,11 +41,14 @@ import type {
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
+  FtsSearchHit,
+  FtsSearchOpts,
   LedgerStore,
   OnMutation,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
+import { LedgerSearchIndex } from "../search/LedgerSearchIndex.js";
 import type {
   FetchedLedger,
   FetchedMilestoneGroup,
@@ -83,6 +86,7 @@ export class InMemoryLedgerStore implements LedgerStore {
   private readonly mutexes = new Map<string, AsyncMutex>();
   private readonly now: () => string;
   private readonly onMutation: OnMutation | null;
+  private readonly searchIndex = new LedgerSearchIndex();
   private initialised = false;
   private readonly initialSeed: Array<{ name: string; schema: LedgerSchema }>;
 
@@ -101,6 +105,11 @@ export class InMemoryLedgerStore implements LedgerStore {
     ledgerId: string,
     op: "create" | "update" | "archive",
   ): void {
+    // Keep the derived FTS index coherent with the write FIRST (guarded so an
+    // index error never unwinds the already-committed write), then fire the
+    // user hook. Archived docs only change on an `archive` op.
+    this.rebuildLedgerIndexActive(ledgerId);
+    if (op === "archive") this.refreshLedgerIndexArchived(ledgerId);
     if (this.onMutation === null) return;
     try {
       this.onMutation(ledgerId, op);
@@ -108,6 +117,52 @@ export class InMemoryLedgerStore implements LedgerStore {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(
         `InMemoryLedgerStore: onMutation hook threw for ${ledgerId} (${op}): ${msg}\n`,
+      );
+    }
+  }
+
+  /** Rebuild active FTS docs for a ledger from its in-memory items. Guarded. */
+  private rebuildLedgerIndexActive(ledgerId: string): void {
+    try {
+      const ledger = this.ledgers.get(ledgerId);
+      if (ledger === undefined) return;
+      const items: Item[] = [];
+      for (const m of ledger.milestones) for (const it of m.items) items.push(it);
+      this.searchIndex.rebuildLedgerActive(ledgerId, items);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `InMemoryLedgerStore: FTS active-rebuild threw for ${ledgerId}: ${msg}\n`,
+      );
+    }
+  }
+
+  /**
+   * Rebuild archived FTS docs for a ledger from the archive Maps. For the
+   * milestones ledger the archived units are single milestone-ITEMs
+   * (`itemArchives`); for every other ledger they are milestone-GROUPs whose
+   * items are the archived items (`archives`). Guarded.
+   */
+  private refreshLedgerIndexArchived(ledgerId: string): void {
+    try {
+      const ledger = this.ledgers.get(ledgerId);
+      if (ledger === undefined) return;
+      const items: Item[] = [];
+      for (const ptr of ledger.archivePointers) {
+        const key = `${ledgerId}/${ptr.id}`;
+        if (ledgerId === MILESTONES_LEDGER) {
+          const it = this.itemArchives.get(key);
+          if (it !== undefined) items.push(it);
+        } else {
+          const group = this.archives.get(key);
+          if (group !== undefined) items.push(...group.items);
+        }
+      }
+      this.searchIndex.setLedgerArchived(ledgerId, items);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `InMemoryLedgerStore: FTS archived-refresh threw for ${ledgerId}: ${msg}\n`,
       );
     }
   }
@@ -129,6 +184,11 @@ export class InMemoryLedgerStore implements LedgerStore {
       this.ledgers.set(name, freshLedger(name, schema));
     }
     this.initialised = true;
+    // Build the FTS index for every ledger present after bootstrap + seed.
+    for (const name of this.ledgers.keys()) {
+      this.rebuildLedgerIndexActive(name);
+      this.refreshLedgerIndexArchived(name);
+    }
   }
 
   async dispose(): Promise<void> {
@@ -161,6 +221,13 @@ export class InMemoryLedgerStore implements LedgerStore {
 
   search(ledgerId: string, query: string): Item[] {
     return searchItems(this.getLedger(ledgerId), query).map(cloneItem);
+  }
+
+  async ftsSearch(query: string, opts: FtsSearchOpts = {}): Promise<FtsSearchHit[]> {
+    this.assertInit();
+    return this.searchIndex
+      .search(query, opts)
+      .map((h) => ({ ...h, item: cloneItem(h.item) }));
   }
 
   fetchMilestone(milestoneId: string): FetchedMilestoneItem {

@@ -104,6 +104,82 @@ describe("FsLedgerStore — cross-instance invalidate", () => {
     }
   });
 
+  // FTS cross-process coherence: prove the derived index rebuilds on the
+  // REMOTE path (invalidate), not only on a local mutation. Mirrors the
+  // LOCK-D01 two-store-one-cwd pattern: A writes an item; before the relay
+  // delivers, B's ftsSearch misses; after B.invalidate (the onMutation→peer
+  // relay), B's ftsSearch finds A's item.
+  it("A.createItem then B.invalidate makes A's item searchable in B's FTS index", async () => {
+    const dir = await seedDir([
+      {
+        name: "xenos",
+        schema: {
+          statusValues: ["open", "done"],
+          terminalStatuses: ["done"],
+          fields: { headline: { type: "string", required: true } },
+        },
+      },
+    ]);
+    const A = new FsLedgerStore({ root: dir });
+    const B = new FsLedgerStore({ root: dir });
+    await A.init();
+    await B.init();
+    try {
+      const m = await A.createMilestone({ title: "x" });
+      await B.invalidate("milestones"); // B learns the milestone first.
+      await A.createItem("xenos", m.id, {
+        status: "open",
+        fields: { headline: "quokka sighting" },
+      });
+      // BEFORE the relay delivers: B's index is stale — no hit.
+      expect((await B.ftsSearch("quokka")).length).toBe(0);
+      // The D-COHERENCE relay (onMutation→peer.invalidate) re-reads xenos and
+      // MUST rebuild B's FTS docs for it.
+      await B.invalidate("xenos");
+      const hits = await B.ftsSearch("quokka");
+      expect(hits.length).toBe(1);
+      expect(hits[0]?.ledgerId).toBe("xenos");
+      expect(hits[0]?.item.fields["headline"]).toBe("quokka sighting");
+    } finally {
+      await A.dispose();
+      await B.dispose();
+    }
+  });
+
+  // FTS coherence on the registry-reload (new-ledger) branch of invalidate
+  // (F1): a ledger A creates is searchable in B only after B.invalidate(<new>)
+  // reloads the registry AND indexes the freshly-loaded ledger.
+  it("A.createLedger+createItem then B.invalidate(<new>) makes the item searchable in B", async () => {
+    const dir = await seedDir([]);
+    const A = new FsLedgerStore({ root: dir });
+    const B = new FsLedgerStore({ root: dir });
+    await A.init();
+    await B.init();
+    try {
+      await A.createLedger("fresh", {
+        statusValues: ["open"],
+        terminalStatuses: [],
+        idPrefix: "F",
+        fields: { headline: { type: "string", required: true } },
+      });
+      const m = await A.createMilestone({ title: "x" });
+      await A.createItem("fresh", m.id, {
+        status: "open",
+        fields: { headline: "narwhal pod" },
+      });
+      // B knows nothing about `fresh` yet — no hit.
+      expect((await B.ftsSearch("narwhal")).length).toBe(0);
+      // Registry-reload branch must index the new ledger (F1).
+      await B.invalidate("milestones");
+      await B.invalidate("fresh");
+      const hits = await B.ftsSearch("narwhal");
+      expect(hits.map((h) => h.ledgerId)).toEqual(["fresh"]);
+    } finally {
+      await A.dispose();
+      await B.dispose();
+    }
+  });
+
   it("A.createLedger then B.invalidate(<new>) reloads the registry and exposes the new ledger", async () => {
     const dir = await seedDir([]);
     const A = new FsLedgerStore({ root: dir });

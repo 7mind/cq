@@ -16,7 +16,7 @@
  *      Claude-identical CallToolResult shape.
  *
  * A second case spawns the binary WITHOUT the env and asserts the
- * standalone surface stays at the 13 ledger tools (no ask_user_question).
+ * standalone surface stays at the 14 ledger tools (incl. fts_search; no ask_user_question).
  *
  * Mirrors `internalWs-integration.test.ts`; the subprocess is launched via
  * `bun run packages/cq-mcp/src/main.ts` so no built bin is required.
@@ -160,9 +160,10 @@ describe("askproxy — cq-mcp ask_user_question round-trip", () => {
       const list = await client.listTools();
       const names = list.tools.map((t) => t.name);
       expect(names).toContain("ask_user_question");
-      // The 13 ledger tools are still present.
+      // The 14 ledger tools (incl. fts_search) are still present.
       expect(names).toContain("enumerate_ledgers");
-      expect(names.length).toBe(14);
+      expect(names).toContain("fts_search");
+      expect(names.length).toBe(15);
     });
   });
 
@@ -171,7 +172,7 @@ describe("askproxy — cq-mcp ask_user_question round-trip", () => {
       const list = await client.listTools();
       const names = list.tools.map((t) => t.name);
       expect(names).not.toContain("ask_user_question");
-      expect(names.length).toBe(13);
+      expect(names.length).toBe(14);
     });
   });
 

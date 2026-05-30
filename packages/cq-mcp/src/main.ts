@@ -272,6 +272,48 @@ export function registerLedgerTools(server: McpServer, store: LedgerStore): void
     async (args) => jsonResult({ items: store.search(args.ledger_id, args.query) }),
   );
 
+  server.registerTool(
+    "fts_search",
+    {
+      description:
+        "Ranked full-text search across ledger items. Cross-ledger by default (pass `ledger` to restrict to one). Supports fuzzy + prefix matching, an exact status filter, and an `include_archived` flag (default false). Results are ranked by relevance score (descending); field boosts favour headline/title/question over description/rationale over status. Each result carries the full item, its score, and the fields that matched. Use this for discovery; use search_items for precise single-ledger substring matching.",
+      inputSchema: {
+        query: z.string(),
+        ledger: z.string().optional(),
+        limit: z.number().int().positive().optional(),
+        fuzzy: z.boolean().optional(),
+        prefix: z.boolean().optional(),
+        status: z.string().optional(),
+        include_archived: z.boolean().optional(),
+      },
+    },
+    async (args) => {
+      const opts: {
+        ledger?: string;
+        limit?: number;
+        fuzzy?: boolean;
+        prefix?: boolean;
+        statusFilter?: string;
+        includeArchived?: boolean;
+      } = {};
+      if (args.ledger !== undefined) opts.ledger = args.ledger;
+      if (args.limit !== undefined) opts.limit = args.limit;
+      if (args.fuzzy !== undefined) opts.fuzzy = args.fuzzy;
+      if (args.prefix !== undefined) opts.prefix = args.prefix;
+      if (args.status !== undefined) opts.statusFilter = args.status;
+      if (args.include_archived !== undefined) opts.includeArchived = args.include_archived;
+      const hits = await store.ftsSearch(args.query, opts);
+      return jsonResult({
+        results: hits.map((h) => ({
+          ledgerId: h.ledgerId,
+          item: h.item,
+          score: h.score,
+          matchedFields: h.matchedFields,
+        })),
+      });
+    },
+  );
+
   // ---- Milestone surface (5) ---------------------------------------------
 
   server.registerTool(

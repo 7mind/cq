@@ -665,5 +665,132 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
         }
       });
     });
+
+    // -----------------------------------------------------------------------
+    // FTS — ftsSearch ranked cross-ledger search + includeArchived + coherence
+    // -----------------------------------------------------------------------
+
+    describe("FTS — ftsSearch", () => {
+      it("ranks cross-ledger and restricts with a single-ledger filter", async () => {
+        const store = await factory.build([
+          { name: WIDGETS, schema: widgetsSchema },
+          { name: NOTES, schema: notesSchema },
+        ]);
+        try {
+          const m = await store.createMilestone({ title: "x" });
+          await store.createItem(WIDGETS, m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "stream scroll defect" },
+          });
+          await store.createItem(NOTES, m.id, {
+            status: "open",
+            fields: { notes: "stream notes here" },
+          });
+          // Cross-ledger: both ledgers' items match "stream".
+          const cross = await store.ftsSearch("stream");
+          expect(cross.map((h) => h.ledgerId).sort()).toEqual([NOTES, WIDGETS].sort());
+          // Single-ledger restriction.
+          const single = await store.ftsSearch("stream", { ledger: NOTES });
+          expect(single.map((h) => h.ledgerId)).toEqual([NOTES]);
+          // Hits carry the full Item + a positive score.
+          expect(single[0]?.item.fields["notes"]).toBe("stream notes here");
+          expect((single[0]?.score ?? 0) > 0).toBe(true);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("a headline-field match outranks a body-only match (boosts)", async () => {
+        // The widgets schema has no 'headline' field, so use the canonical
+        // defects ledger whose required field IS 'headline'.
+        const store = await factory.build([]);
+        try {
+          const m = await store.createMilestone({ title: "x" });
+          await store.createItem("defects", m.id, {
+            status: "open",
+            fields: { headline: "widget overflow", severity: "minor", description: "x" },
+          });
+          await store.createItem("defects", m.id, {
+            status: "open",
+            fields: { headline: "unrelated heading", severity: "minor", description: "the widget here" },
+          });
+          const hits = await store.ftsSearch("widget", { ledger: "defects" });
+          expect(hits.length).toBe(2);
+          // The headline match (D1) ranks first; its score is strictly higher.
+          expect(hits[0]?.item.fields["headline"]).toBe("widget overflow");
+          expect((hits[0]?.score ?? 0) > (hits[1]?.score ?? 1)).toBe(true);
+          expect(hits[0]?.matchedFields).toContain("headline");
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("fuzzy + prefix + status options behave", async () => {
+        const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+        try {
+          const m = await store.createMilestone({ title: "x" });
+          await store.createItem(WIDGETS, m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "neuromancer motorcycle" },
+          });
+          await store.createItem(WIDGETS, m.id, {
+            status: "resolved",
+            fields: { severity: "major", location: "y.ts", description: "neuromancer scooter" },
+          });
+          // Exact misses the typo; fuzzy finds it.
+          expect((await store.ftsSearch("neromancer")).length).toBe(0);
+          expect((await store.ftsSearch("neromancer", { fuzzy: true })).length).toBe(2);
+          // Prefix finds by term prefix.
+          expect((await store.ftsSearch("motor")).length).toBe(0);
+          expect((await store.ftsSearch("motor", { prefix: true })).length).toBe(1);
+          // Status filter restricts.
+          const open = await store.ftsSearch("neuromancer", { statusFilter: "open" });
+          expect(open.map((h) => h.item.status)).toEqual(["open"]);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("local coherence: create then update is reflected in ftsSearch", async () => {
+        const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+        try {
+          const m = await store.createMilestone({ title: "x" });
+          const it = await store.createItem(WIDGETS, m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "aardvark" },
+          });
+          expect((await store.ftsSearch("aardvark")).map((h) => h.item.id)).toEqual([it.id]);
+          // Update the searchable text; the old term no longer matches, the new one does.
+          await store.updateItem(WIDGETS, it.id, { fields: { description: "buffalo" } });
+          expect((await store.ftsSearch("aardvark")).length).toBe(0);
+          expect((await store.ftsSearch("buffalo")).map((h) => h.item.id)).toEqual([it.id]);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("includeArchived: an archived item is found ONLY when include_archived=true", async () => {
+        const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+        try {
+          const m = await store.createMilestone({ title: "x" });
+          await store.createItem(WIDGETS, m.id, {
+            status: "resolved",
+            fields: { severity: "minor", location: "x.ts", description: "zebracrossing" },
+          });
+          // Before archive: active, found by default.
+          expect((await store.ftsSearch("zebracrossing")).length).toBe(1);
+          // Archive the milestone (item already terminal; mark milestone done).
+          await store.updateMilestone(m.id, { status: "done" });
+          await store.archiveMilestone(m.id, "summary");
+          // After archive: default search hides it; includeArchived reveals it.
+          expect((await store.ftsSearch("zebracrossing")).length).toBe(0);
+          const incl = await store.ftsSearch("zebracrossing", { includeArchived: true });
+          expect(incl.length).toBe(1);
+          expect(incl[0]?.ledgerId).toBe(WIDGETS);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+    });
   });
 }

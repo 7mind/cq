@@ -4,7 +4,7 @@
  * Spawns the REAL cq-mcp stdio binary with the workflow env
  * (CQ_INTERNAL_WS_URL/TOKEN + CQ_WORKFLOW_SUBMIT_ID/PHASE) pointed at a FAKE
  * internal-WS server, then drives it through the MCP Client. Asserts:
- *   1. tools/list now includes `submit_workflow_phase` (14-tool surface).
+ *   1. tools/list now includes `submit_workflow_phase` (15-tool surface).
  *   2. calling it relays `workflow.submit{submitId,phase,payload}` to the fake
  *      server, which acks {ok:true}; the tool returns success.
  *
@@ -127,11 +127,11 @@ describe("cq-mcp submit_workflow_phase relay (codexwf, real binary)", () => {
     const client = new Client({ name: "cq-mcp-submit-test", version: "0.0.1" }, { capabilities: {} });
     await client.connect(transport);
     try {
-      // 1. tools/list includes submit_workflow_phase (14-tool surface).
+      // 1. tools/list includes submit_workflow_phase (15-tool surface).
       const list = await client.listTools();
       const names = list.tools.map((t) => t.name);
       expect(names).toContain("submit_workflow_phase");
-      expect(names.length).toBe(14); // 13 ledger tools + the relay tool
+      expect(names.length).toBe(15); // 14 ledger tools (incl. fts_search) + the relay tool
 
       // 2. Calling it relays workflow.submit and resolves on the auto-ack.
       const payload = { goal: { description: "x" }, questions: [{ question: "q?" }] };

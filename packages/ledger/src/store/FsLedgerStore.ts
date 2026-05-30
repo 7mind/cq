@@ -81,11 +81,14 @@ import type {
   CreateItemInit,
   CreateMilestoneItemInit,
   FetchedMilestoneItem,
+  FtsSearchHit,
+  FtsSearchOpts,
   LedgerStore,
   OnMutation,
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
+import { LedgerSearchIndex } from "../search/LedgerSearchIndex.js";
 import { AsyncMutex } from "./mutex.js";
 import { Lockfile, type LockfileOpts } from "./lockfile.js";
 import {
@@ -135,6 +138,7 @@ export class FsLedgerStore implements LedgerStore {
   private readonly now: () => string;
   private readonly lockfile: Lockfile;
   private readonly onMutation: OnMutation | null;
+  private readonly searchIndex = new LedgerSearchIndex();
   private registry: LedgerRegistry = { ...EMPTY_REGISTRY, ledgers: [] };
   private initialised = false;
 
@@ -159,6 +163,12 @@ export class FsLedgerStore implements LedgerStore {
     ledgerId: string,
     op: "create" | "update" | "archive",
   ): void {
+    // Keep the derived FTS ACTIVE docs coherent with the local write FIRST
+    // (synchronous, cheap, guarded), then fire the user hook. The ARCHIVED
+    // docs (which only change on an `archive` op, and require file I/O) are
+    // refreshed by `archiveMilestone` itself, awaited so the index is coherent
+    // by the time that async mutation resolves — see its tail.
+    this.rebuildLedgerIndexActive(ledgerId);
     if (this.onMutation === null) return;
     try {
       this.onMutation(ledgerId, op);
@@ -168,6 +178,73 @@ export class FsLedgerStore implements LedgerStore {
         `FsLedgerStore: onMutation hook threw for ${ledgerId} (${op}): ${msg}\n`,
       );
     }
+  }
+
+  /**
+   * Rebuild the ACTIVE docs of `ledgerId` from the current in-memory ledger.
+   * Synchronous, cheap (a field-bucketing map), and GUARDED: an index error
+   * must never propagate into the write path (mirrors the onMutation-swallow
+   * contract). No-op if the ledger is not loaded.
+   */
+  private rebuildLedgerIndexActive(ledgerId: string): void {
+    try {
+      const ledger = this.ledgers.get(ledgerId);
+      if (ledger === undefined) return;
+      this.searchIndex.rebuildLedgerActive(ledgerId, activeItemsOf(ledger));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `FsLedgerStore: FTS active-rebuild threw for ${ledgerId}: ${msg}\n`,
+      );
+    }
+  }
+
+  /**
+   * Rebuild the ARCHIVED docs of `ledgerId` by reading each archive pointer's
+   * (immutable) file. Async + GUARDED: archive I/O failure must not unwind a
+   * write. No-op if the ledger is not loaded.
+   */
+  private async refreshLedgerIndexArchived(ledgerId: string): Promise<void> {
+    try {
+      const ledger = this.ledgers.get(ledgerId);
+      if (ledger === undefined) return;
+      const archived = await this.collectArchivedItems(ledgerId);
+      this.searchIndex.setLedgerArchived(ledgerId, archived);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `FsLedgerStore: FTS archived-refresh threw for ${ledgerId}: ${msg}\n`,
+      );
+    }
+  }
+
+  /**
+   * Read every archived item of `ledgerId` from its archive pointers. For a
+   * non-milestones ledger each pointer is a milestone-GROUP archive (its items
+   * are the archived items); for the milestones ledger each pointer is a
+   * single milestone-ITEM archive. Files are immutable, so this is called only
+   * at init and on archive/invalidate events.
+   */
+  private async collectArchivedItems(ledgerId: string): Promise<Item[]> {
+    const ledger = this.ledgers.get(ledgerId);
+    if (ledger === undefined) return [];
+    const out: Item[] = [];
+    for (const ptr of ledger.archivePointers) {
+      const content = await this.fetchArchive(ledgerId, ptr.id);
+      if (content.kind === "group") out.push(...content.milestone.items);
+      else out.push(content.item);
+    }
+    return out;
+  }
+
+  /**
+   * Build the FULL index entry (active + archived) for `ledgerId`. Used at
+   * init and on the remote-coherence (`invalidate`) path, where the op kind is
+   * unknown so archives are refreshed too (idempotent over immutable files).
+   */
+  private async indexLedgerFull(ledgerId: string): Promise<void> {
+    this.rebuildLedgerIndexActive(ledgerId);
+    await this.refreshLedgerIndexArchived(ledgerId);
   }
 
   async init(): Promise<void> {
@@ -252,6 +329,10 @@ export class FsLedgerStore implements LedgerStore {
       this.ledgers.set(entry.name, ledger);
     }
     this.initialised = true;
+    // Build the FTS index for every loaded ledger (active + archived).
+    for (const name of this.ledgers.keys()) {
+      await this.indexLedgerFull(name);
+    }
   }
 
   async dispose(): Promise<void> {
@@ -311,6 +392,13 @@ export class FsLedgerStore implements LedgerStore {
 
   search(ledgerId: string, query: string): Item[] {
     return searchItems(this.getLedger(ledgerId), query).map(cloneItem);
+  }
+
+  async ftsSearch(query: string, opts: FtsSearchOpts = {}): Promise<FtsSearchHit[]> {
+    this.assertInit();
+    return this.searchIndex
+      .search(query, opts)
+      .map((h) => ({ ...h, item: cloneItem(h.item) }));
   }
 
   async fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
@@ -463,6 +551,13 @@ export class FsLedgerStore implements LedgerStore {
     // always gets one hook.
     for (const id of participatingLedgers) this.fireMutation(id, "archive");
     this.fireMutation(MILESTONES_LEDGER, "archive");
+    // Archived FTS docs change only on archive. Refresh them for every
+    // participating ledger (and the milestones ledger, whose milestone-ITEM
+    // was archived) and AWAIT so the index is coherent when this mutation
+    // resolves. Guarded inside refreshLedgerIndexArchived; archive files are
+    // immutable so this read is bounded and one-shot.
+    for (const id of participatingLedgers) await this.refreshLedgerIndexArchived(id);
+    await this.refreshLedgerIndexArchived(MILESTONES_LEDGER);
     return ptr;
   }
 
@@ -484,6 +579,11 @@ export class FsLedgerStore implements LedgerStore {
       await this.withLock(ledgerId, async () => {
         await this.reloadLedgerFromDisk(ledgerId);
       });
+      // The in-memory ledger was replaced by a peer's committed state; rebuild
+      // its FTS docs so a remote write is searchable here (proves coherence on
+      // the remote path, not just local mutation). Archives are immutable but
+      // the remote op may have been an `archive`, so refresh both.
+      await this.indexLedgerFull(ledgerId);
       return;
     }
     // Unknown ledger — reload registry and, if it's now there, load it.
@@ -525,6 +625,10 @@ export class FsLedgerStore implements LedgerStore {
         isMilestonesLedger: isMilestones,
       });
       this.ledgers.set(entry.name, ledger);
+      // F1: a brand-new ledger learned via the registry-reload path must be
+      // indexed too, or a cross-process `createLedger` leaves it unsearchable
+      // on the peer.
+      await this.indexLedgerFull(entry.name);
     });
   }
 
@@ -802,6 +906,13 @@ function freshLedger(name: string, schema: LedgerSchema): Ledger {
     milestones: [],
     archivePointers: [],
   };
+}
+
+/** Every active item across a ledger's milestone-groups (FTS active docs). */
+function activeItemsOf(ledger: Ledger): Item[] {
+  const out: Item[] = [];
+  for (const m of ledger.milestones) for (const it of m.items) out.push(it);
+  return out;
 }
 
 function seedBootstrapGroup(ledger: Ledger): void {

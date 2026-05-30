@@ -4,13 +4,13 @@
  * Returns an array of `tool()` instances ready to be passed to
  * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
  *
- * Tool surface (13 tools after msunify):
+ * Tool surface (14 tools: 13 msunify + fts_search):
  *
- * Item / ledger surface (8):
+ * Item / ledger surface (9):
  *  - enumerate_ledgers, fetch_ledger, fetch_ledger_archive,
  *    fetch_item (renamed from ledger_fetch),
  *    update_item (renamed from ledger_update),
- *    create_item, create_ledger, search_items.
+ *    create_item, create_ledger, search_items, fts_search.
  *
  * Milestone surface (5) — global, operate against the `milestones` ledger:
  *  - create_milestone(title, description?, blockedBy?, dependsOn?)
@@ -224,6 +224,45 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
     async (args) => jsonResult({ items: store.search(args.ledger_id, args.query) }),
   );
 
+  const ftsSearch = tool(
+    "fts_search",
+    "Ranked full-text search across ledger items. Cross-ledger by default (pass `ledger` to restrict to one). Supports fuzzy + prefix matching, an exact status filter, and an `include_archived` flag (default false). Results are ranked by relevance score (descending); field boosts favour headline/title/question over description/rationale over status. Each result carries the full item, its score, and the fields that matched. Use this for discovery; use search_items for precise single-ledger substring matching.",
+    {
+      query: z.string(),
+      ledger: z.string().optional(),
+      limit: z.number().int().positive().optional(),
+      fuzzy: z.boolean().optional(),
+      prefix: z.boolean().optional(),
+      status: z.string().optional(),
+      include_archived: z.boolean().optional(),
+    } as const,
+    async (args) => {
+      const opts: {
+        ledger?: string;
+        limit?: number;
+        fuzzy?: boolean;
+        prefix?: boolean;
+        statusFilter?: string;
+        includeArchived?: boolean;
+      } = {};
+      if (args.ledger !== undefined) opts.ledger = args.ledger;
+      if (args.limit !== undefined) opts.limit = args.limit;
+      if (args.fuzzy !== undefined) opts.fuzzy = args.fuzzy;
+      if (args.prefix !== undefined) opts.prefix = args.prefix;
+      if (args.status !== undefined) opts.statusFilter = args.status;
+      if (args.include_archived !== undefined) opts.includeArchived = args.include_archived;
+      const hits = await store.ftsSearch(args.query, opts);
+      return jsonResult({
+        results: hits.map((h) => ({
+          ledgerId: h.ledgerId,
+          item: h.item,
+          score: h.score,
+          matchedFields: h.matchedFields,
+        })),
+      });
+    },
+  );
+
   // ---- Milestone surface (5) ---------------------------------------------
 
   const createMilestone = tool(
@@ -322,6 +361,7 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
     createItem,
     createLedger,
     searchItems,
+    ftsSearch,
     createMilestone,
     updateMilestone,
     fetchMilestone,
@@ -340,6 +380,7 @@ export const LEDGER_TOOL_NAMES = [
   "create_item",
   "create_ledger",
   "search_items",
+  "fts_search",
   "create_milestone",
   "update_milestone",
   "fetch_milestone",

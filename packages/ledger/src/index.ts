@@ -55,3 +55,5 @@ export { Lockfile } from "./store/lockfile.js";
 export type { LockfileOpts, LockHolder } from "./store/lockfile.js";
 export { parseRegistry, serializeRegistry, parseSchema, EMPTY_REGISTRY } from "./registry.js";
 export { createLedgerMcpTools, LEDGER_TOOL_NAMES } from "./mcp/ledgerTools.js";
+export { LedgerSearchIndex } from "./search/LedgerSearchIndex.js";
+export type { FtsSearchOpts, FtsSearchHit } from "./search/LedgerSearchIndex.js";
