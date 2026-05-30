@@ -121,7 +121,6 @@ error becomes actionable and points at `cq reset`. Artifact set derived from
 - [x] `docs/archive/<name>/` removed ONLY where `<name>` exactly matches a canonical ledger; flat `docs/archive/tasks-M*.md` NEVER touched.
 
 ---
-||||||| 5d0408c
 ## Cycle: phase-timeout — raise /plan phase-dispatch timeout to 300s + env override
 
 Plan: [`docs/drafts/20260530-1553-phase-timeout.md`](docs/drafts/20260530-1553-phase-timeout.md).
