@@ -44,11 +44,18 @@ export const MODELS: readonly ModelEntry[] = [
   { id: "claude-sonnet-4-6[1m]", label: "claude-sonnet-4-6 (1M)", platform: "claude" },
   { id: "claude-sonnet-4-6",     label: "claude-sonnet-4-6",      platform: "claude" },
   { id: "claude-haiku-4-5",      label: "claude-haiku-4-5",       platform: "claude" },
-  // Codex — exposed via @openai/codex-sdk. The SDK defaults are passed
-  // straight through; cq does not maintain its own model-id resolution.
-  { id: "gpt-5.1",  label: "gpt-5.1",       platform: "codex" },
-  { id: "gpt-5",    label: "gpt-5",         platform: "codex" },
-  { id: "o3",       label: "o3",            platform: "codex" },
+  // Codex — exposed via @openai/codex-sdk (drives the `codex` CLI).
+  // NOTE: Codex with ChatGPT-account auth restricts the model set — most
+  // ids ("gpt-5", "gpt-5.1", "o3", any "-codex"/"-pro"/"-mini" variant,
+  // "gpt-5.3", "gpt-5.5-pro") are rejected with "model is not supported
+  // when using Codex with a ChatGPT account". The entries below are the
+  // verified-working plain models (2026-05-30); gpt-5.5 first to match the
+  // common `~/.codex/config.toml` default. A deployment on API-key auth or
+  // a different account tier may support a different set — these are the
+  // ones that actually work against ChatGPT-account Codex today.
+  { id: "gpt-5.5",  label: "gpt-5.5",       platform: "codex" },
+  { id: "gpt-5.4",  label: "gpt-5.4",       platform: "codex" },
+  { id: "gpt-5.2",  label: "gpt-5.2",       platform: "codex" },
 ] as const;
 
 /** Default model on a fresh tab (preserves prior behaviour). */

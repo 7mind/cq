@@ -146,7 +146,7 @@ describe("SettingsPopup", () => {
   });
 
   test("permission-mode options follow Codex model selection (3 sandbox values)", () => {
-    const c = renderHeader(defaultProps({ model: "gpt-5.1" }));
+    const c = renderHeader(defaultProps({ model: "gpt-5.5" }));
     openPopup(c);
     const sel = c.querySelector("[data-testid='permission-mode-select']") as HTMLSelectElement;
     expect(sel).not.toBeNull();
@@ -179,10 +179,10 @@ describe("SettingsPopup", () => {
     const sel = c.querySelector("[data-testid='model-select']") as HTMLSelectElement;
     expect(sel).not.toBeNull();
     act(() => {
-      sel.value = "gpt-5.1";
+      sel.value = "gpt-5.5";
       sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    expect(chosenModel).toBe("gpt-5.1");
+    expect(chosenModel).toBe("gpt-5.5");
   });
 
   // -------------------------------------------------------------------------
@@ -195,7 +195,7 @@ describe("SettingsPopup", () => {
   });
 
   test("gcn1-3: approval-policy row is present for Codex models with the 4 SDK values", () => {
-    const c = renderHeader(defaultProps({ model: "gpt-5.1" }));
+    const c = renderHeader(defaultProps({ model: "gpt-5.5" }));
     openPopup(c);
     const sel = c.querySelector("[data-testid='approval-policy-select']") as HTMLSelectElement;
     expect(sel).not.toBeNull();
@@ -207,7 +207,7 @@ describe("SettingsPopup", () => {
     let chosen: string | null = null;
     const c = renderHeader(
       defaultProps({
-        model: "gpt-5.1",
+        model: "gpt-5.5",
         approvalPolicy: "on-request",
         onApprovalPolicyChange: (p) => { chosen = p; },
       }),

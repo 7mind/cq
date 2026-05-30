@@ -5,7 +5,7 @@
  *   1. Open the page; run a short Claude turn to seed a persisted main
  *      invocation row.
  *   2. Open the SettingsPopup and switch the model to a Codex id
- *      (gpt-5.1). localStorage updates synchronously.
+ *      (gpt-5.5). localStorage updates synchronously.
  *   3. Navigate to the History tab; the Claude row's Resume button must
  *      now be hidden because the row's platform != currentPlatform.
  *   4. Programmatically open a second WebSocket from the page and send
@@ -60,7 +60,7 @@ test("cross-platform-resume: Resume hidden across platforms + server refuses wit
   await cq.goToChat();
   await page.locator("[data-testid='settings-gear-btn']").click();
   await expect(page.locator("[data-testid='settings-popup']")).toBeVisible();
-  await page.locator("[data-testid='model-select']").selectOption("gpt-5.1");
+  await page.locator("[data-testid='model-select']").selectOption("gpt-5.5");
   // Close the popup (Esc) and go back to history.
   await page.keyboard.press("Escape");
   await cq.goToHistory();
@@ -85,7 +85,7 @@ test("cross-platform-resume: Resume hidden across platforms + server refuses wit
             type: "chat.start",
             seq: 1,
             ts: Date.now(),
-            model: "gpt-5.1",
+            model: "gpt-5.5",
             platform: "codex",
             resumeFromInvocationId: invId,
           };
