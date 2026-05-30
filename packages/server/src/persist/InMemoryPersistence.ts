@@ -1,4 +1,4 @@
-import type { SessionRow, InvocationRow, HistoryRow, HistoryRowFull, Effort } from "@cq/shared";
+import type { SessionRow, InvocationRow, HistoryRow, HistoryRowFull, Effort, WorkflowSessionLink } from "@cq/shared";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type {
   Persistence,
@@ -44,12 +44,16 @@ function cmp(a: unknown, b: unknown): number {
 export class InMemoryPersistence implements Persistence {
   private readonly sessionMap = new Map<string, SessionRow>();
   private readonly invocationMap = new Map<string, InvocationRow>();
+  private readonly workflowSessionMap = new Map<string, WorkflowSessionLink>();
   private readonly eventLog = new InMemoryEventLog();
   private _uiSettings: UiSettings = { model: null, permissionMode: null, hideSdkEvents: false };
 
   readonly sessions = {
     insert: (row: SessionRow): void => {
-      this.sessionMap.set(row.id, { ...row });
+      // Mirror SQLite's `kind` column DEFAULT 'chat': a row inserted without an
+      // explicit kind reads back as "chat" (the SQLite adapter applies the
+      // column default; the in-memory adapter must match that semantics).
+      this.sessionMap.set(row.id, { kind: "chat", ...row });
     },
 
     update: (id: string, patch: Partial<SessionRow>): void => {
@@ -245,6 +249,7 @@ export class InMemoryPersistence implements Persistence {
           platform: session?.platform ?? "claude",
           effort: (session?.effort ?? "none") as Effort,
           approvalPolicy: session?.approvalPolicy ?? null,
+          kind: session?.kind ?? "chat",
         };
       });
 
@@ -283,7 +288,18 @@ export class InMemoryPersistence implements Persistence {
         platform: session?.platform ?? "claude",
         effort: (session?.effort ?? "none") as Effort,
         approvalPolicy: session?.approvalPolicy ?? null,
+        kind: session?.kind ?? "chat",
       };
+    },
+  };
+
+  readonly workflowSessions = {
+    link: (link: WorkflowSessionLink): void => {
+      this.workflowSessionMap.set(link.goalId, { ...link });
+    },
+    getByGoal: (goalId: string): WorkflowSessionLink | undefined => {
+      const r = this.workflowSessionMap.get(goalId);
+      return r ? { ...r } : undefined;
     },
   };
 

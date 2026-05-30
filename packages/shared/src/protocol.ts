@@ -80,6 +80,13 @@ export const HistoryRow = z.object({
    * rows and on Codex rows that pre-date migration #7.
    */
   approvalPolicy: z.string().nullable().optional(),
+  /**
+   * Command kind that owns this session's run. "chat" — an interactive Bridge
+   * session. "workflow" — a `/plan` planning run (its own History entry). New
+   * in migration #8. Optional on the wire: pre-migration rows and legacy frames
+   * omit it; the UI treats an absent value as "chat".
+   */
+  kind: z.enum(["chat", "workflow"]).optional(),
 });
 export type HistoryRow = z.infer<typeof HistoryRow>;
 

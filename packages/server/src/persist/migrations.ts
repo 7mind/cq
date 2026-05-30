@@ -160,6 +160,34 @@ ALTER TABLE session ADD COLUMN effort   TEXT NOT NULL DEFAULT 'none';
 ALTER TABLE session ADD COLUMN approval_policy TEXT;
 `,
   },
+  {
+    // wfhist-1: a `/plan` workflow run gets its OWN History entry, distinct from
+    // the chat session. `session.kind` distinguishes the two: 'chat' (the
+    // interactive Bridge session — the default, so every pre-migration row reads
+    // as a chat) vs 'workflow' (a `/plan` planning run, written directly by the
+    // WorkflowRuntime). The column is plain TEXT (not a CHECK enum) so the valid
+    // set stays single-sourced in the protocol Zod schema
+    // (z.enum(["chat","workflow"])).
+    //
+    // `workflow_session` links the DURABLE goal id to its workflow session +
+    // root invocation so a resumed phase dispatch (reconcile/auto-advance after a
+    // restart) re-attaches to the SAME session instead of orphaning. goal_id is
+    // the natural key (a run is identified by its goal; workflowId is per-dispatch
+    // and regenerated every advance). No FK to `session` so the link survives a
+    // session row delete (best-effort cleanup is the caller's job, mirroring the
+    // event-log path handling) and so the in-memory adapter can mirror it without
+    // cascade plumbing.
+    version: 8,
+    up: `
+ALTER TABLE session ADD COLUMN kind TEXT NOT NULL DEFAULT 'chat';
+
+CREATE TABLE IF NOT EXISTS workflow_session (
+  goal_id            TEXT PRIMARY KEY,
+  session_id         TEXT NOT NULL,
+  root_invocation_id TEXT NOT NULL
+);
+`,
+  },
 ];
 
 export function runMigrations(db: Database, migrations: Migration[]): void {

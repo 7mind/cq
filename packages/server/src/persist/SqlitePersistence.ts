@@ -6,13 +6,14 @@ import { openDb } from "./db.js";
 import { MIGRATIONS, runMigrations } from "./migrations.js";
 import { SessionStore } from "./sessions.js";
 import { InvocationStore } from "./invocations.js";
+import { WorkflowSessionStore } from "./workflowSessions.js";
 import { SqliteEventLog } from "./events.js";
 import { SettingsStore } from "./settings.js";
 import { tryAcquireDbLock } from "./cqLock.js";
 import type { CqLock } from "./cqLock.js";
 import type { Persistence, SessionFilter, SortSpec, PageSpec, PagedResult } from "./Persistence.js";
 import type { UiSettings } from "./settings.js";
-import type { SessionRow, InvocationRow } from "@cq/shared";
+import type { SessionRow, InvocationRow, WorkflowSessionLink } from "@cq/shared";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "../log/logger.js";
 
@@ -28,6 +29,7 @@ export class SqlitePersistence implements Persistence {
   private readonly db: Database;
   private readonly sessionStore: SessionStore;
   private readonly invocationStore: InvocationStore;
+  private readonly workflowSessionStore: WorkflowSessionStore;
   private readonly eventLog: SqliteEventLog;
   private readonly settingsStore: SettingsStore;
   private _closed = false;
@@ -60,6 +62,7 @@ export class SqlitePersistence implements Persistence {
 
     this.sessionStore = new SessionStore(this.db);
     this.invocationStore = new InvocationStore(this.db);
+    this.workflowSessionStore = new WorkflowSessionStore(this.db);
     this.eventLog = new SqliteEventLog(dir);
     this.settingsStore = new SettingsStore(this.db);
 
@@ -119,6 +122,12 @@ export class SqlitePersistence implements Persistence {
     delete: (id: string): void => this.invocationStore.delete(id),
     searchFts: (query: string, limit: number): InvocationRow[] =>
       this.invocationStore.searchFts(query, limit),
+  };
+
+  readonly workflowSessions = {
+    link: (link: WorkflowSessionLink): void => this.workflowSessionStore.link(link),
+    getByGoal: (goalId: string): WorkflowSessionLink | undefined =>
+      this.workflowSessionStore.getByGoal(goalId),
   };
 
   readonly events = {

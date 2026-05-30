@@ -73,6 +73,62 @@ describe("openDb", () => {
     }
   });
 
+  test("wfhist-1: migration #8 adds session.kind ('chat' default) + workflow_session table", () => {
+    const dir = makeTmp();
+    const db = openDb(join(dir, "test.db"));
+    try {
+      // session.kind column exists with default 'chat'.
+      const cols = db
+        .query<{ name: string; dflt_value: string | null }, []>("PRAGMA table_info(session)")
+        .all();
+      const kindCol = cols.find((c) => c.name === "kind");
+      expect(kindCol).toBeDefined();
+      expect(kindCol!.dflt_value).toBe("'chat'");
+
+      // workflow_session link table exists with the expected columns.
+      const tables = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
+        .all()
+        .map((r) => r.name);
+      expect(tables).toContain("workflow_session");
+      const wfCols = db
+        .query<{ name: string }, []>("PRAGMA table_info(workflow_session)")
+        .all()
+        .map((r) => r.name);
+      expect(wfCols).toEqual(["goal_id", "session_id", "root_invocation_id"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("wfhist-1: migrations apply incrementally onto a pre-#8 DB (clean upgrade)", async () => {
+    // Apply only migrations 1..7 to a DB, then run the full set: #8 must apply
+    // cleanly on top of a schema that already has the 1..7 columns.
+    const { MIGRATIONS, runMigrations } = await import("../src/persist/migrations.js");
+    const { Database } = await import("bun:sqlite");
+    const db = new Database(":memory:");
+    try {
+      runMigrations(db, MIGRATIONS.filter((m) => m.version <= 7));
+      // Pre-#8: no kind column, no workflow_session table.
+      const colsBefore = db.query<{ name: string }, []>("PRAGMA table_info(session)").all().map((r) => r.name);
+      expect(colsBefore).not.toContain("kind");
+      // Now run the full set — #8 is the only pending one.
+      runMigrations(db, MIGRATIONS);
+      const colsAfter = db.query<{ name: string }, []>("PRAGMA table_info(session)").all().map((r) => r.name);
+      expect(colsAfter).toContain("kind");
+      const tables = db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
+        .all()
+        .map((r) => r.name);
+      expect(tables).toContain("workflow_session");
+      // schema_version reached 8.
+      const maxV = db.query<{ v: number }, []>("SELECT MAX(version) AS v FROM schema_version").get();
+      expect(maxV!.v).toBe(8);
+    } finally {
+      db.close();
+    }
+  });
+
   test("PRAGMAs: journal_mode=wal, foreign_keys=1", () => {
     const dir = makeTmp();
     const db = openDb(join(dir, "test.db"));

@@ -29,6 +29,7 @@ interface SessionSqlRow {
   platform: string;
   effort: string;
   approval_policy: string | null;
+  kind: string;
 }
 
 function toRow(r: SessionSqlRow): SessionRow {
@@ -54,6 +55,9 @@ function toRow(r: SessionSqlRow): SessionRow {
     platform: (r.platform === "codex" ? "codex" : "claude") as "claude" | "codex",
     effort: r.effort,
     approvalPolicy: r.approval_policy,
+    // Narrow the persisted string to the SessionRow union; rows stored before
+    // migration #8 read as the column default "chat" so the cast is sound.
+    kind: (r.kind === "workflow" ? "workflow" : "chat") as "chat" | "workflow",
   };
 }
 
@@ -77,12 +81,12 @@ export class SessionStore {
         (id, started_at, ended_at, cwd, model, permission_mode,
          total_input_tokens, total_output_tokens, total_cache_read,
          total_cache_create, total_cost_usd, ended_reason, title,
-         last_server_seq, sdk_session_id, platform, effort, approval_policy)
+         last_server_seq, sdk_session_id, platform, effort, approval_policy, kind)
       VALUES
         ($id, $started_at, $ended_at, $cwd, $model, $permission_mode,
          $total_input_tokens, $total_output_tokens, $total_cache_read,
          $total_cache_create, $total_cost_usd, $ended_reason, $title,
-         $last_server_seq, $sdk_session_id, $platform, $effort, $approval_policy)
+         $last_server_seq, $sdk_session_id, $platform, $effort, $approval_policy, $kind)
     `);
 
     this.stmtGet = db.prepare<SessionSqlRow, [string]>(
@@ -110,6 +114,7 @@ export class SessionStore {
       $platform: row.platform,
       $effort: row.effort,
       $approval_policy: row.approvalPolicy ?? null,
+      $kind: row.kind ?? "chat",
     });
   }
 
@@ -134,6 +139,7 @@ export class SessionStore {
     if (patch.platform !== undefined) { sets.push("platform = $platform"); params.$platform = patch.platform; }
     if (patch.effort !== undefined) { sets.push("effort = $effort"); params.$effort = patch.effort; }
     if (patch.approvalPolicy !== undefined) { sets.push("approval_policy = $approval_policy"); params.$approval_policy = patch.approvalPolicy; }
+    if (patch.kind !== undefined) { sets.push("kind = $kind"); params.$kind = patch.kind; }
 
     if (sets.length === 0) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

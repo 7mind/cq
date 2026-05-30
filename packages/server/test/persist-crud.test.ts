@@ -718,6 +718,55 @@ function runSuite(label: string, factory: () => Persistence): void {
       const row = p.invocations.get(inv.id);
       expect(row?.status).toBe("running");
     });
+
+    // -----------------------------------------------------------------------
+    // wfhist-1: session.kind round-trip + HistoryRow surfaces it
+    // -----------------------------------------------------------------------
+    test("wfhist-1: session.kind survives insert/get round-trip (chat default + workflow)", () => {
+      const chat = makeSession(); // no kind → reads as "chat"
+      const wf = makeSession({ kind: "workflow" });
+      p.sessions.insert(chat);
+      p.sessions.insert(wf);
+      expect(p.sessions.get(chat.id)?.kind).toBe("chat");
+      expect(p.sessions.get(wf.id)?.kind).toBe("workflow");
+    });
+
+    test("wfhist-1: update can mutate session.kind", () => {
+      const s = makeSession();
+      p.sessions.insert(s);
+      p.sessions.update(s.id, { kind: "workflow" });
+      expect(p.sessions.get(s.id)?.kind).toBe("workflow");
+    });
+
+    test("wfhist-1: HistoryRow surfaces kind from the joined session", () => {
+      const s = makeSession({ kind: "workflow" });
+      p.sessions.insert(s);
+      p.invocations.insert(makeInvocation(s.id));
+      const result = p.invocations.list({}, { field: "startedAt", dir: "desc" }, { offset: 0, limit: 10 });
+      expect(result.rows[0]!.kind).toBe("workflow");
+    });
+
+    // -----------------------------------------------------------------------
+    // wfhist-1: workflow_session link store (goalId → session + root invocation)
+    // -----------------------------------------------------------------------
+    test("wfhist-1: workflowSessions link + getByGoal round-trip", () => {
+      const link = { goalId: "G1", sessionId: uid(), rootInvocationId: uid() };
+      p.workflowSessions.link(link);
+      expect(p.workflowSessions.getByGoal("G1")).toEqual(link);
+      expect(p.workflowSessions.getByGoal("G-absent")).toBeUndefined();
+    });
+
+    test("wfhist-1: workflowSessions.link upserts on the same goalId", () => {
+      const s1 = uid();
+      const s2 = uid();
+      p.workflowSessions.link({ goalId: "G1", sessionId: s1, rootInvocationId: "r1" });
+      p.workflowSessions.link({ goalId: "G1", sessionId: s2, rootInvocationId: "r2" });
+      expect(p.workflowSessions.getByGoal("G1")).toEqual({
+        goalId: "G1",
+        sessionId: s2,
+        rootInvocationId: "r2",
+      });
+    });
   });
 }
 

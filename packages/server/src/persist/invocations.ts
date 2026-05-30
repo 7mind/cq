@@ -72,6 +72,10 @@ interface HistorySqlRow extends InvocationSqlRow {
   // gcn1-1 (outer-9): session-level Codex approvalPolicy joined into
   // history rows. NULL for Claude sessions and pre-migration Codex sessions.
   approval_policy: string | null;
+  // wfhist-1: session-level command kind ('chat' | 'workflow') joined into
+  // history rows so the UI can badge a `/plan` run distinctly. Pre-migration
+  // rows read the column default 'chat'.
+  kind: string;
 }
 
 const INVOCATION_SORT_MAP: Record<string, string> = {
@@ -108,6 +112,9 @@ function toHistoryRow(r: HistorySqlRow): HistoryRow {
     // hand-rolled SQL.
     effort: (r.effort ?? "none") as HistoryRow["effort"],
     approvalPolicy: r.approval_policy,
+    // The DB column has DEFAULT 'chat' so this is non-null for migration #8+
+    // rows; narrow to the union, defaulting anything unexpected to "chat".
+    kind: (r.kind === "workflow" ? "workflow" : "chat") as "chat" | "workflow",
   };
 }
 
@@ -293,7 +300,7 @@ export class InvocationStore {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rows = this.db.query<HistorySqlRow, any>(
         `${ftsCte}
-         SELECT u.*, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd, s.platform, s.effort, s.approval_policy
+         SELECT u.*, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd, s.platform, s.effort, s.approval_policy, s.kind
          FROM combined u
          LEFT JOIN session s ON s.id = u.session_id
          ORDER BY ${colDeduped} ${dir} LIMIT $limit OFFSET $offset`,
@@ -329,7 +336,7 @@ export class InvocationStore {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = this.db.query<HistorySqlRow, any>(
       `${unionCte}
-       SELECT u.*, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd, s.platform, s.effort, s.approval_policy
+       SELECT u.*, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd, s.platform, s.effort, s.approval_policy, s.kind
        FROM combined u
        LEFT JOIN session s ON s.id = u.session_id
        ORDER BY ${colDeduped} ${dir} LIMIT $limit OFFSET $offset`,
@@ -341,7 +348,7 @@ export class InvocationStore {
   getFull(id: string): HistoryRowFull | undefined {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const r = this.db.query<HistorySqlRow, any>(
-      `SELECT i.*, i.resumed_from_invocation_id, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd, s.platform, s.effort, s.approval_policy
+      `SELECT i.*, i.resumed_from_invocation_id, s.title, s.cwd, s.permission_mode, s.ended_reason, s.sdk_session_id, s.total_input_tokens, s.total_output_tokens, s.total_cost_usd, s.platform, s.effort, s.approval_policy, s.kind
        FROM invocation i LEFT JOIN session s ON s.id = i.session_id
        WHERE i.id = ?`,
     ).get(id);

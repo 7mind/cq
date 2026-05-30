@@ -38,6 +38,27 @@ export interface SessionRow {
    * in-memory persistence's seed helpers may omit it.
    */
   approvalPolicy?: string | null;
+  /**
+   * Command kind that owns this session. New in migration #8.
+   * "chat" — the interactive Bridge session (the default; every pre-migration
+   *   row reads as "chat"). "workflow" — a `/plan` planning run written directly
+   *   by the WorkflowRuntime (its own History entry, distinct from the chat
+   *   session). Optional on the TS shape because the in-memory persistence's
+   *   seed helpers may omit it (read default = "chat").
+   */
+  kind?: "chat" | "workflow";
+}
+
+/**
+ * Links a durable goal id to the workflow session + root invocation created for
+ * its `/plan` run. New in migration #8. Used on resume/auto-advance after a
+ * restart so a resumed phase dispatch re-attaches to the SAME session and
+ * appends a new child invocation rather than orphaning a fresh session.
+ */
+export interface WorkflowSessionLink {
+  goalId: string;
+  sessionId: string;
+  rootInvocationId: string;
 }
 
 /** A row from the `invocation` table (§ 4 DDL). */

@@ -1,4 +1,4 @@
-import type { SessionRow, InvocationRow, HistoryRow, HistoryRowFull } from "@cq/shared";
+import type { SessionRow, InvocationRow, HistoryRow, HistoryRowFull, WorkflowSessionLink } from "@cq/shared";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { UiSettings } from "./settings.js";
 
@@ -94,6 +94,18 @@ export interface Persistence {
   settings: {
     get(): UiSettings;
     set(patch: Partial<UiSettings>): void;
+  };
+
+  /**
+   * Links a `/plan` workflow run's durable goal id to the session + root
+   * invocation created for it. Lets a resumed phase dispatch re-attach to the
+   * SAME session (no orphan / duplicate) after a server restart.
+   */
+  workflowSessions: {
+    /** Insert or replace the goalId → (sessionId, rootInvocationId) link. */
+    link(link: WorkflowSessionLink): void;
+    /** Look up the workflow session link for a goal, or undefined if none. */
+    getByGoal(goalId: string): WorkflowSessionLink | undefined;
   };
 
   withTx<T>(fn: () => T): T;

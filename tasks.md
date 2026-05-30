@@ -4,6 +4,28 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ---
 
+## Cycle: workflow-history — `/plan` runs visible in the History tab
+
+Plan: [`docs/drafts/20260530-1358-workflow-history.md`](docs/drafts/20260530-1358-workflow-history.md).
+Baseline (verified 1f32906): `bun test` 1032 pass / 0 fail; e2e 26/26.
+
+Each `/plan` run = its own History entry (a workflow-`kind` session + a root
+`main` invocation) with each phase subagent (producer / clarify-reviewer /
+planner / plan-reviewer / continuation) nested under it as a child invocation.
+Persisted DIRECTLY via the Persistence adapter — never through the interactive
+Bridge / SessionRegistry, so pool=1 holds.
+
+### Milestone M-WFHIST — PR breakdown
+
+- [ ] **wfhist-1** — Persistence: `session.kind` column (migration #8) + `workflow_session` link store (goalId→sessionId+rootInvocationId); both adapters; HistoryRow/Full Zod carry `kind`; history join selects it.
+- [ ] **wfhist-2** — Capture phase-subagent usage (model/cost/tokens) from the SDK `result` message through an `onUsage` callback on the dispatch/produce request (no sync/async union; Codex=0). Remove the `submitted`-break so the drain observes `result`.
+- [ ] **wfhist-3** — Wire `persistence` into `WorkflowRuntime`; create the workflow session + root `main` invocation per run; link goalId→session; settle/close on terminal.
+- [ ] **wfhist-4** — One CHILD invocation per phase dispatch (producer, each clarify/planner/review/revise round, continuation): running→completed/failed, cost/tokens recorded, correct parent linkage.
+- [ ] **wfhist-5** — Web: `List.tsx` "Plan" badge on workflow main rows; phase children render as `↪` subagent rows.
+- [ ] **wfhist-6** — Resume re-attach test (restart mid-workflow → same session, no orphan); pool=1 regression; E2E `/plan`→History; discharge.
+
+---
+
 ## Cycle: gtitle — add short `title` to goals alongside `description`
 
 Plan: [`docs/drafts/20260530-1310-goal-title.md`](docs/drafts/20260530-1310-goal-title.md).
