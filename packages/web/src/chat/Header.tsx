@@ -53,6 +53,14 @@ export interface HeaderProps {
   sessionId: string | null;
   startedAt: number | null;
   inProgress: boolean;
+  /**
+   * ACTIVITY-01: aggregate compute-activity count from the server's
+   * `activity.status` frame = chat-busy (0/1) + in-flight `/plan` workflow phase
+   * dispatches. Drives the top-bar status badge: `running > 0 → "BUSY (running)"`.
+   * Distinct from `inProgress` (chat-only), which still drives the duration tick.
+   * Defaults to 0 so callers that have not wired it render IDLE/NEW.
+   */
+  running?: number;
   /** D44: count of subagents currently mid-flight (task_started without
    *  matching task_notification). Driven by computeSubagentCount in ChatTab. */
   runningSubagents?: number;
@@ -94,6 +102,7 @@ export function Header({
   sessionId,
   startedAt,
   inProgress,
+  running = 0,
   runningSubagents = 0,
   onNewSession,
   hideSdkEvents,
@@ -153,9 +162,16 @@ export function Header({
   const durationText =
     startedAt !== null ? formatDuration(startedAt, now) : "--:--";
 
-  // D44: session status badge — "BUSY" while a turn is in flight (inProgress),
-  // "IDLE" once chat.done landed and we're waiting for next input.
-  const statusBadge = sessionId === null ? "NEW" : inProgress ? "BUSY" : "IDLE";
+  // ACTIVITY-01: the status badge reflects ALL active compute — the aggregate
+  // `running` count (chat turn streaming + in-flight /plan workflow phases), NOT
+  // just the chat session's inProgress. `running > 0 → BUSY (N)`; else IDLE when
+  // a chat session exists, else NEW. A workflow phase dispatching while the chat
+  // is idle still shows BUSY (1). The badge STATE (busy/idle/new) drives the CSS
+  // class; the LABEL carries the count.
+  const badgeState: "new" | "busy" | "idle" =
+    running > 0 ? "busy" : sessionId === null ? "new" : "idle";
+  const statusLabel =
+    badgeState === "busy" ? `BUSY (${running})` : badgeState === "idle" ? "IDLE" : "NEW";
 
   return (
     <>
@@ -218,17 +234,17 @@ export function Header({
           <span className={styles.sessionId} data-testid="session-id">—</span>
         )}
 
-        {/* D44: session status + subagent count badges. */}
+        {/* ACTIVITY-01: aggregate-activity status + subagent count badges. */}
         <span
           className={`${styles.badge} ${
-            statusBadge === "BUSY" ? styles.badgeBusy :
-            statusBadge === "IDLE" ? styles.badgeIdle :
+            badgeState === "busy" ? styles.badgeBusy :
+            badgeState === "idle" ? styles.badgeIdle :
             styles.badgeNew
           }`}
           data-testid="session-status"
-          title={`Session status: ${statusBadge.toLowerCase()}`}
+          title={`Session status: ${badgeState}`}
         >
-          {statusBadge}
+          {statusLabel}
         </span>
         {runningSubagents > 0 && (
           <span

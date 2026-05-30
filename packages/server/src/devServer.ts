@@ -10,6 +10,7 @@ import { SqlitePersistence } from "./persist/SqlitePersistence.js";
 import { FsLedgerStore } from "@cq/ledger";
 import { initLedgerStoreOrExit } from "./ledgerInit";
 import { INTERNAL_WS_PATH, InternalWsService, type InternalWsConnData } from "./agent/internalWs";
+import { AggregateActivityTracker } from "./ws/activityTracker";
 
 export type DevServerConfig = Readonly<{
   host: string;
@@ -75,6 +76,10 @@ export async function startDevServer(
       });
     }
   });
+  // ACTIVITY-01: chat-only activity tracker (dev server wires no WorkflowRuntime).
+  // Declared before the bridge so its busy-change callback can reference it;
+  // assigned after (its read closure needs `bridge`). Observe-only.
+  let activityTracker: AggregateActivityTracker | undefined = undefined;
   const bridge = new Bridge({
     logger,
     registry,
@@ -84,6 +89,14 @@ export async function startDevServer(
     internalWsToken: internalWs.tokenForChild(),
     // askproxy / outer-14: ask.reply travels upstream via broadcast.
     sendAskReply: (msg) => internalWs.broadcast(msg),
+    // ACTIVITY-01: chat-lane busy transitions recompute + push the running count.
+    onBusyChange: () => activityTracker?.onLaneChange(),
+  });
+  // No WorkflowRuntime in dev → the chat lane is the only contributor. The chat
+  // lane contributes 1 only while a TURN streams (isTurnInFlight), not for the
+  // whole session lifetime (ACTIVITY-01-D01).
+  activityTracker = new AggregateActivityTracker({
+    isChatBusy: () => bridge.isTurnInFlight(),
   });
   // askproxy / outer-14: inbound ask.request → drive browser ask UI + proxy.
   internalWs.registerHandler("ask.request", async (msg) => {
@@ -127,7 +140,7 @@ export async function startDevServer(
         }
 
         const sessionId = crypto.randomUUID();
-        const session = new WsSession(sessionId, logger, registry, bridge);
+        const session = new WsSession(sessionId, logger, registry, bridge, null, null, activityTracker);
         const upgraded = srv.upgrade(req, { data: { sessionId, session } });
         if (!upgraded) {
           return new Response("Upgrade required", { status: 426 });

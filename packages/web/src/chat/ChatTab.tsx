@@ -36,7 +36,7 @@ import { ElicitationCard } from "./Cards/ElicitationCard";
 import type { ElicitationReply } from "./Cards/ElicitationCard";
 import { Detail } from "../history/Detail";
 import type { PermissionMode } from "./Header";
-import type { ChatInput, ChatInterrupt, ChatEvent, ChatStart, ChatRejoin, ChatStarted, ChatUsage, ChatPermissionRequest, ChatPermissionReply, ChatElicitationRequest, ChatElicitationReply, ChatQuestionReply, HistoryGet, HistoryReplayEvent, ChatError, SettingsGet, SettingsSet, SettingsGetResult, ApprovalPolicy, Effort, WorkflowStart, WorkflowEvent } from "@cq/shared";
+import type { ChatInput, ChatInterrupt, ChatEvent, ChatStart, ChatRejoin, ChatStarted, ChatUsage, ChatPermissionRequest, ChatPermissionReply, ChatElicitationRequest, ChatElicitationReply, ChatQuestionReply, HistoryGet, HistoryReplayEvent, ChatError, SettingsGet, SettingsSet, SettingsGetResult, ApprovalPolicy, Effort, WorkflowStart, WorkflowEvent, ActivityStatus } from "@cq/shared";
 import { DEFAULT_EFFORT, modelToPlatform } from "@cq/shared";
 import { WorkflowBanner } from "./WorkflowBanner";
 import { ATTACHMENT_TOTAL_MAX_BYTES, base64DecodedByteLength } from "@cq/shared";
@@ -104,7 +104,7 @@ export function ChatTab(): React.ReactElement {
   const stats = useConnectionStats();
   // activeSessionId and inProgress are lifted into SessionContext so they
   // survive Chat ↔ History tab switches (E2E-D04).
-  const { activeSessionId, setActiveSessionId, inProgress, setInProgress, resumeRequest, clearResumeRequest } = useSession();
+  const { activeSessionId, setActiveSessionId, inProgress, setInProgress, running, setRunning, resumeRequest, clearResumeRequest } = useSession();
   const seqRef = useRef(0);
   const [chatEvents, setChatEvents] = useState<ChatEvent[]>([]);
   // D49: count of user messages submitted while a turn was already in progress
@@ -410,6 +410,10 @@ export function ChatTab(): React.ReactElement {
         if (wf.status === "errored") {
           showToast({ level: "error", text: wf.detail ?? "Planning workflow failed" });
         }
+      } else if (frame.type === "activity.status") {
+        // ACTIVITY-01: aggregate compute-activity count (chat + workflow phases)
+        // drives the top-bar BUSY (N) badge. Distinct from chat-only inProgress.
+        setRunning((frame as ActivityStatus).running);
       } else if (frame.type === "chat.error") {
         const errFrame = frame as ChatError;
         // Clear the self-clearing timeout whenever chat.error arrives
@@ -840,6 +844,7 @@ export function ChatTab(): React.ReactElement {
         sessionId={sessionId}
         startedAt={startedAt}
         inProgress={inProgress}
+        running={running}
         runningSubagents={subagentCounts.running}
         onNewSession={handleNewSession}
         hideSdkEvents={hideSdkEvents}

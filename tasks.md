@@ -4,6 +4,85 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ---
 
+## Cycle: activity-indicator — aggregate top-bar BUSY (N) badge
+
+Plan: [`docs/drafts/20260530-1700-activity-indicator-plan.md`](docs/drafts/20260530-1700-activity-indicator-plan.md).
+Worktree `.claude/worktrees/activity-indicator`, branch `activity-indicator`, base `da42222`.
+Baseline (verified da42222): `bun test` 1120 pass / 0 fail; e2e 28/28.
+No Task tool → plan / adversarial-review / execute / review run inline as distinct steps.
+
+The top-bar badge must reflect ALL active compute (interactive chat turn AND `/plan`
+workflow phase dispatches), not just the chat session, and show a count: `BUSY (N)`.
+`N = (chat turn streaming ? 1 : 0) + (in-flight workflow phase dispatches)`. A workflow
+PARKED on answers contributes 0. Defect: ACTIVITY-01.
+
+### Milestone M-ACTIVITY — PR breakdown (single buildable commit)
+
+- [x] **activity-1** (commit <this>) — protocol `activity.status` + WorkflowRuntime
+  `activeDispatchCount`/`onActivityChange` + backend-bridge `onBusyChange`/`isTurnInFlight`
+  + server `AggregateActivityTracker` + WS sink wiring (server.ts/devServer.ts) + web
+  SessionContext.running/ChatTab branch/Header badge. ONE commit — concerns interwoven
+  across protocol/server/web; a per-file split would not compile cleanly. D01–D06 in the
+  plan doc.
+
+**M-ACTIVITY CLOSED.** Discharge: `bun run check` exit 0 ×2 (1156/0 both; baseline 1120
++ 36 new tests); `bun run e2e` 28/28 (3 consecutive clean full runs); `nix build .#default`
+exit 0 (cq-0.0.1; local fallback, remote SSH builder unreachable). Adversarial review
+opened+resolved ACTIVITY-01-D01 (per-turn vs session-busy chat signal) and ACTIVITY-01-D02
+(e2e BUSY-transient flake → robust MutationObserver + end-state assertion + deterministic
+web-level proof). Metrics: review rounds 1 (inline); defects {major:1, minor:1}; verification
+complete; scope delta — added `isTurnInFlight()` to the backend interface + both backends
+(not foreseen in the plan; surfaced by adversarial review of the multi-turn streaming model).
+
+## Completed
+
+- **activity-1** (2026-05-30) — Aggregate top-bar `BUSY (N)` activity badge. The badge now
+  reflects ALL active compute: `running = (chat turn streaming ? 1 : 0) + (in-flight /plan
+  workflow phase dispatches)`. What shipped: (1) `activity.status{running}` server→client
+  Zod frame; (2) `WorkflowRuntime.activeDispatchCount()` + `onActivityChange()` derived from
+  the `active` dispatch slot via a single `setActive` helper wrapping every assignment;
+  (3) per-backend `isTurnInFlight()` + `onBusyChange` (claude: a `turnInFlight` flag toggled
+  at turn start / `sendDone`; codex: `abortController !== null`) routed through `setActive`/
+  `setTurnInFlight`/`setTurnAbort` helpers so every transition notifies; (4) a server-side
+  `AggregateActivityTracker` summing the lanes + pushing on connect and on every change
+  (de-duped on the summed value); (5) WsSession sink wiring + server.ts (both lanes) /
+  devServer.ts (chat-only); (6) web SessionContext.running + ChatTab `activity.status` branch
+  + Header badge `running > 0 → "BUSY (N)"`. Verification: `bun run check` exit 0 ×2 (1156/0);
+  `bun run e2e` 28/28 (×3); `nix build .#default` exit 0.
+  Notes / surprises:
+  - WHAT COUNTS (justification): `activeDispatchCount` derives from `this.active` (dispatch-
+    start → submit/settle = "model working"), NOT `pendingTeardowns` (post-submit subprocess
+    reap; the model is already done, so counting it would leave the badge stuck BUSY).
+  - PER-TURN, not per-session (ACTIVITY-01-D01): the chat lane's `isBusy()` = `active !== null`
+    stays true for the WHOLE multi-turn streaming session (the `query()` stays open across
+    turns; `active` clears only on shutdown). Feeding it to the badge would show BUSY between
+    turns while idle. Fixed by a distinct per-turn `isTurnInFlight()` (false between turns,
+    true while a turn streams) feeding the tracker; `isBusy()` keeps its pool=1 preempt
+    semantics untouched. Future work touching the bridge must preserve this distinction.
+  - E2E transient (ACTIVITY-01-D02): the badge BUSY now lags the send by one round-trip and
+    can coalesce in a single React batch against the instant mock — the sub-frame "BUSY (1)"
+    transient is not deterministically observable. The strict label assertion lives in the
+    deterministic web unit test `activity-badge.test.ts`; the e2e asserts end-state IDLE +
+    validates any painted busy label is "BUSY (1)".
+  - CONSTRAINT preserved: the tracker only OBSERVES the two lanes (injected read functions +
+    change callbacks); it never routes the workflow through the Bridge and never changes
+    pool=1. No loop/phase/recorder/ledger/divergence-guard semantics were touched.
+
+### Cross-cutting architectural notes (locked)
+
+- [x] "running" counts ACTIVE DISPATCH (`this.active`, dispatch-start→submit/settle), NOT
+  `pendingTeardowns` (post-submit subprocess reap) — the model is done by reap-time, so
+  counting it would leave the badge stuck BUSY. Justification in the plan doc § A.
+- [x] Push-on-every-transition guaranteed by a single `setActive()` helper per lane that
+  wraps EVERY `this.active = …` assignment and fires the change callback — no raw
+  assignment can bypass the notification.
+- [x] Observe-only: the tracker NEVER routes the workflow through the Bridge and NEVER
+  changes pool=1; it only reads the two lanes' busy signals via injected functions.
+- [x] devServer (HMR, no WorkflowRuntime) wires a chat-only ActivityTracker so the badge
+  still shows BUSY during a chat turn there.
+
+---
+
 ## Cycle: pcontent — `/plan` planning CONTENT visible + explore-once
 
 Plan: [`docs/drafts/20260530-1620-plan-content.md`](docs/drafts/20260530-1620-plan-content.md).

@@ -102,6 +102,14 @@ export interface BridgeOpts {
    * to the Codex backend. Undefined in tests that do not exercise the proxy.
    */
   sendAskReply?: (msg: import("@cq/shared").InternalWsMessage) => void;
+  /**
+   * Fired on EVERY transition of the chat-lane busy state across both backends
+   * (a turn starting or ending), AFTER the backend's `active` slot is updated
+   * (ACTIVITY-01). The facade forwards this single callback to both ClaudeBridge
+   * and CodexBridge, so the aggregate activity tracker is notified whichever
+   * backend owns the active session. Observe-only: never changes pool=1.
+   */
+  onBusyChange?: () => void;
 }
 
 export class Bridge implements BackendBridge {
@@ -131,6 +139,7 @@ export class Bridge implements BackendBridge {
       ...(opts.askBroker !== undefined ? { askBroker: opts.askBroker } : {}),
       ...(opts.titleGenerator !== undefined ? { titleGenerator: opts.titleGenerator } : {}),
       ...(opts.ledgerStore !== undefined ? { ledgerStore: opts.ledgerStore } : {}),
+      ...(opts.onBusyChange !== undefined ? { onBusyChange: opts.onBusyChange } : {}),
     };
     this.claude = new ClaudeBridge(claudeOpts);
   }
@@ -160,6 +169,11 @@ export class Bridge implements BackendBridge {
     return this.active !== null && this.active.isBusy();
   }
 
+  /** ACTIVITY-01: true iff the active backend has a turn currently streaming. */
+  isTurnInFlight(): boolean {
+    return this.active !== null && this.active.isTurnInFlight();
+  }
+
   activeSessionId(): string | null {
     return this.active?.activeSessionId() ?? null;
   }
@@ -183,6 +197,7 @@ export class Bridge implements BackendBridge {
           ...(this.opts.internalWsUrl !== undefined ? { internalWsUrl: this.opts.internalWsUrl } : {}),
           ...(this.opts.internalWsToken !== undefined ? { internalWsToken: this.opts.internalWsToken } : {}),
           ...(this.opts.sendAskReply !== undefined ? { sendAskReply: this.opts.sendAskReply } : {}),
+          ...(this.opts.onBusyChange !== undefined ? { onBusyChange: this.opts.onBusyChange } : {}),
         });
       }
       return this.codex;

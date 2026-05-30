@@ -49,6 +49,12 @@ export type WsSocket = {
 
 export interface BackendBridge {
   isBusy(): boolean;
+  /**
+   * ACTIVITY-01: true iff a TURN is currently streaming (the model is working).
+   * Unlike `isBusy()` (session-active, for pool=1 preempt), this is false
+   * between turns of a live multi-turn session.
+   */
+  isTurnInFlight(): boolean;
   activeSessionId(): string | null;
   handleChatStart(ws: WsSocket, frame: ChatStart): Promise<void>;
   handleChatRejoin(ws: WsSocket, frame: ChatRejoin): Promise<void>;

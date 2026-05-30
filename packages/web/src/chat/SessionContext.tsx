@@ -39,6 +39,15 @@ interface SessionState {
   inProgress: boolean;
   setInProgress: (v: boolean) => void;
   /**
+   * ACTIVITY-01: aggregate compute-activity count from the server's
+   * `activity.status` frame. `running = (chat turn streaming ? 1 : 0) +
+   * (in-flight /plan workflow phase dispatches)`. Drives the top-bar BUSY (N)
+   * badge — distinct from `inProgress`, which is chat-only and still drives the
+   * countdown ring / textarea / duration tick.
+   */
+  running: number;
+  setRunning: (n: number) => void;
+  /**
    * PR-03: cross-tab resume signal. HistoryTab sets this when the user
    * clicks a row's Resume button; App switches to the chat tab on observing
    * a non-null value; ChatTab consumes the value, fires `chat.start` with
@@ -55,6 +64,7 @@ export function SessionProvider({ children }: { children: ReactNode }): React.Re
   // Hydrate from localStorage on initial render (D47).
   const [activeSessionId, setActiveSessionIdState] = useState<string | null>(readStoredSessionId);
   const [inProgress, setInProgress] = useState(false);
+  const [running, setRunning] = useState(0);
   const [resumeRequest, setResumeRequest] = useState<{ invocationId: string } | null>(null);
 
   const setActiveSessionId = useCallback((id: string | null) => {
@@ -76,6 +86,8 @@ export function SessionProvider({ children }: { children: ReactNode }): React.Re
         setActiveSessionId,
         inProgress,
         setInProgress,
+        running,
+        setRunning,
         resumeRequest,
         requestResume,
         clearResumeRequest,

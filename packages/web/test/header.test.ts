@@ -82,6 +82,7 @@ function defaultProps(overrides: Partial<HeaderProps> = {}): HeaderProps {
     sessionId: SESSION_ID,
     startedAt: STARTED_AT,
     inProgress: false,
+    running: 0,
     onNewSession: () => undefined,
     hideSdkEvents: false,
     onHideSdkEventsChange: () => undefined,
@@ -130,7 +131,7 @@ describe("Header — session metadata display", () => {
     // D44: ISO started-at was replaced with session-status badge.
     const statusEl = c.querySelector("[data-testid='session-status']");
     expect(statusEl).not.toBeNull();
-    // Has sessionId + !inProgress → IDLE
+    // ACTIVITY-01: has sessionId + running=0 → IDLE.
     expect(statusEl!.textContent).toBe("IDLE");
   });
 
@@ -304,5 +305,66 @@ describe("Header — session metadata display", () => {
       effortSel.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(effortValue).toBe("high");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ACTIVITY-01: the status badge reflects the AGGREGATE `running` count
+// (chat + /plan workflow phases), not just the chat-only inProgress flag.
+// ---------------------------------------------------------------------------
+
+describe("Header — aggregate activity badge (ACTIVITY-01)", () => {
+  function badgeText(c: HTMLDivElement): string | null {
+    return c.querySelector("[data-testid='session-status']")?.textContent ?? null;
+  }
+  function badgeTitle(c: HTMLDivElement): string {
+    return (c.querySelector("[data-testid='session-status']") as HTMLElement | null)?.getAttribute("title") ?? "";
+  }
+
+  test("no chat session and running=0 → NEW", () => {
+    const c = renderHeader(defaultProps({ sessionId: null, running: 0, inProgress: false }));
+    expect(badgeText(c)).toBe("NEW");
+  });
+
+  test("chat session present and running=0 → IDLE", () => {
+    const c = renderHeader(defaultProps({ sessionId: SESSION_ID, running: 0, inProgress: false }));
+    expect(badgeText(c)).toBe("IDLE");
+  });
+
+  test("running=1 → BUSY (1)", () => {
+    const c = renderHeader(defaultProps({ sessionId: SESSION_ID, running: 1 }));
+    expect(badgeText(c)).toBe("BUSY (1)");
+  });
+
+  test("running=2 → BUSY (2)", () => {
+    const c = renderHeader(defaultProps({ sessionId: SESSION_ID, running: 2 }));
+    expect(badgeText(c)).toBe("BUSY (2)");
+  });
+
+  test("running>0 shows BUSY even with no chat session yet (workflow-only)", () => {
+    // A /plan workflow phase dispatching before any chat session exists still
+    // shows BUSY — the badge reflects ALL compute, not just chat.
+    const c = renderHeader(defaultProps({ sessionId: null, running: 1, inProgress: false }));
+    expect(badgeText(c)).toBe("BUSY (1)");
+  });
+
+  test("badge does NOT flip to IDLE while a workflow phase runs and chat is idle", () => {
+    // inProgress (chat-only) is false, but running=1 (a workflow phase) → BUSY.
+    const c = renderHeader(defaultProps({ sessionId: SESSION_ID, running: 1, inProgress: false }));
+    expect(badgeText(c)).toBe("BUSY (1)");
+  });
+
+  test("badge title encodes the busy/idle/new state for the className branch", () => {
+    // CSS-module class names do not resolve in the test DOM, so assert the
+    // title attribute — which the same `badgeState` drives — instead. busy and
+    // idle resolve to distinct, lowercase state titles.
+    const busy = renderHeader(defaultProps({ sessionId: SESSION_ID, running: 2 }));
+    expect(badgeTitle(busy)).toBe("Session status: busy");
+    teardown();
+    const idle = renderHeader(defaultProps({ sessionId: SESSION_ID, running: 0 }));
+    expect(badgeTitle(idle)).toBe("Session status: idle");
+    teardown();
+    const fresh = renderHeader(defaultProps({ sessionId: null, running: 0 }));
+    expect(badgeTitle(fresh)).toBe("Session status: new");
   });
 });

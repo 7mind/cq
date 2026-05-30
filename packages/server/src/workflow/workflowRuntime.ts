@@ -161,6 +161,14 @@ export class WorkflowRuntime {
 
   /** Single active phase dispatch (Q D: pool=1 for the workflow lane). */
   private active: ActiveWorkflow | null = null;
+  /**
+   * Activity-change listeners (ACTIVITY-01). Fired on EVERY transition of the
+   * `active` slot via `setActive`, so the aggregate activity tracker can
+   * recompute `running` whenever a workflow phase dispatch starts or ends.
+   * Distinct from `subscribers` (workflow LIFECYCLE frames) — these carry no
+   * payload; the listener re-reads `activeDispatchCount()`.
+   */
+  private readonly activityListeners = new Set<() => void>();
   /** Lifecycle subscribers (all connected WS sessions). De-duped by identity. */
   private readonly subscribers = new Set<WorkflowEventSink>();
   /** Per-goal in-flight latch: true while a phase is dispatching for that goal. */
@@ -191,6 +199,61 @@ export class WorkflowRuntime {
   /** True iff a workflow phase is currently dispatching. */
   isBusy(): boolean {
     return this.active !== null;
+  }
+
+  /**
+   * Count of workflow phase dispatches actively computing RIGHT NOW
+   * (ACTIVITY-01). Derived from the `active` slot — a phase between
+   * dispatch-START and submit/settle. The lane is pool=1, so this is 0 or 1.
+   *
+   * Deliberately NOT derived from `pendingTeardowns`: that set tracks
+   * post-submit subprocess REAP (the model already finished; only OS-process
+   * teardown remains), so counting it would over-report "running" and leave the
+   * badge stuck BUSY while a subprocess drains after the model is done.
+   */
+  activeDispatchCount(): number {
+    return this.active !== null ? 1 : 0;
+  }
+
+  /**
+   * Register an activity-change listener (ACTIVITY-01). The listener fires on
+   * every `active`-slot transition (a phase dispatch starting or ending), AFTER
+   * the slot has been updated — so a listener that reads `activeDispatchCount()`
+   * observes the post-transition value. Returns an unsubscribe function.
+   */
+  onActivityChange(listener: () => void): () => void {
+    this.activityListeners.add(listener);
+    return () => {
+      this.activityListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Assign the `active` slot and notify activity listeners. The SINGLE point
+   * through which `this.active` is mutated — every set and clear routes here so
+   * no transition can bypass the activity notification (push-on-every-
+   * transition, ACTIVITY-01). Order is assign-THEN-notify so a listener reading
+   * `activeDispatchCount()` sees the new value.
+   */
+  private setActive(next: ActiveWorkflow | null): void {
+    this.active = next;
+    for (const listener of this.activityListeners) {
+      try {
+        listener();
+      } catch (err: unknown) {
+        this.logger.warn("workflow.activity_listener_error", { err: String(err) });
+      }
+    }
+  }
+
+  /**
+   * Clear the `active` slot iff it still belongs to `workflowId` (the
+   * dispatch-end guard used by each phase's `finally`). Reads `this.active`
+   * through a method so control-flow narrowing at the call site (where a busy
+   * guard narrowed it to null) does not mask the runtime value.
+   */
+  private clearActiveIf(workflowId: string): void {
+    if (this.active?.workflowId === workflowId) this.setActive(null);
   }
 
   /**
@@ -332,7 +395,7 @@ export class WorkflowRuntime {
     }
 
     const abort = new AbortController();
-    this.active = { workflowId, abort };
+    this.setActive({ workflowId, abort });
     this.goalPlatform.set(goalRef, platform);
     this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "started", detail: "continuing goal" });
     this.logger.info("workflow.continuation_started", { workflowId, goalRef, platform });
@@ -390,7 +453,7 @@ export class WorkflowRuntime {
       this.logger.warn("workflow.continuation_errored", { workflowId, goalRef, reason });
       return { outcome: "errored", workflowId, reason };
     } finally {
-      if (this.active?.workflowId === workflowId) this.active = null;
+      this.clearActiveIf(workflowId);
     }
   }
 
@@ -411,7 +474,7 @@ export class WorkflowRuntime {
     }
 
     const abort = new AbortController();
-    this.active = { workflowId, abort };
+    this.setActive({ workflowId, abort });
     this.emitAll({ type: "workflow.event", workflowId, phase: "produce", status: "started" });
     this.logger.info("workflow.started", { workflowId, platform: input.platform });
 
@@ -473,7 +536,7 @@ export class WorkflowRuntime {
       this.logger.warn("workflow.errored", { workflowId, reason });
       return { outcome: "errored", workflowId, reason };
     } finally {
-      if (this.active?.workflowId === workflowId) this.active = null;
+      this.clearActiveIf(workflowId);
     }
   }
 
@@ -718,7 +781,7 @@ export class WorkflowRuntime {
     this.inFlight.add(goalId);
     const workflowId = crypto.randomUUID();
     const abort = new AbortController();
-    this.active = { workflowId, abort };
+    this.setActive({ workflowId, abort });
     try {
       if (pos.kind === "clarify_ready") {
         await this.runClarifyReview(goalId, workflowId, abort.signal);
@@ -735,7 +798,7 @@ export class WorkflowRuntime {
       this.logger.warn("workflow.phase_errored", { goalId, workflowId, reason });
     } finally {
       this.inFlight.delete(goalId);
-      if (this.active?.workflowId === workflowId) this.active = null;
+      this.clearActiveIf(workflowId);
     }
   }
 
@@ -758,7 +821,7 @@ export class WorkflowRuntime {
     this.inFlight.add(goalId);
     const workflowId = crypto.randomUUID();
     const abort = new AbortController();
-    this.active = { workflowId, abort };
+    this.setActive({ workflowId, abort });
     try {
       await this.runPlanner(goalId, workflowId, abort.signal, guidance);
     } catch (err: unknown) {
@@ -767,7 +830,7 @@ export class WorkflowRuntime {
       this.logger.warn("workflow.guidance_errored", { goalId, workflowId, reason });
     } finally {
       this.inFlight.delete(goalId);
-      if (this.active?.workflowId === workflowId) this.active = null;
+      this.clearActiveIf(workflowId);
     }
   }
 

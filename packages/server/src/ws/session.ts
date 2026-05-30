@@ -1,4 +1,4 @@
-import { ClientFrame, type ServerHbPong, type SessionState, type ChatError, type HistoryListResult, type HistoryGetResult, type HistoryReplayEvent, type HistoryReplayDone, type HistoryUpdate, type SettingsGetResult, type WorkflowEvent, type GoalsSnapshot } from "@cq/shared";
+import { ClientFrame, type ServerHbPong, type SessionState, type ChatError, type HistoryListResult, type HistoryGetResult, type HistoryReplayEvent, type HistoryReplayDone, type HistoryUpdate, type SettingsGetResult, type WorkflowEvent, type GoalsSnapshot, type ActivityStatus } from "@cq/shared";
 import { FRAME_VALIDATION_FAILED } from "@cq/shared";
 import type { Logger } from "../log/logger";
 import { createHeartbeat, type HeartbeatHandle } from "./heartbeat";
@@ -7,6 +7,7 @@ import type { Bridge, WsSocket as BridgeWsSocket } from "../agent/bridge";
 import type { Persistence } from "../persist/Persistence.js";
 import type { WorkflowRuntime } from "../workflow/index.js";
 import { parsePlanCommand } from "../workflow/index.js";
+import type { ActivityTracker } from "./activityTracker";
 
 // ---------------------------------------------------------------------------
 // Data attached to each WebSocket connection via ws.data
@@ -31,6 +32,7 @@ type HistoryUpdatePayload = Omit<HistoryUpdate, "seq" | "ts">;
 type SettingsGetResultPayload = Omit<SettingsGetResult, "seq" | "ts">;
 type WorkflowEventPayload = Omit<WorkflowEvent, "seq" | "ts">;
 type GoalsSnapshotPayload = Omit<GoalsSnapshot, "seq" | "ts">;
+type ActivityStatusPayload = Omit<ActivityStatus, "seq" | "ts">;
 
 // ---------------------------------------------------------------------------
 // WsSession — per-connection state and message dispatch
@@ -68,16 +70,26 @@ export class WsSession {
    * fire outside the original `/plan` request. Bound to `ws` lazily in `open`.
    */
   private workflowSink: ((event: WorkflowEventPayload) => void) | null = null;
+  /**
+   * Aggregate activity tracker (ACTIVITY-01) — null when not wired (tests / a
+   * server without it). When non-null this connection subscribes on `open` to
+   * receive the initial `activity.status{running}` immediately and a fresh frame
+   * on every transition of either compute lane.
+   */
+  private readonly activityTracker: ActivityTracker | null;
+  /** Unsubscribe handle for the activity-tracker sink (set on open, called on close). */
+  private activityUnsubscribe: (() => void) | null = null;
   /** The socket this session is bound to (set on open) for the fan-out sink. */
   private boundWs: WsSocket | null = null;
 
-  constructor(sessionId: string, logger: Logger, registry?: SessionRegistry, bridge?: Bridge | null, persistence?: Persistence | null, workflow?: WorkflowRuntime | null) {
+  constructor(sessionId: string, logger: Logger, registry?: SessionRegistry, bridge?: Bridge | null, persistence?: Persistence | null, workflow?: WorkflowRuntime | null, activityTracker?: ActivityTracker | null) {
     this.sessionId = sessionId;
     this.logger = logger;
     this.registry = registry ?? null;
     this.bridge = bridge ?? null;
     this.persistence = persistence ?? null;
     this.workflow = workflow ?? null;
+    this.activityTracker = activityTracker ?? null;
     this.heartbeat = createHeartbeat({
       buildFrame: (payload) => {
         const seq = this.outboundSeq++;
@@ -91,15 +103,29 @@ export class WsSession {
   open(ws: WsSocket): void {
     this.logger.info("ws.open", { sessionId: this.sessionId });
     this.heartbeat.start(ws);
+    // Bind the socket before any subscribe so a synchronous initial push
+    // (activity.status on connect) has a socket to write to.
+    this.boundWs = ws;
     // Subscribe to workflow lifecycle frames so async loop phases (clarify /
     // plan / review) and question.answer-triggered advances reach this client.
     if (this.workflow !== null) {
-      this.boundWs = ws;
       const sink = (event: WorkflowEventPayload): void => {
         if (this.boundWs !== null) this.sendFrame(this.boundWs, event);
       };
       this.workflowSink = sink;
       this.workflow.subscribe(sink);
+    }
+    // Subscribe to the aggregate activity tracker (ACTIVITY-01). `subscribe`
+    // pushes the CURRENT running count synchronously (initial state on connect),
+    // then a fresh value on every transition of either compute lane.
+    if (this.activityTracker !== null) {
+      const sink = (running: number): void => {
+        if (this.boundWs !== null) {
+          const payload: ActivityStatusPayload = { type: "activity.status", running };
+          this.sendFrame(this.boundWs, payload);
+        }
+      };
+      this.activityUnsubscribe = this.activityTracker.subscribe(sink);
     }
   }
 
@@ -348,6 +374,10 @@ export class WsSession {
       this.workflow.unsubscribe(this.workflowSink);
       this.workflowSink = null;
     }
+    if (this.activityUnsubscribe !== null) {
+      this.activityUnsubscribe();
+      this.activityUnsubscribe = null;
+    }
     this.boundWs = null;
   }
 
@@ -556,7 +586,7 @@ export class WsSession {
    * Sends a frame to the client, injecting `seq` and `ts` automatically.
    * `payload` must contain all fields except `seq` and `ts`.
    */
-  private sendFrame(ws: WsSocket, payload: PongPayload | SessionStatePayload | HistoryListResultPayload | HistoryGetResultPayload | HistoryReplayEventPayload | HistoryReplayDonePayload | HistoryUpdatePayload | SettingsGetResultPayload | WorkflowEventPayload | GoalsSnapshotPayload): void {
+  private sendFrame(ws: WsSocket, payload: PongPayload | SessionStatePayload | HistoryListResultPayload | HistoryGetResultPayload | HistoryReplayEventPayload | HistoryReplayDonePayload | HistoryUpdatePayload | SettingsGetResultPayload | WorkflowEventPayload | GoalsSnapshotPayload | ActivityStatusPayload): void {
     const seq = this.outboundSeq++;
     const ts = Date.now();
     ws.send(JSON.stringify({ ...payload, seq, ts }));

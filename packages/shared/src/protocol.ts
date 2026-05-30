@@ -600,6 +600,32 @@ export const WorkflowEvent = z.object({
 });
 export type WorkflowEvent = z.infer<typeof WorkflowEvent>;
 
+/**
+ * `activity.status` — server → client AGGREGATE compute-activity notification
+ * (ACTIVITY-01). `running` is the total number of compute lanes actively
+ * working RIGHT NOW:
+ *
+ *   running = (interactive chat turn streaming ? 1 : 0)
+ *           + (count of in-flight `/plan` workflow phase dispatches)
+ *
+ * A workflow PARKED waiting for the user to answer questions is NOT computing
+ * and contributes 0. With pool=1 chat + a single-active workflow lane,
+ * `running` ∈ {0,1,2}, but the value is a general sum of whatever is running.
+ *
+ * Pushed once on connect (initial state) and again on EVERY transition of
+ * either lane (chat start/done; workflow phase dispatch start/end). The top-bar
+ * badge renders `running > 0 → "BUSY (running)"`, else IDLE (or NEW with no
+ * chat session). Distinct from the chat-only `inProgress` flag, which still
+ * drives the per-chat UI (countdown ring, textarea, duration tick).
+ */
+export const ActivityStatus = z.object({
+  type: z.literal("activity.status"),
+  seq,
+  ts,
+  running: z.number().int().nonnegative(),
+});
+export type ActivityStatus = z.infer<typeof ActivityStatus>;
+
 // ---------------------------------------------------------------------------
 // Goals snapshot (Goals tab read protocol, cycle 4)
 // ---------------------------------------------------------------------------
@@ -783,6 +809,7 @@ export const ServerFrame = z.discriminatedUnion("type", [
   ChatDone,
   ChatError,
   WorkflowEvent,
+  ActivityStatus,
   GoalsSnapshot,
   ChatReadFileResult,
   HistoryListResult,

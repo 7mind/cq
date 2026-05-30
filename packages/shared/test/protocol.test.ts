@@ -34,6 +34,7 @@ import {
   GoalsList,
   GoalsSnapshot,
   WorkflowEscalationReply,
+  ActivityStatus,
   SDKMessageEnvelope,
   base64DecodedByteLength,
   ATTACHMENT_TOTAL_MAX_BYTES,
@@ -758,4 +759,36 @@ test("base64DecodedByteLength computes correct sizes", () => {
 
 test("ATTACHMENT_TOTAL_MAX_BYTES equals 5 MiB", () => {
   expect(ATTACHMENT_TOTAL_MAX_BYTES).toBe(5 * 1024 * 1024);
+});
+
+// ---------------------------------------------------------------------------
+// activity.status (ACTIVITY-01) — aggregate compute-activity frame
+// ---------------------------------------------------------------------------
+
+describe("ActivityStatus", () => {
+  test("round-trips and is accepted by ServerFrame", () => {
+    const frame = { type: "activity.status" as const, seq: 11, ts: NOW, running: 2 };
+    expect(ActivityStatus.parse(frame)).toEqual(frame);
+    expect(ServerFrame.parse(frame).type).toBe("activity.status");
+  });
+
+  test("accepts running = 0 (idle)", () => {
+    const frame = { type: "activity.status" as const, seq: 0, ts: NOW, running: 0 };
+    expect(ActivityStatus.parse(frame)).toEqual(frame);
+  });
+
+  test("rejects negative running", () => {
+    const result = ActivityStatus.safeParse({ type: "activity.status", seq: 0, ts: NOW, running: -1 });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects non-integer running", () => {
+    const result = ActivityStatus.safeParse({ type: "activity.status", seq: 0, ts: NOW, running: 1.5 });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects missing running", () => {
+    const result = ActivityStatus.safeParse({ type: "activity.status", seq: 0, ts: NOW });
+    expect(result.success).toBe(false);
+  });
 });

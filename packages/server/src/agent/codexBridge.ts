@@ -158,6 +158,13 @@ export interface CodexBridgeOpts {
   sendAskReply?: (msg: InternalWsMessage) => void;
   /** Override process.pid for ask.reply sourcePid (tests). */
   selfPid?: number;
+  /**
+   * Fired on EVERY transition of the chat-lane busy state (a turn starting or
+   * ending), AFTER `this.active` is updated, so a listener reading `isBusy()`
+   * sees the post-transition value (ACTIVITY-01). Wired by the Bridge facade to
+   * the aggregate activity tracker. Observe-only: it never changes pool=1.
+   */
+  onBusyChange?: () => void;
 }
 
 /** Tracks one Codex session's runtime state. */
@@ -313,10 +320,13 @@ export class CodexBridge implements BackendBridge {
   private readonly selfPid: number;
   private readonly askProxy: AskProxy;
   private active: ActiveCodexSession | null = null;
+  /** ACTIVITY-01: fired on every `active`-slot transition (assign-then-notify). */
+  private readonly onBusyChange: (() => void) | undefined;
 
   constructor(opts: CodexBridgeOpts) {
     this.logger = opts.logger;
     this.registry = opts.registry;
+    this.onBusyChange = opts.onBusyChange;
     this.cwd = path.resolve(opts.cwd);
     this.persistence = opts.persistence;
     this.selfPid = opts.selfPid ?? process.pid;
@@ -356,8 +366,50 @@ export class CodexBridge implements BackendBridge {
     return this.active !== null;
   }
 
+  /**
+   * ACTIVITY-01: true iff a TURN is currently streaming. A Codex session runs a
+   * turn only while its `abortController` is set (between `runStreamed` start and
+   * its finally that nulls it); it is idle between turns and before the first
+   * input. The aggregate-activity badge tracks this, not session-aliveness.
+   */
+  isTurnInFlight(): boolean {
+    return this.active !== null && this.active.abortController !== null;
+  }
+
   activeSessionId(): string | null {
     return this.active?.chatSessionId ?? null;
+  }
+
+  /** Fire the busy-change listener (ACTIVITY-01); best-effort. */
+  private notifyBusyChange(): void {
+    if (this.onBusyChange !== undefined) {
+      try {
+        this.onBusyChange();
+      } catch (err: unknown) {
+        this.logger.warn("codex.busy_listener_error", { err: String(err) });
+      }
+    }
+  }
+
+  /**
+   * Assign the `active` slot and notify the busy-change listener (ACTIVITY-01).
+   * The SINGLE point through which `this.active` is mutated — every set and
+   * clear routes here so no transition can bypass the notification. Order is
+   * assign-THEN-notify so a listener reading `isTurnInFlight()` sees the new value.
+   */
+  private setActive(next: ActiveCodexSession | null): void {
+    this.active = next;
+    this.notifyBusyChange();
+  }
+
+  /**
+   * Set the active session's per-turn `abortController` and notify (ACTIVITY-01).
+   * A non-null controller marks a turn in flight; null marks it settled.
+   */
+  private setTurnAbort(controller: AbortController | null): void {
+    if (this.active === null) return;
+    this.active.abortController = controller;
+    this.notifyBusyChange();
   }
 
   async handleChatStart(ws: WsSocket, frame: ChatStart): Promise<void> {
@@ -561,7 +613,7 @@ export class CodexBridge implements BackendBridge {
       outputTokens: 0,
       costUsd: 0,
     };
-    this.active = session;
+    this.setActive(session);
 
     this.logger.info("codex.chat_start", { chatSessionId, invocationId });
 
@@ -608,7 +660,8 @@ export class CodexBridge implements BackendBridge {
 
     // Run one turn. Abort-aware via AbortController.
     const abort = new AbortController();
-    session.abortController = abort;
+    // ACTIVITY-01: a turn begins → mark in flight (push the badge to BUSY).
+    this.setTurnAbort(abort);
     let turnDone: ChatDone["reason"] = "completed";
     try {
       const streamed = await session.thread.runStreamed(frame.text, { signal: abort.signal });
@@ -635,7 +688,8 @@ export class CodexBridge implements BackendBridge {
         this.sendError(ws, session.chatSessionId, "CODEX_ERROR", msg);
       }
     } finally {
-      session.abortController = null;
+      // ACTIVITY-01: the turn settled → clear the flag (drop the badge toward IDLE).
+      this.setTurnAbort(null);
     }
     this.sendDone(ws, session, turnDone);
     if (turnDone === "errored") {
@@ -756,7 +810,7 @@ export class CodexBridge implements BackendBridge {
     // own broker rejects the parked tool call — the model is not left
     // hanging on either side. A late chat.question_reply is then stale.
     this.askProxy.clear();
-    this.active = null;
+    this.setActive(null);
   }
 
   // ---------------------------------------------------------------------------

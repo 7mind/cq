@@ -143,6 +143,13 @@ export interface BridgeOpts {
    * a real network call.
    */
   titleGenerator?: TitleGenerator;
+  /**
+   * Fired on EVERY transition of the chat-lane busy state (a turn starting or
+   * ending), AFTER `this.active` is updated, so a listener reading `isBusy()`
+   * sees the post-transition value (ACTIVITY-01). Wired by the Bridge facade to
+   * the aggregate activity tracker. Observe-only: it never changes pool=1.
+   */
+  onBusyChange?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +217,15 @@ type ActiveSession = {
   /** Set to true once chat.interrupt has been received; suppresses late chat.event frames. */
   aborting: boolean;
   /**
+   * ACTIVITY-01: true while a TURN is streaming (the model is working), false
+   * between turns. Distinct from session-aliveness (`active !== null`): in the
+   * multi-turn streaming model the session stays alive across turns, so the
+   * aggregate-activity badge must track this per-turn flag, not session life.
+   * Set true at turn start (chat.start first turn + each chat.input), cleared in
+   * `sendDone` (per-turn chat.done). Read via `isTurnInFlight()`.
+   */
+  turnInFlight: boolean;
+  /**
    * The UI-level permission mode label sent in ChatStart.permissionMode.
    * "read-only" activates the canUseTool deny overlay; all other values are
    * forwarded directly to the SDK. The SDK always receives "default" when
@@ -264,10 +280,13 @@ export class ClaudeBridge implements BackendBridge {
   private readonly persistence: Persistence;
   private readonly ledgerStore: LedgerStore | null;
   private readonly titleGenerator: TitleGenerator;
+  /** ACTIVITY-01: fired on every `active`-slot transition (assign-then-notify). */
+  private readonly onBusyChange: (() => void) | undefined;
 
   constructor(opts: BridgeOpts) {
     this.logger = opts.logger;
     this.registry = opts.registry;
+    this.onBusyChange = opts.onBusyChange;
     this.queryFactory = opts.queryFactory ?? (({ prompt, options }) =>
       options !== undefined ? sdkQuery({ prompt, options }) : sdkQuery({ prompt }));
     // Resolve cwd to an absolute path so the UI's path indicator shows
@@ -289,8 +308,55 @@ export class ClaudeBridge implements BackendBridge {
     return this.active !== null;
   }
 
+  /**
+   * ACTIVITY-01: true iff a TURN is currently streaming (the model is working).
+   * Unlike `isBusy()` (session-active, used for pool=1 preempt), this is false
+   * between turns of a live multi-turn session — the per-turn truth the
+   * aggregate-activity badge needs.
+   */
+  isTurnInFlight(): boolean {
+    return this.active !== null && this.active.turnInFlight;
+  }
+
   activeSessionId(): string | null {
     return this.active?.chatSessionId ?? null;
+  }
+
+  /**
+   * Fire the busy-change listener (ACTIVITY-01). Called after any transition of
+   * either the `active` slot or the active session's `turnInFlight` flag, so the
+   * aggregate tracker recomputes whenever chat-lane activity changes.
+   */
+  private notifyBusyChange(): void {
+    if (this.onBusyChange !== undefined) {
+      try {
+        this.onBusyChange();
+      } catch (err: unknown) {
+        this.logger.warn("bridge.busy_listener_error", { err: String(err) });
+      }
+    }
+  }
+
+  /**
+   * Assign the `active` slot and notify the busy-change listener (ACTIVITY-01).
+   * The SINGLE point through which `this.active` is mutated — every set and
+   * clear routes here so no transition can bypass the notification. Order is
+   * assign-THEN-notify so a listener reading `isTurnInFlight()` sees the new value.
+   */
+  private setActive(next: ActiveSession | null): void {
+    this.active = next;
+    this.notifyBusyChange();
+  }
+
+  /**
+   * Toggle the active session's per-turn `turnInFlight` flag and notify
+   * (ACTIVITY-01). No-op when it is already at `value` (idempotent — avoids a
+   * redundant notification) or when there is no active session.
+   */
+  private setTurnInFlight(value: boolean): void {
+    if (this.active === null || this.active.turnInFlight === value) return;
+    this.active.turnInFlight = value;
+    this.notifyBusyChange();
   }
 
   // ---------------------------------------------------------------------------
@@ -576,6 +642,9 @@ export class ClaudeBridge implements BackendBridge {
       queue,
       ws,
       aborting: false,
+      // ACTIVITY-01: the first turn begins immediately on session creation (the
+      // SDK starts working on the initial prompt), so the turn is in flight.
+      turnInFlight: true,
       uiMode,
       startedAt,
       taskInvocationMap: new Map(),
@@ -588,7 +657,7 @@ export class ClaudeBridge implements BackendBridge {
       firstUserText: "",
       titleRequested: false,
     };
-    this.active = session;
+    this.setActive(session);
 
     // Wire the permission broker's send callback to forward chat.permission_request
     // frames over the current WS connection.
@@ -771,6 +840,9 @@ export class ClaudeBridge implements BackendBridge {
     this.sendEvent(ws, session, echoMsg);
 
     session.queue.push(userMsg);
+    // ACTIVITY-01: a new user message begins a new turn — the model resumes
+    // working, so mark the turn in flight (push the badge back to BUSY).
+    this.setTurnInFlight(true);
     this.logger.info("bridge.chat_input", {
       chatSessionId: session.chatSessionId,
       textLen: frame.text.length,
@@ -904,7 +976,7 @@ export class ClaudeBridge implements BackendBridge {
       this.logger.info("bridge.shutdown", { chatSessionId: session.chatSessionId });
       session.queue.end();
       session.query.close();
-      this.active = null;
+      this.setActive(null);
     }
   }
 
@@ -1232,7 +1304,7 @@ export class ClaudeBridge implements BackendBridge {
       });
 
       if (this.active === session) {
-        this.active = null;
+        this.setActive(null);
         session.queue.end();
         // Reject any pending permission requests — the session is over.
         this.permissionBroker.rejectAll();
@@ -1435,6 +1507,13 @@ export class ClaudeBridge implements BackendBridge {
       reason,
     };
     ws.send(JSON.stringify(frame));
+    // ACTIVITY-01: the turn finished — the model is no longer working. Clear the
+    // per-turn flag on this session and, if it is the live active session, notify
+    // the aggregate tracker so the badge drops back toward IDLE.
+    if (session.turnInFlight) {
+      session.turnInFlight = false;
+      if (this.active === session) this.notifyBusyChange();
+    }
     this.logger.info("bridge.chat_done", {
       chatSessionId: session.chatSessionId,
       reason,

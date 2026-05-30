@@ -58,8 +58,13 @@ function nextMessage(ws: WebSocket, timeoutMs = 3000): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error("ws.message timeout")), timeoutMs);
     ws.onmessage = (ev) => {
+      const parsed = JSON.parse(ev.data as string);
+      // ACTIVITY-01: the server pushes an out-of-band `activity.status{running}`
+      // frame on connect (initial aggregate-activity state). It is not a reply
+      // to any client frame, so skip it here and wait for the next message.
+      if ((parsed as { type?: unknown }).type === "activity.status") return;
       clearTimeout(t);
-      resolve(JSON.parse(ev.data as string));
+      resolve(parsed);
     };
     ws.onerror = () => {
       clearTimeout(t);

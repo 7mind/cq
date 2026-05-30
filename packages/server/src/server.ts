@@ -10,6 +10,7 @@ import { SqlitePersistence } from "./persist/SqlitePersistence.js";
 import { FsLedgerStore } from "@cq/ledger";
 import { initLedgerStoreOrExit } from "./ledgerInit";
 import { INTERNAL_WS_PATH, InternalWsService, type InternalWsConnData } from "./agent/internalWs";
+import { AggregateActivityTracker } from "./ws/activityTracker";
 import {
   WorkflowRuntime,
   WorkflowSubmitProxy,
@@ -106,6 +107,13 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   // for now; we MUST refresh it before the first Codex session starts.
   // Approach: a one-shot pre-bind handler that sets it on Bridge. See
   // below — we mutate the bridge.opts after `server.url` resolves.
+  // ACTIVITY-01: aggregate compute-activity tracker. Declared before the lanes
+  // so the lanes' change callbacks can reference it; assigned after the lanes
+  // exist (its read closures need `bridge` + `workflow`). The callbacks are only
+  // INVOKED on a lane transition, long after construction, so the late binding
+  // is safe. Observe-only: it never routes the workflow through the Bridge and
+  // never changes pool=1.
+  let activityTracker: AggregateActivityTracker | undefined = undefined;
   const bridge = new Bridge({
     logger,
     registry,
@@ -116,6 +124,9 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
     // askproxy / outer-14: ask.reply travels upstream via broadcast (askId
     // discriminates across connected cq-mcp children).
     sendAskReply: (msg) => internalWs.broadcast(msg),
+    // ACTIVITY-01: every chat-lane busy transition (turn start/end) recomputes
+    // and pushes the aggregate running count.
+    onBusyChange: () => activityTracker?.onLaneChange(),
   });
   // WorkflowSubmitProxy (codexwf) — server side of the Codex /plan structured-
   // output relay. A headless-Codex phase dispatch registers a submitId here;
@@ -181,6 +192,19 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   internalWs.registerHandler("workflow.submit", async (msg) => {
     submitProxy.onSubmit({ submitId: msg.submitId, phase: msg.phase, payload: msg.payload });
   });
+  // ACTIVITY-01: construct the aggregate tracker now that both lanes exist, and
+  // wire the workflow lane's activity callback. running = chat-busy (0/1) +
+  // workflow active phase-dispatch count. The chat lane's callback was wired in
+  // the Bridge ctor above (it reads `activityTracker` lazily through the closure).
+  activityTracker = new AggregateActivityTracker({
+    // ACTIVITY-01: the chat lane contributes 1 only while a TURN is streaming
+    // (the model is working), NOT for the whole multi-turn session lifetime —
+    // `isTurnInFlight()` is false between turns, so the badge returns to IDLE.
+    isChatBusy: () => bridge.isTurnInFlight(),
+    workflowActiveDispatchCount: () => workflow.activeDispatchCount(),
+  });
+  workflow.onActivityChange(() => activityTracker?.onLaneChange());
+
   // Resume any goal mid-loop from ledger state (closes WF-D02). Goals waiting on
   // open questions sit idle until a `question.answer` arrives.
   await workflow.reconcile();
@@ -366,7 +390,7 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
         }
 
         const sessionId = crypto.randomUUID();
-        const session = new WsSession(sessionId, logger, registry, bridge, persistence, workflow);
+        const session = new WsSession(sessionId, logger, registry, bridge, persistence, workflow, activityTracker);
         const upgraded = srv.upgrade(req, { data: { sessionId, session } });
         if (!upgraded) {
           // Bun returns false when the upgrade fails for non-WS requests
