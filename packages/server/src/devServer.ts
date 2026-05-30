@@ -8,6 +8,7 @@ import { Bridge } from "./agent/bridge";
 import { SessionRegistry } from "./seq/sessionRegistry";
 import { SqlitePersistence } from "./persist/SqlitePersistence.js";
 import { FsLedgerStore } from "@cq/ledger";
+import { initLedgerStoreOrExit } from "./ledgerInit";
 import { INTERNAL_WS_PATH, InternalWsService, type InternalWsConnData } from "./agent/internalWs";
 
 export type DevServerConfig = Readonly<{
@@ -61,7 +62,9 @@ export async function startDevServer(
       });
     },
   });
-  await ledgerStore.init();
+  // Humane startup (see server.ts): BootstrapViolationError → actionable
+  // `cq reset` guidance, not a raw stack trace.
+  await initLedgerStoreOrExit(ledgerStore);
   internalWs.registerHandler("ledger.changed", async (msg) => {
     try {
       await ledgerStore.invalidate(msg.ledgerId);

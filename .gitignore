@@ -44,6 +44,8 @@ docs/questions.md
 docs/decisions.md
 docs/goals.md
 docs/.locks/
+# `cq reset` moves the bootstrap files here (timestamped) before regenerating.
+docs/.ledger-backup/
 
 # scratch
 /debug/

@@ -146,3 +146,97 @@ describe("parseArgs", () => {
     exitCode = undefined;
   });
 });
+
+describe("parseInvocation", () => {
+  async function importParseInvocation() {
+    const mod = await import("../src/args");
+    return mod.parseInvocation;
+  }
+
+  it("routes a normal flag invocation to the server (unchanged Args)", async () => {
+    const parseInvocation = await importParseInvocation();
+    const inv = parseInvocation(["--cwd", "/tmp", "--port", "8080"]);
+    expect(inv.kind).toBe("server");
+    if (inv.kind !== "server") throw new Error("expected server invocation");
+    expect(inv.args.cwd).toBe("/tmp");
+    expect(inv.args.port).toBe(8080);
+    expect(inv.args.dev).toBe(false);
+  });
+
+  it("routes an empty argv to the server with defaults", async () => {
+    const parseInvocation = await importParseInvocation();
+    const inv = parseInvocation([]);
+    expect(inv.kind).toBe("server");
+    if (inv.kind !== "server") throw new Error("expected server invocation");
+    expect(inv.args.cwd).toBe(process.cwd());
+  });
+
+  it("routes --dev to the server with dev: true", async () => {
+    const parseInvocation = await importParseInvocation();
+    const inv = parseInvocation(["--dev", "--host", "0.0.0.0"]);
+    expect(inv.kind).toBe("server");
+    if (inv.kind !== "server") throw new Error("expected server invocation");
+    expect(inv.args.dev).toBe(true);
+    expect(inv.args.host).toBe("0.0.0.0");
+  });
+
+  it("routes a leading `reset` positional to the reset subcommand", async () => {
+    const parseInvocation = await importParseInvocation();
+    const inv = parseInvocation(["reset"]);
+    expect(inv.kind).toBe("reset");
+    if (inv.kind !== "reset") throw new Error("expected reset invocation");
+    expect(inv.opts.cwd).toBe(process.cwd());
+    expect(inv.opts.yes).toBe(false);
+    expect(inv.opts.backup).toBe(true);
+  });
+
+  it("parses reset flags: --cwd, --yes, --no-backup", async () => {
+    const parseInvocation = await importParseInvocation();
+    const inv = parseInvocation(["reset", "--cwd", "/tmp/x", "--yes", "--no-backup"]);
+    expect(inv.kind).toBe("reset");
+    if (inv.kind !== "reset") throw new Error("expected reset invocation");
+    expect(inv.opts.cwd).toBe("/tmp/x");
+    expect(inv.opts.yes).toBe(true);
+    expect(inv.opts.backup).toBe(false);
+  });
+
+  it("treats `reset` only as the FIRST token (a flagged invocation stays server)", async () => {
+    const parseInvocation = await importParseInvocation();
+    // `--cwd reset` means cwd=\"reset\", a server invocation — NOT the subcommand.
+    const inv = parseInvocation(["--cwd", "reset"]);
+    expect(inv.kind).toBe("server");
+    if (inv.kind !== "server") throw new Error("expected server invocation");
+    expect(inv.args.cwd).toBe("reset");
+  });
+
+  it("rejects an unknown reset flag with exit(1)", async () => {
+    const parseInvocation = await importParseInvocation();
+    let code: number | undefined;
+    let err = "";
+    const exitSpy = spyOn(process, "exit").mockImplementation((c?: number | string | null) => {
+      code = typeof c === "number" ? c : 1;
+      throw new Error("process.exit called");
+    });
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation((d: string | Uint8Array) => {
+      err += typeof d === "string" ? d : "";
+      return true;
+    });
+    try {
+      parseInvocation(["reset", "--bogus"]);
+    } catch {
+      // swallow
+    }
+    expect(code).toBe(1);
+    expect(err).toContain("unknown reset flag");
+    exitSpy.mockRestore();
+    stderrSpy.mockRestore();
+  });
+
+  it("returns frozen invocation objects", async () => {
+    const parseInvocation = await importParseInvocation();
+    const server = parseInvocation([]);
+    const reset = parseInvocation(["reset"]);
+    expect(Object.isFrozen(server)).toBe(true);
+    expect(Object.isFrozen(reset)).toBe(true);
+  });
+});

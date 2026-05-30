@@ -8,6 +8,7 @@ import { Bridge } from "./agent/bridge";
 import { SessionRegistry } from "./seq/sessionRegistry";
 import { SqlitePersistence } from "./persist/SqlitePersistence.js";
 import { FsLedgerStore } from "@cq/ledger";
+import { initLedgerStoreOrExit } from "./ledgerInit";
 import { INTERNAL_WS_PATH, InternalWsService, type InternalWsConnData } from "./agent/internalWs";
 import {
   WorkflowRuntime,
@@ -83,7 +84,10 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
       });
     },
   });
-  await ledgerStore.init();
+  // Humane startup: a BootstrapViolationError (on-disk ledger schema diverged
+  // from the current build) is re-presented as an actionable `cq reset`
+  // instruction instead of a raw stack trace; other errors propagate.
+  await initLedgerStoreOrExit(ledgerStore);
   // Inbound `ledger.changed` from any cq-mcp triggers a local
   // invalidate. Loop-detection (sourcePid === our pid) is enforced
   // inside the service before the handler runs.

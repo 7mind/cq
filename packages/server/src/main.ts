@@ -1,11 +1,27 @@
-import { parseArgs } from "./args";
+import { parseInvocation } from "./args";
 import { buildWeb } from "./buildWeb";
 import { startServer } from "./server";
 import { startDevServer } from "./devServer";
 import { createLogger } from "./log/logger";
 import { startGracefulShutdown } from "./shutdown";
+import { runReset, defaultConfirm } from "./reset";
 
-const args = parseArgs(process.argv.slice(2));
+const invocation = parseInvocation(process.argv.slice(2));
+
+if (invocation.kind === "reset") {
+  // `cq reset` — back up / clear the regenerable bootstrap ledger files and
+  // exit. Never starts a server.
+  const { code } = await runReset(invocation.opts, {
+    stdout: (s) => process.stdout.write(`${s}\n`),
+    stderr: (s) => process.stderr.write(`${s}\n`),
+    confirm: defaultConfirm,
+    now: () => new Date().toISOString(),
+    stdinIsTty: () => process.stdin.isTTY === true,
+  });
+  process.exit(code);
+}
+
+const args = invocation.args;
 
 const logger = createLogger();
 

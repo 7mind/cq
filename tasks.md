@@ -4,6 +4,46 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ---
 
+## Cycle: reset — `cq reset` subcommand + humane bootstrap-divergence startup error
+
+Plan: [`docs/drafts/20260530-1545-cq-reset.md`](docs/drafts/20260530-1545-cq-reset.md).
+Baseline (verified 5d0408c): `bun run check` exit 0, 1077 pass / 0 fail; e2e 28/28.
+Loop serialised (no subagent-dispatch in this harness); adversarial review
+run as an explicit per-PR step.
+
+Changing a bootstrapped ledger's canonical schema makes `FsLedgerStore.init()`
+throw `BootstrapViolationError` against an existing old-schema `docs/<ledger>.md`
+— today a raw stack trace. The bootstrap files are GITIGNORED, REGENERABLE.
+`cq reset` clears them (manual confirmation; backup by default); the startup
+error becomes actionable and points at `cq reset`. Artifact set derived from
+`@cq/ledger` `CANONICAL_LEDGERS` (single source of truth), never hardcoded.
+
+### Milestone M-RESET — PR breakdown
+
+- [x] **reset-1** — Arg layer: `parseInvocation` discriminated union (`server` | `reset`) + `ResetOpts` (`cwd`, `yes`, `backup`). `reset` first-positional → reset; else delegate to existing `parseArgs` → server. Usage text. Routing unit tests.
+- [x] **reset-2** — `reset.ts`: bootstrap artifact-set from CANONICAL_LEDGERS; list/backup/delete; injected `confirm`/`now`/IO; non-TTY refusal (no hang); backup to `docs/.ledger-backup/<iso>/` preserving layout. Tests drive `runReset` directly.
+- [x] **reset-3** — Humane startup error wrapper `ledgerInit.ts` (catch `BootstrapViolationError` → actionable stderr msg + non-zero exit, no stack trace; rethrow others); wire into server.ts + devServer.ts; main.ts routing switch. `.gitignore` += `docs/.ledger-backup/`. Wrapper tests.
+- [x] **reset-4** — Discharge: `bun run check` ×2, `bun run e2e`, `nix build .#default`, closure smoke `./result/bin/cq reset --cwd /tmp/probe --yes`, manual scenario + session log, defect RESET-01.
+
+**M-RESET CLOSED.** Discharge: `bun run check` exit 0 ×2 (1097/0 both; +20 tests over the 1077 baseline; one pre-existing happy-dom web flake observed once, did not recur across 5 subsequent full runs); `bun run e2e` 28/28; `nix build .#default` exit 0 (local build, remote SSH builder unreachable); closure smoke `./result/bin/cq reset --cwd <probe> --yes` backs up 9 files + exits 0 without starting a server. Defects `RESET-01` (feature) + `RESET-02` (closure-source-inclusion, caught by the smoke) resolved. Session log: `docs/logs/20260530-1545-log.md`.
+
+### Completed (M-RESET)
+
+- **reset-1** (2026-05-30) — `parseInvocation` discriminated union in `args.ts`. The `cq` binary is `bun run main.ts -- <args>`, so `process.argv.slice(2)` carries the user args; `reset` is recognised ONLY as the first positional (`--cwd reset` stays a server invocation, cwd="reset"). Server path delegates to the byte-unchanged `parseArgs`. Usage text extended; a separate `RESET_USAGE`. 8 routing tests (server/reset discrimination, reset-flag parsing, first-token-only, unknown-reset-flag exit 1, frozen objects). Verification: `bun test args.test.ts` 17/17.
+- **reset-2** (2026-05-30) — `reset.ts` `runReset(opts,deps)` — returns an exit code, never calls `process.exit`; all IO via injected `deps` (`stdout`/`stderr`/`confirm`(async)/`now`/`stdinIsTty`). `collectArtifacts(docsDir)` derives the set from `@cq/ledger` `CANONICAL_LEDGERS`: ledgers.yaml, each `<ledger>.md`, `archive/<ledger>/` ONLY where the basename matches a canonical ledger AND it is a directory (uses `fs.lstat`, so a same-named flat file is excluded), and `.locks/`. Backup default = MOVE to `docs/.ledger-backup/<iso>/` preserving relative layout (`fs.rename` with EXDEV copy+rm fallback); `--no-backup` hard-deletes. Confirmation gate: `--yes` skips; non-TTY without `--yes` → refuse exit 1 (no stdin read → no hang); else `defaultConfirm` reads one line (`y`/`yes` → proceed; empty/EOF → abort exit 0). 8 tests against per-test `mkdtemp` cwds prove backup/no-backup/abort/--yes/non-TTY-refuse/nothing-to-reset/flat-file-exclusion AND that seeded `docs/drafts/x.md` + flat `docs/archive/tasks-M0.md` survive. Surprise: a real `archive/<ledger>/` subdir does not exist in this repo's `docs/archive` (only tracked flat `tasks-M*.md`), so the directory-vs-flat distinction is the load-bearing safety invariant — covered with a dedicated test + a real-dir end-to-end probe.
+- **reset-3** (2026-05-30) — `ledgerInit.ts` `initLedgerStoreOrExit(store,deps)` catches ONLY `BootstrapViolationError`, extracts the diverged ledger name from the throw-site message via regex, prints an actionable `cq reset` instruction (naming the ledger + `docs/<name>.md`) to stderr, exits 1 — NO stack trace; every other error propagates unchanged (asserted by identity). Wired into both `server.ts` and `devServer.ts` (replacing the bare `await ledgerStore.init()`). `main.ts` switches on the invocation kind and runs the reset path (default stdin-line `confirm`, real clock, `process.stdin.isTTY` gate) before any server code. `.gitignore` += `docs/.ledger-backup/`. 4 wrapper tests (success pass-through, BootstrapViolationError → actionable+exit1+no-stack-markers, non-bootstrap error propagates unreformatted, generic-guidance fallback). End-to-end: a real `bun run main.ts` boot against a hand-staled `goals` schema printed the actionable message + exited 1; after `cq reset --yes` the next boot regenerated a valid schema and logged "cq listening" then clean-shutdown.
+- **reset-4** (2026-05-30) — Discharge (see M-RESET CLOSED above). The closure smoke surfaced `RESET-02`: the `cq` flake derivation builds from the git-tree source, so the still-untracked `reset.ts`/`ledgerInit.ts` were omitted from the first closure (`Cannot find module './reset'`); `git add` + rebuild fixed it. Constraint future work must respect: any NEW source file must be `git add`-ed before `nix build` or the closure silently omits it.
+
+### Cross-cutting architectural notes (locked) — M-RESET
+
+- [x] Subcommand detection in the arg layer (`parseInvocation`), NOT in main.ts ad-hoc — server path delegates to existing `parseArgs` unchanged.
+- [x] Bootstrap artifact set derived from `@cq/ledger` `CANONICAL_LEDGERS` — single source of truth; never a hardcoded stale list.
+- [x] `runReset` takes injected `cwd` / `confirm` (async) / `now` / IO sinks — fully testable; no sync/async unions; default `confirm` refuses (no hang) on non-TTY without `--yes`.
+- [x] Backup is the default (`MOVE` to `docs/.ledger-backup/<iso>/`); `--no-backup` hard-deletes. `docs/.ledger-backup/` gitignored.
+- [x] `docs/archive/<name>/` removed ONLY where `<name>` exactly matches a canonical ledger; flat `docs/archive/tasks-M*.md` NEVER touched.
+
+---
+
 ## Cycle: dark — real, app-wide dark theme (light/dark/auto, gear toggle)
 
 Plan: [`docs/drafts/20260530-1442-dark-theme.md`](docs/drafts/20260530-1442-dark-theme.md).
