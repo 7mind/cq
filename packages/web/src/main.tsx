@@ -2,8 +2,14 @@ import { createRoot } from "react-dom/client";
 import { Manager } from "./ws/Manager";
 import { ConnectionProvider } from "./ws/ConnectionProvider";
 import { defaultCryptoProvider } from "./lib/crypto";
+import { initTheme } from "./lib/theme";
 import App from "./App";
 import "./styles/global.css";
+
+// DARK-01: resolve + apply the theme (light|dark|auto) BEFORE React renders,
+// so document.documentElement[data-theme] is set ahead of first paint (no
+// flash of wrong theme). Attaches the live OS-change listener for auto mode.
+initTheme();
 
 /**
  * Application entry point (PR-17).

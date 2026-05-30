@@ -1,7 +1,16 @@
 /**
- * global.css — application-wide baseline styles (PR-50 a11y).
+ * global.css — application-wide baseline styles (PR-50 a11y; dark theme: DARK-01).
  *
  * Imported once from main.tsx. Applies to the entire document.
+ *
+ * Theme mechanism (DARK-01):
+ *   `:root` holds the LIGHT defaults (unchanged from the original palette).
+ *   `[data-theme="dark"]` (set on <html> by lib/theme.ts) overrides every
+ *   theme variable with its dark value. The theme controller resolves
+ *   light|dark|auto — auto follows the OS via matchMedia with a live listener.
+ *   CSS modules reference these variables (never hardcode a light surface),
+ *   so dark applies app-wide. Light resolved colors are byte-identical to the
+ *   pre-dark palette.
  *
  * Palette (light neutral):
  *   --bg              #ffffff  page background
@@ -14,6 +23,14 @@
  *   --accent          #0070f3  links, active tabs
  *   --hover           #f0f0f0  hover surfaces
  *   --input-bg        #ffffff  text input backgrounds
+ *
+ * Semantic groups added for the sweep (see [data-theme="dark"] for darks):
+ *   surface-overlay/text-tertiary/on-accent/shadow* — base extras
+ *   accent-hover/accent-violet                       — accent variants
+ *   surface-code/border-code/text-code/text-code-muted — GitHub-style code chrome
+ *   surface-success/surface-danger/surface-neutral   — solid colored button bgs
+ *   info-*                                           — elicitation blue card
+ *   chip-*-bg / chip-*-text                          — status/severity chips
  */
 
 :root {
@@ -28,7 +45,109 @@
   --hover: #f0f0f0;
   --input-bg: #ffffff;
   --status-error: #991b1b;
+
+  /* base extras */
+  --surface-overlay: #ffffff;
+  --text-tertiary: #888888;
+  --on-accent: #ffffff;
+  --shadow: rgba(0, 0, 0, 0.15);
+  --shadow-strong: rgba(0, 0, 0, 0.25);
+
+  /* accent variants */
+  --accent-hover: #0056b3;
+  --accent-violet: #7c3aed;
+
+  /* GitHub-style code chrome */
+  --surface-code: #f6f8fa;
+  --border-code: #d0d7de;
+  --text-code: #24292f;
+  --text-code-muted: #57606a;
+
+  /* solid colored button backgrounds */
+  --surface-success: #1a7f37;
+  --surface-danger: #cf222e;
+  --surface-neutral: #6e7781;
+
+  /* elicitation / info (blue) card */
+  --info-border: #0550ae;
+  --info-bg: #f0f6ff;
+  --info-header-bg: #dbeafe;
+  --info-text: #0a3775;
+
+  /* status / severity chips (bg + text pairs) */
+  --chip-info-bg: #dbeafe;
+  --chip-info-text: #1e40af;
+  --chip-success-bg: #dcfce7;
+  --chip-success-text: #166534;
+  --chip-error-bg: #fee2e2;
+  --chip-error-text: #991b1b;
+  --chip-warning-bg: #fef3c7;
+  --chip-warning-text: #92400e;
+  --chip-neutral-bg: #475569;
+  --chip-neutral-text: #ffffff;
+  --chip-violet-bg: #ede9fe;
+  --chip-violet-text: #5b21b6;
 }
+
+[data-theme="dark"] {
+  --bg: #121212;
+  --surface: #1c1c1c;
+  --surface-message: #1f1f1f;
+  --border: #333333;
+  --border-light: #2a2a2a;
+  --text-primary: #e6e6e6;
+  --text-secondary: #a0a0a0;
+  --accent: #4d9bff;
+  --hover: #2a2a2a;
+  --input-bg: #1c1c1c;
+  --status-error: #ff9b9b;
+
+  /* base extras */
+  --surface-overlay: #1e1e1e;
+  --text-tertiary: #8a8a8a;
+  --on-accent: #ffffff;
+  --shadow: rgba(0, 0, 0, 0.5);
+  --shadow-strong: rgba(0, 0, 0, 0.6);
+
+  /* accent variants */
+  --accent-hover: #6cb0ff;
+  --accent-violet: #a78bfa;
+
+  /* GitHub-style code chrome */
+  --surface-code: #161b22;
+  --border-code: #30363d;
+  --text-code: #c9d1d9;
+  --text-code-muted: #8b949e;
+
+  /* solid colored button backgrounds */
+  --surface-success: #238636;
+  --surface-danger: #da3633;
+  --surface-neutral: #484f58;
+
+  /* elicitation / info (blue) card */
+  --info-border: #388bfd;
+  --info-bg: #0d1b2e;
+  --info-header-bg: #15243b;
+  --info-text: #79c0ff;
+
+  /* status / severity chips (bg + text pairs) */
+  --chip-info-bg: #15243b;
+  --chip-info-text: #9cbdff;
+  --chip-success-bg: #11331f;
+  --chip-success-text: #7ee2a8;
+  --chip-error-bg: #3a1212;
+  --chip-error-text: #ff9b9b;
+  --chip-warning-bg: #3a2e0a;
+  --chip-warning-text: #f0c674;
+  --chip-neutral-bg: #30363d;
+  --chip-neutral-text: #c9d1d9;
+  --chip-violet-bg: #2a1a4a;
+  --chip-violet-text: #c7a8ff;
+}
+
+/* color-scheme hints native form controls / scrollbars to match the theme. */
+:root { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
 
 *,
 *::before,
