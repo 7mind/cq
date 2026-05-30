@@ -90,6 +90,16 @@ describe("phase prompt builders", () => {
     expect(p).toContain("a notes app");
     expect(p).toContain("answer: web");
   });
+  it("clarify-review prompt instructs answering a counter-question via the next batch", () => {
+    // When a user's ANSWER is itself a request for info, the reviewer must reply
+    // through newQuestions' context/recommendation/suggestions — the only channel
+    // back to the user (counter-question routing).
+    const p = buildClarifyReviewPrompt("a notes app", qna);
+    expect(p).toContain("ANSWERS the request");
+    expect(p).toContain("`context`");
+    expect(p).toContain("`recommendation`");
+    expect(p).toContain("ONLY channel");
+  });
   it("planner prompt names the tool and renders Q&A", () => {
     const p = buildPlannerPrompt("a notes app", qna);
     expect(p).toContain("submit_plan_doc");

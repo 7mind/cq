@@ -253,8 +253,19 @@ export function buildClarifyReviewPrompt(
     "a `question`, optional `context`, optional `suggestions`, optional",
     "`recommendation`) that must be answered before planning.",
     "",
+    "An ANSWER may itself ask you a question, request information, or express",
+    "uncertainty (e.g. \"explain the pros and cons of X and Y\", \"not sure — what",
+    "do you recommend?\", \"which is better?\"). When that happens the scope is NOT",
+    "clear: set `clear: false` and emit a `newQuestion` that ANSWERS the request —",
+    "put the explanation/comparison in `context`, your advice in `recommendation`,",
+    "and the concrete options in `suggestions` — then re-pose the decision so the",
+    "user can choose. Ground the answer in the repository/context above; do not",
+    "invent facts. The `newQuestions` you submit are the ONLY channel by which",
+    "your reply reaches the user, so a request you leave unanswered is lost.",
+    "",
     "You MUST call the `submit_clarify_review` tool exactly once. Do NOT write",
-    "to any ledger or file. Do NOT ask the user anything directly.",
+    "to any ledger or file. Communicate with the user ONLY through the",
+    "`newQuestions` you submit — never assume a side channel.",
   ].join("\n");
 }
 
