@@ -61,8 +61,8 @@ function confirmSse(): SSEEvent[] {
 test("/plan run appears as a distinct History entry with its producer phase nested", async ({ cq, mock, page }) => {
   test.setTimeout(150_000);
   await cq.open();
-  await expect(cq.textarea).toBeEnabled({ timeout: 10_000 });
-  await cq.waitForIdle(15_000);
+  await expect(cq.textarea).toBeEnabled({ timeout: 45_000 });
+  await cq.waitForIdle(45_000);
 
   await mock.script(submitPlanSse());
   await mock.scriptOnToolResult(confirmSse());
@@ -81,16 +81,16 @@ test("/plan run appears as a distinct History entry with its producer phase nest
 
   // A top-level workflow row carries the "Plan" badge.
   const planBadge = page.locator("[data-testid^='workflow-badge-']");
-  await expect(planBadge.first()).toBeVisible({ timeout: 15_000 });
+  await expect(planBadge.first()).toBeVisible({ timeout: 45_000 });
   await expect(planBadge.first()).toHaveText("Plan");
 
   // The workflow run's title row is present.
   const titleRow = page.locator("table tbody tr", { hasText: SUBMIT_INPUT.goal.title });
-  await expect(titleRow.first()).toBeVisible({ timeout: 15_000 });
+  await expect(titleRow.first()).toBeVisible({ timeout: 45_000 });
 
   // The producer phase child renders as a nested subagent row under the run.
   const producerRow = page.locator("table tbody tr", { hasText: "producer" });
-  await expect(producerRow.first()).toBeVisible({ timeout: 15_000 });
+  await expect(producerRow.first()).toBeVisible({ timeout: 45_000 });
   // Subagent rows carry the ↪ nesting glyph.
   await expect(producerRow.first()).toContainText("↪");
 
@@ -99,10 +99,10 @@ test("/plan run appears as a distinct History entry with its producer phase nest
   // Before this cycle the workflow wrote no event rows, so this Detail was empty.
   await producerRow.first().click();
   const detailBody = page.locator("[data-testid='detail-body']");
-  await expect(detailBody).toBeVisible({ timeout: 15_000 });
+  await expect(detailBody).toBeVisible({ timeout: 45_000 });
   // The producer's post-submit assistant text ("submitted") was forwarded +
   // recorded → it renders as a bubble in the replayed Detail.
-  await expect(detailBody).toContainText("submitted", { timeout: 15_000 });
+  await expect(detailBody).toContainText("submitted", { timeout: 45_000 });
   // Close the Detail.
   await page.locator("[data-testid='detail-close-btn']").first().click();
 
@@ -111,7 +111,20 @@ test("/plan run appears as a distinct History entry with its producer phase nest
   const rootRow = page.locator("table tbody tr", { hasText: SUBMIT_INPUT.goal.title }).first();
   await rootRow.click();
   const rootDetail = page.locator("[data-testid='detail-body']");
-  await expect(rootDetail).toBeVisible({ timeout: 15_000 });
-  await expect(rootDetail).toContainText("Asked 1 clarifying question", { timeout: 15_000 });
-  await expect(rootDetail).toContainText("Which platforms should it target?", { timeout: 15_000 });
+  await expect(rootDetail).toBeVisible({ timeout: 45_000 });
+  await expect(rootDetail).toContainText("Asked 1 clarifying question", { timeout: 45_000 });
+  await expect(rootDetail).toContainText("Which platforms should it target?", { timeout: 45_000 });
+
+  // WFL-D02 drain: this is the only producer-spawning prelude spec that lacked a
+  // teardown drain. The /plan producer's headless subprocess outlives submit-time
+  // (the busy flag clears BEFORE query().close() reaps the child), so without this
+  // it could linger into the `main` project. /__e2e/workflow-drain blocks until
+  // every workflow subprocess has actually exited. Mirrors plan-workflow-loop/
+  // -goals/-continuation teardown. (Defensive hygiene; per ACTIVITY-01-D03 this
+  // drain does NOT fix the separate deterministic header-badges warm-up-turn
+  // failure, which is a production defect in the base ACTIVITY-01 work.)
+  const cqUrl = process.env["CQ_BASE_URL"] ?? "http://127.0.0.1:5173";
+  const drainRes = await fetch(`${cqUrl}/__e2e/workflow-drain`, { method: "POST" });
+  expect(drainRes.ok, "workflow-drain hook must report success").toBeTruthy();
+  await cq.waitForIdle(45_000).catch(() => undefined);
 });

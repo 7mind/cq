@@ -46,6 +46,36 @@ function makeHangingQuery(head: SDKMessage[]): { query: MockQuery; release: () =
   return { query, release };
 }
 
+/**
+ * A query whose end-of-turn `result` is GATED behind `openGate()`, then hangs
+ * (session stays alive). Yields `init` immediately, blocks on the gate, then
+ * yields `result`. Mirrors production ordering (the SDK emits `result` only after
+ * it has the user's input), so turn 1's BUSY window can be observed before it
+ * settles — ACTIVITY-01-D03 made the construction-time `turnInFlight` false, so a
+ * turn is in flight only once a real `chat.input` starts it.
+ */
+function makeGatedTurnQuery(): { query: MockQuery; openGate: () => void } {
+  let openGate!: () => void;
+  const gate = new Promise<void>((r) => {
+    openGate = r;
+  });
+  let release!: () => void;
+  const hang = new Promise<void>((r) => {
+    release = r;
+  });
+  const gen = (async function* (): AsyncGenerator<SDKMessage, void> {
+    yield makeInitMessage();
+    await gate;
+    yield makeResultMessage();
+    await hang;
+  })();
+  const query = gen as unknown as MockQuery;
+  patchStubs(query);
+  query.interrupt = async () => {};
+  query.close = () => release();
+  return { query, openGate };
+}
+
 async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -57,8 +87,11 @@ async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<void> {
 
 describe("Bridge chat-lane activity is per-turn (ACTIVITY-01-D01)", () => {
   it("isTurnInFlight clears on chat.done but isBusy stays true between turns", async () => {
-    // init → result (turn 1 completes) → hang (session stays alive, idle).
-    const { query } = makeHangingQuery([makeInitMessage(), makeResultMessage()]);
+    // init → (gate) → result (turn 1 completes) → hang (session stays alive,
+    // idle). The result is gated so turn 1's BUSY window is observed before it
+    // settles. ACTIVITY-01-D03: a fresh session is NOT in flight; turn 1 begins
+    // only when the first chat.input arrives, not at construction.
+    const { query, openGate } = makeGatedTurnQuery();
     const registry = new SessionRegistry();
     const busyChanges: boolean[] = [];
     const bridge = new Bridge({
@@ -74,11 +107,19 @@ describe("Bridge chat-lane activity is per-turn (ACTIVITY-01-D01)", () => {
     const [started] = await ws.waitForFrames("chat.started");
     const sessionId = started!.sessionId as string;
 
-    // Turn 1 begins immediately on start → in flight.
+    // Fresh session: no turn yet (ACTIVITY-01-D03) — the warm-up auto-start must
+    // NOT report BUSY before any real input.
+    expect(bridge.isTurnInFlight()).toBe(false);
+
+    // The first chat.input begins turn 1 → in flight. The result is still gated,
+    // so the turn cannot have completed.
+    await bridge.handleChatInput(ws, makeChatInput(sessionId, "turn one"));
     expect(bridge.isTurnInFlight()).toBe(true);
 
-    // The result message drives a per-turn chat.done; turnInFlight must clear,
-    // but the session stays alive (isBusy stays true) because the query hangs.
+    // Release turn 1: the result message drives a per-turn chat.done;
+    // turnInFlight must clear, but the session stays alive (isBusy stays true)
+    // because the query hangs.
+    openGate();
     await ws.waitForFrames("chat.done");
     await waitFor(() => !bridge.isTurnInFlight());
     expect(bridge.isTurnInFlight()).toBe(false); // idle between turns
@@ -88,12 +129,12 @@ describe("Bridge chat-lane activity is per-turn (ACTIVITY-01-D01)", () => {
     await bridge.handleChatInput(ws, makeChatInput(sessionId, "next turn"));
     expect(bridge.isTurnInFlight()).toBe(true);
 
-    // onBusyChange fired across the transitions: start(true) → done(false) →
+    // onBusyChange fired across the transitions: input(true) → done(false) →
     // input(true). (The exact sequence must contain these in order.)
     expect(busyChanges).toContain(true);
     expect(busyChanges).toContain(false);
     // First notification was the turn-start (true); a later one was the
-    // turn-end (false); the input re-raised it (true).
+    // turn-end (false); the next input re-raised it (true).
     const firstFalseIdx = busyChanges.indexOf(false);
     expect(firstFalseIdx).toBeGreaterThanOrEqual(0);
     expect(busyChanges.slice(firstFalseIdx + 1)).toContain(true);
