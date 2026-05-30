@@ -26,42 +26,59 @@ Two defects + one optimization:
 
 ### Milestone M-PCONTENT — PR breakdown
 
-- [ ] **pcontent-1** — Recorder event sink: extend `WorkflowHistoryRecorder` with
-  `appendPhaseEvent`/`closePhaseEvents`/`appendRootEvent` (Persistent →
-  `persistence.events.append`/`close`; Null → no-op). Thread an `onEvent` sink
-  through `ProduceRequest`/`PhaseRequest`; both Claude lanes forward each drained
-  SDK message; `recordPhase` + the producer/continuation dispatch wire `onEvent`
-  → `appendPhaseEvent(phase, …)` and `closePhaseEvents` on settle. → verify:
-  recorder tests (dual adapter) assert events under the right invocation + closed.
-- [ ] **pcontent-2** — Q&A transcript: harness appends a synthetic assistant-style
-  "asked" event under the root on every question-batch write
-  (`writeArtifacts`/`writeIncrement`/clarify+review new questions) and a synthetic
-  user-style "answered Qid: …" event on each open→answered in `submitAnswer`.
-  → verify: events under root carry the asked/answered text; Detail replay includes them.
-- [ ] **pcontent-3** — Explore-once: add `grounding` to `ProducerOutputSchema` +
-  `submitPlanSchema` (lockstep — GOAL-TITLE-01) + `GOALS_SCHEMA`; producer prompt
-  asks for grounding; harness persists it on the goal; later-phase builders
-  (clarify/planner/plan-review/continuation-planner) PREPEND the grounding +
-  SOFTEN the explore instruction; producer keeps full explore-first. → verify:
-  prompt-text asserts; grounding survives restart; real-SDK MockAnthropic producer
-  with grounding does not time out (stripped-field guard).
-- [ ] **pcontent-4** — E2E (`/plan` mocked → open run in History → Detail
-  NON-empty + shows Q&A) in the correct Playwright project (WFL-D02 ordering) +
-  discharge (`bun run check` ×2, `bun run e2e`, `nix build .#default`, manual
-  scenario + session log + defects rows).
+- [x] **pcontent-1+2+3** (commit 622d5f2) — Recorder event sink + Q&A transcript +
+  explore-once grounding (delivered as ONE buildable commit — the three concerns
+  are interwoven across `workflowRuntime.ts`/`producer.ts`/`phases.ts`, so
+  splitting by file would produce non-compiling intermediate commits).
+- [x] **pcontent-4** (commit <this>) — E2E (`/plan` mocked → open run in History →
+  producer Detail NON-empty + root Detail shows Q&A; prelude project per WFL-D02)
+  + discharge.
+
+**M-PCONTENT CLOSED.** Discharge: `bun run check` exit 0 ×2 (1120/0 both;
+baseline 1109 + 11 new tests; one pre-existing heartbeat timing flake observed
+once under full-suite load on run 1, isolated 3/3 green, did not recur on run 2 —
+not in this cycle's scope); `bun run e2e` 28/28 (extended `plan-workflow-history.spec.ts`
+in-place — no count delta); `nix build .#default` exit 0 (`result` → cq-0.0.1;
+local build, remote SSH builder unreachable). Defects `WF-HIST-02` (empty Detail /
+Q&A transcript) + `PLAN-EXPLORE-01` (explore-once) resolved. Session log:
+`docs/logs/20260530-1620-log.md`. GOALS_SCHEMA gained `grounding` → existing dev
+`docs/goals.md` needs `cq reset` once (gitignored, regenerable).
 
 ### Cross-cutting architectural notes (locked) — M-PCONTENT
 
-- [ ] Events written DIRECTLY via Persistence inside the recorder — never via the
-  Bridge/SessionRegistry (pool=1 holds, same as WF-HIST).
-- [ ] `grounding` stored on the GOAL (GOALS_SCHEMA field) — natural durable home,
+- [x] Events written DIRECTLY via Persistence inside the recorder — never via the
+  Bridge/SessionRegistry (pool=1 holds, same as WF-HIST). Proven by the dual-adapter
+  content test reading events via `persistence.events.readAll` + the existing
+  pool=1 regression tests staying green.
+- [x] `grounding` stored on the GOAL (GOALS_SCHEMA field) — natural durable home,
   re-read by every phase via the existing goal fetch, survives restart for free.
   Cost: divergence-guard schema change → existing dev `docs/goals.md` needs
   `cq reset` (noted; gitignored/regenerable).
-- [ ] Any new structured field is in BOTH the advertised submit schema AND the
-  validated schema (GOAL-TITLE-01 — SDK strips to advertised shape).
-- [ ] Event sink is best-effort + never gates control flow; uniform-async, no
-  sync/async unions.
+- [x] Any new structured field is in BOTH the advertised submit schema AND the
+  validated schema (GOAL-TITLE-01 — SDK strips to advertised shape). Guarded by the
+  real-SDK MockAnthropic integration test (grounding round-trips onto the goal).
+- [x] Event sink + recorder appends are best-effort (swallow+warn) + never gate
+  control flow; `grounding` is OPTIONAL so a stripped field degrades to "", not a
+  validation failure; uniform-async throughout, no sync/async unions.
+
+### Completed (M-PCONTENT)
+
+- **pcontent-1+2+3** (2026-05-30, commit 622d5f2) — see defects `WF-HIST-02` +
+  `PLAN-EXPLORE-01` for the full shipped description. Surprise: the phase-1 "asked"
+  event had to be recorded from `startPlan` (after `linkGoal`/`runHandles.set`
+  cache the handle), NOT inside `writeArtifacts` — at `writeArtifacts` time the
+  goalId→run link is not yet persisted, so `runHandleFor` would resolve undefined
+  and the asked event would be silently dropped. Continuation/clarify/review write
+  sites are safe (handle already cached). R3 (close-before-`result` race) resolved
+  by the reopen-on-append property of `SqliteEventLog.fdFor` — proven in the e2e
+  (the producer Detail shows the post-submit "submitted" text, appended AFTER
+  `closePhaseEvents`).
+- **pcontent-4** (2026-05-30) — extended `plan-workflow-history.spec.ts` in-place
+  (kept it in the prelude project — its `testMatch` already includes `-history`):
+  added `grounding` to the producer submit payload, then clicks the producer child
+  row → asserts `detail-body` contains "submitted" (NON-empty replay; before this
+  cycle the Detail was empty), and clicks the root row → asserts the Detail shows
+  "Asked 1 clarifying question" + the question text (Q&A visible). Discharge above.
 
 ---
 

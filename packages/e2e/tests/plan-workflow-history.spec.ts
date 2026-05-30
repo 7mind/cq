@@ -24,6 +24,7 @@ const SUBMIT_INPUT = {
   questions: [
     { question: "Which platforms should it target?", suggestions: ["web", "desktop"], recommendation: "web" },
   ],
+  grounding: "cq is a local-first ledger app; ledgers under docs/; the workflow runtime drives /plan.",
 };
 
 function submitPlanSse(): SSEEvent[] {
@@ -92,4 +93,25 @@ test("/plan run appears as a distinct History entry with its producer phase nest
   await expect(producerRow.first()).toBeVisible({ timeout: 15_000 });
   // Subagent rows carry the ↪ nesting glyph.
   await expect(producerRow.first()).toContainText("↪");
+
+  // WF-HIST-02a: opening the producer phase's Detail replays a NON-empty
+  // transcript (the producer's drained SDK messages were recorded as events).
+  // Before this cycle the workflow wrote no event rows, so this Detail was empty.
+  await producerRow.first().click();
+  const detailBody = page.locator("[data-testid='detail-body']");
+  await expect(detailBody).toBeVisible({ timeout: 15_000 });
+  // The producer's post-submit assistant text ("submitted") was forwarded +
+  // recorded → it renders as a bubble in the replayed Detail.
+  await expect(detailBody).toContainText("submitted", { timeout: 15_000 });
+  // Close the Detail.
+  await page.locator("[data-testid='detail-close-btn']").first().click();
+
+  // WF-HIST-02b: the run ROOT's Detail shows the asked Q&A transcript. The root
+  // (main) row carries the "Plan" badge; open it.
+  const rootRow = page.locator("table tbody tr", { hasText: SUBMIT_INPUT.goal.title }).first();
+  await rootRow.click();
+  const rootDetail = page.locator("[data-testid='detail-body']");
+  await expect(rootDetail).toBeVisible({ timeout: 15_000 });
+  await expect(rootDetail).toContainText("Asked 1 clarifying question", { timeout: 15_000 });
+  await expect(rootDetail).toContainText("Which platforms should it target?", { timeout: 15_000 });
 });
