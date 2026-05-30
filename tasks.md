@@ -12,15 +12,21 @@ TEST-ONLY. `packages/e2e/tests/plan-workflow-history.spec.ts` passes in isolatio
 contention (workers=1, serial). No Task tool → executor/reviewer run inline as
 distinct steps with explicit red-before-green repro discipline (project convention).
 
-### Milestone M-HIST-STABLE — single buildable commit
+### Milestone M-HIST-STABLE — single buildable commit — CLOSED (2026-05-30)
 
-- [!] **hist-stable-1** — BLOCKED (ACTIVITY-01-D03). The TEST-ONLY work (bump +
-  drain) is applied and the history spec passes 6/6, but the full suite is NOT
-  green: a DIFFERENT, deterministic, production-rooted failure (`header-badges.spec.ts:29`,
-  warm-up turn latched at `BUSY (1)`) blocks 28/28. It pre-exists on clean `a7501ab`,
-  is independent of the history spec, and the drain does not fix it. Per the brief's
-  hard STOP constraint (a production change ⇒ real regression, not a flake) the loop
-  halts here for user authorization. See ACTIVITY-01-D03 in defects.md.
+- [x] **hist-stable-1** — RESOLVED (ACTIVITY-01-D03). Production fix authorized and
+  shipped: `ActiveSession` now constructs with `turnInFlight: false` (claudeBridge.ts:651),
+  so the auto-started warm-up session no longer latches the aggregate badge at `BUSY (1)`.
+  Root cause confirmed: the construction-time `true` reported a turn-in-flight before any
+  real turn (the chat.start input queue is empty; the first turn arrives via chat.input →
+  `setTurnInFlight(true)`, cleared by per-turn chat.done). CodexBridge already correct
+  (`isTurnInFlight()` ⟺ `abortController !== null`, constructed null). Added regression
+  test `packages/server/test/warmup-activity.test.ts` (fresh session not-in-flight; real
+  turn BUSY→IDLE) and corrected `bridge-activity.test.ts:78` (turn 1 now input-driven, not
+  construction-assumed). The 28bb49a history-spec hardening (45_000 bumps + WFL-D02 drain)
+  is RETAINED. Proof: `bun run e2e` 4/4 full runs all 28/28 (header-badges +
+  plan-workflow-history green every run); `bun run check` exit 0 ×2 (1158 pass / 0 fail);
+  `nix build .#default` exit 0. See ACTIVITY-01-D03 in defects.md.
 - [~] (superseded by the BLOCKED line above) **hist-stable-1** — (a) bump the under-load-tight waits in `plan-workflow-history.spec.ts`
   (warm-up `waitForIdle`, textarea-enabled, History badge/title/producer-row visibility +
   Detail body/text waits) 10_000/15_000 → 45_000, matching the heavy workflow specs; banner

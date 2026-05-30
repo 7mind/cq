@@ -642,9 +642,13 @@ export class ClaudeBridge implements BackendBridge {
       queue,
       ws,
       aborting: false,
-      // ACTIVITY-01: the first turn begins immediately on session creation (the
-      // SDK starts working on the initial prompt), so the turn is in flight.
-      turnInFlight: true,
+      // ACTIVITY-01-D03: a freshly-created session is NOT processing a turn yet.
+      // chat.start seeds an EMPTY input queue and does not deliver a prompt — the
+      // first real turn arrives later via chat.input (`setTurnInFlight(true)` in
+      // handleChatInput) and is cleared by the per-turn chat.done (`sendDone`).
+      // Initialising this `true` made the auto-started warm-up session (which
+      // never runs a real turn) latch the aggregate badge at "BUSY (1)" forever.
+      turnInFlight: false,
       uiMode,
       startedAt,
       taskInvocationMap: new Map(),
