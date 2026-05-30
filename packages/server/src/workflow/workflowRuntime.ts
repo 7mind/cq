@@ -41,7 +41,15 @@ import type { Logger } from "../log/logger";
 import type { Item, LedgerStore } from "@cq/ledger";
 import { GOALS_LEDGER, QUESTIONS_LEDGER, TASKS_LEDGER } from "@cq/ledger";
 import type { WorkflowEvent, GoalSnapshot, GoalMilestone, GoalQuestion, GoalTask } from "@cq/shared";
-import type { WorkflowProducer, ProducerOutput } from "./producer.js";
+import type { WorkflowProducer, ProducerOutput, PhaseUsage } from "./producer.js";
+import type { Persistence } from "../persist/Persistence.js";
+import {
+  type WorkflowHistoryRecorder,
+  type WorkflowRunHandle,
+  type PhaseInvocationHandle,
+  NullWorkflowHistoryRecorder,
+  PersistentWorkflowHistoryRecorder,
+} from "./workflowHistory.js";
 import {
   CLARIFY_REVIEW_SPEC,
   CONTINUE_SPEC,
@@ -86,12 +94,24 @@ export interface WorkflowRuntimeOpts {
   selectProducer: ProducerSelector;
   /** Resolves a phase subagent per platform (clarify/plan/review loops). */
   selectPhaseSubagent: PhaseSubagentSelector;
+  /**
+   * Persistence adapter for recording `/plan` runs into the History tables
+   * (wfhist). Optional/injectable: when omitted (legacy callers / some tests)
+   * the runtime uses a no-op recorder and writes no History rows. When supplied,
+   * each run becomes its own workflow-`kind` session + root invocation with one
+   * child per phase dispatch — written DIRECTLY, never via the Bridge.
+   */
+  persistence?: Persistence;
+  /** Working directory recorded on the workflow session's `cwd`. */
+  cwd?: string;
 }
 
 /** Input to a single `/plan <text>` (new-goal) run. */
 export interface StartPlanInput {
   readonly text: string;
   readonly platform: "claude" | "codex";
+  /** Optional model the run's phase subagents use (recorded on the History rows). */
+  readonly model?: string;
 }
 
 /** A tracked active phase dispatch (pool=1 for the workflow lane). */
@@ -121,6 +141,22 @@ export class WorkflowRuntime {
   private readonly store: LedgerStore;
   private readonly selectProducer: ProducerSelector;
   private readonly selectPhaseSubagent: PhaseSubagentSelector;
+  /** History recorder (no-op unless persistence was injected). */
+  private readonly history: WorkflowHistoryRecorder;
+  /**
+   * In-memory goalId → run handle map. Populated when a run is started+linked or
+   * resumed; consulted to attach phase children + settle the run. Empty after a
+   * restart — `runHandleFor` rebuilds it from the durable workflow_session link
+   * table on demand, so resume re-attaches to the SAME session (no orphan).
+   */
+  private readonly runHandles = new Map<string, WorkflowRunHandle>();
+  /**
+   * Per-goal, per-phase round counters so a looping phase (clarify-reviewer /
+   * planner / plan-reviewer) records `clarify-reviewer#1`, `#2`, … one row per
+   * round. Keyed `<goalId>:<phase>`. In-memory only: round indices are cosmetic
+   * (they label rows), so a restart restarting at `#1` is acceptable.
+   */
+  private readonly phaseRounds = new Map<string, number>();
 
   /** Single active phase dispatch (Q D: pool=1 for the workflow lane). */
   private active: ActiveWorkflow | null = null;
@@ -145,6 +181,10 @@ export class WorkflowRuntime {
     this.store = opts.store;
     this.selectProducer = opts.selectProducer;
     this.selectPhaseSubagent = opts.selectPhaseSubagent;
+    this.history =
+      opts.persistence !== undefined
+        ? new PersistentWorkflowHistoryRecorder(opts.persistence, opts.cwd ?? process.cwd(), opts.logger)
+        : new NullWorkflowHistoryRecorder();
   }
 
   /** True iff a workflow phase is currently dispatching. */
@@ -296,15 +336,34 @@ export class WorkflowRuntime {
     this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "started", detail: "continuing goal" });
     this.logger.info("workflow.continuation_started", { workflowId, goalRef, platform });
 
+    // Resume the goal's existing workflow run if one was recorded, else begin a
+    // fresh run for this continuation (a goal planned before this feature
+    // shipped has no link). Either way the continuation producer + the ensuing
+    // loop phases attach under the SAME session for this goal.
+    let contHandle = this.runHandleFor(goalRef);
+    if (contHandle === undefined) {
+      contHandle = this.history.startRun({
+        workflowId,
+        platform,
+        model: "",
+        title: String(goal.fields["title"] ?? text),
+      });
+      this.history.linkGoal(contHandle, goalRef, String(goal.fields["title"] ?? text));
+      this.runHandles.set(goalRef, contHandle);
+    }
+
     try {
       this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "producing", detail: "scoping the increment" });
       const desc = String(goal.fields["description"] ?? "");
       const subagent = this.selectPhaseSubagent(platform);
-      const output: ProducerOutput = await subagent.dispatch(CONTINUE_SPEC, {
-        prompt: buildContinuationPrompt(desc, this.milestoneTitles(goalRef), this.qnaFor(goalRef), text),
-        signal: abort.signal,
-        registerTeardown: this.trackTeardown,
-      });
+      const output: ProducerOutput = await this.recordPhase(goalRef, this.nextPhaseName(goalRef, "continuation"), (onUsage) =>
+        subagent.dispatch(CONTINUE_SPEC, {
+          prompt: buildContinuationPrompt(desc, this.milestoneTitles(goalRef), this.qnaFor(goalRef), text),
+          signal: abort.signal,
+          registerTeardown: this.trackTeardown,
+          onUsage,
+        }),
+      );
 
       await this.writeIncrement(goalRef, text, output);
 
@@ -320,6 +379,9 @@ export class WorkflowRuntime {
       return { outcome: "questions_ready", workflowId, goalId: goalRef };
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
+      // The continuation producer failed: settle the run failed (the child row
+      // was already marked failed by recordPhase) so it is not left running.
+      this.settleRunFor(goalRef, "failed", reason);
       this.emitAll({ type: "workflow.event", workflowId, goalId: goalRef, phase: "produce", status: "errored", detail: reason });
       this.logger.warn("workflow.continuation_errored", { workflowId, goalRef, reason });
       return { outcome: "errored", workflowId, reason };
@@ -349,16 +411,36 @@ export class WorkflowRuntime {
     this.emitAll({ type: "workflow.event", workflowId, phase: "produce", status: "started" });
     this.logger.info("workflow.started", { workflowId, platform: input.platform });
 
+    // Begin the History run: a workflow-`kind` session + a running root `main`
+    // invocation. The title is a placeholder (the `/plan` text) until the goal
+    // title is known; `linkGoal` updates it + binds goalId → (session, root).
+    const runHandle = this.history.startRun({
+      workflowId,
+      platform: input.platform,
+      model: input.model ?? "",
+      title: input.text,
+    });
+    // The producer dispatch is the first phase child under the run root.
+    const producerPhase = this.history.startPhase(runHandle, "producer", input.model ?? "");
+
     try {
       this.emitAll({ type: "workflow.event", workflowId, phase: "produce", status: "producing" });
       const producer = this.selectProducer(input.platform);
       const output = await producer.produce({
         text: input.text,
+        ...(input.model !== undefined ? { model: input.model } : {}),
         signal: abort.signal,
         registerTeardown: this.trackTeardown,
+        onUsage: (u) => this.history.recordPhaseUsage(producerPhase, u),
       });
+      this.history.settlePhase(producerPhase, "completed");
+
       const goalId = await this.writeArtifacts(output);
       this.goalPlatform.set(goalId, input.platform);
+      // Bind the run to its goal now that the title + id are known, and cache the
+      // handle so subsequent phases (clarify/plan/review) attach under it.
+      this.history.linkGoal(runHandle, goalId, output.goal.title);
+      this.runHandles.set(goalId, runHandle);
 
       this.emitAll({
         type: "workflow.event",
@@ -372,6 +454,11 @@ export class WorkflowRuntime {
       return { outcome: "questions_ready", workflowId, goalId };
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
+      // The producer phase + the whole run failed: mark both rather than leave
+      // dangling-running. The goal id is unknown on this path, so settle via the
+      // handle directly.
+      this.history.settlePhase(producerPhase, "failed");
+      this.history.settleRun(runHandle, "failed", reason);
       this.emitAll({ type: "workflow.event", workflowId, phase: "produce", status: "errored", detail: reason });
       this.logger.warn("workflow.errored", { workflowId, reason });
       return { outcome: "errored", workflowId, reason };
@@ -450,6 +537,8 @@ export class WorkflowRuntime {
 
     if (choice === "abandon") {
       await this.store.updateItem(GOALS_LEDGER, goalId, { status: "abandoned" });
+      // Terminal: settle the run + close the session.
+      this.settleRunFor(goalId, "completed", "abandoned");
       const workflowId = crypto.randomUUID();
       this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "done", detail: "goal abandoned" });
       this.logger.info("workflow.escalation_abandon", { goalId });
@@ -458,6 +547,8 @@ export class WorkflowRuntime {
 
     if (choice === "proceed") {
       await this.store.updateItem(GOALS_LEDGER, goalId, { status: "planned" });
+      // Terminal: settle the run + close the session.
+      this.settleRunFor(goalId, "completed", "planned");
       const workflowId = crypto.randomUUID();
       this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "planned", detail: "plan accepted as-is" });
       this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "done", detail: "planning complete" });
@@ -622,6 +713,10 @@ export class WorkflowRuntime {
       }
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
+      // A phase dispatch in the clarify/plan/review loop failed: settle the run
+      // failed (the child row was marked failed by recordPhase) so the root is
+      // not left dangling-running.
+      this.settleRunFor(goalId, "failed", reason);
       this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "errored", detail: reason });
       this.logger.warn("workflow.phase_errored", { goalId, workflowId, reason });
     } finally {
@@ -669,11 +764,14 @@ export class WorkflowRuntime {
     this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "clarify", status: "clarifying", detail: "reviewing answers" });
 
     const subagent = this.selectPhaseSubagent(this.platformFor(goalId));
-    const out = await subagent.dispatch(CLARIFY_REVIEW_SPEC, {
-      prompt: buildClarifyReviewPrompt(desc, this.qnaFor(goalId)),
-      signal,
-      registerTeardown: this.trackTeardown,
-    });
+    const out = await this.recordPhase(goalId, this.nextPhaseName(goalId, "clarify-reviewer"), (onUsage) =>
+      subagent.dispatch(CLARIFY_REVIEW_SPEC, {
+        prompt: buildClarifyReviewPrompt(desc, this.qnaFor(goalId)),
+        signal,
+        registerTeardown: this.trackTeardown,
+        onUsage,
+      }),
+    );
 
     // No-progress guard (same trigger as the plan-review loop, generalized):
     // a clarify-reviewer that reports NOT-CLEAR but writes NO new questions
@@ -742,7 +840,9 @@ export class WorkflowRuntime {
     const prompt = this.isContinuation(goalId)
       ? buildContinuationPlannerPrompt(desc, this.preservedPlanArtifacts(goalId), this.qnaFor(goalId)) + addendum
       : buildPlannerPrompt(desc, this.qnaFor(goalId)) + addendum;
-    return subagent.dispatch(PLAN_SPEC, { prompt, signal, registerTeardown: this.trackTeardown });
+    return this.recordPhase(goalId, this.nextPhaseName(goalId, "planner"), (onUsage) =>
+      subagent.dispatch(PLAN_SPEC, { prompt, signal, registerTeardown: this.trackTeardown, onUsage }),
+    );
   }
 
   /**
@@ -770,16 +870,21 @@ export class WorkflowRuntime {
     this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "reviewing", detail: "reviewing the plan" });
 
     const subagent = this.selectPhaseSubagent(this.platformFor(goalId));
-    const review = await subagent.dispatch(PLAN_REVIEW_SPEC, {
-      // The reviewer sees the current plan; prior findings (if any) were already
-      // folded into the planner prompt on the preceding revise round.
-      prompt: buildPlanReviewPrompt(desc, this.qnaFor(goalId), this.planArtifacts(goalId), []),
-      signal,
-      registerTeardown: this.trackTeardown,
-    });
+    const review = await this.recordPhase(goalId, this.nextPhaseName(goalId, "plan-reviewer"), (onUsage) =>
+      subagent.dispatch(PLAN_REVIEW_SPEC, {
+        // The reviewer sees the current plan; prior findings (if any) were already
+        // folded into the planner prompt on the preceding revise round.
+        prompt: buildPlanReviewPrompt(desc, this.qnaFor(goalId), this.planArtifacts(goalId), []),
+        signal,
+        registerTeardown: this.trackTeardown,
+        onUsage,
+      }),
+    );
 
     if (review.satisfied) {
       await this.store.updateItem(GOALS_LEDGER, goalId, { status: "planned" });
+      // Terminal: the run reached `planned`. Settle the root + close the session.
+      this.settleRunFor(goalId, "completed", "planned");
       this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "planned", detail: "plan ready" });
       this.emitAll({ type: "workflow.event", workflowId, goalId, phase: "review", status: "done", detail: "planning complete" });
       return;
@@ -1237,6 +1342,77 @@ export class WorkflowRuntime {
 
   private platformFor(goalId: string): "claude" | "codex" {
     return this.goalPlatform.get(goalId) ?? "claude";
+  }
+
+  // ─────────────────────────────────────────────────────────────────────── //
+  // History recording (wfhist-3 / wfhist-4). All rows are written DIRECTLY via
+  // the Persistence adapter inside the recorder — never via the Bridge — so the
+  // pool=1 interactive-chat invariant holds.
+  // ─────────────────────────────────────────────────────────────────────── //
+
+  /** The model recorded on a goal's workflow rows (none tracked yet → ""). */
+  private modelFor(_goalId: string): string {
+    return "";
+  }
+
+  /** Next round-suffixed agent name for a looping phase (e.g. `planner#2`). */
+  private nextPhaseName(goalId: string, phase: string): string {
+    const key = `${goalId}:${phase}`;
+    const n = (this.phaseRounds.get(key) ?? 0) + 1;
+    this.phaseRounds.set(key, n);
+    return `${phase}#${n}`;
+  }
+
+  /**
+   * Resolve the run handle for a goal: from the in-memory map, else rebuild it
+   * from the durable workflow_session link (resume re-attach after a restart),
+   * else undefined (no run was recorded for this goal — e.g. a goal planned
+   * before this feature shipped). On a successful resume the handle is cached.
+   */
+  private runHandleFor(goalId: string): WorkflowRunHandle | undefined {
+    const cached = this.runHandles.get(goalId);
+    if (cached !== undefined) return cached;
+    const resumed = this.history.resumeRun(goalId);
+    if (resumed !== undefined) this.runHandles.set(goalId, resumed);
+    return resumed;
+  }
+
+  /**
+   * Run one phase dispatch with its own child invocation row: insert a running
+   * child, run `dispatch` (which records usage via the `onUsage` sink threaded
+   * into the request), then settle the child completed/failed. The child row is
+   * NEVER left dangling-running: any throw marks it failed and re-throws.
+   *
+   * `mkRequest` receives the `onUsage` sink so the caller can attach it to the
+   * phase request alongside the rest of its fields.
+   */
+  private async recordPhase<O>(
+    goalId: string,
+    agentName: string,
+    run: (onUsage: (u: PhaseUsage) => void) => Promise<O>,
+  ): Promise<O> {
+    const handle = this.runHandleFor(goalId);
+    if (handle === undefined) {
+      // No recorded run (e.g. legacy goal) — run without a child row.
+      return run(() => {});
+    }
+    const phase: PhaseInvocationHandle = this.history.startPhase(handle, agentName, this.modelFor(goalId));
+    const onUsage = (u: PhaseUsage): void => this.history.recordPhaseUsage(phase, u);
+    try {
+      const out = await run(onUsage);
+      this.history.settlePhase(phase, "completed");
+      return out;
+    } catch (err: unknown) {
+      this.history.settlePhase(phase, "failed");
+      throw err;
+    }
+  }
+
+  /** Settle a goal's run root + close its session (terminal lifecycle). */
+  private settleRunFor(goalId: string, status: "completed" | "failed", endedReason: string): void {
+    const handle = this.runHandleFor(goalId);
+    if (handle === undefined) return;
+    this.history.settleRun(handle, status, endedReason);
   }
 
   private guidanceAddendum(guidance?: string): string {

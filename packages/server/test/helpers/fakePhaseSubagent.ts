@@ -8,12 +8,22 @@
  */
 
 import type { PhaseSubagent, PhaseSpec, PhaseRequest } from "../../src/workflow/index";
+import type { PhaseUsage } from "../../src/workflow/producer";
 
 type Canned<O> = O | (() => O);
 
 export class FakePhaseSubagent implements PhaseSubagent {
   /** Per-toolName queue of canned outputs. */
   private readonly queues = new Map<string, Array<Canned<unknown>>>();
+  /** When set, every dispatch fires `req.onUsage` with this usage (wfhist-4). */
+  private usage: PhaseUsage | undefined;
+
+  /** Make every dispatch fire `onUsage` with the given usage before resolving. */
+  fireUsage(usage: PhaseUsage): this {
+    this.usage = usage;
+    return this;
+  }
+
   /** Per-toolName sticky output used once the queue drains (for unbounded loops). */
   private readonly sticky = new Map<string, Canned<unknown>>();
   /** Per-toolName dispatch count (assertable). */
@@ -49,6 +59,7 @@ export class FakePhaseSubagent implements PhaseSubagent {
       return Promise.reject(new Error(`FakePhaseSubagent: no canned output for ${spec.toolName}`));
     }
     const value = typeof entry === "function" ? (entry as () => unknown)() : entry;
+    if (this.usage !== undefined && req.onUsage !== undefined) req.onUsage(this.usage);
     return Promise.resolve(value as O);
   }
 }

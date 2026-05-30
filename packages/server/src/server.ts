@@ -144,6 +144,11 @@ export async function startServer(config: ServerConfig): Promise<RunningServer> 
   const workflow = new WorkflowRuntime({
     logger,
     store: ledgerStore,
+    // wfhist: record each `/plan` run as its own History entry (workflow-kind
+    // session + root + per-phase child invocations), written DIRECTLY via the
+    // Persistence adapter — never through the interactive Bridge (pool=1 holds).
+    persistence,
+    cwd,
     selectProducer: (platform) =>
       platform === "codex"
         ? new CodexProducer({

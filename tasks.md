@@ -18,7 +18,7 @@ Bridge / SessionRegistry, so pool=1 holds.
 ### Milestone M-WFHIST — PR breakdown
 
 - [x] **wfhist-1** (commit 4fab2f5) — Persistence: `session.kind` column (migration #8) + `workflow_session` link store (goalId→sessionId+rootInvocationId); both adapters; HistoryRow/Full Zod carry `kind`; history join selects it. Dual-adapter round-trip + migration-on-pre-#8-DB tests. 1044/0.
-- [ ] **wfhist-2** — Capture phase-subagent usage (model/cost/tokens) from the SDK `result` message through an `onUsage` callback on the dispatch/produce request (no sync/async union; Codex=0). Remove the `submitted`-break so the drain observes `result`.
+- [x] **wfhist-2** (commit 3377826) — Capture phase-subagent usage (model/cost/tokens) from the SDK `result` via an `onUsage` sink on the dispatch/produce request (no sync/async union; Codex=0). Drain defers `q.close()` past submit (5s grace) to observe `result`; resolves at submit-time (pool=1 timing unchanged). Real-SDK onUsage test. 1049/0.
 - [ ] **wfhist-3** — Wire `persistence` into `WorkflowRuntime`; create the workflow session + root `main` invocation per run; link goalId→session; settle/close on terminal.
 - [ ] **wfhist-4** — One CHILD invocation per phase dispatch (producer, each clarify/planner/review/revise round, continuation): running→completed/failed, cost/tokens recorded, correct parent linkage.
 - [ ] **wfhist-5** — Web: `List.tsx` "Plan" badge on workflow main rows; phase children render as `↪` subagent rows.
