@@ -605,10 +605,30 @@ export function ChatTab(): React.ReactElement {
     if (planMatch !== null) {
       const rest = (planMatch[1] ?? "").trim();
       const goalRefMatch = /^(G\d+)\s+([\s\S]*)$/.exec(rest);
+      // PLAN-D04: the server's workflow.start handler emits only
+      // workflow.event lifecycle frames, never a chat.event, so the user's
+      // typed `/plan …` line would vanish from the transcript. Echo it
+      // locally as a synthetic user message (same SDKUserMessage shape the
+      // server echoes for chat.input) so the existing Stream user-bubble
+      // renderer preserves a record that the command was issued.
+      const now = Date.now();
+      const echo: ChatEvent = {
+        type: "chat.event",
+        seq: seqRef.current++,
+        ts: now,
+        sessionId: activeSessionId ?? "workflow",
+        invocationId: "workflow",
+        parentInvocationId: null,
+        sdkEvent: {
+          type: "user",
+          message: { role: "user", content: [{ type: "text", text }] },
+        },
+      };
+      setChatEvents((prev) => [...prev, echo]);
       const frame: WorkflowStart = {
         type: "workflow.start",
         seq: seqRef.current++,
-        ts: Date.now(),
+        ts: now,
         kind: "plan",
         text: goalRefMatch !== null ? goalRefMatch[2]!.trim() : rest,
         platform: modelToPlatform(model),
