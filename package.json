@@ -1,18 +1,14 @@
 {
-  "name": "cq",
+  "name": "ledger-suite",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/shared", "packages/ledger", "packages/cq-mcp", "packages/ledger-mcp", "packages/ledger-tui", "packages/ledger-web", "packages/server", "packages/web", "packages/e2e"],
+  "workspaces": ["packages/ledger", "packages/ledger-mcp", "packages/ledger-tui", "packages/ledger-web"],
   "scripts": {
     "check": "tsc -b && eslint . && bun test",
     "typecheck": "tsc -b",
     "lint": "eslint packages",
     "format": "prettier --write .",
-    "test": "bun test --pass-with-no-tests",
-    "start": "bun run packages/server/src/main.ts --cwd /tmp --port 5173",
-    "dev": "bun run packages/server/src/main.ts -- --dev --cwd . --port 5173",
-    "e2e": "cd packages/e2e && bun x playwright test",
-    "e2e:headed": "cd packages/e2e && bun x playwright test --headed"
+    "test": "bun test --pass-with-no-tests"
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",

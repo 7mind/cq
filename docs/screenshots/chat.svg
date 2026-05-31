@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
-  <rect width="800" height="500" fill="#1e1e2e"/>
-  <rect x="10" y="10" width="780" height="480" rx="8" fill="none" stroke="#45475a" stroke-width="1"/>
-  <text x="400" y="240" font-family="monospace" font-size="18" fill="#cdd6f4" text-anchor="middle">Chat tab — replace with real screenshot before release</text>
-  <text x="400" y="270" font-family="monospace" font-size="13" fill="#6c7086" text-anchor="middle">placeholder · docs/screenshots/chat.svg</text>
-</svg>

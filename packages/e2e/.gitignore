@@ -1,3 +1,0 @@
-# Playwright transient run artifacts (screenshots, traces, videos).
-# .last-run.json is intentionally tracked as the run pointer.
-test-results/*/

@@ -1,3 +1,0 @@
-[test]
-# Exclude compiled JS output from test discovery; tests run from TypeScript source.
-pathIgnorePatterns = ["dist/**"]

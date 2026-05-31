@@ -1,7 +1,5 @@
 [test]
 # Exclude compiled JS output from test discovery; tests run from TypeScript source.
-pathIgnorePatterns = ["**/dist/**", "result/**", "result-*/**", "packages/e2e/**"]
-# Preload happy-dom globals for indicator.test.ts (DOM environment for React rendering).
-# preload intentionally omitted: happy-dom is registered per-test-file
-# in indicator.test.ts to avoid interfering with jest.useFakeTimers() in
-# other test files (GlobalRegistrator.register() replaces global timers).
+pathIgnorePatterns = ["**/dist/**", "result/**", "result-*/**"]
+# happy-dom globals are registered per-test-file (see ledger-web's
+# test/helpers/dom.ts), not preloaded, so DOM-using and non-DOM tests coexist.
