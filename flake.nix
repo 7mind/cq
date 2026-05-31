@@ -45,6 +45,7 @@
               ./packages/ledger/package.json
               ./packages/cq-mcp/package.json
               ./packages/ledger-mcp/package.json
+              ./packages/ledger-tui/package.json
               ./packages/e2e/package.json
             ];
           };
@@ -93,13 +94,15 @@
             # the final `cq` derivation's installPhase to absolute paths so they
             # survive being placed in a different part of the store tree.
             mkdir -p $out/packages/server $out/packages/web $out/packages/shared \
-                     $out/packages/ledger $out/packages/cq-mcp $out/packages/ledger-mcp
+                     $out/packages/ledger $out/packages/cq-mcp $out/packages/ledger-mcp \
+                     $out/packages/ledger-tui
             cp -r packages/server/node_modules $out/packages/server/node_modules
             cp -r packages/web/node_modules    $out/packages/web/node_modules
             cp -r packages/shared/node_modules $out/packages/shared/node_modules
             cp -r packages/ledger/node_modules $out/packages/ledger/node_modules
             cp -r packages/cq-mcp/node_modules $out/packages/cq-mcp/node_modules
             cp -r packages/ledger-mcp/node_modules $out/packages/ledger-mcp/node_modules
+            cp -r packages/ledger-tui/node_modules $out/packages/ledger-tui/node_modules
 
             runHook postInstall
           '';
@@ -108,7 +111,7 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           # Updated after the first build (see README § Nix for workflow).
-          outputHash = "sha256-NqcLeZLcUVmvcEfEh+JW/A9zCW+zJIsmOkQpb/6BFgw=";
+          outputHash = "sha256-/MDENhxYySmeJaO7tx/+6IRZHuhvGvJ7wdj0vUmBxY0=";
         };
 
         # ------------------------------------------------------------------ #
@@ -143,7 +146,8 @@
               "$WORKSPACE/packages/shared/node_modules" \
               "$WORKSPACE/packages/ledger/node_modules" \
               "$WORKSPACE/packages/cq-mcp/node_modules" \
-              "$WORKSPACE/packages/ledger-mcp/node_modules"
+              "$WORKSPACE/packages/ledger-mcp/node_modules" \
+              "$WORKSPACE/packages/ledger-tui/node_modules"
 
             # ── 2. Root node_modules ────────────────────────────────────── #
             # Create a real directory that mirrors the FOD's root node_modules
@@ -394,11 +398,70 @@
           dontStrip = true;
           dontFixup = true;
         };
+
+        # ------------------------------------------------------------------ #
+        # ledger-tui — Ink terminal UI client for a ledger MCP server.         #
+        #                                                                      #
+        # A pure MCP client: it connects over Streamable HTTP to a running     #
+        # `ledger-mcp --http` server (`ledger-tui --url <url>`) and never       #
+        # touches ledger files directly. Runtime closure is just ink + react   #
+        # + @modelcontextprotocol/sdk (and their transitive deps via the FOD's  #
+        # .bun store). It does NOT depend on @cq/ledger at runtime — the TUI    #
+        # imports those types `import type`-only, so they are erased.          #
+        # ------------------------------------------------------------------ #
+        ledgerTui = pkgs.stdenv.mkDerivation {
+          pname = "ledger-tui";
+          version = "0.0.1";
+
+          src = ./.;
+
+          nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper ];
+
+          dontConfigure = true;
+          buildPhase = "true";
+
+          installPhase = ''
+            runHook preInstall
+
+            WORKSPACE=$out/share/ledger-tui
+            mkdir -p "$WORKSPACE/packages/ledger-tui" $out/bin
+
+            # ── 1. Source (only this package) ───────────────────────────── #
+            cp -r packages/ledger-tui/src "$WORKSPACE/packages/ledger-tui/src"
+            cp packages/ledger-tui/package.json "$WORKSPACE/packages/ledger-tui/"
+            cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
+
+            # ── 2. node_modules — ink + react + MCP SDK ─────────────────── #
+            # Symlinked into the FOD; their transitive graph (react-reconciler,
+            # yoga, chalk, …) resolves through the FOD's self-contained .bun
+            # store that those symlinks point into.
+            mkdir -p "$WORKSPACE/packages/ledger-tui/node_modules/@modelcontextprotocol"
+            for dep in ink react bun-types; do
+              if [ -e "${bunNodeModules}/packages/ledger-tui/node_modules/$dep" ]; then
+                ln -s "${bunNodeModules}/packages/ledger-tui/node_modules/$dep" \
+                  "$WORKSPACE/packages/ledger-tui/node_modules/$dep"
+              fi
+            done
+            ln -s ${bunNodeModules}/packages/ledger-tui/node_modules/@modelcontextprotocol/sdk \
+              "$WORKSPACE/packages/ledger-tui/node_modules/@modelcontextprotocol/sdk"
+
+            # ── 3. Wrapper ──────────────────────────────────────────────── #
+            makeWrapper ${pkgs.bun}/bin/bun $out/bin/ledger-tui \
+              --add-flags "run $WORKSPACE/packages/ledger-tui/src/main.tsx --" \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
+
+            runHook postInstall
+          '';
+
+          dontStrip = true;
+          dontFixup = true;
+        };
       in {
         packages = {
           default = cq;
           cq = cq;
           ledger-mcp = ledgerMcp;
+          ledger-tui = ledgerTui;
           # Expose for debugging / hash refresh.
           cq-node-modules = bunNodeModules;
         };
@@ -411,6 +474,11 @@
         apps.ledger-mcp = {
           type = "app";
           program = "${ledgerMcp}/bin/ledger-mcp";
+        };
+
+        apps.ledger-tui = {
+          type = "app";
+          program = "${ledgerTui}/bin/ledger-tui";
         };
 
         devShells.default = pkgs.mkShell {

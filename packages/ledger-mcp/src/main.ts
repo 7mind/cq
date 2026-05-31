@@ -1,44 +1,78 @@
 #!/usr/bin/env -S bun run
 /**
- * ledger-mcp — standalone stdio MCP server exposing the 14 ledger tools.
+ * ledger-mcp — standalone MCP server exposing the 14 ledger tools.
  *
- * This is the cq-free counterpart to `@cq/cq-mcp`: it speaks the
- * `@modelcontextprotocol/sdk` stdio protocol over stdin/stdout and shells
- * every operation through to a file-backed `FsLedgerStore` rooted at the
- * supplied `--cwd` directory. It has NO dependency on the cq server — no
- * internal WebSocket channel, no `ask_user_question`/`submit_workflow_phase`
- * relays — so any MCP client (Claude Code, Codex, a bespoke harness) can run
- * it directly to read and mutate a ledger tree.
+ * This is the cq-free ledger MCP server: it serves the tool surface backed
+ * by a file-backed `FsLedgerStore` rooted at the supplied `--cwd` directory,
+ * with NO dependency on the cq server. It speaks two transports:
+ *
+ *   - stdio (default): JSON-RPC frames over stdin/stdout, for clients that
+ *     spawn the server as a child process (Claude Code, Codex, etc.).
+ *   - Streamable HTTP (`--http [host:]port`): the MCP Streamable HTTP
+ *     transport over `Bun.serve`, for clients that connect to an
+ *     already-running server (e.g. ledger-tui). Session-managed: each
+ *     client initialize allocates a session bound to its own `McpServer`,
+ *     all sharing the one `FsLedgerStore`.
  *
  * CLI:
- *   ledger-mcp --cwd <absolute path>
+ *   ledger-mcp --cwd <absolute path>                 # stdio
+ *   ledger-mcp --cwd <absolute path> --http 7777     # HTTP on 127.0.0.1:7777
+ *   ledger-mcp --cwd <absolute path> --http 0.0.0.0:7777
  *
- * Lifecycle:
- *   1. Parse CLI flags. `--cwd <abs>` is required.
- *   2. Construct `FsLedgerStore({ root: cwd })` and `init()` it
- *      (auto-bootstraps the milestones ledger on first run).
- *   3. Register the 14 ledger tools on an `McpServer` via
- *      `registerLedgerStdioTools` (shared with cq-mcp through `@cq/ledger`).
- *   4. Connect a `StdioServerTransport` and run until the parent closes
- *      stdin (which the MCP SDK signals via the transport's onclose).
- *
- * Output discipline. Stdout is reserved for MCP protocol traffic only.
- * All logs and parse errors go to stderr — anything on stdout that is not
- * a JSON-RPC frame corrupts the protocol and the client tears down the
- * channel.
+ * Output discipline (stdio mode). Stdout is reserved for MCP protocol
+ * traffic only; all logs go to stderr.
  */
 
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { FsLedgerStore, registerLedgerStdioTools } from "@cq/ledger";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import {
+  FsLedgerStore,
+  type LedgerStore,
+  registerLedgerStdioTools,
+} from "@cq/ledger";
 
-interface ParsedArgs {
+const SERVER_INFO = { name: "ledger-mcp", version: "0.0.1" } as const;
+const DEFAULT_HTTP_HOST = "127.0.0.1";
+/** Path the Streamable HTTP transport is served on. */
+export const MCP_HTTP_PATH = "/mcp";
+
+export interface HttpOpts {
+  host: string;
+  port: number;
+}
+
+export interface ParsedArgs {
   cwd: string;
+  http: HttpOpts | null;
+}
+
+/**
+ * Parse `--http [host:]port` into a structured {host, port}. A bare port
+ * binds 127.0.0.1 (loopback) so the server is not exposed by default.
+ */
+function parseHttp(value: string): HttpOpts {
+  const lastColon = value.lastIndexOf(":");
+  let host = DEFAULT_HTTP_HOST;
+  let portStr = value;
+  if (lastColon !== -1) {
+    host = value.slice(0, lastColon);
+    portStr = value.slice(lastColon + 1);
+    if (host === "") host = DEFAULT_HTTP_HOST;
+  }
+  const port = Number(portStr);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error(`ledger-mcp: --http port must be 1..65535; got: ${portStr}`);
+  }
+  return { host, port };
 }
 
 export function parseArgs(argv: readonly string[]): ParsedArgs {
   let cwd: string | undefined;
+  let http: HttpOpts | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--cwd") {
@@ -50,6 +84,15 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       cwd = v;
     } else if (a !== undefined && a.startsWith("--cwd=")) {
       cwd = a.slice("--cwd=".length);
+    } else if (a === "--http") {
+      i += 1;
+      const v = argv[i];
+      if (v === undefined) {
+        throw new Error("ledger-mcp: --http requires a [host:]port value");
+      }
+      http = parseHttp(v);
+    } else if (a !== undefined && a.startsWith("--http=")) {
+      http = parseHttp(a.slice("--http=".length));
     }
   }
   if (cwd === undefined || cwd === "") {
@@ -58,11 +101,88 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   if (!path.isAbsolute(cwd)) {
     throw new Error(`ledger-mcp: --cwd must be an absolute path; got: ${cwd}`);
   }
-  return { cwd };
+  return { cwd, http };
+}
+
+/** Build a fresh McpServer with the 14 ledger tools bound to `store`. */
+function buildServer(store: LedgerStore): McpServer {
+  const server = new McpServer(SERVER_INFO, { capabilities: { tools: {} } });
+  registerLedgerStdioTools(server, store);
+  return server;
+}
+
+/**
+ * Serve the MCP protocol over Streamable HTTP via Bun.serve.
+ *
+ * Session-managed (stateful): the first request from a client is an
+ * `initialize` with no session id; we mint a transport + McpServer for it
+ * and register the transport under the generated session id once the SDK
+ * fires `onsessioninitialized`. Subsequent requests carry the
+ * `mcp-session-id` header and route back to the same transport. All
+ * sessions share the single `store` (FsLedgerStore is concurrency-safe via
+ * its own mutex + lockfile).
+ *
+ * Returns the running Bun server so callers (tests) can `.stop()` it.
+ */
+export function serveHttp(
+  store: LedgerStore,
+  opts: HttpOpts,
+): ReturnType<typeof Bun.serve> {
+  const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
+
+  return Bun.serve({
+    hostname: opts.host,
+    port: opts.port,
+    idleTimeout: 0,
+    async fetch(req): Promise<Response> {
+      const url = new URL(req.url);
+      if (url.pathname !== MCP_HTTP_PATH) {
+        return new Response("not found", { status: 404 });
+      }
+
+      const sessionId = req.headers.get("mcp-session-id") ?? undefined;
+      const existing = sessionId !== undefined ? transports.get(sessionId) : undefined;
+      if (existing !== undefined) {
+        return existing.handleRequest(req);
+      }
+
+      // No existing session. Only a POST initialize may open one; anything
+      // else without a valid session is a client error.
+      if (req.method !== "POST") {
+        return new Response("missing or invalid session", { status: 400 });
+      }
+      const body: unknown = await req.json().catch(() => undefined);
+      if (!isInitializeRequest(body)) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "Bad Request: no valid session id" },
+            id: null,
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        );
+      }
+
+      const transport = new WebStandardStreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (sid) => {
+          transports.set(sid, transport);
+        },
+        onsessionclosed: (sid) => {
+          transports.delete(sid);
+        },
+      });
+      const server = buildServer(store);
+      await server.connect(transport);
+      // Body already consumed above; hand it back so the transport doesn't
+      // re-read the (now-empty) request stream.
+      return transport.handleRequest(req, { parsedBody: body });
+    },
+  });
 }
 
 export async function main(argv: readonly string[]): Promise<void> {
-  const { cwd } = parseArgs(argv);
+  const { cwd, http } = parseArgs(argv);
 
   // Construct the store, init it, then register tools. If init fails we
   // surface the error to stderr and exit non-zero — the parent MCP client
@@ -70,11 +190,21 @@ export async function main(argv: readonly string[]): Promise<void> {
   const store = new FsLedgerStore({ root: cwd });
   await store.init();
 
-  const server = new McpServer(
-    { name: "ledger-mcp", version: "0.0.1" },
-    { capabilities: { tools: {} } },
-  );
-  registerLedgerStdioTools(server, store);
+  if (http !== null) {
+    const server = serveHttp(store, http);
+    const shutdown = (): void => {
+      server.stop(true);
+      process.exit(0);
+    };
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
+    process.stderr.write(
+      `ledger-mcp: serving Streamable HTTP on http://${http.host}:${http.port}${MCP_HTTP_PATH} (cwd=${cwd})\n`,
+    );
+    return;
+  }
+
+  const server = buildServer(store);
 
   // Graceful shutdown on SIGTERM / SIGINT.
   const shutdown = (): void => {

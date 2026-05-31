@@ -5,6 +5,7 @@
     { "path": "./packages/ledger" },
     { "path": "./packages/cq-mcp" },
     { "path": "./packages/ledger-mcp" },
+    { "path": "./packages/ledger-tui" },
     { "path": "./packages/server" },
     { "path": "./packages/web" }
   ]
