@@ -212,3 +212,15 @@ button:hover {
   width: 100%;
   text-align: left;
 }
+
+.lw-toggle-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.lw-dag {
+  display: block;
+  max-width: 100%;
+}
+.lw-dag text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

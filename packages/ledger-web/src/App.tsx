@@ -18,6 +18,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient } from "./types.js";
+import { DagView } from "./DagView.js";
+import { loadDagData, type DagData } from "./dagData.js";
 
 const MILESTONES = "milestones";
 
@@ -66,6 +68,8 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
   const [hits, setHits] = useState<FtsHit[] | null>(null);
   const [creating, setCreating] = useState<"item" | "milestone" | null>(null);
   const [flash, setFlash] = useState("");
+  const [mainView, setMainView] = useState<"ledger" | "dag">("ledger");
+  const [dag, setDag] = useState<DagData | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -76,6 +80,8 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
     setView(null);
     setSelected(null);
     setHits(null);
+    setMainView("ledger");
+    setDag(null);
     connect(url)
       .then(async (c) => {
         if (!alive) {
@@ -146,11 +152,12 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
         else await client.updateItem(ledger!, row.item.id, { status });
         setFlash(`${row.item.id} → ${status}`);
         await reload();
+        if (mainView === "dag") setDag(await loadDagData(client));
       } catch (e) {
         setFlash(errMsg(e));
       }
     },
-    [client, isMilestones, ledger, reload],
+    [client, isMilestones, ledger, reload, mainView],
   );
 
   const setFieldValue = useCallback(
@@ -176,11 +183,12 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
         await client.updateMilestone(row.item.id, { title });
         setFlash(`${row.item.id} title updated`);
         await reload();
+        if (mainView === "dag") setDag(await loadDagData(client));
       } catch (e) {
         setFlash(errMsg(e));
       }
     },
-    [client, reload],
+    [client, reload, mainView],
   );
 
   const runSearch = useCallback(
@@ -207,6 +215,40 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
         setView(v);
         setHits(null);
         setSelected({ item: hit.item, milestoneId: hit.item.milestoneId });
+      } catch (e) {
+        setFlash(errMsg(e));
+      }
+    },
+    [client],
+  );
+
+  const refreshDag = useCallback(async () => {
+    if (client === null) return;
+    try {
+      setDag(await loadDagData(client));
+    } catch (e) {
+      setFlash(errMsg(e));
+    }
+  }, [client]);
+
+  const showDag = useCallback(async () => {
+    setMainView("dag");
+    setDag(null);
+    await refreshDag();
+  }, [refreshDag]);
+
+  const openMilestoneNode = useCallback(
+    async (id: string) => {
+      if (client === null) return;
+      try {
+        const v = await client.fetchLedger(MILESTONES);
+        setLedger(MILESTONES);
+        setView(v);
+        setHits(null);
+        let found: Row | null = null;
+        for (const g of v.milestones)
+          for (const it of g.items) if (it.id === id) found = { item: it, milestoneId: g.id };
+        setSelected(found);
       } catch (e) {
         setFlash(errMsg(e));
       }
@@ -241,6 +283,18 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
           </button>
         </form>
         <SearchBar onSearch={(q) => void runSearch(q)} disabled={client === null} />
+        <button
+          type="button"
+          data-testid="toggle-dag"
+          className={mainView === "dag" ? "lw-toggle lw-toggle-active" : "lw-toggle"}
+          disabled={client === null}
+          onClick={() => {
+            if (mainView === "dag") setMainView("ledger");
+            else void showDag();
+          }}
+        >
+          {mainView === "dag" ? "table" : "graph"}
+        </button>
       </header>
 
       {conn === "error" && (
@@ -269,7 +323,15 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
         </nav>
 
         <main className="lw-main">
-          {hits !== null ? (
+          {mainView === "dag" ? (
+            dag !== null ? (
+              <DagView data={dag} selectedId={selected?.item.id ?? null} onSelect={(id) => void openMilestoneNode(id)} />
+            ) : (
+              <p className="lw-empty" data-testid="dag-loading">
+                loading graph…
+              </p>
+            )
+          ) : hits !== null ? (
             <SearchResults hits={hits} onOpen={(h) => void openHit(h)} onClear={() => setHits(null)} />
           ) : view !== null ? (
             <>
