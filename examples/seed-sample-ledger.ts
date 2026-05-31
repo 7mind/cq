@@ -40,24 +40,77 @@ async function main(): Promise<void> {
   ): Promise<unknown> => store.createItem(ledger, milestoneId, { status, fields });
 
   // ── tasks ─────────────────────────────────────────────────────────────
-  await item("tasks", "M1", "done", { headline: "Bootstrap the repository", acceptance: "bun install + bun test green" });
-  await item("tasks", "M1", "done", { headline: "Define the ledger data model" });
-  await item("tasks", "M1", "wip", { headline: "Wire up CI", tags: ["infra"] });
-  await item("tasks", "M2", "wip", { headline: "Implement the markdown parser", description: "frontmatter + grouped items round-trip" });
-  await item("tasks", "M2", "planned", { headline: "Add the file-store mutex + lockfile" });
-  await item("tasks", "M2", "planned", { headline: "Build the full-text search index", dependsOn: ["T4"] });
-  await item("tasks", "M3", "planned", { headline: "Item table + detail panel" });
-  await item("tasks", "M3", "blocked", { headline: "Milestone DAG layout", blockedBy: ["T7"] });
-  await item("tasks", "M4", "planned", { headline: "Marketing landing page" });
+  await item("tasks", "M1", "done", {
+    headline: "Bootstrap the repository",
+    description: "Initialise the Bun workspace, eslint/prettier, and the flake dev shell.",
+    acceptance: "bun install + bun test green",
+  });
+  await item("tasks", "M1", "done", {
+    headline: "Define the ledger data model",
+    description: "Milestones own typed items; ids are per-ledger monotonic with a prefix.",
+  });
+  await item("tasks", "M1", "wip", {
+    headline: "Wire up CI",
+    description: "Run typecheck, lint and tests on every push.",
+    tags: ["infra"],
+  });
+  await item("tasks", "M2", "wip", {
+    headline: "Implement the markdown parser",
+    description: "Frontmatter plus grouped items must round-trip losslessly.\nValues are stored as YAML field lines under each item heading.",
+  });
+  await item("tasks", "M2", "planned", {
+    headline: "Add the file-store mutex + lockfile",
+    description: "Serialise concurrent writers on a per-ledger lockfile so two processes cannot corrupt a file.",
+  });
+  await item("tasks", "M2", "planned", {
+    headline: "Build the full-text search index",
+    description: "Cross-ledger ranked search over item fields, backed by minisearch.",
+    dependsOn: ["T4"],
+  });
+  await item("tasks", "M3", "planned", {
+    headline: "Item table + detail panel",
+    description: "Browse a ledger's items in a table; click one to view and edit its fields.",
+  });
+  await item("tasks", "M3", "blocked", {
+    headline: "Milestone DAG layout",
+    description: "Lay out the milestone dependency graph (dependsOn/blockedBy) as a left-to-right DAG.",
+    blockedBy: ["T7"],
+  });
+  await item("tasks", "M4", "planned", {
+    headline: "Marketing landing page",
+    description: "A static page describing the project with install instructions.",
+  });
 
   // ── defects (severity is required) ─────────────────────────────────────
-  await item("defects", "M2", "open", { headline: "Parser drops a trailing newline on serialize", severity: "minor" });
-  await item("defects", "M3", "wip", { headline: "Status filter resets on page reload", severity: "major", rootCause: "filter state not persisted to the URL" });
-  await item("defects", "M2", "resolved", { headline: "FTS ignores hyphenated ids", severity: "minor", fix: "tokenizer keeps id-shaped tokens whole" });
+  await item("defects", "M2", "open", {
+    headline: "Parser drops a trailing newline on serialize",
+    description: "Round-tripping a ledger removes the final newline, producing a noisy git diff.",
+    severity: "minor",
+  });
+  await item("defects", "M3", "wip", {
+    headline: "Status filter resets on page reload",
+    description: "The selected status filter is not persisted, so a reload shows all items again.",
+    severity: "major",
+    rootCause: "filter state not persisted to the URL",
+  });
+  await item("defects", "M2", "resolved", {
+    headline: "FTS ignores hyphenated ids",
+    description: "Searching for an id like D-12 returned no results.",
+    severity: "minor",
+    fix: "tokenizer keeps id-shaped tokens whole",
+  });
 
   // ── hypotheses ──────────────────────────────────────────────────────────
-  await item("hypothesis", "M2", "open", { headline: "Lock contention degrades parallel writes", rationale: "two writers on the same ledger serialize on the lockfile" });
-  await item("hypothesis", "M2", "uncertain", { headline: "minisearch splits ids on punctuation", evidence: ["search for D12 returns nothing"] });
+  await item("hypothesis", "M2", "open", {
+    headline: "Lock contention degrades parallel writes",
+    description: "Throughput drops sharply when several agents write the same ledger at once.",
+    rationale: "two writers on the same ledger serialize on the lockfile",
+  });
+  await item("hypothesis", "M2", "uncertain", {
+    headline: "minisearch splits ids on punctuation",
+    description: "Ids containing punctuation may be tokenised into pieces, hurting recall.",
+    evidence: ["search for D12 returns nothing"],
+  });
 
   // ── questions ─────────────────────────────────────────────────────────
   await item("questions", "M1", "open", { question: "Which authentication model for the web console?", suggestions: ["none (local)", "reverse-proxy auth", "OIDC"] });
