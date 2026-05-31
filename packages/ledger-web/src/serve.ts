@@ -191,8 +191,16 @@ export async function main(argv: readonly string[]): Promise<void> {
   const opts = parseArgs(argv);
   await fs.mkdir(opts.outdir, { recursive: true });
   const server = await serve(opts);
+  // Stop the server and exit on Ctrl+C / SIGTERM so the port is released and
+  // the process does not linger (Bun keeps the process alive for the server).
+  const shutdown = (): void => {
+    server.stop(true);
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
   process.stderr.write(
-    `ledger-web: serving http://${opts.host}:${server.port}/ (default MCP ${opts.mcpUrl})\n`,
+    `ledger-web: serving http://${opts.host}:${server.port}/ → MCP upstream ${opts.mcpUrl}\n`,
   );
 }
 
