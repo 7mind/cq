@@ -61,7 +61,7 @@ export class FakeClient implements LedgerClient {
         {
           id: "M1",
           items: [
-            { id: "D1", milestoneId: "M1", status: "open", fields: { headline: "warp leak", note: "intermittent" }, createdAt: TS, updatedAt: TS },
+            { id: "D1", milestoneId: "M1", status: "open", fields: { headline: "warp leak", note: "**intermittent** glitch" }, createdAt: TS, updatedAt: TS },
           ],
         },
       ],

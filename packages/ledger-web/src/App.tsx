@@ -19,6 +19,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient } from "./types.js";
 import { DagView } from "./DagView.js";
+import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
 
 const MILESTONES = "milestones";
@@ -548,7 +549,9 @@ function DetailPanel({
         {Object.entries(row.item.fields).map(([k, v]) => (
           <React.Fragment key={k}>
             <dt>{k}</dt>
-            <dd>{fieldToString(v)}</dd>
+            <dd data-testid={`detail-field-${k}`}>
+              {Array.isArray(v) ? v.join(", ") : <Markdown text={v} />}
+            </dd>
           </React.Fragment>
         ))}
         <dt>milestone</dt>

@@ -91,6 +91,9 @@ describe("ledger-web App", () => {
     await flush();
     expect(testid("detail-id")?.textContent).toBe("D1");
     expect(testid("detail-status")?.textContent).toBe("open");
+    // string field values render as markdown ("**intermittent** glitch")
+    const strong = testid("detail-field-note")?.querySelector("strong");
+    expect(strong?.textContent).toBe("intermittent");
   });
 
   it("edits an item's status and persists via the client", async () => {

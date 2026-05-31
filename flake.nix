@@ -86,7 +86,7 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           # Refresh after dependency changes (see README § Nix).
-          outputHash = "sha256-alqr8F0Mcx8R0lJnOFK7wimcBExDP9Vmann6jXQLFv4=";
+          outputHash = "sha256-B2IEK35KNFZpD3iISmh+EIUzWyjwbi8TxJXq/tJ4U/M=";
         };
 
         # ------------------------------------------------------------------ #
@@ -247,7 +247,7 @@
             cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
 
             mkdir -p "$WORKSPACE/packages/ledger-web/node_modules/@modelcontextprotocol"
-            for dep in react react-dom bun-types; do
+            for dep in react react-dom react-markdown remark-gfm rehype-sanitize bun-types; do
               if [ -e "${bunNodeModules}/packages/ledger-web/node_modules/$dep" ]; then
                 ln -s "${bunNodeModules}/packages/ledger-web/node_modules/$dep" \
                   "$WORKSPACE/packages/ledger-web/node_modules/$dep"
