@@ -121,11 +121,13 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
         setHits(null);
         setCreating(null);
         setFlash("");
+        // In graph mode, re-graph the newly selected ledger (stay in graph).
+        if (mainView === "dag") setDag(await loadDagData(client, name));
       } catch (e) {
         setFlash(errMsg(e));
       }
     },
-    [client],
+    [client, mainView],
   );
 
   const reload = useCallback(async () => {
@@ -152,7 +154,7 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
         else await client.updateItem(ledger!, row.item.id, { status });
         setFlash(`${row.item.id} → ${status}`);
         await reload();
-        if (mainView === "dag") setDag(await loadDagData(client));
+        if (mainView === "dag" && ledger !== null) setDag(await loadDagData(client, ledger));
       } catch (e) {
         setFlash(errMsg(e));
       }
@@ -169,11 +171,12 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
         await client.updateItem(ledger!, row.item.id, { fields: { [field]: value } });
         setFlash(`${row.item.id}.${field} updated`);
         await reload();
+        if (mainView === "dag" && ledger !== null) setDag(await loadDagData(client, ledger));
       } catch (e) {
         setFlash(errMsg(e));
       }
     },
-    [client, view, ledger, reload],
+    [client, view, ledger, reload, mainView],
   );
 
   const setTitle = useCallback(
@@ -183,7 +186,7 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
         await client.updateMilestone(row.item.id, { title });
         setFlash(`${row.item.id} title updated`);
         await reload();
-        if (mainView === "dag") setDag(await loadDagData(client));
+        if (mainView === "dag" && ledger !== null) setDag(await loadDagData(client, ledger));
       } catch (e) {
         setFlash(errMsg(e));
       }
@@ -222,38 +225,35 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
     [client],
   );
 
-  const refreshDag = useCallback(async () => {
+  // Toggle to the graph; graph the currently-selected ledger (or milestones).
+  const showDag = useCallback(async () => {
     if (client === null) return;
+    const target = ledger ?? MILESTONES;
     try {
-      setDag(await loadDagData(client));
+      const v = await client.fetchLedger(target);
+      setLedger(target);
+      setView(v);
+      setSelected(null);
+      setHits(null);
+      setMainView("dag");
+      setDag(null);
+      setDag(await loadDagData(client, target));
     } catch (e) {
       setFlash(errMsg(e));
     }
-  }, [client]);
+  }, [client, ledger]);
 
-  const showDag = useCallback(async () => {
-    setMainView("dag");
-    setDag(null);
-    await refreshDag();
-  }, [refreshDag]);
-
-  const openMilestoneNode = useCallback(
-    async (id: string) => {
-      if (client === null) return;
-      try {
-        const v = await client.fetchLedger(MILESTONES);
-        setLedger(MILESTONES);
-        setView(v);
-        setHits(null);
-        let found: Row | null = null;
-        for (const g of v.milestones)
-          for (const it of g.items) if (it.id === id) found = { item: it, milestoneId: g.id };
-        setSelected(found);
-      } catch (e) {
-        setFlash(errMsg(e));
-      }
+  // Open a graph node into the detail panel, finding it in the current view.
+  const openNode = useCallback(
+    (id: string) => {
+      if (view === null) return;
+      for (const g of view.milestones)
+        for (const it of g.items) if (it.id === id) {
+          setSelected({ item: it, milestoneId: g.id });
+          return;
+        }
     },
-    [client],
+    [view],
   );
 
   // ---- render ------------------------------------------------------------
@@ -325,7 +325,7 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
         <main className="lw-main">
           {mainView === "dag" ? (
             dag !== null ? (
-              <DagView data={dag} selectedId={selected?.item.id ?? null} onSelect={(id) => void openMilestoneNode(id)} />
+              <DagView data={dag} selectedId={selected?.item.id ?? null} onSelect={(id) => openNode(id)} />
             ) : (
               <p className="lw-empty" data-testid="dag-loading">
                 loading graph…

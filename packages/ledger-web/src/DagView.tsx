@@ -33,13 +33,13 @@ export function DagView({
   selectedId: string | null;
   onSelect: (id: string) => void;
 }): React.ReactElement {
-  const ids = data.milestones.map((m) => m.id);
+  const ids = data.nodes.map((m) => m.id);
   const layout = computeDagLayout(ids, data.edges);
-  const byId = new Map(data.milestones.map((m) => [m.id, m]));
+  const byId = new Map(data.nodes.map((m) => [m.id, m]));
   const posById = new Map(layout.nodes.map((n) => [n.id, n]));
 
   if (ids.length === 0) {
-    return <p className="lw-empty">(no milestones to graph)</p>;
+    return <p className="lw-empty">(nothing to graph in {data.ledgerId})</p>;
   }
 
   return (
@@ -72,7 +72,7 @@ export function DagView({
         );
       })}
 
-      {data.milestones.map((m) => {
+      {data.nodes.map((m) => {
         const n = posById.get(m.id);
         if (n === undefined) return null;
         const color = statusColor(m.status);
@@ -104,7 +104,7 @@ export function DagView({
               {m.status}
             </text>
             <text x={n.w - 10} y={49} fill="#8b93a7" fontSize={10} textAnchor="end">
-              {m.refCount} item{m.refCount === 1 ? "" : "s"}
+              {m.sublabel}
             </text>
           </g>
         );

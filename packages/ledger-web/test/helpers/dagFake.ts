@@ -83,7 +83,8 @@ export class DagFakeClient implements LedgerClient {
           {
             id: "M1",
             milestone: { id: "M1", status: "open", title: "Foundations", description: "" },
-            items: [bug("D1", "M1"), bug("D2", "M1")],
+            // D2 depends on D1 → an intra-ledger edge D1→D2 in the bugs graph.
+            items: [bug("D1", "M1"), { ...bug("D2", "M1"), fields: { headline: "bug D2", dependsOn: ["D1"] } }],
           },
           {
             id: "M2",

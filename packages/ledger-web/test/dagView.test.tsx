@@ -46,7 +46,7 @@ afterEach(() => {
 
 describe("DagView", () => {
   it("renders a node per milestone and an edge per dependency", async () => {
-    const data = await loadDagData(new DagFakeClient());
+    const data = await loadDagData(new DagFakeClient(), "milestones");
     const selected: string[] = [];
     await act(async () => {
       root.render(createElement(DagView, { data, selectedId: null, onSelect: (id: string) => selected.push(id) }));
@@ -74,7 +74,7 @@ describe("App DAG integration", () => {
     await flush();
   }
 
-  it("toggles to the graph, renders nodes, and opens a node into detail", async () => {
+  it("toggles to the graph (milestones by default) and opens a node into detail", async () => {
     await mount();
     click(testid("toggle-dag"));
     await flush();
@@ -85,5 +85,19 @@ describe("App DAG integration", () => {
     await flush();
     expect(testid("detail-id")?.textContent).toBe("M2");
     expect(testid("detail-status")?.textContent).toBe("open");
+  });
+
+  it("scopes the graph to the selected ledger", async () => {
+    await mount();
+    // select the bugs ledger, then switch to the graph
+    click(testid("ledger-bugs"));
+    await flush();
+    click(testid("toggle-dag"));
+    await flush();
+    // bugs items are the nodes now — not milestones
+    expect(testid("dag-node-D1")).not.toBeNull();
+    expect(testid("dag-node-D2")).not.toBeNull();
+    expect(testid("dag-edge-D1-D2")).not.toBeNull();
+    expect(testid("dag-node-M1")).toBeNull();
   });
 });
