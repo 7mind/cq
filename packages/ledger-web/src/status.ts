@@ -58,6 +58,28 @@ export function statusMatchesFilter(
   }
 }
 
+// The questions ledger's convention: a free-form `answer` field and an
+// `answered` terminal status reachable from `open`. The "answer & resolve"
+// affordance keys off this shape rather than the ledger name, so it lights up
+// for any ledger sharing the convention.
+export const ANSWER_FIELD = "answer";
+export const ANSWERED_STATUS = "answered";
+/** Question's recommended-answer field, and the canned "accept it" answer. */
+export const RECOMMENDATION_FIELD = "recommendation";
+export const AS_RECOMMENDED_ANSWER = "as recommended";
+
+/**
+ * True when an item supports the one-step "answer & resolve" affordance: its
+ * schema declares an `answer` field and `answered` is a legal transition from
+ * the item's current status. Falls back to `statusValues` when the schema
+ * declares no transition guard.
+ */
+export function canAnswer(schema: LedgerSchema, status: string): boolean {
+  if (!(ANSWER_FIELD in schema.fields)) return false;
+  const allowed = schema.transitions !== undefined ? schema.transitions[status] ?? [] : schema.statusValues;
+  return allowed.includes(ANSWERED_STATUS);
+}
+
 /** Encode a filter as a stable string for a <select> value, and back. */
 export function filterToValue(f: StatusFilter): string {
   return f.kind === "status" ? `status:${f.value}` : f.kind;

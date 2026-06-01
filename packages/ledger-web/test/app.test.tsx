@@ -69,6 +69,8 @@ async function mount(): Promise<void> {
 }
 
 beforeEach(() => {
+  // Isolate persisted UI state (panel layout + restored view) across tests.
+  localStorage.clear();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -86,6 +88,52 @@ describe("ledger-web App", () => {
     expect(testid("conn-status")?.textContent).toContain("connected");
     expect(testid("ledger-bugs")).not.toBeNull();
     expect(testid("ledger-milestones")).not.toBeNull();
+  });
+
+  it("shows each ledger's item count in the sidebar", async () => {
+    await mount();
+    // FakeClient: bugs/plain/milestones each hold 1 item.
+    expect(testid("ledger-count-bugs")?.textContent).toBe("1");
+    expect(testid("ledger-count-milestones")?.textContent).toBe("1");
+    expect(testid("ledger-count-plain")?.textContent).toBe("1");
+  });
+
+  it("persists the current view (ledger + item) to localStorage as you navigate", async () => {
+    await mount();
+    click(testid("ledger-bugs"));
+    await flush();
+    click(testid("item-D1"));
+    await flush();
+    const saved = JSON.parse(localStorage.getItem("ledger-web.view") ?? "{}") as {
+      ledger?: string;
+      itemId?: string;
+      mainView?: string;
+    };
+    expect(saved.ledger).toBe("bugs");
+    expect(saved.itemId).toBe("D1");
+    expect(saved.mainView).toBe("ledger");
+  });
+
+  it("restores the saved ledger + item on load (reload persistence)", async () => {
+    localStorage.setItem(
+      "ledger-web.view",
+      JSON.stringify({ ledger: "bugs", itemId: "D1", mainView: "ledger" }),
+    );
+    await mount();
+    await flush();
+    // The restored ledger's items render and the saved item is selected.
+    expect(testid("item-D1")).not.toBeNull();
+    expect(testid("detail-id")?.textContent).toBe("D1");
+  });
+
+  it("restores graph mode on load", async () => {
+    localStorage.setItem(
+      "ledger-web.view",
+      JSON.stringify({ ledger: "bugs", itemId: null, mainView: "dag" }),
+    );
+    await mount();
+    await flush();
+    expect(testid("toggle-dag")?.className).toContain("lw-toggle-active");
   });
 
   it("opens a ledger and shows its items", async () => {
@@ -113,6 +161,34 @@ describe("ledger-web App", () => {
     setValue(testid("status-filter"), "active");
     await flush();
     expect(testid("item-D1")).not.toBeNull();
+  });
+
+  it("answers a question and resolves it in one action", async () => {
+    await mount();
+    click(testid("ledger-questions"));
+    await flush();
+    click(testid("item-Q1"));
+    await flush();
+    expect(testid("answer-box")).not.toBeNull();
+    setValue(testid("answer-input"), "ship it");
+    click(testid("answer-submit"));
+    await flush();
+    const q = await fake.fetchItem("questions", "Q1");
+    expect(q.status).toBe("answered");
+    expect(q.fields["answer"]).toBe("ship it");
+  });
+
+  it("answers a question 'as recommended' with one click", async () => {
+    await mount();
+    click(testid("ledger-questions"));
+    await flush();
+    click(testid("item-Q1"));
+    await flush();
+    click(testid("answer-as-recommended"));
+    await flush();
+    const q = await fake.fetchItem("questions", "Q1");
+    expect(q.status).toBe("answered");
+    expect(q.fields["answer"]).toBe("as recommended");
   });
 
   it("opens item detail when a row is clicked", async () => {

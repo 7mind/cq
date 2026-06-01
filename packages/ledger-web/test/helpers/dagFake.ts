@@ -11,6 +11,7 @@ import type {
   Item,
   LedgerClient,
   LedgerSchema,
+  LedgerSummary,
 } from "../../src/types.js";
 
 const TS = "2026-01-01T00:00:00.000Z";
@@ -50,8 +51,11 @@ function bug(id: string, milestoneId: string): Item {
 export class DagFakeClient implements LedgerClient {
   updatedMilestones: Array<{ id: string; status: string | undefined }> = [];
 
-  async enumerateLedgers(): Promise<string[]> {
-    return ["bugs", "milestones"];
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [
+      { name: "bugs", itemCount: 3 },
+      { name: "milestones", itemCount: 3 },
+    ];
   }
 
   async fetchLedger(ledgerId: string): Promise<FetchedLedger> {

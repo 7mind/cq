@@ -142,6 +142,16 @@ export interface FetchedLedger {
   archivePointers: ArchivePointer[];
 }
 
+/**
+ * Lightweight per-ledger summary returned by `enumerate_ledgers`: the
+ * ledger name and its count of active (non-archived) items. Lets a client
+ * show counts in a ledger list without fetching each ledger in full.
+ */
+export interface LedgerSummary {
+  name: string;
+  itemCount: number;
+}
+
 export interface ArchivePointer {
   /** Milestone id. */
   id: string;

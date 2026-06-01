@@ -9,11 +9,12 @@ import type {
   FieldValue,
   FetchedLedger,
   FetchedMilestoneGroup,
+  LedgerSummary,
   ResolvedMilestone,
   LedgerSchema,
 } from "@cq/ledger";
 
-export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, ResolvedMilestone, LedgerSchema };
+export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema };
 
 export interface FtsHit {
   ledgerId: string;
@@ -55,7 +56,7 @@ export interface MilestonePatch {
  * tests drive.
  */
 export interface LedgerClient {
-  enumerateLedgers(): Promise<string[]>;
+  enumerateLedgers(): Promise<LedgerSummary[]>;
   fetchLedger(ledgerId: string): Promise<FetchedLedger>;
   fetchItem(ledgerId: string, itemId: string): Promise<Item>;
   createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<Item>;

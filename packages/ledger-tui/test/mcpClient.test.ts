@@ -68,8 +68,27 @@ afterAll(async () => {
 describe("McpLedgerClient over HTTP", () => {
   it("enumerates ledgers", async () => {
     const ledgers = await client.enumerateLedgers();
-    expect(ledgers).toContain("bugs");
-    expect(ledgers).toContain("milestones");
+    const names = ledgers.map((l) => l.name);
+    expect(names).toContain("bugs");
+    expect(names).toContain("milestones");
+    // every summary carries a non-negative item count
+    expect(ledgers.every((l) => l.itemCount >= 0)).toBe(true);
+  });
+
+  it("tolerates a server response without a counts map (version skew → itemCount 0)", async () => {
+    // A server build predating the `counts` field returns just `{ ledgers }`.
+    // The client must not dereference an undefined `counts` (regression: the
+    // web UI crashed with "can't access property … r.counts is undefined").
+    const stub = {
+      callTool: async () => ({
+        content: [{ type: "text", text: JSON.stringify({ ledgers: ["alpha", "beta"] }) }],
+      }),
+    };
+    const c = new McpLedgerClient(stub as unknown as ConstructorParameters<typeof McpLedgerClient>[0]);
+    expect(await c.enumerateLedgers()).toEqual([
+      { name: "alpha", itemCount: 0 },
+      { name: "beta", itemCount: 0 },
+    ]);
   });
 
   it("creates a milestone and lists it via fetchLedger(milestones)", async () => {

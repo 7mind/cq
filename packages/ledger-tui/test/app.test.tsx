@@ -15,7 +15,7 @@ import React from "react";
 import { render } from "ink-testing-library";
 import { App } from "../src/app.js";
 import { FakeClient } from "./fakeClient.js";
-import type { FetchedLedger, Item, LedgerClient } from "../src/types.js";
+import type { FetchedLedger, Item, LedgerClient, LedgerSummary } from "../src/types.js";
 
 const DOWN = "[B";
 const ENTER = "\r";
@@ -26,8 +26,8 @@ const TS = "2026-01-01T00:00:00.000Z";
 /** A client with a single ledger of N items, for the scroll test. */
 class ManyItemsClient implements LedgerClient {
   constructor(private readonly n: number) {}
-  async enumerateLedgers(): Promise<string[]> {
-    return ["work"];
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [{ name: "work", itemCount: this.n }];
   }
   async fetchLedger(id: string): Promise<FetchedLedger> {
     if (id !== "work") throw new Error(`Ledger not found: ${id}`);
@@ -78,8 +78,8 @@ class ManyItemsClient implements LedgerClient {
 
 /** A single-ledger client whose schema declares NO `transitions` map. */
 class NoTransitionsClient implements LedgerClient {
-  async enumerateLedgers(): Promise<string[]> {
-    return ["work"];
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [{ name: "work", itemCount: 1 }];
   }
   async fetchLedger(id: string): Promise<FetchedLedger> {
     if (id !== "work") throw new Error(`Ledger not found: ${id}`);
@@ -193,6 +193,15 @@ describe("ledger-tui App", () => {
     h.unmount();
   });
 
+  it("shows each ledger's item count right-aligned in the ledgers list", async () => {
+    const h = await mount();
+    // FakeClient: bugs has 1 item (D1), milestones has 1 item (M1). The count
+    // is rendered after the name, separated by padding spaces (right-aligned).
+    expect(h.frame()).toMatch(/bugs\s{2,}1/);
+    expect(h.frame()).toMatch(/milestones\s{2,}1/);
+    h.unmount();
+  });
+
   it("opens a ledger and shows its items", async () => {
     const h = await mount();
     await h.key(ENTER); // open bugs (cursor starts at index 0)
@@ -283,6 +292,35 @@ describe("ledger-tui App", () => {
     await h.key(ENTER);
     await tick(40);
     expect((await h.client.fetchItem("bugs", "D1")).fields["headline"]).toBe("warp leak fixed");
+    h.unmount();
+  });
+
+  it("answers a question and resolves it in one step (a → type → Enter)", async () => {
+    const h = await mount();
+    await h.key(DOWN); // bugs -> milestones
+    await h.key(DOWN); // milestones -> questions
+    await h.key(ENTER); // open questions (cursor on Q1)
+    expect(h.frame()).toContain("a answer"); // hint advertises the affordance
+    await h.key("a"); // open the answer prompt
+    await type(h, "ship it");
+    await h.key(ENTER);
+    await tick(40);
+    const q = await h.client.fetchItem("questions", "Q1");
+    expect(q.status).toBe("answered");
+    expect(q.fields["answer"]).toBe("ship it");
+    h.unmount();
+  });
+
+  it("answers a question 'as recommended' with one key (r)", async () => {
+    const h = await mount();
+    await h.key(DOWN); // -> milestones
+    await h.key(DOWN); // -> questions
+    await h.key(ENTER); // open questions
+    await h.key("r"); // answer as recommended (Q1 has a recommendation)
+    await tick(40);
+    const q = await h.client.fetchItem("questions", "Q1");
+    expect(q.status).toBe("answered");
+    expect(q.fields["answer"]).toBe("as recommended");
     h.unmount();
   });
 

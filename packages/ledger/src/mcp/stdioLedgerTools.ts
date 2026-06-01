@@ -116,10 +116,18 @@ export function registerLedgerStdioTools(server: McpServer, store: LedgerStore):
   server.registerTool(
     "enumerate_ledgers",
     {
-      description: "List all known ledger names.",
+      description:
+        "List all known ledger names, plus a `counts` map of each ledger's active-item count.",
       inputSchema: {},
     },
-    async () => jsonResult({ ledgers: store.enumerate() }),
+    async () => {
+      const ledgers = store.enumerate();
+      const counts: Record<string, number> = {};
+      for (const name of ledgers) {
+        counts[name] = store.fetch(name).milestones.reduce((n, g) => n + g.items.length, 0);
+      }
+      return jsonResult({ ledgers, counts });
+    },
   );
 
   server.registerTool(

@@ -13,6 +13,7 @@ import type {
   ItemPatch,
   LedgerClient,
   LedgerSchema,
+  LedgerSummary,
   MilestonePatch,
 } from "../src/types.js";
 
@@ -43,6 +44,18 @@ const bugsSchema: LedgerSchema = {
   transitions: { open: ["wip", "closed"], wip: ["closed", "open"], closed: [] },
 };
 
+const questionsSchema: LedgerSchema = {
+  statusValues: ["open", "answered", "withdrawn"],
+  terminalStatuses: ["answered", "withdrawn"],
+  idPrefix: "Q",
+  transitions: { open: ["answered", "withdrawn"], answered: [], withdrawn: [] },
+  fields: {
+    question: { type: "string", required: true },
+    recommendation: { type: "string", required: false },
+    answer: { type: "string", required: false },
+  },
+};
+
 export class FakeClient implements LedgerClient {
   closed = false;
   private msCounter = 1;
@@ -70,10 +83,26 @@ export class FakeClient implements LedgerClient {
         },
       ],
     },
+    questions: {
+      schema: questionsSchema,
+      groups: [
+        {
+          id: "M1",
+          items: [
+            { id: "Q1", milestoneId: "M1", status: "open", fields: { question: "Ship on Friday?", recommendation: "yes, ship it" }, createdAt: TS, updatedAt: TS },
+          ],
+        },
+      ],
+    },
   };
 
-  async enumerateLedgers(): Promise<string[]> {
-    return Object.keys(this.data).sort();
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return Object.keys(this.data)
+      .sort()
+      .map((name) => ({
+        name,
+        itemCount: this.data[name]!.groups.reduce((n, g) => n + g.items.length, 0),
+      }));
   }
 
   async fetchLedger(ledgerId: string): Promise<FetchedLedger> {

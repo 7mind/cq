@@ -20,6 +20,7 @@ import type {
   ItemInit,
   ItemPatch,
   LedgerClient,
+  LedgerSummary,
   MilestonePatch,
 } from "./types.js";
 
@@ -67,8 +68,15 @@ export class McpLedgerClient implements LedgerClient {
     return JSON.parse(text) as T;
   }
 
-  async enumerateLedgers(): Promise<string[]> {
-    return (await this.call<{ ledgers: string[] }>("enumerate_ledgers", {})).ledgers;
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    const r = await this.call<{ ledgers: string[]; counts?: Record<string, number> }>(
+      "enumerate_ledgers",
+      {},
+    );
+    // `counts` is optional for forward/backward compatibility with a server
+    // build that predates it — fall back to 0 rather than dereferencing undefined.
+    const counts = r.counts ?? {};
+    return r.ledgers.map((name) => ({ name, itemCount: counts[name] ?? 0 }));
   }
 
   async fetchLedger(ledgerId: string): Promise<FetchedLedger> {

@@ -26,9 +26,14 @@ import {
   isTerminal,
   statusMatchesFilter,
   filterLabel,
+  canAnswer,
+  ANSWER_FIELD,
+  ANSWERED_STATUS,
+  RECOMMENDATION_FIELD,
+  AS_RECOMMENDED_ANSWER,
   type StatusFilter,
 } from "./status.js";
-import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema } from "./types.js";
+import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary } from "./types.js";
 
 const MILESTONES = "milestones";
 /** Provenance author stamped on writes made by a human through this editor. */
@@ -78,6 +83,11 @@ function parseFieldValue(raw: string, type: string): FieldValue {
   return raw;
 }
 
+/** True when the item carries a non-empty `recommendation` field. */
+function hasRecommendation(item: Item): boolean {
+  return fieldToString(item.fields[RECOMMENDATION_FIELD]).trim().length > 0;
+}
+
 interface Row {
   item: Item;
   milestoneId: string;
@@ -104,6 +114,7 @@ type Frame =
 type Overlay =
   | { t: "search" }
   | { t: "status"; row: Row }
+  | { t: "answer"; row: Row }
   | { t: "pickField"; row: Row }
   | { t: "editField"; row: Row; field: string }
   | { t: "editTitle"; row: Row }
@@ -128,7 +139,7 @@ export function App({
   const { cols, rows } = useTermSize();
   const [conn, setConn] = useState<"connecting" | "connected" | "error">("connecting");
   const [connErr, setConnErr] = useState("");
-  const [ledgers, setLedgers] = useState<string[]>([]);
+  const [ledgers, setLedgers] = useState<LedgerSummary[]>([]);
   const [stack, setStack] = useState<Frame[]>([{ kind: "ledgers", cursor: 0 }]);
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [flash, setFlash] = useState("");
@@ -247,6 +258,27 @@ export function App({
     [client, top, isMilestonesLedger, reloadItems],
   );
 
+  // Questions "answer & resolve": write the `answer` field AND transition to
+  // `answered` in one update (the transition guard permits open → answered).
+  const applyAnswer = useCallback(
+    async (row: Row, answer: string) => {
+      if (top.kind !== "items") return;
+      try {
+        await client.updateItem(top.ledger, row.item.id, {
+          status: ANSWERED_STATUS,
+          fields: { [ANSWER_FIELD]: answer },
+          author: UI_AUTHOR,
+        });
+        setFlash(`${row.item.id} answered`);
+        await reloadItems();
+      } catch (e) {
+        setFlash(errMsg(e));
+      }
+      setOverlay(null);
+    },
+    [client, top, reloadItems],
+  );
+
   const applyField = useCallback(
     async (row: Row, field: string, raw: string) => {
       if (top.kind !== "items") return;
@@ -305,7 +337,7 @@ export function App({
         const idx = Math.max(0, rs.findIndex((r) => r.item.id === hit.item.id));
         // Replace the stack: a fresh ledgers root, then push the hit's ledger.
         setStack([
-          { kind: "ledgers", cursor: Math.max(0, ledgers.indexOf(hit.ledgerId)) },
+          { kind: "ledgers", cursor: Math.max(0, ledgers.findIndex((l) => l.name === hit.ledgerId)) },
           { kind: "items", ledger: hit.ledgerId, view, cursor: idx, focus: "list", scroll: 0 },
         ]);
         // The hit's row index is into the unfiltered list — clear any filter so
@@ -341,8 +373,8 @@ export function App({
         else if (key.downArrow || input === "j")
           patchTop({ cursor: Math.min(ledgers.length - 1, top.cursor + 1) });
         else if (key.return) {
-          const name = ledgers[top.cursor];
-          if (name !== undefined) void openLedger(name);
+          const sel = ledgers[top.cursor];
+          if (sel !== undefined) void openLedger(sel.name);
         } else if (input === "/") setOverlay({ t: "search" });
         else if (input === "q") exit();
         return;
@@ -355,6 +387,15 @@ export function App({
         else if (key.downArrow || input === "j") patchTop({ scroll: top.scroll + 1 });
         else if (key.escape) patchTop({ focus: "list", scroll: 0 });
         else if (input === "s" && cur) setOverlay({ t: "status", row: cur });
+        else if (input === "a" && cur && canAnswer(top.view.schema, cur.item.status))
+          setOverlay({ t: "answer", row: cur });
+        else if (
+          input === "r" &&
+          cur &&
+          canAnswer(top.view.schema, cur.item.status) &&
+          hasRecommendation(cur.item)
+        )
+          void applyAnswer(cur, AS_RECOMMENDED_ANSWER);
         else if (input === "e" && cur)
           setOverlay(isMilestonesLedger ? { t: "editTitle", row: cur } : { t: "pickField", row: cur });
         return;
@@ -368,6 +409,15 @@ export function App({
       } else if (key.escape) setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
       else if (input === "n") void beginCreate();
       else if (input === "s" && cur) setOverlay({ t: "status", row: cur });
+      else if (input === "a" && cur && canAnswer(top.view.schema, cur.item.status))
+        setOverlay({ t: "answer", row: cur });
+      else if (
+        input === "r" &&
+        cur &&
+        canAnswer(top.view.schema, cur.item.status) &&
+        hasRecommendation(cur.item)
+      )
+        void applyAnswer(cur, AS_RECOMMENDED_ANSWER);
       else if (input === "e" && cur)
         setOverlay(isMilestonesLedger ? { t: "editTitle", row: cur } : { t: "pickField", row: cur });
       else if (input === "f") setOverlay({ t: "filter" });
@@ -395,10 +445,25 @@ export function App({
   if (top.kind === "ledgers") {
     pathStr = "all ledgers";
     hints = "↑↓ move · Enter open · / search · o/[ ] panes · q quit";
+    // Right-align the per-ledger item count: pad the name out to fill the row
+    // (less the cursor prefix and a scrollbar column when one is shown).
+    const showBar = ledgers.length > listInnerH;
+    const labelW = Math.max(8, listOuterW - 4 - 2 - (showBar ? 1 : 0));
     listEl = (
       <ScrollList
         items={ledgers}
-        getLabel={(l) => l}
+        getLabel={(l) => l.name}
+        renderLabel={(l) => {
+          const count = String(l.itemCount);
+          const pad = Math.max(1, labelW - l.name.length - count.length);
+          return (
+            <Text>
+              {l.name}
+              {" ".repeat(pad)}
+              <Text dimColor>{count}</Text>
+            </Text>
+          );
+        }}
         cursor={top.cursor}
         height={listInnerH}
         active={overlay === null}
@@ -408,7 +473,7 @@ export function App({
     contentEl = (
       <Box flexDirection="column">
         <Text bold color="green">
-          {sel ?? ""}
+          {sel?.name ?? ""}
         </Text>
         <Text dimColor>Press Enter to open this ledger.</Text>
       </Box>
@@ -421,10 +486,14 @@ export function App({
     pathStr =
       cur !== undefined ? `${top.ledger} → ${cur.milestoneId} → ${cur.item.id}` : top.ledger;
     if (fLabel.length > 0) pathStr += `  [${fLabel}]`;
+    const answerable = cur !== undefined && canAnswer(schema, cur.item.status);
+    const answerHint = answerable
+      ? ` · a answer${hasRecommendation(cur!.item) ? " · r as-recommended" : ""}`
+      : "";
     hints =
       top.focus === "content"
-        ? "↑↓ scroll · s status · e edit · o/[ ] panes · Esc back to list"
-        : "↑↓ move · Enter open · s status · e edit · n new · f filter · / search · o/[ ] panes · Esc back";
+        ? `↑↓ scroll · s status${answerHint} · e edit · o/[ ] panes · Esc back to list`
+        : `↑↓ move · Enter open · s status${answerHint} · e edit · n new · f filter · / search · o/[ ] panes · Esc back`;
     listEl = (
       <ScrollList
         items={rowsArr}
@@ -490,6 +559,7 @@ export function App({
               overlay={overlay}
               view={top.kind === "items" ? top.view : null}
               onStatus={applyStatus}
+              onAnswer={applyAnswer}
               onField={applyField}
               onTitle={applyTitle}
               search={search}
@@ -829,6 +899,7 @@ function Overlays({
   overlay,
   view,
   onStatus,
+  onAnswer,
   onField,
   onTitle,
   search,
@@ -842,6 +913,7 @@ function Overlays({
   overlay: Overlay;
   view: FetchedLedger | null;
   onStatus: (row: Row, status: string) => void;
+  onAnswer: (row: Row, answer: string) => void;
   onField: (row: Row, field: string, value: string) => void;
   onTitle: (row: Row, title: string) => void;
   search: (q: string) => Promise<FtsHit[]>;
@@ -896,6 +968,15 @@ function Overlays({
         />
       );
     }
+    case "answer":
+      return (
+        <TextPrompt
+          label="answer (saves + marks answered):"
+          initialValue={fieldToString(overlay.row.item.fields[ANSWER_FIELD])}
+          onSubmit={(v) => onAnswer(overlay.row, v)}
+          onCancel={onCancel}
+        />
+      );
     case "pickField": {
       const fields = view !== null ? Object.keys(view.schema.fields) : [];
       return (

@@ -17,7 +17,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, MilestonePatch } from "./types.js";
+import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSummary, MilestonePatch } from "./types.js";
 import { DagView } from "./DagView.js";
 import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
@@ -28,6 +28,11 @@ import {
   statusMatchesFilter,
   filterToValue,
   valueToFilter,
+  canAnswer,
+  ANSWER_FIELD,
+  ANSWERED_STATUS,
+  RECOMMENDATION_FIELD,
+  AS_RECOMMENDED_ANSWER,
   type StatusFilter,
 } from "./status.js";
 
@@ -61,6 +66,31 @@ function loadPanel(): PanelLayout {
     /* fall through to default */
   }
   return { ...DEFAULT_PANEL };
+}
+
+// Current navigation view, persisted so a page reload restores where you were:
+// the open ledger, the selected item, and whether the table or graph was shown.
+const VIEW_KEY = "ledger-web.view";
+interface SavedView {
+  ledger: string | null;
+  itemId: string | null;
+  mainView: "ledger" | "dag";
+}
+function loadView(): SavedView {
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(VIEW_KEY) : null;
+    if (raw !== null) {
+      const p = JSON.parse(raw) as Partial<SavedView>;
+      return {
+        ledger: typeof p.ledger === "string" ? p.ledger : null,
+        itemId: typeof p.itemId === "string" ? p.itemId : null,
+        mainView: p.mainView === "dag" ? "dag" : "ledger",
+      };
+    }
+  } catch {
+    /* fall through to default */
+  }
+  return { ledger: null, itemId: null, mainView: "ledger" };
 }
 
 export function clampPanelSize(size: number, max: number): number {
@@ -124,7 +154,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
   const [client, setClient] = useState<LedgerClient | null>(null);
   const [conn, setConn] = useState<"connecting" | "connected" | "error">("connecting");
   const [connErr, setConnErr] = useState("");
-  const [ledgers, setLedgers] = useState<string[]>([]);
+  const [ledgers, setLedgers] = useState<LedgerSummary[]>([]);
   const [ledger, setLedger] = useState<string | null>(null);
   const [view, setView] = useState<FetchedLedger | null>(null);
   const [selected, setSelected] = useState<Row | null>(null);
@@ -188,6 +218,9 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
 
   useEffect(() => {
     let alive = true;
+    // Capture the persisted view BEFORE the resets below trigger the
+    // persistence effect (which would overwrite it with the cleared state).
+    const saved = loadView();
     setConn("connecting");
     setConnErr("");
     setClient(null);
@@ -211,6 +244,28 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
         setClient(c);
         setLedgers(ls);
         setConn("connected");
+        // Restore the previous view (reload persistence): re-open the saved
+        // ledger, re-select the saved item, and re-enter graph mode if it was
+        // active. Silently skipped when the saved ledger/item no longer exists.
+        if (saved.ledger !== null && ls.some((l) => l.name === saved.ledger)) {
+          const v = await c.fetchLedger(saved.ledger);
+          if (!alive) {
+            await c.close();
+            return;
+          }
+          setLedger(saved.ledger);
+          setView(v);
+          setNavZone("main");
+          if (saved.itemId !== null) {
+            for (const g of v.milestones)
+              for (const it of g.items)
+                if (it.id === saved.itemId) setSelected({ item: it, milestoneId: g.id });
+          }
+          if (saved.mainView === "dag") {
+            setMainView("dag");
+            setDag(await loadDagData(c, saved.ledger));
+          }
+        }
       })
       .catch((e: unknown) => {
         if (alive) {
@@ -222,6 +277,18 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
       alive = false;
     };
   }, [connect, url]);
+
+  // Persist the current view so a page reload can restore it (see loadView).
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        VIEW_KEY,
+        JSON.stringify({ ledger, itemId: selected?.item.id ?? null, mainView }),
+      );
+    } catch {
+      /* ignore (e.g. storage disabled) */
+    }
+  }, [ledger, selected, mainView]);
 
   const isMilestones = ledger === MILESTONES;
 
@@ -454,7 +521,10 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
 
   // Reset cursors when their underlying lists change.
   useEffect(() => setHitCursor(0), [hits]);
-  useEffect(() => setLedgerCursor(Math.max(0, ledgers.indexOf(ledger ?? ""))), [ledger, ledgers]);
+  useEffect(
+    () => setLedgerCursor(Math.max(0, ledgers.findIndex((l) => l.name === (ledger ?? "")))),
+    [ledger, ledgers],
+  );
 
   // ---- keyboard navigation ----------------------------------------------
   // A stable document listener delegates to the freshest handler via a ref, so
@@ -524,9 +594,9 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
       } else if (e.key === "ArrowRight" || e.key === "l") {
         if (view !== null) setNavZone("main");
       } else if (enter) {
-        const name = ledgers[ledgerCursor];
-        if (name !== undefined) {
-          void openLedger(name);
+        const sel = ledgers[ledgerCursor];
+        if (sel !== undefined) {
+          void openLedger(sel.name);
           setNavZone("main");
         }
       }
@@ -653,23 +723,26 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
           {ledgers.map((l, i) => {
             const cls = [
               "lw-ledger",
-              l === ledger ? "lw-ledger-active" : "",
+              l.name === ledger ? "lw-ledger-active" : "",
               navZone === "sidebar" && i === ledgerCursor ? "lw-ledger-cursor" : "",
             ]
               .filter(Boolean)
               .join(" ");
             return (
               <button
-                key={l}
-                data-testid={`ledger-${l}`}
+                key={l.name}
+                data-testid={`ledger-${l.name}`}
                 className={cls}
                 onClick={() => {
                   setLedgerCursor(i);
                   setNavZone("main");
-                  void openLedger(l);
+                  void openLedger(l.name);
                 }}
               >
-                {l}
+                <span className="lw-ledger-name">{l.name}</span>
+                <span className="lw-ledger-count" data-testid={`ledger-count-${l.name}`}>
+                  {l.itemCount}
+                </span>
               </button>
             );
           })}
@@ -1053,6 +1126,8 @@ function DetailPanel({
   const [status, setStatus] = useState(row.item.status);
   const [milestoneId, setMilestoneId] = useState(draftMilestones?.[0]?.id ?? "");
   const fieldRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | null>>({});
+  // Uncontrolled answer box for the questions "answer & resolve" affordance.
+  const answerRef = useRef<HTMLTextAreaElement>(null);
 
   // Reset to the initial mode + values whenever the row changes (a different
   // item loads, or a fresh create session starts → blank draft row).
@@ -1214,6 +1289,23 @@ function DetailPanel({
   // (status-only patch, preserving the item's current fields).
   const allowed = schema.transitions?.[row.item.status] ?? null;
 
+  // "Answer & resolve" affordance (questions ledger): a single action that
+  // writes the `answer` field AND transitions to `answered`. When available it
+  // supersedes the bare `answered` quick-transition (still offering the others,
+  // e.g. `withdrawn`) and owns the `answer` field (dropped from the read-only
+  // field list below to avoid showing it twice).
+  const answerable = !isMilestones && onSave !== undefined && canAnswer(schema, row.item.status);
+  const hasRecommendation = fieldToString(row.item.fields[RECOMMENDATION_FIELD]).trim().length > 0;
+  const answerWith = (answer: string): void => {
+    if (onSave === undefined) return;
+    onSave(ANSWERED_STATUS, {
+      ...(row.item.fields as Record<string, FieldValue>),
+      [ANSWER_FIELD]: answer,
+    });
+  };
+  const submitAnswer = (): void => answerWith(answerRef.current?.value ?? "");
+  const transitionTargets = (allowed ?? []).filter((t) => !(answerable && t === ANSWERED_STATUS));
+
   return (
     <aside className="lw-detail" data-testid="detail">
       {head}
@@ -1224,12 +1316,44 @@ function DetailPanel({
             {row.item.status}
           </span>
         </dd>
-        {allowed !== null && allowed.length > 0 && !isMilestones && onSave !== undefined && (
+        {answerable && (
+          <>
+            <dt>answer</dt>
+            <dd>
+              <div className="lw-answer" data-testid="answer-box">
+                <textarea
+                  key={row.item.id}
+                  data-testid="answer-input"
+                  className="lw-answer-input"
+                  rows={4}
+                  ref={answerRef}
+                  defaultValue={fieldToString(row.item.fields[ANSWER_FIELD])}
+                  placeholder="type an answer…"
+                />
+                <div className="lw-answer-actions">
+                  <button type="button" data-testid="answer-submit" onClick={submitAnswer}>
+                    save &amp; mark answered
+                  </button>
+                  {hasRecommendation && (
+                    <button
+                      type="button"
+                      data-testid="answer-as-recommended"
+                      onClick={() => answerWith(AS_RECOMMENDED_ANSWER)}
+                    >
+                      as recommended
+                    </button>
+                  )}
+                </div>
+              </div>
+            </dd>
+          </>
+        )}
+        {transitionTargets.length > 0 && !isMilestones && onSave !== undefined && (
           <>
             <dt>transition to</dt>
             <dd>
               <div className="lw-transitions" data-testid="transitions">
-                {allowed.map((target) => (
+                {transitionTargets.map((target) => (
                   <button
                     key={target}
                     type="button"
@@ -1246,14 +1370,16 @@ function DetailPanel({
             </dd>
           </>
         )}
-        {orderItemFields(Object.entries(row.item.fields) as Array<[string, FieldValue]>).map(([k, v]) => (
-          <React.Fragment key={k}>
-            <dt>{k}</dt>
-            <dd data-testid={`detail-field-${k}`}>
-              {Array.isArray(v) ? v.join(", ") : <Markdown text={v} />}
-            </dd>
-          </React.Fragment>
-        ))}
+        {orderItemFields(Object.entries(row.item.fields) as Array<[string, FieldValue]>)
+          .filter(([k]) => !(answerable && k === ANSWER_FIELD))
+          .map(([k, v]) => (
+            <React.Fragment key={k}>
+              <dt>{k}</dt>
+              <dd data-testid={`detail-field-${k}`}>
+                {Array.isArray(v) ? v.join(", ") : <Markdown text={v} />}
+              </dd>
+            </React.Fragment>
+          ))}
         <dt>milestone</dt>
         <dd>{row.milestoneId}</dd>
         {(row.item.author !== undefined || row.item.session !== undefined) && (

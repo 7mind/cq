@@ -115,6 +115,14 @@ describe("ledger MCP tools", () => {
     expect(it.item.status).toBe("open");
     expect(it.item.milestoneId).toBe("M1");
 
+    // enumerate_ledgers reports the active-item count per ledger: xenos now
+    // holds X1, and milestones holds the just-created M1 (≥ 1).
+    const counted = decode<{ counts: Record<string, number> }>(
+      await callTool(tools, "enumerate_ledgers", {}),
+    );
+    expect(counted.counts["xenos"]).toBe(1);
+    expect(counted.counts["milestones"]).toBeGreaterThanOrEqual(1);
+
     const fetched = decode<{ item: { fields: Record<string, string> } }>(
       await callTool(tools, "fetch_item", { ledger_id: "xenos", item_id: "X1" }),
     );

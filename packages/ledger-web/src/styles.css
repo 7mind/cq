@@ -198,6 +198,20 @@ button:hover {
 }
 .lw-ledger {
   text-align: left;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.lw-ledger-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lw-ledger-count {
+  flex: 0 0 auto;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
 }
 .lw-ledger-active {
   border-color: var(--accent);
@@ -306,6 +320,27 @@ button:hover {
 }
 /* Guard-aligned quick-transition buttons: one per legal next status, styled
    like the status badge of their target bucket. */
+.lw-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lw-answer-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+  resize: vertical;
+}
+.lw-answer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .lw-transitions {
   display: flex;
   flex-wrap: wrap;

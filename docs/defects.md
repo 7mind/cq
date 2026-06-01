@@ -1,0 +1,21 @@
+---
+ledger: defects
+counters:
+  milestone: 0
+  item: 1
+archives: []
+---
+
+# defects
+
+## M2
+
+### D1 — resolved
+
+- createdAt: 2026-06-01T19:45:51.333Z
+- updatedAt: 2026-06-01T19:45:51.333Z
+- author: "opus-4.8[1m]"
+- session: b946b5c5-0dca-4058-a5bf-45caaea6111d
+- headline: "Web UI crash on connect: r.counts is undefined when server omits counts"
+- severity: major
+- description: "After the enumerate_ledgers `counts` change, McpLedgerClient.enumerateLedgers() dereferenced r.counts[name] unconditionally. Against a ledger-mcp server build that predates the change (version skew — the externally-run --http server was not restarted), the response is {ledgers} with no counts, so r.counts is undefined and the map callback threw 'can't access property \"decisions\", r.counts is undefined', surfaced as 'connection failed'. Fix: default counts to {} at the boundary in both frontends' mcpClient. Regression test added (injected stub response without counts → itemCount 0)."

@@ -35,6 +35,9 @@ function click(el: Element | null): void {
 }
 
 beforeEach(() => {
+  // Isolate persisted UI state (restored view) so one test's navigation does
+  // not auto-restore into the next.
+  localStorage.clear();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);

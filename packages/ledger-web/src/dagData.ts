@@ -61,7 +61,9 @@ export async function loadDagData(client: LedgerClient, ledgerId: string): Promi
   let refCounts: Map<string, number> | null = null;
   if (ledgerId === MILESTONES) {
     refCounts = new Map();
-    const others = (await client.enumerateLedgers()).filter((n) => n !== MILESTONES);
+    const others = (await client.enumerateLedgers())
+      .map((l) => l.name)
+      .filter((n) => n !== MILESTONES);
     const views = await Promise.all(others.map((n) => client.fetchLedger(n)));
     for (const v of views) {
       for (const g of v.milestones) refCounts.set(g.id, (refCounts.get(g.id) ?? 0) + g.items.length);

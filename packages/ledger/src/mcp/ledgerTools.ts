@@ -143,9 +143,16 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
 
   const enumerateLedgers = tool(
     "enumerate_ledgers",
-    "List all known ledger names.",
+    "List all known ledger names, plus a `counts` map of each ledger's active-item count.",
     {} as Record<string, never>,
-    async () => jsonResult({ ledgers: store.enumerate() }),
+    async () => {
+      const ledgers = store.enumerate();
+      const counts: Record<string, number> = {};
+      for (const name of ledgers) {
+        counts[name] = store.fetch(name).milestones.reduce((n, g) => n + g.items.length, 0);
+      }
+      return jsonResult({ ledgers, counts });
+    },
   );
 
   const fetchLedger = tool(
