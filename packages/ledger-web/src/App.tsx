@@ -33,6 +33,9 @@ import {
   ANSWERED_STATUS,
   RECOMMENDATION_FIELD,
   AS_RECOMMENDED_ANSWER,
+  QUESTION_FIELD,
+  CONTEXT_FIELD,
+  isQuestion,
   type StatusFilter,
 } from "./status.js";
 
@@ -1296,6 +1299,10 @@ function DetailPanel({
   // field list below to avoid showing it twice).
   const answerable = !isMilestones && onSave !== undefined && canAnswer(schema, row.item.status);
   const hasRecommendation = fieldToString(row.item.fields[RECOMMENDATION_FIELD]).trim().length > 0;
+  // A question item gets a fixed field order with a highlighted recommendation
+  // (T23). For non-questions the original top answer box + short-first order is
+  // kept unchanged.
+  const isQ = !isMilestones && isQuestion(schema);
   const answerWith = (answer: string): void => {
     if (onSave === undefined) return;
     onSave(ANSWERED_STATUS, {
@@ -1305,6 +1312,79 @@ function DetailPanel({
   };
   const submitAnswer = (): void => answerWith(answerRef.current?.value ?? "");
   const transitionTargets = (allowed ?? []).filter((t) => !(answerable && t === ANSWERED_STATUS));
+
+  // The editable "answer & resolve" control, reused at the top (non-questions)
+  // or just below the highlighted recommendation (questions).
+  const answerBox = (
+    <div className="lw-answer" data-testid="answer-box">
+      <textarea
+        key={row.item.id}
+        data-testid="answer-input"
+        className="lw-answer-input"
+        rows={4}
+        ref={answerRef}
+        defaultValue={fieldToString(row.item.fields[ANSWER_FIELD])}
+        placeholder="type an answer…"
+      />
+      <div className="lw-answer-actions">
+        <button type="button" data-testid="answer-submit" onClick={submitAnswer}>
+          save &amp; mark answered
+        </button>
+        {hasRecommendation && (
+          <button
+            type="button"
+            data-testid="answer-as-recommended"
+            onClick={() => answerWith(AS_RECOMMENDED_ANSWER)}
+          >
+            as recommended
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // Question field rendering (T23): short/metadata fields first, then question,
+  // context, the HIGHLIGHTED recommendation, and the answer last (editable box
+  // when answerable, else the stored answer). Render order in the DOM is
+  // question → context → recommendation → answer.
+  const renderQuestionFields = (): React.ReactElement => {
+    const narrative = new Set([QUESTION_FIELD, CONTEXT_FIELD, RECOMMENDATION_FIELD, ANSWER_FIELD]);
+    const entries = Object.entries(row.item.fields) as Array<[string, FieldValue]>;
+    const metadata = orderItemFields(entries.filter(([k]) => !narrative.has(k)));
+    const fieldDtDd = (k: string, body: React.ReactNode): React.ReactElement => (
+      <React.Fragment key={k}>
+        <dt>{k}</dt>
+        <dd data-testid={`detail-field-${k}`}>{body}</dd>
+      </React.Fragment>
+    );
+    const valueOf = (k: string): FieldValue | undefined => row.item.fields[k];
+    const renderVal = (v: FieldValue): React.ReactNode =>
+      Array.isArray(v) ? v.join(", ") : <Markdown text={v} />;
+    const recVal = valueOf(RECOMMENDATION_FIELD);
+    const ansVal = valueOf(ANSWER_FIELD);
+    return (
+      <>
+        {metadata.map(([k, v]) => fieldDtDd(k, renderVal(v)))}
+        {valueOf(QUESTION_FIELD) !== undefined &&
+          fieldDtDd(QUESTION_FIELD, renderVal(valueOf(QUESTION_FIELD)!))}
+        {valueOf(CONTEXT_FIELD) !== undefined &&
+          fieldDtDd(CONTEXT_FIELD, renderVal(valueOf(CONTEXT_FIELD)!))}
+        {recVal !== undefined && (
+          <React.Fragment key={RECOMMENDATION_FIELD}>
+            <dt>{RECOMMENDATION_FIELD}</dt>
+            <dd data-testid={`detail-field-${RECOMMENDATION_FIELD}`}>
+              <div className="lw-recommendation" data-testid="recommendation">
+                {renderVal(recVal)}
+              </div>
+            </dd>
+          </React.Fragment>
+        )}
+        {answerable
+          ? fieldDtDd(ANSWER_FIELD, answerBox)
+          : ansVal !== undefined && fieldDtDd(ANSWER_FIELD, renderVal(ansVal))}
+      </>
+    );
+  };
 
   return (
     <aside className="lw-detail" data-testid="detail">
@@ -1316,36 +1396,10 @@ function DetailPanel({
             {row.item.status}
           </span>
         </dd>
-        {answerable && (
+        {!isQ && answerable && (
           <>
             <dt>answer</dt>
-            <dd>
-              <div className="lw-answer" data-testid="answer-box">
-                <textarea
-                  key={row.item.id}
-                  data-testid="answer-input"
-                  className="lw-answer-input"
-                  rows={4}
-                  ref={answerRef}
-                  defaultValue={fieldToString(row.item.fields[ANSWER_FIELD])}
-                  placeholder="type an answer…"
-                />
-                <div className="lw-answer-actions">
-                  <button type="button" data-testid="answer-submit" onClick={submitAnswer}>
-                    save &amp; mark answered
-                  </button>
-                  {hasRecommendation && (
-                    <button
-                      type="button"
-                      data-testid="answer-as-recommended"
-                      onClick={() => answerWith(AS_RECOMMENDED_ANSWER)}
-                    >
-                      as recommended
-                    </button>
-                  )}
-                </div>
-              </div>
-            </dd>
+            <dd>{answerBox}</dd>
           </>
         )}
         {transitionTargets.length > 0 && !isMilestones && onSave !== undefined && (
@@ -1370,16 +1424,18 @@ function DetailPanel({
             </dd>
           </>
         )}
-        {orderItemFields(Object.entries(row.item.fields) as Array<[string, FieldValue]>)
-          .filter(([k]) => !(answerable && k === ANSWER_FIELD))
-          .map(([k, v]) => (
-            <React.Fragment key={k}>
-              <dt>{k}</dt>
-              <dd data-testid={`detail-field-${k}`}>
-                {Array.isArray(v) ? v.join(", ") : <Markdown text={v} />}
-              </dd>
-            </React.Fragment>
-          ))}
+        {isQ
+          ? renderQuestionFields()
+          : orderItemFields(Object.entries(row.item.fields) as Array<[string, FieldValue]>)
+              .filter(([k]) => !(answerable && k === ANSWER_FIELD))
+              .map(([k, v]) => (
+                <React.Fragment key={k}>
+                  <dt>{k}</dt>
+                  <dd data-testid={`detail-field-${k}`}>
+                    {Array.isArray(v) ? v.join(", ") : <Markdown text={v} />}
+                  </dd>
+                </React.Fragment>
+              ))}
         <dt>milestone</dt>
         <dd>{row.milestoneId}</dd>
         {(row.item.author !== undefined || row.item.session !== undefined) && (

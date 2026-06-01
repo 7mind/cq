@@ -31,6 +31,8 @@ import {
   ANSWERED_STATUS,
   RECOMMENDATION_FIELD,
   AS_RECOMMENDED_ANSWER,
+  QUESTION_FIELD_ORDER,
+  isQuestion,
   type StatusFilter,
 } from "./status.js";
 import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary } from "./types.js";
@@ -767,7 +769,18 @@ function ContentPane({
   scroll: number;
 }): React.ReactElement {
   const f = row.item.fields;
-  const entries = orderItemFields(Object.entries(f) as Array<[string, FieldValue]>);
+  const allEntries = Object.entries(f) as Array<[string, FieldValue]>;
+  // Questions (T23): metadata/short fields first, then the fixed narrative order
+  // question → context → recommendation (highlighted) → answer. Otherwise the
+  // generic short-first order.
+  const entries = isQuestion(schema)
+    ? [
+        ...orderItemFields(allEntries.filter(([k]) => !QUESTION_FIELD_ORDER.includes(k))),
+        ...QUESTION_FIELD_ORDER.filter((k) => f[k] !== undefined).map(
+          (k) => [k, f[k]!] as [string, FieldValue],
+        ),
+      ]
+    : orderItemFields(allEntries);
   const { author, session } = row.item;
   const hasProvenance = author !== undefined || session !== undefined;
   // Estimate total height to clamp scrolling: short fields are one line each;
@@ -802,7 +815,16 @@ function ContentPane({
           <Text dimColor>(no fields)</Text>
         ) : (
           entries.map(([k, v]) =>
-            isShortField(v) ? (
+            k === RECOMMENDATION_FIELD ? (
+              // Highlighted recommendation block (T23): bordered + accent so the
+              // recommended answer stands out as the call-to-action.
+              <Box key={k} flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={1}>
+                <Text bold color="cyan">
+                  {k}
+                </Text>
+                {Array.isArray(v) ? <Text>{v.join(", ")}</Text> : <Markdown text={v} />}
+              </Box>
+            ) : isShortField(v) ? (
               // Short/fixed-size field: render inline on a single line.
               <Text key={k}>
                 <Text bold color="gray">

@@ -191,6 +191,32 @@ describe("ledger-web App", () => {
     expect(q.fields["answer"]).toBe("as recommended");
   });
 
+  it("renders a question with a highlighted recommendation and fixed field order", async () => {
+    await mount();
+    click(testid("ledger-questions"));
+    await flush();
+    click(testid("item-Q1"));
+    await flush();
+
+    // The recommendation is rendered in a highlighted block.
+    const rec = testid("recommendation");
+    expect(rec).not.toBeNull();
+    expect(rec?.classList.contains("lw-recommendation")).toBe(true);
+
+    // DOM order: question → context → recommendation → answer (the editable box,
+    // since Q1 is open/answerable).
+    const question = testid("detail-field-question");
+    const context = testid("detail-field-context");
+    const recommendation = testid("detail-field-recommendation");
+    const answer = testid("answer-box");
+    for (const el of [question, context, recommendation, answer]) expect(el).not.toBeNull();
+    const follows = (a: HTMLElement | null, b: HTMLElement | null): boolean =>
+      (a!.compareDocumentPosition(b!) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(question, context)).toBe(true);
+    expect(follows(context, recommendation)).toBe(true);
+    expect(follows(recommendation, answer)).toBe(true);
+  });
+
   it("opens item detail when a row is clicked", async () => {
     await mount();
     click(testid("ledger-bugs"));

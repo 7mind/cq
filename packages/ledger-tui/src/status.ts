@@ -63,6 +63,24 @@ export const ANSWERED_STATUS = "answered";
 /** Question's recommended-answer field, and the canned "accept it" answer. */
 export const RECOMMENDATION_FIELD = "recommendation";
 export const AS_RECOMMENDED_ANSWER = "as recommended";
+/** A question carries a free-form `question` field (data-driven, not by name). */
+export const QUESTION_FIELD = "question";
+export const CONTEXT_FIELD = "context";
+/**
+ * Fixed render order for a question's narrative fields (T23): question, its
+ * context, the (highlighted) recommendation, then the answer last. Other fields
+ * render as short/metadata before these.
+ */
+export const QUESTION_FIELD_ORDER: readonly string[] = [
+  QUESTION_FIELD,
+  CONTEXT_FIELD,
+  RECOMMENDATION_FIELD,
+  ANSWER_FIELD,
+];
+/** True when an item is a question (its schema declares a `question` field). */
+export function isQuestion(schema: LedgerSchema): boolean {
+  return QUESTION_FIELD in schema.fields;
+}
 
 /**
  * True when an item supports the one-step "answer & resolve" affordance: its
