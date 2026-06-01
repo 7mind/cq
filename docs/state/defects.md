@@ -75,7 +75,35 @@ Status: `[ ] open` · `[~] under fix` · `[x] resolved`
 
 ## M4 (UI quick-transition buttons)
 
-(under review — changes uncommitted in worktree `worktree-agent-af04491be06bc3584`)
+Adversarial review: no major, no minor findings. Four nits, all accepted (no fix):
+
+### [M4-N01] Redundant `as Record<string, FieldValue>` cast on `row.item.fields`
+**Status:** [x] resolved (accepted)
+**Severity:** nit
+**Location:** packages/ledger-web/src/App.tsx:1239
+**Description:** `Item.fields` is already `Record<string, FieldValue>`, so the cast is unnecessary. Harmless; typechecks clean.
+**Fix:** Accepted as-is (not worth a fix cycle / code edit bypassing the loop). Drop opportunistically if the file is touched later.
+
+### [M4-N02] `author="user"` provenance on quick-transition update
+**Status:** [x] resolved (accepted)
+**Severity:** nit
+**Location:** packages/ledger-web/src/App.tsx:36,281
+**Description:** Pre-existing UI convention (the editor's save path already stamps `author="user"`); a human UI action is correctly attributed to "user". Not introduced by M4.
+**Fix:** No change — correct and consistent with the existing convention.
+
+### [M4-N03] TUI shows quick picker for milestones; web suppresses it
+**Status:** [x] resolved (accepted)
+**Severity:** nit
+**Location:** packages/ledger-tui/src/app.tsx vs packages/ledger-web/src/App.tsx
+**Description:** Web hides quick buttons for the milestones ledger; TUI shows the guard-constrained picker but dispatches correctly via `updateMilestone` (not `updateItem`). Both correct; cosmetic asymmetry.
+**Fix:** No change. Parity is a possible future polish, not a defect.
+
+### [M4-N04] UI tests don't exercise the store's F1 guard rejection
+**Status:** [x] resolved (accepted)
+**Severity:** nit
+**Location:** packages/ledger-{tui,web}/test/fakeClient.ts
+**Description:** Fake clients accept any status, so the suites verify the UI offers only legal targets but not that the store rejects an illegal one. Guard enforcement is `@cq/ledger`'s responsibility (covered by transitions.test.ts); UI correctness is asserted at render level.
+**Fix:** No change — correct separation of concerns.
 
 ### [PR-01-D06] `scripts/` excluded from lint
 **Status:** [x] resolved (accepted; see Fix)

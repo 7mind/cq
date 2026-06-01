@@ -76,6 +76,57 @@ class ManyItemsClient implements LedgerClient {
   }
 }
 
+/** A single-ledger client whose schema declares NO `transitions` map. */
+class NoTransitionsClient implements LedgerClient {
+  async enumerateLedgers(): Promise<string[]> {
+    return ["work"];
+  }
+  async fetchLedger(id: string): Promise<FetchedLedger> {
+    if (id !== "work") throw new Error(`Ledger not found: ${id}`);
+    return {
+      id: "work",
+      schema: {
+        statusValues: ["todo", "doing", "done"],
+        terminalStatuses: ["done"],
+        fields: { headline: { type: "string", required: true } },
+        // no `transitions` → quick-transition picker falls back to all statuses
+      },
+      counters: { milestone: 1, item: 2 },
+      milestones: [
+        {
+          id: "active",
+          milestone: { id: "active", status: "open", title: "", description: "" },
+          items: [
+            { id: "T1", milestoneId: "active", status: "todo", fields: { headline: "thing" }, createdAt: TS, updatedAt: TS },
+          ],
+        },
+      ],
+      archivePointers: [],
+    };
+  }
+  async fetchItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async createItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async ftsSearch(): Promise<never[]> {
+    return [];
+  }
+  async createMilestone(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateMilestone(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async close(): Promise<void> {
+    /* no-op */
+  }
+}
+
 const tick = (ms = 25): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 interface Harness {
@@ -164,13 +215,62 @@ describe("ledger-tui App", () => {
     const h = await mount();
     await h.key(ENTER); // bugs
     await h.key(ENTER); // detail D1
-    await h.key("s"); // status picker: open/wip/closed
-    await h.key(DOWN); // -> wip
-    await h.key(ENTER);
+    // D1 is "open"; the guard map allows open → [wip, closed], so the picker
+    // lists exactly those two — "wip" is the first option.
+    await h.key("s"); // status picker: wip/closed (legal transitions only)
+    await h.key(ENTER); // -> wip (first allowed target)
     await tick(40);
     expect(h.frame()).toContain("D1 → wip");
     expect((await h.client.fetchItem("bugs", "D1")).status).toBe("wip");
     h.unmount();
+  });
+
+  it("status picker offers only the guard-allowed transitions (multi-target)", async () => {
+    const h = await mount();
+    await h.key(ENTER); // bugs
+    await h.key(ENTER); // detail D1 (status "open")
+    await h.key("s"); // open the status picker
+    await tick(20);
+    const f = h.frame();
+    // open → [wip, closed]: both legal targets shown, the illegal "open" is not.
+    expect(f).toContain("wip");
+    expect(f).toContain("closed");
+    expect(f).not.toContain("(no transitions from this status)");
+    h.unmount();
+  });
+
+  it("status picker shows no actions from a terminal status ([])", async () => {
+    const h = await mount();
+    // Drive D1 to the terminal status before opening the ledger, so the fetched
+    // view shows it as "closed" (transitions["closed"] === []).
+    await h.client.updateItem("bugs", "D1", { status: "closed" });
+    await h.key(ENTER); // open bugs (fresh fetch → D1 is "closed")
+    await h.key(ENTER); // detail D1 (terminal)
+    await h.key("s"); // status picker
+    await tick(20);
+    const f = h.frame();
+    expect(f).toContain("(no transitions from this status)");
+    expect(f).not.toContain("[wip]"); // no transition action offered
+    h.unmount();
+  });
+
+  it("status picker falls back to the full status list when no map is present", async () => {
+    const client = new NoTransitionsClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open the only ledger
+    await tick(30);
+    r.stdin.write(ENTER); // detail of the first item (status "todo")
+    await tick(30);
+    r.stdin.write("s"); // status picker
+    await tick(30);
+    const f = r.lastFrame() ?? "";
+    // No transitions map → the picker lists every status value.
+    expect(f).toContain("todo");
+    expect(f).toContain("doing");
+    expect(f).toContain("done");
+    expect(f).not.toContain("(no transitions from this status)");
+    r.unmount();
   });
 
   it("edits an item field value", async () => {

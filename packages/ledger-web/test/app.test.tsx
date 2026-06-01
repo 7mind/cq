@@ -153,6 +153,50 @@ describe("ledger-web App", () => {
     expect(testid("detail-provenance")?.textContent).toContain("user");
   });
 
+  it("renders guard-aligned quick-transition buttons and applies one on click", async () => {
+    await mount();
+    click(testid("ledger-bugs"));
+    await flush();
+    click(testid("item-D1")); // D1 is "open" → transitions[open] = [wip, closed]
+    await flush();
+    // One button per legal target; the illegal self-status "open" is absent.
+    expect(testid("transitions")).not.toBeNull();
+    expect(testid("transition-wip")).not.toBeNull();
+    expect(testid("transition-closed")).not.toBeNull();
+    expect(testid("transition-open")).toBeNull();
+    // Click "wip": issues the update with the target status, preserving fields.
+    click(testid("transition-wip"));
+    await flush();
+    const item = await fake.fetchItem("bugs", "D1");
+    expect(item.status).toBe("wip");
+    expect(item.fields["headline"]).toBe("warp leak"); // unchanged
+    expect(item.author).toBe("user"); // stamped via the existing update path
+    expect(testid("detail-status")?.textContent).toBe("wip");
+  });
+
+  it("shows no quick-transition buttons from a terminal status ([])", async () => {
+    await mount();
+    // Move D1 to the terminal status first.
+    await fake.updateItem("bugs", "D1", { status: "closed" });
+    click(testid("ledger-bugs"));
+    await flush();
+    click(testid("item-D1"));
+    await flush();
+    expect(testid("detail-status")?.textContent).toBe("closed");
+    expect(testid("transitions")).toBeNull(); // transitions[closed] = [] → none
+  });
+
+  it("shows no quick-transition buttons for a ledger without a map", async () => {
+    await mount();
+    click(testid("ledger-plain"));
+    await flush();
+    click(testid("item-P1"));
+    await flush();
+    expect(testid("detail-status")?.textContent).toBe("open");
+    expect(testid("transitions")).toBeNull(); // no map → existing editor only
+    expect(testid("edit")).not.toBeNull(); // the existing status editor is intact
+  });
+
   it("cancels an edit without saving", async () => {
     await mount();
     click(testid("ledger-bugs"));

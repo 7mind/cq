@@ -17,7 +17,7 @@ Status: `[ ]` planned · `[~]` in progress · `[x]` done · `[!]` blocked
   + Codex locations) — `/plan:start`, `/plan:advance`, `plan-reviewer`.
 - [ ] **M3** — Non-AI watcher (F4): `@cq/ledger-live` process re-invoking the open
   session on the resume predicate.
-- [~] **M4** — UI quick-transition buttons (TUI + web): render only the legal next
+- [x] **M4** — UI quick-transition buttons (TUI + web): render only the legal next
   statuses from the schema `transitions` map as one-click actions. Edits
   `ledger-tui`/`ledger-web` only. **Depends on PR-01** (the map) AND on that map
   being surfaced in the `fetch_ledger`/schema MCP response. Can run in an isolated
@@ -122,6 +122,25 @@ Detail in `./docs/drafts/20260601-1606-plan-flow.md`. One line per PR here.
     frontend can read the map from the fetched ledger schema today.
   - The whole `docs/` tree is untracked in git except where individually added; the review-loop
     state (`docs/state/`, `docs/drafts/`) is added explicitly per commit.
+
+- **M4** (2026-06-01) — UI quick-transition buttons (TUI + web). Shipped: both clients read
+  `schema.transitions[item.status]` from the fetched MCP ledger schema and render one-click
+  actions for ONLY the legal next statuses, dispatching the existing `update_item({status})`
+  path (TUI status overlay; web detail-panel `transition to` button row, styled via new
+  `.lw-transitions`/`.lw-transition` CSS). Absent map → existing status editor unchanged;
+  terminal (`[]`) → no actions. Web excludes milestones (their status routes via
+  `updateMilestone`); TUI dispatches milestone status via `updateMilestone` correctly.
+  Executed in an isolated worktree, then transplanted onto `feat/plan-flow` (disjoint packages).
+  Verification: `bun run check` on the combined PR-02+M4 tree → tsc/eslint clean, `bun test`
+  362 pass / 0 fail (31 files); M4 UI suites 77 pass.
+  Metrics: review rounds 1 (no major/minor; 4 accepted nits); verification complete; scope
+  delta none (confined to ledger-tui + ledger-web).
+  Notes:
+  - **Worktree gotcha:** `Agent isolation:"worktree"` branched off `main`, NOT the current
+    `feat/plan-flow` — so the worktree initially lacked the F1 `transitions` field. The agent
+    rebased onto `feat/plan-flow`. For future parallel editors, verify the worktree base branch.
+  - `transitions` reaches clients via `fetch_ledger` → `cloneSchema` → JSON (no projection);
+    field path in both UIs is `view.schema.transitions`.
 
 - **PR-02** (2026-06-01) — F2 server-enforced goal preconditions. Shipped: a shared pure helper
   `assertGoalPhasePreconditions` (core.ts) invoked via a `StatusChangePrecondition` hook in

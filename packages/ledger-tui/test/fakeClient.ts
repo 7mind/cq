@@ -39,6 +39,8 @@ const bugsSchema: LedgerSchema = {
   terminalStatuses: ["closed"],
   fields: { headline: { type: "string", required: true }, note: { type: "string", required: false } },
   idPrefix: "D",
+  // Declarative status-transition guard (F1): drives the quick-transition UI.
+  transitions: { open: ["wip", "closed"], wip: ["closed", "open"], closed: [] },
 };
 
 export class FakeClient implements LedgerClient {

@@ -37,6 +37,15 @@ const bugsSchema: LedgerSchema = {
   terminalStatuses: ["closed"],
   fields: { headline: { type: "string", required: true }, note: { type: "string", required: false } },
   idPrefix: "D",
+  // Declarative status-transition guard (F1): drives the quick-transition UI.
+  transitions: { open: ["wip", "closed"], wip: ["closed", "open"], closed: [] },
+};
+const plainSchema: LedgerSchema = {
+  statusValues: ["open", "closed"],
+  terminalStatuses: ["closed"],
+  fields: { headline: { type: "string", required: true } },
+  idPrefix: "P",
+  // No `transitions` map.
 };
 
 export class FakeClient implements LedgerClient {
@@ -62,6 +71,19 @@ export class FakeClient implements LedgerClient {
           id: "M1",
           items: [
             { id: "D1", milestoneId: "M1", status: "open", fields: { headline: "warp leak", note: "**intermittent** glitch" }, createdAt: TS, updatedAt: TS },
+          ],
+        },
+      ],
+    },
+    // A non-milestones ledger with NO `transitions` map (sorts last): exercises
+    // the back-compat path where the quick-transition buttons must not render.
+    plain: {
+      schema: plainSchema,
+      groups: [
+        {
+          id: "M1",
+          items: [
+            { id: "P1", milestoneId: "M1", status: "open", fields: { headline: "no guard" }, createdAt: TS, updatedAt: TS },
           ],
         },
       ],

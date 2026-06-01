@@ -304,6 +304,21 @@ button:hover {
 .lw-status-dropped {
   color: var(--dim);
 }
+/* Guard-aligned quick-transition buttons: one per legal next status, styled
+   like the status badge of their target bucket. */
+.lw-transitions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lw-transition {
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  font-size: 11px;
+  background: transparent;
+}
 /* Terminal (closed) items recede: dimmed text + muted summary. */
 .lw-row-terminal td {
   color: var(--dim);

@@ -1206,6 +1206,14 @@ function DetailPanel({
     );
   }
 
+  // Guard-aligned quick transitions: when the schema declares a `transitions`
+  // map, the legal next statuses from the item's current one are offered as
+  // one-click buttons (a terminal status maps to `[]` → none). When the map is
+  // absent (null), no buttons render and the existing status editor is the
+  // only path — left untouched. Each button issues the existing update path
+  // (status-only patch, preserving the item's current fields).
+  const allowed = schema.transitions?.[row.item.status] ?? null;
+
   return (
     <aside className="lw-detail" data-testid="detail">
       {head}
@@ -1216,6 +1224,28 @@ function DetailPanel({
             {row.item.status}
           </span>
         </dd>
+        {allowed !== null && allowed.length > 0 && !isMilestones && onSave !== undefined && (
+          <>
+            <dt>transition to</dt>
+            <dd>
+              <div className="lw-transitions" data-testid="transitions">
+                {allowed.map((target) => (
+                  <button
+                    key={target}
+                    type="button"
+                    className={`lw-transition lw-status-${statusBucket(target, schema)}`}
+                    data-testid={`transition-${target}`}
+                    onClick={() =>
+                      onSave(target, row.item.fields as Record<string, FieldValue>)
+                    }
+                  >
+                    {target}
+                  </button>
+                ))}
+              </div>
+            </dd>
+          </>
+        )}
         {orderItemFields(Object.entries(row.item.fields) as Array<[string, FieldValue]>).map(([k, v]) => (
           <React.Fragment key={k}>
             <dt>{k}</dt>

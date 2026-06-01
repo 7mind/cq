@@ -879,15 +879,23 @@ function Overlays({
     }
     case "search":
       return <LiveSearch search={search} onOpenHit={onOpenHit} onCancel={onCancel} />;
-    case "status":
+    case "status": {
+      // Guard-aligned quick transitions: when the schema declares a
+      // `transitions` map, offer ONLY the statuses legal from the item's
+      // current one (a terminal status maps to `[]` → no actions). When the
+      // map is absent, fall back to the full status list unchanged.
+      const allowed = view?.schema.transitions?.[overlay.row.item.status] ?? null;
+      const items = allowed ?? view?.schema.statusValues ?? [];
       return (
         <SelectList
-          items={view?.schema.statusValues ?? []}
+          items={items}
           getLabel={(s) => s}
           onSelect={(s) => onStatus(overlay.row, s)}
           onCancel={onCancel}
+          emptyLabel="(no transitions from this status)"
         />
       );
+    }
     case "pickField": {
       const fields = view !== null ? Object.keys(view.schema.fields) : [];
       return (
