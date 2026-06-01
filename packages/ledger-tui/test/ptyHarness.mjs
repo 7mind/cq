@@ -30,7 +30,7 @@ if (!bunPath || !tuiMain || !url) {
   process.exit(2);
 }
 
-const term = pty.spawn(bunPath, ["run", tuiMain, "--url", url], {
+const term = pty.spawn(bunPath, ["run", tuiMain, "--mcp-url", url], {
   name: "xterm-256color",
   cols: 100,
   rows: 30,

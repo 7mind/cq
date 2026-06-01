@@ -93,8 +93,49 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           # Refresh after dependency changes (see README § Nix).
-          outputHash = "sha256-eDbzw2nkzeupu36YXt73h0FLxEJ1oJOOTRS+PKOLqEM=";
+          outputHash = "sha256-ItCIWnqn+iyK+aUZ/vM4UG9emU65HTOJCut9dgrvmPM=";
         };
+
+        # ------------------------------------------------------------------ #
+        # Shell fragment: stage the @cq/ledger + @cq/ledger-mcp source and    #
+        # their node_modules into $WORKSPACE so a FRONTEND can run the ledger #
+        # MCP server EMBEDDED in-process (ledger-tui/-web with no --mcp-url). #
+        # Mirrors the ledger + ledger-mcp wiring of the standalone ledger-mcp #
+        # product. Expects $WORKSPACE to be set by the caller.                #
+        # ------------------------------------------------------------------ #
+        embedServerClosure = ''
+          cp -r packages/ledger     "$WORKSPACE/packages/ledger"
+          cp -r packages/ledger-mcp "$WORKSPACE/packages/ledger-mcp"
+          rm -rf \
+            "$WORKSPACE/packages/ledger/node_modules" \
+            "$WORKSPACE/packages/ledger-mcp/node_modules"
+
+          # @cq/ledger runtime deps.
+          mkdir -p "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai" \
+                   "$WORKSPACE/packages/ledger/node_modules/@modelcontextprotocol"
+          for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify minisearch bun-types; do
+            if [ -e "${bunNodeModules}/packages/ledger/node_modules/$dep" ]; then
+              ln -s "${bunNodeModules}/packages/ledger/node_modules/$dep" \
+                "$WORKSPACE/packages/ledger/node_modules/$dep"
+            fi
+          done
+          ln -s ${bunNodeModules}/packages/ledger/node_modules/@anthropic-ai/claude-agent-sdk \
+            "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai/claude-agent-sdk"
+          ln -s ${bunNodeModules}/packages/ledger/node_modules/@modelcontextprotocol/sdk \
+            "$WORKSPACE/packages/ledger/node_modules/@modelcontextprotocol/sdk"
+
+          # @cq/ledger-mcp runtime deps + its @cq/ledger workspace link.
+          mkdir -p "$WORKSPACE/packages/ledger-mcp/node_modules/@modelcontextprotocol" \
+                   "$WORKSPACE/packages/ledger-mcp/node_modules/@cq"
+          ln -s ${bunNodeModules}/packages/ledger-mcp/node_modules/@modelcontextprotocol/sdk \
+            "$WORKSPACE/packages/ledger-mcp/node_modules/@modelcontextprotocol/sdk"
+          if [ -e "${bunNodeModules}/packages/ledger-mcp/node_modules/bun-types" ]; then
+            ln -s "${bunNodeModules}/packages/ledger-mcp/node_modules/bun-types" \
+              "$WORKSPACE/packages/ledger-mcp/node_modules/bun-types"
+          fi
+          ln -s "$WORKSPACE/packages/ledger" \
+            "$WORKSPACE/packages/ledger-mcp/node_modules/@cq/ledger"
+        '';
 
         # ------------------------------------------------------------------ #
         # ledger-mcp — the standalone ledger MCP server.                       #
@@ -175,9 +216,11 @@
         # ------------------------------------------------------------------ #
         # ledger-tui — Ink terminal UI client for a ledger MCP server.         #
         #                                                                      #
-        # A pure MCP client over Streamable HTTP (`ledger-tui --url <url>`).   #
-        # Runtime closure: ink + react + @modelcontextprotocol/sdk (+ their    #
-        # transitive deps via the FOD .bun store). @cq/ledger is type-only.    #
+        # Pure MCP client. Two modes: REMOTE (`--mcp-url <url>`, Streamable     #
+        # HTTP) or EMBEDDED (default; runs the MCP server in-process over an    #
+        # in-memory transport, root from `--cwd`/$LEDGER_ROOT/CWD). Runtime     #
+        # closure: ink + react + @modelcontextprotocol/sdk, plus the embedded   #
+        # @cq/ledger + @cq/ledger-mcp server closure.                          #
         # ------------------------------------------------------------------ #
         ledgerTui = pkgs.stdenv.mkDerivation {
           pname = "ledger-tui";
@@ -205,6 +248,9 @@
             cp packages/ledger-live/package.json "$WORKSPACE/packages/ledger-live/"
             cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
 
+            # Embedded MCP server closure (@cq/ledger + @cq/ledger-mcp).
+            ${embedServerClosure}
+
             mkdir -p "$WORKSPACE/packages/ledger-tui/node_modules/@modelcontextprotocol" \
                      "$WORKSPACE/packages/ledger-tui/node_modules/@cq"
             for dep in ink react bun-types; do
@@ -217,6 +263,12 @@
               "$WORKSPACE/packages/ledger-tui/node_modules/@modelcontextprotocol/sdk"
             ln -s "$WORKSPACE/packages/ledger-live" \
               "$WORKSPACE/packages/ledger-tui/node_modules/@cq/ledger-live"
+            # Embedded-mode workspace links: the TUI imports @cq/ledger-mcp at
+            # runtime (which resolves @cq/ledger from its own node_modules).
+            ln -s "$WORKSPACE/packages/ledger-mcp" \
+              "$WORKSPACE/packages/ledger-tui/node_modules/@cq/ledger-mcp"
+            ln -s "$WORKSPACE/packages/ledger" \
+              "$WORKSPACE/packages/ledger-tui/node_modules/@cq/ledger"
 
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/ledger-tui \
               --add-flags "run $WORKSPACE/packages/ledger-tui/src/main.tsx --" \
@@ -232,12 +284,13 @@
         # ------------------------------------------------------------------ #
         # ledger-web — static server for the browser explorer/editor + DAG.    #
         #                                                                      #
-        # Serves the React bundle (Bun.build at startup) and injects a default  #
-        # MCP URL; the browser is a pure MCP client to a separately-running     #
-        # `ledger-mcp --http` (CORS-enabled). The server imports no npm deps,   #
-        # but Bun.build resolves the browser bundle's react / react-dom /       #
-        # @modelcontextprotocol/sdk from the closure at build time.             #
-        # LEDGER_WEB_OUTDIR redirects the bundler output to a writable path.    #
+        # Serves the React bundle (Bun.build at startup). Two modes: PROXY      #
+        # (`--mcp-url`, reverse-proxies same-origin /mcp+/ws to a separate      #
+        # `ledger-mcp --http`) or EMBEDDED (default; hosts the MCP server       #
+        # in-process on /mcp+/ws, root from `--cwd`/$LEDGER_ROOT/CWD). Bun.build #
+        # resolves the browser bundle's react / react-dom / sdk from the        #
+        # closure; the embedded server adds the @cq/ledger + @cq/ledger-mcp     #
+        # closure. LEDGER_WEB_OUTDIR redirects bundler output to a writable path.#
         # ------------------------------------------------------------------ #
         ledgerWeb = pkgs.stdenv.mkDerivation {
           pname = "ledger-web";
@@ -266,6 +319,9 @@
             cp packages/ledger-live/package.json "$WORKSPACE/packages/ledger-live/"
             cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
 
+            # Embedded MCP server closure (@cq/ledger + @cq/ledger-mcp).
+            ${embedServerClosure}
+
             mkdir -p "$WORKSPACE/packages/ledger-web/node_modules/@modelcontextprotocol" \
                      "$WORKSPACE/packages/ledger-web/node_modules/@cq"
             for dep in react react-dom react-markdown remark-gfm rehype-sanitize bun-types; do
@@ -278,6 +334,12 @@
               "$WORKSPACE/packages/ledger-web/node_modules/@modelcontextprotocol/sdk"
             ln -s "$WORKSPACE/packages/ledger-live" \
               "$WORKSPACE/packages/ledger-web/node_modules/@cq/ledger-live"
+            # Embedded-mode workspace links: serve.ts imports @cq/ledger-mcp at
+            # runtime (which resolves @cq/ledger from its own node_modules).
+            ln -s "$WORKSPACE/packages/ledger-mcp" \
+              "$WORKSPACE/packages/ledger-web/node_modules/@cq/ledger-mcp"
+            ln -s "$WORKSPACE/packages/ledger" \
+              "$WORKSPACE/packages/ledger-web/node_modules/@cq/ledger"
 
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/ledger-web \
               --add-flags "run $WORKSPACE/packages/ledger-web/src/serve.ts --" \

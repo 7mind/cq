@@ -19,6 +19,10 @@ library. Bun + TypeScript workspace; products are packaged with Nix.
 - Surgical changes; match surrounding style; no unrelated refactors.
 - Reproduce a defect (failing test or documented repro) before fixing it.
 - Frontends are pure MCP clients — they never read the ledger files directly.
+  This holds in *embedded* mode too (TUI/web with no `--mcp-url`): the frontend
+  co-locates the MCP server in its own process (in-memory transport for the TUI,
+  co-hosted `/mcp` + `/ws` for the web) and still talks to it over MCP — it does
+  not read `docs/` directly.
 - `--cwd` for `ledger-mcp` must be absolute (or relative, resolved vs CWD);
   it defaults to the process CWD.
 - Tests: `ink-testing-library` for the TUI, happy-dom for the web; controlled

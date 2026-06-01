@@ -18,10 +18,16 @@
 
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import {
+  attachMcpHttp,
+  changedFrame,
+  createEmbeddedStore,
+  LEDGER_TOPIC,
+  startLedgerWatcher,
+} from "@cq/ledger-mcp";
 
 const DEFAULT_PORT = 5180;
 const DEFAULT_HOST = "127.0.0.1";
-const DEFAULT_MCP_URL = "http://127.0.0.1:7777/mcp";
 
 const WEB_SRC = path.resolve(import.meta.dir, "main.tsx");
 const DEFAULT_OUTDIR = path.resolve(import.meta.dir, "..", "dist");
@@ -29,7 +35,13 @@ const DEFAULT_OUTDIR = path.resolve(import.meta.dir, "..", "dist");
 export interface ServeOpts {
   host: string;
   port: number;
-  mcpUrl: string;
+  /**
+   * Upstream MCP URL to reverse-proxy to, or `null` to run the MCP server
+   * EMBEDDED in this process (rooted at `cwd`) and host `/mcp` + `/ws` directly.
+   */
+  mcpUrl: string | null;
+  /** Ledger root for embedded mode (--cwd > $LEDGER_ROOT > CWD). */
+  cwd: string;
   outdir: string;
 }
 
@@ -147,10 +159,40 @@ interface WsData {
   buf: string[];
 }
 
+/**
+ * Serve a static asset from `outdir` for `url`, with SPA fallback to
+ * index.html. Shared by both the proxy and embedded servers.
+ */
+async function serveStatic(url: URL, outdir: string, indexPath: string): Promise<Response> {
+  const reqPath = url.pathname === "/" ? "/index.html" : url.pathname;
+  // Resolve within outdir; reject path traversal.
+  const resolved = path.resolve(outdir, `.${reqPath}`);
+  if (resolved === outdir || resolved.startsWith(outdir + path.sep)) {
+    const file = Bun.file(resolved);
+    if (await file.exists()) return new Response(file);
+  }
+  // SPA fallback.
+  return new Response(Bun.file(indexPath), {
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
+/** Dispatcher: embedded MCP when `mcpUrl` is null, else reverse-proxy. */
 export async function serve(opts: ServeOpts): Promise<ReturnType<typeof Bun.serve>> {
   await prepare(opts.outdir);
   const indexPath = path.join(opts.outdir, "index.html");
-  const wsUpstream = mcpUrlToWs(opts.mcpUrl);
+  return opts.mcpUrl === null
+    ? serveEmbedded(opts, indexPath)
+    : serveProxy(opts, opts.mcpUrl, indexPath);
+}
+
+/** Reverse-proxy `/mcp` + `/ws` to a separate `ledger-mcp --http` server. */
+function serveProxy(
+  opts: ServeOpts,
+  mcpUrl: string,
+  indexPath: string,
+): ReturnType<typeof Bun.serve> {
+  const wsUpstream = mcpUrlToWs(mcpUrl);
 
   return Bun.serve<WsData>({
     hostname: opts.host,
@@ -165,19 +207,9 @@ export async function serve(opts: ServeOpts): Promise<ReturnType<typeof Bun.serv
         return new Response("expected a websocket upgrade", { status: 426 });
       }
       if (url.pathname === MCP_PROXY_PATH) {
-        return proxyToMcp(req, opts.mcpUrl);
+        return proxyToMcp(req, mcpUrl);
       }
-      const reqPath = url.pathname === "/" ? "/index.html" : url.pathname;
-      // Resolve within outdir; reject path traversal.
-      const resolved = path.resolve(opts.outdir, `.${reqPath}`);
-      if (resolved === opts.outdir || resolved.startsWith(opts.outdir + path.sep)) {
-        const file = Bun.file(resolved);
-        if (await file.exists()) return new Response(file);
-      }
-      // SPA fallback.
-      return new Response(Bun.file(indexPath), {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
+      return serveStatic(url, opts.outdir, indexPath);
     },
     // Reverse-proxy the WS to the upstream ledger-mcp /ws, piping both ways, so
     // the browser only ever talks to this origin (same as the /mcp proxy).
@@ -224,17 +256,65 @@ export async function serve(opts: ServeOpts): Promise<ReturnType<typeof Bun.serv
   });
 }
 
-interface ParsedArgs {
-  host: string;
-  port: number;
-  mcpUrl: string;
-  outdir: string;
+/**
+ * Host the MCP server IN-PROCESS: an embedded file-store rooted at `opts.cwd`,
+ * the shared `attachMcpHttp` handlers mounted on `/mcp` + `/ws`, and the file
+ * watcher publishing `changed` frames to subscribed browser sockets. The
+ * browser is unchanged — it still talks to the same-origin `/mcp` and `/ws`.
+ * The returned server's `stop()` is wrapped to also close the watcher and
+ * dispose the store.
+ */
+async function serveEmbedded(
+  opts: ServeOpts,
+  indexPath: string,
+): Promise<ReturnType<typeof Bun.serve>> {
+  const store = await createEmbeddedStore(opts.cwd);
+  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store);
+
+  const server = Bun.serve({
+    hostname: opts.host,
+    port: opts.port,
+    idleTimeout: 0, // long-lived SSE / WS streams must not time out
+    async fetch(req, srv): Promise<Response | undefined> {
+      const url = new URL(req.url);
+      if (url.pathname === WS_PROXY_PATH) {
+        if (srv.upgrade(req, { data: undefined })) return undefined;
+        return new Response("expected a websocket upgrade", { status: 426 });
+      }
+      if (url.pathname === MCP_PROXY_PATH) {
+        return handle(req);
+      }
+      return serveStatic(url, opts.outdir, indexPath);
+    },
+    websocket: {
+      open: onWsOpen,
+      message: onWsMessage,
+    },
+  });
+
+  // Publish a `changed` frame to subscribed browser sockets on any file change
+  // (this server's own writes, the agent's stdio server, git, a hand-edit).
+  const watcher = startLedgerWatcher(store, opts.cwd, (ledger) => {
+    server.publish(LEDGER_TOPIC, changedFrame(ledger));
+  });
+
+  // Tear down the embedded resources when the server stops (main()/tests call
+  // server.stop(true)); the return type stays the Bun server.
+  const origStop = server.stop.bind(server);
+  server.stop = (closeActiveConnections?: boolean): Promise<void> => {
+    watcher.close();
+    void store.dispose();
+    return origStop(closeActiveConnections);
+  };
+
+  return server;
 }
 
-export function parseArgs(argv: readonly string[]): ParsedArgs {
+export function parseArgs(argv: readonly string[]): ServeOpts {
   let host = DEFAULT_HOST;
   let port = DEFAULT_PORT;
-  let mcpUrl = DEFAULT_MCP_URL;
+  let mcpUrl: string | null = null; // omitted ⇒ embedded
+  let cwd: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--port") port = Number(argv[++i]);
@@ -243,12 +323,19 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     else if (a?.startsWith("--host=")) host = a.slice("--host=".length);
     else if (a === "--mcp-url") mcpUrl = argv[++i] ?? mcpUrl;
     else if (a?.startsWith("--mcp-url=")) mcpUrl = a.slice("--mcp-url=".length);
+    else if (a === "--cwd") cwd = argv[++i];
+    else if (a?.startsWith("--cwd=")) cwd = a.slice("--cwd=".length);
   }
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw new Error(`ledger-web: --port must be 1..65535; got: ${port}`);
   }
+  // Embedded ledger root: --cwd > $LEDGER_ROOT > process CWD (mirrors ledger-mcp).
+  const fromArg = cwd !== undefined && cwd !== "" ? cwd : undefined;
+  const fromEnv = process.env["LEDGER_ROOT"];
+  const chosen = fromArg ?? (fromEnv !== undefined && fromEnv !== "" ? fromEnv : undefined);
+  const resolvedCwd = chosen !== undefined ? path.resolve(chosen) : process.cwd();
   const outdir = process.env["LEDGER_WEB_OUTDIR"] ?? DEFAULT_OUTDIR;
-  return { host, port, mcpUrl, outdir };
+  return { host, port, mcpUrl, cwd: resolvedCwd, outdir };
 }
 
 export async function main(argv: readonly string[]): Promise<void> {
@@ -263,8 +350,9 @@ export async function main(argv: readonly string[]): Promise<void> {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  const backend = opts.mcpUrl === null ? `embedded MCP (cwd=${opts.cwd})` : `MCP upstream ${opts.mcpUrl}`;
   process.stderr.write(
-    `ledger-web: serving http://${opts.host}:${server.port}/ → MCP upstream ${opts.mcpUrl}\n`,
+    `ledger-web: serving http://${opts.host}:${server.port}/ → ${backend}\n`,
   );
 }
 

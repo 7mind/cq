@@ -31,6 +31,8 @@ import {
   ANSWERED_STATUS,
   RECOMMENDATION_FIELD,
   AS_RECOMMENDED_ANSWER,
+  QUESTION_FIELD_ORDER,
+  isQuestion,
   type StatusFilter,
 } from "./status.js";
 import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary } from "./types.js";
@@ -130,10 +132,17 @@ export function App({
   client,
   liveUrl = null,
   liveWsCtor,
+  onSubscribe = null,
 }: {
   client: LedgerClient;
   liveUrl?: string | null;
   liveWsCtor?: { new (url: string): WebSocket };
+  /**
+   * In-process change source for embedded mode (no WebSocket): given a refresh
+   * callback, start watching and return a disposer. When set (and `liveUrl` is
+   * null) the App refreshes on external file changes via this instead of a WS.
+   */
+  onSubscribe?: ((onChange: () => void) => () => void) | null;
 }): React.ReactElement {
   const { exit } = useApp();
   const { cols, rows } = useTermSize();
@@ -222,22 +231,31 @@ export function App({
     };
   }, [client, reloadItems]);
 
-  // Live updates: connect to the server's /ws, refetch the current frame on a
-  // pushed change, and expose health to the status bar.
+  // Live updates. REMOTE (liveUrl): connect to the server's /ws, refetch the
+  // current frame on a pushed change, expose health to the status bar. EMBEDDED
+  // (onSubscribe, no WS): wire the in-process file watcher to the same refresh.
   useEffect(() => {
-    if (liveUrl === null) return;
-    const mgr = new LiveManager({
-      url: liveUrl,
-      ...(liveWsCtor !== undefined ? { WebSocketCtor: liveWsCtor } : {}),
-      onChanged: () => refreshRef.current(),
-      onUpdate: (s) => setLive(s),
-    });
-    mgr.start();
-    return () => {
-      mgr.destroy();
-      setLive(null);
-    };
-  }, [liveUrl, liveWsCtor]);
+    if (liveUrl !== null) {
+      const mgr = new LiveManager({
+        url: liveUrl,
+        ...(liveWsCtor !== undefined ? { WebSocketCtor: liveWsCtor } : {}),
+        onChanged: () => refreshRef.current(),
+        onUpdate: (s) => setLive(s),
+      });
+      mgr.start();
+      return () => {
+        mgr.destroy();
+        setLive(null);
+      };
+    }
+    if (onSubscribe !== null) {
+      const dispose = onSubscribe(() => refreshRef.current());
+      return () => {
+        dispose();
+      };
+    }
+    return undefined;
+  }, [liveUrl, liveWsCtor, onSubscribe]);
 
   // ---- mutations (called from overlays) ----------------------------------
   const isMilestonesLedger = top.kind === "items" && top.ledger === MILESTONES;
@@ -540,6 +558,9 @@ export function App({
           {conn === "error" ? `error: ${connErr}` : pathStr}
         </Text>
         {liveUrl !== null && <LiveBadge stats={live} />}
+        {liveUrl === null && onSubscribe !== null && (
+          <Text dimColor>{"  ◆ in-process"}</Text>
+        )}
       </Box>
 
       {/* body: list | content — split right (row) or bottom (column) */}
@@ -748,7 +769,18 @@ function ContentPane({
   scroll: number;
 }): React.ReactElement {
   const f = row.item.fields;
-  const entries = orderItemFields(Object.entries(f) as Array<[string, FieldValue]>);
+  const allEntries = Object.entries(f) as Array<[string, FieldValue]>;
+  // Questions (T23): metadata/short fields first, then the fixed narrative order
+  // question → context → recommendation (highlighted) → answer. Otherwise the
+  // generic short-first order.
+  const entries = isQuestion(schema)
+    ? [
+        ...orderItemFields(allEntries.filter(([k]) => !QUESTION_FIELD_ORDER.includes(k))),
+        ...QUESTION_FIELD_ORDER.filter((k) => f[k] !== undefined).map(
+          (k) => [k, f[k]!] as [string, FieldValue],
+        ),
+      ]
+    : orderItemFields(allEntries);
   const { author, session } = row.item;
   const hasProvenance = author !== undefined || session !== undefined;
   // Estimate total height to clamp scrolling: short fields are one line each;
@@ -783,7 +815,16 @@ function ContentPane({
           <Text dimColor>(no fields)</Text>
         ) : (
           entries.map(([k, v]) =>
-            isShortField(v) ? (
+            k === RECOMMENDATION_FIELD ? (
+              // Highlighted recommendation block (T23): bordered + accent so the
+              // recommended answer stands out as the call-to-action.
+              <Box key={k} flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={1}>
+                <Text bold color="cyan">
+                  {k}
+                </Text>
+                {Array.isArray(v) ? <Text>{v.join(", ")}</Text> : <Markdown text={v} />}
+              </Box>
+            ) : isShortField(v) ? (
               // Short/fixed-size field: render inline on a single line.
               <Text key={k}>
                 <Text bold color="gray">

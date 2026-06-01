@@ -83,6 +83,7 @@ beforeAll(async () => {
     host: "127.0.0.1",
     port: 0,
     mcpUrl: `http://127.0.0.1:${mcpPort}/mcp`,
+    cwd: tmpRoot, // ignored in proxy mode
     outdir,
   });
 });

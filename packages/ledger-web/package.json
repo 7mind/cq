@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@cq/ledger-live": "workspace:*",
+    "@cq/ledger-mcp": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",

@@ -15,11 +15,14 @@ diffable and git-friendly. Milestones form a dependency DAG via their
 |---|---|
 | `@cq/ledger` | The library: parser, `FsLedgerStore`, schema/registry, FTS index, and the MCP tool definitions. |
 | `@cq/ledger-mcp` | Standalone MCP server exposing the 14-tool ledger surface over **stdio** or **Streamable HTTP**. |
-| `@cq/ledger-tui` | Ink terminal UI — a pure MCP client over HTTP. |
-| `@cq/ledger-web` | Browser explorer/editor + milestone **DAG view** — a pure MCP client over HTTP; served as a static bundle. |
+| `@cq/ledger-tui` | Ink terminal UI — a pure MCP client. Runs against a remote `ledger-mcp --http` (`--mcp-url`) or, by default, with the MCP server **embedded in-process** (`--cwd`). |
+| `@cq/ledger-web` | Browser explorer/editor + milestone **DAG view** — a pure MCP client served as a static bundle. Reverse-proxies to a remote `ledger-mcp` (`--mcp-url`) or, by default, **embeds the MCP server in-process** (`--cwd`). |
 
-The two frontends never touch the ledger files directly; they talk to a
-running `ledger-mcp` over the MCP protocol.
+The two frontends never read the ledger files directly — they always speak the
+MCP protocol. Embedded mode does not change that invariant: it merely
+**co-locates** the MCP server in the frontend's own process (an in-memory
+transport for the TUI; a co-hosted `/mcp` + `/ws` for the web server), so a
+single command needs no separately-running server.
 
 ## Tool surface (14)
 
@@ -30,14 +33,30 @@ running `ledger-mcp` over the MCP protocol.
 
 ## Quick start (Nix)
 
+**Embedded (one command, no separate server)** — the frontend runs the MCP
+server in-process against a ledger root (its `docs/` tree):
+
 ```sh
-# 1. Start the MCP server over HTTP against a ledger root (its docs/ tree).
+# Terminal UI, embedded:
+nix run .#ledger-tui -- --cwd /abs/path/to/ledger-root
+
+# Browser UI, embedded (serves a static bundle; open the printed URL):
+nix run .#ledger-web -- --cwd /abs/path/to/ledger-root --port 5180
+```
+
+The embedded root resolves as `--cwd` > `$LEDGER_ROOT` > the process CWD.
+
+**Remote (shared server)** — run one `ledger-mcp --http` and point the
+frontends at it (e.g. several UIs against one ledger, or a remote host):
+
+```sh
+# 1. Start the MCP server over HTTP against a ledger root.
 nix run .#ledger-mcp -- --cwd /abs/path/to/ledger-root --http 7777
 
 # 2a. Terminal UI:
-nix run .#ledger-tui -- --url http://127.0.0.1:7777/mcp
+nix run .#ledger-tui -- --mcp-url http://127.0.0.1:7777/mcp
 
-# 2b. Browser UI (serves a static bundle; open the printed URL):
+# 2b. Browser UI:
 nix run .#ledger-web -- --port 5180 --mcp-url http://127.0.0.1:7777/mcp
 ```
 

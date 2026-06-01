@@ -10,9 +10,14 @@
     "types": ["bun-types", "react"],
     "paths": {
       "@cq/ledger": ["../ledger/src/index.ts"],
-      "@cq/ledger-live": ["../ledger-live/src/index.ts"]
+      "@cq/ledger-live": ["../ledger-live/src/index.ts"],
+      "@cq/ledger-mcp": ["../ledger-mcp/src/main.ts"]
     }
   },
-  "references": [{ "path": "../ledger" }, { "path": "../ledger-live" }],
+  "references": [
+    { "path": "../ledger" },
+    { "path": "../ledger-live" },
+    { "path": "../ledger-mcp" }
+  ],
   "include": ["src", "test"]
 }

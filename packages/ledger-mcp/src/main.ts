@@ -30,6 +30,7 @@
 
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import type { ServerWebSocket } from "bun";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -40,6 +41,10 @@ import {
   registerLedgerStdioTools,
 } from "@cq/ledger";
 import { startLedgerWatcher } from "./watcher.js";
+
+// Re-export so in-process hosts (ledger-tui embedded, ledger-web embedded) can
+// wire live refresh against the same watcher the standalone binary uses.
+export { startLedgerWatcher, type LedgerWatcher } from "./watcher.js";
 
 const SERVER_INFO = { name: "ledger-mcp", version: "0.0.1" } as const;
 const DEFAULT_HTTP_HOST = "127.0.0.1";
@@ -175,13 +180,107 @@ const SERVER_INSTRUCTIONS = [
   "fields — so they apply to every ledger and never need a schema change.",
 ].join("\n");
 
-function buildServer(store: LedgerStore): McpServer {
+export function buildServer(store: LedgerStore): McpServer {
   const server = new McpServer(SERVER_INFO, {
     capabilities: { tools: {} },
     instructions: SERVER_INSTRUCTIONS,
   });
   registerLedgerStdioTools(server, store);
   return server;
+}
+
+/**
+ * Construct and initialise a file-backed store rooted at `cwd`. The single
+ * place that builds the embedded store, shared by the standalone binary and
+ * the in-process UIs (ledger-tui in-memory transport, ledger-web co-hosted
+ * HTTP) so root resolution + init stay identical everywhere.
+ */
+export async function createEmbeddedStore(cwd: string): Promise<FsLedgerStore> {
+  const store = new FsLedgerStore({ root: cwd });
+  await store.init();
+  return store;
+}
+
+/**
+ * Transport-agnostic MCP-over-HTTP handlers bound to one `store`, so any
+ * `Bun.serve` host — the standalone `serveHttp` below OR ledger-web's `serve`
+ * — mounts the SAME `/mcp` request logic and `/ws` live-change socket. The
+ * caller owns the `Bun.serve` instance (and thus `server.publish` for change
+ * frames); these handlers only implement the per-request / per-socket
+ * behaviour. Returned `handle` produces the raw protocol Response WITHOUT CORS
+ * — the caller applies CORS uniformly.
+ */
+export interface McpHttpHandlers {
+  /** Handle one `/mcp` request (session routing + initialize). */
+  handle(req: Request): Promise<Response>;
+  /** `Bun.serve` `websocket.open` — subscribe the socket to change frames. */
+  onWsOpen(ws: ServerWebSocket<undefined>): void;
+  /** `Bun.serve` `websocket.message` — app-level ping/pong heartbeat. */
+  onWsMessage(ws: ServerWebSocket<undefined>, raw: string | Buffer): void;
+}
+
+export function attachMcpHttp(store: LedgerStore): McpHttpHandlers {
+  const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
+
+  async function handle(req: Request): Promise<Response> {
+    const sessionId = req.headers.get("mcp-session-id") ?? undefined;
+    const existing = sessionId !== undefined ? transports.get(sessionId) : undefined;
+    if (existing !== undefined) {
+      return existing.handleRequest(req);
+    }
+
+    // No existing session. Only a POST initialize may open one; anything
+    // else without a valid session is a client error.
+    if (req.method !== "POST") {
+      return new Response("missing or invalid session", { status: 400 });
+    }
+    const body: unknown = await req.json().catch(() => undefined);
+    if (!isInitializeRequest(body)) {
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Bad Request: no valid session id" },
+          id: null,
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sid) => {
+        transports.set(sid, transport);
+      },
+      onsessionclosed: (sid) => {
+        transports.delete(sid);
+      },
+    });
+    const server = buildServer(store);
+    await server.connect(transport);
+    // Body already consumed above; hand it back so the transport doesn't
+    // re-read the (now-empty) request stream.
+    return transport.handleRequest(req, { parsedBody: body });
+  }
+
+  function onWsOpen(ws: ServerWebSocket<undefined>): void {
+    ws.subscribe(LEDGER_TOPIC); // receives every published `changed` event
+  }
+
+  function onWsMessage(ws: ServerWebSocket<undefined>, raw: string | Buffer): void {
+    // App-level heartbeat (resilient-ws-ui R3): echo ping nonce + ts so the
+    // client can measure RTT and detect a dead connection.
+    let msg: { type?: string; nonce?: string; ts?: number } | undefined;
+    try {
+      msg = JSON.parse(typeof raw === "string" ? raw : raw.toString()) as typeof msg;
+    } catch {
+      return;
+    }
+    if (msg?.type === "ping") {
+      ws.send(JSON.stringify({ type: "pong", nonce: msg.nonce, ts: msg.ts, serverTs: Date.now() }));
+    }
+  }
+
+  return { handle, onWsOpen, onWsMessage };
 }
 
 /**
@@ -201,49 +300,7 @@ export function serveHttp(
   store: LedgerStore,
   opts: HttpOpts,
 ): ReturnType<typeof Bun.serve> {
-  const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
-
-  // Inner handler returns the protocol Response; the outer fetch applies CORS
-  // uniformly and answers preflight so every code path stays consistent.
-  async function handle(req: Request): Promise<Response> {
-      const sessionId = req.headers.get("mcp-session-id") ?? undefined;
-      const existing = sessionId !== undefined ? transports.get(sessionId) : undefined;
-      if (existing !== undefined) {
-        return existing.handleRequest(req);
-      }
-
-      // No existing session. Only a POST initialize may open one; anything
-      // else without a valid session is a client error.
-      if (req.method !== "POST") {
-        return new Response("missing or invalid session", { status: 400 });
-      }
-      const body: unknown = await req.json().catch(() => undefined);
-      if (!isInitializeRequest(body)) {
-        return new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            error: { code: -32000, message: "Bad Request: no valid session id" },
-            id: null,
-          }),
-          { status: 400, headers: { "content-type": "application/json" } },
-        );
-      }
-
-      const transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (sid) => {
-          transports.set(sid, transport);
-        },
-        onsessionclosed: (sid) => {
-          transports.delete(sid);
-        },
-      });
-      const server = buildServer(store);
-      await server.connect(transport);
-      // Body already consumed above; hand it back so the transport doesn't
-      // re-read the (now-empty) request stream.
-      return transport.handleRequest(req, { parsedBody: body });
-  }
+  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store);
 
   return Bun.serve({
     hostname: opts.host,
@@ -266,22 +323,8 @@ export function serveHttp(
       return applyCors(await handle(req));
     },
     websocket: {
-      open(ws): void {
-        ws.subscribe(LEDGER_TOPIC); // receives every published `changed` event
-      },
-      message(ws, raw): void {
-        // App-level heartbeat (resilient-ws-ui R3): echo ping nonce + ts so the
-        // client can measure RTT and detect a dead connection.
-        let msg: { type?: string; nonce?: string; ts?: number } | undefined;
-        try {
-          msg = JSON.parse(typeof raw === "string" ? raw : raw.toString()) as typeof msg;
-        } catch {
-          return;
-        }
-        if (msg?.type === "ping") {
-          ws.send(JSON.stringify({ type: "pong", nonce: msg.nonce, ts: msg.ts, serverTs: Date.now() }));
-        }
-      },
+      open: onWsOpen,
+      message: onWsMessage,
     },
   });
 }

@@ -60,12 +60,12 @@ archives: []
 
 ## M2
 
-### K2 — proposed
+### K2 — locked
 
 - createdAt: 2026-06-01T20:13:13.876Z
-- updatedAt: 2026-06-01T20:14:34.268Z
+- updatedAt: 2026-06-01T22:17:52.764Z
 - author: "opus-4.8[1m]"
-- session: b946b5c5-0dca-4058-a5bf-45caaea6111d
+- session: 94b7733c-6379-4acb-a300-7d92f856f321
 - headline: "In-process ledgers: relocate the MCP server into the UI process, don't make UIs read files"
 - rationale: |
     Goal: omitting --mcp-url should let each UI work without a separate ledger-mcp process. Constraint: the repo invariant 'frontends are pure MCP clients — never read ledger files directly' (CLAUDE.md) must hold. Resolution: co-locate the MCP *server* in the same OS process as the UI, not bypass MCP.

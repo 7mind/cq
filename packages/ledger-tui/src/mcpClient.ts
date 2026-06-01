@@ -10,7 +10,10 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { buildServer, createEmbeddedStore } from "@cq/ledger-mcp";
+import type { FsLedgerStore } from "@cq/ledger";
 import type {
   FetchedLedger,
   FieldValue,
@@ -38,8 +41,17 @@ interface CallToolResultLike {
   isError?: boolean;
 }
 
+/** In-process context an embedded client owns and must tear down on close. */
+export interface EmbeddedContext {
+  readonly store: FsLedgerStore;
+  readonly cwd: string;
+}
+
 export class McpLedgerClient implements LedgerClient {
-  constructor(private readonly client: Client) {}
+  constructor(
+    private readonly client: Client,
+    private readonly embeddedCtx: EmbeddedContext | null = null,
+  ) {}
 
   /** Connect to a `ledger-mcp --http` server at `url` (e.g. http://127.0.0.1:7777/mcp). */
   static async connect(url: string): Promise<McpLedgerClient> {
@@ -54,6 +66,31 @@ export class McpLedgerClient implements LedgerClient {
     // identical; bridge the declaration gap through unknown.
     await client.connect(transport as unknown as Transport);
     return new McpLedgerClient(client);
+  }
+
+  /**
+   * Run the MCP server IN-PROCESS over an in-memory transport, backed by a
+   * file-store rooted at `cwd`. No socket, no subprocess: the same tool surface
+   * the `--http` server exposes, wired client↔server through a linked transport
+   * pair. The returned client OWNS the store and disposes it on {@link close}.
+   * Used when ledger-tui is launched with no `--mcp-url`.
+   */
+  static async embedded(cwd: string): Promise<McpLedgerClient> {
+    const store = await createEmbeddedStore(cwd);
+    const server = buildServer(store);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client(
+      { name: "ledger-tui", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    await client.connect(clientTransport);
+    return new McpLedgerClient(client, { store, cwd });
+  }
+
+  /** The in-process context when running embedded, else null (HTTP mode). */
+  get embedded(): EmbeddedContext | null {
+    return this.embeddedCtx;
   }
 
   private async call<T>(name: string, args: Record<string, unknown>): Promise<T> {
@@ -138,6 +175,11 @@ export class McpLedgerClient implements LedgerClient {
 
   async close(): Promise<void> {
     await this.client.close();
+    // Embedded mode owns the in-process store; dispose it so its watcher /
+    // lockfile are released. HTTP mode owns no store here.
+    if (this.embeddedCtx !== null) {
+      await this.embeddedCtx.store.dispose();
+    }
   }
 }
 
