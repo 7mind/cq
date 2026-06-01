@@ -310,18 +310,19 @@ archives:
     
     TO ACTIVATE: (a) restart the Claude session (project .claude/agents override the plugin) for the local fix; (b) for users who get these agents via the home-manager plugin, rebuild the plugin from this repo's updated llm/ (llmAssets) so the bundled copies carry the denylist. NOTE: uncommitted working-tree change in llm/agents/plan-advance.md and llm/agents/plan-reviewer.md.
 
-### T14 — planned
+### T14 — done
 
 - createdAt: 2026-06-01T20:03:30.163Z
-- updatedAt: 2026-06-01T20:03:30.163Z
+- updatedAt: 2026-06-01T22:29:27.495Z
 - author: "opus-4.8[1m]"
-- session: 86ec6253-6f0d-405a-9a97-a89319e33ce3
+- session: 94b7733c-6379-4acb-a300-7d92f856f321
 - headline: "/plan:advance with no args advances all unlocked goals"
 - suggestedModel: frontier
 - description: "Currently /plan:advance requires a goal id ($ARGUMENTS). Improvement: when called WITHOUT arguments, it should advance ALL 'unlocked' goals — i.e. every goal not in a terminal/locked phase. Define 'unlocked' precisely: goals in `clarifying` or `planning` (not `planned`, `done`, or `abandoned`). For each such goal, run the existing planner<->reviewer round (the same per-goal loop). Iterate goals independently; a goal that hits `awaiting-answers` is reported and skipped, others continue. Update llm/commands/plan/advance.md: when $ARGUMENTS is empty, enumerate goals via the goals ledger and loop over the unlocked set; when an id is given, keep current single-goal behaviour. Report a per-goal summary (phase + next action) at the end."
 - acceptance: advance.md handles empty $ARGUMENTS by selecting all goals in clarifying/planning and running the round on each; explicit-id behaviour unchanged. The 4-iteration cap applies per goal. Per-goal outcome summary is reported.
 - dependsOn: ["T13"]
 - ledgerRefs: ["goals:G1"]
+- completion: "plan/advance.md now handles an empty argument: it reads the goals ledger and runs the per-goal round on every UNLOCKED goal (clarifying/planning), independently (one stopping at awaiting-answers doesn't block others), with the 4-iteration cap applied per goal and a per-goal + roll-up report. Explicit-id behavior unchanged. argument-hint relaxed to [goalId]. Markdown-only (allowed-tools already include fetch_ledger/enumerate_ledgers)."
 
 ### T25 — done
 

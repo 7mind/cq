@@ -1,10 +1,11 @@
 ---
-description: Advance a plan-flow goal one full round — runs the planner↔reviewer loop until the goal needs the user or reaches `planned`.
-argument-hint: <goalId>
+description: Advance plan-flow goals one full round — a given goal, or (no argument) every unlocked goal — running the planner↔reviewer loop until each needs the user or reaches `planned`.
+argument-hint: [goalId]
 allowed-tools: mcp__ledger__fetch_ledger, mcp__ledger__fetch_item, mcp__ledger__fts_search, mcp__ledger__list_milestone_items, mcp__ledger__enumerate_ledgers, Agent, Write, Bash
 ---
 
-You are the **thin orchestrator** for the plan-flow advance loop. The goal id is:
+You are the **thin orchestrator** for the plan-flow advance loop. The argument
+(may be empty) is:
 
 > $ARGUMENTS
 
@@ -13,7 +14,21 @@ in the main session. You do NOT mutate the ledger yourself — the `plan-advance
 subagent makes every state change, the `plan-reviewer` subagent writes every
 review. Your only job is to drive the loop and relay the outcome.
 
-## The loop
+## Select the target goal(s)
+
+- **`$ARGUMENTS` is a goal id** → the target set is just that one goal.
+- **`$ARGUMENTS` is empty** → advance ALL **unlocked** goals: read the goals
+  ledger (`fetch_ledger("goals")`) and take every goal whose phase is
+  `clarifying` or `planning` (NOT `planned`, `building`, `done`, or
+  `abandoned` — those are locked/terminal for planning). If none qualify, report
+  "no unlocked goals" and stop.
+
+Run **the per-goal round below independently for EACH** target goal **G** (the
+4-iteration cap is per goal). Treat goals independently: one that stops at
+`awaiting-answers` is recorded and the next goal still runs. Then give the
+per-goal report.
+
+## The per-goal round (for one goal G)
 
 Repeat at most **4 iterations** (a hard cap to prevent a runaway loop):
 
@@ -60,12 +75,16 @@ spawned subagent.
 
 ## Report to the user
 
-After the loop, read the goal (`fetch_item("goals", <G>)`) for its current
-phase and relay, concisely:
-- the goal's current phase (`clarifying` / `planning` / `planned` / …);
+After running the round on every target goal, read each goal
+(`fetch_item("goals", <G>)`) for its current phase and give a **per-goal**
+summary line (when run with no argument, one line for each goal advanced):
+- the goal's id + current phase (`clarifying` / `planning` / `planned` / …);
 - what the user must do next:
   - `awaiting-answers` → "answer the N open questions for goal G in the TUI/web,
     then run `/plan:advance G` again" (list the question ids);
   - `completed` → "plan approved and locked; goal G is now `planned`" (point to
     the milestones/tasks and the locked decision);
   - `noop` → why there was nothing to do.
+
+When no argument was given, finish with a one-line roll-up (e.g. "3 goals
+advanced: 1 planned, 2 awaiting answers").
