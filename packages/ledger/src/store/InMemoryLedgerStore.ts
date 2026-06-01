@@ -581,7 +581,7 @@ function cloneMilestone(m: Milestone): Milestone {
 }
 
 function cloneItem(i: Item): Item {
-  return {
+  const out: Item = {
     id: i.id,
     milestoneId: i.milestoneId,
     status: i.status,
@@ -591,4 +591,7 @@ function cloneItem(i: Item): Item {
     createdAt: i.createdAt,
     updatedAt: i.updatedAt,
   };
+  if (i.author !== undefined) out.author = i.author;
+  if (i.session !== undefined) out.session = i.session;
+  return out;
 }

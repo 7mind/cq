@@ -30,6 +30,10 @@ export interface FtsHit {
 export interface ItemPatch {
   status?: string;
   fields?: Record<string, FieldValue>;
+  /** Provenance of this write (see {@link Item.author}). */
+  author?: string;
+  /** Provenance of this write (see {@link Item.session}). */
+  session?: string;
 }
 
 /** Init accepted by {@link LedgerClient.createItem}. */
@@ -37,6 +41,10 @@ export interface ItemInit {
   status: string;
   fields: Record<string, FieldValue>;
   id?: string;
+  /** Provenance of the creating write (see {@link Item.author}). */
+  author?: string;
+  /** Provenance of the creating write (see {@link Item.session}). */
+  session?: string;
 }
 
 /** Patch accepted by {@link LedgerClient.updateMilestone}. */

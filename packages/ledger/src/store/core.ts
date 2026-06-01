@@ -97,7 +97,7 @@ const STATUS_VALUE_RE = /^[A-Za-z0-9 _-]+$/;
 const FIELD_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** Reserved field names that collide with intrinsic Item fields. D-LED-02. */
-const RESERVED_FIELD_NAMES = new Set(["createdAt", "updatedAt"]);
+const RESERVED_FIELD_NAMES = new Set(["createdAt", "updatedAt", "author", "session"]);
 
 /**
  * Validate a LedgerSchema against the invariants every layer must honour
@@ -223,6 +223,8 @@ export function applyUpdateItem(
       item.fields[k] = v;
     }
   }
+  if (patch.author !== undefined) item.author = patch.author;
+  if (patch.session !== undefined) item.session = patch.session;
   item.updatedAt = now;
   return item;
 }
@@ -302,6 +304,10 @@ export function applyCreateItem(
     createdAt: now,
     updatedAt: now,
   };
+  // Optional provenance — assign conditionally so exactOptionalPropertyTypes
+  // never sees an explicit `undefined` on the optional keys.
+  if (init.author !== undefined) item.author = init.author;
+  if (init.session !== undefined) item.session = init.session;
   milestone.items.push(item);
   return item;
 }

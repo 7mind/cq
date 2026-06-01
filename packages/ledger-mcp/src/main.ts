@@ -166,6 +166,12 @@ const SERVER_INSTRUCTIONS = [
   "Conventions: keep one item per discrete unit of work; put detail in the",
   "item's fields (markdown is supported); use enumerate_ledgers to discover",
   "ledgers and their schemas before creating items.",
+  "",
+  "Provenance: on every create_item / update_item, set `author` to your model",
+  'class (e.g. "opus-4.8[1m]") and `session` to your CLAUDE_CODE_SESSION_ID so',
+  "the ledger records who wrote each item. Human edits via the TUI/web editor",
+  'set author to "user". These are optional intrinsic fields — not schema',
+  "fields — so they apply to every ledger and never need a schema change.",
 ].join("\n");
 
 function buildServer(store: LedgerStore): McpServer {

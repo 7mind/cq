@@ -63,6 +63,22 @@ export interface Item {
   createdAt: string;
   /** ISO 8601 UTC timestamp (ms precision). Bumped on every updateItem. */
   updatedAt: string;
+  /**
+   * Provenance: who last wrote this item — either the literal `"user"` (a
+   * human, e.g. via the TUI/web editor) or a model class such as
+   * `"opus-4.8[1m]"` (an agent writing through the MCP tools). Intrinsic and
+   * optional: like createdAt/updatedAt it is NOT a schema field (so it never
+   * affects schema-divergence detection), and absent on items written before
+   * the convention or by callers that don't supply it. Set on createItem and
+   * overwritten on every updateItem that supplies it (last-writer wins).
+   */
+  author?: string;
+  /**
+   * Provenance: the writing session id (e.g. the agent's
+   * `CLAUDE_CODE_SESSION_ID`). Same intrinsic/optional/last-writer semantics
+   * as {@link Item.author}.
+   */
+  session?: string;
 }
 
 export interface Milestone {

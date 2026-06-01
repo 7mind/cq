@@ -335,6 +335,15 @@ function applyItemFields(item: Item, list: List, source: string): void {
       else item.updatedAt = value;
       continue;
     }
+    if (key === "author" || key === "session") {
+      // Intrinsic provenance — free-form string, lifted off the field map onto
+      // the Item (mirrors createdAt/updatedAt; no timestamp validation).
+      if (typeof value !== "string") {
+        throw new SchemaValidationError(`field "${key}" must be a string; got ${JSON.stringify(value)}`);
+      }
+      item[key] = value;
+      continue;
+    }
     item.fields[key] = value;
   }
 }

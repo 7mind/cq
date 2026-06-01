@@ -89,6 +89,8 @@ export class McpLedgerClient implements LedgerClient {
       fields: init.fields,
     };
     if (init.id !== undefined) args["id"] = init.id;
+    if (init.author !== undefined) args["author"] = init.author;
+    if (init.session !== undefined) args["session"] = init.session;
     return (await this.call<{ item: Item }>("create_item", args)).item;
   }
 
@@ -96,6 +98,8 @@ export class McpLedgerClient implements LedgerClient {
     const args: Record<string, unknown> = { ledger_id: ledgerId, item_id: itemId };
     if (patch.status !== undefined) args["status"] = patch.status;
     if (patch.fields !== undefined) args["fields"] = patch.fields;
+    if (patch.author !== undefined) args["author"] = patch.author;
+    if (patch.session !== undefined) args["session"] = patch.session;
     return (await this.call<{ item: Item }>("update_item", args)).item;
   }
 

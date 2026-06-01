@@ -134,6 +134,37 @@ describe("ledger MCP tools", () => {
     expect(updated.item.fields["note"]).toBe("bought milk");
   });
 
+  it("create_item / update_item thread author + session provenance", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+    await callTool(tools, "create_milestone", { title: "first" });
+
+    const created = decode<{ item: { id: string; author?: string; session?: string } }>(
+      await callTool(tools, "create_item", {
+        ledger_id: "xenos",
+        milestone_id: "M1",
+        status: "open",
+        fields: { note: "n" },
+        author: "opus-4.8[1m]",
+        session: "sess-1",
+      }),
+    );
+    expect(created.item.author).toBe("opus-4.8[1m]");
+    expect(created.item.session).toBe("sess-1");
+
+    const updated = decode<{ item: { author?: string; session?: string } }>(
+      await callTool(tools, "update_item", {
+        ledger_id: "xenos",
+        item_id: created.item.id,
+        status: "done",
+        author: "user",
+        session: "sess-2",
+      }),
+    );
+    expect(updated.item.author).toBe("user");
+    expect(updated.item.session).toBe("sess-2");
+  });
+
   it("create_item refuses absent / terminal milestone (strict existence Q5)", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);

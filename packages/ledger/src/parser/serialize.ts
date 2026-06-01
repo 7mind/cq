@@ -114,6 +114,9 @@ function serializeItem(item: Item): string {
   // Always emit createdAt / updatedAt so round-trip preserves them.
   parts.push(serializeFieldLine("createdAt", item.createdAt));
   parts.push(serializeFieldLine("updatedAt", item.updatedAt));
+  // Optional provenance — emitted only when present (absent on legacy items).
+  if (item.author !== undefined) parts.push(serializeFieldLine("author", item.author));
+  if (item.session !== undefined) parts.push(serializeFieldLine("session", item.session));
   for (const [key, value] of Object.entries(item.fields)) {
     parts.push(serializeFieldLine(key, value));
   }

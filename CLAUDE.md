@@ -47,6 +47,9 @@ work, instead of inline TODOs or scratch files.
   item under the milestone is terminal.
 - **Detail goes in fields** (markdown is supported), not the headline. Don't
   hand-edit `docs/*.md` — go through the tools so counters/schema stay valid.
+- **Provenance**: on every `create_item` / `update_item`, pass `author` (your
+  model class, e.g. `opus-4.8[1m]`) and `session` (`$CLAUDE_CODE_SESSION_ID`)
+  so the ledger records who wrote each item.
 - Don't `create_ledger` unless asked; the canonical set is enough.
 
 > The server also advertises baseline usage `instructions` on connect — this

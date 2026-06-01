@@ -30,7 +30,7 @@
 import { z } from "zod";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
-import type { LedgerStore } from "../store/LedgerStore.js";
+import type { LedgerStore, CreateItemInit, UpdateItemPatch } from "../store/LedgerStore.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
 
 /**
@@ -72,7 +72,7 @@ const statusValueSchema = z
 
 // D-LED-02: field names become YAML keys; restrict to identifier-style
 // names and forbid the intrinsic Item field names.
-const RESERVED_FIELD_NAMES_ZOD = ["createdAt", "updatedAt"];
+const RESERVED_FIELD_NAMES_ZOD = ["createdAt", "updatedAt", "author", "session"];
 const fieldNameSchema = z
   .string()
   .regex(
@@ -80,8 +80,21 @@ const fieldNameSchema = z
     "field name must match /^[A-Za-z_][A-Za-z0-9_]*$/",
   )
   .refine((n) => !RESERVED_FIELD_NAMES_ZOD.includes(n), {
-    message: "field name is reserved (createdAt/updatedAt)",
+    message: "field name is reserved (createdAt/updatedAt/author/session)",
   });
+
+// Optional provenance params shared by create_item / update_item. `author` is
+// the literal "user" (a human) or the writing model's class (e.g.
+// "opus-4.8[1m]"); `session` is the writing session id (e.g.
+// CLAUDE_CODE_SESSION_ID). Intrinsic Item metadata, not schema fields.
+const authorParam = z
+  .string()
+  .optional()
+  .describe('who is writing: "user", or your model class e.g. "opus-4.8[1m]"');
+const sessionParam = z
+  .string()
+  .optional()
+  .describe("writing session id, e.g. the value of CLAUDE_CODE_SESSION_ID");
 
 const idPrefixSchema = z
   .string()
@@ -163,17 +176,21 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
 
   const updateItem = tool(
     "update_item",
-    "Update an item's status and/or fields. Provided fields replace existing values; omitted fields are preserved.",
+    "Update an item's status and/or fields. Provided fields replace existing values; omitted fields are preserved. Pass author/session to record who made this edit.",
     {
       ledger_id: z.string(),
       item_id: z.string(),
       status: z.string().optional(),
       fields: fieldsSchema.optional(),
+      author: authorParam,
+      session: sessionParam,
     } as const,
     async (args) => {
-      const patch: { status?: string; fields?: Record<string, FieldValue> } = {};
+      const patch: UpdateItemPatch = {};
       if (args.status !== undefined) patch.status = args.status;
       if (args.fields !== undefined) patch.fields = args.fields as Record<string, FieldValue>;
+      if (args.author !== undefined) patch.author = args.author;
+      if (args.session !== undefined) patch.session = args.session;
       const item = await store.updateItem(args.ledger_id, args.item_id, patch);
       return jsonResult({ item });
     },
@@ -181,20 +198,24 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
 
   const createItem = tool(
     "create_item",
-    "Create a new item under a milestone in a ledger. milestone_id must resolve to an active (non-archived, non-terminal) milestone in the milestones ledger. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match). Auto-creates the depth-2 group on first reference.",
+    "Create a new item under a milestone in a ledger. milestone_id must resolve to an active (non-archived, non-terminal) milestone in the milestones ledger. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match). Auto-creates the depth-2 group on first reference. Pass author/session to record who created the item.",
     {
       ledger_id: z.string(),
       milestone_id: safeIdSchema,
       status: z.string(),
       fields: fieldsSchema,
       id: safeIdSchema.optional(),
+      author: authorParam,
+      session: sessionParam,
     } as const,
     async (args) => {
-      const init: { id?: string; status: string; fields: Record<string, FieldValue> } = {
+      const init: CreateItemInit = {
         status: args.status,
         fields: args.fields as Record<string, FieldValue>,
       };
       if (args.id !== undefined) init.id = args.id;
+      if (args.author !== undefined) init.author = args.author;
+      if (args.session !== undefined) init.session = args.session;
       const item = await store.createItem(args.ledger_id, args.milestone_id, init);
       return jsonResult({ item });
     },

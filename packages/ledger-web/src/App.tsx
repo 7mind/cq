@@ -24,6 +24,8 @@ import { loadDagData, type DagData } from "./dagData.js";
 import { LiveManager, type LiveStats } from "@cq/ledger-live";
 
 const MILESTONES = "milestones";
+/** Provenance author stamped on writes made by a human through this editor. */
+const UI_AUTHOR = "user";
 
 // Detail-panel layout, persisted to localStorage.
 const PANEL_KEY = "ledger-web.panel";
@@ -239,7 +241,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
           if (Array.isArray(fields["dependsOn"])) patch.dependsOn = fields["dependsOn"];
           await client.updateMilestone(row.item.id, patch);
         } else {
-          await client.updateItem(ledger!, row.item.id, { status, fields });
+          await client.updateItem(ledger!, row.item.id, { status, fields, author: UI_AUTHOR });
         }
         setFlash(`saved ${row.item.id}`);
         await reload();
@@ -473,7 +475,11 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
                   loadMilestones={() => client.fetchLedger(MILESTONES)}
                   onCreate={async (milestoneId, status, fields) => {
                     try {
-                      const it = await client.createItem(ledger!, milestoneId, { status, fields });
+                      const it = await client.createItem(ledger!, milestoneId, {
+                        status,
+                        fields,
+                        author: UI_AUTHOR,
+                      });
                       setFlash(`created ${it.id}`);
                       setCreating(null);
                       await reload();

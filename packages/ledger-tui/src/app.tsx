@@ -25,6 +25,8 @@ import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient } from "./ty
 
 const MILESTONES = "milestones";
 const LIST_WIDTH = 34;
+/** Provenance author stamped on writes made by a human through this editor. */
+const UI_AUTHOR = "user";
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -192,7 +194,7 @@ export function App({
       if (top.kind !== "items") return;
       try {
         if (isMilestonesLedger) await client.updateMilestone(row.item.id, { status });
-        else await client.updateItem(top.ledger, row.item.id, { status });
+        else await client.updateItem(top.ledger, row.item.id, { status, author: UI_AUTHOR });
         setFlash(`${row.item.id} → ${status}`);
         await reloadItems();
       } catch (e) {
@@ -210,6 +212,7 @@ export function App({
         const spec = top.view.schema.fields[field];
         await client.updateItem(top.ledger, row.item.id, {
           fields: { [field]: parseFieldValue(raw, spec?.type ?? "string") },
+          author: UI_AUTHOR,
         });
         setFlash(`${row.item.id}.${field} updated`);
         await reloadItems();
@@ -429,7 +432,11 @@ export function App({
               onCreateItem={async (milestoneId, status, fields) => {
                 if (top.kind !== "items") return;
                 try {
-                  const it = await client.createItem(top.ledger, milestoneId, { status, fields });
+                  const it = await client.createItem(top.ledger, milestoneId, {
+                    status,
+                    fields,
+                    author: UI_AUTHOR,
+                  });
                   setFlash(`created ${it.id}`);
                   await reloadItems();
                 } catch (e) {

@@ -62,12 +62,20 @@ export type OnMutation = (ledgerId: string, op: LedgerMutationOp) => void;
 export interface UpdateItemPatch {
   status?: string;
   fields?: Record<string, FieldValue>;
+  /** Provenance of this write (see {@link Item.author}). Overwrites when set. */
+  author?: string;
+  /** Provenance of this write (see {@link Item.session}). Overwrites when set. */
+  session?: string;
 }
 
 export interface CreateItemInit {
   id?: string;
   status: string;
   fields: Record<string, FieldValue>;
+  /** Provenance of the creating write (see {@link Item.author}). */
+  author?: string;
+  /** Provenance of the creating write (see {@link Item.session}). */
+  session?: string;
 }
 
 /**
