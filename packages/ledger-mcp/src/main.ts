@@ -15,9 +15,14 @@
  *     all sharing the one `FsLedgerStore`.
  *
  * CLI:
- *   ledger-mcp --cwd <absolute path>                 # stdio
- *   ledger-mcp --cwd <absolute path> --http 7777     # HTTP on 127.0.0.1:7777
- *   ledger-mcp --cwd <absolute path> --http 0.0.0.0:7777
+ *   ledger-mcp                            # stdio; ledger root = $LEDGER_ROOT or CWD
+ *   ledger-mcp --cwd <path>               # stdio; explicit root (rel→resolved vs CWD)
+ *   ledger-mcp --cwd <path> --http 7777   # HTTP on 127.0.0.1:7777
+ *   ledger-mcp --http 0.0.0.0:7777        # HTTP, root = CWD
+ *
+ * Ledger root precedence: --cwd > $LEDGER_ROOT > process CWD. Defaulting to the
+ * CWD lets a single global install serve per-repo ledgers (the MCP client
+ * spawns this server with the repo as its working directory).
  *
  * Output discipline (stdio mode). Stdout is reserved for MCP protocol
  * traffic only; all logs go to stderr.
@@ -116,13 +121,15 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       http = parseHttp(a.slice("--http=".length));
     }
   }
-  if (cwd === undefined || cwd === "") {
-    throw new Error("ledger-mcp: --cwd <absolute path> is required");
-  }
-  if (!path.isAbsolute(cwd)) {
-    throw new Error(`ledger-mcp: --cwd must be an absolute path; got: ${cwd}`);
-  }
-  return { cwd, http };
+  // The ledger root, in priority order: --cwd, then $LEDGER_ROOT, else the
+  // process working directory. A relative value resolves against the CWD.
+  // Defaulting to the CWD is what lets one global install serve per-repo
+  // ledgers — the MCP client spawns this server with the repo as its CWD.
+  const fromArg = cwd !== undefined && cwd !== "" ? cwd : undefined;
+  const fromEnv = process.env["LEDGER_ROOT"];
+  const chosen = fromArg ?? (fromEnv !== undefined && fromEnv !== "" ? fromEnv : undefined);
+  const resolved = chosen !== undefined ? path.resolve(chosen) : process.cwd();
+  return { cwd: resolved, http };
 }
 
 /** Build a fresh McpServer with the 14 ledger tools bound to `store`. */
