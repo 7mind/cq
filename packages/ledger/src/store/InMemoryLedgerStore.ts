@@ -573,6 +573,11 @@ function cloneSchema(s: LedgerSchema): LedgerSchema {
     ),
   };
   if (s.idPrefix !== undefined) out.idPrefix = s.idPrefix;
+  if (s.transitions !== undefined) {
+    out.transitions = Object.fromEntries(
+      Object.entries(s.transitions).map(([from, tos]) => [from, [...tos]]),
+    );
+  }
   return out;
 }
 

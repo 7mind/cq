@@ -107,6 +107,7 @@ const schemaSchema = z
     terminalStatuses: z.array(z.string()),
     fields: z.record(fieldNameSchema, fieldSpecSchema),
     idPrefix: idPrefixSchema.optional(),
+    transitions: z.record(z.string(), z.array(z.string())).optional(),
   })
   .refine(
     (s) => s.terminalStatuses.every((t) => s.statusValues.includes(t)),

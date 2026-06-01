@@ -48,6 +48,17 @@ export const MILESTONES_SCHEMA: LedgerSchema = {
   statusValues: ["open", "done", "postponed", "blocked"],
   terminalStatuses: ["done"],
   idPrefix: "M",
+  // F1 transition guard. statuses: open, done(terminal), postponed, blocked.
+  // open is the working state; postponed/blocked are reversible holds that
+  // return to open and may also move directly between each other; any
+  // non-terminal state may complete to done. `done` is terminal (no outgoing
+  // transitions).
+  transitions: {
+    open: ["done", "postponed", "blocked"],
+    postponed: ["open", "done", "blocked"],
+    blocked: ["open", "done", "postponed"],
+    done: [],
+  },
   fields: {
     title: { type: "string", required: true },
     description: { type: "string", required: false },
@@ -91,6 +102,17 @@ export const DEFECTS_SCHEMA: LedgerSchema = {
   statusValues: ["open", "wip", "blocked", "resolved", "abandoned"],
   terminalStatuses: ["resolved", "abandoned"],
   idPrefix: "D",
+  // F1 transition guard. The proposed map omitted the `blocked` status that
+  // the schema actually declares; `blocked` is folded in as a reversible
+  // hold reachable from open/wip and returning to either, with the terminal
+  // states (resolved/abandoned) reachable from any non-terminal state.
+  transitions: {
+    open: ["wip", "blocked", "resolved", "abandoned"],
+    wip: ["blocked", "resolved", "abandoned"],
+    blocked: ["open", "wip", "resolved", "abandoned"],
+    resolved: [],
+    abandoned: [],
+  },
   fields: {
     headline: { type: "string", required: true },
     description: { type: "string", required: false },
@@ -107,6 +129,17 @@ export const TASKS_SCHEMA: LedgerSchema = {
   statusValues: ["planned", "wip", "done", "blocked", "abandoned"],
   terminalStatuses: ["done", "abandoned"],
   idPrefix: "T",
+  // F1 transition guard. The proposed map omitted the `blocked` status the
+  // schema declares; `blocked` is folded in as a reversible hold reachable
+  // from planned/wip and returning to either, with terminal states
+  // (done/abandoned) reachable from any non-terminal state.
+  transitions: {
+    planned: ["wip", "blocked", "done", "abandoned"],
+    wip: ["blocked", "done", "abandoned"],
+    blocked: ["planned", "wip", "done", "abandoned"],
+    done: [],
+    abandoned: [],
+  },
   fields: {
     headline: { type: "string", required: true },
     description: { type: "string", required: false },
@@ -124,6 +157,14 @@ export const HYPOTHESIS_SCHEMA: LedgerSchema = {
   statusValues: ["open", "uncertain", "confirmed", "wrong"],
   terminalStatuses: ["confirmed", "wrong"],
   idPrefix: "H",
+  // F1 transition guard. open → uncertain/confirmed/wrong; uncertain →
+  // confirmed/wrong; confirmed/wrong are terminal.
+  transitions: {
+    open: ["uncertain", "confirmed", "wrong"],
+    uncertain: ["confirmed", "wrong"],
+    confirmed: [],
+    wrong: [],
+  },
   fields: {
     headline: { type: "string", required: true },
     description: { type: "string", required: false },
@@ -139,6 +180,12 @@ export const QUESTIONS_SCHEMA: LedgerSchema = {
   statusValues: ["open", "answered", "withdrawn"],
   terminalStatuses: ["answered", "withdrawn"],
   idPrefix: "Q",
+  // F1 transition guard. open → answered/withdrawn; both are terminal.
+  transitions: {
+    open: ["answered", "withdrawn"],
+    answered: [],
+    withdrawn: [],
+  },
   fields: {
     question: { type: "string", required: true },
     context: { type: "string", required: false },
@@ -154,6 +201,15 @@ export const DECISIONS_SCHEMA: LedgerSchema = {
   statusValues: ["proposed", "locked", "superseded"],
   terminalStatuses: ["locked", "superseded"],
   idPrefix: "K",
+  // F1 transition guard. proposed → locked/superseded; locked → superseded;
+  // superseded is terminal. (Both locked and superseded are terminal per the
+  // schema, so locked carries no outgoing transitions despite the proposed
+  // locked → superseded; see report note.)
+  transitions: {
+    proposed: ["locked", "superseded"],
+    locked: [],
+    superseded: [],
+  },
   fields: {
     headline: { type: "string", required: true },
     rationale: { type: "string", required: false },
@@ -172,6 +228,17 @@ export const GOALS_SCHEMA: LedgerSchema = {
   statusValues: ["clarifying", "planning", "planned", "building", "done", "abandoned"],
   terminalStatuses: ["done", "abandoned"],
   idPrefix: "G",
+  // F1 transition guard. clarifying → planning → planned → building → done,
+  // with abandoned reachable from each non-terminal state; planning may loop
+  // back to clarifying. done/abandoned are terminal.
+  transitions: {
+    clarifying: ["planning", "abandoned"],
+    planning: ["clarifying", "planned", "abandoned"],
+    planned: ["building", "abandoned"],
+    building: ["done", "abandoned"],
+    done: [],
+    abandoned: [],
+  },
   fields: {
     title: { type: "string", required: true },
     description: { type: "string", required: true },

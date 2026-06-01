@@ -111,14 +111,39 @@ export function parseSchema(raw: unknown): LedgerSchema {
     }
     idPrefix = idPrefixRaw;
   }
+  const transitions = parseTransitions(s["transitions"]);
   // D-LED-02: enforce cross-layer invariants (terminal subset, em-dash-free
   // status values, field name regex, reserved field names, idPrefix shape).
-  const schema: LedgerSchema =
-    idPrefix === undefined
-      ? { statusValues: sv, terminalStatuses: ts, fields }
-      : { statusValues: sv, terminalStatuses: ts, fields, idPrefix };
+  const schema: LedgerSchema = { statusValues: sv, terminalStatuses: ts, fields };
+  if (idPrefix !== undefined) schema.idPrefix = idPrefix;
+  if (transitions !== undefined) schema.transitions = transitions;
   validateSchema(schema);
   return schema;
+}
+
+/**
+ * Parse the optional `transitions` map (F1): a record of from-status →
+ * string[] of allowed to-statuses. Returns undefined when absent/null.
+ * Only the shape (a map of string keys to string[] values) is enforced here.
+ * Status-membership of the from/to entries against statusValues is enforced by
+ * the subsequent `validateSchema` call in `parseSchema`, which throws a
+ * `SchemaValidationError` on any unknown from/to status.
+ */
+function parseTransitions(raw: unknown): Record<string, string[]> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new SchemaValidationError("schema.transitions must be a map");
+  }
+  const out: Record<string, string[]> = {};
+  for (const [from, tos] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(tos) || tos.some((v) => typeof v !== "string")) {
+      throw new SchemaValidationError(
+        `schema.transitions["${from}"] must be a string[]`,
+      );
+    }
+    out[from] = tos as string[];
+  }
+  return out;
 }
 
 function parseFieldSpec(name: string, raw: unknown): FieldSpec {
@@ -154,6 +179,11 @@ export function serializeRegistry(registry: LedgerRegistry): string {
         ),
       };
       if (e.schema.idPrefix !== undefined) schema["idPrefix"] = e.schema.idPrefix;
+      if (e.schema.transitions !== undefined) {
+        schema["transitions"] = Object.fromEntries(
+          Object.entries(e.schema.transitions).map(([from, tos]) => [from, [...tos]]),
+        );
+      }
       return { name: e.name, schema };
     }),
   };

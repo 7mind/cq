@@ -8,7 +8,8 @@
     "typecheck": "tsc -b",
     "lint": "eslint packages",
     "format": "prettier --write .",
-    "test": "bun test --pass-with-no-tests"
+    "test": "bun test --pass-with-no-tests",
+    "regen-bootstrap": "bun run scripts/regen-bootstrap.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",

@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, mkdir, readFile, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -78,6 +78,14 @@ interface LedgerCase {
   update: { status?: string; fields?: Record<string, FieldValue> };
   searchNeedle: string; // substring present in a created field
   terminalStatus: string;
+  /**
+   * Status to create the item with so the single `update` to `terminalStatus`
+   * is a LEGAL transition under the F1 guard. Defaults to `firstStatus(ledger)`.
+   * `goals` overrides it to `building` (the only state with a direct edge to
+   * `done`); for the other ledgers the first status already reaches terminal
+   * directly.
+   */
+  createStatus?: string;
 }
 
 const CASES: LedgerCase[] = [
@@ -128,6 +136,9 @@ const CASES: LedgerCase[] = [
     update: { status: "done", fields: { tags: ["open-ended"] } },
     searchNeedle: "canonical ledgers",
     terminalStatus: "done",
+    // F1: clarifying → done is illegal; create at `building`, which has a
+    // direct legal edge to `done`.
+    createStatus: "building",
   },
 ];
 
@@ -140,7 +151,10 @@ for (const factory of [inMem, fs_]) {
           const m = await store.createMilestone({ title: `${c.ledger} milestone` });
           // create — id is <prefix>1.
           const created = await store.createItem(c.ledger, m.id, {
-            status: c.update.status === undefined ? "open" : firstStatus(c.ledger),
+            status:
+              c.update.status === undefined
+                ? "open"
+                : (c.createStatus ?? firstStatus(c.ledger)),
             fields: c.create,
           });
           expect(created.id).toBe(`${c.prefix}1`);
@@ -365,5 +379,34 @@ describe("fresh-cwd bootstrap shape", () => {
     expect(milestonesMd).toContain("\n## active\n");
     expect(milestonesMd).not.toContain("M0 —");
     expect(milestonesMd).toContain("### M-AMBIENT — open");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D01 — the committed-in-repo `docs/ledgers.yaml` (a PURE schema registry,
+// regenerated via `bun run regen-bootstrap`) must match canon. Booting an
+// FsLedgerStore against a copy of it succeeds with NO BootstrapViolationError;
+// the strict, order-significant divergence guard would fire if the on-disk
+// registry omitted any canonical `transitions` map or diverged otherwise.
+// ---------------------------------------------------------------------------
+
+describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () => {
+  it("boots against the regenerated on-disk registry", async () => {
+    const repoRegistry = path.resolve(import.meta.dir, "../../../docs/ledgers.yaml");
+    const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-disk-"));
+    dirs.push(dir);
+    const docsDir = path.join(dir, "docs");
+    await mkdir(docsDir, { recursive: true });
+    await copyFile(repoRegistry, path.join(docsDir, "ledgers.yaml"));
+
+    const store = new FsLedgerStore({ root: dir });
+    // init() throws BootstrapViolationError on any divergence; reaching the
+    // assertions proves the on-disk registry matches canon.
+    await store.init();
+    try {
+      expect(store.enumerate()).toEqual(CANONICAL_LEDGERS.map((c) => c.name).sort());
+    } finally {
+      await store.dispose();
+    }
   });
 });

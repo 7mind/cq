@@ -973,6 +973,35 @@ function schemasEqual(a: LedgerSchema, b: LedgerSchema): boolean {
     if (af === undefined || bf === undefined) return false;
     if (af.type !== bf.type || af.required !== bf.required) return false;
   }
+  if (!transitionsEqual(a.transitions, b.transitions)) return false;
+  return true;
+}
+
+/**
+ * Structural equality for the optional `transitions` map (F1). Both absent
+ * is equal; one absent is unequal. Order of the to-status arrays is
+ * significant (matches the order-significant contract used for statusValues).
+ */
+function transitionsEqual(
+  a: Record<string, string[]> | undefined,
+  b: Record<string, string[]> | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  for (let i = 0; i < aKeys.length; i++) {
+    if (aKeys[i] !== bKeys[i]) return false;
+  }
+  for (const k of aKeys) {
+    const av = a[k];
+    const bv = b[k];
+    if (av === undefined || bv === undefined) return false;
+    if (av.length !== bv.length) return false;
+    for (let i = 0; i < av.length; i++) {
+      if (av[i] !== bv[i]) return false;
+    }
+  }
   return true;
 }
 

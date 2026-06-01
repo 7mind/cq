@@ -22,6 +22,7 @@ import {
   DuplicatePrefixError,
   InvalidIdError,
   InvalidStatusError,
+  InvalidTransitionError,
   ItemNotFoundError,
   MilestoneItemNotFoundError,
   MilestoneNotFoundError,
@@ -115,6 +116,7 @@ export function validateSchema(schema: {
   terminalStatuses: string[];
   fields: Record<string, { type: string; required: boolean }>;
   idPrefix?: string;
+  transitions?: Record<string, string[]>;
 }): void {
   if (schema.statusValues.length === 0) {
     throw new SchemaValidationError("statusValues must be non-empty");
@@ -149,6 +151,32 @@ export function validateSchema(schema: {
       throw new SchemaValidationError(
         `field name "${name}" must match /^[A-Za-z_][A-Za-z0-9_]*$/`,
       );
+    }
+  }
+  // F1: every from-status and to-status referenced by the transition guard
+  // must be a declared status value, else the guard is unreachable / dead.
+  // A terminal status must additionally carry NO outgoing transitions —
+  // a non-empty target array on a terminal key is a contradiction.
+  if (schema.transitions !== undefined) {
+    const terminalSet = new Set(schema.terminalStatuses);
+    for (const [from, tos] of Object.entries(schema.transitions)) {
+      if (!svSet.has(from)) {
+        throw new SchemaValidationError(
+          `transitions key "${from}" is not in statusValues`,
+        );
+      }
+      for (const to of tos) {
+        if (!svSet.has(to)) {
+          throw new SchemaValidationError(
+            `transitions["${from}"] target "${to}" is not in statusValues`,
+          );
+        }
+      }
+      if (terminalSet.has(from) && tos.length > 0) {
+        throw new SchemaValidationError(
+          `terminal status "${from}" must have no outgoing transitions`,
+        );
+      }
     }
   }
 }
@@ -215,6 +243,12 @@ export function applyUpdateItem(
   const { item } = findItem(ledger, itemId);
   if (patch.status !== undefined) {
     assertStatusAllowed(ledger, patch.status);
+    // F1: enforce the declarative transition guard only when the status
+    // actually changes and the schema declares a transitions map. A
+    // field-only or no-op (status unchanged) patch never triggers it.
+    if (patch.status !== item.status) {
+      assertTransitionAllowed(ledger, itemId, item.status, patch.status);
+    }
     item.status = patch.status;
   }
   if (patch.fields !== undefined) {
@@ -565,6 +599,26 @@ export function assertMilestoneActive(
 function assertStatusAllowed(ledger: Ledger, status: string): void {
   if (!ledger.schema.statusValues.includes(status)) {
     throw new InvalidStatusError(status, ledger.schema.statusValues);
+  }
+}
+
+/**
+ * F1: enforce the declarative transition guard for a `from → to` status
+ * change. No-op when the schema declares no `transitions` map (back-compat).
+ * A from-status with no entry in the map has no permitted outgoing
+ * transitions. Callers must only invoke this when `from !== to`.
+ */
+function assertTransitionAllowed(
+  ledger: Ledger,
+  itemId: string,
+  from: string,
+  to: string,
+): void {
+  const transitions = ledger.schema.transitions;
+  if (transitions === undefined) return;
+  const allowed = transitions[from] ?? [];
+  if (!allowed.includes(to)) {
+    throw new InvalidTransitionError(ledger.id, itemId, from, to, allowed);
   }
 }
 

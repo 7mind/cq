@@ -38,6 +38,19 @@ export interface LedgerSchema {
    * prefix with `DuplicatePrefixError`.
    */
   idPrefix?: string;
+  /**
+   * Optional declarative status-transition guard (F1). Maps a from-status to
+   * the set of to-statuses an item may move INTO from it. When present, a
+   * `updateItem` patch that changes `status` is rejected unless the new status
+   * is listed under `transitions[currentStatus]`. When ABSENT, no transition
+   * enforcement applies (back-compat for user-created ledgers) — only the
+   * status-membership check (`statusValues`) still runs.
+   *
+   * Terminal statuses map to `[]` (no outgoing transitions). A `transitions`
+   * map does NOT need an entry for every status: a status with no entry has
+   * no permitted outgoing transitions (treated as `[]`).
+   */
+  transitions?: Record<string, string[]>;
 }
 
 /**
@@ -255,6 +268,28 @@ export class InvalidStatusError extends LedgerError {
   constructor(status: string, allowed: string[]) {
     super(`Invalid status "${status}"; allowed: ${allowed.join(", ")}`);
     this.name = "InvalidStatusError";
+  }
+}
+
+/**
+ * Thrown by `updateItem` when a status change is not permitted by the
+ * ledger schema's declarative `transitions` map (F1). Only fires when the
+ * schema declares a `transitions` map AND the patch moves the item to a
+ * different status that is not listed under `transitions[from]`.
+ */
+export class InvalidTransitionError extends LedgerError {
+  constructor(
+    ledgerId: string,
+    itemId: string,
+    from: string,
+    to: string,
+    allowed: string[],
+  ) {
+    super(
+      `Invalid status transition for item ${itemId} in ledger ${ledgerId}: ` +
+        `"${from}" → "${to}"; allowed from "${from}": ${allowed.length > 0 ? allowed.join(", ") : "(none)"}`,
+    );
+    this.name = "InvalidTransitionError";
   }
 }
 
