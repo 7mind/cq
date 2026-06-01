@@ -71,6 +71,14 @@ describe("ledger-mcp Streamable HTTP", () => {
     });
   });
 
+  it("advertises usage instructions on initialize", async () => {
+    await withClient(async (client) => {
+      const instr = client.getInstructions() ?? "";
+      expect(instr).toContain("planning ledger");
+      expect(instr).toContain("create_item");
+    });
+  });
+
   it("404s on a non-/mcp path", async () => {
     const res = await fetch(new URL(`http://127.0.0.1:${server.port}/nope`));
     expect(res.status).toBe(404);

@@ -133,8 +133,41 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 }
 
 /** Build a fresh McpServer with the 14 ledger tools bound to `store`. */
+/**
+ * Server-level usage guidance, surfaced to the client on `initialize` (the MCP
+ * `instructions` field). Clients that inject it give the model "when/how to
+ * use this server" without any per-project setup. Keep it short and
+ * actionable; per-repo policy belongs in the project's own instructions
+ * (e.g. CLAUDE.md).
+ */
+const SERVER_INSTRUCTIONS = [
+  "This server is a markdown-backed planning ledger. Use it to track work as",
+  "structured items instead of scratch notes or ad-hoc TODO files.",
+  "",
+  "Model: a `milestones` ledger holds milestones (which form a DAG via",
+  "dependsOn/blockedBy); other ledgers (tasks, defects, hypothesis, questions,",
+  "decisions, goals) hold typed items, each attached to a milestone.",
+  "",
+  "When to use it:",
+  "- At the start of multi-step work: create a milestone, then create_item the",
+  "  tasks/defects/etc. under it.",
+  "- As work proceeds: update_item status (e.g. planned→wip→done) so the ledger",
+  "  reflects reality; record findings as hypothesis/decision/question items.",
+  "- Before acting: fts_search / fetch_ledger to see what already exists; do not",
+  "  duplicate an existing item.",
+  "- On completion: mark items terminal and archive_milestone once all its items",
+  "  are terminal.",
+  "",
+  "Conventions: keep one item per discrete unit of work; put detail in the",
+  "item's fields (markdown is supported); use enumerate_ledgers to discover",
+  "ledgers and their schemas before creating items.",
+].join("\n");
+
 function buildServer(store: LedgerStore): McpServer {
-  const server = new McpServer(SERVER_INFO, { capabilities: { tools: {} } });
+  const server = new McpServer(SERVER_INFO, {
+    capabilities: { tools: {} },
+    instructions: SERVER_INSTRUCTIONS,
+  });
   registerLedgerStdioTools(server, store);
   return server;
 }
