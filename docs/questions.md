@@ -3,7 +3,10 @@ ledger: questions
 counters:
   milestone: 0
   item: 10
-archives: []
+archives:
+  - id: M2
+    path: ./archive/questions/M2.md
+    summary: TUI + web UI improvements — complete. Per-ledger counts (T1), answer-and-resolve for questions (T2), view persistence (T3), embedded in-process MCP mode for ledger-tui + ledger-web (T17–T22), question-detail field order + highlighted recommendation (T23). Decision K2 (in-process = co-locate the MCP server, don't bypass MCP). Defect D1 (web counts undefined) resolved. Shipped on main (commits 63df0f3, 5cf4916; merged b510170).
 ---
 
 # questions
@@ -112,29 +115,4 @@ archives: []
 - suggestions: ["Task success = `bun run check` passes in the worktree AND reviewer approves; check failure feeds the criticism loop","Reviewer is the sole gate; checks advisory","Hard-fail the task and surface to user immediately"]
 - recommendation: Define task success as `bun run check` green AND reviewer go-ahead; on check failure feed output into the criticism loop.
 - ledgerRefs: ["goals:G1"]
-- answer: as recommended
-
-## M2
-
-### Q9 — answered
-
-- createdAt: 2026-06-01T20:14:38.068Z
-- updatedAt: 2026-06-01T20:15:24.777Z
-- author: user
-- session: b946b5c5-0dca-4058-a5bf-45caaea6111d
-- question: Standardize the TUI connection flag on --mcp-url? Today ledger-tui uses --url while ledger-web uses --mcp-url; the request says 'if --mcp-url is omitted'.
-- context: The repo rule is 'no backwards compatibility in internal code'. Renaming keeps one flag across both UIs.
-- suggestions: ["Rename TUI --url → --mcp-url, drop --url (no alias)","Add --mcp-url, keep --url as a deprecated alias","Leave the TUI on --url"]
-- recommendation: Rename TUI --url → --mcp-url and drop --url (no alias), per the no-internal-back-compat rule.
-- answer: as recommended
-
-### Q10 — answered
-
-- createdAt: 2026-06-01T20:14:41.040Z
-- updatedAt: 2026-06-01T20:15:49.066Z
-- author: user
-- session: b946b5c5-0dca-4058-a5bf-45caaea6111d
-- question: For embedded (no --mcp-url) mode, resolve the ledger root as --cwd > $LEDGER_ROOT > process CWD (mirroring ledger-mcp)?
-- context: ledger-mcp already uses exactly this precedence. Reusing it gives one mental model across the standalone server and the embedded UIs.
-- recommendation: Yes — mirror ledger-mcp's precedence exactly (--cwd > $LEDGER_ROOT > process.cwd()).
 - answer: as recommended
