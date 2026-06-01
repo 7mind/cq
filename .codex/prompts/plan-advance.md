@@ -1,1 +1,1 @@
-../../prompts/plan-advance.md
+../../llm/commands/plan/advance.md

@@ -1,1 +1,1 @@
-../../prompts/plan-start.md
+../../llm/commands/plan/start.md

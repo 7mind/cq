@@ -1,1 +1,1 @@
-../../prompts/plan-reviewer.md
+../../llm/agents/plan-reviewer.md

@@ -1,1 +1,1 @@
-../../prompts/plan-advance-agent.md
+../../llm/agents/plan-advance.md

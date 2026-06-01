@@ -11,8 +11,13 @@
       # All products are pure Bun/TypeScript; pin to x86_64-linux for the
       # hermetic outputs (the dev shell is available on other systems too).
       buildSystems = [ "x86_64-linux" ];
+
+      # System-agnostic: the LLM prompt/skill assets this repo contributes to a
+      # home-manager LLM toolbelt. Pure/eval-time (IFD-free) — consumed as
+      # `inputs.<this>.llmAssets`. See ./llm/assets.nix for the shape.
+      llmAssets = import ./llm/assets.nix { lib = nixpkgs.lib; };
     in
-    flake-utils.lib.eachSystem buildSystems (system:
+    (flake-utils.lib.eachSystem buildSystems (system:
       let
         pkgs = import nixpkgs { inherit system; };
 
@@ -337,5 +342,9 @@
             mkdir -p "$BUN_INSTALL_CACHE_DIR"
           '';
         };
-      });
+      }))
+    // {
+      # System-agnostic LLM assets (prompts/skills) — see ./llm/assets.nix.
+      inherit llmAssets;
+    };
 }

@@ -1,15 +1,16 @@
 # Codex prompts — plan-flow
 
-These four prompts are **symlinks into the repo-root `prompts/` directory**, the
+These four prompts are **symlinks into the repo-root `llm/` asset tree**, the
 single source of truth shared with Claude Code (`.claude/commands/plan/*`,
-`.claude/agents/*`). Edit the files under `prompts/`; never edit the symlinks.
+`.claude/agents/*`) and the `llmAssets` flake output. Edit the files under
+`llm/`; never edit the symlinks. See `llm/README.md` for the full layout.
 
-| Codex prompt file              | Source (`prompts/`)        | Claude location                      | Role |
-|--------------------------------|----------------------------|--------------------------------------|------|
-| `plan-start.md`                | `plan-start.md`            | `.claude/commands/plan/start.md`     | slash command — start a goal, file first questions |
-| `plan-advance.md`              | `plan-advance.md`          | `.claude/commands/plan/advance.md`   | slash command — thin planner↔reviewer loop |
-| `plan-advance-agent.md`        | `plan-advance-agent.md`    | `.claude/agents/plan-advance.md`     | subagent — the planner (one state step) |
-| `plan-reviewer.md`             | `plan-reviewer.md`         | `.claude/agents/plan-reviewer.md`    | subagent — the adversarial reviewer |
+| Codex prompt file              | Source (`llm/`)                  | Claude location                      | Role |
+|--------------------------------|----------------------------------|--------------------------------------|------|
+| `plan-start.md`                | `commands/plan/start.md`         | `.claude/commands/plan/start.md`     | slash command — start a goal, file first questions |
+| `plan-advance.md`              | `commands/plan/advance.md`       | `.claude/commands/plan/advance.md`   | slash command — thin planner↔reviewer loop |
+| `plan-advance-agent.md`        | `agents/plan-advance.md`         | `.claude/agents/plan-advance.md`     | subagent — the planner (one state step) |
+| `plan-reviewer.md`             | `agents/plan-reviewer.md`        | `.claude/agents/plan-reviewer.md`    | subagent — the adversarial reviewer |
 
 ## How Codex consumes these
 
