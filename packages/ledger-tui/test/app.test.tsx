@@ -243,11 +243,9 @@ describe("ledger-tui App", () => {
     await h.key(ENTER); // open bugs; D1 auto-highlighted → content pane shows it
     await tick(60);
     const f = h.frame();
-    // content pane shows the item's field labels + values (no second Enter needed)
-    expect(f).toContain("headline");
-    expect(f).toContain("note");
-    expect(f).toContain("intermittent");
-    // markdown is rendered (see markdownText.test.tsx for the renderer itself)
+    // short fields render inline (key: value on one line), no second Enter needed
+    expect(f).toContain("headline: warp leak");
+    expect(f).toContain("note: intermittent");
     h.unmount();
   });
 

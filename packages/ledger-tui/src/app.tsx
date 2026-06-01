@@ -58,6 +58,19 @@ function summarize(item: Item): string {
   const pick = f["headline"] ?? f["title"] ?? f["question"] ?? f["summary"] ?? Object.values(f)[0];
   return fieldToString(pick as FieldValue | undefined);
 }
+/** A field is "short" (fixed-size) when its value is single-line and compact. */
+const SHORT_FIELD_MAX = 48;
+function isShortField(v: FieldValue): boolean {
+  const s = fieldToString(v);
+  return !s.includes("\n") && s.length <= SHORT_FIELD_MAX;
+}
+/** Short/fixed-size fields first (original order preserved), long fields after. */
+function orderItemFields(entries: Array<[string, FieldValue]>): Array<[string, FieldValue]> {
+  return [
+    ...entries.filter(([, v]) => isShortField(v)),
+    ...entries.filter(([, v]) => !isShortField(v)),
+  ];
+}
 function parseFieldValue(raw: string, type: string): FieldValue {
   if (type === "string[]" || type === "id[]") {
     return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
@@ -665,12 +678,15 @@ function ContentPane({
   scroll: number;
 }): React.ReactElement {
   const f = row.item.fields;
-  const entries = Object.entries(f);
+  const entries = orderItemFields(Object.entries(f) as Array<[string, FieldValue]>);
   const { author, session } = row.item;
   const hasProvenance = author !== undefined || session !== undefined;
-  // Estimate total height to clamp scrolling.
+  // Estimate total height to clamp scrolling: short fields are one line each;
+  // long fields are a header line + their wrapped body + a top margin.
   let est = 4 + (hasProvenance ? 1 : 0); // header + status + milestone + timestamps (+ provenance)
-  for (const [, v] of entries) est += 1 + estimateLines(fieldToString(v as FieldValue), width);
+  for (const [, v] of entries) {
+    est += isShortField(v) ? 1 : 2 + estimateLines(fieldToString(v), width);
+  }
   const maxScroll = Math.max(0, est - height);
   const clamped = Math.min(scroll, maxScroll);
 
@@ -696,14 +712,25 @@ function ContentPane({
         {entries.length === 0 ? (
           <Text dimColor>(no fields)</Text>
         ) : (
-          entries.map(([k, v]) => (
-            <Box key={k} flexDirection="column" marginTop={1}>
-              <Text bold color="gray">
-                {k}
+          entries.map(([k, v]) =>
+            isShortField(v) ? (
+              // Short/fixed-size field: render inline on a single line.
+              <Text key={k}>
+                <Text bold color="gray">
+                  {k}:{" "}
+                </Text>
+                {fieldToString(v)}
               </Text>
-              {Array.isArray(v) ? <Text>{v.join(", ")}</Text> : <Markdown text={v} />}
-            </Box>
-          ))
+            ) : (
+              // Long field (description, etc.): header + markdown block.
+              <Box key={k} flexDirection="column" marginTop={1}>
+                <Text bold color="gray">
+                  {k}
+                </Text>
+                {Array.isArray(v) ? <Text>{v.join(", ")}</Text> : <Markdown text={v} />}
+              </Box>
+            ),
+          )
         )}
       </Box>
     </Box>

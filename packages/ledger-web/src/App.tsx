@@ -79,6 +79,19 @@ function summarize(item: Item): string {
   const pick = f["headline"] ?? f["title"] ?? f["question"] ?? f["summary"] ?? Object.values(f)[0];
   return fieldToString(pick as FieldValue | undefined);
 }
+/** A field is "short" (fixed-size) when its value is single-line and compact. */
+const SHORT_FIELD_MAX = 48;
+function isShortField(v: FieldValue): boolean {
+  const s = fieldToString(v);
+  return !s.includes("\n") && s.length <= SHORT_FIELD_MAX;
+}
+/** Short/fixed-size fields first (original order preserved), long fields after. */
+function orderItemFields(entries: Array<[string, FieldValue]>): Array<[string, FieldValue]> {
+  return [
+    ...entries.filter(([, v]) => isShortField(v)),
+    ...entries.filter(([, v]) => !isShortField(v)),
+  ];
+}
 function parseFieldValue(raw: string, type: string): FieldValue {
   if (type === "string[]" || type === "id[]") {
     return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
@@ -870,7 +883,7 @@ function DetailPanel({
             {row.item.status}
           </span>
         </dd>
-        {Object.entries(row.item.fields).map(([k, v]) => (
+        {orderItemFields(Object.entries(row.item.fields) as Array<[string, FieldValue]>).map(([k, v]) => (
           <React.Fragment key={k}>
             <dt>{k}</dt>
             <dd data-testid={`detail-field-${k}`}>
