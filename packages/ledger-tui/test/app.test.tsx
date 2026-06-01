@@ -105,13 +105,23 @@ async function type(h: Harness, text: string): Promise<void> {
   for (const ch of text) await h.key(ch);
 }
 
-/** Poll the rendered frame until it contains `substr` (robust to async steps). */
-async function waitFor(h: Harness, substr: string, ms = 1500): Promise<void> {
+/**
+ * Advance a multi-step overlay one step by pressing Enter, resilient to a
+ * dropped keystroke. On a cold first render the freshly-mounted SelectList can
+ * miss the Enter that arrives before its input handler attaches; we re-press
+ * Enter only while the current step (`still`) is still showing and `done` has
+ * not yet appeared. Because every step here advances on Enter against its
+ * default selection, a re-press is idempotent (re-picks the same option), so
+ * this can never overshoot past `done`.
+ */
+async function advance(h: Harness, still: string, done: string, ms = 1500): Promise<void> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    if (h.frame().includes(substr)) return;
-    await tick(10);
+    if (h.frame().includes(done)) return;
+    if (h.frame().includes(still)) await h.key(ENTER);
+    else await tick(10);
   }
+  throw new Error(`advance: '${done}' never appeared (stuck on '${still}')`);
 }
 
 describe("ledger-tui App", () => {
@@ -185,13 +195,15 @@ describe("ledger-tui App", () => {
     const h = await mount();
     await h.key(ENTER); // bugs
     await h.key("n"); // new item -> pick milestone (async: fetches milestones)
-    await waitFor(h, "Bootstrap"); // milestone-pick overlay rendered
-    await h.key(ENTER); // choose M1
-    await h.key(ENTER); // choose status 'open' (index 0)
+    // Gate every step on its rendered marker before sending the next key: a
+    // SelectList swapped in by the previous step's onSelect registers its
+    // input handler on mount, so an Enter sent before that render commits is
+    // dropped. Polling each step's marker makes the flow timing-independent.
+    await advance(h, "Bootstrap", "closed"); // pick M1 → status step (open/wip/closed)
+    await advance(h, "closed", "field 1/2"); // pick status 'open' → headline field
     await type(h, "ion drive misalignment"); // headline*
-    await h.key(ENTER);
-    await h.key(ENTER); // note (optional) left empty
-    await tick(40);
+    await advance(h, "field 1/2", "field 2/2"); // submit headline → note field
+    await advance(h, "field 2/2", "created"); // submit (empty note) → "created Dn" flash
     const ledger = await h.client.fetchLedger("bugs");
     const headlines = ledger.milestones.flatMap((g) => g.items.map((i) => i.fields["headline"]));
     expect(headlines).toContain("ion drive misalignment");
