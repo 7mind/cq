@@ -15,6 +15,7 @@
     }
   },
   "dependencies": {
+    "@cq/ledger-live": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
     "ink": "7.0.5",
     "react": "19.2.6"

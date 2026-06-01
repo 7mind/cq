@@ -33,6 +33,7 @@
               ./bun.lock
               ./bunfig.toml
               ./packages/ledger/package.json
+              ./packages/ledger-live/package.json
               ./packages/ledger-mcp/package.json
               ./packages/ledger-tui/package.json
               ./packages/ledger-web/package.json
@@ -73,12 +74,13 @@
             # Root node_modules: the .bun/ hoisted store plus top-level symlinks.
             cp -r node_modules $out/node_modules
 
-            mkdir -p $out/packages/ledger $out/packages/ledger-mcp \
+            mkdir -p $out/packages/ledger $out/packages/ledger-live $out/packages/ledger-mcp \
                      $out/packages/ledger-tui $out/packages/ledger-web
-            cp -r packages/ledger/node_modules     $out/packages/ledger/node_modules
-            cp -r packages/ledger-mcp/node_modules $out/packages/ledger-mcp/node_modules
-            cp -r packages/ledger-tui/node_modules $out/packages/ledger-tui/node_modules
-            cp -r packages/ledger-web/node_modules $out/packages/ledger-web/node_modules
+            cp -r packages/ledger/node_modules      $out/packages/ledger/node_modules
+            cp -r packages/ledger-live/node_modules $out/packages/ledger-live/node_modules
+            cp -r packages/ledger-mcp/node_modules  $out/packages/ledger-mcp/node_modules
+            cp -r packages/ledger-tui/node_modules  $out/packages/ledger-tui/node_modules
+            cp -r packages/ledger-web/node_modules  $out/packages/ledger-web/node_modules
 
             runHook postInstall
           '';
@@ -86,7 +88,7 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           # Refresh after dependency changes (see README § Nix).
-          outputHash = "sha256-B2IEK35KNFZpD3iISmh+EIUzWyjwbi8TxJXq/tJ4U/M=";
+          outputHash = "sha256-eDbzw2nkzeupu36YXt73h0FLxEJ1oJOOTRS+PKOLqEM=";
         };
 
         # ------------------------------------------------------------------ #
@@ -190,10 +192,16 @@
             mkdir -p "$WORKSPACE/packages/ledger-tui" $out/bin
 
             cp -r packages/ledger-tui/src "$WORKSPACE/packages/ledger-tui/src"
-            cp packages/ledger-tui/package.json "$WORKSPACE/packages/ledger-tui/"
+            cp packages/ledger-tui/package.json packages/ledger-tui/tsconfig.json \
+              "$WORKSPACE/packages/ledger-tui/"
+            # @cq/ledger-live (zero runtime deps) — source + workspace symlink.
+            mkdir -p "$WORKSPACE/packages/ledger-live"
+            cp -r packages/ledger-live/src "$WORKSPACE/packages/ledger-live/src"
+            cp packages/ledger-live/package.json "$WORKSPACE/packages/ledger-live/"
             cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
 
-            mkdir -p "$WORKSPACE/packages/ledger-tui/node_modules/@modelcontextprotocol"
+            mkdir -p "$WORKSPACE/packages/ledger-tui/node_modules/@modelcontextprotocol" \
+                     "$WORKSPACE/packages/ledger-tui/node_modules/@cq"
             for dep in ink react bun-types; do
               if [ -e "${bunNodeModules}/packages/ledger-tui/node_modules/$dep" ]; then
                 ln -s "${bunNodeModules}/packages/ledger-tui/node_modules/$dep" \
@@ -202,6 +210,8 @@
             done
             ln -s ${bunNodeModules}/packages/ledger-tui/node_modules/@modelcontextprotocol/sdk \
               "$WORKSPACE/packages/ledger-tui/node_modules/@modelcontextprotocol/sdk"
+            ln -s "$WORKSPACE/packages/ledger-live" \
+              "$WORKSPACE/packages/ledger-tui/node_modules/@cq/ledger-live"
 
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/ledger-tui \
               --add-flags "run $WORKSPACE/packages/ledger-tui/src/main.tsx --" \
@@ -243,10 +253,16 @@
 
             cp -r packages/ledger-web/src "$WORKSPACE/packages/ledger-web/src"
             cp packages/ledger-web/index.html "$WORKSPACE/packages/ledger-web/"
-            cp packages/ledger-web/package.json "$WORKSPACE/packages/ledger-web/"
+            cp packages/ledger-web/package.json packages/ledger-web/tsconfig.json \
+              "$WORKSPACE/packages/ledger-web/"
+            # @cq/ledger-live (bundled by Bun.build) — source + workspace symlink.
+            mkdir -p "$WORKSPACE/packages/ledger-live"
+            cp -r packages/ledger-live/src "$WORKSPACE/packages/ledger-live/src"
+            cp packages/ledger-live/package.json "$WORKSPACE/packages/ledger-live/"
             cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
 
-            mkdir -p "$WORKSPACE/packages/ledger-web/node_modules/@modelcontextprotocol"
+            mkdir -p "$WORKSPACE/packages/ledger-web/node_modules/@modelcontextprotocol" \
+                     "$WORKSPACE/packages/ledger-web/node_modules/@cq"
             for dep in react react-dom react-markdown remark-gfm rehype-sanitize bun-types; do
               if [ -e "${bunNodeModules}/packages/ledger-web/node_modules/$dep" ]; then
                 ln -s "${bunNodeModules}/packages/ledger-web/node_modules/$dep" \
@@ -255,6 +271,8 @@
             done
             ln -s ${bunNodeModules}/packages/ledger-web/node_modules/@modelcontextprotocol/sdk \
               "$WORKSPACE/packages/ledger-web/node_modules/@modelcontextprotocol/sdk"
+            ln -s "$WORKSPACE/packages/ledger-live" \
+              "$WORKSPACE/packages/ledger-web/node_modules/@cq/ledger-live"
 
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/ledger-web \
               --add-flags "run $WORKSPACE/packages/ledger-web/src/serve.ts --" \

@@ -32,12 +32,24 @@ function resolveInitialUrl(): string {
   return new URL(injected, window.location.origin).toString();
 }
 
+/**
+ * Same-origin /ws for live updates, proxied to the upstream by this server.
+ * Scheme follows the page: `ws://` on a plain-http page, `wss://` on https —
+ * a secure page may not open an insecure socket (mixed content), and a
+ * plain-http page must not attempt wss.
+ */
+function liveWsUrl(): string {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws`;
+}
+
 const rootEl = document.getElementById("root");
 if (rootEl !== null) {
   createRoot(rootEl).render(
     createElement(App, {
       connect: (url: string) => McpLedgerClient.connect(url),
       initialUrl: resolveInitialUrl(),
+      liveUrl: liveWsUrl(),
     }),
   );
 }

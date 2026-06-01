@@ -62,6 +62,7 @@
         "ledger-tui": "./src/main.tsx",
       },
       "dependencies": {
+        "@cq/ledger-live": "workspace:*",
         "@modelcontextprotocol/sdk": "1.29.0",
         "ink": "7.0.5",
         "react": "19.2.6",
@@ -81,6 +82,7 @@
         "ledger-web": "./src/serve.ts",
       },
       "dependencies": {
+        "@cq/ledger-live": "workspace:*",
         "@modelcontextprotocol/sdk": "1.29.0",
         "react": "19.2.6",
         "react-dom": "19.2.6",

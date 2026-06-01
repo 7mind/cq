@@ -42,6 +42,13 @@ export function normalizeUrl(raw: string): string {
   return parsed.toString();
 }
 
+/** Live-change WS URL for the same server: http→ws, https→wss, /mcp→/ws. */
+export function liveUrlFor(mcpUrl: string): string {
+  const u = new URL(mcpUrl);
+  const proto = u.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${u.host}/ws`;
+}
+
 async function run(): Promise<void> {
   const { url } = parseArgs(process.argv.slice(2));
   let client: McpLedgerClient;
@@ -52,7 +59,7 @@ async function run(): Promise<void> {
     process.stderr.write(`ledger-tui: cannot connect to ${url}: ${msg}\n`);
     process.exit(1);
   }
-  const app = render(<App client={client} />);
+  const app = render(<App client={client} liveUrl={liveUrlFor(url)} />);
   await app.waitUntilExit();
   await client.close();
 }

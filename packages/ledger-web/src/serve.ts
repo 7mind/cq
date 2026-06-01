@@ -132,16 +132,38 @@ export async function proxyToMcp(req: Request, upstream: string): Promise<Respon
   });
 }
 
+/** Path the browser connects to for live-change notifications (proxied). */
+export const WS_PROXY_PATH = "/ws";
+
+/** Derive the upstream WS URL (.../ws) from the upstream MCP URL (.../mcp). */
+export function mcpUrlToWs(mcpUrl: string): string {
+  const u = new URL(mcpUrl);
+  const proto = u.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${u.host}${WS_PROXY_PATH}`;
+}
+
+interface WsData {
+  up: WebSocket | null;
+  buf: string[];
+}
+
 export async function serve(opts: ServeOpts): Promise<ReturnType<typeof Bun.serve>> {
   await prepare(opts.outdir);
   const indexPath = path.join(opts.outdir, "index.html");
+  const wsUpstream = mcpUrlToWs(opts.mcpUrl);
 
-  return Bun.serve({
+  return Bun.serve<WsData>({
     hostname: opts.host,
     port: opts.port,
-    idleTimeout: 0, // long-lived SSE proxy streams must not time out
-    async fetch(req): Promise<Response> {
+    idleTimeout: 0, // long-lived SSE / WS proxy streams must not time out
+    async fetch(req, server): Promise<Response | undefined> {
       const url = new URL(req.url);
+      // Live-change WebSocket: upgrade the browser socket; the upstream socket
+      // is opened per-connection in the `open` handler below.
+      if (url.pathname === WS_PROXY_PATH) {
+        if (server.upgrade(req, { data: { up: null, buf: [] } })) return undefined;
+        return new Response("expected a websocket upgrade", { status: 426 });
+      }
       if (url.pathname === MCP_PROXY_PATH) {
         return proxyToMcp(req, opts.mcpUrl);
       }
@@ -156,6 +178,48 @@ export async function serve(opts: ServeOpts): Promise<ReturnType<typeof Bun.serv
       return new Response(Bun.file(indexPath), {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
+    },
+    // Reverse-proxy the WS to the upstream ledger-mcp /ws, piping both ways, so
+    // the browser only ever talks to this origin (same as the /mcp proxy).
+    websocket: {
+      open(ws): void {
+        const up = new WebSocket(wsUpstream);
+        ws.data.up = up;
+        up.onopen = (): void => {
+          for (const m of ws.data.buf) up.send(m);
+          ws.data.buf = [];
+        };
+        up.onmessage = (ev: MessageEvent): void => {
+          try {
+            ws.send(typeof ev.data === "string" ? ev.data : String(ev.data));
+          } catch {
+            /* client gone */
+          }
+        };
+        up.onclose = (): void => {
+          try {
+            ws.close();
+          } catch {
+            /* already closed */
+          }
+        };
+        up.onerror = (): void => {
+          /* close follows */
+        };
+      },
+      message(ws, raw): void {
+        const s = typeof raw === "string" ? raw : raw.toString();
+        const up = ws.data.up;
+        if (up !== null && up.readyState === 1) up.send(s);
+        else ws.data.buf.push(s); // queue until upstream opens
+      },
+      close(ws): void {
+        try {
+          ws.data.up?.close();
+        } catch {
+          /* ignore */
+        }
+      },
     },
   });
 }

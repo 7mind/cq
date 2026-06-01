@@ -199,3 +199,63 @@ describe("clampPanelSize", () => {
     expect(clampPanelSize(900, 50)).toBe(180); // max below min → min wins
   });
 });
+
+// Minimal fake WebSocket the test drives.
+class FakeWS {
+  static instances: FakeWS[] = [];
+  readyState = 0;
+  onopen: ((e: unknown) => void) | null = null;
+  onmessage: ((e: unknown) => void) | null = null;
+  onclose: ((e: unknown) => void) | null = null;
+  onerror: ((e: unknown) => void) | null = null;
+  constructor(public url: string) {
+    FakeWS.instances.push(this);
+  }
+  send(): void {}
+  close(): void {
+    this.readyState = 3;
+  }
+  open(): void {
+    this.readyState = 1;
+    this.onopen?.({});
+  }
+  push(obj: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(obj) });
+  }
+}
+
+describe("ledger-web live updates", () => {
+  it("shows the live indicator and refetches on a pushed change", async () => {
+    FakeWS.instances = [];
+    fake = new FakeClient();
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect: async () => fake,
+          initialUrl: "http://x/mcp",
+          liveUrl: "ws://x/ws",
+          liveWsCtor: FakeWS as unknown as { new (url: string): WebSocket },
+        }),
+      );
+    });
+    await flush();
+    // a live socket was created; open it → indicator goes live
+    expect(FakeWS.instances.length).toBeGreaterThanOrEqual(1);
+    const ws = FakeWS.instances[0]!;
+    act(() => ws.open());
+    await flush();
+    expect(testid("live-status")?.getAttribute("data-state")).toBe("alive");
+
+    // open the bugs ledger
+    click(testid("ledger-bugs"));
+    await flush();
+    expect(testid("item-D2")).toBeNull(); // not there yet
+
+    // an external writer adds an item, then the server pushes `changed`
+    await fake.createItem("bugs", "M1", { status: "open", fields: { headline: "pushed in" } });
+    act(() => ws.push({ type: "changed", ledger: "bugs" }));
+    await flush();
+    // the table refetched and now shows the new item
+    expect(text()).toContain("pushed in");
+  });
+});

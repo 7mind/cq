@@ -20,6 +20,7 @@ import { SelectList } from "./components/SelectList.js";
 import { TextPrompt } from "./components/TextPrompt.js";
 import { Markdown } from "./markdownText.js";
 import { useTermSize } from "./useTermSize.js";
+import { LiveManager, type LiveStats } from "@cq/ledger-live";
 import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient } from "./types.js";
 
 const MILESTONES = "milestones";
@@ -81,7 +82,15 @@ type Overlay =
 // App
 // ---------------------------------------------------------------------------
 
-export function App({ client }: { client: LedgerClient }): React.ReactElement {
+export function App({
+  client,
+  liveUrl = null,
+  liveWsCtor,
+}: {
+  client: LedgerClient;
+  liveUrl?: string | null;
+  liveWsCtor?: { new (url: string): WebSocket };
+}): React.ReactElement {
   const { exit } = useApp();
   const { cols, rows } = useTermSize();
   const [conn, setConn] = useState<"connecting" | "connected" | "error">("connecting");
@@ -90,6 +99,8 @@ export function App({ client }: { client: LedgerClient }): React.ReactElement {
   const [stack, setStack] = useState<Frame[]>([{ kind: "ledgers", cursor: 0 }]);
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [flash, setFlash] = useState("");
+  const [live, setLive] = useState<LiveStats | null>(null);
+  const refreshRef = React.useRef<() => void>(() => {});
 
   useEffect(() => {
     let alive = true;
@@ -141,6 +152,37 @@ export function App({ client }: { client: LedgerClient }): React.ReactElement {
       setFlash(errMsg(e));
     }
   }, [client, top, patchTop]);
+
+  // Keep the refresh closure current for the long-lived live connection.
+  useEffect(() => {
+    refreshRef.current = (): void => {
+      void (async () => {
+        try {
+          setLedgers(await client.enumerateLedgers());
+          await reloadItems();
+        } catch {
+          /* surfaces on the next change */
+        }
+      })();
+    };
+  }, [client, reloadItems]);
+
+  // Live updates: connect to the server's /ws, refetch the current frame on a
+  // pushed change, and expose health to the status bar.
+  useEffect(() => {
+    if (liveUrl === null) return;
+    const mgr = new LiveManager({
+      url: liveUrl,
+      ...(liveWsCtor !== undefined ? { WebSocketCtor: liveWsCtor } : {}),
+      onChanged: () => refreshRef.current(),
+      onUpdate: (s) => setLive(s),
+    });
+    mgr.start();
+    return () => {
+      mgr.destroy();
+      setLive(null);
+    };
+  }, [liveUrl, liveWsCtor]);
 
   // ---- mutations (called from overlays) ----------------------------------
   const isMilestonesLedger = top.kind === "items" && top.ledger === MILESTONES;
@@ -356,6 +398,7 @@ export function App({ client }: { client: LedgerClient }): React.ReactElement {
           {conn === "connected" ? "● " : conn === "connecting" ? "○ " : "✕ "}
           {conn === "error" ? `error: ${connErr}` : pathStr}
         </Text>
+        {liveUrl !== null && <LiveBadge stats={live} />}
       </Box>
 
       {/* body: list | content */}
@@ -417,6 +460,25 @@ export function App({ client }: { client: LedgerClient }): React.ReactElement {
 // ---------------------------------------------------------------------------
 // Scrollable list with a scrollbar column
 // ---------------------------------------------------------------------------
+
+/** Connection-health badge for the live channel (derived; truthful labels). */
+function LiveBadge({ stats }: { stats: LiveStats | null }): React.ReactElement {
+  const state = stats?.state ?? "connecting";
+  const map: Record<string, { glyph: string; text: string; color: string }> = {
+    alive: { glyph: "●", text: "live", color: "green" },
+    connecting: { glyph: "○", text: "live…", color: "yellow" },
+    stale: { glyph: "◐", text: "stale", color: "yellow" },
+    dead: { glyph: "↻", text: "reconnecting", color: "yellow" },
+    terminal: { glyph: "✕", text: "offline", color: "red" },
+  };
+  const v = map[state] ?? map["connecting"]!;
+  return (
+    <Text color={v.color}>
+      {"  "}
+      {v.glyph} {v.text}
+    </Text>
+  );
+}
 
 function ScrollList<T>({
   items,

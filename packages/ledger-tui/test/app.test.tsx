@@ -105,6 +105,15 @@ async function type(h: Harness, text: string): Promise<void> {
   for (const ch of text) await h.key(ch);
 }
 
+/** Poll the rendered frame until it contains `substr` (robust to async steps). */
+async function waitFor(h: Harness, substr: string, ms = 1500): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (h.frame().includes(substr)) return;
+    await tick(10);
+  }
+}
+
 describe("ledger-tui App", () => {
   it("lists ledgers on connect", async () => {
     const h = await mount();
@@ -175,7 +184,8 @@ describe("ledger-tui App", () => {
   it("creates an item via the multi-step form", async () => {
     const h = await mount();
     await h.key(ENTER); // bugs
-    await h.key("n"); // new item -> pick milestone
+    await h.key("n"); // new item -> pick milestone (async: fetches milestones)
+    await waitFor(h, "Bootstrap"); // milestone-pick overlay rendered
     await h.key(ENTER); // choose M1
     await h.key(ENTER); // choose status 'open' (index 0)
     await type(h, "ion drive misalignment"); // headline*
@@ -250,6 +260,54 @@ describe("ledger-tui scrolling", () => {
     }
     await tick(40);
     expect(r.lastFrame() ?? "").toContain("T59 "); // scrolled into view
+    r.unmount();
+  });
+});
+
+class FakeWS {
+  static instances: FakeWS[] = [];
+  readyState = 0;
+  onopen: ((e: unknown) => void) | null = null;
+  onmessage: ((e: unknown) => void) | null = null;
+  onclose: ((e: unknown) => void) | null = null;
+  onerror: ((e: unknown) => void) | null = null;
+  constructor(public url: string) {
+    FakeWS.instances.push(this);
+  }
+  send(): void {}
+  close(): void {
+    this.readyState = 3;
+  }
+  open(): void {
+    this.readyState = 1;
+    this.onopen?.({});
+  }
+  push(obj: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(obj) });
+  }
+}
+
+describe("ledger-tui live updates", () => {
+  it("shows a live badge and refetches the current frame on a pushed change", async () => {
+    FakeWS.instances = [];
+    const client = new FakeClient();
+    const r = render(
+      <App client={client} liveUrl="ws://x/ws" liveWsCtor={FakeWS as unknown as { new (u: string): WebSocket }} />,
+    );
+    await tick();
+    expect(FakeWS.instances.length).toBeGreaterThanOrEqual(1);
+    FakeWS.instances[0]!.open();
+    await tick(20);
+    expect(r.lastFrame() ?? "").toContain("live");
+
+    r.stdin.write(ENTER); // open bugs
+    await tick(30);
+    expect(r.lastFrame() ?? "").not.toContain("pushed-tui");
+
+    await client.createItem("bugs", "M1", { status: "open", fields: { headline: "pushed-tui" } });
+    FakeWS.instances[0]!.push({ type: "changed", ledger: "bugs" });
+    await tick(60);
+    expect(r.lastFrame() ?? "").toContain("pushed-tui");
     r.unmount();
   });
 });

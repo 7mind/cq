@@ -21,6 +21,7 @@ import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, MilestonePa
 import { DagView } from "./DagView.js";
 import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
+import { LiveManager, type LiveStats } from "@cq/ledger-live";
 
 const MILESTONES = "milestones";
 
@@ -84,9 +85,13 @@ function ledgerRows(view: FetchedLedger): Row[] {
 export interface AppProps {
   connect: (url: string) => Promise<LedgerClient>;
   initialUrl: string;
+  /** Same-origin /ws URL for live updates; null disables live. */
+  liveUrl?: string | null;
+  /** Injectable WebSocket ctor (tests); defaults to the global. */
+  liveWsCtor?: { new (url: string): WebSocket };
 }
 
-export function App({ connect, initialUrl }: AppProps): React.ReactElement {
+export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProps): React.ReactElement {
   const [url, setUrl] = useState(initialUrl);
   const urlRef = useRef<HTMLInputElement>(null);
   const [client, setClient] = useState<LedgerClient | null>(null);
@@ -104,6 +109,10 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
   const [panel, setPanel] = useState<PanelLayout>(loadPanel);
   const [dragging, setDragging] = useState(false);
   const workareaRef = useRef<HTMLDivElement>(null);
+  const [live, setLive] = useState<LiveStats | null>(null);
+  // Latest-callback ref: the live connection lives across ledger changes, so
+  // its onChanged must call the freshest refresh closure, not a stale one.
+  const refreshRef = useRef<() => void>(() => {});
 
   // Persist panel layout.
   useEffect(() => {
@@ -304,6 +313,46 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
     [view],
   );
 
+  // Keep the refresh closure current (used by the long-lived live connection).
+  useEffect(() => {
+    refreshRef.current = (): void => {
+      if (client === null) return;
+      void (async () => {
+        try {
+          setLedgers(await client.enumerateLedgers());
+          await reload();
+          if (mainView === "dag" && ledger !== null) setDag(await loadDagData(client, ledger));
+        } catch {
+          /* a transient fetch error surfaces on the next change */
+        }
+      })();
+    };
+  }, [client, reload, ledger, mainView]);
+
+  // Live updates: subscribe once we have a client + a /ws URL; refetch on push.
+  useEffect(() => {
+    if (client === null || liveUrl === null) return;
+    const mgr = new LiveManager({
+      url: liveUrl,
+      ...(liveWsCtor !== undefined ? { WebSocketCtor: liveWsCtor } : {}),
+      onChanged: () => refreshRef.current(),
+      onUpdate: (s) => setLive(s),
+    });
+    mgr.start();
+    // React to tab visibility / network coming back (resilient-ws-ui R9 subset).
+    const onVisible = (): void => {
+      if (document.visibilityState === "visible") mgr.poke();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onVisible);
+      mgr.destroy();
+      setLive(null);
+    };
+  }, [client, liveUrl, liveWsCtor]);
+
   // ---- render ------------------------------------------------------------
   return (
     <div className="lw-root">
@@ -312,6 +361,7 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
         <span className={`lw-conn lw-conn-${conn}`} data-testid="conn-status">
           {conn === "connected" ? "● connected" : conn === "connecting" ? "○ connecting…" : "✕ error"}
         </span>
+        {liveUrl !== null && <LiveIndicator stats={live} />}
         <form
           className="lw-urlform"
           onSubmit={(e) => {
@@ -476,6 +526,36 @@ export function App({ connect, initialUrl }: AppProps): React.ReactElement {
 // ---------------------------------------------------------------------------
 // Subcomponents
 // ---------------------------------------------------------------------------
+
+/**
+ * Connection-health indicator for the live channel (resilient-ws-ui V2/V3/V10):
+ * state is DERIVED from stats (never stored), shown with colour + glyph + text,
+ * and labeled truthfully (terminal = "offline", not a forever-spinner).
+ */
+function LiveIndicator({ stats }: { stats: LiveStats | null }): React.ReactElement {
+  const state = stats?.state ?? "connecting";
+  const view: Record<string, { glyph: string; text: string }> = {
+    alive: { glyph: "●", text: "live" },
+    connecting: { glyph: "○", text: "connecting" },
+    stale: { glyph: "◐", text: "stale" },
+    dead: { glyph: "↻", text: "reconnecting" },
+    terminal: { glyph: "✕", text: "offline" },
+  };
+  const v = view[state] ?? view["connecting"]!;
+  const title =
+    stats === null
+      ? "live: connecting"
+      : `live: ${state}` +
+        (stats.rttMs !== null ? ` · rtt ${Math.round(stats.rttMs)}ms` : "") +
+        (state === "dead" ? ` · attempt ${stats.attempt}/${stats.maxAttempts}` : "") +
+        (stats.lastCloseCode !== null ? ` · last close ${stats.lastCloseCode}` : "");
+  return (
+    <span className={`lw-live lw-live-${state}`} data-testid="live-status" data-state={state} title={title}>
+      {v.glyph} {v.text}
+      {state === "dead" && stats !== null ? ` ${stats.attempt}/${stats.maxAttempts}` : ""}
+    </span>
+  );
+}
 
 function SearchBar({ onSearch, disabled }: { onSearch: (q: string) => void; disabled: boolean }): React.ReactElement {
   const ref = useRef<HTMLInputElement>(null);

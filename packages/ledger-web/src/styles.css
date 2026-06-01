@@ -48,6 +48,22 @@ body {
 .lw-conn-error {
   color: var(--err);
 }
+.lw-live {
+  font-size: 12px;
+}
+.lw-live-alive {
+  color: var(--ok);
+}
+.lw-live-connecting,
+.lw-live-stale {
+  color: var(--warn);
+}
+.lw-live-dead {
+  color: var(--warn);
+}
+.lw-live-terminal {
+  color: var(--err);
+}
 .lw-urlform,
 .lw-search {
   display: flex;
