@@ -47,6 +47,14 @@ Verify with evidence, against the actual diff and repo — not the worker's clai
   not settle. Phrase each as a direct question. These STOP the task and go to the
   user. Be strict: if a competent engineer could resolve it from the task + repo,
   it is `criticism`, not a `question`.
+- **`defects`** — OUT-OF-SCOPE or pre-existing faults you noticed while reviewing
+  the diff: a fault NOT caused by, and NOT fixable within, the current task (e.g.
+  a latent defect in adjacent code the diff merely touched or revealed). Do NOT
+  put these in `criticism` — fixing them is out of scope this round, so they must
+  not block the verdict on this task. You still write NOTHING to the ledger; the
+  /implement:advance orchestrator files each as a `defects` ledger item. Each
+  entry is an object — `{ headline, description, severity, suggestedFix? }` —
+  where `severity` is REQUIRED.
 
 ## Output contract
 Emit the **Session summary** section (below), then return a single fenced `json`
@@ -59,6 +67,14 @@ the terminal review:
   "verdict": "approve | disapprove",
   "criticism": ["<autonomously-fixable defect>", "..."],
   "questions": ["<user-only ambiguity, phrased as a question>", "..."],
+  "defects": [
+    {
+      "headline": "<short title of an out-of-scope / pre-existing fault>",
+      "description": "<what is wrong and where; why it is out of scope for this task>",
+      "severity": "<low | medium | high | critical>",
+      "suggestedFix": "<optional remediation hint>"
+    }
+  ],
   "rationale": "<1-3 lines: the decisive evidence for the verdict>",
   "summary": "<optional one-line summary of the verdict for the reviews ledger item>"
 }
@@ -66,7 +82,8 @@ the terminal review:
 
 Rules: `approve` REQUIRES empty `criticism` AND empty `questions` AND a green
 `bun run check`. `disapprove` REQUIRES at least one of `criticism` / `questions`
-non-empty.
+non-empty. `defects` is INDEPENDENT of the verdict — out-of-scope/pre-existing
+faults never block this task; leave it `[]` when there are none.
 
 ## Session summary (handover)
 Immediately before the JSON block, emit:
