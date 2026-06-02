@@ -80,8 +80,18 @@ interface ArchiveEntry {
 
 export class FakeClient implements LedgerClient {
   closed = false;
+  private readonly _displayName: string;
   private msCounter = 1;
   private itemCounter = 1;
+
+  constructor(displayName = "cq1") {
+    this._displayName = displayName;
+  }
+
+  displayName(): string {
+    return this._displayName;
+  }
+
   /** Per-ledger archive entries (pointer list + content). */
   private archives: Record<string, ArchiveEntry[]> = {
     bugs: [

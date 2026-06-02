@@ -71,6 +71,7 @@ const tasksSchema: LedgerSchema = {
 class DefectsClient implements LedgerClient {
   private tasksRequested = false;
 
+  displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "defects", itemCount: 2 }];
   }
@@ -183,6 +184,7 @@ const hypothesisSchema: LedgerSchema = {
  *   - Children: [H2]
  */
 class HypothesisClient implements LedgerClient {
+  displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "hypothesis", itemCount: 3 }];
   }

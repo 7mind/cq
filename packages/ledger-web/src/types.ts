@@ -57,6 +57,12 @@ export interface MilestonePatch {
  * tests drive.
  */
 export interface LedgerClient {
+  /**
+   * The project display name surfaced by the server on connect (serverInfo.title
+   * or the 'Project: <name>' instructions fallback). Captured at connect time so
+   * this accessor is synchronous.
+   */
+  displayName(): string;
   enumerateLedgers(): Promise<LedgerSummary[]>;
   fetchLedger(ledgerId: string): Promise<FetchedLedger>;
   fetchLedgerArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent>;

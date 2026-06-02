@@ -50,10 +50,41 @@ export interface EmbeddedContext {
 }
 
 export class McpLedgerClient implements LedgerClient {
+  private readonly _displayName: string;
+
   constructor(
     private readonly client: Client,
     private readonly embeddedCtx: EmbeddedContext | null = null,
-  ) {}
+    displayName?: string,
+  ) {
+    this._displayName = displayName ?? McpLedgerClient.resolveDisplayName(client);
+  }
+
+  /**
+   * Read the project display name from the SDK client after a successful
+   * `connect()` call. Primary carrier: `serverInfo.title` (via
+   * `getServerVersion()`). Fallback: parse the leading `'Project: <name>'`
+   * line from `getInstructions()` — the same line T65 writes as a redundant
+   * carrier for SDK runtimes that drop `title`. Returns "" if neither carrier
+   * is available (e.g. a test stub that omits SDK methods).
+   */
+  private static resolveDisplayName(client: Client): string {
+    try {
+      const title = client.getServerVersion()?.title;
+      if (title !== undefined && title !== "") return title;
+      const instructions = client.getInstructions() ?? "";
+      const first = instructions.split("\n")[0] ?? "";
+      const m = /^Project:\s+(.+)$/.exec(first.trim());
+      if (m !== null && m[1] !== undefined && m[1] !== "") return m[1];
+    } catch {
+      // stub/test client that doesn't implement SDK query methods
+    }
+    return "";
+  }
+
+  displayName(): string {
+    return this._displayName;
+  }
 
   /** Connect to a `ledger-mcp --http` server at `url` (e.g. http://127.0.0.1:7777/mcp). */
   static async connect(url: string): Promise<McpLedgerClient> {

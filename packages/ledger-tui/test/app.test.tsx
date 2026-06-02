@@ -27,6 +27,7 @@ const TS = "2026-01-01T00:00:00.000Z";
 /** A client with a single ledger of N items, for the scroll test. */
 class ManyItemsClient implements LedgerClient {
   constructor(private readonly n: number) {}
+  displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "work", itemCount: this.n }];
   }
@@ -82,6 +83,7 @@ class ManyItemsClient implements LedgerClient {
 
 /** A single-ledger client whose schema declares NO `transitions` map. */
 class NoTransitionsClient implements LedgerClient {
+  displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "work", itemCount: 1 }];
   }
@@ -532,6 +534,7 @@ describe("ledger-tui live updates", () => {
  * and two milestone groups, so we can assert column alignment and subsections.
  */
 class MultiMilestoneClient implements LedgerClient {
+  displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "tasks", itemCount: 3 }];
   }
@@ -713,6 +716,7 @@ class ArchiveClient implements LedgerClient {
   archiveFetched = false;
   statusApplied = false;
 
+  displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "jobs", itemCount: 1 }];
   }
@@ -922,6 +926,7 @@ describe("ledger-tui archive view (T33)", () => {
 class MultiMilestoneArchiveClient implements LedgerClient {
   statusApplied = "";
 
+  displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "tasks", itemCount: 2 }];
   }

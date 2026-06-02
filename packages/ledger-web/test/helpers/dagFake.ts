@@ -51,6 +51,10 @@ function bug(id: string, milestoneId: string): Item {
 export class DagFakeClient implements LedgerClient {
   updatedMilestones: Array<{ id: string; status: string | undefined }> = [];
 
+  displayName(): string {
+    return "cq1";
+  }
+
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [
       { name: "bugs", itemCount: 3 },

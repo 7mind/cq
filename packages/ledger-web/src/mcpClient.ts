@@ -41,7 +41,36 @@ interface CallToolResultLike {
 }
 
 export class McpLedgerClient implements LedgerClient {
-  constructor(private readonly client: Client) {}
+  private readonly _displayName: string;
+
+  constructor(
+    private readonly client: Client,
+    displayName?: string,
+  ) {
+    this._displayName = displayName ?? McpLedgerClient.resolveDisplayName(client);
+  }
+
+  /**
+   * Read the project display name from the SDK client after a successful
+   * `connect()` call. Primary carrier: `serverInfo.title` (via
+   * `getServerVersion()`). Fallback: parse the leading `'Project: <name>'`
+   * line from `getInstructions()` — the same line T65 writes as a redundant
+   * carrier for SDK runtimes that drop `title`. Returns "" if neither carrier
+   * is available (e.g. a test stub that omits SDK methods).
+   */
+  private static resolveDisplayName(client: Client): string {
+    try {
+      const title = client.getServerVersion()?.title;
+      if (title !== undefined && title !== "") return title;
+      const instructions = client.getInstructions() ?? "";
+      const first = instructions.split("\n")[0] ?? "";
+      const m = /^Project:\s+(.+)$/.exec(first.trim());
+      if (m !== null && m[1] !== undefined && m[1] !== "") return m[1];
+    } catch {
+      // stub/test client that doesn't implement SDK query methods
+    }
+    return "";
+  }
 
   static async connect(url: string): Promise<McpLedgerClient> {
     const transport = new StreamableHTTPClientTransport(new URL(url));
@@ -54,6 +83,10 @@ export class McpLedgerClient implements LedgerClient {
     // Transport interface's `sessionId?: string`. Bridge through unknown.
     await client.connect(transport as unknown as Transport);
     return new McpLedgerClient(client);
+  }
+
+  displayName(): string {
+    return this._displayName;
   }
 
   private async call<T>(name: string, args: Record<string, unknown>): Promise<T> {
