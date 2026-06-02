@@ -17,6 +17,10 @@
     "./columns": {
       "import": "./dist/src/columns.js",
       "types": "./dist/src/columns.d.ts"
+    },
+    "./constants": {
+      "import": "./dist/src/constants.js",
+      "types": "./dist/src/constants.d.ts"
     }
   },
   "dependencies": {
