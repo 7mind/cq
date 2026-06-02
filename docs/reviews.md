@@ -2,11 +2,23 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 21
+  item: 28
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
     summary: "Dogfood complete: T24 driven to done through the real implement-flow loop (manual worktree (K4 Codex path) -> implement-worker created+committed the marker -> bun run check green in worktree (379 pass) -> implement-reviewer approved 0/0 -> ff merge-back into throwaway dogfood/base). Throwaway branches deleted; nothing landed on main. Two setup findings recorded as defects under goals:G1."
+  - id: M6
+    path: ./archive/reviews/M6.md
+    summary: UI/schema follow-up (G1) — COMPLETE. reviews `summary` field (T26); summarize() legacy fallback + badge/cell nowrap-ellipsis both UIs (T27); summary threaded through reviewer prompts + implement:advance recorder (T28); fetchLedgerArchive client web+TUI (T29); web subsections + milestone dropdown (T30); TUI column table + subsections (T31); web (T32) + TUI (T33) read-only archive views; integration gate + cross-cutting regression (T34). Tasks T26-T34; reviews R7/R8/R11/R12/R14/R15/R16/R17/R22. Shipped on main; final check 483 pass.
+  - id: M7
+    path: ./archive/reviews/M7.md
+    summary: "investigate:* flow assets (G1 #2) — COMPLETE. Design lock K8 (T35); investigate-explorer read-only evidence-gatherer (T36); /investigate:advance DFS/adjudication loop with file-and-defer handoff + defect-seeded clarify-skip (T37); /investigate:start intake + inline advance (T38, round-1 fixed phantom-subagent); LINKS wiring (T39). Tasks T35-T39; reviews R9/R13/R18/R19. Shipped on main; all investigate:* symlinks resolve; final check 483 pass."
+  - id: M8
+    path: ./archive/reviews/M8.md
+    summary: "defect-awareness in plan:*/implement:* prompts (G1 #2) — COMPLETE. plan-reviewer defects[] bucket (T40); implement-reviewer defects[] JSON (T42); plan-flow defect-aware planning + bidirectional linkage + reviewer-defects file-and-defer + defect-seeded clarify-skip (T41); implement/advance files reviewer defects + orchestrator-owned closure on merge-back (T43); cross-prompt 6-grep-invariant audit (T44). Tasks T40-T44; reviews R23/R24/R25/R26/R27. Shipped on main. Closed loop defect->investigate->plan->implement->resolve confirmed."
+  - id: M9
+    path: ./archive/reviews/M9.md
+    summary: "defect/hypothesis relationship views (G1 #2, Q28 Full) — COMPLETE. Schema-sufficiency spike, no @cq/ledger change (T45); pure shared helpers defectFixTaskIds + hypothesisRelationships (T46); web detail-panel relationship views via ./relationships subpath (T47); TUI content-pane views (T48); cross-UI single-source regression + full-suite gate (T49). Tasks T45-T49; reviews R10/R20/R21/R28. Shipped on main; final check 483 pass."
 ---
 
 # reviews
@@ -62,174 +74,3 @@ archives:
 - new_questions: []
 - criticism: []
 - ledgerRefs: ["goals:G1"]
-
-## M6
-
-### R7 — go-ahead
-
-- createdAt: 2026-06-02T06:24:17.022Z
-- updatedAt: 2026-06-02T06:24:17.022Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T26","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-### R8 — go-ahead
-
-- createdAt: 2026-06-02T06:24:19.357Z
-- updatedAt: 2026-06-02T06:24:19.357Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T29","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-### R11 — go-ahead
-
-- createdAt: 2026-06-02T06:39:59.611Z
-- updatedAt: 2026-06-02T06:39:59.611Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T30","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-### R12 — go-ahead
-
-- createdAt: 2026-06-02T06:40:01.495Z
-- updatedAt: 2026-06-02T06:40:01.495Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T31","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-### R14 — go-ahead
-
-- createdAt: 2026-06-02T06:45:47.615Z
-- updatedAt: 2026-06-02T06:45:47.615Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T28","goals:G1"]
-- tags: ["implement-flow","round-1","criticism-resolved"]
-
-### R15 — go-ahead
-
-- createdAt: 2026-06-02T06:55:06.153Z
-- updatedAt: 2026-06-02T06:55:06.153Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T27","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-### R16 — go-ahead
-
-- createdAt: 2026-06-02T07:08:21.036Z
-- updatedAt: 2026-06-02T07:08:21.036Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T32","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-### R17 — go-ahead
-
-- createdAt: 2026-06-02T07:08:22.666Z
-- updatedAt: 2026-06-02T07:08:22.666Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T33","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-## M7
-
-### R9 — go-ahead
-
-- createdAt: 2026-06-02T06:24:21.223Z
-- updatedAt: 2026-06-02T06:24:21.223Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T36","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-### R13 — go-ahead
-
-- createdAt: 2026-06-02T06:40:03.150Z
-- updatedAt: 2026-06-02T06:40:03.150Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T37","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-### R18 — go-ahead
-
-- createdAt: 2026-06-02T07:08:24.565Z
-- updatedAt: 2026-06-02T07:08:24.565Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T38","goals:G1"]
-- tags: ["implement-flow","round-1","criticism-resolved"]
-
-### R19 — go-ahead
-
-- createdAt: 2026-06-02T07:27:28.008Z
-- updatedAt: 2026-06-02T07:27:28.008Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T39","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-## M9
-
-### R10 — go-ahead
-
-- createdAt: 2026-06-02T06:24:22.848Z
-- updatedAt: 2026-06-02T06:24:22.848Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T46","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-### R20 — go-ahead
-
-- createdAt: 2026-06-02T07:27:30.186Z
-- updatedAt: 2026-06-02T07:27:30.186Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T47","goals:G1"]
-- tags: ["implement-flow","round-0"]
-
-### R21 — go-ahead
-
-- createdAt: 2026-06-02T07:27:31.615Z
-- updatedAt: 2026-06-02T07:27:31.615Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T48","goals:G1"]
-- tags: ["implement-flow","round-0"]

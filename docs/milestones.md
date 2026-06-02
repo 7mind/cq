@@ -16,6 +16,18 @@ archives:
   - id: M4
     path: ./archive/milestones/M4.md
     summary: Plan-flow maintenance — complete. Subagent MCP tool access made server-name-independent via denylist (T13); /plan:follow-up command + goal re-open transitions, decision K5 (T25); /plan:advance with no argument advances all unlocked goals (T14). Shipped on main (commits 4f430b3, 67727e9).
+  - id: M6
+    path: ./archive/milestones/M6.md
+    summary: UI/schema follow-up (G1) — COMPLETE. reviews `summary` field (T26); summarize() legacy fallback + badge/cell nowrap-ellipsis both UIs (T27); summary threaded through reviewer prompts + implement:advance recorder (T28); fetchLedgerArchive client web+TUI (T29); web subsections + milestone dropdown (T30); TUI column table + subsections (T31); web (T32) + TUI (T33) read-only archive views; integration gate + cross-cutting regression (T34). Tasks T26-T34; reviews R7/R8/R11/R12/R14/R15/R16/R17/R22. Shipped on main; final check 483 pass.
+  - id: M7
+    path: ./archive/milestones/M7.md
+    summary: "investigate:* flow assets (G1 #2) — COMPLETE. Design lock K8 (T35); investigate-explorer read-only evidence-gatherer (T36); /investigate:advance DFS/adjudication loop with file-and-defer handoff + defect-seeded clarify-skip (T37); /investigate:start intake + inline advance (T38, round-1 fixed phantom-subagent); LINKS wiring (T39). Tasks T35-T39; reviews R9/R13/R18/R19. Shipped on main; all investigate:* symlinks resolve; final check 483 pass."
+  - id: M8
+    path: ./archive/milestones/M8.md
+    summary: "defect-awareness in plan:*/implement:* prompts (G1 #2) — COMPLETE. plan-reviewer defects[] bucket (T40); implement-reviewer defects[] JSON (T42); plan-flow defect-aware planning + bidirectional linkage + reviewer-defects file-and-defer + defect-seeded clarify-skip (T41); implement/advance files reviewer defects + orchestrator-owned closure on merge-back (T43); cross-prompt 6-grep-invariant audit (T44). Tasks T40-T44; reviews R23/R24/R25/R26/R27. Shipped on main. Closed loop defect->investigate->plan->implement->resolve confirmed."
+  - id: M9
+    path: ./archive/milestones/M9.md
+    summary: "defect/hypothesis relationship views (G1 #2, Q28 Full) — COMPLETE. Schema-sufficiency spike, no @cq/ledger change (T45); pure shared helpers defectFixTaskIds + hypothesisRelationships (T46); web detail-panel relationship views via ./relationships subpath (T47); TUI content-pane views (T48); cross-UI single-source regression + full-suite gate (T49). Tasks T45-T49; reviews R10/R20/R21/R28. Shipped on main; final check 483 pass."
 ---
 
 # milestones
@@ -34,33 +46,3 @@ archives:
 - updatedAt: 2026-06-01T19:24:22.101Z
 - title: "Plan: /implement:* command family"
 - description: "Coordination milestone for the goal of building the /implement:* command family (start/advance) that executes the planned roadmap: DAG-ordered task pickup, per-task worktree + implementor subagent, reviewer subagent gate, autonomous criticism loop, and user-answered questions. Groups the goal, its clarifying questions, reviews, and final approval decision. Work tasks live under separate work milestones recorded on the goal's fields.milestones."
-
-### M6 — open
-
-- createdAt: 2026-06-01T23:17:53.320Z
-- updatedAt: 2026-06-01T23:17:53.320Z
-- title: "UI/schema follow-up: archives, milestone grouping, TUI table, reviews summary"
-- description: "Follow-up scope on G1 (2026-06-02). Five user requests: (1) view archived items in both UIs; (2) per-milestone filter in web; (3) milestone subsections in ledger views; (4) column-aligned TUI item table; (5) reviews `summary` field + UI wrapping fix + reviewer prompt updates. Decisions pinned by answered questions Q11-Q18."
-- dependsOn: ["M3"]
-
-### M7 — open
-
-- createdAt: 2026-06-01T23:35:52.617Z
-- updatedAt: 2026-06-01T23:35:52.617Z
-- title: "investigate:* flow — research-loop-style defect investigation assets"
-- description: "Follow-up #2 (G1). New investigate:* command family modeled on the research-loop skill: commands/investigate/{start,advance}.md + agents/investigate-explorer.md, wired into scripts/link-prompts.ts LINKS. The hypothesis ledger is the durable tree (Q24); /investigate:advance is the orchestrator/adjudicator; investigate-explorer is read-only evidence-gatherer (Q27). On confirmed root cause, hands off to plan-flow to produce reviewed fix tasks (Q25)."
-
-### M8 — open
-
-- createdAt: 2026-06-01T23:35:57.677Z
-- updatedAt: 2026-06-01T23:43:48.012Z
-- title: "defect-awareness in plan:* and implement:* prompts"
-- description: "Follow-up #2 (G1). Edit existing plan/implement prompts so they operate on BOTH defects and tasks: user-reported defects land in the defects ledger (Q21), reviewers file out-of-scope defects via a defects[] bucket (Q22), defect<->task linkage via dependsOn/ledgerRefs (Q20), implement orchestrator closes a defect when all linked fix-tasks are done, and discovered defects route to investigate:* file-and-defer (Q26). Depends on M7 (the investigate:* assets the routing references) AND M6 (T28 threads the `summary` field into plan-reviewer.md and implement-reviewer.md's JSON contract; M8/T40+T42 edit the SAME prompts/JSON block to add defects[], so T28 must land first to avoid a same-file conflict and the false 'currently has summary' premise — R5 criticism #3)."
-- dependsOn: ["M7","M6"]
-
-### M9 — open
-
-- createdAt: 2026-06-01T23:36:02.408Z
-- updatedAt: 2026-06-01T23:36:02.408Z
-- title: defect/hypothesis relationship views in TUI + web (Full scope, Q28)
-- description: "Follow-up #2 (G1). Per Q28 'Full' answer: surface defect↔fix-task linkage (dependsOn/ledgerRefs) and the hypothesis tree (parentHypothesis ancestry) as relationship views in BOTH the TUI and web clients. No @cq/ledger schema change is required for the link (dependsOn/ledgerRefs already exist on both schemas); a schema tweak is only added if the UI work proves the existing fields insufficient. Independent of M7/M8 (pure client work)."
