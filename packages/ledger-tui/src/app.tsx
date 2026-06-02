@@ -99,6 +99,45 @@ function ledgerRows(view: FetchedLedger): Row[] {
 }
 
 // ---------------------------------------------------------------------------
+// List entries: union of selectable item rows and non-selectable headers.
+// The cursor indexes into items only; headers are visual separators only.
+// ---------------------------------------------------------------------------
+
+type ListEntry<T> =
+  | { t: "item"; item: T; itemIdx: number }
+  | { t: "header"; label: string };
+
+/**
+ * Build entries for a non-milestones ledger: per-milestone subsection headers
+ * interleaved with the filtered item rows, preserving fetch_ledger group order.
+ * For the milestones ledger itself the list is flat (no headers).
+ * The returned `itemIdx` matches the item's index in `filteredRows`.
+ */
+function buildItemEntries(view: FetchedLedger, filteredRows: Row[], isMilestones: boolean): ListEntry<Row>[] {
+  if (isMilestones) {
+    return filteredRows.map((r, i) => ({ t: "item", item: r, itemIdx: i }));
+  }
+  const entries: ListEntry<Row>[] = [];
+  // Group rows by milestone, preserving the fetch_ledger group order
+  const rowsByMilestone = new Map<string, Array<{ row: Row; itemIdx: number }>>();
+  filteredRows.forEach((r, i) => {
+    const bucket = rowsByMilestone.get(r.milestoneId) ?? [];
+    bucket.push({ row: r, itemIdx: i });
+    rowsByMilestone.set(r.milestoneId, bucket);
+  });
+  for (const g of view.milestones) {
+    const bucket = rowsByMilestone.get(g.id);
+    if (bucket === undefined || bucket.length === 0) continue;
+    const title = g.milestone.title ? ` ${g.milestone.title}` : "";
+    entries.push({ t: "header", label: `${g.id}${title} [${g.milestone.status}]` });
+    for (const { row, itemIdx } of bucket) {
+      entries.push({ t: "item", item: row, itemIdx });
+    }
+  }
+  return entries;
+}
+
+// ---------------------------------------------------------------------------
 // Navigation frames + overlays
 // ---------------------------------------------------------------------------
 
@@ -512,16 +551,24 @@ export function App({
       top.focus === "content"
         ? `↑↓ scroll · s status${answerHint} · e edit · o/[ ] panes · Esc back to list`
         : `↑↓ move · Enter open · s status${answerHint} · e edit · n new · f filter · / search · o/[ ] panes · Esc back`;
+    // Column widths: id padded to longest id among visible rows; status padded
+    // to the schema's max statusValue length so all rows share the same column.
+    const maxIdW = rowsArr.reduce((m, r) => Math.max(m, r.item.id.length), 2);
+    const maxStatusW = schema.statusValues.reduce((m, s) => Math.max(m, s.length), 4);
+    const itemEntries = buildItemEntries(top.view, rowsArr, isMilestonesLedger);
     listEl = (
       <ScrollList
         items={rowsArr}
-        getLabel={(r) => `${r.item.id} [${r.item.status}] ${summarize(r.item)}`}
+        entries={itemEntries}
+        getLabel={(r) => `${r.item.id.padEnd(maxIdW)} ${r.item.status.padEnd(maxStatusW)} ${summarize(r.item)}`}
         renderLabel={(r) => (
           <ItemRowLabel
             id={r.item.id}
             status={r.item.status}
             summary={summarize(r.item)}
             schema={schema}
+            idW={maxIdW}
+            statusW={maxStatusW}
           />
         )}
         cursor={top.cursor}
@@ -659,32 +706,41 @@ function LiveBadge({ stats }: { stats: LiveStats | null }): React.ReactElement {
 }
 
 /**
- * One item row: `id [status] summary`, with the status badge colored by its
- * semantic bucket and the whole row dimmed when the item is terminal (so
- * closed work recedes). `author` provenance is shown as a trailing tag.
+ * One item row rendered as aligned columns: id (padded to idW) | status
+ * (padded to statusW) | summary (fills remaining width, truncates at end).
+ * The whole row is dimmed when the item is terminal.
  */
 function ItemRowLabel({
   id,
   status,
   summary,
   schema,
+  idW,
+  statusW,
 }: {
   id: string;
   status: string;
   summary: string;
   schema: LedgerSchema;
+  /** Width of the id column (chars), padded with spaces on the right. */
+  idW: number;
+  /** Width of the status column (chars), padded with spaces on the right. */
+  statusW: number;
 }): React.ReactElement {
   const terminal = isTerminal(status, schema);
   const color = statusColor(status, schema);
+  const idPadded = id.padEnd(idW);
+  const statusPadded = status.padEnd(statusW);
   return (
     <Text dimColor={terminal}>
-      {id} <Text color={color}>[{status}]</Text> {summary}
+      {idPadded}{" "}<Text color={color}>{statusPadded}</Text>{" "}{summary}
     </Text>
   );
 }
 
 function ScrollList<T>({
   items,
+  entries: entriesProp,
   getLabel,
   renderLabel,
   cursor,
@@ -693,6 +749,12 @@ function ScrollList<T>({
   emptyLabel = "(empty)",
 }: {
   items: readonly T[];
+  /**
+   * When provided, overrides the flat `items` list with a pre-built entries
+   * array that may include non-selectable section headers. The `cursor` still
+   * indexes into item entries only (i.e. entries with `t === "item"`).
+   */
+  entries?: readonly ListEntry<T>[];
   getLabel: (item: T, index: number) => string;
   /** Optional rich (colored) label; falls back to getLabel's plain string. */
   renderLabel?: (item: T, index: number) => React.ReactNode;
@@ -701,29 +763,64 @@ function ScrollList<T>({
   active: boolean;
   emptyLabel?: string;
 }): React.ReactElement {
-  if (items.length === 0) return <Text dimColor>{emptyLabel}</Text>;
-  const n = items.length;
-  const h = Math.max(1, height);
-  let topIdx = 0;
-  if (cursor >= h) topIdx = Math.min(cursor - h + 1, Math.max(0, n - h));
-  topIdx = Math.max(0, Math.min(topIdx, Math.max(0, n - h)));
-  const win = items.slice(topIdx, topIdx + h);
+  // Build a flat entries array when none is provided (backward-compat path).
+  const entries: readonly ListEntry<T>[] =
+    entriesProp !== undefined
+      ? entriesProp
+      : items.map((item, i) => ({ t: "item" as const, item, itemIdx: i }));
 
-  // scrollbar thumb
-  const showBar = n > h;
-  const thumbSize = showBar ? Math.max(1, Math.round((h / n) * h)) : 0;
-  const thumbStart = showBar ? Math.min(h - thumbSize, Math.round((topIdx / (n - h)) * (h - thumbSize))) : 0;
+  const itemCount = entries.filter((e) => e.t === "item").length;
+  if (itemCount === 0) return <Text dimColor>{emptyLabel}</Text>;
+
+  const totalEntries = entries.length;
+  const h = Math.max(1, height);
+
+  // Find the visual index of the selected item within entries
+  const cursorVisIdx = entries.findIndex((e) => e.t === "item" && e.itemIdx === cursor);
+  const selVisIdx = cursorVisIdx >= 0 ? cursorVisIdx : 0;
+
+  // Compute topVisIdx: the first visible entry index in the viewport.
+  // We want the selected item to stay in view; ensure the viewport includes
+  // selVisIdx. We also keep enough room for a header above the selected item.
+  let topVisIdx = 0;
+  if (selVisIdx >= h) {
+    // Push viewport so that the selected item is the last visible row.
+    topVisIdx = Math.min(selVisIdx - h + 1, Math.max(0, totalEntries - h));
+  }
+  // If the row just above a selected item is a header, try to include it.
+  if (topVisIdx > 0 && entries[topVisIdx]?.t === "header") {
+    topVisIdx = Math.max(0, topVisIdx - 1);
+  }
+  topVisIdx = Math.max(0, Math.min(topVisIdx, Math.max(0, totalEntries - h)));
+
+  const win = entries.slice(topVisIdx, topVisIdx + h);
+
+  // scrollbar thumb — based on item count position for stability
+  const showBar = totalEntries > h;
+  const thumbSize = showBar ? Math.max(1, Math.round((h / totalEntries) * h)) : 0;
+  const maxTop = Math.max(1, totalEntries - h);
+  const thumbStart = showBar
+    ? Math.min(h - thumbSize, Math.round((topVisIdx / maxTop) * (h - thumbSize)))
+    : 0;
 
   return (
     <Box flexDirection="row">
       <Box flexDirection="column" flexGrow={1}>
-        {win.map((it, idx) => {
-          const i = topIdx + idx;
-          const sel = i === cursor;
+        {win.map((entry, idx) => {
+          const visI = topVisIdx + idx;
+          if (entry.t === "header") {
+            return (
+              <Text key={`h-${visI}`} bold dimColor wrap="truncate-end">
+                {"  "}
+                {entry.label}
+              </Text>
+            );
+          }
+          const sel = entry.itemIdx === cursor;
           return (
-            <Text key={i} inverse={sel && active} {...(sel && !active ? { color: "cyan" as const } : {})} wrap="truncate-end">
+            <Text key={`i-${entry.itemIdx}`} inverse={sel && active} {...(sel && !active ? { color: "cyan" as const } : {})} wrap="truncate-end">
               {sel ? "› " : "  "}
-              {renderLabel !== undefined ? renderLabel(it, i) : getLabel(it, i)}
+              {renderLabel !== undefined ? renderLabel(entry.item, entry.itemIdx) : getLabel(entry.item, entry.itemIdx)}
             </Text>
           );
         })}

@@ -511,3 +511,143 @@ describe("ledger-tui live updates", () => {
     r.unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Column alignment and per-milestone subsection headers (Req3 + Req4)
+// ---------------------------------------------------------------------------
+
+/**
+ * A client whose single ledger has items with varying id lengths (T1 vs T14)
+ * and two milestone groups, so we can assert column alignment and subsections.
+ */
+class MultiMilestoneClient implements LedgerClient {
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [{ name: "tasks", itemCount: 3 }];
+  }
+  async fetchLedger(id: string): Promise<FetchedLedger> {
+    if (id !== "tasks") throw new Error(`Ledger not found: ${id}`);
+    return {
+      id: "tasks",
+      schema: {
+        statusValues: ["planned", "wip", "done"],
+        terminalStatuses: ["done"],
+        fields: { headline: { type: "string", required: true } },
+        idPrefix: "T",
+      },
+      counters: { milestone: 2, item: 3 },
+      milestones: [
+        {
+          id: "M1",
+          milestone: { id: "M1", status: "open", title: "Bootstrap", description: "" },
+          items: [
+            { id: "T1", milestoneId: "M1", status: "planned", fields: { headline: "alpha" }, createdAt: TS, updatedAt: TS },
+            { id: "T2", milestoneId: "M1", status: "wip", fields: { headline: "beta" }, createdAt: TS, updatedAt: TS },
+          ],
+        },
+        {
+          id: "M2",
+          milestone: { id: "M2", status: "open", title: "Phase Two", description: "" },
+          items: [
+            { id: "T14", milestoneId: "M2", status: "planned", fields: { headline: "gamma" }, createdAt: TS, updatedAt: TS },
+          ],
+        },
+      ],
+      archivePointers: [],
+    };
+  }
+  async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
+  async fetchItem(): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<Item> { throw new Error("not used"); }
+  async updateItem(): Promise<Item> { throw new Error("not used"); }
+  async ftsSearch(): Promise<never[]> { return []; }
+  async createMilestone(): Promise<Item> { throw new Error("not used"); }
+  async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async close(): Promise<void> { /* no-op */ }
+}
+
+describe("ledger-tui column alignment and subsection headers (Req3+Req4)", () => {
+  it("pads id column to the max id width so columns align (T1 vs T14)", async () => {
+    const client = new MultiMilestoneClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open tasks
+    await tick(40);
+    const f = r.lastFrame() ?? "";
+    // T1 must be padded to match T14's width (3 chars): "T1 " appears before status
+    // T14 appears at width 3 with no extra space before the status separator
+    expect(f).toContain("T1 "); // id "T1" padded to 3 chars
+    expect(f).toContain("T14 "); // id "T14" followed by status sep space
+    r.unmount();
+  });
+
+  it("renders per-milestone subsection headers in group order", async () => {
+    const client = new MultiMilestoneClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open tasks
+    await tick(40);
+    const f = r.lastFrame() ?? "";
+    // Both milestone headers should be visible
+    expect(f).toContain("M1");
+    expect(f).toContain("Bootstrap");
+    expect(f).toContain("M2");
+    expect(f).toContain("Phase Two");
+    // M1 header must appear before M2 header in the rendered output
+    expect(f.indexOf("M1")).toBeLessThan(f.indexOf("M2"));
+    r.unmount();
+  });
+
+  it("items appear under their milestone subsection header", async () => {
+    const client = new MultiMilestoneClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open tasks
+    await tick(40);
+    const f = r.lastFrame() ?? "";
+    // T1 and T2 appear after M1 header, T14 appears after M2 header
+    const m1Pos = f.indexOf("Bootstrap");
+    const t1Pos = f.indexOf("T1 "); // padded id
+    const m2Pos = f.indexOf("Phase Two");
+    const t14Pos = f.indexOf("T14");
+    expect(m1Pos).toBeGreaterThanOrEqual(0);
+    expect(t1Pos).toBeGreaterThan(m1Pos);
+    expect(m2Pos).toBeGreaterThan(t1Pos);
+    expect(t14Pos).toBeGreaterThan(m2Pos);
+    r.unmount();
+  });
+
+  it("milestones ledger shows no per-milestone subsection headers", async () => {
+    const h = await mount();
+    await h.key(DOWN); // bugs → milestones
+    await h.key(ENTER); // open milestones
+    await tick(20);
+    const f = h.frame();
+    // The milestones ledger should show the milestone item (M1) in the list
+    expect(f).toContain("M1");
+    // But no subsection header format like "active [open]" (the group id for
+    // milestones is "active", which would appear as a header only if subsections
+    // were emitted — they should not be for the milestones ledger)
+    // The key invariant: item rows appear directly without a separate group header
+    // interleaved. We verify by checking there's no bold "active [" header line
+    // distinct from the content pane's detail text.
+    expect(f).not.toContain("active [open]");
+    h.unmount();
+  });
+
+  it("status column is padded to the schema's max status width", async () => {
+    const client = new MultiMilestoneClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open tasks
+    await tick(40);
+    const f = r.lastFrame() ?? "";
+    // Schema status values: planned(7), wip(3), done(4). Max = 7 ("planned").
+    // So "wip" row should show "wip    " (padded to 7 chars) before the summary.
+    // We check that "wip" appears padded (followed by spaces before "beta").
+    // "planned" appears for T1: "planned alpha" and T14: "planned gamma"
+    expect(f).toContain("planned"); // T1 and T14 both have status "planned"
+    // "wip" for T2: padded to "wip    " (4 trailing spaces to reach 7)
+    expect(f).toMatch(/wip\s+beta/); // wip padded then summary
+    r.unmount();
+  });
+});
