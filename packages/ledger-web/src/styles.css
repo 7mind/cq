@@ -159,19 +159,19 @@ body {
   padding: 1px 6px;
   white-space: nowrap;
 }
-/* Batch-answer modal (Q33): a wider HelpOverlay-style popup with LARGER font,
-   stepping through open questions one at a time. */
+/* Batch-answer modal (Q33): a wider HelpOverlay-style popup with focused font,
+   stepping through open questions one at a time. Sized larger to accommodate
+   longer question content; font reduced to 0.95rem for better readability. */
 .lw-batch {
-  width: 720px;
-  max-width: 92vw;
-  max-height: 88vh;
-  overflow: auto;
+  width: min(900px, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
   padding: 18px 22px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  font-size: 1.2rem;
+  font-size: 0.95rem;
   line-height: 1.5;
 }
 .lw-batch-body {
