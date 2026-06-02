@@ -1,7 +1,16 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import React from "react";
+import { Text } from "ink";
+import { render } from "ink-testing-library";
 import { statusBucket, statusColor, isTerminal } from "../src/status.js";
 import type { LedgerSchema } from "../src/types.js";
 import { REVIEWS_SCHEMA } from "@cq/ledger";
+
+// Resolve chalk via ink's dependency to force ANSI output in tests.
+const inkPath = import.meta.resolve("ink");
+const chalkPath = import.meta.resolve("chalk", inkPath);
+const chalkMod = await import(chalkPath);
+const chalk = chalkMod.default ?? chalkMod;
 
 const tasks: LedgerSchema = {
   statusValues: ["planned", "wip", "done", "blocked", "abandoned"],
@@ -48,5 +57,45 @@ describe("warning bucket (reviews schema)", () => {
 
   it("go-ahead → done", () => {
     expect(statusBucket("go-ahead", REVIEWS_SCHEMA)).toBe("done");
+  });
+
+  it("statusColor: revise → magenta (distinct from yellow used by progress)", () => {
+    expect(statusColor("revise", REVIEWS_SCHEMA)).toBe("magenta");
+  });
+
+  it("statusColor: go-ahead → green (unchanged)", () => {
+    expect(statusColor("go-ahead", REVIEWS_SCHEMA)).toBe("green");
+  });
+});
+
+// ANSI magenta = [35m; green = [32m.  Force chalk.level=1 so ink
+// emits escape codes even in a non-TTY test runner.
+const ANSI_MAGENTA = "[35m";
+const ANSI_GREEN = "[32m";
+
+describe("ink badge color (warning bucket → magenta)", () => {
+  let prevLevel: number;
+  beforeAll(() => {
+    prevLevel = (chalk as { level: number }).level;
+    (chalk as { level: number }).level = 1;
+  });
+  afterAll(() => {
+    (chalk as { level: number }).level = prevLevel;
+  });
+
+  it("renders revise badge in magenta (ANSI 35)", () => {
+    const color = statusColor("revise", REVIEWS_SCHEMA); // "magenta"
+    const r = render(<Text color={color}>revise</Text>);
+    const frame = r.lastFrame() ?? "";
+    r.unmount();
+    expect(frame).toContain(ANSI_MAGENTA);
+  });
+
+  it("renders go-ahead badge in green (ANSI 32, unchanged)", () => {
+    const color = statusColor("go-ahead", REVIEWS_SCHEMA); // "green"
+    const r = render(<Text color={color}>go-ahead</Text>);
+    const frame = r.lastFrame() ?? "";
+    r.unmount();
+    expect(frame).toContain(ANSI_GREEN);
   });
 });

@@ -53,7 +53,7 @@ const BUCKET_COLOR: Record<StatusBucket, string> = {
   blocked: "red",
   done: "green",
   dropped: "gray",
-  warning: "yellow",
+  warning: "magenta",
 };
 
 /** Ink color name for a status badge. */
