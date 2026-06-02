@@ -8,10 +8,12 @@
 
 import type { LedgerSchema } from "./types.js";
 
-export type StatusBucket = "start" | "progress" | "blocked" | "done" | "dropped";
+export type StatusBucket = "start" | "progress" | "blocked" | "done" | "dropped" | "warning";
 
 const PROGRESS = new Set(["wip", "building", "planning", "in-progress", "in_progress", "doing"]);
 const BLOCKED = new Set(["blocked"]);
+// Terminal statuses that mean "needs changes" (rendered as a warning, not green).
+const WARNING = new Set(["revise"]);
 const DROPPED = new Set([
   "abandoned",
   "withdrawn",
@@ -29,7 +31,11 @@ export function isTerminal(status: string, schema: LedgerSchema): boolean {
 
 export function statusBucket(status: string, schema: LedgerSchema): StatusBucket {
   const s = status.toLowerCase();
-  if (isTerminal(status, schema)) return DROPPED.has(s) ? "dropped" : "done";
+  if (isTerminal(status, schema)) {
+    if (WARNING.has(s)) return "warning";
+    if (DROPPED.has(s)) return "dropped";
+    return "done";
+  }
   if (BLOCKED.has(s)) return "blocked";
   if (PROGRESS.has(s)) return "progress";
   return "start";

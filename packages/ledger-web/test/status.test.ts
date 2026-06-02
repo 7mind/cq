@@ -7,6 +7,7 @@ import {
   valueToFilter,
 } from "../src/status";
 import type { LedgerSchema } from "../src/types";
+import { REVIEWS_SCHEMA } from "@cq/ledger";
 
 const bugs: LedgerSchema = {
   statusValues: ["open", "wip", "closed"],
@@ -45,5 +46,15 @@ describe("web status helper", () => {
       kind: "status",
       value: "wip",
     });
+  });
+});
+
+describe("warning bucket (reviews schema)", () => {
+  it("revise → warning", () => {
+    expect(statusBucket("revise", REVIEWS_SCHEMA)).toBe("warning");
+  });
+
+  it("go-ahead → done", () => {
+    expect(statusBucket("go-ahead", REVIEWS_SCHEMA)).toBe("done");
   });
 });

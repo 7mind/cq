@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { statusBucket, statusColor, isTerminal } from "../src/status.js";
 import type { LedgerSchema } from "../src/types.js";
+import { REVIEWS_SCHEMA } from "@cq/ledger";
 
 const tasks: LedgerSchema = {
   statusValues: ["planned", "wip", "done", "blocked", "abandoned"],
@@ -37,5 +38,15 @@ describe("status buckets", () => {
     expect(statusColor("blocked", tasks)).toBe("red");
     expect(statusColor("done", tasks)).toBe("green");
     expect(statusColor("abandoned", tasks)).toBe("gray");
+  });
+});
+
+describe("warning bucket (reviews schema)", () => {
+  it("revise → warning", () => {
+    expect(statusBucket("revise", REVIEWS_SCHEMA)).toBe("warning");
+  });
+
+  it("go-ahead → done", () => {
+    expect(statusBucket("go-ahead", REVIEWS_SCHEMA)).toBe("done");
   });
 });
