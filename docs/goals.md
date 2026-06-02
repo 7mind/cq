@@ -70,12 +70,12 @@ archives: []
 
 ## M10
 
-### G2 — planned
+### G2 — done
 
 - createdAt: 2026-06-02T08:27:10.593Z
-- updatedAt: 2026-06-02T16:29:25.591Z
+- updatedAt: 2026-06-02T22:18:12.711Z
 - author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
 - title: Ledger-suite UI/schema enhancements (columns, batch-answer, colors, titles)
 - description: |
     UI/schema enhancements for the ledger-suite frontends (TUI @cq/ledger-tui and web @cq/ledger-web), a follow-on to the now-completed goal G1. Greenfield features + small UI-correctness fixes.
@@ -144,12 +144,12 @@ archives: []
 
 ## M15
 
-### G3 — planned
+### G3 — done
 
 - createdAt: 2026-06-02T09:12:10.677Z
-- updatedAt: 2026-06-02T10:23:16.669Z
+- updatedAt: 2026-06-02T22:18:14.143Z
 - author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
 - title: "Plan/implement flow-behavior changes: auto-investigate + never auto-close goals"
 - description: |
     Prompt-suite behavior changes to the plan:*/implement:*/investigate:* command flows (markdown edits under llm/commands + llm/agents). Follow-on to completed G1 (which built these flows). Two distinct changes:
@@ -184,12 +184,12 @@ archives: []
 
 ## M20
 
-### G4 — planned
+### G4 — done
 
 - createdAt: 2026-06-02T11:27:09.012Z
-- updatedAt: 2026-06-02T16:39:14.185Z
+- updatedAt: 2026-06-02T22:18:16.042Z
 - author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
 - title: "Fix D2: graceful backup-and-reinit on ledger schema divergence (no fatal BootstrapViolationError)"
 - description: |
     DEFECT-SEEDED goal (linked defects:D2) — the root cause is ALREADY CONFIRMED (hypothesis H4), so this goal enters `planning` directly and SKIPS the clarifying round (per decision K8 point 4 / K12 defect-seeded clarify-skip). plan-advance should produce reviewed FIX TASKS directly.
@@ -207,12 +207,12 @@ archives: []
 
 ## M23
 
-### G5 — planned
+### G5 — done
 
 - createdAt: 2026-06-02T17:25:47.978Z
-- updatedAt: 2026-06-02T17:48:04.264Z
+- updatedAt: 2026-06-02T22:18:16.868Z
 - author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
 - title: Fix out-of-scope defects D3-D6 (@cq/ledger packaging + column eligibility + archived-head badge)
 - description: |
     DEFECT-SEEDED goal (linked defects:D3, D4, D5, D6) — all four root causes are ALREADY CONFIRMED via the investigate-flow (hypotheses H5-H8, evidence validated against source), so this goal enters `planning` directly and SKIPS clarifying (K8 pt4 / K12). plan-advance should produce reviewed FIX TASKS directly, grouped by the natural fix units below.

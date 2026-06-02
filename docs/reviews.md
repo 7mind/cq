@@ -84,6 +84,11 @@ archives:
     summary: "G5 Fix Unit C archived-head status badge — COMPLETE. T104 passes archived pointer status as milestoneStatus to the archived MilestoneSubsection (empty-status guarded) → T80 badge renders for archived heads; happy-dom test. T103 withdrawn (R77: no @cq/shared wire mirror — T91's ArchivePointer.status flows over the wire as-is). Defect D5 RESOLVED. Review R92. Shipped on main; check 661."
     title: ""
     status: ""
+  - id: M21
+    path: ./archive/reviews/M21.md
+    summary: "G2 follow-up #4 (items 16-19) — COMPLETE. T90 (!isMilestones gate, D7); T91 (ArchivePointer title+status extension, D8, lands status for D5); T92 (retire /investigate:start routing-questions per K13, item 18); T93 (batch-answer modal wider/taller/smaller-font/scrolls, item 19). Defects D7/D8 resolved; out-of-scope D9/D10 surfaced here, resolved via G6/M28 (T105/T106). Reviews R79/R83/R84/R90. Last G2 work milestone."
+    title: "G2 follow-up #4: milestones-ledger archived rendering, routing-question retirement, batch-modal sizing"
+    status: done
 ---
 
 # reviews
@@ -254,52 +259,6 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G5"]
 - tags: ["round-2","go-ahead","all-R77-criticisms-resolved"]
-
-## M21
-
-### R79 — go-ahead
-
-- createdAt: 2026-06-02T18:25:25.168Z
-- updatedAt: 2026-06-02T18:25:25.168Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T90","goals:G2"]
-- tags: ["implement-flow","round-0","approve","!isMilestones gate; valid fail-first repro + regression guard; check 634; out-of-scope ledger-tui HTTP flake filed D9"]
-
-### R83 — go-ahead
-
-- createdAt: 2026-06-02T18:49:11.795Z
-- updatedAt: 2026-06-02T18:49:11.795Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T91","goals:G2"]
-- tags: ["implement-flow","round-0","approve","collapsed head shows title (repro-confirmed); ArchivePointer title+status both stores; wire JSON-clean; check 635; D10 filed for InMemory parity"]
-
-### R84 — go-ahead
-
-- createdAt: 2026-06-02T18:49:14.614Z
-- updatedAt: 2026-06-02T18:49:14.614Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T92","decisions:K13","goals:G2"]
-- tags: ["implement-flow","round-0","approve","routing-question removed from implement/advance §3; defect-filing + non-blocking preserved; K13 rationale accurate; peers conform; check 635"]
-
-### R90 — go-ahead
-
-- createdAt: 2026-06-02T19:12:48.328Z
-- updatedAt: 2026-06-02T19:12:48.328Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: ["[resolved round 1] round-0 DECREASED .lw-batch max-height 88vh→85vh (not 'taller'); test asserted the regressed value + omitted scroll assertion. Fixed: max-height→90vh (taller than prior 88vh), test asserts 90vh + non-vacuous overflow-y:auto scroll clause."]
-- new_questions: []
-- ledgerRefs: ["tasks:T93","goals:G2"]
-- tags: ["implement-flow","round-1","criticism-resolved","batch modal wider/taller/smaller-font/scrolls; check 659"]
 
 ## M27
 
