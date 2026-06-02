@@ -350,7 +350,10 @@ describe("bootstrap idempotence + divergence guard", () => {
         serializeRegistry({ version: 1, ledgers: divergent }),
         "utf8",
       );
-      const store = new FsLedgerStore({ root: dir });
+      // T95: with the opt-out policy, init() still throws on divergence.
+      // (T96 will formalize this migration + add the default backup-reinit
+      // coverage; this minimal edit keeps the worktree's `bun run check` green.)
+      const store = new FsLedgerStore({ root: dir, onSchemaDivergence: "abort" });
       await expect(store.init()).rejects.toThrow(/different schema/);
     });
   }

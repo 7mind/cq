@@ -125,6 +125,16 @@ export interface FsLedgerStoreOpts {
    * ledger, including the milestones ledger). NOT fired for reads.
    */
   onMutation?: OnMutation;
+  /**
+   * Policy for an on-disk canonical ledger whose schema has diverged from
+   * its canonical bootstrap schema (detected at init()).
+   *
+   * - `'backup-reinit'` (default): back up the divergent on-disk state and
+   *   reinitialise the canonical files from scratch, then continue startup.
+   * - `'abort'`: refuse to start — throw `BootstrapViolationError` — so the
+   *   divergence is loud and operator-handled.
+   */
+  onSchemaDivergence?: "backup-reinit" | "abort";
 }
 
 /** Global lock key for the milestones-cross-ledger mutex/lockfile. */
@@ -142,6 +152,7 @@ export class FsLedgerStore implements LedgerStore {
   private readonly now: () => string;
   private readonly lockfile: Lockfile;
   private readonly onMutation: OnMutation | null;
+  private readonly onSchemaDivergence: "backup-reinit" | "abort";
   private readonly searchIndex = new LedgerSearchIndex();
   private registry: LedgerRegistry = { ...EMPTY_REGISTRY, ledgers: [] };
   private initialised = false;
@@ -155,6 +166,7 @@ export class FsLedgerStore implements LedgerStore {
     this.now = opts.now ?? (() => new Date().toISOString());
     this.lockfile = new Lockfile(opts.lockfile ?? {});
     this.onMutation = opts.onMutation ?? null;
+    this.onSchemaDivergence = opts.onSchemaDivergence ?? "backup-reinit";
   }
 
   /**
@@ -273,22 +285,34 @@ export class FsLedgerStore implements LedgerStore {
     }
 
     // Bootstrap every canonical ledger (milestones + the canon-cycle five +
-    // goals) if absent. Refuse to start if any on-disk schema diverged.
+    // goals) if absent. Collect any on-disk schema that diverged from canon.
     let registryDirty = false;
+    const divergent: string[] = [];
     for (const canonical of CANONICAL_LEDGERS) {
       const entry = this.registry.ledgers.find((e) => e.name === canonical.name);
       if (entry === undefined) {
         this.registry.ledgers.push({ name: canonical.name, schema: canonical.schema });
         registryDirty = true;
       } else if (!schemasEqual(entry.schema, canonical.schema)) {
-        // Defensive: a prior cycle / hand-edit wrote an out-of-band schema.
-        // Refuse to start so the divergence is loud.
-        throw new BootstrapViolationError(
-          `existing ${canonical.name} ledger has a different schema than its canonical bootstrap schema`,
-        );
+        // A prior cycle / hand-edit wrote an out-of-band schema.
+        divergent.push(canonical.name);
       }
     }
-    if (registryDirty) await this.writeRegistry();
+    if (divergent.length > 0) {
+      if (this.onSchemaDivergence === "abort") {
+        // Opt-out: refuse to start so the divergence is loud + operator-handled.
+        throw new BootstrapViolationError(
+          `existing ${divergent.join(", ")} ledger(s) have a different schema than their canonical bootstrap schema`,
+        );
+      }
+      // Default: back up the divergent on-disk state, then reinitialise the
+      // canonical files + registry from scratch. backupAndReinit updates
+      // this.registry IN PLACE to fresh canonical, so the load loop below
+      // iterates the FRESH canonical registry (and reads the fresh files).
+      await this.backupAndReinit();
+    } else if (registryDirty) {
+      await this.writeRegistry();
+    }
 
     // Load each ledger (including milestones).
     for (const entry of this.registry.ledgers) {
