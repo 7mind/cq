@@ -123,9 +123,7 @@ returned results for sanity and STOP the loop (→ §5 bailout) when ANY holds:
 - the **criticism repeats without shrinking** — the same defects recur across
   two consecutive rounds with no reduction in count/severity;
 - the **same `bun run check` failure** (same failing test/error signature)
-  recurs across rounds;
-- a **hard safety ceiling of 8 rounds** is hit (defense-in-depth only — a healthy
-  loop converges well before this; reaching it means it is not converging).
+  recurs across rounds.
 
 Log the reason you stopped.
 
