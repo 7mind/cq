@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 57
+  item: 61
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -399,3 +399,47 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T61","goals:G2"]
 - tags: ["implement-flow","round-1","criticism-resolved"]
+
+### R58 — go-ahead
+
+- createdAt: 2026-06-02T12:48:37.209Z
+- updatedAt: 2026-06-02T12:48:37.209Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T63","goals:G2"]
+- tags: ["implement-flow","round-0","approve","batch-answer modal: every acceptance clause backed by real happy-dom tests; reuses MCP answer write path; check green 565"]
+
+### R59 — go-ahead
+
+- createdAt: 2026-06-02T12:48:39.147Z
+- updatedAt: 2026-06-02T12:48:39.147Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T64","goals:G2"]
+- tags: ["implement-flow","round-0","approve","batch-answer stepper: all 5 acceptance clauses tested; surgical pure-MCP-client diff; check green 565"]
+
+### R60 — go-ahead
+
+- createdAt: 2026-06-02T12:57:00.963Z
+- updatedAt: 2026-06-02T12:57:00.963Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T67","goals:G2"]
+- tags: ["implement-flow","round-0","approve","appTitle derived from client.displayName(); document.title + header both asserted; graceful pre-connect fallback; check green 567"]
+
+### R61 — go-ahead
+
+- createdAt: 2026-06-02T12:57:03.778Z
+- updatedAt: 2026-06-02T12:57:03.778Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T68","goals:G2"]
+- tags: ["implement-flow","round-0","approve","TUI header '[<displayName>] LLM ledgers' with graceful fallback; real frame assertion; layout intact; check green 567"]

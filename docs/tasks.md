@@ -242,10 +242,10 @@ archives:
 - resultCommit: a7d66b3
 - completion: TUI column-selector Overlay (pickColumns, key 'c', documented) over eligibleColumnFields; extra columns render after id|status before summary (T31 alignment preserved); per-ledger in-memory (Q29), seeded from defaultColumns (tasks→suggestedModel); 3 ink tests. Reviewer approve 0/0. Merged a7d66b3 (recovered onto main after a stray verify-worker left the checkout on implement/T78); integration 552 pass.
 
-### T63 — planned
+### T63 — done
 
 - createdAt: 2026-06-02T08:48:27.429Z
-- updatedAt: 2026-06-02T08:48:27.429Z
+- updatedAt: 2026-06-02T12:48:15.974Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Web: batch-answer modal stepping open questions (sidebar button, larger font, prev/next + kbd nav)"
@@ -254,11 +254,13 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T56"]
 - ledgerRefs: ["goals:G2"]
+- resultCommit: e677b77
+- completion: "Web batch-answer modal: sidebar-bottom button opens a larger-font HelpOverlay-style modal stepping all open answerable questions (canAnswer + not-answered, from questions ledger); save&mark-answered + as-recommended over client.updateItem; prev/next buttons + ctrl/cmd+[ /] kbd nav; Esc closes. 5 happy-dom tests. Reviewer approve 0/0."
 
-### T64 — planned
+### T64 — done
 
 - createdAt: 2026-06-02T08:48:33.730Z
-- updatedAt: 2026-06-02T08:48:33.730Z
+- updatedAt: 2026-06-02T12:48:18.835Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "TUI: batch-answer full-screen overlay stepping open questions (keybinding, prev/next nav)"
@@ -267,6 +269,8 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T57"]
 - ledgerRefs: ["goals:G2"]
+- resultCommit: 8bfd320
+- completion: "TUI batch-answer full-screen Overlay ('b'): steps open answerable items (canAnswer + not-answered, default questions ledger); Enter saves+advances, Ctrl+R as-recommended (gated on hasRecommendation), Left/Right prev-next (clamped), Esc exits; write path at parity with single-item applyAnswer. 5 ink tests. Reviewer approve 0/0."
 
 ### T65 — done
 
@@ -310,10 +314,10 @@ archives:
 - resultCommit: d30a148
 - completion: "displayName() added to LedgerClient interface (web+TUI) + all impls/fakes; McpLedgerClient reads T65's serverInfo.title (getServerVersion) primary + 'Project:' instructions fallback, cached at connect; fake+real-carrier tests. Reviewer approve 0/0. Merged d30a148 (auto-merged cleanly with T57's TUI test edits); integration 530 pass."
 
-### T67 — planned
+### T67 — done
 
 - createdAt: 2026-06-02T08:48:59.249Z
-- updatedAt: 2026-06-02T08:48:59.249Z
+- updatedAt: 2026-06-02T12:56:55.865Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Web: render '[<dir>] LLM ledgers' as document.title + header"
@@ -322,11 +326,13 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T66"]
 - ledgerRefs: ["goals:G2"]
+- resultCommit: 66dddd4
+- completion: "Web: appTitle = '[<dir>] LLM ledgers' from client.displayName() (fallback 'LLM ledgers' pre-connect); useEffect sets document.title; header span renders it; index.html default updated. happy-dom test asserts both document.title + header. Reviewer approve 0/0."
 
-### T68 — planned
+### T68 — done
 
 - createdAt: 2026-06-02T08:49:03.471Z
-- updatedAt: 2026-06-02T08:49:03.471Z
+- updatedAt: 2026-06-02T12:56:58.657Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "TUI: render '[<dir>] LLM ledgers' as the header"
@@ -335,6 +341,8 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T66"]
 - ledgerRefs: ["goals:G2"]
+- resultCommit: be4287b
+- completion: "TUI: header renders '[<dir>] LLM ledgers' from client.displayName() (fallback 'ledger-tui'); header layout (conn status, LiveBadge, hints) intact. ink test asserts frame contains '[cq1] LLM ledgers'. Reviewer approve 0/0."
 
 ## M16
 
