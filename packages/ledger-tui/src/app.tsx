@@ -46,6 +46,7 @@ import {
   DEFECTS_LEDGER,
   TASKS_LEDGER,
   HYPOTHESIS_LEDGER,
+MILESTONES_SCHEMA,
 } from "@cq/ledger";
 
 const MILESTONES = "milestones";
@@ -139,15 +140,18 @@ function answerableRows(view: FetchedLedger): Row[] {
 
 type ListEntry<T> =
   | { t: "item"; item: T; itemIdx: number }
-  | { t: "header"; label: string };
+  | { t: "header"; label: string; node?: React.ReactNode };
 
 /**
  * Build entries for a non-milestones ledger: per-milestone subsection headers
  * interleaved with the filtered item rows, preserving fetch_ledger group order.
  * For the milestones ledger itself the list is flat (no headers).
  * The returned `itemIdx` matches the item's index in `filteredRows`.
+ *
+ * `milestonesSchema` is used to color the status token in each header via
+ * statusColor() so open/done/postponed/blocked render in their semantic color.
  */
-function buildItemEntries(view: FetchedLedger, filteredRows: Row[], isMilestones: boolean): ListEntry<Row>[] {
+function buildItemEntries(view: FetchedLedger, filteredRows: Row[], isMilestones: boolean, milestonesSchema: LedgerSchema): ListEntry<Row>[] {
   if (isMilestones) {
     return filteredRows.map((r, i) => ({ t: "item", item: r, itemIdx: i }));
   }
@@ -163,7 +167,17 @@ function buildItemEntries(view: FetchedLedger, filteredRows: Row[], isMilestones
     const bucket = rowsByMilestone.get(g.id);
     if (bucket === undefined || bucket.length === 0) continue;
     const title = g.milestone.title ? ` ${g.milestone.title}` : "";
-    entries.push({ t: "header", label: `${g.id}${title} [${g.milestone.status}]` });
+    const label = `${g.id}${title} [${g.milestone.status}]`;
+    const statusToken = g.milestone.status;
+    const color = statusColor(statusToken, milestonesSchema);
+    const node = (
+      <Text>
+        {g.id}{title}{" ["}
+        <Text color={color}>{statusToken}</Text>
+        {"]"}
+      </Text>
+    );
+    entries.push({ t: "header", label, node });
     for (const { row, itemIdx } of bucket) {
       entries.push({ t: "item", item: row, itemIdx });
     }
@@ -800,7 +814,7 @@ export function App({
     );
     // Build entries: active section via buildItemEntries, then a header +
     // flat archive rows appended when archive is shown.
-    const activeEntries = buildItemEntries(top.view, rowsArr, isMilestonesLedger);
+    const activeEntries = buildItemEntries(top.view, rowsArr, isMilestonesLedger, MILESTONES_SCHEMA);
     let itemEntries: ListEntry<Row>[];
     if (top.showArchive) {
       const archiveEntries: ListEntry<Row>[] = top.archiveLoading
@@ -1127,7 +1141,7 @@ function ScrollList<T>({
             return (
               <Text key={`h-${visI}`} bold dimColor wrap="truncate-end">
                 {"  "}
-                {entry.label}
+                {entry.node !== undefined ? entry.node : entry.label}
               </Text>
             );
           }

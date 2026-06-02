@@ -10,7 +10,7 @@
  * into a single chunk and drop the second key.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import React from "react";
 import { render } from "ink-testing-library";
 import { App } from "../src/app.js";
@@ -1330,5 +1330,142 @@ describe("ledger-tui column selector (T62)", () => {
     expect(f).toContain("opus"); // suggestedModel still shown
     expect(f).toContain("backend"); // tags still shown
     h.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Milestone subsection header: colored status token (T81)
+// ---------------------------------------------------------------------------
+
+/**
+ * A client with two milestone groups whose milestones have different statuses
+ * so we can assert that each header's status token is rendered in the right
+ * statusColor (open→cyan, done→green via the milestones schema).
+ */
+class ColoredHeaderClient implements LedgerClient {
+  displayName(): string { return "cq1"; }
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [{ name: "tasks", itemCount: 2 }];
+  }
+  async fetchLedger(id: string): Promise<FetchedLedger> {
+    if (id !== "tasks") throw new Error(`Ledger not found: ${id}`);
+    return {
+      id: "tasks",
+      schema: {
+        statusValues: ["planned", "done"],
+        terminalStatuses: ["done"],
+        fields: { headline: { type: "string", required: true } },
+        idPrefix: "T",
+      },
+      counters: { milestone: 2, item: 2 },
+      milestones: [
+        {
+          id: "M1",
+          milestone: { id: "M1", status: "open", title: "Open sprint", description: "" },
+          items: [
+            { id: "T1", milestoneId: "M1", status: "planned", fields: { headline: "alpha" }, createdAt: TS, updatedAt: TS },
+          ],
+        },
+        {
+          id: "M2",
+          milestone: { id: "M2", status: "done", title: "Done sprint", description: "" },
+          items: [
+            { id: "T2", milestoneId: "M2", status: "done", fields: { headline: "beta" }, createdAt: TS, updatedAt: TS },
+          ],
+        },
+      ],
+      archivePointers: [],
+    };
+  }
+  async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
+  async fetchItem(): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<Item> { throw new Error("not used"); }
+  async updateItem(): Promise<Item> { throw new Error("not used"); }
+  async ftsSearch(): Promise<never[]> { return []; }
+  async createMilestone(): Promise<Item> { throw new Error("not used"); }
+  async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async close(): Promise<void> { /* no-op */ }
+}
+
+// Resolve chalk via ink's dependency to force ANSI output in tests.
+// (same approach as status.test.tsx)
+const inkPath = import.meta.resolve("ink");
+const chalkPath = import.meta.resolve("chalk", inkPath);
+const chalkMod = await import(chalkPath);
+const chalk = chalkMod.default ?? chalkMod;
+
+// ANSI color codes (level=1 short-form): cyan=[36m, green=[32m
+const ANSI_CYAN = "[36m";
+const ANSI_GREEN = "[32m";
+
+describe("ledger-tui milestone header colored status token (T81)", () => {
+  let prevLevel: number;
+  beforeAll(() => {
+    prevLevel = (chalk as { level: number }).level;
+    (chalk as { level: number }).level = 1;
+  });
+  afterAll(() => {
+    (chalk as { level: number }).level = prevLevel;
+  });
+
+  it("open milestone header renders its status token in cyan (start bucket)", async () => {
+    const client = new ColoredHeaderClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open tasks
+    await tick(40);
+    const f = r.lastFrame() ?? "";
+    r.unmount();
+    // The frame must contain the open status token in cyan (ANSI 36).
+    // The header label contains "open" and the surrounding text; the ANSI code
+    // appears immediately before "open" due to chalk coloring.
+    expect(f).toContain(ANSI_CYAN);
+    // The frame contains both milestone headers with their status tokens.
+    expect(f).toContain("M1");
+    expect(f).toContain("open");
+  });
+
+  it("done milestone header renders its status token in green (done bucket)", async () => {
+    const client = new ColoredHeaderClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open tasks
+    await tick(40);
+    const f = r.lastFrame() ?? "";
+    r.unmount();
+    // The frame must contain the done status token in green (ANSI 32).
+    expect(f).toContain(ANSI_GREEN);
+    // The frame contains the done milestone header.
+    expect(f).toContain("M2");
+    expect(f).toContain("done");
+  });
+
+  it("open and done milestone headers render in distinct colors", async () => {
+    const client = new ColoredHeaderClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open tasks
+    await tick(40);
+    const f = r.lastFrame() ?? "";
+    r.unmount();
+    // Both color codes appear in the same frame: cyan for "open", green for "done".
+    // This confirms distinct coloring rather than uncolored plain text.
+    expect(f).toContain(ANSI_CYAN);
+    expect(f).toContain(ANSI_GREEN);
+  });
+
+  it("non-milestone rows (item entries) are unchanged by the header change", async () => {
+    const client = new ColoredHeaderClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open tasks
+    await tick(40);
+    const f = r.lastFrame() ?? "";
+    r.unmount();
+    // Item rows T1 and T2 still appear with their ids and summaries.
+    expect(f).toContain("T1");
+    expect(f).toContain("alpha");
+    expect(f).toContain("T2");
+    expect(f).toContain("beta");
   });
 });
