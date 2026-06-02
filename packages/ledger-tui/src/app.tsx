@@ -36,6 +36,7 @@ import {
   type StatusFilter,
 } from "./status.js";
 import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary } from "./types.js";
+import { defectFixTaskIds, hypothesisRelationships, DEFECTS_LEDGER, TASKS_LEDGER, HYPOTHESIS_LEDGER } from "@cq/ledger";
 
 const MILESTONES = "milestones";
 /** Provenance author stamped on writes made by a human through this editor. */
@@ -208,6 +209,11 @@ export function App({
   const [live, setLive] = useState<LiveStats | null>(null);
   const [filter, setFilter] = useState<StatusFilter>({ kind: "all" });
   const [panel, setPanel] = useState<PanelLayout>(PANEL_DEFAULT);
+  /**
+   * Cross-ledger item cache: lazily fetched secondary ledgers used for
+   * relationship resolution (e.g. tasks when viewing defects).
+   */
+  const [crossItems, setCrossItems] = useState<Map<string, Item[]>>(new Map());
   const refreshRef = React.useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -283,6 +289,34 @@ export function App({
       })();
     };
   }, [client, reloadItems]);
+
+  // Lazily fetch secondary ledgers needed for relationship resolution.
+  // When the user is browsing defects, fetch tasks (for fix-task links).
+  useEffect(() => {
+    if (top.kind !== "items") return;
+    let secondary: string | null = null;
+    if (top.ledger === DEFECTS_LEDGER) secondary = TASKS_LEDGER;
+    if (secondary === null || crossItems.has(secondary)) return;
+    let alive = true;
+    client.fetchLedger(secondary).then((view) => {
+      if (!alive) return;
+      const items = view.milestones.flatMap((g) => g.items);
+      setCrossItems((prev) => {
+        const next = new Map(prev);
+        next.set(secondary!, items);
+        return next;
+      });
+    }).catch(() => {
+      /* silently ignore — cross items are best-effort */
+      if (!alive) return;
+      setCrossItems((prev) => {
+        const next = new Map(prev);
+        next.set(secondary!, []);
+        return next;
+      });
+    });
+    return () => { alive = false; };
+  }, [top.kind === "items" ? top.ledger : null, client, crossItems]);
 
   // Live updates. REMOTE (liveUrl): connect to the server's /ws, refetch the
   // current frame on a pushed change, expose health to the status bar. EMBEDDED
@@ -678,6 +712,10 @@ export function App({
         emptyLabel={filter.kind === "all" ? "(no items — press n)" : "(no items match filter — f)"}
       />
     );
+    // Flat list of all items in the current view (for relationship resolution).
+    const viewItems = allRows.map((r) => r.item);
+    // Cross-ledger items for secondary relationship lookups.
+    const taskItems = crossItems.get(TASKS_LEDGER) ?? [];
     contentEl =
       cur !== undefined ? (
         <ContentPane
@@ -688,6 +726,8 @@ export function App({
           height={contentInnerH}
           scroll={top.scroll}
           readOnly={cursorInArchive}
+          viewItems={viewItems}
+          taskItems={taskItems}
         />
       ) : (
         <Text dimColor>(no item selected)</Text>
@@ -963,6 +1003,8 @@ function ContentPane({
   height,
   scroll,
   readOnly = false,
+  viewItems = [],
+  taskItems = [],
 }: {
   row: Row;
   ledger: string;
@@ -972,6 +1014,17 @@ function ContentPane({
   scroll: number;
   /** When true, display a read-only badge (archived item). */
   readOnly?: boolean;
+  /**
+   * All items currently loaded in the view (used for relationship resolution).
+   * For the hypothesis ledger: all hypothesis items for ancestry/children.
+   * For the defects ledger: all defect items for forward fix-task links.
+   */
+  viewItems?: readonly Item[];
+  /**
+   * Items from the tasks ledger (lazily fetched); used for defect → fix-task
+   * reverse-link resolution.
+   */
+  taskItems?: readonly Item[];
 }): React.ReactElement {
   const f = row.item.fields;
   const allEntries = Object.entries(f) as Array<[string, FieldValue]>;
@@ -988,11 +1041,29 @@ function ContentPane({
     : orderItemFields(allEntries);
   const { author, session } = row.item;
   const hasProvenance = author !== undefined || session !== undefined;
+
+  // Relationship blocks (T48): defects → fix tasks; hypothesis → ancestry + children.
+  const isDefect = ledger === DEFECTS_LEDGER;
+  const isHypothesis = ledger === HYPOTHESIS_LEDGER;
+  const fixTaskIds = isDefect ? defectFixTaskIds(row.item.id, viewItems, taskItems) : [];
+  const hypoRels = isHypothesis ? hypothesisRelationships(row.item.id, viewItems) : null;
+
+  // Helper: find an item by id across viewItems and taskItems.
+  const findItem = (id: string): Item | undefined =>
+    (viewItems as Item[]).find((i) => i.id === id) ??
+    (taskItems as Item[]).find((i) => i.id === id);
+
   // Estimate total height to clamp scrolling: short fields are one line each;
   // long fields are a header line + their wrapped body + a top margin.
   let est = 4 + (hasProvenance ? 1 : 0); // header + status + milestone + timestamps (+ provenance)
   for (const [, v] of entries) {
     est += isShortField(v) ? 1 : 2 + estimateLines(fieldToString(v), width);
+  }
+  // Relationship blocks contribute ~(N+2) lines each.
+  if (fixTaskIds.length > 0) est += fixTaskIds.length + 2;
+  if (hypoRels !== null) {
+    if (hypoRels.ancestors.length > 0) est += hypoRels.ancestors.length + 2;
+    if (hypoRels.children.length > 0) est += hypoRels.children.length + 2;
   }
   const maxScroll = Math.max(0, est - height);
   const clamped = Math.min(scroll, maxScroll);
@@ -1048,6 +1119,82 @@ function ContentPane({
               </Box>
             ),
           )
+        )}
+        {/* Fix tasks block: shown when the selected item is a defect. */}
+        {isDefect && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold color="gray">Fix tasks</Text>
+            {fixTaskIds.length === 0 ? (
+              <Text dimColor>  (none)</Text>
+            ) : (
+              fixTaskIds.map((tid) => {
+                const t = findItem(tid);
+                return (
+                  <Text key={tid}>
+                    {"  "}
+                    <Text bold>{tid}</Text>
+                    {t !== undefined ? (
+                      <>
+                        {" ["}
+                        <Text color={statusColor(t.status, schema)}>{t.status}</Text>
+                        {"] "}
+                        <Text>{summarize(t)}</Text>
+                      </>
+                    ) : null}
+                  </Text>
+                );
+              })
+            )}
+          </Box>
+        )}
+        {/* Hypothesis tree block: ancestry chain then direct children. */}
+        {isHypothesis && hypoRels !== null && (hypoRels.ancestors.length > 0 || hypoRels.children.length > 0) && (
+          <Box flexDirection="column" marginTop={1}>
+            {hypoRels.ancestors.length > 0 && (
+              <>
+                <Text bold color="gray">Ancestry</Text>
+                {hypoRels.ancestors.map((aid) => {
+                  const a = findItem(aid);
+                  return (
+                    <Text key={aid}>
+                      {"  "}
+                      <Text bold>{aid}</Text>
+                      {a !== undefined ? (
+                        <>
+                          {" ["}
+                          <Text color={statusColor(a.status, schema)}>{a.status}</Text>
+                          {"] "}
+                          <Text>{summarize(a)}</Text>
+                        </>
+                      ) : null}
+                    </Text>
+                  );
+                })}
+              </>
+            )}
+            {hypoRels.children.length > 0 && (
+              <>
+                <Text bold color="gray">Children</Text>
+                {hypoRels.children.map((cid) => {
+                  const c = findItem(cid);
+                  return (
+                    <Text key={cid}>
+                      {"  "}
+                      <Text bold>{cid}</Text>
+                      {c !== undefined ? (
+                        <>
+                          {" ["}
+                          <Text color={statusColor(c.status, schema)}>{c.status}</Text>
+                          {"] "}
+                          <Text>{summarize(c)}</Text>
+                        </>
+                      ) : null}
+                    </Text>
+                  );
+                })}
+              </>
+            )}
+          </Box>
         )}
       </Box>
     </Box>
