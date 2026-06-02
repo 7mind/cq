@@ -45,6 +45,22 @@ const bugsSchema: LedgerSchema = {
   transitions: { open: ["wip", "closed"], wip: ["closed", "open"], closed: [] },
 };
 
+const tasksSchema: LedgerSchema = {
+  statusValues: ["planned", "wip", "done"],
+  terminalStatuses: ["done"],
+  idPrefix: "T",
+  transitions: { planned: ["wip", "done"], wip: ["done"], done: [] },
+  fields: {
+    headline: { type: "string", required: true },
+    // `description` is on the long-field denylist → never a column.
+    description: { type: "string", required: false },
+    // `suggestedModel` is column-eligible and is the tasks-ledger default.
+    suggestedModel: { type: "string", required: false },
+    // `tags` is column-eligible (string[]) but not a default column.
+    tags: { type: "string[]", required: false },
+  },
+};
+
 const questionsSchema: LedgerSchema = {
   statusValues: ["open", "answered", "withdrawn"],
   terminalStatuses: ["answered", "withdrawn"],
@@ -101,6 +117,18 @@ export class FakeClient implements LedgerClient {
           id: "M1",
           items: [
             { id: "D1", milestoneId: "M1", status: "open", fields: { headline: "warp leak", note: "intermittent" }, createdAt: TS, updatedAt: TS },
+          ],
+        },
+      ],
+    },
+    tasks: {
+      schema: tasksSchema,
+      groups: [
+        {
+          id: "M1",
+          items: [
+            { id: "T1", milestoneId: "M1", status: "planned", fields: { headline: "wire mcp", suggestedModel: "opus", tags: ["backend"] }, createdAt: TS, updatedAt: TS },
+            { id: "T2", milestoneId: "M1", status: "wip", fields: { headline: "tui columns", suggestedModel: "sonnet", tags: ["ui", "tui"] }, createdAt: TS, updatedAt: TS },
           ],
         },
       ],

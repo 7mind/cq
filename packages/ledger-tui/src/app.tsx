@@ -37,7 +37,15 @@ import {
   type StatusFilter,
 } from "./status.js";
 import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary } from "./types.js";
-import { defectFixTaskIds, hypothesisRelationships, DEFECTS_LEDGER, TASKS_LEDGER, HYPOTHESIS_LEDGER } from "@cq/ledger";
+import {
+  defectFixTaskIds,
+  hypothesisRelationships,
+  eligibleColumnFields,
+  defaultColumns,
+  DEFECTS_LEDGER,
+  TASKS_LEDGER,
+  HYPOTHESIS_LEDGER,
+} from "@cq/ledger";
 
 const MILESTONES = "milestones";
 /** Provenance author stamped on writes made by a human through this editor. */
@@ -180,7 +188,8 @@ type Overlay =
   | { t: "editTitle"; row: Row }
   | { t: "createMilestone" }
   | { t: "createItem"; milestones: Item[] }
-  | { t: "filter" };
+  | { t: "filter" }
+  | { t: "pickColumns"; ledger: string };
 
 // ---------------------------------------------------------------------------
 // App
@@ -218,6 +227,15 @@ export function App({
    * relationship resolution (e.g. tasks when viewing defects).
    */
   const [crossItems, setCrossItems] = useState<Map<string, Item[]>>(new Map());
+  /**
+   * Per-ledger extra-column selection, held IN MEMORY for the session only
+   * (Q29 — no server/config persistence). A ledger absent from the map has
+   * not been customised this session; its columns are seeded lazily from
+   * `defaultColumns(ledgerName)` on first read. Selecting columns through the
+   * picker writes the explicit set here, which then survives navigation
+   * within the session.
+   */
+  const [columnsByLedger, setColumnsByLedger] = useState<Map<string, string[]>>(new Map());
   const refreshRef = React.useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -245,6 +263,20 @@ export function App({
     setStack((s) => {
       const t = s[s.length - 1]!;
       return [...s.slice(0, -1), { ...t, ...patch } as Frame];
+    });
+  }, []);
+
+  // Effective extra columns for a ledger: the session selection if the user
+  // has customised it, else the per-ledger defaults (seeded lazily).
+  const columnsFor = useCallback(
+    (ledger: string): string[] => columnsByLedger.get(ledger) ?? defaultColumns(ledger),
+    [columnsByLedger],
+  );
+  const setColumnsFor = useCallback((ledger: string, cols: string[]): void => {
+    setColumnsByLedger((m) => {
+      const next = new Map(m);
+      next.set(ledger, cols);
+      return next;
     });
   }, []);
 
@@ -586,6 +618,7 @@ export function App({
       else if (input === "e" && cur && !cursorInArchive)
         setOverlay(isMilestonesLedger ? { t: "editTitle", row: cur } : { t: "pickField", row: cur });
       else if (input === "f") setOverlay({ t: "filter" });
+      else if (input === "c") setOverlay({ t: "pickColumns", ledger: top.ledger });
       else if (input === "/") setOverlay({ t: "search" });
       else if (input === "A") void toggleArchive();
     },
@@ -670,11 +703,24 @@ export function App({
     hints =
       top.focus === "content"
         ? `↑↓ scroll · s status${answerHint} · e edit · o/[ ] panes · Esc back to list${cursorInArchive ? " [read-only]" : ""}`
-        : `↑↓ move · Enter open · s status${answerHint} · e edit · n new · f filter · / search · o/[ ] panes${archiveHint} · Esc back`;
+        : `↑↓ move · Enter open · s status${answerHint} · e edit · n new · f filter · c columns · / search · o/[ ] panes${archiveHint} · Esc back`;
     // Column widths: computed over all displayed rows (active + archive) so
     // columns align consistently across the whole list.
     const maxIdW = allRows.reduce((m, r) => Math.max(m, r.item.id.length), 2);
     const maxStatusW = schema.statusValues.reduce((m, s) => Math.max(m, s.length), 4);
+    // Extra columns (T62): the session's per-ledger selection, restricted to
+    // fields the schema still declares as column-eligible. Each column's width
+    // is the max of its header (field name) and any rendered cell across rows,
+    // so cells align; the summary column then absorbs whatever width remains.
+    const extraColumns = columnsFor(top.ledger).filter((c) =>
+      eligibleColumnFields(schema).includes(c),
+    );
+    const columnWidths = extraColumns.map((field) =>
+      allRows.reduce(
+        (m, r) => Math.max(m, fieldToString(r.item.fields[field]).length),
+        field.length,
+      ),
+    );
     // Build entries: active section via buildItemEntries, then a header +
     // flat archive rows appended when archive is shown.
     const activeEntries = buildItemEntries(top.view, rowsArr, isMilestonesLedger);
@@ -698,7 +744,13 @@ export function App({
       <ScrollList
         items={allRows}
         entries={itemEntries}
-        getLabel={(r) => `${r.item.id.padEnd(maxIdW)} ${r.item.status.padEnd(maxStatusW)} ${summarize(r.item)}`}
+        getLabel={(r) => {
+          const cells = extraColumns
+            .map((f, ci) => fieldToString(r.item.fields[f]).padEnd(columnWidths[ci]!))
+            .join(" ");
+          const extra = cells.length > 0 ? `${cells} ` : "";
+          return `${r.item.id.padEnd(maxIdW)} ${r.item.status.padEnd(maxStatusW)} ${extra}${summarize(r.item)}`;
+        }}
         renderLabel={(r, idx) => (
           <ItemRowLabel
             id={r.item.id}
@@ -707,6 +759,9 @@ export function App({
             schema={schema}
             idW={maxIdW}
             statusW={maxStatusW}
+            extraColumns={extraColumns}
+            columnWidths={columnWidths}
+            fields={r.item.fields}
             dimmed={top.showArchive && idx >= activeCount}
           />
         )}
@@ -808,6 +863,11 @@ export function App({
                 patchTop({ cursor: 0 });
                 setOverlay(null);
               }}
+              columnsFor={columnsFor}
+              onColumns={(ledger, cols) => {
+                setColumnsFor(ledger, cols);
+                setOverlay(null);
+              }}
               setOverlay={setOverlay}
               onCancel={() => setOverlay(null)}
             />
@@ -853,8 +913,9 @@ function LiveBadge({ stats }: { stats: LiveStats | null }): React.ReactElement {
 
 /**
  * One item row rendered as aligned columns: id (padded to idW) | status
- * (padded to statusW) | summary (fills remaining width, truncates at end).
- * The whole row is dimmed when the item is terminal.
+ * (padded to statusW) | extra columns (each padded to its column width) |
+ * summary (fills remaining width, truncates at end). The whole row is dimmed
+ * when the item is terminal.
  */
 function ItemRowLabel({
   id,
@@ -863,6 +924,9 @@ function ItemRowLabel({
   schema,
   idW,
   statusW,
+  extraColumns = [],
+  columnWidths = [],
+  fields = {},
   dimmed = false,
 }: {
   id: string;
@@ -873,6 +937,12 @@ function ItemRowLabel({
   idW: number;
   /** Width of the status column (chars), padded with spaces on the right. */
   statusW: number;
+  /** Extra column field names rendered after status, before summary (T62). */
+  extraColumns?: readonly string[];
+  /** Per-extra-column widths, index-aligned with `extraColumns`. */
+  columnWidths?: readonly number[];
+  /** The item's fields, used to read extra-column cell values. */
+  fields?: Record<string, FieldValue>;
   /** Extra dimming applied to archived rows. */
   dimmed?: boolean;
 }): React.ReactElement {
@@ -882,7 +952,13 @@ function ItemRowLabel({
   const statusPadded = status.padEnd(statusW);
   return (
     <Text dimColor={terminal || dimmed}>
-      {idPadded}{" "}<Text color={color}>{statusPadded}</Text>{" "}{summary}
+      {idPadded}{" "}<Text color={color}>{statusPadded}</Text>{" "}
+      {extraColumns.map((field, ci) => (
+        <React.Fragment key={field}>
+          <Text dimColor>{fieldToString(fields[field]).padEnd(columnWidths[ci] ?? 0)}</Text>{" "}
+        </React.Fragment>
+      ))}
+      {summary}
     </Text>
   );
 }
@@ -1322,6 +1398,72 @@ function LiveSearch({
 }
 
 // ---------------------------------------------------------------------------
+// Column picker (T62) — a keyboard-driven multi-select over the schema's
+// column-eligible fields. Space toggles a field, Enter commits the selection,
+// Esc cancels. The selection is held in App state IN MEMORY for the session.
+// ---------------------------------------------------------------------------
+
+function ColumnPicker({
+  eligible,
+  selected,
+  onSubmit,
+  onCancel,
+}: {
+  eligible: readonly string[];
+  selected: readonly string[];
+  onSubmit: (cols: string[]) => void;
+  onCancel: () => void;
+}): React.ReactElement {
+  const [chosen, setChosen] = useState<Set<string>>(new Set(selected));
+  const [cursor, setCursor] = useState(0);
+  const sel = eligible.length === 0 ? 0 : Math.min(cursor, eligible.length - 1);
+
+  useInput((input, key) => {
+    if (key.escape) onCancel();
+    else if (key.upArrow || input === "k") setCursor((c) => Math.max(0, Math.min(c, eligible.length - 1) - 1));
+    else if (key.downArrow || input === "j") setCursor((c) => Math.min(eligible.length - 1, c + 1));
+    else if (input === " ") {
+      const field = eligible[sel];
+      if (field !== undefined) {
+        setChosen((prev) => {
+          const next = new Set(prev);
+          if (next.has(field)) next.delete(field);
+          else next.add(field);
+          return next;
+        });
+      }
+    } else if (key.return) {
+      // Commit in eligible-field order so columns render in a stable order.
+      onSubmit(eligible.filter((f) => chosen.has(f)));
+    }
+  });
+
+  if (eligible.length === 0) {
+    return (
+      <Box flexDirection="column">
+        <Text bold>columns</Text>
+        <Text dimColor>(no column-eligible fields) · Esc</Text>
+      </Box>
+    );
+  }
+  return (
+    <Box flexDirection="column">
+      <Text bold>columns</Text>
+      <Text dimColor>Space toggle · Enter apply · Esc cancel</Text>
+      <Box marginTop={1} flexDirection="column">
+        {eligible.map((field, i) => (
+          <Text key={field} inverse={i === sel}>
+            {i === sel ? "› " : "  "}
+            {chosen.has(field) ? "[x] " : "[ ] "}
+            {field}
+          </Text>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Overlays (edit / create / search) — own input while mounted
 // ---------------------------------------------------------------------------
 
@@ -1337,6 +1479,8 @@ function Overlays({
   onCreateMilestone,
   onCreateItem,
   onFilter,
+  columnsFor,
+  onColumns,
   setOverlay,
   onCancel,
 }: {
@@ -1351,6 +1495,8 @@ function Overlays({
   onCreateMilestone: (title: string) => void;
   onCreateItem: (milestoneId: string, status: string, fields: Record<string, FieldValue>) => void;
   onFilter: (f: StatusFilter) => void;
+  columnsFor: (ledger: string) => string[];
+  onColumns: (ledger: string, cols: string[]) => void;
   setOverlay: (o: Overlay | null) => void;
   onCancel: () => void;
 }): React.ReactElement {
@@ -1381,6 +1527,17 @@ function Overlays({
     }
     case "search":
       return <LiveSearch search={search} onOpenHit={onOpenHit} onCancel={onCancel} />;
+    case "pickColumns": {
+      const eligible = view !== null ? eligibleColumnFields(view.schema) : [];
+      return (
+        <ColumnPicker
+          eligible={eligible}
+          selected={columnsFor(overlay.ledger)}
+          onSubmit={(cols) => onColumns(overlay.ledger, cols)}
+          onCancel={onCancel}
+        />
+      );
+    }
     case "status": {
       // Guard-aligned quick transitions: when the schema declares a
       // `transitions` map, offer ONLY the statuses legal from the item's

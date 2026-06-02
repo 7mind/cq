@@ -1114,3 +1114,133 @@ describe("ledger-tui M6 cross-cutting regression (T34)", () => {
     r.unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Column selector overlay + extra columns, per-ledger in memory (T62)
+// ---------------------------------------------------------------------------
+
+const SPACE = " ";
+
+/**
+ * Extract the left list-pane portion of each rendered row (text before the
+ * vertical border that splits the list pane from the content pane). The
+ * content pane echoes an item's full field set, so a substring check against
+ * the whole frame cannot tell a list COLUMN apart from a detail FIELD; slicing
+ * to the list side makes column assertions unambiguous.
+ */
+function listSide(frame: string): string {
+  return frame
+    .split("\n")
+    .map((line) => {
+      const i = line.indexOf("│", line.indexOf("│") + 1);
+      return i >= 0 ? line.slice(0, i) : line;
+    })
+    .join("\n");
+}
+
+/**
+ * Press DOWN until the column picker's cursor (`› `) sits on `field`,
+ * resilient to a dropped first keystroke on the freshly-mounted overlay.
+ */
+async function waitForCursorOn(h: Harness, field: string, ms = 1500): Promise<void> {
+  const end = Date.now() + ms;
+  const onField = (): boolean =>
+    h.frame().split("\n").some((l) => l.includes("› ") && l.includes(field));
+  while (Date.now() < end) {
+    if (onField()) return;
+    await h.key(DOWN);
+  }
+  throw new Error(`waitForCursorOn: cursor never reached '${field}'`);
+}
+
+/** Navigate the freshly-mounted App to the tasks ledger and open it. */
+async function openTasks(h: Harness): Promise<void> {
+  // Ledgers sorted: bugs(0), milestones(1), questions(2), reviews(3), tasks(4).
+  await h.key(DOWN);
+  await h.key(DOWN);
+  await h.key(DOWN);
+  await h.key(DOWN);
+  await h.key(ENTER);
+  await waitFor(h, "T1 ");
+}
+
+describe("ledger-tui column selector (T62)", () => {
+  it("opening the tasks ledger shows the suggestedModel column by default", async () => {
+    const h = await mount();
+    await openTasks(h);
+    const f = listSide(h.frame());
+    // defaultColumns("tasks") === ["suggestedModel"]; the cell values appear in
+    // the list rows alongside id/status/summary.
+    expect(f).toContain("opus"); // T1.suggestedModel
+    expect(f).toContain("sonnet"); // T2.suggestedModel
+    // The summary (headline) still renders after the extra column.
+    expect(f).toContain("wire mcp");
+    expect(f.indexOf("opus")).toBeLessThan(f.indexOf("wire mcp"));
+    h.unmount();
+  });
+
+  it("the column overlay toggles a field on/off and rows gain/lose that column", async () => {
+    const h = await mount();
+    await openTasks(h);
+    // Default: suggestedModel shown, tags NOT shown — assert on the list side
+    // only (the content pane always echoes the selected item's tags field).
+    expect(listSide(h.frame())).not.toContain("backend"); // T1.tags = ["backend"]
+
+    // Open the column picker; eligible fields: suggestedModel, tags.
+    await h.key("c");
+    await waitFor(h, "Space toggle");
+    const picker = h.frame();
+    expect(picker).toContain("suggestedModel");
+    expect(picker).toContain("tags");
+    expect(picker).toContain("[x] suggestedModel"); // default selection checked
+    expect(picker).toContain("[ ] tags"); // not selected
+
+    // Move cursor to "tags" and toggle it on, then apply. A freshly-mounted
+    // overlay can drop the first keystroke before its input handler attaches;
+    // gate the DOWN on the cursor (›) actually landing on the tags row.
+    await waitForCursorOn(h, "tags");
+    await h.key(SPACE); // toggle tags on
+    await waitFor(h, "[x] tags"); // confirm the toggle registered
+    await h.key(ENTER); // apply
+    await waitFor(h, "backend"); // tags cell now rendered in the rows
+    expect(listSide(h.frame())).toContain("backend"); // T1.tags in the list row
+    expect(listSide(h.frame())).toContain("opus"); // suggestedModel still present
+
+    // Re-open and toggle suggestedModel OFF; the column disappears from rows.
+    await h.key("c");
+    await waitFor(h, "Space toggle");
+    await waitForCursorOn(h, "suggestedModel"); // cursor starts at index 0
+    await h.key(SPACE); // toggle suggestedModel off
+    await waitFor(h, "[ ] suggestedModel"); // confirm the toggle registered
+    await h.key(ENTER);
+    await tick(40);
+    const f = listSide(h.frame());
+    expect(f).not.toContain("opus"); // suggestedModel column removed from rows
+    expect(f).toContain("backend"); // tags column remains
+    h.unmount();
+  });
+
+  it("column selection persists while navigating away and back within the session", async () => {
+    const h = await mount();
+    await openTasks(h);
+    // Turn on the tags column (in addition to the default suggestedModel).
+    await h.key("c");
+    await waitFor(h, "Space toggle");
+    await waitForCursorOn(h, "tags");
+    await h.key(SPACE); // tags on
+    await waitFor(h, "[x] tags");
+    await h.key(ENTER);
+    await waitFor(h, "backend");
+
+    // Navigate away: Esc back to the ledgers list, then re-open tasks.
+    await h.key(ESC);
+    await waitFor(h, "› tasks"); // cursor restored on the tasks row
+    await h.key(ENTER);
+    await waitFor(h, "T1 ");
+    // The session selection (suggestedModel + tags) survived the round trip.
+    const f = listSide(h.frame());
+    expect(f).toContain("opus"); // suggestedModel still shown
+    expect(f).toContain("backend"); // tags still shown
+    h.unmount();
+  });
+});
