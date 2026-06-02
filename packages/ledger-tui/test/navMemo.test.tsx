@@ -40,6 +40,27 @@ const TS = "2026-01-01T00:00:00.000Z";
 const ENTER = "\r";
 const tick = (ms = 25): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Wait until the instrumented builders go QUIESCENT — i.e. the total invocation
+ * count stops changing across a full poll interval. The mount/data-load path
+ * fires a bounded burst of data-driven builds whose timing varies with N and
+ * CPU load; polling for stability (rather than a fixed sleep) ensures no
+ * trailing settle-render lands in a later measurement window, making the
+ * counter assertions deterministic under full-suite contention.
+ */
+async function waitQuiescent(): Promise<void> {
+  let prev = -1;
+  for (let i = 0; i < 200; i++) {
+    const cur =
+      derivationCounters.filterVisibleRows +
+      derivationCounters.computeColumnLayout +
+      derivationCounters.buildItemEntries;
+    if (cur === prev) return; // stable across one full poll interval
+    prev = cur;
+    await tick(15);
+  }
+}
+
 const tasksSchema: LedgerSchema = {
   statusValues: ["planned", "wip", "done"],
   terminalStatuses: ["done"],
@@ -115,11 +136,16 @@ describe("ledger-tui navigation memoization (T85)", () => {
     const r = render(<App client={client} />);
     await tick(); // enumerateLedgers resolves
 
+    // `derivationCounters` is module-global and shared across every test file in
+    // the bun process, so it arrives here already polluted by prior tests' App
+    // renders. Reset BEFORE opening the ledger so the mount-cap assertion counts
+    // only this test's data-driven builds (not cross-file accumulation).
+    resetDerivationCounters();
     r.stdin.write(ENTER); // open the only ledger (tasks)
     // Wait for the items frame to settle (first item id visible).
     for (let i = 0; i < 100 && !(r.lastFrame() ?? "").includes("T1"); i++) await tick(10);
     expect(r.lastFrame() ?? "").toContain("T1");
-    await tick(30); // let any settle-time re-renders flush
+    await waitQuiescent(); // let ALL settle-time re-renders flush before measuring
 
     // The data-driven build happened a bounded, small number of times — and
     // crucially NOT proportional to N. Allow a few re-renders during mount.
@@ -150,7 +176,7 @@ describe("ledger-tui navigation memoization (T85)", () => {
     await tick();
     r.stdin.write(ENTER); // open tasks
     for (let i = 0; i < 100 && !(r.lastFrame() ?? "").includes("T1"); i++) await tick(10);
-    await tick(30);
+    await waitQuiescent();
 
     resetDerivationCounters();
     // Open the filter overlay and pick a non-"all" filter. The overlay's first

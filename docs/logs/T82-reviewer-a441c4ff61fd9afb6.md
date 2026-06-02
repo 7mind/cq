@@ -1,0 +1,3 @@
+# implement-reviewer — T82 (M18) — APPROVE 0/0 (round 0)
+
+Agent a441c4ff61fd9afb6. `.lw-col-narrow` (width:1% + white-space:nowrap) defined ONCE; <colgroup> applied to all 3 variants — active subsection + archive both via shared SubsectionItemTable (3 cols), flat milestones via ItemTable (4 cols). Extra columns mapped from same extraColumns array in colgroup/thead/tbody so col/cell counts can't drift (verified 4-col extra-column variant). 4 happy-dom tests assert col count + per-col className, fail if colgroup absent. happy-dom can't compute CSS layout → structural assertion is the correct contract (acceptance permits "or computed-style"). check 582/0.

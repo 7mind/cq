@@ -1,0 +1,5 @@
+# implement-worker — T85 (M18) TUI nav-perf memoization — PASS
+
+Agent a8577c8cedc3fcb61. resultCommit 201c2d70bfaa5bdbfd382e2082d4264a2bad87dd, branch worktree-agent-a8577c8cedc3fcb61 (rebased onto fbcfe9e). check 580 pass / 0 fail.
+
+Hoisted the three O(N) items-frame derivations (filterVisibleRows, computeColumnLayout=maxIdW/maxStatusW/columnWidths, buildItemEntries) to module scope, invoked through ONE useMemo (ItemsDerived) keyed on view/ledger/filter/showArchive/archiveRows/columnsKey — NOT cursor. Both input handler AND render body read the memoized bundle (the input handler also called visibleRows per-key — now fixed). Pure cursor move = zero O(N) work; nav output unchanged. eslint has no react-hooks/exhaustive-deps → used content-based dep key (itemsColumnsKey). Reproduction verified: adding top.cursor to memo deps → test fails at exactly 40 invocations (one per cursor move), revert → green. Added derivationCounters instrumentation + navMemo.test.tsx (40 cursor moves @ N=500 → zero builder invocations; filter change re-runs). Files: app.tsx, test/navMemo.test.tsx.
