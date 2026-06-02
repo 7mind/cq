@@ -582,6 +582,71 @@ export class FsLedgerStore implements LedgerStore {
   }
 
   /**
+   * Back up the divergent on-disk ledger state and reinitialise canonical
+   * files from scratch.
+   *
+   * (a) Compute a timestamped backup dir under docs/.backup/<sanitized-ISO>/
+   *     using this.now() (colons in the ISO string replaced with '-' so the
+   *     path is valid on all platforms). mkdir recursively.
+   * (b) Copy each affected canonical ledger file (this.ledgerPath(name) for
+   *     every CANONICAL_LEDGERS entry) AND docs/ledgers.yaml into that backup
+   *     dir, preserving basenames. ENOENT is silently tolerated on any source
+   *     file (a registry or ledger file may legitimately be absent).
+   * (c) Write a fresh canonical registry + ledger files from CANONICAL_LEDGERS
+   *     via the existing writeRegistry / writeLedgerFile primitives; seeds the
+   *     milestones bootstrap group and M-AMBIENT exactly as the empty-dir init()
+   *     path does.
+   * (d) Emits a loud WARNING to process.stderr naming the absolute backup path.
+   *
+   * T95 wires this into init()'s divergence branch; kept private + tested
+   * directly here so the helper is exercised and lint stays clean.
+   */
+  private async backupAndReinit(): Promise<void> {
+    // (a) Sanitize the ISO timestamp for use as a directory name.
+    const ts = this.now().replace(/:/g, "-");
+    const backupDir = path.join(this.docsDir, ".backup", ts);
+    await fs.mkdir(backupDir, { recursive: true });
+
+    // (b) Copy ledger files + registry into the backup dir; tolerate ENOENT.
+    const filesToBackup: string[] = [
+      this.registryPath,
+      ...CANONICAL_LEDGERS.map((c) => this.ledgerPath(c.name)),
+    ];
+    for (const src of filesToBackup) {
+      const dest = path.join(backupDir, path.basename(src));
+      try {
+        await fs.copyFile(src, dest);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      }
+    }
+
+    // (d) Warn BEFORE rewriting so the path is logged even if a write fails.
+    process.stderr.write(
+      `WARNING: FsLedgerStore divergence detected — prior state backed up to ${backupDir}\n`,
+    );
+
+    // (c) Rewrite fresh canonical registry.
+    this.registry = { version: 1, ledgers: [] };
+    for (const canonical of CANONICAL_LEDGERS) {
+      this.registry.ledgers.push({ name: canonical.name, schema: canonical.schema });
+    }
+    await this.writeRegistry();
+
+    // (c) Rewrite fresh canonical ledger files with the milestones bootstrap
+    // group + M-AMBIENT ambient milestone seeded.
+    for (const canonical of CANONICAL_LEDGERS) {
+      const isMilestones = canonical.name === MILESTONES_LEDGER;
+      const ledger = freshLedger(canonical.name, canonical.schema);
+      if (isMilestones) {
+        seedBootstrapGroup(ledger);
+        applyEnsureAmbientMilestone(ledger, this.now());
+      }
+      await this.writeLedgerFile(ledger);
+    }
+  }
+
+  /**
    * Drop the in-memory cache for `ledgerId` and re-read it from disk
    * under the per-ledger lock. Used by the cross-process coherence
    * channel (D-COHERENCE) on inbound `ledger.changed` notifications.
