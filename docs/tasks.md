@@ -36,10 +36,10 @@ archives:
 - resultCommit: 99fad44
 - completion: Added optional `summary` to REVIEWS_SCHEMA + both YAML registry copies; explicit field test + backward-compat test. Reviewer approve 0/0. Merged to main 99fad44; integration check 422 pass.
 
-### T27 — planned
+### T27 — done
 
 - createdAt: 2026-06-01T23:18:23.231Z
-- updatedAt: 2026-06-01T23:22:20.207Z
+- updatedAt: 2026-06-02T06:55:04.394Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Req5: prefer `summary` in summarize() + fix status-badge/summary-cell wrapping in both UIs"
@@ -48,6 +48,8 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T26"]
 - ledgerRefs: ["goals:G1"]
+- resultCommit: dc7af9c
+- completion: Both summarize() copies (web+TUI) fall back to truncated first criticism line (not joined) for legacy summary-less reviews; web .lw-status nowrap + .lw-summary-cell ellipsis on all ledgers. 5 tests (happy-dom + ink). Reviewer approve 0/0. Merged dc7af9c; integration 438 pass.
 
 ### T28 — done
 
@@ -106,10 +108,10 @@ archives:
 - resultCommit: c6e2e80
 - completion: TUI list → column-aligned (id|status|summary, padded) with per-milestone subsection headers (group order); milestones ledger unaffected; cursor+scrollbar preserved (ListEntry<T> union); 5 ink tests. Reviewer approve 0/0. Merged c6e2e80.
 
-### T32 — planned
+### T32 — done
 
 - createdAt: 2026-06-01T23:18:59.949Z
-- updatedAt: 2026-06-01T23:18:59.949Z
+- updatedAt: 2026-06-02T07:08:12.889Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Req1 (web): read-only archive affordance — per-ledger 'show archived' toggle + expand pointer"
@@ -118,11 +120,13 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T29"]
 - ledgerRefs: ["goals:G1"]
+- resultCommit: 44b63bb
+- completion: Web per-ledger 'show archived' toggle (gated on archivePointers); lazy fetchLedgerArchive; archived items read-only (DetailPanel isArchived + no onSave suppresses edit/transition/answer); active editing unchanged; 5 happy-dom tests. Reviewer approve 0/0. Merged 44b63bb.
 
-### T33 — planned
+### T33 — done
 
 - createdAt: 2026-06-01T23:19:05.614Z
-- updatedAt: 2026-06-01T23:19:05.614Z
+- updatedAt: 2026-06-02T07:08:15.562Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Req1 (TUI): read-only archive view — per-ledger 'show archived' affordance + read-only items"
@@ -131,6 +135,8 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T29","T31"]
 - ledgerRefs: ["goals:G1"]
+- resultCommit: 39197bb
+- completion: TUI 'A' archive toggle per ledger; lazy fetchLedgerArchive; archived rows read-only (s/a/r/e/n inert via !cursorInArchive in both focus modes); T31 column layout reused; 7 ink tests. Reviewer approve 0/0. Merged 39197bb.
 
 ### T34 — planned
 
@@ -190,10 +196,10 @@ archives:
 - resultCommit: 3bfe470
 - completion: "Authored llm/commands/investigate/advance.md (six-step DFS/adjudication loop; file-and-defer handoff, defect-seeded clarify-skip citing K8; [correct]/[incorrect] + parallel-only-when-seeding). Reviewer approve 0/0. Merged 3bfe470."
 
-### T38 — planned
+### T38 — done
 
 - createdAt: 2026-06-01T23:36:52.804Z
-- updatedAt: 2026-06-01T23:36:52.804Z
+- updatedAt: 2026-06-02T07:08:18.351Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: Author llm/commands/investigate/start.md (defect intake + bootstrap)
@@ -202,11 +208,13 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T37"]
 - ledgerRefs: ["goals:G1"]
+- resultCommit: 6f13e2d
+- completion: "Authored llm/commands/investigate/start.md (both intake + bare-defectId resume forms; inline /investigate:advance hand-off mirroring implement/start.md). Round-0 criticism (phantom investigate-advance subagent) fixed in round 1. Reviewer approve. Merged 6f13e2d."
 
-### T39 — planned
+### T39 — done
 
 - createdAt: 2026-06-01T23:36:58.691Z
-- updatedAt: 2026-06-01T23:36:58.691Z
+- updatedAt: 2026-06-02T07:27:19.682Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Wire the investigate:* assets into scripts/link-prompts.ts LINKS"
@@ -215,6 +223,8 @@ archives:
 - suggestedModel: fast
 - dependsOn: ["T36","T37","T38"]
 - ledgerRefs: ["goals:G1"]
+- resultCommit: 08dc295
+- completion: "Added 3 investigate:* entries to scripts/link-prompts.ts LINKS; link-prompts runs clean, symlinks resolve. Reviewer approve 0/0. Merged 08dc295. M7 now complete."
 
 ## M8
 
@@ -320,10 +330,10 @@ archives:
 - resultCommit: 4274f0f
 - completion: Pure helpers defectFixTaskIds + hypothesisRelationships in @cq/ledger (relationships.ts), exported from index; 10 unit tests. Reviewer approve 0/0. Merged to main 4274f0f.
 
-### T47 — planned
+### T47 — done
 
 - createdAt: 2026-06-01T23:38:32.464Z
-- updatedAt: 2026-06-01T23:38:32.464Z
+- updatedAt: 2026-06-02T07:27:23.296Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Web UI: defect->fix-task and hypothesis-tree relationship view in the detail panel"
@@ -332,11 +342,13 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T46"]
 - ledgerRefs: ["goals:G1"]
+- resultCommit: e996620
+- completion: "Web detail panel: Fix-tasks section (defectFixTaskIds, both link directions) + hypothesis ancestry/children (hypothesisRelationships), clickable/navigable; shared @cq/ledger helper via new ./relationships browser-safe subpath export; 13 happy-dom tests. Reviewer approve 0/0. Merged e996620. NOTE: touched bun.lock + package.json (flake FOD hash refresh needed before nix build)."
 
-### T48 — planned
+### T48 — done
 
 - createdAt: 2026-06-01T23:38:39.271Z
-- updatedAt: 2026-06-01T23:38:39.271Z
+- updatedAt: 2026-06-02T07:27:25.649Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "TUI: defect->fix-task and hypothesis-tree relationship view in the content pane"
@@ -345,6 +357,8 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T46"]
 - ledgerRefs: ["goals:G1"]
+- resultCommit: bb4d341
+- completion: "TUI content pane: Fix-tasks block + hypothesis ancestry/children via shared @cq/ledger helpers; bounded lazy cross-ledger fetch (crossItems.has guard); 9 ink tests. Reviewer approve 0/0. Merged bb4d341."
 
 ### T49 — planned
 
