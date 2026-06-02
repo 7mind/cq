@@ -884,6 +884,83 @@ describe("ledger-web App", () => {
     const closed = await fake.fetchItem("bugs", "D1");
     expect(closed.status).toBe("closed");
   });
+
+  // ---- milestone-section status badge (Web #10 / T80) ----
+  // The milestone subsection header renders the milestone's status as a
+  // <span class='lw-status lw-status-<bucket>'> badge — NOT as bare '[status]'
+  // text in the label. Bucket is derived via statusBucket against the milestones
+  // schema (terminalStatuses: ["done"]).
+
+  it("milestone subsection header shows status as a badge, not bare [status] text", async () => {
+    await mount();
+    click(testid("ledger-bugs"));
+    await flush();
+
+    // FakeClient returns status: "open" for both M1 and M2 milestone groups.
+    // "open" is non-terminal in the milestones schema → start bucket.
+    const toggle1 = testid("ms-toggle-M1");
+    const toggle2 = testid("ms-toggle-M2");
+    expect(toggle1).not.toBeNull();
+    expect(toggle2).not.toBeNull();
+
+    // The status badge element must be present in the header.
+    const badge1 = testid("ms-status-badge-M1");
+    expect(badge1).not.toBeNull();
+    // "open" maps to the "start" bucket (non-terminal, not progress/blocked).
+    expect(badge1!.className).toContain("lw-status");
+    expect(badge1!.className).toContain("lw-status-start");
+    // The badge text is the raw status value.
+    expect(badge1!.textContent).toBe("open");
+
+    // The label span must NOT contain bare '[open]' text.
+    const label1 = toggle1!.querySelector(".lw-ms-label");
+    expect(label1).not.toBeNull();
+    expect(label1!.textContent).not.toContain("[open]");
+    expect(label1!.textContent).not.toContain("[");
+
+    // The toggle button as a whole still carries the id and title.
+    expect(toggle1!.textContent).toContain("M1");
+    expect(toggle1!.textContent).toContain("Bootstrap");
+    // But not the bare bracket form.
+    expect(toggle1!.textContent).not.toContain("[open]");
+  });
+
+  it("milestone subsection header uses done bucket for a terminal (done) milestone status", async () => {
+    // Mutate the FakeClient so M1's resolved milestone status is "done"
+    // (done is the sole terminal status in the milestones schema).
+    await mount();
+
+    // The FakeClient's fetchLedger method constructs the resolved milestone with
+    // status: "open". Inject a custom fetchLedger that returns "done" for M1.
+    const origFetch = fake.fetchLedger.bind(fake);
+    fake.fetchLedger = async (id: string) => {
+      const v = await origFetch(id);
+      if (id === "bugs") {
+        return {
+          ...v,
+          milestones: v.milestones.map((g) =>
+            g.id === "M1" ? { ...g, milestone: { ...g.milestone, status: "done" } } : g,
+          ),
+        };
+      }
+      return v;
+    };
+
+    click(testid("ledger-bugs"));
+    await flush();
+
+    const badge = testid("ms-status-badge-M1");
+    expect(badge).not.toBeNull();
+    // "done" is terminal in the milestones schema → done bucket.
+    expect(badge!.className).toContain("lw-status-done");
+    expect(badge!.className).not.toContain("lw-status-start");
+    expect(badge!.textContent).toBe("done");
+
+    // No bare '[done]' text in the label.
+    const label = testid("ms-toggle-M1")!.querySelector(".lw-ms-label");
+    expect(label!.textContent).not.toContain("[done]");
+    expect(label!.textContent).not.toContain("[");
+  });
 });
 
 describe("ledger-web keyboard navigation", () => {

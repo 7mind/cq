@@ -58,6 +58,21 @@ import {
 const MILESTONES = "milestones";
 /** Provenance author stamped on writes made by a human through this editor. */
 const UI_AUTHOR = "user";
+
+/**
+ * Minimal schema for classifying milestone statuses into buckets. The milestones
+ * ledger schema is not importable from the @cq/ledger main index (it pulls
+ * Node.js builtins that must not enter the browser bundle), so we define the
+ * essential subset here. Must stay in sync with MILESTONES_SCHEMA in
+ * packages/ledger/src/constants.ts — only `terminalStatuses` matters for
+ * statusBucket().
+ */
+const MILESTONE_STATUS_SCHEMA: LedgerSchema = {
+  statusValues: ["open", "done", "postponed", "blocked"],
+  terminalStatuses: ["done"],
+  fields: {},
+  idPrefix: "M",
+};
 /** Debounce for as-you-type search (ms). */
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -1586,6 +1601,7 @@ function SubsectionItemTable({
 function MilestoneSubsection({
   id,
   headerLabel,
+  milestoneStatus,
   archived,
   collapsed,
   onToggle,
@@ -1593,6 +1609,12 @@ function MilestoneSubsection({
 }: {
   id: string;
   headerLabel: string;
+  /**
+   * When provided (active milestone groups), renders a status badge using the
+   * shared `lw-status lw-status-<bucket>` class derived from MILESTONE_STATUS_SCHEMA.
+   * Absent for archived groups (status not available in ArchivePointer/Milestone).
+   */
+  milestoneStatus?: string;
   archived: boolean;
   collapsed: boolean;
   onToggle: () => void;
@@ -1609,6 +1631,14 @@ function MilestoneSubsection({
       >
         <span className="lw-ms-chevron">{collapsed ? "▶" : "▼"}</span>
         <span className="lw-ms-label">{headerLabel}</span>
+        {milestoneStatus !== undefined && (
+          <span
+            className={`lw-status lw-status-${statusBucket(milestoneStatus, MILESTONE_STATUS_SCHEMA)}`}
+            data-testid={`ms-status-badge-${id}`}
+          >
+            {milestoneStatus}
+          </span>
+        )}
         {archived && (
           <span className="lw-archived-badge" data-testid={`archived-badge-${id}`}>
             archived
@@ -1745,14 +1775,13 @@ function ItemTable({
         // Omit groups that have no visible items under the current status filter.
         if (rows.length === 0) return null;
         const ms = g.milestone;
-        const headerLabel = ms.title
-          ? `${g.id}: ${ms.title} [${ms.status}]`
-          : `${g.id} [${ms.status}]`;
+        const headerLabel = ms.title ? `${g.id}: ${ms.title}` : g.id;
         return (
           <MilestoneSubsection
             key={g.id}
             id={g.id}
             headerLabel={headerLabel}
+            milestoneStatus={ms.status}
             archived={false}
             collapsed={collapsed.has(g.id)}
             onToggle={() => toggleCollapsed(g.id)}
