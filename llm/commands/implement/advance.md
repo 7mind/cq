@@ -199,9 +199,15 @@ closure in §7.4 when its fix tasks all merge, or via the investigate-flow for a
 out-of-scope defect filed in §3).
 
 Note the asymmetry: a filed defect does NOT gate task merge-back (§3 file-and-
-defer — tasks merge regardless), but it DOES gate milestone archival. The goal
-`G` the milestone serves can advance per the plan-flow once the milestone is
-archived.
+defer — tasks merge regardless), but it DOES gate milestone archival.
+
+When ALL of goal `G`'s work milestones are archived, the orchestrator REPORTS
+that goal `G` is ready to close and instructs the user to set its status to
+`done` themselves via the TUI/web when satisfied. The orchestrator makes NO
+goal-status change — the orchestrator MUST NEVER automatically transition a
+goal to a terminal status (`building`→`done`). `planned`→`building` may remain
+automatic (non-terminal; it records that work has started), but the final
+closure is always the user's action.
 
 ## Report to the user
 Summarize the pass concisely:
@@ -209,5 +215,7 @@ Summarize the pass concisely:
 - tasks **blocked** on questions (id + the question ids to answer);
 - tasks **failed**/skipped and why;
 - whether any milestone was archived;
+- whether goal `G` is **ready to close** (all work milestones archived) —
+  instruct the user to close it in the TUI/web (set status to `done`);
 - the next action: if anything is `blocked`, "answer the listed questions in the
   TUI/web, then run `/implement:advance` to resume"; if all done, say so.
