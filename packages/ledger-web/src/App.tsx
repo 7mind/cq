@@ -27,6 +27,9 @@ import { defectFixTaskIds, hypothesisRelationships } from "@cq/ledger/relationsh
 // which must not enter the browser bundle. `./columns` is side-effect-free and
 // Node-free, mirroring the `./relationships` leaf import above.
 import { eligibleColumnFields, defaultColumns } from "@cq/ledger/columns";
+// Leaf subpath: constants.ts is data-only (no Node.js builtins). Importing
+// MILESTONES_SCHEMA from here avoids the duplicated local copy (D6).
+import { MILESTONES_SCHEMA } from "@cq/ledger/constants";
 
 // Ledger names for the relationship panels — consistent with the canonical
 // constants in @cq/ledger but defined locally to avoid bundling Node.js
@@ -66,20 +69,6 @@ const MILESTONES = "milestones";
 /** Provenance author stamped on writes made by a human through this editor. */
 const UI_AUTHOR = "user";
 
-/**
- * Minimal schema for classifying milestone statuses into buckets. The milestones
- * ledger schema is not importable from the @cq/ledger main index (it pulls
- * Node.js builtins that must not enter the browser bundle), so we define the
- * essential subset here. Must stay in sync with MILESTONES_SCHEMA in
- * packages/ledger/src/constants.ts — only `terminalStatuses` matters for
- * statusBucket().
- */
-const MILESTONE_STATUS_SCHEMA: LedgerSchema = {
-  statusValues: ["open", "done", "postponed", "blocked"],
-  terminalStatuses: ["done"],
-  fields: {},
-  idPrefix: "M",
-};
 /** Debounce for as-you-type search (ms). */
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -1636,7 +1625,7 @@ function MilestoneSubsection({
   headerLabel: string;
   /**
    * When provided (active milestone groups), renders a status badge using the
-   * shared `lw-status lw-status-<bucket>` class derived from MILESTONE_STATUS_SCHEMA.
+   * shared `lw-status lw-status-<bucket>` class derived from MILESTONES_SCHEMA.
    * Absent for archived groups (status badge rendering is a separate task — T104).
    */
   milestoneStatus?: string;
@@ -1658,7 +1647,7 @@ function MilestoneSubsection({
         <span className="lw-ms-label">{headerLabel}</span>
         {milestoneStatus !== undefined && (
           <span
-            className={`lw-status lw-status-${statusBucket(milestoneStatus, MILESTONE_STATUS_SCHEMA)}`}
+            className={`lw-status lw-status-${statusBucket(milestoneStatus, MILESTONES_SCHEMA)}`}
             data-testid={`ms-status-badge-${id}`}
           >
             {milestoneStatus}
