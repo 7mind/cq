@@ -1,7 +1,7 @@
 ---
 description: Add new scope to an EXISTING plan-flow goal — append the follow-up request, re-open the goal, and hand to the planner for a fresh clarifying round.
 argument-hint: <goalId> <follow-up request>
-allowed-tools: mcp__ledger__*, Agent, Write, Bash
+allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob
 ---
 
 You are adding a **follow-up** to an existing plan-flow goal. The first
@@ -79,9 +79,39 @@ the Codex equivalent; omit if unavailable).
    short header (goal id, role: planner, returned status token) followed by the
    verbatim summary block.
 
-7. **Report.** Tell the user: the goal id **G** and its new phase (`clarifying`);
+7. **Auto-investigate filed defects (conditional — K12).** This mirrors the
+   same phase in `plan/advance.md` (see that file's §Auto-investigate filed
+   defects for the full logic) — this step is a pointer to it, not a
+   re-derivation.
+
+   Derive the worklist by **LEDGER QUERY** — NOT from the planner's prose:
+   > every `open` defect whose `ledgerRefs` link the just-advanced goal
+   > (`goals:<G>`) and that has no terminal status (`resolved`/`wontfix`).
+
+   (`fts_search`/`search_items` on the `defects` ledger filtered to
+   `status:open` with a `goals:<G>` ledgerRef.)
+
+   **If the worklist is empty (the typical case on a fresh follow-up bootstrap)
+   — skip this step entirely.** A freshly re-opened goal usually reaches
+   `clarifying` with new questions and no filed defects on this round; the
+   defect-seeded-goal path (investigate→plan) is the main case.
+
+   For each defect **D** in the worklist, run **`/investigate:advance D`
+   inline** in this same main session, exactly per
+   llm/commands/investigate/advance.md — do NOT duplicate or re-implement
+   that logic; run it. Inherit the stop predicates from plan/advance.md's
+   auto-investigate phase (predicates a–f, per K12). A command chaining
+   another command's loop is legal under **K12**; the
+   subagents-cannot-spawn-subagents rule is preserved because only this
+   orchestrator (a command) does the chaining.
+
+8. **Report.** Tell the user: the goal id **G** and its new phase (`clarifying`);
    the questions the planner filed; and that they should answer them in the
-   TUI/web, then run **`/plan:advance G`** to plan the added scope.
+   TUI/web, then run **`/plan:advance G`** to plan the added scope;
+   if step 7 ran: for each defect D in the worklist, one line covering its
+   auto-investigate outcome (confirmed→seeded goal, parked on a question, or
+   stopped by a K12 predicate) — same format as plan/advance.md's §Report
+   auto-investigate lines.
 
 Do not file questions, emit a plan, or lock decisions yourself — the
 `plan-advance` planner and `/plan:advance` own everything after the re-open.

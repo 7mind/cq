@@ -1,7 +1,7 @@
 ---
 description: Start a plan-flow goal — create the goal, then hand off to the planner for the first clarifying questions.
 argument-hint: <goal description>
-allowed-tools: mcp__ledger__*, Agent, Write, Bash
+allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob
 ---
 
 You are starting a **plan-flow goal**. The user's goal is:
@@ -69,12 +69,42 @@ report its id and stop instead of creating a new one.
    verbatim summary block. The subagent writes no file itself — the orchestrator
    does.
 
-5. **Report.** Tell the user:
+5. **Auto-investigate filed defects (conditional — K12).** This mirrors the
+   same phase in `plan/advance.md` (see that file's §Auto-investigate filed
+   defects for the full logic) — this step is a pointer to it, not a
+   re-derivation.
+
+   Derive the worklist by **LEDGER QUERY** — NOT from the planner's prose:
+   > every `open` defect whose `ledgerRefs` link the just-created goal
+   > (`goals:<G>`) and that has no terminal status (`resolved`/`wontfix`).
+
+   (`fts_search`/`search_items` on the `defects` ledger filtered to
+   `status:open` with a `goals:<G>` ledgerRef.)
+
+   **If the worklist is empty (the typical case on a fresh bootstrap) — skip
+   this step entirely.** A freshly bootstrapped goal usually reaches
+   `clarifying` with open questions and no filed defects; the
+   defect-seeded-goal path (investigate→plan) is the main case.
+
+   For each defect **D** in the worklist, run **`/investigate:advance D`
+   inline** in this same main session, exactly per
+   llm/commands/investigate/advance.md — do NOT duplicate or re-implement
+   that logic; run it. Inherit the stop predicates from plan/advance.md's
+   auto-investigate phase (predicates a–f, per K12). A command chaining
+   another command's loop is legal under **K12**; the
+   subagents-cannot-spawn-subagents rule is preserved because only this
+   orchestrator (a command) does the chaining.
+
+6. **Report.** Tell the user:
    - the goal id **G** and milestone **M**;
    - the questions the planner filed (from its returned summary);
    - that they should answer the questions in the TUI or web client (set each to
      `answered` with a non-empty `answer`), then run **`/plan:advance G`** to
-     continue.
+     continue;
+   - if step 5 ran: for each defect D in the worklist, one line covering its
+     auto-investigate outcome (confirmed→seeded goal, parked on a question, or
+     stopped by a K12 predicate) — same format as plan/advance.md's §Report
+     auto-investigate lines.
 
 Do not file questions, transition the goal, or emit any plan yourself — the
 `plan-advance` planner and `/plan:advance` own everything after the goal is
