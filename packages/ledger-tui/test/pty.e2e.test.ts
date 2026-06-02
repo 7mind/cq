@@ -23,11 +23,11 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { spawn as bunSpawn, type Subprocess } from "bun";
-import * as net from "node:net";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { FsLedgerStore } from "@cq/ledger";
+import { freePort, waitForPort } from "./portHelpers.js";
 
 // ---- availability guard ---------------------------------------------------
 const nodePath = Bun.which("node");
@@ -46,34 +46,6 @@ const serverMain = path.resolve(here, "..", "..", "ledger-mcp", "src", "main.ts"
 const tuiMain = path.resolve(here, "..", "src", "main.tsx");
 const harness = path.resolve(here, "ptyHarness.mjs");
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, "127.0.0.1", () => {
-      const addr = srv.address();
-      if (addr === null || typeof addr === "string") return reject(new Error("no port"));
-      const p = addr.port;
-      srv.close(() => resolve(p));
-    });
-    srv.on("error", reject);
-  });
-}
-
-async function waitForPort(p: number, attempts = 100): Promise<void> {
-  for (let i = 0; i < attempts; i++) {
-    const ok = await new Promise<boolean>((res) => {
-      const s = net.connect(p, "127.0.0.1");
-      s.on("connect", () => {
-        s.end();
-        res(true);
-      });
-      s.on("error", () => res(false));
-    });
-    if (ok) return;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error(`server not up on ${p}`);
-}
 
 let tmpRoot: string;
 let server: Subprocess;

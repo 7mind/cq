@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { FsLedgerStore } from "@cq/ledger";
 import { McpLedgerClient } from "../src/mcpClient.js";
 import { FakeClient } from "./fakeClient.js";
+import { freePort, waitForPort } from "./portHelpers.js";
 
 // ---------------------------------------------------------------------------
 // FakeClient
@@ -43,21 +44,7 @@ const serverMain = path.resolve(here, "..", "..", "ledger-mcp", "src", "main.ts"
 let tmpRoot: string;
 let proc: Subprocess;
 let client: McpLedgerClient;
-const PORT = 7795;
-
-/** Poll the server until it answers (or time out). */
-async function waitForServer(url: string, attempts = 100): Promise<void> {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const res = await fetch(url, { method: "GET" });
-      await res.text();
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-  }
-  throw new Error(`server did not come up at ${url}`);
-}
+let port: number;
 
 beforeAll(async () => {
   // Use a directory whose basename is a known token we can assert on.
@@ -66,13 +53,14 @@ beforeAll(async () => {
   await seed.init();
   await seed.dispose();
 
+  port = await freePort();
   proc = spawn({
-    cmd: [process.execPath, "run", serverMain, "--cwd", tmpRoot, "--http", String(PORT)],
+    cmd: [process.execPath, "run", serverMain, "--cwd", tmpRoot, "--http", String(port)],
     stdout: "inherit",
     stderr: "inherit",
   });
-  await waitForServer(`http://127.0.0.1:${PORT}/mcp`);
-  client = await McpLedgerClient.connect(`http://127.0.0.1:${PORT}/mcp`);
+  await waitForPort(port);
+  client = await McpLedgerClient.connect(`http://127.0.0.1:${port}/mcp`);
 });
 
 afterAll(async () => {
