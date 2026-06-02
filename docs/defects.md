@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 9
+  item: 10
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -104,10 +104,10 @@ archives:
 - dependsOn: ["T90"]
 - fix: "T90 (208b446): gated the ArchiveSubsections render on `!isMilestones` so the MILESTONES ledger no longer duplicates an archived milestone as both a flat row and an archived subsection. happy-dom repro + non-milestones regression guard; integration check 634 green."
 
-### D8 — open
+### D8 — resolved
 
 - createdAt: 2026-06-02T16:17:29.755Z
-- updatedAt: 2026-06-02T16:18:30.170Z
+- updatedAt: 2026-06-02T18:49:22.608Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: Archived milestone subsection TITLES render the milestone `description` instead of its `title`
@@ -117,6 +117,7 @@ archives:
 - suggestedFix: Thread the milestone `title` to the archived MilestoneSubsection head and render it (parity with active sections). Prefer adding `title` to the ArchivePointer payload at the MCP/server boundary so the head shows the title on first paint without waiting for lazy content. Add a happy-dom assertion that an archived section head shows the milestone title, not its description.
 - ledgerRefs: ["goals:G2"]
 - dependsOn: ["T91"]
+- fix: "T91 (98e50c6): extended ArchivePointer with `title` (and `status`), populated at archive time in both stores; switched the archived section head label from p.summary (description) to p.title. happy-dom test asserts a COLLAPSED archived head shows the milestone title (repro-verified). Integration check 635 green."
 
 ### D9 — open
 
@@ -129,3 +130,15 @@ archives:
 - description: "Surfaced (out-of-scope) during T90 review. Under one `bun run check` invocation, ~3-4 tests in packages/ledger-tui/test/{mcpClient,displayName}.test.ts failed with 'Unable to connect. Is the computer able to access the url?' (McpLedgerClient over HTTP — update status / surface validation errors; displayName HTTP — serverInfo.title). They PASS on isolated re-run (6/0) and in the full suite on re-run, indicating a connection-setup / port-binding race under concurrent test execution — NOT a product defect, a test-harness flakiness. Independent of any G2/G4/G5 task diff."
 - suggestedFix: "In the HTTP McpLedgerClient test harness, allocate an ephemeral port and WAIT for the server to confirm listening (readiness probe) before the client connects, so concurrent test execution cannot race the bind. Or serialize those HTTP tests. Triage via /investigate:start D9 when chosen."
 - ledgerRefs: ["tasks:T90","goals:G2"]
+
+### D10 — open
+
+- createdAt: 2026-06-02T18:49:30.407Z
+- updatedAt: 2026-06-02T18:49:30.407Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- headline: InMemoryLedgerStore.performArchive lacked a pre-mutation terminal guard (partial-mutation divergence from FsLedgerStore)
+- severity: low
+- description: Surfaced (out-of-scope) during T91 review. Before T91, InMemoryLedgerStore.performArchive relied solely on Phase 3's applyDetachMilestoneItem to reject a non-terminal milestone-item; because Phase 2 (detach+archive of every non-milestones group) runs first, a non-terminal milestone-item left Phase-2 in-memory state mutated before the Phase-3 throw — a partial archive, diverging from FsLedgerStore's pre-existing Phase 1b gate. T91 added the Phase 1b terminal-guard to InMemoryLedgerStore (correct + harmless, restores dual-store parity) as a side effect of needing the milestone-item lookup for title/status. The latent inconsistency it remediates was pre-existing/out-of-scope; it warrants its own tracking item plus a dual-store abstract assertion that post-rejection state is unchanged in BOTH adapters (the current non-terminal test asserts only the throw, not the absence of partial mutation).
+- suggestedFix: "Add an abstract store-suite assertion that after a non-terminal archiveMilestone rejection, the non-milestones ledger groups remain attached (no partial archive) in BOTH FsLedgerStore and InMemoryLedgerStore. The Phase 1b guard T91 added already prevents the InMemory partial mutation; this is a test-hardening + tracking item. Triage via /investigate:start D10 when chosen."
+- ledgerRefs: ["tasks:T91","goals:G2"]

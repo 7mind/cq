@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 82
+  item: 86
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -398,6 +398,28 @@ archives:
 - ledgerRefs: ["tasks:T90","goals:G2"]
 - tags: ["implement-flow","round-0","approve","!isMilestones gate; valid fail-first repro + regression guard; check 634; out-of-scope ledger-tui HTTP flake filed D9"]
 
+### R83 — go-ahead
+
+- createdAt: 2026-06-02T18:49:11.795Z
+- updatedAt: 2026-06-02T18:49:11.795Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T91","goals:G2"]
+- tags: ["implement-flow","round-0","approve","collapsed head shows title (repro-confirmed); ArchivePointer title+status both stores; wire JSON-clean; check 635; D10 filed for InMemory parity"]
+
+### R84 — go-ahead
+
+- createdAt: 2026-06-02T18:49:14.614Z
+- updatedAt: 2026-06-02T18:49:14.614Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T92","decisions:K13","goals:G2"]
+- tags: ["implement-flow","round-0","approve","routing-question removed from implement/advance §3; defect-filing + non-blocking preserved; K13 rationale accurate; peers conform; check 635"]
+
 ## M22
 
 ### R80 — go-ahead
@@ -411,6 +433,17 @@ archives:
 - ledgerRefs: ["tasks:T94","goals:G4"]
 - tags: ["implement-flow","round-0","approve","4-step backup+reinit helper, ENOENT-tolerant, backup-before-reinit, init() untouched; 7 tests; check 634"]
 
+### R85 — go-ahead
+
+- createdAt: 2026-06-02T18:49:17.468Z
+- updatedAt: 2026-06-02T18:49:17.468Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T95","goals:G4"]
+- tags: ["implement-flow","round-0","approve","init() divergence → backupAndReinit (set, once) default + abort opt-out; registry mutated in place; regressions intact; 6 cases migrated; check 635"]
+
 ## M24
 
 ### R81 — go-ahead
@@ -423,6 +456,17 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T98","goals:G5"]
 - tags: ["implement-flow","round-0","approve","all exports realigned ./dist/src/*; targets exist after build; tsconfig untouched; no ./constants yet (T99); check 634"]
+
+### R86 — go-ahead
+
+- createdAt: 2026-06-02T18:49:19.778Z
+- updatedAt: 2026-06-02T18:49:19.778Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T99","goals:G5"]
+- tags: ["implement-flow","round-0","approve","./constants export + web tsconfig paths verified; MILESTONES_SCHEMA type-checks from ledger-web; App.tsx untouched; check 635"]
 
 ## M25
 

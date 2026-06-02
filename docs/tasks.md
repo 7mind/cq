@@ -343,10 +343,10 @@ archives:
 - resultCommit: 208b446
 - completion: Added `&& !isMilestones` to the ArchiveSubsections JSX gate (App.tsx ~L1193) so the MILESTONES ledger no longer renders archived per-milestone subsections (already shown as flat rows); non-milestones unchanged. fakeClient milestones-archive entry + 2 happy-dom tests (repro fails pre-fix). Reviewer approve 0/0.
 
-### T91 — planned
+### T91 — done
 
 - createdAt: 2026-06-02T16:17:55.978Z
-- updatedAt: 2026-06-02T16:25:22.512Z
+- updatedAt: 2026-06-02T18:48:58.607Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Web: archived milestone section heads show milestone title, not description (fix D8 / item 17)"
@@ -362,11 +362,13 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T90"]
 - ledgerRefs: ["defects:D8","defects:D5","goals:G2"]
+- resultCommit: 98e50c6
+- completion: "Extended ArchivePointer with title+status, populated at archive time in both FsLedgerStore + InMemoryLedgerStore; frontmatter parser backward-compat defaults; archived head label p.summary→p.title. happy-dom collapsed-head title test (repro-verified). Lands status field for D5/T104. Reviewer approve 0/0 (filed out-of-scope D10: InMemory partial-mutation parity). Resolves D8."
 
-### T92 — planned
+### T92 — done
 
 - createdAt: 2026-06-02T16:18:12.738Z
-- updatedAt: 2026-06-02T16:25:48.394Z
+- updatedAt: 2026-06-02T18:49:01.916Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Retire routing-questions from the flow prompts per K13 (item 18): file-the-defect only, no `/investigate:start` pointer question"
@@ -384,6 +386,8 @@ archives:
 - acceptance: "llm/commands/implement/advance.md §3 no longer instructs creating a `run /investigate:start <D>` routing question (it files the open defect with triage note only); llm/commands/plan/advance.md and llm/agents/plan-reviewer.md are confirmed already conforming (LEDGER-QUERY worklist / report-only defects[] bucket respectively — verify-no-op, no routing-question text present). All three explicitly preserve non-blocking file-and-defer. No `open` questions item remains whose sole purpose is an /investigate:start pointer (Q52/Q53 already withdrawn). `bun run check` passes (markdown-only edits should not regress it; run it to confirm)."
 - suggestedModel: standard
 - ledgerRefs: ["decisions:K13","goals:G2"]
+- resultCommit: a858b51
+- completion: "implement/advance.md §3: removed the create_item('questions',...) routing step (K13), kept open-defect filing + embedded bare-defect-id/ledger-query rationale; non-blocking property preserved. plan/advance.md + plan-reviewer.md verified no-op (already conform). Reviewer approve 0/0."
 
 ### T93 — planned
 
@@ -418,10 +422,10 @@ archives:
 - resultCommit: 0d66e33
 - completion: "Private async backupAndReinit() on FsLedgerStore: docs/.backup/<sanitized-ISO-ts>/, copies CANONICAL_LEDGERS files + ledgers.yaml (ENOENT-tolerant, backup-before-reinit), rewrites fresh canonical (milestones+M-AMBIENT seeded), one stderr WARNING. 7 unit tests. init() NOT yet rewired (T95). Reviewer approve 0/0."
 
-### T95 — planned
+### T95 — done
 
 - createdAt: 2026-06-02T16:31:16.074Z
-- updatedAt: 2026-06-02T16:36:23.722Z
+- updatedAt: 2026-06-02T18:49:05.643Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: Replace fatal throw at FsLedgerStore.init() divergence branch with backup-and-reinit (default) + opt-out flag
@@ -435,6 +439,8 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T94"]
 - ledgerRefs: ["defects:D2","goals:G4"]
+- resultCommit: a26104b
+- completion: "init() !schemasEqual branch rewired: collects the divergent set, calls backupAndReinit ONCE by default (helper mutates this.registry in place to canonical → load loop reads fresh); FsLedgerStoreOpts.onSchemaDivergence ('backup-reinit'|'abort', default backup-reinit), 'abort' preserves the throw; no-divergence + empty-dir unchanged. Migrated the 6 canonical-ledgers divergence-guard cases to 'abort'. Reviewer approve 0/0. (D2 partial — T96/T97 remain.)"
 
 ### T96 — planned
 
@@ -483,10 +489,10 @@ archives:
 - resultCommit: b1878e7
 - completion: "package.json main+types+exports['.']+['./relationships'] realigned ./dist/*.js → ./dist/src/*.js (./columns already correct); all targets confirmed present after tsc -b; tsconfig unchanged (no rootDir). Reviewer approve 0/0. (D3 partial — T99/T101 remain.)"
 
-### T99 — planned
+### T99 — done
 
 - createdAt: 2026-06-02T17:38:20.429Z
-- updatedAt: 2026-06-02T17:44:48.117Z
+- updatedAt: 2026-06-02T18:49:08.924Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: Add browser-safe @cq/ledger ./constants subpath export + web tsconfig paths entry (D6)
@@ -495,6 +501,8 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T98"]
 - ledgerRefs: ["defects:D6","defects:D3","goals:G5"]
+- resultCommit: 81a370a
+- completion: Added @cq/ledger ./constants subpath export (./dist/src/constants.js + .d.ts) + @cq/ledger/constants paths→source entry in ledger-web/tsconfig.json; MILESTONES_SCHEMA imports + type-checks from ledger-web (browser-safe; constants.ts type-only import). Reviewer approve 0/0. (D6 partial — T100 remains; D3 partial — T101 remains.)
 
 ### T100 — planned
 
