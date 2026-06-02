@@ -93,6 +93,23 @@ the worker's structured result, and the round number. A worker that returned
 `status: "fail"` skips review and goes straight to the criticism loop (its
 `blockedReason` is treated as round-0 criticism).
 
+**File the reviewer's `defects[]` (Q22/Q26, file-and-defer).** A reviewer return
+may carry a non-empty `defects[]` — OUT-OF-SCOPE or pre-existing faults the
+reviewer noticed in the diff (entries `{ headline, description, severity,
+suggestedFix? }`, see implement-reviewer T42). This is INDEPENDENT of the
+verdict and never blocks the current in-scope task (Q26). For each entry,
+`create_item("defects", <taskMilestone>, status: "open", fields: { headline,
+description, severity: <reviewer's severity>, suggestedFix?, ledgerRefs:
+["tasks:<id>", "goals:<G>"] })`. Then ROUTE it to investigate:* by file-and-defer
+— file an `open` question pointing the user at the new defect:
+`create_item("questions", <taskMilestone>, status: "open", fields: { question:
+"Out-of-scope defect <D> surfaced while reviewing <task>; run /investigate:start
+<D> to triage it.", ledgerRefs: ["defects:<D>", "tasks:<id>", "goals:<G>"] })`.
+Do NOT block, fail, or re-dispatch the current task on a filed defect, and do NOT
+add it to the criticism loop — it is tracked separately and triaged on its own
+via the investigate-flow. Filing a defect is idempotent: on a re-run, skip
+entries already filed for this task (match by headline + task ledgerRef).
+
 ### 4. Autonomous criticism loop (NO fixed cap)
 For a task whose reviewer verdict is `disapprove` with non-empty `criticism` and
 EMPTY `questions`: re-dispatch the SAME worker in the SAME worktree with the
@@ -144,6 +161,16 @@ after every task in its `dependsOn` has merged). For each:
    "<merged sha>", completion: "<1-line: what landed>" })` (both are valid
    optional `tasks` fields), and remove the worktree (Claude: auto; Codex: `git
    worktree remove` + delete the branch).
+4. **Resolve the defect this task fixed (Q20 — orchestrator-owned closure).** If
+   the just-merged task `ledgerRefs` one or more `defects:<D>` (it is a fix task
+   for D), check whether D is now fully fixed: collect D's fix-task set =
+   `D.dependsOn` (filtered to tasks) UNION every task whose `ledgerRefs` include
+   `defects:<D>` (the bidirectional link from the plan-flow, dedup'd). If EVERY
+   task in that set is now `done`, close the defect:
+   `update_item("defects", <D>, status: "resolved", fields: { fix: "<1-line:
+   what landed across the fix tasks>" })`. If any fix task is still non-terminal,
+   leave D `open` — a later merge-back closes it. The orchestrator OWNS this
+   closure; the reviewer and worker never touch the defects ledger status.
 
 ### 8. Loop
 After merge-back, RE-DERIVE the ready-set (step 1) — tasks unblocked by the
@@ -163,9 +190,18 @@ synthesize `'<verdict>: <first line of rationale, truncated to ~80 chars>'`.
 This keeps the ledger to one review per task instead of one per criticism round.
 
 ## Milestone completion
-When every task under a target milestone is terminal (`done`/abandoned),
-`archive_milestone(<id>)` (the goal `G` it serves can then advance per the
-plan-flow). Do this only when ALL its items are terminal.
+`archive_milestone(<id>)` requires ALL items under the milestone to be terminal —
+that includes its `defects` (terminal = `resolved`/`abandoned`), not just its
+`tasks` (`done`/abandoned). So a milestone whose tasks are all `done` but that
+still carries an `open` defect is NOT yet complete: archiving waits until the
+defect reaches a terminal status too (it gets there via the orchestrator-owned
+closure in §7.4 when its fix tasks all merge, or via the investigate-flow for an
+out-of-scope defect filed in §3).
+
+Note the asymmetry: a filed defect does NOT gate task merge-back (§3 file-and-
+defer — tasks merge regardless), but it DOES gate milestone archival. The goal
+`G` the milestone serves can advance per the plan-flow once the milestone is
+archived.
 
 ## Report to the user
 Summarize the pass concisely:
