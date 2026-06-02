@@ -269,7 +269,7 @@ async function serveEmbedded(
   indexPath: string,
 ): Promise<ReturnType<typeof Bun.serve>> {
   const store = await createEmbeddedStore(opts.cwd);
-  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store);
+  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store, path.basename(opts.cwd));
 
   const server = Bun.serve({
     hostname: opts.host,

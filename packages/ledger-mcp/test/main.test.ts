@@ -19,7 +19,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { FsLedgerStore, CANONICAL_LEDGERS, LEDGER_TOOL_NAMES } from "@cq/ledger";
+import { buildServer, projectInstructionLine } from "../src/main.js";
 
 const BOOTSTRAPPED = CANONICAL_LEDGERS.map((c) => c.name);
 
@@ -157,5 +159,38 @@ describe("ledger-mcp stdio binary", () => {
     const view = verify.fetchMilestone("M9");
     expect(view.resolved.title).toBe("ledger-mcp round-trip");
     await verify.dispose();
+  });
+});
+
+describe("buildServer project display name", () => {
+  it("exposes basename of cwd as serverInfo.title (name/version unchanged), with instructions fallback", async () => {
+    // Project dir basename, e.g. the repo root 'cq1'.
+    const displayName = "cq1";
+    const store = new FsLedgerStore({ root: tmpRoot });
+    await store.init();
+    const server = buildServer(store, displayName);
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client(
+      { name: "ledger-mcp-test", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    await client.connect(clientTransport);
+    try {
+      // Primary carrier: serverInfo.title, read via getServerVersion().
+      const info = client.getServerVersion();
+      expect(info?.title).toBe(displayName);
+      // name/version held stable.
+      expect(info?.name).toBe("ledger-mcp");
+      expect(info?.version).toBe("0.0.1");
+
+      // Fallback carrier: leading instructions line.
+      const instructions = client.getInstructions();
+      expect(instructions?.startsWith(projectInstructionLine(displayName))).toBe(true);
+    } finally {
+      await client.close();
+      await store.dispose();
+    }
   });
 });

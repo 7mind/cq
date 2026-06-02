@@ -32,7 +32,7 @@ beforeAll(async () => {
     terminalStatuses: ["done"],
     fields: { note: { type: "string", required: false } },
   });
-  server = serveHttp(store, { host: "127.0.0.1", port: 0 });
+  server = serveHttp(store, { host: "127.0.0.1", port: 0 }, "test-project");
   baseUrl = new URL(`http://127.0.0.1:${server.port}${MCP_HTTP_PATH}`);
 });
 

@@ -73,7 +73,7 @@ describe("ledger-mcp WebSocket push", () => {
     await store.init();
     await store.createLedger("ops", opsSchema);
     msId = (await store.createMilestone({ id: "M1", title: "m1" })).id;
-    server = serveHttp(store, { host: "127.0.0.1", port: 0 });
+    server = serveHttp(store, { host: "127.0.0.1", port: 0 }, "test-project");
     watcher = startLedgerWatcher(store, root, (ledger) => {
       server.publish(LEDGER_TOPIC, changedFrame(ledger));
     });

@@ -8,6 +8,7 @@
  * carrying the server's message.
  */
 
+import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -78,7 +79,7 @@ export class McpLedgerClient implements LedgerClient {
    */
   static async embedded(cwd: string): Promise<McpLedgerClient> {
     const store = await createEmbeddedStore(cwd);
-    const server = buildServer(store);
+    const server = buildServer(store, path.basename(cwd));
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     const client = new Client(

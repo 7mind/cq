@@ -180,10 +180,33 @@ const SERVER_INSTRUCTIONS = [
   "fields — so they apply to every ledger and never need a schema change.",
 ].join("\n");
 
-export function buildServer(store: LedgerStore): McpServer {
-  const server = new McpServer(SERVER_INFO, {
+/**
+ * Stable leading line carrying the project display name on `instructions`,
+ * used as a fallback for SDK runtimes that drop `title` off the Implementation
+ * carrier. The primary channel is `serverInfo.title` (read via the client's
+ * `getServerVersion()`); this line lets a client recover the same value from
+ * `getInstructions()` if title is absent.
+ */
+export function projectInstructionLine(displayName: string): string {
+  return `Project: ${displayName}`;
+}
+
+/**
+ * Build a fresh McpServer with the 14 ledger tools bound to `store`.
+ *
+ * `displayName` is the basename of the resolved `--cwd` (the project directory
+ * name). Frontends are pure MCP clients and never read cwd, so the server
+ * conveys it on `serverInfo.title` — a per-instance Implementation `title`,
+ * with `name`/`version` held stable — which the client reads via
+ * `getServerVersion()`. It is also pinned as the leading `instructions` line as
+ * a fallback for SDK runtimes that omit `title`. Stable across reconnects.
+ */
+export function buildServer(store: LedgerStore, displayName: string): McpServer {
+  const serverInfo = { ...SERVER_INFO, title: displayName };
+  const instructions = `${projectInstructionLine(displayName)}\n\n${SERVER_INSTRUCTIONS}`;
+  const server = new McpServer(serverInfo, {
     capabilities: { tools: {} },
-    instructions: SERVER_INSTRUCTIONS,
+    instructions,
   });
   registerLedgerStdioTools(server, store);
   return server;
@@ -219,7 +242,7 @@ export interface McpHttpHandlers {
   onWsMessage(ws: ServerWebSocket<undefined>, raw: string | Buffer): void;
 }
 
-export function attachMcpHttp(store: LedgerStore): McpHttpHandlers {
+export function attachMcpHttp(store: LedgerStore, displayName: string): McpHttpHandlers {
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
   async function handle(req: Request): Promise<Response> {
@@ -255,7 +278,7 @@ export function attachMcpHttp(store: LedgerStore): McpHttpHandlers {
         transports.delete(sid);
       },
     });
-    const server = buildServer(store);
+    const server = buildServer(store, displayName);
     await server.connect(transport);
     // Body already consumed above; hand it back so the transport doesn't
     // re-read the (now-empty) request stream.
@@ -299,8 +322,9 @@ export function attachMcpHttp(store: LedgerStore): McpHttpHandlers {
 export function serveHttp(
   store: LedgerStore,
   opts: HttpOpts,
+  displayName: string,
 ): ReturnType<typeof Bun.serve> {
-  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store);
+  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store, displayName);
 
   return Bun.serve({
     hostname: opts.host,
@@ -336,6 +360,7 @@ export function changedFrame(ledgerId: string | null): string {
 
 export async function main(argv: readonly string[]): Promise<void> {
   const { cwd, http } = parseArgs(argv);
+  const displayName = path.basename(cwd);
 
   // Construct the store, init it, then register tools. If init fails we
   // surface the error to stderr and exit non-zero — the parent MCP client
@@ -344,7 +369,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   await store.init();
 
   if (http !== null) {
-    const server = serveHttp(store, http);
+    const server = serveHttp(store, http, displayName);
     // Watch the files; push a `changed` frame to subscribed UIs on any change
     // (incl. writes by another process — the agent's own server, git, etc.).
     const watcher = startLedgerWatcher(store, cwd, (ledger) => {
@@ -363,7 +388,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const server = buildServer(store);
+  const server = buildServer(store, displayName);
   // Even on stdio, watch the files so this server's cache stays fresh when
   // another process writes the same ledgers.
   const watcher = startLedgerWatcher(store, cwd);
