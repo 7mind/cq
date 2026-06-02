@@ -1537,6 +1537,14 @@ function SubsectionItemTable({
 }): React.ReactElement {
   return (
     <table className="lw-table">
+      <colgroup>
+        <col className="lw-col-narrow" />
+        <col className="lw-col-narrow" />
+        <col />
+        {extraColumns.map((c) => (
+          <col key={c} className="lw-col-narrow" />
+        ))}
+      </colgroup>
       <thead>
         <tr>
           <th>id</th>
@@ -1704,6 +1712,15 @@ function ItemTable({
     if (rows.length === 0) return <p className="lw-empty">(no items)</p>;
     return (
       <table className="lw-table" data-testid="item-table">
+        <colgroup>
+          <col className="lw-col-narrow" />
+          <col className="lw-col-narrow" />
+          <col className="lw-col-narrow" />
+          <col />
+          {extraColumns.map((c) => (
+            <col key={c} className="lw-col-narrow" />
+          ))}
+        </colgroup>
         <thead>
           <tr>
             <th>milestone</th>

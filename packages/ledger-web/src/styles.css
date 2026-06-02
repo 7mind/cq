@@ -337,6 +337,13 @@ button:hover {
 .lw-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: auto;
+}
+/* Narrow scalar columns (id, status, extra columns): hug their content.
+   The summary column is left unsized so it takes all remaining width. */
+.lw-col-narrow {
+  width: 1%;
+  white-space: nowrap;
 }
 .lw-table th {
   text-align: left;
