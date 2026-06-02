@@ -93,23 +93,25 @@ the worker's structured result, and the round number. A worker that returned
 `status: "fail"` skips review and goes straight to the criticism loop (its
 `blockedReason` is treated as round-0 criticism).
 
-**File the reviewer's `defects[]` (Q22/Q26, file-and-defer).** A reviewer return
-may carry a non-empty `defects[]` — OUT-OF-SCOPE or pre-existing faults the
-reviewer noticed in the diff (entries `{ headline, description, severity,
+**File the reviewer's `defects[]` (Q22/Q26, file-and-defer, K13).** A reviewer
+return may carry a non-empty `defects[]` — OUT-OF-SCOPE or pre-existing faults
+the reviewer noticed in the diff (entries `{ headline, description, severity,
 suggestedFix? }`, see implement-reviewer T42). This is INDEPENDENT of the
 verdict and never blocks the current in-scope task (Q26). For each entry,
 `create_item("defects", <taskMilestone>, status: "open", fields: { headline,
 description, severity: <reviewer's severity>, suggestedFix?, ledgerRefs:
-["tasks:<id>", "goals:<G>"] })`. Then ROUTE it to investigate:* by file-and-defer — file an `open` question
-pointing the user at the new defect: `create_item("questions", <taskMilestone>,
-status: "open", fields: { question: "Out-of-scope defect <D> surfaced while
-reviewing <task>; it will be picked up by the next /plan:advance auto-investigate
-pass (K12/Q43), or run /investigate:start <D> manually to triage it sooner.",
-ledgerRefs: ["defects:<D>", "tasks:<id>", "goals:<G>"] })`. **Implement:* does
-NOT auto-launch investigate inline (Q43) — that is plan:*'s responsibility, since
-implement:* is an execution flow, not a planning flow. The filed defect will be
-triaged by the next /plan:advance cycle's auto-investigate phase, or by a direct
-user /investigate:start.** Do NOT block, fail, or re-dispatch the current task on
+["tasks:<id>", "goals:<G>"] })`. Record the triage context (task id, round,
+reviewer rationale) in the defect's OWN `fields` (e.g. `description` or
+`suggestedFix`). **Do NOT file a `questions` item routing the user to
+`/investigate:start <D>` (K13 — questions are reserved for genuine user
+decisions, not routing pointers).** The defect is self-contained: its
+`ledgerRefs` link it to the task and goal, and `/investigate:start` accepts a
+bare defect id (`^D\d+$` resume path) so any open defect is directly actionable
+via ledger query without a pointer question. **Implement:* does NOT auto-launch
+investigate inline (Q43) — that is plan:*'s responsibility, since implement:* is
+an execution flow, not a planning flow. The filed defect will be triaged by the
+next /plan:advance cycle's auto-investigate phase, or by a direct user
+/investigate:start <D>.** Do NOT block, fail, or re-dispatch the current task on
 a filed defect, and do NOT add it to the criticism loop — it is tracked
 separately. Filing a defect is idempotent: on a re-run, skip entries already
 filed for this task (match by headline + task ledgerRef).
