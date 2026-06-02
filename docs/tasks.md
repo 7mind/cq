@@ -61,10 +61,10 @@ archives:
 - dependsOn: ["T50"]
 - ledgerRefs: ["goals:G2"]
 
-### T52 — wip
+### T52 — done
 
 - createdAt: 2026-06-02T08:46:39.837Z
-- updatedAt: 2026-06-02T10:53:12.403Z
+- updatedAt: 2026-06-02T11:01:54.007Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Web: canonical bucket→color palette as the single shared source (CSS vars + JS map) incl. `warning`"
@@ -73,6 +73,8 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T50"]
 - ledgerRefs: ["goals:G2"]
+- resultCommit: 7609b8a
+- completion: "Web: canonical BUCKET_HEX:Record<StatusBucket,string> (single source) mirrored as --lw-status-* CSS vars on :root; .lw-status-warning=#e0a341 (Q34 amber, distinct from progress); badge rules re-sourced from vars (no palette dup); revise→lw-status-warning; tests assert keys===union. Reviewer approve 0/0. Merged 7609b8a."
 
 ### T53 — planned
 
@@ -128,10 +130,10 @@ archives:
 - dependsOn: []
 - ledgerRefs: ["goals:G2"]
 
-### T56 — wip
+### T56 — done
 
 - createdAt: 2026-06-02T08:47:22.715Z
-- updatedAt: 2026-06-02T10:53:11.212Z
+- updatedAt: 2026-06-02T11:01:50.135Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Web: render `suggestions` (string[]) as a bulleted list"
@@ -140,6 +142,8 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T54"]
 - ledgerRefs: ["goals:G2"]
+- resultCommit: 17aabe5
+- completion: "Web: renderListField emits <ul><li> for string[] fields (both detail render paths); scalar Markdown preserved; happy-dom test asserts 3 <li>. Reviewer approve 0/0. Merged 17aabe5."
 
 ### T57 — planned
 
@@ -182,10 +186,10 @@ archives:
 
 ## M14
 
-### T60 — wip
+### T60 — done
 
 - createdAt: 2026-06-02T08:47:57.646Z
-- updatedAt: 2026-06-02T10:53:13.344Z
+- updatedAt: 2026-06-02T11:01:59.159Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "Column model: eligible-fields rule + per-ledger default columns constant"
@@ -193,6 +197,8 @@ archives:
 - acceptance: "Unit test: eligibleColumnFields(TASKS_SCHEMA) includes 'suggestedModel' and excludes 'description'/'id'/'status'; defaultColumns('tasks') === ['suggestedModel']; defaultColumns('goals') === []. `bun run check` green."
 - suggestedModel: frontier
 - ledgerRefs: ["goals:G2"]
+- resultCommit: 48fa2c6
+- completion: "@cq/ledger columns.ts: pure eligibleColumnFields(schema) (field-level, minus long/narrative denylist + always-shown id/status/summary) + defaultColumns(ledgerName) (tasks→['suggestedModel']); index-exported, no Node deps (browser-safe for T61); 6 unit tests. Reviewer approve 0/0 (noted acceptance/planDoc/grounding eligible — T61/T62 may refine). Merged 48fa2c6."
 
 ### T61 — planned
 
@@ -421,10 +427,10 @@ archives:
 - resultCommit: 7256dc6
 - completion: "plan-advance.md reviewer-defect path now file-only (open defect linked goals:<G>, discoverable by orchestrator ledger query); dropped 'run /investigate:start' user-question; prose summary demoted to advisory; cites K12; subagent one-step/no-Bash/single-token contract intact. Reviewer approve 0/0. Merged 7256dc6."
 
-### T74 — wip
+### T74 — done
 
 - createdAt: 2026-06-02T10:15:09.269Z
-- updatedAt: 2026-06-02T10:53:09.580Z
+- updatedAt: 2026-06-02T11:01:47.327Z
 - author: "opus-4.8[1m]"
 - session: 0a4a7acf-25b6-4783-83a1-a45870023493
 - headline: "plan/advance.md orchestrator: auto-launch /investigate:advance after planning + CONCRETE cross-chain stop predicates (drop 4-iteration cap)"
@@ -455,6 +461,8 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T72","T73"]
 - ledgerRefs: ["goals:G3"]
+- resultCommit: 22169f2
+- completion: "plan/advance.md: broadened allowed-tools for inline investigate; added auto-investigate phase (ledger-query worklist, runs /investigate:advance inline + auto-resume on defect-seeded goal); explicit awaiting-answers+defects orthogonality; removed 4-iteration cap, replaced with enumerated convergent stop predicates (a)-(f); cites K12; Report covers outcomes. Reviewer approve 0/0. Merged 22169f2; integration 516 pass."
 
 ### T75 — planned
 
