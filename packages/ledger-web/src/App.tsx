@@ -22,6 +22,14 @@ import { DagView } from "./DagView.js";
 import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
 import { LiveManager, type LiveStats } from "@cq/ledger-live";
+import { defectFixTaskIds, hypothesisRelationships } from "@cq/ledger/relationships";
+
+// Ledger names for the relationship panels — consistent with the canonical
+// constants in @cq/ledger but defined locally to avoid bundling Node.js
+// modules into the browser build.
+const DEFECTS_LEDGER = "defects";
+const TASKS_LEDGER = "tasks";
+const HYPOTHESIS_LEDGER = "hypothesis";
 import {
   statusBucket,
   isTerminal,
@@ -192,6 +200,9 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
   const [showArchive, setShowArchive] = useState(false);
   const [archiveContent, setArchiveContent] = useState<ArchiveContent | null>(null);
   const [archiveId, setArchiveId] = useState<string | null>(null);
+  // Auxiliary items for cross-ledger relationship panels. Lazily fetched when
+  // a defects or hypothesis item is selected; keyed by ledger name.
+  const [auxItems, setAuxItems] = useState<Record<string, Item[]>>({});
   // Latest-callback ref: the live connection lives across ledger changes, so
   // its onChanged must call the freshest refresh closure, not a stale one.
   const refreshRef = useRef<() => void>(() => {});
@@ -463,6 +474,33 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
     [view],
   );
 
+  // Navigate to a specific item in a (possibly different) ledger.  Used by
+  // the relationship panels (fix-tasks, hypothesis tree) to let the user jump
+  // between related items without leaving the MCP client.
+  const navigateToItem = useCallback(
+    async (targetLedger: string, itemId: string) => {
+      if (client === null) return;
+      try {
+        const v = await client.fetchLedger(targetLedger);
+        setLedger(targetLedger);
+        setView(v);
+        setHits(null);
+        setCreating(null);
+        setNavZone("main");
+        for (const g of v.milestones)
+          for (const it of g.items)
+            if (it.id === itemId) {
+              setSelected({ item: it, milestoneId: g.id });
+              return;
+            }
+        setSelected(null);
+      } catch (e) {
+        setFlash(errMsg(e));
+      }
+    },
+    [client],
+  );
+
   // Keep the refresh closure current (used by the long-lived live connection).
   useEffect(() => {
     refreshRef.current = (): void => {
@@ -503,6 +541,12 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
     };
   }, [client, liveUrl, liveWsCtor]);
 
+  // All items in the currently-fetched ledger (unfiltered; used by relationship panels).
+  const allCurrentItems = useMemo<Item[]>(
+    () => (view === null ? [] : view.milestones.flatMap((g) => g.items)),
+    [view],
+  );
+
   // The item rows currently visible (ledger rows after status + milestone filter).
   // The keyboard handler and the table render from the same derived list.
   const visibleRows = useMemo(
@@ -542,6 +586,23 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
       alive = false;
     };
   }, [creating, client]);
+
+  // When a defects item is selected, lazily fetch the tasks ledger so the
+  // fix-tasks relationship panel can resolve both link directions.
+  useEffect(() => {
+    if (client === null || ledger !== DEFECTS_LEDGER || selected === null) return;
+    if (auxItems[TASKS_LEDGER] !== undefined) return; // already cached
+    let alive = true;
+    void client.fetchLedger(TASKS_LEDGER).then((v) => {
+      if (alive) {
+        const items = v.milestones.flatMap((g) => g.items);
+        setAuxItems((prev) => ({ ...prev, [TASKS_LEDGER]: items }));
+      }
+    }).catch(() => { /* tasks ledger may not exist */ });
+    return () => {
+      alive = false;
+    };
+  }, [client, ledger, selected, auxItems]);
 
   // A stable blank row to seed the editor in create mode (per create session).
   const draftRow = useMemo<Row>(
@@ -983,6 +1044,9 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
                     onToggleOrientation={toggleOrientation}
                     onSave={(status, fields) => void saveEdit(selected, status, fields)}
                     onClose={() => setSelected(null)}
+                    allCurrentItems={allCurrentItems}
+                    auxItems={auxItems}
+                    onNavigateToItem={(targetLedger, itemId) => void navigateToItem(targetLedger, itemId)}
                   />
                 )
               )}
@@ -1431,6 +1495,9 @@ function DetailPanel({
   draftMilestones,
   isArchived,
   onClose,
+  allCurrentItems,
+  auxItems,
+  onNavigateToItem,
 }: {
   row: Row;
   ledger: string;
@@ -1445,6 +1512,12 @@ function DetailPanel({
   /** When true, suppress ALL edit affordances (archived items are read-only). */
   isArchived?: boolean;
   onClose: () => void;
+  /** All items from the currently-fetched ledger (for relationship resolution). */
+  allCurrentItems?: Item[];
+  /** Items fetched from auxiliary ledgers keyed by ledger name. */
+  auxItems?: Record<string, Item[]>;
+  /** Navigate to a specific item in a (possibly different) ledger. */
+  onNavigateToItem?: (targetLedger: string, itemId: string) => void;
 }): React.ReactElement {
   const isDraft = draftMilestones !== undefined;
   const fieldNames = Object.keys(schema.fields);
@@ -1776,7 +1849,154 @@ function DetailPanel({
         )}
       </dl>
       {isMilestones && <p className="lw-dim">Milestone fields (title/deps) are edited via the form.</p>}
+      {/* Defect → fix-tasks relationship panel */}
+      {ledger === DEFECTS_LEDGER && !isDraft && (
+        <FixTasksPanel
+          defectId={row.item.id}
+          defects={allCurrentItems ?? []}
+          tasks={auxItems?.[TASKS_LEDGER] ?? []}
+          onNavigate={(id) => onNavigateToItem?.(TASKS_LEDGER, id)}
+        />
+      )}
+      {/* Hypothesis ancestry + children panel */}
+      {ledger === HYPOTHESIS_LEDGER && !isDraft && (
+        <HypothesisTreePanel
+          hypothesisId={row.item.id}
+          hypotheses={allCurrentItems ?? []}
+          onNavigate={(id) => onNavigateToItem?.(HYPOTHESIS_LEDGER, id)}
+        />
+      )}
     </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Relationship sub-panels (defect fix-tasks, hypothesis tree)
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders the "Fix tasks" section for a selected defect item.
+ * Uses the pure `defectFixTaskIds` helper to resolve linked tasks from both
+ * forward (defect.dependsOn) and reverse (task.ledgerRefs) directions.
+ */
+function FixTasksPanel({
+  defectId,
+  defects,
+  tasks,
+  onNavigate,
+}: {
+  defectId: string;
+  defects: readonly Item[];
+  tasks: readonly Item[];
+  onNavigate: (taskId: string) => void;
+}): React.ReactElement | null {
+  const taskIds = defectFixTaskIds(defectId, defects, tasks);
+  if (taskIds.length === 0) return null;
+  // Build a lookup so we can render status + summary for each resolved task.
+  const taskById = new Map<string, Item>();
+  for (const t of tasks) taskById.set(t.id, t);
+
+  return (
+    <section className="lw-rel-section" data-testid="fix-tasks-section">
+      <h4 className="lw-rel-heading">Fix tasks</h4>
+      <ul className="lw-rel-list">
+        {taskIds.map((id) => {
+          const task = taskById.get(id);
+          return (
+            <li key={id}>
+              <button
+                type="button"
+                className="lw-rel-row"
+                data-testid={`fix-task-${id}`}
+                onClick={() => onNavigate(id)}
+              >
+                <span className="lw-rel-id">{id}</span>
+                {task !== undefined && (
+                  <>
+                    <span className={`lw-status lw-status-${task.status}`} data-testid={`fix-task-status-${id}`}>
+                      {task.status}
+                    </span>
+                    <span className="lw-rel-summary lw-dim">{summarize(task)}</span>
+                  </>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Renders the ancestry breadcrumb (root..parent) and direct children for a
+ * selected hypothesis item.
+ */
+function HypothesisTreePanel({
+  hypothesisId,
+  hypotheses,
+  onNavigate,
+}: {
+  hypothesisId: string;
+  hypotheses: readonly Item[];
+  onNavigate: (hypothesisId: string) => void;
+}): React.ReactElement | null {
+  const { ancestors, children } = hypothesisRelationships(hypothesisId, hypotheses);
+  if (ancestors.length === 0 && children.length === 0) return null;
+
+  // Build a lookup for rendering status + summary.
+  const byId = new Map<string, Item>();
+  for (const h of hypotheses) byId.set(h.id, h);
+
+  const renderHypLink = (id: string, testPrefix: string): React.ReactElement => {
+    const item = byId.get(id);
+    return (
+      <button
+        type="button"
+        key={id}
+        className="lw-rel-row"
+        data-testid={`${testPrefix}-${id}`}
+        onClick={() => onNavigate(id)}
+      >
+        <span className="lw-rel-id">{id}</span>
+        {item !== undefined && (
+          <>
+            <span className={`lw-status lw-status-${item.status}`} data-testid={`${testPrefix}-status-${id}`}>
+              {item.status}
+            </span>
+            <span className="lw-rel-summary lw-dim">{summarize(item)}</span>
+          </>
+        )}
+      </button>
+    );
+  };
+
+  return (
+    <section className="lw-rel-section" data-testid="hypothesis-tree-section">
+      {ancestors.length > 0 && (
+        <>
+          <h4 className="lw-rel-heading">Ancestry</h4>
+          <nav className="lw-rel-breadcrumb" data-testid="hypothesis-ancestry" aria-label="hypothesis ancestry">
+            {[...ancestors].reverse().map((id, i) => (
+              <React.Fragment key={id}>
+                {i > 0 && <span className="lw-rel-sep"> › </span>}
+                {renderHypLink(id, "ancestor")}
+              </React.Fragment>
+            ))}
+          </nav>
+        </>
+      )}
+      {children.length > 0 && (
+        <>
+          <h4 className="lw-rel-heading">Children</h4>
+          <ul className="lw-rel-list" data-testid="hypothesis-children">
+            {children.map((id) => (
+              <li key={id}>{renderHypLink(id, "child")}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
   );
 }
 

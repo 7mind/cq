@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./relationships": {
+      "import": "./dist/relationships.js",
+      "types": "./dist/relationships.d.ts"
     }
   },
   "dependencies": {
