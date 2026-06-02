@@ -78,9 +78,14 @@ describe("batch modal sizing (T93)", () => {
     // Verify the new sizing rule exists in styles.css
     expect(content).toContain(".lw-batch");
     expect(content).toContain("width: min(900px, 90vw)");
-    expect(content).toContain("max-height: 85vh");
+    expect(content).toContain("max-height: 90vh");
     expect(content).toContain("font-size: 0.95rem");
     expect(content).toContain("overflow-y: auto");
+    // Behavioral: the .lw-batch rule must declare overflow-y: auto so long content scrolls
+    const batchRuleMatch = content.match(/\.lw-batch\s*\{([^}]*)/);
+    expect(batchRuleMatch).not.toBeNull();
+    const batchRuleBody = batchRuleMatch![1];
+    expect(batchRuleBody).toContain("overflow-y: auto");
   });
 
   it("batch modal dialog element renders with proper class", async () => {

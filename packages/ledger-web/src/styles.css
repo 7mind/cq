@@ -164,7 +164,7 @@ body {
    longer question content; font reduced to 0.95rem for better readability. */
 .lw-batch {
   width: min(900px, 90vw);
-  max-height: 85vh;
+  max-height: 90vh;
   overflow-y: auto;
   padding: 18px 22px;
   background: var(--panel);
