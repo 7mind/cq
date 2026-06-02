@@ -2,7 +2,7 @@
 ledger: decisions
 counters:
   milestone: 0
-  item: 5
+  item: 7
 archives:
   - id: M2
     path: ./archive/decisions/M2.md
@@ -27,4 +27,24 @@ archives:
 - session: 86ec6253-6f0d-405a-9a97-a89319e33ce3
 - headline: "plan review: approved"
 - rationale: "Reviewer go-ahead (ref review R1) with empty new_questions; criticism folded into tasks T4/T5/T6/T9. Plan for /implement:* command family is approved."
+- ledgerRefs: ["goals:G1"]
+
+### K6 — locked
+
+- createdAt: 2026-06-01T23:24:31.385Z
+- updatedAt: 2026-06-01T23:24:31.385Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- headline: "plan review: approved"
+- rationale: Reviewer go-ahead (ref review R4) with 0 criticisms and 0 new questions for the follow-up plan (work milestone M6, tasks T26-T34). R3 revise criticism on T26/T27/T34 was folded into the tasks; R4 confirms clean.
+- ledgerRefs: ["goals:G1"]
+
+### K7 — locked
+
+- createdAt: 2026-06-01T23:46:42.519Z
+- updatedAt: 2026-06-01T23:46:42.519Z
+- author: "opus-4.8[1m]"
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- headline: "plan review: approved"
+- rationale: "Reviewer go-ahead (review R6): 0 criticisms, 0 new questions for the #2-follow-up plan (work milestones M7/M8/M9, tasks T35-T49). Plan approved; goal advances to planned."
 - ledgerRefs: ["goals:G1"]

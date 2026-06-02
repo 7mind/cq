@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 10
+  item: 28
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -116,3 +116,237 @@ archives:
 - recommendation: Define task success as `bun run check` green AND reviewer go-ahead; on check failure feed output into the criticism loop.
 - ledgerRefs: ["goals:G1"]
 - answer: as recommended
+
+### Q11 — answered
+
+- createdAt: 2026-06-01T23:07:00.582Z
+- updatedAt: 2026-06-01T23:16:44.241Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Archived items (req 1): how should the UIs surface archives, and what is the read contract? The store keeps archives at ./archive/<ledger>/<id>.md; the MCP exposes fetch_ledger_archive(ledger_id, archive_id) for ONE archive plus archivePointers[] on fetch_ledger, but neither the web nor TUI client exposes archive reads and there is no 'list all archives' enumeration tool. Should viewing archives reuse the per-ledger archivePointers + fetch_ledger_archive (per-ledger, milestone-scoped), or do we add a new cross-ledger 'enumerate_archives' MCP tool first?"
+- context: fetch_ledger already returns archivePointers (id, path, summary) per ledger; fetch_ledger_archive returns either a whole archived milestone-group (non-milestones ledger) or a single archived milestone-item (milestones ledger). The web mcpClient does not even implement fetchLedgerArchive yet. Archived items are detached and terminal.
+- suggestions: ["Reuse existing archivePointers + fetch_ledger_archive; add an 'archived' toggle/section per ledger that lazily fetches a chosen milestone's archive","Add a new enumerate_archives MCP tool (cross-ledger list of pointers) then build a dedicated archive browser","Just make ftsSearch include_archived=true reachable from the search box (read-only","no dedicated browser)"]
+- recommendation: "Reuse archivePointers + fetch_ledger_archive: add an 'archived' affordance per ledger that lists its archive pointers and expands a selected milestone's archived items read-only. No new MCP tool unless a cross-ledger view is wanted."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended but you could add new mcp tools if you think the agents may benefit from having them!
+
+### Q12 — answered
+
+- createdAt: 2026-06-01T23:07:07.420Z
+- updatedAt: 2026-06-01T23:11:12.480Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Archived items (req 1): should archived items be read-only in both UIs, and should they ALSO appear in the TUI (which currently has no archive affordance at all, only status filters)? The web detail panel has edit/save and quick-transition buttons; archived items are detached/terminal and the store has no 'update archived item' path."
+- context: Both UIs share the same edit affordances (status, fields, transitions, answer). Surfacing archives must suppress those for archived items. The TUI also needs a new navigation entry to reach archives, unlike the web where it could be a toggle in the existing toolbar.
+- suggestions: ["Archives strictly read-only in both UIs; reach them via a dedicated toggle/section per ledger","Read-only in web only for v1; defer the TUI archive view","Read-only, and reached via a distinct top-level 'archived' pseudo-ledger entry in both"]
+- recommendation: Strictly read-only in BOTH UIs (no edit/transition/answer controls); reach archives via a per-ledger 'show archived' toggle that lists archive pointers and expands one milestone's items.
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q13 — answered
+
+- createdAt: 2026-06-01T23:07:19.156Z
+- updatedAt: 2026-06-01T23:13:11.384Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Per-milestone filter (req 2) + milestone subsections (req 3): are these the SAME feature or two? Today the web ItemTable is a flat <table> with a 'milestone' column and a single status <select>. Option A: add a second milestone <select> (filter to one milestone, ANDed with status). Option B: drop the milestone column and instead render the table as per-milestone subsections (a milestone header row, then its items), which is itself a form of grouping/filtering. Do you want a milestone DROPDOWN filter, milestone SUBSECTIONS, or both (subsections by default + a dropdown to narrow to one)?"
+- context: "Req 2 asks for a per-milestone filter control; req 3 asks for milestone table subsections. They overlap: subsections group by milestone; a filter narrows to one. Implementing both naively double-counts the work and competes for the same toolbar/table space."
+- suggestions: ["Both: render milestone subsections by default AND add a milestone dropdown that collapses to one milestone (subsection becomes the only group)","Dropdown filter only (req 2), keep the flat milestone column; no subsections","Subsections only (req 3), drop the dropdown — grouping replaces filtering"]
+- recommendation: "Both, unified: render per-milestone subsections (collapsible header + its rows) and add a milestone dropdown that narrows to a single milestone; status filter ANDs with it. Drop the redundant per-row milestone column once subsections show it in the header."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q14 — answered
+
+- createdAt: 2026-06-01T23:07:25.871Z
+- updatedAt: 2026-06-01T23:11:59.537Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Milestone subsections (req 3): which views get them, and does the subsection ordering follow the milestones DAG (dependsOn) or insertion order? You said 'ledger views where items include a milestone field' — that is every non-milestones ledger (all items carry milestoneId). Should subsections appear in BOTH the web table AND the new TUI table (req 4), and should the milestones ledger itself (where the 'milestone' IS the item) be excluded?"
+- context: "Every non-milestones item has a milestoneId; fetch_ledger already returns items grouped into FetchedMilestoneGroup[] with resolved milestone title/status, so grouping data is available without extra calls. The milestones ledger groups under M0 only."
+- suggestions: ["Subsections in both web and TUI tables, in fetch_ledger group order, with the resolved milestone title+status as the header; exclude the milestones ledger","Web only for v1; TUI keeps a flat (but column-aligned) table","Subsections everywhere including a synthetic header for the milestones ledger"]
+- recommendation: Subsections in BOTH web and TUI tables, ordered as fetch_ledger returns the groups (insertion order), header = resolved milestone id + title + status; the milestones ledger is excluded (it has no meaningful sub-grouping).
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q15 — answered
+
+- createdAt: 2026-06-01T23:07:37.780Z
+- updatedAt: 2026-06-01T23:13:59.576Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "TUI column table (req 4): which columns, and how should they degrade in a narrow left pane? The TUI list renders each row as one ink <Text> string 'id [status] summary' inside ScrollList (with a cursor prefix and an optional 1-char scrollbar column), and the pane width is user-resizable (ratio 0.2–0.8) and can dock right or bottom. A column table needs a fixed id-width and status-width with the summary truncating. Should columns be id | status | summary (matching the row content today), or also include milestone (id | milestone | status | summary, mirroring the web table)?"
+- context: Misalignment comes from variable id width ('T1' vs 'T14'). The fix is to right-pad the id column to the max id width in the visible set (or a fixed width) and color the status in its own column. The left pane can be very narrow, so the summary must truncate-end (already the wrap mode used).
+- suggestions: ["Columns id | status | summary, id padded to the max id width in view, status to the max status width; summary truncates. No milestone column (subsections from req 3 carry milestone)","Columns id | milestone | status | summary mirroring the web table","Fixed id width (e.g. 5) + fixed status width; simplest, no per-view measurement"]
+- recommendation: "Columns id | status | summary: pad id to the max id width among visible rows and status to the schema's max statusValue width; summary truncate-end. No milestone column — milestone is conveyed by the req-3 subsection header."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q16 — answered
+
+- createdAt: 2026-06-01T23:07:46.666Z
+- updatedAt: 2026-06-01T23:09:57.269Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Reviews summary (req 5): the schema change. Confirmed: docs/ledgers.yaml reviews schema has new_questions[], criticism[], ledgerRefs[], tags[], sourceRefs[] — no 'summary'. The summary column shows criticism because summarize() falls through to the first field. Should 'summary' be an OPTIONAL string field (back-compat: existing reviews have none, so summarize() still needs a graceful fallback), and must I also update examples/sample-ledger/docs/ledgers.yaml and any canonical-ledgers test/seed? And: is summary a single line (a title) or a short paragraph?"
+- context: "summarize() in both UIs picks headline ?? title ?? question ?? summary ?? Object.values(f)[0]. Adding an optional 'summary' makes it the natural pick for reviews. docs/ledgers.yaml is the live registry; examples/sample-ledger has its own copy; canonical-ledgers.test.ts asserts the canonical set. Making summary required would break every existing review item."
+- suggestions: ["Optional single-line 'summary' string; update docs + examples + canonical tests; summarize() prefers it, falls back to a truncated criticism when absent","Required summary (forces every new review to set it; needs a migration/backfill for existing R1)","No schema change; just fix the UI summary column to truncate criticism (req 5 wrapping only)"]
+- recommendation: Add an OPTIONAL single-line 'summary' string to the reviews schema; update docs/ledgers.yaml, examples/sample-ledger, and the canonical-ledgers test; summarize() prefers summary and falls back to a truncated first-criticism line for legacy reviews.
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q17 — answered
+
+- createdAt: 2026-06-01T23:07:58.026Z
+- updatedAt: 2026-06-01T23:09:07.830Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Reviews badge wrapping (req 5): the status badge wraps badly because the long criticism text in the summary cell pushes layout. Once 'summary' replaces criticism in the summary column, is a CSS fix to the status badge (white-space:nowrap on .lw-status, plus a max-width/ellipsis on the summary cell) sufficient, or do you also want the summary cell itself clamped to one line with ellipsis across ALL ledgers (not just reviews)?"
+- context: "The web ItemTable status cell renders <span class='lw-status lw-status-<bucket>'>. The summary <td> currently shows the full first field with no clamp. Reviews' criticism is a string[] joined with ', ' so it is very long. The fix has a schema half (Q16) and a pure-CSS/render half (this)."
+- suggestions: ["nowrap the status badge + single-line ellipsis on the summary cell for ALL ledgers (uniform table rows)","Only nowrap the badge; leave summary wrapping as-is for non-review ledgers","Clamp summary to 1–2 lines (line-clamp) rather than a hard single-line ellipsis"]
+- recommendation: nowrap the status badge AND clamp the summary cell to a single line with ellipsis for ALL ledgers (uniform, predictable row height); the schema 'summary' field (Q16) makes the reviews summary short anyway.
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q18 — answered
+
+- createdAt: 2026-06-01T23:08:08.090Z
+- updatedAt: 2026-06-01T23:15:10.339Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45784023493
+- question: "Reviews summary (req 5): the prompt changes — scope and write path. Both reviewers must populate the new 'summary'. plan-reviewer.md writes its reviews item directly via create_item, so it just adds summary to the fields. implement-reviewer.md writes NOTHING — it returns a JSON block (taskId/verdict/criticism/questions/rationale) that the /implement:advance orchestrator records as the terminal reviews item. So req 5 also needs: (a) implement-reviewer's JSON contract gains a 'summary' field, and (b) the implement:advance command (llm/commands/implement/advance.md) must map it into the create_item fields. Confirm both prompt files AND the implement:advance orchestrator are in scope, and should plan-reviewer's existing R-format examples be updated too?"
+- context: plan-reviewer.md create_item example currently sets new_questions/criticism/ledgerRefs only. implement-reviewer.md defines the JSON the orchestrator parses. The implement command family was just designed under this same goal (milestone M3) and its prompts may not be written yet — the summary field should be baked in from the start there.
+- suggestions: ["In scope: plan-reviewer.md (add summary to its create_item), implement-reviewer.md (add summary to its JSON contract), and implement:advance.md (map summary → create_item). Summary = one-line verdict gist.","Only plan-reviewer for now; implement-* prompts handle summary when they are authored under M3","Add summary to the JSON contract only; let the orchestrator synthesize a summary if the field is missing"]
+- recommendation: "All three in scope: add an optional one-line 'summary' to plan-reviewer's create_item, to implement-reviewer's JSON contract, and have implement:advance map it into the recorded reviews item (synthesizing a fallback from the rationale/verdict if the model omits it)."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q19 — answered
+
+- createdAt: 2026-06-01T23:28:44.233Z
+- updatedAt: 2026-06-01T23:29:52.436Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Defects vs tasks in plan/implement: parametrize the SAME prompts over a 'work-item ledger' (tasks|defects), or add a thin defect-specific layer on top? The two schemas differ materially: defects use status open/wip/blocked/resolved/abandoned with required `severity`, plus `rootCause`/`suggestedFix`/`fix`; tasks use planned/wip/done/blocked/abandoned with `acceptance`/`resultCommit`/`completion`. The implement loop's READY-SET, success gate ('check green AND reviewer approve'), and merge-back all assume task vocabulary."
+- context: "docs/ledgers.yaml: defects schema already exists with rootCause/suggestedFix/fix/severity(required)/dependsOn/ledgerRefs/suggestedModel and terminal=resolved/abandoned; tasks terminal=done/abandoned. The follow-up says they are 'very similar, just ledger names/metadata differ' — but the status sets and required fields differ, so a naive parametrization needs a status/terminal/required-field mapping. Decisive for how every plan/implement prompt is edited."
+- suggestions: ["Generalize prompts over a {ledger, statusMap, terminalStatuses, requiredFields} descriptor so one prompt body handles both — minimal duplication, but the prompts carry a mapping table","Keep tasks the only EXECUTABLE unit; defects are never directly implemented — a defect is always decomposed into tasks (defect->tasks), so implement-flow still operates ONLY on tasks and defects are a planning/investigation concern","Treat defects as first-class executable items too (implement-flow picks up resolvable defects directly when a defect needs no decomposition, e.g. a one-line fix)"]
+- recommendation: "Option 2 as the spine: the implement EXECUTION loop continues to operate on `tasks` only; a defect is the problem record, its fix is always one-or-more tasks linked back to it (defect->tasks). plan/implement gain defect-AWARENESS (intake, linkage, closing the defect when its tasks are done), not a second execution path. This keeps the success-gate/merge-back semantics intact and matches 'one defect may require one or more tasks'."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q20 — answered
+
+- createdAt: 2026-06-01T23:28:53.577Z
+- updatedAt: 2026-06-01T23:30:02.978Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Defect->task linkage: how is it represented in the ledger, and how does a defect become terminal? Options for the link: (a) each fix task carries `ledgerRefs: [\"defects:<D>\"]`; (b) the defect carries `dependsOn: [<taskIds>]`; (c) both directions. And: when do we flip the defect to `resolved` — when all its linked fix tasks are `done`, and who does it (the implement orchestrator on merge-back, or a separate step)?"
+- context: "Both schemas expose `dependsOn: id[]` and `ledgerRefs: id[]`. The implement orchestrator already sets tasks done on merge-back and archives milestones when all items terminal. Closing the defect needs an owner and a trigger. The reviewer/plan flows need to discover 'fix tasks for defect D' to know D's progress."
+- suggestions: ["Fix tasks ledgerRef the defect (tasks.ledgerRefs += defects:<D>); defect resolves when every task that ledgerRefs it is done; implement orchestrator flips it on the final merge-back","Defect.dependsOn lists its fix tasks; resolve when all dependsOn tasks are done","Both: tasks->defect via ledgerRefs (discoverable from the task) AND defect->tasks via dependsOn (discoverable from the defect), orchestrator resolves the defect when all linked tasks terminal"]
+- recommendation: "Option 3 (both directions) for discoverability, with the implement orchestrator owning closure: after merge-back, if every task linked to a defect is `done`, set the defect `resolved` and record the fix summary in defects.fix. The defect's `dependsOn` is the authoritative fix-task set; tasks.ledgerRefs back-link for the reviewer/UI."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q21 — answered
+
+- createdAt: 2026-06-01T23:29:03.574Z
+- updatedAt: 2026-06-01T23:30:15.746Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "User-reported defects: which command files an `open` defect into the `defects` ledger, and does it auto-route into investigation? Is there a NEW thin intake command (e.g. /investigate:start <defect text> or /defect:report) that creates the defect and hands to the investigate loop, OR is defect intake folded into the existing /plan:start / /plan:follow-up (which currently create goals, not defects)?"
+- context: "Today /plan:start creates a `goals` item and hands to plan-advance for clarifying questions; there is no command that writes a `defects` item. The follow-up wants user-reported defects to land in `defects` and (per the investigate:* requirement) to be researched before fix tasks are planned. severity is a REQUIRED defect field, so intake must capture or default it."
+- suggestions: ["New /investigate:start <defect description> — creates the defects item (open, severity captured/defaulted) under a coordination milestone, then hands to investigate-advance (clarify root cause -> hypotheses)","Reuse /plan:start but detect 'this is a defect' and branch to a defect record + investigate flow","Two commands: /defect:report (just file it) and /investigate:start <defectId> (begin research) kept separate"]
+- recommendation: "New /investigate:start <defect description> as the intake+bootstrap (mirrors /plan:start): create the defect (open) under a coordination milestone, capture severity (default a sensible tier with a clarifying question if absent), then hand to the investigate-advance loop. A bare /investigate:start <defectId> also resumes an existing defect. This keeps defect intake out of the goal-oriented plan:* commands."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q22 — answered
+
+- createdAt: 2026-06-01T23:29:14.346Z
+- updatedAt: 2026-06-01T23:30:29.437Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Reviewer-found defects: when plan-reviewer or implement-reviewer finds a genuine DEFECT (vs a fixable criticism or a user-question), should it file a `defects` item instead of folding it into criticism[]? Today plan-reviewer buckets findings into new_questions[] vs criticism[]; implement-reviewer into questions[] vs criticism[] and the orchestrator records one review. Where does 'this is a defect, file it' fit — a THIRD bucket (`defects[]`) that the orchestrator turns into defects-ledger items?"
+- context: The follow-up explicitly says 'when reviewer finds a defect, it should be filed as a defect, not task'. But reviewers currently never create defects. The implement-reviewer is read-only-to-the-ledger and returns JSON the orchestrator records. A defect found mid-implementation is distinct from in-scope criticism (which the worker fixes in the same worktree this round).
+- suggestions: ["Add a `defects[]` bucket to both reviewers' output; orchestrator files each as an open defect linked to the goal/task and routes it to investigate (out-of-scope of the current task)","Reviewer only flags 'defect' in rationale; orchestrator decides whether to file a defect vs criticism","Distinguish by scope: in-scope regressions stay criticism (fixed this round); out-of-scope/pre-existing defects are filed as defects and investigated separately"]
+- recommendation: "Combine 1+3: reviewers gain a `defects[]` bucket reserved for OUT-OF-SCOPE or pre-existing defects (a fault not caused by, and not fixable within, the current task/plan); in-scope regressions remain `criticism` and are fixed in the same round. The orchestrator files each reviewer defect as an `open` defects item (severity from the reviewer) linked to goals:<G>, and routes it into the investigate flow rather than blocking the current task."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q23 — answered
+
+- createdAt: 2026-06-01T23:29:25.234Z
+- updatedAt: 2026-06-01T23:30:51.558Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "investigate:* command family shape: mirror plan-flow exactly? Proposed: thin commands /investigate:start (bootstrap a defect + coordination milestone) and /investigate:advance (drive the research loop one round), plus subagents `investigate-advance` (the orchestrator-side 'brain' — but see Q on the loop owner) and `investigate-explorer` (read-only hypothesis-tester). Confirm the command/subagent set and their llm/{commands,agents} file names so scripts/link-prompts.ts LINKS can be extended."
+- context: "plan-flow = commands/plan/{start,advance,follow-up}.md + agents/{plan-advance,plan-reviewer}.md, all symlinked via the LINKS array in scripts/link-prompts.ts. The research-loop skill has THREE roles: orchestrator (hypothesis formation/validation/adjudication), read-only evidence-gathering subagents (parallel when seeding), and no separate reviewer (adjudication is the orchestrator's). investigate:* must map those onto the host's command+subagent surfaces."
+- suggestions: ["commands/investigate/{start,advance}.md + agents/{investigate-explorer}.md (no separate reviewer; the advance command is the orchestrator/adjudicator, explorer is the read-only evidence-gatherer)","Add agents/investigate-adjudicator.md too, so /investigate:advance stays thin and the adjudication brain is a subagent like plan-advance","Single /investigate command (no start/advance split)"]
+- recommendation: "commands/investigate/{start,advance}.md + a single read-only agents/investigate-explorer.md. The research-loop's orchestration (hypothesis formation, evidence validation, adjudication, DFS) is exactly the work that CANNOT be delegated to a subagent that can't spawn subagents — so it lives in the /investigate:advance command body (the loop owner), and explorer is the parallel read-only evidence-gatherer. No separate reviewer subagent (adjudication is orchestrator work). Extend LINKS accordingly."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q24 — answered
+
+- createdAt: 2026-06-01T23:29:37.464Z
+- updatedAt: 2026-06-01T23:31:12.304Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Research-loop hypothesis tree under the subagents-cannot-spawn-subagents constraint: where does the DFS loop live, and is the hypothesis tree stored in the `hypothesis` LEDGER (not a docs/research/*.md file)? The skill keeps a markdown ledger and forms H1/H1.1 trees with evidence E1/E2 and states confirmed/uncertain/wrong. Our hypothesis schema has parentHypothesis(id), evidence(string[]), rationale, status open/uncertain/confirmed/wrong — a near-exact match."
+- context: "research-loop says the orchestrator (never a subagent) forms hypotheses, validates evidence against source, and adjudicates; read-only subagents only gather evidence and may run in parallel when seeding. Our platform forbids subagents spawning subagents, so the DFS/adjudication MUST be the /investigate:advance command body (exactly as plan-flow keeps the loop in the command). The hypothesis ledger can hold the durable tree instead of a markdown file."
+- suggestions: ["Store the tree in the `hypothesis` LEDGER: each node a hypothesis item (parentHypothesis for ancestry, evidence[] for cited findings, status for verdict), linked to the defect via ledgerRefs; /investigate:advance owns formation+validation+adjudication; investigate-explorer subagents gather evidence (parallel only when seeding disjoint roots, per the skill)","Keep the docs/research/research-<defect>.md markdown ledger as the skill specifies, and only mirror the final root-cause into defects.rootCause","Hybrid: hypothesis ledger as the structured tree + a generated markdown view"]
+- recommendation: "Option 1: the `hypothesis` ledger IS the durable tree (parentHypothesis = ancestry, evidence[] = cited 3-5 line excerpts, status = verdict), each node ledgerRef'd to its defect. /investigate:advance is the orchestrator: it forms hypotheses, dispatches investigate-explorer read-only subagents (parallel ONLY when seeding disjoint top-level hypotheses, serial while drilling a branch per the skill), VALIDATES every returned citation against source itself, and adjudicates status. One /investigate:advance call = one research round; the loop is resumable from ledger state. This dogfoods the ledger instead of a side markdown file."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q25 — answered
+
+- createdAt: 2026-06-01T23:29:47.888Z
+- updatedAt: 2026-06-01T23:31:46.237Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Investigation -> planning handoff: once a root cause is CONFIRMED, how are the fix tasks produced? Does /investigate:advance itself emit the fix tasks (run a mini planning cycle inline), or does it record rootCause/suggestedFix on the defect and hand off to the plan-flow (create/extend a goal, run plan-advance->plan-reviewer to produce reviewed fix tasks under a work milestone)?"
+- context: "The follow-up: 'once root cause is found - planning cycle to produce tasks'. plan-flow already IS the reviewed planning cycle (plan-advance emits tasks, plan-reviewer adversarially reviews, decision locks). Reusing it avoids duplicating the planning/review machinery inside investigate. But a defect's fix may be small enough that a full goal/clarify cycle is overkill."
+- suggestions: ["Hand off to plan-flow: on confirmed root cause, /investigate:advance records defects.rootCause + suggestedFix, then creates (or reuses) a goal seeded from the defect and invokes the plan-advance/plan-reviewer cycle to produce reviewed fix tasks linked back to the defect","Inline mini-planning: /investigate:advance emits fix tasks directly (status planned, dependsOn the defect, suggestedModel set) and a plan-reviewer pass reviews them, without creating a goals item","Configurable: small defects get inline tasks; large ones spawn a goal"]
+- recommendation: "Option 1 (hand off to plan-flow), to keep ONE reviewed planning cycle in the repo: on a confirmed root cause, write defects.rootCause + suggestedFix, then bridge into plan-flow by creating a goal whose description embeds the defect + confirmed root cause (or extending an existing goal via the follow-up path) and running the standard plan-advance<->plan-reviewer loop; the emitted fix tasks ledgerRef the defect (Q on linkage). This makes investigate -> plan -> implement a clean pipeline and reuses the adversarial plan review for fixes."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q26 — answered
+
+- createdAt: 2026-06-01T23:29:59.213Z
+- updatedAt: 2026-06-01T23:32:24.584Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "How is the investigate:* flow INTEGRATED into plan:* and implement:* (the follow-up's explicit requirement)? Concretely: when a reviewer or the user surfaces a defect during /plan:advance or /implement:advance, does that flow AUTO-invoke investigation (orchestrator dispatches the investigate loop in the same session), or does it just FILE an open defect + an open question telling the user to run /investigate:start <D>, keeping the flows decoupled and resumable?"
+- context: "Both advance commands are designed idempotent/resumable and gate on user-answerable questions. research-loop investigation can be many rounds and may itself need user input (ambiguous scope / missing access). Auto-running a multi-round investigation inside an implement pass could balloon a single /implement:advance invocation; filing-and-deferring matches the existing 'register a question, user resumes' pattern."
+- suggestions: ["Decoupled (file & defer): plan/implement file the open defect and a linked open question ('defect D needs investigation — run /investigate:start D'); the user drives investigation separately, then the produced fix tasks flow back through plan/implement","Auto-invoke: the advance orchestrator runs the investigate loop inline when a defect is discovered, blocking that task until root cause + fix tasks exist","Hybrid by severity: high-severity defects auto-invoke; others are filed and deferred"]
+- recommendation: "Option 1 (decoupled file-and-defer), consistent with the existing resumable design: discovering a defect in plan/implement files an `open` defects item (+ optionally an open question pointing the user to /investigate:start) and, in implement, does NOT block the current in-scope task on it (out-of-scope per the reviewer-defect Q). Investigation is its own loop the user runs; its reviewed fix tasks then re-enter implement normally. 'Integrated' = shared ledger + documented routing, not a single mega-invocation."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q27 — answered
+
+- createdAt: 2026-06-01T23:30:10.991Z
+- updatedAt: 2026-06-01T23:33:40.813Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "investigate-explorer subagent: read-only (no worktree) and how does it return evidence for orchestrator validation? research-loop mandates read-only evidence-gatherers that share the main checkout (no worktree isolation), returning numbered evidence items with file:line + 3-5 line excerpts, and the ORCHESTRATOR re-opens each citation to mark it correct/incorrect. Confirm explorer is read-only (disallow Write/Edit/Agent, NO isolation:worktree), and that /investigate:advance validates every citation before adjudicating — and where validated evidence is stored (hypothesis.evidence[] with a correct/incorrect marker per item)."
+- context: "implement-worker uses isolation:worktree because it edits; research subagents do not edit, so per the skill they need no worktree and may run in parallel. The skill is emphatic that the orchestrator must independently verify each cited file:line (a mis-cited line is the dominant way the loop confirms the wrong hypothesis). Our hypothesis.evidence is a string[]; encoding per-item validation state needs a convention."
+- suggestions: ["explorer: read-only (disallow Write/Edit/MultiEdit/Agent, no worktree); returns numbered evidence JSON; /investigate:advance opens each citation, prefixes the stored evidence string with [correct]/[incorrect] (mirroring the skill's E1 [correct] convention) and only draws verdicts from [correct] items","Store evidence as free prose; skip per-item validation markers (lighter, but loses the skill's anti-mis-citation guarantee)","Add a structured evidence sub-schema instead of string[] markers"]
+- recommendation: "Option 1: investigate-explorer is strictly read-only (no isolation:worktree, Agent/Write/Edit disallowed), shares the main checkout, and returns numbered evidence with file:line + excerpt; /investigate:advance VALIDATES each citation against source and stores items in hypothesis.evidence[] using a `[correct]`/`[incorrect]` prefix convention (matching research-loop's E-item format), adjudicating status only from [correct] evidence. Parallel explorers only when seeding disjoint top-level hypotheses; serial while drilling."
+- ledgerRefs: ["goals:G1"]
+- answer: as recommended
+
+### Q28 — answered
+
+- createdAt: 2026-06-01T23:30:22.527Z
+- updatedAt: 2026-06-01T23:33:59.301Z
+- author: user
+- session: 0a4a7acf-25b6-4783-83a1-a45870023493
+- question: "Scope confirmation for THIS #2 follow-up: is it PROMPT-ONLY (edit llm/commands+agents, add the investigate:* prompts, extend scripts/link-prompts.ts LINKS) with NO @cq/ledger schema or UI changes — relying on the EXISTING defects/hypothesis schemas as-is? Or do you also want UI/MCP work (e.g. surface defects->tasks and hypothesis-tree relationships in the TUI/web, a defect-centric view), which would expand into the @cq/ledger + clients the way the #1 follow-up (M6) did?"
+- context: "The defects and hypothesis schemas ALREADY exist and carry the needed fields (defects: rootCause/suggestedFix/fix/severity/dependsOn/ledgerRefs; hypothesis: parentHypothesis/evidence/rationale). So the core of this follow-up can be delivered as prompt+command edits + new investigate:* assets + a link-prompts update, with zero schema change. The #1 follow-up (M6) DID touch schema/UI. Knowing the boundary fixes how many work milestones and which packages the plan spans."
+- suggestions: ["Prompt-only: edit plan/implement prompts for defect-awareness, add commands/investigate/* + agents/investigate-explorer, extend link-prompts LINKS; no schema/UI change (the schemas already suffice)","Prompt + a small UI affordance (e.g. show a defect's linked fix tasks / a hypothesis tree) but no schema change","Full: prompts + UI + any schema tweaks (e.g. a dedicated defect<->task link field) if the existing dependsOn/ledgerRefs prove insufficient"]
+- recommendation: "Option 1 (prompt-only) for this round: the existing defects/hypothesis schemas already carry every field the design needs, so deliver the flow as prompt/command/agent edits plus the link-prompts LINKS extension, with NO @cq/ledger or client changes. If a UI defect/hypothesis view is desired, capture it as a SEPARATE follow-up so this round stays bounded and shippable."
+- ledgerRefs: ["goals:G1"]
+- answer: "Full: prompts + UI + any schema tweaks (e.g. a dedicated defect<->task link field) if the existing dependsOn/ledgerRefs prove insufficient"
