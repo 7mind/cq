@@ -1014,6 +1014,56 @@ describe("ledger-tui suggestions bulleted list (T57)", () => {
   });
 });
 
+describe("ledger-tui question detail field order (T59)", () => {
+  it("renders milestone, status, by, question, context, suggestions, recommendation, answer in that vertical order", async () => {
+    const h = await mount();
+    // Navigate to questions ledger (sorted: bugs=0, milestones=1, questions=2, reviews=3)
+    await h.key(DOWN); // → milestones
+    await h.key(DOWN); // → questions
+    await h.key(ENTER); // open questions (cursor on Q1)
+    await h.key(DOWN); // → Q2
+    await h.key(DOWN); // → Q3 (full narrative: question/context/suggestions/recommendation/answer)
+    await waitFor(h, "Q3 @ questions");
+    const f = h.frame();
+
+    // Content-pane-unique tokens for each label (the bare words "questions"/
+    // "status" also occur in the left list and the footer hint bar, so we match
+    // the exact rendered forms of the content-pane lines instead).
+    const labels = [
+      { label: "milestone", token: "milestone M1" },
+      { label: "status", token: "status open" },
+      { label: "by", token: "by opus-4.8[1m]" },
+      { label: "question", token: "question: Full narrative?" },
+      { label: "context", token: "context: the why" },
+      { label: "suggestions", token: "suggestions" },
+      { label: "recommendation", token: "recommendation" },
+      { label: "answer", token: "answer: picked s1" },
+    ];
+    const positions = labels.map(({ label, token }) => ({ label, idx: f.indexOf(token) }));
+    for (const { label, idx } of positions) {
+      expect(idx, `label "${label}" must be present in the content pane`).toBeGreaterThanOrEqual(0);
+    }
+    // Each label appears strictly after the previous one (vertical order).
+    for (let i = 1; i < positions.length; i++) {
+      const prev = positions[i - 1]!;
+      const cur = positions[i]!;
+      expect(cur.idx, `"${cur.label}" must follow "${prev.label}"`).toBeGreaterThan(prev.idx);
+    }
+    h.unmount();
+  });
+
+  it("leaves non-question item leading lines unchanged (milestone · created · updated)", async () => {
+    const h = await mount();
+    // bugs ledger (index 0) → open → D1 detail.
+    await h.key(ENTER); // open bugs
+    await tick(40);
+    const f = h.frame();
+    expect(f).toContain("created");
+    expect(f).toContain("updated");
+    h.unmount();
+  });
+});
+
 describe("ledger-tui M6 cross-cutting regression (T34)", () => {
   it("subsection headers + archive toggle + status picker all coexist: active items remain editable", async () => {
     const client = new MultiMilestoneArchiveClient();

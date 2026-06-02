@@ -76,13 +76,16 @@ export const CONTEXT_FIELD = "context";
 /** Structured option list for a question; rendered as a bulleted list in the TUI. */
 export const SUGGESTIONS_FIELD = "suggestions";
 /**
- * Fixed render order for a question's narrative fields (T23): question, its
- * context, the (highlighted) recommendation, then the answer last. Other fields
- * render as short/metadata before these.
+ * Fixed render order for a question's narrative fields (T23, extended T59):
+ * question, its context, the suggestions (bulleted option list), the
+ * (highlighted) recommendation, then the answer last. Other fields render as
+ * short/metadata before these. MIRRORED in packages/ledger-web/src/status.ts —
+ * keep the two arrays identical.
  */
 export const QUESTION_FIELD_ORDER: readonly string[] = [
   QUESTION_FIELD,
   CONTEXT_FIELD,
+  SUGGESTIONS_FIELD,
   RECOMMENDATION_FIELD,
   ANSWER_FIELD,
 ];

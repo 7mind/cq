@@ -1032,10 +1032,11 @@ function ContentPane({
 }): React.ReactElement {
   const f = row.item.fields;
   const allEntries = Object.entries(f) as Array<[string, FieldValue]>;
-  // Questions (T23): metadata/short fields first, then the fixed narrative order
-  // question → context → recommendation (highlighted) → answer. Otherwise the
-  // generic short-first order.
-  const entries = isQuestion(schema)
+  const question = isQuestion(schema);
+  // Questions (T23/T59): metadata/short fields first, then the fixed narrative
+  // order question → context → suggestions → recommendation (highlighted) →
+  // answer. Otherwise the generic short-first order.
+  const entries = question
     ? [
         ...orderItemFields(allEntries.filter(([k]) => !QUESTION_FIELD_ORDER.includes(k))),
         ...QUESTION_FIELD_ORDER.filter((k) => f[k] !== undefined).map(
@@ -1078,19 +1079,42 @@ function ContentPane({
         <Text>
           <Text bold>{row.item.id}</Text>
           <Text dimColor> @ {ledger}</Text>
-          {"  "}
-          <Text color={statusColor(row.item.status, schema)}>{row.item.status}</Text>
+          {!question ? (
+            <>
+              {"  "}
+              <Text color={statusColor(row.item.status, schema)}>{row.item.status}</Text>
+            </>
+          ) : null}
           {readOnly ? <Text dimColor>{" "}[archived · read-only]</Text> : null}
         </Text>
-        <Text dimColor>
-          milestone {row.milestoneId} · created {row.item.createdAt.slice(0, 10)} · updated{" "}
-          {row.item.updatedAt.slice(0, 10)}
-        </Text>
-        {hasProvenance && (
-          <Text dimColor>
-            by {author ?? "?"}
-            {session !== undefined ? ` · session ${session}` : ""}
-          </Text>
+        {question ? (
+          // Questions (T59, Q31): the leading metadata is exactly milestone →
+          // status → by, in that literal order, ahead of the narrative fields.
+          // created/updated are relocated out of the required leading sequence.
+          <>
+            <Text dimColor>milestone {row.milestoneId}</Text>
+            <Text dimColor>
+              status{" "}
+              <Text color={statusColor(row.item.status, schema)}>{row.item.status}</Text>
+            </Text>
+            <Text dimColor>
+              by {author ?? "?"}
+              {session !== undefined ? ` · session ${session}` : ""}
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text dimColor>
+              milestone {row.milestoneId} · created {row.item.createdAt.slice(0, 10)} · updated{" "}
+              {row.item.updatedAt.slice(0, 10)}
+            </Text>
+            {hasProvenance && (
+              <Text dimColor>
+                by {author ?? "?"}
+                {session !== undefined ? ` · session ${session}` : ""}
+              </Text>
+            )}
+          </>
         )}
         {entries.length === 0 ? (
           <Text dimColor>(no fields)</Text>
