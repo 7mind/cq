@@ -46,10 +46,14 @@ import {
   DEFECTS_LEDGER,
   TASKS_LEDGER,
   HYPOTHESIS_LEDGER,
+  GOALS_LEDGER,
 MILESTONES_SCHEMA,
 } from "@cq/ledger";
 
 const MILESTONES = "milestones";
+/** Goals (T84): the `id[]` field holding a goal's work-milestone ids, shown as
+ * a flat list in the content pane in place of the coordination-milestone line. */
+const GOAL_MILESTONES_FIELD = "milestones";
 /** Default ledger the batch-answer stepper (T64) targets when the current
  * frame isn't itself answerable. */
 const QUESTIONS_LEDGER = "questions";
@@ -143,16 +147,20 @@ export type ListEntry<T> =
   | { t: "header"; label: string; node?: React.ReactNode };
 
 /**
- * Build entries for a non-milestones ledger: per-milestone subsection headers
- * interleaved with the filtered item rows, preserving fetch_ledger group order.
- * For the milestones ledger itself the list is flat (no headers).
+ * Build entries for an items ledger. By default each fetch_ledger milestone
+ * group becomes a subsection header interleaved with its filtered item rows,
+ * preserving group order. When `flat` is set the list is rendered as a flat
+ * sequence with NO subsection headers — true for the milestones ledger (each
+ * item already IS a milestone) and the goals ledger (T84 / Q48: a goal's
+ * coordination-milestone grouping is suppressed; its work-milestone ids live in
+ * fields.milestones and are shown in the content pane instead).
  * The returned `itemIdx` matches the item's index in `filteredRows`.
  *
  * `milestonesSchema` is used to color the status token in each header via
  * statusColor() so open/done/postponed/blocked render in their semantic color.
  */
-export function buildItemEntries(view: FetchedLedger, filteredRows: Row[], isMilestones: boolean, milestonesSchema: LedgerSchema): ListEntry<Row>[] {
-  if (isMilestones) {
+export function buildItemEntries(view: FetchedLedger, filteredRows: Row[], flat: boolean, milestonesSchema: LedgerSchema): ListEntry<Row>[] {
+  if (flat) {
     return filteredRows.map((r, i) => ({ t: "item", item: r, itemIdx: i }));
   }
   const entries: ListEntry<Row>[] = [];
@@ -814,7 +822,11 @@ export function App({
     );
     // Build entries: active section via buildItemEntries, then a header +
     // flat archive rows appended when archive is shown.
-    const activeEntries = buildItemEntries(top.view, rowsArr, isMilestonesLedger, MILESTONES_SCHEMA);
+    // Goals (T84 / Q48): render the goals ledger as a FLAT list with no
+    // per-coordination-milestone subsection headers, exactly like the
+    // milestones ledger. Every other ledger keeps its subsection grouping.
+    const flatList = isMilestonesLedger || top.ledger === GOALS_LEDGER;
+    const activeEntries = buildItemEntries(top.view, rowsArr, flatList, MILESTONES_SCHEMA);
     let itemEntries: ListEntry<Row>[];
     if (top.showArchive) {
       const archiveEntries: ListEntry<Row>[] = top.archiveLoading
@@ -1211,8 +1223,21 @@ function ContentPane({
   taskItems?: readonly Item[];
 }): React.ReactElement {
   const f = row.item.fields;
-  const allEntries = Object.entries(f) as Array<[string, FieldValue]>;
   const question = isQuestion(schema);
+  // Goals (T84 / Q48): a goal's coordination-milestone (row.milestoneId) is not
+  // shown; instead its work-milestone ids (fields.milestones) are listed in the
+  // leading metadata. The `milestones` field is therefore lifted out of the
+  // generic field list so it is not rendered twice.
+  const isGoal = ledger === GOALS_LEDGER;
+  const goalMilestones = isGoal
+    ? (() => {
+        const v = f[GOAL_MILESTONES_FIELD];
+        return Array.isArray(v) ? v : [];
+      })()
+    : [];
+  const allEntries = (Object.entries(f) as Array<[string, FieldValue]>).filter(
+    ([k]) => !(isGoal && k === GOAL_MILESTONES_FIELD),
+  );
   // Questions (T23/T59): metadata/short fields first, then the fixed narrative
   // order question → context → suggestions → recommendation (highlighted) →
   // answer. Otherwise the generic short-first order.
@@ -1240,7 +1265,7 @@ function ContentPane({
 
   // Estimate total height to clamp scrolling: short fields are one line each;
   // long fields are a header line + their wrapped body + a top margin.
-  let est = 4 + (hasProvenance ? 1 : 0); // header + status + milestone + timestamps (+ provenance)
+  let est = 4 + (hasProvenance ? 1 : 0) + (isGoal ? 1 : 0); // header + status + milestone(s) + timestamps (+ provenance) (+ goal milestones line)
   for (const [, v] of entries) {
     est += isShortField(v) ? 1 : 2 + estimateLines(fieldToString(v), width);
   }
@@ -1281,6 +1306,25 @@ function ContentPane({
               by {author ?? "?"}
               {session !== undefined ? ` · session ${session}` : ""}
             </Text>
+          </>
+        ) : isGoal ? (
+          // Goals (T84 / Q48): replace the single coordination-milestone line
+          // with the goal's work-milestone ids (fields.milestones) rendered as a
+          // flat `milestones` list. created/updated remain on their own line.
+          <>
+            <Text dimColor>
+              created {row.item.createdAt.slice(0, 10)} · updated {row.item.updatedAt.slice(0, 10)}
+            </Text>
+            <Text>
+              <Text bold color="gray">milestones: </Text>
+              {goalMilestones.length > 0 ? goalMilestones.join(", ") : <Text dimColor>(none)</Text>}
+            </Text>
+            {hasProvenance && (
+              <Text dimColor>
+                by {author ?? "?"}
+                {session !== undefined ? ` · session ${session}` : ""}
+              </Text>
+            )}
           </>
         ) : (
           <>

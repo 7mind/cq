@@ -1444,3 +1444,143 @@ describe("ledger-tui milestone header colored status token (T81)", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Goals ledger: flat list (no subsection headers) + fields.milestones in the
+// content pane (T84 / Q48)
+// ---------------------------------------------------------------------------
+
+/**
+ * A client whose goals ledger spans two coordination-milestone groups (M1, M2),
+ * each holding one goal. G2 carries fields.milestones = [M12, M13, M14] (its
+ * work-milestone ids). The goals view must render as a FLAT list with no
+ * per-coordination-milestone subsection header, and the content pane must show
+ * the work-milestone ids — not the single coordination-milestone line.
+ */
+class GoalsClient implements LedgerClient {
+  displayName(): string { return "cq1"; }
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [{ name: "goals", itemCount: 2 }, { name: "tasks", itemCount: 1 }];
+  }
+  async fetchLedger(id: string): Promise<FetchedLedger> {
+    if (id === "goals") {
+      return {
+        id: "goals",
+        schema: {
+          statusValues: ["clarifying", "planning", "planned", "building", "done", "abandoned"],
+          terminalStatuses: ["done", "abandoned"],
+          fields: {
+            title: { type: "string", required: true },
+            description: { type: "string", required: true },
+            milestones: { type: "id[]", required: false },
+          },
+          idPrefix: "G",
+        },
+        counters: { milestone: 3, item: 3 },
+        milestones: [
+          {
+            id: "M1",
+            milestone: { id: "M1", status: "open", title: "Coordination Alpha", description: "" },
+            items: [
+              { id: "G1", milestoneId: "M1", status: "planning", fields: { title: "first goal", description: "d1" }, createdAt: TS, updatedAt: TS },
+            ],
+          },
+          {
+            id: "M2",
+            milestone: { id: "M2", status: "open", title: "Coordination Beta", description: "" },
+            items: [
+              { id: "G2", milestoneId: "M2", status: "building", fields: { title: "second goal", description: "d2", milestones: ["M12", "M13", "M14"] }, createdAt: TS, updatedAt: TS },
+            ],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    if (id === "tasks") {
+      return {
+        id: "tasks",
+        schema: {
+          statusValues: ["planned", "wip", "done"],
+          terminalStatuses: ["done"],
+          fields: { headline: { type: "string", required: true } },
+          idPrefix: "T",
+        },
+        counters: { milestone: 2, item: 2 },
+        milestones: [
+          {
+            id: "M1",
+            milestone: { id: "M1", status: "open", title: "Sprint One", description: "" },
+            items: [
+              { id: "T1", milestoneId: "M1", status: "planned", fields: { headline: "alpha" }, createdAt: TS, updatedAt: TS },
+            ],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    throw new Error(`Ledger not found: ${id}`);
+  }
+  async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
+  async fetchItem(): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<Item> { throw new Error("not used"); }
+  async updateItem(): Promise<Item> { throw new Error("not used"); }
+  async ftsSearch(): Promise<never[]> { return []; }
+  async createMilestone(): Promise<Item> { throw new Error("not used"); }
+  async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async close(): Promise<void> { /* no-op */ }
+}
+
+describe("ledger-tui goals flat list + fields.milestones (T84)", () => {
+  it("renders the goals list FLAT with no per-coordination-milestone subsection header", async () => {
+    const client = new GoalsClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open goals (cursor 0)
+    await tick(40);
+    const f = listSide(r.lastFrame() ?? "");
+    // Both goals visible.
+    expect(f).toContain("G1");
+    expect(f).toContain("G2");
+    // No coordination-milestone subsection header lines (they would render as
+    // "M1 Coordination Alpha [open]" / "M2 Coordination Beta [open]").
+    expect(f).not.toContain("Coordination Alpha");
+    expect(f).not.toContain("Coordination Beta");
+    expect(f).not.toContain("[open]");
+    r.unmount();
+  });
+
+  it("the content pane for a goal shows its fields.milestones list, not the coordination milestone line", async () => {
+    const client = new GoalsClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open goals
+    await tick(40);
+    r.stdin.write(DOWN); // move to G2 (has fields.milestones = [M12, M13, M14])
+    await tick(40);
+    const f = r.lastFrame() ?? "";
+    expect(f).toContain("G2 @ goals");
+    // Work-milestone ids appear as a `milestones` list.
+    expect(f).toContain("milestones");
+    expect(f).toContain("M12");
+    expect(f).toContain("M13");
+    expect(f).toContain("M14");
+    // The single coordination-milestone line ("milestone M2") must NOT appear.
+    expect(f).not.toContain("milestone M2");
+    r.unmount();
+  });
+
+  it("leaves another ledger's subsection grouping unchanged (tasks still grouped)", async () => {
+    const client = new GoalsClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(DOWN); // goals -> tasks
+    await tick(20);
+    r.stdin.write(ENTER); // open tasks
+    await tick(40);
+    const f = listSide(r.lastFrame() ?? "");
+    // The tasks ledger keeps its per-milestone subsection header.
+    expect(f).toContain("Sprint One");
+    expect(f).toContain("T1");
+    r.unmount();
+  });
+});
