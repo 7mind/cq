@@ -244,10 +244,10 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
   const workareaRef = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState<LiveStats | null>(null);
-  // Archive: show/hide the archive section + selected archive + loaded content.
+  // Archive: show/hide the archived subsections. Per-group expand + lazy-fetch
+  // state lives inside ArchiveSubsections (it remounts when the toggle/ledger
+  // resets showArchive, so its cache resets with it).
   const [showArchive, setShowArchive] = useState(false);
-  const [archiveContent, setArchiveContent] = useState<ArchiveContent | null>(null);
-  const [archiveId, setArchiveId] = useState<string | null>(null);
   // Auxiliary items for cross-ledger relationship panels. Lazily fetched when
   // a defects or hypothesis item is selected; keyed by ledger name.
   const [auxItems, setAuxItems] = useState<Record<string, Item[]>>({});
@@ -269,8 +269,6 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
     setFilter({ kind: "all" });
     setMilestoneFilter("");
     setShowArchive(false);
-    setArchiveContent(null);
-    setArchiveId(null);
   }, [ledger]);
 
   // Persist panel layout.
@@ -559,22 +557,6 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
     [client],
   );
 
-  const loadArchive = useCallback(
-    async (pointerId: string) => {
-      if (client === null || ledger === null) return;
-      try {
-        const content = await client.fetchLedgerArchive(ledger, pointerId);
-        setArchiveContent(content);
-        setArchiveId(pointerId);
-        setSelected(null);
-        setSelectedArchiveRow(null);
-      } catch (e) {
-        setFlash(errMsg(e));
-      }
-    },
-    [client, ledger],
-  );
-
   const openHit = useCallback(
     async (hit: FtsHit) => {
       if (client === null) return;
@@ -710,19 +692,6 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
           ),
     [view, filter, milestoneFilter],
   );
-
-  // Rows from the loaded archive content (read-only, detached from the ledger).
-  const archiveRows = useMemo((): Row[] => {
-    if (archiveContent === null || archiveId === null) return [];
-    if (archiveContent.kind === "group") {
-      return archiveContent.milestone.items.map((item) => ({
-        item,
-        milestoneId: archiveContent.milestone.id,
-      }));
-    }
-    // kind === "item" — a single archived milestone-item (milestones ledger).
-    return [{ item: archiveContent.item, milestoneId: archiveId }];
-  }, [archiveContent, archiveId]);
 
   // When creating a new item, load the milestones to pick from (the editor
   // shows a milestone selector in create mode).
@@ -1125,9 +1094,8 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
                     className={showArchive ? "lw-toggle lw-toggle-active" : "lw-toggle"}
                     onClick={() => {
                       setShowArchive((s) => !s);
+                      // Hiding the archive drops any open read-only archived row.
                       if (showArchive) {
-                        setArchiveContent(null);
-                        setArchiveId(null);
                         setSelectedArchiveRow(null);
                       }
                     }}
@@ -1199,14 +1167,12 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
                   setSelectedArchiveRow(null);
                 }}
               />
-              {showArchive && view.archivePointers.length > 0 && (
-                <ArchiveSection
+              {showArchive && view.archivePointers.length > 0 && client !== null && ledger !== null && (
+                <ArchiveSubsections
                   pointers={view.archivePointers}
-                  activeId={archiveId}
-                  rows={archiveRows}
+                  fetchArchive={(archiveId) => client.fetchLedgerArchive(ledger, archiveId)}
                   schema={view.schema}
                   selectedId={selectedArchiveRow?.item.id ?? null}
-                  onSelectPointer={(id) => void loadArchive(id)}
                   onSelectRow={(r) => {
                     setSelectedArchiveRow(r);
                     setSelected(null);
@@ -1536,6 +1502,124 @@ function SearchBar({ onSearch, disabled }: { onSearch: (q: string) => void; disa
 }
 
 /**
+ * The id/status/summary (+ extra columns) row table for ONE milestone
+ * subsection. Shared by the active subsections (ItemTable) and the archived
+ * subsections (ArchiveSubsections) so both render identical structure/classes.
+ */
+function SubsectionItemTable({
+  rows,
+  schema,
+  extraColumns,
+  selectedId,
+  onSelect,
+}: {
+  rows: Row[];
+  schema: FetchedLedger["schema"];
+  extraColumns: string[];
+  selectedId: string | null;
+  onSelect: (row: Row) => void;
+}): React.ReactElement {
+  return (
+    <table className="lw-table">
+      <thead>
+        <tr>
+          <th>id</th>
+          <th>status</th>
+          <th>summary</th>
+          {extraColumns.map((c) => (
+            <th key={c} data-testid={`column-header-${c}`}>{c}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => {
+          const terminal = isTerminal(r.item.status, schema);
+          const cls = [
+            "lw-row",
+            r.item.id === selectedId ? "lw-row-active" : "",
+            terminal ? "lw-row-terminal" : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+          return (
+            <tr
+              key={r.item.id}
+              data-testid={`item-${r.item.id}`}
+              className={cls}
+              onClick={() => onSelect(r)}
+            >
+              <td>{r.item.id}</td>
+              <td>
+                <span
+                  className={`lw-status lw-status-${statusBucket(r.item.status, schema)}`}
+                  data-testid={`status-${r.item.id}`}
+                >
+                  {r.item.status}
+                </span>
+              </td>
+              <td className="lw-summary-cell">{summarize(r.item)}</td>
+              {extraColumns.map((c) => (
+                <td key={c} data-testid={`cell-${r.item.id}-${c}`}>
+                  {fieldToString(r.item.fields[c])}
+                </td>
+              ))}
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * One collapsible milestone subsection: a `<section className="lw-milestone-section">`
+ * with a header button (chevron + label + optional 'archived' badge) and, when
+ * expanded, its item table. Used for BOTH active and archived groups so they
+ * render identical structure/classes (the only visual difference is the badge).
+ *
+ * `children` renders the expanded body. Kept as a render-prop-ish slot so the
+ * archived path can show a loading placeholder while its items lazy-fetch and
+ * so later overrides (T80 milestone-status badge, T83 goals flat-list) compose
+ * by passing different `headExtra` / body content without forking this shell.
+ */
+function MilestoneSubsection({
+  id,
+  headerLabel,
+  archived,
+  collapsed,
+  onToggle,
+  children,
+}: {
+  id: string;
+  headerLabel: string;
+  archived: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <section className="lw-milestone-section" data-testid={`ms-section-${id}`}>
+      <button
+        type="button"
+        className="lw-ms-header"
+        data-testid={`ms-toggle-${id}`}
+        aria-expanded={!collapsed}
+        onClick={onToggle}
+      >
+        <span className="lw-ms-chevron">{collapsed ? "▶" : "▼"}</span>
+        <span className="lw-ms-label">{headerLabel}</span>
+        {archived && (
+          <span className="lw-archived-badge" data-testid={`archived-badge-${id}`}>
+            archived
+          </span>
+        )}
+      </button>
+      {!collapsed && children}
+    </section>
+  );
+}
+
+/**
  * Renders the item table.
  *
  * For non-milestones ledgers the table is broken into per-milestone
@@ -1659,74 +1743,27 @@ function ItemTable({
           .map((item) => ({ item, milestoneId: g.id }));
         // Omit groups that have no visible items under the current status filter.
         if (rows.length === 0) return null;
-        const isCollapsed = collapsed.has(g.id);
         const ms = g.milestone;
         const headerLabel = ms.title
           ? `${g.id}: ${ms.title} [${ms.status}]`
           : `${g.id} [${ms.status}]`;
         return (
-          <section key={g.id} className="lw-milestone-section" data-testid={`ms-section-${g.id}`}>
-            <button
-              type="button"
-              className="lw-ms-header"
-              data-testid={`ms-toggle-${g.id}`}
-              aria-expanded={!isCollapsed}
-              onClick={() => toggleCollapsed(g.id)}
-            >
-              <span className="lw-ms-chevron">{isCollapsed ? "▶" : "▼"}</span>
-              <span className="lw-ms-label">{headerLabel}</span>
-            </button>
-            {!isCollapsed && (
-              <table className="lw-table">
-                <thead>
-                  <tr>
-                    <th>id</th>
-                    <th>status</th>
-                    <th>summary</th>
-                    {extraColumns.map((c) => (
-                      <th key={c} data-testid={`column-header-${c}`}>{c}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => {
-                    const terminal = isTerminal(r.item.status, schema);
-                    const cls = [
-                      "lw-row",
-                      r.item.id === selectedId ? "lw-row-active" : "",
-                      terminal ? "lw-row-terminal" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ");
-                    return (
-                      <tr
-                        key={r.item.id}
-                        data-testid={`item-${r.item.id}`}
-                        className={cls}
-                        onClick={() => onSelect(r)}
-                      >
-                        <td>{r.item.id}</td>
-                        <td>
-                          <span
-                            className={`lw-status lw-status-${statusBucket(r.item.status, schema)}`}
-                            data-testid={`status-${r.item.id}`}
-                          >
-                            {r.item.status}
-                          </span>
-                        </td>
-                        <td className="lw-summary-cell">{summarize(r.item)}</td>
-                        {extraColumns.map((c) => (
-                          <td key={c} data-testid={`cell-${r.item.id}-${c}`}>
-                            {fieldToString(r.item.fields[c])}
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </section>
+          <MilestoneSubsection
+            key={g.id}
+            id={g.id}
+            headerLabel={headerLabel}
+            archived={false}
+            collapsed={collapsed.has(g.id)}
+            onToggle={() => toggleCollapsed(g.id)}
+          >
+            <SubsectionItemTable
+              rows={rows}
+              schema={schema}
+              extraColumns={extraColumns}
+              selectedId={selectedId}
+              onSelect={onSelect}
+            />
+          </MilestoneSubsection>
         );
       })}
     </div>
@@ -1777,87 +1814,96 @@ function SearchResults({
 }
 
 /**
- * Shows the archive pointers for the current ledger and, once one is selected
- * (fetched), lists its items in a read-only table.
+ * Renders the ledger's ARCHIVED milestone-groups through the SAME subsection
+ * renderer as the active groups (MilestoneSubsection + SubsectionItemTable),
+ * listed AFTER the active sections — each carries an 'archived' badge in its
+ * head. Sections DEFAULT COLLAPSED and LAZY-FETCH their items (one
+ * fetchArchive per pointer) on first expand; the content is then cached so
+ * collapse/re-expand does not refetch. Archived rows open read-only via
+ * `onSelectRow` (the App routes them to the read-only DetailPanel).
  */
-function ArchiveSection({
+function ArchiveSubsections({
   pointers,
-  activeId,
-  rows,
+  fetchArchive,
   schema,
   selectedId,
-  onSelectPointer,
   onSelectRow,
 }: {
   pointers: Array<{ id: string; path: string; summary: string }>;
-  activeId: string | null;
-  rows: Row[];
+  fetchArchive: (archiveId: string) => Promise<ArchiveContent>;
   schema: FetchedLedger["schema"];
   selectedId: string | null;
-  onSelectPointer: (id: string) => void;
   onSelectRow: (row: Row) => void;
 }): React.ReactElement {
+  // Per-pointer expansion + lazily-fetched content. Default: all collapsed.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [content, setContent] = useState<Record<string, ArchiveContent>>({});
+
+  const toggle = useCallback(
+    (id: string): void => {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) {
+          next.delete(id);
+          return next;
+        }
+        next.add(id);
+        // Lazy-fetch on first expand only (not yet cached).
+        setContent((cur) => {
+          if (cur[id] === undefined) {
+            void fetchArchive(id).then((c) => setContent((c2) => ({ ...c2, [id]: c })));
+          }
+          return cur;
+        });
+        return next;
+      });
+    },
+    [fetchArchive],
+  );
+
+  const rowsOf = (c: ArchiveContent | undefined, id: string): Row[] => {
+    if (c === undefined) return [];
+    if (c.kind === "group") {
+      return c.milestone.items.map((item) => ({ item, milestoneId: c.milestone.id }));
+    }
+    return [{ item: c.item, milestoneId: id }];
+  };
+
   return (
     <section className="lw-archive-section" data-testid="archive-section">
       <h3 className="lw-archive-heading">Archived milestones</h3>
-      <ul className="lw-archive-pointers" data-testid="archive-pointers">
-        {pointers.map((p) => (
-          <li key={p.id}>
-            <button
-              type="button"
-              data-testid={`archive-pointer-${p.id}`}
-              className={p.id === activeId ? "lw-archive-pointer lw-archive-pointer-active" : "lw-archive-pointer"}
-              onClick={() => onSelectPointer(p.id)}
+      <div className="lw-subsections">
+        {pointers.map((p) => {
+          const collapsed = !expanded.has(p.id);
+          const c = content[p.id];
+          const rows = rowsOf(c, p.id);
+          const headerLabel = p.summary.length > 0 ? `${p.id}: ${p.summary}` : p.id;
+          return (
+            <MilestoneSubsection
+              key={p.id}
+              id={p.id}
+              headerLabel={headerLabel}
+              archived={true}
+              collapsed={collapsed}
+              onToggle={() => toggle(p.id)}
             >
-              <span className="lw-archive-pointer-id">{p.id}</span>
-              {p.summary.length > 0 && (
-                <span className="lw-archive-pointer-summary lw-dim">{p.summary}</span>
+              {c === undefined ? (
+                <p className="lw-empty" data-testid={`archive-loading-${p.id}`}>
+                  loading…
+                </p>
+              ) : (
+                <SubsectionItemTable
+                  rows={rows}
+                  schema={schema}
+                  extraColumns={[]}
+                  selectedId={selectedId}
+                  onSelect={onSelectRow}
+                />
               )}
-            </button>
-          </li>
-        ))}
-      </ul>
-      {rows.length > 0 && (
-        <table className="lw-table lw-archive-table" data-testid="archive-items">
-          <thead>
-            <tr>
-              <th>id</th>
-              <th>status</th>
-              <th>summary</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const terminal = isTerminal(r.item.status, schema);
-              const cls = [
-                "lw-row",
-                r.item.id === selectedId ? "lw-row-active" : "",
-                terminal ? "lw-row-terminal" : "",
-              ]
-                .filter(Boolean)
-                .join(" ");
-              return (
-                <tr
-                  key={r.item.id}
-                  data-testid={`archive-item-${r.item.id}`}
-                  className={cls}
-                  onClick={() => onSelectRow(r)}
-                >
-                  <td>{r.item.id}</td>
-                  <td>
-                    <span
-                      className={`lw-status lw-status-${statusBucket(r.item.status, schema)}`}
-                    >
-                      {r.item.status}
-                    </span>
-                  </td>
-                  <td className="lw-summary-cell">{summarize(r.item)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
+            </MilestoneSubsection>
+          );
+        })}
+      </div>
     </section>
   );
 }

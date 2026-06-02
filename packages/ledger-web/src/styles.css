@@ -681,41 +681,6 @@ button:hover {
   color: var(--dim);
   margin: 0 0 6px;
 }
-.lw-archive-pointers {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 8px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.lw-archive-pointer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: none;
-  color: var(--fg);
-  cursor: pointer;
-  font-size: 12px;
-}
-.lw-archive-pointer:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.lw-archive-pointer-active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-.lw-archive-pointer-id {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.lw-archive-pointer-summary {
-  font-size: 11px;
-}
 .lw-archived-badge {
   font-size: 10px;
   font-weight: 600;

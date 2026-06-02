@@ -95,6 +95,8 @@ interface ArchiveEntry {
 
 export class FakeClient implements LedgerClient {
   closed = false;
+  /** Per-`<ledger>/<archiveId>` count of fetchLedgerArchive calls (lazy-fetch assertions). */
+  readonly archiveFetches: Record<string, number> = {};
   private readonly _displayName: string;
   private msCounter = 1;
   private itemCounter = 1;
@@ -120,6 +122,20 @@ export class FakeClient implements LedgerClient {
             description: "",
             items: [
               { id: "D99", milestoneId: "A1", status: "closed", fields: { headline: "archived bug", note: "" }, createdAt: "2025-01-01T00:00:00.000Z", updatedAt: "2025-01-01T00:00:00.000Z" },
+            ],
+          },
+        },
+      },
+      {
+        pointer: { id: "A2", path: "./archive/bugs/A2.md", summary: "second pass fixes" },
+        content: {
+          kind: "group",
+          milestone: {
+            id: "A2",
+            title: "Phase Two",
+            description: "",
+            items: [
+              { id: "D98", milestoneId: "A2", status: "closed", fields: { headline: "another archived bug", note: "" }, createdAt: "2025-01-02T00:00:00.000Z", updatedAt: "2025-01-02T00:00:00.000Z" },
             ],
           },
         },
@@ -244,6 +260,8 @@ export class FakeClient implements LedgerClient {
     };
   }
   async fetchLedgerArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
+    const key = `${ledgerId}/${archiveId}`;
+    this.archiveFetches[key] = (this.archiveFetches[key] ?? 0) + 1;
     const entries = this.archives[ledgerId] ?? [];
     const entry = entries.find((e) => e.pointer.id === archiveId);
     if (entry === undefined) throw new Error(`Archive not found: ${ledgerId}/${archiveId}`);

@@ -666,8 +666,8 @@ describe("ledger-web App", () => {
     click(testid("toggle-archive"));
     await flush();
     expect(testid("archive-section")).not.toBeNull();
-    // The pointer A1 is listed.
-    expect(testid("archive-pointer-A1")).not.toBeNull();
+    // The archived group A1 is listed as its own subsection.
+    expect(testid("ms-section-A1")).not.toBeNull();
 
     // Switch to another ledger → archive section disappears, toggle resets.
     click(testid("ledger-plain"));
@@ -682,19 +682,74 @@ describe("ledger-web App", () => {
     expect(testid("toggle-archive")?.className).not.toContain("lw-toggle-active");
   });
 
-  it("selecting an archive pointer fetches and lists its archived items", async () => {
+  // ---- archived groups as unified subsections (Web #9 / T79) ----
+
+  it("renders every archived milestone-group as a collapsible <section> (same structure as active subsections) with an 'archived' badge, after the active sections, all present at once — none as an lw-archive-pointer button", async () => {
     await mount();
     click(testid("ledger-bugs"));
     await flush();
     click(testid("toggle-archive"));
     await flush();
-    // The pointer is listed; click it to load the archive.
-    click(testid("archive-pointer-A1"));
+
+    // Both archived groups render as their own subsections, using the SAME
+    // class/structure as the active subsections.
+    const a1 = testid("ms-section-A1");
+    const a2 = testid("ms-section-A2");
+    expect(a1).not.toBeNull();
+    expect(a2).not.toBeNull();
+    expect(a1?.className).toContain("lw-milestone-section");
+    expect(a2?.className).toContain("lw-milestone-section");
+    // The active subsections still render with the same class.
+    expect(testid("ms-section-M1")?.className).toContain("lw-milestone-section");
+
+    // Each archived section carries an 'archived' badge (reusing the class) in
+    // its head; the active sections do not.
+    expect(testid("archived-badge-A1")?.className).toContain("lw-archived-badge");
+    expect(testid("archived-badge-A2")?.className).toContain("lw-archived-badge");
+    expect(testid("archived-badge-M1")).toBeNull();
+
+    // The retired per-pointer button path is gone.
+    expect(testid("archive-pointer-A1")).toBeNull();
+    expect(testid("archive-pointer-A2")).toBeNull();
+    expect(testid("archive-pointers")).toBeNull();
+
+    // Archived sections come AFTER the active ones in document order.
+    const sections = Array.from(
+      container.querySelectorAll('[data-testid^="ms-section-"]'),
+    ).map((el) => el.getAttribute("data-testid"));
+    expect(sections).toEqual(["ms-section-M1", "ms-section-M2", "ms-section-A1", "ms-section-A2"]);
+  });
+
+  it("an archived section is collapsed by default and lazy-fetches its items only on first expand", async () => {
+    await mount();
+    click(testid("ledger-bugs"));
     await flush();
-    // The archived item D99 appears in the archive table.
-    expect(testid("archive-items")).not.toBeNull();
-    expect(testid("archive-item-D99")).not.toBeNull();
-    expect(testid("archive-item-D99")?.textContent).toContain("archived bug");
+    click(testid("toggle-archive"));
+    await flush();
+
+    // Collapsed by default: no fetch yet, and the items are not in the DOM.
+    expect(fake.archiveFetches["bugs/A1"]).toBeUndefined();
+    expect(testid("item-D99")).toBeNull();
+    expect(testid("ms-toggle-A1")?.getAttribute("aria-expanded")).toBe("false");
+
+    // First expand → exactly one lazy fetch, items now listed (same id/status/
+    // summary table as active subsections).
+    click(testid("ms-toggle-A1"));
+    await flush();
+    expect(fake.archiveFetches["bugs/A1"]).toBe(1);
+    expect(testid("item-D99")).not.toBeNull();
+    expect(testid("item-D99")?.textContent).toContain("archived bug");
+    // The OTHER archived group was not fetched (no fetch-everything up front).
+    expect(fake.archiveFetches["bugs/A2"]).toBeUndefined();
+
+    // Collapse then re-expand → no refetch (cached).
+    click(testid("ms-toggle-A1"));
+    await flush();
+    expect(testid("item-D99")).toBeNull();
+    click(testid("ms-toggle-A1"));
+    await flush();
+    expect(fake.archiveFetches["bugs/A1"]).toBe(1);
+    expect(testid("item-D99")).not.toBeNull();
   });
 
   it("opening an archived item shows it read-only with NO edit/transition/answer controls", async () => {
@@ -703,14 +758,15 @@ describe("ledger-web App", () => {
     await flush();
     click(testid("toggle-archive"));
     await flush();
-    click(testid("archive-pointer-A1"));
+    // Expand the archived section to reveal its items.
+    click(testid("ms-toggle-A1"));
     await flush();
     // Click the archived item to open it in the detail panel.
-    click(testid("archive-item-D99"));
+    click(testid("item-D99"));
     await flush();
     // Detail panel opens with the archived item.
     expect(testid("detail-id")?.textContent).toBe("D99");
-    // The "archived" badge is visible.
+    // The "archived" badge is visible (detail-panel badge).
     expect(testid("archived-badge")).not.toBeNull();
     // NO edit button.
     expect(testid("edit")).toBeNull();
