@@ -33,6 +33,7 @@ import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import type { LedgerStore, CreateItemInit, UpdateItemPatch } from "../store/LedgerStore.js";
 import { QUERY_LANGUAGE_HELP } from "../search/query.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
+import { projectCompact, paginate } from "../projection.js";
 
 /**
  * The SDK's `tools?:` field on createSdkMcpServer is typed as
@@ -157,9 +158,52 @@ export function createLedgerMcpTools(store: LedgerStore): AnyTool[] {
 
   const fetchLedger = tool(
     "fetch_ledger",
-    "Fetch a ledger: schema, active milestone groups (each expanded with resolved milestone metadata { id, status, title, description }), and archive pointers.",
-    { ledger_id: z.string() } as const,
-    async (args) => jsonResult({ ledger: store.fetch(args.ledger_id) }),
+    `Fetch a ledger: schema, active milestone groups (each expanded with resolved milestone metadata { id, status, title, description }), and archive pointers.
+
+Optional params:
+- compact (boolean): when true, strips all long narrative fields from every item (description, rationale, rootCause, grounding, recommendation, suggestions, and others in COMPACT_PROJECTION_DENYLIST). Use compact to avoid token-overflow when reading large ledgers such as goals (51.8 KB) or questions (142.7 KB). compact:true is strongly recommended when you only need a summary view.
+- offset (integer, ≥0): zero-based index of the first item to return across the flattened item list. Enables pagination.
+- limit (integer, >0): maximum number of items to return. When combined with offset, use total in the response to calculate remaining pages.
+
+When offset or limit are provided the response shape changes: { ledger: { id, schema, counters, archivePointers }, items: Item[], total: number }. The milestone grouping is omitted; items are flattened across all milestone groups in their natural order.
+
+When compact is true without pagination the response is the usual { ledger: FetchedLedger } with projected items in all milestone groups.
+
+When no params are provided the response is the unchanged full ledger (backward-compatible).`,
+    {
+      ledger_id: z.string(),
+      compact: z.boolean().optional().describe("strip long narrative fields from items to avoid token-overflow"),
+      offset: z.number().int().min(0).optional().describe("zero-based start index for pagination"),
+      limit: z.number().int().positive().optional().describe("max items to return per page"),
+    } as const,
+    async (args) => {
+      const fetched = store.fetch(args.ledger_id);
+      const usePagination = args.offset !== undefined || args.limit !== undefined;
+
+      if (usePagination) {
+        // Flatten all items across milestone groups, apply compact, paginate.
+        const allItems = fetched.milestones.flatMap((g) => g.items);
+        const projected = args.compact === true ? allItems.map(projectCompact) : allItems;
+        const { items, total } = paginate(projected, args.offset ?? 0, args.limit);
+        // Return schema/counters/archivePointers in ledger but omit milestones.
+        const { milestones: _omit, ...ledgerMeta } = fetched;
+        void _omit;
+        return jsonResult({ ledger: ledgerMeta, items, total });
+      }
+
+      if (args.compact === true) {
+        const projectedLedger = {
+          ...fetched,
+          milestones: fetched.milestones.map((g) => ({
+            ...g,
+            items: g.items.map(projectCompact),
+          })),
+        };
+        return jsonResult({ ledger: projectedLedger });
+      }
+
+      return jsonResult({ ledger: fetched });
+    },
   );
 
   const fetchLedgerArchive = tool(
