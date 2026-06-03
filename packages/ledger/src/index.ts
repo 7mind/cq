@@ -73,3 +73,10 @@ export {
   LONG_FIELD_DENYLIST,
   ALWAYS_SHOWN_COLUMNS,
 } from "./columns.js";
+export {
+  projectCompact,
+  paginate,
+  COMPACT_PROJECTION_DENYLIST,
+  PROJECTION_EXTRA_DENYLIST,
+} from "./projection.js";
+export type { PaginateResult } from "./projection.js";
