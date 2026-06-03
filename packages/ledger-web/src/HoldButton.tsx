@@ -59,7 +59,7 @@ export interface HoldButtonProps {
   /** Standard disabled passthrough. */
   disabled?: boolean;
   /** Injected clock (tests only); defaults to the real browser clock. */
-  clock?: HoldClock;
+  clock?: HoldClock | undefined;
   /** Optional class for the outer button. */
   className?: string;
   /** Optional test id. */
