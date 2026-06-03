@@ -17,6 +17,7 @@ import { REVIEWS_SCHEMA } from "@cq/ledger";
 const ALL_BUCKETS = [
   "start",
   "progress",
+  "ready",
   "blocked",
   "done",
   "dropped",

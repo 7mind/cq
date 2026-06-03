@@ -8,7 +8,7 @@
 
 import type { LedgerSchema } from "./types.js";
 
-export type StatusBucket = "start" | "progress" | "blocked" | "done" | "dropped" | "warning";
+export type StatusBucket = "start" | "progress" | "ready" | "blocked" | "done" | "dropped" | "warning";
 
 /**
  * Canonical StatusBucket → hex color palette. THE single source of truth for
@@ -21,6 +21,8 @@ export type StatusBucket = "start" | "progress" | "blocked" | "done" | "dropped"
 export const BUCKET_HEX: Record<StatusBucket, string> = {
   start: "#4ea1ff",
   progress: "#e0b341",
+  // Purple: root-cause captured, fix deferred — distinct from in-progress yellow.
+  ready: "#7c6af5",
   blocked: "#ef6a6a",
   done: "#57d18a",
   dropped: "#8b93a7",
@@ -30,8 +32,12 @@ export const BUCKET_HEX: Record<StatusBucket, string> = {
 
 const PROGRESS = new Set(["wip", "building", "planning", "in-progress", "in_progress", "doing"]);
 const BLOCKED = new Set(["blocked"]);
+// Non-terminal "file-and-defer" status: root cause captured, awaiting fix (defects lifecycle).
+const READY = new Set(["root-caused"]);
 // Terminal statuses that mean "needs changes" (rendered as a warning, not green).
 const WARNING = new Set(["revise"]);
+// Non-terminal statuses that signal a parked/inconclusive state (rendered as warning/amber).
+const WARNING_ACTIVE = new Set(["inconclusive"]);
 const DROPPED = new Set([
   "abandoned",
   "withdrawn",
@@ -41,6 +47,8 @@ const DROPPED = new Set([
   "cancelled",
   "canceled",
   "rejected",
+  // defects lifecycle: decided not to fix (T118).
+  "wontfix",
 ]);
 
 export function isTerminal(status: string, schema: LedgerSchema): boolean {
@@ -55,6 +63,8 @@ export function statusBucket(status: string, schema: LedgerSchema): StatusBucket
     return "done";
   }
   if (BLOCKED.has(s)) return "blocked";
+  if (READY.has(s)) return "ready";
+  if (WARNING_ACTIVE.has(s)) return "warning";
   if (PROGRESS.has(s)) return "progress";
   return "start";
 }

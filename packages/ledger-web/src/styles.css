@@ -13,6 +13,7 @@
      BUCKET_HEX in JS). Keep these hex values identical to BUCKET_HEX. */
   --lw-status-start: #4ea1ff;
   --lw-status-progress: #e0b341;
+  --lw-status-ready: #7c6af5;
   --lw-status-blocked: #ef6a6a;
   --lw-status-done: #57d18a;
   --lw-status-dropped: #8b93a7;
