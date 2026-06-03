@@ -2,14 +2,28 @@
 ledger: hypothesis
 counters:
   milestone: 0
-  item: 8
+  item: 13
 archives:
   - id: M14
     path: ./archive/hypothesis/M14.md
     summary: G2-W3 column selector + batch-answer + project title — COMPLETE. T60-T68 (eligibleColumnFields/defaultColumns, web+TUI column selectors, web batch-answer modal + TUI overlay, displayName + web/TUI titles). Out-of-scope defects D3 (exports map) + D4 (column eligibility) RESOLVED via G5; Q52 withdrawn (K13). Reviews R54/R57-R61. Shipped on main.
+    title: "G2-W3: Column selector, batch-answer mode, project title"
+    status: done
   - id: M18
     path: ./archive/hypothesis/M18.md
     summary: "G2 follow-up #9-13 — COMPLETE. T79 archived-subsection unification, T80/T81 milestone-status badge (web)/color (TUI), T82 colgroup column proportions, T83/T84 goals flat-list, T85 TUI nav-perf memoization. Out-of-scope D5 (archived-head badge) + D6 (browser-safe constants) RESOLVED via G5; Q53 withdrawn (K13). Reviews R62-R68. Shipped on main."
+    title: "G2 follow-up: web milestone-section rendering + column-width + goals flat-list + TUI nav-perf (#9-#13)"
+    status: done
+  - id: M27
+    path: ./archive/hypothesis/M27.md
+    summary: "G6 coordination — COMPLETE. Goal G6 (low-severity cleanup + follow-ups: #2 universal /advance command + N=4→8, #3 ledger-mcp --reset, #4 formal defect-lifecycle states + milestone auto-archive) done; work milestones M28/M31/M32/M33 archived; defects D9/D10/D11/D12/D13 resolved (D13's investigation hypotheses H9/H10 confirmed, H11/H12 refuted); reviews + decisions terminal. Auto-archived by the /advance whole-ledger sweep."
+    title: "Plan: low-severity cleanup — D9 test flake, D10 store parity, D11 sticky filter bar"
+    status: done
+  - id: M35
+    path: ./archive/hypothesis/M35.md
+    summary: G8 coordination — COMPLETE. Goal G8 (fix remaining buildable defects D20/D21) done; work milestone M36 archived; defects D20/D21 resolved, residuals D22/D23 resolved (D23 fixed via G10/T134; D22 user-resolved); D23 investigation hypothesis H13 confirmed; reviews R125/R126 + decision K21 terminal. Auto-archived by the /advance whole-ledger sweep.
+    title: "Plan: fix remaining buildable defects (D20 tui-test flakiness, D21 reset non-canonical)"
+    status: done
 ---
 
 # hypothesis
