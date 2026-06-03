@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 122
+  item: 124
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -93,6 +93,31 @@ archives:
     path: ./archive/reviews/M30.md
     summary: "G7 fixes COMPLETE — six confirmed dogfood defects fixed + merged. T110 (D16: backfill non-milestones archive-pointer titles from docs/archive/milestones/<id>.md by id; 48f4e93). T111 (D14: spawnWithFreePort retry-on-EADDRINUSE closes the bind-then-close TOCTOU; 6e223bb). T112 (D15: bounded wait-for de-flakes the live-badge test; 40385f6). T113 (D17: removed archived badge from row id cell; 1dec462). T114 (D18: per-suggestion pick buttons in the batch answer modal; ae0e5f8). T115 (D19: batch modal closes on open-set drain; 051fb27). Reviews R105-R110 (all go-ahead). Decision K19. Defects D14-D19 resolved. Final integration check 696 pass / 0 fail. Seeded + driven by the simulated /advance pipeline."
     title: "G7 fixes: confirmed dogfood UI/store defects (D14-D19)"
+    status: done
+  - id: M15
+    path: ./archive/reviews/M15.md
+    summary: "G3 coordination — COMPLETE (auto-archived by the new milestone-sweep rule, T129). Goal G3 (plan/implement flow-behavior changes: auto-investigate + never-auto-close-goals) done; work milestones M16/M17 archived; decisions K10/K12 (K12 supersedes K8 pt3); questions Q42-Q47 answered; reviews R31/R32."
+    title: "Plan: plan/implement flow-behavior changes (auto-investigate + never auto-close goals)"
+    status: done
+  - id: M20
+    path: ./archive/reviews/M20.md
+    summary: G4 coordination — COMPLETE (auto-archived by the milestone-sweep rule, T129). Goal G4 (D2 backup-and-reinit on schema divergence) done; work milestone M22 archived; decision K15; reviews R75/R76. D2 resolved.
+    title: "Plan: fix D2 — graceful backup-and-reinit on ledger schema divergence"
+    status: done
+  - id: M23
+    path: ./archive/reviews/M23.md
+    summary: G5 coordination — COMPLETE (auto-archived by the milestone-sweep rule, T129). Goal G5 (@cq/ledger packaging + UI-eligibility defects D3-D6) done; work milestones M24/M25/M26 archived; decision K16; reviews R77/R78. D3-D6 resolved.
+    title: "Plan: @cq/ledger packaging + UI-eligibility defect cleanup (D3-D6)"
+    status: done
+  - id: M28
+    path: ./archive/reviews/M28.md
+    summary: G6 work milestone M28 — COMPLETE (auto-archived by the milestone-completion rule). Tasks T105 (D9), T106 (D10), T107 (D11), T108+T109 (D12) done; defects D9/D10/D11/D12 + the out-of-scope D14/D15/D16/D17 all resolved (via G7/M30); reviews R98-R102. Decisions K17/K18. Integration green.
+    title: "G6 fixes: D9 test flake, D10 store parity, D11 sticky toolbar"
+    status: done
+  - id: M31
+    path: ./archive/reviews/M31.md
+    summary: "G6 #2/#4B — COMPLETE. T125 (authored llm/commands/advance.md universal sequencer), T126 (wired into link-prompts.ts + committed .codex/prompts/advance.md symlink), T127 (implement worker cap N=4→8), T128 (factored milestone auto-close+archive sweep predicate in advance.md + implement/advance.md), T129 (one-shot backlog sweep: archived M15/M20/M23/M28; guard-skipped M10/M11/M29/M27/M32/M33). Reviews R119/R122/R123/R124. Integration green."
+    title: "G6 #2/#4B — universal /advance command, parallelism bump (N=4→8), milestone auto-close+archive sweep"
     status: done
 ---
 
@@ -201,70 +226,6 @@ archives:
 - criticism: ["GO-AHEAD (round 2). Both R73 (revise) criticisms are genuinely resolved against source; the G2 follow-up #4 plan (M21: T90-T93, defects D7/D8) is fine-grained, correctly sequenced, testable, grounded, and complete for items 16/17/18/19. No new defects, no out-of-scope faults to file. Verification detail follows.","R73 #1 RESOLVED (T93 / item 19). Verified packages/ledger-web/src/styles.css (read L280-762, covering all overlay/dialog/modal/table regions) contains NO `.lw-batch`, `.lw-batch-body`, or `.lw-batch-nav` rule. The revised T93 description now states explicitly the work is to ADD/DEFINE new batch-modal sizing rules (not 'tune' pre-existing ones), specifies an explicit wider+taller box via vw/vh caps, a reduced font-size, and a body overflow-scroll rule for long questions, and instructs the implementer to FIRST confirm against the actual BatchAnswerModal JSX which element(s) carry the box/body/nav classes the rules must target (correct, since `.lw-batch` is a marker class with no backing rule). The acceptance (assert width/height/font-size resolve to the new values + body scroll, via computed style or the literal CSS rule under happy-dom) is operational and survives the re-grounding.","R73 #2 RESOLVED (T91 / item 17). Verified packages/ledger/src/types.ts ArchivePointer @ L155-162 is `{id, path, summary}` — no `title`, no `status`; and packages/ledger-web/src/App.tsx L2000 builds the archived head label from `p.summary` (= milestone description) for BOTH collapsed and expanded states, with group content (c) only lazy-fetched on expand. The revised T91 now states the title-source mechanism is NOT implementer's choice — it MUST extend the ArchivePointer payload (add `title` to types.ts + populate it in the server's archivePointer build, then use p.title) — and pins the acceptance to a COLLAPSED (un-expanded) archived head showing the milestone `title` (not description). This is satisfiable on a collapsed head ONLY via the payload extension (lazy c.milestone.title would not be populated pre-expand), so the acceptance genuinely forces the right path.","D5 COORDINATION COHERENT (T91). T91 now lands BOTH `title` (its own item 17 / D8 fix) and `status` (D5's prerequisite) in ONE ArchivePointer-payload + server-build edit; T91 ledgerRefs now include defects:D5. Verified D5 (open, severity low, M18) requires exactly this payload extension to carry the milestone terminal status for the #10 archived-head status badge. D5 stays open for its consuming badge-render work but its payload prerequisite is satisfied here — neither orphaned (D5 still tracks the render) nor double-implemented (T91 adds only the payload field, not the badge render). The added `status` field is bounded additive scope on one shape, not an unscoped task.","COVERAGE/SEQUENCING INTACT. Items 16 (T90/D7: gate ArchiveSubsections on !isMilestones — render site App.tsx ~L1193 gated only on showArchive+archivePointers, isMilestones in scope), 17 (T91/D8), 18 (T92), 19 (T93) all still covered. Item 18/T92 vs K13: verified llm/commands/implement/advance.md §3 L103-108 contains the ONLY real `/investigate:start <D>` routing-question creation step to delete, matching K13 (locked) and T92's revised grounding; plan/advance.md (ledger-query worklist) + plan-reviewer.md (report-only defects[]) already conform (verify-no-op), and the Q52/Q53 one-time cleanup is already done with D3-D6 triage preserved on the defect records. Sequencing sound: T90->T91 serialize (same App.tsx archive path); T92 (prompts) + T93 (CSS-only) disjoint and parallel-safe; M21 dependsOn M19."]
 - ledgerRefs: ["goals:G2"]
 
-## M15
-
-### R31 — revise
-
-- createdAt: 2026-06-02T10:18:25.488Z
-- updatedAt: 2026-06-02T10:18:25.488Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- new_questions: []
-- criticism: ["VERDICT (revise): the plan (T69-T78) encodes the user's actual Q42-Q47 answers correctly (file-all-defects + orchestrator auto-launch, command-only triggers, K8 supersession not amendment, never-auto-close-goal with planned->building allowed) and is well-grounded against the live files (implement/advance.md L203 offending phrase, plan/advance.md L4/27/33/56 caps, K8 point-3 prohibition, plan-advance.md rules 5/7). Change B (M16) is sound. Change A (M17) needs the fixes below before build. No out-of-scope/pre-existing repo defects found (no `defects` to file).","[HIGHEST RISK] T74: removing the 4-iteration cap leaves the NEW auto-investigate<->replan chain (a cross-command loop: investigate confirms -> seeds goal -> plan replans -> may surface a new defect -> investigate again) WITHOUT concrete termination predicates. T74 acceptance (c) only requires generic 'model-judged ill-loop detection' and points at implement/advance.md L119-130 -- but those three signals (no file changes; criticism repeats without shrinking; same `bun run check` failure recurs) are about a SINGLE worktree's criticism rounds and do NOT translate to the cross-command auto-investigate axis. A cap-free auto-launching loop with no operationally-pinned stop for its NEW axis is a runaway-cost hazard. Fix: T74 acceptance must enumerate concrete ill-loop predicates for the auto-investigate<->replan chain specifically (e.g. the same defect D re-confirmed across rounds with no new fix tasks emitted; investigate returns no adjudicable evidence on two consecutive rounds for the same defect; the goal is re-planned with an identical task set; a defect cycles open->investigated->replanned->open without convergence) -> STOP and file an `open` questions item. 'Remove the cap' is not a stop condition.","T74: the orchestrator's auto-investigate phase is specified to run 'AFTER the per-goal planner<->reviewer round completes', but the plan does not say what happens when the round stops on `awaiting-answers` (rule 4: reviewer new_questions sent the goal back to `clarifying`) WHILE the same review's defects[] bucket was also filed (a go-ahead OR revise review may carry defects[], per plan-reviewer.md L92-95). Does auto-investigate run when the goal is simultaneously parked on user questions? Specify the interaction: either auto-investigate still runs on filed defects (they are orthogonal to the goal's clarification, per plan-advance.md L237-242) or it is deferred. As written the executor must guess.","T73/T74 data-passing is fragile and contradicts the subagent output contract. T73 has plan-advance emit a 'Filed defects for auto-investigate: D<n>' line inside its free-text `### Session summary`, and T74 parses it. But plan-advance.md L257-263 fixes the subagent's machine-readable output to a SINGLE status token on the last line; the Session summary is free prose. String-parsing a prose summary line is brittle. T74 already names the robust alternative ('open defects newly linked goals:<G> with no terminal status') -- make the LEDGER QUERY the primary (authoritative) source of the auto-investigate worklist and demote the summary flag to at most an advisory hint. Adjust T73 acceptance accordingly so it does not mandate a parse-dependent contract.","T72: the new superseding decision should state explicitly that it stands on K8 point 4 (defect-seeded clarify-skip) as well as point 3, because T74/T75's auto-resume path ('skips clarification per K8 pt4') depends on point 4 remaining in force. T72's four required points cover point 3 but do not pin that point 4 is untouched; add a one-line 'K8 points 1,2,4,5 remain in force; only point 3's handoff-direction asymmetry is refined' so the executor does not over-read the supersession.","T78 (verify) inherits the T74 gap: its grep set checks the caps are GONE ('4-iteration|8 rounds|safety ceiling') but has NO positive check that a concrete cross-chain ill-loop/termination criterion was ADDED. Add an acceptance clause to T78 that asserts plan/advance.md contains enumerated auto-investigate stop predicates (not merely the absence of a numeric cap), so removing the cap without adding a real stop cannot pass verification."]
-
-### R32 — go-ahead
-
-- createdAt: 2026-06-02T10:22:27.963Z
-- updatedAt: 2026-06-02T10:22:27.963Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- new_questions: []
-- criticism: ["VERDICT (go-ahead): the revised plan (T69-T78) resolves all 5 R31 criticisms and the Change A auto-investigate loop is now provably convergent via operationally-checkable stop predicates. Re-verified against the live files: plan/advance.md L27/33/56 carry the 4-iteration cap to remove, plan-advance.md L213-242 is the file-and-defer 'defects[] bucket' block to edit, and L257-263 fixes the single-status-token output contract that grounds the ledger-query-over-summary-parsing fix. (1 HIGHEST-RISK) T74 pt4 now enumerates concrete cross-chain termination predicates (a-f): once-per-defect-per-round; no-relaunch-without-new-confirmed-evidence; stop+report once a confirmed root cause seeded/extended its goal; park on non-converging open->investigated->replanned->open cycle; park after two consecutive no-adjudicable-evidence rounds; per-pass budget governed by (a)-(e). It explicitly states the generic single-worktree signals do NOT satisfy this. Acceptance (d) restates them as required. Resolved. (2) T74 pt3 specifies the awaiting-answers + defects-filed interaction: filed defects are orthogonal and still auto-investigated even when the goal is parked in `clarifying`, but planning does NOT auto-resume on a clarifying-parked goal. Resolved. (3) T73 + T74 pt2 make the LEDGER QUERY (open defects newly linked goals:<G>, no terminal status) the authoritative worklist; prose-summary parsing demoted to advisory; T73 acceptance forbids mandating any summary parse. Resolved. (4) T72 now requires the explicit 'K8 points 1,2,4,5 remain in force; only point 3 handoff-direction refined' line and pins that pt4 (defect-seeded clarify-skip) must stay because T74/T75 auto-resume depends on it; pt3's prohibition on investigate running the plan loop inline still stands. Resolved. (5) T78 pt4 adds a POSITIVE stop-predicate presence grep ('caps removed cannot pass without convergence guaranteed'); conjoined with pt3 (caps GONE) it catches the exact targeted regression of caps-removed-but-stop-condition-missing. Resolved.","CONVERGENCE PROOF (crux confirmed): within a plan:advance pass the worklist is the finite set of open defects at auto-investigate-phase entry; predicate (a) processes each at most once; new defects are only filed by the in-round planner<->reviewer loop which completes before the auto-investigate phase runs; predicate (c) halts relaunch once a defect seeds/extends a goal (planning then resumes on that goal, itself bounded by planner<->reviewer convergence); predicates (b)/(d)/(e) force a park-to-user on no-new-evidence / non-convergence / two-consecutive-no-evidence. Each predicate is a ledger-state comparison, so the stop is operationally checkable. The cap-free loop terminates.","BY-POINTER CHECK (T75/T77 do not silently reintroduce summary-parsing or drop a stop condition): T75 binds plan/start.md + follow-up.md to 'mirror plan/advance.md new phase (T-A3)' by pointer to the WHOLE T74 auto-investigate phase (which carries both the ledger-query worklist and the stop predicates) and its acceptance requires running /investigate:advance inline by pointer to that phase, not by re-deriving a worklist from a summary -- so the ledger-query authority and the stop predicates are inherited, not duplicated or weakened. T77 is wording-only, explicitly defers mechanics to T74/T75/T76, correctly keeps investigate->plan handback as file-and-defer (K8 pt3 stands) and keeps implement:* file-and-defer (Q43 names only plan:* as triggers). NON-BLOCKING NOTE for the executor (does not flip the verdict): T75 pt1 phrase 'if the plan-advance subagent flagged filed defects' should be read as the ledger-query existence check (no-op when none filed), NOT a parse of an advisory summary flag -- the binding acceptance and the by-pointer reference to T74's ledger-query phase govern; keep the trigger ledger-query-authoritative when implementing T75 to avoid re-importing the brittle summary contract R31#3 removed. Plan is fine-grained, correctly sequenced (T72 root; T73/T74 depend on it; T75/T77 depend on T74; T78 depends on all M17 tasks; M16 T69/T70->T71 independent), testable (each carries a grep/fetch/`bun run check` acceptance), grounded, and complete against the goal description. No out-of-scope/pre-existing repo defects surfaced (none to file-and-defer)."]
-
-## M20
-
-### R75 — revise
-
-- createdAt: 2026-06-02T16:35:00.336Z
-- updatedAt: 2026-06-02T16:35:00.336Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- new_questions: []
-- criticism: ["VERDICT (revise): D2-fix plan (M22: T94-T97) is correctly root-caused, safe (backup-before-reinit, both ledger file(s) + docs/ledgers.yaml, loud WARNING, ENOENT-tolerant), and correctly sequenced (T94 helper -> T95 rewire -> T96 tests -> T97 gate); default backup-and-reinit with onSchemaDivergence:'abort' opt-out matches the user's direction; all named primitives verified to exist (freshLedger/seedBootstrapGroup/serializeRegistry as module fns; ledgerPath/registryPath/writeRegistry/writeLedgerFile/now/docsDir as fields; CANONICAL_LEDGERS; BootstrapViolationError @ types.ts:384; init() throw site @ FsLedgerStore.ts:283-289; main() awaits init() before serve @ main.ts:369). One planner-fixable defect below. No user-only gaps; no out-of-scope repo defects (the stale-global-binary limitation is correctly out-of-scope per the goal).","T96 OMITS a REQUIRED test migration that T95 will break. An EXISTING parameterized test in packages/ledger/test/canonical-ledgers.test.ts:332-356 ('divergence guard fires for a hand-edited <name> schema') runs for SIX canonical ledgers (defects/tasks/hypothesis/questions/decisions/goals): it seeds a registry whose entry has a divergent (superset) schema and asserts `await store.init()` REJECTS with /different schema/ under DEFAULT options. After T95 flips the default to backup-and-reinit (no throw on divergence), all six of these assertions INVERT and FAIL. T96's description only says 'add tests' for the new divergence-backup/abort/regression cases and never names this existing suite; its 'REGRESSION' cases cover only no-divergence and empty-dir, NOT this divergence-throw suite. T97 (`bun run check`) will surface the six failures but carries no scoped mandate to rewrite assertions ('resolve any failures introduced by the change' is too vague for what is a deliberate, EXPECTED behavior-change migration, not a defect to debug). FIX: extend T96 (and call it out explicitly) to MIGRATE canonical-ledgers.test.ts:332-356 -- either re-target each of the six cases to construct FsLedgerStore with onSchemaDivergence:'abort' (preserving the rejects-with-/different schema/ assertion, repurposing this suite as the abort-opt-out coverage), OR replace them with the new backup-and-reinit default assertion. Note this existing suite seeds only ledgers.yaml (no on-disk .md ledger file), which is why T94's ENOENT-tolerance on the ledger file is load-bearing -- the migration and T94 must stay consistent on that.","MINOR (planner-fixable, fold into T95): T95's description hedges the re-load mechanism ('re-derive this.registry from the freshly-written registry before the load loop, OR have the helper update this.registry in place'). Since T94's helper already rewrites the registry file via writeRegistry (which serializes this.registry), the helper should authoritatively update this.registry IN PLACE (the single source the load loop at FsLedgerStore.ts:294-334 iterates), and T95's acceptance should PIN that the post-reinit load loop iterates the fresh canonical registry -- not leave the executor a choice that could load stale entries. Operationally verifiable: assert init() leaves this.registry.ledgers equal to CANONICAL_LEDGERS schemas after a divergence-reinit."]
-- ledgerRefs: ["goals:G4"]
-
-### R76 — go-ahead
-
-- createdAt: 2026-06-02T16:38:26.061Z
-- updatedAt: 2026-06-02T16:38:26.061Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- new_questions: []
-- criticism: ["VERDICT (go-ahead, round 2): both R75 criticisms genuinely resolved against source. (1) TEST MIGRATION: T96 now carries a 'MANDATORY MIGRATION (do not skip)' section naming packages/ledger/test/canonical-ledgers.test.ts:332-356 — the six-ledger parameterized 'divergence guard fires for a hand-edited <name> schema' suite (verified in source: schemas[] = DEFECTS/TASKS/HYPOTHESIS/QUESTIONS/DECISIONS/GOALS, constructs new FsLedgerStore({root:dir}), asserts rejects.toThrow(/different schema/)) — mandating re-target to new FsLedgerStore({root:dir, onSchemaDivergence:'abort'}) preserving the /different schema/ assertion; T96 acceptance explicitly states NO test asserts a DEFAULT init() throw on divergence. Resolved. (2) RE-LOAD MECHANISM: T95 now has a 'PINNED (no executor choice)' section — helper mutates this.registry in place to canonical, writeRegistry() (verified @878: serializes this.registry) writes it, load loop @294-334 (verified) iterates the fresh canonical registry; T95 acceptance asserts post-reinit this.registry.ledgers schemas == CANONICAL_LEDGERS and the in-memory loaded ledger is fresh-canonical. Resolved; mechanism is internally consistent since writeRegistry cannot persist canonical unless this.registry is canonical first.","COVERAGE (no regression): T96 asserts all four paths — default divergence->backup+reinit (no throw, backup dir holds prior ledgers.yaml + prior .md byte-for-byte, live ledger fresh-canonical, one stderr WARNING), abort opt-out (throws BootstrapViolationError, files untouched, no backup dir), no-divergence regression (unchanged, no backup), empty-dir regression (unchanged, no backup) — plus the migrated six-ledger abort suite. ENOENT-tolerance in T94 stays load-bearing and consistent with the migrated suite (which seeds only ledgers.yaml, no .md). SEQUENCING T94->T95->T96->T97 via dependsOn is coherent (helper -> rewire init() -> tests needing both behaviors -> bun run check gate). GROUNDING: all cited symbols verified — FsLedgerStoreOpts @106 (option to be added), init throw @283-289, load loop @294-334, writeRegistry @878, ledgerPath/writeLedgerFile @870-876, freshLedger @921, seedBootstrapGroup @938, BootstrapViolationError @types.ts:384; FsLedgerStore-only scope correct (InMemoryLedgerStore has no on-disk registry; the migrated suite is FsLedgerStore-specific, not dual). Plan is fine-grained, sequenced, testable, grounded, and complete. Approve."]
-- ledgerRefs: ["goals:G4"]
-
-## M23
-
-### R77 — revise
-
-- createdAt: 2026-06-02T17:42:46.221Z
-- updatedAt: 2026-06-02T17:42:46.221Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- criticism: ["VERDICT: revise. Coverage (D3->T98/T101, D6->T99/T100, D4->T102, D5->T103/T104) is complete and defect ledgerRefs are bidirectional; Fix A and Fix B are sound; Fix C (T103) is grounded on a nonexistent @cq/shared Zod wire mirror. Details below.","T103 is built on a symbol that does not exist: there is NO @cq/shared package and NO Zod wire mirror of fetch_ledger's archivePointers[]. The server tool (packages/ledger/src/mcp/ledgerTools.ts:158-163) serialises store.fetch() via plain JSON.stringify with no output schema; the web client (packages/ledger-web/src/mcpClient.ts:116-119) does `JSON.parse(text) as FetchedLedger` with no runtime validation, and its ArchivePointer is a type-only re-export from @cq/ledger (packages/ledger-web/src/types.ts:7-18). Consequently, once T91 adds `status` to the ArchivePointer interface in packages/ledger/src/types.ts:155-162, the field already flows over the wire into the web client — there is NO separate 'wire half' to extend. The goal's own grounding ('the @cq/shared Zod mirror of archivePointers[] is the un-covered half') is factually wrong against the repo. Fix: DROP T103 as redundant, OR re-scope it to the real verifiable gap — an end-to-end round-trip assertion (e.g. extend packages/ledger-web/test/serve.test.ts or a store test) that an archived milestone's `status` survives fetch_ledger from server to client. Either way M26 loses its dependency on a fictitious wire schema.","T104 dependsOn/blockedBy T103, but T104's only real prerequisite is T91 (the ArchivePointer types+server-build data). Since T103 rests on a nonexistent package, T104's dependency chain is contaminated: re-point T104 to dependsOn T91 directly (M26 already dependsOn M21 for T91). T104's render fix itself is correct — passing p.status as milestoneStatus to the archived MilestoneSubsection (packages/ledger-web/src/App.tsx:2002-2008), mirroring the active head (App.tsx:1853, badge gated App.tsx:1659).","T98 leaves a risky either/or (set rootDir:'src' for a flat ./dist/*.js layout, OR realign all entries to ./dist/src/*) for the implementer to resolve at build time. The rootDir:'src' branch carries a concrete, known failure: the ledger tsconfig has include:['src','test'] (packages/ledger/tsconfig.json:10) and tsconfig.base.json sets no rootDir, so setting rootDir:'src' makes tsc emit TS6059 ('File is not under rootDir') for every test/ file unless test inclusion is restructured. Pick the FALLBACK (realign all exports/main to ./dist/src/*) as the PRIMARY approach: it matches the already-correct ./columns entry (package.json:18), requires no tsconfig or test-layout change, and avoids the TS6059 conflict. Reserve rootDir:'src' only if a flat layout is independently desired."]
-- ledgerRefs: ["goals:G5"]
-
-### R78 — go-ahead
-
-- createdAt: 2026-06-02T17:47:09.723Z
-- updatedAt: 2026-06-02T17:47:09.723Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- new_questions: []
-- criticism: []
-- ledgerRefs: ["goals:G5"]
-- tags: ["round-2","go-ahead","all-R77-criticisms-resolved"]
-
 ## M27
 
 ### R93 — revise
@@ -342,63 +303,6 @@ archives:
 - new_questions: []
 - criticism: []
 - ledgerRefs: ["goals:G6"]
-
-## M28
-
-### R98 — go-ahead
-
-- createdAt: 2026-06-02T21:31:54.734Z
-- updatedAt: 2026-06-02T21:31:54.734Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T105 approved: HTTP tui tests moved to OS-assigned ports + TCP-connect readiness wait via shared portHelpers.ts; product-clean; 3/3 consecutive check runs green. Residual bind-then-close TOCTOU filed out-of-scope as D14."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T105","goals:G6"]
-
-### R99 — go-ahead
-
-- createdAt: 2026-06-02T21:31:58.032Z
-- updatedAt: 2026-06-02T21:31:58.032Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T106 approved: D10 Phase-1b no-partial-mutation pin is correct, dual-adapter, reproduces pre-T91 for the right reason; only check failure is a pre-existing unrelated ledger-tui live-badge flake (filed out-of-scope as D15)."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T106","goals:G6"]
-
-### R100 — go-ahead
-
-- createdAt: 2026-06-02T21:32:00.849Z
-- updatedAt: 2026-06-02T21:32:00.849Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T107 approved: .lw-toolbar sticky/top/z-index/gutter CSS meets all acceptance clauses with a passing CSS-assertion test; sole check failure is the same unrelated pre-existing TUI flake (D15)."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T107","goals:G6"]
-
-### R101 — go-ahead
-
-- createdAt: 2026-06-02T21:32:03.453Z
-- updatedAt: 2026-06-02T21:32:03.453Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T109 approved: FS-only init() backfill of legacy ArchivePointer title/status; reproduction-first test fails pre-fix and passes post-fix; materialiseFetchedLedger + InMemory untouched (D10/T106 parity preserved); fetch() stays sync; check green."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T109","goals:G6"]
-
-### R102 — go-ahead
-
-- createdAt: 2026-06-02T22:05:03.693Z
-- updatedAt: 2026-06-02T22:05:03.693Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T108 approved: archived milestones render as single titled rows with status + archived badge in the milestones ItemTable; D7 !isMilestones gate preserved; check green; title-guard test verified by mutation (forcing bare-id fallback fails the test)."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T108","goals:G6"]
 
 ## M29
 
@@ -515,27 +419,3 @@ archives:
 - criticism: []
 - new_questions: []
 - ledgerRefs: ["tasks:T124","goals:G6"]
-
-## M31
-
-### R119 — go-ahead
-
-- createdAt: 2026-06-03T04:26:11.598Z
-- updatedAt: 2026-06-03T04:26:11.598Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T125 approved: advance.md fully specifies Q55-Q60 (3 ledger-query predicates over new defect statuses incl. root-caused excluded as plan-owned; loop-to-quiescence no-cap; command-of-commands no-own-subagents chaining sub-commands; re-check-investigate + plan-owns-auto-investigate boundary; DRAINED/BLOCKED/MIXED report; no own cap). Cross-checked against the sub-command prompts — boundaries consistent, no stranding gap. T128 sweep correctly a placeholder."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T125","goals:G6"]
-
-### R122 — go-ahead
-
-- createdAt: 2026-06-03T04:40:31.144Z
-- updatedAt: 2026-06-03T04:40:31.144Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T126 approved: LINKS entry shape/path correct (top-level no-ns), link-prompts materialises .claude/commands/advance.md→../../llm/commands/advance.md resolving to source; committed .codex/prompts/advance.md symlink matches sibling ../../llm convention + resolves; .claude/ not committed; tsc clean; diff confined to 2 files."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T126","goals:G6"]

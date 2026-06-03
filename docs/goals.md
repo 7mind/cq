@@ -3,7 +3,22 @@ ledger: goals
 counters:
   milestone: 0
   item: 8
-archives: []
+archives:
+  - id: M15
+    path: ./archive/goals/M15.md
+    summary: "G3 coordination — COMPLETE (auto-archived by the new milestone-sweep rule, T129). Goal G3 (plan/implement flow-behavior changes: auto-investigate + never-auto-close-goals) done; work milestones M16/M17 archived; decisions K10/K12 (K12 supersedes K8 pt3); questions Q42-Q47 answered; reviews R31/R32."
+    title: "Plan: plan/implement flow-behavior changes (auto-investigate + never auto-close goals)"
+    status: done
+  - id: M20
+    path: ./archive/goals/M20.md
+    summary: G4 coordination — COMPLETE (auto-archived by the milestone-sweep rule, T129). Goal G4 (D2 backup-and-reinit on schema divergence) done; work milestone M22 archived; decision K15; reviews R75/R76. D2 resolved.
+    title: "Plan: fix D2 — graceful backup-and-reinit on ledger schema divergence"
+    status: done
+  - id: M23
+    path: ./archive/goals/M23.md
+    summary: G5 coordination — COMPLETE (auto-archived by the milestone-sweep rule, T129). Goal G5 (@cq/ledger packaging + UI-eligibility defects D3-D6) done; work milestones M24/M25/M26 archived; decision K16; reviews R77/R78. D3-D6 resolved.
+    title: "Plan: @cq/ledger packaging + UI-eligibility defect cleanup (D3-D6)"
+    status: done
 ---
 
 # goals
@@ -141,106 +156,6 @@ archives: []
     #14 PICK-AS-ANSWER (Q50, BOTH UIs; DEPENDS ON M13 T56/T57; questions ledger only): once suggestions render as a list, add a per-suggestion 'pick as answer' control that sets THAT suggestion's text as the answer, parity with existing 'as recommended'. WEB: small button after each <li> in renderQuestionFields() (where `answerable`/answerWith are in scope), shown ONLY when answerable, calling answerWith(suggestionText) → immediate save + mark answered (answerWith pattern at App.tsx L1733-1741). TUI: bind number keys 1-9 to pick the Nth suggestion, gated on canAnswer + presence of suggestions, calling applyAnswer(cur, suggestionText) immediately, mirroring the `r` as-recommended key (app.tsx L548-557,L572-581). Sequence after T56 (web list) / T57 (TUI list).
     #15 DISABLE-WHEN-TYPING (Q51, BOTH UIs; DEPENDS ON #14 + 'as recommended'; ALSO applies inside batch modal T63/T64): once the user has entered ANY non-whitespace text into the answer field, DISABLE both 'as recommended' and the #14 per-suggestion 'pick' controls (they auto-fill/clobber the answer). WEB: answer textarea is UNCONTROLLED (ref answerRef + defaultValue, App.tsx L1720-1728) so there is no reactive value today — add a minimal onInput-driven 'answer non-empty (NON-WHITESPACE)' signal (onInput fires on uncontrolled textarea under happy-dom; onChange on controlled text does NOT — CLAUDE.md) and gate the buttons' `disabled` on it. TUI: the `r` key + #14 pick keys fire in LIST/CONTENT focus OUTSIDE the answer overlay, reading the PERSISTED cur.item.fields.answer — make them inert/no-op when fieldToString(fields[ANSWER_FIELD]).trim().length>0 (symmetric with web). Apply the rule WHEREVER these auto-fill controls render, INCLUDING the batch-answer modal (#5: web T63 / TUI T64). Sequence after T56/T57 and after #14.
 - milestones: ["M12","M13","M14","M18","M19","M21"]
-
-## M15
-
-### G3 — done
-
-- createdAt: 2026-06-02T09:12:10.677Z
-- updatedAt: 2026-06-02T22:18:14.143Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- title: "Plan/implement flow-behavior changes: auto-investigate + never auto-close goals"
-- description: |
-    Prompt-suite behavior changes to the plan:*/implement:*/investigate:* command flows (markdown edits under llm/commands + llm/agents). Follow-on to completed G1 (which built these flows). Two distinct changes:
-    
-    A) AUTO-INVESTIGATE: plan:* should investigate defects AUTOMATICALLY rather than requiring the user to manually run /investigate:start. CURRENT STATE (deliberate, locked as decision K8, chosen over inline by review R5 #1): the plan↔investigate integration is FILE-AND-DEFER — when plan-flow encounters/needs a defect investigation it files a defect + an open question pointing the user to /investigate:start, and investigate→plan hands back via another user-run /plan:advance. The user wants this AUTOMATIC. This REVERSES/REFINES K8 and must be reconciled with the hard constraint that subagents cannot spawn subagents (the loops live in the main-session command, so the MAIN session can chain investigate→plan, but a subagent cannot). Candidate interpretations to resolve in clarifying: (a) main-session orchestrator auto-chains — when /plan:advance (or /plan:start) detects the goal describes a defect, or the plan-reviewer flags an out-of-scope defect, it AUTOMATICALLY runs the /investigate:advance pass inline instead of filing a question; (b) keep file-and-defer but auto-LAUNCH /investigate:start (no manual step) and auto-resume planning once a root cause is confirmed; (c) hybrid — auto-investigate only reviewer-found in-plan defects, user-reported defects still via /investigate:start. Must stay consistent with the investigate hypothesis-tree/citation-validation machinery and UPDATE the K8 decision record.
-    
-    B) NEVER AUTO-CLOSE GOALS: agents must NEVER transition a GOAL to a terminal/done status automatically — only when the user explicitly asks. CURRENT STATE: the implement-flow orchestrator advanced goal G1 planned→building→done on its own after the work milestones completed; llm/commands/implement/advance.md's milestone-completion section says the goal 'can then advance per the plan-flow', which invited the auto-close. DESIRED: when all of a goal's work milestones are done, the orchestrator archives the milestones and REPORTS the goal is ready to close, but leaves the goal's terminal transition to the user. Scope the exact prompt edits: implement/advance.md milestone-completion language (do NOT auto-advance the goal) + any plan-flow text implying auto-closing. Marking individual tasks/defects terminal as work completes stays fine; the prohibition is specifically closing the GOAL.
-    
-    Scope: prompt/markdown edits to llm/commands/plan/{advance,start,follow-up}.md, llm/commands/implement/{start,advance}.md, llm/agents/{plan-advance,plan-reviewer}.md, llm/commands/investigate/{start,advance}.md as needed, and the K8 decision record. No new ledgers; no new product code expected (prompt-suite behavior), though A may touch how the main-session orchestrator chains commands. Constraints: subagents-cannot-spawn-subagents; the file-and-defer vs inline-chain distinction; dogfood-only (this repo is the sole user). Repo gate: bun run check. References G1 (M7/M8 investigate + defect-awareness) and decision K8; and the user rule 'never auto-close goals'. Item A pairs with / may revisit K8; item B is a smaller well-understood correction.
-- grounding: |
-    Prompt-suite (markdown only) change; no product code. Grounded against the live files:
-    
-    CHANGE A (auto-investigate) — answers (Q42b-extended/Q43/Q44/Q45):
-    - Q42: file ALL defects (user-reported AND auto-found); the plan ORCHESTRATOR auto-launches /investigate:* itself AFTER finishing its primary work, always when possible. (Not the narrow hybrid (c) recommendation.)
-    - Q43: trigger lives in the COMMAND orchestrators plan/advance.md, plan/start.md, plan/follow-up.md (a command can run /investigate:advance inline; a subagent cannot). The plan-advance/plan-reviewer SUBAGENTS only file/flag defects (subagent disallowedTools include Bash; they never spawn subagents).
-    - Q44: NO hard caps. Replace the existing hard caps with MODEL-JUDGED ill-loop detection that, when the chain loops meaninglessly, STOPS and surfaces a question to the user. Hard caps to remove: plan/advance.md '4-iteration cap' (lines 27,33,56) and implement/advance.md '8-round safety ceiling' (line 128). implement/advance.md already has model-judged ill-loop signals (lines 119-130) to mirror.
-    - Q45: SUPERSEDE K8 with a NEW locked decisions item under M (the M15 coordination milestone) that cites K8 point 3 and records the new auto-investigate direction + the model-judged-stop bound; leave K8 immutable.
-    
-    Current file-and-defer trigger sites that become auto-launch:
-      (i) plan-advance subagent 'Consuming the reviewer's defects[] bucket' (llm/agents/plan-advance.md lines 213-242) files defect + routes to /investigate:start.
-      (ii) implement/advance.md step 3 (lines 96-111) files reviewer defects[] + routes to /investigate:start.
-      (iii) investigate/advance.md step 5 (lines 115-150) file-and-defer hands BACK to a user-run /plan:advance.
-    The symmetric reversal: a /plan:* command, after its primary planning work, auto-runs /investigate:advance on filed defects; and on a confirmed root cause the goal is defect-seeded so the SAME /plan:* session can auto-resume planning. K8 point-3 prohibition was on /investigate:advance running the PLAN loop inline; that stays (investigate hands back). The new behavior is /plan:* running the INVESTIGATE loop inline after its own work.
-    
-    CHANGE B (never auto-close goals) — answers (Q46/Q47):
-    - Q46: forbid ONLY automatic goal building->done; planned->building MAY remain automatic (records work started).
-    - Q47: when all work milestones done -> archive them + PRINT explicit 'goal G ready to close; close it in the TUI/web (set G to done)' + make NO goal-status change. Auto-marking tasks/defects terminal stays fine.
-    - Offending text: implement/advance.md 'Milestone completion' (lines 192-204), specifically line 203 'The goal G ... can advance per the plan-flow once the milestone is archived'. plan-advance.md rule 7 (lines 175-176) returns 'completed' for planned/building/done but does not itself close — keep, but ensure no plan-flow text implies auto-closing the goal. No /plan:close command exists (only start/advance/follow-up); close mechanism = TUI/web.
-    
-    Gate: bun run check (markdown-only edits should be no-op for it, but run it). Files in scope: llm/commands/plan/{advance,start,follow-up}.md, llm/commands/implement/advance.md (and possibly start.md), llm/commands/investigate/advance.md (the handback Report wording, optional), llm/agents/{plan-advance,plan-reviewer}.md, + the K8-superseding decision record.
-- milestones: ["M16","M17"]
-
-## M20
-
-### G4 — done
-
-- createdAt: 2026-06-02T11:27:09.012Z
-- updatedAt: 2026-06-02T22:18:16.042Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- title: "Fix D2: graceful backup-and-reinit on ledger schema divergence (no fatal BootstrapViolationError)"
-- description: |
-    DEFECT-SEEDED goal (linked defects:D2) — the root cause is ALREADY CONFIRMED (hypothesis H4), so this goal enters `planning` directly and SKIPS the clarifying round (per decision K8 point 4 / K12 defect-seeded clarify-skip). plan-advance should produce reviewed FIX TASKS directly.
-    
-    CONFIRMED ROOT CAUSE (from D2/H4, user-reported error verbatim): `ledger-mcp: fatal: Bootstrap invariant violated: existing goals ledger has a different schema than its canonical bootstrap schema`. FsLedgerStore.init() (packages/ledger/src/store/FsLedgerStore.ts:283-289) THROWS BootstrapViolationError when an EXISTING on-disk ledger's schema diverges from its CANONICAL_LEDGERS bootstrap schema; main() (packages/ledger-mcp/src/main.ts:337-344) awaits store.init() before serving, so the throw crashes the process before the MCP handshake → 'connection failed'. This is a version-skew artifact (stale built/global binary vs evolved docs/ledgers.yaml). The empty-dir auto-init path already works — only the divergence path is fatal.
-    
-    CONFIRMED FIX (suggestedFix, user-directed): replace the fatal throw with graceful BACKUP-AND-REINIT. When init() detects a schema divergence for an existing ledger (the `!schemasEqual` branch at FsLedgerStore.ts:283-289), instead of throwing: (a) move/copy the divergent on-disk ledger file(s) AND docs/ledgers.yaml into a timestamped backup dir (e.g. docs/.backup/<ISO-timestamp>/); (b) write fresh canonical ledger(s) + registry from CANONICAL_LEDGERS; (c) continue startup. Emit a loud WARNING to stderr naming the backup path so nothing is silently lost. (Optional: a flag to opt back into the hard abort, but default to backup-and-reinit per the user.)
-    
-    SCOPE: code fix in @cq/ledger (FsLedgerStore.init + a backup helper) + tests. Tests (dual-tests style): seed a divergent on-disk ledger schema → init() backs up the prior files into docs/.backup/<ts>/ + reinitializes canonical + serves (NO throw); assert the backup dir contains the prior file(s) and the live ledger is fresh-canonical; the empty-dir and the no-divergence (normal) paths are unchanged. Repo gate: `bun run check`. The BootstrapViolationError type may stay defined (for the opt-out path) but is no longer thrown by default on divergence.
-    
-    NOTE: implementing this in source does NOT retroactively fix an already-running stale GLOBAL binary — that needs a rebuild; and an immediate manual unblock is to back up/remove the divergent docs/ before launch. This goal is the durable code fix.
-- grounding: "Confirmed root cause + fix verified against source during the D2 investigation (hypotheses H1/H2 refuted; H4 confirmed via the user's verbatim runtime error). Key sites: packages/ledger/src/store/FsLedgerStore.ts:254-340 (init: mkdir/ENOENT-swallow/bootstrap; the throw at 283-289), packages/ledger-mcp/src/main.ts:337-344 (main awaits init before serve), BootstrapViolationError type in packages/ledger/src/types.ts. CANONICAL_LEDGERS + serializeRegistry/writeRegistry/freshLedger already exist in the store for the reinit path; archiveDir/backup-style dir creation patterns exist (the store already mkdir's docs/archive). Tests use the dual-tests pattern (FsLedgerStore over a seeded tmpdir)."
-- tags: ["defect-seeded","defect:D2","ledger-bootstrap","backup-and-reinit"]
-- milestones: ["M22"]
-
-## M23
-
-### G5 — done
-
-- createdAt: 2026-06-02T17:25:47.978Z
-- updatedAt: 2026-06-02T22:18:16.868Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- title: Fix out-of-scope defects D3-D6 (@cq/ledger packaging + column eligibility + archived-head badge)
-- description: |
-    DEFECT-SEEDED goal (linked defects:D3, D4, D5, D6) — all four root causes are ALREADY CONFIRMED via the investigate-flow (hypotheses H5-H8, evidence validated against source), so this goal enters `planning` directly and SKIPS clarifying (K8 pt4 / K12). plan-advance should produce reviewed FIX TASKS directly, grouped by the natural fix units below.
-    
-    These are out-of-scope defects surfaced during G2 implement-flow reviews (file-and-defer), now investigated on the user's broadest-scope /investigate:start.
-    
-    === FIX UNIT A — @cq/ledger packaging (D3 major + D6 low; SAME package.json edit) ===
-    D3 (CONFIRMED H5): packages/ledger/package.json main + exports['.']=./dist/index.js and ['./relationships']=./dist/relationships.js point at files that DON'T exist — tsc (outDir ./dist, include [src,test], NO rootDir) emits under ./dist/src/. Validated on disk. ['./columns'] already correctly uses ./dist/src/columns.js (internal inconsistency). Masked in-repo by tsconfig paths→source; breaks a published / nix clean-checkout consumer.
-    D6 (CONFIRMED H8): no browser-safe ./constants subpath export; the '.' barrel (index.ts:50) re-exports FsLedgerStore which imports node:fs/node:path, so importing MILESTONES_SCHEMA via '@cq/ledger' drags Node builtins into the browser bundle — forcing T80's hand-duplicated MILESTONE_STATUS_SCHEMA (App.tsx:69-82).
-    FIX A: (1) realign main + every exports entry to a CONSISTENT real layout — prefer setting the ledger tsconfig rootDir:'src' so dist emits flat ./dist/*.js matching the declared paths (then ./columns drops its src/ prefix), OR realign all entries to ./dist/src/* (matching ./columns). (2) ADD a browser-safe `./constants` subpath export (constants.ts is Node-free: only a type-only import) + a `@cq/ledger/constants` paths→source entry in ledger-web/tsconfig.json (mirroring ./relationships, ./columns); import MILESTONES_SCHEMA from @cq/ledger/constants in App.tsx and DELETE the duplicated MILESTONE_STATUS_SCHEMA. (3) Add a test asserting every declared export/main target file exists after `tsc -b`, and (optionally) that the web bundle pulls no Node builtins.
-    
-    === FIX UNIT B — column eligibility (D4 low) ===
-    D4 (CONFIRMED H6): packages/ledger/src/columns.ts eligibleColumnFields (L55-72) excludes only LONG_FIELD_DENYLIST + {id,status,summary}; headline/title/question pass → the column picker offers them, and since summarize() picks headline??title??question??summary first, selecting that column duplicates the summary cell.
-    FIX B: exclude the summary-source fields {headline,title,question} from eligibleColumnFields (add a SUMMARY_SOURCE_FIELDS exclusion set, or drop the field summarize() would pick). Add a unit test (none exists) asserting eligibleColumnFields omits headline.
-    
-    === FIX UNIT C — archived-head status badge (D5 low; DEPENDS ON T91) ===
-    D5 (CONFIRMED H7): ArchivePointer/archive-group Milestone carry no status (only ResolvedMilestone does), so archived web heads can't render the T80 status badge. Planned task T91 (M21, under G2) already extends ArchivePointer with title+status at the @cq/ledger types + server-build boundary — supplying the DATA. D5 reduces to: (1) ensure that extension ALSO carries `status` across the MCP fetch_ledger WIRE boundary (the @cq/shared Zod mirror of archivePointers[]) — H7 found this wire half is NOT yet covered by T91's stated scope; (2) a RENDER task passing the archived pointer's status as milestoneStatus to the archived MilestoneSubsection (App.tsx:2002-2008) + a happy-dom assertion. FIX C is BLOCKED-BY / sequenced-after T91 (M21); coordinate so the types+wire extension lands once.
-    
-    Scope: code fixes in @cq/ledger (package.json, tsconfig, columns.ts), @cq/ledger-web (App.tsx, tsconfig), and the @cq/shared wire schema (for D5); + tests. Repo gate: `bun run check`. Pure-MCP-client invariant for the web changes. No new ledgers.
-- grounding: |
-    All four root causes confirmed during this investigate pass and validated against source by the orchestrator:
-    - D3/H5: package.json:6-20 (main + exports targets); on-disk dist/index.js + dist/relationships.js MISSING, dist/src/* EXIST; tsconfig.json outDir ./dist + include [src,test] + no rootDir; ledger-web/tsconfig.json:11-16 paths mask it. ./columns already uses ./dist/src/columns.js.
-    - D4/H6: columns.ts:35-47 (LONG_FIELD_DENYLIST), :55-72 (eligibleColumnFields); summarize() tui app.tsx:82-86 / web App.tsx:181-185; tui app.tsx:1200-1210 row render duplicates; picker mount app.tsx:1809. No columns.test.ts exists.
-    - D5/H7: types.ts:155-162 (ArchivePointer {id,path,summary}), :97-104 (Milestone statusless), :116-121 (ResolvedMilestone has status); store/LedgerStore.ts:42-44 + core.ts:497; web App.tsx:1853 (active passes status) vs :2002-2008 (archived passes none), badge gated App.tsx:1659, comment App.tsx:1640. T91 (M21) is the data-extension dependency; the @cq/shared fetch_ledger wire Zod mirror of archivePointers[] is the un-covered half.
-    - D6/H8: package.json:8-21 (no ./constants); index.ts:50 re-exports FsLedgerStore; FsLedgerStore.ts:29-30 node:fs/node:path; constants.ts:25-27 type-only import (browser-safe), :47 MILESTONES_SCHEMA; web App.tsx:69-82 duplicate; App.tsx:25/29 already use @cq/ledger/relationships + /columns leaf subpaths; serve.ts:55-59 Bun.build target browser.
-    Fix A (D3+D6) share the package.json exports edit. Fix C (D5) sequences after T91 (M21). Tests: bun:test (ledger), happy-dom (web). Repo gate bun run check.
-- tags: ["defect-seeded","defect:D3","defect:D4","defect:D5","defect:D6","packaging","out-of-scope-cleanup"]
-- milestones: ["M24","M25","M26"]
 
 ## M27
 

@@ -19,6 +19,21 @@ archives:
     summary: Plan-flow maintenance — complete. Subagent MCP tool access made server-name-independent via denylist (T13); /plan:follow-up command + goal re-open transitions, decision K5 (T25); /plan:advance with no argument advances all unlocked goals (T14). Shipped on main (commits 4f430b3, 67727e9).
     title: ""
     status: ""
+  - id: M15
+    path: ./archive/decisions/M15.md
+    summary: "G3 coordination — COMPLETE (auto-archived by the new milestone-sweep rule, T129). Goal G3 (plan/implement flow-behavior changes: auto-investigate + never-auto-close-goals) done; work milestones M16/M17 archived; decisions K10/K12 (K12 supersedes K8 pt3); questions Q42-Q47 answered; reviews R31/R32."
+    title: "Plan: plan/implement flow-behavior changes (auto-investigate + never auto-close goals)"
+    status: done
+  - id: M20
+    path: ./archive/decisions/M20.md
+    summary: G4 coordination — COMPLETE (auto-archived by the milestone-sweep rule, T129). Goal G4 (D2 backup-and-reinit on schema divergence) done; work milestone M22 archived; decision K15; reviews R75/R76. D2 resolved.
+    title: "Plan: fix D2 — graceful backup-and-reinit on ledger schema divergence"
+    status: done
+  - id: M23
+    path: ./archive/decisions/M23.md
+    summary: G5 coordination — COMPLETE (auto-archived by the milestone-sweep rule, T129). Goal G5 (@cq/ledger packaging + UI-eligibility defects D3-D6) done; work milestones M24/M25/M26 archived; decision K16; reviews R77/R78. D3-D6 resolved.
+    title: "Plan: @cq/ledger packaging + UI-eligibility defect cleanup (D3-D6)"
+    status: done
 ---
 
 # decisions
@@ -134,64 +149,6 @@ archives:
 - headline: "plan review: approved (follow-up #4)"
 - rationale: "Reviewer go-ahead (ref review R74, round 2): follow-up #4 plan is fine-grained, sequenced, testable, grounded, complete for items 16-19; 0 criticisms, 0 new questions, no out-of-scope defects. Work milestone M21 (tasks T90-T93, defects D7/D8) covers items 16-19."
 - ledgerRefs: ["goals:G2"]
-
-## M15
-
-### K10 — locked
-
-- createdAt: 2026-06-02T10:23:13.487Z
-- updatedAt: 2026-06-02T10:23:13.487Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- headline: "plan review: approved"
-- rationale: "Plan-reviewer go-ahead (ref review R32, 0 criticisms beyond confirmation, 0 new_questions, empty defects[] bucket): revised plan T69-T78 across work milestones M16/M17 resolves all 5 R31 criticisms; Change A auto-investigate loop proven convergent via operationally-checkable stop predicates, Change B never-auto-close-goal sound. Approving G3 to planned."
-- ledgerRefs: ["goals:G3"]
-
-### K12 — locked
-
-- createdAt: 2026-06-02T10:43:44.346Z
-- updatedAt: 2026-06-02T10:43:44.346Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- headline: "Auto-investigate from plan:* — supersede K8 point 3's handoff DIRECTION only (K8 pts 1,2,4,5 stay in force)"
-- rationale: |
-    Implements goal G3 Change A (T72). SUPERSEDES K8 point 3 by REFINING ITS DIRECTION ONLY; it does NOT amend K8 in place (K8 stays locked, immutable history).
-    
-    (1) SCOPE OF SUPERSESSION. K8 points 1, 2, 4, and 5 REMAIN IN FORCE UNCHANGED. This decision refines ONLY point 3's handoff-direction asymmetry. K8 point 3 forbade /investigate:advance running the PLAN loop inline — that prohibition STILL STANDS (investigate still hands back to the user via file-and-defer; NOT reversed). The NEW direction is the symmetric one: a /plan:* COMMAND, after completing its own primary planning work, MAY run /investigate:advance inline in the same main session. This is legal because a COMMAND does the chaining; a SUBAGENT still cannot (subagents-cannot-spawn-subagents is preserved). K8 POINT 4 (defect-seeded clarify-skip) MUST remain in force — the auto-resume path depends on it.
-    
-    (2) RULE (Q42). All defects — user-reported AND auto-found by the plan-reviewer — are FILED; the plan:* orchestrator then auto-launches /investigate:advance itself after its primary work, always when possible, REPLACING the prior 'file an open question telling the user to run /investigate:start' manual step.
-    
-    (3) TRIGGER SITES (Q43). The trigger lives in the plan:* COMMAND orchestrators (plan/advance.md, plan/start.md, plan/follow-up.md). The plan-advance / plan-reviewer SUBAGENTS only file/flag defects — they never spawn subagents and never run /investigate:advance. implement:* does NOT auto-launch investigate (its primary work is execution, not planning); its filed defects are picked up by the next plan:* auto-investigate or a user /investigate:start.
-    
-    (4) STOP BOUNDARY (Q44). NO hard iteration caps. Removes plan/advance.md's 4-iteration cap and implement/advance.md's 8-round safety ceiling. The orchestrator uses MODEL-JUDGED ill-loop detection with CONCRETE, operationally-pinned termination predicates for the cross-command auto-investigate<->replan chain (enumerated in T74: once-per-defect-per-round; no-relaunch-without-new-confirmed/[correct]-evidence; stop+report once a confirmed root cause seeded/extended its goal; park on a non-converging open->investigated->replanned->open cycle; park on two consecutive no-adjudicable-evidence rounds). When any holds, the orchestrator STOPS auto-relaunching and files an `open` questions item to the user. The defect-seeded goal is NOT auto-resumed while it is parked in `clarifying` on user questions (filed defects are orthogonal to goal clarification).
-- alternatives: Narrow hybrid (auto only reviewer-found in-plan defects; user-reported still manual) — rejected by Q42 (broad auto-launch, file all). Keep hard caps as defense-in-depth — rejected by Q44 (model-judged ill-loop detection only). Amend K8 in place — rejected by Q45 (supersede, keep K8 immutable).
-- supersedes: ["K8"]
-- ledgerRefs: ["goals:G3","decisions:K8"]
-- tags: ["plan-flow","investigate-flow","auto-investigate","supersedes-K8","follow-up-G3"]
-
-## M20
-
-### K15 — locked
-
-- createdAt: 2026-06-02T16:39:10.543Z
-- updatedAt: 2026-06-02T16:39:10.543Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- headline: "plan review: approved"
-- rationale: "Reviewer go-ahead (ref review R76, round 2): both R75 criticisms resolved against source (T96 mandatory migration of canonical-ledgers.test.ts:332-356 to onSchemaDivergence:'abort'; T95 pinned in-place this.registry reinit). D2-fix plan under work milestone M22 (tasks T94-T97) approved as fine-grained, sequenced, testable, grounded, and complete."
-- ledgerRefs: ["goals:G4","defects:D2"]
-
-## M23
-
-### K16 — locked
-
-- createdAt: 2026-06-02T17:48:00.702Z
-- updatedAt: 2026-06-02T17:48:00.702Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- headline: "plan review: approved"
-- rationale: "Reviewer go-ahead R78 (round-2, all R77 criticisms resolved: T103 withdrawn, T104 re-pointed to T91, T98 fixed on the ./dist/src/* realign primary). D3-D6 fix plan approved across work milestones M24/M25/M26 (tasks T98-T102, T104). Locking the plan; G5 planning -> planned."
-- ledgerRefs: ["goals:G5","defects:D3","defects:D4","defects:D5","defects:D6"]
 
 ## M27
 

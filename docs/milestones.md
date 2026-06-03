@@ -109,6 +109,31 @@ archives:
     summary: "G7 fixes COMPLETE — six confirmed dogfood defects fixed + merged. T110 (D16: backfill non-milestones archive-pointer titles from docs/archive/milestones/<id>.md by id; 48f4e93). T111 (D14: spawnWithFreePort retry-on-EADDRINUSE closes the bind-then-close TOCTOU; 6e223bb). T112 (D15: bounded wait-for de-flakes the live-badge test; 40385f6). T113 (D17: removed archived badge from row id cell; 1dec462). T114 (D18: per-suggestion pick buttons in the batch answer modal; ae0e5f8). T115 (D19: batch modal closes on open-set drain; 051fb27). Reviews R105-R110 (all go-ahead). Decision K19. Defects D14-D19 resolved. Final integration check 696 pass / 0 fail. Seeded + driven by the simulated /advance pipeline."
     title: "G7 fixes: confirmed dogfood UI/store defects (D14-D19)"
     status: done
+  - id: M15
+    path: ./archive/milestones/M15.md
+    summary: "G3 coordination — COMPLETE (auto-archived by the new milestone-sweep rule, T129). Goal G3 (plan/implement flow-behavior changes: auto-investigate + never-auto-close-goals) done; work milestones M16/M17 archived; decisions K10/K12 (K12 supersedes K8 pt3); questions Q42-Q47 answered; reviews R31/R32."
+    title: "Plan: plan/implement flow-behavior changes (auto-investigate + never auto-close goals)"
+    status: done
+  - id: M20
+    path: ./archive/milestones/M20.md
+    summary: G4 coordination — COMPLETE (auto-archived by the milestone-sweep rule, T129). Goal G4 (D2 backup-and-reinit on schema divergence) done; work milestone M22 archived; decision K15; reviews R75/R76. D2 resolved.
+    title: "Plan: fix D2 — graceful backup-and-reinit on ledger schema divergence"
+    status: done
+  - id: M23
+    path: ./archive/milestones/M23.md
+    summary: G5 coordination — COMPLETE (auto-archived by the milestone-sweep rule, T129). Goal G5 (@cq/ledger packaging + UI-eligibility defects D3-D6) done; work milestones M24/M25/M26 archived; decision K16; reviews R77/R78. D3-D6 resolved.
+    title: "Plan: @cq/ledger packaging + UI-eligibility defect cleanup (D3-D6)"
+    status: done
+  - id: M28
+    path: ./archive/milestones/M28.md
+    summary: G6 work milestone M28 — COMPLETE (auto-archived by the milestone-completion rule). Tasks T105 (D9), T106 (D10), T107 (D11), T108+T109 (D12) done; defects D9/D10/D11/D12 + the out-of-scope D14/D15/D16/D17 all resolved (via G7/M30); reviews R98-R102. Decisions K17/K18. Integration green.
+    title: "G6 fixes: D9 test flake, D10 store parity, D11 sticky toolbar"
+    status: done
+  - id: M31
+    path: ./archive/milestones/M31.md
+    summary: "G6 #2/#4B — COMPLETE. T125 (authored llm/commands/advance.md universal sequencer), T126 (wired into link-prompts.ts + committed .codex/prompts/advance.md symlink), T127 (implement worker cap N=4→8), T128 (factored milestone auto-close+archive sweep predicate in advance.md + implement/advance.md), T129 (one-shot backlog sweep: archived M15/M20/M23/M28; guard-skipped M10/M11/M29/M27/M32/M33). Reviews R119/R122/R123/R124. Integration green."
+    title: "G6 #2/#4B — universal /advance command, parallelism bump (N=4→8), milestone auto-close+archive sweep"
+    status: done
 ---
 
 # milestones
@@ -142,38 +167,11 @@ archives:
 - title: "Investigate: mcp-fails-uninitialized-ledger"
 - description: "Coordination milestone for investigating defect: @cq/ledger-mcp fails to connect when started in a directory with no initialized ledger; should auto-init the canonical ledger set instead. Holds the defect, its hypothesis tree, and any clarifying questions."
 
-### M15 — open
-
-- createdAt: 2026-06-02T09:11:53.285Z
-- updatedAt: 2026-06-02T09:11:53.285Z
-- title: "Plan: plan/implement flow-behavior changes (auto-investigate + never auto-close goals)"
-- description: "Coordination milestone for goal G3: prompt-suite behavior changes to the plan:*/implement:*/investigate:* command flows — (A) make plan:* investigate defects automatically (revisit K8 file-and-defer) and (B) forbid the orchestrator from auto-closing a goal. Groups the goal, its clarifying questions, reviews, and the final approval decision. Work tasks live under separate work milestones recorded on the goal's fields.milestones during planning."
-
-### M20 — open
-
-- createdAt: 2026-06-02T11:26:47.033Z
-- updatedAt: 2026-06-02T11:26:47.033Z
-- title: "Plan: fix D2 — graceful backup-and-reinit on ledger schema divergence"
-- description: "Coordination milestone for the defect-seeded goal G4: fix D2 (ledger-mcp aborts with BootstrapViolationError on schema divergence) by replacing the fatal throw in FsLedgerStore.init() with backup-and-reinit. Holds the goal, its reviews, and approval decision."
-
-### M23 — open
-
-- createdAt: 2026-06-02T17:25:15.494Z
-- updatedAt: 2026-06-02T17:25:15.494Z
-- title: "Plan: @cq/ledger packaging + UI-eligibility defect cleanup (D3-D6)"
-
 ### M27 — open
 
 - createdAt: 2026-06-02T19:51:11.686Z
 - updatedAt: 2026-06-02T19:51:11.686Z
 - title: "Plan: low-severity cleanup — D9 test flake, D10 store parity, D11 sticky filter bar"
-
-### M28 — open
-
-- createdAt: 2026-06-02T19:52:19.215Z
-- updatedAt: 2026-06-02T19:52:19.215Z
-- title: "G6 fixes: D9 test flake, D10 store parity, D11 sticky toolbar"
-- description: "Work milestone for defect-seeded goal G6. Three file-disjoint, parallel-safe low-severity fix tasks: D9 (ledger-tui HTTP test-harness flake), D10 (ledger store-abstract dual-store no-partial-mutation assertion), D11 (ledger-web sticky .lw-toolbar). Gate: bun run check."
 
 ### M29 — open
 
@@ -188,14 +186,6 @@ archives:
 - updatedAt: 2026-06-03T00:40:21.784Z
 - title: G6 #4A — formal defect-lifecycle states (root-caused/inconclusive) across schema + flow prompts
 - description: "Replace the free-text rootCause UNKNOWN/CONFIRMED/GROUNDED markers with explicit defects-ledger lifecycle STATUS values. LOCKED (Q66/Q67/Q68/Q69): statusValues [open, wip, root-caused, inconclusive, resolved, wontfix]; terminal [resolved, wontfix]; root-caused+inconclusive non-terminal. status==root-caused becomes the queryable gate replacing every 'confirmed root cause'/'confirmed node' prose check (investigate file-and-defer; plan K12 a-f worklist + stop-predicates). rootCause field survives as free-text narrative (markers removed). No baboon — direct CANONICAL_LEDGERS edit; one-shot update_item migration of live open defects (Q69). Gate: bun run check."
-
-### M31 — open
-
-- createdAt: 2026-06-03T00:40:30.478Z
-- updatedAt: 2026-06-03T00:40:30.478Z
-- title: G6 #2/#4B — universal /advance command, parallelism bump (N=4→8), milestone auto-close+archive sweep
-- description: "New top-level /advance command (llm/commands/advance.md, no namespace) sequencing investigate:advance→plan:advance→implement:advance, looping to quiescence with NO max-iter cap (Q55-Q59); wired into link-prompts.ts + committed .codex/prompts. Bump implement worker cap N=4→8 (Q60). Auto-close+archive completed milestones: authoritative sweep in /advance, predicate also stated in implement/advance.md, factored once (Q70/Q71); one-shot backlog cleanup of M10/M11/M15/M20/M23/M29 with per-milestone eligibility re-verification (Q72). Gate: bun run check."
-- dependsOn: ["M33"]
 
 ### M32 — open
 
