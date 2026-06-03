@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 134
+  item: 145
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -164,6 +164,11 @@ archives:
     summary: G8 coordination — COMPLETE. Goal G8 (fix remaining buildable defects D20/D21) done; work milestone M36 archived; defects D20/D21 resolved, residuals D22/D23 resolved (D23 fixed via G10/T134; D22 user-resolved); D23 investigation hypothesis H13 confirmed; reviews R125/R126 + decision K21 terminal. Auto-archived by the /advance whole-ledger sweep.
     title: "Plan: fix remaining buildable defects (D20 tui-test flakiness, D21 reset non-canonical)"
     status: done
+  - id: M41
+    path: ./archive/reviews/M41.md
+    summary: "G12 work milestone — COMPLETE. T136 (b8df1c6): made the 's'-key-inert archived-item test regression-sensitive (content-pane '[archived · read-only]' badge-present + content-pane-scoped picker-absence), resolving D24 (ex-D22). Review R141 go-ahead. Integration check green 783/0. G12 goal is `planned` and ready for the user to close."
+    title: "G12 fix: regression-sensitive 's'-key-inert archived-item test (D24)"
+    status: done
 ---
 
 # reviews
@@ -201,3 +206,119 @@ archives:
 - new_questions: []
 - criticism: []
 - ledgerRefs: ["goals:G10"]
+
+## M39
+
+### R135 — revise
+
+- createdAt: 2026-06-03T15:18:45.206Z
+- updatedAt: 2026-06-03T15:18:45.206Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- summary: T136 is correctly scoped (test-only) and citation-accurate, but its acceptance offers an unsound assertion path — a whole-frame '› '-absent check — that can never pass because the list-pane cursor always renders '› '; require content-pane scoping.
+- new_questions: []
+- criticism: ["T136 acceptance offers two assertion paths joined by 'AND/OR', and one of them is INCORRECT: 'assert \"› \" absent from the whole frame'. The list-pane SelectList renders \"› \" for the SELECTED row (app.tsx:1294, `sel ? \"› \" : \"  \"`); in this test the cursor sits on the archived row after A+DOWN, so the list pane always renders \"› archived task\" and \"› \" is present in the whole frame INDEPENDENT of whether the status overlay opened. The test file itself documents this exact trap — the listSide() helper (app.test.tsx L1257-1263) exists precisely because 'a substring check against the whole frame cannot tell a list COLUMN apart from a detail FIELD'. Consequently a whole-frame '› '-absent assertion FAILS even with the !cursorInArchive guard correctly in place (it is red on a CORRECT codebase, never passes) — the opposite of regression-sensitive, and it would also fail acceptance step 2 ('with the guard restored, the test passes'). FIX: T136 must REQUIRE that any '› '-absence assertion be CONTENT-PANE-SCOPED (slice the content pane — the complement of listSide, the text to the RIGHT of the second '│' — and assert '› ' absent there), OR drop the '› '-absence path entirely and assert only the read-only badge '[archived · read-only]' (app.tsx:1424) PRESENT. The badge path is verified sound and regression-sensitive: contentEl always renders ContentPane with readOnly={cursorInArchive} (app.tsx:1012-1021) so the badge shows whenever the cursor is on an archived row regardless of focus, while opening the status overlay swaps the content-pane Box to <Overlays/> (app.tsx:1071-1073), removing the badge — exactly mirroring the proven 'e'-inert test (app.test.tsx:1008). Remove the misleading parenthetical 'or assert › absent from the whole frame (the archived read-only content pane renders no SelectList)': it is true of the content pane but ignores the list-pane cursor."]
+- ledgerRefs: ["goals:G12"]
+
+### R136 — go-ahead
+
+- createdAt: 2026-06-03T15:21:23.794Z
+- updatedAt: 2026-06-03T15:21:23.794Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- summary: "T136 (revised) resolves R135: PRIMARY assertion = '[archived · read-only]' badge PRESENT is regression-sensitive (overlay swaps content-pane Box, removing badge), any '› '-absence is content-pane-scoped, whole-frame '› '-absent is explicitly FORBIDDEN; all citations verified against source; test-only, red/green + bun run check."
+- new_questions: []
+- criticism: []
+- ledgerRefs: ["goals:G12"]
+
+## M40
+
+### R137 — revise
+
+- createdAt: 2026-06-03T15:31:39.298Z
+- updatedAt: 2026-06-03T15:31:39.298Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- summary: Plan is complete vs Q74-Q87 and well-grounded, but the unarchive design (T141/T146) is mis-grounded against the milestone-group-keyed archive layout, and four same-file tasks run DAG-parallel (ledgerTools.ts T144-T147; App.tsx T151/T152; advance.md T153/T156) violating implement-flow parallel-safety.
+- new_questions: []
+- criticism: ["T141/T146 unarchiveItem is mis-grounded. The plan specifies unarchiveItem(ledger,itemId) restoring 'from ./archive/<ledger>/<id>.md' treating <id> as the ITEM id. But FsLedgerStore archives non-milestones ledgers as a milestone-GROUP file keyed by MILESTONE id (./docs/archive/<ledger>/<milestoneId>.md, confirmed in FsLedgerStore.ts:7 and the archive_milestone tool description ledgerTools.ts:365); only the milestones ledger has per-item archive files. The actual D22 footgun (evidence #5) was a defects item swept inside its milestone-group archive. So 'restore one item by item-id' has no per-item file to read — the op must locate the group archive containing the item, extract that single item, re-attach it to the active ledger, and decide the fate of the remaining group + the archive pointer. Re-specify T141/T146 against the group-keyed layout (e.g. a signature carrying the milestone-id, or scanning group files), and update T141's acceptance and the dual-tests accordingly. The reopen-terminal half of T141 is correctly grounded and unaffected.","File-collision / parallel-safety: T144,T145,T146,T147 all edit packages/ledger/src/mcp/ledgerTools.ts but have NO mutual dependsOn (each depends only on a distinct W1 helper). Under the implement flow's isolated-worktree parallel execution these four workers will edit the same file concurrently and clobber on merge-back. Serialize them via a dependsOn chain (or collapse into fewer tasks) so the shared ledgerTools.ts edits are not concurrent.","File-collision: T151 (apply HoldButton to all buttons in App.tsx) and T152 (render sessionLogs popup in App.tsx) both edit packages/ledger-web/src/App.tsx with no dependsOn between them (T151->T150, T152->T147). They are DAG-parallel on the same file. Add a dependsOn edge (e.g. T152 dependsOn T151) or otherwise serialize the two App.tsx edits.","File-collision: T153 (amend advance.md §Provenance) and T156 (add the snapshot-first bootstrap recipe to advance.md) both edit llm/commands/advance.md with no dependsOn between them (T153->T137, T156->T145). Serialize them (e.g. T156 dependsOn T153) so the two advance.md edits do not run concurrently. T154 already serializes after T153 and touches different files (plan/implement/investigate prompts) — fine.","T142/T144 projection completeness: the grounding's LONG_FIELD_DENYLIST (columns.ts:35-47) does NOT include the goals 'grounding' field, yet evidence #2 names the goals ledger as a primary cause of the 51.8KB overflow and the GOALS_SCHEMA 'grounding' field holds a large per-goal repo-grounding blob. Reusing LONG_FIELD_DENYLIST verbatim will NOT strip 'grounding', so compact fetch_ledger over goals may still overflow — defeating the motivating fix and contradicting T144's own acceptance ('the previously-overflowing goals/questions ledgers fit'). Either extend the projection set used by projectCompact to include 'grounding' (and verify other large non-denylisted fields), or make T142/T144 acceptance prove the goals ledger fits under the token limit with grounding stripped.","T147 read_log confinement root is underspecified. The tool must confine reads to <root>/docs/logs, but the LedgerStore interface exposes no root/cwd accessor and the InMemoryLedgerStore (the dual-tests dummy the plan names) has no filesystem. Specify where read_log obtains its confinement root (e.g. an explicit root passed to the tool factory, distinct from the store) and how the traversal-rejection + truncation tests run when the store is the in-memory dummy; as written T147's dual-tests acceptance is not realizable against the in-memory store."]
+- ledgerRefs: ["goals:G11"]
+
+### R138 — revise
+
+- createdAt: 2026-06-03T15:38:07.312Z
+- updatedAt: 2026-06-03T15:38:07.312Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- summary: All six R137 criticisms resolved and correctly re-grounded, but the same-file parallel-safety invariant was applied only to the three files R137 named — two NEW un-serialized same-file collisions remain (T141<->T143 on the LedgerStore trio; T148<->T149 on ledger-mcp/main.ts).
+- new_questions: []
+- criticism: ["File-collision (same class as R137 #2, newly surfaced): T141 (reopenItem+unarchiveItem on the LedgerStore interface — edits packages/ledger/src/store/LedgerStore.ts + FsLedgerStore.ts + InMemoryLedgerStore.ts) and T143 (cross-ledger snapshot, specified as 'a single store-level method (e.g. snapshot())' built on the store, which lands the new method in the SAME three files) are BOTH W1 roots with NO mutual dependsOn, so they are concurrently DAG-ready and will edit LedgerStore.ts/FsLedgerStore.ts/InMemoryLedgerStore.ts in parallel isolated worktrees and clobber on merge-back. Resolve by either serializing them (e.g. T143 dependsOn T141) or re-specifying T143's snapshot as a free function over the public store interface (snapshot(store)) in its OWN file and stating that explicitly so it shares no file with T141. T142 (projectCompact) is described as a pure isolation-testable helper not touching columns.ts/the store — confirm it lands in its own module (not the store trio); if it instead adds a store method it joins this same collision and must also be ordered.","File-collision (same class as R137 #2, newly surfaced): T148 (update the '14 tools' count comment + LEDGER_TOOL_NAMES + tests — edits packages/ledger-mcp/src/main.ts) and T149 (clarify SERVER_INSTRUCTIONS query-language docs — also edits packages/ledger-mcp/src/main.ts, the SERVER_INSTRUCTIONS string at main.ts:164) BOTH edit packages/ledger-mcp/src/main.ts but have NO mutual dependsOn. Their dep-sets differ (T148 dependsOn T144-T147; T149 dependsOn T140,T144,T145), so T149 becomes ready before T148 and the implement flow can dispatch them in overlapping ready-waves, clobbering main.ts on merge-back. Add a dependsOn edge between them (e.g. T148 dependsOn T149, since T149's instruction edit is independent of the tool-count sweep) so the two main.ts edits are serialized."]
+- ledgerRefs: ["goals:G11"]
+
+### R139 — revise
+
+- createdAt: 2026-06-03T15:43:46.135Z
+- updatedAt: 2026-06-03T15:43:46.135Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- summary: "R138's two collisions fixed (T143->T141, T148->T149) and T155 narrowed off advance.md correctly; projection now strips grounding/recommendation/suggestions; DAG acyclic. But the full sweep missed a THIRD same-file collision of the same class: T149 also edits ledgerTools.ts (fts_search + snapshot + fetch_ledger tool descriptions) yet forks parallel to T146/T147, which is left un-serialized."
+- new_questions: []
+- criticism: ["File-collision (same class as R137 #2 / R138, still un-serialized): T149 edits THREE files, not two. Its description amends QUERY_LANGUAGE_HELP (query.ts), SERVER_INSTRUCTIONS (main.ts:164), AND the fts_search tool description plus the new snapshot/fetch_ledger-compact tool descriptions — all three of which live in packages/ledger/src/mcp/ledgerTools.ts (QUERY_LANGUAGE_HELP is imported there at ledgerTools.ts:34 and every per-tool description string is constructed in that file's tool factory). The planner serialized the ledgerTools.ts write-chain as T144->T145->T146->T147 and serialized T149 only against main.ts (T148 dependsOn T149) and query.ts (T139->T140->T149) — but DID NOT place T149 in the ledgerTools.ts chain. T149 dependsOn {T140, T144, T145}, so it becomes ready right after T145 and runs DAG-parallel to T146 (dependsOn {T141, T145}) and T147 (dependsOn T146), both of which also edit ledgerTools.ts. After T145 merges, T146 and T149 are co-ready; after T146 merges, T147 and T149 can be co-ready. Two isolated-worktree workers (T149 and T146/T147) will then edit ledgerTools.ts concurrently and clobber on merge-back — the exact parallel-safety invariant R137 #2 and R138 enforce for every other shared file. The planner's reported file->task grouping classified T149 as a main.ts/query.ts task only and omitted it from the ledgerTools.ts group, which is why the sweep missed it. FIX: serialize T149 against the tail of the ledgerTools.ts chain, e.g. add T149 dependsOn T147 (T149 keeps its T140/T144/T145 deps; placing it after T147 puts it strictly after the whole T144->T145->T146->T147 chain). T148 already dependsOn T149, so T148 still trails correctly and the main.ts pair stays serialized; the only effect is that the ledgerTools.ts edits become strictly sequential. Update T149's acceptance/sequencing note to record that it edits ledgerTools.ts tool descriptions and is the last writer in that file's chain."]
+- ledgerRefs: ["goals:G11"]
+
+### R140 — go-ahead
+
+- createdAt: 2026-06-03T15:47:47.514Z
+- updatedAt: 2026-06-03T15:47:47.514Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- summary: "4th pass: R139's fix applied (T149 dependsOn T147) — ledgerTools.ts chain T144->T145->T146->T147->T149 is now total; all shared-file task pairs verified totally ordered; DAG acyclic; R137/R138/R139 fixes intact; plan complete + faithful to Q74-Q87."
+- new_questions: []
+- criticism: []
+- ledgerRefs: ["goals:G11"]
+
+## M42
+
+### R142 — go-ahead
+
+- createdAt: 2026-06-03T16:09:41.405Z
+- updatedAt: 2026-06-03T16:09:41.405Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- summary: "T137 approved: handoffs ledger (HANDOFFS_SCHEMA, 9th canonical entry, idPrefix HO, all-terminal, 8 fields incl. handoffReasons+sessionLogs) matches Q83/Q84 exactly; no drift across constants.ts + both ledgers.yaml fixtures; HO/H prefixes unambiguous; init() bootstraps; check green."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T137","goals:G11"]
+
+### R143 — go-ahead
+
+- createdAt: 2026-06-03T16:09:50.783Z
+- updatedAt: 2026-06-03T16:09:50.783Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- summary: "T139 approved: reproduce-first test exercises the real fts evaluator path (LedgerSearchIndex.searchQuery); (status:open OR status:wip) is term-free OR-of-status-qualifiers matched via matchItemQualifier — GREEN adjudication SOUND (not a defect; Q77 was a usage/stale-index artifact → T140 docs-only). check green."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T139","goals:G11"]
+
+### R144 — go-ahead
+
+- createdAt: 2026-06-03T16:09:54.560Z
+- updatedAt: 2026-06-03T16:09:54.560Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- summary: "T141 approved: reopenItem (terminal→validated non-terminal, guard bypassed) + group-keyed unarchiveItem (extract from milestone-group archive, rewrite/delete group + pointer) on both stores via pure core helpers; genuine dual-test coverage (FsLedgerStore + InMemoryLedgerStore); assertWithinDocsRoot enforced; surgical; check green."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T141","goals:G11"]
+
+### R145 — go-ahead
+
+- createdAt: 2026-06-03T16:09:57.697Z
+- updatedAt: 2026-06-03T16:09:57.697Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- summary: "T142 approved: projectCompact reuses LONG_FIELD_DENYLIST as base + adds {grounding,recommendation,suggestions} (no columns.ts mutation), strips them for goals/questions (tests assert absence + small size); paginate stable slices+total; pure, own module; index.ts export merges cleanly; check green."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T142","goals:G11"]

@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 38
+  item: 46
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -179,6 +179,11 @@ archives:
     summary: G8 coordination — COMPLETE. Goal G8 (fix remaining buildable defects D20/D21) done; work milestone M36 archived; defects D20/D21 resolved, residuals D22/D23 resolved (D23 fixed via G10/T134; D22 user-resolved); D23 investigation hypothesis H13 confirmed; reviews R125/R126 + decision K21 terminal. Auto-archived by the /advance whole-ledger sweep.
     title: "Plan: fix remaining buildable defects (D20 tui-test flakiness, D21 reset non-canonical)"
     status: done
+  - id: M41
+    path: ./archive/milestones/M41.md
+    summary: "G12 work milestone — COMPLETE. T136 (b8df1c6): made the 's'-key-inert archived-item test regression-sensitive (content-pane '[archived · read-only]' badge-present + content-pane-scoped picker-absence), resolving D24 (ex-D22). Review R141 go-ahead. Integration check green 783/0. G12 goal is `planned` and ready for the user to close."
+    title: "G12 fix: regression-sensitive 's'-key-inert archived-item test (D24)"
+    status: done
 ---
 
 # milestones
@@ -204,3 +209,56 @@ archives:
 - updatedAt: 2026-06-03T10:24:42.538Z
 - title: "Plan: fix D13 (TUI nav perf — memo boundaries) + D23 (multi-step-form test flake)"
 - description: "Coordination milestone for defect-seeded goal G9 — the two root-caused defects from the /advance investigate round (2026-06-03): D13 (TUI ~500ms/cursor-move — confirmed N-independent: full unmemoized re-render + per-keystroke markdown re-parse, H9+H10) and D23 (multi-step-form test flakes via advance() helper's fixed 1500ms budget, H13). Both root causes CONFIRMED with runtime/git evidence. File-disjoint (ledger-tui src vs test) → parallel-safe. Holds the goal, its reviews, approval decision; work tasks under a separate work milestone."
+
+### M39 — open
+
+- createdAt: 2026-06-03T11:34:10.465Z
+- updatedAt: 2026-06-03T11:34:10.465Z
+- title: "Fix: vacuous 's'-key-inert archived-item test (restores D22)"
+- description: Coordination milestone restoring defect D22, which the user accidentally set `resolved` and which the /advance auto-archive sweep then swept into the M35 archive (G8 coordination). The ledger tooling has no un-archive / reopen-terminal path, so D22 is re-filed here as a fresh OPEN defect with its original content + the T130-reviewer-identified fix. (The archive footgun — auto-archive acting on an erroneous terminal status, with no inverse op — is grounding for the agent-ergonomics goal filed this session.)
+
+### M40 — open
+
+- createdAt: 2026-06-03T11:34:40.352Z
+- updatedAt: 2026-06-03T11:34:40.352Z
+- title: "Plan: agent-ergonomic ledger MCP (state-overview endpoint + better descriptions)"
+- description: "Coordination milestone for a greenfield goal: make the ledger MCP server more convenient/efficient for AGENT consumers — chiefly the /advance, /plan, /implement, /investigate flows that must derive ledger state at the start of a run. Groups the goal, its clarifying questions, reviews, and final approval decision; work tasks live under separate work milestones the planner creates."
+
+### M42 — open
+
+- createdAt: 2026-06-03T15:24:10.937Z
+- updatedAt: 2026-06-03T15:24:10.937Z
+- title: G11 W1 — @cq/ledger schema + store foundations
+- description: "Foundation layer for G11 (all downstream MCP/web/prompt work depends on it). @cq/ledger only: (a) handoffs CANONICAL_LEDGERS entry (idPrefix HO, all-terminal statuses drained|answers-required|mixed|illness-detected, fields summary/flow/ledgerRefs/blockingQuestions/handoffReasons/sessionLogs/tags/sourceRefs); (b) sessionLogs:string[] added to tasks/reviews/defects/hypothesis/goals (handoffs already has it); (c) reopen-terminal + un-archive store ops on LedgerStore (+ in-memory dummy via dual-tests); (d) compact-projection + cross-ledger snapshot store helpers reusing columns.ts LONG_FIELD_DENYLIST; (e) reproduce-first the fts (status:open OR status:wip) anomaly and fix-or-document. No MCP/web changes here."
+
+### M43 — open
+
+- createdAt: 2026-06-03T15:24:17.184Z
+- updatedAt: 2026-06-03T15:24:17.184Z
+- title: G11 W2 — @cq/ledger-mcp tool surface
+- description: "MCP tool layer for G11 (depends on W1 store foundations). @cq/ledger-mcp + ledgerTools.ts: new MCP tools snapshot (cross-ledger {id,status,summary} grouped by ledger×status), reopen_item, unarchive_item, read_log (bounded log-file read for the web viewer); fetch_ledger gains projection+pagination PARAMS; update the '14 tools' comments + LEDGER_TOOL_NAMES + their tests to the new count; server-instructions + per-tool query-language doc clarifications (status param vs inline qualifier, active-vs-archived, terminal semantics)."
+- dependsOn: ["M42"]
+
+### M44 — open
+
+- createdAt: 2026-06-03T15:24:23.530Z
+- updatedAt: 2026-06-03T15:24:23.530Z
+- title: G11 W3 — @cq/ledger-web HoldButton + sessionLogs viewer
+- description: "Web client for G11 (F1 + F3 frontend). F1 depends only on the web tree (parallel to W1/W2); the sessionLogs popup viewer depends on the W2 read_log MCP tool. Tasks: reusable HoldButton wrapper (HOLD_MS=1000, per-button requireHold default true, pointer hold + Enter/Space keyboard hold, release-before-complete cancels+resets, visible progress bar) applied to ALL state-mutating buttons (DetailPanel save, create-mode +item/+milestone, BatchAnswerModal submit/as-recommended/per-suggestion pick, detail-panel answerBox); sessionLogs rendered as CLICKABLE links opening a POPUP that renders log content via the read_log MCP tool. happy-dom: fake timers + dispatched pointer/key events. WEB-ONLY (no TUI)."
+- dependsOn: ["M43"]
+
+### M45 — open
+
+- createdAt: 2026-06-03T15:24:29.146Z
+- updatedAt: 2026-06-03T15:24:29.146Z
+- title: G11 W4 — flow-prompt wiring (handoff writes + bootstrap recipe + docs)
+- description: "Flow-command prompt layer for G11 (llm/commands/**). Depends on W2 (the handoffs ledger + snapshot tool must exist before prompts reference them). Tasks: amend advance.md §Provenance to permit the single run-level handoffs write; wire per-flow handoff writes (plan/implement/investigate write a handoff when STANDALONE, suppress when chained under /advance which writes the one run-level record); populate sessionLogs in the same update_item that records each flow's outcome; add an /advance bootstrap recipe pointing at the new snapshot/projection surface. Docs/prompt-only — no code."
+- dependsOn: ["M43"]
+
+### M46 — open
+
+- createdAt: 2026-06-03T15:24:34.200Z
+- updatedAt: 2026-06-03T15:24:34.200Z
+- title: G11 W5 — integration verification (bun run check)
+- description: Final integration gate for G11. Depends on W1–W4. Run bun run check (bun test + tsc -b + eslint) across the workspace; refresh the flake.nix FOD hash if bun.lock changed; verify the end-to-end ergonomics win (snapshot collapses the /advance bootstrap to ~1 call; fetch_ledger projection no longer overflows). Closes out the plan as a verifiable whole.
+- dependsOn: ["M42","M43","M44","M45"]

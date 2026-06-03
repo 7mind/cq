@@ -2,7 +2,7 @@
 ledger: decisions
 counters:
   milestone: 0
-  item: 22
+  item: 24
 archives:
   - id: M2
     path: ./archive/decisions/M2.md
@@ -74,3 +74,27 @@ archives:
 - headline: "plan review: approved"
 - rationale: "Reviewer go-ahead (ref review R131): revised G10 fix plan (M38: T132/T133 D13 memo+layout incremental-render with text-keyed parse cache and instrumented-count regression guard; T134 D23 advance() poll-until-condition + generous per-test timeout; T135 D13 UX defer-detail file-and-defer) is fine-grained, sequenced, testable, and fully grounded — all citations verified against source. Both R130 feasibility corrections (ink 7.0.5 lacks incrementalRendering; instrumented render-count gate not wall-clock) resolved."
 - ledgerRefs: ["goals:G10"]
+
+## M39
+
+### K23 — locked
+
+- createdAt: 2026-06-03T15:22:11.639Z
+- updatedAt: 2026-06-03T15:22:11.639Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- headline: "plan review: approved"
+- rationale: "Reviewer go-ahead (ref review R136): T136 (revised) resolves R135 — PRIMARY assertion is '[archived · read-only]' badge PRESENT (regression-sensitive, overlay swaps the content-pane Box removing the badge); any '› '-absence assertion is content-pane-scoped; whole-frame '› '-absent is forbidden. Test-only fix to packages/ledger-tui/test/app.test.tsx, red/green + bun run check."
+- ledgerRefs: ["goals:G12"]
+
+## M40
+
+### K24 — locked
+
+- createdAt: 2026-06-03T15:48:52.034Z
+- updatedAt: 2026-06-03T15:48:52.034Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- headline: "plan review: approved"
+- rationale: "Reviewer go-ahead on R140 (4th pass) — 0 criticisms, 0 new questions. Approved plan: 5 work milestones M42-M46, 21 tasks T137-T157 implementing the four G11 features (state-overview snapshot + fetch_ledger projection/pagination, doc/description improvements + FTS-anomaly repro, terminal-reopen + un-archive store ops, web click-and-hold HoldButton protection, handoffs ledger + sessionLogs link fields + read-log tool/log-viewer). Task DAG verified acyclic and totally ordered across shared-file task pairs (ledgerTools.ts chain T144->T145->T146->T147->T149); faithful to clarifying answers Q74-Q87."
+- ledgerRefs: ["goals:G11"]

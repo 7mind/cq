@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 23
+  item: 24
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -68,3 +68,20 @@ archives:
 - suggestedFix: "Replace the fatal throw with a graceful BACKUP-AND-REINIT: when FsLedgerStore.init() detects a schema divergence for an existing ledger (the schemasEqual==false branch), instead of throwing BootstrapViolationError, (a) move/copy the divergent on-disk ledger file(s) (and docs/ledgers.yaml) into a timestamped backup location (e.g. docs/.backup/<ISO-timestamp>/), then (b) write fresh canonical ledger(s) + registry from CANONICAL_LEDGERS and continue startup. Surface a loud WARNING (stderr) naming the backup path so no data is silently lost. Consider a guard/opt-out flag if a non-destructive abort is ever wanted, but default to backup-and-reinit per the user. Add tests: a seeded divergent on-disk schema → init() backs up + reinitializes + serves (no throw); backup dir contains the prior files."
 - dependsOn: ["T94","T95","T96","T97"]
 - fix: "Backup-and-reinit on schema divergence (replaces the fatal BootstrapViolationError): T94 (0d66e33) backupAndReinit helper (timestamped docs/.backup/, ENOENT-tolerant copy of prior files, fresh canonical + stderr WARNING); T95 (a26104b) rewired FsLedgerStore.init() !schemasEqual branch to backup-and-reinit BY DEFAULT (collects the divergent set, mutates this.registry in place to canonical) + onSchemaDivergence:'abort' opt-out preserving the throw; T96 (844d240) tests (divergence→backup+reinit / abort / no-divergence / empty-dir) + migrated the 6 divergence-guard cases to the abort opt-out; T97 repo-gate green. ledger-mcp no longer crashes the MCP handshake on a stale/divergent on-disk schema — it backs up + reinitializes and serves. NOTE: a stale already-running GLOBAL binary still needs a rebuild (out of scope, captured in G4). Integration check 659 green."
+
+## M39
+
+### D24 — resolved
+
+- createdAt: 2026-06-03T11:34:20.890Z
+- updatedAt: 2026-06-03T16:11:32.817Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- headline: "'s'-key-inert archived-item test is vacuous against an overlay-open regression (app.test.tsx) [restores D22]"
+- severity: low
+- description: "RESTORES D22 (re-filed open after it was erroneously set `resolved` by the user and then swept into the M35 archive by the /advance auto-archive sweep; the ledger has no un-archive/reopen-terminal path, hence the new id). Original finding (T130 reviewer, still valid): packages/ledger-tui/test/app.test.tsx (\"the 's' key is inert on an archived item\") asserts only frame.toContain('[archived]') + frame.toContain('archived task'). Per src/app.tsx, the path-header '[archived]' (cursorInArchive ~L937) and the list-pane row persist regardless of overlay state — the status overlay replaces only the right-hand content pane. So if 's' WERE wrongly handled on an archived row and opened the status picker, BOTH assertions would still pass — the test would not catch the regression. PRE-EXISTING (byte-identical to base); the sibling 'e'-inert test IS regression-sensitive (asserts 'read-only' which the overlay would replace)."
+- suggestedFix: "Mirror the 'e'-inert test's content-pane sensitivity: after pressing 's', assert the status-picker is ABSENT — no SelectList '› ' cursor marker (app.tsx:1291-1296) in the frame/content pane — AND that the read-only badge '[archived · read-only]' (app.tsx:1424) is still PRESENT (a content-pane string the overlay would replace). The test file already has listSide(frame) (~L1264) for the list pane; add a complementary content-pane assertion (or assert '› ' absent from the whole frame, since the archived read-only content pane shows no SelectList). Keep the existing waitForFrame settle. Scope: packages/ledger-tui/test/app.test.tsx ONLY. bun run check."
+- ledgerRefs: ["tasks:T130","goals:G2","goals:G12"]
+- rootCause: "CONFIRMED (H14). The \"'s' key is inert on an archived item\" test (packages/ledger-tui/test/app.test.tsx:959-986) asserts ONLY f.toContain('[archived]') (:982) and f.toContain('archived task') (:984). Both are overlay-INSENSITIVE: '[archived]' is the path-HEADER string (app.tsx:934-939, top-level header Box) and 'archived task' is the LIST-pane row (app.tsx:1069, a separate Box); both persist regardless of overlay state. The status overlay replaces ONLY the right-hand content-pane Box (app.tsx:1071-1073: `overlay !== null ? <Overlays/> : contentEl`). So if the 's' handler's `!cursorInArchive` guard (app.tsx:803 content-focus / :838 list-focus) were removed, pressing 's' on an archived row would open the status SelectList in the content pane, yet BOTH asserted strings would still be present → the test passes, failing to catch the regression. Contrast the sibling 'e'-inert test (:988-1010) which asserts f.toContain('read-only') (:1008) — a content-pane badge ('[archived · read-only]', app.tsx:1424) the overlay WOULD replace → it IS regression-sensitive."
+- dependsOn: ["T136"]
+- fix: "T136 (merged b8df1c6): the \"'s' key is inert on an archived item\" test now asserts the content-pane '[archived · read-only]' badge is present (+ an optional content-pane-scoped check that the SelectList '› ' picker marker is absent), mirroring the regression-sensitive 'e'-inert test — so it FAILS if the !cursorInArchive guard regresses and 's' opens the status overlay on an archived row. Verified red-for-right-reason via scratch guard removal; app.tsx untouched; integration check green 783/0. Sole fix task T136 done."

@@ -2,7 +2,7 @@
 ledger: hypothesis
 counters:
   milestone: 0
-  item: 13
+  item: 14
 archives:
   - id: M14
     path: ./archive/hypothesis/M14.md
@@ -74,3 +74,16 @@ archives:
 - parentHypothesis: H3
 - evidence: ["[correct] USER-OBSERVED runtime error (decisive): `ledger-mcp: fatal: Bootstrap invariant violated: existing goals ledger has a different schema than its canonical bootstrap schema` — the exact BootstrapViolationError message, naming the goals ledger schema divergence.","[correct] packages/ledger/src/store/FsLedgerStore.ts:283-289 (orchestrator-verified earlier): `else if (!schemasEqual(entry.schema, canonical.schema)) { throw new BootstrapViolationError(...) }` — the only startup throw on a non-ENOENT tree; fires on an existing-but-divergent on-disk schema.","[correct] packages/ledger-mcp/src/main.ts:337-344: main() awaits store.init() before serving, so this throw aborts the connection."]
 - ledgerRefs: ["defects:D2"]
+
+## M39
+
+### H14 — confirmed
+
+- createdAt: 2026-06-03T15:10:57.119Z
+- updatedAt: 2026-06-03T15:14:20.262Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- headline: The 's'-key-inert archived-item test asserts only overlay-INSENSITIVE frame content, so it cannot catch a regression where 's' opens the status overlay on an archived row
+- description: "ROOT-CAUSE CANDIDATE (single). packages/ledger-tui/test/app.test.tsx \"the 's' key is inert on an archived item\" asserts only frame.toContain('[archived]') + frame.toContain('archived task'). TRUE if: (a) both asserted strings render OUTSIDE the right-hand content pane (the '[archived]' path-header at app.tsx cursorInArchive ~L937 + the list-pane row), (b) the status/SelectList overlay replaces ONLY the content pane — so the header + list row persist even when the picker IS open — making both assertions pass regardless of whether 's' was wrongly handled, and (c) the sibling 'e'-inert test asserts a content-pane string ('read-only') that the overlay WOULD replace, so it IS regression-sensitive and is the model for the fix (assert the status-picker SelectList marker is absent in the content pane, or the read-only badge present)."
+- ledgerRefs: ["defects:D24"]
+- evidence: ["[correct] app.test.tsx:982-984 (orchestrator-verified) — the 's'-inert test asserts ONLY `expect(f).toContain('[archived]')` + `expect(f).toContain('archived task')`; both are overlay-insensitive (path header + list row).","[correct] app.test.tsx:1008 (orchestrator-verified) — the sibling 'e'-inert test asserts `expect(f).toContain('read-only')`, a CONTENT-PANE string the overlay would replace → regression-sensitive; the model for the fix.","[correct] app.tsx:1061-1073 (orchestrator-verified) — the list pane ({listEl}, holding 'archived task') is its own Box; the right-hand box renders `overlay !== null ? <Overlays/> : contentEl`, so the status overlay replaces ONLY the content pane. Header '[archived]' + list row persist with the picker open → both 's'-test assertions still pass.","[correct] app.tsx:803 + 838 (orchestrator-verified) — the guarded behavior is `input === 's' && cur && !cursorInArchive && setOverlay({t:'status',row:cur})` (content-focus L803, list-focus L838). Removing `!cursorInArchive` re-introduces exactly the regression the current test cannot catch.","[correct] app.tsx:1291-1296 + 1424 (explorer-cited, consistent with source) — the SelectList cursor marker is '› '; the archived content-pane badge is '[archived · read-only]'. The fix asserts the '› ' picker marker ABSENT / the read-only badge PRESENT in the content pane."]
