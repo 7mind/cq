@@ -104,6 +104,11 @@ archives:
     summary: "G2 follow-up #4 (items 16-19) — COMPLETE. T90 (!isMilestones gate, D7); T91 (ArchivePointer title+status extension, D8, lands status for D5); T92 (retire /investigate:start routing-questions per K13, item 18); T93 (batch-answer modal wider/taller/smaller-font/scrolls, item 19). Defects D7/D8 resolved; out-of-scope D9/D10 surfaced here, resolved via G6/M28 (T105/T106). Reviews R79/R83/R84/R90. Last G2 work milestone."
     title: "G2 follow-up #4: milestones-ledger archived rendering, routing-question retirement, batch-modal sizing"
     status: done
+  - id: M30
+    path: ./archive/milestones/M30.md
+    summary: "G7 fixes COMPLETE — six confirmed dogfood defects fixed + merged. T110 (D16: backfill non-milestones archive-pointer titles from docs/archive/milestones/<id>.md by id; 48f4e93). T111 (D14: spawnWithFreePort retry-on-EADDRINUSE closes the bind-then-close TOCTOU; 6e223bb). T112 (D15: bounded wait-for de-flakes the live-badge test; 40385f6). T113 (D17: removed archived badge from row id cell; 1dec462). T114 (D18: per-suggestion pick buttons in the batch answer modal; ae0e5f8). T115 (D19: batch modal closes on open-set drain; 051fb27). Reviews R105-R110 (all go-ahead). Decision K19. Defects D14-D19 resolved. Final integration check 696 pass / 0 fail. Seeded + driven by the simulated /advance pipeline."
+    title: "G7 fixes: confirmed dogfood UI/store defects (D14-D19)"
+    status: done
 ---
 
 # milestones
@@ -176,10 +181,3 @@ archives:
 - updatedAt: 2026-06-02T22:48:12.040Z
 - title: "Plan: fix confirmed dogfood UI/store defects (D14-D19)"
 - description: Coordination milestone for the defect-seeded goal G7 — fix the batch of confirmed/grounded defects surfaced during G6 dogfooding (D14 freePort TOCTOU, D15 ledger-tui live-badge flake, D16 non-milestones archived-title backfill gate, D17 archived-badge in id column, D18 batch modal missing pick buttons, D19 batch modal no close-on-last). Holds the goal, its reviews, and approval decision. Work tasks live under a separate work milestone.
-
-### M30 — open
-
-- createdAt: 2026-06-02T22:49:49.864Z
-- updatedAt: 2026-06-02T22:49:49.864Z
-- title: "G7 fixes: confirmed dogfood UI/store defects (D14-D19)"
-- description: "Fix tasks for the six confirmed dogfood defects under goal G7. Scope: packages/ledger (D16), packages/ledger-web/src/App.tsx (D17/D18/D19 — serialize, same file), packages/ledger-tui/test (D14, D15). Repo gate: `bun run check`. Parallel-safety: D16, D14, D15 are disjoint and parallel-safe; D17→D18→D19 are chained (dependsOn) because they all edit App.tsx and are NOT parallel-safe with each other."

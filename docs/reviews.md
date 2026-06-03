@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 109
+  item: 110
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -88,6 +88,11 @@ archives:
     path: ./archive/reviews/M21.md
     summary: "G2 follow-up #4 (items 16-19) — COMPLETE. T90 (!isMilestones gate, D7); T91 (ArchivePointer title+status extension, D8, lands status for D5); T92 (retire /investigate:start routing-questions per K13, item 18); T93 (batch-answer modal wider/taller/smaller-font/scrolls, item 19). Defects D7/D8 resolved; out-of-scope D9/D10 surfaced here, resolved via G6/M28 (T105/T106). Reviews R79/R83/R84/R90. Last G2 work milestone."
     title: "G2 follow-up #4: milestones-ledger archived rendering, routing-question retirement, batch-modal sizing"
+    status: done
+  - id: M30
+    path: ./archive/reviews/M30.md
+    summary: "G7 fixes COMPLETE — six confirmed dogfood defects fixed + merged. T110 (D16: backfill non-milestones archive-pointer titles from docs/archive/milestones/<id>.md by id; 48f4e93). T111 (D14: spawnWithFreePort retry-on-EADDRINUSE closes the bind-then-close TOCTOU; 6e223bb). T112 (D15: bounded wait-for de-flakes the live-badge test; 40385f6). T113 (D17: removed archived badge from row id cell; 1dec462). T114 (D18: per-suggestion pick buttons in the batch answer modal; ae0e5f8). T115 (D19: batch modal closes on open-set drain; 051fb27). Reviews R105-R110 (all go-ahead). Decision K19. Defects D14-D19 resolved. Final integration check 696 pass / 0 fail. Seeded + driven by the simulated /advance pipeline."
+    title: "G7 fixes: confirmed dogfood UI/store defects (D14-D19)"
     status: done
 ---
 
@@ -396,60 +401,3 @@ archives:
 - new_questions: []
 - criticism: []
 - ledgerRefs: ["goals:G7"]
-
-## M30
-
-### R105 — go-ahead
-
-- createdAt: 2026-06-02T23:41:42.919Z
-- updatedAt: 2026-06-02T23:41:42.919Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T110 approved: non-milestones archive titles sourced from docs/archive/milestones/<id>.md by id (not the title-less group archive); reproduction-first test discriminates pre-fix AND the naive parse-ptr.path approach; FS-only/fail-soft, InMemory untouched; check green 680/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T110","goals:G7"]
-
-### R106 — go-ahead
-
-- createdAt: 2026-06-02T23:41:46.354Z
-- updatedAt: 2026-06-02T23:41:46.354Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T111 approved: spawnWithFreePort closes the bind-then-close TOCTOU (retry on child-exit/EADDRINUSE, fresh port); all 3 call sites consistent; freePort signature preserved; only check failure was the pre-existing D15 flake (fixed by T112)."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T111","goals:G7"]
-
-### R107 — go-ahead
-
-- createdAt: 2026-06-02T23:41:49.571Z
-- updatedAt: 2026-06-02T23:41:49.571Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T112 approved: bounded wait-for de-flakes the live-badge test, real toContain('pushed-tui') assertion preserved, 12/12 deterministic, check green; the re-push covers a test-harness timing artifact (not a product race), so no defect filed."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T112","goals:G7"]
-
-### R108 — go-ahead
-
-- createdAt: 2026-06-02T23:41:52.072Z
-- updatedAt: 2026-06-02T23:41:52.072Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T113 approved: lw-archived-badge removed from archived-row id cell (single-line id column); archived state still signaled by lw-row-terminal + show-archived grouping; click-to-open intact; test meaningfully updated; ledger-web 167/0. Full-suite failures were pre-existing ledger-tui flake (D20)."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T113","goals:G7"]
-
-### R109 — go-ahead
-
-- createdAt: 2026-06-02T23:57:23.985Z
-- updatedAt: 2026-06-02T23:57:23.985Z
-- author: "opus-4.8[1m]"
-- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
-- summary: "T114 approved: per-suggestion pick buttons on the real batch save path (onSave(row, suggestion)) with answerHasText gating; genuine discriminating test (fails 10/10 on base); diff confined to App.tsx batch region + new test; check green 690/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T114","goals:G7"]

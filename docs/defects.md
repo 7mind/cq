@@ -166,10 +166,10 @@ archives:
 - dependsOn: ["T114"]
 - fix: "T114 (commit ae0e5f8): BatchAnswerModal renders one per-suggestion 'pick' button (iterating Array.isArray(sv)?sv:[sv]) wired to onSave(row, suggestionText) — the same batch save path as 'as recommended' — each gated by the answerHasText disable rule. New happy-dom test (batchPickSuggestion.test.tsx) verifies count/click-to-save/disable-when-typing; fails 10/10 on base, passes at HEAD."
 
-### D19 — open
+### D19 — resolved
 
 - createdAt: 2026-06-02T22:42:03.577Z
-- updatedAt: 2026-06-02T22:50:56.680Z
+- updatedAt: 2026-06-03T00:17:30.474Z
 - author: "opus-4.8[1m]"
 - session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
 - headline: Batch answer-questions modal does not CLOSE after answering the LAST open question ('save & mark answered' / 'as recommended')
@@ -179,6 +179,7 @@ archives:
 - suggestedFix: "In batchSave, after a successful save, detect completion and close: if the saved row was the last remaining unanswered row (e.g. i >= batchRows.length - 1, or recompute remaining-open after reload and close when none remain) call setBatchOpen(false) instead of clamping the index. Prefer recomputing the open set post-save so mid-queue answers also shrink the queue correctly. Add a happy-dom test: a 1-question batch + 'save & mark answered' (and a separate 'as recommended') closes the modal (batch-overlay absent) after the last answer."
 - ledgerRefs: ["tasks:T63","tasks:T88","goals:G2"]
 - dependsOn: ["T115"]
+- fix: "T115 (commit 051fb27): batchSave now tracks answered ids in a useRef<Set<string>> and after each save recomputes the remaining-open set over the batchRows snapshot; if empty it calls setBatchOpen(false) (closes regardless of current index — covers last-question, out-of-order, and fully-drained), else advances to the next still-open question via forward-scan-with-wrap (mid-queue answers no longer strand the modal). Reload-timing-independent. New happy-dom test (batchModalClose.test.tsx) fails on base (modal stays open) and passes at HEAD."
 
 ### D20 — open
 
