@@ -2,7 +2,7 @@
 ledger: decisions
 counters:
   milestone: 0
-  item: 24
+  item: 26
 archives:
   - id: M2
     path: ./archive/decisions/M2.md
@@ -98,3 +98,27 @@ archives:
 - headline: "plan review: approved"
 - rationale: "Reviewer go-ahead on R140 (4th pass) — 0 criticisms, 0 new questions. Approved plan: 5 work milestones M42-M46, 21 tasks T137-T157 implementing the four G11 features (state-overview snapshot + fetch_ledger projection/pagination, doc/description improvements + FTS-anomaly repro, terminal-reopen + un-archive store ops, web click-and-hold HoldButton protection, handoffs ledger + sessionLogs link fields + read-log tool/log-viewer). Task DAG verified acyclic and totally ordered across shared-file task pairs (ledgerTools.ts chain T144->T145->T146->T147->T149); faithful to clarifying answers Q74-Q87."
 - ledgerRefs: ["goals:G11"]
+
+## M47
+
+### K25 — locked
+
+- createdAt: 2026-06-03T20:10:29.521Z
+- updatedAt: 2026-06-03T20:10:29.521Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- headline: "plan review: approved"
+- rationale: reviewer go-ahead on G13/M48 plan (T158/T159/T160), ref review R162 — no criticism, no new questions, no out-of-scope defects.
+- ledgerRefs: ["goals:G13"]
+
+## M49
+
+### K26 — locked
+
+- createdAt: 2026-06-03T20:44:53.220Z
+- updatedAt: 2026-06-03T20:44:53.220Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- headline: "plan review: approved"
+- rationale: "Reviewer go-ahead (R166): G14/M50 plan approved round 0, 0 criticisms, 0 new questions, no out-of-scope defects. T161 closes D28 TOCTOU; fix + acceptance verified against source."
+- ledgerRefs: ["goals:G14"]

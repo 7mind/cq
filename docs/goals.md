@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 12
+  item: 14
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -153,3 +153,50 @@ archives:
     SUGGESTED FIX: after pressing 's', add a content-pane-sensitive assertion mirroring the 'e' test — assert the SelectList '› ' cursor marker (app.tsx:1291-1296) is ABSENT and/or the read-only badge '[archived · read-only]' (app.tsx:1424) is still PRESENT, so the test FAILS if 's' wrongly opens the status overlay on an archived row. Use the existing listSide(frame) helper (~test L1264) pattern for a content-pane slice, or assert '› ' absent from the whole frame. Keep the existing waitForFrame settle. Scope: packages/ledger-tui/test/app.test.tsx ONLY (test-quality fix, no product change). Repo gate: bun run check. NOTE: do NOT mark D24 resolved here — the implement-flow merge-back owns closure.
 - tags: ["defect-seeded","defect:D24","test-quality"]
 - milestones: ["M41"]
+
+## M47
+
+### G13 — planned
+
+- createdAt: 2026-06-03T20:06:27.954Z
+- updatedAt: 2026-06-03T20:10:32.790Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- title: Fix D25/D26/D27 (G11 follow-up code-quality cleanup)
+- description: |
+    DEFECT-SEEDED goal (clarify-skipped, K8 pt4) for three confirmed, low-severity, disjoint code-quality defects filed during the G11 build. Linked defects (their ledgerRefs point back here): D25, D26, D27. All three root causes are CONFIRMED with [correct]-validated citations; each fix is small + well-specified. Three disjoint file scopes → naturally parallel fix tasks. The fix TASKS must each ledgerRef their defect (defects:D25/D26/D27) so the implement orchestrator can close the defect on merge (goals has no ledgerRefs field).
+    
+    === D26 (read_log symlink-escape hardening — the only behavioural fix; reproduce-first) ===
+    CONFIRMED ROOT CAUSE: FsLedgerStore.readLog (packages/ledger/src/store/FsLedgerStore.ts:1257-1267) validates containment with a LEXICAL path.resolve(logsDir, relPath) + startsWith(logsDir + path.sep) check and never calls fs.realpath; fs.readFile(resolved) then follows symlinks. A symlink inside docs/logs/ whose target escapes the root passes the lexical guard and is read.
+    SUGGESTED FIX: after the lexical guard, fs.realpath(resolved) and re-assert realpath === logsDir || startsWith(logsDir + path.sep); throw the same escape error otherwise. Catch ENOENT so a genuinely missing file still surfaces the normal not-found error (do NOT mask it). ~3 lines. ADD a regression test FIRST: create a symlink under docs/logs pointing outside the root, assert read_log rejects it (must fail before the fix, pass after).
+    
+    === D25 (stale eslint-disable — lint hygiene) ===
+    CONFIRMED ROOT CAUSE: navRenderBytes.test.tsx:291 carries `// eslint-disable-next-line no-console` over the console.log at :292, but no-console is not enabled in eslint.config.js, so the directive is unused → eslint warning (non-fatal).
+    SUGGESTED FIX: remove the stale `// eslint-disable-next-line no-console` comment at packages/ledger-tui/test/navRenderBytes.test.tsx:291 (keep the console.log).
+    
+    === D27 (handoff CHAINED-trigger wording — prompt clarity) ===
+    CONFIRMED ROOT CAUSE: the */advance.md handoff CHAINED branch (plan/advance.md:283, implement/advance.md:290) names only /advance; investigate/advance.md:282 adds /plan:advance; none covers a /<flow>:start or /<flow>:follow-up inline pass, leaving correctness reliant on start.md/follow-up.md external override.
+    SUGGESTED FIX: reword each of the 3 */advance.md CHAINED triggers to fire on ANY wrapping flow command — 'CHAINED INLINE by any wrapping flow command (/advance, /plan:advance, or a /<flow>:start / /<flow>:follow-up that runs this pass inline) → SUPPRESS; the outermost wrapper owns the single handoff write.' Prompt-only.
+    
+    GATE: bun run check green. Frontends stay pure MCP clients. D26 requires reproduce-first (failing symlink test before the realpath fix).
+- milestones: ["M48"]
+
+## M49
+
+### G14 — planned
+
+- createdAt: 2026-06-03T20:40:59.340Z
+- updatedAt: 2026-06-03T20:44:56.357Z
+- author: "opus-4.8[1m]"
+- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- title: Fix D28 (readLog check-then-read TOCTOU)
+- description: |
+    DEFECT-SEEDED goal (clarify-skipped, K8 pt4) for D28 (CONFIRMED H18) — a low-severity, pre-existing TOCTOU in FsLedgerStore.readLog surfaced by the T158 reviewer. Linked defect (its ledgerRefs point back here): D28. The fix TASK must ledgerRef defects:D28 + goals:G14 (goals has no ledgerRefs field) so the implement orchestrator closes D28 on merge.
+    
+    CONFIRMED ROOT CAUSE: readLog computes `real = fs.realpath(resolved)` and validates `real` against realLogsDir inside a try block, but reads `fs.readFile(resolved)` (the non-canonical, symlink-bearing path) after the block. A symlink swapped between the realpath check and the readFile follows to its new target at read time (check-then-read TOCTOU). T158 closed the persistent-symlink escape; this transient race remains. Low severity: read-only tool confined to the server's own docs/logs; an actor able to swap an in-docs/logs symlink already controls returned content (no privilege escalation).
+    
+    SUGGESTED FIX: hoist `real` out of the try block and read the validated CANONICAL path — `fs.readFile(real)` instead of `fs.readFile(resolved)`. `real` has no symlink components, so the read follows nothing and the validated path === the read path, closing the TOCTOU. PRESERVE ENOENT: when realpath(resolved) throws ENOENT (genuinely missing file), fall back to reading `resolved` so the normal not-found error still surfaces (do NOT mask it). Add a regression test (e.g. assert the canonical path is read, or a post-check symlink swap does not escape). ~2-3 lines + test. Keep the existing D26 escape-rejection + symlinked-root + ENOENT tests green.
+    
+    GATE: bun run check green. Scope: packages/ledger/src/store/FsLedgerStore.ts (readLog) + test.
+- grounding: "Verified against packages/ledger/src/store/FsLedgerStore.ts (main, current tree). readLog() at L1251-1302: `resolved = path.resolve(this.logsDir, relPath)` (L1257); lexical containment check L1258-1265; then a try block (L1276-1294) computes `const real = await fs.realpath(resolved)` (L1277) and validates `real` against `realLogsDir` (L1285-1289) — but `real` is BLOCK-SCOPED to the try and the actual read at L1296 is `const buf = await fs.readFile(resolved)`, the non-canonical symlink-bearing path. Confirms H18 TOCTOU. The existing catch (L1290-1294) already swallows ENOENT (`if (code !== 'ENOENT') throw err`) to let a genuinely-missing file fall through to readFile — so the ENOENT-fallback semantics the fix must preserve already exist at the catch. Fix: hoist `real` to a `let` outside the try, assign inside; after the try, `await fs.readFile(real ?? resolved)` so a missing file (real undefined, ENOENT-swallowed) still reads `resolved` and surfaces the normal not-found error, while the happy path reads the validated canonical `real`. Sibling protections assertWithinDocsRoot (L1326) + the D26 realpath re-assert are the model. Tests live alongside in packages/ledger (D26 escape-rejection / symlinked-root / ENOENT suite must stay green)."
+- milestones: ["M50"]

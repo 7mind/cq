@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 145
+  item: 167
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -169,6 +169,41 @@ archives:
     summary: "G12 work milestone — COMPLETE. T136 (b8df1c6): made the 's'-key-inert archived-item test regression-sensitive (content-pane '[archived · read-only]' badge-present + content-pane-scoped picker-absence), resolving D24 (ex-D22). Review R141 go-ahead. Integration check green 783/0. G12 goal is `planned` and ready for the user to close."
     title: "G12 fix: regression-sensitive 's'-key-inert archived-item test (D24)"
     status: done
+  - id: M42
+    path: ./archive/reviews/M42.md
+    summary: G11 W1 (@cq/ledger schema + store foundations) — COMPLETE. T137 handoffs CANONICAL_LEDGERS entry (idPrefix HO, all-terminal); T138 sessionLogs:string[] on 6 work-producing schemas; T139/T140 fts (status:open OR status:wip) adjudicated GREEN (usage artifact, docs-only); T141 reopenItem + group-keyed unarchiveItem (both stores); T142 projectCompact + paginate (strips grounding/recommendation/suggestions); T143 cross-ledger snapshot(). Reviews R142-R147 go-ahead. Shipped on main.
+    title: G11 W1 — @cq/ledger schema + store foundations
+    status: done
+  - id: M43
+    path: ./archive/reviews/M43.md
+    summary: G11 W2 (@cq/ledger-mcp tool surface) — COMPLETE. T144 fetch_ledger compact/offset/limit params (fixes 51.8KB/142.7KB overflow); T145 snapshot tool; T146 reopen_item + unarchive_item; T147 read_log (bounded, root-confined); T148 tool-count reconciliation (14→18 across all refs); T149 query-language doc clarifications. Reviews R148-R153 go-ahead. Out-of-scope defects D25/D26 filed here, both later resolved (G13). Shipped on main.
+    title: G11 W2 — @cq/ledger-mcp tool surface
+    status: done
+  - id: M44
+    path: ./archive/reviews/M44.md
+    summary: G11 W3 (@cq/ledger-web HoldButton + sessionLogs viewer) — COMPLETE. T150 reusable HoldButton (HOLD_MS=1000, pointer+keyboard hold-to-confirm, progress bar, injectable HoldClock); T151 all 10 state-mutating web buttons hold-gated; T152 sessionLogs rendered as clickable links → popup via read_log MCP tool. Reviews R154/R157/R160 go-ahead (T151 r0 missed the 2 quick-transition buttons, fixed r1). Recovered a partial-cherry-pick of T151 during merge-back. Shipped on main.
+    title: G11 W3 — @cq/ledger-web HoldButton + sessionLogs viewer
+    status: done
+  - id: M45
+    path: ./archive/reviews/M45.md
+    summary: G11 W4 (flow-prompt wiring) — COMPLETE. T153 advance.md §Provenance permits the single run-level handoffs write; T154 per-flow handoff writes with contextual /advance suppression; T155 sessionLogs population in each outcome write; T156 snapshot-first /advance bootstrap recipe. Reviews R155/R156/R158/R159 go-ahead (T154 r0 used an env var, fixed r1 → contextual). Out-of-scope defect D27 filed here, later resolved (G13). Docs/prompt-only. Shipped on main.
+    title: G11 W4 — flow-prompt wiring (handoff writes + bootstrap recipe + docs)
+    status: done
+  - id: M46
+    path: ./archive/reviews/M46.md
+    summary: "G11 W5 (integration verification) — COMPLETE. T157 verification-only gate: bun run check green 847/0 on main (697aec8); bun.lock unchanged → no flake FOD refresh; all 5 ergonomics wins demonstrated via passing tests (snapshot one-call, fetch_ledger compact no-overflow, reopen/unarchive recovery, handoffs bootstrap, web hold-gate+sessionLogs popup). Review R161 go-ahead. G11 fully built (21 tasks); goal planned, ready for the user to close."
+    title: G11 W5 — integration verification (bun run check)
+    status: done
+  - id: M48
+    path: ./archive/reviews/M48.md
+    summary: "G13 fix work (D25/D26/D27 G11 follow-up cleanup) — COMPLETE. T158 (D26): readLog symlink-escape hardening (realpath both target+root); T159 (D25): removed stale eslint-disable; T160 (D27): reworded CHAINED handoff trigger + made start/follow-up wrappers the single handoff writer (7 files). Reviews R163/R164/R165 go-ahead (T158/T160 each r0 disapprove→r1 approve). H15/H16/H18 confirmed. Defects D25/D26 resolved (also D28 filed here from T158 review, resolved via G14). Merged 311b8a1."
+    title: "G13 fix tasks: D25/D26/D27 code-quality cleanup"
+    status: done
+  - id: M50
+    path: ./archive/reviews/M50.md
+    summary: "G14 fix work (D28 readLog TOCTOU) — COMPLETE. T161: readLog now reads the validated canonical path (fs.readFile(real ?? resolved)) instead of the symlink-bearing resolved, closing the check-then-read TOCTOU; ENOENT unmasked. Deterministic TOCTOU regression test (spies fs.realpath to swap the target at the check→use boundary; verified to fail against the pre-fix read). Review R167 go-ahead (r0 disapprove: non-discriminating test → r1 made it fail against pre-fix code). Defect D28 resolved. Merged 537017f."
+    title: Close D28 readLog check-then-read TOCTOU (read validated canonical path)
+    status: done
 ---
 
 # reviews
@@ -277,48 +312,28 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G11"]
 
-## M42
+## M47
 
-### R142 — go-ahead
+### R162 — go-ahead
 
-- createdAt: 2026-06-03T16:09:41.405Z
-- updatedAt: 2026-06-03T16:09:41.405Z
+- createdAt: 2026-06-03T20:09:39.421Z
+- updatedAt: 2026-06-03T20:09:39.421Z
 - author: "opus-4.8[1m]"
 - session: ea0ee283-9e2d-4088-a61a-86fac464e29b
-- summary: "T137 approved: handoffs ledger (HANDOFFS_SCHEMA, 9th canonical entry, idPrefix HO, all-terminal, 8 fields incl. handoffReasons+sessionLogs) matches Q83/Q84 exactly; no drift across constants.ts + both ledgers.yaml fixtures; HO/H prefixes unambiguous; init() bootstraps; check green."
-- criticism: []
+- summary: "G13/M48 plan is fine-grained, parallel, testable, grounded: all 3 fix tasks (T158/T159/T160) correctly scope+accept their confirmed root causes (D26 realpath reproduce-first w/ ENOENT carve-out, D25 stale eslint-disable removal, D27 CHAINED-trigger reword), each ledgerRefs defects:D<n>+goals:G13, and the disjoint file scopes justify the no-dependsOn parallel DAG. Verified all 3 defect locations against the repo. No revisions needed."
 - new_questions: []
-- ledgerRefs: ["tasks:T137","goals:G11"]
+- criticism: []
+- ledgerRefs: ["goals:G13"]
 
-### R143 — go-ahead
+## M49
 
-- createdAt: 2026-06-03T16:09:50.783Z
-- updatedAt: 2026-06-03T16:09:50.783Z
+### R166 — go-ahead
+
+- createdAt: 2026-06-03T20:44:17.656Z
+- updatedAt: 2026-06-03T20:44:17.656Z
 - author: "opus-4.8[1m]"
 - session: ea0ee283-9e2d-4088-a61a-86fac464e29b
-- summary: "T139 approved: reproduce-first test exercises the real fts evaluator path (LedgerSearchIndex.searchQuery); (status:open OR status:wip) is term-free OR-of-status-qualifiers matched via matchItemQualifier — GREEN adjudication SOUND (not a defect; Q77 was a usage/stale-index artifact → T140 docs-only). check green."
+- summary: "G14/M50 plan go-ahead, round 0. Single fine-grained task T161 closes the confirmed D28 check-then-read TOCTOU: read `real ?? resolved` (validated canonical, no symlink components) instead of the symlink-bearing `resolved` at FsLedgerStore.ts L1296. Verified against source L1251-1302 — fix correctly closes the race (read-path === validated-path); ENOENT preserved (realpath ENOENT swallowed at L1290-1294 leaves hoisted `let real` undefined → reads `resolved` → genuine not-found surfaces, not masked); escape-rejection LedgerError still rethrows (code undefined). Acceptance is reproduction-first (regression test must FAIL pre-fix) and requires the D26 escape-rejection + symlinked-root + ENOENT suite stay green + bun run check. ledgerRefs defects:D28+goals:G14 correct for orchestrator-owned closure (D28.dependsOn=[T161] reciprocates). Scope surgical (~2-3 lines + one test, one file), no over-reach, no missing prerequisite (T158/D26 realpath re-assert already merged on main). No user-only gaps, no planner-fixable defects, no out-of-scope faults."
 - criticism: []
 - new_questions: []
-- ledgerRefs: ["tasks:T139","goals:G11"]
-
-### R144 — go-ahead
-
-- createdAt: 2026-06-03T16:09:54.560Z
-- updatedAt: 2026-06-03T16:09:54.560Z
-- author: "opus-4.8[1m]"
-- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
-- summary: "T141 approved: reopenItem (terminal→validated non-terminal, guard bypassed) + group-keyed unarchiveItem (extract from milestone-group archive, rewrite/delete group + pointer) on both stores via pure core helpers; genuine dual-test coverage (FsLedgerStore + InMemoryLedgerStore); assertWithinDocsRoot enforced; surgical; check green."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T141","goals:G11"]
-
-### R145 — go-ahead
-
-- createdAt: 2026-06-03T16:09:57.697Z
-- updatedAt: 2026-06-03T16:09:57.697Z
-- author: "opus-4.8[1m]"
-- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
-- summary: "T142 approved: projectCompact reuses LONG_FIELD_DENYLIST as base + adds {grounding,recommendation,suggestions} (no columns.ts mutation), strips them for goals/questions (tests assert absence + small size); paginate stable slices+total; pure, own module; index.ts export merges cleanly; check green."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T142","goals:G11"]
+- ledgerRefs: ["goals:G14"]

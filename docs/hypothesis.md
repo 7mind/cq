@@ -2,7 +2,7 @@
 ledger: hypothesis
 counters:
   milestone: 0
-  item: 14
+  item: 18
 archives:
   - id: M14
     path: ./archive/hypothesis/M14.md
@@ -23,6 +23,21 @@ archives:
     path: ./archive/hypothesis/M35.md
     summary: G8 coordination — COMPLETE. Goal G8 (fix remaining buildable defects D20/D21) done; work milestone M36 archived; defects D20/D21 resolved, residuals D22/D23 resolved (D23 fixed via G10/T134; D22 user-resolved); D23 investigation hypothesis H13 confirmed; reviews R125/R126 + decision K21 terminal. Auto-archived by the /advance whole-ledger sweep.
     title: "Plan: fix remaining buildable defects (D20 tui-test flakiness, D21 reset non-canonical)"
+    status: done
+  - id: M43
+    path: ./archive/hypothesis/M43.md
+    summary: G11 W2 (@cq/ledger-mcp tool surface) — COMPLETE. T144 fetch_ledger compact/offset/limit params (fixes 51.8KB/142.7KB overflow); T145 snapshot tool; T146 reopen_item + unarchive_item; T147 read_log (bounded, root-confined); T148 tool-count reconciliation (14→18 across all refs); T149 query-language doc clarifications. Reviews R148-R153 go-ahead. Out-of-scope defects D25/D26 filed here, both later resolved (G13). Shipped on main.
+    title: G11 W2 — @cq/ledger-mcp tool surface
+    status: done
+  - id: M45
+    path: ./archive/hypothesis/M45.md
+    summary: G11 W4 (flow-prompt wiring) — COMPLETE. T153 advance.md §Provenance permits the single run-level handoffs write; T154 per-flow handoff writes with contextual /advance suppression; T155 sessionLogs population in each outcome write; T156 snapshot-first /advance bootstrap recipe. Reviews R155/R156/R158/R159 go-ahead (T154 r0 used an env var, fixed r1 → contextual). Out-of-scope defect D27 filed here, later resolved (G13). Docs/prompt-only. Shipped on main.
+    title: G11 W4 — flow-prompt wiring (handoff writes + bootstrap recipe + docs)
+    status: done
+  - id: M48
+    path: ./archive/hypothesis/M48.md
+    summary: "G13 fix work (D25/D26/D27 G11 follow-up cleanup) — COMPLETE. T158 (D26): readLog symlink-escape hardening (realpath both target+root); T159 (D25): removed stale eslint-disable; T160 (D27): reworded CHAINED handoff trigger + made start/follow-up wrappers the single handoff writer (7 files). Reviews R163/R164/R165 go-ahead (T158/T160 each r0 disapprove→r1 approve). H15/H16/H18 confirmed. Defects D25/D26 resolved (also D28 filed here from T158 review, resolved via G14). Merged 311b8a1."
+    title: "G13 fix tasks: D25/D26/D27 code-quality cleanup"
     status: done
 ---
 
