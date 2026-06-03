@@ -48,7 +48,7 @@ export type {
   UpdateMilestoneItemPatch,
 } from "./store/LedgerStore.js";
 export { FsLedgerStore } from "./store/FsLedgerStore.js";
-export type { FsLedgerStoreOpts } from "./store/FsLedgerStore.js";
+export type { FsLedgerStoreOpts, ResetSummary } from "./store/FsLedgerStore.js";
 export { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 export type { InMemoryLedgerStoreOpts } from "./store/InMemoryLedgerStore.js";
 export { validateSchema } from "./store/core.js";

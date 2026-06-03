@@ -103,6 +103,18 @@ import {
   QUESTIONS_LEDGER,
 } from "../constants.js";
 
+/**
+ * Result of {@link FsLedgerStore.reset}: the absolute path the prior on-disk
+ * state was snapshotted to, plus a per-ledger count of the items that existed
+ * BEFORE the wipe — what a CLI prints to confirm what it just backed up.
+ */
+export interface ResetSummary {
+  /** Absolute path of the `docs/.backup/<ts>/` snapshot dir. */
+  backupDir: string;
+  /** Active item count per active ledger, captured BEFORE the reinit. */
+  ledgers: Array<{ name: string; itemCount: number }>;
+}
+
 export interface FsLedgerStoreOpts {
   /** Filesystem root (server --cwd). Ledgers live under `<root>/docs/`. */
   root: string;
@@ -690,8 +702,11 @@ export class FsLedgerStore implements LedgerStore {
    *
    * T95 wires this into init()'s divergence branch; kept private + tested
    * directly here so the helper is exercised and lint stays clean.
+   *
+   * Returns the absolute backup dir so callers (the public reset()) can
+   * surface it without recomputing the timestamp.
    */
-  private async backupAndReinit(): Promise<void> {
+  private async backupAndReinit(): Promise<string> {
     // (a) Sanitize the ISO timestamp for use as a directory name.
     const ts = this.now().replace(/:/g, "-");
     const backupDir = path.join(this.docsDir, ".backup", ts);
@@ -734,6 +749,42 @@ export class FsLedgerStore implements LedgerStore {
       }
       await this.writeLedgerFile(ledger);
     }
+    return backupDir;
+  }
+
+  /**
+   * Public, operator-facing wipe-and-reinit. Intended for a CLI to call on a
+   * freshly-constructed, already-init()'d store (not one actively serving
+   * clients): it snapshots the current on-disk ledgers to a timestamped
+   * `docs/.backup/<ts>/` dir and rewrites the canonical empty set, exactly as
+   * the init()-divergence path does (reuses backupAndReinit verbatim).
+   *
+   * reset() adds only the pre-wipe per-ledger item count and the returned
+   * summary; it then reloads the fresh canonical state into memory + the FTS
+   * index (via init()) so subsequent reads observe the empty ledgers.
+   */
+  async reset(): Promise<ResetSummary> {
+    this.assertInit();
+    // Count active items per ledger BEFORE the wipe.
+    const ledgers = Array.from(this.ledgers.entries())
+      .map(([name, ledger]) => ({ name, itemCount: activeItemsOf(ledger).length }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const backupDir = await this.backupAndReinit();
+
+    // backupAndReinit rewrote files + this.registry but left the in-memory
+    // ledger map and FTS index pointing at the pre-wipe state. Drop the ledger
+    // map and re-run init() to load the fresh canonical empty set. init()
+    // re-indexes every loaded ledger (rebuildLedgerActive + setLedgerArchived
+    // are replace-semantics), and the canonical ledger set is unchanged by the
+    // reinit, so no stale FTS docs survive. init() early-returns unless
+    // `initialised` is false, so reset it first; the on-disk registry is now
+    // canonical, so init() will not re-detect divergence.
+    this.ledgers.clear();
+    this.initialised = false;
+    await this.init();
+
+    return { backupDir, ledgers };
   }
 
   /**

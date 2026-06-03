@@ -46,9 +46,9 @@ async function makeStore(
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function callBackupAndReinit(store: FsLedgerStore): Promise<void> {
+async function callBackupAndReinit(store: FsLedgerStore): Promise<string> {
   // Access private method via `any` cast — test-only pattern.
-  return (store as unknown as Record<string, () => Promise<void>>)["backupAndReinit"]!();
+  return (store as unknown as Record<string, () => Promise<string>>)["backupAndReinit"]!();
 }
 
 // ---------------------------------------------------------------------------
@@ -90,11 +90,11 @@ describe("FsLedgerStore.backupAndReinit", () => {
     const docsDir = path.join(root, "docs");
     await mkdir(docsDir, { recursive: true });
 
-    // Must not throw despite no files to copy.
-    await expect(callBackupAndReinit(store)).resolves.toBeUndefined();
-
+    // Must not throw despite no files to copy; returns the backup dir path.
     const expectedDirName = fixedTs.replace(/:/g, "-");
     const backupDir = path.join(docsDir, ".backup", expectedDirName);
+    await expect(callBackupAndReinit(store)).resolves.toBe(backupDir);
+
     const s = await stat(backupDir);
     expect(s.isDirectory()).toBe(true);
   });
