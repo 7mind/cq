@@ -92,6 +92,60 @@ own §Session logs rule — follow each sub-command's logging rule while running
 
 ---
 
+## Bootstrap recipe (T156 / Q79 — snapshot-first start)
+
+At the very start of each `/advance` run (and at the start of each cycle),
+derive **all three detection predicates** from **ONE tool call**:
+
+```
+snapshot()
+```
+
+`snapshot` is the `mcp__ledger__snapshot` MCP tool (no required params).
+It returns `{ ledger: { [ledgerId]: { [status]: { count, items: [{id,status,summary}] } } } }` —
+a compact `{id, status, summary}` view of every active item across every
+active ledger, grouped by `ledgerId` × `status`. No long narrative fields;
+stays well under token-overflow thresholds even on large repos.
+
+**Deriving the predicates from the snapshot — all three at once:**
+
+From the single `snapshot()` result:
+- **P-investigate**: check `defects` bucket — any item whose `status` ∈
+  `{open, wip, inconclusive}` AND (after cross-referencing `questions` bucket)
+  not solely blocked by an `open` question AND not linked as
+  goal-owned (see §P-investigate below for the exact exclusion rules).
+- **P-plan**: check `goals` bucket — any item whose `status` ∈
+  `{clarifying, planning}` where `clarifying` items are only movable if no
+  linked `open` question blocks them (see §P-plan below).
+- **P-implement**: check `tasks` bucket — any item whose `status` is
+  non-terminal and non-`blocked`, then cross-check `milestones` bucket to
+  confirm milestone-level `dependsOn` are satisfied (see §P-implement below).
+- **Open-questions gate**: check `questions` bucket — `open` items gate the
+  predicates above; their owning items are identified by `ledgerRefs`.
+
+If the snapshot result is insufficient to resolve an edge case (e.g. you
+need to confirm a specific `dependsOn` chain or read a full item's fields),
+fall back to **`fetch_ledger`** with `compact: true` for the specific ledger:
+
+```
+fetch_ledger({ ledger_id: "tasks",    compact: true })
+fetch_ledger({ ledger_id: "defects",  compact: true })
+fetch_ledger({ ledger_id: "goals",    compact: true })
+fetch_ledger({ ledger_id: "questions",compact: true })
+```
+
+`compact: true` strips long narrative fields; combine with `offset`/`limit`
+for pagination on large ledgers. Use `fetch_item` for a single item's full
+fields only when the compact view is not enough.
+
+**Rule:** this bootstrap MUST NOT exceed ~2 tool calls for the common case
+(snapshot + at most one targeted follow-up). The ~13-call per-ledger sweep
+(evidence #1) is replaced by this recipe; the per-flow DAG/phase semantics
+stay in the detection predicates below (per Q75 — snapshot is generic/
+flow-agnostic; the three predicates are the flow-specific logic).
+
+---
+
 ## Detection predicates (the three ledger queries — Q55)
 
 Before each stage you run a LEDGER QUERY to decide whether that stage has work.
