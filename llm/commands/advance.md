@@ -42,9 +42,48 @@ answering questions); it picks up exactly where the durable ledger state left of
   from the ledger.
 
 ## Provenance
-This command makes NO ledger writes of its own (read-only detection only). Every
-write is performed by a chained sub-command, which stamps `author`/`session` per
-its own prompt. You stamp nothing.
+This command performs **EXACTLY ONE** ledger write of its own: a single
+**run-level `handoffs` record** at end-of-run (Q85 — the user picked option (b):
+each per-flow command writes its own handoff only when run STANDALONE, and
+suppresses it when chained under `/advance`, so `/advance` is the sole writer of
+the one authoritative run-level handoff). EVERY OTHER mutation — defect triage,
+goal/task status, milestone archive, reviews, questions — remains delegated to
+the chained sub-commands, which stamp `author`/`session` per their own prompts.
+Detection stays strictly read-only (the three predicates query item STATUS; they
+never write).
+
+### The one write — the run-level handoff (Q83/Q84/Q85)
+At end-of-run, after you classify the run (see §End-of-run report), write ONE
+`handoffs` item via `create_item("handoffs", <milestone>, <status>, <fields>)`,
+mapping the report classification to the handoff `status`:
+
+| §End-of-run classification | handoff `status`     |
+| -------------------------- | -------------------- |
+| DRAINED                    | `drained`            |
+| BLOCKED-ON-QUESTIONS        | `answers-required`   |
+| MIXED                      | `mixed`              |
+| error / abort              | `illness-detected`   |
+
+The `handoffs` ledger (idPrefix `HO`; all four statuses terminal; shipped in
+T137, now in `CANONICAL_LEDGERS`) carries this item shape:
+- `summary` (**required**) — the human-readable why-it-stopped (mirror the
+  end-of-run report prose);
+- `flow` — `advance` (this command is the writer);
+- `ledgerRefs` — the stop-causing items (the `defects:<D>` / `goals:<G>` /
+  `tasks:<id>` the report enumerates);
+- `blockingQuestions` — `open` question ids for `answers-required`/`mixed` stops
+  (mirrors the BLOCKED-ON-QUESTIONS enumeration);
+- `handoffReasons` — for a `mixed` stop, the component reasons (e.g.
+  `[drained, answers-required]`) explaining what is mixed (Q83);
+- `sessionLogs` — the `docs/logs/<ts>-<agent-id>.md` path(s) produced during
+  this run; populate them in the SAME `create_item` call that writes the handoff
+  (do not write them in a separate update);
+- `tags`, `sourceRefs` — optional cross-references.
+
+Stamp `author`/`session` on this write like any other. The handoff is
+APPEND-ONLY (written once at end-of-run, never updated). This single write is the
+ONLY mutation `/advance` performs; all other mutations remain delegated to the
+chained sub-commands.
 
 ## Session logs
 This command spawns no subagents, so it writes no session-log file of its own.
@@ -209,3 +248,10 @@ ledger: if all three are FALSE and no `open` question gates any actionable item 
 unanswered question → **BLOCKED-ON-QUESTIONS** (or **MIXED** when the run also
 landed work). Always close with the concrete next action and (for the blocked
 categories) the exact list of question ids to answer.
+
+After emitting the report, persist it as the single run-level `handoffs` record
+— `/advance`'s one and only ledger write — mapping this classification to the
+handoff `status` (DRAINED→`drained`, BLOCKED-ON-QUESTIONS→`answers-required`,
+MIXED→`mixed`, error/abort→`illness-detected`) and populating `summary`, `flow`,
+`ledgerRefs`, `blockingQuestions`, `handoffReasons` (for `mixed`), and
+`sessionLogs` in that one `create_item`. See §Provenance for the full item shape.
