@@ -205,13 +205,39 @@ out-of-scope defect filed in §3).
 Note the asymmetry: a filed defect does NOT gate task merge-back (§3 file-and-
 defer — tasks merge regardless), but it DOES gate milestone archival.
 
-When ALL of goal `G`'s work milestones are archived, the orchestrator REPORTS
-that goal `G` is ready to close and instructs the user to set its status to
-`done` themselves via the TUI/web when satisfied. The orchestrator makes NO
-goal-status change — the orchestrator MUST NEVER automatically transition a
-goal to a terminal status (`building`→`done`). `planned`→`building` may remain
-automatic (non-terminal; it records that work has started), but the final
-closure is always the user's action.
+### Milestone auto-close+archive sweep (factored predicate)
+After merge-back, run the **auto-close+archive sweep** over every milestone the
+pass touched (and, in `/advance`, over the whole `milestones` ledger). This is
+the single authoritative predicate — `/advance` (llm/commands/advance.md) states
+the same rule and is the catch-all that also sweeps milestones whose goal the
+user closed between runs.
+
+A milestone `M` is **eligible to auto-close+archive** iff BOTH:
+1. **every item under `M`** (across ALL ledgers — tasks, defects, reviews,
+   questions, decisions, hypotheses, and the goal if any) is **terminal**; AND
+2. if `M` is a **coordination milestone** (its items include a `goals` item),
+   that **goal is itself terminal** (`done`/`abandoned`). A **work** milestone
+   has no goal item, so condition 2 is vacuous for it.
+
+**Mechanism (both conditions hold):** `update_milestone(M, status: "done")`
+THEN `archive_milestone(M)` — `archive_milestone` refuses unless the
+milestone-item itself is terminal, so the `status: "done"` step must come first.
+Do NOT add any `dependsOn`-terminal precondition beyond the two above.
+
+**Guard:** NEVER archive a coordination milestone whose goal is **non-terminal**,
+even if all its current items are terminal — new follow-up scope may still add
+items to it (e.g. a goal in `planned`/`building`, or one re-opened to
+`clarifying`, must keep its coordination milestone open).
+
+**Goal-vs-milestone asymmetry (explicit):** **GOALS NEVER auto-close** — the
+orchestrator MUST NEVER transition a goal to a terminal status
+(`building`→`done`); that is always the user's action (the G3-B / M16 invariant;
+`planned`→`building` may stay automatic as it is non-terminal). **MILESTONES
+ALWAYS may** auto-close+archive once eligible per the predicate above. So when
+all of goal `G`'s work milestones are archived, the orchestrator REPORTS that
+`G` is ready to close and instructs the user to set it `done` in the TUI/web —
+and once the user DOES close `G`, the next sweep archives `G`'s now-eligible
+coordination milestone automatically.
 
 ## Report to the user
 Summarize the pass concisely:

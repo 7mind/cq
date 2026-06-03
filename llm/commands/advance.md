@@ -149,11 +149,35 @@ re-check (4) surfaced new work) means another cycle is warranted.
 
 ## Milestone auto-close + archive sweep (end-of-run — placeholder, T128)
 
-> **Placeholder — filled by task T128.** After the loop reaches quiescence, run
-> the milestone auto-close + archive sweep here, at the END of the run. T128
-> supplies the predicate and the sweep body (detect milestones whose every linked
-> item is terminal and archive them). Until T128 lands, this section is a no-op
-> placeholder; do not invent the predicate here.
+After the loop reaches quiescence, run the **auto-close+archive sweep** over the
+entire `milestones` ledger. `/advance` is the AUTHORITATIVE locus for this rule
+(it re-derives ledger state each run, so it also catches milestones whose goal
+the user closed between runs); implement/advance.md's milestone-completion step
+states the SAME factored predicate for the in-pass case — keep the two in sync,
+do not let them diverge.
+
+A milestone `M` is **eligible to auto-close+archive** iff BOTH:
+1. **every item under `M`** (across ALL ledgers — tasks, defects, reviews,
+   questions, decisions, hypotheses, and the goal item if any) is **terminal**; AND
+2. if `M` is a **coordination milestone** (its items include a `goals` item),
+   that **goal is itself terminal** (`done`/`abandoned`). A **work** milestone
+   has no goal item, so condition 2 is vacuous for it.
+
+**Mechanism (both hold):** `update_milestone(M, status: "done")` THEN
+`archive_milestone(M)` — `archive_milestone` refuses unless the milestone-item is
+already terminal, so the `done` step comes first. No `dependsOn`-terminal
+precondition beyond the two above.
+
+**Guard:** NEVER archive a coordination milestone whose goal is **non-terminal**,
+even when all its current items are terminal — pending follow-up scope may still
+add items (a goal in `planned`/`building`, or re-opened to `clarifying`, keeps
+its coordination milestone open).
+
+**Goal-vs-milestone asymmetry (explicit):** **GOALS NEVER auto-close** — never
+transition a goal `building`→`done` (always the user's action; the G3-B / M16
+invariant). **MILESTONES ALWAYS may** auto-close+archive once eligible. So once
+the user closes a goal `G`, the next `/advance` sweep archives `G`'s
+now-eligible coordination milestone automatically.
 
 ---
 
