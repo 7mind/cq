@@ -203,6 +203,57 @@ export interface LedgerStore {
   createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger>;
 
   /**
+   * Reopen a TERMINAL item (Q78): move it to a chosen NON-terminal status,
+   * bypassing the declarative transition guard (a terminal status has no
+   * outgoing transitions) while still validating that `toStatus` is a real,
+   * non-terminal status of `ledgerId`'s schema. Preserves the item's
+   * intrinsic `createdAt`; sets a fresh `updatedAt`.
+   *
+   * Rejects when:
+   *  - `itemId` is absent (`ItemNotFoundError`);
+   *  - the item is not currently terminal (reopen an active item with
+   *    `updateItem` instead);
+   *  - `toStatus` is unknown (`InvalidStatusError`) or itself terminal.
+   *
+   * Holds the per-ledger lock for `ledgerId`.
+   */
+  reopenItem(
+    ledgerId: string,
+    itemId: string,
+    toStatus: string,
+  ): Promise<Item>;
+
+  /**
+   * Un-archive a single item out of an archived milestone-GROUP (Q78).
+   *
+   * Archive layout (FsLedgerStore.ts:7): a non-milestones ledger archives a
+   * whole milestone-group as ONE file keyed by milestone id at
+   * `./archive/<ledger>/<milestoneId>.md`; only the milestones ledger keeps
+   * per-ITEM archive files. So the op operates at GROUP granularity and the
+   * signature carries the milestone id.
+   *
+   * Reads the archived group for `milestoneId`, EXTRACTS the single requested
+   * `itemId`, re-attaches it to the active ledger under `milestoneId` (the
+   * depth-2 group is auto-created when absent), and rewrites the group archive
+   * WITHOUT the extracted item — removing the group archive file AND its
+   * `ArchivePointer` entirely when it becomes empty; the remaining items stay
+   * archived. For the milestones ledger (per-item archive files) the `itemId`
+   * path applies directly.
+   *
+   * Preserves the item's intrinsic `createdAt`; sets a fresh `updatedAt`.
+   *
+   * Rejects cleanly when there is no archived group/file for `milestoneId`, or
+   * the group/file does not contain `itemId`.
+   *
+   * Holds the per-ledger lock for `ledgerId`.
+   */
+  unarchiveItem(
+    ledgerId: string,
+    milestoneId: string,
+    itemId: string,
+  ): Promise<Item>;
+
+  /**
    * Archive a milestone across all ledgers (Q6 — two-level atomic):
    *  1. Acquire `__milestones__`.
    *  2. For every ledger, find items whose milestone-group is `milestoneId`.

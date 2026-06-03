@@ -64,6 +64,8 @@ import {
   applyDetachMilestoneGroup,
   applyDetachMilestoneItem,
   applyEnsureAmbientMilestone,
+  applyReattachItem,
+  applyReopenItem,
   applyUpdateItem,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
@@ -643,6 +645,99 @@ export class FsLedgerStore implements LedgerStore {
     return result;
   }
 
+  async reopenItem(
+    ledgerId: string,
+    itemId: string,
+    toStatus: string,
+  ): Promise<Item> {
+    const it = await this.withLock(ledgerId, async () => {
+      const ledger = this.getLedger(ledgerId);
+      const x = applyReopenItem(ledger, itemId, toStatus, this.now());
+      await this.writeLedgerFile(ledger);
+      return cloneItem(x);
+    });
+    this.fireMutation(ledgerId, "update");
+    return it;
+  }
+
+  async unarchiveItem(
+    ledgerId: string,
+    milestoneId: string,
+    itemId: string,
+  ): Promise<Item> {
+    const isMilestones = ledgerId === MILESTONES_LEDGER;
+    const reattached = await this.withLock(ledgerId, async () => {
+      const ledger = this.getLedger(ledgerId);
+      const ptr = ledger.archivePointers.find((p) => p.id === milestoneId);
+      if (ptr === undefined) {
+        throw new LedgerError(
+          isMilestones
+            ? `no archived item ${milestoneId} in ledger ${ledgerId}`
+            : `no archived group for milestone ${milestoneId} in ledger ${ledgerId}`,
+        );
+      }
+      const absPath = path.resolve(this.docsDir, ptr.path);
+      this.assertWithinDocsRoot(absPath);
+      const text = await fs.readFile(absPath, "utf8");
+
+      if (isMilestones) {
+        // Per-ITEM archive file: the single archived milestone-item.
+        const archivedItem = parseMilestoneItemArchive(text);
+        if (archivedItem.id !== itemId) {
+          throw new LedgerError(
+            `archived item file ${milestoneId} in ledger ${ledgerId} does not contain item ${itemId}`,
+          );
+        }
+        const out = applyReattachItem(
+          ledger,
+          archivedItem.milestoneId,
+          archivedItem,
+          this.now(),
+        );
+        // Per-item archive always becomes empty on extraction: remove the
+        // file + its pointer entirely.
+        await fs.rm(absPath, { force: true });
+        this.removeArchivePointer(ledger, milestoneId);
+        await this.writeLedgerFile(ledger);
+        return cloneItem(out);
+      }
+
+      // Non-milestones ledger: a milestone-GROUP archive file. Extract ONLY
+      // the requested item, re-attach it, and rewrite the group WITHOUT it
+      // (removing the file + pointer when the group becomes empty).
+      const group = parseArchive(text);
+      const idx = group.items.findIndex((it) => it.id === itemId);
+      if (idx < 0) {
+        throw new LedgerError(
+          `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
+        );
+      }
+      const [extracted] = group.items.splice(idx, 1);
+      if (extracted === undefined) {
+        throw new LedgerError(
+          `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
+        );
+      }
+      const out = applyReattachItem(ledger, milestoneId, extracted, this.now());
+      if (group.items.length === 0) {
+        // Last item removed — drop the group archive file + its pointer.
+        await fs.rm(absPath, { force: true });
+        this.removeArchivePointer(ledger, milestoneId);
+      } else {
+        // Rewrite the group archive WITHOUT the extracted item; the pointer
+        // (id/path/summary/title/status) is unchanged.
+        await atomicWrite(absPath, serializeArchiveImpl(group));
+      }
+      await this.writeLedgerFile(ledger);
+      return cloneItem(out);
+    });
+    // The active docs gained an item and the archived docs shrank/vanished;
+    // refresh both. fireMutation rebuilds active; refresh archived explicitly.
+    this.fireMutation(ledgerId, "update");
+    await this.refreshLedgerIndexArchived(ledgerId);
+    return reattached;
+  }
+
   async archiveMilestone(
     milestoneId: string,
     summary: string,
@@ -923,6 +1018,12 @@ export class FsLedgerStore implements LedgerStore {
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  /** Drop the ArchivePointer keyed by `archiveId` from `ledger` (if present). */
+  private removeArchivePointer(ledger: Ledger, archiveId: string): void {
+    const i = ledger.archivePointers.findIndex((p) => p.id === archiveId);
+    if (i >= 0) ledger.archivePointers.splice(i, 1);
+  }
 
   private countReferences(milestoneId: string): Record<string, number> {
     const out: Record<string, number> = {};

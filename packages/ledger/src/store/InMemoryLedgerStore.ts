@@ -27,6 +27,8 @@ import {
   applyDetachMilestoneGroup,
   applyDetachMilestoneItem,
   applyEnsureAmbientMilestone,
+  applyReattachItem,
+  applyReopenItem,
   applyUpdateItem,
   applyUpdateMilestoneItem,
   assertGoalPhasePreconditions,
@@ -366,6 +368,84 @@ export class InMemoryLedgerStore implements LedgerStore {
     return result;
   }
 
+  async reopenItem(
+    ledgerId: string,
+    itemId: string,
+    toStatus: string,
+  ): Promise<Item> {
+    const item = await this.withLock(ledgerId, async () => {
+      const ledger = this.getLedger(ledgerId);
+      return cloneItem(applyReopenItem(ledger, itemId, toStatus, this.now()));
+    });
+    this.fireMutation(ledgerId, "update");
+    return item;
+  }
+
+  async unarchiveItem(
+    ledgerId: string,
+    milestoneId: string,
+    itemId: string,
+  ): Promise<Item> {
+    // The milestones ledger keeps per-ITEM archive files; un-archiving a
+    // milestone-item is a later concern (T146 covers MCP wrappers). Here the
+    // group-keyed path covers non-milestones ledgers; the itemId path applies
+    // for milestones (where milestoneId === itemId, the archive key).
+    const isMilestones = ledgerId === MILESTONES_LEDGER;
+    const reattached = await this.withLock(ledgerId, async () => {
+      const ledger = this.getLedger(ledgerId);
+      const key = `${ledgerId}/${milestoneId}`;
+      if (isMilestones) {
+        const archivedItem = this.itemArchives.get(key);
+        if (archivedItem === undefined || archivedItem.id !== itemId) {
+          throw new LedgerError(
+            `no archived item ${itemId} under milestone ${milestoneId} in ledger ${ledgerId}`,
+          );
+        }
+        const out = applyReattachItem(
+          ledger,
+          archivedItem.milestoneId,
+          archivedItem,
+          this.now(),
+        );
+        this.itemArchives.delete(key);
+        this.removeArchivePointer(ledger, milestoneId);
+        return out;
+      }
+      const group = this.archives.get(key);
+      if (group === undefined) {
+        throw new LedgerError(
+          `no archived group for milestone ${milestoneId} in ledger ${ledgerId}`,
+        );
+      }
+      const idx = group.items.findIndex((it) => it.id === itemId);
+      if (idx < 0) {
+        throw new LedgerError(
+          `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
+        );
+      }
+      const [extracted] = group.items.splice(idx, 1);
+      if (extracted === undefined) {
+        throw new LedgerError(
+          `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
+        );
+      }
+      const out = applyReattachItem(ledger, milestoneId, extracted, this.now());
+      if (group.items.length === 0) {
+        // Last item removed — drop the whole group archive + its pointer.
+        this.archives.delete(key);
+        this.removeArchivePointer(ledger, milestoneId);
+      }
+      // (else the rewritten group stays in `this.archives` with the
+      // remaining items; the pointer is unchanged.)
+      return out;
+    });
+    // An un-archive changes BOTH the active docs (new attached item) and the
+    // archived docs (the group shrank or vanished). Refresh both.
+    this.fireMutation(ledgerId, "update");
+    this.refreshLedgerIndexArchived(ledgerId);
+    return reattached;
+  }
+
   async archiveMilestone(
     milestoneId: string,
     summary: string,
@@ -417,6 +497,12 @@ export class InMemoryLedgerStore implements LedgerStore {
       }
       this.ledgers.set(name, ledger);
     }
+  }
+
+  /** Drop the ArchivePointer keyed by `archiveId` from `ledger` (if present). */
+  private removeArchivePointer(ledger: Ledger, archiveId: string): void {
+    const i = ledger.archivePointers.findIndex((p) => p.id === archiveId);
+    if (i >= 0) ledger.archivePointers.splice(i, 1);
   }
 
   private countReferences(milestoneId: string): Record<string, number> {

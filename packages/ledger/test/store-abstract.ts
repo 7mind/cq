@@ -851,5 +851,156 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
         }
       });
     });
+
+    // -----------------------------------------------------------------------
+    // Q78 — reopenItem (terminal → non-terminal) + unarchiveItem (group-keyed)
+    // -----------------------------------------------------------------------
+
+    describe("Q78 — reopenItem", () => {
+      it("moves a TERMINAL item to a chosen NON-terminal status (createdAt preserved, updatedAt fresh)", async () => {
+        const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+        try {
+          const m = await store.createMilestone({ title: "x" });
+          const created = await store.createItem(WIDGETS, m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "foo" },
+          });
+          const resolved = await store.updateItem(WIDGETS, created.id, {
+            status: "resolved",
+          });
+          await new Promise((r) => setTimeout(r, 2));
+          const reopened = await store.reopenItem(WIDGETS, created.id, "in-progress");
+          expect(reopened.status).toBe("in-progress");
+          // Intrinsic createdAt preserved; updatedAt bumped.
+          expect(reopened.createdAt).toBe(created.createdAt);
+          expect(isIsoTimestamp(reopened.updatedAt)).toBe(true);
+          expect(reopened.updatedAt >= resolved.updatedAt).toBe(true);
+          // Re-read confirms the persisted state.
+          expect(store.fetchItem(WIDGETS, created.id).status).toBe("in-progress");
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("rejects terminal → terminal, an unknown status, and reopening a non-terminal item", async () => {
+        const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+        try {
+          const m = await store.createMilestone({ title: "x" });
+          const created = await store.createItem(WIDGETS, m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "foo" },
+          });
+          // Reopening an item that is NOT terminal is refused.
+          await expect(
+            store.reopenItem(WIDGETS, created.id, "in-progress"),
+          ).rejects.toThrow(/non-terminal status/);
+          await store.updateItem(WIDGETS, created.id, { status: "resolved" });
+          // Terminal → terminal is refused.
+          await expect(
+            store.reopenItem(WIDGETS, created.id, "abandoned"),
+          ).rejects.toThrow(/terminal status/);
+          // Unknown status is refused.
+          await expect(
+            store.reopenItem(WIDGETS, created.id, "BOGUS"),
+          ).rejects.toThrow(/Invalid status/);
+          // Absent item is refused.
+          await expect(
+            store.reopenItem(WIDGETS, "W999", "open"),
+          ).rejects.toThrow(/Item not found/);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+    });
+
+    describe("Q78 — unarchiveItem (group-keyed)", () => {
+      it("re-attaches ONLY the requested item; remaining items stay archived; last item removal drops the group archive + pointer", async () => {
+        const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+        try {
+          const m = await store.createMilestone({ title: "M-unarch" });
+          const a = await store.createItem(WIDGETS, m.id, {
+            status: "resolved",
+            fields: { severity: "minor", location: "a.ts", description: "alpha" },
+          });
+          const b = await store.createItem(WIDGETS, m.id, {
+            status: "resolved",
+            fields: { severity: "major", location: "b.ts", description: "beta" },
+          });
+          await store.updateMilestone(m.id, { status: "done" });
+          await store.archiveMilestone(m.id, "summary");
+
+          // The whole group is archived (2 items); active ledger has no group.
+          const beforeArchive = await store.fetchArchive(WIDGETS, m.id);
+          expect(beforeArchive.kind).toBe("group");
+          if (beforeArchive.kind === "group") {
+            expect(beforeArchive.milestone.items.map((i) => i.id).sort()).toEqual(
+              [a.id, b.id].sort(),
+            );
+          }
+          expect(store.fetch(WIDGETS).milestones.map((g) => g.id)).toEqual([]);
+
+          // Un-archive ONLY item `a`.
+          const reA = await store.unarchiveItem(WIDGETS, m.id, a.id);
+          expect(reA.id).toBe(a.id);
+          expect(reA.milestoneId).toBe(m.id);
+          expect(reA.createdAt).toBe(a.createdAt);
+          expect(isIsoTimestamp(reA.updatedAt)).toBe(true);
+
+          // `a` is back in the active ledger under its group; `b` is NOT.
+          const grouped = store.listMilestoneItems(m.id);
+          expect(grouped[WIDGETS]?.map((i) => i.id)).toEqual([a.id]);
+
+          // The group archive was rewritten WITHOUT `a`; `b` stays archived.
+          const afterFirst = await store.fetchArchive(WIDGETS, m.id);
+          expect(afterFirst.kind).toBe("group");
+          if (afterFirst.kind === "group") {
+            expect(afterFirst.milestone.items.map((i) => i.id)).toEqual([b.id]);
+          }
+          // Pointer still present (group non-empty).
+          expect(store.fetch(WIDGETS).archivePointers.map((p) => p.id)).toEqual([m.id]);
+
+          // Un-archive the LAST item `b`: the group archive + pointer vanish.
+          const reB = await store.unarchiveItem(WIDGETS, m.id, b.id);
+          expect(reB.id).toBe(b.id);
+          expect(store.fetch(WIDGETS).archivePointers.map((p) => p.id)).toEqual([]);
+          await expect(store.fetchArchive(WIDGETS, m.id)).rejects.toThrow(
+            /archive .* not found/,
+          );
+          // Both items are now active under the group.
+          expect(
+            store.listMilestoneItems(m.id)[WIDGETS]?.map((i) => i.id).sort(),
+          ).toEqual([a.id, b.id].sort());
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+
+      it("errors when the archived group is absent, or the item is not in the group", async () => {
+        const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+        try {
+          const m = await store.createMilestone({ title: "M-x" });
+          const a = await store.createItem(WIDGETS, m.id, {
+            status: "resolved",
+            fields: { severity: "minor", location: "a.ts", description: "alpha" },
+          });
+          // No archive yet → absent group.
+          await expect(
+            store.unarchiveItem(WIDGETS, m.id, a.id),
+          ).rejects.toThrow(/no archived group/);
+          await store.updateMilestone(m.id, { status: "done" });
+          await store.archiveMilestone(m.id, "summary");
+          // Group exists but the requested item is not in it.
+          await expect(
+            store.unarchiveItem(WIDGETS, m.id, "W999"),
+          ).rejects.toThrow(/no item W999/);
+          // Unknown milestone group.
+          await expect(
+            store.unarchiveItem(WIDGETS, "M999", a.id),
+          ).rejects.toThrow(/no archived group/);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      });
+    });
   });
 }

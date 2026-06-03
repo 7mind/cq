@@ -25,6 +25,7 @@ import {
   InvalidStatusError,
   InvalidTransitionError,
   ItemNotFoundError,
+  LedgerError,
   MilestoneItemNotFoundError,
   MilestoneNotFoundError,
   MissingRequiredFieldError,
@@ -561,6 +562,86 @@ export function applyDetachMilestoneItem(
   };
   ledger.archivePointers.push(pointer);
   return { item, pointer };
+}
+
+/**
+ * Reopen a TERMINAL item: move it to a chosen NON-terminal status,
+ * bypassing the declarative transition guard (F1) but validating that
+ * `toStatus` is a real, non-terminal status of the ledger's schema (Q78).
+ *
+ * Preconditions:
+ *  - `itemId` exists in `ledger` (else `ItemNotFoundError`);
+ *  - the item is currently in a terminal status (else `LedgerError` — a
+ *    non-terminal item is reopened by an ordinary `updateItem`, not here);
+ *  - `toStatus` is a declared status value (else `InvalidStatusError`) and
+ *    is NOT terminal (else `LedgerError` — reopen targets a non-terminal
+ *    status by definition).
+ *
+ * Preserves `createdAt`; sets a fresh `updatedAt`. The transition guard is
+ * intentionally bypassed: a terminal status has no outgoing transitions, so
+ * the only way back is this explicit reopen op.
+ */
+export function applyReopenItem(
+  ledger: Ledger,
+  itemId: string,
+  toStatus: string,
+  now: string,
+): Item {
+  const { item } = findItem(ledger, itemId);
+  const terminal = new Set(ledger.schema.terminalStatuses);
+  if (!terminal.has(item.status)) {
+    throw new LedgerError(
+      `cannot reopen item ${itemId} in ledger ${ledger.id}: it is in non-terminal status "${item.status}" (use updateItem)`,
+    );
+  }
+  assertStatusAllowed(ledger, toStatus);
+  if (terminal.has(toStatus)) {
+    throw new LedgerError(
+      `cannot reopen item ${itemId} in ledger ${ledger.id} to terminal status "${toStatus}"; pick a non-terminal status`,
+    );
+  }
+  item.status = toStatus;
+  item.updatedAt = now;
+  return item;
+}
+
+/**
+ * Re-attach a previously-archived `item` to its active milestone-group
+ * `milestoneId` in `ledger` (Q78 un-archive). The depth-2 group is
+ * auto-created (bare title/description) when absent — mirroring the lazy
+ * group materialisation of `applyCreateItem`. Refuses a duplicate id.
+ *
+ * Preserves the item's intrinsic `createdAt`; sets a fresh `updatedAt`.
+ * Does NOT touch the ledger item counter: the id already belongs to the
+ * ledger's namespace (it was issued before archiving).
+ */
+export function applyReattachItem(
+  ledger: Ledger,
+  milestoneId: string,
+  item: Item,
+  now: string,
+): Item {
+  if (itemIdExists(ledger, item.id)) {
+    throw new DuplicateIdError("item", item.id);
+  }
+  let group = ledger.milestones.find((m) => m.id === milestoneId);
+  if (group === undefined) {
+    assertSafeId("milestone", milestoneId);
+    group = { id: milestoneId, title: "", description: "", items: [] };
+    ledger.milestones.push(group);
+  }
+  const reattached: Item = {
+    id: item.id,
+    milestoneId,
+    status: item.status,
+    fields: { ...item.fields },
+    createdAt: item.createdAt,
+    updatedAt: now,
+  };
+  if (item.author !== undefined) reattached.author = item.author;
+  if (item.session !== undefined) reattached.session = item.session;
+  group.items.push(reattached);
+  return reattached;
 }
 
 /**
