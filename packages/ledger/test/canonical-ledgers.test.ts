@@ -30,6 +30,8 @@ import {
   GOALS_LEDGER,
   REVIEWS_LEDGER,
   REVIEWS_SCHEMA,
+  HANDOFFS_LEDGER,
+  HANDOFFS_SCHEMA,
   InvalidStatusError,
   DEFECTS_SCHEMA,
   TASKS_SCHEMA,
@@ -215,9 +217,22 @@ for (const factory of [inMem, fs_]) {
         });
         expect(ids.has(review.id)).toBe(false);
         ids.add(review.id);
-        expect(ids.size).toBe(CASES.length + 1);
-        // Each id carries its ledger's distinct prefix.
-        expect([...ids].map((id) => id[0]).sort()).toEqual(["D", "G", "H", "K", "Q", "R", "T"]);
+        // `handoffs` is also excluded from CASES (all-terminal, no lifecycle
+        // update step), so mint one directly to exercise the `HO` prefix.
+        const handoff = await store.createItem(HANDOFFS_LEDGER, m.id, {
+          status: "drained",
+          fields: { summary: "all tasks drained" },
+        });
+        expect(ids.has(handoff.id)).toBe(false);
+        ids.add(handoff.id);
+        expect(ids.size).toBe(CASES.length + 2);
+        // Each id carries its ledger's distinct prefix (HO is a 2-char prefix).
+        const prefixes = [...ids].map((id) => {
+          // Extract the prefix: everything before the trailing digit sequence.
+          const m2 = id.match(/^([A-Z]+)\d+$/);
+          return m2 ? m2[1] : id;
+        });
+        expect(prefixes.sort()).toEqual(["D", "G", "H", "HO", "K", "Q", "R", "T"]);
       } finally {
         await store.dispose();
       }
@@ -327,6 +342,7 @@ describe("bootstrap idempotence + divergence guard", () => {
     [QUESTIONS_LEDGER, QUESTIONS_SCHEMA],
     [DECISIONS_LEDGER, DECISIONS_SCHEMA],
     [GOALS_LEDGER, GOALS_SCHEMA],
+    [HANDOFFS_LEDGER, HANDOFFS_SCHEMA],
   ];
 
   for (const [name] of schemas) {
@@ -553,3 +569,144 @@ describe("Req5: reviews summary field — all three registry copies", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// T137 — HANDOFFS_SCHEMA shape + bootstrap + lifecycle (all-terminal).
+// ---------------------------------------------------------------------------
+
+describe("HANDOFFS_SCHEMA shape", () => {
+  it("statusValues are exactly the 4 declared values", () => {
+    expect(HANDOFFS_SCHEMA.statusValues).toEqual([
+      "drained",
+      "answers-required",
+      "mixed",
+      "illness-detected",
+    ]);
+  });
+
+  it("all four statusValues are terminal", () => {
+    expect(HANDOFFS_SCHEMA.terminalStatuses).toEqual(HANDOFFS_SCHEMA.statusValues);
+  });
+
+  it("idPrefix is HO", () => {
+    expect(HANDOFFS_SCHEMA.idPrefix).toBe("HO");
+  });
+
+  it("all transitions are empty arrays (all-terminal)", () => {
+    expect(HANDOFFS_SCHEMA.transitions).toBeDefined();
+    const transitions = HANDOFFS_SCHEMA.transitions!;
+    for (const status of HANDOFFS_SCHEMA.statusValues) {
+      expect(transitions[status]).toEqual([]);
+    }
+  });
+
+  it("has exactly 8 fields: summary, flow, ledgerRefs, blockingQuestions, handoffReasons, sessionLogs, tags, sourceRefs", () => {
+    const fieldNames = Object.keys(HANDOFFS_SCHEMA.fields).sort();
+    expect(fieldNames).toEqual(
+      ["blockingQuestions", "flow", "handoffReasons", "ledgerRefs", "sessionLogs", "sourceRefs", "summary", "tags"],
+    );
+  });
+
+  it("summary is required:true, type:string", () => {
+    const f = HANDOFFS_SCHEMA.fields["summary"];
+    expect(f).toBeDefined();
+    expect(f!.type).toBe("string");
+    expect(f!.required).toBe(true);
+  });
+
+  it("flow is required:false, type:string", () => {
+    const f = HANDOFFS_SCHEMA.fields["flow"];
+    expect(f).toBeDefined();
+    expect(f!.type).toBe("string");
+    expect(f!.required).toBe(false);
+  });
+
+  it("ledgerRefs is required:false, type:id[]", () => {
+    const f = HANDOFFS_SCHEMA.fields["ledgerRefs"];
+    expect(f).toBeDefined();
+    expect(f!.type).toBe("id[]");
+    expect(f!.required).toBe(false);
+  });
+
+  it("blockingQuestions is required:false, type:id[]", () => {
+    const f = HANDOFFS_SCHEMA.fields["blockingQuestions"];
+    expect(f).toBeDefined();
+    expect(f!.type).toBe("id[]");
+    expect(f!.required).toBe(false);
+  });
+
+  it("handoffReasons is required:false, type:string[]", () => {
+    const f = HANDOFFS_SCHEMA.fields["handoffReasons"];
+    expect(f).toBeDefined();
+    expect(f!.type).toBe("string[]");
+    expect(f!.required).toBe(false);
+  });
+
+  it("CANONICAL_LEDGERS has 9 entries and handoffs is last", () => {
+    expect(CANONICAL_LEDGERS).toHaveLength(9);
+    expect(CANONICAL_LEDGERS[CANONICAL_LEDGERS.length - 1]!.name).toBe(HANDOFFS_LEDGER);
+  });
+});
+
+for (const factory of [inMem, fs_]) {
+  describe(`handoffs ledger — all-terminal lifecycle (${factory.name})`, () => {
+    it("bootstraps a fresh handoffs ledger file and creates items with HO prefix", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "handoffs milestone" });
+        const created = await store.createItem(HANDOFFS_LEDGER, m.id, {
+          status: "drained",
+          fields: {
+            summary: "All DAG-ready tasks processed to completion.",
+            flow: "implement",
+            handoffReasons: [],
+            tags: ["auto"],
+          },
+        });
+        expect(created.id).toBe("HO1");
+        expect(created.status).toBe("drained");
+        expect(created.fields["summary"]).toBe("All DAG-ready tasks processed to completion.");
+        expect(created.fields["flow"]).toBe("implement");
+
+        const fetched = store.fetchItem(HANDOFFS_LEDGER, created.id);
+        expect(fetched.id).toBe("HO1");
+        expect(fetched.status).toBe("drained");
+      } finally {
+        await store.dispose();
+      }
+    });
+
+    it("creates a mixed handoff with handoffReasons", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "mixed handoff" });
+        const created = await store.createItem(HANDOFFS_LEDGER, m.id, {
+          status: "mixed",
+          fields: {
+            summary: "Session stopped for multiple reasons.",
+            handoffReasons: ["drained", "answers-required"],
+          },
+        });
+        expect(created.status).toBe("mixed");
+        expect(created.fields["handoffReasons"]).toEqual(["drained", "answers-required"]);
+      } finally {
+        await store.dispose();
+      }
+    });
+
+    it("rejects an out-of-enum status", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "invalid handoff" });
+        await expect(
+          store.createItem(HANDOFFS_LEDGER, m.id, {
+            status: "done",
+            fields: { summary: "wrong status" },
+          }),
+        ).rejects.toThrow(InvalidStatusError);
+      } finally {
+        await store.dispose();
+      }
+    });
+  });
+}

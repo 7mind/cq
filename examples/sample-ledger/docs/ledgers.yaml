@@ -320,3 +320,46 @@ ledgers:
       transitions:
         go-ahead: []
         revise: []
+  - name: handoffs
+    schema:
+      statusValues:
+        - drained
+        - answers-required
+        - mixed
+        - illness-detected
+      terminalStatuses:
+        - drained
+        - answers-required
+        - mixed
+        - illness-detected
+      fields:
+        summary:
+          type: string
+          required: true
+        flow:
+          type: string
+          required: false
+        ledgerRefs:
+          type: id[]
+          required: false
+        blockingQuestions:
+          type: id[]
+          required: false
+        handoffReasons:
+          type: string[]
+          required: false
+        sessionLogs:
+          type: string[]
+          required: false
+        tags:
+          type: string[]
+          required: false
+        sourceRefs:
+          type: string[]
+          required: false
+      idPrefix: HO
+      transitions:
+        drained: []
+        answers-required: []
+        mixed: []
+        illness-detected: []

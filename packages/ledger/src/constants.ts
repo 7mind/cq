@@ -81,6 +81,7 @@ export const QUESTIONS_LEDGER = "questions" as const;
 export const DECISIONS_LEDGER = "decisions" as const;
 export const GOALS_LEDGER = "goals" as const;
 export const REVIEWS_LEDGER = "reviews" as const;
+export const HANDOFFS_LEDGER = "handoffs" as const;
 
 /**
  * Common cross-cutting fields shared by the canonical ledgers (§1). Spread
@@ -302,6 +303,54 @@ export const REVIEWS_SCHEMA: LedgerSchema = {
 };
 
 /**
+ * Handoffs ledger — records implement-flow / plan-flow session handoffs.
+ * The item `status` IS the handoff outcome; all four statuses are terminal
+ * (a handoff is an immutable record of one session's exit state).
+ * idPrefix HO — distinct from the existing single-char prefixes M/D/T/H/Q/K/G/R.
+ *
+ * statusValues:
+ *   - drained: the session processed all available DAG-ready tasks to completion.
+ *   - answers-required: the session stopped because one or more blocking questions
+ *     need user answers before progress can resume.
+ *   - mixed: the session stopped for multiple reasons (e.g. both drained and
+ *     answers-required); see `handoffReasons` for the exact mix (per Q83).
+ *   - illness-detected: a defect or invariant violation was detected that the
+ *     session could not resolve autonomously.
+ *
+ * Fields are bespoke (NOT spread from COMMON_REF_FIELDS):
+ *   - summary: human-readable handoff summary (required).
+ *   - flow: which flow produced this handoff — advance | plan | implement |
+ *     investigate. String-typed (not enum-enforced at schema level).
+ *   - ledgerRefs: advisory cross-references to ledger items (e.g. tasks:T42).
+ *   - blockingQuestions: ids of questions preventing progress.
+ *   - handoffReasons: explains a `mixed` stop (e.g. ["drained","answers-required"]).
+ *   - sessionLogs: paths or inline excerpts of session logs.
+ *   - tags: free-form tags.
+ *   - sourceRefs: source file / commit / URL references.
+ */
+export const HANDOFFS_SCHEMA: LedgerSchema = {
+  statusValues: ["drained", "answers-required", "mixed", "illness-detected"],
+  terminalStatuses: ["drained", "answers-required", "mixed", "illness-detected"],
+  idPrefix: "HO",
+  transitions: {
+    drained: [],
+    "answers-required": [],
+    mixed: [],
+    "illness-detected": [],
+  },
+  fields: {
+    summary: { type: "string", required: true },
+    flow: { type: "string", required: false },
+    ledgerRefs: { type: "id[]", required: false },
+    blockingQuestions: { type: "id[]", required: false },
+    handoffReasons: { type: "string[]", required: false },
+    sessionLogs: { type: "string[]", required: false },
+    tags: { type: "string[]", required: false },
+    sourceRefs: { type: "string[]", required: false },
+  },
+};
+
+/**
  * Bootstrap manifest. `milestones` MUST be first (the others reference it
  * for milestone-group resolution). On init() every entry is provisioned if
  * its file is absent and guarded against on-disk schema divergence.
@@ -315,6 +364,7 @@ export const CANONICAL_LEDGERS: ReadonlyArray<{ name: string; schema: LedgerSche
   { name: DECISIONS_LEDGER, schema: DECISIONS_SCHEMA },
   { name: GOALS_LEDGER, schema: GOALS_SCHEMA },
   { name: REVIEWS_LEDGER, schema: REVIEWS_SCHEMA },
+  { name: HANDOFFS_LEDGER, schema: HANDOFFS_SCHEMA },
 ];
 
 /**
