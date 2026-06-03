@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 119
+  item: 122
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -481,6 +481,17 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T120","goals:G6"]
 
+### R120 — go-ahead
+
+- createdAt: 2026-06-03T04:40:27.368Z
+- updatedAt: 2026-06-03T04:40:27.368Z
+- author: "opus-4.8[1m]"
+- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
+- summary: "T121 approved: implement/advance.md:198 defect-terminal corrected to resolved/wontfix; the 8 other abandoned/blocked matches are TASK-status or dependsOn/blockedBy refs, correctly untouched; reviewer-filed-defects section unchanged; diff confined (1 file, 2 lines)."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T121","goals:G6"]
+
 ## M32
 
 ### R118 — go-ahead
@@ -494,6 +505,17 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T123","goals:G6"]
 
+### R121 — go-ahead
+
+- createdAt: 2026-06-03T04:40:29.967Z
+- updatedAt: 2026-06-03T04:40:29.967Z
+- author: "opus-4.8[1m]"
+- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
+- summary: "T124 approved: --reset/--yes parseArgs honouring --cwd; confirm policy correct (--yes unattended, TTY y/Y, non-TTY-no-yes exit2 before any store constructed/no mutation); calls store.reset() prints backupDir+summary, no server started; serve paths byte-identical when --reset absent; IO-injection exercises real policy+reset against a real tmp tree; tsc + 23/0 targeted; diff confined to ledger-mcp."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T124","goals:G6"]
+
 ## M31
 
 ### R119 — go-ahead
@@ -506,3 +528,14 @@ archives:
 - criticism: []
 - new_questions: []
 - ledgerRefs: ["tasks:T125","goals:G6"]
+
+### R122 — go-ahead
+
+- createdAt: 2026-06-03T04:40:31.144Z
+- updatedAt: 2026-06-03T04:40:31.144Z
+- author: "opus-4.8[1m]"
+- session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
+- summary: "T126 approved: LINKS entry shape/path correct (top-level no-ns), link-prompts materialises .claude/commands/advance.md→../../llm/commands/advance.md resolving to source; committed .codex/prompts/advance.md symlink matches sibling ../../llm convention + resolves; .claude/ not committed; tsc clean; diff confined to 2 files."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T126","goals:G6"]

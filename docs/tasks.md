@@ -318,10 +318,10 @@ archives:
 - resultCommit: 6818f7a
 - completion: "plan/advance.md + plan-advance.md: auto-investigate worklist keyed to open/wip/inconclusive actionable, seed gate status==root-caused, resolved/wontfix excluded; K12 hypothesis-tree predicates (b)/(c)/(d) untouched."
 
-### T121 — wip
+### T121 — done
 
 - createdAt: 2026-06-03T00:42:18.563Z
-- updatedAt: 2026-06-03T02:42:30.158Z
+- updatedAt: 2026-06-03T04:40:06.423Z
 - author: "opus-4.8[1m]"
 - session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
 - headline: "implement/advance.md: align defect-terminal vocabulary with the locked set (abandoned->wontfix at :198; reviewer-filed defects already status:open)"
@@ -337,6 +337,8 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T116"]
 - ledgerRefs: ["goals:G6"]
+- resultCommit: f546fe2
+- completion: "implement/advance.md:198 defect-terminal ref abandoned→wontfix (per T116 schema); task-status `abandoned` (:199) + blocked/blockedBy dependency refs correctly untouched; reviewer-filed-defects section unchanged (status:open)."
 
 ### T122 — planned
 
@@ -367,10 +369,10 @@ archives:
 - resultCommit: af0d882
 - completion: "Public FsLedgerStore.reset() → ResetSummary{backupDir,ledgers:[{name,itemCount}]}: pre-counts, reuses backupAndReinit (now returns backup dir), reloads canonical via init(). Test asserts backup contents + canonical empty + counts + new defect status set."
 
-### T124 — planned
+### T124 — done
 
 - createdAt: 2026-06-03T00:43:10.514Z
-- updatedAt: 2026-06-03T00:43:10.514Z
+- updatedAt: 2026-06-03T04:40:12.621Z
 - author: "opus-4.8[1m]"
 - session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
 - headline: "ledger-mcp: add --reset flag (TTY y/N confirm + --yes skip), short-circuit main() to reset then exit"
@@ -379,6 +381,8 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T123"]
 - ledgerRefs: ["goals:G6"]
+- resultCommit: 8ac6c29
+- completion: "ledger-mcp --reset/--yes: parseArgs + main() short-circuit to exported runReset(cwd,yes,ResetIo) — Q64 confirm (--yes unattended, TTY y/N, non-TTY-no-yes refuses exit2 no-mutation), calls store.reset(), prints backupDir+summary, exits without serving. 23/0 targeted tests."
 
 ## M31
 
@@ -397,10 +401,10 @@ archives:
 - resultCommit: 010f323
 - completion: "Authored llm/commands/advance.md: main-session command-of-commands sequencer (3 ledger-query predicates over new defect statuses, investigate→plan→implement loop-to-quiescence no-cap, plan-owns-auto-investigate, DRAINED/BLOCKED/MIXED report). T126 wires it; T128 fills the sweep placeholder."
 
-### T126 — planned
+### T126 — done
 
 - createdAt: 2026-06-03T00:43:46.828Z
-- updatedAt: 2026-06-03T00:43:46.828Z
+- updatedAt: 2026-06-03T04:40:18.866Z
 - author: "opus-4.8[1m]"
 - session: fe0aaf85-56b3-45ce-a7fc-718ab19c37e1
 - headline: Wire /advance into scripts/link-prompts.ts LINKS + add committed .codex/prompts/advance.md symlink
@@ -409,6 +413,8 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T125"]
 - ledgerRefs: ["goals:G6"]
+- resultCommit: 7b758a2
+- completion: "Wired /advance: LINKS entry (.claude/commands/advance.md→../../llm/commands/advance.md, no-namespace) + committed .codex/prompts/advance.md symlink matching sibling convention; link-prompts materialises cleanly."
 
 ### T127 — planned
 
