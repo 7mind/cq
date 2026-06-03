@@ -38,6 +38,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import {
   FsLedgerStore,
   type LedgerStore,
+  type ResetSummary,
   registerLedgerStdioTools,
 } from "@cq/ledger";
 import { startLedgerWatcher } from "./watcher.js";
@@ -84,6 +85,10 @@ export interface HttpOpts {
 export interface ParsedArgs {
   cwd: string;
   http: HttpOpts | null;
+  /** `--reset`: wipe-and-reinit the ledgers at `cwd`, then exit without serving. */
+  reset: boolean;
+  /** `--yes`/`-y`: skip the interactive reset confirmation (unattended). */
+  yes: boolean;
 }
 
 /**
@@ -109,9 +114,15 @@ function parseHttp(value: string): HttpOpts {
 export function parseArgs(argv: readonly string[]): ParsedArgs {
   let cwd: string | undefined;
   let http: HttpOpts | null = null;
+  let reset = false;
+  let yes = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--cwd") {
+    if (a === "--reset") {
+      reset = true;
+    } else if (a === "--yes" || a === "-y") {
+      yes = true;
+    } else if (a === "--cwd") {
       i += 1;
       const v = argv[i];
       if (v === undefined) {
@@ -139,7 +150,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   const fromEnv = process.env["LEDGER_ROOT"];
   const chosen = fromArg ?? (fromEnv !== undefined && fromEnv !== "" ? fromEnv : undefined);
   const resolved = chosen !== undefined ? path.resolve(chosen) : process.cwd();
-  return { cwd: resolved, http };
+  return { cwd: resolved, http, reset, yes };
 }
 
 /** Build a fresh McpServer with the 14 ledger tools bound to `store`. */
@@ -358,9 +369,113 @@ export function changedFrame(ledgerId: string | null): string {
   return JSON.stringify(ledgerId !== null ? { type: "changed", ledger: ledgerId } : { type: "changed" });
 }
 
+/**
+ * Injectable IO for the `--reset` path, so the operator-facing confirmation +
+ * exit can be driven from a test without touching the real TTY / killing the
+ * test process. Production wires these to `process.std*` and `readline`.
+ */
+export interface ResetIo {
+  /** Whether stdin is an interactive terminal (gates the prompt). */
+  isTty: boolean;
+  /** Write an informational/summary line (stdout in production). */
+  out(line: string): void;
+  /** Write a warning/error line (stderr in production). */
+  err(line: string): void;
+  /**
+   * Show `question`, read one line, resolve the trimmed answer. Only called on
+   * a TTY without `--yes`. Production reads a single line via `readline`.
+   */
+  prompt(question: string): Promise<string>;
+}
+
+/** Outcome of {@link runReset}: the exit code main() should propagate. */
+export interface ResetOutcome {
+  exitCode: number;
+  /** The reset summary when the wipe actually ran; null if refused/aborted. */
+  summary: ResetSummary | null;
+}
+
+function defaultResetIo(): ResetIo {
+  return {
+    isTty: process.stdin.isTTY === true,
+    out: (line) => process.stdout.write(`${line}\n`),
+    err: (line) => process.stderr.write(`${line}\n`),
+    prompt: async (question) => {
+      const rl = (await import("node:readline")).createInterface({
+        input: process.stdin,
+        output: process.stderr,
+      });
+      try {
+        return await new Promise<string>((resolve) => rl.question(question, resolve));
+      } finally {
+        rl.close();
+      }
+    },
+  };
+}
+
+/**
+ * The `--reset` short-circuit (Q64): confirm, then wipe-and-reinit the ledgers
+ * at `cwd` via the public {@link FsLedgerStore.reset}, print the backup dir +
+ * per-ledger summary, and return an exit code. NEVER starts a server.
+ *
+ * Confirmation policy:
+ *   - `--yes`            → proceed unattended (no prompt).
+ *   - TTY, no `--yes`    → prompt; proceed only on a `y`/`Y` answer.
+ *   - non-TTY, no `--yes`→ REFUSE (exit 2) — never wipe a tree silently.
+ *
+ * Factored out of main() so a test can drive it with an injected ResetIo and
+ * assert the filesystem effects without the process.exit that main() applies.
+ */
+export async function runReset(
+  cwd: string,
+  yes: boolean,
+  io: ResetIo = defaultResetIo(),
+): Promise<ResetOutcome> {
+  if (!yes) {
+    if (!io.isTty) {
+      io.err(
+        `ledger-mcp: refusing to reset ledgers at ${cwd} without confirmation; ` +
+          `re-run with --yes to reset non-interactively.`,
+      );
+      return { exitCode: 2, summary: null };
+    }
+    const answer = await io.prompt(
+      `Reset ledgers at ${cwd}? Backup will be written to docs/.backup/. [y/N] `,
+    );
+    if (answer.trim().toLowerCase() !== "y") {
+      io.err("ledger-mcp: reset aborted.");
+      return { exitCode: 1, summary: null };
+    }
+  }
+
+  const store = new FsLedgerStore({ root: cwd });
+  await store.init();
+  let summary: ResetSummary;
+  try {
+    summary = await store.reset();
+  } finally {
+    await store.dispose();
+  }
+
+  io.out(`ledger-mcp: reset ledgers at ${cwd}`);
+  io.out(`  backup: ${summary.backupDir}`);
+  for (const { name, itemCount } of summary.ledgers) {
+    io.out(`  ${name}: ${itemCount} item(s) backed up, reinitialised empty`);
+  }
+  return { exitCode: 0, summary };
+}
+
 export async function main(argv: readonly string[]): Promise<void> {
-  const { cwd, http } = parseArgs(argv);
+  const { cwd, http, reset, yes } = parseArgs(argv);
   const displayName = path.basename(cwd);
+
+  // --reset short-circuit: confirm, wipe-and-reinit, print summary, exit.
+  // NEVER falls through to start a watcher/HTTP/stdio server.
+  if (reset) {
+    const { exitCode } = await runReset(cwd, yes);
+    process.exit(exitCode);
+  }
 
   // Construct the store, init it, then register tools. If init fails we
   // surface the error to stderr and exit non-zero — the parent MCP client
