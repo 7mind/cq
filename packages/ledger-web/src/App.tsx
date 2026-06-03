@@ -23,6 +23,7 @@ import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
 import { LiveManager, type LiveStats } from "@cq/ledger-live";
 import { defectFixTaskIds, hypothesisRelationships } from "@cq/ledger/relationships";
+import { HoldButton, type HoldClock } from "./HoldButton.js";
 // Leaf subpath: the @cq/ledger index pulls Node builtins (node:fs/os/path),
 // which must not enter the browser bundle. `./columns` is side-effect-free and
 // Node-free, mirroring the `./relationships` leaf import above.
@@ -218,9 +219,11 @@ export interface AppProps {
   liveUrl?: string | null;
   /** Injectable WebSocket ctor (tests); defaults to the global. */
   liveWsCtor?: { new (url: string): WebSocket };
+  /** Injectable HoldClock for tests; defaults to the real browser clock. */
+  holdClock?: HoldClock | undefined;
 }
 
-export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProps): React.ReactElement {
+export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock }: AppProps): React.ReactElement {
   const [url, setUrl] = useState(initialUrl);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -999,6 +1002,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
           onNext={() => setBatchIndex((i) => Math.min(batchRows.length - 1, i + 1))}
           onSave={batchSave}
           onClose={() => setBatchOpen(false)}
+          holdClock={holdClock}
         />
       )}
 
@@ -1172,6 +1176,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
                     }
                   }}
                   onCancel={() => setCreating(null)}
+                  holdClock={holdClock}
                 />
               )}
               <ItemTable
@@ -1270,6 +1275,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
                     void createDraft(milestoneId, status, fields)
                   }
                   onClose={() => setCreating(null)}
+                  holdClock={holdClock}
                 />
               ) : selectedArchiveRow !== null ? (
                 <DetailPanel
@@ -1281,6 +1287,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
                   onToggleOrientation={toggleOrientation}
                   isArchived={true}
                   onClose={() => setSelectedArchiveRow(null)}
+                  holdClock={holdClock}
                 />
               ) : (
                 selected !== null && (
@@ -1296,6 +1303,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
                     allCurrentItems={allCurrentItems}
                     auxItems={auxItems}
                     onNavigateToItem={(targetLedger, itemId) => void navigateToItem(targetLedger, itemId)}
+                    holdClock={holdClock}
                   />
                 )
               )}
@@ -1396,6 +1404,7 @@ function BatchAnswerModal({
   onNext,
   onSave,
   onClose,
+  holdClock,
 }: {
   rows: Row[];
   index: number;
@@ -1403,6 +1412,7 @@ function BatchAnswerModal({
   onNext: () => void;
   onSave: (row: Row, answer: string) => void;
   onClose: () => void;
+  holdClock?: HoldClock | undefined;
 }): React.ReactElement {
   const answerRef = useRef<HTMLTextAreaElement>(null);
   // True once the user has typed at least one non-whitespace character; gates
@@ -1458,15 +1468,15 @@ function BatchAnswerModal({
                           {items.map((suggestion, i) => (
                             <li key={i}>
                               {suggestion}
-                              <button
-                                type="button"
+                              <HoldButton
                                 className="lw-pick-suggestion"
                                 data-testid={`batch-pick-suggestion-${i}`}
                                 disabled={answerHasText}
-                                onClick={() => onSave(row, suggestion)}
+                                onConfirm={() => onSave(row, suggestion)}
+                                clock={holdClock}
                               >
                                 pick
-                              </button>
+                              </HoldButton>
                             </li>
                           ))}
                         </ul>
@@ -1498,22 +1508,22 @@ function BatchAnswerModal({
                 onInput={(e) => setAnswerHasText((e.currentTarget as HTMLTextAreaElement).value.trim().length > 0)}
               />
               <div className="lw-answer-actions">
-                <button
-                  type="button"
+                <HoldButton
                   data-testid="batch-answer-submit"
-                  onClick={() => onSave(row, answerRef.current?.value ?? "")}
+                  onConfirm={() => onSave(row, answerRef.current?.value ?? "")}
+                  clock={holdClock}
                 >
                   save &amp; mark answered
-                </button>
+                </HoldButton>
                 {fieldToString(row.item.fields[RECOMMENDATION_FIELD]).trim().length > 0 && (
-                  <button
-                    type="button"
+                  <HoldButton
                     data-testid="batch-answer-as-recommended"
                     disabled={answerHasText}
-                    onClick={() => onSave(row, AS_RECOMMENDED_ANSWER)}
+                    onConfirm={() => onSave(row, AS_RECOMMENDED_ANSWER)}
+                    clock={holdClock}
                   >
                     as recommended
-                  </button>
+                  </HoldButton>
                 )}
               </div>
             </div>
@@ -2143,6 +2153,7 @@ function DetailPanel({
   allCurrentItems,
   auxItems,
   onNavigateToItem,
+  holdClock,
 }: {
   row: Row;
   ledger: string;
@@ -2163,6 +2174,8 @@ function DetailPanel({
   auxItems?: Record<string, Item[]>;
   /** Navigate to a specific item in a (possibly different) ledger. */
   onNavigateToItem?: (targetLedger: string, itemId: string) => void;
+  /** Injectable HoldClock for tests; defaults to the real browser clock. */
+  holdClock?: HoldClock | undefined;
 }): React.ReactElement {
   const isDraft = draftMilestones !== undefined;
   const fieldNames = Object.keys(schema.fields);
@@ -2228,9 +2241,9 @@ function DetailPanel({
             <button type="button" data-testid="cancel-edit" onClick={cancel}>
               cancel
             </button>
-            <button type="button" data-testid="save" onClick={save}>
+            <HoldButton data-testid="save" onConfirm={save} clock={holdClock}>
               {isDraft ? "create" : "save"}
-            </button>
+            </HoldButton>
           </>
         ) : (
           <>
@@ -2389,18 +2402,18 @@ function DetailPanel({
         onInput={(e) => setAnswerHasText((e.currentTarget as HTMLTextAreaElement).value.trim().length > 0)}
       />
       <div className="lw-answer-actions">
-        <button type="button" data-testid="answer-submit" onClick={submitAnswer}>
+        <HoldButton data-testid="answer-submit" onConfirm={submitAnswer} clock={holdClock}>
           save &amp; mark answered
-        </button>
+        </HoldButton>
         {hasRecommendation && (
-          <button
-            type="button"
+          <HoldButton
             data-testid="answer-as-recommended"
             disabled={answerHasText}
-            onClick={() => answerWith(AS_RECOMMENDED_ANSWER)}
+            onConfirm={() => answerWith(AS_RECOMMENDED_ANSWER)}
+            clock={holdClock}
           >
             as recommended
-          </button>
+          </HoldButton>
         )}
       </div>
     </div>
@@ -2467,15 +2480,15 @@ function DetailPanel({
                     <li key={i}>
                       {item}
                       {answerable && (
-                        <button
-                          type="button"
+                        <HoldButton
                           className="lw-pick-suggestion"
                           data-testid={`answer-pick-suggestion-${i}`}
                           disabled={answerHasText}
-                          onClick={() => answerWith(item)}
+                          onConfirm={() => answerWith(item)}
+                          clock={holdClock}
                         >
                           pick
-                        </button>
+                        </HoldButton>
                       )}
                     </li>
                   ))}
@@ -2762,9 +2775,11 @@ function HypothesisTreePanel({
 function CreateMilestoneForm({
   onCreate,
   onCancel,
+  holdClock,
 }: {
   onCreate: (title: string) => void;
   onCancel: () => void;
+  holdClock?: HoldClock | undefined;
 }): React.ReactElement {
   const ref = useRef<HTMLInputElement>(null);
   const go = (): void => {
@@ -2781,9 +2796,9 @@ function CreateMilestoneForm({
       }}
     >
       <input data-testid="ms-title" placeholder="milestone title" ref={ref} defaultValue="" />
-      <button type="button" data-testid="ms-create" onClick={go}>
+      <HoldButton data-testid="ms-create" onConfirm={go} clock={holdClock}>
         create
-      </button>
+      </HoldButton>
       <button type="button" onClick={onCancel}>
         cancel
       </button>

@@ -14,6 +14,55 @@ import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App, clampPanelSize } from "../src/App";
 import { FakeClient } from "./fakeClient";
+import type { HoldClock } from "../src/HoldButton";
+import { HOLD_MS } from "../src/HoldButton";
+
+/**
+ * Deterministic fake clock for driving HoldButton in tests.
+ * Mirrors the FakeClock in holdButton.test.tsx.
+ */
+class FakeClock implements HoldClock {
+  private current = 0;
+  private nextHandle = 1;
+  private scheduled = new Map<number, { due: number; cb: () => void }>();
+
+  now(): number {
+    return this.current;
+  }
+
+  setTimeout(cb: () => void, ms: number): number {
+    const handle = this.nextHandle++;
+    this.scheduled.set(handle, { due: this.current + ms, cb });
+    return handle;
+  }
+
+  clearTimeout(handle: number): void {
+    this.scheduled.delete(handle);
+  }
+
+  advance(ms: number): void {
+    const target = this.current + ms;
+    for (;;) {
+      let nextHandle: number | null = null;
+      let nextDue = Infinity;
+      for (const [handle, entry] of this.scheduled) {
+        if (entry.due <= target && entry.due < nextDue) {
+          nextDue = entry.due;
+          nextHandle = handle;
+        }
+      }
+      if (nextHandle === null) break;
+      const entry = this.scheduled.get(nextHandle)!;
+      this.scheduled.delete(nextHandle);
+      this.current = entry.due;
+      entry.cb();
+    }
+    this.current = target;
+  }
+}
+
+/** Shared clock injected into App so tests can drive HoldButton synchronously. */
+let holdClock: FakeClock;
 
 let container: HTMLElement;
 let root: Root;
@@ -66,10 +115,25 @@ function pressOn(el: Element | null, key: string): void {
     el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
   });
 }
+/**
+ * Perform a completed hold gesture on a HoldButton: pointerdown then advance
+ * the fake clock by HOLD_MS so onConfirm fires.
+ */
+async function holdFull(el: Element | null): Promise<void> {
+  if (el === null) throw new Error("holdFull: element not found");
+  act(() => {
+    el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+  });
+  act(() => {
+    holdClock.advance(HOLD_MS);
+  });
+  await flush();
+}
 async function mount(): Promise<void> {
+  holdClock = new FakeClock();
   fake = new FakeClient();
   await act(async () => {
-    root.render(createElement(App, { connect: async () => fake, initialUrl: "http://x/mcp" }));
+    root.render(createElement(App, { connect: async () => fake, initialUrl: "http://x/mcp", holdClock }));
   });
   await flush(); // resolve connect + enumerateLedgers
 }
@@ -187,8 +251,7 @@ describe("ledger-web App", () => {
     await flush();
     expect(testid("answer-box")).not.toBeNull();
     setValue(testid("answer-input"), "ship it");
-    click(testid("answer-submit"));
-    await flush();
+    await holdFull(testid("answer-submit"));
     const q = await fake.fetchItem("questions", "Q1");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("ship it");
@@ -200,8 +263,7 @@ describe("ledger-web App", () => {
     await flush();
     click(testid("item-Q1"));
     await flush();
-    click(testid("answer-as-recommended"));
-    await flush();
+    await holdFull(testid("answer-as-recommended"));
     const q = await fake.fetchItem("questions", "Q1");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("as recommended");
@@ -312,8 +374,7 @@ describe("ledger-web App", () => {
     expect(testid("edit-form")).not.toBeNull();
     setValue(testid("edit-status"), "wip");
     setValue(testid("edit-field-headline"), "warp leak fixed");
-    click(testid("save"));
-    await flush();
+    await holdFull(testid("save"));
     const item = await fake.fetchItem("bugs", "D1");
     expect(item.status).toBe("wip");
     expect(item.fields["headline"]).toBe("warp leak fixed");
@@ -390,8 +451,7 @@ describe("ledger-web App", () => {
     click(testid("new-item-or-milestone"));
     await flush();
     setValue(testid("ms-title"), "Phase Two");
-    click(testid("ms-create"));
-    await flush();
+    await holdFull(testid("ms-create"));
     expect(testid("flash")?.textContent).toContain("created M2");
     const ms = await fake.fetchLedger("milestones");
     const titles = ms.milestones.flatMap((g) => g.items.map((i) => i.fields["title"]));
@@ -409,8 +469,7 @@ describe("ledger-web App", () => {
     expect(testid("edit-milestone")).not.toBeNull();
     expect(testid("detail-id")?.textContent).toBe("new item");
     setValue(testid("edit-field-headline"), "ion drive misalignment");
-    click(testid("save"));
-    await flush();
+    await holdFull(testid("save"));
     const ledger = await fake.fetchLedger("bugs");
     const headlines = ledger.milestones.flatMap((g) => g.items.map((i) => i.fields["headline"]));
     expect(headlines).toContain("ion drive misalignment");
@@ -896,8 +955,7 @@ describe("ledger-web App", () => {
     expect(testid("edit-form")).not.toBeNull();
     setValue(testid("edit-status"), "wip");
     setValue(testid("edit-field-headline"), "warp leak [T34 regression]");
-    click(testid("save"));
-    await flush();
+    await holdFull(testid("save"));
     const item = await fake.fetchItem("bugs", "D1");
     expect(item.status).toBe("wip");
     expect(item.fields["headline"]).toBe("warp leak [T34 regression]");
@@ -1187,8 +1245,7 @@ describe("ledger-web keyboard navigation", () => {
     click(testid("batch-open"));
     await flush();
     setValue(testid("batch-answer-input"), "ship it");
-    click(testid("batch-answer-submit"));
-    await flush();
+    await holdFull(testid("batch-answer-submit"));
     const q1 = await fake.fetchItem("questions", "Q1");
     expect(q1.status).toBe("answered");
     expect(q1.fields["answer"]).toBe("ship it");
@@ -1200,8 +1257,7 @@ describe("ledger-web keyboard navigation", () => {
     await mount();
     click(testid("batch-open"));
     await flush();
-    click(testid("batch-answer-as-recommended"));
-    await flush();
+    await holdFull(testid("batch-answer-as-recommended"));
     const q1 = await fake.fetchItem("questions", "Q1");
     expect(q1.status).toBe("answered");
     expect(q1.fields["answer"]).toBe("as recommended");
