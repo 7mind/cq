@@ -274,6 +274,9 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
   const [batchRows, setBatchRows] = useState<Row[]>([]);
   const [batchSchema, setBatchSchema] = useState<LedgerSchema | null>(null);
   const [batchIndex, setBatchIndex] = useState(0);
+  // Tracks IDs answered during this batch session so we can recompute the
+  // remaining-open set after each save (D19). Cleared when the modal opens.
+  const batchAnsweredRef = useRef<Set<string>>(new Set());
 
   // Filters are per-ledger; reset them whenever the active ledger changes.
   useEffect(() => {
@@ -520,6 +523,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
       setBatchRows(open);
       setBatchSchema(v.schema);
       setBatchIndex(0);
+      batchAnsweredRef.current = new Set();
       setBatchOpen(true);
     } catch (e) {
       setFlash(errMsg(e));
@@ -527,9 +531,11 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
   }, [client]);
 
   // Persist one batch answer: write the `answer` field + the `answered` status
-  // for the row at `i`, then advance to the next step. Mirrors the detail
-  // panel's answer path (update_item, UI_AUTHOR provenance) and refreshes the
-  // underlying ledger view so counts/badges stay current.
+  // for the row at `i`, then advance to the next still-open question. After
+  // persisting, we track answered IDs locally (batchAnsweredRef) and recompute
+  // the remaining-open set. If it is empty the modal closes; otherwise the
+  // index advances to the next unanswered row so mid-queue answers do not
+  // strand the modal on an already-answered row (D19 / T115).
   const batchSave = useCallback(
     async (row: Row, answer: string) => {
       if (client === null) return;
@@ -540,13 +546,24 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor }: AppProp
           author: UI_AUTHOR,
         });
         setFlash(`saved ${row.item.id}`);
-        setBatchIndex((i) => Math.min(batchRows.length - 1, i + 1));
+        // Track this answer locally and recompute the remaining-open set.
+        batchAnsweredRef.current.add(row.item.id);
+        const remaining = batchRows.filter((r) => !batchAnsweredRef.current.has(r.item.id));
+        if (remaining.length === 0) {
+          setBatchOpen(false);
+        } else {
+          // Advance to the next still-open row after the current position.
+          const currentOrigIdx = batchRows.findIndex((r) => r.item.id === row.item.id);
+          const nextRow =
+            remaining.find((r) => batchRows.indexOf(r) > currentOrigIdx) ?? remaining[0]!;
+          setBatchIndex(batchRows.indexOf(nextRow));
+        }
         if (ledger === QUESTIONS_LEDGER) await reload();
       } catch (e) {
         setFlash(errMsg(e));
       }
     },
-    [client, batchRows.length, ledger, reload],
+    [client, batchRows, ledger, reload],
   );
 
   const runSearch = useCallback(
