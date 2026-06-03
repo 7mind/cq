@@ -2502,15 +2502,15 @@ function DetailPanel({
             <dd>
               <div className="lw-transitions" data-testid="transitions">
                 {transitionTargets.map((target) => (
-                  <button
+                  <HoldButton
                     key={target}
-                    type="button"
                     className={`lw-transition lw-status-${statusBucket(target, schema)}`}
                     data-testid={`transition-${target}`}
-                    onClick={() => onSave(target, row.item.fields as Record<string, FieldValue>)}
+                    onConfirm={() => onSave(target, row.item.fields as Record<string, FieldValue>)}
+                    clock={holdClock}
                   >
                     {target}
-                  </button>
+                  </HoldButton>
                 ))}
               </div>
             </dd>
@@ -2549,17 +2549,17 @@ function DetailPanel({
                 <dd>
                   <div className="lw-transitions" data-testid="transitions">
                     {transitionTargets.map((target) => (
-                      <button
+                      <HoldButton
                         key={target}
-                        type="button"
                         className={`lw-transition lw-status-${statusBucket(target, schema)}`}
                         data-testid={`transition-${target}`}
-                        onClick={() =>
+                        onConfirm={() =>
                           onSave(target, row.item.fields as Record<string, FieldValue>)
                         }
+                        clock={holdClock}
                       >
                         {target}
-                      </button>
+                      </HoldButton>
                     ))}
                   </div>
                 </dd>

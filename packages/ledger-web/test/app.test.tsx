@@ -336,9 +336,8 @@ describe("ledger-web App", () => {
     expect(testid("transition-wip")).not.toBeNull();
     expect(testid("transition-closed")).not.toBeNull();
     expect(testid("transition-open")).toBeNull();
-    // Click "wip": issues the update with the target status, preserving fields.
-    click(testid("transition-wip"));
-    await flush();
+    // Hold "wip": issues the update with the target status, preserving fields.
+    await holdFull(testid("transition-wip"));
     const item = await fake.fetchItem("bugs", "D1");
     expect(item.status).toBe("wip");
     expect(item.fields["headline"]).toBe("warp leak"); // unchanged
@@ -906,8 +905,7 @@ describe("ledger-web App", () => {
 
     // (6) Quick-transition from the new status still works (wip → closed/open).
     expect(testid("transitions")).not.toBeNull();
-    click(testid("transition-closed"));
-    await flush();
+    await holdFull(testid("transition-closed"));
     const closed = await fake.fetchItem("bugs", "D1");
     expect(closed.status).toBe("closed");
   });
