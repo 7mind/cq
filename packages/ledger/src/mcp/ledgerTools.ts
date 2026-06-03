@@ -4,7 +4,7 @@
  * Returns an array of `tool()` instances ready to be passed to
  * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
  *
- * Tool surface (14 tools: 13 msunify + fts_search):
+ * Tool surface (15 tools: 13 msunify + fts_search + snapshot):
  *
  * Item / ledger surface (9):
  *  - enumerate_ledgers, fetch_ledger, fetch_ledger_archive,
@@ -18,6 +18,9 @@
  *  - fetch_milestone(milestone_id) → { milestone, resolved, references }
  *  - archive_milestone(milestone_id, summary) → { pointer }
  *  - list_milestone_items(milestone_id) → { items: Record<ledger, Item[]> }
+ *
+ * Cross-ledger overview (1):
+ *  - snapshot() → { ledger: LedgerSnapshot }
  *
  * Each handler turns the validated input into a single LedgerStore call,
  * serialises the result as JSON, and returns it as a text content block.
@@ -426,6 +429,20 @@ When no params are provided the response is the unchanged full ledger (backward-
     async (args) => jsonResult({ items: store.listMilestoneItems(args.milestone_id) }),
   );
 
+  // ---- Cross-ledger overview (1) -----------------------------------------
+
+  const snapshotTool = tool(
+    "snapshot",
+    "One-call cross-ledger actionable-state overview; compact {id,status,summary} stubs grouped by ledger x status; flow-agnostic (compose /advance predicates from this). Returns { ledger: { [ledgerId]: { [status]: { count, items: {id,status,summary}[] } } } } for every active ledger that has at least one active item. No long narrative fields — stays well under token-overflow thresholds. include_archived is accepted but currently a no-op (snapshot() covers active ledgers only; archived coverage is a future extension).",
+    {
+      include_archived: z
+        .boolean()
+        .optional()
+        .describe("reserved for future use — currently ignored; active ledgers only"),
+    } as const,
+    async () => jsonResult({ ledger: store.snapshot() }),
+  );
+
   return [
     enumerateLedgers,
     fetchLedger,
@@ -441,6 +458,7 @@ When no params are provided the response is the unchanged full ledger (backward-
     fetchMilestone,
     archiveMilestone,
     listMilestoneItems,
+    snapshotTool,
   ] as unknown as AnyTool[];
 }
 
@@ -460,4 +478,5 @@ export const LEDGER_TOOL_NAMES = [
   "fetch_milestone",
   "archive_milestone",
   "list_milestone_items",
+  "snapshot",
 ] as const;

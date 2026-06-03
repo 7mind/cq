@@ -53,12 +53,13 @@ function decode<T>(result: { content: Array<{ type: string; text: string }> }): 
 }
 
 describe("ledger MCP tools", () => {
-  it("exports the expected tool names (14 tools)", async () => {
+  it("exports the expected tool names (15 tools)", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...LEDGER_TOOL_NAMES].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(14);
+    expect(LEDGER_TOOL_NAMES.length).toBe(15);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
+    expect(LEDGER_TOOL_NAMES).toContain("snapshot");
   });
 
   it("enumerate_ledgers + create_ledger + fetch_ledger round-trip (includes bootstrapped milestones)", async () => {
@@ -500,5 +501,57 @@ describe("ledger MCP tools", () => {
       await callTool(tools, "fts_search", { query: "quokka", include_archived: true }),
     );
     expect(incl.results.map((r) => r.item.id)).toEqual(["X1"]);
+  });
+
+  it("snapshot returns W1 grouping: { ledger: { [ledgerId]: { [status]: { count, items } } } }", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+
+    // Seed two items in two different status buckets under xenos.
+    await callTool(tools, "create_milestone", { title: "snap-test" });
+    await callTool(tools, "create_item", {
+      ledger_id: "xenos",
+      milestone_id: "M1",
+      status: "open",
+      fields: { note: "first item" },
+    });
+    await callTool(tools, "create_item", {
+      ledger_id: "xenos",
+      milestone_id: "M1",
+      status: "open",
+      fields: { note: "second item" },
+    });
+
+    const out = decode<{
+      ledger: Record<
+        string,
+        Record<string, { count: number; items: Array<{ id: string; status: string; summary: string }> }>
+      >;
+    }>(await callTool(tools, "snapshot", {}));
+
+    // The top-level key is "ledger" wrapping the LedgerSnapshot.
+    expect(typeof out.ledger).toBe("object");
+
+    // xenos has 2 open items — both appear in the open bucket.
+    const xenosOpen = out.ledger["xenos"]?.["open"];
+    expect(xenosOpen).toBeDefined();
+    expect(xenosOpen!.count).toBe(2);
+    expect(xenosOpen!.items.length).toBe(2);
+
+    // Each stub must carry exactly { id, status, summary } — no long fields.
+    const stub = xenosOpen!.items[0]!;
+    expect(typeof stub.id).toBe("string");
+    expect(stub.status).toBe("open");
+    expect(typeof stub.summary).toBe("string");
+    expect(Object.keys(stub).sort()).toEqual(["id", "status", "summary"]);
+
+    // milestones ledger is also active (holds M1 at status open).
+    expect(out.ledger["milestones"]).toBeDefined();
+
+    // include_archived is a no-op; tool accepts it without error.
+    const out2 = decode<{ ledger: Record<string, unknown> }>(
+      await callTool(tools, "snapshot", { include_archived: true }),
+    );
+    expect(typeof out2.ledger).toBe("object");
   });
 });

@@ -1,7 +1,7 @@
 /**
  * Stdio MCP tool registration for the ledger surface.
  *
- * Registers the 14-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
+ * Registers the 15-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
  * `@modelcontextprotocol/sdk` `McpServer` via `registerTool`, backed by a
  * `LedgerStore`. This is the stdio counterpart to `createLedgerMcpTools`
  * (the in-process Claude-SDK `tool()` factory in `./ledgerTools.ts`): both
@@ -107,7 +107,7 @@ function jsonResult(value: unknown): {
 }
 
 /**
- * Register the 14 ledger tools on the given MCP server. Identical
+ * Register the 15 ledger tools on the given MCP server. Identical
  * semantics to the Claude-side factory in `./ledgerTools.ts`.
  */
 export function registerLedgerStdioTools(server: McpServer, store: LedgerStore): void {
@@ -390,5 +390,22 @@ export function registerLedgerStdioTools(server: McpServer, store: LedgerStore):
       },
     },
     async (args) => jsonResult({ items: store.listMilestoneItems(args.milestone_id) }),
+  );
+
+  // ---- Cross-ledger overview (1) -----------------------------------------
+
+  server.registerTool(
+    "snapshot",
+    {
+      description:
+        "One-call cross-ledger actionable-state overview; compact {id,status,summary} stubs grouped by ledger x status; flow-agnostic (compose /advance predicates from this). Returns { ledger: { [ledgerId]: { [status]: { count, items: {id,status,summary}[] } } } } for every active ledger that has at least one active item. No long narrative fields — stays well under token-overflow thresholds. include_archived is accepted but currently a no-op (snapshot() covers active ledgers only; archived coverage is a future extension).",
+      inputSchema: {
+        include_archived: z
+          .boolean()
+          .optional()
+          .describe("reserved for future use — currently ignored; active ledgers only"),
+      },
+    },
+    async () => jsonResult({ ledger: store.snapshot() }),
   );
 }
