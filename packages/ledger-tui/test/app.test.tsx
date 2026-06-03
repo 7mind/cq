@@ -982,6 +982,15 @@ describe("ledger-tui archive view (T33)", () => {
     expect(f).toContain("[archived]"); // path header unchanged → overlay was not opened
     // The underlying archived item row must still be visible in the list.
     expect(f).toContain("archived task");
+    // PRIMARY (regression-sensitive): the content pane still shows the read-only badge.
+    // If 's' opened the status overlay, the content pane swaps to <Overlays/> (app.tsx:1071-1073)
+    // and the badge '[archived · read-only]' disappears — this assertion catches that regression.
+    expect(f).toContain("[archived · read-only]");
+    // OPTIONAL (content-pane-scoped): the status picker's SelectList cursor marker ('› ') must
+    // be absent from the content-pane slice. We scope to contentSide() because the list pane's
+    // own SelectList always renders '› ' for the selected row — asserting absence whole-frame
+    // would be a false red on a correct codebase.
+    expect(contentSide(f)).not.toContain("› ");
     r.unmount();
   });
 
@@ -1267,6 +1276,23 @@ function listSide(frame: string): string {
     .map((line) => {
       const i = line.indexOf("│", line.indexOf("│") + 1);
       return i >= 0 ? line.slice(0, i) : line;
+    })
+    .join("\n");
+}
+
+/**
+ * Extract the right content-pane portion of each rendered row (text after the
+ * vertical border that splits the list pane from the content pane — the
+ * complement of listSide). Using this slice ensures assertions about the
+ * content-pane overlay state are not contaminated by the list pane's own
+ * SelectList cursor marker (`› `).
+ */
+function contentSide(frame: string): string {
+  return frame
+    .split("\n")
+    .map((line) => {
+      const i = line.indexOf("│", line.indexOf("│") + 1);
+      return i >= 0 ? line.slice(i) : "";
     })
     .join("\n");
 }
