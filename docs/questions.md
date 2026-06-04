@@ -68,12 +68,12 @@ archives:
 ### Q74 — answered
 
 - createdAt: 2026-06-03T11:36:57.788Z
-- updatedAt: 2026-06-03T14:59:41.371Z
+- updatedAt: 2026-06-03T22:04:48.263Z
 - author: user
 - session: ea0ee283-9e2d-4088-a61a-86fac464e29b
 - question: Which convenience surface(s) do you want built? (a) a single state-overview/snapshot MCP tool returning the actionable set in one call; (b) a generic compact/projection + pagination mode on fetch_ledger; (c) better tool/field/query-language descriptions only (docs); or some combination?
 - context: These are the four candidate directions in the goal, and they are not mutually exclusive but they have very different cost/blast-radius. The repo today has 14 read tools but no cross-ledger snapshot, no projection, and the fts query help is already embedded in the tool description + server instructions. A snapshot tool (a) directly kills evidence #1/#4 (the ~13 bootstrap calls); a projection mode (b) directly kills evidence #2 (token overflow) and is reusable beyond /advance; docs (c) address evidence #3 and are nearly free. I can scope any subset.
-- suggestions: ["All of a+b+c (snapshot tool + fetch_ledger projection/pagination + doc improvements) — covers every piece of evidence","a+c only (snapshot tool + docs) — the snapshot is /advance-shaped and can itself be compact, deferring a generic projection","b+c only (projection/pagination + docs) — generic, reusable building blocks; let agents compose predicates from compact reads","c only — documentation/recipes, no new endpoints"]
+- suggestions: ["All of a+b+c (snapshot tool + fetch_ledger projection/pagination + doc improvements) — covers every piece of evidence, a+c only (snapshot tool + docs) — the snapshot is /advance-shaped and can itself be compact, deferring a generic projection, b+c only (projection/pagination + docs) — generic, reusable building blocks","let agents compose predicates from compact reads, c only — documentation/recipes, no new endpoints"]
 - recommendation: All of a+b+c. The snapshot tool removes the bootstrap round-trips, the projection mode is a small reusable fix for the token-overflow that also benefits the snapshot, and the doc improvements are cheap. The grounding shows columns.ts already provides LONG_FIELD_DENYLIST as the projection building block, so (b) is low-cost.
 - ledgerRefs: ["goals:G11"]
 - answer: as recommended
