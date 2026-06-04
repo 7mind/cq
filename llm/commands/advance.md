@@ -219,9 +219,14 @@ you re-derive the predicates and continue.
    double-triage them (Q57); the plan stage handles them as part of its own round.
    If P-plan is FALSE, skip this stage.
 3. **Implement stage.** Evaluate **P-implement**. If TRUE, run
-   **`/implement:advance` INLINE** (no argument — it resumes the in-progress run)
-   exactly per llm/commands/implement/advance.md. Its reviewers may FILE new
-   `open` defects (file-and-defer, K13). If P-implement is FALSE, skip this stage.
+   **`/implement:advance` INLINE** (no argument) exactly per
+   llm/commands/implement/advance.md. "Resume" INCLUDES a just-`planned` goal with
+   no prior implement pass: `/implement:advance` derives its ready-set from the
+   planned tasks (every non-archived, non-terminal milestone with non-terminal
+   tasks), so a missing `/implement:start` or "no run bootstrapped yet" is NEVER a
+   reason to skip the stage or to ask — bootstrap and build. Its reviewers may
+   FILE new `open` defects (file-and-defer, K13). If P-implement is FALSE, skip
+   this stage.
 4. **RE-CHECK investigate after implement.** Because the implement reviewer may
    have filed new defects this cycle, re-evaluate **P-investigate** at the END of
    the cycle. If it is now TRUE again (new actionable defects appeared), the loop
@@ -266,7 +271,22 @@ cost effort. Before you may end a run you MUST do BOTH, in order:
 - "substantial work has already landed this run";
 - the remaining work feels disproportionate to its value (e.g. the full
   investigate→plan→implement ceremony for a confirmed one-line fix) — proportion
-  is not a stop condition; continue and finish it.
+  is not a stop condition; continue and finish it;
+- the next stage is large, consequential, or high-blast-radius (e.g. a
+  multi-task, multi-language implementation, or autonomously building an entire
+  feature) — magnitude is NEVER a reason to pause or confirm;
+- no implement run has been bootstrapped yet — P-implement TRUE on a `planned`
+  goal means BOOTSTRAP and build it, not ask (see the implement stage above).
+
+**No confirmation pauses (hard rule).** `/advance` NEVER uses `AskUserQuestion`
+— or any inline "should I proceed / is this OK / confirm the scope" prompt — to
+pause between stages. The ONLY legitimate user-facing pause is
+**BLOCKED-ON-QUESTIONS**: an `open` item in the `questions` ledger that an
+actionable item depends on (filed by a sub-flow, enumerated in the end-of-run
+report, answered in the TUI/web, resumed by re-running `/advance`). A scope /
+scale / blast-radius / "is-this-OK" confirmation is FORBIDDEN; if you are tempted
+to ask one, that is the signal to **CONTINUE**. Running `/advance` is itself the
+authorization — the user chose to launch it.
 
 If you find yourself reaching for any of the above, that is the signal to
 **CONTINUE**, not to classify. Keep cycling while ANY stage still moves the
