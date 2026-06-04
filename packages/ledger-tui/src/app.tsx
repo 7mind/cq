@@ -1082,9 +1082,12 @@ export function App({
           />
         </Box>
       ) : (
-      <Box flexGrow={1} flexDirection={horizontal ? "row" : "column"}>
+      <Box flexGrow={1} minHeight={0} flexDirection={horizontal ? "row" : "column"}>
         <Box
           {...(horizontal ? { width: listOuterW } : { height: listOuterH })}
+          flexShrink={0}
+          minHeight={0}
+          overflow="hidden"
           flexDirection="column"
           borderStyle="round"
           borderColor="gray"
@@ -1092,7 +1095,7 @@ export function App({
         >
           {listEl}
         </Box>
-        <Box flexGrow={1} flexDirection="column" borderStyle="round" borderColor={top.kind === "items" && top.focus === "content" ? "cyan" : "gray"} paddingX={1}>
+        <Box flexGrow={1} flexShrink={1} minHeight={0} overflow="hidden" flexDirection="column" borderStyle="round" borderColor={top.kind === "items" && top.focus === "content" ? "cyan" : "gray"} paddingX={1}>
           {overlay !== null ? (
             <Overlays
               overlay={overlay}
