@@ -1252,9 +1252,15 @@ export class FsLedgerStore implements LedgerStore {
     if (path.isAbsolute(relPath)) {
       throw new LedgerError(`read_log: absolute paths are not allowed: ${relPath}`);
     }
+    // sessionLogs stores REPO-relative paths ("docs/logs/<file>"), but this
+    // method resolves against logsDir (= <root>/docs/logs). Strip a leading
+    // docs/logs/ so a repo-relative path is not doubled into
+    // <root>/docs/logs/docs/logs/<file>. A path already relative to docs/logs
+    // ("<file>") is unaffected. Containment is still enforced below.
+    const rel = relPath.replace(/^docs[/\\]logs[/\\]/, "");
     // Normalise the requested relative path, then resolve under logsDir and
     // verify containment (defence-in-depth against `..` traversal).
-    const resolved = path.resolve(this.logsDir, relPath);
+    const resolved = path.resolve(this.logsDir, rel);
     if (
       resolved !== this.logsDir &&
       !resolved.startsWith(this.logsDir + path.sep)

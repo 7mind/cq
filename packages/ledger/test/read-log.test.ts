@@ -77,6 +77,22 @@ describe("read_log (FS-backed)", () => {
     expect(res.truncated).toBeUndefined();
   });
 
+  it("accepts a repo-relative docs/logs/ path without doubling the prefix", async () => {
+    const { store, root } = await buildFsStore();
+    const logsDir = path.join(root, "docs", "logs");
+    await mkdir(logsDir, { recursive: true });
+    await writeFile(path.join(logsDir, "session.md"), "hello log\n", "utf8");
+
+    const tools = createLedgerMcpTools(store, (p) => store.readLog(p));
+    // sessionLogs stores REPO-relative paths ("docs/logs/<file>"). read_log
+    // resolves against logsDir, so it must strip a leading docs/logs/ instead of
+    // doubling it into <root>/docs/logs/docs/logs/<file> (ENOENT).
+    const res = decode<ReadLogResult>(
+      await callTool(tools, "read_log", { path: "docs/logs/session.md" }),
+    );
+    expect(res.content).toBe("hello log\n");
+  });
+
   it("rejects `..` traversal escaping docs/logs/", async () => {
     const { store, root } = await buildFsStore();
     // A secret file directly under docs/ (one level above docs/logs/).
