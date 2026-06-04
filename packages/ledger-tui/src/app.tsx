@@ -70,6 +70,8 @@ const PANEL_DEFAULT: PanelLayout = { orientation: "right", ratio: 0.5 };
 /** Fixed height (rows) of the bottom status bar; the hint text wraps within it.
  * Constant so bodyRows accounting is exact regardless of hint-wrap width. */
 const STATUS_ROWS = 2;
+/** Rows scrolled per PageUp/PageDown in the detail content pane. */
+const CONTENT_PAGE = 10;
 const PANEL_MIN_RATIO = 0.2;
 const PANEL_MAX_RATIO = 0.8;
 const PANEL_STEP = 0.05;
@@ -377,6 +379,10 @@ export function App({
    */
   const [columnsByLedger, setColumnsByLedger] = useState<Map<string, string[]>>(new Map());
   const refreshRef = React.useRef<() => void>(() => {});
+  // Max scroll offset of the detail pane for the current item, published by
+  // ContentPane each render so the key handler can clamp scroll (avoids
+  // over-scrolling past the end, which would make scroll-back feel stuck).
+  const contentMaxScroll = React.useRef(0);
 
   useEffect(() => {
     let alive = true;
@@ -799,8 +805,11 @@ export function App({
       // Whether the cursor currently points at an archived row (read-only).
       const cursorInArchive = top.showArchive && top.cursor >= activeCount;
       if (top.focus === "content") {
-        if (key.upArrow || input === "k") patchTop({ scroll: Math.max(0, top.scroll - 1) });
-        else if (key.downArrow || input === "j") patchTop({ scroll: top.scroll + 1 });
+        const clampScroll = (s: number): number => Math.max(0, Math.min(s, contentMaxScroll.current));
+        if (key.upArrow || input === "k") patchTop({ scroll: clampScroll(top.scroll - 1) });
+        else if (key.downArrow || input === "j") patchTop({ scroll: clampScroll(top.scroll + 1) });
+        else if (key.pageUp) patchTop({ scroll: clampScroll(top.scroll - CONTENT_PAGE) });
+        else if (key.pageDown) patchTop({ scroll: clampScroll(top.scroll + CONTENT_PAGE) });
         else if (key.escape) patchTop({ focus: "list", scroll: 0 });
         // Edit/transition/answer keys are inert for archived items.
         else if (input === "s" && cur && !cursorInArchive) setOverlay({ t: "status", row: cur });
@@ -829,10 +838,16 @@ export function App({
           setOverlay(isMilestonesLedger ? { t: "editTitle", row: cur } : { t: "pickField", row: cur });
         return;
       }
-      // focus === list
-      if (key.upArrow || input === "k") patchTop({ cursor: Math.max(0, top.cursor - 1) });
+      // focus === list. ↑↓ move the cursor (resetting the detail scroll to the
+      // top of the newly-selected item); PageUp/PageDown scroll the detail pane
+      // in place WITHOUT switching focus, so the detail is scrollable without the
+      // Enter-to-focus step; Enter focuses the pane for ↑↓ line scrolling.
+      if (key.upArrow || input === "k") patchTop({ cursor: Math.max(0, top.cursor - 1), scroll: 0 });
       else if (key.downArrow || input === "j")
-        patchTop({ cursor: Math.min(totalRows - 1, top.cursor + 1) });
+        patchTop({ cursor: Math.min(totalRows - 1, top.cursor + 1), scroll: 0 });
+      else if (key.pageUp) patchTop({ scroll: Math.max(0, top.scroll - CONTENT_PAGE) });
+      else if (key.pageDown)
+        patchTop({ scroll: Math.min(contentMaxScroll.current, top.scroll + CONTENT_PAGE) });
       else if (key.return) {
         if (cur) patchTop({ focus: "content", scroll: 0 });
       } else if (key.escape) setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
@@ -958,8 +973,8 @@ export function App({
       : "";
     hints =
       top.focus === "content"
-        ? `↑↓ scroll · s status${answerHint} · e edit · o/[ ] panes · Esc back to list${cursorInArchive ? " [read-only]" : ""}`
-        : `↑↓ move · Enter open · s status${answerHint} · e edit · n new · b batch-answer · f filter · c columns · / search · o/[ ] panes${archiveHint} · Esc back`;
+        ? `↑↓/PgUp/Dn scroll · s status${answerHint} · e edit · o/[ ] panes · Esc back to list${cursorInArchive ? " [read-only]" : ""}`
+        : `↑↓ move · PgUp/Dn scroll detail · Enter focus · s status${answerHint} · e edit · n new · b batch-answer · f filter · c columns · / search · o/[ ] panes${archiveHint} · Esc back`;
     // Column widths (T62) computed over all displayed rows, and the active
     // list entries — both from the memoized bundle (see ItemsDerived). The
     // archive section header + rows are appended cheaply below.
@@ -1029,6 +1044,7 @@ export function App({
           readOnly={cursorInArchive}
           viewItems={viewItems}
           taskItems={taskItems}
+          maxScrollRef={contentMaxScroll}
         />
       ) : (
         <Text dimColor>(no item selected)</Text>
@@ -1337,6 +1353,7 @@ function ContentPane({
   readOnly = false,
   viewItems = [],
   taskItems = [],
+  maxScrollRef,
 }: {
   row: Row;
   ledger: string;
@@ -1346,6 +1363,8 @@ function ContentPane({
   scroll: number;
   /** When true, display a read-only badge (archived item). */
   readOnly?: boolean;
+  /** Published with this item's max scroll offset each render (for key clamping). */
+  maxScrollRef?: React.MutableRefObject<number>;
   /**
    * All items currently loaded in the view (used for relationship resolution).
    * For the hypothesis ledger: all hypothesis items for ancestry/children.
@@ -1550,6 +1569,8 @@ function ContentPane({
 
   const maxScroll = Math.max(0, lines.length - height);
   const clamped = Math.max(0, Math.min(scroll, maxScroll));
+  // Publish for the key handler's scroll clamping (ref write, no re-render).
+  if (maxScrollRef !== undefined) maxScrollRef.current = maxScroll;
   // Render the whole flat line list inside an inner box offset by `marginTop`,
   // clipped by the outer overflow box (the original, correct scroll/clip
   // structure). Slicing to exactly the window instead made ink's overflow drop
@@ -1557,9 +1578,30 @@ function ContentPane({
   // are flat single-row <Text> (markdownLines pre-wraps), so laying all of them
   // out stays cheap.
   const visible = lines.slice(clamped, clamped + height);
+  // Scrollbar (mirrors ScrollList): a right-hand column showing the scroll
+  // position when the detail is taller than the pane — the visible affordance
+  // that the content is scrollable (focus the pane with Enter, then ↑↓/PgUp/Dn).
+  const total = lines.length;
+  const showBar = total > height;
+  const thumbSize = showBar ? Math.max(1, Math.round((height / total) * height)) : 0;
+  const maxTop = Math.max(1, total - height);
+  const thumbStart = showBar
+    ? Math.min(height - thumbSize, Math.round((clamped / maxTop) * (height - thumbSize)))
+    : 0;
   return (
-    <Box flexDirection="column" height={height} overflow="hidden">
-      {visible}
+    <Box flexDirection="row" height={height}>
+      <Box flexDirection="column" flexGrow={1} overflow="hidden">
+        {visible}
+      </Box>
+      {showBar && (
+        <Box flexDirection="column">
+          {Array.from({ length: height }, (_, i) => (
+            <Text key={i} dimColor>
+              {i >= thumbStart && i < thumbStart + thumbSize ? "█" : "░"}
+            </Text>
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }

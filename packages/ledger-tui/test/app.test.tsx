@@ -270,7 +270,7 @@ describe("ledger-tui App", () => {
     expect(top).not.toContain("Line 40:"); // the end is below the fold
     // Focus the content pane (Enter) and scroll to the bottom.
     await h.key(ENTER);
-    expect(h.frame()).toContain("↑↓ scroll"); // focus moved to the content pane
+    expect(h.frame()).toContain("scroll · "); // focus moved to the content pane (scroll hint)
     for (let i = 0; i < 45; i++) await h.key(DOWN); // scroll past the end (clamps)
     await tick(40);
     expect(h.frame()).toContain("Line 40:"); // deep content now visible → scroll works
