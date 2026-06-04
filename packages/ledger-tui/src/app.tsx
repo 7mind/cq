@@ -18,7 +18,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { SelectList } from "./components/SelectList.js";
 import { TextPrompt } from "./components/TextPrompt.js";
-import { Markdown } from "./markdownText.js";
+import { Markdown, markdownLines } from "./markdownText.js";
 import { useTermSize } from "./useTermSize.js";
 import { LiveManager, type LiveStats } from "@cq/ledger-live";
 import {
@@ -67,6 +67,9 @@ interface PanelLayout {
   ratio: number;
 }
 const PANEL_DEFAULT: PanelLayout = { orientation: "right", ratio: 0.5 };
+/** Fixed height (rows) of the bottom status bar; the hint text wraps within it.
+ * Constant so bodyRows accounting is exact regardless of hint-wrap width. */
+const STATUS_ROWS = 2;
 const PANEL_MIN_RATIO = 0.2;
 const PANEL_MAX_RATIO = 0.8;
 const PANEL_STEP = 0.05;
@@ -329,41 +332,6 @@ type Overlay =
 // App
 // ---------------------------------------------------------------------------
 
-/**
- * Idle delay (ms) before the heavy detail pane renders after the selection
- * changes. Rendering a large item's detail is expensive (ink measures the full
- * text volume), so a rapid sequence of cursor moves must not each pay it — see
- * {@link useDebounced} + the detail skeleton. Overridable via
- * `LEDGER_TUI_DETAIL_SETTLE_MS` (tests set it to `0` to disable the debounce so
- * content assertions see the full detail synchronously).
- */
-const DEFAULT_DETAIL_SETTLE_MS = 110;
-function detailSettleMs(): number {
-  const raw = process.env["LEDGER_TUI_DETAIL_SETTLE_MS"];
-  return raw !== undefined && raw !== "" ? Number(raw) : DEFAULT_DETAIL_SETTLE_MS;
-}
-
-/**
- * Returns `value` but lags updates until it has been stable for `ms`. Because
- * the held state starts at the OLD value, the first render after `value`
- * changes already returns the stale value — callers compare `debounced ===
- * value` to detect "selection is still settling". `ms <= 0` disables the
- * debounce entirely (returns the live value), which the test harness uses.
- */
-function useDebounced<T>(value: T, ms: number): T {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    if (v === value) return;
-    if (ms <= 0) {
-      setV(value);
-      return;
-    }
-    const t = setTimeout(() => setV(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms, v]);
-  return ms <= 0 ? value : v;
-}
-
 export function App({
   client,
   liveUrl = null,
@@ -437,17 +405,6 @@ export function App({
       return [...s.slice(0, -1), { ...t, ...patch } as Frame];
     });
   }, []);
-
-  // Detail-render debounce (perf): while the selection is actively changing,
-  // render a cheap skeleton instead of the heavy ContentPane; the full detail
-  // renders only once the cursor has been idle for DETAIL_SETTLE_MS. The key
-  // also includes `focus` so toggling into the content pane (to scroll) renders
-  // the full detail. `top.scroll` is deliberately EXCLUDED so scrolling within
-  // the content pane is not debounced (windowing keeps each scroll step cheap).
-  const selKey =
-    top.kind === "items" ? `items#${top.ledger}#${top.cursor}#${top.focus}` : top.kind;
-  const committedSelKey = useDebounced(selKey, detailSettleMs());
-  const showFullDetail = committedSelKey === selKey;
 
   // Effective extra columns for a ledger: the session selection if the user
   // has customised it, else the per-ledger defaults (seeded lazily).
@@ -915,7 +872,12 @@ export function App({
   );
 
   // ---- derived for render ------------------------------------------------
-  const bodyRows = Math.max(3, rows - 2); // minus header + status bar
+  // Chrome is a 1-row path header + a fixed 2-row status bar (STATUS_ROWS).
+  // Reserving an exact, constant footer height keeps `contentInnerH` matched to
+  // the actual content-pane area regardless of how the hint text wraps — a
+  // miscount makes the content box overflow its pane and ink clips the top row
+  // (dropping the detail header).
+  const bodyRows = Math.max(3, rows - 1 - STATUS_ROWS);
   // Pane sizing from the panel layout. Each pane has a 1-char round border on
   // every side (-2) and the content pane adds paddingX={1} (-2 more on width).
   const horizontal = panel.orientation === "right";
@@ -1057,30 +1019,17 @@ export function App({
     const taskItems = crossItems.get(TASKS_LEDGER) ?? [];
     contentEl =
       cur !== undefined ? (
-        showFullDetail ? (
-          <ContentPane
-            row={cur}
-            ledger={top.ledger}
-            schema={schema}
-            width={contentInnerW}
-            height={contentInnerH}
-            scroll={top.scroll}
-            readOnly={cursorInArchive}
-            viewItems={viewItems}
-            taskItems={taskItems}
-          />
-        ) : (
-          // Cheap placeholder during active navigation (DETAIL_SETTLE_MS
-          // debounce): just the item's id/status/summary, no markdown — so a
-          // rapid sequence of cursor moves does not each pay the heavy render.
-          <DetailSkeleton
-            row={cur}
-            ledger={top.ledger}
-            schema={schema}
-            height={contentInnerH}
-            readOnly={cursorInArchive}
-          />
-        )
+        <ContentPane
+          row={cur}
+          ledger={top.ledger}
+          schema={schema}
+          width={contentInnerW}
+          height={contentInnerH}
+          scroll={top.scroll}
+          readOnly={cursorInArchive}
+          viewItems={viewItems}
+          taskItems={taskItems}
+        />
       ) : (
         <Text dimColor>(no item selected)</Text>
       );
@@ -1183,8 +1132,10 @@ export function App({
       </Box>
       )}
 
-      {/* status bar */}
-      <Box>
+      {/* status bar — pinned to exactly STATUS_ROWS rows so bodyRows accounting
+          stays exact. The hint text may wrap within these rows; height-bounding
+          the box keeps the footer from stealing a row from the content pane. */}
+      <Box height={STATUS_ROWS} flexShrink={0}>
         <Text>
           {flash.length > 0 ? <Text color="yellow">{flash}  </Text> : null}
           <Text dimColor>{hints}</Text>
@@ -1376,45 +1327,6 @@ function ScrollList<T>({
 // Content pane: item detail with markdown-rendered fields + line scroll
 // ---------------------------------------------------------------------------
 
-function estimateLines(value: string, width: number): number {
-  const w = Math.max(8, width - 2);
-  return value.split("\n").reduce((acc, line) => acc + Math.max(1, Math.ceil(line.length / w)), 0);
-}
-
-/**
- * Lightweight stand-in for {@link ContentPane} shown while the selection is
- * still settling (see the DETAIL_SETTLE_MS debounce). Renders only the item's
- * id/status/summary — no per-field markdown — so rapid cursor movement stays
- * fluid regardless of the selected item's size.
- */
-function DetailSkeleton({
-  row,
-  ledger,
-  schema,
-  height,
-  readOnly = false,
-}: {
-  row: Row;
-  ledger: string;
-  schema: LedgerSchema;
-  height: number;
-  readOnly?: boolean;
-}): React.ReactElement {
-  return (
-    <Box flexDirection="column" height={height} overflow="hidden">
-      <Text>
-        <Text bold>{row.item.id}</Text>
-        <Text dimColor> @ {ledger}</Text>
-        {"  "}
-        <Text color={statusColor(row.item.status, schema)}>{row.item.status}</Text>
-        {readOnly ? <Text dimColor> [archived · read-only]</Text> : null}
-      </Text>
-      <Text>{summarize(row.item)}</Text>
-      <Text dimColor>…</Text>
-    </Box>
-  );
-}
-
 function ContentPane({
   row,
   ledger,
@@ -1487,200 +1399,167 @@ function ContentPane({
     (viewItems as Item[]).find((i) => i.id === id) ??
     (taskItems as Item[]).find((i) => i.id === id);
 
-  // Estimate total height to clamp scrolling: short fields are one line each;
-  // long fields are a header line + their wrapped body + a top margin.
-  let est = 4 + (hasProvenance ? 1 : 0) + (isGoal ? 1 : 0); // header + status + milestone(s) + timestamps (+ provenance) (+ goal milestones line)
-  for (const [, v] of entries) {
-    est += isShortField(v) ? 1 : 2 + estimateLines(fieldToString(v), width);
-  }
-  // Relationship blocks contribute ~(N+2) lines each.
-  if (fixTaskIds.length > 0) est += fixTaskIds.length + 2;
-  if (hypoRels !== null) {
-    if (hypoRels.ancestors.length > 0) est += hypoRels.ancestors.length + 2;
-    if (hypoRels.children.length > 0) est += hypoRels.children.length + 2;
-  }
-  const maxScroll = Math.max(0, est - height);
-  const clamped = Math.min(scroll, maxScroll);
+  // Build the detail as a FLAT list of one-row elements, then render only the
+  // visible [scroll, scroll+height] slice. Windowing keeps each render cheap —
+  // ink only measures the on-screen rows, not the full (possibly multi-KB) text
+  // of every field, which is the dominant per-cursor-move cost (D13).
+  const lines: React.ReactElement[] = [];
+  let lk = 0;
+  // Every line MUST render as exactly ONE terminal row: ink's overflow="hidden"
+  // on the bounded content box clips the TOP rows when total rows exceed the
+  // height, so a single wrapped (2-row) line would push the header/metadata off
+  // the top. `wrap="truncate"` guarantees one row per line. markdownLines is
+  // already pre-wrapped to `width`, so this only bites un-wrapped metadata.
+  const push = (
+    node: React.ReactNode,
+    props: { bold?: boolean; color?: string; dimColor?: boolean } = {},
+  ): void => {
+    lines.push(
+      <Text key={`dl-${lk++}`} wrap="truncate" {...props}>
+        {node}
+      </Text>,
+    );
+  };
+  const pushBlank = (): void => push(" ");
+  const byLine = (): string =>
+    `by ${author ?? "?"}${session !== undefined ? ` · session ${session}` : ""}`;
 
+  // Header: id @ ledger [status] [read-only]. Emitted as a direct <Text> (not
+  // via push): a push-wrapped Fragment with nested Fragments/conditionals
+  // rendered empty inside the bounded/overflow content box.
+  lines.push(
+    <Text key={`dl-${lk++}`} wrap="truncate">
+      <Text bold>{row.item.id}</Text>
+      <Text dimColor> @ {ledger}</Text>
+      {!question ? (
+        <>
+          {"  "}
+          <Text color={statusColor(row.item.status, schema)}>{row.item.status}</Text>
+        </>
+      ) : null}
+      {readOnly ? <Text dimColor> [archived · read-only]</Text> : null}
+    </Text>,
+  );
+
+  // Leading metadata (question / goal / generic variants).
+  if (question) {
+    push(`milestone ${row.milestoneId}`, { dimColor: true });
+    push(
+      <>
+        status <Text color={statusColor(row.item.status, schema)}>{row.item.status}</Text>
+      </>,
+      { dimColor: true },
+    );
+    push(byLine(), { dimColor: true });
+  } else if (isGoal) {
+    push(
+      `created ${row.item.createdAt.slice(0, 10)} · updated ${row.item.updatedAt.slice(0, 10)}`,
+      { dimColor: true },
+    );
+    push(
+      <>
+        <Text bold color="gray">milestones: </Text>
+        {goalMilestones.length > 0 ? goalMilestones.join(", ") : <Text dimColor>(none)</Text>}
+      </>,
+    );
+    if (hasProvenance) push(byLine(), { dimColor: true });
+  } else {
+    push(
+      `milestone ${row.milestoneId} · created ${row.item.createdAt.slice(0, 10)} · updated ${row.item.updatedAt.slice(0, 10)}`,
+      { dimColor: true },
+    );
+    if (hasProvenance) push(byLine(), { dimColor: true });
+  }
+
+  // Fields.
+  if (entries.length === 0) {
+    push("(no fields)", { dimColor: true });
+  } else {
+    for (const [k, v] of entries) {
+      if (k === RECOMMENDATION_FIELD) {
+        pushBlank();
+        push(k, { bold: true, color: "cyan" });
+        if (Array.isArray(v)) push(v.join(", "));
+        else for (const ln of markdownLines(v, width, `f-${k}`)) lines.push(ln);
+      } else if (k === SUGGESTIONS_FIELD && Array.isArray(v)) {
+        pushBlank();
+        push(k, { bold: true, color: "gray" });
+        for (const sg of v) push(`• ${sg}`);
+      } else if (isShortField(v)) {
+        push(
+          <>
+            <Text bold color="gray">
+              {k}:{" "}
+            </Text>
+            {fieldToString(v)}
+          </>,
+        );
+      } else {
+        pushBlank();
+        push(k, { bold: true, color: "gray" });
+        if (Array.isArray(v)) push(v.join(", "));
+        else for (const ln of markdownLines(v, width, `f-${k}`)) lines.push(ln);
+      }
+    }
+  }
+
+  // Relationship row helper (fix tasks / hypothesis tree).
+  const relRow = (id: string): void => {
+    const it = findItem(id);
+    push(
+      <>
+        {"  "}
+        <Text bold>{id}</Text>
+        {it !== undefined ? (
+          <>
+            {" ["}
+            <Text color={statusColor(it.status, schema)}>{it.status}</Text>
+            {"] "}
+            {summarize(it)}
+          </>
+        ) : null}
+      </>,
+    );
+  };
+
+  // Fix tasks block (defects).
+  if (isDefect) {
+    pushBlank();
+    push("Fix tasks", { bold: true, color: "gray" });
+    if (fixTaskIds.length === 0) push("  (none)", { dimColor: true });
+    else for (const tid of fixTaskIds) relRow(tid);
+  }
+
+  // Hypothesis tree block: ancestry chain then direct children.
+  if (
+    isHypothesis &&
+    hypoRels !== null &&
+    (hypoRels.ancestors.length > 0 || hypoRels.children.length > 0)
+  ) {
+    if (hypoRels.ancestors.length > 0) {
+      pushBlank();
+      push("Ancestry", { bold: true, color: "gray" });
+      for (const aid of hypoRels.ancestors) relRow(aid);
+    }
+    if (hypoRels.children.length > 0) {
+      pushBlank();
+      push("Children", { bold: true, color: "gray" });
+      for (const cid of hypoRels.children) relRow(cid);
+    }
+  }
+
+  const maxScroll = Math.max(0, lines.length - height);
+  const clamped = Math.max(0, Math.min(scroll, maxScroll));
+  // Render the whole flat line list inside an inner box offset by `marginTop`,
+  // clipped by the outer overflow box (the original, correct scroll/clip
+  // structure). Slicing to exactly the window instead made ink's overflow drop
+  // the TOP row at the fill boundary (the off-by-one header-clip bug). The lines
+  // are flat single-row <Text> (markdownLines pre-wraps), so laying all of them
+  // out stays cheap.
+  const visible = lines.slice(clamped, clamped + height);
   return (
     <Box flexDirection="column" height={height} overflow="hidden">
-      <Box flexDirection="column" marginTop={-clamped}>
-        <Text>
-          <Text bold>{row.item.id}</Text>
-          <Text dimColor> @ {ledger}</Text>
-          {!question ? (
-            <>
-              {"  "}
-              <Text color={statusColor(row.item.status, schema)}>{row.item.status}</Text>
-            </>
-          ) : null}
-          {readOnly ? <Text dimColor>{" "}[archived · read-only]</Text> : null}
-        </Text>
-        {question ? (
-          // Questions (T59, Q31): the leading metadata is exactly milestone →
-          // status → by, in that literal order, ahead of the narrative fields.
-          // created/updated are relocated out of the required leading sequence.
-          <>
-            <Text dimColor>milestone {row.milestoneId}</Text>
-            <Text dimColor>
-              status{" "}
-              <Text color={statusColor(row.item.status, schema)}>{row.item.status}</Text>
-            </Text>
-            <Text dimColor>
-              by {author ?? "?"}
-              {session !== undefined ? ` · session ${session}` : ""}
-            </Text>
-          </>
-        ) : isGoal ? (
-          // Goals (T84 / Q48): replace the single coordination-milestone line
-          // with the goal's work-milestone ids (fields.milestones) rendered as a
-          // flat `milestones` list. created/updated remain on their own line.
-          <>
-            <Text dimColor>
-              created {row.item.createdAt.slice(0, 10)} · updated {row.item.updatedAt.slice(0, 10)}
-            </Text>
-            <Text>
-              <Text bold color="gray">milestones: </Text>
-              {goalMilestones.length > 0 ? goalMilestones.join(", ") : <Text dimColor>(none)</Text>}
-            </Text>
-            {hasProvenance && (
-              <Text dimColor>
-                by {author ?? "?"}
-                {session !== undefined ? ` · session ${session}` : ""}
-              </Text>
-            )}
-          </>
-        ) : (
-          <>
-            <Text dimColor>
-              milestone {row.milestoneId} · created {row.item.createdAt.slice(0, 10)} · updated{" "}
-              {row.item.updatedAt.slice(0, 10)}
-            </Text>
-            {hasProvenance && (
-              <Text dimColor>
-                by {author ?? "?"}
-                {session !== undefined ? ` · session ${session}` : ""}
-              </Text>
-            )}
-          </>
-        )}
-        {entries.length === 0 ? (
-          <Text dimColor>(no fields)</Text>
-        ) : (
-          entries.map(([k, v]) =>
-            k === RECOMMENDATION_FIELD ? (
-              // Highlighted recommendation block (T23): bordered + accent so the
-              // recommended answer stands out as the call-to-action.
-              <Box key={k} flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={1}>
-                <Text bold color="cyan">
-                  {k}
-                </Text>
-                {Array.isArray(v) ? <Text>{v.join(", ")}</Text> : <Markdown text={v} />}
-              </Box>
-            ) : k === SUGGESTIONS_FIELD && Array.isArray(v) ? (
-              // Suggestions (T57): one bulleted line per element.
-              <Box key={k} flexDirection="column" marginTop={1}>
-                <Text bold color="gray">
-                  {k}
-                </Text>
-                {v.map((s, i) => <Text key={i}>{"• "}{s}</Text>)}
-              </Box>
-            ) : isShortField(v) ? (
-              // Short/fixed-size field: render inline on a single line.
-              <Text key={k}>
-                <Text bold color="gray">
-                  {k}:{" "}
-                </Text>
-                {fieldToString(v)}
-              </Text>
-            ) : (
-              // Long field (description, etc.): header + markdown block.
-              <Box key={k} flexDirection="column" marginTop={1}>
-                <Text bold color="gray">
-                  {k}
-                </Text>
-                {Array.isArray(v) ? <Text>{v.join(", ")}</Text> : <Markdown text={v} />}
-              </Box>
-            ),
-          )
-        )}
-        {/* Fix tasks block: shown when the selected item is a defect. */}
-        {isDefect && (
-          <Box flexDirection="column" marginTop={1}>
-            <Text bold color="gray">Fix tasks</Text>
-            {fixTaskIds.length === 0 ? (
-              <Text dimColor>  (none)</Text>
-            ) : (
-              fixTaskIds.map((tid) => {
-                const t = findItem(tid);
-                return (
-                  <Text key={tid}>
-                    {"  "}
-                    <Text bold>{tid}</Text>
-                    {t !== undefined ? (
-                      <>
-                        {" ["}
-                        <Text color={statusColor(t.status, schema)}>{t.status}</Text>
-                        {"] "}
-                        <Text>{summarize(t)}</Text>
-                      </>
-                    ) : null}
-                  </Text>
-                );
-              })
-            )}
-          </Box>
-        )}
-        {/* Hypothesis tree block: ancestry chain then direct children. */}
-        {isHypothesis && hypoRels !== null && (hypoRels.ancestors.length > 0 || hypoRels.children.length > 0) && (
-          <Box flexDirection="column" marginTop={1}>
-            {hypoRels.ancestors.length > 0 && (
-              <>
-                <Text bold color="gray">Ancestry</Text>
-                {hypoRels.ancestors.map((aid) => {
-                  const a = findItem(aid);
-                  return (
-                    <Text key={aid}>
-                      {"  "}
-                      <Text bold>{aid}</Text>
-                      {a !== undefined ? (
-                        <>
-                          {" ["}
-                          <Text color={statusColor(a.status, schema)}>{a.status}</Text>
-                          {"] "}
-                          <Text>{summarize(a)}</Text>
-                        </>
-                      ) : null}
-                    </Text>
-                  );
-                })}
-              </>
-            )}
-            {hypoRels.children.length > 0 && (
-              <>
-                <Text bold color="gray">Children</Text>
-                {hypoRels.children.map((cid) => {
-                  const c = findItem(cid);
-                  return (
-                    <Text key={cid}>
-                      {"  "}
-                      <Text bold>{cid}</Text>
-                      {c !== undefined ? (
-                        <>
-                          {" ["}
-                          <Text color={statusColor(c.status, schema)}>{c.status}</Text>
-                          {"] "}
-                          <Text>{summarize(c)}</Text>
-                        </>
-                      ) : null}
-                    </Text>
-                  );
-                })}
-              </>
-            )}
-          </Box>
-        )}
-      </Box>
+      {visible}
     </Box>
   );
 }

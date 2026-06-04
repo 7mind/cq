@@ -20,11 +20,6 @@ import type {
   LedgerSummary,
 } from "../src/types.js";
 
-// Disable the detail-render debounce in tests so content assertions observe the
-// full ContentPane synchronously (the debounce is a perf optimisation verified
-// via the PTY harness, not these unit tests). See app.tsx detailSettleMs().
-process.env["LEDGER_TUI_DETAIL_SETTLE_MS"] = "0";
-
 const TS = "2026-01-01T00:00:00.000Z";
 
 const ENTER = "\r";

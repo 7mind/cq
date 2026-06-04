@@ -20,6 +20,15 @@ import type {
 
 const TS = "2026-01-01T00:00:00.000Z";
 
+// A field whose rendered detail is far taller than any test terminal — exercises
+// the windowed content pane (header/metadata must stay visible at the top; the
+// pane must scroll). Each "Line N:" is its own paragraph (blank-separated) so it
+// renders on its own row and is individually findable in a frame.
+export const HUGE_NOTE = Array.from(
+  { length: 40 },
+  (_, i) => `- Line ${i + 1}: marker **b** \`c\`.`,
+).join("\n");
+
 interface Group {
   id: string;
   items: Item[];
@@ -117,6 +126,7 @@ export class FakeClient implements LedgerClient {
           id: "M1",
           items: [
             { id: "D1", milestoneId: "M1", status: "open", fields: { headline: "warp leak", note: "intermittent" }, createdAt: TS, updatedAt: TS },
+            { id: "D2", milestoneId: "M1", status: "open", fields: { headline: "huge item", note: HUGE_NOTE }, createdAt: TS, updatedAt: TS },
           ],
         },
       ],

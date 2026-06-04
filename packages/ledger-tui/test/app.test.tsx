@@ -19,11 +19,6 @@ import type { ArchiveContent, FetchedLedger, Item, LedgerClient, LedgerSummary }
 import type { Milestone } from "@cq/ledger";
 import { MILESTONES_SCHEMA } from "@cq/ledger";
 
-// Disable the detail-render debounce in tests so content assertions observe the
-// full ContentPane synchronously (the debounce is a perf optimisation verified
-// via the PTY harness, not these unit tests). See app.tsx detailSettleMs().
-process.env["LEDGER_TUI_DETAIL_SETTLE_MS"] = "0";
-
 const DOWN = "[B";
 const LEFT = "[D";
 const RIGHT = "[C";
@@ -235,9 +230,9 @@ describe("ledger-tui App", () => {
 
   it("shows each ledger's item count right-aligned in the ledgers list", async () => {
     const h = await mount();
-    // FakeClient: bugs has 1 item (D1), milestones has 1 item (M1). The count
-    // is rendered after the name, separated by padding spaces (right-aligned).
-    expect(h.frame()).toMatch(/bugs\s{2,}1/);
+    // FakeClient: bugs has 2 items (D1 + the huge D2), milestones has 1 item
+    // (M1). The count is rendered after the name, right-aligned via padding.
+    expect(h.frame()).toMatch(/bugs\s{2,}2/);
     expect(h.frame()).toMatch(/milestones\s{2,}1/);
     h.unmount();
   });
@@ -259,6 +254,28 @@ describe("ledger-tui App", () => {
     expect(h.frame()).toContain("intermittent");
     h.unmount();
   });
+
+  it("an overflowing item keeps its header/metadata at the top and scrolls (windowing)", async () => {
+    const h = await mount();
+    await h.key(ENTER); // open bugs
+    await waitForFrame(() => h.frame(), "D2"); // list shows the huge item
+    await h.key(DOWN); // cursor → D2 (its `note` is far taller than the pane)
+    await waitForFrame(() => h.frame(), "D2 @ bugs"); // header MUST render at the top
+    const top = h.frame();
+    // Regression (windowing top-clip): the header + metadata + start of the long
+    // field must be visible even though the content overflows the pane.
+    expect(top).toContain("D2 @ bugs"); // header line
+    expect(top).toContain("milestone M1"); // metadata line, not clipped off the top
+    expect(top).toContain("Line 1:"); // start of the long field
+    expect(top).not.toContain("Line 40:"); // the end is below the fold
+    // Focus the content pane (Enter) and scroll to the bottom.
+    await h.key(ENTER);
+    expect(h.frame()).toContain("↑↓ scroll"); // focus moved to the content pane
+    for (let i = 0; i < 45; i++) await h.key(DOWN); // scroll past the end (clamps)
+    await tick(40);
+    expect(h.frame()).toContain("Line 40:"); // deep content now visible → scroll works
+    h.unmount();
+  }, 20000);
 
   it("edits an item's status through the status picker", async () => {
     const h = await mount();
