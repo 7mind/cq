@@ -153,11 +153,14 @@ opus = "claude:opus-4.8"
 `;
 
 describe("parseConfig with planners", () => {
-  it("whitelist rejects planners key before the fix (reproduce-first)", () => {
-    // This test documents the pre-fix behaviour: the parser should throw
-    // "unexpected top-level key planners" before the whitelist is extended.
-    // After the fix this test is superseded by the passing parse test below.
-    // We leave it here as documentation; post-fix it should no longer throw.
+  it("whitelist rejects an unknown top-level key but accepts planners", () => {
+    // (a) Unknown top-level key hits the same rejection path that `planners`
+    //     hit before the whitelist was extended — verifies the guard is live.
+    expect(() => parseConfig(`bogus = []\n`)).toThrow(
+      /unexpected top-level key bogus/,
+    );
+    // (b) After the fix, `planners` is whitelisted — must parse without error.
+    expect(() => parseConfig(VALID_TOML_WITH_PLANNERS)).not.toThrow();
   });
 
   it("parses a cq.toml carrying both reviewers and planners", () => {
