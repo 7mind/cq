@@ -1,16 +1,14 @@
 /**
  * cq.toml config capability for the ledger MCP (T1 / R193 / G18).
  *
- * Lifts the reusable payload logic from `@cq/config-mcp`'s server
- * (computeReviewers/computeConfig) into a small module local to
+ * Provides computeReviewers/computeConfig as a small module local to
  * `@cq/ledger-mcp`. `@cq/ledger` core stays config-agnostic — the `@cq/config`
  * import + `loadConfig`/`resolveReviewers` call live ONLY here; the resulting
  * `ConfigCapability` is INJECTED into `registerLedgerStdioTools` /
  * `createLedgerMcpTools` (the buildServer wiring is T2).
  *
  * Each method re-reads `cq.toml` from disk on every call so the server
- * reflects edits without a restart (same discipline as the standalone
- * cq-config-mcp server).
+ * reflects edits without a restart.
  */
 
 import {

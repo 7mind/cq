@@ -22,20 +22,6 @@
         "bun-types": "^1.1.0",
       },
     },
-    "packages/cq-config-mcp": {
-      "name": "@cq/config-mcp",
-      "version": "0.0.1",
-      "bin": {
-        "cq-config-mcp": "./src/main.ts",
-      },
-      "dependencies": {
-        "@cq/config": "workspace:*",
-        "@modelcontextprotocol/sdk": "1.29.0",
-      },
-      "devDependencies": {
-        "bun-types": "^1.1.0",
-      },
-    },
     "packages/ledger": {
       "name": "@cq/ledger",
       "version": "0.0.1",
@@ -152,8 +138,6 @@
     "@babel/runtime": ["@babel/runtime@7.29.7", "", {}, "sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw=="],
 
     "@cq/config": ["@cq/config@workspace:packages/cq-config"],
-
-    "@cq/config-mcp": ["@cq/config-mcp@workspace:packages/cq-config-mcp"],
 
     "@cq/ledger": ["@cq/ledger@workspace:packages/ledger"],
 
