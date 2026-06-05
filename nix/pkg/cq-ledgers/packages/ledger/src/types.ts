@@ -146,10 +146,27 @@ export interface FetchedLedger {
  * Lightweight per-ledger summary returned by `enumerate_ledgers`: the
  * ledger name and its count of active (non-archived) items. Lets a client
  * show counts in a ledger list without fetching each ledger in full.
+ *
+ * The two optional fields are computed server-side and schema-free for the
+ * consumer (both fields absent on older servers — fall back gracefully):
+ *  - `statusCounts`: raw status → active-item count for this ledger.
+ *  - `completedCount`: items that count as COMPLETED for the progress bar,
+ *    classified against the ledger's OWN schema server-side. For the
+ *    questions ledger this means items in the `answered` status only (NOT
+ *    all terminals); for every other ledger it means items whose status is
+ *    in the schema's `terminalStatuses`.
  */
 export interface LedgerSummary {
   name: string;
   itemCount: number;
+  /** Raw status → active-item count. Optional: absent on older servers. */
+  statusCounts?: Record<string, number>;
+  /**
+   * Number of active items that count as completed for the progress bar,
+   * computed server-side against each ledger's schema. Optional: absent on
+   * older servers.
+   */
+  completedCount?: number;
 }
 
 export interface ArchivePointer {

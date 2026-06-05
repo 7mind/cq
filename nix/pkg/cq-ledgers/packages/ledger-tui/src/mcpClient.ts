@@ -143,14 +143,30 @@ export class McpLedgerClient implements LedgerClient {
   }
 
   async enumerateLedgers(): Promise<LedgerSummary[]> {
-    const r = await this.call<{ ledgers: string[]; counts?: Record<string, number> }>(
-      "enumerate_ledgers",
-      {},
-    );
-    // `counts` is optional for forward/backward compatibility with a server
-    // build that predates it — fall back to 0 rather than dereferencing undefined.
+    const r = await this.call<{
+      ledgers: string[];
+      counts?: Record<string, number>;
+      ledgerSummaries?: Array<{
+        name: string;
+        itemCount: number;
+        statusCounts?: Record<string, number>;
+        completedCount?: number;
+      }>;
+    }>("enumerate_ledgers", {});
+    // `counts` and `ledgerSummaries` are optional for forward/backward
+    // compatibility with a server build that predates them — fall back
+    // gracefully rather than dereferencing undefined.
     const counts = r.counts ?? {};
-    return r.ledgers.map((name) => ({ name, itemCount: counts[name] ?? 0 }));
+    const summaryMap = new Map(
+      (r.ledgerSummaries ?? []).map((s) => [s.name, s]),
+    );
+    return r.ledgers.map((name) => {
+      const extra = summaryMap.get(name);
+      const summary: LedgerSummary = { name, itemCount: counts[name] ?? 0 };
+      if (extra?.statusCounts !== undefined) summary.statusCounts = extra.statusCounts;
+      if (extra?.completedCount !== undefined) summary.completedCount = extra.completedCount;
+      return summary;
+    });
   }
 
   async fetchLedger(ledgerId: string): Promise<FetchedLedger> {

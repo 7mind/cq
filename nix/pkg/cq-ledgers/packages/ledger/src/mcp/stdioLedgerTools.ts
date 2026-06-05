@@ -23,6 +23,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { LedgerStore, CreateItemInit, UpdateItemPatch } from "../store/LedgerStore.js";
 import { QUERY_LANGUAGE_HELP } from "../search/query.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
+import { QUESTIONS_LEDGER } from "../constants.js";
 import {
   ReadLogNotImplementedError,
   type ReadLogCapability,
@@ -99,6 +100,39 @@ const safeIdSchema = z
   .regex(/^[A-Za-z0-9_-]+$/, "id may only contain A-Za-z0-9_-");
 
 // ---------------------------------------------------------------------------
+// Completion classification (server-side, schema-aware)
+// ---------------------------------------------------------------------------
+
+/**
+ * The answered status for the questions ledger. Kept as a local constant so
+ * the completion logic is expressed once (mirror of ANSWERED_STATUS in the
+ * web client's status.ts, but server-side where we have the schema).
+ */
+const QUESTIONS_ANSWERED_STATUS = "answered";
+
+/**
+ * Compute the number of active items that count as COMPLETED for this
+ * ledger's progress bar, classified against its OWN schema:
+ *  - questions ledger: only items in the "answered" status (NOT all terminals;
+ *    "withdrawn" is also terminal but does not count as a positive completion).
+ *  - every other ledger: items whose status is in schema.terminalStatuses.
+ */
+function computeCompletedCount(
+  ledgerName: string,
+  sc: Record<string, number>,
+  schema: LedgerSchema,
+): number {
+  if (ledgerName === QUESTIONS_LEDGER) {
+    return sc[QUESTIONS_ANSWERED_STATUS] ?? 0;
+  }
+  let total = 0;
+  for (const status of schema.terminalStatuses) {
+    total += sc[status] ?? 0;
+  }
+  return total;
+}
+
+// ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
 
@@ -135,10 +169,29 @@ export function registerLedgerStdioTools(
     async () => {
       const ledgers = store.enumerate();
       const counts: Record<string, number> = {};
+      const statusCounts: Record<string, Record<string, number>> = {};
+      const completedCounts: Record<string, number> = {};
       for (const name of ledgers) {
-        counts[name] = store.fetch(name).milestones.reduce((n, g) => n + g.items.length, 0);
+        const fetched = store.fetch(name);
+        const sc: Record<string, number> = {};
+        let total = 0;
+        for (const group of fetched.milestones) {
+          for (const item of group.items) {
+            sc[item.status] = (sc[item.status] ?? 0) + 1;
+            total++;
+          }
+        }
+        counts[name] = total;
+        statusCounts[name] = sc;
+        completedCounts[name] = computeCompletedCount(name, sc, fetched.schema);
       }
-      return jsonResult({ ledgers, counts });
+      const ledgerSummaries = ledgers.map((name) => ({
+        name,
+        itemCount: counts[name] ?? 0,
+        statusCounts: statusCounts[name] ?? {},
+        completedCount: completedCounts[name] ?? 0,
+      }));
+      return jsonResult({ ledgers, counts, ledgerSummaries });
     },
   );
 
