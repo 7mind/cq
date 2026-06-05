@@ -1920,3 +1920,97 @@ describe("ledger-tui inert r/1-9 when persisted answer non-empty (T89)", () => {
     h.unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// D29 UX guard: empty/whitespace Enter is a no-op in both answer paths (T164)
+// ---------------------------------------------------------------------------
+
+describe("ledger-tui D29: empty answer Enter is a no-op (T164)", () => {
+  // --- TextPrompt answer overlay (single-item answer via 'a' key) ----------
+
+  it("pressing Enter with an empty answer in the TextPrompt overlay does NOT submit (status stays open)", async () => {
+    const h = await mount();
+    await openQuestions(h); // lands on Q1
+    await h.key("a"); // open answer overlay
+    await tick(20);
+    // The overlay pre-fills with Q1's existing answer (empty).  Press Enter
+    // immediately without typing anything.
+    await h.key(ENTER);
+    await tick(40);
+    const q = await h.client.fetchItem("questions", "Q1");
+    // Status must remain open; no answered transition fired.
+    expect(q.status).toBe("open");
+    h.unmount();
+  });
+
+  it("pressing Enter with a whitespace-only answer in the TextPrompt overlay does NOT submit", async () => {
+    const h = await mount();
+    await openQuestions(h); // lands on Q1
+    await h.key("a"); // open answer overlay (pre-filled empty for Q1)
+    await tick(20);
+    await type(h, "   "); // type only spaces
+    await h.key(ENTER);
+    await tick(40);
+    const q = await h.client.fetchItem("questions", "Q1");
+    expect(q.status).toBe("open");
+    h.unmount();
+  });
+
+  it("pressing Enter with a non-empty answer in the TextPrompt overlay DOES submit", async () => {
+    const h = await mount();
+    await openQuestions(h); // lands on Q1
+    await h.key("a"); // open answer overlay
+    await tick(20);
+    await type(h, "yes");
+    await h.key(ENTER);
+    await tick(40);
+    const q = await h.client.fetchItem("questions", "Q1");
+    expect(q.status).toBe("answered");
+    expect(q.fields["answer"]).toBe("yes");
+    h.unmount();
+  });
+
+  // --- BatchAnswerOverlay (batch-answer stepper via 'b' key) ---------------
+
+  it("pressing Enter with an empty typed answer in BatchAnswerOverlay does NOT submit (status stays open)", async () => {
+    const h = await mount();
+    await openQuestions(h); // lands on Q1
+    await h.key("b"); // enter batch-answer overlay (Q1 is first open item)
+    await tick(20);
+    // The overlay initialises value to fieldToString(Q1's answer) = "".
+    // Press Enter immediately without typing anything.
+    await h.key(ENTER);
+    await tick(40);
+    const q = await h.client.fetchItem("questions", "Q1");
+    expect(q.status).toBe("open");
+    expect(h.frame()).toContain("Q1"); // still on Q1, not auto-advanced
+    h.unmount();
+  });
+
+  it("pressing Enter with a whitespace-only typed answer in BatchAnswerOverlay does NOT submit", async () => {
+    const h = await mount();
+    await openQuestions(h); // lands on Q1
+    await h.key("b"); // enter batch-answer overlay
+    await tick(20);
+    await type(h, "  "); // type only spaces
+    await h.key(ENTER);
+    await tick(40);
+    const q = await h.client.fetchItem("questions", "Q1");
+    expect(q.status).toBe("open");
+    h.unmount();
+  });
+
+  it("pressing Enter with a non-empty typed answer in BatchAnswerOverlay DOES submit", async () => {
+    const h = await mount();
+    await openQuestions(h); // lands on Q1
+    await h.key("b"); // enter batch-answer overlay
+    await tick(20);
+    await type(h, "ship it");
+    await h.key(ENTER);
+    await tick(40);
+    const q = await h.client.fetchItem("questions", "Q1");
+    expect(q.status).toBe("answered");
+    expect(q.fields["answer"]).toBe("ship it");
+    h.unmount();
+  });
+});

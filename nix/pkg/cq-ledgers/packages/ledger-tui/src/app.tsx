@@ -1856,7 +1856,7 @@ function Overlays({
         <TextPrompt
           label="answer (saves + marks answered):"
           initialValue={fieldToString(overlay.row.item.fields[ANSWER_FIELD])}
-          onSubmit={(v) => onAnswer(overlay.row, v)}
+          onSubmit={(v) => { if (v.trim() !== "") onAnswer(overlay.row, v); }}
           onCancel={onCancel}
         />
       );
@@ -1950,7 +1950,7 @@ function BatchAnswerOverlay({
       // the persisted answer is empty — symmetric with the list/content key gate).
       if (recommended && !persistedAnswerNonEmpty) onAnswer(row, AS_RECOMMENDED_ANSWER);
     } else if (key.return) {
-      onAnswer(row, value);
+      if (value.trim() !== "") onAnswer(row, value);
     } else if (key.backspace || key.delete) {
       setValue((v) => v.slice(0, -1));
     } else if (input.length > 0 && !key.ctrl && !key.meta) {
