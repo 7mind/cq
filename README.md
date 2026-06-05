@@ -24,7 +24,8 @@ nix/
       examples/sample-ledger/ # ready-made dataset
     cq-assets/                # ledger's contributed LLM assets (assets.nix, commands/, agents/)
     yolo/                     # bubblewrap sandbox wrapper (+ internal llm-sandbox.sh)
-    llm-prompts/              # base prompts + skills bundle
+    llm-skills/               # SKILL.md set + meta.yaml validation
+    llm-contexts/             # general-context.md + pi-context.md
     claude-code/ codex/       # vendored agent CLIs (pinned releases)
     pi-coding-agent/ pi-xai-patched/ pi-extensions/
     reattach-llm/
@@ -153,8 +154,8 @@ Other modules can append their own `assetBundles` (same shape as
 modules (e.g. a consumer's opencode config) to reuse.
 
 The harness building blocks are also exposed as individual packages —
-`packages.<system>.{yolo,claude-code,codex,pi-coding-agent,llm-prompts,
-reattach-llm}` — so they can be built or consumed directly.
+`packages.<system>.{yolo,claude-code,codex,pi-coding-agent,llm-skills,
+llm-contexts,reattach-llm}` — so they can be built or consumed directly.
 
 ---
 
@@ -182,6 +183,6 @@ dependencies. After changing dependencies (and `bun.lock`), refresh its
 Outputs:
 - `packages.{ledger-mcp,ledger-tui,ledger-web,node-modules}` +
   `apps.{default,ledger-mcp,ledger-tui,ledger-web}` (default is `ledger-mcp`).
-- `packages.{yolo,claude-code,codex,pi-coding-agent,pi-xai-patched,llm-prompts,reattach-llm}` — harness building blocks.
+- `packages.{yolo,claude-code,codex,pi-coding-agent,pi-xai-patched,llm-skills,llm-contexts,llm-context-with-env,reattach-llm}` — harness building blocks.
 - `homeManagerModules.dev-llm` — the coding-agent harness module.
 - `llmAssets` — the ledger's system-agnostic prompt/skill asset bundle.

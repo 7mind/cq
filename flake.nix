@@ -381,13 +381,24 @@
 
           # ── LLM coding-agent harness support packages ──────────────── #
           # The building blocks of homeManagerModules.dev-llm, exposed so
-          # consumers (and CI) can build them directly. llm-prompts in
-          # particular is consumed by nix-config's copilot/vibe modules
-          # (its `context-with-env.md`).
-          # llm-prompts/default.nix returns { llmAssets; contextWithEnvFile;
-          # package; }; expose the build-time-validated derivation (it carries
-          # `context-with-env.md` for skill-less agents).
-          llm-prompts = (pkgs.callPackage ./nix/pkg/llm-prompts/default.nix { }).package;
+          # consumers (and CI) can build them directly.
+          # llm-skills: the validated SKILL.md set (also carries $out/skills).
+          llm-skills = (pkgs.callPackage ./nix/pkg/llm-skills/default.nix { }).package;
+          # llm-contexts: the general + Pi context fragments as files.
+          llm-contexts = (pkgs.callPackage ./nix/pkg/llm-contexts/default.nix { }).package;
+          # llm-context-with-env: general context + the environment skill folded
+          # in, for skill-less agents (Copilot, Vibe). The file IS the store
+          # path; referencing llm-skills.package keeps meta.yaml validation in
+          # the consumer's build graph. Consumed by nix-config's dev-opencode.
+          llm-context-with-env =
+            let
+              skills = pkgs.callPackage ./nix/pkg/llm-skills/default.nix { };
+              contexts = pkgs.callPackage ./nix/pkg/llm-contexts/default.nix { };
+            in
+            pkgs.runCommandLocal "context-with-env.md" { } ''
+              : "${skills.package}" # pull skill validation into the build graph
+              cp ${pkgs.writeText "context-with-env-body" (contexts.general + "\n\n" + skills.environmentContent)} "$out"
+            '';
           claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
           codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
