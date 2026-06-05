@@ -53,20 +53,18 @@ function decode<T>(result: { content: Array<{ type: string; text: string }> }): 
 }
 
 describe("ledger MCP tools", () => {
-  it("exports the expected tool names (18 tools)", async () => {
+  it("exports the expected tool names (20 tools)", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...LEDGER_TOOL_NAMES].sort());
-    // T1: LEDGER_TOOL_NAMES gained get_reviewers + get_config (now 20). The
-    // `as number` widening keeps tsc from literal-narrowing the receiver so
-    // `bun run typecheck` stays green; the runtime assertion is deliberately
-    // RED here (count is 20, not 18) — T3 bumps this target to 20.
-    expect(LEDGER_TOOL_NAMES.length as number).toBe(18);
+    expect(LEDGER_TOOL_NAMES.length).toBe(20);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("reopen_item");
     expect(LEDGER_TOOL_NAMES).toContain("unarchive_item");
     expect(LEDGER_TOOL_NAMES).toContain("read_log");
+    expect(LEDGER_TOOL_NAMES).toContain("get_reviewers");
+    expect(LEDGER_TOOL_NAMES).toContain("get_config");
   });
 
   it("read_log against the in-memory store throws the documented not-implemented error", async () => {

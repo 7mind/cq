@@ -3,7 +3,7 @@
  *
  * Spawns the standalone stdio binary as a subprocess, drives it through the
  * `@modelcontextprotocol/sdk` Client + StdioClientTransport pair, and asserts:
- *   1. tools/list returns exactly the 18-tool ledger surface.
+ *   1. tools/list returns exactly the 20-tool ledger surface.
  *   2. enumerate_ledgers reflects the bootstrapped + seeded ledgers.
  *   3. A full create → read → update → search round-trip works through the
  *      transport and persists to disk (verified with a fresh store).
@@ -80,7 +80,7 @@ function decode<T>(result: unknown): T {
 }
 
 describe("ledger-mcp stdio binary", () => {
-  it("lists exactly the 18 ledger tools (no cq ask/submit tools)", async () => {
+  it("lists exactly the 20 ledger tools (no cq ask/submit tools)", async () => {
     await withClient(async (client) => {
       const list = await client.listTools();
       const names = list.tools.map((t) => t.name).sort();

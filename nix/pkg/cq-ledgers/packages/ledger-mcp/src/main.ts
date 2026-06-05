@@ -1,6 +1,6 @@
 #!/usr/bin/env -S bun run
 /**
- * ledger-mcp — standalone MCP server exposing the 18 ledger tools.
+ * ledger-mcp — standalone MCP server exposing the 20 ledger tools.
  *
  * This is the cq-free ledger MCP server: it serves the tool surface backed
  * by a file-backed `FsLedgerStore` rooted at the supplied `--cwd` directory,
@@ -156,7 +156,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   return { cwd: resolved, http, reset, yes };
 }
 
-/** Build a fresh McpServer with the 18 ledger tools bound to `store`. */
+/** Build a fresh McpServer with the 20 ledger tools bound to `store`. */
 /**
  * Server-level usage guidance, surfaced to the client on `initialize` (the MCP
  * `instructions` field). Clients that inject it give the model "when/how to

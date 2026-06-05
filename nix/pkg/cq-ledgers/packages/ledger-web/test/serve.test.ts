@@ -6,7 +6,7 @@
  *   - index.html is served with the same-origin /mcp endpoint injected + the
  *     module script; the JS bundle loads; unknown paths fall back to index.
  *   - the SAME-ORIGIN /mcp endpoint reverse-proxies to the upstream: an MCP
- *     client connected to the web origin can list the 18 tools and round-trip
+ *     client connected to the web origin can list the 20 tools and round-trip
  *     a create/fetch (so the browser never needs to reach the MCP host).
  */
 
