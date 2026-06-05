@@ -56,7 +56,6 @@
               ./nix/pkg/cq-ledgers/bun.lock
               ./nix/pkg/cq-ledgers/bunfig.toml
               ./nix/pkg/cq-ledgers/packages/cq-config/package.json
-              ./nix/pkg/cq-ledgers/packages/cq-config-mcp/package.json
               ./nix/pkg/cq-ledgers/packages/ledger/package.json
               ./nix/pkg/cq-ledgers/packages/ledger-live/package.json
               ./nix/pkg/cq-ledgers/packages/ledger-mcp/package.json
@@ -99,11 +98,10 @@
             # Root node_modules: the .bun/ hoisted store plus top-level symlinks.
             cp -r node_modules $out/node_modules
 
-            mkdir -p $out/packages/cq-config $out/packages/cq-config-mcp \
+            mkdir -p $out/packages/cq-config \
                      $out/packages/ledger $out/packages/ledger-live $out/packages/ledger-mcp \
                      $out/packages/ledger-tui $out/packages/ledger-web
             cp -r packages/cq-config/node_modules     $out/packages/cq-config/node_modules
-            cp -r packages/cq-config-mcp/node_modules $out/packages/cq-config-mcp/node_modules
             cp -r packages/ledger/node_modules      $out/packages/ledger/node_modules
             cp -r packages/ledger-live/node_modules $out/packages/ledger-live/node_modules
             cp -r packages/ledger-mcp/node_modules  $out/packages/ledger-mcp/node_modules
@@ -129,9 +127,11 @@
         embedServerClosure = ''
           cp -r packages/ledger     "$WORKSPACE/packages/ledger"
           cp -r packages/ledger-mcp "$WORKSPACE/packages/ledger-mcp"
+          cp -r packages/cq-config  "$WORKSPACE/packages/cq-config"
           rm -rf \
             "$WORKSPACE/packages/ledger/node_modules" \
-            "$WORKSPACE/packages/ledger-mcp/node_modules"
+            "$WORKSPACE/packages/ledger-mcp/node_modules" \
+            "$WORKSPACE/packages/cq-config/node_modules"
 
           # @cq/ledger runtime deps.
           mkdir -p "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai" \
@@ -158,6 +158,8 @@
           fi
           ln -s "$WORKSPACE/packages/ledger" \
             "$WORKSPACE/packages/ledger-mcp/node_modules/@cq/ledger"
+          ln -s "$WORKSPACE/packages/cq-config" \
+            "$WORKSPACE/packages/ledger-mcp/node_modules/@cq/config"
         '';
 
         # ------------------------------------------------------------------ #
@@ -224,76 +226,15 @@
             ln -s "$WORKSPACE/packages/ledger" \
               "$WORKSPACE/packages/ledger-mcp/node_modules/@cq/ledger"
 
+            # @cq/config — config-capability parser dep of @cq/ledger-mcp.
+            cp -r packages/cq-config "$WORKSPACE/packages/cq-config"
+            rm -rf "$WORKSPACE/packages/cq-config/node_modules"
+            ln -s "$WORKSPACE/packages/cq-config" \
+              "$WORKSPACE/packages/ledger-mcp/node_modules/@cq/config"
+
             # ── 4. Wrapper ──────────────────────────────────────────────── #
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/ledger-mcp \
               --add-flags "run $WORKSPACE/packages/ledger-mcp/src/main.ts --" \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
-
-            runHook postInstall
-          '';
-
-          dontStrip = true;
-          dontFixup = true;
-        };
-
-        # ------------------------------------------------------------------ #
-        # cq-config-mcp — the standalone cq.toml config MCP server.            #
-        #                                                                      #
-        # Exposes get_reviewers / get_config over stdio, backed by the         #
-        # @cq/config parser (cq.toml at the --cwd repo root, default CWD).     #
-        # Mirrors the ledger-mcp packaging: source + workspace links for the   #
-        # @cq/config library and the @modelcontextprotocol/sdk runtime dep.    #
-        # ------------------------------------------------------------------ #
-        cqConfigMcp = pkgs.stdenv.mkDerivation {
-          pname = "cq-config-mcp";
-          version = "0.0.1";
-
-          src = ./nix/pkg/cq-ledgers;
-
-          nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper ];
-
-          dontConfigure = true;
-          # Bun transpiles TypeScript at runtime; no compile step here.
-          buildPhase = "true";
-
-          installPhase = ''
-            runHook preInstall
-
-            WORKSPACE=$out/share/cq-config-mcp
-            mkdir -p "$WORKSPACE/packages" $out/bin
-
-            # ── 1. Source: the library + this binary ────────────────────── #
-            cp -r packages/cq-config     "$WORKSPACE/packages/cq-config"
-            cp -r packages/cq-config-mcp "$WORKSPACE/packages/cq-config-mcp"
-            cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
-            rm -rf \
-              "$WORKSPACE/packages/cq-config/node_modules" \
-              "$WORKSPACE/packages/cq-config-mcp/node_modules"
-
-            # ── 2. cq-config node_modules ───────────────────────────────── #
-            # The parser is dependency-free at runtime (pure node:fs/path);
-            # only bun-types is wired so the workspace layout matches dev.
-            mkdir -p "$WORKSPACE/packages/cq-config/node_modules"
-            if [ -e "${bunNodeModules}/packages/cq-config/node_modules/bun-types" ]; then
-              ln -s "${bunNodeModules}/packages/cq-config/node_modules/bun-types" \
-                "$WORKSPACE/packages/cq-config/node_modules/bun-types"
-            fi
-
-            # ── 3. cq-config-mcp node_modules ───────────────────────────── #
-            mkdir -p "$WORKSPACE/packages/cq-config-mcp/node_modules/@modelcontextprotocol" \
-                     "$WORKSPACE/packages/cq-config-mcp/node_modules/@cq"
-            ln -s ${bunNodeModules}/packages/cq-config-mcp/node_modules/@modelcontextprotocol/sdk \
-              "$WORKSPACE/packages/cq-config-mcp/node_modules/@modelcontextprotocol/sdk"
-            if [ -e "${bunNodeModules}/packages/cq-config-mcp/node_modules/bun-types" ]; then
-              ln -s "${bunNodeModules}/packages/cq-config-mcp/node_modules/bun-types" \
-                "$WORKSPACE/packages/cq-config-mcp/node_modules/bun-types"
-            fi
-            ln -s "$WORKSPACE/packages/cq-config" \
-              "$WORKSPACE/packages/cq-config-mcp/node_modules/@cq/config"
-
-            # ── 4. Wrapper ──────────────────────────────────────────────── #
-            makeWrapper ${pkgs.bun}/bin/bun $out/bin/cq-config-mcp \
-              --add-flags "run $WORKSPACE/packages/cq-config-mcp/src/main.ts --" \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
 
             runHook postInstall
@@ -446,7 +387,6 @@
         packages = {
           default = ledgerMcp;
           ledger-mcp = ledgerMcp;
-          cq-config-mcp = cqConfigMcp;
           ledger-tui = ledgerTui;
           ledger-web = ledgerWeb;
           # Expose for debugging / hash refresh.
@@ -490,10 +430,6 @@
         apps.ledger-mcp = {
           type = "app";
           program = "${ledgerMcp}/bin/ledger-mcp";
-        };
-        apps.cq-config-mcp = {
-          type = "app";
-          program = "${cqConfigMcp}/bin/cq-config-mcp";
         };
         apps.ledger-tui = {
           type = "app";
