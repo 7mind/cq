@@ -88,6 +88,20 @@ async function holdFull(el: Element | null): Promise<void> {
   await flush();
 }
 
+/**
+ * Fire onInput on an uncontrolled textarea (happy-dom safe). Required before
+ * holding 'save & mark answered', which is disabled until the answer is non-empty.
+ */
+function fireInput(el: Element | null, value: string): void {
+  if (el === null) throw new Error("fireInput: element not found");
+  act(() => {
+    const node = el as HTMLTextAreaElement;
+    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), "value");
+    desc?.set?.call(node, value);
+    node.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 async function mount(): Promise<void> {
   holdClock = new FakeClock();
   fake = new FakeClient();
@@ -135,7 +149,9 @@ describe("BatchAnswerModal close on queue drain (D19 / T115)", () => {
     await flush();
     expect(testid("batch-overlay")).not.toBeNull();
 
-    // Answer Q1.
+    // Answer Q1 (type something first to enable the submit button).
+    fireInput(testid("batch-answer-input"), "yes");
+    await flush();
     await holdFull(testid("batch-answer-submit"));
 
     // Modal must close.
@@ -168,17 +184,23 @@ describe("BatchAnswerModal close on queue drain (D19 / T115)", () => {
     await flush();
     expect(testid("batch-overlay")).not.toBeNull();
 
-    // Answer Q1 (index 0).
+    // Answer Q1 (index 0) — type to enable the submit button first.
+    fireInput(testid("batch-answer-input"), "a1");
+    await flush();
     await holdFull(testid("batch-answer-submit"));
     // Modal must still be open (Q2 and Q3 remain).
     expect(testid("batch-overlay")).not.toBeNull();
 
-    // Answer Q2 (now at current index).
+    // Answer Q2 (now at current index) — answerHasText resets on nav; type again.
+    fireInput(testid("batch-answer-input"), "a2");
+    await flush();
     await holdFull(testid("batch-answer-submit"));
     // Modal must still be open (Q3 remains).
     expect(testid("batch-overlay")).not.toBeNull();
 
-    // Answer Q3.
+    // Answer Q3 — same pattern.
+    fireInput(testid("batch-answer-input"), "a3");
+    await flush();
     await holdFull(testid("batch-answer-submit"));
 
     // All answered — modal must close.
@@ -194,7 +216,9 @@ describe("BatchAnswerModal close on queue drain (D19 / T115)", () => {
     const progressBefore = testid("batch-progress")?.textContent ?? "";
     expect(progressBefore).toContain("1 of 3");
 
-    // Answer Q1.
+    // Answer Q1 — type to enable the submit button first.
+    fireInput(testid("batch-answer-input"), "yes");
+    await flush();
     await holdFull(testid("batch-answer-submit"));
 
     // Must advance — progress must NOT still show "1 of 3".
@@ -218,7 +242,9 @@ describe("BatchAnswerModal close on queue drain (D19 / T115)", () => {
     // Verify we are at Q2.
     expect(testid("batch-progress")?.textContent).toContain("2 of 3");
 
-    // Answer Q2.
+    // Answer Q2 — type to enable the submit button first.
+    fireInput(testid("batch-answer-input"), "q2 answer");
+    await flush();
     await holdFull(testid("batch-answer-submit"));
 
     // Modal must remain open (Q1 and Q3 are still unanswered).

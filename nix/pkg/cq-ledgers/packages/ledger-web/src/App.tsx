@@ -1636,13 +1636,16 @@ function BatchAnswerModal({
   holdClock?: HoldClock | undefined;
 }): React.ReactElement {
   const answerRef = useRef<HTMLTextAreaElement>(null);
-  // True once the user has typed at least one non-whitespace character; gates
-  // the 'as recommended' button so it cannot clobber a draft answer (T88 / Web #15).
-  const [answerHasText, setAnswerHasText] = useState(false);
-  // Reset the guard whenever the active question changes.
+  // True when the answer textarea contains non-whitespace text; gates the
+  // 'save & mark answered' button (must have text) and the 'as recommended'
+  // button (must NOT have text, to avoid clobbering a draft) (T88 / Web #15, D29).
+  const [answerHasText, setAnswerHasText] = useState(
+    () => fieldToString(rows[index]?.item.fields[ANSWER_FIELD]).trim().length > 0,
+  );
+  // Re-sync the guard whenever the active question changes.
   useEffect(() => {
-    setAnswerHasText(false);
-  }, [index]);
+    setAnswerHasText(fieldToString(rows[index]?.item.fields[ANSWER_FIELD]).trim().length > 0);
+  }, [index, rows]);
   const row = rows[index];
   const renderVal = (v: FieldValue): React.ReactNode =>
     Array.isArray(v) ? renderListField(v) : <Markdown text={v} />;
@@ -1731,6 +1734,7 @@ function BatchAnswerModal({
               <div className="lw-answer-actions">
                 <HoldButton
                   data-testid="batch-answer-submit"
+                  disabled={!answerHasText}
                   onConfirm={() => onSave(row, answerRef.current?.value ?? "")}
                   clock={holdClock}
                 >
@@ -2410,16 +2414,19 @@ function DetailPanel({
   // Uncontrolled answer box for the questions "answer & resolve" affordance.
   const answerRef = useRef<HTMLTextAreaElement>(null);
   // True once the user has typed at least one non-whitespace character into the
-  // answer textarea; gates the 'as recommended' and per-suggestion 'pick'
-  // buttons so they cannot clobber a draft answer (T88 / Web #15).
-  const [answerHasText, setAnswerHasText] = useState(false);
+  // answer textarea; gates the 'save & mark answered' button (must have text)
+  // and the 'as recommended' / per-suggestion 'pick' buttons (must NOT have
+  // text, to avoid clobbering a draft) (T88 / Web #15, D29).
+  const [answerHasText, setAnswerHasText] = useState(
+    () => fieldToString(row.item.fields[ANSWER_FIELD]).trim().length > 0,
+  );
 
   // Reset to the initial mode + values whenever the row changes (a different
   // item loads, or a fresh create session starts → blank draft row).
   useEffect(() => {
     setEditing(isDraft);
     setStatus(row.item.status);
-    setAnswerHasText(false);
+    setAnswerHasText(fieldToString(row.item.fields[ANSWER_FIELD]).trim().length > 0);
   }, [row, isDraft]);
 
   // Default the milestone selection once the options arrive.
@@ -2626,7 +2633,7 @@ function DetailPanel({
         onInput={(e) => setAnswerHasText((e.currentTarget as HTMLTextAreaElement).value.trim().length > 0)}
       />
       <div className="lw-answer-actions">
-        <HoldButton data-testid="answer-submit" onConfirm={submitAnswer} clock={holdClock}>
+        <HoldButton data-testid="answer-submit" disabled={!answerHasText} onConfirm={submitAnswer} clock={holdClock}>
           save &amp; mark answered
         </HoldButton>
         {hasRecommendation && (
