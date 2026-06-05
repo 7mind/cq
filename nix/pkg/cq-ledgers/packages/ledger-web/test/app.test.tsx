@@ -1137,10 +1137,58 @@ describe("ledger-web App", () => {
   });
 });
 
+describe("ledger-web sidebar layout (T4)", () => {
+  it("questions ledger button renders before the Q&A button, divider present, other ledgers after", async () => {
+    await mount();
+    const sidebar = testid("ledger-list");
+    expect(sidebar).not.toBeNull();
+
+    const questionsBtn = testid("ledger-questions");
+    const batchBtn = testid("batch-open");
+    const divider = testid("sidebar-divider");
+    const bugsBtn = testid("ledger-bugs");
+
+    // All elements are present.
+    expect(questionsBtn).not.toBeNull();
+    expect(batchBtn).not.toBeNull();
+    expect(divider).not.toBeNull();
+    expect(bugsBtn).not.toBeNull();
+
+    // Document order: questions → batch-open → divider → bugs (and other non-questions ledgers).
+    const follows = (a: Element | null, b: Element | null): boolean =>
+      (a!.compareDocumentPosition(b!) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(questionsBtn, batchBtn)).toBe(true);
+    expect(follows(batchBtn, divider)).toBe(true);
+    expect(follows(divider, bugsBtn)).toBe(true);
+
+    // Q&A button label is exactly "Q&A".
+    expect(batchBtn!.textContent).toBe("Q&A");
+
+    // Q&A button still opens the batch modal (retained openBatch behavior).
+    click(batchBtn);
+    await flush();
+    expect(testid("batch-overlay")).not.toBeNull();
+  });
+
+  it("keyboard nav: cursor indices are keyed to the ledgers array (bugs=0, milestones=1)", async () => {
+    await mount();
+    // Initial cursor is on bugs (array index 0), which renders in section 2.
+    expect(testid("ledger-bugs")?.className).toContain("lw-ledger-cursor");
+    // ArrowDown moves to milestones (array index 1).
+    press("ArrowDown");
+    await flush();
+    expect(testid("ledger-milestones")?.className).toContain("lw-ledger-cursor");
+    // Enter opens milestones.
+    press("Enter");
+    await flush();
+    expect(testid("item-M1")).not.toBeNull();
+  });
+});
+
 describe("ledger-web keyboard navigation", () => {
   it("opens a ledger from the sidebar with arrows + Enter", async () => {
     await mount();
-    // sidebar focused, cursor on the first ledger (bugs, sorted first)
+    // sidebar focused, cursor on the first ledger (bugs, array index 0)
     expect(testid("ledger-bugs")?.className).toContain("lw-ledger-cursor");
     press("ArrowDown"); // → milestones
     await flush();

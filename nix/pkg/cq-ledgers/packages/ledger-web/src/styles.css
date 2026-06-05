@@ -202,10 +202,15 @@ body {
   gap: 12px;
   margin-top: 14px;
 }
-/* Entry button pinned to the BOTTOM of the sidebar flex column. */
+/* Q&A batch-answer entry button: top of the sidebar (section 1). */
 .lw-batch-open {
-  margin-top: auto;
   text-align: left;
+}
+/* Divider between the Q&A section and the remaining ledgers. */
+.lw-sidebar-divider {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 4px 0;
 }
 input,
 select,

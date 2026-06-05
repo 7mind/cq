@@ -1022,7 +1022,10 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
 
       <div className="lw-body">
         <nav className="lw-sidebar" data-testid="ledger-list">
+          {/* Section 1: the 'questions' ledger (if present), then the Q&A
+              batch-answer button. */}
           {ledgers.map((l, i) => {
+            if (l.name !== QUESTIONS_LEDGER) return null;
             const cls = [
               "lw-ledger",
               l.name === ledger ? "lw-ledger-active" : "",
@@ -1048,16 +1051,45 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
               </button>
             );
           })}
-          {/* Batch-answer entry point (Q33): pinned to the BOTTOM of the
-              sidebar. Opens the modal that steps through all open questions. */}
+          {/* Batch-answer entry point (Q33): immediately after 'questions'. */}
           <button
             type="button"
             className="lw-batch-open"
             data-testid="batch-open"
             onClick={() => void openBatch()}
           >
-            answer questions…
+            Q&A
           </button>
+          {/* Visual divider between the Q&A section and the other ledgers. */}
+          <hr className="lw-sidebar-divider" data-testid="sidebar-divider" />
+          {/* Section 2: all ledgers except 'questions', in their original order. */}
+          {ledgers.map((l, i) => {
+            if (l.name === QUESTIONS_LEDGER) return null;
+            const cls = [
+              "lw-ledger",
+              l.name === ledger ? "lw-ledger-active" : "",
+              navZone === "sidebar" && i === ledgerCursor ? "lw-ledger-cursor" : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+            return (
+              <button
+                key={l.name}
+                data-testid={`ledger-${l.name}`}
+                className={cls}
+                onClick={() => {
+                  setLedgerCursor(i);
+                  setNavZone("main");
+                  void openLedger(l.name);
+                }}
+              >
+                <span className="lw-ledger-name">{l.name}</span>
+                <span className="lw-ledger-count" data-testid={`ledger-count-${l.name}`}>
+                  {l.itemCount}
+                </span>
+              </button>
+            );
+          })}
         </nav>
 
         <div className={`lw-workarea lw-workarea-${panel.orientation}`} ref={workareaRef}>
