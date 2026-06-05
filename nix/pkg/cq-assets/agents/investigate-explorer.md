@@ -72,9 +72,24 @@ adjudicates H's status from the `[correct]` items only:
     }
   ],
   "lean": "supports | contradicts | mixed | insufficient",
-  "notes": "<optional: leads worth drilling next, or access/info you lacked>"
+  "notes": "<optional: leads worth drilling next, or access/info you lacked>",
+  "probeRequest": {
+    "what": "<commands / builds / tests the orchestrator must RUN to gather decisive evidence>",
+    "why": "<why read-only static inspection cannot settle H — what execution would reveal>"
+  }
 }
 ```
+
+`probeRequest` is **omitted by default**. Include it only when static
+read-only inspection cannot settle H because the decisive evidence requires
+execution — for example: running a reproduction script, `bun test`, a build,
+or git operations that produce runtime output. When you include `probeRequest`,
+also set `lean: "insufficient"`.
+
+**You never execute anything.** Your `disallowedTools` keep Bash, Edit, and
+Write blocked — you have no means to run commands, and attempting to do so is
+a contract violation. When execution is needed, you RETURN a `probeRequest`
+and let the orchestrator dispatch a prober that runs in its own worktree.
 
 Rules:
 - `evidence` is numbered from 1; each item MUST have a precise `citation`
@@ -84,6 +99,9 @@ Rules:
   to point at what to chase next.
 - Return an empty `evidence` array (with `lean: "insufficient"`) rather than
   citing something you did not actually read. Never fabricate a `file:line`.
+- `probeRequest` is optional and omitted when static evidence suffices. When
+  present, `what` describes the exact commands or test targets to run; `why`
+  explains what read-only inspection cannot determine.
 
 ## Provenance
 You write nothing to the ledger, so you record no `author`/`session` — the
