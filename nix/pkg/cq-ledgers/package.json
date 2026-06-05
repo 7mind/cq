@@ -2,7 +2,7 @@
   "name": "ledger-suite",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/cq-config", "packages/ledger", "packages/ledger-live", "packages/ledger-mcp", "packages/ledger-tui", "packages/ledger-web"],
+  "workspaces": ["packages/cq-config", "packages/cq-config-mcp", "packages/ledger", "packages/ledger-live", "packages/ledger-mcp", "packages/ledger-tui", "packages/ledger-web"],
   "scripts": {
     "check": "tsc -b && eslint . && bun test",
     "typecheck": "tsc -b",
