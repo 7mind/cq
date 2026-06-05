@@ -29,6 +29,21 @@ durable ledger state left off. **ONE invocation = ONE research round.**
   seeding disjoint top-level (root) hypotheses. While DRILLING a single branch
   (a node and its children), dispatch **serially** — each child's framing
   depends on the parent's validated findings.
+- **Explorer is READ-ONLY; the prober EXECUTES (Q89).** When an `investigate-explorer`
+  cannot settle H by reading alone — it needs a thing RUN (the repro, `bun test`,
+  a build, `git show`/`git blame`) — it does NOT run it; it returns a
+  `probeRequest {what, why}` in its evidence-json. This command then dispatches an
+  `investigate-prober` (the EXECUTION-capable sibling) into a **throwaway worktree**
+  to run exactly that probe and return the SAME evidence-json shape (see step 4).
+  The prober is **LOCAL-ONLY, NO network**, makes **NO persisted edits to the main
+  checkout** (all writes confined to the discardable worktree), writes NOTHING to the
+  ledger, and does NOT adjudicate — this command validates its citations and sets the
+  hypothesis status, exactly as for an explorer. **Agent worktree isolation**
+  (consistent with implement/advance.md): Claude → dispatch via `Agent` with
+  `isolation: "worktree"` (native throwaway worktree, auto-removed); Codex → the
+  orchestrator does `git worktree add ../wt-probe-<H> <branch>` before dispatch and
+  `git worktree remove` after harvest. The worktree is ALWAYS removed after the
+  evidence is harvested — harvest-then-discard.
 - **The defect LIFECYCLE lives on the defect's STATUS, not on free-text
   markers.** The `defects` ledger status is `open → wip → {root-caused |
   inconclusive} → resolved | wontfix` (T116; terminal: `resolved`/`wontfix`;
@@ -66,12 +81,15 @@ On every `create_item` / `update_item`, pass `author` = your OWN model class
 `$CLAUDE_CODE_SESSION_ID` (or the Codex equivalent; omit if unavailable).
 
 ## Session logs (after EVERY subagent returns)
-Each `investigate-explorer` ends its reply with a `### Session summary` block.
-After each `Agent` call returns: take `<agent-id>` from the tool result, stamp
-`<timestamp>` (`Bash`: `date -u +%Y%m%d-%H%M%S`), `mkdir -p docs/logs`, and
-`Write` `docs/logs/<timestamp>-<agent-id>.md` — a short header (defect id,
-hypothesis id, role: explorer, returned `lean`) plus the verbatim summary block.
-Subagents write no file; you do.
+Each `investigate-explorer` **and** each `investigate-prober` ends its reply with a
+`### Session summary` block. After each `Agent` call returns — explorer OR prober —
+take `<agent-id>` from the tool result, stamp `<timestamp>` (`Bash`: `date -u
++%Y%m%d-%H%M%S`), `mkdir -p docs/logs`, and `Write`
+`docs/logs/<timestamp>-<agent-id>.md` — a short header (defect id, hypothesis id,
+`role: explorer` or `role: prober`, returned `lean`) plus the verbatim summary
+block. **One log file per dispatched subagent**, so a hypothesis whose explorer
+raised a `probeRequest` produces TWO logs this round (the explorer's, then the
+prober's). Subagents write no file; you do.
 
 ---
 
@@ -132,10 +150,40 @@ single branch, dispatch its children SERIALLY — wait for each explorer's
 validated findings before framing the next child. Write each explorer's session
 log on return (§Session logs).
 
+**An explorer may return a `probeRequest` instead of (or alongside) settling H**
+when it cannot adjudicate by reading alone — it needs something RUN. Do not run
+the probe inline; handle it in step 4 by dispatching an `investigate-prober` into
+a throwaway worktree (the prober runs read+execute and returns the same
+evidence-json), then harvest its evidence through the same citation-revalidation
+path.
+
 ### 4. VALIDATE citations + adjudicate (orchestrator-side)
 The explorer's evidence is UNTRUSTED until you check it. A mis-cited `file:line`
 is the dominant way the loop confirms the WRONG hypothesis, so re-open every
 citation yourself:
+- **If the explorer returned a `probeRequest` `{what, why}`** (it could not settle
+  H by reading alone — it needs the repro / `bun test` / a build / `git
+  show`/`git blame` RUN) **and you judge running it warranted for adjudicating H**,
+  dispatch an `investigate-prober` via `Agent` (`subagent_type:
+  "investigate-prober"`, `isolation: "worktree"`, most-capable model — `opus`).
+  Under Claude the `isolation: "worktree"` gives a native throwaway worktree; under
+  Codex the orchestrator `git worktree add ../wt-probe-<H> <branch>` before dispatch
+  and `git worktree remove` after harvest. The prompt MUST carry: the `probeRequest
+  {what, why}` verbatim, H's id + statement (verbatim), and the branch context (the
+  defect, the base commit / branch the worktree was cut from, parent hypothesis,
+  sibling findings already validated, what to confirm or rule out). The prober runs
+  **read+execute** in that worktree and RETURNS the SAME evidence-json shape an
+  explorer returns. **Scope guard (Q89):** probes are **LOCAL-ONLY, NO network**,
+  and make **NO persisted edits to the main checkout** — every write stays confined
+  to the discardable worktree. Write the prober's session log on return (§Session
+  logs). **Harvest-then-discard:** harvest the prober's returned evidence through the
+  EXISTING citation-revalidation path below (re-open each cited `file:line`, or
+  re-run the cited command and compare its output), exactly as for an explorer; then
+  the throwaway worktree is **always removed** after harvest (Claude: auto on Agent
+  return; Codex: `git worktree remove ../wt-probe-<H>`). Treat the prober's evidence
+  items identically to an explorer's in the bullets below. If you judge the probe
+  NOT warranted (e.g. the request is out of scope, needs network, or H is already
+  adjudicable), skip the dispatch and proceed with the explorer's evidence.
 - For each returned evidence item, **re-open the cited `file:line` (Read) — or
   re-fetch the URL (WebFetch)** and compare the source against the explorer's
   `excerpt`. If the excerpt matches the source AND genuinely bears on H, store it
@@ -260,6 +308,8 @@ exactly where it left off.
 ## Report to the user
 Summarize the round concisely:
 - hypotheses **seeded/drilled** this round (id + statement + new `status`);
+- any **probes dispatched** this round (which H, what was run in the throwaway
+  worktree, harvested-then-discarded);
 - citations **validated** (`[correct]` vs `[incorrect]` counts per node);
 - the defect's **STATUS** after this round (`wip` while drilling; `root-caused`
   when the cause is pinned; `inconclusive` when investigated but unpinned) and
