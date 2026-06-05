@@ -21,7 +21,8 @@ Current assets:
 | `commands/plan/advance.md`        | slash command — thin planner↔reviewer loop         |
 | `commands/plan/follow-up.md`      | slash command — add scope to an existing goal, re-clarify |
 | `agents/plan-advance.md`          | subagent — the planner (one state step)            |
-| `agents/plan-reviewer.md`         | subagent — the adversarial reviewer                |
+| `agents/plan-reviewer.md`         | subagent — the adversarial reviewer (mode-gated write) |
+| `commands/cq/plan-review.md`      | shared prompt — canonical plan-review rubric (Claude/Codex/Pi) |
 | `commands/implement/start.md`     | slash command — resolve scope, hand to advance loop |
 | `commands/implement/advance.md`   | slash command — the implement orchestrator loop    |
 | `agents/implement-worker.md`      | subagent — implements one task in an isolated worktree |
