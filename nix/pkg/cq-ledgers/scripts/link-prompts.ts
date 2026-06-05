@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 /**
- * (Re)create the Claude Code symlinks into the single-source `llm/` assets.
+ * (Re)create the Claude Code symlinks into the single-source `cq-assets/` assets.
  *
- * The prompts live once under `llm/` (the cross-tool asset convention:
- * `llm/commands/<ns>/<name>.md`, `llm/agents/<name>.md`). The `.codex/prompts/*`
- * symlinks are committed; the `.claude/` tree is gitignored, so Claude users run
- * this after clone (`bun run link-prompts`) to materialise the slash-command and
- * agent symlinks Claude Code discovers. Idempotent: existing symlinks are
- * replaced and parent dirs are created as needed.
+ * The prompts live once under `../cq-assets/` (sibling workspace package:
+ * `../cq-assets/commands/<ns>/<name>.md`, `../cq-assets/agents/<name>.md`). The
+ * `.claude/` tree is gitignored, so Claude users run this after clone
+ * (`bun run link-prompts`) to materialise the slash-command and agent symlinks
+ * Claude Code discovers. Idempotent: existing symlinks are replaced and parent
+ * dirs are created as needed.
  *
  *   bun run link-prompts
  *   bun run link-prompts -- --check   # exits non-zero if any target is missing
@@ -19,30 +19,30 @@ import { mkdir, lstat, unlink, symlink, readlink, access } from "node:fs/promise
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Each Claude link: its path, and the `llm/` source it points at. */
+/** Each Claude link: its path, and the `cq-assets/` source it points at. */
 export interface PromptLink {
   /** Link path, relative to the repo root. */
   readonly link: string;
-  /** Source file under `llm/`, relative to the repo root. */
+  /** Source file under `../cq-assets/`, relative to the repo root. */
   readonly source: string;
 }
 
 /** Single source of truth for all Claude symlinks. Exported for tests and --check mode. */
 export const LINKS: readonly PromptLink[] = [
-  { link: ".claude/commands/plan/start.md", source: "llm/commands/plan/start.md" },
-  { link: ".claude/commands/plan/advance.md", source: "llm/commands/plan/advance.md" },
-  { link: ".claude/commands/plan/follow-up.md", source: "llm/commands/plan/follow-up.md" },
-  { link: ".claude/agents/plan-advance.md", source: "llm/agents/plan-advance.md" },
-  { link: ".claude/agents/plan-reviewer.md", source: "llm/agents/plan-reviewer.md" },
-  { link: ".claude/commands/implement/start.md", source: "llm/commands/implement/start.md" },
-  { link: ".claude/commands/implement/advance.md", source: "llm/commands/implement/advance.md" },
-  { link: ".claude/agents/implement-worker.md", source: "llm/agents/implement-worker.md" },
-  { link: ".claude/agents/implement-reviewer.md", source: "llm/agents/implement-reviewer.md" },
-  { link: ".claude/agents/implement-conflict-resolver.md", source: "llm/agents/implement-conflict-resolver.md" },
-  { link: ".claude/commands/investigate/start.md", source: "llm/commands/investigate/start.md" },
-  { link: ".claude/commands/investigate/advance.md", source: "llm/commands/investigate/advance.md" },
-  { link: ".claude/agents/investigate-explorer.md", source: "llm/agents/investigate-explorer.md" },
-  { link: ".claude/commands/advance.md", source: "llm/commands/advance.md" },
+  { link: ".claude/commands/plan/start.md", source: "../cq-assets/commands/plan/start.md" },
+  { link: ".claude/commands/plan/advance.md", source: "../cq-assets/commands/plan/advance.md" },
+  { link: ".claude/commands/plan/follow-up.md", source: "../cq-assets/commands/plan/follow-up.md" },
+  { link: ".claude/agents/plan-advance.md", source: "../cq-assets/agents/plan-advance.md" },
+  { link: ".claude/agents/plan-reviewer.md", source: "../cq-assets/agents/plan-reviewer.md" },
+  { link: ".claude/commands/implement/start.md", source: "../cq-assets/commands/implement/start.md" },
+  { link: ".claude/commands/implement/advance.md", source: "../cq-assets/commands/implement/advance.md" },
+  { link: ".claude/agents/implement-worker.md", source: "../cq-assets/agents/implement-worker.md" },
+  { link: ".claude/agents/implement-reviewer.md", source: "../cq-assets/agents/implement-reviewer.md" },
+  { link: ".claude/agents/implement-conflict-resolver.md", source: "../cq-assets/agents/implement-conflict-resolver.md" },
+  { link: ".claude/commands/investigate/start.md", source: "../cq-assets/commands/investigate/start.md" },
+  { link: ".claude/commands/investigate/advance.md", source: "../cq-assets/commands/investigate/advance.md" },
+  { link: ".claude/agents/investigate-explorer.md", source: "../cq-assets/agents/investigate-explorer.md" },
+  { link: ".claude/commands/advance.md", source: "../cq-assets/commands/advance.md" },
 ];
 
 /** A link whose target does not resolve on disk. */
@@ -104,6 +104,16 @@ async function main(): Promise<void> {
     const relTarget = path.relative(path.dirname(absLink), absSource);
 
     await mkdir(path.dirname(absLink), { recursive: true });
+
+    // Assert the source exists before creating a symlink — fail loud so a
+    // future relocation is caught immediately rather than silently producing a
+    // dangling link.  Reuse the same existence check as checkLinks().
+    const [missingSource] = await checkLinks([{ link, source }]);
+    if (missingSource) {
+      throw new Error(
+        `link-prompts: source missing for link "${link}": ${missingSource.absSource}`,
+      );
+    }
 
     if (await linkExists(absLink)) {
       const stat = await lstat(absLink);
