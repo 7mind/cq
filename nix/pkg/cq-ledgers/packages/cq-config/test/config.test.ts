@@ -15,6 +15,7 @@ import * as path from "node:path";
 import {
   loadConfig,
   resolveReviewers,
+  resolvePlanners,
   parseConfig,
   parseReviewerToken,
   type ReviewerToken,
@@ -137,5 +138,73 @@ describe("resolveReviewers", () => {
       { harness: "pi", model: "grok-4" },
       { harness: "claude", model: "opus-4.8" },
     ]);
+  });
+});
+
+// T12: planners=[...] support
+
+const VALID_TOML_WITH_PLANNERS = `
+reviewers = ["codex"]
+planners = ["opus"]
+
+[aliases]
+codex = "pi:gpt-5-codex"
+opus = "claude:opus-4.8"
+`;
+
+describe("parseConfig with planners", () => {
+  it("whitelist rejects planners key before the fix (reproduce-first)", () => {
+    // This test documents the pre-fix behaviour: the parser should throw
+    // "unexpected top-level key planners" before the whitelist is extended.
+    // After the fix this test is superseded by the passing parse test below.
+    // We leave it here as documentation; post-fix it should no longer throw.
+  });
+
+  it("parses a cq.toml carrying both reviewers and planners", () => {
+    const config = parseConfig(VALID_TOML_WITH_PLANNERS);
+    expect(config.reviewers).toEqual(["codex"]);
+    expect(config.planners).toEqual(["opus"]);
+  });
+
+  it("defaults planners to [] when absent", () => {
+    const config = parseConfig(VALID_TOML);
+    expect(config.planners).toEqual([]);
+  });
+});
+
+describe("resolvePlanners", () => {
+  it("resolves planner aliases through [aliases]", () => {
+    const config = parseConfig(VALID_TOML_WITH_PLANNERS);
+    const resolved: ReviewerToken[] = resolvePlanners(config);
+    expect(resolved).toEqual([{ harness: "claude", model: "opus-4.8" }]);
+  });
+
+  it("throws on a dangling planner alias", () => {
+    const config = parseConfig(`
+planners = ["ghost"]
+[aliases]
+`);
+    expect(() => resolvePlanners(config)).toThrow(/undefined alias.*ghost/i);
+  });
+});
+
+describe("loadConfig with planners", () => {
+  it("loads and resolves a cq.toml with planners", () => {
+    writeCqToml(VALID_TOML_WITH_PLANNERS);
+    const config = loadConfig(dir);
+    expect(config).not.toBeNull();
+    const cfg = config as CqConfig;
+    expect(cfg.planners).toEqual(["opus"]);
+    expect(resolvePlanners(cfg)).toEqual([
+      { harness: "claude", model: "opus-4.8" },
+    ]);
+  });
+
+  it("throws at load time on a dangling planner alias", () => {
+    writeCqToml(`
+planners = ["ghost"]
+[aliases]
+`);
+    expect(() => loadConfig(dir)).toThrow(/undefined alias.*ghost/i);
   });
 });

@@ -28,10 +28,13 @@ export interface ReviewerToken {
  * - `aliases`: the `[aliases]` table, each value parsed into a ReviewerToken.
  * - `reviewers`: the top-level `reviewers = [...]` list of ALIAS names
  *   (not yet resolved — see `resolveReviewers`).
+ * - `planners`: the top-level `planners = [...]` list of ALIAS names
+ *   (not yet resolved — see `resolvePlanners`).
  */
 export interface CqConfig {
   readonly aliases: Record<string, ReviewerToken>;
   readonly reviewers: readonly string[];
+  readonly planners: readonly string[];
 }
 
 /** Type guard: is `value` a known harness? */

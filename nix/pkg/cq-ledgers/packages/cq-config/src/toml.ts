@@ -19,6 +19,8 @@ export interface RawToml {
   readonly aliases: Record<string, string>;
   /** The top-level `reviewers` array of strings, or null if absent. */
   readonly reviewers: readonly string[] | null;
+  /** The top-level `planners` array of strings, or null if absent. */
+  readonly planners: readonly string[] | null;
 }
 
 class TomlSyntaxError extends Error {
@@ -102,6 +104,7 @@ function parseStringArray(token: string, line: number): string[] {
 export function parseToml(source: string): RawToml {
   const aliases: Record<string, string> = {};
   let reviewers: string[] | null = null;
+  let planners: string[] | null = null;
   // null = top-level; "aliases" = inside [aliases]; other = unknown table.
   let currentTable: string | null = null;
 
@@ -138,6 +141,8 @@ export function parseToml(source: string): RawToml {
     } else if (currentTable === null) {
       if (key === "reviewers") {
         reviewers = parseStringArray(value, lineNo);
+      } else if (key === "planners") {
+        planners = parseStringArray(value, lineNo);
       } else {
         throw new TomlSyntaxError(`unexpected top-level key ${key}`, lineNo);
       }
@@ -146,5 +151,5 @@ export function parseToml(source: string): RawToml {
     }
   }
 
-  return { aliases, reviewers };
+  return { aliases, reviewers, planners };
 }

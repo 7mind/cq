@@ -66,7 +66,8 @@ export function parseConfig(source: string): CqConfig {
   }
 
   const reviewers = raw.reviewers ?? [];
-  return { aliases, reviewers };
+  const planners = raw.planners ?? [];
+  return { aliases, reviewers, planners };
 }
 
 /**
@@ -79,6 +80,22 @@ export function resolveReviewers(config: CqConfig): ReviewerToken[] {
     if (token === undefined) {
       throw new CqConfigError(
         `reviewers references undefined alias "${alias}" (not declared in [aliases])`,
+      );
+    }
+    return token;
+  });
+}
+
+/**
+ * Resolve each `planners` alias name through `[aliases]` into a
+ * ReviewerToken. Throws a precise `CqConfigError` on a dangling alias.
+ */
+export function resolvePlanners(config: CqConfig): ReviewerToken[] {
+  return config.planners.map((alias) => {
+    const token = config.aliases[alias];
+    if (token === undefined) {
+      throw new CqConfigError(
+        `planners references undefined alias "${alias}" (not declared in [aliases])`,
       );
     }
     return token;
@@ -101,5 +118,6 @@ export function loadConfig(repoRoot: string): CqConfig | null {
   const config = parseConfig(source);
   // Eagerly resolve so a dangling alias is reported at load time, not later.
   resolveReviewers(config);
+  resolvePlanners(config);
   return config;
 }

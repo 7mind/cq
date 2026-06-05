@@ -14,6 +14,7 @@ export {
   parseReviewerToken,
   parseConfig,
   resolveReviewers,
+  resolvePlanners,
   loadConfig,
 } from "./config.js";
 export type { RawToml } from "./toml.js";
