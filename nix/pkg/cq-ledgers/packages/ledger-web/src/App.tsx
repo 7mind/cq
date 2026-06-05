@@ -946,6 +946,9 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
           {mainView === "dag" ? "table" : "graph"}
         </button>
         <div className="lw-header-right">
+        <LedgerProgressBar testid="progress-questions" label="questions" ledgers={ledgers} />
+        <LedgerProgressBar testid="progress-tasks" label="tasks" ledgers={ledgers} />
+        <LedgerProgressBar testid="progress-defects" label="defects" ledgers={ledgers} />
         <button
           type="button"
           data-testid="help-toggle"
@@ -1321,6 +1324,36 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
 // ---------------------------------------------------------------------------
 // Subcomponents
 // ---------------------------------------------------------------------------
+
+/**
+ * Small progress bar for one ledger, fed by server-computed completedCount/itemCount.
+ * Degrades gracefully: itemCount=0 or missing completedCount both render a 0% bar.
+ * No client-side schema lookup — classification is entirely server-side (T1/T3).
+ */
+function LedgerProgressBar({
+  testid,
+  label,
+  ledgers,
+}: {
+  testid: string;
+  label: string;
+  ledgers: LedgerSummary[];
+}): React.ReactElement {
+  const summary = ledgers.find((l) => l.name === label);
+  const total = summary?.itemCount ?? 0;
+  const done = summary?.completedCount ?? 0;
+  const pct = total > 0 ? (done / total) * 100 : 0;
+  return (
+    <div
+      className="lw-progress-bar"
+      data-testid={testid}
+      title={`${done}/${total}`}
+      aria-label={`${label} progress`}
+    >
+      <div className="lw-progress-fill" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
 
 /**
  * Connection-health indicator for the live channel (resilient-ws-ui V2/V3/V10):

@@ -82,12 +82,27 @@ body {
 .lw-urlform input {
   width: 280px;
 }
-/* Right-aligned header cluster: help (?) + settings (⚙). */
+/* Right-aligned header cluster: progress bars + help (?) + settings (⚙). */
 .lw-header-right {
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* Small ledger progress bar track + fill. */
+.lw-progress-bar {
+  width: 48px;
+  height: 6px;
+  background: var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.lw-progress-fill {
+  height: 100%;
+  background: var(--lw-status-done);
+  border-radius: 3px;
+  transition: width 0.2s ease;
 }
 .lw-settings {
   position: relative;
