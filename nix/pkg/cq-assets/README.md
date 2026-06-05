@@ -23,6 +23,8 @@ Current assets:
 | `agents/plan-advance.md`          | subagent — the planner (one state step)            |
 | `agents/plan-reviewer.md`         | subagent — the adversarial reviewer (mode-gated write) |
 | `commands/cq/plan-review.md`      | shared prompt — canonical plan-review rubric (Claude/Codex/Pi) |
+| `commands/cq/implement-review.md` | shared prompt — canonical implement-review rubric (Claude/Codex/Pi) |
+| `commands/cq/reviewers.md`        | session-only reviewer-set override command |
 | `commands/implement/start.md`     | slash command — resolve scope, hand to advance loop |
 | `commands/implement/advance.md`   | slash command — the implement orchestrator loop    |
 | `agents/implement-worker.md`      | subagent — implements one task in an isolated worktree |
@@ -58,6 +60,9 @@ Edit the files in this directory, never a symlink or a consumer's copy.
    | `.claude/agents/investigate-explorer.md`  | `../cq-assets/agents/investigate-explorer.md`  |
    | `.claude/agents/investigate-prober.md`    | `../cq-assets/agents/investigate-prober.md`    |
    | `.claude/commands/advance.md`             | `../cq-assets/commands/advance.md`             |
+   | `.claude/commands/cq/plan-review.md`      | `../cq-assets/commands/cq/plan-review.md`      |
+   | `.claude/commands/cq/implement-review.md` | `../cq-assets/commands/cq/implement-review.md` |
+   | `.claude/commands/cq/reviewers.md`        | `../cq-assets/commands/cq/reviewers.md`        |
 
 2. **Codex** (`.codex/prompts/*`) — committed symlinks into this tree; a fresh
    clone works with no extra step.
@@ -68,6 +73,16 @@ Edit the files in this directory, never a symlink or a consumer's copy.
    assets and materializes every asset into each agent's layout (`~/.claude/commands`,
    `~/.codex/prompts`, …) globally — no symlink script needed there. The repo-local
    symlinks above remain for in-repo dogfooding.
+
+## Configuration — cq.toml and cq-config MCP
+
+An optional `cq.toml` file at the repo root configures reviewer harnesses via a
+`[aliases]` table and a top-level `reviewers` list. See `cq.toml.example` for
+the schema (alias names resolve to `<harness>:<model>` tokens; absence of
+`cq.toml` means the native Claude reviewer only). The `cq-config` MCP server
+exposes `get_reviewers` over the `.mcp.json` interface so orchestrator flows
+can dispatch parallel reviewers at review gates (plan/advance and
+implement/advance).
 
 ## Session logs — subagent handover convention
 

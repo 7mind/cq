@@ -44,6 +44,9 @@ export const LINKS: readonly PromptLink[] = [
   { link: ".claude/agents/investigate-explorer.md", source: "../cq-assets/agents/investigate-explorer.md" },
   { link: ".claude/agents/investigate-prober.md", source: "../cq-assets/agents/investigate-prober.md" },
   { link: ".claude/commands/advance.md", source: "../cq-assets/commands/advance.md" },
+  { link: ".claude/commands/cq/plan-review.md", source: "../cq-assets/commands/cq/plan-review.md" },
+  { link: ".claude/commands/cq/implement-review.md", source: "../cq-assets/commands/cq/implement-review.md" },
+  { link: ".claude/commands/cq/reviewers.md", source: "../cq-assets/commands/cq/reviewers.md" },
 ];
 
 /** A link whose target does not resolve on disk. */
