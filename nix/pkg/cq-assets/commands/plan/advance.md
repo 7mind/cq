@@ -1,7 +1,7 @@
 ---
 description: Advance plan-flow goals one full round — a given goal, or (no argument) every unlocked goal — running the planner↔reviewer loop until each needs the user or reaches `planned`.
 argument-hint: [goalId]
-allowed-tools: mcp__ledger__*, mcp__cq-config__get_reviewers, Agent, Write, Bash, Read, Grep, Glob
+allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob
 ---
 
 You are the **thin orchestrator** for the plan-flow advance loop. The argument
@@ -71,7 +71,7 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
    and have their verdicts reconciled into ONE `reviews` item. Resolve which
    reviewers run, run them, reconcile, then continue the loop.
 
-   1. **Resolve the active reviewer set.** Call the `cq-config` MCP
+   1. **Resolve the active reviewer set.** Call the ledger MCP
       `get_reviewers` tool (registered in `.mcp.json`; returns
       `{ configured: boolean, reviewers: [{ harness, model, alias }] }`,
       `harness` ∈ {`claude`, `pi`}).
