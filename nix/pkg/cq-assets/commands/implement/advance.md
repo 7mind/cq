@@ -1,7 +1,7 @@
 ---
 description: Advance an implement-flow run one full pass — pick DAG-ready tasks, implement each in an isolated worktree, adversarially review, autonomously fix criticism, register user questions, and merge back in dependency order.
 argument-hint: [milestoneId ...]   # optional; omit to resume the in-progress run
-allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob
+allowed-tools: mcp__ledger__*, mcp__cq-config__get_reviewers, Agent, Write, Bash, Read, Grep, Glob
 ---
 
 You are the **implement-flow orchestrator**. You execute a plan-flow roadmap by
@@ -102,10 +102,11 @@ goes straight to the criticism loop (its `blockedReason` is treated as round-0
 criticism).
 
 **3a. Resolve the reviewer panel (cq-config, T172).** ONCE per pass, query
-cq-config's `get_reviewers` (a `Bash` shellout to the cq-config CLI — no new
-allowed-tools grant; `Bash` is already present). It returns `{ configured,
-reviewers: [{ harness, model, alias }] }`. Apply any session-only override
-already in effect. Then:
+cq-config's reviewer list by calling the `mcp__cq-config__get_reviewers` MCP
+tool (cq-config is a stdio MCP server registered in `.mcp.json` as `cq-config`;
+it has no stdout-printing CLI, so this is an MCP-tool call, NOT a `Bash`
+shellout). It returns `{ configured, reviewers: [{ harness, model, alias }] }`.
+Apply any session-only override already in effect. Then:
 - **`configured` is false (absent / unconfigured)** → the panel is the SINGLE
   native `implement-reviewer` Agent, exactly as before (`subagent_type:
   "implement-reviewer"`, most-capable model — `opus`). It already returns the
