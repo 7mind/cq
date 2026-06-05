@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "./packages/cq-config" },
     { "path": "./packages/ledger" },
     { "path": "./packages/ledger-live" },
     { "path": "./packages/ledger-mcp" },

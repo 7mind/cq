@@ -1,0 +1,17 @@
+{
+  "name": "@cq/config",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/src/index.js",
+      "types": "./dist/src/index.d.ts"
+    }
+  },
+  "devDependencies": {
+    "bun-types": "^1.1.0"
+  }
+}
