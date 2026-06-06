@@ -367,11 +367,14 @@ command in the SAME inline session, so you already KNOW which context you are in
   for a `mixed` stop (e.g. `[drained, answers-required]`); `sessionLogs` = the
   `docs/logs/<ts>-<agent-id>.md` path(s) written this round — populate them in
   the SAME `create_item` call. Stamp `author`/`session`. Append-only: written
-  once at the stop, never updated.
+  once at the stop, never updated. **Then commit the ledger** (§Commit the
+  ledger): stage the ledger artifacts only and commit, so a standalone
+  investigate round never leaves the ledger uncommitted.
 
 - **Run CHAINED INLINE by any wrapping flow command** (`/advance`,
   `/plan:advance`, or a `/<flow>:start` / `/<flow>:follow-up` that runs this
-  pass inline): **SUPPRESS this handoff write.** The outermost wrapper owns the
+  pass inline): **SUPPRESS this handoff write** — AND suppress the at-stop ledger
+  commit (the outermost wrapper owns both). The outermost wrapper owns the
   single authoritative run-level handoff and writes it once at its stop —
   `/advance` per its §Provenance (it is the sole `handoffs` writer for the whole
   run); `/plan:advance` writes its own standalone record covering the whole pass
@@ -381,3 +384,16 @@ command in the SAME inline session, so you already KNOW which context you are in
   you and its prompt instructs this suppression; a standalone invocation has no
   such wrapper. Suppressing here is what guarantees exactly ONE handoff per run —
   never a duplicate.
+
+## Commit the ledger (standalone stop)
+After the standalone handoff write, persist the ledger to git — and ONLY the
+ledger (`docs/*.md` + `docs/archive` + `docs/logs`; NEVER `docs/ledgers.yaml`,
+gitignored; NEVER code):
+```
+git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /investigate:advance — <stop: <status>>
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+The `git diff --cached --quiet` guard makes it a NO-OP when nothing changed.
+SUPPRESS this commit when chained (the wrapper owns the single run-stop commit).

@@ -122,6 +122,18 @@ report its id and stop instead of creating a new one.
    `/<flow>:start` is listed as a suppress-context; this command owns the single
    authoritative write).
 
+8. **Commit the ledger.** This command is the outermost wrapper, so it owns the
+   single run-stop ledger commit. Immediately after the handoff write, persist
+   the ledger to git — ONLY the ledger (`docs/*.md` + `docs/archive` +
+   `docs/logs`; NEVER `docs/ledgers.yaml`, gitignored; NEVER code):
+   ```
+   git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+   git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /plan:start — goal G<n> bootstrapped (awaiting-answers)
+
+   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+   ```
+   The `git diff --cached --quiet` guard makes it a NO-OP when nothing changed.
+
 Do not file questions, transition the goal, or emit any plan yourself — the
 `plan-advance` planner and `/plan:advance` own everything after the goal is
 created.

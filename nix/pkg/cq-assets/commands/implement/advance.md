@@ -329,6 +329,29 @@ all of goal `G`'s work milestones are archived, the orchestrator REPORTS that
 and once the user DOES close `G`, the next sweep archives `G`'s now-eligible
 coordination milestone automatically.
 
+### Commit the ledger (after every milestone archive + at the standalone stop)
+The ledger files are tracked git artifacts. Commit the ledger — and ONLY the
+ledger (`docs/*.md` + `docs/archive` + `docs/logs`; NEVER `docs/ledgers.yaml`,
+gitignored; NEVER code, which lands on task branches) — at TWO points:
+- **After every `archive_milestone`** (the sweep above, and each merge-back
+  archive): commit immediately, so each completed milestone is a durable
+  checkpoint. This ALWAYS fires, even when chained under `/advance`.
+- **At this pass's STOP**, right after the §Handoff record write — but ONLY when
+  run STANDALONE. When CHAINED under `/advance`, SUPPRESS the at-stop commit
+  (the wrapper owns the single run-stop commit, mirroring the handoff
+  suppression). The per-archive commits above still fire either way.
+
+Mechanism (run from the ledger root):
+```
+git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /implement:advance — <Mxx archived | stop: <status>>
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+The `git diff --cached --quiet` guard makes the commit a NO-OP when nothing
+changed (idempotent). Scope `git add` to the ledger artifacts only — never
+`git add -A`.
+
 ## Report to the user
 Summarize the pass concisely:
 - tasks **merged** this pass (id + resultCommit);
@@ -381,11 +404,14 @@ context you are in.
   a `mixed` stop (e.g. `[drained, answers-required]`); `sessionLogs` = the
   `docs/logs/<ts>-<agent-id>.md` path(s) written this pass — populate them in
   the SAME `create_item` call. Stamp `author`/`session`. Append-only: written
-  once at the stop, never updated.
+  once at the stop, never updated. **Then commit the ledger** (§Commit the
+  ledger, at-stop commit) — this is the final act of the standalone pass.
 
 - **Run CHAINED INLINE by any wrapping flow command** (`/advance`, or a
   `/<flow>:start` that runs this pass inline):
-  **SUPPRESS this handoff write.** The outermost wrapper owns the single
+  **SUPPRESS this handoff write** — AND suppress the at-stop ledger commit (the
+  outermost wrapper owns both). The per-archive ledger commits (§Commit the
+  ledger) still fire. The outermost wrapper owns the single
   authoritative run-level handoff and writes it once at its stop — `/advance`
   per its §Provenance (it is the sole `handoffs` writer for the whole run);
   a `/<flow>:start` writes it directly in its own §Handoff record step. You can

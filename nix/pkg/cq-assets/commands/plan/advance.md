@@ -530,11 +530,14 @@ context you are in.
   the SAME `create_item` call. Stamp `author`/`session`. Append-only: written
   once at the stop, never updated. (The auto-investigate sub-rounds this command
   chains do NOT each write a handoff — investigate/advance.md suppresses its own
-  handoff whenever chained, so this one record covers the whole pass.)
+  handoff whenever chained, so this one record covers the whole pass.) **Then
+  commit the ledger** (§Commit the ledger): stage the ledger artifacts only and
+  commit, so a standalone plan round never leaves the ledger uncommitted.
 
 - **Run CHAINED INLINE by any wrapping flow command** (`/advance`, or a
   `/<flow>:start` / `/<flow>:follow-up` that runs this pass inline):
-  **SUPPRESS this handoff write.** The outermost wrapper owns the single
+  **SUPPRESS this handoff write** — AND suppress the at-stop ledger commit (the
+  outermost wrapper owns both). The outermost wrapper owns the single
   authoritative run-level handoff and writes it once at its stop — `/advance`
   per its §Provenance (it is the sole `handoffs` writer for the whole run);
   a `/<flow>:start` or `/<flow>:follow-up` writes it directly in its own
@@ -542,3 +545,16 @@ context you are in.
   wrapping command explicitly chains you and its prompt instructs this
   suppression; a standalone invocation has no such wrapper. Suppressing here is
   what guarantees exactly ONE handoff per run — never a duplicate.
+
+## Commit the ledger (standalone stop)
+After the standalone handoff write, persist the ledger to git — and ONLY the
+ledger (`docs/*.md` + `docs/archive` + `docs/logs`; NEVER `docs/ledgers.yaml`,
+gitignored; NEVER code):
+```
+git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /plan:advance — <stop: <status>>
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+The `git diff --cached --quiet` guard makes it a NO-OP when nothing changed.
+SUPPRESS this commit when chained (the wrapper owns the single run-stop commit).

@@ -111,7 +111,17 @@ its own handoff write** (per investigate/advance.md's CHAINED section —
 `/<flow>:start` is listed as a suppress-context), and **this command** writes
 the ONE `handoffs` record at the stop. Use the field schema from
 investigate/advance.md's §Handoff record, STANDALONE branch (do not restate the
-mapping here).
+mapping here). **Then commit the ledger** — this command is the outermost
+wrapper, so it owns the single run-stop ledger commit; immediately after the
+handoff write, persist ONLY the ledger (`docs/*.md` + `docs/archive` +
+`docs/logs`; NEVER `docs/ledgers.yaml`, gitignored; NEVER code):
+```
+git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /investigate:start — defect D<n> <intake|resume> + first round
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+The `git diff --cached --quiet` guard makes it a NO-OP when nothing changed.
 
 The run is resumable: after the user answers any registered questions, they re-run
 **`/investigate:advance D`** (no need to re-run `/investigate:start`).

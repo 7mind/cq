@@ -82,15 +82,18 @@ T137, now in `CANONICAL_LEDGERS`) carries this item shape:
 
 Stamp `author`/`session` on this write like any other. The handoff is
 APPEND-ONLY (written once at end-of-run, never updated). This single write is the
-ONLY mutation `/advance` performs; all other mutations remain delegated to the
-chained sub-commands.
+ONLY ledger mutation `/advance` performs; all other ledger mutations remain
+delegated to the chained sub-commands. (The §Commit the ledger `git commit`s are
+git operations on the already-written ledger files, not ledger writes.)
 
 **This write is the STOP GATE** (see §Stop condition). You may not conclude an
 `/advance` run without it, and you may only write it once the run genuinely maps
 to one of the four statuses above — i.e. once the re-derived predicates show
 DRAINED or everything-blocked. If no status legitimately applies because a
 predicate is still TRUE and unblocked, the run has NOT reached a legal stop:
-CONTINUE the cycle instead of writing a handoff.
+CONTINUE the cycle instead of writing a handoff. **Immediately after writing the
+handoff, perform the run-stop ledger commit (§Commit the ledger)** — that commit
+is the final act of the run.
 
 ## Session logs
 This command spawns no subagents, so it writes no session-log file of its own.
@@ -354,6 +357,38 @@ transition a goal `building`→`done` (always the user's action; the G3-B / M16
 invariant). **MILESTONES ALWAYS may** auto-close+archive once eligible. So once
 the user closes a goal `G`, the next `/advance` sweep archives `G`'s
 now-eligible coordination milestone automatically.
+
+---
+
+## Commit the ledger (after every milestone archive + at the run stop)
+
+The ledger files are tracked git artifacts; persist them so a run never leaves
+the ledger uncommitted. Commit the ledger — and ONLY the ledger (its markdown +
+`docs/archive` + `docs/logs` session logs; NEVER `docs/ledgers.yaml`, the
+per-cwd runtime registry, which is gitignored; and NEVER code) — at TWO points:
+
+- **After every `archive_milestone`** (the sweep above, and any archive a
+  chained sub-flow performs): commit immediately, so each completed milestone is
+  a durable checkpoint.
+- **At the run STOP**, immediately after you write the run-level `handoffs`
+  record (§Provenance / §The one write): one final commit capturing the
+  end-of-run ledger state.
+
+Mechanism (run from the ledger root — the MCP `--cwd`, the repo root here):
+```
+git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /advance — <Mxx archived | run stop: <status>>
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+```
+The `git diff --cached --quiet` guard makes the commit a NO-OP when nothing
+changed (idempotent — safe to repeat, never errors on an empty commit). Scope
+the `git add` to the ledger artifacts only; do NOT `git add -A` (code changes
+land on their own task branches; a ledger commit must contain only ledger
+files). **`/advance` is the SOLE at-stop committer for a full run** — chained
+sub-flows SUPPRESS their own at-stop ledger commit (mirroring the handoff
+suppression), but a milestone archived inside a chained sub-flow's pass is still
+committed at the point of archive.
 
 ---
 

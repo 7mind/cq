@@ -129,5 +129,17 @@ the Codex equivalent; omit if unavailable).
    `/<flow>:follow-up` is listed as a suppress-context; this command owns the
    single authoritative write).
 
+10. **Commit the ledger.** This command is the outermost wrapper, so it owns the
+    single run-stop ledger commit. Immediately after the handoff write, persist
+    ONLY the ledger (`docs/*.md` + `docs/archive` + `docs/logs`; NEVER
+    `docs/ledgers.yaml`, gitignored; NEVER code):
+    ```
+    git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+    git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /plan:follow-up — goal G<n> re-opened (awaiting-answers)
+
+    Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+    ```
+    The `git diff --cached --quiet` guard makes it a NO-OP when nothing changed.
+
 Do not file questions, emit a plan, or lock decisions yourself — the
 `plan-advance` planner and `/plan:advance` own everything after the re-open.
