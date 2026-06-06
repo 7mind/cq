@@ -2,8 +2,8 @@
  * Pure unit tests for the min-layer re-base fix in computeDagLayout (D33 / T199).
  *
  * Tests are DOM-free.  They assert that after the fix:
- *   (A) MILESTONES_SCHEMA, TASKS_SCHEMA, GOALS_SCHEMA through computeStateMachine
- *       yield Math.min(node.x) === 16 (STATE_LAYOUT_OPTS pad).
+ *   (A) MILESTONES_SCHEMA, TASKS_SCHEMA, GOALS_SCHEMA through computeDagLayout
+ *       (with STATE_LAYOUT_OPTS) yield Math.min(node.x) === 16 (the pad).
  *   (B) A flush schema (one that already had minLayer=0) is a no-op: same node
  *       count and identical x-coordinates to a captured baseline.
  *   (C) DEFAULT_LAYOUT_OPTS / DagView path:
@@ -14,11 +14,15 @@
  *       pre-fix width − minLayer*(nodeWidth+hGap).
  *   (E) Empty-graph guard: computeDagLayout([], []) returns width===pad*2,
  *       height===pad*2 without throwing.
+ *
+ * NOTE (T203): the State-machines tab no longer routes through computeDagLayout
+ * (it moved onto elkjs). These tests therefore exercise the rebase fix DIRECTLY
+ * via computeDagLayout — which after the migration only serves DagView — using
+ * the canonical schemas' statusValues + transitions as fixtures.
  */
 
 import { describe, it, expect } from "bun:test";
 import { computeDagLayout, DEFAULT_LAYOUT_OPTS, type DagEdge, type LayoutOpts } from "../src/dagLayout.js";
-import { computeStateMachine } from "../src/stateMachine.js";
 import {
   MILESTONES_SCHEMA,
   TASKS_SCHEMA,
@@ -48,18 +52,18 @@ function schemaEdges(schema: { transitions?: Record<string, string[]> }): DagEdg
 }
 
 // ---------------------------------------------------------------------------
-// (A) Real canonical schemas through computeStateMachine — minX === pad === 16
+// (A) Real canonical schemas through computeDagLayout — minX === pad === 16
 // ---------------------------------------------------------------------------
-describe("A — canonical schemas via computeStateMachine (STATE_LAYOUT_OPTS, pad=16)", () => {
+describe("A — canonical schemas via computeDagLayout (STATE_LAYOUT_OPTS, pad=16)", () => {
   for (const { name, schema } of [
     { name: "MILESTONES_SCHEMA", schema: MILESTONES_SCHEMA },
     { name: "TASKS_SCHEMA", schema: TASKS_SCHEMA },
     { name: "GOALS_SCHEMA", schema: GOALS_SCHEMA },
   ]) {
     it(`${name}: Math.min(node.x) === 16`, () => {
-      const m = computeStateMachine(schema);
-      expect(m.nodes.length).toBeGreaterThan(0);
-      const minX = Math.min(...m.nodes.map((n) => n.x));
+      const layout = computeDagLayout(schema.statusValues, schemaEdges(schema), STATE_LAYOUT_OPTS);
+      expect(layout.nodes.length).toBeGreaterThan(0);
+      const minX = Math.min(...layout.nodes.map((n) => n.x));
       expect(minX).toBe(STATE_LAYOUT_OPTS.pad);
     });
   }
@@ -85,20 +89,20 @@ describe("B — flush schema (HYPOTHESIS_SCHEMA) is a rebase no-op", () => {
   };
 
   it("node count is unchanged", () => {
-    const m = computeStateMachine(HYPOTHESIS_SCHEMA);
-    expect(m.nodes.length).toBe(4);
+    const layout = computeDagLayout(HYPOTHESIS_SCHEMA.statusValues, schemaEdges(HYPOTHESIS_SCHEMA), STATE_LAYOUT_OPTS);
+    expect(layout.nodes.length).toBe(4);
   });
 
   it("minX is still 16 (pad)", () => {
-    const m = computeStateMachine(HYPOTHESIS_SCHEMA);
-    const minX = Math.min(...m.nodes.map((n) => n.x));
+    const layout = computeDagLayout(HYPOTHESIS_SCHEMA.statusValues, schemaEdges(HYPOTHESIS_SCHEMA), STATE_LAYOUT_OPTS);
+    const minX = Math.min(...layout.nodes.map((n) => n.x));
     expect(minX).toBe(STATE_LAYOUT_OPTS.pad);
   });
 
   it("x-coordinates are byte-identical to the pre-fix baseline", () => {
-    const m = computeStateMachine(HYPOTHESIS_SCHEMA);
-    for (const n of m.nodes) {
-      expect(n.x).toBe(BASELINE[n.status]!);
+    const layout = computeDagLayout(HYPOTHESIS_SCHEMA.statusValues, schemaEdges(HYPOTHESIS_SCHEMA), STATE_LAYOUT_OPTS);
+    for (const n of layout.nodes) {
+      expect(n.x).toBe(BASELINE[n.id]!);
     }
   });
 });

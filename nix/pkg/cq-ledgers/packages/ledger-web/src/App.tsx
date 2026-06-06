@@ -21,7 +21,9 @@ import type { ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, 
 import { DagView } from "./DagView.js";
 import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
-import { computeStateMachine, type StateMachineModel } from "./stateMachine.js";
+import { computeStateMachine } from "./stateMachine.js";
+import { layoutDiagram, type LaidOutDiagram } from "./diagramLayout.js";
+import { DiagramSvg } from "./DiagramSvg.js";
 import { LiveManager, type LiveStats } from "@cq/ledger-live";
 import { defectFixTaskIds, hypothesisRelationships } from "@cq/ledger/relationships";
 import { HoldButton, type HoldClock } from "./HoldButton.js";
@@ -1580,65 +1582,34 @@ function HelpOverlay({
 }
 
 /**
- * Inline-SVG state-machine diagram for a single ledger (T5). Nodes are the
- * schema's statuses filled by their bucket color (SVG `fill` can't resolve a
- * CSS class, so we read BUCKET_HEX directly — same as DagView); directed edges
- * are the `transitions` pairs. Terminal statuses get a thicker outline but keep
- * their bucket fill.
+ * Inline-SVG state-machine diagram for a single ledger (T5, migrated to the elk
+ * renderer in T203 / decision K37). {@link computeStateMachine} maps the schema
+ * to the generic graph model (status nodes filled by their bucket color, edges
+ * from the `transitions` pairs INCLUDING self-loops); {@link layoutDiagram}
+ * positions it via elkjs (async — driven in a useEffect), then {@link DiagramSvg}
+ * renders it. The per-ledger `idPrefix` (`help-statemachine-${ledger}`) makes the
+ * documented T202 scheme resolve per-ledger: svg `${idPrefix}-svg`, node
+ * `${idPrefix}-node-${status}`, edge `${idPrefix}-edge-${from}-${to}`.
+ *
+ * elk lays out left→right with no empty leading layer, so wide diagrams stay
+ * left-aligned (no D33 right-shift): the homegrown `computeDagLayout` is no
+ * longer in this path.
  */
 function StateMachineDiagram({ ledger, schema }: { ledger: string; schema: LedgerSchema }): React.ReactElement {
-  const model: StateMachineModel = useMemo(() => computeStateMachine(schema), [schema]);
-  return (
-    <svg
-      className="lw-statemachine-svg"
-      data-testid={`help-statemachine-svg-${ledger}`}
-      width={model.width}
-      height={model.height}
-      // Cap upscaling at the diagram's intrinsic width: CSS width:100% fills the
-      // dialog (so wide diagrams can't overflow), this max-width keeps a narrow
-      // diagram (e.g. edgeless handoffs) at its natural size instead of stretched.
-      style={{ maxWidth: model.width }}
-      viewBox={`0 0 ${model.width} ${model.height}`}
-      preserveAspectRatio="xMinYMid meet"
-    >
-      <defs>
-        <marker id="lw-sm-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="#566" />
-        </marker>
-      </defs>
-      {model.edges.map((e) => {
-        const midX = (e.x1 + e.x2) / 2;
-        const d = `M${e.x1},${e.y1} C${midX},${e.y1} ${midX},${e.y2} ${e.x2},${e.y2}`;
-        return (
-          <path
-            key={`${e.from}->${e.to}`}
-            data-testid={`help-sm-edge-${ledger}-${e.from}-${e.to}`}
-            d={d}
-            fill="none"
-            stroke="#566"
-            strokeWidth={1.5}
-            markerEnd="url(#lw-sm-arrow)"
-          />
-        );
-      })}
-      {model.nodes.map((n) => (
-        <g key={n.status} data-testid={`help-sm-node-${ledger}-${n.status}`} transform={`translate(${n.x},${n.y})`}>
-          <rect
-            data-testid={`help-sm-rect-${ledger}-${n.status}`}
-            width={n.w}
-            height={n.h}
-            rx={n.terminal ? 4 : 14}
-            fill={n.fill}
-            stroke="#171a21"
-            strokeWidth={n.terminal ? 2.5 : 1}
-          />
-          <text x={n.w / 2} y={n.h / 2 + 4} fill="#171a21" fontSize={12} fontWeight={700} textAnchor="middle">
-            {n.status}
-          </text>
-        </g>
-      ))}
-    </svg>
-  );
+  const model = useMemo(() => computeStateMachine(schema), [schema]);
+  const [laid, setLaid] = useState<LaidOutDiagram | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const out = await layoutDiagram(model);
+      if (!cancelled) setLaid(out);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [model]);
+  if (laid === null) return <p className="lw-empty">(laying out…)</p>;
+  return <DiagramSvg idPrefix={`help-statemachine-${ledger}`} model={laid} className="lw-statemachine-svg" />;
 }
 
 /**

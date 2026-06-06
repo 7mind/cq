@@ -29,6 +29,12 @@ async function flush(): Promise<void> {
     await sleep(10);
   });
 }
+// The state-machines tab fires a batched schema fetch AND an async elk layout
+// per diagram (layoutDiagram drives a fake worker); flush a few times so both
+// the fetch promise and every layout useEffect settle before asserting.
+async function settle(): Promise<void> {
+  for (let i = 0; i < 6; i++) await flush();
+}
 const q = (sel: string): HTMLElement | null => container.querySelector(sel);
 const testid = (id: string): HTMLElement | null => q(`[data-testid="${id}"]`);
 
@@ -93,24 +99,26 @@ describe("tabbed help dialog", () => {
     press("?");
     await flush();
     click(testid("help-tab-statemachines"));
-    await flush();
+    await settle();
 
-    // A diagram container per ledger that the fake enumerates.
+    // A diagram container per ledger that the fake enumerates. The svg testid
+    // follows DiagramSvg's `${idPrefix}-svg` scheme with idPrefix
+    // `help-statemachine-${ledger}` (T203 elk migration).
     const ledgers = (await fake.enumerateLedgers()).map((l) => l.name);
     for (const name of ledgers) {
       expect(testid(`help-statemachine-${name}`)).not.toBeNull();
-      expect(testid(`help-statemachine-svg-${name}`)).not.toBeNull();
+      expect(testid(`help-statemachine-${name}-svg`)).not.toBeNull();
     }
 
     // A known node's SVG fill equals the shared bucket palette color.
-    const openFill = testid("help-sm-rect-bugs-open")?.getAttribute("fill");
+    const openFill = testid("help-statemachine-bugs-rect-open")?.getAttribute("fill");
     expect(openFill).toBe(BUCKET_HEX[statusBucket("open", bugsSchema)]);
     // sanity: open (non-terminal) is the `start` bucket.
     expect(openFill).toBe(BUCKET_HEX.start);
 
     // A directed edge exists for a known transition pair (open -> wip).
-    expect(testid("help-sm-edge-bugs-open-wip")).not.toBeNull();
-    expect(testid("help-sm-edge-bugs-open-closed")).not.toBeNull();
+    expect(testid("help-statemachine-bugs-edge-open-wip")).not.toBeNull();
+    expect(testid("help-statemachine-bugs-edge-open-closed")).not.toBeNull();
   });
 
   it("renders colored nodes with no edges for a ledger without a transitions map", async () => {
@@ -118,15 +126,15 @@ describe("tabbed help dialog", () => {
     press("?");
     await flush();
     click(testid("help-tab-statemachines"));
-    await flush();
+    await settle();
 
     // `plain` declares no transitions: nodes present, no edges.
     expect(testid("help-statemachine-plain")).not.toBeNull();
-    expect(testid("help-sm-node-plain-open")).not.toBeNull();
-    expect(testid("help-sm-rect-plain-open")?.getAttribute("fill")).toBe(
+    expect(testid("help-statemachine-plain-node-open")).not.toBeNull();
+    expect(testid("help-statemachine-plain-rect-open")?.getAttribute("fill")).toBe(
       BUCKET_HEX[statusBucket("open", { statusValues: ["open", "closed"], terminalStatuses: ["closed"], fields: {} })],
     );
-    expect(container.querySelector('[data-testid^="help-sm-edge-plain-"]')).toBeNull();
+    expect(container.querySelector('[data-testid^="help-statemachine-plain-edge-"]')).toBeNull();
 
     // Regression guard (giant-node + alignment defect): the svg carries explicit
     // intrinsic width/height attrs AND an inline max-width = intrinsic width. CSS
@@ -134,7 +142,7 @@ describe("tabbed help dialog", () => {
     // while the inline max-width caps upscaling, so a narrow edgeless diagram
     // renders at its natural small size. An edgeless ledger stacks its statuses
     // in a single column, so the intrinsic width stays narrow.
-    const svg = testid("help-statemachine-svg-plain") as unknown as SVGElement | null;
+    const svg = testid("help-statemachine-plain-svg") as unknown as SVGElement | null;
     const w = Number(svg?.getAttribute("width"));
     const h = Number(svg?.getAttribute("height"));
     expect(w).toBeGreaterThan(0);

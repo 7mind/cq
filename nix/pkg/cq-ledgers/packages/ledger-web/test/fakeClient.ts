@@ -57,7 +57,9 @@ const tasksSchema: LedgerSchema = {
   statusValues: ["planned", "wip", "done"],
   terminalStatuses: ["done"],
   idPrefix: "T",
-  transitions: { planned: ["wip"], wip: ["done", "planned"], done: [] },
+  // `wip -> wip` is a self-loop: exercises the elk renderer keeping self-loops
+  // that the old computeDagLayout-based state-machine model dropped (T203).
+  transitions: { planned: ["wip"], wip: ["done", "planned", "wip"], done: [] },
   fields: {
     headline: { type: "string", required: true },
     description: { type: "string", required: false },
