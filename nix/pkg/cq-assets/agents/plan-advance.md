@@ -121,7 +121,7 @@ throw `InvalidTransitionError`. Do not attempt any other transition.
    answering. Do nothing. Return `awaiting-answers`.
 
 2. **`clarifying`, and no linked question is currently `open`** — either none
-   exist yet (a fresh goal straight from `/plan:start`), or every linked question
+   exist yet (a fresh goal straight from `/cq:plan`), or every linked question
    is terminal `answered` (with a non-empty `answer`). Read the FULL Q&A so far
    (empty on a fresh goal). Then either:
    - **(0) defect-seeded → SKIP clarification** — FIRST check whether this goal is
@@ -285,7 +285,7 @@ EACH entry:
    discover this defect for auto-investigation (see below).
 
 That is the WHOLE step — **file only**. Per **K12** (which supersedes K8 point
-3's handoff *direction*), you do NOT file a `run /investigate:start <D>` user
+3's handoff *direction*), you do NOT file a `run /cq:investigate <D>` user
 question for these defects. The `/plan:*` COMMAND orchestrator (T74), after its
 primary planning work, **re-derives the auto-investigate worklist by QUERYING
 THE LEDGER** — defects linked `goals:<G>` whose `status` is still ACTIONABLE

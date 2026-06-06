@@ -17,7 +17,7 @@ Current assets:
 
 | File                              | Role                                               |
 |-----------------------------------|----------------------------------------------------|
-| `commands/plan/start.md`          | slash command — start a goal, file first questions |
+| `commands/cq/plan.md`             | slash command — start a goal, file first questions |
 | `commands/plan/advance.md`        | slash command — thin planner↔reviewer loop         |
 | `commands/plan/follow-up.md`      | slash command — add scope to an existing goal, re-clarify |
 | `agents/plan-advance.md`          | subagent — the planner (one state step)            |
@@ -30,11 +30,11 @@ Current assets:
 | `agents/implement-worker.md`      | subagent — implements one task in an isolated worktree |
 | `agents/implement-reviewer.md`    | subagent — adversarial per-task reviewer           |
 | `agents/implement-conflict-resolver.md` | subagent — resolves rebase conflicts on merge-back |
-| `commands/investigate/start.md`   | slash command — start a root-cause investigation   |
+| `commands/cq/investigate.md`      | slash command — start a root-cause investigation   |
 | `commands/investigate/advance.md` | slash command — the investigate orchestrator loop   |
 | `agents/investigate-explorer.md`  | subagent — read-only hypothesis explorer           |
 | `agents/investigate-prober.md`    | subagent — execution-capable evidence gatherer     |
-| `commands/advance.md`             | shared prompt — unified multi-flow advance coordinator |
+| `commands/cq/advance.md`          | shared prompt — unified multi-flow advance coordinator |
 
 Edit the files in this directory, never a symlink or a consumer's copy.
 
@@ -45,7 +45,7 @@ Edit the files in this directory, never a symlink or a consumer's copy.
 
    | Claude link                          | → source                                   |
    |--------------------------------------|-------------------------------------------|
-   | `.claude/commands/plan/start.md`     | `../cq-assets/commands/plan/start.md`     |
+   | `.claude/commands/cq/plan.md`        | `../cq-assets/commands/cq/plan.md`        |
    | `.claude/commands/plan/advance.md`   | `../cq-assets/commands/plan/advance.md`   |
    | `.claude/commands/plan/follow-up.md` | `../cq-assets/commands/plan/follow-up.md` |
    | `.claude/agents/plan-advance.md`     | `../cq-assets/agents/plan-advance.md`     |
@@ -55,11 +55,11 @@ Edit the files in this directory, never a symlink or a consumer's copy.
    | `.claude/agents/implement-worker.md`    | `../cq-assets/agents/implement-worker.md`    |
    | `.claude/agents/implement-reviewer.md`  | `../cq-assets/agents/implement-reviewer.md`  |
    | `.claude/agents/implement-conflict-resolver.md` | `../cq-assets/agents/implement-conflict-resolver.md` |
-   | `.claude/commands/investigate/start.md`   | `../cq-assets/commands/investigate/start.md`   |
+   | `.claude/commands/cq/investigate.md`      | `../cq-assets/commands/cq/investigate.md`      |
    | `.claude/commands/investigate/advance.md` | `../cq-assets/commands/investigate/advance.md` |
    | `.claude/agents/investigate-explorer.md`  | `../cq-assets/agents/investigate-explorer.md`  |
    | `.claude/agents/investigate-prober.md`    | `../cq-assets/agents/investigate-prober.md`    |
-   | `.claude/commands/advance.md`             | `../cq-assets/commands/advance.md`             |
+   | `.claude/commands/cq/advance.md`          | `../cq-assets/commands/cq/advance.md`          |
    | `.claude/commands/cq/plan-review.md`      | `../cq-assets/commands/cq/plan-review.md`      |
    | `.claude/commands/cq/implement-review.md` | `../cq-assets/commands/cq/implement-review.md` |
    | `.claude/commands/cq/reviewers.md`        | `../cq-assets/commands/cq/reviewers.md`        |
@@ -92,7 +92,7 @@ same shared `[aliases]` table (see `cq.toml.example`).
 Every subagent these flows dispatch (plan-flow *and* implement-flow) ends its
 final message with a `### Session summary` block (**Did / Achieved / Discovered
 / Issues**). The subagent writes **no file** — it only emits the section. The
-**orchestrator** command (`plan/start`, `plan/advance`, `implement/start`,
+**orchestrator** command (`cq/plan`, `plan/advance`, `implement/start`,
 `implement/advance`) persists it to
 `docs/logs/<timestamp>-<agent-id>.md` after each `Agent` call returns:
 `<agent-id>` comes from the Agent tool result, `<timestamp>` is stamped by the

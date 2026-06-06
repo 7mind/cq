@@ -13,7 +13,7 @@ This command does the one-time **scope resolution** only, then hands off to the
 `/implement:advance` loop. It owns NO execution logic of its own — the entire
 pass (DAG-ready pickup, worktree dispatch, review, criticism loop, question
 registration, merge-back) lives in `/implement:advance`, so that logic exists in
-exactly ONE place (exactly as `/plan:start` does the goal bootstrap and hands the
+exactly ONE place (exactly as `/cq:plan` does the goal bootstrap and hands the
 round to `plan-advance`).
 
 ## No confirmation checkpoints — just run (hard rule)

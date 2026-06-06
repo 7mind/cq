@@ -66,7 +66,7 @@ durable ledger state left off. **ONE invocation = ONE research round.**
   `defects.rootCause`/`suggestedFix`, seed/extend a plan-flow goal, and STOP. You
   MUST NOT re-implement or invoke the planner↔plan-reviewer loop yourself. **Two
   contexts (K12):**
-  - *Standalone* (`/investigate:start` run directly by the user): file the
+  - *Standalone* (`/cq:investigate` run directly by the user): file the
     open question pointing at `/plan:advance <G>` and STOP — the user resumes
     manually.
   - *Auto-launched inside plan:*\*: this investigation was triggered by
@@ -258,7 +258,7 @@ prompt (T41) explicitly permits skipping clarification when a goal is
 (c) **Hand back to the planner, and STOP.** File an `open` question linked to
 the defect. Then STOP — this command does not advance G. The action depends on
 context (K12):
-- *Standalone* (`/investigate:start` run directly): the question text instructs
+- *Standalone* (`/cq:investigate` run directly): the question text instructs
   the user to run **`/plan:advance <G>`**: `create_item("questions",
   <defectMilestone>, status: "open", fields: { question: "Root cause of <D>
   confirmed and a defect-seeded goal G is ready — run `/plan:advance G` to
@@ -339,7 +339,7 @@ Summarize the round concisely:
 > gate: one of `drained` / `answers-required` / `mixed` / `illness-detected`,
 > each requiring a real predicate condition — there is no status for an
 > effort-based stop. If tempted to stop while an `uncertain`/`open` leaf is still
-> adjudicable, CONTINUE. (See llm/commands/advance.md §Stop condition.)
+> adjudicable, CONTINUE. (See llm/commands/cq/advance.md §Stop condition.)
 
 Whether you write a `handoffs` record at your stop depends ENTIRELY on your
 invocation context — there is **no env var or process signal** to read. You,
@@ -371,12 +371,12 @@ command in the SAME inline session, so you already KNOW which context you are in
   ledger): stage the ledger artifacts only and commit, so a standalone
   investigate round never leaves the ledger uncommitted.
 
-- **Run CHAINED INLINE by any wrapping flow command** (`/advance`,
+- **Run CHAINED INLINE by any wrapping flow command** (`/cq:advance`,
   `/plan:advance`, or a `/<flow>:start` / `/<flow>:follow-up` that runs this
   pass inline): **SUPPRESS this handoff write** — AND suppress the at-stop ledger
   commit (the outermost wrapper owns both). The outermost wrapper owns the
   single authoritative run-level handoff and writes it once at its stop —
-  `/advance` per its §Provenance (it is the sole `handoffs` writer for the whole
+  `/cq:advance` per its §Provenance (it is the sole `handoffs` writer for the whole
   run); `/plan:advance` writes its own standalone record covering the whole pass
   including the chained investigate sub-round; a `/<flow>:start` or
   `/<flow>:follow-up` writes it directly in its own §Handoff record step. You

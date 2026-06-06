@@ -205,18 +205,18 @@ reviewer rationale) in the defect's OWN `fields` (e.g. `description` or
 `suggestedFix`). A filed defect is a fault **to be fixed in a separate task** —
 its default disposition is FIX; it is NEVER a "candidate for fix or wontfix"
 choice the flow puts to the user. **Do NOT file a `questions` item routing the
-user to `/investigate:start <D>`, AND do NOT file a `questions` item asking
+user to `/cq:investigate <D>`, AND do NOT file a `questions` item asking
 whether/how/when to fix it (fix-vs-wontfix, out-of-scope/pre-existing,
 external-API or blast-radius disposition) (K13 — `questions` are reserved for
 genuine user *requirements* decisions, not routing pointers and not
 fix-disposition prompts; `wontfix` is user-initiated only).** The defect is self-contained: its
-`ledgerRefs` link it to the task and goal, and `/investigate:start` accepts a
+`ledgerRefs` link it to the task and goal, and `/cq:investigate` accepts a
 bare defect id (`^D\d+$` resume path) so any open defect is directly actionable
 via ledger query without a pointer question. **Implement:* does NOT auto-launch
 investigate inline (Q43) — that is plan:*'s responsibility, since implement:* is
 an execution flow, not a planning flow. The filed defect will be triaged by the
 next /plan:advance cycle's auto-investigate phase, or by a direct user
-/investigate:start <D>.** Do NOT block, fail, or re-dispatch the current task on
+/cq:investigate <D>.** Do NOT block, fail, or re-dispatch the current task on
 a filed defect, and do NOT add it to the criticism loop — it is tracked
 separately. Filing a defect is idempotent: on a re-run, skip entries already
 filed for this task (match by headline + task ledgerRef).
@@ -327,8 +327,8 @@ defer — tasks merge regardless), but it DOES gate milestone archival.
 
 ### Milestone auto-close+archive sweep (factored predicate)
 After merge-back, run the **auto-close+archive sweep** over every milestone the
-pass touched (and, in `/advance`, over the whole `milestones` ledger). This is
-the single authoritative predicate — `/advance` (llm/commands/advance.md) states
+pass touched (and, in `/cq:advance`, over the whole `milestones` ledger). This is
+the single authoritative predicate — `/cq:advance` (llm/commands/cq/advance.md) states
 the same rule and is the catch-all that also sweeps milestones whose goal the
 user closed between runs.
 
@@ -365,9 +365,9 @@ ledger (`docs/*.md` + `docs/archive` + `docs/logs`; NEVER `docs/ledgers.yaml`,
 gitignored; NEVER code, which lands on task branches) — at TWO points:
 - **After every `archive_milestone`** (the sweep above, and each merge-back
   archive): commit immediately, so each completed milestone is a durable
-  checkpoint. This ALWAYS fires, even when chained under `/advance`.
+  checkpoint. This ALWAYS fires, even when chained under `/cq:advance`.
 - **At this pass's STOP**, right after the §Handoff record write — but ONLY when
-  run STANDALONE. When CHAINED under `/advance`, SUPPRESS the at-stop commit
+  run STANDALONE. When CHAINED under `/cq:advance`, SUPPRESS the at-stop commit
   (the wrapper owns the single run-stop commit, mirroring the handoff
   suppression). The per-archive commits above still fire either way.
 
@@ -406,12 +406,12 @@ Summarize the pass concisely:
 > / `mixed` / `illness-detected`, each requiring a real predicate condition —
 > there is no status for an effort-based stop. If tempted to stop while a task is
 > still READY (or a criticism round is still converging), CONTINUE. (See
-> llm/commands/advance.md §Stop condition.)
+> llm/commands/cq/advance.md §Stop condition.)
 
 Whether you write a `handoffs` record at your stop depends ENTIRELY on your
 invocation context — there is **no env var or process signal** to read. You,
 the executing agent, run both this command and (when chained) the wrapping
-`/advance` command in the SAME inline session, so you already KNOW which
+`/cq:advance` command in the SAME inline session, so you already KNOW which
 context you are in.
 
 - **Run STANDALONE** (the user invoked `/implement:advance` directly, with no
@@ -437,12 +437,12 @@ context you are in.
   once at the stop, never updated. **Then commit the ledger** (§Commit the
   ledger, at-stop commit) — this is the final act of the standalone pass.
 
-- **Run CHAINED INLINE by any wrapping flow command** (`/advance`, or a
+- **Run CHAINED INLINE by any wrapping flow command** (`/cq:advance`, or a
   `/<flow>:start` that runs this pass inline):
   **SUPPRESS this handoff write** — AND suppress the at-stop ledger commit (the
   outermost wrapper owns both). The per-archive ledger commits (§Commit the
   ledger) still fire. The outermost wrapper owns the single
-  authoritative run-level handoff and writes it once at its stop — `/advance`
+  authoritative run-level handoff and writes it once at its stop — `/cq:advance`
   per its §Provenance (it is the sole `handoffs` writer for the whole run);
   a `/<flow>:start` writes it directly in its own §Handoff record step. You can
   tell you are in this context because the wrapping command explicitly chains you

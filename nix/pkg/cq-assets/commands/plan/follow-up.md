@@ -12,19 +12,19 @@ follow-up request (free text):
 
 Use this when a goal's plan is already done (`planned`) — or its build is under
 way (`building`) — and the user wants to add MORE scope to the SAME goal. Like
-`/plan:start`, this command does the one-time **bootstrap** only — record the
+`/cq:plan`, this command does the one-time **bootstrap** only — record the
 request and re-open the goal — then hands off to the `plan-advance` planner for a
 fresh clarifying round (clarify-first). It owns NO question or plan logic itself.
 
 > **Follow-up scope vs a defect.** Use this for MORE greenfield scope on an
 > existing goal. If the follow-up is really a **DEFECT report** — an existing
 > fault to fix, not new capability — intake it on the `defects` ledger via
-> **`/investigate:start <defect description>`** instead of folding it into this
+> **`/cq:investigate <defect description>`** instead of folding it into this
 > goal. Investigation confirms the root cause and seeds a *defect-seeded*
 > plan-flow goal (linked `defects:<D>`) that `/plan:advance` turns into reviewed
 > FIX TASKS — tasks remain the only executable unit; the defect stays a problem
 > record. If the request plainly describes a fault to repair, point the user at
-> `/investigate:start` rather than re-opening this goal.
+> `/cq:investigate` rather than re-opening this goal.
 
 ## Provenance (every ledger write)
 On every `update_item`, pass `author` = your OWN model class (derived from
@@ -43,7 +43,7 @@ the Codex equivalent; omit if unavailable).
    - **`done` / `abandoned`** (terminal): a finished goal canNOT be re-opened —
      the goals state machine keeps terminal statuses outgoing-edge-free by
      design. STOP and tell the user to start a fresh goal for the new scope with
-     `/plan:start` (it can reference G in its description). Do not mutate G.
+     `/cq:plan` (it can reference G in its description). Do not mutate G.
    - **`clarifying`**: already taking input — skip the re-open in step 4, just
      append (step 3) and hand off (step 5).
    - **`planning` / `planned` / `building`**: proceed.

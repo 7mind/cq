@@ -546,12 +546,12 @@ auto-investigated: 1 confirmed→seeded goal, 1 parked on a question").
 > `drained` / `answers-required` / `mixed` / `illness-detected`, each requiring a
 > real predicate condition — there is no status for an effort-based stop. If
 > tempted to stop while progress is still possible, CONTINUE. (See
-> llm/commands/advance.md §Stop condition.)
+> llm/commands/cq/advance.md §Stop condition.)
 
 Whether you write a `handoffs` record at your stop depends ENTIRELY on your
 invocation context — there is **no env var or process signal** to read. You,
 the executing agent, run both this command and (when chained) the wrapping
-`/advance` command in the SAME inline session, so you already KNOW which
+`/cq:advance` command in the SAME inline session, so you already KNOW which
 context you are in.
 
 - **Run STANDALONE** (the user invoked `/plan:advance` directly, with no
@@ -567,7 +567,7 @@ context you are in.
   | both at once — some goals planned/drained, others awaiting answers          | `mixed`            |
   | a stop predicate (a)/(c)–(f) bounded the pass / an invariant violation      | `illness-detected` |
 
-  Field set (per `HANDOFFS_SCHEMA`; consistent with advance.md §Provenance):
+  Field set (per `HANDOFFS_SCHEMA`; consistent with cq/advance.md §Provenance):
   `summary` (**required** — the why-it-stopped prose, mirror the §Report);
   `flow` = `plan`; `ledgerRefs` = the stop-causing items (`goals:<G>`,
   `defects:<D>`); `blockingQuestions` = the `open` question ids for an
@@ -581,11 +581,11 @@ context you are in.
   commit the ledger** (§Commit the ledger): stage the ledger artifacts only and
   commit, so a standalone plan round never leaves the ledger uncommitted.
 
-- **Run CHAINED INLINE by any wrapping flow command** (`/advance`, or a
+- **Run CHAINED INLINE by any wrapping flow command** (`/cq:advance`, or a
   `/<flow>:start` / `/<flow>:follow-up` that runs this pass inline):
   **SUPPRESS this handoff write** — AND suppress the at-stop ledger commit (the
   outermost wrapper owns both). The outermost wrapper owns the single
-  authoritative run-level handoff and writes it once at its stop — `/advance`
+  authoritative run-level handoff and writes it once at its stop — `/cq:advance`
   per its §Provenance (it is the sole `handoffs` writer for the whole run);
   a `/<flow>:start` or `/<flow>:follow-up` writes it directly in its own
   §Handoff record step. You can tell you are in this context because the
