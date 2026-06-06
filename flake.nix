@@ -54,6 +54,7 @@
               ./nix/pkg/cq-ledgers/bun.lock
               ./nix/pkg/cq-ledgers/bunfig.toml
               ./nix/pkg/cq-ledgers/packages/cq-config/package.json
+              ./nix/pkg/cq-ledgers/packages/cq-cli/package.json
               ./nix/pkg/cq-ledgers/packages/ledger/package.json
               ./nix/pkg/cq-ledgers/packages/ledger-live/package.json
               ./nix/pkg/cq-ledgers/packages/ledger-mcp/package.json
@@ -96,10 +97,11 @@
             # Root node_modules: the .bun/ hoisted store plus top-level symlinks.
             cp -r node_modules $out/node_modules
 
-            mkdir -p $out/packages/cq-config \
+            mkdir -p $out/packages/cq-config $out/packages/cq-cli \
                      $out/packages/ledger $out/packages/ledger-live $out/packages/ledger-mcp \
                      $out/packages/ledger-tui $out/packages/ledger-web
             cp -r packages/cq-config/node_modules     $out/packages/cq-config/node_modules
+            cp -r packages/cq-cli/node_modules        $out/packages/cq-cli/node_modules
             cp -r packages/ledger/node_modules      $out/packages/ledger/node_modules
             cp -r packages/ledger-live/node_modules $out/packages/ledger-live/node_modules
             cp -r packages/ledger-mcp/node_modules  $out/packages/ledger-mcp/node_modules
@@ -112,7 +114,7 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           # Refresh after dependency changes (see README § Nix).
-          outputHash = "sha256-Ymy9b5It+yQLP9J0WtCFMgVk70ZD9NJYiZ7TOYmJGDw=";
+          outputHash = "sha256-R/phwlOIrTVkohhdyNi+YvtkTOaOENTrnP/x9T4SQjc=";
         };
 
         # Shell fragment: stage the @cq/ledger + @cq/ledger-mcp source and
@@ -371,12 +373,85 @@
           dontStrip = true;
           dontFixup = true;
         };
+
+        # cq — the ledger-suite CLI (`cq init|reset|erase`). A standalone Bun
+        # bin (NOT embedded — it constructs an FsLedgerStore directly), modelled
+        # on ledgerMcp: stage @cq/cli + @cq/ledger source, strip their
+        # node_modules, symlink @cq/ledger (+ its runtime deps from the shared
+        # FOD) + @cq/config under cq-cli/node_modules/@cq, makeWrapper bun.
+        cqCli = pkgs.stdenv.mkDerivation {
+          pname = "cq";
+          version = "0.0.1";
+
+          src = ./nix/pkg/cq-ledgers;
+
+          nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper ];
+
+          dontConfigure = true;
+          buildPhase = "true";
+
+          installPhase = ''
+            runHook preInstall
+
+            WORKSPACE=$out/share/cq
+            mkdir -p "$WORKSPACE/packages" $out/bin
+
+            # ── 1. Source: the library + this binary ────────────────────── #
+            cp -r packages/ledger "$WORKSPACE/packages/ledger"
+            cp -r packages/cq-cli "$WORKSPACE/packages/cq-cli"
+            cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
+            rm -rf \
+              "$WORKSPACE/packages/ledger/node_modules" \
+              "$WORKSPACE/packages/cq-cli/node_modules"
+
+            # ── 2. ledger node_modules (runtime deps, mirrors ledgerMcp) ──── #
+            mkdir -p "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai" \
+                     "$WORKSPACE/packages/ledger/node_modules/@modelcontextprotocol"
+            for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify minisearch bun-types; do
+              if [ -e "${bunNodeModules}/packages/ledger/node_modules/$dep" ]; then
+                ln -s "${bunNodeModules}/packages/ledger/node_modules/$dep" \
+                  "$WORKSPACE/packages/ledger/node_modules/$dep"
+              fi
+            done
+            ln -s ${bunNodeModules}/packages/ledger/node_modules/@anthropic-ai/claude-agent-sdk \
+              "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai/claude-agent-sdk"
+            ln -s ${bunNodeModules}/packages/ledger/node_modules/@modelcontextprotocol/sdk \
+              "$WORKSPACE/packages/ledger/node_modules/@modelcontextprotocol/sdk"
+
+            # ── 3. cq-cli node_modules ──────────────────────────────────── #
+            mkdir -p "$WORKSPACE/packages/cq-cli/node_modules/@cq"
+            if [ -e "${bunNodeModules}/packages/cq-cli/node_modules/bun-types" ]; then
+              ln -s "${bunNodeModules}/packages/cq-cli/node_modules/bun-types" \
+                "$WORKSPACE/packages/cq-cli/node_modules/bun-types"
+            fi
+            ln -s "$WORKSPACE/packages/ledger" \
+              "$WORKSPACE/packages/cq-cli/node_modules/@cq/ledger"
+
+            # @cq/config — kept in the closure for parity with the other
+            # products; cq-cli resolves it from here should it ever import it.
+            cp -r packages/cq-config "$WORKSPACE/packages/cq-config"
+            rm -rf "$WORKSPACE/packages/cq-config/node_modules"
+            ln -s "$WORKSPACE/packages/cq-config" \
+              "$WORKSPACE/packages/cq-cli/node_modules/@cq/config"
+
+            # ── 4. Wrapper ──────────────────────────────────────────────── #
+            makeWrapper ${pkgs.bun}/bin/bun $out/bin/cq \
+              --add-flags "run $WORKSPACE/packages/cq-cli/src/main.ts --" \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
+
+            runHook postInstall
+          '';
+
+          dontStrip = true;
+          dontFixup = true;
+        };
       in {
         packages = {
           default = ledgerMcp;
           ledger-mcp = ledgerMcp;
           ledger-tui = ledgerTui;
           ledger-web = ledgerWeb;
+          cq = cqCli;
           # Expose for debugging / hash refresh.
           node-modules = bunNodeModules;
 
@@ -426,6 +501,10 @@
         apps.ledger-web = {
           type = "app";
           program = "${ledgerWeb}/bin/ledger-web";
+        };
+        apps.cq = {
+          type = "app";
+          program = "${cqCli}/bin/cq";
         };
 
         devShells.default = pkgs.mkShell {
