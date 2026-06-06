@@ -231,7 +231,8 @@ body {
 }
 .lw-statemachine-svg {
   display: block;
-  max-width: 100%;
+  width: 100%;
+  height: auto;
 }
 .lw-statemachine-svg text {
   user-select: none;
