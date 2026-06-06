@@ -249,23 +249,11 @@ archives:
     summary: "G23 phase 2 complete: adopted elkjs, built the diagramLayout adapter + DiagramSvg renderer (T202), migrated the State-machines help tab off computeDagLayout onto elk (T203), authored the flow render-data module (T204), added the third Flows help tab (T205), and passed the end-to-end verification gate (T206: bun run check 1014/0, nix build .#node-modules + .#ledger-web both green, D33 left-alignment confirmed resolved, DagView unchanged). All 6 tasks merged, all reviews go-ahead."
     title: G23 phase 2 — adopt diagram library, migrate State-machines tab, add Flows tab
     status: done
+  - id: M77
+    path: ./archive/tasks/M77.md
+    summary: "G23 phase 1 complete: authored nix/pkg/cq-assets/docs/flow-state-machines.md (T200) documenting the plan/investigate/implement/advance state machines + cross-flow handoff topology; reviewed go-ahead (R240). Task done, milestone fully terminal."
+    title: G23 phase 1 — flow state-machine doc
+    status: done
 ---
 
 # tasks
-
-## M77
-
-### T200 — done
-
-- createdAt: 2026-06-06T20:59:46.674Z
-- updatedAt: 2026-06-06T21:37:01.134Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
-- headline: Author the harness-flow state-machine document (plan / investigate / implement / advance)
-- description: "Write a single prose Markdown document (Q114) at nix/pkg/cq-assets/docs/flow-state-machines.md describing the state machines of all four harness flows. SOURCE the states/transitions/handoffs by reading the actual flow specs under nix/pkg/cq-assets/commands/cq/ (plan/{start,advance,follow-up,plan-review,planners}, investigate/{start,advance}, implement/{start,advance,implement-review}, advance) plus the plan-advance and plan-reviewer agent prompts (nix/pkg/cq-assets/agents/ or wherever they live). For EACH flow document: (a) its states (e.g. for plan: clarifying / planning / planned / building / done / abandoned, plus the orchestrator's waiting-for-user-input loop states), (b) the transitions between them and what triggers each (user answers, reviewer go-ahead/revise, plan locked, etc.), (c) the cross-flow HANDOFFS where one flow defers/returns to another (advance sequences investigate->plan->implement to quiescence; plan file-and-defers a confirmed/out-of-scope defect to investigate; investigate seeds a confirmed-root-cause goal back to plan; plan reaches planned and implement picks up the task DAG). Include a top-level section for the advance sequencer showing the cross-flow handoff topology (this doubles as the combined overview per Q115). Prose for humans; this doc is SEPARATE from the Flows-tab render data (no shared source of truth required). Match existing docs/ style. NOTE: this doc is the authoritative reference the phase-2 flow render-data module mirrors by hand."
-- acceptance: "nix/pkg/cq-assets/docs/flow-state-machines.md exists and contains a dedicated section for each of the four flows (plan, investigate, implement, advance) plus the cross-flow handoff topology; each flow section enumerates its states and its labelled transitions; the states/transitions/handoffs match the current command specs under nix/pkg/cq-assets/commands/cq/ (spot-checked: plan phases clarifying->planning->planned->building->done/abandoned with the planning<->clarifying revise edge; advance's investigate->plan->implement sequencing; plan's file-and-defer-defect-to-investigate and investigate's seed-goal-back-to-plan handoffs are all present). The doc references no nonexistent state/transition."
-- suggestedModel: frontier
-- ledgerRefs: ["goals:G23"]
-- resultCommit: e9bf762
-- completion: Authored nix/pkg/cq-assets/docs/flow-state-machines.md (all four flows + cross-flow handoff topology).
-- sessionLogs: ["docs/logs/20260606-213541-a45e9cbf3976acb05.md","docs/logs/20260606-213541-ac51a9a79be8601ed.md"]

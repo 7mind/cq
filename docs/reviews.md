@@ -274,6 +274,11 @@ archives:
     summary: "G23 phase 2 complete: adopted elkjs, built the diagramLayout adapter + DiagramSvg renderer (T202), migrated the State-machines help tab off computeDagLayout onto elk (T203), authored the flow render-data module (T204), added the third Flows help tab (T205), and passed the end-to-end verification gate (T206: bun run check 1014/0, nix build .#node-modules + .#ledger-web both green, D33 left-alignment confirmed resolved, DagView unchanged). All 6 tasks merged, all reviews go-ahead."
     title: G23 phase 2 — adopt diagram library, migrate State-machines tab, add Flows tab
     status: done
+  - id: M77
+    path: ./archive/reviews/M77.md
+    summary: "G23 phase 1 complete: authored nix/pkg/cq-assets/docs/flow-state-machines.md (T200) documenting the plan/investigate/implement/advance state machines + cross-flow handoff topology; reviewed go-ahead (R240). Task done, milestone fully terminal."
+    title: G23 phase 1 — flow state-machine doc
+    status: done
 ---
 
 # reviews
@@ -630,17 +635,3 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G23"]
 - sessionLogs: ["docs/logs/20260606-210916-a07e3591c62e34c2d.md"]
-
-## M77
-
-### R240 — go-ahead
-
-- createdAt: 2026-06-06T21:36:46.637Z
-- updatedAt: 2026-06-06T21:36:46.637Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
-- summary: "approve — T200 flow-state-machines.md is accurate and complete: all four flows + cross-flow handoff topology, every state/transition/trigger/handoff verified against constants.ts and commands/cq/* + agents/plan-advance; no invented states. Docs-only (bun run check N/A)."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T200","goals:G23"]
-- sessionLogs: ["docs/logs/20260606-213541-ac51a9a79be8601ed.md"]

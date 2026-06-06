@@ -304,6 +304,11 @@ archives:
     summary: "G23 phase 2 complete: adopted elkjs, built the diagramLayout adapter + DiagramSvg renderer (T202), migrated the State-machines help tab off computeDagLayout onto elk (T203), authored the flow render-data module (T204), added the third Flows help tab (T205), and passed the end-to-end verification gate (T206: bun run check 1014/0, nix build .#node-modules + .#ledger-web both green, D33 left-alignment confirmed resolved, DagView unchanged). All 6 tasks merged, all reviews go-ahead."
     title: G23 phase 2 — adopt diagram library, migrate State-machines tab, add Flows tab
     status: done
+  - id: M77
+    path: ./archive/milestones/M77.md
+    summary: "G23 phase 1 complete: authored nix/pkg/cq-assets/docs/flow-state-machines.md (T200) documenting the plan/investigate/implement/advance state machines + cross-flow handoff topology; reviewed go-ahead (R240). Task done, milestone fully terminal."
+    title: G23 phase 1 — flow state-machine doc
+    status: done
 ---
 
 # milestones
@@ -419,10 +424,3 @@ archives:
 - createdAt: 2026-06-06T20:44:12.421Z
 - updatedAt: 2026-06-06T20:44:12.421Z
 - title: "Plan: fix D33 (sm-diagram layer-0 left gap)"
-
-### M77 — open
-
-- createdAt: 2026-06-06T20:58:45.337Z
-- updatedAt: 2026-06-06T20:58:45.337Z
-- title: G23 phase 1 — flow state-machine doc
-- description: "Phase 1 of G23: a single prose Markdown document under nix/pkg/cq-assets/docs/ describing the state machines (states + transitions + cross-flow handoffs) of all harness flows — plan, investigate, implement, and the top-level advance sequencer. Per Q114 this doc is human prose, kept SEPARATE from the Flows tab's render data."
