@@ -73,6 +73,13 @@ export function computeDagLayout(
   edges: readonly DagEdge[],
   opts: LayoutOpts = DEFAULT_LAYOUT_OPTS,
 ): DagLayout {
+  // Short-circuit for empty graphs: no nodes means no layout work, and the
+  // width formula (maxLayer*(nodeWidth+hGap)+nodeWidth+pad*2) would yield
+  // nodeWidth+pad*2 with maxLayer=0, not pad*2.  Return a minimal bounding box.
+  if (nodeIds.length === 0) {
+    return { nodes: [], edges: [], width: opts.pad * 2, height: opts.pad * 2 };
+  }
+
   const known = new Set(nodeIds);
   // Keep only edges between known nodes and drop self-loops.
   const validEdges = edges.filter((e) => e.from !== e.to && known.has(e.from) && known.has(e.to));
@@ -96,6 +103,15 @@ export function computeDagLayout(
     return best;
   };
   for (const id of nodeIds) layerOf(id);
+
+  // Re-base layers so the minimum assigned layer is always 0.  For fully-cyclic
+  // graphs (every status has an incoming transition) the longest-path pass
+  // assigns layers starting at some value > 0, which shifts every node right and
+  // widens the bounding box unnecessarily.  Guard the empty-graph case: if there
+  // are no nodes, Math.min() of an empty iterable returns +Infinity, so we clamp
+  // to 0 explicitly.
+  const minLayer = nodeIds.length === 0 ? 0 : Math.min(...layer.values());
+  for (const id of nodeIds) layer.set(id, layer.get(id)! - minLayer);
 
   // Group by layer in stable input order; assign rows.
   const byLayer = new Map<number, string[]>();

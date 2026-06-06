@@ -114,7 +114,7 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           # Refresh after dependency changes (see README § Nix).
-          outputHash = "sha256-R/phwlOIrTVkohhdyNi+YvtkTOaOENTrnP/x9T4SQjc=";
+          outputHash = "sha256-vCfIJBEcTWTcEQGWHo59PIAAcsSXxYX9w1CUsnmvd/Y=";
         };
 
         # Shell fragment: stage the @cq/ledger + @cq/ledger-mcp source and
@@ -342,7 +342,7 @@
 
             mkdir -p "$WORKSPACE/packages/ledger-web/node_modules/@modelcontextprotocol" \
                      "$WORKSPACE/packages/ledger-web/node_modules/@cq"
-            for dep in react react-dom react-markdown remark-gfm rehype-sanitize bun-types; do
+            for dep in react react-dom react-markdown remark-gfm rehype-sanitize bun-types elkjs; do
               if [ -e "${bunNodeModules}/packages/ledger-web/node_modules/$dep" ]; then
                 ln -s "${bunNodeModules}/packages/ledger-web/node_modules/$dep" \
                   "$WORKSPACE/packages/ledger-web/node_modules/$dep"
