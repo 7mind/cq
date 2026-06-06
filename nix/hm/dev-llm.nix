@@ -195,10 +195,20 @@ let
   # file) re-declares the same servers with lifecycle="keep-alive" so Pi
   # connects them at startup and auto-reconnects. Kept out of the shared
   # programs.mcp registry so `lifecycle` doesn't leak into claude/codex configs.
+  # `directTools` (gated by smind.hm.dev.llm.pi.mcpDirectTools) is likewise
+  # Pi-only — it registers a server's tools directly instead of behind the
+  # adapter's mcp() proxy, and stays out of the shared registry for the same
+  # reason.
+  piMcpDirectTools = config.smind.hm.dev.llm.pi.mcpDirectTools;
   piMcpJson = jsonFormat.generate "pi-mcp.json" {
-    mcpServers = lib.mapAttrs (_name: server: server // { lifecycle = "keep-alive"; }) (
-      config.programs.mcp.servers
-    );
+    mcpServers = lib.mapAttrs (
+      name: server:
+      let
+        directToolsEnabled =
+          if lib.isList piMcpDirectTools then lib.elem name piMcpDirectTools else piMcpDirectTools;
+      in
+      server // { lifecycle = "keep-alive"; } // lib.optionalAttrs directToolsEnabled { directTools = true; }
+    ) config.programs.mcp.servers;
   };
 
   # Repo-agnostic operating manual appended INSIDE Pi's system prompt (via
@@ -386,6 +396,22 @@ in
       type = lib.types.bool;
       default = true;
       description = "Enable fullscreen TUI mode for agent CLIs that support it";
+    };
+
+    smind.hm.dev.llm.pi.mcpDirectTools = lib.mkOption {
+      type = lib.types.either lib.types.bool (lib.types.listOf lib.types.str);
+      default = false;
+      example = [ "codegraph" "ledger" ];
+      description = ''
+        Register Pi MCP servers' tools individually instead of behind
+        pi-mcp-adapter's single `mcp({search, tool})` proxy. The proxy exists
+        for context-window economy (progressive disclosure), so this defaults
+        off. `true` sets `directTools = true` on every server in
+        {option}`programs.mcp.servers`; a list of server names enables it only
+        for the named servers (e.g. `[ "codegraph" "ledger" ]`), leaving the
+        rest proxied. Pi-only: applied in `piMcpJson`, not leaked into the
+        shared MCP registry used by claude/codex.
+      '';
     };
 
     smind.hm.dev.llm.llmSshKeyPath = lib.mkOption {
