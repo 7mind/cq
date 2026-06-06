@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 13
+  item: 14
 archives: []
 ---
 
@@ -214,3 +214,14 @@ archives: []
 - ledgerRefs: ["goals:G23","goals:G24","tasks:T203","tasks:T204","tasks:T205","tasks:T206"]
 - handoffReasons: ["T202 landed+merged+verified (elk layout layer)","single-session context budget exhausted before T203-T206","worktree-isolation base still pinned to session-start 224f69f — fresh session needed for clean dependent-task worktrees"]
 - sessionLogs: ["docs/logs/20260606-221023-acd38b19b1b81ebba.md","docs/logs/20260606-221023-a6e702c34e735176f.md"]
+
+### HO14 — drained
+
+- createdAt: 2026-06-06T23:15:12.559Z
+- updatedAt: 2026-06-06T23:15:12.559Z
+- author: "opus-4.8[1m]"
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
+- summary: "DRAINED. This /cq:advance run drove G23 phase 2 to completion through the implement flow. Merged T203 (a684c7c — State-machines help tab migrated off computeDagLayout onto the elk DiagramSvg renderer), T204 (b4a5ec2 — flowData.ts render-data module: plan/investigate/implement/advance), T205 (8234adf — third 'Flows' help tab), and T206 (c4c0779 — end-to-end verification gate: bun run check 1014/0, nix build .#node-modules + .#ledger-web both green, D33 left-alignment confirmed resolved, DagView unchanged). All four reviewed go-ahead (R243-R246), 0 criticism/0 questions/0 defects each. Archived both of G23's work milestones: M78 (phase 2) and M77 (phase 1). Final predicate gate: P-investigate=FALSE (defects D2/D24/D30 all resolved, none actionable), P-plan=FALSE (no goal in clarifying/planning; 13 planned + 2 building), P-implement=FALSE (zero non-terminal tasks remain), open-question gate clear. Nothing actionable remains anywhere — no user action required by the flow. NOTE (not a blocker): G23 (building) is now ready for the user to CLOSE in the TUI/web (both its work milestones M77+M78 are archived); goals never auto-close. M11 stays open due to a dangling non-terminal hypothesis H3 (parent of confirmed H4; D2 resolved) — not actionable under any predicate, left untouched as it is the investigate flow's to adjudicate."
+- flow: advance
+- ledgerRefs: ["tasks:T203","tasks:T204","tasks:T205","tasks:T206","goals:G23"]
+- sessionLogs: ["docs/logs/20260606-223721-a17c47cd7aec8fefe.md","docs/logs/20260606-223721-a019d531ab8b61e31.md","docs/logs/20260606-224129-a06765ad835a5090a.md","docs/logs/20260606-224129-aee826807d10e0030.md","docs/logs/20260606-225422-a8132557d5466889d.md","docs/logs/20260606-225749-a4c83a8942b4ac95c.md","docs/logs/20260606-230739-abec781393d38c3e8.md","docs/logs/20260606-231042-ad3b8a17ae7e97a6d.md"]
