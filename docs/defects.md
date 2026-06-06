@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 33
+  item: 34
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -143,3 +143,25 @@ archives:
 - sessionLogs: ["docs/logs/20260605-185840-addf76024a26b2805.md"]
 - dependsOn: ["T179","T180","T181"]
 - fix: "Resolved across T179/T180/T181 (merged to main 24c1d51). T179: made link-prompts.ts import-safe (export LINKS+checkLinks, creation loop behind import.meta.main), added --check mode + reproduce-first test. T180: repointed all 14 LINKS sources llm/ -> ../cq-assets/{commands,agents}/ (all resolve) and hardened the loop to throw loud on a missing source (reuses checkLinks), flipped repro test to checkLinks(LINKS) toEqual([]). T181: de-staled cq-assets/README.md to the new layout. `bun run link-prompts` now produces 14 non-dangling symlinks; integrated bun run check green."
+
+## M79
+
+### D34 — root-caused
+
+- createdAt: 2026-06-06T23:16:29.780Z
+- updatedAt: 2026-06-06T23:22:28.686Z
+- author: "opus-4.8[1m]"
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
+- headline: Top-bar progress indicator reads 38/39 when all questions are answered (off-by-one; likely counts the withdrawn question in the denominator)
+- severity: low
+- description: |
+    User report (verbatim): "Right now (commit 6b057903c40e469a03f3511d0310c802e58ddece, no changes) all the questions are answered. Progressbar in the top bar shows 38/39!"
+    
+    Precise restatement: the top-bar progress indicator displays 38/39 — numerator 38, denominator 39 — so it never reaches 100% even though the user reports no question is left to answer. The bar's completed-count does not equal its total.
+    
+    Working hypothesis (to verify against code, not yet confirmed): the ledger currently holds questions in states answered=38, withdrawn=1 (total active questions = 39). The progress numerator likely counts only `answered` (38) while the denominator counts ALL questions including the 1 `withdrawn` (39). `withdrawn` is a terminal question status but is not `answered`, so it inflates the total without ever contributing to the numerator — an off-by-one that keeps the bar at 38/39. The correct behavior is presumably to either exclude `withdrawn` from the denominator (so it reads 38/38 = 100%) or count every terminal/resolved question in the numerator. The exact intended semantics must be confirmed from the progress-bar implementation.
+    
+    Environment: ledger-web (and/or ledger-tui) top bar, at commit 6b05790, no working-tree changes. Severity low — cosmetic display defect in a progress indicator; no functional impact, no data loss.
+- rootCause: "CONFIRMED (hypothesis H26). The top-bar questions progress fraction is `completedCount / itemCount`, both server-computed in the LedgerSummary and rendered verbatim by LedgerProgressBar (ledger-web App.tsx:1416-1430). For the questions ledger the NUMERATOR `computeCompletedCount` returns the count of `answered` only (ledgerTools.ts:78-79; mirrored stdioLedgerTools.ts:119-132), deliberately excluding the other terminal status `withdrawn`. The DENOMINATOR `itemCount` (ledgerTools.ts:191-198) totals EVERY active item in every status with no terminal exclusion, so it DOES include the `withdrawn` question. Per QUESTIONS_SCHEMA (constants.ts:205-206) `withdrawn` is terminal but is not `answered`. With the live ledger holding 38 answered + 1 withdrawn + 0 open = 39 active questions, the bar reads completedCount 38 / itemCount 39 = 38/39 and can never reach 100% while any withdrawn question exists — even though zero questions await answering. The answered-only numerator is intentional (types.ts:154-169); the defect is the ASYMMETRY: the denominator is not adjusted to also exclude `withdrawn`."
+- suggestedFix: "Make the questions progress denominator symmetric with its answered-only numerator so a withdrawn question is neither a positive completion (numerator) nor pending work (denominator). RECOMMENDED (approach A): introduce a per-schema 'progress denominator' classification alongside computeCompletedCount — for the questions ledger, denominator = active questions MINUS `withdrawn` (equivalently open + answered); for every other ledger, denominator = itemCount as today. Then the questions bar reads 38/38 = 100% when all answerable questions are answered. Keep `itemCount` itself unchanged (it is a general LedgerSummary field that other consumers may rely on) — add a separate progress-total (e.g. `progressTotal`/`pendingPlusDone`) field OR compute the denominator from statusCounts in LedgerProgressBar. Alternative (approach B): count `withdrawn` in the numerator too (39/39) — simpler but contradicts the documented 'withdrawn is not a positive completion' intent (ledgerTools.ts:69-70, types.ts), so prefer A. Apply the fix in BOTH MCP transports (ledgerTools.ts + stdioLedgerTools.ts) to keep them in sync, and extend test/enumerate-ledgers-summary.test.ts (which already encodes the 2-answered/1-open/1-withdrawn case) to assert the new denominator excludes withdrawn. NOTE: this is a real defect to FIX (default disposition), not a candidate for wontfix; the exact A-vs-B choice and field shape is plan-flow's to lock during its clarifying round."
+- ledgerRefs: ["hypothesis:H26"]

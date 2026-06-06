@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 78
+  item: 79
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -424,3 +424,10 @@ archives:
 - createdAt: 2026-06-06T20:44:12.421Z
 - updatedAt: 2026-06-06T20:44:12.421Z
 - title: "Plan: fix D33 (sm-diagram layer-0 left gap)"
+
+### M79 — open
+
+- createdAt: 2026-06-06T23:16:18.254Z
+- updatedAt: 2026-06-06T23:16:18.254Z
+- title: "Investigate: topbar-progress-undercount"
+- description: "Investigate why the top-bar progress indicator reads 38/39 at commit 6b057903c40e469a03f3511d0310c802e58ddece (no working changes) even though, per the user, all questions are answered. Working hypothesis to verify: the numerator counts only `answered` questions (38) while the denominator (39) includes the 1 `withdrawn` question — an off-by-one where a terminal-but-not-`answered` question inflates the total so the bar never reaches 100%."

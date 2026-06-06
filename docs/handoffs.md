@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 14
+  item: 15
 archives: []
 ---
 
@@ -225,3 +225,16 @@ archives: []
 - flow: advance
 - ledgerRefs: ["tasks:T203","tasks:T204","tasks:T205","tasks:T206","goals:G23"]
 - sessionLogs: ["docs/logs/20260606-223721-a17c47cd7aec8fefe.md","docs/logs/20260606-223721-a019d531ab8b61e31.md","docs/logs/20260606-224129-a06765ad835a5090a.md","docs/logs/20260606-224129-aee826807d10e0030.md","docs/logs/20260606-225422-a8132557d5466889d.md","docs/logs/20260606-225749-a4c83a8942b4ac95c.md","docs/logs/20260606-230739-abec781393d38c3e8.md","docs/logs/20260606-231042-ad3b8a17ae7e97a6d.md"]
+
+## M79
+
+### HO15 — drained
+
+- createdAt: 2026-06-06T23:22:47.811Z
+- updatedAt: 2026-06-06T23:22:47.811Z
+- author: "opus-4.8[1m]"
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
+- summary: "DRAINED — investigate-flow run for D34 (top-bar progress reads 38/39) reached a CONFIRMED root cause in one round and file-and-deferred the fix to plan-flow. Root cause (H26, confirmed, all citations orchestrator-validated): the questions top-bar fraction is completedCount/itemCount; the numerator counts `answered` only (ledgerTools.ts:78-79, intentional) while the denominator itemCount (ledgerTools.ts:191-198) counts ALL active questions including the terminal `withdrawn` (constants.ts:205-206). Live data is 38 answered + 1 withdrawn + 0 open = 39, so the bar reads 38/39 and never reaches 100% despite zero questions awaiting an answer. D34 set to root-caused with a recommended fix (make the questions denominator exclude `withdrawn`, symmetric with the answered-only numerator; apply in both ledgerTools.ts + stdioLedgerTools.ts and extend enumerate-ledgers-summary.test.ts). No blocking questions; nothing left to investigate. Next: the fix will be picked up by the next /cq:plan:advance auto-investigate phase (root-caused defect → seed fix goal), or the user can run /cq:plan / /cq:advance to plan + implement it."
+- flow: investigate
+- ledgerRefs: ["defects:D34","hypothesis:H26"]
+- sessionLogs: ["docs/logs/20260606-232140-a89c2213af28373de.md"]
