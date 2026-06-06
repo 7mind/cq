@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 238
+  item: 241
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -263,6 +263,11 @@ archives:
     path: ./archive/reviews/M72.md
     summary: "G22 part 4 (cq: command renames): T196 git-mv'd advance/plan:start/investigate:start command files into commands/cq/{advance,plan,investigate}.md + rewrote in-file refs, T197 updated link-prompts.ts LINKS to cq/ paths, T198 swept all remaining cross-refs across nix/pkg (7 markdown files + 2 MCP tool-description strings) to cq:* names. All 3 tasks done, all reviews go-ahead, bun run check green (985/0)."
     title: "G22 cq: command renames (part 4) — advance/plan:start/investigate:start → cq:*"
+    status: done
+  - id: M76
+    path: ./archive/reviews/M76.md
+    summary: "G24 fix landed: computeDagLayout re-based to min-layer 0 (T199, commit e9bf762), reviewed (R239 go-ahead), bun run check green. Resolves D33's left-gap on cyclic state-machine diagrams."
+    title: Fix D33 — re-base DAG layer numbering so cyclic state-machine diagrams left-align
     status: done
 ---
 
@@ -620,3 +625,31 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G23"]
 - sessionLogs: ["docs/logs/20260606-210916-a07e3591c62e34c2d.md"]
+
+## M77
+
+### R240 — go-ahead
+
+- createdAt: 2026-06-06T21:36:46.637Z
+- updatedAt: 2026-06-06T21:36:46.637Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- summary: "approve — T200 flow-state-machines.md is accurate and complete: all four flows + cross-flow handoff topology, every state/transition/trigger/handoff verified against constants.ts and commands/cq/* + agents/plan-advance; no invented states. Docs-only (bun run check N/A)."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T200","goals:G23"]
+- sessionLogs: ["docs/logs/20260606-213541-ac51a9a79be8601ed.md"]
+
+## M78
+
+### R241 — go-ahead
+
+- createdAt: 2026-06-06T21:37:00.421Z
+- updatedAt: 2026-06-06T21:37:00.421Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- summary: "approve — T201 elkjs dependency + bundled-entry smoke land cleanly; verified by execution: nix build .#node-modules + .#ledger-web both EXIT=0 (FOD hash concretely refreshed), elkjs in package.json+bun.lock and the ledgerWeb symlink loop, src/elk.ts imports elkjs/lib/elk.bundled.js and typechecks, bun run check green."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T201","goals:G23"]
+- sessionLogs: ["docs/logs/20260606-213541-ac8524b4dcf023468.md"]

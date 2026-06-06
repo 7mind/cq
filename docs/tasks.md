@@ -239,57 +239,21 @@ archives:
     summary: "G22 part 4 (cq: command renames): T196 git-mv'd advance/plan:start/investigate:start command files into commands/cq/{advance,plan,investigate}.md + rewrote in-file refs, T197 updated link-prompts.ts LINKS to cq/ paths, T198 swept all remaining cross-refs across nix/pkg (7 markdown files + 2 MCP tool-description strings) to cq:* names. All 3 tasks done, all reviews go-ahead, bun run check green (985/0)."
     title: "G22 cq: command renames (part 4) — advance/plan:start/investigate:start → cq:*"
     status: done
+  - id: M76
+    path: ./archive/tasks/M76.md
+    summary: "G24 fix landed: computeDagLayout re-based to min-layer 0 (T199, commit e9bf762), reviewed (R239 go-ahead), bun run check green. Resolves D33's left-gap on cyclic state-machine diagrams."
+    title: Fix D33 — re-base DAG layer numbering so cyclic state-machine diagrams left-align
+    status: done
 ---
 
 # tasks
 
-## M76
-
-### T199 — planned
-
-- createdAt: 2026-06-06T20:47:55.141Z
-- updatedAt: 2026-06-06T20:52:38.055Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
-- headline: Re-base computeDagLayout layer numbering to min-layer 0, with a pure unit test
-- description: |
-    Fix D33 (browser-verified root cause; see goals:G24 grounding, defects:D33, hypothesis:H25). In nix/pkg/cq-ledgers/packages/ledger-web/src/dagLayout.ts, computeDagLayout uses longest-path layering (layerOf, ~L87-98). For fully-cyclic transition graphs with no true source node (the milestones/tasks/goals status lifecycles, where every status has an incoming transition), the minimum assigned layer can be > 0, so x = opts.pad + l*(nodeWidth+hGap) (~L120) shifts every node right by minLayer columns and the width formula (~L142, maxLayer-based) over-counts. With preserveAspectRatio=xMinYMid the empty leading column(s) render as a left gap.
-    
-    IMPLEMENTATION (single generic fix in computeDagLayout, after the `for (const id of nodeIds) layerOf(id)` loop at ~L98 and BEFORE the byLayer grouping at ~L101):
-    - Compute const minLayer = nodeIds.length === 0 ? 0 : Math.min(...layer.values()); — GUARD the empty-nodeIds case (Math.min() of nothing is +Infinity), so an empty graph stays well-defined.
-    - Re-base every layer: for (const id of nodeIds) layer.set(id, layer.get(id)! - minLayer); (do this before byLayer grouping so grouping, row assignment, x positioning at L120, maxLayer at L113, and the width formula at L142 all flow from the re-based values — do NOT add a second offset elsewhere).
-    - No other behavior change: ordering, cycle-breaking, edge dropping, height all stay as-is. The fix is purely the layer normalization. Net effect: minimum node x === opts.pad for every graph, and width shrinks by minLayer*(nodeWidth+hGap).
-    
-    This single change corrects BOTH consumers because computeStateMachine (stateMachine.ts, STATE_LAYOUT_OPTS.pad=16) and the milestone DagView (DEFAULT_LAYOUT_OPTS.pad=24) both delegate positioning to computeDagLayout. The 441d46c CSS wide-diagram overflow guard is orthogonal and MUST stay untouched.
-    
-    UNIT TEST (pure, no happy-dom / no DOM): add a Bun test co-located with the source (e.g. dagLayout.test.ts and/or stateMachine.test.ts under nix/pkg/cq-ledgers/packages/ledger-web/src/ — match the package's existing test placement convention). It MUST:
-    - Build computeStateMachine over the real milestones, tasks, AND goals schemas (import the actual LedgerSchema definitions the app uses — do not hand-fabricate transition maps; if the schemas are not importable as plain data, drive computeDagLayout directly with the same statusValues/transitions) and assert Math.min(...nodes.map(n => n.x)) === 16 (STATE_LAYOUT_OPTS.pad) for each — these are the three previously-offset (192) graphs.
-    - Assert that at least one previously-flush ledger (a schema whose state graph already had a layer-0 source, e.g. one of the non-cyclic ledgers reported flush at 16) is UNCHANGED — min x still === 16, same node count, and (regression) identical node x-coordinates to a captured baseline so the re-base is a no-op when minLayer is already 0.
-    - Drive computeDagLayout directly to assert the WIDTH regression: for a graph whose minLayer was > 0, width after the fix === width_before - minLayer*(nodeWidth+hGap) (or equivalently assert width === maxRebasedLayer*(nodeWidth+hGap)+nodeWidth+pad*2). Include an explicit minLayer>0 fixture (e.g. a 2-cycle a<->b plus an isolated downstream node, or the goals transition set) so the assertion is meaningful.
-    - Include an empty-nodeIds case: computeDagLayout([], []) returns without throwing and yields width === pad*2, height === pad*2 (guards the Math.min empty case).
-- acceptance: |
-    From nix/pkg/cq-ledgers/: `bun run check` is green (bun test + tsc -b typecheck + eslint all pass). The new pure unit test passes and FAILS against the pre-fix dagLayout.ts (verify by reverting the re-base locally: the milestones/tasks/goals min-x assertions go to 192). All existing tests still pass (no regressions in any dagLayout/stateMachine/DagView tests). The 441d46c CSS wide-diagram overflow guard is unchanged in the diff. CONCRETELY, the unit test MUST assert ALL of the following:
-    
-    (A) REAL canonical schemas through computeStateMachine (STATE_LAYOUT_OPTS, pad=16). The test MUST import the actual exported canonical schemas from @cq/ledger — MILESTONES_SCHEMA, TASKS_SCHEMA, GOALS_SCHEMA (and/or CANONICAL_LEDGERS) — which are RUNTIME values in packages/ledger/src/constants.ts re-exported from index.ts (ledger-web already depends on @cq/ledger; src/types.ts imports from it). Feed each of these REAL schemas through computeStateMachine and assert Math.min(...nodes.map(n => n.x)) === 16 for each — these are the three previously-offset (192) graphs. NO hand-fabricated transition-map fallback is permitted: any copied/hand-built statusValues/transitions map is REMOVED (it can silently drift from the canonical schema and pass while the real diagram regresses); the assertion MUST be driven by the imported *_SCHEMA objects.
-    
-    (B) Previously-flush ledger unchanged (re-base is a no-op when minLayer already 0). At least one previously-flush schema (a state graph that already had a layer-0 source) still yields min x === 16, same node count, AND identical node x-coordinates to a captured baseline.
-    
-    (C) DagView / DEFAULT_LAYOUT_OPTS (pad=24) coverage — both sub-assertions:
-      (c-i) minLayer>0 fixture: a fixture whose longest-path layering leaves minLayer>0 (e.g. a 2-cycle a<->b plus an isolated downstream node, or the goals transition set) driven through computeDagLayout(ids, edges, DEFAULT_LAYOUT_OPTS) asserts Math.min(...nodes.map(n => n.x)) === 24.
-      (c-ii) no-op / invariance on a real layer-0 source: a graph WITH a real layer-0 source (as the milestone dependency DAG always has) is byte-identical in node positions pre/post the re-base — i.e. the re-base does NOT disturb the milestone dependency-graph DagView, and only shifts content left when minLayer>0.
-    
-    (D) WIDTH regression. For a minLayer>0 fixture, computeDagLayout width after the fix === pre-fix width minus minLayer*(nodeWidth+hGap) (equivalently width === maxRebasedLayer*(nodeWidth+hGap)+nodeWidth+pad*2).
-    
-    (E) Empty-graph guard. computeDagLayout([], []) returns width===pad*2, height===pad*2 without throwing (guards the Math.min empty-nodeIds case).
-- suggestedModel: standard
-- ledgerRefs: ["defects:D33","goals:G24"]
-
 ## M77
 
-### T200 — planned
+### T200 — done
 
 - createdAt: 2026-06-06T20:59:46.674Z
-- updatedAt: 2026-06-06T20:59:46.674Z
+- updatedAt: 2026-06-06T21:37:01.134Z
 - author: "opus-4.8[1m]"
 - session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
 - headline: Author the harness-flow state-machine document (plan / investigate / implement / advance)
@@ -297,13 +261,16 @@ archives:
 - acceptance: "nix/pkg/cq-assets/docs/flow-state-machines.md exists and contains a dedicated section for each of the four flows (plan, investigate, implement, advance) plus the cross-flow handoff topology; each flow section enumerates its states and its labelled transitions; the states/transitions/handoffs match the current command specs under nix/pkg/cq-assets/commands/cq/ (spot-checked: plan phases clarifying->planning->planned->building->done/abandoned with the planning<->clarifying revise edge; advance's investigate->plan->implement sequencing; plan's file-and-defer-defect-to-investigate and investigate's seed-goal-back-to-plan handoffs are all present). The doc references no nonexistent state/transition."
 - suggestedModel: frontier
 - ledgerRefs: ["goals:G23"]
+- resultCommit: e9bf762
+- completion: Authored nix/pkg/cq-assets/docs/flow-state-machines.md (all four flows + cross-flow handoff topology).
+- sessionLogs: ["docs/logs/20260606-213541-a45e9cbf3976acb05.md","docs/logs/20260606-213541-ac51a9a79be8601ed.md"]
 
 ## M78
 
-### T201 — planned
+### T201 — done
 
 - createdAt: 2026-06-06T20:59:57.550Z
-- updatedAt: 2026-06-06T20:59:57.550Z
+- updatedAt: 2026-06-06T21:37:04.063Z
 - author: "opus-4.8[1m]"
 - session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
 - headline: Add elkjs dependency to ledger-web, wire it through the Nix FOD + bundle closure, refresh the FOD hash
@@ -311,6 +278,9 @@ archives:
 - acceptance: "`elkjs` appears in packages/ledger-web/package.json dependencies and in bun.lock; `nix build .#node-modules` succeeds with the refreshed outputHash (no hash-mismatch error); `nix build .#ledger-web` succeeds; `elkjs` is present in the ledgerWeb derivation's `for dep` symlink list; a trivial `import ELK from 'elkjs/lib/elk.bundled.js'` in the ledger-web src typechecks (`bun run typecheck`) and bundles without an unresolved-worker error."
 - suggestedModel: standard
 - ledgerRefs: ["goals:G23"]
+- resultCommit: e9bf762
+- completion: Added elkjs 0.11.1 (bundled entry), wired through Nix FOD + ledger-web symlink closure, refreshed FOD outputHash; both nix builds green.
+- sessionLogs: ["docs/logs/20260606-213541-adb007e3bc921fd76.md","docs/logs/20260606-213541-ac8524b4dcf023468.md"]
 
 ### T202 — planned
 

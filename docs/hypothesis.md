@@ -54,6 +54,11 @@ archives:
     summary: "Investigate D31 (web BatchAnswerModal premature-close) — COMPLETE. User-confirmed repro (Q103) flipped the prior 'does not reproduce' conclusion: H22 (suspected T163 regression) WRONG; H24 CONFIRMED — the modal backdrop closed on any click whose common-ancestor was the backdrop with no guard the press STARTED there; a press-and-hold on 'save & mark answered' (timer-fired) advanced to a shorter question, the dialog shrank while still pressed, and the release over the backdrop dismissed it (react-modal #466 class; vacuous test coverage cf. D24/H14). Root-caused → defect-seeded G21 → fixed (T183 RED + T184 shared useBackdropDismiss on all 3 overlays) → D31 RESOLVED. Q103 answered, Q112 (traceability) withdrawn."
     title: "Investigate: batch-answer-modal-premature-close"
     status: done
+  - id: M73
+    path: ./archive/hypothesis/M73.md
+    summary: "D33 investigated → root-caused (H25 confirmed via headless-chromium ground truth: computeDagLayout left layer 0 empty for cyclic graphs, not CSS) → resolved by G24/T199 (e9bf762). Q113 answered (use headless chromium)."
+    title: "Investigate: sm-diagram-alignment (blocked on env)"
+    status: done
 ---
 
 # hypothesis
@@ -131,17 +136,3 @@ archives:
 - ledgerRefs: ["defects:D30"]
 - evidence: ["[correct] scripts/link-prompts.ts:19 — REPO_ROOT = resolve(dirname(scriptfile), '..') = nix/pkg/cq-ledgers/; sources resolve under it. (re-validated, exact)","[correct] scripts/link-prompts.ts:29-44 — all 14 LINKS entries set source: 'llm/commands/...' / 'llm/agents/...'. (re-validated, exact)","[correct] `ls nix/pkg/cq-ledgers/llm` -> 'No such file or directory' — the llm/ source root the script points at is ABSENT, so every absSource is missing. (re-validated)","[correct] scripts/link-prompts.ts:46-73 — linkExists()/the loop stat only absLink (the LINK), NEVER absSource (the TARGET); symlink(relTarget, absLink) succeeds for a nonexistent target and line 73 logs success -> DANGLING symlinks on a 'clean' run. (re-validated, exact)","[correct] nix/pkg/cq-assets/assets.nix:49-50 — commands = collectMdIn ./commands; agents = collectMdIn ./agents; (relative to cq-assets, no llm/ prefix) confirming relocation. (re-validated, exact)","[correct] real assets present: nix/pkg/cq-assets/agents/plan-reviewer.md + commands/plan/start.md exist (test -e OK) — sources moved here, not deleted. (re-validated)","[correct] nix/pkg/cq-assets/README.md:1,10-11,40-42 — title '# `llm/` — single-source LLM assets' + convention block + Claude-link table still cite 'llm/commands/...' / 'llm/agents/...'. (re-validated, exact)","[correct] package.json:13 — 'link-prompts': 'bun run scripts/link-prompts.ts' runs from nix/pkg/cq-ledgers/, fixing the CWD/REPO_ROOT. (re-validated, exact)"]
 - sessionLogs: ["docs/logs/20260605-185840-addf76024a26b2805.md"]
-
-## M73
-
-### H25 — confirmed
-
-- createdAt: 2026-06-06T20:43:49.503Z
-- updatedAt: 2026-06-06T20:43:49.503Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
-- headline: Right-shift is caused by computeDagLayout leaving layer 0 empty for fully-cyclic graphs (not CSS/preserveAspectRatio)
-- description: "computeDagLayout longest-path layering assigns a minimum layer > 0 when no node is a true source (every status has an incoming transition). All nodes then offset right by minLayer*(nodeWidth+hGap), leaving empty leading columns in the viewBox; preserveAspectRatio=xMinYMid renders that leading padding as a left gap. Confirmed by browser ground truth + the per-ledger leftmost-node-x computation. Fix: re-base layers to minLayer=0."
-- evidence: ["[correct] dagLayout.ts:87-98 — layerOf() = max(pred layers)+1 with on-stack back-edges returning 0; for the cyclic milestones graph (open/postponed/blocked mutually reachable, all->done) it yields blocked=1,postponed=2,open=3,done=4: NO node at layer 0.","[correct] dagLayout.ts:120 — x = opts.pad + l*(opts.nodeWidth+opts.hGap); with minLayer=1 the leftmost node sits at pad+176=192 instead of pad=16.","[correct] browser (chromium 148, real component+real styles.css, window 1280/dialog inner ~847): milestones/tasks/goals content gap-left ~176px scaled; defects/hypothesis/questions/decisions/reviews/handoffs flush-left. svg BOX leftOffset=0 in all cases (box not right-aligned).","[correct] computeStateMachine over CANONICAL_LEDGERS minNodeX: milestones=192, tasks=192, goals=192 (LEFT-GAP); defects/hypothesis/questions/decisions/reviews/handoffs=16 (FLUSH) — exact match to D33's user-confirmed census.","[incorrect] D33 prior analysis: 'intrinsic width >= container' is the cause — confound; the cyclic graphs are merely also the widest. preserveAspectRatio=xMinYMid pins content LEFT and cannot produce a LEFT gap, so the box-overflow/CSS hypothesis (tested by 47e8ff7 + 441d46c) was wrong."]
-- ledgerRefs: ["defects:D33"]
-- sessionLogs: ["docs/logs/20260606-204303-investigate-d33.md"]

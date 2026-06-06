@@ -289,6 +289,16 @@ archives:
     summary: "G22 part 4 (cq: command renames): T196 git-mv'd advance/plan:start/investigate:start command files into commands/cq/{advance,plan,investigate}.md + rewrote in-file refs, T197 updated link-prompts.ts LINKS to cq/ paths, T198 swept all remaining cross-refs across nix/pkg (7 markdown files + 2 MCP tool-description strings) to cq:* names. All 3 tasks done, all reviews go-ahead, bun run check green (985/0)."
     title: "G22 cq: command renames (part 4) — advance/plan:start/investigate:start → cq:*"
     status: done
+  - id: M76
+    path: ./archive/milestones/M76.md
+    summary: "G24 fix landed: computeDagLayout re-based to min-layer 0 (T199, commit e9bf762), reviewed (R239 go-ahead), bun run check green. Resolves D33's left-gap on cyclic state-machine diagrams."
+    title: Fix D33 — re-base DAG layer numbering so cyclic state-machine diagrams left-align
+    status: done
+  - id: M73
+    path: ./archive/milestones/M73.md
+    summary: "D33 investigated → root-caused (H25 confirmed via headless-chromium ground truth: computeDagLayout left layer 0 empty for cyclic graphs, not CSS) → resolved by G24/T199 (e9bf762). Q113 answered (use headless chromium)."
+    title: "Investigate: sm-diagram-alignment (blocked on env)"
+    status: done
 ---
 
 # milestones
@@ -393,13 +403,6 @@ archives:
 - updatedAt: 2026-06-06T12:24:48.761Z
 - title: "Plan: sidebar reorder + help-size + SVG align + cq: command renames"
 
-### M73 — open
-
-- createdAt: 2026-06-06T16:25:33.137Z
-- updatedAt: 2026-06-06T16:25:33.137Z
-- title: "Investigate: sm-diagram-alignment (blocked on env)"
-- description: "Tracks the unresolved right-alignment of the widest state-machine diagrams in the web help dialog. Blocked: cannot reproduce/diagnose without a browser-rendering environment (sandbox has no browser engine; test suite uses happy-dom which does no layout)."
-
 ### M74 — open
 
 - createdAt: 2026-06-06T20:24:47.108Z
@@ -411,13 +414,6 @@ archives:
 - createdAt: 2026-06-06T20:44:12.421Z
 - updatedAt: 2026-06-06T20:44:12.421Z
 - title: "Plan: fix D33 (sm-diagram layer-0 left gap)"
-
-### M76 — open
-
-- createdAt: 2026-06-06T20:47:26.107Z
-- updatedAt: 2026-06-06T20:47:26.107Z
-- title: Fix D33 — re-base DAG layer numbering so cyclic state-machine diagrams left-align
-- description: "Work milestone for plan-flow goal G24 (defect-seeded from D33, hypothesis H25). One cohesive fix: re-base layer numbering in computeDagLayout (ledger-web) so the minimum layer is 0, eliminating empty leading columns in fully-cyclic transition graphs (milestones/tasks/goals state machines) and the milestone DagView; ships with a pure unit test. The 441d46c CSS overflow guard stays untouched."
 
 ### M77 — open
 

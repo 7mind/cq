@@ -461,10 +461,10 @@ archives:
 
 ## M74
 
-### G23 — planned
+### G23 — building
 
 - createdAt: 2026-06-06T20:24:56.027Z
-- updatedAt: 2026-06-06T21:11:01.139Z
+- updatedAt: 2026-06-06T21:12:36.644Z
 - author: "opus-4.8[1m]"
 - session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
 - title: Describe all flow state machines + add a Flows help tab
@@ -495,10 +495,10 @@ archives:
 
 ## M75
 
-### G24 — planned
+### G24 — building
 
 - createdAt: 2026-06-06T20:44:52.063Z
-- updatedAt: 2026-06-06T20:55:23.935Z
+- updatedAt: 2026-06-06T21:12:35.485Z
 - author: "opus-4.8[1m]"
 - session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
 - title: Fix D33 — left-align cyclic state-machine diagrams (computeDagLayout layer re-base)

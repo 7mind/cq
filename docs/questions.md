@@ -59,6 +59,11 @@ archives:
     summary: "Investigate D31 (web BatchAnswerModal premature-close) — COMPLETE. User-confirmed repro (Q103) flipped the prior 'does not reproduce' conclusion: H22 (suspected T163 regression) WRONG; H24 CONFIRMED — the modal backdrop closed on any click whose common-ancestor was the backdrop with no guard the press STARTED there; a press-and-hold on 'save & mark answered' (timer-fired) advanced to a shorter question, the dialog shrank while still pressed, and the release over the backdrop dismissed it (react-modal #466 class; vacuous test coverage cf. D24/H14). Root-caused → defect-seeded G21 → fixed (T183 RED + T184 shared useBackdropDismiss on all 3 overlays) → D31 RESOLVED. Q103 answered, Q112 (traceability) withdrawn."
     title: "Investigate: batch-answer-modal-premature-close"
     status: done
+  - id: M73
+    path: ./archive/questions/M73.md
+    summary: "D33 investigated → root-caused (H25 confirmed via headless-chromium ground truth: computeDagLayout left layer 0 empty for cyclic graphs, not CSS) → resolved by G24/T199 (e9bf762). Q113 answered (use headless chromium)."
+    title: "Investigate: sm-diagram-alignment (blocked on env)"
+    status: done
 ---
 
 # questions
@@ -533,19 +538,6 @@ archives:
 - suggestions: ["G20 plans against HEAD, sequence parser edits after G18 if it lands first (dependsOn note); cq init does NOT write cq.toml","G20 explicitly depends on G18 landing first; cq init does NOT write cq.toml","cq init ALSO scaffolds a starter cq.toml with a commented [webui] template"]
 - recommendation: (a) Plan G20 against current HEAD and coordinate parser edits with G18 (serialize same-file changes if G18 lands first); `cq init` bootstraps ONLY the docs/ ledgers and does NOT write cq.toml (config authoring stays the user's, consistent with loadConfig returning null when absent).
 - answer: G20 explicitly depends on G18 landing first; cq init does NOT write cq.toml
-
-## M73
-
-### Q113 — answered
-
-- createdAt: 2026-06-06T16:26:05.054Z
-- updatedAt: 2026-06-06T20:30:03.962Z
-- author: user
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
-- question: "Browser ground truth needed to diagnose D33 (sm-diagram right-alignment). For ONE right-aligned diagram (e.g. goals) and ONE correct/left one (e.g. defects), in the deployed web app's help → State machines tab, please provide: (a) a screenshot of the tab showing both; and/or (b) from devtools, selecting each <svg class=\"lw-statemachine-svg\">: its computed width (px), its getBoundingClientRect().width and .left, and the parent .lw-statemachine / .lw-help-body width. Also: which browser + the window width. This pins whether the wide svg overflows, is capped-but-internally-shifted, or is narrow-and-pushed-right — which my headless environment cannot observe."
-- context: Blocker for D33. Sandbox has no browser engine and tests run under happy-dom (no layout), so width/alignment cannot be measured here. Two reasoned attempts (47e8ff7 size-fix worked; 441d46c alignment-fix did not). The width threshold (right iff intrinsic width >= ~849px dialog inner width) is established; what's unknown is the actual box geometry of a capped svg in the real engine.
-- ledgerRefs: ["defects:D33","goals:G22"]
-- answer: Can you try to use headless chromium/playwright etc? You have full nixpkgs at your disposal!
 
 ## M74
 
