@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 6
+  item: 7
 archives: []
 ---
 
@@ -105,3 +105,17 @@ archives: []
 - blockingQuestions: ["Q103"]
 - handoffReasons: ["drained","answers-required"]
 - sessionLogs: ["docs/logs/20260605-233831-acb2103ec420aa076.md","docs/logs/20260606-002814-ad5aae722ae7162ff.md","docs/logs/20260606-003435-af834a15d90eb54a6.md","docs/logs/20260606-003711-a5fbe5076e58e816e.md","docs/logs/20260606-004501-abf629cdf1df480ad.md"]
+
+## M65
+
+### HO7 — answers-required
+
+- createdAt: 2026-06-06T10:42:20.193Z
+- updatedAt: 2026-06-06T10:42:20.193Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- summary: "/plan:start bootstrapped goal G20 (milestone M65) — two minor greenfield feature requests: (1) a `[webui]` section in cq.toml (host/port) that ledger-web reads, with CLI args preferred, port auto-increment-until-free, and the actual host/port reported to stdout; (2) a new `cq` CLI tool with subcommands init (create empty ledgers if none), reset (relocate the ledger-reset logic out of the MCP), and erase (destroy ledgers). The planner (plan-advance, agent a7535a8456c8bf94d) grounded both features read-only against the repo, recorded a grounding summary on G20, and filed the first clarifying batch Q105–Q111; goal left in `clarifying`/awaiting-answers. STANDALONE /plan:start. Key grounding deviations flagged as questions: ledger-web currently prints its startup line to STDERR (goal wants STDOUT) and does not read cq.toml; removing `ledger-mcp --reset` is a breaking CLI change; `erase` has no existing implementation and is the most destructive/ambiguous; and [webui] touches the same @cq/config parser files (toml.ts/config.ts/types.ts) that the in-flight G18 PART 2 `planners` work edits — a same-file coordination risk. Next: user answers Q105–Q111 in the TUI/web, then run /plan:advance G20."
+- flow: plan
+- ledgerRefs: ["goals:G20"]
+- blockingQuestions: ["Q105","Q106","Q107","Q108","Q109","Q110","Q111"]
+- sessionLogs: ["docs/logs/20260606-104144-a7535a8456c8bf94d.md"]

@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 104
+  item: 111
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -454,3 +454,82 @@ archives:
 - question: "D31 (web BatchAnswerModal premature-close) does NOT reproduce from current source — the code already advances correctly on a non-last answer and a passing test asserts it. Which web build are you observing the bug in, and can you give an exact repro? Specifically: (1) is the running web app freshly built from CURRENT main (HEAD f2b69be / ledger commit 32624c8), or an older/deployed build? (2) which button triggers it — 'save & mark answered', 'as recommended', or a per-suggestion 'pick'? (3) how many questions are in the batch, and after answering WHICH one does it close (the first? a specific position?) — every time or intermittently? (4) if you rebuild the web app from current main (e.g. `nix build .#ledger-web` / restart it) and retry, does it still close prematurely?"
 - context: "Investigation ruled out the suspected T163/D29 regression (H22 = wrong, all citations validated). batchSave (ledger-web/src/App.tsx:543-571) advances batchIndex to the next unanswered row and only setBatchOpen(false) when the remaining-open set is empty. All three save buttons ('save & mark answered' App.tsx:1738, 'as recommended' :1747, per-suggestion 'pick' :1699) call the SAME onSave=batchSave — none calls onClose. `git log 6629483..HEAD -- App.tsx` is EMPTY (no change after T163). reload() (App.tsx:469) cannot close the modal (batchRows/batchOpen/batchSchema are captured at open, not reset). The test batchModalClose.test.tsx:233-257 ('mid-queue Q2 of 3 advances to Q3') asserts exactly the expected behavior and the suite is green (6/6) at HEAD. So either the observed build is stale, or there is a repro detail the current happy-dom tests don't capture. D31 is `inconclusive` and re-openable to `wip` once a concrete repro arrives. NOTE: I did NOT ship a speculative fix — there is nothing to fix in current source (reproduce-before-fixing)."
 - ledgerRefs: ["defects:D31"]
+
+## M65
+
+### Q105 — open
+
+- createdAt: 2026-06-06T10:40:20.545Z
+- updatedAt: 2026-06-06T10:40:20.545Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "FEATURE 1 — cq.toml [webui] schema: exactly which keys, and how is `port` typed? The @cq/config TOML parser today supports ONLY double-quoted strings + string arrays (no number literals). For `port = 5180` (a bare integer), do you want (a) the parser extended to parse integers, or (b) `port` kept as a quoted string (port = \"5180\") to avoid touching value parsing? And should [webui] hold ONLY host+port, or also other web settings (e.g. mcp-url, cwd) so the section is future-proof?"
+- context: "[webui] is a NEW table; parseToml + RawToml/CqConfig/parseConfig must be extended either way. The number-vs-string choice determines whether parser value-parsing changes (parseString only today)."
+- suggestions: ["(a) extend parser to support integer values; [webui] holds host (string) + port (integer) only","(b) keep port as a quoted string; no integer support added; host+port only","(c) extend integers AND model [webui] as a general web-settings table (host/port now, room for more later)"]
+- recommendation: "(a) — add minimal integer support and keep [webui] = host + port only; matches the user's stated two entries and keeps cq.toml readable (port = 5180, not \"5180\")."
+
+### Q106 — open
+
+- createdAt: 2026-06-06T10:40:26.679Z
+- updatedAt: 2026-06-06T10:40:26.679Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "FEATURE 1 — precedence/merge + defaults: confirm the resolution order is CLI flag > cq.toml [webui] value > built-in default, applied PER FIELD (host and port independently). I.e. if cq.toml sets port but not host, host falls back to the built-in default (127.0.0.1) unless --host is passed? And does host auto-increment? (Only port increments; host is taken as-is.)"
+- context: Goal says 'CLI args MUST be preferred over cq.toml'. Today defaults are host=127.0.0.1, port=5180. Need to confirm per-field merge and that the increment applies to port only.
+- suggestions: ["Per-field: each of host/port independently resolves CLI > cq.toml > default; only port increments on collision","All-or-nothing: if either CLI flag is set, ignore the whole [webui] section"]
+- recommendation: Per-field precedence (CLI > cq.toml > default), independently for host and port; only port auto-increments.
+
+### Q107 — open
+
+- createdAt: 2026-06-06T10:40:35.416Z
+- updatedAt: 2026-06-06T10:40:35.416Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "FEATURE 1 — port auto-increment semantics + the stdout report: (1) scan bound? increment by 1 from the requested port until the first free port, with a cap (e.g. try up to N=64 ports, then fail) or unbounded to 65535? (2) Is auto-increment ALWAYS on, or only when the port was defaulted/from-config (i.e. should an EXPLICIT --port that is occupied fail loudly instead of silently moving)? (3) The goal says report actual host/port to STDOUT — today ledger-web prints its serving line to STDERR. What exact stdout format do you want (e.g. a bare `http://127.0.0.1:5181/` line, or `host port` tokens for scripting), and should the existing stderr line stay or move?"
+- context: Bun.serve does not auto-increment (throws EADDRINUSE); the loop is net-new. Stdout vs stderr matters for scripts capturing the chosen port. An occupied EXPLICIT --port silently moving could surprise.
+- suggestions: ["Bounded scan (cap ~64), always-on increment, print `http://<host>:<port>/` to stdout, keep stderr line too","Unbounded to 65535; increment only for defaulted/config port; explicit --port collision FAILS; stdout prints `<host>:<port>`","Bounded scan, always-on, stdout prints machine-readable `<host> <port>`, drop the stderr line"]
+- recommendation: "Bounded scan (cap ~64) always-on for simplicity; print the actual URL `http://<host>:<port>/` to STDOUT and keep the human stderr line. Confirm whether explicit --port should instead fail-loud on collision."
+
+### Q108 — open
+
+- createdAt: 2026-06-06T10:40:44.772Z
+- updatedAt: 2026-06-06T10:40:44.772Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "FEATURE 2 — is `cq` a brand-new package/bin, and how is it packaged + does the ledger root resolve the same way? Today there is NO `cq` bin. Proposed: a net-new workspace package (e.g. packages/cq-cli, bin `cq` -> src/main.ts) packaged in flake.nix exactly like ledger-mcp (own derivation + node-modules FOD entry), resolving its ledger root via --cwd > $LEDGER_ROOT > CWD (mirroring ledger-mcp/ledger-web). Confirm, and confirm the bin name is literally `cq`."
+- context: Net-new bin needs a home + Nix packaging decision. Mirroring the existing bins keeps root-resolution and packaging uniform.
+- suggestions: ["New package packages/cq-cli, bin `cq`, packaged like ledger-mcp, root via --cwd > $LEDGER_ROOT > CWD","Add `cq` as an additional bin inside an existing package (e.g. ledger-mcp) rather than a new package"]
+- recommendation: New dedicated package packages/cq-cli with bin `cq`, packaged + root-resolved exactly like ledger-mcp (own flake.nix derivation, --cwd > $LEDGER_ROOT > CWD).
+
+### Q109 — open
+
+- createdAt: 2026-06-06T10:40:57.438Z
+- updatedAt: 2026-06-06T10:40:57.438Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "FEATURE 2 — `cq reset`: relocating the reset CLI off the MCP. The reset CAPABILITY exists at two layers: (1) the LIBRARY method FsLedgerStore.reset() in @cq/ledger (backup-to-docs/.backup/<ts>/ + reinit-empty), and (2) the CLI WRAPPER on the ledger-mcp BINARY (`ledger-mcp --reset [--yes]` => runReset()+ResetIo, exits without serving). I read 'move reset OUT of the MCP' as: keep FsLedgerStore.reset() in @cq/ledger (reusable core), MOVE the CLI wrapper (runReset/--reset parsing) into `cq reset`, and REMOVE the `--reset`/`--yes` flags from the ledger-mcp binary. Correct? And is removing `--reset` from ledger-mcp acceptable as a breaking CLI change (any wrapper script / Nix app invoking `ledger-mcp --reset` must switch to `cq reset`)?"
+- context: Precise relocation boundary + whether dropping ledger-mcp --reset is an acceptable breaking change for consumers. The library method must stay (the MCP/web servers' init path is unrelated to it; reset is operator-only).
+- suggestions: ["Keep library reset(); move CLI wrapper to `cq reset`; REMOVE ledger-mcp --reset entirely (breaking CLI change, acceptable)","Keep library reset(); add `cq reset`; KEEP ledger-mcp --reset too (no removal — not really 'relocating')","Move runReset() into a shared module both cq and (optionally) ledger-mcp import, but only `cq` exposes the subcommand"]
+- recommendation: Keep FsLedgerStore.reset() in @cq/ledger; move the runReset/ResetIo CLI wrapper into `cq reset`; REMOVE `--reset`/`--yes` from the ledger-mcp binary (breaking but matches 'move OUT of the MCP'). Reuse the same confirmation policy (--yes / TTY prompt / non-TTY refuse).
+
+### Q110 — open
+
+- createdAt: 2026-06-06T10:41:06.297Z
+- updatedAt: 2026-06-06T10:41:06.297Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "FEATURE 2 — define `cq init`, `cq reset`, `cq erase` so the three are non-overlapping, and pin `erase`'s exact scope + safety. Grounded meanings: init = create empty ledgers ONLY if absent (run FsLedgerStore.init(); idempotent; do NOT touch existing data); reset = backup-then-reinit-empty (existing FsLedgerStore.reset(), data recoverable in docs/.backup/); erase = DESTROY with NO backup/reinit. erase has NO existing implementation — what EXACTLY should it delete: (a) only the canonical docs/*.md ledger files + docs/ledgers.yaml, (b) the whole docs/ dir including archive/, .backup/, logs/, .locks/, or (c) docs/*.md + ledgers.yaml + archive/ but PRESERVE .backup/ and logs/? After erase, leave the dir empty or not recreate anything? And what confirmation/safety does each destructive command need?"
+- context: init/reset are grounded in existing code; erase is net-new and the most destructive, so its blast radius (esp. whether it nukes the .backup/ safety net and session logs) and confirmation policy must be pinned. Reusing the ResetIo confirmation pattern (--yes / TTY prompt / non-TTY refuse) is the natural safety model.
+- suggestions: ["init=init()-if-none; reset=backup+reinit (existing); erase=delete docs/*.md + ledgers.yaml + archive/, PRESERVE docs/.backup/ + docs/logs/, leave empty; all destructive cmds require --yes or TTY confirm, non-TTY refuse","erase nukes the ENTIRE docs/ tree (incl. .backup/ + logs/ + .locks/) — a true clean slate","erase deletes only docs/*.md + ledgers.yaml (active ledgers), preserving archive/ + .backup/ + logs/"]
+- recommendation: "init = init()-if-none (idempotent, never overwrites); reset = existing backup+reinit; erase = destroy the active ledgers + registry + archive/ but PRESERVE docs/.backup/ and docs/logs/ (don't destroy the safety net / session history), leave nothing re-initialised. Every destructive command (reset, erase) reuses the ResetIo policy: --yes to proceed, TTY prompt otherwise, non-TTY-without-yes REFUSES."
+
+### Q111 — open
+
+- createdAt: 2026-06-06T10:41:19.074Z
+- updatedAt: 2026-06-06T10:41:19.074Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "COORDINATION with in-flight G18: G20's [webui] parsing touches the SAME @cq/config parser files (toml.ts/config.ts/types.ts) that G18 PART 2 (status: planned, not yet built) is extending for `planners`. How should these be sequenced? Options: (a) G20 plans against current HEAD and accepts a rebase/merge if G18 lands first; (b) G20 depends on / waits for G18 to land; (c) build them together. Also: should `cq init` create the cq.toml file itself (a starter [webui]/[aliases]/reviewers/planners template), or does `cq init` ONLY bootstrap the docs/ ledgers and leave cq.toml entirely to the user?"
+- context: Both goals edit the same minimal TOML parser; conflicting edits to the table-whitelist + CqConfig shape are likely. Also need to decide whether cq.toml authoring is in scope for `cq init` at all.
+- suggestions: ["G20 plans against HEAD, sequence parser edits after G18 if it lands first (dependsOn note); cq init does NOT write cq.toml","G20 explicitly depends on G18 landing first; cq init does NOT write cq.toml","cq init ALSO scaffolds a starter cq.toml with a commented [webui] template"]
+- recommendation: (a) Plan G20 against current HEAD and coordinate parser edits with G18 (serialize same-file changes if G18 lands first); `cq init` bootstraps ONLY the docs/ ledgers and does NOT write cq.toml (config authoring stays the user's, consistent with loadConfig returning null when absent).

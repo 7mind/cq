@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 19
+  item: 20
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -348,3 +348,44 @@ archives:
 - description: "Defect-seeded goal (D32, confirmed root cause H23 — clarification skipped per K8 pt4). CONFIRMED ROOT CAUSE: nix/pkg/cq-assets/README.md is the last live consumer documenting the removed standalone cq-config MCP server; staleness confined to the 'Configuration' section — L77 heading '## Configuration — cq.toml and cq-config MCP' and L82-85 prose 'The `cq-config` MCP server exposes `get_reviewers` over the `.mcp.json` interface ...'. After G18 PART 1 the standalone server/package/flake-attr/registrations were deleted and get_reviewers/get_config merged into the ledger MCP (mcp__ledger__*; get_planners added PART 2). SUGGESTED FIX (verbatim): Edit README.md 'Configuration' section ONLY — (1) L77 heading → 'Configuration — cq.toml and the ledger MCP' (or drop the server name); (2) L82-85 prose → cq.toml is parsed by the @cq/config parser and surfaced by the LEDGER MCP server, which exposes get_reviewers/get_config (and get_planners) as mcp__ledger__* over .mcp.json — no standalone cq-config server; optionally note planners mirror reviewers via the shared [aliases] table. Doc-only; bun run check stays green. Linked defect: D32. Single fix task expected; acceptance: README 'Configuration' section repointed to the ledger MCP, no standalone-cq-config-SERVER reference remains in README, bun run check green."
 - milestones: ["M64"]
 - sessionLogs: ["docs/logs/20260606-003711-af72aa0c4af9b4c73.md","docs/logs/20260606-003711-a6ec41c8478ee27ba.md"]
+
+## M65
+
+### G20 — clarifying
+
+- createdAt: 2026-06-06T10:37:42.559Z
+- updatedAt: 2026-06-06T10:42:01.567Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- title: "cq.toml [webui] config + new cq CLI (init/reset/erase)"
+- description: |
+    Two minor feature requests (greenfield).
+    
+    FEATURE 1 — `[webui]` section in cq.toml + port auto-increment:
+    Add a `[webui]` section to cq.toml with two entries: `host` and `port`. The web UI should read its host/port settings from there. If CLI args (the existing `--host`/`--port` flags) are set, the CLI args MUST be preferred over the cq.toml values. If the configured/requested port is already occupied, the web UI should increment the port number until it finds the first available port, listen on it, and REPORT the actual host/port it ended up listening on to stdout.
+    
+    FEATURE 2 — new `cq` CLI tool with subcommands:
+    Introduce a new CLI tool named `cq` with three subcommands:
+    - `cq init` — creates empty ledgers if there are none.
+    - `cq reset` — move the ledgers RESET logic OUT of the MCP server and into this subcommand (relocate the existing reset capability from the MCP).
+    - `cq erase` — destroys existing ledgers.
+    
+    Both are described by the user as MINOR feature requests.
+- grounding: |
+    Grounded read-only against HEAD 32cfe43 (2026-06-06). Bun workspace = nix/pkg/cq-ledgers/packages/{ledger,ledger-mcp,ledger-web,ledger-tui,cq-config}. bun run check = tsc -b && eslint . && bun test (run from nix/pkg/cq-ledgers/). Nix bins packaged in repo-root flake.nix (.#ledger-mcp/.#ledger-tui/.#ledger-web) + node-modules FOD.
+    
+    === FEATURE 1 (cq.toml [webui] + port auto-increment) ===
+    - @cq/config (packages/cq-config/src/{toml,config,types}.ts) is a MINIMAL hand-rolled TOML parser, intentionally NOT full TOML. parseToml's table handling whitelists ONLY the [aliases] table and top-level keys reviewers/planners; ANY other top-level key OR table THROWS TomlSyntaxError ('unexpected table [..]' / 'unexpected top-level key ..'). Value parsing supports ONLY double-quoted STRINGS (parseString) and single-line arrays of strings (parseStringArray) — NO numbers/bools. => [webui] is a NEW table: BOTH parseToml (add a [webui] branch) AND the typed model (RawToml/CqConfig/parseConfig in toml.ts+config.ts+types.ts) must be extended; `port` being a NUMBER needs either integer support added to the parser or port kept as a quoted string. loadConfig(repoRoot) reads <repoRoot>/cq.toml, returns null if absent, and EAGERLY resolveReviewers+resolvePlanners (throws on dangling alias) — [webui] is orthogonal but shares this load path.
+    - ledger-web entrypoint = packages/ledger-web/src/serve.ts (bin 'ledger-web' -> ./src/serve.ts). parseArgs already handles --host (DEFAULT_HOST 127.0.0.1) / --port (DEFAULT_PORT 5180) / --mcp-url / --cwd; ledger root resolves --cwd > $LEDGER_ROOT > process.cwd(). Default mode is EMBEDDED MCP (co-hosts /mcp + /ws in-process via attachMcpHttp + createEmbeddedStore); --mcp-url switches to reverse-proxy. cq.toml root for [webui] = that resolved cwd (same root the embedded store/ledger MCP uses; matches G18 Q99 'config root IS the ledger root').
+    - Bun.serve binds opts.port directly and does NOT auto-increment on EADDRINUSE (it throws). The increment-until-free loop is NET-NEW. main() currently prints startup line to STDERR ('ledger-web: serving http://host:server.port/ -> backend'), using Bun's server.port (the actual bound port). Goal wants the actual host/port reported to STDOUT — that is a CHANGE of stream + possibly format. ledger-web does NOT read cq.toml today at all; threading loadConfig into serve.ts is new wiring.
+    
+    === FEATURE 2 (cq CLI: init/reset/erase) ===
+    - NO `cq` bin exists today (net-new package/bin; would mirror ledger-mcp packaging in flake.nix + node-modules FOD).
+    - RESET already exists at TWO layers: (1) library FsLedgerStore.reset() in @cq/ledger (packages/ledger/src/store/FsLedgerStore.ts) — public operator-facing: counts items, drops non-canonical FTS, calls private backupAndReinit() which snapshots docs/*.md + docs/ledgers.yaml to docs/.backup/<sanitized-ISO>/ then rewrites the canonical empty set, reloads via init(); returns ResetSummary{backupDir, ledgers[]}. (2) CLI surface in packages/ledger-mcp/src/main.ts: parseArgs --reset/--yes(-y) + runReset() (ResetIo-injectable; confirmation policy: --yes => proceed; TTY no --yes => prompt y/N; non-TTY no --yes => REFUSE exit 2; backup to docs/.backup/) + main() short-circuit that exits WITHOUT serving. So 'relocate reset OUT of the MCP' = move the CLI WRAPPER (runReset + --reset parsing) to `cq reset`; FsLedgerStore.reset() library method STAYS in @cq/ledger (it's the reusable core). Removing --reset from ledger-mcp is a CLI-surface change (any script/Nix app invoking `ledger-mcp --reset` would break).
+    - INIT (create-if-none): store.init() (FsLedgerStore) bootstraps docs/ledgers.yaml (EMPTY_REGISTRY if missing) + every CANONICAL_LEDGER (milestones seeded with active group + M-AMBIENT; others empty) when files are absent; it is IDEMPOTENT and already runs on EVERY server start (ledger-mcp, embedded ledger-web). `cq init` ~= run init() (creates empty ledgers if none; no-op/leaves data if present).
+    - ERASE (destroy): NO existing implementation. reset() backs-up-then-reinits (data recoverable in docs/.backup/); erase = destroy WITHOUT reinit/backup — net-new + most destructive + most ambiguous (what exactly: docs/*.md only? docs/ entirely incl. archive/.backup/logs/.locks? leave dir empty vs re-init?). Needs a confirmation/safety policy (reuse ResetIo pattern).
+    - 'empty ledgers' = docs/ledgers.yaml registry + per-ledger docs/<name>.md files (milestones with bootstrap group + ambient milestone, others empty), under <root>/docs/.
+    
+    === COORDINATION ===
+    G18 PART 2 (status: planned, not yet built) extends THIS SAME @cq/config parser for `planners` (toml whitelist + CqConfig + resolvePlanners + get_planners tool). G20's [webui] touches the same parser files (toml.ts/config.ts/types.ts) — must coordinate/sequence to avoid conflicting edits. G15 already built the cq.toml [aliases]+reviewers parser; G18 PART1 merged cq-config into the ledger MCP (no standalone server).
+- sessionLogs: ["docs/logs/20260606-104144-a7535a8456c8bf94d.md"]

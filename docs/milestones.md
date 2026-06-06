@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 64
+  item: 65
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -351,3 +351,9 @@ archives:
 - createdAt: 2026-06-06T00:35:07.871Z
 - updatedAt: 2026-06-06T00:35:07.871Z
 - title: "Plan: fix D32 (README cq-config repoint)"
+
+### M65 — open
+
+- createdAt: 2026-06-06T10:37:32.297Z
+- updatedAt: 2026-06-06T10:37:32.297Z
+- title: "Plan: cq.toml [webui] + cq CLI (init/reset/erase)"
