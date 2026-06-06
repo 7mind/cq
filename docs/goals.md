@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 17
+  item: 19
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -288,3 +288,63 @@ archives:
 - grounding: "Re-validated against source 2026-06-05. scripts/link-prompts.ts (nix/pkg/cq-ledgers/): REPO_ROOT = dirname(script)/.. = nix/pkg/cq-ledgers/ (L19); run via package.json:13 `link-prompts`. 14 LINKS (L29-44) set source:'llm/commands/...' / 'llm/agents/...'; nix/pkg/cq-ledgers/llm does NOT exist. The creation loop (L56-74) stats only the LINK (linkExists/lstat absLink, L64-65), NEVER the target absSource (L58), so symlink(2) (L72) succeeds on a nonexistent target and L73 logs success -> 14 dangling .claude/** symlinks produced silently. Real assets live at nix/pkg/cq-assets/{commands,agents}/ (assets.nix:49-50 collectMdIn ./commands/./agents); cq-assets is a SIBLING of cq-ledgers, so from REPO_ROOT the correct source is `../cq-assets/commands/...` / `../cq-assets/agents/...`. Explicit repoint preferred over restoring a hidden `llm -> ../cq-assets` symlink. nix/pkg/cq-assets/README.md still documents `llm/` root: title L1, convention block L9-13, current-assets table L18-29 (commands/.. relative, OK but header context stale), three-consumers Claude-link table L38-49 (llm/ sources), narrative L31,54. No existing test covers link-prompts.ts (package.json test = `bun test --pass-with-no-tests`). COORDINATION: G15 T168/T178 also edit scripts/link-prompts.ts (add investigate-prober / cq:* entries) — same-file, must be serialized with G17."
 - milestones: ["M58"]
 - sessionLogs: ["docs/logs/20260605-190250-a847f24eb64249876.md","docs/logs/20260605-190732-acc3a65f452db3ad0.md","docs/logs/20260605-190853b-a4d9f6096ca33a3fa.md"]
+
+## M59
+
+### G18 — planned
+
+- createdAt: 2026-06-05T21:58:20.012Z
+- updatedAt: 2026-06-05T22:33:18.726Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- title: Merge cq-config into ledger MCP + pluggable parallel planners
+- description: |
+    Two follow-up changes to the just-built G15 harness work (Feature 2 / M56).
+    
+    PART 1 — Consolidate cq-config into the ledger MCP (scope correction):
+    The G15 build created a SEPARATE `cq-config` MCP server (package `@cq/config-mcp` + `cq-config-mcp` bin + Nix package `.#cq-config-mcp` + registrations in dev-llm.nix `programs.mcp.servers` and this repo's `.mcp.json`). The user wanted just a cq-config TOOL added to the EXISTING ledger MCP server — NOT a standalone server. ACTION: merge the cq-config functionality (the `get_reviewers`/`get_config` tools over the `@cq/config` parser) INTO the ledger MCP server as tool(s), then REMOVE the unnecessary standalone server: the `@cq/config-mcp` package, the `cq-config-mcp` bin, the `.#cq-config-mcp` flake attr/derivation, and the dev-llm.nix + .mcp.json `cq-config` server registrations. The `@cq/config` parser package can stay (it is the reusable library); only the separate SERVER/transport is removed. All consumers (the reconciliation wiring in plan/advance.md + implement/advance.md + /cq:reviewers) must be updated to call the tool on the ledger MCP (e.g. `mcp__ledger__get_reviewers`) instead of `mcp__cq-config__*`.
+    
+    PART 2 — Pluggable parallel PLANNERS (mirror parallel reviewers):
+    We now support parallel REVIEWERS (cq.toml `reviewers = [...]`, strictest-wins+union reconciliation, `/cq:reviewers` per-session override). Add the SAME capability for PLANNERS: define a default planner set in the config (e.g. `planners = ["claude:opus", "pi:grok-build", ...]`); when defined, the plan flow launches all configured planners in parallel and reconciles their plans; the user can modify the ACTIVE planner set per-session with a command (e.g. `/cq:planners use grok and opus only`), exactly the way `/cq:reviewers` works. The planner reconciliation semantics (how N parallel plans are merged into one) are for clarifying/planning to settle.
+- sourceRefs: ["goals:G15"]
+- grounding: |
+    Grounded against just-merged G15/M56 artifacts (HEAD f2b69be). [v2 — folds in Q97–Q102 answers + a second grounding pass on ledgerTools.ts/cq-config-mcp/main.ts/cq-config parser/plan-advance.md/reviewers.md/plan+implement advance.md.]
+    
+    === DECISIONS LOCKED BY ANSWERS ===
+    - Q97 (a): port BOTH tools verbatim -> mcp__ledger__get_reviewers + mcp__ledger__get_config (consumer call-sites become 1:1 renames). Tool count 18->20 (PART 1); ->21 after PART 2 adds get_planners.
+    - Q98: DELETE the standalone server outright (no shim) AND keep @cq/ledger config-agnostic -> thread a CONFIG capability from @cq/ledger-mcp into the tool factory, mirroring the readLog capability (createLedgerMcpTools(store, readLog?) gains a configCapability? param resolving cq.toml against the store root). => @cq/config becomes a dep of @cq/ledger-MCP (NOT @cq/ledger core).
+    - Q99: cq.toml stays at repo root = ledger MCP --cwd/$LEDGER_ROOT; drop the redundant $CQ_CONFIG_ROOT. Schema unchanged except PART 2 adds sibling planners=[].
+    - Q100 (CORE): GENERATE-N-then-JUDGE, and the judge must SYNTHESIZE — when non-best planners produced something important, factor those good parts in (NOT blind pick-best). Orchestrator writes only the final synthesized plan.
+    - Q101: under model (a), pi:* planners ALLOWED as candidate-emitters (they emit a structured task-DAG via stdout; the orchestrator owns ALL ledger writes). Claude planners run as plan-advance subagents in a new CANDIDATE MODE.
+    - Q102: SHARED [aliases] table; sibling planners=[] list; new commands/cq/planners.md mirroring reviewers.md (reuse same fallback map grok->pi:grok-build, opus->claude:opus-4.8[1m], codex->pi:gpt-5.5); add resolvePlanners(); add get_planners tool + a planners field on get_config.
+    
+    === PART 1 surface (verified) ===
+    - @cq/config PARSER lib (packages/cq-config/src/{index,types,config,toml}.ts): loadConfig(repoRoot)->CqConfig|null, resolveReviewers, parseReviewerToken, CQ_CONFIG_FILENAME='cq.toml', HARNESSES=['claude','pi']. STAYS. CqConfig={aliases:Record<string,ReviewerToken>, reviewers:readonly string[]}. parseConfig/parseToml currently reject any top-level key other than 'reviewers' (toml.ts L139-143) — PART 2 must extend BOTH the toml whitelist and CqConfig/parseConfig for 'planners'.
+    - @cq/config-mcp STANDALONE SERVER (packages/cq-config-mcp/src/main.ts): raw @modelcontextprotocol/sdk McpServer+StdioServerTransport+registerTool (NOT the claude-agent-sdk tool() shape). Payload builders computeReviewers/computeConfig + ResolvedReviewer/GetReviewersResult/GetConfigResult types are the REUSABLE logic to lift into the merged tool. Root precedence --cwd>$CQ_CONFIG_ROOT>cwd. TO DELETE entirely (server+bin+package dir).
+    - MERGE TARGET packages/ledger/src/mcp/ledgerTools.ts: factory createLedgerMcpTools(store, readLog?) returns tool()[] (names auto-prefixed mcp__cq__*). Header documents '18 tools' (L7) + the LEDGER_TOOL_NAMES asserted list (test surface) — both bump to 20 (PART1)/21 (PART2). readLog capability is injected (ReadLogCapability from ./readLog.js, threaded from ledger-mcp buildServer) — the config capability follows the SAME injection pattern. Re-express get_reviewers/get_config in tool()+zod (empty input schema {} as Record<string,never>, jsonResult(...) return) calling computeReviewers/computeConfig against the resolved store root.
+    - ledger-mcp/src/main.ts buildServer(store, displayName) -> registerLedgerStdioTools(server, store, readLog); --cwd>$LEDGER_ROOT>cwd. Wire @cq/config here: construct a config capability bound to the resolved root and pass it into the factory (mirror readLog). embedded TUI/web buildServer paths get the same wiring.
+    - flake.nix: remove cqConfigMcp derivation (~247-304), packages.cq-config-mcp + apps.cq-config-mcp (~449,494), node-modules FOD fileset+installPhase entries for packages/cq-config-mcp (~59,102,106). @cq/config stays in FOD. Because @cq/config becomes a dep of @cq/ledger-mcp, the ledger-mcp derivation installPhase must add a @cq/config workspace symlink under packages/ledger-mcp/node_modules/@cq/config (mirror the @cq/ledger link), and embedServerClosure for TUI/web likewise. FOD-hash refresh required (set outputHash to 52 A's -> nix build .#node-modules -> paste got: hash).
+    - dev-llm.nix: remove cqConfigPkg = ledgerPkgs.cq-config-mcp (~105) + programs.mcp.servers.cq-config (~567-570). piMcpJson keep-alive remap is generic, so removing the entry covers Pi too.
+    - .mcp.json: remove the 'cq-config' server entry (~7-10).
+    - Consumers (switch mcp__cq-config__get_reviewers/get_config -> mcp__ledger__* + frontmatter allowed-tools): commands/plan/advance.md (frontmatter L4 grants mcp__cq-config__get_reviewers; step 2.1 calls get_reviewers), commands/implement/advance.md (frontmatter L4 grants mcp__cq-config__get_reviewers; reviewer-resolution block), commands/cq/reviewers.md (frontmatter L4 grants both get_reviewers+get_config; steps 1-2 call get_config).
+    
+    === PART 2 surface (verified) ===
+    - Reviewer template = commands/plan/advance.md step 2: 2a single-reviewer fallback (native plan-reviewer writes its own review); 2b multi-reviewer (orchestrator launches ALL reviewers in parallel — claude:* via Agent subagent_type plan-reviewer in 'configured mode' returning JSON; pi:* via Bash `pi -p --no-tools --no-session --provider P --model M '<prompt>'` per K30, strip code fence; reconcile strictest-wins+tagged-union; orchestrator writes the ONE aggregated reviews item). The multi-PLANNER step mirrors 2b STRUCTURE but with generate-N-then-JUDGE+SYNTHESIS reconciliation (NOT strictest-wins, which only works for commensurable verdicts).
+    - Native planner agents/plan-advance.md: one state-step per call; disallowedTools Write/Edit/MultiEdit/NotebookEdit/Bash (so candidate mode is READ-ONLY — emits a structured task-DAG JSON in its REPLY, writes no ledger; consistent with its disallow list). Currently SINGLE; gains a CANDIDATE MODE branch (when invoked by the orchestrator as one of N: ground + produce a full candidate plan as fenced JSON {milestones:[...], tasks:[{headline,description,acceptance,suggestedModel,dependsOn,ledgerRefs}], rationale}, write NOTHING).
+    - /cq:reviewers (commands/cq/reviewers.md) is the session-only NL override (parses NL->alias names, resolves via cq.toml [aliases] + hardcoded fallback map, echoes active set, writes nothing). /cq:planners mirrors it 1:1 (same fallback map, same SESSION-ONLY semantics, reads get_planners/get_config).
+    - KEY: N plans are alternative DAGs, NOT unionable -> generate-N-then-judge+synthesis. The judge is a synthesis step (orchestrator, or a dedicated plan-synthesizer subagent) that PICKS a base candidate AND folds in valuable parts of the others; only that ONE synthesized plan is written to the ledger by the orchestrator. pi:* planners participate as candidate-emitters because the orchestrator owns all writes.
+- sessionLogs: ["docs/logs/20260605-220206-a2104c6c950c88db3.md","docs/logs/20260605-222325-a0458c766de7ac50b.md","docs/logs/20260605-222806-a85471b82ade9e93e.md","docs/logs/20260605-223004-a8f8d7161f2ec8bdf.md","docs/logs/20260605-223202-a0aae2a8104718584.md","docs/logs/20260605-223202b-ac77d7a55c4c9dd79.md"]
+- milestones: ["M61","M62"]
+
+## M63
+
+### G19 — planned
+
+- createdAt: 2026-06-06T00:35:45.432Z
+- updatedAt: 2026-06-06T00:39:50.924Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- title: Fix D32 — repoint cq-assets/README.md off the removed cq-config MCP server
+- description: "Defect-seeded goal (D32, confirmed root cause H23 — clarification skipped per K8 pt4). CONFIRMED ROOT CAUSE: nix/pkg/cq-assets/README.md is the last live consumer documenting the removed standalone cq-config MCP server; staleness confined to the 'Configuration' section — L77 heading '## Configuration — cq.toml and cq-config MCP' and L82-85 prose 'The `cq-config` MCP server exposes `get_reviewers` over the `.mcp.json` interface ...'. After G18 PART 1 the standalone server/package/flake-attr/registrations were deleted and get_reviewers/get_config merged into the ledger MCP (mcp__ledger__*; get_planners added PART 2). SUGGESTED FIX (verbatim): Edit README.md 'Configuration' section ONLY — (1) L77 heading → 'Configuration — cq.toml and the ledger MCP' (or drop the server name); (2) L82-85 prose → cq.toml is parsed by the @cq/config parser and surfaced by the LEDGER MCP server, which exposes get_reviewers/get_config (and get_planners) as mcp__ledger__* over .mcp.json — no standalone cq-config server; optionally note planners mirror reviewers via the shared [aliases] table. Doc-only; bun run check stays green. Linked defect: D32. Single fix task expected; acceptance: README 'Configuration' section repointed to the ledger MCP, no standalone-cq-config-SERVER reference remains in README, bun run check green."
+- milestones: ["M64"]
+- sessionLogs: ["docs/logs/20260606-003711-af72aa0c4af9b4c73.md","docs/logs/20260606-003711-a6ec41c8478ee27ba.md"]

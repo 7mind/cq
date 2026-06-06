@@ -2,7 +2,7 @@
 ledger: decisions
 counters:
   milestone: 0
-  item: 30
+  item: 32
 archives:
   - id: M2
     path: ./archive/decisions/M2.md
@@ -163,3 +163,27 @@ archives:
 - headline: "plan review: approved"
 - rationale: "Reviewer go-ahead on review R178 (0 criticisms, 0 new questions): all 3 R169 criticisms resolved, Q95 confirms strictest-wins+union reconciliation, DAG acyclic with same-file edits serialized. Approves the G15 plan (M55/M56) to advance planning -> planned."
 - ledgerRefs: ["goals:G15"]
+
+## M59
+
+### K31 — locked
+
+- createdAt: 2026-06-05T22:32:37.047Z
+- updatedAt: 2026-06-05T22:32:37.047Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- headline: "plan review: approved"
+- rationale: "Reviewer go-ahead (ref review R194): all three R193 criticisms durably resolved (dual-surface tool registration in ledgerTools.ts + stdioLedgerTools.ts, 18->20->21 count/drift-guard, bare cq-config repoint); PART 2 design sound. Plan G18 (M61/M62) approved for planned."
+- ledgerRefs: ["goals:G18"]
+
+## M63
+
+### K32 — locked
+
+- createdAt: 2026-06-06T00:39:28.607Z
+- updatedAt: 2026-06-06T00:39:28.607Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- headline: "plan review: approved"
+- rationale: "Reviewer go-ahead (ref review R212): plan minimal, grounded, testable — single doc-only fix task T182, 0 criticisms, 0 new questions."
+- ledgerRefs: ["goals:G19"]

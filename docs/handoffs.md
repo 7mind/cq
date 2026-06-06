@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 4
+  item: 6
 archives: []
 ---
 
@@ -66,3 +66,42 @@ archives: []
 - handoffReasons: []
 - tags: ["advance-run","drained","G15","feature-1-explorer-prober","feature-2-pluggable-reviewers"]
 - sessionLogs: ["docs/logs/20260605-202254-afdfc963dee5ab691.md","docs/logs/20260605-202254-ad4f65b5c798e0da1.md","docs/logs/20260605-202254b-a9ddca0b976c0faf3.md","docs/logs/20260605-203620-ac996d83316cba0a8.md","docs/logs/20260605-203620-a0bd2fd3ae68e33fa.md","docs/logs/20260605-203620-a18d7049505451d94.md","docs/logs/20260605-203620-a59573920102771e3.md","docs/logs/20260605-203620-afc984a344aced594.md","docs/logs/20260605-204152-a7b80da0000390eb5.md","docs/logs/20260605-204152-ab4bf2096a6f3e81a.md","docs/logs/20260605-204152-a68634e221c3c193a.md","docs/logs/20260605-204152-a94f773db05f3c674.md","docs/logs/20260605-204152-a7b0bbcaa359d2c8c.md","docs/logs/20260605-205630-a7346fe5fcba01d81.md","docs/logs/20260605-205630-a88adc255223c45f8.md","docs/logs/20260605-210010-a5ac7aec42e31eeaa.md","docs/logs/20260605-210010-a404a9d2e8655f371.md","docs/logs/20260605-210751-a4c5d1972671574de.md","docs/logs/20260605-210751-aafff80d4c318e49b.md","docs/logs/20260605-210751-a7cc382eecd7147f3.md","docs/logs/20260605-211047-a3bf57ee924b1799c.md","docs/logs/20260605-211047-af31e7820670fed1d.md","docs/logs/20260605-211047-ae8150e0cadc2509f.md","docs/logs/20260605-211925-aeef7be337eb3fdb0.md","docs/logs/20260605-211925-a89206ec7799ad28d.md","docs/logs/20260605-211925-a239faff082ee8b30.md","docs/logs/20260605-212510-a9f0fc4592a942a3f.md","docs/logs/20260605-212510-ae473ef7b6ed03f67.md","docs/logs/20260605-212510-ac02457bde959f0c8.md","docs/logs/20260605-212912-ad77e24aa3ffd2118.md","docs/logs/20260605-212912-aa6df76dacfe8e290.md","docs/logs/20260605-213245-ad5d8d780beefa6d3.md","docs/logs/20260605-213245-a074ab6be09b601b6.md","docs/logs/20260605-213907-a9d2b9a8fa9c45647.md","docs/logs/20260605-213907-a5335712c74c878d5.md","docs/logs/20260605-214603-ac8f2ea24e4a37acf.md","docs/logs/20260605-214603-ae4ed344d7d90ac3a.md"]
+
+## M59
+
+### HO5 — answers-required
+
+- createdAt: 2026-06-05T22:02:33.521Z
+- updatedAt: 2026-06-05T22:02:33.521Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- summary: "/plan:start bootstrapped goal G18 (milestone M59) — a two-part follow-up to G15: (1) merge the standalone cq-config MCP server into the existing ledger MCP as a tool and remove the separate server/package/flake-attr/registrations (keep the @cq/config parser lib); (2) add pluggable parallel PLANNERS mirroring the parallel-reviewers design (config defaults + /cq:planners per-session override). Planner (plan-advance, agent a2104c6c950c88db3) grounded against the merged G15/M56 artifacts and filed the first clarifying batch Q97–Q102; goal left in `clarifying`/awaiting-answers. STANDALONE plan:start. Next: user answers Q97–Q102 in the TUI/web, then run /plan:advance G18."
+- flow: plan
+- ledgerRefs: ["goals:G18","goals:G15"]
+- blockingQuestions: ["Q97","Q98","Q99","Q100","Q101","Q102"]
+- handoffReasons: ["answers-required"]
+- tags: ["plan-start","standalone","G18","cq-config-merge","parallel-planners"]
+- sessionLogs: ["docs/logs/20260605-220206-a2104c6c950c88db3.md"]
+
+### HO6 — mixed
+
+- createdAt: 2026-06-06T00:47:36.867Z
+- updatedAt: 2026-06-06T00:47:36.867Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- summary: |
+    /advance run (resumed after the user answered Q97-Q102 and flagged the D31 regression) reached quiescence: MIXED — the entire G18 feature landed + D32 auto-fixed end-to-end; only pre-existing D31 remains blocked on open Q103.
+    
+    LANDED — G18 'Merge cq-config into ledger MCP + pluggable parallel planners', BOTH parts fully BUILT and merged to main (tip 418b641):
+    • PART 1 (M61 archived) — 11 tasks (T1-T11): get_reviewers+get_config merged onto BOTH ledger-MCP tool surfaces behind an injected config-agnostic ConfigCapability (T1) wired through buildServer + e2e stdio roundtrip (T2); tool-count 18→20 + cross-surface drift-guard (T3); standalone @cq/config-mcp server package DELETED (T4); flake.nix cqConfigMcp derivation/attrs/FOD removed + @cq/config symlink into ledger-mcp & embed closures (T5); dev-llm.nix (T6) + .mcp.json (T7) registrations removed; the 3 consumer commands repointed mcp__cq-config__* → mcp__ledger__* (T8/T9/T10); node-modules FOD hash refreshed + nix build .#ledger-mcp/.#ledger-tui/.#ledger-web all green + .#cq-config-mcp now attr-not-found (T11). The @cq/config PARSER library was retained.
+    • PART 2 (M62 archived) — 6 tasks (T12-T17): planners=[] added to @cq/config (resolvePlanners, shared [aliases]) (T12); get_planners tool + planners-on-get_config on BOTH surfaces, count 20→21 + drift-guard + e2e stdio (T13); plan-advance CANDIDATE mode emitting task-DAG JSON (T14); multi-planner generate-N-then-JUDGE+SYNTHESIS step in plan/advance.md — candidate-emitters (claude CANDIDATE mode + pi K30 shellout), judge folds in non-best, orchestrator owns all ledger writes (T15); commands/cq/planners.md session-only override mirroring reviewers.md (T16); convergence gate — assets glob auto-includes planners.md, cq.toml.example planners= example, mcp__cq-config__ grep clean (T17). Reviews R195-R211 go-ahead (T3/T9/T12/T13 each after one autonomous criticism round). bun run check green 931/0.
+    • D32 (out-of-scope defect filed by T10's reviewer: cq-assets/README.md still documented the removed cq-config server) auto-investigated→root-caused (H23, validated against source)→defect-seeded goal G19 (M63)→planned (K32, review R212)→BUILT (T182, R213, commit 418b641)→D32 RESOLVED, M64 archived; traceability Q104 withdrawn. README 'Configuration' section repointed to the ledger MCP.
+    
+    BLOCKED — D31 (web BatchAnswerModal premature-close) remains `inconclusive`: it does NOT reproduce from current source (a passing test asserts correct advance-on-non-last-answer) and is parked on open Q103 awaiting the user's exact repro / which build they observed. Pre-existing from the prior turn; orthogonal to G18.
+    
+    Gate at stop: P-investigate=FALSE, P-plan=FALSE, P-implement=FALSE; only Q103 open (gating D31). Goals G10-G19 are all `planned` with their work milestones archived — READY FOR THE USER TO CLOSE (set status `done`; goals never auto-close). Coordination milestones M37/M39/M40/M47/M49/M51/M53/M57/M59/M63 stay open until their goals are closed; M11/M60 (investigate) and M-AMBIENT likewise remain. NEXT: answer Q103 in the TUI/web to unblock D31 (or close it if the regression isn't observed on a fresh build), and close the planned goals; then re-run /advance if anything new appears.
+- flow: advance
+- ledgerRefs: ["goals:G18","goals:G19","defects:D32","defects:D31"]
+- blockingQuestions: ["Q103"]
+- handoffReasons: ["drained","answers-required"]
+- sessionLogs: ["docs/logs/20260605-233831-acb2103ec420aa076.md","docs/logs/20260606-002814-ad5aae722ae7162ff.md","docs/logs/20260606-003435-af834a15d90eb54a6.md","docs/logs/20260606-003711-a5fbe5076e58e816e.md","docs/logs/20260606-004501-abf629cdf1df480ad.md"]

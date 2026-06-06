@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 192
+  item: 213
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -224,6 +224,21 @@ archives:
     summary: "G15 Feature 2 (pluggable parallel reviewers) built+merged: pi non-interactive spike confirmed (K30 invocation contract) (T169); @cq/config cq.toml parser package (T170) + cq-config MCP server exposing get_reviewers + Nix package (T171); registered in dev-llm.nix + .mcp.json (T172); shared /cq:plan-review (T173) + /cq:implement-review (T174) rubrics; reconciliation (strictest-wins+union-with-source-tags, get_reviewers MCP tool, pi shellout) wired into plan/advance.md (T175) + implement/advance.md (T176); /cq:reviewers session-only override (T177); cq.toml.example + cq/* link entries + README (T178). Tasks T169-T178 done, reviews go-ahead, K30 locked. Integrated bun run check green 930/0; all new asset symlinks resolve."
     title: G15 W2 — Pluggable parallel reviewers (cq.toml + cq-config MCP + pi shellout)
     status: done
+  - id: M62
+    path: ./archive/reviews/M62.md
+    summary: "G18 PART 2 — pluggable parallel planners — COMPLETE. All 6 tasks done + merged to main (T12 84f1bfe @cq/config planners=[] parser/resolvePlanners; T13 7a3806d get_planners + get_config.planners on BOTH ledger-MCP surfaces, count 20→21 + drift-guard + e2e stdio; T14 6f2397e plan-advance CANDIDATE mode emitting task-DAG JSON; T15 d949db6 multi-planner generate-N-then-JUDGE+SYNTHESIS step in plan/advance.md; T16 b3278b3 commands/cq/planners.md session-only override; T17 7e403fe convergence gate — assets glob picks up planners.md, cq.toml.example planners= example, mcp__cq-config__ grep clean). Reviews R206-R211 all go-ahead (T12 + T13 each after 1 criticism round: T12 empty-test→real reproduction, T13 5 stale '20-tool' strings→21). bun run check green 931/0. Tip 7e403fe."
+    title: G18 PART 2 — Pluggable parallel planners (generate-N-then-judge w/ synthesis)
+    status: done
+  - id: M64
+    path: ./archive/reviews/M64.md
+    summary: D32 fix COMPLETE. Single doc-only task T182 (commit 418b641, merged to main) repointed nix/pkg/cq-assets/README.md 'Configuration' section off the removed standalone cq-config MCP server to the ledger MCP (heading 'cq.toml and the ledger MCP'; prose attributes parsing to the @cq/config parser package + surfacing to the ledger MCP exposing get_reviewers/get_config/get_planners as mcp__ledger__*). Review R213 go-ahead. D32 resolved (orchestrator-owned closure). bun run check 931/0.
+    title: Repoint cq-assets/README.md Configuration section off cq-config MCP server (D32 fix)
+    status: done
+  - id: M61
+    path: ./archive/reviews/M61.md
+    summary: G18 PART 1 — Merge cq-config into ledger MCP + remove standalone server — COMPLETE. 11 tasks done + merged (T1 get_reviewers/get_config on BOTH ledger-MCP surfaces behind injected ConfigCapability; T2 buildServer wiring + e2e stdio; T3 count 18→20 + drift-guard; T4 delete cq-config-mcp package; T5 flake.nix removal + @cq/config symlink; T6 dev-llm.nix; T7 .mcp.json; T8/T9/T10 repoint reviewers.md/implement-advance/plan-advance to mcp__ledger__*; T11 FOD hash refresh + nix build .#ledger-mcp/.#ledger-tui/.#ledger-web green + .#cq-config-mcp attr-not-found). Reviews R195-R205 go-ahead. Out-of-scope defect D32 (README still referenced the removed server) auto-investigated→root-caused (H23)→defect-seeded G19→planned (K32/R212)→BUILT (T182, R213)→D32 RESOLVED in the same run; Q104 traceability withdrawn. bun run check green 931/0; main tip 418b641. @cq/config PARSER library retained.
+    title: G18 PART 1 — Merge cq-config into ledger MCP + remove standalone server
+    status: done
 ---
 
 # reviews
@@ -422,3 +437,43 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G17"]
 - sessionLogs: ["docs/logs/20260605-190853-aaf37e9557710bdc2.md"]
+
+## M59
+
+### R193 — revise
+
+- createdAt: 2026-06-05T22:27:35.671Z
+- updatedAt: 2026-06-05T22:28:21.450Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- summary: Plan is well-grounded, fine-grained, and correctly sequenced, but T1/T2/T3/T13 only touch the Claude-SDK tool() factory (ledgerTools.ts) and miss the SECOND registration surface (stdioLedgerTools.ts) that the standalone ledger-mcp binary — the one .mcp.json/plan/implement/reviewers actually reach as mcp__ledger__* — uses; without it the new tools never surface on the real server.
+- new_questions: []
+- criticism: ["BLOCKER (T1, T2, T13): the ledger MCP has TWO parallel tool-registration surfaces, both keyed off LEDGER_TOOL_NAMES: (a) createLedgerMcpTools in packages/ledger/src/mcp/ledgerTools.ts (the @anthropic-ai/claude-agent-sdk tool() factory, used only by the in-process Claude-SDK host), and (b) registerLedgerStdioTools in packages/ledger/src/mcp/stdioLedgerTools.ts (raw @modelcontextprotocol/sdk server.registerTool). The STANDALONE @cq/ledger-mcp binary — which .mcp.json's `ledger` server runs (`nix run .#ledger-mcp`), and which plan/advance.md, implement/advance.md, and reviewers.md all reach as mcp__ledger__get_reviewers/get_config — goes through buildServer() -> registerLedgerStdioTools (ledger-mcp/src/main.ts:247), NOT createLedgerMcpTools. The embedded TUI (in-memory transport) and web (co-hosted HTTP via attachMcpHttp) servers ALSO route through buildServer -> registerLedgerStdioTools. T1 adds get_reviewers/get_config ONLY to ledgerTools.ts (its description and acceptance name only that file and createLedgerMcpTools); T13 adds get_planners ONLY to ledgerTools.ts. As written, the new tools surface on the in-process Claude-SDK path but NOT on the standalone/embedded stdio+HTTP binary that every consumer actually calls — PART 1's whole premise (consumers calling mcp__ledger__*) is unmet. FIX: T1 must ALSO register get_reviewers+get_config in registerLedgerStdioTools (stdioLedgerTools.ts), T13 must add get_planners there too, and the config capability must be threaded as a new param of registerLedgerStdioTools(server, store, readLog, configCapability?) — T2 already names registerLedgerStdioTools for the buildServer wiring, but no task actually adds the tool registrations to that file.","T3 (and T13) count/name bump is under-scoped to one file: stdioLedgerTools.ts ALSO documents '18 tools' (header L4-5 and the registerLedgerStdioTools doc-comment L149) and shares LEDGER_TOOL_NAMES, and per its own comment (L18) 'the schema-drift guard between the stdio path and the Claude path is the test suite' — i.e. a test asserts the two surfaces register the SAME tool set. Updating only ledgerTools.ts will leave that drift-guard / count test failing (or mask the bug by leaving BOTH files at 18). T3's and T13's acceptance must require the 18->20->21 bump AND the new tool names in BOTH ledgerTools.ts and stdioLedgerTools.ts, and the cross-surface drift-guard test green.","Minor (T8): reviewers.md carries bare 'cq-config' prose references beyond the two patterns T8's acceptance greps for ('mcp__cq-config__' and 'cq-config MCP server'): e.g. L15 '(from cq-config), falling back', L30 'Call get_config (from the cq-config MCP server)', the frontmatter `description` line ('from cq-config get_reviewers/get_config'), and L44/L147 'the cq-config server'/'(cq-config MCP)'. T8's acceptance grep should also catch the bare 'cq-config' token (or enumerate the description-line + prose hits) so no stale reference survives the repoint."]
+- ledgerRefs: ["goals:G18"]
+- sessionLogs: ["docs/logs/20260605-222806-a85471b82ade9e93e.md"]
+
+### R194 — go-ahead
+
+- createdAt: 2026-06-05T22:31:42.631Z
+- updatedAt: 2026-06-05T22:32:16.345Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- summary: "Round-2: all three R193 criticisms durably resolved — T1/T2/T13 now register get_reviewers/get_config/get_planners on BOTH ledgerTools.ts (createLedgerMcpTools) AND stdioLedgerTools.ts (registerLedgerStdioTools, config capability threaded as new 4th param) with T2's end-to-end STDIO-roundtrip acceptance; T3/T13 bump the 18→20→21 count + LEDGER_TOOL_NAMES in BOTH files with the cross-surface drift-guard test green (reproduce-first); T8 greps the BARE 'cq-config' token to zero. Anchors verified real (main.ts:247 buildServer→registerLedgerStdioTools, stdioLedgerTools.ts L18 drift-guard note + L155 readLog?-param signature, reviewers.md bare cq-config prose). PART 2 (Q100 generate-N-then-judge+synthesis, Q101 pi candidate-emitters, Q102 config/command/tool, same-file DAG serialization) sound. Go-ahead."
+- new_questions: []
+- criticism: []
+- ledgerRefs: ["goals:G18"]
+- sessionLogs: ["docs/logs/20260605-223202-a0aae2a8104718584.md"]
+
+## M63
+
+### R212 — go-ahead
+
+- createdAt: 2026-06-06T00:38:47.177Z
+- updatedAt: 2026-06-06T00:39:10.146Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- summary: "Plan is minimal, grounded, and testable: single doc-only task T182 repoints README L77/L82-85 to the ledger MCP with operationally-pinned acceptance and correct closure links; all grounding claims verified against source."
+- new_questions: []
+- criticism: []
+- ledgerRefs: ["goals:G19","defects:D32","tasks:T182"]
+- sessionLogs: ["docs/logs/20260606-003711-a5fbe5076e58e816e.md"]

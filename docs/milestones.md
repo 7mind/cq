@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 58
+  item: 64
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -244,6 +244,21 @@ archives:
     summary: "G15 Feature 2 (pluggable parallel reviewers) built+merged: pi non-interactive spike confirmed (K30 invocation contract) (T169); @cq/config cq.toml parser package (T170) + cq-config MCP server exposing get_reviewers + Nix package (T171); registered in dev-llm.nix + .mcp.json (T172); shared /cq:plan-review (T173) + /cq:implement-review (T174) rubrics; reconciliation (strictest-wins+union-with-source-tags, get_reviewers MCP tool, pi shellout) wired into plan/advance.md (T175) + implement/advance.md (T176); /cq:reviewers session-only override (T177); cq.toml.example + cq/* link entries + README (T178). Tasks T169-T178 done, reviews go-ahead, K30 locked. Integrated bun run check green 930/0; all new asset symlinks resolve."
     title: G15 W2 — Pluggable parallel reviewers (cq.toml + cq-config MCP + pi shellout)
     status: done
+  - id: M62
+    path: ./archive/milestones/M62.md
+    summary: "G18 PART 2 — pluggable parallel planners — COMPLETE. All 6 tasks done + merged to main (T12 84f1bfe @cq/config planners=[] parser/resolvePlanners; T13 7a3806d get_planners + get_config.planners on BOTH ledger-MCP surfaces, count 20→21 + drift-guard + e2e stdio; T14 6f2397e plan-advance CANDIDATE mode emitting task-DAG JSON; T15 d949db6 multi-planner generate-N-then-JUDGE+SYNTHESIS step in plan/advance.md; T16 b3278b3 commands/cq/planners.md session-only override; T17 7e403fe convergence gate — assets glob picks up planners.md, cq.toml.example planners= example, mcp__cq-config__ grep clean). Reviews R206-R211 all go-ahead (T12 + T13 each after 1 criticism round: T12 empty-test→real reproduction, T13 5 stale '20-tool' strings→21). bun run check green 931/0. Tip 7e403fe."
+    title: G18 PART 2 — Pluggable parallel planners (generate-N-then-judge w/ synthesis)
+    status: done
+  - id: M64
+    path: ./archive/milestones/M64.md
+    summary: D32 fix COMPLETE. Single doc-only task T182 (commit 418b641, merged to main) repointed nix/pkg/cq-assets/README.md 'Configuration' section off the removed standalone cq-config MCP server to the ledger MCP (heading 'cq.toml and the ledger MCP'; prose attributes parsing to the @cq/config parser package + surfacing to the ledger MCP exposing get_reviewers/get_config/get_planners as mcp__ledger__*). Review R213 go-ahead. D32 resolved (orchestrator-owned closure). bun run check 931/0.
+    title: Repoint cq-assets/README.md Configuration section off cq-config MCP server (D32 fix)
+    status: done
+  - id: M61
+    path: ./archive/milestones/M61.md
+    summary: G18 PART 1 — Merge cq-config into ledger MCP + remove standalone server — COMPLETE. 11 tasks done + merged (T1 get_reviewers/get_config on BOTH ledger-MCP surfaces behind injected ConfigCapability; T2 buildServer wiring + e2e stdio; T3 count 18→20 + drift-guard; T4 delete cq-config-mcp package; T5 flake.nix removal + @cq/config symlink; T6 dev-llm.nix; T7 .mcp.json; T8/T9/T10 repoint reviewers.md/implement-advance/plan-advance to mcp__ledger__*; T11 FOD hash refresh + nix build .#ledger-mcp/.#ledger-tui/.#ledger-web green + .#cq-config-mcp attr-not-found). Reviews R195-R205 go-ahead. Out-of-scope defect D32 (README still referenced the removed server) auto-investigated→root-caused (H23)→defect-seeded G19→planned (K32/R212)→BUILT (T182, R213)→D32 RESOLVED in the same run; Q104 traceability withdrawn. bun run check green 931/0; main tip 418b641. @cq/config PARSER library retained.
+    title: G18 PART 1 — Merge cq-config into ledger MCP + remove standalone server
+    status: done
 ---
 
 # milestones
@@ -316,3 +331,23 @@ archives:
 - updatedAt: 2026-06-05T18:59:52.376Z
 - title: "Plan: fix D30 (link-prompts stale `llm/` root → dangling symlinks)"
 - description: Coordination milestone for the defect-seeded plan-flow goal fixing D30 — scripts/link-prompts.ts + cq-assets/README.md still reference the relocated `llm/` asset root, so `bun run link-prompts` silently creates dangling symlinks. Confirmed root cause embedded; skips clarifying (T35).
+
+### M59 — open
+
+- createdAt: 2026-06-05T21:57:57.940Z
+- updatedAt: 2026-06-05T21:57:57.940Z
+- title: "Plan: merge cq-config into ledger MCP + parallel planners"
+- description: "Coordination milestone for a plan-flow goal: (1) consolidate the standalone cq-config MCP server (built in G15/M56) into the existing ledger MCP as a tool, removing the separate server/package; (2) add pluggable parallel PLANNERS mirroring the parallel-reviewers design (config defaults + per-session override command). Groups the goal, its clarifying questions, plan reviews, and the final approval decision."
+
+### M60 — open
+
+- createdAt: 2026-06-05T22:09:26.734Z
+- updatedAt: 2026-06-05T22:09:26.734Z
+- title: "Investigate: batch-answer-modal-premature-close"
+- description: "Coordination milestone for investigating a web-UI regression: the BatchAnswerModal (Q&A batch-answer popup) dismisses prematurely after answering a non-last question instead of advancing to the next. Suspected regression from the D29 fix (T163)."
+
+### M63 — open
+
+- createdAt: 2026-06-06T00:35:07.871Z
+- updatedAt: 2026-06-06T00:35:07.871Z
+- title: "Plan: fix D32 (README cq-config repoint)"

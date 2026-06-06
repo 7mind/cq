@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 30
+  item: 32
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -69,6 +69,11 @@ archives:
     summary: "Investigation of D29 (empty-answer-accepted) complete: H19 (backend gap) + H20 (frontend gap) confirmed against source, root cause pinned, fix file-and-deferred to G16 and resolved this run. Q94 pointer withdrawn (fulfilled)."
     title: "Investigate: empty-answer-accepted"
     status: done
+  - id: M61
+    path: ./archive/defects/M61.md
+    summary: G18 PART 1 — Merge cq-config into ledger MCP + remove standalone server — COMPLETE. 11 tasks done + merged (T1 get_reviewers/get_config on BOTH ledger-MCP surfaces behind injected ConfigCapability; T2 buildServer wiring + e2e stdio; T3 count 18→20 + drift-guard; T4 delete cq-config-mcp package; T5 flake.nix removal + @cq/config symlink; T6 dev-llm.nix; T7 .mcp.json; T8/T9/T10 repoint reviewers.md/implement-advance/plan-advance to mcp__ledger__*; T11 FOD hash refresh + nix build .#ledger-mcp/.#ledger-tui/.#ledger-web green + .#cq-config-mcp attr-not-found). Reviews R195-R205 go-ahead. Out-of-scope defect D32 (README still referenced the removed server) auto-investigated→root-caused (H23)→defect-seeded G19→planned (K32/R212)→BUILT (T182, R213)→D32 RESOLVED in the same run; Q104 traceability withdrawn. bun run check green 931/0; main tip 418b641. @cq/config PARSER library retained.
+    title: G18 PART 1 — Merge cq-config into ledger MCP + remove standalone server
+    status: done
 ---
 
 # defects
@@ -128,3 +133,23 @@ archives:
 - sessionLogs: ["docs/logs/20260605-185840-addf76024a26b2805.md"]
 - dependsOn: ["T179","T180","T181"]
 - fix: "Resolved across T179/T180/T181 (merged to main 24c1d51). T179: made link-prompts.ts import-safe (export LINKS+checkLinks, creation loop behind import.meta.main), added --check mode + reproduce-first test. T180: repointed all 14 LINKS sources llm/ -> ../cq-assets/{commands,agents}/ (all resolve) and hardened the loop to throw loud on a missing source (reuses checkLinks), flipped repro test to checkLinks(LINKS) toEqual([]). T181: de-staled cq-assets/README.md to the new layout. `bun run link-prompts` now produces 14 non-dangling symlinks; integrated bun run check green."
+
+## M60
+
+### D31 — inconclusive
+
+- createdAt: 2026-06-05T22:09:34.943Z
+- updatedAt: 2026-06-05T22:15:59.099Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- headline: Web BatchAnswerModal dismisses prematurely after answering a non-last question (should advance to next)
+- severity: medium
+- description: |
+    Web UI regression: in the Q&A batch-answer popup (BatchAnswerModal in @cq/ledger-web), clicking "save & mark answered" closes/dismisses the entire popup even when the just-answered question is NOT the last one in the batch — it should instead advance to the next unanswered question and only close when the batch is exhausted. The "as recommended" button may have the same problem (unconfirmed). Suspected regression from the recent D29 fix (task T163), which modified the BatchAnswerModal submit/disable behavior and adjusted batchModalClose tests. Expected behavior: answering a non-terminal question advances within the modal; answering the last one closes it.
+    
+    Severity rationale: degraded UX (the user must reopen the popup for each remaining question) but a workaround exists (reopen), so `medium`.
+- rootCause: |
+    NOT REPRODUCED from current source (HEAD). Investigated H22 (suspected T163/D29 regression) and ruled it out with validated evidence: BatchAnswerModal's `batchSave` (ledger-web/src/App.tsx:543-571) advances `batchIndex` to the next unanswered row on a non-last answer and calls `setBatchOpen(false)` ONLY when the remaining-open set is empty. All THREE save buttons ('save & mark answered' 1738, 'as recommended' 1747, per-suggestion 'pick' 1699) call the SAME `onSave`=batchSave — none calls onClose. T163's diff (commit 6629483) only added the `disabled` guard + answerHasText re-sync; it did NOT touch the advance/close code, and NO commit touched App.tsx after 6629483. `reload()` cannot close the modal (batchRows/batchOpen/batchSchema are captured at open, not reset by reload). The test `batchModalClose.test.tsx:233-257` ('mid-queue Q2 of 3 advances to Q3') asserts EXACTLY the user-expected behavior and PASSES (suite 6/6 green at HEAD). So current source is correct; the reported regression does not manifest in the repo.
+    
+    Most likely explanation: the running/observed web app is a STALE build (predating the D19/T115 advance logic or otherwise out of sync with current main), or the observation was tentative/misremembered (the report itself hedged: 'might', 'not sure'). Needs user repro detail to proceed — parked on a question (D31 re-openable to wip if a new lead/repro arrives).
+- ledgerRefs: []

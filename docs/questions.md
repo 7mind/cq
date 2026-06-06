@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 96
+  item: 104
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -48,6 +48,11 @@ archives:
     path: ./archive/questions/M52.md
     summary: "Investigation of D29 (empty-answer-accepted) complete: H19 (backend gap) + H20 (frontend gap) confirmed against source, root cause pinned, fix file-and-deferred to G16 and resolved this run. Q94 pointer withdrawn (fulfilled)."
     title: "Investigate: empty-answer-accepted"
+    status: done
+  - id: M61
+    path: ./archive/questions/M61.md
+    summary: G18 PART 1 — Merge cq-config into ledger MCP + remove standalone server — COMPLETE. 11 tasks done + merged (T1 get_reviewers/get_config on BOTH ledger-MCP surfaces behind injected ConfigCapability; T2 buildServer wiring + e2e stdio; T3 count 18→20 + drift-guard; T4 delete cq-config-mcp package; T5 flake.nix removal + @cq/config symlink; T6 dev-llm.nix; T7 .mcp.json; T8/T9/T10 repoint reviewers.md/implement-advance/plan-advance to mcp__ledger__*; T11 FOD hash refresh + nix build .#ledger-mcp/.#ledger-tui/.#ledger-web green + .#cq-config-mcp attr-not-found). Reviews R195-R205 go-ahead. Out-of-scope defect D32 (README still referenced the removed server) auto-investigated→root-caused (H23)→defect-seeded G19→planned (K32/R212)→BUILT (T182, R213)→D32 RESOLVED in the same run; Q104 traceability withdrawn. bun run check green 931/0; main tip 418b641. @cq/config PARSER library retained.
+    title: G18 PART 1 — Merge cq-config into ledger MCP + remove standalone server
     status: done
 ---
 
@@ -357,3 +362,95 @@ archives:
 - context: "AUTO-LAUNCHED inside /plan:advance (chained under /advance), so no manual `/plan:advance G17` is needed — the parent plan session auto-resumes G17 this same run. Root cause: link-prompts.ts + cq-assets/README.md still reference the removed `llm/` asset root (assets moved to nix/pkg/cq-assets/), and the symlink loop never stats the target, so `bun run link-prompts` silently creates dangling .claude/** symlinks. Forward-reference, not a blocker."
 - ledgerRefs: ["defects:D30","goals:G17"]
 - answer: "Withdrawn: fulfilled traceability pointer. D30 was auto-resumed under this /advance run — goal G17 planned and fix tasks T179/T180/T181 built+merged; D30 resolved. No user action was required."
+
+## M59
+
+### Q97 — answered
+
+- createdAt: 2026-06-05T22:00:40.392Z
+- updatedAt: 2026-06-05T22:03:18.359Z
+- author: user
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "PART 1 — Confirm the cq-config merge target: ONE merged tool or keep TWO? The standalone server exposes two tools, get_reviewers ({configured, reviewers:[{harness,model,alias}]}) and get_config ({configured, aliases, reviewers}). When folded into the ledger MCP, do we (a) port BOTH tools verbatim onto the ledger MCP as mcp__ledger__get_reviewers + mcp__ledger__get_config (lowest-churn for consumers), or (b) collapse to a single tool, or (c) rename them (e.g. cq_get_reviewers) to namespace them away from the ledger-domain tools?"
+- context: "The merge changes ledgerTools.ts (which documents an '18 tools' surface + an asserted LEDGER_TOOL_NAMES list). Option (a) bumps the count to 20 and keeps consumer call-sites a 1:1 rename (mcp__cq-config__get_reviewers -> mcp__ledger__get_reviewers). /cq:reviewers calls get_config; plan/implement advance call get_reviewers — so both are in active use today, which argues for porting both."
+- suggestions: ["(a) port BOTH verbatim as mcp__ledger__get_reviewers + mcp__ledger__get_config","(b) collapse to a single get_config (callers derive reviewers themselves)","(c) port both but rename with a cq_ prefix to namespace"]
+- recommendation: (a) — port both tools verbatim; lowest consumer churn, both are actively called, and the names don't collide with existing ledger tools.
+- ledgerRefs: ["goals:G18"]
+- answer: (a) port BOTH verbatim as mcp__ledger__get_reviewers + mcp__ledger__get_config
+
+### Q98 — answered
+
+- createdAt: 2026-06-05T22:00:51.635Z
+- updatedAt: 2026-06-05T22:03:38.819Z
+- author: user
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "PART 1 — Confirm FULL removal (not deprecation) of the standalone cq-config server, and the @cq/config dependency wiring. Removal surface I found: the cqConfigMcp derivation + packages.cq-config-mcp + apps.cq-config-mcp in flake.nix, the cq-config-mcp node-modules FOD fileset/installPhase entries, cqConfigPkg + programs.mcp.servers.cq-config in dev-llm.nix, the 'cq-config' entry in .mcp.json, and the whole packages/cq-config-mcp/ directory. The @cq/config PARSER package stays. Confirm: delete all of that outright (no deprecation shim)? AND — to call @cq/config from inside the ledger MCP — should @cq/config become a workspace dependency of @cq/ledger (the package owning ledgerTools.ts) or of @cq/ledger-mcp?"
+- context: The merged tool calls loadConfig/resolveReviewers, so @cq/config must be a runtime dep of whichever package holds the tool handler. ledgerTools.ts lives in @cq/ledger, which argues for adding @cq/config there; but @cq/ledger is the cq-free core library, so wiring it into @cq/ledger-mcp's buildServer (passing a resolved reviewer-config callback into the factory, like readLog is threaded) keeps @cq/ledger config-agnostic. This also drives the flake derivation symlink additions and a FOD-hash refresh.
+- suggestions: ["Delete outright; add @cq/config dep to @cq/ledger (tool handler lives in ledgerTools.ts directly)","Delete outright; keep @cq/ledger config-agnostic — thread a config capability from @cq/ledger-mcp into the factory (mirror the readLog capability pattern)","Deprecate the standalone server (leave it, just add the merged tool)"]
+- recommendation: Delete outright AND keep @cq/ledger config-agnostic by threading a config capability from @cq/ledger-mcp into the tool factory (mirrors how readLog is already injected only when the store is FS-backed) — preserves the 'cq-free core' boundary the ledger-mcp header advertises.
+- ledgerRefs: ["goals:G18"]
+- answer: as recommended
+
+### Q99 — answered
+
+- createdAt: 2026-06-05T22:00:59.339Z
+- updatedAt: 2026-06-05T22:04:10.226Z
+- author: user
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "PART 1 — cq.toml location/schema: unchanged? The parser resolves cq.toml at the repo root (CQ_CONFIG_FILENAME='cq.toml', via --cwd/$ROOT/CWD). After consolidating into the ledger MCP, the ledger MCP's --cwd (the repo/ledger root) becomes the config root too. Confirm: cq.toml stays at the repo root with the same [aliases] + top-level reviewers=[] schema (PART 2 only ADDS a sibling planners=[] field), and the env override is fine to drop ($CQ_CONFIG_ROOT) in favor of the ledger MCP's existing --cwd/$LEDGER_ROOT?"
+- context: Folding the tool into the ledger MCP means the config root is now the ledger root (same directory in practice). The standalone server had its own $CQ_CONFIG_ROOT env; the ledger MCP uses $LEDGER_ROOT. They normally point at the same repo root, so dropping the separate $CQ_CONFIG_ROOT removes a redundant knob — but confirm there's no setup where cq.toml lives somewhere other than the ledger root.
+- suggestions: ["Yes — cq.toml at repo root = ledger root; drop $CQ_CONFIG_ROOT, reuse the ledger MCP's --cwd/$LEDGER_ROOT","Keep a separate config-root override so cq.toml can live apart from the ledger root"]
+- recommendation: cq.toml at the repo root = ledger MCP --cwd; drop the redundant $CQ_CONFIG_ROOT and resolve config from the ledger store root.
+- ledgerRefs: ["goals:G18"]
+- answer: as recommended
+
+### Q100 — answered
+
+- createdAt: 2026-06-05T22:01:18.861Z
+- updatedAt: 2026-06-05T22:06:28.426Z
+- author: user
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "PART 2 (CORE) — How should N parallel planners RECONCILE? Reviewers reconcile cleanly (strictest-wins on one verdict + tagged-union of findings) because their outputs are commensurable. N independent PLANS are alternative task DAGs that cannot be unioned — unioning would produce a contradictory/duplicated task set. Pick the reconciliation model: (a) GENERATE-N-then-JUDGE — each planner emits a full candidate plan (as a structured task-DAG, NOT yet written to the ledger); a synthesis/judge step (the orchestrator, or a dedicated plan-synthesizer subagent) then either PICKS the single best candidate or SYNTHESIZES a merged plan, and only THAT one plan is written to the ledger; (b) PRIMARY + ADVISORY — one designated primary planner produces and writes the plan via the ledger tools (today's plan-advance path), the other planners produce ADVISORY critiques of a draft that the primary folds in before finalizing (closer to the existing reviewer loop); (c) something else."
+- context: This is the central design decision and gates the whole PART 2 architecture. (a) is powerful but requires defining a portable structured-plan interchange format (so a plan can be emitted WITHOUT writing the ledger, then judged) and a synthesis rubric — substantial new machinery, and it changes plan-advance.md from 'one planner writes the ledger' to 'planners emit candidates, orchestrator picks/merges then writes'. (b) reuses the existing single-writer planner + the proven reviewer-style advisory loop almost verbatim (the 'others' become plan critics), at the cost of not truly exploring divergent DAGs in parallel. The reviewer machinery in plan/advance.md step 2b is the closest existing template, which biases toward (b) for consistency and lower build cost; (a) better matches the literal 'launch all planners in parallel and reconcile their plans' framing.
+- suggestions: ["(a) generate-N-then-judge: planners emit candidate DAGs, a synthesis step picks-or-merges one, orchestrator writes only the winner","(b) primary + advisory: one primary planner writes; the rest produce advisory critiques the primary folds in (mirrors the reviewer loop)","(c) hybrid / other — specify"]
+- recommendation: (a) generate-N-then-JUDGE with a synthesis step is the truer parallel-planners design and matches the user's 'reconcile their plans' wording; but if minimizing build cost and machinery is preferred, (b) primary+advisory reuses the existing reviewer loop almost verbatim. I lean (a) for fidelity to the goal, with the judge defaulting to PICK-best (synthesis as a later enhancement) to bound initial complexity. Please pick (a) or (b).
+- ledgerRefs: ["goals:G18"]
+- answer: generate-N-then-judge. judge should not just pick-best, it should check if "not-the-best" planners produces something important and if they did the judge should factor good parts of their plans in, not blindly ignore
+
+### Q101 — answered
+
+- createdAt: 2026-06-05T22:01:28.298Z
+- updatedAt: 2026-06-05T22:07:34.687Z
+- author: user
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "PART 2 — Are non-Claude (pi:*) PLANNERS in scope for the first cut, or are planners Claude-only initially (while reviewers remain claude+pi)? A pi:* planner would have to emit a FULL task-DAG plan via stdout (it cannot call the mcp__ledger__* tools to write the ledger — pi shells out non-interactively per K30). That only works under reconciliation model (a) generate-N-then-judge, where plans are emitted as structured candidates and the orchestrator does ALL ledger writes anyway. Under model (b) primary+advisory, a pi planner could still serve as an advisory critic (stdout JSON, like a pi reviewer), but the PRIMARY writer would need ledger access (Claude-only)."
+- context: "Reviewers already support pi:* because they only emit JSON the orchestrator consumes — they never write the ledger. The planner's defining act is WRITING the goal/plan to the ledger via mcp tools, which pi cannot do. So pi-planner feasibility is tightly coupled to the reconciliation-model choice in the previous question: model (a) makes pi planners natural (orchestrator owns all writes); model (b) restricts pi to the advisory-critic role only. This answer should be consistent with that one."
+- suggestions: ["Claude-only planners for the first cut; pi planners are a follow-up","pi:* planners allowed as candidate-emitters under model (a) (orchestrator writes the chosen plan)","pi:* allowed only as advisory plan-critics under model (b)"]
+- recommendation: "Tie to the reconciliation choice: if model (a) is chosen, allow pi:* as candidate-emitters (orchestrator owns all ledger writes, so pi participates fully); if model (b), keep the primary WRITER Claude-only and let pi:* act as advisory plan-critics. If in doubt, ship Claude-only planners first and add pi in a follow-up to de-risk the candidate-interchange format."
+- ledgerRefs: ["goals:G18"]
+- answer: as recommended
+
+### Q102 — answered
+
+- createdAt: 2026-06-05T22:01:38.401Z
+- updatedAt: 2026-06-05T22:08:34.729Z
+- author: user
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "PART 2 — How do /cq:planners and the cq.toml planners=[] field relate to the existing /cq:reviewers + reviewers=[]? Specifically: (1) do planners and reviewers SHARE the single [aliases] table in cq.toml (so an alias like opus=claude:opus-4.8[1m] is usable in both planners=[] and reviewers=[]), with two separate top-level lists planners=[] and reviewers=[]? (2) is /cq:planners a NEW separate command file (commands/cq/planners.md, mirroring reviewers.md) with its own session-only override, OR a unified /cq:agents-style command that overrides both? (3) does the config tool expose planners via get_config (which already returns aliases) plus a new get_planners (mirroring get_reviewers), or fold planners into the existing get_reviewers payload?"
+- context: "The reviewers schema is [aliases] + top-level reviewers=[]. The cleanest mirror is a SHARED [aliases] table + a sibling planners=[] list, a resolvePlanners() mirroring resolveReviewers, a new commands/cq/planners.md mirroring reviewers.md, and a get_planners tool mirroring get_reviewers (get_config already exposes the shared aliases + would add a planners field). This keeps reviewers and planners symmetric and independent. The fallback alias map (grok/opus/codex) in reviewers.md would be shared or duplicated into planners.md."
+- suggestions: ["Shared [aliases]; separate planners=[] list; new commands/cq/planners.md; new get_planners tool + planners field on get_config","Shared [aliases]; one unified /cq:agents command overriding both reviewers and planners","Fold planners into the existing get_reviewers payload (single tool returns both sets)"]
+- recommendation: "Shared [aliases] table + sibling planners=[] list; a new commands/cq/planners.md mirroring reviewers.md (its own session-only override, reusing the same fallback alias map); add resolvePlanners() and a get_planners tool, and add a planners field to get_config. Maximal symmetry with the just-built reviewer mechanism, minimal coupling."
+- ledgerRefs: ["goals:G18"]
+- answer: as recommended
+
+## M60
+
+### Q103 — open
+
+- createdAt: 2026-06-05T22:16:14.014Z
+- updatedAt: 2026-06-05T22:16:14.014Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- question: "D31 (web BatchAnswerModal premature-close) does NOT reproduce from current source — the code already advances correctly on a non-last answer and a passing test asserts it. Which web build are you observing the bug in, and can you give an exact repro? Specifically: (1) is the running web app freshly built from CURRENT main (HEAD f2b69be / ledger commit 32624c8), or an older/deployed build? (2) which button triggers it — 'save & mark answered', 'as recommended', or a per-suggestion 'pick'? (3) how many questions are in the batch, and after answering WHICH one does it close (the first? a specific position?) — every time or intermittently? (4) if you rebuild the web app from current main (e.g. `nix build .#ledger-web` / restart it) and retry, does it still close prematurely?"
+- context: "Investigation ruled out the suspected T163/D29 regression (H22 = wrong, all citations validated). batchSave (ledger-web/src/App.tsx:543-571) advances batchIndex to the next unanswered row and only setBatchOpen(false) when the remaining-open set is empty. All three save buttons ('save & mark answered' App.tsx:1738, 'as recommended' :1747, per-suggestion 'pick' :1699) call the SAME onSave=batchSave — none calls onClose. `git log 6629483..HEAD -- App.tsx` is EMPTY (no change after T163). reload() (App.tsx:469) cannot close the modal (batchRows/batchOpen/batchSchema are captured at open, not reset). The test batchModalClose.test.tsx:233-257 ('mid-queue Q2 of 3 advances to Q3') asserts exactly the expected behavior and the suite is green (6/6) at HEAD. So either the observed build is stale, or there is a repro detail the current happy-dom tests don't capture. D31 is `inconclusive` and re-openable to `wip` once a concrete repro arrives. NOTE: I did NOT ship a speculative fix — there is nothing to fix in current source (reproduce-before-fixing)."
+- ledgerRefs: ["defects:D31"]

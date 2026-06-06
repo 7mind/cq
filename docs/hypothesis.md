@@ -2,7 +2,7 @@
 ledger: hypothesis
 counters:
   milestone: 0
-  item: 21
+  item: 23
 archives:
   - id: M14
     path: ./archive/hypothesis/M14.md
@@ -43,6 +43,11 @@ archives:
     path: ./archive/hypothesis/M52.md
     summary: "Investigation of D29 (empty-answer-accepted) complete: H19 (backend gap) + H20 (frontend gap) confirmed against source, root cause pinned, fix file-and-deferred to G16 and resolved this run. Q94 pointer withdrawn (fulfilled)."
     title: "Investigate: empty-answer-accepted"
+    status: done
+  - id: M61
+    path: ./archive/hypothesis/M61.md
+    summary: G18 PART 1 — Merge cq-config into ledger MCP + remove standalone server — COMPLETE. 11 tasks done + merged (T1 get_reviewers/get_config on BOTH ledger-MCP surfaces behind injected ConfigCapability; T2 buildServer wiring + e2e stdio; T3 count 18→20 + drift-guard; T4 delete cq-config-mcp package; T5 flake.nix removal + @cq/config symlink; T6 dev-llm.nix; T7 .mcp.json; T8/T9/T10 repoint reviewers.md/implement-advance/plan-advance to mcp__ledger__*; T11 FOD hash refresh + nix build .#ledger-mcp/.#ledger-tui/.#ledger-web green + .#cq-config-mcp attr-not-found). Reviews R195-R205 go-ahead. Out-of-scope defect D32 (README still referenced the removed server) auto-investigated→root-caused (H23)→defect-seeded G19→planned (K32/R212)→BUILT (T182, R213)→D32 RESOLVED in the same run; Q104 traceability withdrawn. bun run check green 931/0; main tip 418b641. @cq/config PARSER library retained.
+    title: G18 PART 1 — Merge cq-config into ledger MCP + remove standalone server
     status: done
 ---
 
@@ -121,3 +126,17 @@ archives:
 - ledgerRefs: ["defects:D30"]
 - evidence: ["[correct] scripts/link-prompts.ts:19 — REPO_ROOT = resolve(dirname(scriptfile), '..') = nix/pkg/cq-ledgers/; sources resolve under it. (re-validated, exact)","[correct] scripts/link-prompts.ts:29-44 — all 14 LINKS entries set source: 'llm/commands/...' / 'llm/agents/...'. (re-validated, exact)","[correct] `ls nix/pkg/cq-ledgers/llm` -> 'No such file or directory' — the llm/ source root the script points at is ABSENT, so every absSource is missing. (re-validated)","[correct] scripts/link-prompts.ts:46-73 — linkExists()/the loop stat only absLink (the LINK), NEVER absSource (the TARGET); symlink(relTarget, absLink) succeeds for a nonexistent target and line 73 logs success -> DANGLING symlinks on a 'clean' run. (re-validated, exact)","[correct] nix/pkg/cq-assets/assets.nix:49-50 — commands = collectMdIn ./commands; agents = collectMdIn ./agents; (relative to cq-assets, no llm/ prefix) confirming relocation. (re-validated, exact)","[correct] real assets present: nix/pkg/cq-assets/agents/plan-reviewer.md + commands/plan/start.md exist (test -e OK) — sources moved here, not deleted. (re-validated)","[correct] nix/pkg/cq-assets/README.md:1,10-11,40-42 — title '# `llm/` — single-source LLM assets' + convention block + Claude-link table still cite 'llm/commands/...' / 'llm/agents/...'. (re-validated, exact)","[correct] package.json:13 — 'link-prompts': 'bun run scripts/link-prompts.ts' runs from nix/pkg/cq-ledgers/, fixing the CWD/REPO_ROOT. (re-validated, exact)"]
 - sessionLogs: ["docs/logs/20260605-185840-addf76024a26b2805.md"]
+
+## M60
+
+### H22 — wrong
+
+- createdAt: 2026-06-05T22:10:07.637Z
+- updatedAt: 2026-06-05T22:15:24.496Z
+- author: "opus-4.8[1m]"
+- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- headline: T163 (D29 web UX guard) changed BatchAnswerModal so answering a non-last question dismisses the modal instead of advancing to the next unanswered row
+- description: "TRUE if: the BatchAnswerModal's post-save behavior should ADVANCE to the next unanswered question (closing only when the batch is exhausted), but after T163's edits (adding `disabled={!answerHasText}` to the submit + changing `answerHasText` init/reset to read the stored answer + the batchSave/onSave path) the modal now CLOSES after a single non-last answer. Sub-possibilities: (a) the advance logic keys off a list/derivation that T163's answerHasText-reset effect or a `key={row.item.id}` change perturbs; (b) the modal's close condition (e.g. `rows.length===0` after the answered row drops out, or a reset-to-no-selection) fires too early; (c) the batchModalClose.test.tsx edits T163 made encode the BUGGY close-on-any-answer behavior, masking the regression. Confirmed by reading the BatchAnswerModal advance/close logic in ledger-web/src/App.tsx and diffing it against the pre-T163 (pre-6629483) version."
+- ledgerRefs: ["defects:D31"]
+- evidence: ["[correct] ledger-web/src/App.tsx:543-571 — batchSave: on save, adds row to batchAnsweredRef, computes `remaining`, `setBatchOpen(false)` ONLY when remaining.length===0, ELSE advances batchIndex to the next unanswered row. Non-last answer advances, does not dismiss. (re-validated, exact)","[correct] ledger-web/src/App.tsx:1695-1752 — ALL THREE modal save buttons call the SAME `onSave(row, ...)`=batchSave: 'save & mark answered' (1738), 'as recommended' (1747, value AS_RECOMMENDED_ANSWER), per-suggestion 'pick' (1699). None calls onClose. So the user's 'as recommended' uncertainty resolves to the identical correct advance path. (re-validated, exact)","[correct] `git log 6629483..HEAD -- ledger-web/src/App.tsx` returns EMPTY — NO commit touched this file after T163 (6629483). The current source IS the post-T163 source. (re-validated)","[correct] ledger-web/src/App.tsx:277-279,528,1012 — batchRows/batchOpen/batchSchema are captured state set at modal-open (531/528); reload() (469) refreshes ledger items but never resets them; modal render guard is `batchOpen && batchSchema!==null`. reload() cannot close the modal. (re-validated)","[correct] ledger-web/test/batchModalClose.test.tsx:233-257 — test 'mid-queue answer (Q2 of 3) advances to Q3, not back to Q1' asserts batch-overlay stays non-null after a non-last answer + progress 'X of 3' advances. This is EXACTLY the user-reported behavior, asserted CORRECT. (re-validated, exact)","[correct] `bun test batchModalClose.test.tsx` at HEAD => 6 pass / 0 fail — the green reproduction harness shows the modal advances on non-last answers and closes only on exhaustion. (re-run by orchestrator)"]
+- sessionLogs: ["docs/logs/20260605-221259-a78481c5e1824403a.md"]
