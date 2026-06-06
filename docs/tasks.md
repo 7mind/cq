@@ -282,10 +282,10 @@ archives:
 - completion: Added elkjs 0.11.1 (bundled entry), wired through Nix FOD + ledger-web symlink closure, refreshed FOD outputHash; both nix builds green.
 - sessionLogs: ["docs/logs/20260606-213541-adb007e3bc921fd76.md","docs/logs/20260606-213541-ac8524b4dcf023468.md"]
 
-### T202 — planned
+### T202 — done
 
 - createdAt: 2026-06-06T21:00:15.170Z
-- updatedAt: 2026-06-06T21:00:15.170Z
+- updatedAt: 2026-06-06T22:10:57.447Z
 - author: "opus-4.8[1m]"
 - session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
 - headline: Build the elk-based layout adapter + thin SVG diagram renderer (shared by both diagram tabs)
@@ -294,6 +294,9 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T201"]
 - ledgerRefs: ["goals:G23"]
+- resultCommit: 599948c
+- completion: Added src/diagramLayout.ts (async elk layered layout, self-loops + edge labels) + src/DiagramSvg.tsx (generic thin SVG renderer, parameterised testids) + diagramLayout.test.ts. Shared layer for both diagram tabs (T203/T205 consume it). bun run check green.
+- sessionLogs: ["docs/logs/20260606-221023-acd38b19b1b81ebba.md","docs/logs/20260606-221023-a6e702c34e735176f.md"]
 
 ### T203 — planned
 
