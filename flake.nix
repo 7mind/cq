@@ -356,6 +356,9 @@
               "$WORKSPACE/packages/ledger-web/node_modules/@cq/ledger-mcp"
             ln -s "$WORKSPACE/packages/ledger" \
               "$WORKSPACE/packages/ledger-web/node_modules/@cq/ledger"
+            # @cq/config — cq.toml parser used by serve.ts main() (T187).
+            ln -s "$WORKSPACE/packages/cq-config" \
+              "$WORKSPACE/packages/ledger-web/node_modules/@cq/config"
 
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/ledger-web \
               --add-flags "run $WORKSPACE/packages/ledger-web/src/serve.ts --" \

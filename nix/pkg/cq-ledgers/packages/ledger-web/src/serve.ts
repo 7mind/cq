@@ -26,6 +26,7 @@ import {
   startLedgerWatcher,
 } from "@cq/ledger-mcp";
 import type { WebuiConfig } from "@cq/config";
+import { loadConfig } from "@cq/config";
 
 const DEFAULT_PORT = 5180;
 const DEFAULT_HOST = "127.0.0.1";
@@ -197,9 +198,11 @@ async function serveStatic(url: URL, outdir: string, indexPath: string): Promise
 export async function serve(opts: ServeOpts): Promise<ReturnType<typeof Bun.serve>> {
   await prepare(opts.outdir);
   const indexPath = path.join(opts.outdir, "index.html");
-  return opts.mcpUrl === null
-    ? serveEmbedded(opts, indexPath)
-    : serveProxy(opts, opts.mcpUrl, indexPath);
+  if (opts.mcpUrl !== null) {
+    return scanForPort(opts.port, (p) => serveProxy({ ...opts, port: p }, opts.mcpUrl!, indexPath));
+  }
+  // Embedded: async setup first, then synchronous bind scan.
+  return serveEmbedded(opts, indexPath);
 }
 
 /** Reverse-proxy `/mcp` + `/ws` to a separate `ledger-mcp --http` server. */
@@ -287,26 +290,28 @@ async function serveEmbedded(
   const store = await createEmbeddedStore(opts.cwd);
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store, path.basename(opts.cwd));
 
-  const server = Bun.serve({
-    hostname: opts.host,
-    port: opts.port,
-    idleTimeout: 0, // long-lived SSE / WS streams must not time out
-    async fetch(req, srv): Promise<Response | undefined> {
-      const url = new URL(req.url);
-      if (url.pathname === WS_PROXY_PATH) {
-        if (srv.upgrade(req, { data: undefined })) return undefined;
-        return new Response("expected a websocket upgrade", { status: 426 });
-      }
-      if (url.pathname === MCP_PROXY_PATH) {
-        return handle(req);
-      }
-      return serveStatic(url, opts.outdir, indexPath);
-    },
-    websocket: {
-      open: onWsOpen,
-      message: onWsMessage,
-    },
-  });
+  const server = scanForPort(opts.port, (p) =>
+    Bun.serve({
+      hostname: opts.host,
+      port: p,
+      idleTimeout: 0, // long-lived SSE / WS streams must not time out
+      async fetch(req, srv): Promise<Response | undefined> {
+        const url = new URL(req.url);
+        if (url.pathname === WS_PROXY_PATH) {
+          if (srv.upgrade(req, { data: undefined })) return undefined;
+          return new Response("expected a websocket upgrade", { status: 426 });
+        }
+        if (url.pathname === MCP_PROXY_PATH) {
+          return handle(req);
+        }
+        return serveStatic(url, opts.outdir, indexPath);
+      },
+      websocket: {
+        open: onWsOpen,
+        message: onWsMessage,
+      },
+    }),
+  );
 
   // Publish a `changed` frame to subscribed browser sockets on any file change
   // (this server's own writes, the agent's stdio server, git, a hand-edit).
@@ -435,7 +440,14 @@ export function scanForPort<T>(startPort: number, bind: (port: number) => T): T 
 }
 
 export async function main(argv: readonly string[]): Promise<void> {
-  const opts = parseArgs(argv);
+  const parsed = parseArgs(argv);
+  // Load cq.toml from the ledger root (null when absent — feature off).
+  // A dangling reviewers/planners alias in cq.toml throws CqConfigError, which
+  // we treat as a fatal startup error (consistent with the catch below).
+  const config = loadConfig(parsed.cwd);
+  // Resolve effective host/port: explicit CLI flag > cq.toml [webui] > default.
+  const { host, port } = resolveWebOpts(parsed, config?.webui ?? null);
+  const opts: ServeOpts = { ...parsed, host, port };
   await fs.mkdir(opts.outdir, { recursive: true });
   const server = await serve(opts);
   // Stop the server and exit on Ctrl+C / SIGTERM so the port is released and
@@ -446,9 +458,13 @@ export async function main(argv: readonly string[]): Promise<void> {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  const actualPort = server.port;
   const backend = opts.mcpUrl === null ? `embedded MCP (cwd=${opts.cwd})` : `MCP upstream ${opts.mcpUrl}`;
+  // Machine-readable URL on stdout (for scripts/orchestrators).
+  process.stdout.write(`http://${opts.host}:${actualPort}/\n`);
+  // Human-readable line on stderr.
   process.stderr.write(
-    `ledger-web: serving http://${opts.host}:${server.port}/ → ${backend}\n`,
+    `ledger-web: serving http://${opts.host}:${actualPort}/ → ${backend}\n`,
   );
 }
 
