@@ -1,17 +1,12 @@
 /**
  * Pure projection helpers for compact ledger representations (T142, Q76).
  *
- * `projectCompact` strips large narrative fields from an Item so that
- * fetch_ledger can return a smaller payload when the caller only needs
- * a summary view. It imports LONG_FIELD_DENYLIST from columns.ts (the
- * column-eligibility concern) and extends it with additional large
- * narrative fields that are specific to the projection use-case.
+ * `projectCompact` strips large narrative fields from an Item so fetch_ledger
+ * can return a smaller summary-view payload. It reuses LONG_FIELD_DENYLIST from
+ * columns.ts and extends it with projection-specific narrative fields.
  *
- * `paginate` slices an Item array with stable ordering and returns both
- * the slice and the total item count — a building block for pagination
- * support in fetch_ledger.
- *
- * Both functions are pure and side-effect-free.
+ * `paginate` slices an Item array (stable ordering) and returns the slice plus
+ * the total item count — the building block for fetch_ledger pagination.
  */
 
 import type { Item } from "./types.js";

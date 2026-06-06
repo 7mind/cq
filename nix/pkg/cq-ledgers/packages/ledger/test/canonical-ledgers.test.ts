@@ -156,7 +156,6 @@ for (const factory of [inMem, fs_]) {
         const store = await factory.build();
         try {
           const m = await store.createMilestone({ title: `${c.ledger} milestone` });
-          // create — id is <prefix>1.
           const created = await store.createItem(c.ledger, m.id, {
             status:
               c.update.status === undefined
@@ -167,11 +166,9 @@ for (const factory of [inMem, fs_]) {
           expect(created.id).toBe(`${c.prefix}1`);
           expect(created.milestoneId).toBe(m.id);
 
-          // fetch
           const fetched = store.fetchItem(c.ledger, created.id);
           expect(fetched.id).toBe(created.id);
 
-          // search (substring across fields)
           const hits = store.search(c.ledger, c.searchNeedle);
           expect(hits.map((i) => i.id)).toContain(created.id);
 
@@ -179,12 +176,10 @@ for (const factory of [inMem, fs_]) {
           const updated = await store.updateItem(c.ledger, created.id, c.update);
           expect(updated.status).toBe(c.terminalStatus);
 
-          // archive the milestone now that the item is terminal; mark the
-          // milestone done too.
+          // archive once the item is terminal; mark the milestone done too.
           await store.updateMilestone(m.id, { status: "done" });
           const ptr = await store.archiveMilestone(m.id, `${c.ledger} done`);
           expect(ptr.id).toBe(m.id);
-          // The ledger's active group is gone; the archive is readable.
           const arch = await store.fetchArchive(c.ledger, m.id);
           expect(arch.kind).toBe("group");
           if (arch.kind === "group") {
@@ -229,7 +224,6 @@ for (const factory of [inMem, fs_]) {
         expect(ids.size).toBe(CASES.length + 2);
         // Each id carries its ledger's distinct prefix (HO is a 2-char prefix).
         const prefixes = [...ids].map((id) => {
-          // Extract the prefix: everything before the trailing digit sequence.
           const m2 = id.match(/^([A-Z]+)\d+$/);
           return m2 ? m2[1] : id;
         });
@@ -455,7 +449,6 @@ describe("§11 worked-example parser round-trips", () => {
       const item = parsed.milestones[0]?.items[0];
       expect(item).toBeDefined();
       fx.assertItem(item!.fields);
-      // Round-trip stability.
       const text2 = serializeLedger(parsed);
       const parsed2 = parseLedger(text2, { schema: fx.schema });
       expect(parsed2.milestones[0]?.items[0]?.fields).toEqual(item!.fields);

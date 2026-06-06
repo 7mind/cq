@@ -75,11 +75,9 @@ beforeEach(async () => {
   store = await buildStore();
   tools = createLedgerMcpTools(store);
 
-  // Create a milestone for items.
   await callTool(tools, "create_milestone", { title: "M1-title" });
 
-  // Seed goals with a large grounding blob.
-  // goals schema requires: title (string), description (string).
+  // Seed goals with a large grounding blob (schema requires title, description).
   await callTool(tools, "create_item", {
     ledger_id: "goals",
     milestone_id: "M1",
@@ -103,8 +101,7 @@ beforeEach(async () => {
     },
   });
 
-  // Seed questions with a large context blob.
-  // questions schema requires: question (string).
+  // Seed questions with a large context blob (schema requires question).
   await callTool(tools, "create_item", {
     ledger_id: "questions",
     milestone_id: "M1",
@@ -129,7 +126,6 @@ describe("fetch_ledger — no params (backward compat)", () => {
     expect(result.ledger.id).toBe("goals");
     const allItems = result.ledger.milestones.flatMap((g) => g.items);
     expect(allItems.length).toBe(2);
-    // grounding must be present and large.
     const first = allItems[0]!;
     expect(typeof first.fields["grounding"]).toBe("string");
     expect((first.fields["grounding"] as string).length).toBeGreaterThan(50_000);
@@ -267,7 +263,7 @@ describe("fetch_ledger — offset/limit pagination", () => {
     expect(result).toHaveProperty("items");
     expect(result).toHaveProperty("total");
     const ledger = result["ledger"] as Record<string, unknown>;
-    // milestones must NOT be present in the ledger meta when paginating.
+    // milestones must NOT be present in the ledger meta when paginating
     expect(ledger).not.toHaveProperty("milestones");
   });
 

@@ -226,10 +226,8 @@ export const DECISIONS_SCHEMA: LedgerSchema = {
   statusValues: ["proposed", "locked", "superseded"],
   terminalStatuses: ["locked", "superseded"],
   idPrefix: "K",
-  // F1 transition guard. proposed → locked/superseded; locked → superseded;
-  // superseded is terminal. (Both locked and superseded are terminal per the
-  // schema, so locked carries no outgoing transitions despite the proposed
-  // locked → superseded; see report note.)
+  // F1 transition guard. proposed → locked/superseded. Both locked and
+  // superseded are terminal, so locked carries no outgoing transitions.
   transitions: {
     proposed: ["locked", "superseded"],
     locked: [],

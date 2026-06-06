@@ -97,7 +97,7 @@ describe("D-LED-01 — id validation in core helpers", () => {
     const store = new InMemoryLedgerStore({ seed: [{ name: "xenos", schema }] });
     await store.init();
     // Caller-supplied ids must match the ledger's `^<prefix>\d+$` (§8a):
-    // milestones prefix M, the seeded `todos` ledger prefix T.
+    // milestones prefix M, the seeded `xenos` ledger prefix X.
     const m = await store.createMilestone({ id: "M7", title: "x" });
     expect(m.id).toBe("M7");
     const it = await store.createItem("xenos", "M7", {

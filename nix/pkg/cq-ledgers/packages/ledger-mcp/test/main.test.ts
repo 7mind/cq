@@ -100,7 +100,6 @@ describe("ledger-mcp stdio binary", () => {
 
   it("supports a full create → read → update → search round-trip that persists", async () => {
     await withClient(async (client) => {
-      // Milestone to anchor the item under.
       const ms = decode<{ milestone: { id: string } }>(
         await client.callTool({
           name: "create_milestone",
@@ -109,7 +108,6 @@ describe("ledger-mcp stdio binary", () => {
       );
       expect(ms.milestone.id).toBe("M9");
 
-      // Create an item in the seeded `xenos` ledger.
       const created = decode<{ item: { id: string; status: string } }>(
         await client.callTool({
           name: "create_item",
@@ -124,7 +122,6 @@ describe("ledger-mcp stdio binary", () => {
       const itemId = created.item.id;
       expect(created.item.status).toBe("open");
 
-      // Update its status.
       const updated = decode<{ item: { status: string } }>(
         await client.callTool({
           name: "update_item",
@@ -133,7 +130,6 @@ describe("ledger-mcp stdio binary", () => {
       );
       expect(updated.item.status).toBe("done");
 
-      // Fetch it back.
       const fetched = decode<{ item: { id: string; status: string } }>(
         await client.callTool({
           name: "fetch_item",
@@ -143,7 +139,6 @@ describe("ledger-mcp stdio binary", () => {
       expect(fetched.item.id).toBe(itemId);
       expect(fetched.item.status).toBe("done");
 
-      // Full-text search finds it cross-ledger.
       const hits = decode<{ results: Array<{ ledgerId: string }> }>(
         await client.callTool({
           name: "fts_search",

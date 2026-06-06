@@ -42,18 +42,10 @@ async function makeStore(
   return { store, root };
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 async function callBackupAndReinit(store: FsLedgerStore): Promise<string> {
   // Access private method via `any` cast — test-only pattern.
   return (store as unknown as Record<string, () => Promise<string>>)["backupAndReinit"]!();
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("FsLedgerStore.backupAndReinit", () => {
   it("creates docs/.backup/<sanitized-ts>/ directory", async () => {
@@ -64,7 +56,6 @@ describe("FsLedgerStore.backupAndReinit", () => {
 
     await callBackupAndReinit(store);
 
-    // Colons replaced with '-': "2026-06-01T12-34-56.000Z"
     const expectedDirName = fixedTs.replace(/:/g, "-");
     const backupDir = path.join(docsDir, ".backup", expectedDirName);
     const s = await stat(backupDir);
@@ -106,7 +97,6 @@ describe("FsLedgerStore.backupAndReinit", () => {
     await callBackupAndReinit(store);
 
     const registryText = await readFile(path.join(root, "docs", "ledgers.yaml"), "utf8");
-    // All canonical ledger names should appear in the fresh registry.
     for (const c of CANONICAL_LEDGERS) {
       expect(registryText).toContain(c.name);
     }
@@ -137,7 +127,6 @@ describe("FsLedgerStore.backupAndReinit", () => {
     for (const c of CANONICAL_LEDGERS) {
       const filePath = path.join(docsDir, `${c.name}.md`);
       const text = await readFile(filePath, "utf8");
-      // Each file should name its ledger.
       expect(text).toContain(c.name);
     }
   });

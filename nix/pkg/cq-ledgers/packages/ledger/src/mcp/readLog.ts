@@ -1,16 +1,14 @@
 /**
  * read_log capability (T147 / Q87).
  *
- * The `read_log` MCP tool performs a bounded, root-confined read of a file
- * under `<root>/docs/logs/`. Per R137 #6, the confinement root is the EXPLICIT
- * FsLedgerStore root — NOT the generic `LedgerStore` interface (which has no
- * cwd/root accessor, and whose in-memory implementation has no filesystem).
- *
- * The capability is therefore modelled as a standalone function type that the
- * FS-store layer supplies (closing over its own `<root>/docs/logs`), threaded
- * EXPLICITLY into the tool factories alongside the store. When the factory is
- * wired over an in-memory store (no filesystem), no capability is supplied and
- * `read_log` throws the documented `ReadLogNotImplementedError`.
+ * The `read_log` MCP tool performs a bounded, root-confined read of a file under
+ * `<root>/docs/logs/`. Per R137 #6 the confinement root is the EXPLICIT
+ * FsLedgerStore root, NOT the generic `LedgerStore` interface (no root accessor;
+ * its in-memory impl has no filesystem). So the capability is a standalone
+ * function type the FS-store layer supplies (closing over its `<root>/docs/logs`)
+ * and threads explicitly into the tool factories. Wired over an in-memory store
+ * (no filesystem), no capability is supplied and `read_log` throws
+ * `ReadLogNotImplementedError`.
  */
 
 /** Result of a bounded read of a docs/logs file. */

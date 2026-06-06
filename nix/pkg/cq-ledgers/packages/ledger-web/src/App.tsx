@@ -269,11 +269,9 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   // Latest-callback ref: the live connection lives across ledger changes, so
   // its onChanged must call the freshest refresh closure, not a stale one.
   const refreshRef = useRef<() => void>(() => {});
-  // Batch-answer modal (Q33): steps through all open answerable questions one
-  // at a time in a focused, larger-font layout. `batchRows` is the captured
-  // snapshot of open items taken when the modal opens; `batchIndex` is the
-  // current step; `batchSchema` is the (questions) ledger schema those rows
-  // belong to. Closed when batchOpen is false.
+  // Batch-answer modal (Q33). `batchRows` is the snapshot of open items
+  // captured when the modal opens; `batchIndex` is the current step;
+  // `batchSchema` is the (questions) ledger schema those rows belong to.
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchRows, setBatchRows] = useState<Row[]>([]);
   const [batchSchema, setBatchSchema] = useState<LedgerSchema | null>(null);
@@ -511,10 +509,9 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     [client, isMilestones, ledger, reload, mainView],
   );
 
-  // Open the batch-answer modal (Q33): fetch the questions ledger (the default
-  // scope) and capture the set of OPEN answerable items — those where
-  // canAnswer(schema, status) holds AND the item is not yet answered. The set
-  // is captured once (a stable snapshot); the modal steps through it.
+  // Open the batch-answer modal (Q33): fetch the questions ledger and capture a
+  // stable snapshot of OPEN answerable items (canAnswer holds AND not yet
+  // answered). The modal steps through that snapshot.
   const openBatch = useCallback(async () => {
     if (client === null) return;
     try {
@@ -534,12 +531,10 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     }
   }, [client]);
 
-  // Persist one batch answer: write the `answer` field + the `answered` status
-  // for the row at `i`, then advance to the next still-open question. After
-  // persisting, we track answered IDs locally (batchAnsweredRef) and recompute
-  // the remaining-open set. If it is empty the modal closes; otherwise the
-  // index advances to the next unanswered row so mid-queue answers do not
-  // strand the modal on an already-answered row (D19 / T115).
+  // Persist one batch answer (`answer` field + `answered` status), then track
+  // answered IDs locally (batchAnsweredRef) and recompute the remaining-open
+  // set: empty closes the modal, else advance to the next still-open row so
+  // mid-queue answers do not strand on an already-answered row (D19 / T115).
   const batchSave = useCallback(
     async (row: Row, answer: string) => {
       if (client === null) return;
@@ -1034,8 +1029,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
 
       <div className="lw-body">
         <nav className="lw-sidebar" data-testid="ledger-list">
-          {/* Section 1: the 'questions' ledger (if present), then the Q&A
-              batch-answer button. */}
+          {/* Section 1: 'questions' ledger (if present), then the Q&A button. */}
           {visualLedgers.map((l, vi) => {
             if (l.name !== QUESTIONS_LEDGER) return null;
             const cls = [
@@ -1063,7 +1057,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
               </button>
             );
           })}
-          {/* Batch-answer entry point (Q33): immediately after 'questions'. */}
+          {/* Batch-answer entry point (Q33). */}
           <button
             type="button"
             className="lw-batch-open"
@@ -1072,7 +1066,6 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
           >
             Q&A
           </button>
-          {/* Visual divider between the Q&A section and the other ledgers. */}
           <hr className="lw-sidebar-divider" data-testid="sidebar-divider" />
           {/* Section 2: all ledgers except 'questions', in their original order. */}
           {visualLedgers.map((l, vi) => {
@@ -1608,15 +1601,12 @@ function StateMachineDiagram({ ledger, schema }: { ledger: string; schema: Ledge
 }
 
 /**
- * Batch-answer modal (Q33): a large, focused, LARGER-FONT popup that steps
- * through the captured set of open answerable questions one at a time. Reuses
- * the HelpOverlay backdrop pattern. Each step shows the question's narrative
- * fields (question, context, suggestions list, highlighted recommendation) and
- * the same two actions as the detail answerBox — "save & mark answered" and
- * "as recommended". The answer textarea is UNCONTROLLED (ref) so happy-dom can
- * drive it; it is remounted per step via the item-id key so each question
- * starts from its own stored answer. Prev/Next buttons mirror the global
- * ctrl/cmd+[ and ctrl/cmd+] chords (wired in the App keydown handler).
+ * Batch-answer modal (Q33): steps through the captured set of open answerable
+ * questions one at a time, reusing the HelpOverlay backdrop. Same two actions as
+ * the detail answerBox ("save & mark answered" / "as recommended"). The answer
+ * textarea is UNCONTROLLED (ref) so happy-dom can drive it, and is remounted per
+ * step via the item-id key so each question starts from its own stored answer.
+ * Prev/Next mirror the global ctrl/cmd+[ and ctrl/cmd+] chords.
  */
 function BatchAnswerModal({
   rows,
@@ -1968,23 +1958,16 @@ function MilestoneSubsection({
 }
 
 /**
- * Renders the item table.
+ * Renders the item table, in one of three layouts:
  *
- * For non-milestones ledgers the table is broken into per-milestone
- * SUBSECTIONS (collapsible headers = milestone id + title + status, in
- * fetch_ledger group order). The per-row milestone column is omitted; the
- * subsection header carries that information.
- *
- * For the milestones ledger itself (isMilestones=true) the table falls back
- * to the simple flat layout (milestone column included) because sub-grouping
- * by milestone is not meaningful there.
- *
- * For the goals ledger (isGoals=true; T83 / Q48, user-deviated) the table is a
- * FLAT list with NO per-coordination-milestone subsections AND no single
- * milestone column — a goal's coordination grouping is suppressed; its
- * work-milestone ids live in fields.milestones and are shown in the detail
- * panel instead. It reuses SubsectionItemTable (id/status/summary) so the row
- * structure/classes match the other ledgers.
+ * - non-milestones: per-milestone collapsible SUBSECTIONS (header = id + title +
+ *   status, in fetch_ledger order); the per-row milestone column is omitted.
+ * - milestones (isMilestones): flat table with the milestone column — sub-
+ *   grouping by milestone is not meaningful there.
+ * - goals (isGoals; T83 / Q48, user-deviated): FLAT list, no coordination-
+ *   milestone subsections and no milestone column — a goal's work-milestone ids
+ *   live in fields.milestones and show in the detail panel. Reuses
+ *   SubsectionItemTable so row structure/classes match the other ledgers.
  */
 function ItemTable({
   groups,
@@ -2578,11 +2561,9 @@ function DetailPanel({
   }
 
   // Guard-aligned quick transitions: when the schema declares a `transitions`
-  // map, the legal next statuses from the item's current one are offered as
-  // one-click buttons (a terminal status maps to `[]` → none). When the map is
-  // absent (null), no buttons render and the existing status editor is the
-  // only path — left untouched. Each button issues the existing update path
-  // (status-only patch, preserving the item's current fields).
+  // map, the legal next statuses become one-click buttons (terminal → `[]` →
+  // none); when absent (null), only the status editor is offered. Each button
+  // issues a status-only patch preserving the item's current fields.
   const allowed = schema.transitions?.[row.item.status] ?? null;
 
   // "Answer & resolve" affordance (questions ledger): a single action that
@@ -2594,13 +2575,11 @@ function DetailPanel({
   const answerable = !isMilestones && onSave !== undefined && !isArchived && canAnswer(schema, row.item.status);
   const hasRecommendation = fieldToString(row.item.fields[RECOMMENDATION_FIELD]).trim().length > 0;
   // A question item gets a fixed field order with a highlighted recommendation
-  // (T23). For non-questions the original top answer box + short-first order is
-  // kept unchanged.
+  // (T23); non-questions keep the top answer box + short-first order.
   const isQ = !isMilestones && isQuestion(schema);
-  // Goals (T83 / Q48): the goal's coordination-milestone (row.milestoneId) is
-  // NOT shown; instead its work-milestone ids (fields.milestones) are rendered
-  // as a `milestones` list. The `milestones` field is therefore lifted out of
-  // the generic field list so it is not rendered twice.
+  // Goals (T83 / Q48): show work-milestone ids (fields.milestones) as a list
+  // instead of the coordination-milestone (row.milestoneId); the field is lifted
+  // out of the generic field list below so it is not rendered twice.
   const isGoal = !isMilestones && ledger === GOALS_LEDGER;
   const goalMilestonesRaw = isGoal ? row.item.fields[GOAL_MILESTONES_FIELD] : undefined;
   const goalMilestones = Array.isArray(goalMilestonesRaw)
@@ -2650,13 +2629,11 @@ function DetailPanel({
     </div>
   );
 
-  // Question field rendering (Q31 ANSWER): the structural metadata trio
-  // (milestone, status, by) renders FIRST in that exact order, then the
-  // narrative sequence question → context → suggestions → recommendation →
-  // answer. The recommendation keeps its HIGHLIGHTED block; the answer is the
-  // editable box when answerable, else the stored value. Any other metadata
-  // fields render after the trio but before the narrative. Owns the whole
-  // question <dl> body (status/milestone/by are NOT repeated by the outer dl).
+  // Question field rendering (Q31 ANSWER): metadata trio (milestone, status, by)
+  // first, then any other metadata, then the narrative question → context →
+  // suggestions → recommendation (highlighted) → answer (editable box when
+  // answerable, else the stored value). Owns the whole question <dl> body — the
+  // outer dl does not repeat status/milestone/by.
   const renderQuestionFields = (): React.ReactElement => {
     const trio = new Set([QUESTION_FIELD, CONTEXT_FIELD, SUGGESTIONS_FIELD, RECOMMENDATION_FIELD, ANSWER_FIELD]);
     const entries = Object.entries(row.item.fields) as Array<[string, FieldValue]>;

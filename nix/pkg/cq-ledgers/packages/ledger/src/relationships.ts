@@ -8,8 +8,8 @@
  *
  * Supported derivations (T46):
  *  - defectFixTaskIds: for a defect item D, the set of task ids that fix it.
- *  - hypothesisAncestry: for a hypothesis H, the ancestry chain to the root
- *    and the set of direct children.
+ *  - hypothesisRelationships: for a hypothesis H, the ancestry chain to the
+ *    root and the set of direct children.
  */
 
 import type { Item } from "./types.js";

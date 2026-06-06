@@ -1,29 +1,19 @@
-# Updating to a new version:
-#
-#   Easy path:  ./update.sh   (run from this directory)
-#               then verify:  ./verify-configs --verbose "$HOSTNAME"
-#
-# The script below automates the manual recipe. Keep the two in sync — if you
-# change one, change the other.
+# Updating: run ./update.sh (this dir), then verify with
+# ./verify-configs --verbose "$HOSTNAME". The script automates the manual
+# recipe below — keep the two in sync.
 #
 # Manual recipe:
-#
-#   1. Look up the latest version on npm:
-#        curl -s https://registry.npmjs.org/@anthropic-ai/claude-code/latest \
-#          | jq -r .version
-#
-#   2. Fetch SRI hashes for each platform tarball and bump `version` + `hash`
-#      fields below. The umbrella `@anthropic-ai/claude-code` package is just a
-#      stub that postinstalls the matching `claude-code-<platform>` native pkg,
-#      so we hash those directly:
-#
+#   1. Latest version:
+#        curl -s https://registry.npmjs.org/@anthropic-ai/claude-code/latest | jq -r .version
+#   2. Bump `version` + the per-platform `hash` fields below. The umbrella
+#      `@anthropic-ai/claude-code` package is just a stub that postinstalls the
+#      matching `claude-code-<platform>` native pkg, so we hash those directly:
 #        v=2.1.154; for pkg in claude-code-{linux-x64,linux-arm64,darwin-x64,darwin-arm64}; do
 #          url="https://registry.npmjs.org/@anthropic-ai/${pkg}/-/${pkg}-${v}.tgz"
 #          sha=$(nix-prefetch-url --type sha256 --unpack "$url" 2>/dev/null)
 #          sri=$(nix hash convert --hash-algo sha256 --to sri "$sha")
 #          printf '%-30s %s\n' "$pkg" "$sri"
 #        done
-#
 #   3. Verify the build:  ./verify-configs --verbose "$HOSTNAME"
 {
   lib,
@@ -40,9 +30,7 @@
 let
   version = "2.1.156";
 
-  # Upstream now ships native binaries per platform via @anthropic-ai/claude-code-<platform>.
-  # The umbrella @anthropic-ai/claude-code package is just a stub + postinstall that copies
-  # the matching native binary into place. We skip the stub and fetch the native pkg directly.
+  # Skip the umbrella stub; fetch the per-platform native pkg directly (see header).
   sources = {
     "x86_64-linux" = {
       pkg = "claude-code-linux-x64";

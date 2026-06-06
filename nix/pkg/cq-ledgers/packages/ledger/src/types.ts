@@ -125,7 +125,7 @@ export interface ResolvedMilestone {
  * milestone-group is paired with the resolved metadata of its
  * corresponding milestone-item in the `milestones` ledger. For the
  * milestones ledger itself the resolution is the trivial self-resolution
- * (the group is `M0 — active`; the items resolve to themselves with
+ * (the `## active` group; the items resolve to themselves with
  * `title` / `description` pulled from their own fields).
  */
 export interface FetchedMilestoneGroup {
@@ -399,7 +399,7 @@ export class GoalPreconditionError extends LedgerError {
 /**
  * Thrown when an operation would violate a bootstrapped invariant of
  * the `milestones` ledger — e.g. attempting to archive the bootstrap
- * group `M0`, or to re-create the milestones ledger with a different
+ * active group, or to re-create the milestones ledger with a different
  * schema, or to delete it.
  */
 export class BootstrapViolationError extends LedgerError {

@@ -28,21 +28,16 @@ import { App } from "./app.js";
 import { McpLedgerClient } from "./mcpClient.js";
 
 /**
- * D13/T132: ink render options for the TUI. `incrementalRendering` enables
- * ink's line-diff renderer (available in 7.0.5; default off). The default
- * standard renderer erases and rewrites the WHOLE frame on every change
- * (log-update.js: `eraseLines(prev) + str`), so a pure cursor move — which
- * re-renders the newly-selected item's full detail content — pays a full-frame
- * stdout redraw. The incremental renderer diffs line-by-line and rewrites only
- * the lines that actually changed, so per-move stdout-write cost tracks the
- * changed lines, not the whole frame. The rendered frame STRING is identical
- * either way (the reconciler produces the same `str`; only the terminal-write
- * encoding differs), so there is no visual/behavioural change for a settled
- * cursor. Exported so the T133 regression guard can assert the flag is wired.
+ * D13/T132: ink render options for the TUI. `incrementalRendering` (ink 7.0.5,
+ * default off) line-diffs and rewrites only changed lines; the default standard
+ * renderer erases+rewrites the WHOLE frame each change, so a cursor move pays a
+ * full-frame redraw of the newly-selected item's detail. The rendered frame
+ * STRING is identical either way (only the terminal-write encoding differs), so
+ * no visual/behavioural change for a settled cursor. Exported so the T133 guard
+ * can assert the flag is wired.
  *
- * Measured (debug/20260603-150000-d13-distinct-navperf.tsx, distinct long
- * descriptions, N=60, NAV=25): per-move stdout-write ~5839 B/move (flag off) →
- * ~2737 B/move (flag on) = ~53% reduction.
+ * Measured (distinct long descriptions, N=60, NAV=25): ~5839 → ~2737 B/move
+ * (~53% reduction).
  */
 export const TUI_RENDER_OPTIONS: RenderOptions = {
   incrementalRendering: true,

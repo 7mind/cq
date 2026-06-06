@@ -20,9 +20,8 @@ import {
 describe("eligibleColumnFields", () => {
   it("includes a short field and excludes long/narrative + intrinsic columns", () => {
     const eligible = eligibleColumnFields(TASKS_SCHEMA);
-    // short, schema-declared field is eligible
     expect(eligible).toContain("suggestedModel");
-    // long/narrative field is excluded
+    // long/narrative fields excluded
     expect(eligible).not.toContain("description");
     expect(eligible).not.toContain("completion");
     // always-shown intrinsic columns are never offered as extras
@@ -49,25 +48,22 @@ describe("eligibleColumnFields", () => {
   });
 
   it("excludes summary-source fields headline/title/question to prevent duplication with summary cell", () => {
-    // headline appears in defects, tasks, hypothesis, decisions
+    // headline: defects, tasks, hypothesis, decisions
     expect(eligibleColumnFields(DEFECTS_SCHEMA)).not.toContain("headline");
     expect(eligibleColumnFields(TASKS_SCHEMA)).not.toContain("headline");
     expect(eligibleColumnFields(HYPOTHESIS_SCHEMA)).not.toContain("headline");
     expect(eligibleColumnFields(DECISIONS_SCHEMA)).not.toContain("headline");
 
-    // title appears in goals
+    // title: goals
     expect(eligibleColumnFields(GOALS_SCHEMA)).not.toContain("title");
 
-    // question appears in questions ledger
+    // question: questions ledger
     expect(eligibleColumnFields(QUESTIONS_SCHEMA)).not.toContain("question");
   });
 
   it("still includes genuine eligible fields when excluding summary-source fields", () => {
-    // suggestedModel should still be eligible on tasks despite headline exclusion
     expect(eligibleColumnFields(TASKS_SCHEMA)).toContain("suggestedModel");
-    // severity should still be eligible on defects despite headline exclusion
     expect(eligibleColumnFields(DEFECTS_SCHEMA)).toContain("severity");
-    // parentHypothesis should still be eligible on hypothesis despite headline exclusion
     expect(eligibleColumnFields(HYPOTHESIS_SCHEMA)).toContain("parentHypothesis");
   });
 });
@@ -88,7 +84,6 @@ describe("defaultColumns", () => {
     for (const col of defaultColumns("tasks")) {
       expect(eligibleColumnFields(TASKS_SCHEMA)).toContain(col);
     }
-    // goals default is empty, so nothing to check beyond shape
     expect(defaultColumns("goals")).toEqual([]);
     void GOALS_SCHEMA;
   });

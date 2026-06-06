@@ -119,7 +119,6 @@ async function makeFixture(opts: {
   await mkdir(tasksArchiveDir, { recursive: true });
   await mkdir(msArchiveDir, { recursive: true });
 
-  // Write the canonical registry.
   await writeFile(
     path.join(docsDir, "ledgers.yaml"),
     serializeRegistry({

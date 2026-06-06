@@ -53,7 +53,6 @@ runStoreAbstractSuite({
   },
 });
 
-// Cleanup tmp dirs after the file finishes.
 import { afterAll, describe, it, expect } from "bun:test";
 afterAll(async () => {
   for (const d of dirs) {

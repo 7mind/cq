@@ -1,49 +1,22 @@
 /**
  * Ledger MCP tool factory (msunify cycle).
  *
- * Returns an array of `tool()` instances ready to be passed to
+ * Returns an array of `tool()` instances for
  * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
+ * The 21-tool surface is `LEDGER_TOOL_NAMES` (see the section dividers below);
+ * the stdio counterpart is `registerLedgerStdioTools` (./stdioLedgerTools.ts).
  *
- * Tool surface (21 tools: 13 msunify + fts_search + snapshot + reopen_item + unarchive_item + read_log + get_reviewers + get_planners + get_config):
+ * Capability-gated tools:
+ *  - read_log requires an explicit FS-store `readLog` capability (Q87 / R137 #6);
+ *    over an in-memory store it throws `ReadLogNotImplementedError`.
+ *  - get_reviewers / get_planners / get_config require an injected
+ *    `configCapability` (constructed in @cq/ledger-mcp over @cq/config, R193/G18);
+ *    absent it they throw `ConfigNotImplementedError`.
  *
- * Item / ledger surface (9):
- *  - enumerate_ledgers, fetch_ledger, fetch_ledger_archive,
- *    fetch_item (renamed from ledger_fetch),
- *    update_item (renamed from ledger_update),
- *    create_item, create_ledger, search_items, fts_search.
- *
- * Milestone surface (5) — global, operate against the `milestones` ledger:
- *  - create_milestone(title, description?, blockedBy?, dependsOn?)
- *  - update_milestone(milestone_id, { title?, description?, status?, blockedBy?, dependsOn? })
- *  - fetch_milestone(milestone_id) → { milestone, resolved, references }
- *  - archive_milestone(milestone_id, summary) → { pointer }
- *  - list_milestone_items(milestone_id) → { items: Record<ledger, Item[]> }
- *
- * Cross-ledger overview (1):
- *  - snapshot() → { ledger: LedgerSnapshot }
- *
- * Recovery tools (2):
- *  - reopen_item(ledger_id, item_id, to_status) — recover terminal item
- *  - unarchive_item(ledger_id, milestone_id, item_id) — restore archived item
- *
- * Filesystem read (1):
- *  - read_log(path) — bounded, root-confined read of a <root>/docs/logs file.
- *    Requires an explicit FS-store `readLog` capability (Q87 / R137 #6); when
- *    the factory is wired over an in-memory store it throws not-implemented.
- *
- * Config capability (3) — R193 / G18:
- *  - get_reviewers() — the RESOLVED reviewer set from the repo's cq.toml.
- *  - get_planners() — the RESOLVED planner set from the repo's cq.toml.
- *  - get_config() — the full parsed cq.toml (aliases + raw reviewer/planner names).
- *    All require an injected `configCapability` (constructed in @cq/ledger-mcp
- *    over @cq/config); absent it they throw `ConfigNotImplementedError`.
- *
- * Each handler turns the validated input into a single LedgerStore call,
- * serialises the result as JSON, and returns it as a text content block.
- * Errors are surfaced via thrown Error (the SDK reports them as tool errors).
- *
- * Auto-allow: tool names are prefixed `mcp__cq__*` automatically by the SDK;
- * the bridge's existing `canUseTool` auto-allow rule already covers them.
+ * Each handler turns validated input into a single LedgerStore call, serialises
+ * the result as JSON, and returns it as a text content block. Errors surface via
+ * thrown Error (the SDK reports them as tool errors). Tool names are prefixed
+ * `mcp__cq__*` by the SDK; the bridge's `canUseTool` auto-allow already covers them.
  */
 
 import { z } from "zod";
@@ -201,7 +174,7 @@ export function createLedgerMcpTools(
   readLog?: ReadLogCapability,
   configCapability?: ConfigCapability,
 ): AnyTool[] {
-  // ---- Item / ledger surface (8) -----------------------------------------
+  // ---- Item / ledger surface (9) -----------------------------------------
 
   const enumerateLedgers = tool(
     "enumerate_ledgers",

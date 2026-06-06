@@ -45,7 +45,6 @@ describe("FsLedgerStore.reset with non-canonical ledger", () => {
   it("(a) no orphan docs/ops.md, (b) no ops registry entry, (c) no FTS hits after reset", async () => {
     const { store, root } = await makeStore();
 
-    // Create a non-canonical ledger and write an item into it.
     await store.createLedger("ops", OPS_SCHEMA);
 
     const milestone = await store.createMilestone({ title: "ops milestone" });
@@ -54,18 +53,14 @@ describe("FsLedgerStore.reset with non-canonical ledger", () => {
       fields: { headline: "ops-item-one" },
     });
 
-    // Confirm FTS can find the item before reset.
     const beforeHits = await store.ftsSearch("ops-item-one");
     expect(beforeHits.length).toBeGreaterThan(0);
 
-    // Confirm the non-canonical ledger file exists on disk.
     const opsFilePath = path.join(root, "docs", "ops.md");
     expect((await stat(opsFilePath)).isFile()).toBe(true);
 
-    // Confirm the non-canonical ledger appears in enumerate().
     expect(store.enumerate()).toContain("ops");
 
-    // === RESET ===
     await store.reset();
 
     // (a) No orphan docs/ops.md file on disk.
@@ -105,7 +100,6 @@ describe("FsLedgerStore.reset with non-canonical ledger", () => {
 
     const summary = await store.reset();
 
-    // The backup dir should include ops.md alongside the canonical files.
     const { readdir } = await import("node:fs/promises");
     const backedUp = await readdir(summary.backupDir);
     expect(backedUp).toContain("ops.md");

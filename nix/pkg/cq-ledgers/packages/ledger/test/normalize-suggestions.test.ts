@@ -128,7 +128,6 @@ describe("normalize-suggestions — store-level (FsLedgerStore)", () => {
   it("normalizes semicolon-joined suggestions and is idempotent", async () => {
     const { store } = await makeStore();
 
-    // Create a question item with a semicolon-joined suggestions field.
     const item = await store.createItem(
       QUESTIONS_LEDGER,
       MILESTONES_AMBIENT_ID,
@@ -142,23 +141,19 @@ describe("normalize-suggestions — store-level (FsLedgerStore)", () => {
       },
     );
 
-    // Confirm the stored value is the raw semicolon-joined form.
     const before = store.fetchItem(QUESTIONS_LEDGER, item.id);
     expect(before.fields["suggestions"]).toEqual(["option a; option b; option c"]);
 
-    // First normalization pass — should write 1 item.
     const writesFirst = await runNormalizationPass(store);
     expect(writesFirst).toBe(1);
 
-    // Assert the stored value is now properly split.
     const after = store.fetchItem(QUESTIONS_LEDGER, item.id);
     expect(after.fields["suggestions"]).toEqual(["option a", "option b", "option c"]);
 
-    // Second normalization pass — should be a no-op (idempotent).
+    // second pass is a no-op (idempotent)
     const writesSecond = await runNormalizationPass(store);
     expect(writesSecond).toBe(0);
 
-    // Value must be unchanged after second pass.
     const after2 = store.fetchItem(QUESTIONS_LEDGER, item.id);
     expect(after2.fields["suggestions"]).toEqual(["option a", "option b", "option c"]);
 

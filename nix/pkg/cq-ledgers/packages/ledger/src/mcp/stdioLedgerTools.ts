@@ -3,19 +3,14 @@
  *
  * Registers the 21-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
  * `@modelcontextprotocol/sdk` `McpServer` via `registerTool`, backed by a
- * `LedgerStore`. This is the stdio counterpart to `createLedgerMcpTools`
- * (the in-process Claude-SDK `tool()` factory in `./ledgerTools.ts`): both
- * carry identical operational semantics, but the stdio path takes raw Zod
- * shapes through `McpServer.registerTool` whereas the Claude path builds
- * `SdkMcpToolDefinition` objects.
+ * `LedgerStore`. Stdio counterpart to `createLedgerMcpTools` (the in-process
+ * Claude-SDK `tool()` factory in `./ledgerTools.ts`): identical operational
+ * semantics, but this path takes raw Zod shapes through `registerTool` whereas
+ * the Claude path builds `SdkMcpToolDefinition` objects.
  *
- * Consumers:
- *  - `@cq/ledger-mcp` — the standalone, cq-free ledger MCP binary.
- *  - `@cq/cq-mcp` — the cq-coupled binary (adds ask/submit/WS on top).
- *
- * Keeping this here (rather than in either binary) is what lets both
- * stdio servers share one copy of the tool surface; the schema-drift
- * guard between the stdio path and the Claude path is the test suite.
+ * Consumers: `@cq/ledger-mcp` (standalone cq-free binary) and `@cq/cq-mcp`
+ * (cq-coupled, adds ask/submit/WS). Shared here so both stdio servers use one
+ * copy; the schema-drift guard against the Claude path is the test suite.
  */
 
 import { z } from "zod";

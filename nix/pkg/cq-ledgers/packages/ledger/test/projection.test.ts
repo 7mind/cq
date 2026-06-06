@@ -88,7 +88,6 @@ describe("projectCompact — goals item", () => {
     const originalSize = JSON.stringify(goalsItem).length;
     const projectedSize = JSON.stringify(projected).length;
     expect(projectedSize).toBeLessThan(originalSize);
-    // The projected payload must be far smaller when the blob is stripped
     expect(projectedSize).toBeLessThan(originalSize / 10);
   });
 
@@ -192,7 +191,6 @@ describe("projectCompact — immutability", () => {
       rootCause: "Off-by-one error",
     });
     projectCompact(item);
-    // Original item is unchanged
     expect(item.fields).toHaveProperty("description");
     expect(item.fields).toHaveProperty("rootCause");
   });
@@ -203,7 +201,7 @@ describe("projectCompact — immutability", () => {
 // ---------------------------------------------------------------------------
 
 describe("paginate", () => {
-  const items = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; // 10 elements
+  const items = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
   it("returns correct total", () => {
     const result = paginate(items, 0, 5);

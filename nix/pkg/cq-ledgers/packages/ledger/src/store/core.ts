@@ -294,8 +294,8 @@ export function applyUpdateItem(
  * Apply a `createItem` operation against `ledger`.
  *
  * - In the milestones ledger: the only allowed `milestoneId` is the
- *   bootstrap group `M0`. All milestone-items live there; the caller
- *   (FsLedgerStore.createMilestone) routes here.
+ *   bootstrap active group (MILESTONES_ACTIVE_GROUP_ID). All milestone-items
+ *   live there; the caller (FsLedgerStore.createMilestone) routes here.
  * - In every other ledger: if no depth-2 group with id === `milestoneId`
  *   exists yet, one is auto-created (empty title, empty description).
  *   This is the per-msunify-1 plan decision #1: the dropped
@@ -317,7 +317,7 @@ export function applyCreateItem(
   if (existing !== undefined) {
     milestone = existing;
   } else if (ledger.id === MILESTONES_LEDGER) {
-    // The milestones ledger only ever has the M0 group; anything else
+    // The milestones ledger only ever has the active group; anything else
     // is a logic error.
     throw new MilestoneNotFoundError(ledger.id, milestoneId);
   } else {
@@ -377,7 +377,7 @@ export function applyCreateItem(
  * Apply a `createMilestone` operation against the milestones ledger.
  *
  * Allocates an `M<n>` item id via the ledger's own item counter,
- * places the item under the bootstrap `M0` group, and seeds the four
+ * places the item under the bootstrap active group, and seeds the four
  * milestone-item fields (`title`, `description?`, `blockedBy?`,
  * `dependsOn?`) via the standard `applyCreateItem` path.
  *
@@ -503,12 +503,12 @@ export function applyDetachMilestoneGroup(
 }
 
 /**
- * Detach a single milestone-item out of the milestones ledger's M0
+ * Detach a single milestone-item out of the milestones ledger's active
  * group, after verifying it is in a terminal status. Returns the
  * detached item for the caller to persist as `./archive/milestones/<id>.md`,
  * plus the archive pointer the caller is responsible for appending.
  *
- * Bootstrap invariant: the M0 group itself is never detached, only
+ * Bootstrap invariant: the active group itself is never detached, only
  * individual items under it.
  */
 export function applyDetachMilestoneItem(

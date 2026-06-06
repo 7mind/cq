@@ -14,8 +14,7 @@
  * Usage:
  *   bun run scripts/normalize-suggestions.ts [--cwd /path/to/repo]
  *
- * The --cwd argument defaults to the process working directory (i.e. the
- * repo root when invoked from the root, which is where docs/ lives).
+ * --cwd defaults to the process working directory (the repo root, where docs/ lives).
  */
 
 import * as path from "node:path";

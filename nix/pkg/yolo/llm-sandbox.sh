@@ -156,7 +156,6 @@ for bind in "${DEV_BINDS[@]}"; do
   fi
 done
 
-# Environment variables
 for env in "${ENVS[@]}"; do
   IFS='=' read -r name value <<< "$env"
   BWRAP_ARGS+=(--setenv "$name" "$value")

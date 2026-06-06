@@ -1,27 +1,15 @@
 /**
- * Pure column-model helpers (T60, item #1 — foundation for both UIs).
- *
- * These functions decide which schema fields a frontend may offer as
- * *table columns* and which extra columns each ledger shows by default.
- * They are field-LEVEL rules (which field names can ever be a column),
- * distinct from the per-value `isShortField` heuristic that formats a
- * single rendered cell.
- *
- * They are side-effect-free and depend only on a `LedgerSchema`'s field
- * names and a ledger name, so both the web (T61) and TUI (T62) clients —
- * and their tests — import ONE definition from `@cq/ledger`. No Node
- * builtins are touched, so a plain package-index export is sufficient
- * (cf. the T46 `./relationships` helper, which only needed a leaf subpath
- * because of browser-bundle concerns that do not apply here).
+ * Pure column-model helpers (T60). Field-LEVEL rules deciding which schema
+ * field names may ever be a table column, distinct from the per-value
+ * `isShortField` cell-formatting heuristic. Side-effect-free; shared by the
+ * web (T61) and TUI (T62) clients.
  *
  * Per Q29/Q30:
- *  - `eligibleColumnFields(schema)` — every schema field name EXCEPT a small
- *    denylist of known long/narrative fields, and EXCEPT the intrinsic
- *    `id`/`status`/`summary` columns which are ALWAYS shown (so they are
- *    never offered as toggleable extra columns).
- *  - `defaultColumns(ledgerName)` — the per-ledger set of extra columns shown
- *    by default: `tasks` defaults to `suggestedModel`; every other ledger
- *    defaults to none-extra.
+ *  - `eligibleColumnFields(schema)` — every schema field name EXCEPT the
+ *    long/narrative denylist and EXCEPT the always-shown intrinsic
+ *    `id`/`status`/`summary` columns.
+ *  - `defaultColumns(ledgerName)` — per-ledger default extra columns: `tasks`
+ *    defaults to `suggestedModel`; every other ledger to none.
  */
 
 import type { LedgerSchema } from "./types.js";
@@ -59,11 +47,9 @@ export const ALWAYS_SHOWN_COLUMNS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Schema field names that are sources for the summary cell (headline, title, question).
- * These are excluded from the eligible-fields set to prevent duplication: the summary cell
- * already displays the rendered value of one of these fields (via summarize() logic that
- * picks headline ?? title ?? question ?? summary), so showing them as a separate toggleable
- * column would create redundancy. Drawn from the canonical ledger schemas.
+ * Schema field names that source the summary cell. Excluded from the
+ * eligible-fields set to avoid duplicating the summary cell, which already
+ * renders one of these via summarize() (headline ?? title ?? question ?? summary).
  */
 export const SUMMARY_SOURCE_FIELDS: ReadonlySet<string> = new Set([
   "headline",

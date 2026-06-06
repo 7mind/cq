@@ -39,7 +39,6 @@ describe("FsLedgerStore.reset", () => {
     const fixedTs = "2026-06-01T12:34:56.000Z";
     const { store, root } = await makeStore(() => fixedTs);
 
-    // Seed items across two ledgers under a real milestone.
     const m = await store.createMilestone({ title: "reset target" });
     await store.createItem(DEFECTS_LEDGER, m.id, {
       status: "open",

@@ -91,10 +91,8 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
         expect(m1.id).toBe("M1");
         const m2 = await store.createMilestone({ title: "second" });
         expect(m2.id).toBe("M2");
-        // Fields are persisted on the milestone-item.
         expect(m1.fields["title"]).toBe("first");
         expect(m1.status).toBe("open");
-        // createdAt / updatedAt are ISO strings.
         expect(isIsoTimestamp(m1.createdAt)).toBe(true);
         expect(isIsoTimestamp(m1.updatedAt)).toBe(true);
       } finally {
@@ -697,15 +695,14 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
           },
         );
         try {
+          // write succeeds despite the hook throwing
           const m = await store.createMilestone({ title: "x" });
-          // Item was created despite the hook throwing.
           expect(m.id).toBe("M1");
           const it = await store.createItem(WIDGETS, m.id, {
             status: "open",
             fields: { severity: "minor", location: "x.ts", description: "d" },
           });
           expect(it.id).toBe("W1");
-          // Re-read confirms persisted state.
           const fetched = store.fetchItem(WIDGETS, "W1");
           expect(fetched.id).toBe("W1");
         } finally {

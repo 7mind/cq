@@ -145,10 +145,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       http = parseHttp(a.slice("--http=".length));
     }
   }
-  // The ledger root, in priority order: --cwd, then $LEDGER_ROOT, else the
-  // process working directory. A relative value resolves against the CWD.
-  // Defaulting to the CWD is what lets one global install serve per-repo
-  // ledgers — the MCP client spawns this server with the repo as its CWD.
+  // Ledger root precedence: --cwd > $LEDGER_ROOT > process CWD; a relative
+  // value resolves against the CWD. (See file header for the rationale.)
   const fromArg = cwd !== undefined && cwd !== "" ? cwd : undefined;
   const fromEnv = process.env["LEDGER_ROOT"];
   const chosen = fromArg ?? (fromEnv !== undefined && fromEnv !== "" ? fromEnv : undefined);
@@ -156,13 +154,11 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   return { cwd: resolved, http, reset, yes };
 }
 
-/** Build a fresh McpServer with the 21 ledger tools bound to `store`. */
 /**
  * Server-level usage guidance, surfaced to the client on `initialize` (the MCP
- * `instructions` field). Clients that inject it give the model "when/how to
- * use this server" without any per-project setup. Keep it short and
- * actionable; per-repo policy belongs in the project's own instructions
- * (e.g. CLAUDE.md).
+ * `instructions` field) so the model gets "when/how to use this server" without
+ * per-project setup. Keep it short; per-repo policy belongs in the project's own
+ * instructions (e.g. CLAUDE.md).
  */
 const SERVER_INSTRUCTIONS = [
   "This server is a markdown-backed planning ledger. Use it to track work as",

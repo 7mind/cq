@@ -689,7 +689,7 @@ export function materialiseFetchedLedger(
   const groups: FetchedMilestoneGroup[] = ledger.milestones.map((m) => {
     let resolved: ResolvedMilestone;
     if (ledger.id === MILESTONES_LEDGER) {
-      // Self-resolution: the M0 active group itself doesn't correspond
+      // Self-resolution: the active group itself doesn't correspond
       // to a milestone-item; expose a sentinel view so callers can rely
       // on the field always being populated.
       resolved = {
@@ -700,10 +700,9 @@ export function materialiseFetchedLedger(
       };
     } else {
       const view = resolveMilestoneViewSafe(milestonesLedger, m.id);
-      // If the milestone is missing (e.g. archived, or the M0 caller is
-      // running before bootstrap), surface an empty view so the caller
-      // can still render the group. Errors here would hide the broken
-      // state from the UI.
+      // If the milestone is missing (e.g. archived, or running before
+      // bootstrap), surface an empty view so the caller can still render
+      // the group. Errors here would hide the broken state from the UI.
       resolved =
         view ?? {
           id: m.id,

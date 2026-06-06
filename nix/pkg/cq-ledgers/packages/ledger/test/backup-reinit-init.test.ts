@@ -178,10 +178,8 @@ describe("FsLedgerStore.init() divergence → backup+reinit (default)", () => {
     await store.init();
     await store.dispose();
 
-    // The live file must not contain the prior item headline.
     const liveMd = await readFile(path.join(docsDir, `${GOALS_LEDGER}.md`), "utf8");
     expect(liveMd).not.toContain("a prior goal");
-    // It should still name the ledger.
     expect(liveMd).toContain(GOALS_LEDGER);
   });
 
@@ -195,7 +193,6 @@ describe("FsLedgerStore.init() divergence → backup+reinit (default)", () => {
 
     const liveRegistry = await readFile(path.join(docsDir, "ledgers.yaml"), "utf8");
     expect(liveRegistry).not.toContain("extra-status");
-    // All canonical ledgers should still appear.
     for (const c of CANONICAL_LEDGERS) {
       expect(liveRegistry).toContain(c.name);
     }
@@ -258,7 +255,6 @@ describe("FsLedgerStore.init() divergence → backup+reinit (default)", () => {
     const backupDir = path.join(docsDir, ".backup", SANITIZED_TS);
     expect(stderr).toContain("WARNING");
     expect(stderr).toContain(backupDir);
-    // Exactly one WARNING line (the string "WARNING" appears once).
     const warningCount = (stderr.match(/WARNING/g) ?? []).length;
     expect(warningCount).toBe(1);
   });
@@ -352,17 +348,14 @@ describe("FsLedgerStore.init() regression — no divergence", () => {
     });
     await writeFile(path.join(docsDir, "ledgers.yaml"), canonicalRegistryYaml, "utf8");
 
-    // Prime store once to create canonical files with M-AMBIENT seeded,
-    // then dispose — we'll re-init from those files.
+    // Prime canonical files with M-AMBIENT seeded, then re-init from them.
     const storeA = new FsLedgerStore({ root });
     await storeA.init();
     await storeA.dispose();
 
-    // Read the files as they exist after first init.
     const registryAfterFirstInit = await readFile(path.join(docsDir, "ledgers.yaml"), "utf8");
     const goalsAfterFirstInit = await readFile(path.join(docsDir, `${GOALS_LEDGER}.md`), "utf8");
 
-    // Second init — should be idempotent.
     const storeB = new FsLedgerStore({ root });
     await storeB.init();
     await storeB.dispose();

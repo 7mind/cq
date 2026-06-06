@@ -151,12 +151,10 @@ function ledgerRows(view: FetchedLedger): Row[] {
 // ---------------------------------------------------------------------------
 // Heavy per-data derivations + invocation instrumentation (T85).
 //
-// The items frame re-renders on every keystroke — including a pure cursor move,
-// which only changes `top.cursor`. The three derivations below are O(N) in the
-// ledger size; left inline in the render body they ran on EVERY keystroke. They
-// are now hoisted to module scope and invoked through useMemo keyed on their
-// real inputs, so a cursor move does NO O(N) work. The counters let a test
-// assert exactly that: the builders run once per data change, never per nav.
+// The items frame re-renders on every keystroke (incl. a pure cursor move).
+// These three O(N) derivations are hoisted to module scope and invoked through
+// useMemo keyed on their real inputs, so a cursor move does NO O(N) work. The
+// counters let a test assert the builders run once per data change, never per nav.
 // ---------------------------------------------------------------------------
 
 /** Per-derivation invocation counters, observable by tests (T85). */
@@ -230,16 +228,13 @@ export type ListEntry<T> =
 
 /**
  * Build entries for an items ledger. By default each fetch_ledger milestone
- * group becomes a subsection header interleaved with its filtered item rows,
- * preserving group order. When `flat` is set the list is rendered as a flat
- * sequence with NO subsection headers — true for the milestones ledger (each
- * item already IS a milestone) and the goals ledger (T84 / Q48: a goal's
- * coordination-milestone grouping is suppressed; its work-milestone ids live in
- * fields.milestones and are shown in the content pane instead).
- * The returned `itemIdx` matches the item's index in `filteredRows`.
- *
- * `milestonesSchema` is used to color the status token in each header via
- * statusColor() so open/done/postponed/blocked render in their semantic color.
+ * group becomes a subsection header interleaved with its filtered item rows
+ * (group order preserved). `flat` renders a flat sequence with NO headers —
+ * the milestones ledger (each item IS a milestone) and goals (T84 / Q48: a
+ * goal's coordination-milestone grouping is suppressed; its work-milestone ids
+ * live in fields.milestones, shown in the content pane). Returned `itemIdx`
+ * matches the item's index in `filteredRows`. `milestonesSchema` colors each
+ * header's status token via statusColor().
  */
 export function buildItemEntries(view: FetchedLedger, filteredRows: Row[], flat: boolean, milestonesSchema: LedgerSchema): ListEntry<Row>[] {
   derivationCounters.buildItemEntries += 1;
@@ -1053,7 +1048,6 @@ export function App({
 
   return (
     <Box flexDirection="column" width={cols} height={rows}>
-      {/* header */}
       <Box>
         <Text bold color="cyan">
           {headerTitle}
@@ -1493,7 +1487,6 @@ function ContentPane({
     if (hasProvenance) push(byLine(), { dimColor: true });
   }
 
-  // Fields.
   if (entries.length === 0) {
     push("(no fields)", { dimColor: true });
   } else {

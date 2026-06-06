@@ -1,18 +1,15 @@
 /**
  * config capability (T1 / T13 / R193 / G18).
  *
- * The `get_reviewers` / `get_planners` / `get_config` MCP tools surface a
- * repo's resolved reviewer/planner configuration (its `cq.toml`) on the ledger
- * MCP. Per the same discipline as `read_log` (see ./readLog.ts), the actual
- * config parsing is a capability the OUTER package supplies — it is NOT baked
- * into `@cq/ledger` core, which stays config-agnostic. `@cq/ledger` must NOT
- * import `@cq/config`; the `loadConfig`/`resolveReviewers`/`resolvePlanners`
- * calls live ONLY in the `@cq/ledger-mcp` capability implementation, which is
- * constructed there (T2) and injected here.
+ * The `get_reviewers` / `get_planners` / `get_config` MCP tools surface a repo's
+ * resolved cq.toml reviewer/planner config. Like `read_log` (./readLog.ts), the
+ * config parsing is a capability the OUTER package supplies: `@cq/ledger` core
+ * stays config-agnostic and must NOT import `@cq/config` — the loadConfig /
+ * resolveReviewers / resolvePlanners calls live only in the `@cq/ledger-mcp`
+ * implementation, constructed there (T2) and injected here.
  *
- * The result types below are therefore STRUCTURAL (e.g. `harness: string`) so
- * core need not know `@cq/config`'s `Harness` union; the ledger-mcp
- * implementation produces values that are assignable to them.
+ * The result types below are STRUCTURAL (e.g. `harness: string`) so core need
+ * not know `@cq/config`'s `Harness` union.
  */
 
 /**

@@ -62,7 +62,6 @@ describe("enumerate_ledgers — statusCounts and completedCount (T1)", () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    // Create a milestone to anchor items under.
     await callTool(tools, "create_milestone", { title: "T1 seed milestone" });
 
     // questions: 2 answered + 1 open + 1 withdrawn
@@ -111,20 +110,16 @@ describe("enumerate_ledgers — statusCounts and completedCount (T1)", () => {
       ledgerSummaries: LedgerSummary[];
     }>(await callTool(tools, "enumerate_ledgers", {}));
 
-    // Sanity: ledgerSummaries must be present.
     expect(Array.isArray(result.ledgerSummaries)).toBe(true);
 
-    // Helper: find summary by name.
     const find = (name: string) => result.ledgerSummaries.find((s) => s.name === name);
 
     // ---- questions ledger ----
     const qs = find(QUESTIONS_LEDGER);
     expect(qs).toBeDefined();
 
-    // itemCount = 4 total active items
     expect(qs!.itemCount).toBe(4);
 
-    // statusCounts must match the exact per-status distribution
     expect(qs!.statusCounts).toBeDefined();
     expect(qs!.statusCounts!["answered"]).toBe(2);
     expect(qs!.statusCounts!["open"]).toBe(1);
@@ -138,16 +133,13 @@ describe("enumerate_ledgers — statusCounts and completedCount (T1)", () => {
     const ts = find(TASKS_LEDGER);
     expect(ts).toBeDefined();
 
-    // itemCount = 2 total active items
     expect(ts!.itemCount).toBe(2);
 
-    // statusCounts must match
     expect(ts!.statusCounts).toBeDefined();
     expect(ts!.statusCounts!["done"]).toBe(1);
     expect(ts!.statusCounts!["planned"]).toBe(1);
 
-    // completedCount for tasks = items in terminalStatuses (done, abandoned)
-    // Only "done" is present here.
+    // completedCount for tasks = items in terminalStatuses; only "done" here.
     expect(ts!.completedCount).toBe(1);
   });
 
@@ -157,7 +149,7 @@ describe("enumerate_ledgers — statusCounts and completedCount (T1)", () => {
 
     await callTool(tools, "create_milestone", { title: "multi-terminal" });
 
-    // tasks: done=2, wip=1, planned=1 — done and abandoned are terminal in TASKS_SCHEMA
+    // tasks: done=2, wip=1, planned=1
     await callTool(tools, "create_item", {
       ledger_id: TASKS_LEDGER,
       milestone_id: "M1",

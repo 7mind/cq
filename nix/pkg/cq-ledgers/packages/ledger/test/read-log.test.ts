@@ -233,10 +233,9 @@ describe("read_log (FS-backed)", () => {
   // itself a symlink, realpath(target) would resolve the symlink in the path
   // while this.logsDir remained lexical, causing a false escape rejection.
   it("succeeds when the store root is accessed via a symlinked parent (D26 round-1)", async () => {
-    // Create the real directory.
     const realRoot = await mkdtemp(path.join(tmpdir(), "ledger-readlog-real-"));
     dirs.push(realRoot);
-    // Create a symlink that points at realRoot (simulates a symlinked parent).
+    // Symlink pointing at realRoot — simulates a symlinked parent.
     const symlinkRoot = path.join(tmpdir(), `ledger-readlog-sym-${process.pid}-${Date.now()}`);
     await symlink(realRoot, symlinkRoot);
     dirs.push(symlinkRoot);

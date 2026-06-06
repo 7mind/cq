@@ -278,7 +278,7 @@ export interface LedgerStore {
    *     pointer to that ledger.
    *  4. In the milestones ledger: detach the milestone-item itself,
    *     write `./archive/milestones/<milestoneId>.md`, append the pointer.
-   *  5. Refuse to archive the bootstrap group `M0`.
+   *  5. Refuse to archive the bootstrap active group.
    */
   archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
 

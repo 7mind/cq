@@ -1,17 +1,15 @@
 /**
  * Cross-ledger snapshot (T143, Q75).
  *
- * A GENERIC, flow-agnostic, compact view of every ACTIVE (non-archived) item
- * across every active ledger, grouped by ledger then by status. Each item is
- * reduced to the `{ id, status, summary }` stub — NO long narrative fields —
- * so the whole snapshot stays well under the token-overflow threshold that a
- * full per-ledger `fetch_ledger` sweep hits.
+ * A generic, flow-agnostic, compact view of every ACTIVE (non-archived) item
+ * across every active ledger, grouped by ledger then status. Each item is
+ * reduced to a `{ id, status, summary }` stub (NO long narrative fields) so the
+ * snapshot stays well under the token-overflow threshold a full per-ledger
+ * `fetch_ledger` sweep hits.
  *
- * This module is intentionally free of DAG / phase / predicate semantics:
- * those stay in the flow prompts. It is a pure projection over the
- * already-resolved `FetchedLedger` views (which themselves only carry active
- * items — archived items live in the archive files, not in `milestones[]`),
- * so it builds cleanly on the store's existing `enumerate()` + `fetch()`.
+ * Intentionally free of DAG / phase / predicate semantics (those stay in the
+ * flow prompts): a pure projection over the resolved `FetchedLedger` views
+ * (active items only), built on the store's `enumerate()` + `fetch()`.
  */
 
 import type { FetchedLedger } from "./types.js";

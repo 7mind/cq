@@ -37,11 +37,9 @@
           config.allowUnfree = true;
         };
 
-        # ------------------------------------------------------------------ #
-        # Fixed-output derivation: fetches all npm dependencies via           #
-        # `bun install --frozen-lockfile`. Nix allows network access inside   #
-        # FODs; hermeticity is guaranteed by the output hash.                 #
-        # ------------------------------------------------------------------ #
+        # Fixed-output derivation: fetches all npm dependencies via
+        # `bun install --frozen-lockfile`. Nix allows network access inside
+        # FODs; hermeticity is guaranteed by the output hash.
         bunNodeModules = pkgs.stdenv.mkDerivation {
           pname = "ledger-node-modules";
           version = "0.0.1";
@@ -117,13 +115,11 @@
           outputHash = "sha256-Ymy9b5It+yQLP9J0WtCFMgVk70ZD9NJYiZ7TOYmJGDw=";
         };
 
-        # ------------------------------------------------------------------ #
-        # Shell fragment: stage the @cq/ledger + @cq/ledger-mcp source and    #
-        # their node_modules into $WORKSPACE so a FRONTEND can run the ledger #
-        # MCP server EMBEDDED in-process (ledger-tui/-web with no --mcp-url). #
-        # Mirrors the ledger + ledger-mcp wiring of the standalone ledger-mcp #
-        # product. Expects $WORKSPACE to be set by the caller.                #
-        # ------------------------------------------------------------------ #
+        # Shell fragment: stage the @cq/ledger + @cq/ledger-mcp source and
+        # their node_modules into $WORKSPACE so a FRONTEND can run the ledger
+        # MCP server EMBEDDED in-process (ledger-tui/-web with no --mcp-url).
+        # Mirrors the standalone ledger-mcp product's wiring. Expects $WORKSPACE
+        # to be set by the caller.
         embedServerClosure = ''
           cp -r packages/ledger     "$WORKSPACE/packages/ledger"
           cp -r packages/ledger-mcp "$WORKSPACE/packages/ledger-mcp"
@@ -162,14 +158,10 @@
             "$WORKSPACE/packages/ledger-mcp/node_modules/@cq/config"
         '';
 
-        # ------------------------------------------------------------------ #
-        # ledger-mcp — the standalone ledger MCP server.                       #
-        #                                                                      #
-        # Serves the 18-tool ledger surface over stdio or Streamable HTTP      #
-        # (`--http [host:]port`), backed by a file-backed FsLedgerStore. The   #
-        # closure is the @cq/ledger library + the @cq/ledger-mcp binary plus   #
-        # their runtime npm deps from the shared FOD.                          #
-        # ------------------------------------------------------------------ #
+        # ledger-mcp — the standalone ledger MCP server. Serves the 18-tool
+        # ledger surface over stdio or Streamable HTTP (`--http [host:]port`),
+        # backed by a file-backed FsLedgerStore. Closure: the @cq/ledger library
+        # + @cq/ledger-mcp binary plus their runtime npm deps from the shared FOD.
         ledgerMcp = pkgs.stdenv.mkDerivation {
           pname = "ledger-mcp";
           version = "0.0.1";
@@ -244,15 +236,11 @@
           dontFixup = true;
         };
 
-        # ------------------------------------------------------------------ #
-        # ledger-tui — Ink terminal UI client for a ledger MCP server.         #
-        #                                                                      #
-        # Pure MCP client. Two modes: REMOTE (`--mcp-url <url>`, Streamable     #
-        # HTTP) or EMBEDDED (default; runs the MCP server in-process over an    #
-        # in-memory transport, root from `--cwd`/$LEDGER_ROOT/CWD). Runtime     #
-        # closure: ink + react + @modelcontextprotocol/sdk, plus the embedded   #
-        # @cq/ledger + @cq/ledger-mcp server closure.                          #
-        # ------------------------------------------------------------------ #
+        # ledger-tui — Ink terminal UI, a pure MCP client. Two modes: REMOTE
+        # (`--mcp-url <url>`, Streamable HTTP) or EMBEDDED (default; MCP server
+        # in-process over an in-memory transport, root from `--cwd`/$LEDGER_ROOT/
+        # CWD). Runtime closure: ink + react + @modelcontextprotocol/sdk, plus
+        # the embedded @cq/ledger + @cq/ledger-mcp server closure.
         ledgerTui = pkgs.stdenv.mkDerivation {
           pname = "ledger-tui";
           version = "0.0.1";
@@ -312,17 +300,14 @@
           dontFixup = true;
         };
 
-        # ------------------------------------------------------------------ #
-        # ledger-web — static server for the browser explorer/editor + DAG.    #
-        #                                                                      #
-        # Serves the React bundle (Bun.build at startup). Two modes: PROXY      #
-        # (`--mcp-url`, reverse-proxies same-origin /mcp+/ws to a separate      #
-        # `ledger-mcp --http`) or EMBEDDED (default; hosts the MCP server       #
-        # in-process on /mcp+/ws, root from `--cwd`/$LEDGER_ROOT/CWD). Bun.build #
-        # resolves the browser bundle's react / react-dom / sdk from the        #
-        # closure; the embedded server adds the @cq/ledger + @cq/ledger-mcp     #
-        # closure. LEDGER_WEB_OUTDIR redirects bundler output to a writable path.#
-        # ------------------------------------------------------------------ #
+        # ledger-web — static server for the browser explorer/editor + DAG.
+        # Serves the React bundle (Bun.build at startup). Two modes: PROXY
+        # (`--mcp-url`, reverse-proxies same-origin /mcp+/ws to a separate
+        # `ledger-mcp --http`) or EMBEDDED (default; hosts the MCP server
+        # in-process on /mcp+/ws, root from `--cwd`/$LEDGER_ROOT/CWD). Bun.build
+        # resolves the browser bundle's react / react-dom / sdk from the closure;
+        # the embedded server adds the @cq/ledger + @cq/ledger-mcp closure.
+        # LEDGER_WEB_OUTDIR redirects bundler output to a writable path.
         ledgerWeb = pkgs.stdenv.mkDerivation {
           pname = "ledger-web";
           version = "0.0.1";
@@ -401,8 +386,8 @@
           llm-contexts = (pkgs.callPackage ./nix/pkg/llm-contexts/default.nix { }).package;
           # llm-context-with-env: general context + the environment skill folded
           # in, for skill-less agents (Copilot, Vibe). The file IS the store
-          # path; referencing llm-skills.package keeps meta.yaml validation in
-          # the consumer's build graph. Consumed by nix-config's dev-opencode.
+          # path; referencing llm-skills.package keeps meta.yaml validation in the
+          # consumer's build graph. Consumed by nix-config's dev-opencode.
           llm-context-with-env =
             let
               skills = pkgs.callPackage ./nix/pkg/llm-skills/default.nix { };

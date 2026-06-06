@@ -48,10 +48,6 @@ describe("defectFixTaskIds", () => {
     ];
 
     const result = defectFixTaskIds("D3", defects, tasks);
-
-    // T10 from forward link + T10 (deduped) + T20 from reverse link.
-    // T30 is not linked to D3 at all.
-    // H5 is filtered out (not a task id).
     expect(result).toEqual(["T10", "T20"]);
   });
 

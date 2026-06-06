@@ -20,7 +20,6 @@ const TSC_BIN = path.join(REPO_ROOT, "node_modules/.bin/tsc");
 
 beforeAll(
   () => {
-    // Build the package so dist/ is populated.
     const result = spawnSync(TSC_BIN, ["-b"], {
       cwd: REPO_ROOT,
       encoding: "utf8",

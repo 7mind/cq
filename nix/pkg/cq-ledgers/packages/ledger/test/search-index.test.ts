@@ -113,7 +113,6 @@ describe("LedgerSearchIndex", () => {
     const idx = new LedgerSearchIndex();
     idx.rebuildLedgerActive("defects", [item("D1", "open", { headline: "alpha" })]);
     expect(idx.search("alpha").length).toBe(1);
-    // Replace the active set with a different item.
     idx.rebuildLedgerActive("defects", [item("D2", "open", { headline: "beta" })]);
     expect(idx.search("alpha").length).toBe(0);
     expect(idx.search("beta").map((h) => h.item.id)).toEqual(["D2"]);

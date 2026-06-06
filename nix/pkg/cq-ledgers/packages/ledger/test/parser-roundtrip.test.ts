@@ -208,7 +208,6 @@ describe("parser round-trip — non-milestones ledger", () => {
   });
 
   it("legacy em-dash depth-2 headers fail to parse with a clear migration error", () => {
-    // Hand-built legacy fixture.
     const legacy = `---\nledger: defects\ncounters:\n  milestone: 0\n  item: 0\narchives: []\n---\n\n# defects\n\n## M3 — legacy title\n`;
     expect(() => parseLedger(legacy, { schema: defectsSchema })).toThrow(/msunify/i);
   });

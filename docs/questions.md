@@ -457,16 +457,17 @@ archives:
 
 ## M65
 
-### Q105 — open
+### Q105 — answered
 
 - createdAt: 2026-06-06T10:40:20.545Z
-- updatedAt: 2026-06-06T10:40:20.545Z
-- author: "opus-4.8[1m]"
+- updatedAt: 2026-06-06T10:42:28.488Z
+- author: user
 - session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
 - question: "FEATURE 1 — cq.toml [webui] schema: exactly which keys, and how is `port` typed? The @cq/config TOML parser today supports ONLY double-quoted strings + string arrays (no number literals). For `port = 5180` (a bare integer), do you want (a) the parser extended to parse integers, or (b) `port` kept as a quoted string (port = \"5180\") to avoid touching value parsing? And should [webui] hold ONLY host+port, or also other web settings (e.g. mcp-url, cwd) so the section is future-proof?"
 - context: "[webui] is a NEW table; parseToml + RawToml/CqConfig/parseConfig must be extended either way. The number-vs-string choice determines whether parser value-parsing changes (parseString only today)."
 - suggestions: ["(a) extend parser to support integer values; [webui] holds host (string) + port (integer) only","(b) keep port as a quoted string; no integer support added; host+port only","(c) extend integers AND model [webui] as a general web-settings table (host/port now, room for more later)"]
 - recommendation: "(a) — add minimal integer support and keep [webui] = host + port only; matches the user's stated two entries and keeps cq.toml readable (port = 5180, not \"5180\")."
+- answer: I don't understand, do we have a home-baked toml parser??? If so - use a library. Obviously, port should be an integer
 
 ### Q106 — open
 

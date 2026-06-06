@@ -50,8 +50,6 @@ const schema: LedgerSchema = {
 };
 
 function isoTick(tick: number): string {
-  // Use an arbitrary base date in 2026 so the ticks fall in a realistic
-  // time range; add `tick` milliseconds.
   return new Date(1_780_000_000_000 + tick).toISOString();
 }
 
@@ -89,7 +87,6 @@ describe("FsLedgerStore concurrency", () => {
     );
     const results = await Promise.all(updates);
     expect(results.length).toBe(N);
-    // Final on-disk file parses.
     const text = await (async () => {
       for (const d of dirs) {
         try {
@@ -141,7 +138,7 @@ describe("FsLedgerStore concurrency", () => {
     const sorted = [...results].sort((a, b) =>
       a.updatedAt < b.updatedAt ? -1 : a.updatedAt > b.updatedAt ? 1 : 0,
     );
-    // Verify strict monotonicity of updatedAt across the N serialised writes.
+    // strict monotonicity of updatedAt across the N serialised writes
     for (let i = 1; i < N; i++) {
       const prev = sorted[i - 1];
       const cur = sorted[i];

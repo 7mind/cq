@@ -135,7 +135,6 @@ describe("FsLedgerStore.init — legacy ArchivePointer backfill (D12 / T109)", (
       // These are the key assertions — they fail before the fix, pass after.
       expect(ptr!.title).toBe("TUI + web UI improvements");
       expect(ptr!.status).toBe("done");
-      // Sanity-check the unchanged fields.
       expect(ptr!.id).toBe("M99");
       expect(ptr!.summary).toBe("A legacy milestone");
     } finally {
