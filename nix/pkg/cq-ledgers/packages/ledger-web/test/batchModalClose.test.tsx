@@ -273,3 +273,58 @@ describe("BatchAnswerModal close on queue drain (D19 / T115)", () => {
     expect(testid("batch-overlay")).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// D31 / T183 — RED: press-started-inside / released-on-backdrop MUST NOT close
+// ---------------------------------------------------------------------------
+// The backdrop div carries onClick={onClose}. When the user presses a pointer
+// device INSIDE the dialog and releases it over the backdrop (e.g. after
+// shrinking by releasing over the outer rim), the browser fires a click whose
+// target is the backdrop div — the dialog's stopPropagation does not intercept
+// it because the event does not bubble up through the dialog at all.
+// This test reproduces that path so the GREEN step (T184) can fix it.
+
+describe("BatchAnswerModal backdrop dismissal — D31 press-started-inside guard", () => {
+  it("does NOT close the modal when pointerdown was inside the dialog but click lands on the backdrop", async () => {
+    await mount();
+    // All 3 questions open — just need the modal to be showing.
+    click(testid("batch-open"));
+    await flush();
+    expect(testid("batch-overlay")).not.toBeNull();
+
+    const overlay = testid("batch-overlay");
+    const submitBtn = testid("batch-answer-submit");
+    // batch-answer-submit is inside the dialog — simulate press-started-inside.
+    // (If the submit button isn't visible because no text has been typed, fall
+    // back to batch-close which is always present inside the dialog.)
+    const insideTarget = submitBtn ?? testid("batch-close");
+    expect(insideTarget).not.toBeNull();
+
+    // Step 1: pointerdown + mousedown fire on the element inside the dialog.
+    // The dialog's onClick stopPropagation does NOT block pointer events, so
+    // we dispatch directly on the inside element to record "press started inside".
+    act(() => {
+      insideTarget!.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, cancelable: true }),
+      );
+      insideTarget!.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+      );
+    });
+    await flush();
+
+    // Step 2: The pointer is released over the backdrop. The browser fires a
+    // click whose target is the backdrop (lowest common ancestor of pointerdown
+    // and pointerup targets when they differ). Simulate that directly.
+    act(() => {
+      overlay!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+    await flush();
+
+    // EXPECTED (post-fix): modal stays open.
+    // ACTUAL (pre-fix / RED state): modal closes — this assertion FAILS.
+    expect(testid("batch-overlay")).not.toBeNull();
+  });
+});
