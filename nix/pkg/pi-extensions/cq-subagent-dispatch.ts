@@ -33,10 +33,27 @@ import { Type } from "typebox";
 // provider-registering package extensions — e.g. pi-xai's grok-build — must
 // still load for the child's model to resolve.)
 //
-// CHILD MODEL (scope boundary with T225): the child defaults to the PARENT
-// session's currently-active model (ctx.model). This task does NOT resolve
-// tiered/per-agent models — it only knows WHERE cq.toml lives (see
-// resolveCqConfigPath) as a documented seam for T225.
+// CHILD MODEL (T225): the child's provider+model is resolved from the
+// DISPATCHED AGENT'S NAME via cq.toml's flat `[agent_tiers]` + `[tiers]` maps.
+// Resolution precedence (highest first):
+//   1. an explicit `model` arg the caller passes at dispatch (a
+//      "<harness>:<model>" token, or a bare pi model pattern) — wins outright;
+//   2. the agent's tier: agent name -> `[agent_tiers]` -> tier (default
+//      "standard") -> `[tiers]` -> token (resolved via `[aliases]` first, else
+//      a direct "<harness>:<model>" token);
+//   3. fallback: the PARENT session's currently-active model (ctx.model) — used
+//      when cq.toml is absent, has no `[tiers]`/`[agent_tiers]`, the agent's
+//      tier slot is unconfigured, or the token resolves to a `claude:` harness
+//      (a Claude provider cannot be driven by a child `pi -p` process).
+//
+// The cq.toml read strategy is PINNED in K46
+// (docs/drafts/20260607-2049-pi-runtime-config-access.md): $CQ_CONFIG (default
+// $CQ_PROJECT_ROOT/cq.toml, fallback <cwd>/cq.toml), parsed with an INLINED
+// flat-table TOML reader + INLINED resolver that MIRRORS @cq/config's
+// resolveAgentTier/resolveTierToken/resolveAgentModel (T223,
+// packages/cq-config/src/{config,toml}.ts). It is COPIED, not imported: this is
+// a standalone store-path extension OUTSIDE the cq-ledgers bun workspace and
+// cannot import @cq/config.
 
 const DISPATCH_TOOL_NAME = "dispatch_agent";
 
@@ -72,6 +89,17 @@ interface DispatchDetails {
   isolation: "worktree" | null;
   model: string | null;
   provider: string | null;
+  /**
+   * How `model`/`provider` were chosen (T225): "explicit" (caller passed a
+   * model arg), "tier" (agent name -> [agent_tiers] -> [tiers]), or "parent"
+   * (fallback to the parent session's active model).
+   */
+  modelSource: "explicit" | "tier" | "parent";
+  /** The tier the agent NAME mapped to via [agent_tiers] (null when not tiered). */
+  resolvedTier: string | null;
+  /** provider/model the child actually opened against, read from its JSON stream. */
+  childProvider: string | null;
+  childModel: string | null;
   exitCode: number;
   excludedTools: string[];
   cqConfigPath: string;
@@ -81,6 +109,12 @@ interface DispatchDetails {
 const DispatchParams = Type.Object({
   agent: Type.String({ description: "Name of the cq agent to dispatch (matches the agent markdown filename / frontmatter name)." }),
   task: Type.String({ description: "The task to delegate to the agent — becomes the child turn's prompt." }),
+  model: Type.Optional(
+    Type.String({
+      description:
+        'Optional explicit model OVERRIDE. Wins over the agent\'s tier. Either a "<harness>:<model>" token (e.g. "pi:grok-build") or a bare pi --model pattern. A "claude:" token cannot run under a child pi process and falls back to the parent model.',
+    }),
+  ),
   isolation: Type.Optional(
     Type.Literal("worktree", {
       description: 'Optional isolation mode. Only "worktree" is recognized; it is a stubbed seam (deferred per Q128) and does not yet change behavior.',
@@ -91,6 +125,7 @@ const DispatchParams = Type.Object({
 type DispatchArgs = {
   agent: string;
   task: string;
+  model?: string;
   isolation?: "worktree";
 };
 
@@ -102,7 +137,8 @@ function resolveAgentsDir(): string {
 
 /**
  * Resolve the cq.toml path per K46: $CQ_CONFIG, else $CQ_PROJECT_ROOT/cq.toml,
- * else <cwd>/cq.toml. Computed only — not read here (tier resolution is T225).
+ * else <cwd>/cq.toml. The seam T224 left for T225 — now actually READ + resolved
+ * by loadCqConfig / resolveAgentToken below.
  */
 function resolveCqConfigPath(cwd: string): string {
   const explicit = process.env[CQ_CONFIG_ENV];
@@ -110,6 +146,184 @@ function resolveCqConfigPath(cwd: string): string {
   const projectRoot = process.env[CQ_PROJECT_ROOT_ENV];
   if (projectRoot && projectRoot.length > 0) return path.join(projectRoot, CQ_CONFIG_FILENAME);
   return path.join(cwd, CQ_CONFIG_FILENAME);
+}
+
+// ── Inlined cq.toml tier resolution (K46) ───────────────────────────────────
+//
+// MIRRORS @cq/config (T223, packages/cq-config/src/{config,toml}.ts). Copied,
+// NOT imported — this extension is a standalone store-path file outside the
+// cq-ledgers workspace. The only cq.toml tables this needs are the three FLAT
+// `key = "value"` tables `[aliases]`, `[tiers]`, `[agent_tiers]`; we do not need
+// a full TOML 1.0 parser (the smol-toml dep @cq/config uses), only a flat-table
+// reader. Anything outside these three tables is ignored.
+
+/** A `<harness>:<model>` token: harness is "claude" or "pi". */
+interface CqToken {
+  harness: string;
+  model: string;
+}
+
+/** The subset of cq.toml this extension reads: three flat string tables. */
+interface CqConfigSubset {
+  aliases: Record<string, string>;
+  /** tier name ("fast"/"standard"/"frontier") -> raw token/alias string. */
+  tiers: Record<string, string> | null;
+  /** agent name -> tier name. */
+  agentTiers: Record<string, string> | null;
+}
+
+const VALID_TIERS = new Set(["fast", "standard", "frontier"]);
+// MIRRORS @cq/config DEFAULT_TIER: an agent with no [agent_tiers] entry is
+// "standard".
+const DEFAULT_TIER = "standard";
+// The three flat tables this reader understands; any other `[section]` header
+// switches the reader into an ignored section.
+const FLAT_TABLES = new Set(["aliases", "tiers", "agent_tiers"]);
+
+/**
+ * Strip a TOML inline `#` comment and surrounding whitespace from a line.
+ * `#` inside a quoted string is preserved (the cq.toml flat tables never embed
+ * `#` in a value, but we stay robust).
+ */
+function stripTomlComment(line: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"' && !inSingle) inDouble = !inDouble;
+    else if (ch === "'" && !inDouble) inSingle = !inSingle;
+    else if (ch === "#" && !inSingle && !inDouble) return line.slice(0, i);
+  }
+  return line;
+}
+
+/** Unquote a TOML basic/literal string value, or return it verbatim. */
+function unquoteTomlValue(raw: string): string {
+  const v = raw.trim();
+  if (v.length >= 2 && ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))) {
+    return v.slice(1, -1);
+  }
+  return v;
+}
+
+/**
+ * INLINED flat-table TOML reader. Parses ONLY `[aliases]`, `[tiers]`, and
+ * `[agent_tiers]` as flat `key = "value"` string tables; every other section
+ * (e.g. `[webui]`, top-level `reviewers = [...]` arrays) is ignored. Returns
+ * `null` for a table that never appeared, `{}` for a table that appeared empty
+ * (mirroring @cq/config's "absent => null" distinction for [tiers]/[agent_tiers]).
+ */
+function parseFlatToml(source: string): CqConfigSubset {
+  const tables: Record<string, Record<string, string>> = {};
+  let current: string | null = null;
+  let inFlatTable = false;
+  const normalized = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  for (const rawLine of normalized.split("\n")) {
+    const line = stripTomlComment(rawLine).trim();
+    if (!line) continue;
+    const header = line.match(/^\[([^\]]+)\]$/);
+    if (header) {
+      current = header[1]!.trim();
+      inFlatTable = FLAT_TABLES.has(current);
+      if (inFlatTable && !tables[current]) tables[current] = {};
+      continue;
+    }
+    if (!inFlatTable || current === null) continue;
+    const eq = line.indexOf("=");
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim().replace(/^["']|["']$/g, "");
+    if (!key) continue;
+    tables[current]![key] = unquoteTomlValue(line.slice(eq + 1));
+  }
+  return {
+    aliases: tables.aliases ?? {},
+    tiers: tables.tiers ?? null,
+    agentTiers: tables.agent_tiers ?? null,
+  };
+}
+
+/**
+ * Parse a `"<harness>:<model>"` token. First `:` splits harness from model;
+ * further colons stay in the model. Returns null on a malformed/empty token.
+ * MIRRORS @cq/config parseReviewerToken (but lenient: returns null instead of
+ * throwing, since a bad token here just means "fall back to the parent model").
+ */
+function parseCqToken(token: string): CqToken | null {
+  const sep = token.indexOf(":");
+  if (sep < 0) return null;
+  const harness = token.slice(0, sep);
+  const model = token.slice(sep + 1);
+  if (harness === "" || model === "") return null;
+  if (harness !== "claude" && harness !== "pi") return null;
+  return { harness, model };
+}
+
+/** Load + parse cq.toml from `configPath`; null if absent or unreadable. */
+function loadCqConfig(configPath: string): CqConfigSubset | null {
+  let source: string;
+  try {
+    source = fs.readFileSync(configPath, "utf-8");
+  } catch {
+    return null;
+  }
+  return parseFlatToml(source);
+}
+
+/**
+ * Resolve an agent name to its tier. MIRRORS @cq/config resolveAgentTier:
+ * `[agent_tiers]`[name] if present + valid, else DEFAULT_TIER ("standard").
+ */
+function resolveAgentTier(config: CqConfigSubset, agentName: string): string {
+  if (config.agentTiers !== null) {
+    const tier = config.agentTiers[agentName];
+    if (tier !== undefined && VALID_TIERS.has(tier)) return tier;
+  }
+  return DEFAULT_TIER;
+}
+
+/**
+ * Resolve a tier name to a `<harness>:<model>` token via `[tiers]`. A `[tiers]`
+ * value is either an `[aliases]` NAME (checked first) or a direct token.
+ * Returns null if `[tiers]` is absent, the slot is unconfigured, or the value
+ * is unparseable. MIRRORS @cq/config resolveTierToken (lenient: null, not throw).
+ */
+function resolveTierToken(config: CqConfigSubset, tier: string): CqToken | null {
+  if (config.tiers === null) return null;
+  const value = config.tiers[tier];
+  if (value === undefined) return null;
+  const aliased = config.aliases[value];
+  return parseCqToken(aliased !== undefined ? aliased : value);
+}
+
+/**
+ * Resolve an agent end-to-end: agent name -> tier -> token. MIRRORS @cq/config
+ * resolveAgentModel. Returns null when no tiered model applies (caller then
+ * falls back to the parent session's active model).
+ */
+function resolveAgentToken(config: CqConfigSubset, agentName: string): CqToken | null {
+  return resolveTierToken(config, resolveAgentTier(config, agentName));
+}
+
+/**
+ * Map a resolved `<harness>:<model>` token to the child `pi -p` process's
+ * provider/model selection.
+ *
+ * - `pi:<seg>`: `<seg>` is the pi `--model` pattern (pi's `--model` supports a
+ *   `provider/id` form + fuzzy matching, so a bare `grok-build` resolves to the
+ *   grok-build provider). If `<seg>` carries an explicit `provider/model` form,
+ *   the provider half is also emitted as `--provider`.
+ * - `claude:<model>`: a Claude provider CANNOT be driven by a child `pi -p`
+ *   process, so this yields null — the caller falls back to the parent's model.
+ *
+ * Returns the {provider, model} to pass to the child, or null to fall back.
+ */
+function tokenToChildModel(token: CqToken): { provider: string | null; model: string } | null {
+  if (token.harness !== "pi") return null;
+  const slash = token.model.indexOf("/");
+  if (slash > 0) {
+    return { provider: token.model.slice(0, slash), model: token.model.slice(slash + 1) };
+  }
+  return { provider: null, model: token.model };
 }
 
 /** Read + parse the named agent markdown from the cq-agents directory. */
@@ -256,6 +470,9 @@ interface AssistantPart {
 interface ChildMessage {
   role?: string;
   content?: AssistantPart[];
+  /** Pi tags each assistant message with the provider/model it ran against. */
+  provider?: string;
+  model?: string;
 }
 
 /** Walk back to the last assistant message and join ALL its text parts. */
@@ -311,6 +528,10 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         isolation: args.isolation ?? null,
         model: null,
         provider: null,
+        modelSource: "parent",
+        resolvedTier: null,
+        childProvider: null,
+        childModel: null,
         exitCode: 0,
         excludedTools: [],
         cqConfigPath,
@@ -326,10 +547,48 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
       }
 
       const excludeTools = buildExcludeTools(agent.disallowedTools);
-      // Parent's currently-active model is the child default (T224 scope; T225
-      // adds tier resolution). provider+id come from ctx.model when available.
-      const model = ctx.model?.id ?? null;
-      const provider = ctx.model?.provider ?? null;
+
+      // ── Resolve the child model (T225) ──────────────────────────────────
+      // Precedence: explicit `model` arg > agent tier ([agent_tiers]->[tiers])
+      // > parent session's active model. The agent's tier SOURCE is the cq.toml
+      // `[agent_tiers]` table keyed by agent NAME — NOT the agent markdown
+      // frontmatter (which stays byte-identical per Q126/K44).
+      const parentModel = ctx.model?.id ?? null;
+      const parentProvider = ctx.model?.provider ?? null;
+
+      let model: string | null = parentModel;
+      let provider: string | null = parentProvider;
+      let modelSource: "explicit" | "tier" | "parent" = "parent";
+      let resolvedTier: string | null = null;
+
+      const explicit = args.model && args.model.trim().length > 0 ? args.model.trim() : null;
+      if (explicit !== null) {
+        // An explicit override may be a "<harness>:<model>" token or a bare pi
+        // --model pattern. A claude: token can't drive a child pi process —
+        // fall back to the parent model in that case.
+        const token = parseCqToken(explicit);
+        const child = token ? tokenToChildModel(token) : { provider: null, model: explicit };
+        if (child !== null) {
+          model = child.model;
+          provider = child.provider;
+          modelSource = "explicit";
+        }
+        // else: claude: override -> keep the parent-model fallback already set.
+      } else {
+        // Tier resolution from the agent NAME via cq.toml.
+        const config = loadCqConfig(cqConfigPath);
+        if (config !== null) {
+          resolvedTier = resolveAgentTier(config, agent.name);
+          const token = resolveAgentToken(config, agent.name);
+          const child = token ? tokenToChildModel(token) : null;
+          if (child !== null) {
+            model = child.model;
+            provider = child.provider;
+            modelSource = "tier";
+          }
+          // else: no [tiers]/slot, or a claude: tier -> parent-model fallback.
+        }
+      }
 
       // The child is a plain `pi -p` process launched WITHOUT
       // `--extension cq-subagent-dispatch.ts`. We do NOT pass `--no-extensions`
@@ -352,6 +611,8 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         agentFile: agent.filePath,
         model,
         provider,
+        modelSource,
+        resolvedTier,
         excludedTools: excludeTools,
       };
 
@@ -410,6 +671,18 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
 
         details.exitCode = exitCode;
         details.stderr = stderr;
+
+        // Capture the provider/model the child actually opened against — Pi
+        // tags each assistant message with them. This is the observable T225
+        // evidence: it confirms the child ran under the tier-resolved model.
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const m = messages[i];
+          if (m && m.role === "assistant" && (m.provider || m.model)) {
+            details.childProvider = m.provider ?? null;
+            details.childModel = m.model ?? null;
+            break;
+          }
+        }
 
         const finalText = getFinalOutput(messages);
         if (exitCode !== 0 && !finalText) {
