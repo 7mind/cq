@@ -2,7 +2,7 @@
 ledger: tasks
 counters:
   milestone: 0
-  item: 220
+  item: 230
 archives:
   - id: M5
     path: ./archive/tasks/M5.md
@@ -269,6 +269,120 @@ archives:
     summary: "G26 session-log popup landed: added .lw-modal-backdrop/.lw-modal overlay CSS so LogModal is a fixed popup (T216), LogModal renders content via the sanitized Markdown component instead of <pre> (T217), read_log cap relaxed to 4 MiB per K42 (T218), happy-dom regression test for overlay+markdown (T219), and bun run check green gate (T220). All reviewed go-ahead."
     title: "W: session-log markdown popup (ledger-web, G26)"
     status: done
+  - id: M87
+    path: ./archive/tasks/M87.md
+    summary: "G28 W1 spike+de-risk — COMPLETE. T221 read-only go/no-go on Pi 0.78.0 ExtensionAPI child-session primitive: verdict GO — all 5 primitives (registerTool types.d.ts:816; child-session spawn via subprocess Route A `pi -p --mode json` + in-process Route B createAgentSession; tool-filtering --tools/excludeTools; model pin --model; output capture message_end/getFinalOutput) confirmed at exact file:line. Review R270 go-ahead (opus verified citations; 2 minor citation fixes applied at merge). Merged bd6aa87. M88–M91 unblocked."
+    title: Pi subagent dispatch — spike + de-risk
+    status: done
+  - id: M89
+    path: ./archive/tasks/M89.md
+    summary: "G28 W3 tier→model routing + runtime config-access — COMPLETE. T223: additive cq.toml [tiers] (fast/standard/frontier→harness:model) + [agent_tiers] (agent→tier) parsed in @cq/config with resolveAgentTier/resolveTierToken/resolveAgentModel + 17 tests, bun run check green 1038/0, merged 92aae54 (review R269 unanimous go-ahead). T228: locked decision K46 + backing note — standalone store-path extension reads cq.toml at runtime via $CQ_CONFIG (default $CQ_PROJECT_ROOT/cq.toml) with an INLINED flat-table TOML reader + INLINED resolver (Route A; rejected cross-workspace-import B / build-time-inline C). T224/T225 implement against K46."
+    title: Pi subagent dispatch — tier→model routing
+    status: done
 ---
 
 # tasks
+
+## M88
+
+### T222 — planned
+
+- createdAt: 2026-06-07T19:39:28.292Z
+- updatedAt: 2026-06-07T19:56:40.089Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: Project the individual cq agent markdown files to a Pi-discoverable path and pin the exposure mechanism
+- description: |
+    Pi today consumes mergedCommands (as promptTemplates) + mergedSkills but NOT the agents (in nix/hm/dev-llm.nix the agents are materialized only into programs.claude-code.agents; the programs.pi block omits them). The dispatch extension (T224) reads the INDIVIDUAL agent markdown files — the source files are the per-agent markdowns under nix/pkg/cq-assets/agents/<name>.md (the named set: plan-advance.md, plan-reviewer.md, investigate-explorer.md, investigate-prober.md, implement-worker.md, implement-reviewer.md, implement-conflict-resolver.md), each carrying name/description/disallowedTools frontmatter. Materialize these individual files (via the smind.hm.dev.llm.merged.agents read-only option) to a stable Pi-discoverable directory — e.g. home.file writing each agent to ~/.pi/agent/cq-agents/<name>.md (mirroring how piMcpJson is delivered).
+    
+    PIN THE EXPOSURE MECHANISM (do not leave it undecided): expose that directory path to the extension via a SINGLE chosen mechanism — RECOMMENDED: an env var (e.g. CQ_AGENTS_DIR) set on the piWrapped wrapper (the same wrapper that already sets the Pi runtime env), since the extension can read process.env at load; the alternative (a custom pi settings field) is rejected unless T224 shows the ExtensionAPI cannot read process.env. Document the chosen var name so T224/T225 consume the SAME name.
+    
+    RUNTIME-REACHABILITY (T222->T224 hand-off): the acceptance must assert the path is not merely present on disk but READABLE from the extension's runtime context — i.e. the env var resolves to an existing directory containing the agent files at the time pi loads the extension.
+    
+    Additive Pi-side delivery ONLY: do NOT touch the shared cq-asset markdown under nix/pkg/cq-assets, programs.claude-code.agents, or the Codex wiring (honors Q126/K44). Extension AUTHORING and its settings.extensions REGISTRATION are NOT part of this task — they belong to T224.
+- acceptance: "home-manager eval/activation succeeds; after activation each individual cq agent markdown file (investigate-explorer.md, plan-reviewer.md, plan-advance.md, investigate-prober.md, implement-worker.md, implement-reviewer.md, implement-conflict-resolver.md) exists at the chosen Pi-discoverable dir with frontmatter byte-identical to the nix/pkg/cq-assets/agents/<name>.md source; the chosen exposure var (e.g. CQ_AGENTS_DIR) is set on piWrapped and resolves at runtime to that existing directory (verified by a runtime-reachability probe: from the pi process env, the var points to a dir whose listing includes the agent files); `git diff` shows ONLY nix/hm/dev-llm.nix changed (NO new pi-extensions files — those land in T224/T225); programs.claude-code.agents and the entire nix/pkg/cq-assets tree are unchanged (assert via git diff that nix/pkg/cq-assets is untouched)."
+- suggestedModel: standard
+- dependsOn: ["T221"]
+- ledgerRefs: ["goals:G28"]
+
+### T224 — blocked
+
+- createdAt: 2026-06-07T19:39:49.578Z
+- updatedAt: 2026-06-07T20:51:33.058Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: Write the bespoke nix/pkg/pi-extensions dispatch-agent extension
+- description: |
+    Create the production extension (e.g. nix/pkg/pi-extensions/cq-subagent-dispatch.ts) following the two existing extensions' shape (export default function(pi: ExtensionAPI), type-only import from @earendil-works/pi-coding-agent). It registers ONE tool whose call shape matches the EXISTING dispatch convention the shared prompts already speak — the prompts name an agent + a task (+ optional isolation:"worktree") — per decision K44 (the trigger may also be reinforced by a Pi-side context asset, NOT a cq command-prompt edit). The tool: (1) takes { agent: string, task: string, isolation?: "worktree" }; (2) reads the named agent's markdown from the directory wired in T222 (via the pinned exposure var, e.g. CQ_AGENTS_DIR), parsing frontmatter (description/disallowedTools); (3) spawns a filtered-tool child Pi session using the primitive confirmed by the T221 spike — child toolset = defaults minus the agent's disallowedTools minus the dispatch tool itself (ALWAYS excluded -> enforces subagents-cannot-spawn-subagents); (4) injects the agent markdown body as the child's system/instructions and the task as the child turn input; (5) returns the child's final output to the caller as a parseable result.
+    
+    CHILD MODEL DEFAULT (scope boundary with T225): in THIS task the child session uses the PARENT session's currently-active model as its default — i.e. T224 does NOT exercise tiered/per-agent model selection at all. It neither reads nor depends on the cq.toml [tiers]/[agent_tiers] tables for choosing the child's model; it merely needs to KNOW where that config lives (the runtime config-access strategy PINNED by T228 — the per-agent tier SOURCE is the cq.toml [agent_tiers] map keyed by agent NAME, NOT agent frontmatter; agent markdown stays byte-identical). The actual tier->model routing (resolve agent NAME -> [agent_tiers] -> [tiers] -> Pi provider+model, and spawn the child on THAT model instead of the parent default) is ADDED and VERIFIED in T225, which depends on this task. Do not implement tier resolution here; T224 establishes the dispatch primitive on the parent-model default, T225 layers tier selection on top.
+    
+    REGISTRATION (explicit, distinct step): SEPARATELY from authoring the .ts file, register the new extension in programs.pi.settings.extensions in nix/hm/dev-llm.nix as a store-path entry alongside the two existing ones — call this out as its own change so the wiring is not merely implied by a passing `nix build`. Worktree isolation may be a stubbed seam (deferred per Q128 — explorer + reviewer need no worktree).
+- acceptance: "(1) typecheck: from nix/pkg/cq-ledgers, `bun run typecheck` (tsc -b) passes for the extension, matching the existing extensions' discipline; (2) load: launching the wrapped pi in this repo root (the piWrapped binary, cwd = repo root) emits NO extension-load error at session_start (capture the pi startup transcript/log); (3) dispatch probe verifies the DISPATCH PRIMITIVE ONLY (NOT tier selection — that is T225): invoking `dispatch_agent({agent:\"investigate-explorer\", task:\"<trivial read-only probe>\"})` (via a captured pi turn transcript) exercises exactly three things — tool registration, filtered-child-spawn, and result capture — with the concrete observables: (a) the call returns a NON-EMPTY result string (result capture), AND (b) the spawned child session demonstrably LACKS the dispatch tool — the child cannot re-dispatch (filtered-child-spawn enforcing subagents-cannot-spawn-subagents), evidenced in the child transcript / tool list. The child runs on the PARENT's active model (no tier resolution is performed or asserted in this step); (4) registration+build: `git diff` shows the new programs.pi.settings.extensions entry in nix/hm/dev-llm.nix (the registration is an explicit diff hunk, not implied), and `nix build`/eval of the dev-llm config succeeds with the new entry; (5) git diff confirms nix/pkg/cq-assets remains untouched."
+- suggestedModel: frontier
+- dependsOn: ["T222","T228"]
+- ledgerRefs: ["goals:G28"]
+- blockedBy: ["Q131"]
+
+## M90
+
+### T225 — blocked
+
+- createdAt: 2026-06-07T19:39:58.938Z
+- updatedAt: 2026-06-07T20:51:34.458Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: Wire tier resolution into the dispatch extension and integrate it into the pi harness
+- description: "Connect the two halves and confirm they load together. Teach the dispatch extension (T224) to resolve the child session's model from the DISPATCHED AGENT'S NAME via the cq.toml maps (T223): agent NAME -> tier (via [agent_tiers]) -> concrete provider+model (via [tiers]). The per-agent tier SOURCE is the cq.toml [agent_tiers] table keyed by agent name, NOT agent markdown frontmatter (which stays byte-identical per Q126/K44). Resolution precedence: an explicit model the orchestrator passes at dispatch wins; else the agent's tier via [agent_tiers]->[tiers]; else (agent unlisted, or no [tiers]/[agent_tiers] table) fall back to the parent Pi session's active model (documented default). The extension reads cq.toml using the runtime config-access strategy PINNED in T228 (e.g. parse cq.toml at the project root via the agreed env var). Confirm the new extension + the projected agents dir (T222) + the [tiers]/[agent_tiers] tables all load together under the wrapped pi harness."
+- acceptance: "Concrete, observable: (1) tiered resolution — dispatch two agents whose NAMES map to DIFFERENT tiers via [agent_tiers] (e.g. investigate-explorer -> frontier vs a fast-tier agent), launching pi from the repo root, and confirm from the captured pi session/provider log that each child session opened against the provider+model that [tiers] maps that agent's tier to (assert the two child models differ and match the table); (2) explicit-override — a dispatch passing an explicit model uses it regardless of tier (observable in the provider log); (3) fallback — with [tiers]/[agent_tiers] ABSENT (or the agent unlisted), the child falls back to the parent's active model WITHOUT error; (4) integrated load — `nix build`/eval of dev-llm succeeds and launching piWrapped (cwd = repo root) starts cleanly with extension + agents dir + tiers all wired (no load errors in the startup transcript). Capture mechanism: pi session/provider transcript + the dispatch invocations used."
+- suggestedModel: standard
+- dependsOn: ["T224","T223"]
+- ledgerRefs: ["goals:G28"]
+- blockedBy: ["Q131"]
+
+### T229 — blocked
+
+- createdAt: 2026-06-07T20:08:40.376Z
+- updatedAt: 2026-06-07T20:51:36.345Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: Author the harness-agnostic dispatch-trigger instruction in the Pi-side context asset
+- description: |
+    Close R266's COMPLETENESS gap: per decision K44 the UNCHANGED cq command prompts fire the Pi dispatch tool either because the registered tool's call shape matches the prompts' existing named-agent+task wording (T224's PRIMARY trigger) AND/OR because a harness-agnostic dispatch INSTRUCTION lives in a Pi-SIDE asset (K44's PERMITTED SUPPLEMENT). No current task AUTHORS or VERIFIES that Pi-side instruction — T224 only REGISTERS the tool, and T226/T227 merely ASSUME the unchanged prompt makes the Pi model emit a dispatch CALL rather than prose. This task authors that missing trigger.
+    
+    WHAT TO DO: add a harness-agnostic dispatch instruction to a PI-SIDE context asset — append to nix/pkg/llm-contexts/pi-context.md (which dev-llm.nix wires as programs.pi.appendSystemPrompt; a Pi-ONLY asset, NOT a cq command prompt, so it honors Q126/K44) telling the Pi model HOW to map the shared prompts' named-agent+task convention (an agent name + a task [+ optional isolation:"worktree"]) onto the registered dispatch tool (T224) — i.e. 'when a cq command instructs you to dispatch/launch a named subagent with a task, CALL the dispatch tool with {agent, task[, isolation]} rather than answering in prose; you cannot re-dispatch from within a child.' Reuse the exact tool name + arg shape T224 registers. Do NOT edit any file under nix/pkg/cq-assets (commands/agents/skills) and do NOT edit the Claude/Codex wiring — only the Pi-side asset (+ any programs.pi appendSystemPrompt wiring in nix/hm/dev-llm.nix needed to deliver it). This is the trigger half K44 names; it depends on T224 (the tool + its exact name/arg shape must exist to instruct against) and is a PREREQUISITE of the T226/T227 end-to-end demos (which assert an unchanged prompt actually fires the tool).
+- acceptance: "Observable, end-to-end: launching piWrapped (cwd = repo root) and running an UNCHANGED cq command prompt (the same kind T226/T227 drive) results in the Pi model FIRING the dispatch tool (a tool call visible in the captured pi transcript) rather than emitting prose describing the dispatch — i.e. the Pi-side instruction demonstrably converts the prompts' named-agent+task wording into an actual dispatch tool call. `git diff` asserts nix/pkg/cq-assets is UNTOUCHED (the trigger lives only in the Pi-side asset); the only changed files are nix/pkg/llm-contexts/pi-context.md (+ any programs.pi appendSystemPrompt wiring in nix/hm/dev-llm.nix). nix build/eval of dev-llm succeeds with the appended context."
+- suggestedModel: frontier
+- dependsOn: ["T224"]
+- ledgerRefs: ["goals:G28"]
+- blockedBy: ["Q131"]
+
+## M91
+
+### T226 — blocked
+
+- createdAt: 2026-06-07T19:40:07.318Z
+- updatedAt: 2026-06-07T20:51:37.712Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: "Acceptance demo: one read-only explorer dispatch under Pi returning parseable evidence-json"
+- description: "Per Q128 (acceptance, 'as recommended') AND R265's END-TO-END Q126 verification gap: demonstrate ONE read-only explorer dispatch (investigate-style) completing UNDER PI on THIS repo in the NORMAL non-sandboxed env, DRIVEN BY THE ACTUAL UNCHANGED cq command prompt — NOT by a hand-written dispatch_agent({...}) call. Launch the wrapped pi harness (piWrapped, cwd = repo root) and run an UNCHANGED cq command that fires an investigate-explorer dispatch (e.g. the investigate/advance promptTemplate against a real hypothesis + branch context about this repo). Per decision K44 the prompt text itself stays byte-identical (any Pi-side trigger lives in a Pi-side context asset, never in nix/pkg/cq-assets). Observe the Pi model fire the dispatch tool from that unchanged prompt, the child run read-only (filtered toolset: no Write/Bash/dispatch per investigate-explorer's disallowedTools), and the child return the explorer's structured evidence block (numbered file:line + excerpt + relevance) that the orchestrator can parse. Capture the prompt invocation, the dispatch the model emitted, the child's filtered toolset, and the returned structured result as evidence."
+- acceptance: "Captured pi transcript shows, end-to-end from an UNCHANGED cq prompt: (1) the unchanged cq command/promptTemplate was run under piWrapped (cwd = repo root) — record the exact command/template invoked and its capture (pi transcript/log); (2) the Pi model fired the dispatch tool for investigate-explorer FROM the unchanged prompt text (not a manual dispatch_agent call); (3) the child ran read-only (its toolset shows NO Write/Bash/dispatch, matching investigate-explorer.md's disallowedTools); (4) the child returned a parseable structured evidence block matching investigate-explorer.md's contract and the orchestrator-side parse of it succeeds; (5) `git diff` asserts nix/pkg/cq-assets is UNTOUCHED after the run (the prompts truly ran unchanged). Demonstrated on THIS repo, non-sandboxed."
+- suggestedModel: frontier
+- dependsOn: ["T225","T229"]
+- ledgerRefs: ["goals:G28"]
+- blockedBy: ["Q131"]
+
+### T227 — blocked
+
+- createdAt: 2026-06-07T19:40:15.244Z
+- updatedAt: 2026-06-07T20:51:39.101Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: "Acceptance demo: one reviewer dispatch under Pi returning a parseable verdict-json"
+- description: "Per Q128 AND R265's END-TO-END Q126 verification gap: demonstrate ONE reviewer dispatch (plan-review-style) completing UNDER PI on THIS repo non-sandboxed, DRIVEN BY THE ACTUAL UNCHANGED cq command prompt — NOT a hand-written dispatch_agent({...}) call. Launch piWrapped (cwd = repo root) and run an UNCHANGED cq command that fires a plan-reviewer dispatch (e.g. the plan/advance flow's review step, or the cq:plan-review rubric prompt, against a real or sample emitted plan). Per decision K44 the cq command prompt stays byte-identical (any Pi-side trigger lives in a Pi-side context asset). Observe the Pi model fire the dispatch from the unchanged prompt and the child return the single fenced-json verdict ({ summary, verdict, new_questions, criticism, defects }) that the orchestrator parses. Together with the explorer demo (T226) this proves the dispatch primitive works for BOTH the read-only-explorer and reviewer subagent shapes. Record explicitly that full unattended-sandbox + implement-worker (worktree-isolation) validation is the deferred FOLLOW-UP, out of scope for G28. INDEPENDENT of T226 — both depend only on T225."
+- acceptance: "Captured pi transcript shows, end-to-end from an UNCHANGED cq prompt: (1) the unchanged cq command/promptTemplate (plan-review step / cq:plan-review rubric) was run under piWrapped (cwd = repo root) — record the exact command invoked and its capture; (2) the Pi model fired the dispatch for plan-reviewer FROM the unchanged prompt text; (3) the child returned a SINGLE fenced-json verdict conforming to the plan-review contract (parseable new_questions[]/criticism[]/defects[]/verdict) and the orchestrator-side parse succeeds; (4) `git diff` asserts nix/pkg/cq-assets is UNTOUCHED after the run. Demonstrated on THIS repo, non-sandboxed. A short note records that sandbox + implement-worker validation is deferred to a follow-up goal."
+- suggestedModel: frontier
+- dependsOn: ["T225","T229"]
+- ledgerRefs: ["goals:G28"]
+- blockedBy: ["Q131"]

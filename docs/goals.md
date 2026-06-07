@@ -140,10 +140,10 @@ archives:
 
 ## M86
 
-### G28 — clarifying
+### G28 — planned
 
 - createdAt: 2026-06-07T18:58:25.412Z
-- updatedAt: 2026-06-07T19:20:11.817Z
+- updatedAt: 2026-06-07T20:21:50.555Z
 - author: "opus-4.8[1m]"
 - session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
 - title: Enable subagent support in the pi agent harness for the cq flow
@@ -157,4 +157,5 @@ archives:
     - Candidate subagent approaches surfaced: (1) badlogic's own example subagent extension shipped in pi-mono examples/extensions (isolated-context child sessions, filtered tools); (2) third-party npm `nicobailon/pi-subagents` (async delegation, /chain + /parallel slash cmds, agent markdown files with YAML frontmatter for model/tools/skills, session sharing, AND a 'children do not register the subagent tool' boundary that mirrors cq's own 'subagents-cannot-spawn-subagents' invariant); (3) a bespoke in-repo pi.registerTool extension purpose-built to dispatch the existing `mergedAgents` definitions.
     - Codex precedent: programs.codex.settings.features.multi_agent = true (Codex has its own native multi-agent), so cq already tolerates per-harness subagent mechanisms differing from Claude's Task tool.
     - Key tension to resolve in planning: the cq `agents` bundle frontmatter shape (Claude's name/description/tools) vs whatever a chosen pi mechanism expects, and how the cq command prompts (which currently assume a Claude `Task`-style dispatch + a 'subagents cannot spawn subagents' rule) invoke subagents portably across harnesses.
-- sessionLogs: ["docs/logs/20260607-190101-adc3647f6e76fc771.md","docs/logs/20260607-191636-acf7f53795bc6b6aa.md"]
+- sessionLogs: ["docs/logs/20260607-190101-adc3647f6e76fc771.md","docs/logs/20260607-191636-acf7f53795bc6b6aa.md","docs/logs/20260607-194044-aeca57f3db613a5b9.md","docs/logs/20260607-194044-pi-grok.md","docs/logs/20260607-194044-pi-minimax.md","docs/logs/20260607-195829-aa236264221419411.md","docs/logs/20260607-200912-ae41e1d678ccd8dc4.md","docs/logs/20260607-201716-a19419c0f5917a848.md","docs/logs/20260607-201941-ad3fd3408db384547.md"]
+- milestones: ["M87","M88","M89","M90","M91"]

@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 130
+  item: 131
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -180,11 +180,11 @@ archives:
 - ledgerRefs: ["goals:G28"]
 - answer: If we use a third party extension there is no need to vendor it BUT I'm biased towards custom extension - because we will need one later for a determenistic logic governing the orchestrating session
 
-### Q130 — open
+### Q130 — answered
 
 - createdAt: 2026-06-07T19:19:40.150Z
-- updatedAt: 2026-06-07T19:19:40.150Z
-- author: "opus-4.8[1m]"
+- updatedAt: 2026-06-07T19:28:39.847Z
+- author: user
 - session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
 - question: "Mechanism lock-in (re Q125 counter-question): given the now-fixed constraints — Q126 the shared cq command prompts must work UNCHANGED across harnesses (Pi-side adapter only, interpreting the existing dispatch convention), Q127 the orchestrator must be able to name which agent to run and the fast/standard/frontier tiers must resolve via a cq.toml mapping to concrete Pi provider+model pairs, Q128 acceptance = one read-only explorer dispatch + one reviewer dispatch returning a parseable result on THIS repo non-sandboxed, and Q129 no Nix-vendoring requirement plus your stated bias toward a bespoke in-repo extension (also needed later for deterministic orchestration-session logic) — which subagent mechanism do we lock for Pi: (a) third-party npm `nicobailon/pi-subagents`, (b) vendor/port badlogic's example subagent extension, or (c) a bespoke in-repo `nix/pkg/pi-extensions` `pi.registerTool` extension? Full grounded pros/cons/difficulty/downsides analysis is in the context field below."
 - context: |
@@ -210,3 +210,16 @@ archives:
 - suggestions: ["(a) Adopt third-party npm nicobailon/pi-subagents (no vendoring per Q129) + an adapter mapping our dispatch convention onto its tool, and reshape agent frontmatter to its schema","(b) Vendor/port badlogic's example subagent extension into nix/pkg/pi-extensions (collapses into option c with a head start)","(c) RECOMMENDED: bespoke in-repo nix/pkg/pi-extensions pi.registerTool extension shaped to the existing dispatch convention, reading mergedAgents + resolving suggestedModel via a new cq.toml [tiers] mapping, using badlogic's example as a spawning-primitive reference"]
 - recommendation: "Lock (c) the bespoke in-repo extension. It is the only option that satisfies Q126 (shared prompts unchanged — we shape the tool to the existing Agent/subagent_type convention), Q127 (orchestrator names the agent; fast/standard/frontier resolve via a new cq.toml [tiers] mapping the config layer already supports alongside [aliases]), and Q129 (no third-party worker-path dependency, and it IS the extension surface the future deterministic orchestration-session logic will reuse). Implementation difficulty is moderate and bounded: ~150-300 lines in one TS file using the same ExtensionAPI the two existing pi-extensions already use; the single real unknown is whether Pi's ExtensionAPI can spawn a filtered-tool child session and capture its result — which badlogic's example and nicobailon/pi-subagents both prove it can. The honest downside is that we own the child-session lifecycle and its maintenance across Pi version bumps. Recommend the first planned task be a read-only spike confirming that spawning primitive (go/no-go), after which the rest of the breakdown is committed."
 - ledgerRefs: ["goals:G28"]
+- answer: as recommended
+
+### Q131 — open
+
+- createdAt: 2026-06-07T20:49:24.305Z
+- updatedAt: 2026-06-07T20:49:24.305Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- question: "G28's integration + acceptance tail (T224 load the dispatch extension into a running pi; T225 observe tier resolution in pi's provider logs; T229 confirm an UNCHANGED cq prompt fires the dispatch tool under pi; T226/T227 the acceptance demos — one explorer + one reviewer dispatch under the wrapped pi harness) all require the new programs.pi/dev-llm.nix wiring to be HOME-MANAGER-ACTIVATED and the wrapped `pi` harness run with live provider auth (grok-build OAuth) to load the extension and perform live LLM-backed subagent dispatch. The autonomous sandbox session cannot run `home-manager switch` or drive the live interactive pi harness, so it cannot complete/verify Q128's acceptance bar. How do you want to proceed? (a) You activate the wiring (`home-manager switch`) and run the T226/T227 acceptance demos in your environment, reporting the transcripts back; (b) confirm the sandbox CAN activate home-manager + run pi headlessly (and the agent should attempt it); or (c) the agent keeps autonomously building the env-independent remainder (T228 runtime-config-access decision, T222 agents-dir nix projection — verifiable via nix eval / git diff) and you drive only the live-pi acceptance tail. Buildable-without-pi: T228, T222. Needs activated-pi-env: T224, T225, T229, T226, T227."
+- context: "Plan G28 is `planned` (locked, R268 unanimous go-ahead). Implemented + merged this run: T223 (cq.toml [tiers]+[agent_tiers] + @cq/config parser/resolvers, bun run check green 1038/0, commit 92aae54) and T221 (go/no-go spike: GO — all 5 Pi 0.78.0 ExtensionAPI primitives confirmed at exact file:line, Route A subprocess `pi -p --mode json` recommended, commit bd6aa87). M87 complete; M89 has T223 done (T228 still planned). The DAG bottleneck is the live-pi environment for the integration/acceptance milestones M88/M90/M91. This question gates how the env-dependent tasks get executed; it does NOT block the env-independent T228/T222, which the next /cq:advance can build autonomously."
+- suggestions: ["You run `home-manager switch` + the T226/T227 acceptance demos in your environment and report the pi transcripts","Confirm the sandbox can activate home-manager + run pi headlessly with provider auth, and the agent attempts the full tail","Agent autonomously builds the env-independent remainder (T228, T222) on the next /cq:advance; you drive the live-pi acceptance tail (T224–T227)"]
+- recommendation: "Option (c) for the next /cq:advance pass (autonomously land T228 + T222 — both verifiable without pi), then option (a) for the acceptance tail: you activate the wiring and run the two demos, since live LLM-backed subagent dispatch under the interactive pi harness is best observed in your environment with provider auth. If the sandbox can in fact `home-manager switch` + run pi headlessly (option b), say so and the agent will drive the whole tail."
+- ledgerRefs: ["goals:G28","tasks:T224","tasks:T226","tasks:T227"]

@@ -2,7 +2,7 @@
 ledger: decisions
 counters:
   milestone: 0
-  item: 43
+  item: 46
 archives:
   - id: M2
     path: ./archive/decisions/M2.md
@@ -157,3 +157,35 @@ archives:
 ---
 
 # decisions
+
+## M86
+
+### K44 — locked
+
+- createdAt: 2026-06-07T19:55:48.265Z
+- updatedAt: 2026-06-07T19:55:48.265Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: "Pi dispatch trigger: a Pi-side context asset MAY carry the harness-agnostic dispatch instruction; cq command prompts stay byte-unchanged"
+- rationale: "Resolves R265's new_question from the LOCKED answers + repo grounding (no fresh user input needed). Q126 (\"prompts work unchanged in all harnesses\") constrains the SHARED cq command prompts in nix/pkg/cq-assets (which encode only Claude Agent/subagent_type + Codex multi_agent, no Pi branch) — it does NOT constrain Pi's own system context. pi-context.md (nix/pkg/llm-contexts/pi-context.md) and an APPEND_SYSTEM-style Pi asset are ALREADY harness-specific, additive, Pi-only assets — not cq command prompts and not consumed by Claude/Codex. Therefore the dispatch trigger may be supplied two complementary ways, BOTH in scope and BOTH honoring Q126: (1) PRIMARY — register the Pi tool with a call shape/name that matches what the shared prompts ALREADY say (agent name + task [+ isolation:worktree]) per the locked Q130 recommendation, so the existing wording itself can fire it; (2) PERMITTED SUPPLEMENT — add a harness-agnostic dispatch instruction to a Pi-SIDE asset (pi-context.md / an APPEND_SYSTEM addition) telling the Pi model HOW to map the prompts' named-agent+task convention onto the dispatch tool. What stays byte-identical: every file under nix/pkg/cq-assets (commands + agents + skills) and the Claude/Codex wiring. What may change: Pi-side assets (pi-context.md / APPEND_SYSTEM) and nix/hm/dev-llm.nix programs.pi wiring. T224's dispatch design and T226/T227's end-to-end demo are bound by this decision (the demo drives the UNCHANGED cq prompt under Pi and asserts via git diff that nix/pkg/cq-assets is untouched)."
+- ledgerRefs: ["goals:G28"]
+
+### K45 — locked
+
+- createdAt: 2026-06-07T20:20:28.362Z
+- updatedAt: 2026-06-07T20:20:28.362Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: "plan review: approved"
+- rationale: Reviewer go-ahead (R268, round 4) — unanimous opus + grok + codex (minimax abstained, no API key); no new_questions, no criticism, no defects. G28 plan (work milestones M87-M91, tasks T221-T229) is fine-grained, sequenced, testable, grounded, and complete to Q128's acceptance bar; milestone DAG acyclic and consistent with task dependsOn. G28 plan LOCKED/approved.
+- ledgerRefs: ["goals:G28"]
+
+### K46 — locked
+
+- createdAt: 2026-06-07T20:50:42.751Z
+- updatedAt: 2026-06-07T20:50:42.751Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: K46 — Pi dispatch extension reads cq.toml at runtime via $CQ_CONFIG (default $CQ_PROJECT_ROOT/cq.toml) with an INLINED flat-table TOML reader + INLINED resolver (Route A; no cross-workspace import)
+- rationale: "T228 deliverable. The dispatch extension is a standalone store-path .ts loaded by the pi runtime (jiti) via programs.pi.settings.extensions — NOT in the @cq/cq-ledgers workspace, so it CANNOT import @cq/config/@cq/ledger at runtime (rejected option B) and must NOT bake values at build time (rejected option C). CHOSEN (Route A): the extension locates cq.toml via env var CQ_CONFIG (else $CQ_PROJECT_ROOT/cq.toml, else process.cwd()/cq.toml), with CQ_CONFIG/CQ_PROJECT_ROOT set on the piWrapped wrapper in nix/hm/dev-llm.nix ALONGSIDE CQ_AGENTS_DIR (T222). It parses [tiers]+[agent_tiers] with an INLINED, dependency-free reader for cq.toml's flat string-table subset ([table] headers + key=\"value\"; do NOT import smol-toml — a workspace dep the store-path extension can't resolve). The agent-name->tier->provider+model resolution is an INLINED tiny helper mirroring @cq/config's resolveAgentTier/resolveTierToken/resolveAgentModel (copied, not imported); T224's tests assert it matches @cq/config on the same cq.toml. Missing cq.toml / unlisted agent / absent table -> fall back to the parent pi session's active model. CONSUMPTION: T224 implements the extension's config read against THIS contract and T225 reuses the SAME inlined helper — neither re-decides the access strategy; both cite K46. Full backing note: docs/drafts/20260607-2049-pi-runtime-config-access.md."
+- ledgerRefs: ["goals:G28","tasks:T224","tasks:T225"]

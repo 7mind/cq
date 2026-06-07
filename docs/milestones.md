@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 86
+  item: 91
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -424,6 +424,16 @@ archives:
     summary: "Investigate D2 (mcp-fails-uninitialized-ledger) complete: D2 resolved (backup-and-reinit on schema divergence); hypothesis tree closed — H1/H2 wrong, H4 confirmed (BootstrapViolationError on schema divergence), H3 (environmental/version-skew direction) confirmed by H4 + the D2 fix; Q37 answered. All items terminal."
     title: "Investigate: mcp-fails-uninitialized-ledger"
     status: done
+  - id: M87
+    path: ./archive/milestones/M87.md
+    summary: "G28 W1 spike+de-risk — COMPLETE. T221 read-only go/no-go on Pi 0.78.0 ExtensionAPI child-session primitive: verdict GO — all 5 primitives (registerTool types.d.ts:816; child-session spawn via subprocess Route A `pi -p --mode json` + in-process Route B createAgentSession; tool-filtering --tools/excludeTools; model pin --model; output capture message_end/getFinalOutput) confirmed at exact file:line. Review R270 go-ahead (opus verified citations; 2 minor citation fixes applied at merge). Merged bd6aa87. M88–M91 unblocked."
+    title: Pi subagent dispatch — spike + de-risk
+    status: done
+  - id: M89
+    path: ./archive/milestones/M89.md
+    summary: "G28 W3 tier→model routing + runtime config-access — COMPLETE. T223: additive cq.toml [tiers] (fast/standard/frontier→harness:model) + [agent_tiers] (agent→tier) parsed in @cq/config with resolveAgentTier/resolveTierToken/resolveAgentModel + 17 tests, bun run check green 1038/0, merged 92aae54 (review R269 unanimous go-ahead). T228: locked decision K46 + backing note — standalone store-path extension reads cq.toml at runtime via $CQ_CONFIG (default $CQ_PROJECT_ROOT/cq.toml) with an INLINED flat-table TOML reader + INLINED resolver (Route A; rejected cross-workspace-import B / build-time-inline C). T224/T225 implement against K46."
+    title: Pi subagent dispatch — tier→model routing
+    status: done
 ---
 
 # milestones
@@ -442,3 +452,27 @@ archives:
 - updatedAt: 2026-06-07T18:58:19.495Z
 - title: "Plan: pi-agent subagent support for cq flow"
 - description: Coordination milestone for the goal of enabling subagent support in the pi agent harness (which lacks it out of the box) so the cq flow/MCP can use subagents.
+
+### M88 — open
+
+- createdAt: 2026-06-07T19:38:49.133Z
+- updatedAt: 2026-06-07T20:07:56.693Z
+- title: Pi subagent dispatch — agents projection + extension
+- description: "G28 work milestone 2/5: project the cq agents bundle to a Pi-discoverable path, then write the bespoke nix/pkg/pi-extensions dispatch tool that reads it and spawns filtered-tool child sessions. Depends on the spike (M87) AND on the tier-routing config milestone (M89): the dispatch tool (T224) is authored against the runtime config-access contract pinned by M89's T228, so M89 must precede this milestone. Net task order across M89->M88: T223 -> T228 -> T224."
+- dependsOn: ["M87","M89"]
+
+### M90 — open
+
+- createdAt: 2026-06-07T19:38:54.692Z
+- updatedAt: 2026-06-07T19:38:54.692Z
+- title: Pi subagent dispatch — integration + tier wiring
+- description: "G28 work milestone 4/5: wire tier resolution into the dispatch extension and integrate the extension + projected agents + [tiers] into the pi harness so they load together. Depends on the extension (M88) and the [tiers] config layer (M89)."
+- dependsOn: ["M88","M89"]
+
+### M91 — open
+
+- createdAt: 2026-06-07T19:38:58.589Z
+- updatedAt: 2026-06-07T19:38:58.589Z
+- title: Pi subagent dispatch — acceptance demo
+- description: "G28 work milestone 5/5: demonstrate the acceptance bar (Q128) — one read-only explorer dispatch AND one reviewer dispatch complete under pi on THIS repo (non-sandboxed) returning parseable structured results. Sandbox + implement-worker validation is a deferred follow-up."
+- dependsOn: ["M90"]
