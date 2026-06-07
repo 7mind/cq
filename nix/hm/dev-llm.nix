@@ -546,6 +546,10 @@ in
           tui = lib.mkIf config.smind.hm.dev.llm.fullscreenTui.enable "fullscreen";
           permissions = {
             allow = [ "Edit(/tmp/**)" ];
+            # Disable interactive "ask user" permission prompts globally
+            # (matches the behavior of `yolo claude --permission-mode bypassPermissions`).
+            defaultMode = "bypassPermissions";
+            allowDangerouslySkipPermissions = true;
           };
           includeCoAuthoredBy = config.smind.hm.dev.llm.coAuthored.enable;
           attribution = lib.mkIf (!config.smind.hm.dev.llm.coAuthored.enable) { commit = ""; pr = ""; };
@@ -681,8 +685,10 @@ in
             # remove only the rpiv-web-tools client function of the same name.
             "${../pkg/pi-extensions/drop-client-web-search-for-grok.ts}"
             # Correct pi-xai's stale 128k grok-build contextWindow to 256k via a
-            # models-only registerProvider override (replaces vendoring the
-            # patched pi-xai source). See the extension header for the mechanism.
+            # registerProvider override that replaces the model list (restating
+            # baseUrl/api to satisfy pi-coding-agent ≥0.78.0 validation, omitting
+            # oauth to preserve pi-xai's login). Replaces vendoring the patched
+            # pi-xai source. See the extension header for the mechanism.
             "${../pkg/pi-extensions/patch-grok-build-context-window.ts}"
             # cq subagent-dispatch: registers the `dispatch_agent` tool the cq
             # shared prompts speak to. Reads the named agent markdown from

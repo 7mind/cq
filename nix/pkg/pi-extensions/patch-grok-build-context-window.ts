@@ -11,19 +11,44 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // contextWindow) only applies to BUILT-IN providers, and `grok-build` is
 // registered at runtime by pi-xai. Instead of vendoring pi-xai's source to bump
 // the constant, we re-register the provider's model list here with the correct
-// figure. Per Pi's documented registerProvider merge semantics, an override
-// that supplies only `models` REPLACES the model list and PRESERVES every other
-// provider field — including pi-xai's dynamic OAuth token resolver, baseUrl,
-// `api`, and `authHeader`. We restate the three model definitions exactly as
-// pi-xai declares them (pi-xai@0.8.5), changing only `contextWindow`.
+// figure. We restate the three model definitions exactly as pi-xai declares
+// them (pi-xai@0.8.5), changing only `contextWindow`.
 //
-// Ordering: we re-register on `session_start`, which fires after all package
-// extensions (pi-xai included) have loaded and their provider registrations
-// have flushed — so our override lands last and is not clobbered. Per the docs,
-// registerProvider called after the initial load phase takes effect immediately
-// (no /reload needed) and the call is idempotent across session switches.
+// IMPORTANT — registerProvider validation (pi-coding-agent ≥0.78.0):
+// `ModelRegistry.validateProviderConfig` validates the *incoming* config BEFORE
+// the merge step (`upsertRegisteredProvider`) runs. Any config carrying a
+// `models[]` array must therefore itself supply `baseUrl` AND (`apiKey` |
+// `oauth`), and every model must have a resolvable `api`. A models-ONLY override
+// does NOT inherit pi-xai's baseUrl/api for validation — it is rejected with
+// `"baseUrl" is required when defining models`. So we must restate those fields:
+//   - baseUrl / api / authHeader: copied verbatim from pi-xai's registration.
+//   - apiKey: we set it to "$XAI_API_KEY" purely to satisfy the apiKey|oauth
+//     validation gate. We deliberately do NOT re-pass `oauth`: applyProviderConfig
+//     would call registerOAuthProvider with it and CLOBBER pi-xai's live
+//     login/refresh/getApiKey functions (not reachable through pi-xai's exports).
+//     By omitting oauth, pi-xai's OAuth provider registration and the persisted
+//     `/login grok-build` credentials in authStorage are left intact. At request
+//     time getApiKeyAndHeaders resolves authStorage (OAuth) FIRST and only falls
+//     back to this apiKey, so OAuth still wins whenever the user is logged in;
+//     the $XAI_API_KEY fallback matches pi-xai's own "OAuth or XAI_API_KEY"
+//     contract for the not-logged-in case.
+//
+// Ordering: pi-xai registers grok-build once at extension-load time. We
+// re-register on `session_start`, which fires after load, so our override lands
+// last and is not clobbered. registerProvider after the initial load phase takes
+// effect immediately (no /reload needed) and the call is idempotent across
+// session switches.
 
 const PROVIDER_ID = "grok-build";
+
+// Restated from pi-xai@0.8.5 (xai-provider.ts / xai-config.ts XAI_API_BASE).
+// Keep in sync if a future pi-xai version changes them.
+const GROK_BUILD_BASE_URL = "https://api.x.ai/v1";
+const GROK_BUILD_API = "openai-responses";
+// Satisfies validateProviderConfig's apiKey|oauth gate without re-registering
+// (and thereby clobbering) pi-xai's OAuth resolver. OAuth from authStorage takes
+// priority at request time; this is only the not-logged-in env-key fallback.
+const GROK_BUILD_APIKEY_FALLBACK = "$XAI_API_KEY";
 
 // Verified against Pi's bundled model table (grok-build-0.1 -> 256000) and
 // xAI's Grok Build Coding Plan docs. Replaces pi-xai's stale 131072.
@@ -69,7 +94,19 @@ const PATCHED_MODELS = [
 
 export default function patchGrokBuildContextWindow(pi: ExtensionAPI): void {
   pi.on("session_start", () => {
-    // Models-only override: replaces the model list, preserves oauth/baseUrl/etc.
-    pi.registerProvider(PROVIDER_ID, { models: PATCHED_MODELS } as never);
+    // Replaces the model list (corrected contextWindow) and restates the
+    // fields validateProviderConfig requires on a models-bearing config. We omit
+    // `oauth` on purpose so pi-xai's live OAuth registration is preserved — see
+    // the header for why and how OAuth still wins at request time.
+    pi.registerProvider(
+      PROVIDER_ID,
+      {
+        baseUrl: GROK_BUILD_BASE_URL,
+        api: GROK_BUILD_API,
+        authHeader: true,
+        apiKey: GROK_BUILD_APIKEY_FALLBACK,
+        models: PATCHED_MODELS,
+      } as never,
+    );
   });
 }
