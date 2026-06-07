@@ -163,6 +163,8 @@ let
     EXA_API_KEY = "exa";
     BRAVE_SEARCH_API_KEY = "brave";
     FIRECRAWL_API_KEY = "firecrawl";
+    OLLAMA_API_KEY = "ollama"; # Ollama Cloud (pi-ollama-cloud reads $OLLAMA_API_KEY)
+    MINIMAX_API_KEY = "minimax"; # MiniMax (pi-minimax-provider reads $MINIMAX_API_KEY)
   };
   piSecretsPrelude = lib.concatStringsSep "\n" (
     lib.mapAttrsToList (
@@ -677,11 +679,17 @@ in
           #   package as a *peer* dependency, which Pi's --legacy-peer-deps
           #   managed install skips (and Pi does not alias `ollama`), so it fails
           #   to load with "Cannot find module 'ollama'".
+          # - @sinamtz/pi-minimax-provider: MiniMax M3 provider (Anthropic-compat
+          #   streaming). Registers the `minimax` provider against
+          #   https://api.minimax.io (apiKey `$MINIMAX_API_KEY`). Self-contained:
+          #   `@sinclair/typebox` is a regular dep (installed) and also aliased by
+          #   Pi's loader, so the managed --legacy-peer-deps install resolves it.
           # (pi-mcp-adapter is added separately by enableMcpIntegration.)
           packages = [
             "npm:@juicesharp/rpiv-web-tools"
             "npm:@gotgenes/pi-anthropic-auth"
             "npm:pi-ollama-cloud"
+            "npm:@sinamtz/pi-minimax-provider"
             "${piXaiPatched}"
           ];
           extensions = [
