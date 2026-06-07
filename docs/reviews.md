@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 270
+  item: 276
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -394,6 +394,11 @@ archives:
     summary: "G28 W3 tier→model routing + runtime config-access — COMPLETE. T223: additive cq.toml [tiers] (fast/standard/frontier→harness:model) + [agent_tiers] (agent→tier) parsed in @cq/config with resolveAgentTier/resolveTierToken/resolveAgentModel + 17 tests, bun run check green 1038/0, merged 92aae54 (review R269 unanimous go-ahead). T228: locked decision K46 + backing note — standalone store-path extension reads cq.toml at runtime via $CQ_CONFIG (default $CQ_PROJECT_ROOT/cq.toml) with an INLINED flat-table TOML reader + INLINED resolver (Route A; rejected cross-workspace-import B / build-time-inline C). T224/T225 implement against K46."
     title: Pi subagent dispatch — tier→model routing
     status: done
+  - id: M88
+    path: ./archive/reviews/M88.md
+    summary: "G28 W2 agents-projection + extension — COMPLETE. T222: home.file projects the 7 cq agent markdowns to ~/.pi/agent/cq-agents/<name>.md (byte-identical to mergedAgents) + CQ_AGENTS_DIR pinned on piWrapped (7611867, R271 unanimous). T224: bespoke nix/pkg/pi-extensions/cq-subagent-dispatch.ts registering dispatch_agent {agent,task,isolation?} (K44) — reads $CQ_AGENTS_DIR agent md, spawns a Route-A filtered child `pi -p --mode json` (re-dispatch blocked via --exclude-tools + not loading the extension in the child; injection-safe shell:false argv; agent body via temp file), returns child output; registered in dev-llm.nix; LIVE dispatch probe returned non-empty + child lacked the dispatch tool. 1 criticism round fixed a path-traversal + 4 robustness items (235f854, R272 unanimous round-2). tsc --strict clean."
+    title: Pi subagent dispatch — agents projection + extension
+    status: done
 ---
 
 # reviews
@@ -447,3 +452,55 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G28"]
 - sessionLogs: ["docs/logs/20260607-201941-a176e1045eb180489.md","docs/logs/20260607-201941-pi-codex.md","docs/logs/20260607-201941-pi-grok.md","docs/logs/20260607-201941-pi-minimax.md"]
+
+## M90
+
+### R273 — go-ahead
+
+- createdAt: 2026-06-07T23:17:21.798Z
+- updatedAt: 2026-06-07T23:17:21.798Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- summary: "T225 GO-AHEAD (opus + grok approve; codex's lone disapprove VERIFIED FALSE against source — it claimed details.model/provider/modelSource/resolvedTier are never populated, but cq-subagent-dispatch.ts L609-617 builds `details = {...baseDetails, model, provider, modelSource, resolvedTier, ...}` from the resolved locals and the success path returns it; codex misread the split diff hunk; minimax abstained). Inlined flat-table TOML reader + resolver faithfully mirror @cq/config (probe-verified); precedence explicit>tier>parent; fallbacks safe; argv injection-safe; cq-assets untouched; standalone tsc strict clean. LIVE: investigate-explorer→frontier→grok-build vs investigate-prober→fast→ollama-cloud/minimax-m3 (different child models per [tiers]); override + 3 fallbacks hold. Agreed out-of-scope provider-ambiguity filed-and-deferred as D36."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T225","goals:G28"]
+- sessionLogs: ["docs/logs/20260607-230442-a54aba4d897e853d3.md","docs/logs/20260607-231649-T225-reviews.md"]
+
+### R274 — go-ahead
+
+- createdAt: 2026-06-07T23:17:26.902Z
+- updatedAt: 2026-06-07T23:17:26.902Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- summary: "T229 GO-AHEAD (UNANIMOUS: opus + codex + grok approve; minimax abstained). pi-context.md-only (+31): the appended 'Dispatching cq subagents' section maps the shared cq named-agent+task convention onto the EXACT dispatch_agent tool name + {agent,task,isolation?} arg shape (verified vs cq-subagent-dispatch.ts), states the no-re-dispatch boundary, strongly imperative anti-prose wording, trigger scoped to dispatch instructions. LIVE: an UNCHANGED cq-style instruction fired a real dispatch_agent toolCall + child execution (pi --mode json transcript), NOT prose; opus's misfire probe ('you ARE the agent') produced 0 dispatches. Only pi-context.md changed (already wired as programs.pi.appendSystemPrompt); cq-assets + dev-llm.nix untouched; bun run check green 1038/0; nix parse OK."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T229","goals:G28"]
+- sessionLogs: ["docs/logs/20260607-230442-a995278432781c6d1.md","docs/logs/20260607-231649-T229-reviews.md"]
+
+## M91
+
+### R275 — go-ahead
+
+- createdAt: 2026-06-07T23:40:02.577Z
+- updatedAt: 2026-06-07T23:40:02.577Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- summary: "T226 GO-AHEAD (opus approve, sole usable verdict; codex+grok pi shellouts abstained on `argument list too long` from the capture-heavy prompt; minimax abstained). ACCEPTANCE DEMO MET: opus re-parsed the committed capture — the grok-build model GENUINELY fired dispatch_agent(agent=investigate-explorer) from UNCHANGED cq-convention prompt wording (not a hand-written call); child ran read-only (excludedTools=[dispatch_agent,write,edit,bash] matching investigate-explorer.md); child returned a fenced-json evidence block (8/8 file:line citations, contract-valid), live orchestrator parse succeeded; docs-only, cq-assets+nix/ untouched. Out-of-scope defect D37 (stale HM pi settings) filed."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T226","goals:G28"]
+- sessionLogs: ["docs/logs/20260607-233329-aa0c624118a6e9655.md","docs/logs/20260607-233329-T226-T227-reviews.md"]
+
+### R276 — go-ahead
+
+- createdAt: 2026-06-07T23:40:07.461Z
+- updatedAt: 2026-06-07T23:40:07.461Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- summary: "T227 GO-AHEAD (UNANIMOUS usable: opus + codex + grok approve; minimax abstained). ACCEPTANCE DEMO MET: from an UNCHANGED cq plan-review prompt under pi grok-build (extension + pi-context trigger), the model GENUINELY fired dispatch_agent(agent=plan-reviewer); the isolated child returned a SINGLE fenced-json verdict with all 5 plan-review contract keys + correct defects-object shape, and the orchestrator fence-strip+jq parse succeeded (exit 0); docs-only, cq-assets byte-identical, sandbox+implement-worker validation recorded as deferred follow-up. The child's off-enum verdict:\"fail\" (vs go-ahead|revise) is an out-of-scope Pi-path model-paraphrase artifact (does NOT violate the shape/parse acceptance) — filed as defect D38, not a T227 gap."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T227","goals:G28"]
+- sessionLogs: ["docs/logs/20260607-233329-afa0391d57f11518e.md","docs/logs/20260607-233329-T226-T227-reviews.md"]

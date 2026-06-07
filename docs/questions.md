@@ -212,14 +212,15 @@ archives:
 - ledgerRefs: ["goals:G28"]
 - answer: as recommended
 
-### Q131 — open
+### Q131 — answered
 
 - createdAt: 2026-06-07T20:49:24.305Z
-- updatedAt: 2026-06-07T20:49:24.305Z
-- author: "opus-4.8[1m]"
+- updatedAt: 2026-06-07T21:45:40.391Z
+- author: user
 - session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
 - question: "G28's integration + acceptance tail (T224 load the dispatch extension into a running pi; T225 observe tier resolution in pi's provider logs; T229 confirm an UNCHANGED cq prompt fires the dispatch tool under pi; T226/T227 the acceptance demos — one explorer + one reviewer dispatch under the wrapped pi harness) all require the new programs.pi/dev-llm.nix wiring to be HOME-MANAGER-ACTIVATED and the wrapped `pi` harness run with live provider auth (grok-build OAuth) to load the extension and perform live LLM-backed subagent dispatch. The autonomous sandbox session cannot run `home-manager switch` or drive the live interactive pi harness, so it cannot complete/verify Q128's acceptance bar. How do you want to proceed? (a) You activate the wiring (`home-manager switch`) and run the T226/T227 acceptance demos in your environment, reporting the transcripts back; (b) confirm the sandbox CAN activate home-manager + run pi headlessly (and the agent should attempt it); or (c) the agent keeps autonomously building the env-independent remainder (T228 runtime-config-access decision, T222 agents-dir nix projection — verifiable via nix eval / git diff) and you drive only the live-pi acceptance tail. Buildable-without-pi: T228, T222. Needs activated-pi-env: T224, T225, T229, T226, T227."
 - context: "Plan G28 is `planned` (locked, R268 unanimous go-ahead). Implemented + merged this run: T223 (cq.toml [tiers]+[agent_tiers] + @cq/config parser/resolvers, bun run check green 1038/0, commit 92aae54) and T221 (go/no-go spike: GO — all 5 Pi 0.78.0 ExtensionAPI primitives confirmed at exact file:line, Route A subprocess `pi -p --mode json` recommended, commit bd6aa87). M87 complete; M89 has T223 done (T228 still planned). The DAG bottleneck is the live-pi environment for the integration/acceptance milestones M88/M90/M91. This question gates how the env-dependent tasks get executed; it does NOT block the env-independent T228/T222, which the next /cq:advance can build autonomously."
 - suggestions: ["You run `home-manager switch` + the T226/T227 acceptance demos in your environment and report the pi transcripts","Confirm the sandbox can activate home-manager + run pi headlessly with provider auth, and the agent attempts the full tail","Agent autonomously builds the env-independent remainder (T228, T222) on the next /cq:advance; you drive the live-pi acceptance tail (T224–T227)"]
 - recommendation: "Option (c) for the next /cq:advance pass (autonomously land T228 + T222 — both verifiable without pi), then option (a) for the acceptance tail: you activate the wiring and run the two demos, since live LLM-backed subagent dispatch under the interactive pi harness is best observed in your environment with provider auth. If the sandbox can in fact `home-manager switch` + run pi headlessly (option b), say so and the agent will drive the whole tail."
 - ledgerRefs: ["goals:G28","tasks:T224","tasks:T226","tasks:T227"]
+- answer: You should be able to build pi package autonomously and run within your sandbox - you have nix at your disposal, you don't need to switch system in order to test a package.

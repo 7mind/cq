@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 35
+  item: 38
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -112,3 +112,43 @@ archives:
 ---
 
 # defects
+
+## M90
+
+### D36 — open
+
+- createdAt: 2026-06-07T23:16:48.951Z
+- updatedAt: 2026-06-07T23:16:48.951Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: "cq.toml.example tier/alias token `pi:minimax-m3` is provider-ambiguous (no --provider emitted)"
+- severity: low
+- description: "Filed-and-deferred from the T225 review (opus + codex + grok all flagged it; out-of-scope for T225's resolver code, which faithfully maps whatever token the config supplies). In cq.toml.example (added by T223), `[aliases] minimax = \"pi:minimax-m3\"` + `[tiers] fast = \"minimax\"` resolve to the bare token `pi:minimax-m3` (no provider). Both the `ollama-cloud` provider (pi-ollama-cloud) and the MiniMax provider (pi-minimax-provider) register a `minimax-m3` model in nix/hm/dev-llm.nix, so the dispatch extension emits `--model minimax-m3` with NO `--provider`, leaving pi's non-deterministic fuzzy matching to pick the provider. The T225 live evidence used the disambiguated `pi:ollama-cloud/minimax-m3` form, confirming a specific provider is intended."
+- suggestedFix: "In cq.toml.example, pin the provider-qualified token form: `minimax = \"pi:ollama-cloud/minimax-m3\"` (or whichever provider is canonical for minimax-m3) so tier resolution emits an explicit `--provider`. Optionally document the `pi:<provider>/<model>` token form in the cq.toml schema docs."
+- ledgerRefs: ["goals:G28","tasks:T225","tasks:T223"]
+
+## M91
+
+### D37 — open
+
+- createdAt: 2026-06-07T23:39:38.306Z
+- updatedAt: 2026-06-07T23:39:38.306Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: Home-manager ~/.pi/agent/settings.json registers a STALE pre-T225 cq-subagent-dispatch.ts store path
+- severity: medium
+- description: Filed-and-deferred from the T226 review (opus). The home-manager-activated ~/.pi/agent/settings.json points its dispatch extension at a nix-store path from BEFORE the T222/T224/T225 merge stack (HM activation has not been re-run since the merge). So a faithful end-to-end cq subagent dispatch under the locally-installed `pi` does NOT run the merged extension until home-manager is re-activated; the T226 demo had to work around it via a cloned PI_CODING_AGENT_DIR swapping in the repo's merged file. The projected ~/.pi/agent/cq-agents/<name>.md agent markdowns are byte-identical to the merged repo files, so only the EXTENSION code (not the agent contract) is stale. This is a USER/ENVIRONMENT action (re-run activation), not a repo code change.
+- suggestedFix: Re-run `home-manager switch` (or the relevant activation) so ~/.pi/agent/settings.json registers the merged cq-subagent-dispatch.ts store path; then re-capture one dispatch under the unmodified locally-installed pi to confirm the merged extension loads without any PI_CODING_AGENT_DIR override.
+- ledgerRefs: ["goals:G28","tasks:T226"]
+
+### D38 — open
+
+- createdAt: 2026-06-07T23:39:46.103Z
+- updatedAt: 2026-06-07T23:39:46.103Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- headline: Pi-path subagent child emits off-enum verdict ("fail") instead of the plan-review rubric's go-ahead|revise
+- severity: medium
+- description: "Filed-and-deferred from the T227 review (opus). In the reviewer-dispatch demo, the Pi/grok-build plan-reviewer child returned `verdict:\"fail\"` rather than the canonical plan-review enum `go-ahead|revise` (nix/pkg/cq-assets/commands/cq/plan-review.md:85). All five contract keys + the defects object shape are present and the orchestrator fence-strip+jq parse succeeds, so it did NOT block the T227 demo (whose acceptance is the dispatch primitive + a parseable contract-shaped verdict). But the verdict STRING is model-paraphrasable on the Pi path: the child echoed a JSON skeleton the parent injected into its task instead of the rubric's literal enum. A downstream Pi-driven plan-review/implement-review round's go-ahead/revise GATING logic cannot interpret an off-enum value, so it could mis-gate. Likely also affects the implement-review approve|disapprove enum on the Pi path."
+- suggestedFix: Reinforce the verdict enum on the Pi subagent path — e.g. have pi-context.md (the dispatch-trigger section) instruct the model to preserve the cq agent's EXACT output contract including the verdict enum, and/or add an orchestrator-side normalization/validation step that maps or rejects non-enum verdict strings before gating. Validate under the deferred Pi-reviewer follow-up.
+- ledgerRefs: ["goals:G28","tasks:T227"]

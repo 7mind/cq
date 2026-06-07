@@ -434,6 +434,11 @@ archives:
     summary: "G28 W3 tier→model routing + runtime config-access — COMPLETE. T223: additive cq.toml [tiers] (fast/standard/frontier→harness:model) + [agent_tiers] (agent→tier) parsed in @cq/config with resolveAgentTier/resolveTierToken/resolveAgentModel + 17 tests, bun run check green 1038/0, merged 92aae54 (review R269 unanimous go-ahead). T228: locked decision K46 + backing note — standalone store-path extension reads cq.toml at runtime via $CQ_CONFIG (default $CQ_PROJECT_ROOT/cq.toml) with an INLINED flat-table TOML reader + INLINED resolver (Route A; rejected cross-workspace-import B / build-time-inline C). T224/T225 implement against K46."
     title: Pi subagent dispatch — tier→model routing
     status: done
+  - id: M88
+    path: ./archive/milestones/M88.md
+    summary: "G28 W2 agents-projection + extension — COMPLETE. T222: home.file projects the 7 cq agent markdowns to ~/.pi/agent/cq-agents/<name>.md (byte-identical to mergedAgents) + CQ_AGENTS_DIR pinned on piWrapped (7611867, R271 unanimous). T224: bespoke nix/pkg/pi-extensions/cq-subagent-dispatch.ts registering dispatch_agent {agent,task,isolation?} (K44) — reads $CQ_AGENTS_DIR agent md, spawns a Route-A filtered child `pi -p --mode json` (re-dispatch blocked via --exclude-tools + not loading the extension in the child; injection-safe shell:false argv; agent body via temp file), returns child output; registered in dev-llm.nix; LIVE dispatch probe returned non-empty + child lacked the dispatch tool. 1 criticism round fixed a path-traversal + 4 robustness items (235f854, R272 unanimous round-2). tsc --strict clean."
+    title: Pi subagent dispatch — agents projection + extension
+    status: done
 ---
 
 # milestones
@@ -452,14 +457,6 @@ archives:
 - updatedAt: 2026-06-07T18:58:19.495Z
 - title: "Plan: pi-agent subagent support for cq flow"
 - description: Coordination milestone for the goal of enabling subagent support in the pi agent harness (which lacks it out of the box) so the cq flow/MCP can use subagents.
-
-### M88 — open
-
-- createdAt: 2026-06-07T19:38:49.133Z
-- updatedAt: 2026-06-07T20:07:56.693Z
-- title: Pi subagent dispatch — agents projection + extension
-- description: "G28 work milestone 2/5: project the cq agents bundle to a Pi-discoverable path, then write the bespoke nix/pkg/pi-extensions dispatch tool that reads it and spawns filtered-tool child sessions. Depends on the spike (M87) AND on the tier-routing config milestone (M89): the dispatch tool (T224) is authored against the runtime config-access contract pinned by M89's T228, so M89 must precede this milestone. Net task order across M89->M88: T223 -> T228 -> T224."
-- dependsOn: ["M87","M89"]
 
 ### M90 — open
 
