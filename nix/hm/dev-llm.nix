@@ -546,10 +546,10 @@ in
           tui = lib.mkIf config.smind.hm.dev.llm.fullscreenTui.enable "fullscreen";
           permissions = {
             allow = [ "Edit(/tmp/**)" ];
-            # Disable interactive "ask user" permission prompts globally
-            # (matches the behavior of `yolo claude --permission-mode bypassPermissions`).
-            defaultMode = "bypassPermissions";
-            allowDangerouslySkipPermissions = true;
+            # defaultMode = "bypassPermissions";  # commented out: this controls *permission prompts* (file edits etc.), not the AskUserQuestion tool
+            # Disable the AskUserQuestion tool (the interactive multiple-choice "ask user" / question UI).
+            # Tool name from https://code.claude.com/docs/en/tools-reference ; see also GitHub #10258.
+            deny = [ "AskUserQuestion" ];
           };
           includeCoAuthoredBy = config.smind.hm.dev.llm.coAuthored.enable;
           attribution = lib.mkIf (!config.smind.hm.dev.llm.coAuthored.enable) { commit = ""; pr = ""; };

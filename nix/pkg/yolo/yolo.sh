@@ -521,6 +521,7 @@ case "$SUBCMD" in
     EXEC_CMD=(
       claude
       --permission-mode bypassPermissions
+      --disallowed-tools AskUserQuestion
       --append-system-prompt "$_yolo_prompt_full"
       "${CMD_ARGS[@]}"
     )
