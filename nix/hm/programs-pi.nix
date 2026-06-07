@@ -4,7 +4,7 @@
 # Built from the shared lib/mk-agent-harness.nix factory (common surface:
 # enable/package/configDir/settings/context/skills/enableMcpIntegration)
 # plus Pi-specific extras below. Slots into dev-llm.nix identically to the
-# upstream programs.{claude-code,codex,opencode} modules.
+# upstream programs.{claude-code,codex} modules.
 #
 # Pi config layout (https://pi.dev/docs/latest):
 #   ~/.pi/agent/settings.json   global settings (JSON)

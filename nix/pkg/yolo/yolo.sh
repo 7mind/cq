@@ -6,8 +6,6 @@
 #   YOLO_NIX_LD                 - path to nix-ld binary (bound as /lib64/ld-linux-x86-64.so.2)
 #   YOLO_JQ                     - path to jq binary
 #   YOLO_CODEGRAPH_BIN          - path to codegraph binary (per-project index bootstrap)
-#   YOLO_COPILOT_DEFAULT_CONFIG - path to copilot default config JSON
-#   YOLO_COPILOT_BIN            - path to copilot binary
 #
 # Optional env vars:
 #   YOLO_PODMAN_SOCKET_PATH - rootless podman socket path (enables container forwarding)
@@ -27,8 +25,6 @@
 : "${YOLO_NIX_LD:?must be set}"
 : "${YOLO_JQ:?must be set}"
 : "${YOLO_CODEGRAPH_BIN:?must be set}"
-: "${YOLO_COPILOT_DEFAULT_CONFIG:?must be set}"
-: "${YOLO_COPILOT_BIN:?must be set}"
 
 # PROFILE selects an isolated config namespace. Empty means the default
 # profile: agents read their real home dirs (~/.claude, ~/.codex, ...).
@@ -126,7 +122,7 @@ if [[ $MOBILE_MODE -eq 1 ]]; then
 fi
 
 if [[ $# -eq 0 ]]; then
-  echo "Usage: yolo [--profile NAME|-p NAME] [--work] [--mobile] [--gpu|--no-gpu] [--no-cg] [--audio|--no-audio] [--unsafe-share-home] [--env KEY=VAL]... <claude|codex|copilot|vibe|opencode|pi|shell|cmd> [args...]" >&2
+  echo "Usage: yolo [--profile NAME|-p NAME] [--work] [--mobile] [--gpu|--no-gpu] [--no-cg] [--audio|--no-audio] [--unsafe-share-home] [--env KEY=VAL]... <claude|codex|pi|shell|cmd> [args...]" >&2
   exit 1
 fi
 
@@ -388,61 +384,6 @@ add_codex_binds() {
   fi
 }
 
-# vibe: ~/.vibe (config) + ~/.local/share/vibe (data).
-add_vibe_binds() {
-  if [[ -n "$PROFILE" ]]; then
-    local A; A="$(profile_dir vibe)"
-    mkdir -p "$A/config" "$A/data"
-    EXTRA_ARGS+=(
-      --bind "$A/config,${HOME}/.vibe"
-      --bind "$A/data,${HOME}/.local/share/vibe"
-    )
-  else
-    mkdir -p "${HOME}/.vibe" "${HOME}/.local/share/vibe"
-    EXTRA_ARGS+=(
-      --rw "${HOME}/.vibe"
-      --rw "${HOME}/.local/share/vibe"
-    )
-  fi
-}
-
-# opencode: ~/.config/opencode (config) + ~/.local/share/opencode (data).
-add_opencode_binds() {
-  if [[ -n "$PROFILE" ]]; then
-    local A; A="$(profile_dir opencode)"
-    mkdir -p "$A/config" "$A/data"
-    EXTRA_ARGS+=(
-      --bind "$A/config,${HOME}/.config/opencode"
-      --bind "$A/data,${HOME}/.local/share/opencode"
-    )
-  else
-    EXTRA_ARGS+=(
-      --rw "${HOME}/.config/opencode"
-      --rw "${HOME}/.local/share/opencode"
-    )
-  fi
-}
-
-# copilot: backed by ~/.copilot (in-sandbox), seeded on the host side. Sets the
-# global COPILOT_CONFIG_DIR (the in-sandbox path) consumed by the `copilot`
-# subcommand, and seeds config (trusted folder + defaults) on the host backing
-# dir so copilot is usable as a secondary agent launched from another tool.
-add_copilot_binds() {
-  local host_dir
-  if [[ -n "$PROFILE" ]]; then
-    local A; A="$(profile_dir copilot)"
-    mkdir -p "$A/home"
-    host_dir="$A/home"
-    EXTRA_ARGS+=(--bind "$A/home,${HOME}/.copilot")
-  else
-    host_dir="${HOME}/.copilot"
-    EXTRA_ARGS+=(--rw "${HOME}/.copilot")
-  fi
-  EXTRA_ARGS+=(--ro "${HOME}/.config/gh")
-  ensure_copilot_config "$host_dir" "${PWD}"
-  COPILOT_CONFIG_DIR="${HOME}/.copilot"
-}
-
 # pi: ~/.pi (state + ~/.pi/agent config). HM-managed assets (settings.json,
 # AGENTS.md, skills, optional extensions) are shared read-only from the main
 # profile, like codex. Pi has no built-in MCP — its pi-mcp-adapter package
@@ -474,14 +415,11 @@ add_pi_binds() {
 }
 
 # Bind every supported agent's config so that whichever tool is launched can
-# in turn drive any of the others (e.g. claude shelling out to codex/opencode),
+# in turn drive any of the others (e.g. claude shelling out to codex/pi),
 # each scoped to the active $PROFILE.
 add_all_agent_binds() {
   add_claude_binds
   add_codex_binds
-  add_copilot_binds
-  add_vibe_binds
-  add_opencode_binds
   add_pi_binds
 }
 
@@ -498,7 +436,7 @@ add_all_agent_binds() {
 # replaces the HM symlink on the host with a writable copy. That is self-healing:
 # a home-manager rebuild restores the symlink, and the next launch re-creates the
 # writable copy. In a named profile out_file is the profile's own backing file,
-# so the host ~/.codex is untouched. Mirrors the copilot pre-trust.
+# so the host ~/.codex is untouched.
 #   $1 = out_file  (writable config.toml to produce / bind into the sandbox)
 #   $2 = base_file (HM config.toml to copy settings from; a store symlink)
 #   $3 = trusted_dir ($PWD)
@@ -525,46 +463,6 @@ ensure_codex_config() {
   rm -f "$out_file"          # drop the immutable HM symlink (or a stale copy)
   mv "$tmp" "$out_file"
   chmod u+w "$out_file"
-}
-
-ensure_copilot_config() {
-  local config_dir="$1"
-  local trusted_dir="$2"
-  local config_file="$config_dir/config.json"
-  local tmp_config
-
-  mkdir -p "$config_dir"
-  tmp_config="$(mktemp)"
-
-  if [[ -f "$config_file" ]]; then
-    "$YOLO_JQ" \
-      --slurpfile defaults "$YOLO_COPILOT_DEFAULT_CONFIG" \
-      --arg trusted_dir "$trusted_dir" \
-      '
-        ($defaults[0] + .)
-        | .trusted_folders = (((.trusted_folders // []) + [$trusted_dir]) | unique)
-      ' \
-      "$config_file" > "$tmp_config"
-  else
-    "$YOLO_JQ" \
-      -n \
-      --slurpfile defaults "$YOLO_COPILOT_DEFAULT_CONFIG" \
-      --arg trusted_dir "$trusted_dir" \
-      '
-        $defaults[0]
-        | .trusted_folders = (((.trusted_folders // []) + [$trusted_dir]) | unique)
-      ' > "$tmp_config"
-  fi
-
-  # Write only when the result differs from what is already on disk. Because
-  # add_copilot_binds runs on every yolo launch (so copilot is usable as a
-  # secondary agent), this keeps non-copilot launches from rewriting the file
-  # or bumping its mtime once $PWD is already trusted and defaults are applied.
-  if [[ -f "$config_file" ]] && cmp -s "$tmp_config" "$config_file"; then
-    rm -f "$tmp_config"
-  else
-    mv "$tmp_config" "$config_file"
-  fi
 }
 
 # CodeGraph per-project index bootstrap. The codegraph MCP server (wired into
@@ -614,7 +512,7 @@ maybe_init_codegraph() {
 # Agent subcommands run an MCP-enabled CLI that can use the codegraph server;
 # shell/cmd do not, so they skip the index bootstrap.
 case "$SUBCMD" in
-  claude|codex|copilot|vibe|opencode|pi) maybe_init_codegraph ;;
+  claude|codex|pi) maybe_init_codegraph ;;
 esac
 
 case "$SUBCMD" in
@@ -631,35 +529,6 @@ case "$SUBCMD" in
   codex)
     add_all_agent_binds
     EXEC_CMD=(codex --dangerously-bypass-approvals-and-sandbox --search "${CMD_ARGS[@]}")
-    ;;
-
-  copilot)
-    add_all_agent_binds
-
-    copilot_args=(--config-dir "$COPILOT_CONFIG_DIR")
-    case "${CMD_ARGS[0]-}" in
-      help|init|login|plugin|update|version) ;;
-      *)
-        copilot_args+=(
-          --model "$YOLO_COPILOT_MODEL"
-          --reasoning-effort "$YOLO_COPILOT_REASONING_EFFORT"
-          --autopilot
-          --yolo
-        )
-        ;;
-    esac
-
-    EXEC_CMD=("$YOLO_COPILOT_BIN" "${copilot_args[@]}" "${CMD_ARGS[@]}")
-    ;;
-
-  vibe)
-    add_all_agent_binds
-    EXEC_CMD=(vibe --agent auto-approve "${CMD_ARGS[@]}")
-    ;;
-
-  opencode)
-    add_all_agent_binds
-    EXEC_CMD=(opencode "${CMD_ARGS[@]}")
     ;;
 
   pi)
@@ -714,7 +583,7 @@ case "$SUBCMD" in
 
   *)
     echo "Unknown tool: $SUBCMD" >&2
-    echo "Supported: claude, codex, copilot, vibe, opencode, pi, shell, cmd" >&2
+    echo "Supported: claude, codex, pi, shell, cmd" >&2
     exit 1
     ;;
 esac

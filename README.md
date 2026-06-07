@@ -124,8 +124,8 @@ docs/
 this flake's own `inputs` and `self` — that sets up the Claude Code / Codex /
 Pi coding agents, the bubblewrap `yolo` sandbox, a shared `programs.mcp`
 registry (codegraph + ledger), and the merged prompt/skill/command/agent asset
-bundles. Opencode / Copilot / Vibe and any local-model (ollama) provider config
-are deliberately **left to the consumer**.
+bundles. Any local-model (ollama) provider config is deliberately **left to the
+consumer**.
 
 ```nix
 # flake.nix
@@ -151,7 +151,7 @@ consumer wires from its own system config:
 Other modules can append their own `assetBundles` (same shape as
 `cq.llmAssets`); the merged result is exposed read-only at
 `smind.hm.dev.llm.merged.{skills,commands,agents,memoryText}` for sibling
-modules (e.g. a consumer's opencode config) to reuse.
+modules to reuse.
 
 The harness building blocks are also exposed as individual packages —
 `packages.<system>.{yolo,claude-code,codex,pi-coding-agent,llm-skills,

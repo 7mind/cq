@@ -1,7 +1,7 @@
 # Reusable home-manager module factory for AI coding-agent harnesses.
 #
 # Captures the option surface shared by every harness we manage
-# (claude-code, codex, opencode, pi, ...): a config directory, a
+# (claude-code, codex, pi, ...): a config directory, a
 # format-generated settings file, a concatenated memory/context file, a
 # `skills/<name>/SKILL.md` tree, and an `enableMcpIntegration` toggle that
 # feeds from the shared `programs.mcp` registry.

@@ -7,8 +7,8 @@
 # `self` (this flake — for the ledger packages/assets it re-uses). All
 # host/hardware-specific coupling (GPU flags, rootless-Podman socket, ollama
 # models dir, ssh key) is surfaced as `smind.hm.dev.llm.*` options that the
-# consumer wires from its own NixOS config. Opencode / Copilot / Vibe and the
-# local-model provider wiring deliberately stay out of this module.
+# consumer wires from its own NixOS config. Local-model provider wiring
+# deliberately stays out of this module.
 { inputs, self }:
 { config
 , lib
@@ -95,7 +95,8 @@ let
   # Prompt content lives in two sibling packages: pkg/llm-skills (SKILL.md set
   # + build-time validation) and pkg/llm-contexts (general context + Pi's
   # operating manual). Environment guidance is a skill for skill-aware agents;
-  # skill-less agents (Copilot, Vibe) get the pre-composed llm-context-with-env.
+  # skill-less agents (consumers that can't load SKILL.md trees) get the
+  # pre-composed llm-context-with-env.
   llmSkills = pkgs.callPackage ../pkg/llm-skills/default.nix { };
   llmContexts = pkgs.callPackage ../pkg/llm-contexts/default.nix { };
 
@@ -255,16 +256,6 @@ let
       "- $SANDBOX_LINE"
   '';
 
-  copilotConfig = jsonFormat.generate "copilot-config.json" {
-    alt_screen = false;
-    banner = "never";
-    experimental = true;
-    include_coauthor = config.smind.hm.dev.llm.coAuthored.enable;
-    model = "gpt-5.5";
-    theme = "dark";
-    trusted_folders = [ ];
-  };
-
 in
 {
   options = {
@@ -319,8 +310,8 @@ in
     };
 
     # Read-only views of the merged asset bundles, exposed so sibling modules
-    # (e.g. a consumer's opencode module) can reuse the same skill set and
-    # memory text without re-folding `assetBundles`/`memorySections`.
+    # can reuse the same skill set and memory text without re-folding
+    # `assetBundles`/`memorySections`.
     smind.hm.dev.llm.merged.skills = lib.mkOption {
       type = lib.types.attrsOf lib.types.lines;
       readOnly = true;
@@ -733,7 +724,6 @@ in
         (pkgs.callPackage ../pkg/reattach-llm/default.nix { })
 
         (pkgs.callPackage ../pkg/yolo/default.nix {
-          inherit copilotConfig;
           codegraph = codegraphPkg;
           podmanSocketPath = rootlessPodmanSocketPath;
           podmanSocketUri = rootlessPodmanSocketUri;

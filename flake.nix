@@ -463,9 +463,9 @@
           # llm-contexts: the general + Pi context fragments as files.
           llm-contexts = (pkgs.callPackage ./nix/pkg/llm-contexts/default.nix { }).package;
           # llm-context-with-env: general context + the environment skill folded
-          # in, for skill-less agents (Copilot, Vibe). The file IS the store
-          # path; referencing llm-skills.package keeps meta.yaml validation in the
-          # consumer's build graph. Consumed by nix-config's dev-opencode.
+          # in, for skill-less agents (consumers that can't load SKILL.md trees).
+          # The file IS the store path; referencing llm-skills.package keeps
+          # meta.yaml validation in the consumer's build graph.
           llm-context-with-env =
             let
               skills = pkgs.callPackage ./nix/pkg/llm-skills/default.nix { };
@@ -541,7 +541,7 @@
       # harness, shared asset-bundle + MCP infrastructure, and the bubblewrap
       # `yolo` sandbox. Curried over this flake's inputs + self. The consumer
       # wires host/hardware values via `smind.hm.dev.llm.*` options and keeps
-      # its own opencode / copilot / vibe + local-model provider config.
+      # its own local-model provider config.
       homeManagerModules.dev-llm = {
         imports = [
           (import ./nix/hm/dev-llm.nix { inherit inputs self; })
