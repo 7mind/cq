@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 17
+  item: 18
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -258,3 +258,16 @@ archives:
 - ledgerRefs: ["goals:G26"]
 - blockingQuestions: ["Q121","Q122","Q123","Q124"]
 - sessionLogs: ["docs/logs/20260606-233747-adda28120a7df8d0b.md"]
+
+## M-AMBIENT
+
+### HO18 — drained
+
+- createdAt: 2026-06-07T01:12:27.398Z
+- updatedAt: 2026-06-07T01:12:27.398Z
+- author: "opus-4.8[1m]"
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
+- summary: "DRAINED. This /cq:advance run folded in the user's answers (Q117-Q124) and drove three goals + one defect from intake to landed code. INVESTIGATE: completed D34's file-and-defer (seeded defect-seeded goal G27 from the confirmed H26 root cause; the prior /cq:investigate run had marked D34 root-caused but omitted the seed). PLAN: advanced G27 (defect-seeded), G25 (retire 5 legacy skills), G26 (session-log markdown popup) to `planned` via the planner<->reviewer loop (G25 took one revise round, R248->R249; G26/G27 one round each). IMPLEMENT: built and merged all 14 tasks T207-T220 across work milestones M83 (G27/D34 fix: progressTotal denominator), M84 (G25: archived 5 skills to docs/legacy-skills/, de-registered via readDir, repointed refs, nix build green), M85 (G26: modal overlay CSS + LogModal->Markdown + read_log 4MiB cap + tests). All per-task reviews go-ahead. D34 RESOLVED (T207-T209). Archived M79 (D34 investigate), M83, M84, M85. Final predicate gate: P-investigate=FALSE (no non-terminal defects), P-plan=FALSE (no clarifying/planning goal), P-implement=FALSE (no non-terminal tasks), open-question gate clear. Nothing actionable remains. OPERATIONAL NOTE: a background process kept committing divergent 'pi ollama'/'pi config' commits and the Agent worktrees repeatedly branched from a stale commit (4891fa0); merge-back was reconciled via cherry-pick onto main each time and the integrated tree verified green (bun run check 1019/0; nix build .#llm-skills green). NEXT (user action, optional): goals G25, G26, G27 are `planned` with all work milestones archived and all tasks done/merged — ready for you to CLOSE in the TUI/web (set to done); G23 + G24 from prior runs are also building/ready to close. Goals never auto-close. Once closed, the next /cq:advance sweep archives their coordination milestones (M80/M81/M82 etc.). Also still open from before: M11 carries a dangling non-terminal hypothesis H3 (D34-unrelated; investigate-flow's to adjudicate)."
+- flow: advance
+- ledgerRefs: ["goals:G25","goals:G26","goals:G27","defects:D34"]
+- sessionLogs: ["docs/logs/20260606-232140-a89c2213af28373de.md","docs/logs/20260606-235430-a48f559038353f730.md","docs/logs/20260606-235703-aa9bf7ba7fd4842b4.md","docs/logs/20260606-235758-a360792708a13fba4.md","docs/logs/20260606-233304-ab05488ed82cc7cad.md","docs/logs/20260607-000134-ab5f1116794648297.md","docs/logs/20260607-000447-a69e06dc96c2189ab.md","docs/logs/20260607-000637-aeb3128d2c2ae4474.md","docs/logs/20260607-000840-a743847f150e34c0a.md","docs/logs/20260607-000936-a5f137261337c70fc.md","docs/logs/20260606-233747-adda28120a7df8d0b.md","docs/logs/20260607-001319-a46779525c26687ff.md","docs/logs/20260607-001602-a437cb1196df33565.md","docs/logs/20260607-001655-a162a1c387e284ac0.md"]
