@@ -3146,7 +3146,7 @@ function LogModal({ state, onClose }: { state: LogModalState; onClose: () => voi
                   (log truncated — file exceeds the read cap)
                 </p>
               )}
-              <pre className="lw-log-content" data-testid="log-modal-content">{state.content}</pre>
+              <div className="lw-log-content" data-testid="log-modal-content"><Markdown text={state.content} /></div>
             </>
           )}
         </div>
