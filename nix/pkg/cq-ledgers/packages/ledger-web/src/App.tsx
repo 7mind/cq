@@ -1402,7 +1402,8 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
 /**
  * Small progress bar for one ledger, fed by server-computed completedCount/itemCount.
  * Degrades gracefully: itemCount=0 or missing completedCount both render a 0% bar.
- * No client-side schema lookup — classification is entirely server-side (T1/T3).
+ * No client-side schema lookup — classification is entirely server-side (T1/T3);
+ * progressTotal is the denominator when present (excludes withdrawn items from total).
  */
 function LedgerProgressBar({
   testid,
@@ -1414,7 +1415,7 @@ function LedgerProgressBar({
   ledgers: LedgerSummary[];
 }): React.ReactElement {
   const summary = ledgers.find((l) => l.name === label);
-  const total = summary?.itemCount ?? 0;
+  const total = summary?.progressTotal ?? summary?.itemCount ?? 0;
   const done = summary?.completedCount ?? 0;
   const pct = total > 0 ? (done / total) * 100 : 0;
   // Short prefix so the three bars are distinguishable at a glance: Q/T/D.
