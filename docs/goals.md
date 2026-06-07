@@ -495,12 +495,12 @@ archives:
 
 ## M75
 
-### G24 — building
+### G24 — done
 
 - createdAt: 2026-06-06T20:44:52.063Z
-- updatedAt: 2026-06-06T21:12:35.485Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- updatedAt: 2026-06-07T09:32:06.259Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Fix D33 — left-align cyclic state-machine diagrams (computeDagLayout layer re-base)
 - description: |
     DEFECT-SEEDED goal (skips clarification; links defects:D33). Confirmed, browser-verified root cause (see defects:D33 + hypothesis:H25):
@@ -576,11 +576,11 @@ archives:
 
 ## M82
 
-### G27 — planned
+### G27 — done
 
 - createdAt: 2026-06-06T23:50:10.050Z
-- updatedAt: 2026-06-06T23:58:13.226Z
-- author: "opus-4.8[1m]"
+- updatedAt: 2026-06-07T09:32:12.468Z
+- author: user
 - session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Fix D34 — top-bar questions progress bar reads 38/39 (denominator counts the terminal `withdrawn` question)
 - description: |
