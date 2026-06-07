@@ -112,6 +112,7 @@ export class McpLedgerClient implements LedgerClient {
         itemCount: number;
         statusCounts?: Record<string, number>;
         completedCount?: number;
+        progressTotal?: number;
       }>;
     }>("enumerate_ledgers", {});
     // `counts` and `ledgerSummaries` are optional for forward/backward
@@ -126,6 +127,7 @@ export class McpLedgerClient implements LedgerClient {
       const summary: LedgerSummary = { name, itemCount: counts[name] ?? 0 };
       if (extra?.statusCounts !== undefined) summary.statusCounts = extra.statusCounts;
       if (extra?.completedCount !== undefined) summary.completedCount = extra.completedCount;
+      if (extra?.progressTotal !== undefined) summary.progressTotal = extra.progressTotal;
       return summary;
     });
   }
