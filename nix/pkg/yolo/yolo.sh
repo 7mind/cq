@@ -394,7 +394,7 @@ add_pi_binds() {
   # Provider + web-search API keys: agenix secret files, read-only. The pi
   # wrapper (piWrapped) reads /run/agenix/<name> at launch. Missing files are
   # skipped by the llm-sandbox layer (hosts without these secrets).
-  for _sec in openrouter vercel exa brave firecrawl; do
+  for _sec in openrouter vercel exa brave firecrawl ollama minimax; do
     EXTRA_ARGS+=(--ro "/run/agenix/$_sec")
   done
   # rpiv-web-tools writable config (provider selection / SearXNG URL).
