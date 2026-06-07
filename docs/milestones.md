@@ -419,6 +419,11 @@ archives:
     summary: G27 (fix D34 top-bar progress counts withdrawn; + D35 client wiring) closed done; coordination milestone archived.
     title: "Plan: fix D34 (top-bar progress counts withdrawn)"
     status: done
+  - id: M11
+    path: ./archive/milestones/M11.md
+    summary: "Investigate D2 (mcp-fails-uninitialized-ledger) complete: D2 resolved (backup-and-reinit on schema divergence); hypothesis tree closed — H1/H2 wrong, H4 confirmed (BootstrapViolationError on schema divergence), H3 (environmental/version-skew direction) confirmed by H4 + the D2 fix; Q37 answered. All items terminal."
+    title: "Investigate: mcp-fails-uninitialized-ledger"
+    status: done
 ---
 
 # milestones
@@ -430,10 +435,3 @@ archives:
 - createdAt: 2026-06-01T19:15:33.341Z
 - updatedAt: 2026-06-01T19:15:33.341Z
 - title: ambient
-
-### M11 — open
-
-- createdAt: 2026-06-02T08:36:51.936Z
-- updatedAt: 2026-06-02T08:36:51.936Z
-- title: "Investigate: mcp-fails-uninitialized-ledger"
-- description: "Coordination milestone for investigating defect: @cq/ledger-mcp fails to connect when started in a directory with no initialized ledger; should auto-init the canonical ledger set instead. Holds the defect, its hypothesis tree, and any clarifying questions."

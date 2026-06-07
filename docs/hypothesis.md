@@ -74,53 +74,11 @@ archives:
     summary: G15 (explorer RW prober + pluggable parallel reviewers via cq.toml) closed done; coordination milestone archived.
     title: "Plan: explorer RW access + pluggable parallel reviewers (cq.toml)"
     status: done
+  - id: M11
+    path: ./archive/hypothesis/M11.md
+    summary: "Investigate D2 (mcp-fails-uninitialized-ledger) complete: D2 resolved (backup-and-reinit on schema divergence); hypothesis tree closed — H1/H2 wrong, H4 confirmed (BootstrapViolationError on schema divergence), H3 (environmental/version-skew direction) confirmed by H4 + the D2 fix; Q37 answered. All items terminal."
+    title: "Investigate: mcp-fails-uninitialized-ledger"
+    status: done
 ---
 
 # hypothesis
-
-## M11
-
-### H1 — wrong
-
-- createdAt: 2026-06-02T08:37:34.271Z
-- updatedAt: 2026-06-02T08:42:08.733Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- headline: ledger-mcp server startup throws when the ledger registry (docs/ledgers.yaml) is absent — no default/auto-init
-- description: "ROOT-CAUSE CANDIDATE. The MCP server entrypoint eagerly loads/validates the ledger registry (docs/ledgers.yaml) at startup; if the file is missing it throws and the process exits before completing the MCP handshake, so the client reports 'connection failed'. Would be TRUE if: the server main/serve path reads docs/ledgers.yaml (or CANONICAL_LEDGERS divergence-guards against it) and has no branch that initializes a default registry when absent."
-- ledgerRefs: ["defects:D2"]
-- evidence: ["[correct] packages/ledger/src/store/FsLedgerStore.ts:254-291 (orchestrator-verified) — init() mkdir's docs/+.locks/+archive/ recursively, catches ENOENT on reading docs/ledgers.yaml and WRITES serializeRegistry(EMPTY_REGISTRY) instead of throwing, then bootstraps every CANONICAL_LEDGERS entry when absent. The ONLY throw is BootstrapViolationError on schema DIVERGENCE of an existing ledger (L283-289), never on a missing file. Rules out 'missing registry throws at startup'.","[correct] packages/ledger-mcp/src/main.ts:337-344 — main() awaits store.init() before building/connecting any transport; since init auto-inits, startup succeeds on an empty cwd.","[correct] REPRODUCTION (orchestrator-run): `bun packages/ledger-mcp/src/main.ts --cwd <fresh empty tmpdir>` printed 'serving stdio MCP on cwd=...', exited 0, and created docs/{ledgers.yaml,milestones,tasks,defects,hypothesis,questions,reviews,decisions,goals}.md + archive/ + .locks/. Decisively rules out H1."]
-
-### H2 — wrong
-
-- createdAt: 2026-06-02T08:37:39.341Z
-- updatedAt: 2026-06-02T08:42:11.895Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- headline: FsLedgerStore construction/index build throws on a missing docs/ dir or absent ledger files instead of treating an uninitialized dir as empty
-- description: "ROOT-CAUSE CANDIDATE. The store layer (FsLedgerStore) — during construction or initial index build — reads the docs/ directory and per-ledger markdown files; a missing dir/file raises ENOENT (or a parse/validation error) rather than degrading to empty state, propagating up and aborting server bring-up. Would be TRUE if: FsLedgerStore (or its index refresh) does fs reads without an exists-check/auto-create, and no auto-init creates the canonical files. Disjoint from H1 (store layer vs server-entrypoint/registry-load)."
-- ledgerRefs: ["defects:D2"]
-- evidence: ["[correct] packages/ledger/src/store/FsLedgerStore.ts:254-340 (orchestrator-verified) — init() auto-creates docs/.locks/archive via fs.mkdir({recursive:true}); per-ledger markdown reads swallow ENOENT (L298-303) and seed freshLedger(entry) instead of throwing. A missing docs/ dir or absent ledger files degrade to empty/fresh state, not an error.","[correct] REPRODUCTION (orchestrator-run): running the server against a fresh empty tmpdir created the full docs/ tree (all canonical ledger .md files + ledgers.yaml) and exited 0 — empirical proof the store layer does not throw on an uninitialized directory."]
-
-### H3 — open
-
-- createdAt: 2026-06-02T08:41:56.700Z
-- updatedAt: 2026-06-02T08:41:56.700Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- headline: "The observed failure is ENVIRONMENTAL, not missing-init: a stale globally-registered (home-manager/Nix) ledger-mcp binary, --cwd, or .mcp.json wiring"
-- description: "ROOT-CAUSE CANDIDATE (needs user's environment data to adjudicate). Source auto-init works (H1/H2 refuted by reproduction), so any real 'connection fails' must come from outside the source init path. Leading suspects: (a) VERSION SKEW — the ledger MCP is plugin-registered globally via home-manager/Nix; if that built binary predates the FsLedgerStore.init() auto-create code, it would fail against a fresh dir even though source works (cf. resolved defect D1, also a version-skew 'connection failed'). (b) --cwd resolution to a non-existent/unwritable path. (c) the target directory has no .mcp.json / no ledger server wired at all (then it's 'not configured', not a connection failure). (d) a non-ENOENT fs/permission error under init's mkdir. CANNOT adjudicate without the user's actual error text + how the server is launched — parked on Q37."
-- parentHypothesis: ""
-- ledgerRefs: ["defects:D2"]
-
-### H4 — confirmed
-
-- createdAt: 2026-06-02T11:26:20.034Z
-- updatedAt: 2026-06-02T11:26:20.034Z
-- author: "opus-4.8[1m]"
-- session: 0a4a7acf-25b6-4783-83a1-a45870023493
-- headline: "CONFIRMED: startup aborts via BootstrapViolationError on schema divergence (FsLedgerStore.ts:283-289), not missing init"
-- description: "The specific confirmed mechanism under H3 (environmental). FsLedgerStore.init() bootstraps each CANONICAL_LEDGERS entry; for an EXISTING on-disk ledger whose schema differs from the canonical bootstrap schema it THROWS BootstrapViolationError (packages/ledger/src/store/FsLedgerStore.ts:283-289) — which main() lets crash the process before the MCP handshake, so the client reports connection failure. This is the divergence path H1's evidence identified as 'the only startup throw' (which we incorrectly set aside after the empty-dir repro). Divergence arises from version skew: a stale globally-built ledger-mcp binary vs an evolved on-disk docs/ledgers.yaml (or vice-versa)."
-- parentHypothesis: H3
-- evidence: ["[correct] USER-OBSERVED runtime error (decisive): `ledger-mcp: fatal: Bootstrap invariant violated: existing goals ledger has a different schema than its canonical bootstrap schema` — the exact BootstrapViolationError message, naming the goals ledger schema divergence.","[correct] packages/ledger/src/store/FsLedgerStore.ts:283-289 (orchestrator-verified earlier): `else if (!schemasEqual(entry.schema, canonical.schema)) { throw new BootstrapViolationError(...) }` — the only startup throw on a non-ENOENT tree; fires on an existing-but-divergent on-disk schema.","[correct] packages/ledger-mcp/src/main.ts:337-344: main() awaits store.init() before serving, so this throw aborts the connection."]
-- ledgerRefs: ["defects:D2"]
