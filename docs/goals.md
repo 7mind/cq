@@ -50,12 +50,12 @@ archives:
 
 ## M37
 
-### G10 — planned
+### G10 — done
 
 - createdAt: 2026-06-03T10:25:42.386Z
-- updatedAt: 2026-06-03T10:47:40.416Z
-- author: "opus-4.8[1m]"
-- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- updatedAt: 2026-06-07T09:29:29.486Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Fix D13 (TUI nav perf via memo boundaries) + D23 (multi-step-form test flake)
 - description: |
     DEFECT-SEEDED goal (linked defects:D13, D23) — both root causes CONFIRMED by the /advance investigate round (2026-06-03; hypothesis tree H9-H13 + runtime/git evidence), so this goal enters `planning` directly and SKIPS clarifying (K8 pt4 / K12). plan-advance should produce reviewed FIX TASKS directly. Both fix units are FILE-DISJOINT (ledger-tui src vs test) → parallel-safe.
@@ -75,12 +75,12 @@ archives:
 
 ## M40
 
-### G11 — planned
+### G11 — done
 
 - createdAt: 2026-06-03T11:35:03.037Z
-- updatedAt: 2026-06-03T15:48:55.329Z
-- author: "opus-4.8[1m]"
-- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- updatedAt: 2026-06-07T09:29:29.580Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: "Agent-ergonomic ledger MCP: state-overview endpoint + better tool/field descriptions"
 - description: |
     GREENFIELD tooling improvement to the ledger MCP server (@cq/ledger-mcp + @cq/ledger). USER REQUEST (verbatim): "the beginning of [the /advance] session looked suboptimal" — deriving ledger state at the start of a run took many ledger calls — "probably we should add some descriptions somewhere and/or add some endpoints more convenient for the agents."
@@ -138,12 +138,12 @@ archives:
 
 ## M39
 
-### G12 — planned
+### G12 — done
 
 - createdAt: 2026-06-03T15:14:43.984Z
-- updatedAt: 2026-06-03T15:22:15.519Z
-- author: "opus-4.8[1m]"
-- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- updatedAt: 2026-06-07T09:29:29.632Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: "Fix D24: make the 's'-key-inert archived-item test regression-sensitive"
 - description: |
     DEFECT-SEEDED goal (defect:D24, ex-D22) — root cause CONFIRMED by the /advance investigate round (H14 + orchestrator-validated citations), so this goal enters `planning` directly and SKIPS clarifying (K8 pt4 / K12). plan-advance should produce ONE reviewed FIX TASK directly.
@@ -156,12 +156,12 @@ archives:
 
 ## M47
 
-### G13 — planned
+### G13 — done
 
 - createdAt: 2026-06-03T20:06:27.954Z
-- updatedAt: 2026-06-03T20:10:32.790Z
-- author: "opus-4.8[1m]"
-- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- updatedAt: 2026-06-07T09:29:29.682Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Fix D25/D26/D27 (G11 follow-up code-quality cleanup)
 - description: |
     DEFECT-SEEDED goal (clarify-skipped, K8 pt4) for three confirmed, low-severity, disjoint code-quality defects filed during the G11 build. Linked defects (their ledgerRefs point back here): D25, D26, D27. All three root causes are CONFIRMED with [correct]-validated citations; each fix is small + well-specified. Three disjoint file scopes → naturally parallel fix tasks. The fix TASKS must each ledgerRef their defect (defects:D25/D26/D27) so the implement orchestrator can close the defect on merge (goals has no ledgerRefs field).
@@ -183,12 +183,12 @@ archives:
 
 ## M49
 
-### G14 — planned
+### G14 — done
 
 - createdAt: 2026-06-03T20:40:59.340Z
-- updatedAt: 2026-06-03T20:44:56.357Z
-- author: "opus-4.8[1m]"
-- session: ea0ee283-9e2d-4088-a61a-86fac464e29b
+- updatedAt: 2026-06-07T09:29:29.734Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Fix D28 (readLog check-then-read TOCTOU)
 - description: |
     DEFECT-SEEDED goal (clarify-skipped, K8 pt4) for D28 (CONFIRMED H18) — a low-severity, pre-existing TOCTOU in FsLedgerStore.readLog surfaced by the T158 reviewer. Linked defect (its ledgerRefs point back here): D28. The fix TASK must ledgerRef defects:D28 + goals:G14 (goals has no ledgerRefs field) so the implement orchestrator closes D28 on merge.
@@ -203,12 +203,12 @@ archives:
 
 ## M51
 
-### G15 — planned
+### G15 — done
 
 - createdAt: 2026-06-05T18:09:10.959Z
-- updatedAt: 2026-06-05T20:26:42.887Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- updatedAt: 2026-06-07T09:29:29.796Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Explorer RW access + pluggable parallel reviewers (cq.toml)
 - description: |
     Plan two new features for the coding-agent flow harness.
@@ -239,12 +239,12 @@ archives:
 
 ## M53
 
-### G16 — planned
+### G16 — done
 
 - createdAt: 2026-06-05T18:31:39.036Z
-- updatedAt: 2026-06-05T18:39:16.091Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- updatedAt: 2026-06-07T09:29:29.830Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Fix D29 — reject empty/whitespace answer on a question's `answered` transition
 - description: |
     DEFECT-SEEDED goal (skips clarifying per T35; confirmed root cause embedded). Fix D29: the ledger accepts an empty/whitespace `answer` when a `questions` item transitions to `answered`, violating the invariant that an `answered` question carries a usable answer.
@@ -264,12 +264,12 @@ archives:
 
 ## M57
 
-### G17 — planned
+### G17 — done
 
 - createdAt: 2026-06-05T19:00:07.789Z
-- updatedAt: 2026-06-05T19:10:04.835Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- updatedAt: 2026-06-07T09:29:29.872Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Fix D30 — repoint link-prompts.ts + cq-assets README off the vanished `llm/` root
 - description: |
     DEFECT-SEEDED goal (skips clarifying per T35; confirmed root cause embedded). Fix D30: `bun run link-prompts` silently creates 14 dangling `.claude/**` symlinks because the asset tree moved to `nix/pkg/cq-assets/{commands,agents}/` but link-prompts.ts + the cq-assets README still reference the removed `llm/` root.
@@ -291,12 +291,12 @@ archives:
 
 ## M59
 
-### G18 — planned
+### G18 — done
 
 - createdAt: 2026-06-05T21:58:20.012Z
-- updatedAt: 2026-06-05T22:33:18.726Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- updatedAt: 2026-06-07T09:29:29.952Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Merge cq-config into ledger MCP + pluggable parallel planners
 - description: |
     Two follow-up changes to the just-built G15 harness work (Feature 2 / M56).
@@ -338,12 +338,12 @@ archives:
 
 ## M63
 
-### G19 — planned
+### G19 — done
 
 - createdAt: 2026-06-06T00:35:45.432Z
-- updatedAt: 2026-06-06T00:39:50.924Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- updatedAt: 2026-06-07T09:29:30.598Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Fix D32 — repoint cq-assets/README.md off the removed cq-config MCP server
 - description: "Defect-seeded goal (D32, confirmed root cause H23 — clarification skipped per K8 pt4). CONFIRMED ROOT CAUSE: nix/pkg/cq-assets/README.md is the last live consumer documenting the removed standalone cq-config MCP server; staleness confined to the 'Configuration' section — L77 heading '## Configuration — cq.toml and cq-config MCP' and L82-85 prose 'The `cq-config` MCP server exposes `get_reviewers` over the `.mcp.json` interface ...'. After G18 PART 1 the standalone server/package/flake-attr/registrations were deleted and get_reviewers/get_config merged into the ledger MCP (mcp__ledger__*; get_planners added PART 2). SUGGESTED FIX (verbatim): Edit README.md 'Configuration' section ONLY — (1) L77 heading → 'Configuration — cq.toml and the ledger MCP' (or drop the server name); (2) L82-85 prose → cq.toml is parsed by the @cq/config parser and surfaced by the LEDGER MCP server, which exposes get_reviewers/get_config (and get_planners) as mcp__ledger__* over .mcp.json — no standalone cq-config server; optionally note planners mirror reviewers via the shared [aliases] table. Doc-only; bun run check stays green. Linked defect: D32. Single fix task expected; acceptance: README 'Configuration' section repointed to the ledger MCP, no standalone-cq-config-SERVER reference remains in README, bun run check green."
 - milestones: ["M64"]
@@ -351,12 +351,12 @@ archives:
 
 ## M65
 
-### G20 — planned
+### G20 — done
 
 - createdAt: 2026-06-06T10:37:42.559Z
-- updatedAt: 2026-06-06T11:15:54.409Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- updatedAt: 2026-06-07T09:29:32.029Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: "cq.toml [webui] config + new cq CLI (init/reset/erase)"
 - description: |
     Two minor feature requests (greenfield).
@@ -401,12 +401,12 @@ archives:
 
 ## M66
 
-### G21 — planned
+### G21 — done
 
 - createdAt: 2026-06-06T10:55:35.127Z
-- updatedAt: 2026-06-06T11:02:55.935Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- updatedAt: 2026-06-07T09:29:32.927Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Fix D31 — modal backdrop must only dismiss on a press that STARTED on the backdrop
 - description: |
     Defect-seeded goal (D31, confirmed root cause H24 — clarification skipped per K8 pt4). CONFIRMED ROOT CAUSE (verbatim from D31.rootCause): the @cq/ledger-web modal backdrop closes on ANY click whose common-ancestor is the backdrop, with NO guard that the press STARTED there. The batch overlay `<div className="lw-help-backdrop" data-testid="batch-overlay" onClick={onClose}>` (App.tsx) closes via onClose=setBatchOpen(false). Because the 'save & mark answered' HoldButton fires onConfirm on a HOLD_MS TIMER (not pointerup), batchSave advances to the next (shorter) question and the content-driven `.lw-batch` (no fixed height; backdrop is a centering flexbox) shrinks WHILE the user still presses; the still-held pointer ends over the backdrop; the release synthesizes a click with common-ancestor=backdrop → onClose → premature mid-queue dismiss (react-modal #466 class). The suite was green because batchModalClose.test.tsx never simulates a backdrop click (holdFull dispatches only pointerdown + clock advance) — vacuous coverage (cf. D24/H14). The SAME `onClick={onClose}` backdrop pattern is in HelpOverlay (~App.tsx:1485) and the log modal (~3021).
@@ -419,12 +419,12 @@ archives:
 
 ## M70
 
-### G22 — planned
+### G22 — done
 
 - createdAt: 2026-06-06T12:25:00.443Z
-- updatedAt: 2026-06-06T12:39:33.205Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- updatedAt: 2026-06-07T09:29:34.000Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: "Web sidebar reorder + help-popup fixed size + SVG left-align + cq: command renames"
 - description: |
     Four more requests before the large project (all greenfield; the user asked to AVOID obvious questions — only ask if input is truly required):
@@ -461,12 +461,12 @@ archives:
 
 ## M74
 
-### G23 — building
+### G23 — done
 
 - createdAt: 2026-06-06T20:24:56.027Z
-- updatedAt: 2026-06-06T21:12:36.644Z
-- author: "opus-4.8[1m]"
-- session: 58a3012b-08b8-4f7a-816b-008d6fb1d8d5
+- updatedAt: 2026-06-07T09:25:40.039Z
+- author: user
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Describe all flow state machines + add a Flows help tab
 - description: |
     Build a description of the state machines of all the flows we have (the coding-agent harness flows — plan, investigate, implement, and the top-level advance sequencer), INCLUDING transitions. The orchestrator session has states such as waiting-for-user-input; input causes a transition into one of several states; the flow loops; at some point it performs a handoff and returns back to an original/parent state.
@@ -517,11 +517,11 @@ archives:
 
 ## M80
 
-### G25 — planned
+### G25 — done
 
 - createdAt: 2026-06-06T23:30:09.460Z
-- updatedAt: 2026-06-07T00:09:47.056Z
-- author: "opus-4.8[1m]"
+- updatedAt: 2026-06-07T09:25:49.244Z
+- author: user
 - session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Retire legacy skills (research-loop, vsm-loop, vsm-node, question-batch) + clean up cq references
 - description: |
@@ -543,11 +543,11 @@ archives:
 
 ## M81
 
-### G26 — planned
+### G26 — done
 
 - createdAt: 2026-06-06T23:34:57.128Z
-- updatedAt: 2026-06-07T00:17:06.565Z
-- author: "opus-4.8[1m]"
+- updatedAt: 2026-06-07T09:25:49.621Z
+- author: user
 - session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
 - title: Render session-log markdown in a popup (not inline verbatim) for goals/handoffs items
 - description: |

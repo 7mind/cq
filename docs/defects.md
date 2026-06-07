@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 34
+  item: 35
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -148,3 +148,19 @@ archives:
 - sessionLogs: ["docs/logs/20260605-185840-addf76024a26b2805.md"]
 - dependsOn: ["T179","T180","T181"]
 - fix: "Resolved across T179/T180/T181 (merged to main 24c1d51). T179: made link-prompts.ts import-safe (export LINKS+checkLinks, creation loop behind import.meta.main), added --check mode + reproduce-first test. T180: repointed all 14 LINKS sources llm/ -> ../cq-assets/{commands,agents}/ (all resolve) and hardened the loop to throw loud on a missing source (reuses checkLinks), flipped repro test to checkLinks(LINKS) toEqual([]). T181: de-staled cq-assets/README.md to the new layout. `bun run link-prompts` now produces 14 non-dangling symlinks; integrated bun run check green."
+
+## M82
+
+### D35 — resolved
+
+- createdAt: 2026-06-07T09:25:18.899Z
+- updatedAt: 2026-06-07T09:25:27.027Z
+- author: "opus-4.8[1m]"
+- session: 059ff637-d28c-4785-8125-9c0d73ddf7a0
+- headline: "D34 fix incomplete: McpLedgerClient.enumerateLedgers dropped progressTotal, so the top bar still showed the itemCount denominator (46/47 post-deploy)"
+- severity: low
+- description: "User report after redeploying the D34 fix: the top-bar questions indicator still shows Q: 46/47 (with 46 answered + 1 withdrawn + 0 open, the correct display is 46/46). The D34 fix was incomplete across the wire boundary: the server emits progressTotal on each LedgerSummary (T207) and LedgerProgressBar uses summary.progressTotal as the denominator (T208), BUT the web client's McpLedgerClient.enumerateLedgers() (nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts:106-131) parsed the enumerate_ledgers response WITHOUT progressTotal — its typed response shape omitted the field and the summary construction copied statusCounts + completedCount but never progressTotal. So summary.progressTotal was always undefined on the client and LedgerProgressBar fell back to itemCount (47, which includes the terminal withdrawn question) → 46/47. NOT version skew. The gap escaped review because T208's worker/reviewer inspected only App.tsx and T209's regression test exercised the @cq/ledger server summary, not the ledger-web client parse."
+- rootCause: McpLedgerClient.enumerateLedgers (mcpClient.ts) did not read/copy the server-provided progressTotal field onto the LedgerSummary, so the field never reached LedgerProgressBar; the component's `summary?.progressTotal ?? summary?.itemCount` fallback then used itemCount as the denominator.
+- suggestedFix: "Add progressTotal?: number to the enumerate_ledgers typed response shape and copy it (`if (extra?.progressTotal !== undefined) summary.progressTotal = extra.progressTotal;`) in mcpClient.ts enumerateLedgers, mirroring the completedCount passthrough. Add a focused regression test that stubs the SDK client and asserts enumerateLedgers passes progressTotal through."
+- ledgerRefs: ["goals:G27","defects:D34"]
+- fix: "Wired progressTotal through McpLedgerClient.enumerateLedgers (mcpClient.ts): added progressTotal?:number to the enumerate_ledgers typed response and copy it onto the LedgerSummary, mirroring the completedCount passthrough. Added regression test test/mcpClientProgressTotal.test.ts (stubs the SDK client; asserts progressTotal passes through, and stays undefined for an older server peer). Reproduced failing first (progressTotal undefined → 46/47), green after. bun run check: 1020 pass / 1 skip / 0 fail. Commit 1be968c. The top-bar questions bar will read 46/46 after redeploy."
