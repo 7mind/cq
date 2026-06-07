@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 20
+  item: 21
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -91,3 +91,16 @@ archives:
 - ledgerRefs: ["goals:G28"]
 - blockingQuestions: ["Q130"]
 - sessionLogs: ["docs/logs/20260607-191636-acf7f53795bc6b6aa.md"]
+
+### HO21 — mixed
+
+- createdAt: 2026-06-07T20:53:06.315Z
+- updatedAt: 2026-06-07T20:53:06.315Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- summary: "MIXED. /cq:advance folded in the user's Q125-Q130 answers and drove goal G28 (\"Enable subagent support in the pi agent harness for the cq flow\") from clarifying through a full multi-planner plan + 4 reviewer rounds to a LOCKED plan, then implemented the foundational + env-independent tasks. PLAN: G28 planned (R268 unanimous go-ahead; decision K45 lock). Multi-planner panel = opus+grok (minimax abstained, no API key); synthesized 5 work milestones M87-M91 / 8 tasks T221-T227, +T228/T229 added across 3 revise rounds (R265->R266->R267->R268) fixing a critical tier-source hole (cq.toml [agent_tiers], since agent frontmatter carries no tier), DAG/milestone consistency, and authoring the Pi-side dispatch trigger (K44: Q126 constrains only cq-assets prompts, NOT pi-context.md). IMPLEMENT (merged to main): T221 spike GO — all 5 Pi 0.78.0 ExtensionAPI primitives confirmed (Route A subprocess `pi -p --mode json` recommended), bd6aa87, R270; T223 cq.toml [tiers]+[agent_tiers] + @cq/config parser/resolvers + 17 tests, bun run check green 1038/0, 92aae54, R269; T228 locked decision K46 (runtime config-access: extension reads cq.toml via $CQ_CONFIG with inlined TOML reader + resolver) + design note. Work milestones M87 + M89 archived. BLOCKED on Q131: the integration + acceptance tail (T224 author+register the dispatch extension & load it under pi; T225 tier-resolution wiring; T229 author the Pi-side dispatch-trigger instruction; T226/T227 the explorer + reviewer acceptance demos) all require the dev-llm.nix wiring HOME-MANAGER-ACTIVATED and the wrapped pi harness run with live provider auth to perform live LLM-backed subagent dispatch — which this autonomous sandbox cannot activate/run, so G28's acceptance bar (Q128) cannot be met/verified here; T224/T225/T229/T226/T227 set `blocked` on Q131. STILL AUTONOMOUSLY BUILDABLE (env-independent, left `planned`): T222 (project the cq agents bundle to a Pi-discoverable dir via home.file + CQ_AGENTS_DIR, verifiable via nix eval / git diff). Final gate: P-investigate=FALSE, P-plan=FALSE (G28 locked/planned), P-implement=TRUE-but-checkpointed (T222 ready & env-independent; the rest blocked on Q131). NEXT (user): answer Q131 — choose how the live-pi tail executes (you run home-manager switch + the demos / confirm the sandbox can / agent builds the env-independent remainder next pass) — then re-run /cq:advance. G28 stays `planned`; close it in the TUI/web once the acceptance demos pass."
+- flow: advance
+- ledgerRefs: ["goals:G28","tasks:T221","tasks:T223","tasks:T228","tasks:T222","tasks:T224","tasks:T226","tasks:T227"]
+- blockingQuestions: ["Q131"]
+- handoffReasons: ["landed: G28 planned + T221/T223/T228 merged, M87/M89 archived","answers-required: live-pi integration/acceptance tail (T224-T227) blocked on Q131 environment decision"]
+- sessionLogs: ["docs/logs/20260607-203143-a97d456b51fabc948.md","docs/logs/20260607-203143-a9a2104f90713afba.md","docs/logs/20260607-204327-a587aeaaa80fb8b26.md","docs/logs/20260607-204327-ae1180d30433cc093.md","docs/drafts/20260607-2049-pi-runtime-config-access.md"]
