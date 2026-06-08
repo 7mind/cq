@@ -2,7 +2,7 @@
 ledger: decisions
 counters:
   milestone: 0
-  item: 51
+  item: 52
 archives:
   - id: M2
     path: ./archive/decisions/M2.md
@@ -230,3 +230,15 @@ archives:
 - headline: "G30 plan review: approved"
 - rationale: "G30 (add a `user-action-required` handoff status + thread it through the flow prompts) reached unanimous go-ahead (R284) after a 3-round planner↔reviewer loop (R282 revise → R283 revise → R284 go-ahead). Locked plan: 5 work milestones M97-M101, 12 tasks T245-T256. Honors locked answers Q137 (token=user-action-required, terminal), Q138 (narrow legal stop + anti-laundering, no-effort-gate intact), Q139 (distinct from answers-required, mixed via handoffReasons, 4 prompt tables), Q140 (no new schema field), Q141 (in-place schema edit, no backup-reinit, preserve HO records — committed: constants.ts + CI fixture test; operational: gitignored ledgers.yaml on main checkout), Q142 (warning bucket render + schema unit/grep-invariant/render tests + bun run check + scoped nix build)."
 - ledgerRefs: ["goals:G30"]
+
+## M102
+
+### K51 — locked
+
+- createdAt: 2026-06-08T11:18:52.721Z
+- updatedAt: 2026-06-08T11:18:52.721Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- headline: "G32 plan review: approved"
+- rationale: "G32 (fix D39 — enforce handoff stop-gate invariants at write time + close the turn-vs-run blind spot) reached go-ahead (R313) after a 4-round planner↔reviewer loop (R310 revise → R311 revise → R312 revise → R313 go-ahead; opus go-ahead rounds 1-4, codex go-ahead round 3). Locked plan: 4 work milestones M103-M106, 9 tasks T257-T265. Design: a handoffs-specific PURE assertHandoffInvariants helper in @cq/ledger store/core.ts (modelled on assertQuestionAnswerPrecondition/D29 + assertGoalPhasePreconditions/F2; mixed/answers-required⇒non-empty blockingQuestions, user-action-required⇒non-empty handoffReasons, else SchemaValidationError), invoked in applyCreateItem (both stores route through it) + applyUpdateItem; NOT a generic schema DSL (core.ts:790 out-of-scope); the schema field stays required:false (conditional-on-status). Reproduce-first; dual-adapter tests reproducing HO26 as an asserted throw; advance.md + 3 per-flow prompts get the turn-vs-run clause + euphemism blocklist + self-check + enforced-invariant prose; 8-cell grep-invariant; verify gate. Stretch (cross-ledger open-question resolution + drained predicate-gate) deferred (T260, zero-code). All tasks ledgerRef defects:D39."
+- ledgerRefs: ["goals:G32"]

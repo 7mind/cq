@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 102
+  item: 107
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -543,3 +543,41 @@ archives:
 - title: "G30 W5: verify — schema/grep tests + bun run check + scoped nix build"
 - description: Schema unit test + four-table grep-invariant test, then bun run check + scoped nix build (.#llm-contexts/.#llm-context-with-env/.#llm-skills) green. Per Q142 acceptance gates (a)/(b) + repo substantive guard.
 - dependsOn: ["M98","M99","M100"]
+
+### M102 — open
+
+- createdAt: 2026-06-08T10:48:54.877Z
+- updatedAt: 2026-06-08T10:48:54.877Z
+- title: "Plan: fix D39 — enforce handoff stop-gate invariants (make effort-stops unwritable)"
+- description: "Coordination milestone for the defect-seeded fix goal G32 (resolves D39). Root cause confirmed: the handoff stop-gate is unenforced prose (blockingQuestions optional, no per-status validation) + a turn-vs-run blind spot, producing laundered effort-stops (HO22/25/26). Fix: write-time enforcement of handoff invariants + advance.md turn-vs-run clause + euphemism blocklist."
+
+### M103 — open
+
+- createdAt: 2026-06-08T10:55:26.473Z
+- updatedAt: 2026-06-08T10:55:26.473Z
+- title: "G32 W1: write-time handoff invariant enforcement (@cq/ledger, load-bearing)"
+- description: assertHandoffInvariants pure helper (mixed/answers-required ⇒ non-empty blockingQuestions; user-action-required ⇒ non-empty handoffReasons) wired into applyCreateItem + applyUpdateItem; dual-adapter tests reproducing HO26 as an asserted throw; stretch scope decision for cross-ledger open-question resolution + drained predicate-gate.
+
+### M104 — open
+
+- createdAt: 2026-06-08T10:55:28.827Z
+- updatedAt: 2026-06-08T10:55:28.827Z
+- title: "G32 W2: advance.md turn-vs-run stop clause"
+- description: "advance.md §Stop-condition: turn/context exhaustion is NOT a run-stop and needs NO handoff; the ledger is the durable resume point; pause-without-handoff vs the five predicate-gated run-stop statuses."
+- dependsOn: ["M103"]
+
+### M105 — open
+
+- createdAt: 2026-06-08T10:55:31.180Z
+- updatedAt: 2026-06-08T10:55:31.180Z
+- title: "G32 W3: euphemism blocklist + self-check across the four *:advance prompts"
+- description: "Expand advance.md forbidden-rationale list with the exact euphemisms (citing HO22/25/26) + the self-check; thread the turn-vs-run clause + euphemism blocklist + the now-enforced mixed⇒non-empty-blockingQuestions instruction into plan/investigate/implement *:advance handoff sections."
+- dependsOn: ["M104"]
+
+### M106 — open
+
+- createdAt: 2026-06-08T10:55:32.741Z
+- updatedAt: 2026-06-08T10:55:32.741Z
+- title: "G32 W4: verify + grep-invariant"
+- description: Four-table grep-invariant for the new turn-vs-run + euphemism tokens; final verify (bun run check incl. the new write-time-invariant + grep tests + nix build .#ledger-mcp).
+- dependsOn: ["M103","M104","M105"]

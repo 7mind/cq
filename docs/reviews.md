@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 310
+  item: 314
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -757,3 +757,53 @@ archives:
 - criticism: []
 - new_questions: []
 - ledgerRefs: ["tasks:T256","goals:G30"]
+
+## M102
+
+### R310 — revise
+
+- createdAt: 2026-06-08T11:03:58.553Z
+- updatedAt: 2026-06-08T11:03:58.553Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- summary: "G32 plan ROUND 1 REVISE (opus go-ahead; codex + grok + minimax revise). Design verified grounded + sound (assertHandoffInvariants pure helper in core.ts, both apply* paths, schema-field correctly unchanged, T260 gated leaf, DAG acyclic). Planner-fixable: (A) T263 4-prompt-coverage clarity + thread euphemism+self-check into the 3 per-flow too; (B) T259 acceptance matrix (status×empty-field + create/update + both adapters + SchemaValidationError + HO26 pre/post); (C) T260 reframe to default-defer (not scope creep). No new_questions; no real out-of-scope defects (T260's stretch IS in D39's suggestedFix, reframed default-defer)."
+- new_questions: []
+- criticism: ["[codex,grok,minimax] T263 names only the 3 per-flow prompts but the goal says 'the 4 *:advance prompts'. Clarify: the 4th is advance.md (T261/T262); T263 covers plan/investigate/implement advance.md. AND thread BOTH the turn-vs-run clause AND the euphemism-blocklist+self-check into the 3 per-flow files (not just turn-vs-run) so all four are consistent; T264's four-table grep then checks all four for both token sets.","[codex,grok,minimax] T259 acceptance is too vague. Require explicitly: (a) the HO26 repro — mixed+empty blockingQuestions THROWS post-fix (and note it succeeded pre-fix); (b) all three status×empty-field combos — mixed+[], answers-required+[] (blockingQuestions), user-action-required+[] (handoffReasons) — each THROWS SchemaValidationError; (c) the valid non-empty counterparts SUCCEED + drained/illness with empty still succeed; (d) BOTH createItem and updateItem (effective-fields) paths; (e) BOTH InMemoryLedgerStore and FsLedgerStore (Fs on temp fixtures).","[codex,grok] T260 reads as scope-creep inside the enforcement milestone. Reframe to DEFAULT-DEFER: the load-bearing non-empty checks (T257-T259) fully close the reproduced HO22/25/26 launder; the cross-ledger open-question-resolution (A) is implemented ONLY if trivially cheap given F2 plumbing, else deferred-with-rationale; the `drained` predicate-gate (B) defers to the prompt layer. T260 is a cheap scope-DECISION (already a DAG leaf — nothing depends on it), not optional implementation work that blocks M103."]
+- ledgerRefs: ["goals:G32"]
+- sessionLogs: ["docs/logs/20260608-110324-af50ed222aaddb4a5.md","docs/logs/20260608-110324-pi-codex.md","docs/logs/20260608-110324-pi-grok.md","docs/logs/20260608-110324-pi-minimax.md"]
+
+### R311 — revise
+
+- createdAt: 2026-06-08T11:10:53.681Z
+- updatedAt: 2026-06-08T11:10:53.681Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- summary: "G32 plan ROUND 2 REVISE (opus go-ahead; codex+grok+minimax revise). All 3 R310 fixes verified. Two genuinely-valid new points + artifacts. Substantive: (A) reproduce-first — the enforcement task must write the FAILING repro first (confirm the mixed+empty write SUCCEEDS pre-fix = D39 reproduced) then fix, green-merge-compatible; (B) advance.md (T261/T262) must also carry the enforced-invariant prose, not only the 3 per-flow (T263); (C) T264 name the explicit 2-token-set × 4-prompt matrix. The 'T257/T258 too terse / re-anchor both-stores + no-schema-change' criticisms are ARTIFACTS of the abbreviated round-2 prompt — the actual ledger tasks already cite D29/F2 + SchemaValidationError + 'both stores route through applyCreateItem' + 'do NOT change any HANDOFFS_SCHEMA field'."
+- new_questions: []
+- criticism: ["[codex] Reproduce-first (CLAUDE.md §6a): the enforcement task must FIRST author the minimal repro assertion (createItem('handoffs', mixed, blockingQuestions:[]) should throw) and confirm it FAILS against the unmodified store (the bad write currently SUCCEEDS = D39 reproduced; capture it in the session log), THEN add the helper+wiring so it passes. The per-task green-merge constraint forbids committing a red test on a branch, so this is satisfied by demonstrating TEETH within the enforcement task (the bad write succeeds without the assertion). T259 must also demonstrate the reproduction (bad write succeeds without the enforcement).","[codex,grok] advance.md (the 4th *:advance prompt) must ALSO carry the enforced-invariant prose (a standalone mixed/answers-required handoff REQUIRES a non-empty blockingQuestions[], user-action-required a non-empty handoffReasons[], else the @cq/ledger write THROWS) — currently only T263 (the 3 per-flow) adds it. Add it to T262's scope (advance.md) so all four prompts are consistent.","[codex,grok,minimax] T264 acceptance: name the EXPLICIT matrix — 2 token sets (turn-vs-run clause; euphemism-blocklist + self-check) × 4 prompt files (advance.md + plan/investigate/implement advance.md) = 8 cells all populated; FAILS if any cell is missing."]
+- ledgerRefs: ["goals:G32"]
+- sessionLogs: ["docs/logs/20260608-111023-g32-round2-panel.md","docs/logs/20260608-110324-af50ed222aaddb4a5.md"]
+
+### R312 — revise
+
+- createdAt: 2026-06-08T11:16:44.885Z
+- updatedAt: 2026-06-08T11:16:44.885Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- summary: "G32 plan ROUND 3 (opus + codex go-ahead; grok revise). grok's revise: (1) M104 'self-reference [deps M104]' — MISREAD, M104 dependsOn ['M103'] (verified); (2) T261/T262 same-file split + W1-W4 fragmentation — granularity judgment (opus+codex accept; maps to the 3 fix layers + verify); (3) T260 scope-decision should PRECEDE implementation — semi-valid, ADDRESSED: T260 reframed as an up-front ZERO-CODE deferral (deps [], decides to DEFER both stretch hardenings — cross-ledger + drained-gate — so it gates/alters nothing). Only the T260 reframe was applied; the self-dep is false and the fragmentation is the intended layer mapping."
+- new_questions: []
+- criticism: ["[grok] T260 (stretch scope-decision) was sequenced AFTER the helper/tests; a scope decision conceptually precedes the implementation it could affect. FIXED: T260 reframed as an UP-FRONT zero-code deferral (dependsOn [] — it now precedes/parallels W1), explicitly DEFERRING both optional hardenings (the load-bearing non-empty checks fully close the reproduced launder), so it implements nothing and gates nothing."]
+- ledgerRefs: ["goals:G32"]
+- sessionLogs: ["docs/logs/20260608-111023-g32-round3-panel.md"]
+
+### R313 — go-ahead
+
+- createdAt: 2026-06-08T11:18:45.516Z
+- updatedAt: 2026-06-08T11:18:45.516Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- summary: "G32 plan ROUND 4 GO-AHEAD (opus confirming reviewer; reconciled with codex go-ahead round 3). The sole remaining R312 point (T260 ordering) is fixed — T260 verified as an up-front zero-code deferral (deps [], no code, gates nothing). grok's round-3 'M104 self-reference' was a verified misread (M104 dependsOn ['M103']); its fragmentation concern is the intended 3-layer + verify mapping (opus+codex accept). Plan complete + acyclic + grounded against real code (applyCreateItem L309 / applyUpdateItem L259 / assertGoalPhasePreconditions L808 / no-DSL note ~L789 / HANDOFFS_SCHEMA L343 with fields correctly left required:false / all four *:advance prompts). Reproduce-first + dual-adapter + grep-invariant + verify present. Ready to lock."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["goals:G32"]
+- sessionLogs: ["docs/logs/20260608-111023-a18b40d5596a3b471.md"]

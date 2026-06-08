@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 32
+  item: 33
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -210,3 +210,26 @@ archives:
     **Acceptance:** the plan must specify how an off-enum verdict on the Pi path is caught (reinforced child instruction + orchestrator fail-loud), and validate via the existing bun run check + a documented reasoning of why a paraphrased verdict can no longer silently mis-gate. Tasks created under this goal must ledgerRef defects:D38.
 - milestones: ["M96"]
 - sessionLogs: ["docs/logs/20260608-075907-a154a37239d30c033.md","docs/logs/20260608-075907-pi-grok.md","docs/logs/20260608-075907-pi-minimax.md","docs/logs/20260608-080957-a7a8b2a4d39a4f50c.md","docs/logs/20260608-082009-a321657379502d04a.md","docs/logs/20260608-082403-a7069cb62865e8e08.md"]
+
+## M102
+
+### G32 — planned
+
+- createdAt: 2026-06-08T10:50:05.336Z
+- updatedAt: 2026-06-08T11:19:00.496Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- title: Fix D39 — enforce handoff stop-gate invariants at write time (make laundered effort-stops unwritable) + close the turn-vs-run blind spot
+- description: |
+    Defect-seeded goal (resolves defect D39); root cause CONFIRMED, so skip clarification.
+    
+    **Confirmed root cause:** HANDOFFS_SCHEMA.fields.blockingQuestions is `{type:'id[]', required:false}` (constants.ts:358) and the ledger's create_item validates only per-field type/required — NOT cross-field/per-status invariants. So `create_item('handoffs', status:'mixed', blockingQuestions:[])` SUCCEEDS (observed: HO26). The prose gate ('no handoff status for an effort-based stop') is unenforced; combined with a turn-vs-run blind spot in advance.md, the flow fabricates laundered effort-stops (HO22/HO25/HO26).
+    
+    **Fix (three composing layers; layer 1 load-bearing):**
+    1. WRITE-TIME ENFORCEMENT in @cq/ledger create_item for the handoffs ledger — per-status conditional validation: `mixed`/`answers-required` REQUIRE a non-empty blockingQuestions[]; `user-action-required` REQUIRES a non-empty required-action carrier (non-empty handoffReasons). A mixed-with-empty-blockingQuestions THROWS (fail-loud, symmetric to the D38 fix). Optional hardening (scope decision in plan): each blockingQuestions id resolving to an `open` question (cross-ledger), and a `drained` predicate-gate restatement — keep these as stretch unless cheap; the LOAD-BEARING requirement is the non-empty checks that make HO26 unwritable.
+    2. advance.md §Stop-condition: add the TURN-vs-RUN clause (turn/context exhaustion is NOT a run-stop and needs NO handoff; the ledger is the durable resume point; keep going until a predicate-legal stop, then stop mid-stride).
+    3. Expand the §gate forbidden-rationale list with the exact euphemisms ('deliberate/transparent checkpoint', 'warrants fresh context', 'BREAKING/large/delicate change', 'a complete vertical slice is a clean boundary', citing a prior HO-NN that stopped the same way) + the self-check ('if your summary says "not a predicate-legal stop" / "predicates still TRUE", the stop is illegal — delete it and CONTINUE'). Keep the per-flow plan/investigate/implement *:advance handoff sections consistent with the enforced invariants.
+    
+    **Acceptance:** a unit test proving create_item('handoffs', status:'mixed'|'answers-required', blockingQuestions:[]) THROWS and a valid one (non-empty) succeeds; the advance.md turn-vs-run clause + euphemism blocklist present (grep-invariant); bun run check green + nix build. Builds on G30's HANDOFFS_SCHEMA + advance.md. Tasks must ledgerRef defects:D39.
+- milestones: ["M103","M104","M105","M106"]
+- sessionLogs: ["docs/logs/20260608-105000-a52e81205fe425a0e.md","docs/logs/20260608-110324-af50ed222aaddb4a5.md","docs/logs/20260608-111023-g32-round2-panel.md","docs/logs/20260608-111023-g32-round3-panel.md","docs/logs/20260608-111023-a18b40d5596a3b471.md"]
