@@ -97,15 +97,69 @@ export interface GetConfigResult {
 }
 
 /**
- * The injected config capability: computes the `get_reviewers` / `get_config`
- * payloads against a config root the OUTER package bound it to. Supplied by the
- * ledger-mcp layer (over `@cq/config`); absent for config-agnostic factories
- * (e.g. an in-memory store with no cq.toml-capable root).
+ * The per-role model-resolution status, as returned by `get_agent_models`
+ * (Q157+Q158). Exactly four variants:
+ *
+ * - `'resolved'`            — a live token (or tokens) was found for the role's
+ *                             tier class in the candidate union.
+ * - `'not-configured'`      — no `cq.toml` is present at all.
+ * - `'no-live-token'`       — `cq.toml` is present, but the role's
+ *                             `[agent_tiers]` tier has no live token of that
+ *                             class in the candidate union.
+ * - `'not-model-configurable'` — the role has no `agentTierKey` (orchestrator
+ *                             commands), so model selection is N/A.
+ *
+ * This is a SERVER-SIDE status enum. It is NOT byte-identical to the web
+ * client's `ModelClass`: the web's `'N/A'` / `'default'` render-labels do not
+ * exist here — the server reports `status` + a nullable `modelClass`. The web
+ * client owns a single `status` -> render-label mapping; that mapping, not any
+ * type identity, is the source of truth for what the user sees.
+ */
+export type AgentModelStatus =
+  | "resolved"
+  | "not-configured"
+  | "no-live-token"
+  | "not-model-configurable";
+
+/**
+ * One agent role's resolved model overlay, as returned by `get_agent_models`.
+ * `id` is the `AgentRole.id` / `[agent_tiers]` key — the Q158 join key the web
+ * client overlays onto its agent catalogue with no remapping. `modelClass` is
+ * the resolved tier class, or null when no class applies (e.g.
+ * `not-model-configurable` / `no-live-token`). `modelMappings` carries the
+ * per-harness concrete model ids that back the resolved class.
+ */
+export interface AgentModelEntry {
+  readonly id: string;
+  readonly status: AgentModelStatus;
+  readonly modelClass: "frontier" | "standard" | "fast" | null;
+  readonly modelMappings: {
+    readonly claude?: readonly string[];
+    readonly pi?: readonly string[];
+  };
+}
+
+/**
+ * The `get_agent_models` payload: `configured` is true only when a `cq.toml`
+ * is present, and `agents` is the per-role overlay keyed by `AgentRole.id`.
+ */
+export interface AgentModelsResult {
+  readonly configured: boolean;
+  readonly agents: readonly AgentModelEntry[];
+}
+
+/**
+ * The injected config capability: computes the `get_reviewers` / `get_config` /
+ * `get_agent_models` payloads against a config root the OUTER package bound it
+ * to. Supplied by the ledger-mcp layer (over `@cq/config`); absent for
+ * config-agnostic factories (e.g. an in-memory store with no cq.toml-capable
+ * root).
  */
 export interface ConfigCapability {
   computeReviewers(): GetReviewersResult;
   computePlanners(): GetPlannersResult;
   computeConfig(): GetConfigResult;
+  computeAgentModels(): AgentModelsResult;
 }
 
 /**

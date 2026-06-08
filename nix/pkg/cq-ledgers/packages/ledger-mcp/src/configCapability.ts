@@ -149,5 +149,10 @@ export function createConfigCapability(repoRoot: string): ConfigCapability {
     computeReviewers: () => computeReviewers(repoRoot),
     computePlanners: () => computePlanners(repoRoot),
     computeConfig: () => computeConfig(repoRoot),
+    // T283 added the interface method; the resolution logic is T285. Throwing
+    // stub keeps typecheck green until T285 replaces it with a real impl.
+    computeAgentModels: () => {
+      throw new Error("computeAgentModels not implemented — T285");
+    },
   };
 }

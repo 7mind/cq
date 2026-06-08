@@ -66,6 +66,9 @@ export type {
   ResolvedPlanner,
   GetPlannersResult,
   GetConfigResult,
+  AgentModelStatus,
+  AgentModelEntry,
+  AgentModelsResult,
 } from "./mcp/configCapability.js";
 export { LedgerSearchIndex } from "./search/LedgerSearchIndex.js";
 export type { FtsSearchOpts, FtsSearchHit } from "./search/LedgerSearchIndex.js";
