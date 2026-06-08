@@ -169,6 +169,15 @@ let
       )
       piSecretEnv
   );
+  # pi-search-hub's duckduckgo backend spawns `python3 -c "from ddgs import
+  # DDGS …"` (no interpreter override; its `which ddgs` fallback only adds
+  # ddgs's own site-packages, which under Nix omits ddgs's transitive deps, so
+  # it fails here). We need a python3 whose env carries ddgs+deps. We can NOT
+  # add it to home.packages — a bare python3 is already in that buildEnv and a
+  # second one collides (bin/python3, bin/pydoc3.13). Instead we prefix it onto
+  # PATH for the pi process only (below), so the python3 pi spawns resolves to
+  # this env without touching the home-manager profile.
+  ddgsPython = pkgs.python3.withPackages (ps: [ ps.ddgs ]);
   piWrapped = pkgs.symlinkJoin {
     name = "pi-coding-agent-wrapped";
     paths = [ piBase ];
@@ -176,6 +185,7 @@ let
     postBuild = ''
       wrapProgram $out/bin/pi \
         --run ${lib.escapeShellArg piSecretsPrelude} \
+        --prefix PATH : ${ddgsPython}/bin \
         --run 'export CQ_AGENTS_DIR="$HOME/.pi/agent/cq-agents"'
     '';
   };
@@ -195,7 +205,8 @@ let
   # order, so we emit the JSON with EXPLICIT key order from searchHubBackends —
   # edit that list to re-order. We front self-hosted SearXNG, then free DDG,
   # then the paid APIs, so paid backends are only reached if both free ones
-  # fail. duckduckgo needs `ddgs` on PATH at runtime (added to home.packages).
+  # fail. duckduckgo needs `ddgs` at runtime (ddgsPython, prefixed onto pi's
+  # PATH in piWrapped above).
   searchHubBackends = [
     {
       name = "searxng";
@@ -776,9 +787,6 @@ in
       home.packages = [
         pkgs.gh
         pkgs.nodejs # required by claude-code plugins (.mjs scripts)
-        # pi-search-hub's duckduckgo backend spawns `python3 -c "from ddgs
-        # import DDGS …"`, so put a python3 with ddgs importable on PATH.
-        (pkgs.python3.withPackages (ps: [ ps.ddgs ]))
         codegraphPkg # for `codegraph init -i` per-project bootstrap
       ]
       ++ ledgerTools
