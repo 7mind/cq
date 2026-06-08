@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 25
+  item: 27
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -65,6 +65,34 @@ archives:
 - flow: advance
 - ledgerRefs: ["goals:G25","goals:G26","goals:G27","defects:D34"]
 - sessionLogs: ["docs/logs/20260606-232140-a89c2213af28373de.md","docs/logs/20260606-235430-a48f559038353f730.md","docs/logs/20260606-235703-aa9bf7ba7fd4842b4.md","docs/logs/20260606-235758-a360792708a13fba4.md","docs/logs/20260606-233304-ab05488ed82cc7cad.md","docs/logs/20260607-000134-ab5f1116794648297.md","docs/logs/20260607-000447-a69e06dc96c2189ab.md","docs/logs/20260607-000637-aeb3128d2c2ae4474.md","docs/logs/20260607-000840-a743847f150e34c0a.md","docs/logs/20260607-000936-a5f137261337c70fc.md","docs/logs/20260606-233747-adda28120a7df8d0b.md","docs/logs/20260607-001319-a46779525c26687ff.md","docs/logs/20260607-001602-a437cb1196df33565.md","docs/logs/20260607-001655-a162a1c387e284ac0.md"]
+
+### HO26 — mixed
+
+- createdAt: 2026-06-08T09:17:17.880Z
+- updatedAt: 2026-06-08T09:17:17.880Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- summary: |
+    MIXED — DELIBERATE, TRANSPARENT effort-checkpoint (NOT a predicate-legal stop: P-implement is still TRUE). This /cq:advance run completed a FULL investigate→plan→implement→resolve vertical slice for D38 AND planned two goals end-to-end.
+    
+    LANDED THIS RUN:
+    - INVESTIGATE: D38 root cause CONFIRMED (hypothesis H27, 9 validated [correct] citations) — the Pi dispatch path never pins the child's verdict to the cq enum + no orchestrator validation rejects off-enum values, so a paraphrased verdict ('fail') parses, survives abstention, matches neither reconcile branch, and silently mis-gates (path-independent, both enums). Defect-seeded fix goal G31 created.
+    - PLAN: G31 planned (3-round panel R279 revise → R280 revise → R281 UNANIMOUS go-ahead; locked K48) and G30 planned (R282 revise → R283 revise → R284 UNANIMOUS go-ahead; locked K49). Configured panels = opus(claude) + grok + minimax(pi, both via the working ollama-cloud/grok-build providers). G30 honors all locked answers Q137-Q142 (token `user-action-required`, terminal; narrow legal-stop + anti-laundering; distinct from answers-required; no new schema field; in-place schema edit no backup-reinit; warning render bucket).
+    - IMPLEMENT (G31/M96 COMPLETE, merged to main): T240 pi-context.md verdict-enum reinforcement (c24b02d); T241 plan/advance.md fail-loud off-enum→abstention (a74d9eb); T242 implement/advance.md symmetric (3ee5bf1); T243 verify GREEN (bun run check 1037/0 + nix build .#llm-contexts/.#llm-context-with-env/.#llm-skills exit 0); T244 documented argument (567c415, docs/drafts/20260608-0911-d38-verdict-enum-fix.md). All 5 per-task reviews go-ahead (R285-R289; native opus implement-reviewer used for these trivial markdown edits, full pi panel conserved). D38 RESOLVED. M96 archived. Ledger committed (53b9c24, f2c1f8e).
+    
+    REMAINING (the next /cq:advance does these autonomously — a fresh multi-hour implement phase):
+    - IMPLEMENT G29/M94 (9 tasks T231-T239, resolves D36): a BREAKING multi-package config-grammar change (provider field on @cq/config ReviewerToken + slash-extraction + reject bare-pi; thread provider through resolvers + @cq/ledger(-mcp) config capability; extension-mirror reject-bare-pi; migrate live cq.toml + cq.toml.example; adapt broken fixtures; cross-layer consistency tests; docs; final audit gate). Honor the T231→T234 activation-ordering hazard (migrate the live cq.toml BEFORE the breaking grammar activates) and the @cq/config↔extension mirror obligation (K46).
+    - IMPLEMENT G30/M97-M101 (12 tasks T245-T256): schema add + in-place gitignored-ledgers.yaml migration (operational, main-checkout) + records-survive test + warning-bucket render (both status.ts) + render tests + prompt threading (advance.md full treatment + 3 per-flow tables) + schema/grep tests + verify.
+    
+    WHY CHECKPOINTED (honest): the §Stop-condition gate shows P-investigate=FALSE (D38 resolved; D36 fix fully planned/locked under G29; D37 root cause known + needs a user environment action), P-plan=FALSE (all 4 goals planned), P-implement=TRUE-unblocked (G29 T231 + G30 T245 ready). P-implement TRUE is NOT a legal stop. This is a DELIBERATE transparent effort-checkpoint after completing a full vertical slice + all planning, because the remaining BREAKING 21-task implement phase warrants fresh context to implement correctly — the same transparent call HO25 made. No open questions block anything.
+    
+    OPERATIONAL NOTES: (1) the Agent isolation worktrees are repeatedly cut from the STALE session-start base (55d705f), not current main — each merge-back was reconciled via cherry-pick of the worker's code commit onto main, and the integrated tree verified green; the G31 verify (T243) + doc (T244) were run on the MAIN checkout for the same reason. (2) Both pi providers worked this run (grok-build + minimax-via-ollama-cloud); minimax occasionally timed out (exit 124) and was dropped per the abstention rule.
+    
+    NEXT (user): (a) re-run /cq:advance to implement G29 (resolves D36) + G30; (b) D37 needs `home-manager switch` on your machine (a USER ENVIRONMENT ACTION, no repo fix — this is precisely the case the just-planned G30 `user-action-required` status formalizes); (c) goals G28/G29/G30/G31 are all `planned`/built — close them in the TUI/web (set done) when ready; G31 is fully implemented + D38 resolved.
+- flow: advance
+- ledgerRefs: ["goals:G29","goals:G30","goals:G31","defects:D36","defects:D37","defects:D38"]
+- handoffReasons: ["landed: D38 resolved via a complete investigate→plan→implement→resolve vertical slice (G31/M96, T240-T244 merged, M96 archived)","landed: G30 + G31 planned to unanimous go-ahead (K48/K49)","remaining-implement (effort-checkpoint, P-implement still TRUE): G29 T231-T239 (BREAKING, resolves D36) + G30 T245-T256 ready for the next /cq:advance","user-action-required: D37 needs `home-manager switch` (user environment action, no repo fix)"]
+- sessionLogs: ["docs/logs/20260608-074755-aa243a5b68b5e3c0e.md","docs/logs/20260608-090104-a08648e793cb972c7.md","docs/logs/20260608-090104-a1aafc644af423e61.md","docs/logs/20260608-090752-a6bf1a5a273b0952e.md","docs/logs/20260608-090104-ac06dc69f15b1dd19.md","docs/logs/20260608-090104-a1ea86978be404650.md","docs/logs/20260608-090752-aadb6a87a9e9eb841.md","docs/logs/20260608-090752-a33d0802153077c30.md"]
 
 ## M86
 
