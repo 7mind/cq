@@ -6,15 +6,13 @@
   codegraph,
   podmanSocketPath ? null,
   podmanSocketUri ? null,
-  hwNvidiaEnable ? false,
-  hwAmdGpuEnable ? false,
-  hwIntelGpuEnable ? false,
   llmSshKeyPath ? null,
-  gpuByDefault ? false,
   extraReadOnlyPaths ? [ ],
   extraReadWritePaths ? [ ],
+  extraDevicePaths ? [ ],
   ollamaModelsDir ? null,
-  extraPromptFragments ? [ ],
+  promptForClaude ? "",
+  promptForPi ? "",
   secretSessionVariables ? { },
   sandboxPackages ? [ ],
   sessionVariables ? { },
@@ -56,6 +54,9 @@ let
   extraRwExports = lib.optionalString (extraReadWritePaths != [ ]) ''
     export YOLO_EXTRA_RW_PATHS=${lib.escapeShellArg (joinPaths extraReadWritePaths)}
   '';
+  extraDevExports = lib.optionalString (extraDevicePaths != [ ]) ''
+    export YOLO_EXTRA_DEV_PATHS=${lib.escapeShellArg (joinPaths extraDevicePaths)}
+  '';
   # Secret session variables: ENV_VAR -> host secret-file path. Serialized as
   # one newline-joined NAME=path line per entry (paths cannot contain newlines).
   # yolo.sh reads each file's content on the host into a single 0600 NAME=VALUE
@@ -85,8 +86,14 @@ let
   sessionVarsExports = lib.optionalString (sessionVariables != { }) ''
     export YOLO_SESSION_VARS=${lib.escapeShellArg (lib.concatStringsSep "\n" sessionVarLines)}
   '';
-  promptExports = lib.optionalString (extraPromptFragments != [ ]) ''
-    export YOLO_EXTRA_PROMPT=${lib.escapeShellArg (lib.concatStringsSep "\n\n" extraPromptFragments)}
+  # Per-agent system-prompt additions, composed at Nix-eval time from
+  # promptExtensions (target/when filtering done in the home-manager module).
+  # Passed verbatim; yolo.sh appends via --append-system-prompt when non-empty.
+  promptClaudeExports = lib.optionalString (promptForClaude != "") ''
+    export YOLO_PROMPT_CLAUDE=${lib.escapeShellArg promptForClaude}
+  '';
+  promptPiExports = lib.optionalString (promptForPi != "") ''
+    export YOLO_PROMPT_PI=${lib.escapeShellArg promptForPi}
   '';
 in
 pkgs.writeShellScriptBin "yolo" ''
@@ -95,18 +102,16 @@ pkgs.writeShellScriptBin "yolo" ''
   export YOLO_NIX_LD="${nix-ld}/bin/nix-ld"
   export YOLO_JQ="${jq}/bin/jq"
   export YOLO_CODEGRAPH_BIN="${codegraph}/bin/codegraph"
-  export YOLO_HW_NVIDIA_ENABLE=${if hwNvidiaEnable then "1" else "0"}
-  export YOLO_HW_AMD_GPU_ENABLE=${if hwAmdGpuEnable then "1" else "0"}
-  export YOLO_HW_INTEL_GPU_ENABLE=${if hwIntelGpuEnable then "1" else "0"}
-  export YOLO_GPU_DEFAULT=${if gpuByDefault then "1" else "0"}
   ${podmanExports}
   ${llmSshKeyExports}
   ${ollamaExports}
   ${extraRoExports}
   ${extraRwExports}
+  ${extraDevExports}
   ${secretVarsExports}
   ${sandboxBinExports}
   ${sessionVarsExports}
-  ${promptExports}
+  ${promptClaudeExports}
+  ${promptPiExports}
   exec bash ${yoloScript} "$@"
 ''

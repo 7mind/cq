@@ -9,9 +9,10 @@
 # sandbox), so every harness in the sandbox inherits them.
 #
 # Curried over the flake's `inputs` (for the codegraph package the per-project
-# index bootstrap needs). All host/hardware coupling (GPU flags, rootless-Podman
-# socket, ollama models dir, ssh key) is surfaced as `smind.hm.dev.llm.*`
-# options the consumer wires from its own NixOS config.
+# index bootstrap needs). All host/hardware coupling (device passthrough,
+# rootless-Podman socket, ollama models dir, ssh key, prompt extensions) is
+# surfaced as `smind.hm.dev.llm.*` options the consumer wires from its own
+# NixOS config — GPU passthrough is no longer built in.
 { inputs }:
 { config
 , lib
@@ -25,18 +26,25 @@ let
 
   cfg = config.smind.hm.dev.llm;
 
+  # Per-agent composition of the prompt extensions: keep the enabled (`when`)
+  # fragments targeted at this agent (or "*"), in declaration order, joined with
+  # blank lines. Codex is intentionally absent — it has no --append-system-prompt.
+  promptFor = agent:
+    lib.concatStringsSep "\n\n" (
+      map (e: e.prompt) (
+        lib.filter (e: e.when && (e.target == agent || e.target == "*")) cfg.yolo.promptExtensions
+      )
+    );
+
   yoloPkg = pkgs.callPackage ../pkg/yolo/default.nix {
     codegraph = codegraphPkg;
     podmanSocketPath = cfg.podman.socketPath;
     podmanSocketUri = cfg.podman.socketUri;
-    hwNvidiaEnable = cfg.yolo.gpu.nvidiaEnable;
-    hwAmdGpuEnable = cfg.yolo.gpu.amdEnable;
-    hwIntelGpuEnable = cfg.yolo.gpu.intelEnable;
     llmSshKeyPath = cfg.llmSshKeyPath;
-    gpuByDefault = cfg.yolo.gpuByDefault;
     extraReadOnlyPaths = cfg.yolo.extraReadOnlyPaths;
     extraReadWritePaths = cfg.yolo.extraReadWritePaths;
-    extraPromptFragments = cfg.yolo.extraPromptFragments;
+    # Device paths bound with device access (bwrap --dev-bind), e.g. GPU nodes.
+    extraDevicePaths = cfg.yolo.extraDevicePaths;
     # Bind the host's ollama models dir (the consumer sets this from its own
     # services.ollama.models); null skips the bind.
     ollamaModelsDir = cfg.ollamaModelsDir;
@@ -46,13 +54,16 @@ let
     sessionVariables = cfg.yolo.sessionVariables;
     # Secret-file-backed env vars composed + sourced inside the sandbox.
     secretSessionVariables = cfg.yolo.secretSessionVariables;
+    # Per-agent system-prompt additions (see promptExtensions).
+    promptForClaude = promptFor "claude";
+    promptForPi = promptFor "pi";
   };
 in
 {
   options = {
     # Host/hardware coupling surfaced as plain options; the consumer wires
-    # them from its own NixOS config (GPU hw flags, rootless-Podman socket,
-    # ollama models dir). All default to off/null so a bare consumer works.
+    # them from its own NixOS config (device passthrough, rootless-Podman
+    # socket, ollama models dir). All default to off/null so a bare consumer works.
     smind.hm.dev.llm.podman.socketPath = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -93,34 +104,6 @@ in
       '';
     };
 
-    smind.hm.dev.llm.yolo.gpu.nvidiaEnable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Host has an NVIDIA GPU the yolo `--gpu` flag should expose.";
-    };
-
-    smind.hm.dev.llm.yolo.gpu.amdEnable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Host has an AMD GPU the yolo `--gpu` flag should expose.";
-    };
-
-    smind.hm.dev.llm.yolo.gpu.intelEnable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Host has an Intel GPU the yolo `--gpu` flag should expose.";
-    };
-
-    smind.hm.dev.llm.yolo.gpuByDefault = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = ''
-        Default the `--gpu` flag on for `yolo` invocations on this host.
-        Users can still opt out with `--no-gpu`. Has no effect on hosts
-        with none of `smind.hw.{nvidia,amd.gpu,intel.gpu}.enable` set.
-      '';
-    };
-
     smind.hm.dev.llm.yolo.extraReadOnlyPaths = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -141,14 +124,64 @@ in
       '';
     };
 
-    smind.hm.dev.llm.yolo.extraPromptFragments = lib.mkOption {
-      type = lib.types.listOf lib.types.lines;
+    smind.hm.dev.llm.yolo.extraDevicePaths = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
       default = [ ];
+      example = lib.literalExpression ''[ "/dev/dri" "/dev/kfd" ]'';
       description = ''
-        Extra text fragments appended (separated by blank lines) to the
-        claude `--append-system-prompt` after the YOLO authorization line.
-        Use for per-host context (e.g. "this is the home NAS, /srv/nvme
-        holds the photo library").
+        Host device paths to bind into the sandbox WITH device access (bwrap
+        `--dev-bind`) — e.g. GPU render nodes for compute passthrough. Files or
+        directories (a directory exposes every device node under it, so
+        `/dev/dri` covers all render nodes). Missing paths are skipped. GPU
+        passthrough is no longer built in: wire the device paths here, the
+        non-device GPU bits (`/run/opengl-driver`, `/sys`) via
+        {option}`smind.hm.dev.llm.yolo.extraReadOnlyPaths`, and the GPU
+        availability note via {option}`smind.hm.dev.llm.yolo.promptExtensions`.
+      '';
+    };
+
+    smind.hm.dev.llm.yolo.promptExtensions = lib.mkOption {
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          prompt = lib.mkOption {
+            type = lib.types.lines;
+            description = "System-prompt fragment text appended to the targeted agent(s).";
+          };
+          target = lib.mkOption {
+            type = lib.types.enum [ "claude" "pi" "*" ];
+            default = "*";
+            description = ''
+              Which agent(s) the fragment is appended to: "claude", "pi", or
+              "*" (both). Codex has no `--append-system-prompt` CLI hook, so it
+              is not a valid target — deliver Codex instructions through the
+              shared memory (`programs.codex` context / AGENTS.md) instead.
+            '';
+          };
+          when = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              Include this fragment only when true. Lets the consumer gate a
+              fragment on host config (e.g. turn the GPU note on/off).
+            '';
+          };
+        };
+      });
+      default = [ ];
+      example = lib.literalExpression ''
+        [
+          { prompt = "GPU access is enabled (NVIDIA). /dev/dri is bound."; when = config.hardware.nvidia.modesetting.enable; }
+          { prompt = "This host is the NAS; /srv holds the media library."; target = "*"; }
+        ]
+      '';
+      description = ''
+        Ordered system-prompt additions, appended (blank-line-separated) to each
+        agent's `--append-system-prompt`, filtered per agent by `target` and
+        gated by `when`. List-merges across modules: this module contributes the
+        YOLO pre-authorization note (target "claude") via `mkBefore`, and the
+        consumer appends host-specific fragments (GPU availability, host
+        context). Replaces the old hardcoded permission/GPU notes and the
+        former `extraPromptFragments` option. Codex receives none (no CLI hook).
       '';
     };
 
@@ -216,12 +249,25 @@ in
     };
   };
 
-  # The sandbox is Linux-only (bubblewrap); on Darwin claude-code uses its own
-  # sandbox wrapper, wired in dev-llm.nix. Gated on the shared harness enable.
-  config = lib.mkIf (cfg.enable && isLinux) {
-    home.packages = [
-      pkgs.bubblewrap
-      yoloPkg
-    ];
-  };
+  config = lib.mkMerge [
+    {
+      # The YOLO pre-authorization note. Claude has a permission system, so tell
+      # it not to prompt on destructive ops; Pi/Codex have none, so it targets
+      # claude only. mkBefore leads the list; the consumer's fragments append.
+      smind.hm.dev.llm.yolo.promptExtensions = lib.mkBefore [
+        {
+          target = "claude";
+          prompt = ''YOLO mode is active. The user has pre-authorized destructive shell operations (rm, rm -rf, kill, git reset --hard, etc.) and will not be available to confirm. Proceed without asking for confirmation on such operations. Standard safety still applies to actions with broader blast radius (force-push to shared branches, deleting remote resources, sending external messages).'';
+        }
+      ];
+    }
+    # The sandbox is Linux-only (bubblewrap); on Darwin claude-code uses its own
+    # sandbox wrapper, wired in dev-llm.nix. Gated on the shared harness enable.
+    (lib.mkIf (cfg.enable && isLinux) {
+      home.packages = [
+        pkgs.bubblewrap
+        yoloPkg
+      ];
+    })
+  ];
 }

@@ -11,14 +11,12 @@
 # Optional env vars:
 #   YOLO_PODMAN_SOCKET_PATH - rootless podman socket path (enables container forwarding)
 #   YOLO_PODMAN_SOCKET_URI  - rootless podman socket URI
-#   YOLO_HW_NVIDIA_ENABLE    - "1" if smind.hw.nvidia.enable is set on the host (gates --gpu)
-#   YOLO_HW_AMD_GPU_ENABLE   - "1" if smind.hw.amd.gpu.enable is set on the host (gates --gpu)
-#   YOLO_HW_INTEL_GPU_ENABLE - "1" if smind.hw.intel.gpu.enable is set on the host (gates --gpu)
 #   YOLO_LLM_SSH_KEY_PATH    - path to an agenix-managed SSH private key to ro-bind into the sandbox
 #                              (set on llm-worker hosts so the llm user can use the key inside yolo)
-#   YOLO_GPU_DEFAULT         - "1" to default --gpu on (CLI --no-gpu opts out)
 #   YOLO_EXTRA_RO_PATHS      - newline-separated list of host paths to ro-bind (missing paths are skipped)
 #   YOLO_EXTRA_RW_PATHS      - newline-separated list of host paths to rw-bind (missing paths are skipped)
+#   YOLO_EXTRA_DEV_PATHS     - newline-separated list of host device paths to --dev-bind (e.g. GPU render
+#                              nodes); missing paths are skipped
 #   YOLO_SECRET_VARS         - newline-separated NAME=/path/to/secret list (smind.hm.dev.llm.yolo.
 #                              secretSessionVariables); each readable file's content is composed into
 #                              one 0600 file, bound once, and sourced inside the sandbox (never via argv)
@@ -27,7 +25,8 @@
 #   YOLO_SESSION_VARS        - newline-separated NAME=VALUE list (smind.hm.dev.llm.yolo.sessionVariables)
 #                              of env vars to set inside the sandbox; empty means none
 #   YOLO_OLLAMA_MODELS_DIR   - host path to the ollama models directory (ro-bind); empty means no ollama on this host
-#   YOLO_EXTRA_PROMPT        - extra text appended to the claude system prompt (after the YOLO header)
+#   YOLO_PROMPT_CLAUDE       - composed --append-system-prompt text for claude (promptExtensions; empty = none)
+#   YOLO_PROMPT_PI           - composed --append-system-prompt text for pi (promptExtensions; empty = none)
 
 : "${YOLO_LLM_SANDBOX:?must be set}"
 : "${YOLO_SECRETS_EXEC:?must be set}"
@@ -42,7 +41,6 @@
 # env. `--work`/`-w` is a backward-compatible alias for `--profile work`.
 PROFILE=""
 MOBILE_MODE=0
-GPU_MODE=${YOLO_GPU_DEFAULT:-0}
 # Refuse to launch with $PWD == $HOME by default: BASE_ARGS binds $PWD
 # read-write, so running from the home directory would mount the entire home
 # (credentials, keys, history) into the sandbox. --unsafe-share-home overrides.
@@ -63,8 +61,6 @@ while [[ $# -gt 0 ]]; do
       PROFILE="$2"; shift 2 ;;
     --work|-w) PROFILE="work"; shift ;;
     --mobile) MOBILE_MODE=1; shift ;;
-    --gpu) GPU_MODE=1; shift ;;
-    --no-gpu) GPU_MODE=0; shift ;;
     --no-cg) CG_MODE=0; shift ;;
     --audio) AUDIO_MODE=1; shift ;;
     --no-audio) AUDIO_MODE=0; shift ;;
@@ -131,7 +127,7 @@ if [[ $MOBILE_MODE -eq 1 ]]; then
 fi
 
 if [[ $# -eq 0 ]]; then
-  echo "Usage: yolo [--profile NAME|-p NAME] [--work] [--mobile] [--gpu|--no-gpu] [--no-cg] [--audio|--no-audio] [--unsafe-share-home] [--env KEY=VAL]... <claude|codex|pi|shell|cmd> [args...]" >&2
+  echo "Usage: yolo [--profile NAME|-p NAME] [--work] [--mobile] [--no-cg] [--audio|--no-audio] [--unsafe-share-home] [--env KEY=VAL]... <claude|codex|pi|shell|cmd> [args...]" >&2
   exit 1
 fi
 
@@ -162,48 +158,19 @@ if [[ -n "${TMUX:-}" ]]; then
   fi
 fi
 
-GPU_ARGS=()
-if [[ $GPU_MODE -eq 1 ]]; then
-  if [[ "${YOLO_HW_NVIDIA_ENABLE:-0}" != "1" \
-     && "${YOLO_HW_AMD_GPU_ENABLE:-0}" != "1" \
-     && "${YOLO_HW_INTEL_GPU_ENABLE:-0}" != "1" ]]; then
-    echo "warning: --gpu requested but none of smind.hw.{nvidia,amd.gpu,intel.gpu}.enable is set on this host; ignoring" >&2
-  else
-    # /run/opengl-driver carries NixOS-managed GPU userspace libs (libcuda,
-    # libamdhip64, intel-compute-runtime, level-zero, mesa drivers, vulkan ICDs).
-    # Required for NVIDIA, AMD and Intel.
-    if [[ -e /run/opengl-driver ]]; then
-      GPU_ARGS+=(--ro /run/opengl-driver)
-    fi
-    # /sys is needed for GPU enumeration — ROCm reads /sys/class/kfd/kfd/topology,
-    # NVIDIA tools probe /sys/class/drm and /sys/bus/pci, Intel Level Zero / xe
-    # walks /sys/class/drm and /sys/bus/pci to discover devices and SR-IOV VFs.
-    GPU_ARGS+=(--ro /sys)
-    # /dev/dri is shared by AMD, NVIDIA (PRIME offload, Vulkan), and Intel
-    # (render nodes are the primary compute path for Level Zero / OpenCL on xe/i915).
-    if [[ -d /dev/dri ]]; then
-      for dev in /dev/dri/*; do
-        [[ -e "$dev" ]] && GPU_ARGS+=(--dev-bind "$dev,$dev")
-      done
-    fi
-    if [[ "${YOLO_HW_NVIDIA_ENABLE:-0}" == "1" ]]; then
-      for dev in /dev/nvidiactl /dev/nvidia-modeset /dev/nvidia-uvm /dev/nvidia-uvm-tools \
-                 /dev/nvidia0 /dev/nvidia1 /dev/nvidia2 /dev/nvidia3; do
-        [[ -e "$dev" ]] && GPU_ARGS+=(--dev-bind "$dev,$dev")
-      done
-      if [[ -d /dev/nvidia-caps ]]; then
-        for dev in /dev/nvidia-caps/*; do
-          [[ -e "$dev" ]] && GPU_ARGS+=(--dev-bind "$dev,$dev")
-        done
-      fi
-    fi
-    if [[ "${YOLO_HW_AMD_GPU_ENABLE:-0}" == "1" ]]; then
-      [[ -e /dev/kfd ]] && GPU_ARGS+=(--dev-bind "/dev/kfd,/dev/kfd")
-    fi
-    # Intel discrete GPUs (Arc / Arc Pro Battlemage) need no extra char devices
-    # beyond /dev/dri/render*; xe/i915 expose all compute and media surfaces
-    # through DRM render nodes.
-  fi
+# Device passthrough (configured via Nix from
+# smind.hm.dev.llm.yolo.extraDevicePaths -> YOLO_EXTRA_DEV_PATHS). Each entry is
+# bind-mounted WITH device access (bwrap --dev-bind); a directory exposes every
+# device node under it (e.g. /dev/dri for GPU render nodes). GPU passthrough is
+# no longer special-cased here — the consumer wires the device paths plus the
+# non-device bits (/run/opengl-driver, /sys via extraReadOnlyPaths) and the GPU
+# system-prompt note (via promptExtensions) from its own host config. The
+# llm-sandbox layer skips any path absent on this host.
+DEV_ARGS=()
+if [[ -n "${YOLO_EXTRA_DEV_PATHS:-}" ]]; then
+  while IFS= read -r _d; do
+    [[ -n "$_d" ]] && DEV_ARGS+=(--dev-bind "$_d,$_d")
+  done <<< "$YOLO_EXTRA_DEV_PATHS"
 fi
 
 # Per-host extra bind paths (configured via Nix). The underlying llm-sandbox
@@ -327,7 +294,7 @@ BASE_ARGS=(
   --rw "${HOME}/.ivy2"
   "${SOCKET_ARGS[@]}"
   "${TMUX_BIND_ARGS[@]}"
-  "${GPU_ARGS[@]}"
+  "${DEV_ARGS[@]}"
   "${AUDIO_ARGS[@]}"
   "${LLM_SSH_KEY_ARGS[@]}"
   "${EXTRA_PATH_ARGS[@]}"
@@ -348,43 +315,11 @@ BASE_ARGS=(
 EXTRA_ARGS=()
 EXEC_CMD=()
 
-# Compose the system prompt fragments delivered to agents that accept an inline
-# append. Two variants:
-#   _yolo_prompt_full  = YOLO authorization + GPU availability + Nix extras
-#                        (for agents with a permission/confirmation system, e.g.
-#                        claude — the authorization tells them not to prompt).
-#   _yolo_prompt_extra = GPU availability + Nix extras only (no authorization)
-#                        for agents with no permission system, where the "don't
-#                        ask for confirmation" text is meaningless (e.g. pi).
-_yolo_prompt_base='YOLO mode is active. The user has pre-authorized destructive shell operations (rm, rm -rf, kill, git reset --hard, etc.) and will not be available to confirm. Proceed without asking for confirmation on such operations. Standard safety still applies to actions with broader blast radius (force-push to shared branches, deleting remote resources, sending external messages).'
-
-_yolo_prompt_gpu=""
-if [[ $GPU_MODE -eq 1 ]]; then
-  _gpu_vendors=()
-  [[ "${YOLO_HW_NVIDIA_ENABLE:-0}" == "1" ]] && _gpu_vendors+=("NVIDIA")
-  [[ "${YOLO_HW_AMD_GPU_ENABLE:-0}" == "1" ]] && _gpu_vendors+=("AMD")
-  [[ "${YOLO_HW_INTEL_GPU_ENABLE:-0}" == "1" ]] && _gpu_vendors+=("Intel")
-  if (( ${#_gpu_vendors[@]} > 0 )); then
-    _gpu_list=$(IFS=/; echo "${_gpu_vendors[*]}")
-    _yolo_prompt_gpu="GPU access is enabled inside this sandbox (${_gpu_list}). /dev/dri, /sys, and /run/opengl-driver are bound — you can run GPU-accelerated workloads (llama.cpp/SYCL/ROCm/CUDA, vulkan, level-zero, OpenCL) directly without leaving the sandbox."
-  fi
-fi
-
-# Non-authorization fragments (GPU + extras), joined with blank lines.
-_yolo_prompt_extra=""
-if [[ -n "$_yolo_prompt_gpu" ]]; then
-  _yolo_prompt_extra="$_yolo_prompt_gpu"
-fi
-if [[ -n "${YOLO_EXTRA_PROMPT:-}" ]]; then
-  [[ -n "$_yolo_prompt_extra" ]] && _yolo_prompt_extra+=$'\n\n'
-  _yolo_prompt_extra+="$YOLO_EXTRA_PROMPT"
-fi
-
-# Full prompt = authorization + the non-auth fragments.
-_yolo_prompt_full="$_yolo_prompt_base"
-if [[ -n "$_yolo_prompt_extra" ]]; then
-  _yolo_prompt_full+=$'\n\n'"$_yolo_prompt_extra"
-fi
+# System-prompt additions are composed declaratively at Nix-eval time from
+# smind.hm.dev.llm.yolo.promptExtensions (filtered by target + when) and handed
+# in per agent via YOLO_PROMPT_CLAUDE / YOLO_PROMPT_PI. yolo.sh no longer hard-
+# codes the YOLO-authorization or GPU notes — those are promptExtensions now.
+# Codex has no --append-system-prompt, so it receives no injected prompt.
 
 # For named profiles, each agent's config is backed by a dir under
 # ~/.config/yolo/<profile>/<agent>/ and bound onto the agent's standard
@@ -591,11 +526,13 @@ esac
 case "$SUBCMD" in
   claude)
     add_all_agent_binds
+    claude_prompt_args=()
+    [[ -n "${YOLO_PROMPT_CLAUDE:-}" ]] && claude_prompt_args+=(--append-system-prompt "$YOLO_PROMPT_CLAUDE")
     EXEC_CMD=(
       claude
       --permission-mode bypassPermissions
       --disallowed-tools AskUserQuestion
-      --append-system-prompt "$_yolo_prompt_full"
+      "${claude_prompt_args[@]}"
       "${CMD_ARGS[@]}"
     )
     ;;
@@ -607,12 +544,11 @@ case "$SUBCMD" in
 
   pi)
     add_all_agent_binds
-    # Pi has no permission/confirmation system by design, so the YOLO
-    # "don't ask for confirmation" authorization is meaningless to it. Only
-    # append the non-authorization context (GPU availability, host extras), and
-    # only when there is any.
+    # Pi receives only the prompt extensions targeted at "pi" or "*" (the
+    # claude-targeted YOLO authorization note doesn't apply — Pi has no
+    # permission system). Empty means no --append-system-prompt.
     pi_prompt_args=()
-    [[ -n "$_yolo_prompt_extra" ]] && pi_prompt_args+=(--append-system-prompt "$_yolo_prompt_extra")
+    [[ -n "${YOLO_PROMPT_PI:-}" ]] && pi_prompt_args+=(--append-system-prompt "$YOLO_PROMPT_PI")
     EXEC_CMD=(pi "${pi_prompt_args[@]}" "${CMD_ARGS[@]}")
     ;;
 

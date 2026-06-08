@@ -542,8 +542,6 @@
       homeManagerModules.dev-llm = {
         imports = [
           (import ./nix/hm/dev-llm.nix { inherit inputs self; })
-          (import ./nix/hm/yolo.nix { inherit inputs; })
-          ./nix/hm/programs-pi.nix
         ];
       };
     };
