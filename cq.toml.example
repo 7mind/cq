@@ -80,8 +80,8 @@ planners = ["opus", "grok"]
 [agent_tiers]
   investigate-explorer    = "frontier"
   investigate-prober      = "standard"
-  plan-advance            = "standard"
+  plan-advance            = "frontier"
   plan-reviewer           = "frontier"
   implement-worker        = "standard"
-  implement-reviewer      = "standard"
+  implement-reviewer      = "frontier"
   implement-conflict-resolver = "standard"
