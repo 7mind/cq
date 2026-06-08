@@ -785,3 +785,68 @@ for (const factory of [inMem, fs_]) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// T255 (a) — HANDOFFS_SCHEMA explicit `user-action-required` token assertions.
+// These tests would have failed before T245 (the token did not exist).
+// ---------------------------------------------------------------------------
+
+describe("T255(a): HANDOFFS_SCHEMA user-action-required token", () => {
+  it("statusValues contains user-action-required", () => {
+    expect(HANDOFFS_SCHEMA.statusValues).toContain("user-action-required");
+  });
+
+  it("terminalStatuses contains user-action-required", () => {
+    expect(HANDOFFS_SCHEMA.terminalStatuses).toContain("user-action-required");
+  });
+
+  it("transitions has a user-action-required entry that is an empty array", () => {
+    expect(HANDOFFS_SCHEMA.transitions).toBeDefined();
+    const transitions = HANDOFFS_SCHEMA.transitions!;
+    expect(Object.prototype.hasOwnProperty.call(transitions, "user-action-required")).toBe(true);
+    expect(transitions["user-action-required"]).toEqual([]);
+  });
+
+  it("terminal-check via terminalStatuses membership reports user-action-required as terminal", () => {
+    // The schema-level terminal check is: terminalStatuses.includes(status).
+    expect(HANDOFFS_SCHEMA.terminalStatuses.includes("user-action-required")).toBe(true);
+  });
+
+  it("the other four tokens (drained, answers-required, mixed, illness-detected) also satisfy the same assertions", () => {
+    const others = ["drained", "answers-required", "mixed", "illness-detected"] as const;
+    for (const token of others) {
+      expect(HANDOFFS_SCHEMA.statusValues).toContain(token);
+      expect(HANDOFFS_SCHEMA.terminalStatuses).toContain(token);
+      expect(HANDOFFS_SCHEMA.transitions![token]).toEqual([]);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T255 (b) — Four-table grep-invariant: all four cq command-prompt advance.md
+// files must contain the literal token `user-action-required`. This guards
+// against a future prompt edit silently dropping the status row.
+//
+// Path resolution: cq-assets lives at nix/pkg/cq-assets/ in the repo root.
+// From this test file's dir (nix/pkg/cq-ledgers/packages/ledger/test/), that
+// is four levels up (../../../../) then into cq-assets/commands/cq/.
+// ---------------------------------------------------------------------------
+
+describe("T255(b): four-table prompt grep invariant — user-action-required", () => {
+  const cqCommandsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
+
+  const promptFiles = [
+    path.join(cqCommandsRoot, "advance.md"),
+    path.join(cqCommandsRoot, "plan", "advance.md"),
+    path.join(cqCommandsRoot, "investigate", "advance.md"),
+    path.join(cqCommandsRoot, "implement", "advance.md"),
+  ];
+
+  for (const filePath of promptFiles) {
+    const label = filePath.replace(/.*\/commands\/cq\//, "cq/");
+    it(`${label} contains the literal token user-action-required`, async () => {
+      const text = await readFile(filePath, "utf8");
+      expect(text).toContain("user-action-required");
+    });
+  }
+});
