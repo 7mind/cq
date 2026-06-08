@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 334
+  item: 335
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -830,3 +830,15 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T281","goals:G34"]
 - sessionLogs: ["docs/logs/20260608-195916-T281-worker-and-reviews.md"]
+
+### R335 — go-ahead
+
+- createdAt: 2026-06-08T20:14:36.006Z
+- updatedAt: 2026-06-08T20:14:36.006Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "T276 implement review APPROVE (panel: opus[claude] + minimax[pi:ollama-cloud] both approve; grok+codex[pi:grok-build] excluded, stall). gen-agents codegen script parses all 19 Q148 role assets via T275 parseAgentMarkdown, derives model class from cq.toml.example [agent_tiers]+classifyToken (N/A for 12 commands), privilege + exposedTools via T275 helpers; emits committed agentsCatalogue.gen.ts (AGENT_ROLES, 19 complete entries). Hard-fails on missing ## Catalogue (opus empirically verified exit 1). BYTE-DETERMINISTIC (orchestrator + opus both re-ran gen-agents → zero diff; reads committed cq.toml.example not live cq.toml). Spot-checks implement-worker=>RW, plan-reviewer=>RO. Narrowed the now-stale T275 placeholder test (T277 owns the real freshness test). Scope clean (4 files). bun run check green 1201/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T276","goals:G34"]
+- sessionLogs: ["docs/logs/20260608-201412-T276.md"]

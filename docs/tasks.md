@@ -545,10 +545,10 @@ archives:
 - completion: "Created packages/ledger-web/src/agentsCatalogue.ts: typed AgentRole (id,name,kind,source,description,inputs,outputs,ioSchema,promptTemplate,model,modelMappings + privilege RO/RW + exposedTools per Q148/Q151-Q153) mirroring flowData.ts; pure node-free parseAgentMarkdown (agent frontmatter name/description/disallowedTools/isolation + command frontmatter description/argument-hint/allowed-tools per Q152 + optional ## Catalogue fenced-yaml block + body); deriveSubagentPrivilege/deriveCommandPrivilege (exact mutating-tool sets); exported formatExposedTools(frontmatter,kind) helper (canonical per-kind string); Catalogue parser strips surrounding quotes (inner preserved). Placeholder agentsCatalogue.gen.ts (AGENT_ROLES=[]) for T276 to overwrite. Avoided a yaml dep (FOD-hash) via a hand-written parser. 1 revise round (R1 disapprove on 2 forward-looking contract gaps, both resolved R2). Cherry-picked to main. bun run check green 1201/0 (+24 tests). Review APPROVE (opus + minimax, R2)."
 - sessionLogs: ["docs/logs/20260608-193323-T275-worker-and-reviews.md"]
 
-### T276 — planned
+### T276 — done
 
 - createdAt: 2026-06-08T16:58:33.206Z
-- updatedAt: 2026-06-08T17:35:47.732Z
+- updatedAt: 2026-06-08T20:14:40.749Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: Write the codegen script that emits a COMMITTED generated catalogue module from cq-assets
@@ -557,6 +557,9 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T275","T281"]
 - ledgerRefs: ["goals:G34"]
+- resultCommit: dca35f8
+- completion: "Wrote gen-agents-catalogue.ts (wired as `gen-agents` package.json script) parsing all 19 Q148 role assets via T275 parseAgentMarkdown; derives model class from cq.toml.example [agent_tiers]+classifyToken (N/A for the 12 orchestrator commands), privilege via deriveSubagentPrivilege/deriveCommandPrivilege, exposedTools via formatExposedTools; emits committed agentsCatalogue.gen.ts (AGENT_ROLES, 19 entries; 7 real class + 12 N/A; per-harness mappings from planners+reviewers classified to the class). Hard-fails on missing ## Catalogue block; byte-deterministic (reads committed cq.toml.example via parseConfig, not live cq.toml). Narrowed the stale T275 placeholder test. Cherry-picked to main. bun run check green 1201/0; determinism re-verified (zero diff). Review APPROVE (opus + minimax)."
+- sessionLogs: ["docs/logs/20260608-201412-T276.md"]
 
 ### T277 — planned
 
