@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 32
+  item: 33
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -283,3 +283,15 @@ archives:
 - flow: advance
 - ledgerRefs: ["goals:G34","goals:G35","defects:D37","defects:D41","defects:D42"]
 - sessionLogs: ["docs/logs/20260608-150928-abb5622a0a388a034.md","docs/logs/20260608-172307-a279480bcb33c7fd1.md","docs/logs/20260608-181727-a0ebdfdbc5ec7ed80.md","docs/logs/20260608-193323-T275-worker-and-reviews.md","docs/logs/20260608-195916-T281-worker-and-reviews.md","docs/logs/20260608-201412-T276.md","docs/logs/20260608-202739-T277-T278.md","docs/logs/20260608-203646-T279.md","docs/logs/20260608-204503-G35-plan-review.md","docs/logs/20260608-205640-T282.md"]
+
+### HO33 — answers-required
+
+- createdAt: 2026-06-08T21:39:00.470Z
+- updatedAt: 2026-06-08T21:39:00.470Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "ANSWERS-REQUIRED. /cq:plan:follow-up added follow-up #2 to goal G34 (its original 3 parts + follow-up #1 are implemented+merged; M109/M110/M111/M112 archived). New scope: make the Agents tab show the ACTUALLY-configured models from the LIVE (gitignored) cq.toml — resolve model class + per-harness mappings at RUNTIME via the MCP server (which owns the live config + resolveAgentTier/classifyToken/selectTokensForTier) instead of the build-time cq.toml.example, overlaying the live model fields onto the static catalogue. G34 re-opened planned->planning->clarifying. Planner filed Q154-Q159 (all goals:G34). KEY FINDING: get_config's `tiers` wire field is a T268 MINIMAL BRIDGE (configCapability.ts projectConfig collapses the inverted classifier to the OLD {fast,standard,frontier} slots + exposes only alias-name lists), so the client CANNOT reproduce the build-time derivation as-is — a server capability rework / new tool is required; also the web LedgerClient has no config method + agentsTab.test.tsx is static-only (both, incl FakeClient, must change). NEXT (user): answer Q154-Q159 in the TUI/web, then run /cq:plan:advance G34."
+- flow: plan
+- ledgerRefs: ["goals:G34"]
+- blockingQuestions: ["Q154","Q155","Q156","Q157","Q158","Q159"]
+- sessionLogs: ["docs/logs/20260608-213828-aea09588159dc453d.md"]
