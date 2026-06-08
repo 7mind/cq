@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 326
+  item: 328
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -454,6 +454,11 @@ archives:
     summary: "G30 W5 COMPLETE: schema unit + four-table grep tests (T255) + verify (T256, bun run check + scoped nix build). All reviews go-ahead."
     title: "G30 W5: verify — schema/grep tests + bun run check + scoped nix build"
     status: done
+  - id: M98
+    path: ./archive/reviews/M98.md
+    summary: "G30 W2 live-ledger migration complete: T246 (operational in-place migration of the gitignored docs/ledgers.yaml handoffs schema — user-action-required added to statusValues/terminalStatuses/transitions; verified no backup-reinit, HO records intact) + T247 (committed CI records-survive regression test) both done; R299 go-ahead. Closes the last open G30 work item."
+    title: "G30 W2: in-place live-ledger migration (Q141)"
+    status: done
 ---
 
 # reviews
@@ -636,20 +641,6 @@ archives:
 - ledgerRefs: ["goals:G30"]
 - sessionLogs: ["docs/logs/20260608-085336-a644adda2d79b52bb.md","docs/logs/20260608-085336-pi-codex.md","docs/logs/20260608-085336-pi-grok.md","docs/logs/20260608-085336-pi-minimax.md"]
 
-## M98
-
-### R299 — go-ahead
-
-- createdAt: 2026-06-08T10:19:07.735Z
-- updatedAt: 2026-06-08T10:19:07.735Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T247 APPROVE (opus). Committed CI regression test (handoffs-additive-widening-init.test.ts) proves an additive HANDOFFS_SCHEMA statusValue does not destroy HO history: primes a TEMP store with the canonical widened schema + seeded HO1(drained), re-init()s, asserts no docs/.backup/ + handoffs not emptied + HO1 readable. TEETH empirically verified (forced divergence fires backupAndReinit → backup created + HO1 lost). TEMP-only (no live-docs dependency); correctly models the post-migration no-divergence path. Surgical single new file; main 1058/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T247","goals:G30"]
-- sessionLogs: ["docs/logs/20260608-101505-abfc87a49b1c437a7.md"]
-
 ## M102
 
 ### R310 — revise
@@ -737,3 +728,31 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G34"]
 - sessionLogs: ["docs/logs/20260608-173914-afe412ded4d773ce0.md","docs/logs/20260608-173914-pi-minimax-review3.md"]
+
+## M109
+
+### R327 — go-ahead
+
+- createdAt: 2026-06-08T18:18:11.896Z
+- updatedAt: 2026-06-08T18:18:11.896Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "T267 implement review APPROVE (panel: opus[claude] approve; minimax[pi:ollama-cloud] abstained — inert tool-call under --no-tools, no verdict; grok+codex[pi:grok-build] excluded, documented stall). Rename State Machines→Item States complete: every DOM id/class/testid/label migrated to the item-states scheme, bun run check green 1136/0, no Shortcuts/Flows/TUI scope creep (lone leftover is an out-of-scope JSDoc comment in untouched stateMachine.ts)."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T267","goals:G34"]
+- sessionLogs: ["docs/logs/20260608-181727-a0ebdfdbc5ec7ed80.md","docs/logs/20260608-181727-pi-minimax-T267.md"]
+
+## M110
+
+### R328 — go-ahead
+
+- createdAt: 2026-06-08T18:18:11.979Z
+- updatedAt: 2026-06-08T18:18:11.979Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "T268 implement review APPROVE (panel: opus[claude] + minimax[pi:ollama-cloud] both approve; grok+codex[pi:grok-build] excluded, documented stall). TiersConfig TYPE inverted to token-keyed classifier (entries: ReadonlyArray<TierEntry>); no per-tier ReviewerToken slot remains in types.ts; four minimal compile-bridges (parseTiers/resolveTierToken/configCapability wire-slots/2 test assertions) within the sanctioned scope-guard envelope, downstream rework correctly deferred to T270/T271/T272/T273; bun run check green (1135 pass/1 skip/0 fail)."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T268","goals:G34"]
+- sessionLogs: ["docs/logs/20260608-181727-a5a19d637a6699421.md","docs/logs/20260608-181727-pi-minimax-T268.md"]

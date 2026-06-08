@@ -494,6 +494,11 @@ archives:
     summary: "G30 W5 COMPLETE: schema unit + four-table grep tests (T255) + verify (T256, bun run check + scoped nix build). All reviews go-ahead."
     title: "G30 W5: verify — schema/grep tests + bun run check + scoped nix build"
     status: done
+  - id: M98
+    path: ./archive/milestones/M98.md
+    summary: "G30 W2 live-ledger migration complete: T246 (operational in-place migration of the gitignored docs/ledgers.yaml handoffs schema — user-action-required added to statusValues/terminalStatuses/transitions; verified no backup-reinit, HO records intact) + T247 (committed CI records-survive regression test) both done; R299 go-ahead. Closes the last open G30 work item."
+    title: "G30 W2: in-place live-ledger migration (Q141)"
+    status: done
 ---
 
 # milestones
@@ -541,14 +546,6 @@ archives:
 - updatedAt: 2026-06-08T07:49:55.614Z
 - title: "Plan: fix D38 — pin verdict enum on the Pi subagent path"
 - description: "Coordination milestone for the defect-seeded fix goal G31 (resolves D38). Root cause confirmed via H27: the Pi dispatch path never re-asserts the cq agent's canonical verdict enum on the child, and no orchestrator-side step validates/normalizes the returned verdict before gating, so a Pi child can paraphrase the verdict (e.g. \"fail\") and silently mis-gate."
-
-### M98 — open
-
-- createdAt: 2026-06-08T08:34:22.312Z
-- updatedAt: 2026-06-08T08:34:22.312Z
-- title: "G30 W2: in-place live-ledger migration (Q141)"
-- description: Edit this repo's live (gitignored) docs/ledgers.yaml handoffs schema block IN PLACE so init() does not backup-reinit (preserving the tracked handoffs.md HO records), plus a fixture-based records-survive regression test. Per Q141 user override.
-- dependsOn: ["M97"]
 
 ### M102 — open
 

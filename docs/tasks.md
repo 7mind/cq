@@ -339,6 +339,11 @@ archives:
     summary: "G30 W5 COMPLETE: schema unit + four-table grep tests (T255) + verify (T256, bun run check + scoped nix build). All reviews go-ahead."
     title: "G30 W5: verify — schema/grep tests + bun run check + scoped nix build"
     status: done
+  - id: M98
+    path: ./archive/tasks/M98.md
+    summary: "G30 W2 live-ledger migration complete: T246 (operational in-place migration of the gitignored docs/ledgers.yaml handoffs schema — user-action-required added to statusValues/terminalStatuses/transitions; verified no backup-reinit, HO records intact) + T247 (committed CI records-survive regression test) both done; R299 go-ahead. Closes the last open G30 work item."
+    title: "G30 W2: in-place live-ledger migration (Q141)"
+    status: done
 ---
 
 # tasks
@@ -379,43 +384,12 @@ archives:
 - completion: "ACCEPTANCE DEMO (Q128): an UNCHANGED cq plan-review prompt drove grok-build to fire dispatch_agent(agent=plan-reviewer); child returned a single fenced-json verdict with all 5 plan-review contract keys; orchestrator fence-strip+jq parse succeeded; cq-assets untouched; sandbox+implement-worker deferred-follow-up recorded. Off-enum verdict value filed as D38. Evidence in docs/drafts/20260608-0022-T227-reviewer-dispatch-demo.md. Merged."
 - sessionLogs: ["docs/logs/20260607-233329-afa0391d57f11518e.md","docs/logs/20260607-233329-T226-T227-reviews.md"]
 
-## M98
-
-### T246 — planned
-
-- createdAt: 2026-06-08T08:34:57.189Z
-- updatedAt: 2026-06-08T08:49:35.588Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: "OPERATIONAL: in-place migrate the live (gitignored) docs/ledgers.yaml handoffs schema block on the MAIN checkout"
-- description: "Per Q141 (USER OVERRIDE — edit in place, do NOT backup-and-reinit). This is an OPERATIONAL step performed on the MAIN checkout, NOT a worktree code task: docs/ledgers.yaml is GITIGNORED (the per-cwd runtime registry), so a worktree edit would produce no committed diff and could not merge back. The orchestrator (or the implement flow, on the main checkout after T245 lands) edits the docs/ledgers.yaml handoffs block IN PLACE — add `user-action-required` to statusValues AND terminalStatuses AND a `user-action-required: []` transitions entry, byte-matching the canonical T245 shape — so FsLedgerStore.init() sees NO divergence and does NOT backup-reinit this repo's live handoffs ledger. Confirmed grounding: the live schema sidecar is docs/ledgers.yaml (handoffs block ~L429-471); the TRACKED docs/handoffs.md holds only counters/archives (HO18–HO25 preserved by construction). The COMMITTED Q141 deliverables are T245 (constants.ts) + T247 (CI fixture records-survive test); THIS task produces no committed artifact (gitignored). After editing, run the store init path and confirm no docs/.backup/<ts>/ is created and the live handoffs ledger still lists HO18–HO25."
-- acceptance: "On the main checkout, docs/ledgers.yaml handoffs block lists `user-action-required` in statusValues + terminalStatuses + a `user-action-required: []` transitions entry (token byte-identical to constants.ts); running init() creates NO docs/.backup/<ts>/ and does NOT empty the handoffs ledger; docs/handoffs.md counter still 25 and HO18–HO25 unchanged. No committed diff is expected (ledgers.yaml gitignored); the verification output is captured. (Records-survival is ALSO covered by the committed CI test T247.)"
-- suggestedModel: standard
-- dependsOn: ["T245"]
-- ledgerRefs: ["goals:G30"]
-
-### T247 — done
-
-- createdAt: 2026-06-08T08:35:02.973Z
-- updatedAt: 2026-06-08T10:19:34.123Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add a fixture-based test asserting HO records survive the additive schema widening
-- description: "Per Q141's explicit requirement to verify records survive. Add a COMMITTED, CI-runnable test (under nix/pkg/cq-ledgers/packages/ledger/test/, alongside the existing schema-divergence/init suite) that: seeds a TEMP store (temp dirs/fixtures, NOT the repo's live docs/) whose on-disk handoffs ledger + registry already carry the widened statusValues (the additive shape), runs FsLedgerStore.init() against the NEW canonical HANDOFFS_SCHEMA (from T245), and asserts (a) NO backup-reinit fired (no backup dir created, handoffs ledger NOT reset to fresh-canonical) and (b) a pre-seeded HO record is still readable post-init. This test depends ONLY on the committed T245 constants.ts change so it runs in CI; it must NOT depend on the local gitignored docs/ledgers.yaml edit (that live runtime migration is the separate operational step T246). This is the committed regression guard that an additive statusValue does not destroy live handoff history."
-- acceptance: New test runs under `bun test` and passes using temp fixtures (no dependence on the live docs/ledgers.yaml); it FAILS if init() reinitializes/empties the handoffs ledger or creates a backup dir for the additive statusValue, and asserts a pre-seeded HO record is present after init().
-- suggestedModel: frontier
-- dependsOn: ["T245"]
-- ledgerRefs: ["goals:G30"]
-- resultCommit: 3f64515
-- completion: Added committed CI regression test (handoffs-additive-widening-init.test.ts) proving an additive HANDOFFS_SCHEMA statusValue preserves HO history (no backup-reinit; HO1 survives). Teeth empirically verified.
-- sessionLogs: ["docs/logs/20260608-101505-ae7059ac1de10074a.md","docs/logs/20260608-101505-abfc87a49b1c437a7.md"]
-
 ## M109
 
-### T267 — planned
+### T267 — done
 
 - createdAt: 2026-06-08T16:56:59.978Z
-- updatedAt: 2026-06-08T17:18:17.722Z
+- updatedAt: 2026-06-08T18:18:13.497Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: Rename the State Machines tab to Item States (label + ALL internal identifiers)
@@ -430,6 +404,9 @@ archives:
 - acceptance: "From nix/pkg/cq-ledgers/: (negative) `rg -n 'statemachine|State machines|State Machines' packages/ledger-web/src` returns no DOM id/class/testid/label matches; (positive) `rg -n 'item-state' packages/ledger-web/src` shows the new testids/ids/classes AND the tab-state union now contains 'item-states' AND HelpOverlay renders the renamed 'Item States' tab button (data-testid help-tab-item-states) with one diagram per ledger under help-item-state-<ledger>; `bun run typecheck` green. (Render assertions are exercised by the W1 happy-dom test T269.)"
 - suggestedModel: standard
 - ledgerRefs: ["goals:G34"]
+- resultCommit: 2b1a2e0
+- completion: Renamed the web help 'State Machines' tab to 'Item States' — every DOM-visible identifier migrated to the item-states scheme (tab-state union member, label, data-testids help-tab-item-states/help-item-states, per-ledger help-item-state-<ledger>, DiagramSvg idPrefix, CSS lw-item-state*) in App.tsx + styles.css; two happy-dom tests updated. Cherry-picked onto main (clean; worker worktree was stale-based). Reviewed APPROVE; integrated bun run check green 1135/1skip/0.
+- sessionLogs: ["docs/logs/20260608-180917-a27f1b85731cda97f.md","docs/logs/20260608-181727-a0ebdfdbc5ec7ed80.md","docs/logs/20260608-181727-pi-minimax-T267.md"]
 
 ### T269 — planned
 
@@ -446,10 +423,10 @@ archives:
 
 ## M110
 
-### T268 — planned
+### T268 — done
 
 - createdAt: 2026-06-08T16:57:07.395Z
-- updatedAt: 2026-06-08T16:57:07.395Z
+- updatedAt: 2026-06-08T18:18:17.878Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: "Invert TiersConfig type: token-keyed [tiers] classifier ((harness+provider+model) token -> Tier class)"
@@ -457,6 +434,9 @@ archives:
 - acceptance: "From nix/pkg/cq-ledgers/: `bun run typecheck` green with the new TiersConfig shape; types.ts exports the inverted classifier type; no reference to the removed per-tier ReviewerToken slots remains in types.ts."
 - suggestedModel: frontier
 - ledgerRefs: ["goals:G34"]
+- resultCommit: 47824b6
+- completion: "Inverted the TiersConfig TYPE (cq-config/src/types.ts) to a token-keyed classifier (entries: ReadonlyArray<{token,raw,class}>, new TierEntry export); old per-tier ReviewerToken slots removed. Minimal compile-bridges in config.ts/index.ts/ledger-mcp configCapability.ts + 2 test assertions keep bun run check green; full parser/resolver/consumer/test rework deferred to T270/T271/T272/T273. Cherry-picked onto main (clean). Reviewed APPROVE; integrated check green 1135/1skip/0."
+- sessionLogs: ["docs/logs/20260608-180917-a8a9ef0963751a6ef.md","docs/logs/20260608-181727-a5a19d637a6699421.md","docs/logs/20260608-181727-pi-minimax-T268.md"]
 
 ### T270 — planned
 
