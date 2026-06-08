@@ -116,6 +116,73 @@ describe("T285: computeAgentModels — configured fixture", () => {
   });
 });
 
+/**
+ * Multi-harness fixture: the SAME tier class (`frontier`) is assigned to BOTH a
+ * claude token (opus) AND a pi token (minimax), and both aliases are live in the
+ * candidate union (planners ∪ reviewers). An agent placed at `frontier` must
+ * therefore resolve to per-harness mappings containing BOTH `claude` and `pi`
+ * arrays — exercising groupByHarness parity with deriveModelMappings for the
+ * multi-harness case (Q157).
+ *
+ * The `frontier` class also has TWO claude tokens (opus, sonnet) listed in
+ * NON-sorted insertion order ("...opus..." before "...sonnet..." reverses under
+ * lexical sort — "opus-4.8[1m]" > "claude-sonnet…" no; pick ids that reorder),
+ * so the claude array exercises the deterministic sort assertion: candidates
+ * preserve config order, but groupByHarness sorts within each harness.
+ */
+const MULTI_HARNESS_FIXTURE = [
+  // sonnet listed AFTER opus in planners, but sorts BEFORE it lexically
+  // ("opus-4.8[1m]" > "claude-4.8-sonnet" -> "claude-4.8-sonnet" < "opus-4.8[1m]").
+  'planners  = ["opus", "minimax", "sonnet"]',
+  'reviewers = ["opus"]',
+  "",
+  "[aliases]",
+  '  opus    = "claude:opus-4.8[1m]"',
+  '  sonnet  = "claude:claude-4.8-sonnet"',
+  '  minimax = "pi:ollama-cloud/minimax-m3"',
+  "",
+  "[tiers]",
+  '  "claude:opus-4.8[1m]"          = "frontier"',
+  '  "claude:claude-4.8-sonnet"     = "frontier"',
+  '  "pi:ollama-cloud/minimax-m3"   = "frontier"',
+  "",
+  "[agent_tiers]",
+  '  implement-worker = "frontier"',
+  "",
+].join("\n");
+
+describe("T285: computeAgentModels — multi-harness resolved", () => {
+  it("resolves a single agent's tier to BOTH claude and pi mappings, each deduped+sorted", () => {
+    writeCqToml(MULTI_HARNESS_FIXTURE);
+    const result = computeAgentModels(dir);
+    expect(result.configured).toBe(true);
+
+    const worker = entry(result, "implement-worker");
+    expect(worker.status).toBe("resolved");
+    expect(worker.modelClass).toBe("frontier");
+    // Both harnesses present: claude (opus+sonnet) and pi (minimax, qualified).
+    expect(worker.modelMappings).toEqual({
+      claude: ["claude-4.8-sonnet", "opus-4.8[1m]"],
+      pi: ["ollama-cloud/minimax-m3"],
+    });
+  });
+
+  it("orders a same-harness multi-token mapping lexically, not by insertion order", () => {
+    writeCqToml(MULTI_HARNESS_FIXTURE);
+    const result = computeAgentModels(dir);
+
+    // Candidate union preserves config order [opus, minimax, sonnet], so the two
+    // claude frontier tokens enter as [opus-4.8[1m], claude-4.8-sonnet]. The
+    // emitted claude array must be SORTED ([claude-4.8-sonnet, opus-4.8[1m]]),
+    // matching deriveModelMappings — assert the exact ordered array, not a set.
+    const worker = entry(result, "implement-worker");
+    expect(worker.modelMappings.claude).toEqual([
+      "claude-4.8-sonnet",
+      "opus-4.8[1m]",
+    ]);
+  });
+});
+
 describe("T285: computeAgentModels — absent cq.toml", () => {
   it("yields not-configured for every model-configurable role and not-model-configurable for commands", () => {
     // dir has no cq.toml written.
