@@ -154,6 +154,11 @@ archives:
     summary: G27 (fix D34 top-bar progress counts withdrawn; + D35 client wiring) closed done; coordination milestone archived.
     title: "Plan: fix D34 (top-bar progress counts withdrawn)"
     status: done
+  - id: M94
+    path: ./archive/decisions/M94.md
+    summary: "G29 provider-qualified pi token grammar COMPLETE: T231-T239 all merged + reviewed; D36 RESOLVED. pi:<provider>/<model> slash grammar (bare rejected) threaded through @cq/config (parseReviewerToken + resolvers), the @cq/ledger(-mcp) config-capability surface, and the cq-subagent-dispatch extension mirror (K50 cross-layer guard); cq.toml.example migrated + documented; fixtures adapted; final gate green (bun run check 1089/0 + nix builds + bare-pi audit clean). ACTIVATION TAIL: live cq.toml migration + get_config spot-check deferred to the rebuilt-MCP restart."
+    title: "G29 W: provider-qualified pi token grammar"
+    status: done
 ---
 
 # decisions
@@ -225,15 +230,3 @@ archives:
 - headline: "G30 plan review: approved"
 - rationale: "G30 (add a `user-action-required` handoff status + thread it through the flow prompts) reached unanimous go-ahead (R284) after a 3-round planner↔reviewer loop (R282 revise → R283 revise → R284 go-ahead). Locked plan: 5 work milestones M97-M101, 12 tasks T245-T256. Honors locked answers Q137 (token=user-action-required, terminal), Q138 (narrow legal stop + anti-laundering, no-effort-gate intact), Q139 (distinct from answers-required, mixed via handoffReasons, 4 prompt tables), Q140 (no new schema field), Q141 (in-place schema edit, no backup-reinit, preserve HO records — committed: constants.ts + CI fixture test; operational: gitignored ledgers.yaml on main checkout), Q142 (warning bucket render + schema unit/grep-invariant/render tests + bun run check + scoped nix build)."
 - ledgerRefs: ["goals:G30"]
-
-## M94
-
-### K50 — locked
-
-- createdAt: 2026-06-08T09:42:14.128Z
-- updatedAt: 2026-06-08T09:42:14.128Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: "@cq/config grammar and the cq-subagent-dispatch extension mirror MUST agree (pi:<provider>/<model>)"
-- rationale: "Per Q133/K46 (the extension is a standalone nix-store file that cannot import @cq/config), the pi-token grammar exists in TWO deliberate copies that MUST stay byte-parallel in GRAMMAR. The locked contract BOTH implement: (1) pi token grammar is `pi:<provider>/<model>` ONLY — the SLASH separator (Q132); (2) bare `pi:<model>` (no slash) is REJECTED (Q134, BREAKING); (3) the provider qualifier is pi-ONLY — a `/` on a `claude:` token is an error (Q135); (4) provider extraction = split the model segment on the FIRST `/`, with BOTH halves non-empty. The two copies REFUSE bare/invalid tokens by different mechanisms but with identical grammar: `parseReviewerToken` (@cq/config, src/config.ts) THROWS CqConfigError on bare/empty-half/claude-qualifier (shipped T231); `tokenToChildModel` (nix/pkg/pi-extensions/cq-subagent-dispatch.ts) returns null on bare/empty-half (to be shipped T233) — both REFUSE bare. The cross-layer consistency test (T238) is the REGRESSION GUARD: it runs parseReviewerToken and an in-test replica of tokenToChildModel over a shared fixture table and asserts ACCEPT-iff-ACCEPT (agree on harness/model/provider) and REFUSE-iff-REFUSE. EMPIRICAL ANCHOR (Q136): T225's recorded LIVE evidence — pi dispatched minimax with `--provider ollama-cloud` successfully — confirms the qualified form resolves correctly, so NO new live demo is required for this decision."
-- ledgerRefs: ["goals:G29","defects:D36"]

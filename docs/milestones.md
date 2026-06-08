@@ -444,6 +444,11 @@ archives:
     summary: "G31 D38-verdict-enum fix COMPLETE: T240-T244 all merged (c24b02d/a74d9eb/3ee5bf1/567c415), D38 resolved. Two-layer fix (pi-context.md enum reinforcement + plan/implement advance.md fail-loud off-enum→abstention) + verify (bun run check 1037/0 + nix builds) + documented argument. All implement reviews go-ahead (R285-R289)."
     title: "G31 W: D38 verdict-enum fix (reinforce + fail-loud validate)"
     status: done
+  - id: M94
+    path: ./archive/milestones/M94.md
+    summary: "G29 provider-qualified pi token grammar COMPLETE: T231-T239 all merged + reviewed; D36 RESOLVED. pi:<provider>/<model> slash grammar (bare rejected) threaded through @cq/config (parseReviewerToken + resolvers), the @cq/ledger(-mcp) config-capability surface, and the cq-subagent-dispatch extension mirror (K50 cross-layer guard); cq.toml.example migrated + documented; fixtures adapted; final gate green (bun run check 1089/0 + nix builds + bare-pi audit clean). ACTIVATION TAIL: live cq.toml migration + get_config spot-check deferred to the rebuilt-MCP restart."
+    title: "G29 W: provider-qualified pi token grammar"
+    status: done
 ---
 
 # milestones
@@ -492,13 +497,6 @@ archives:
 - updatedAt: 2026-06-08T00:02:01.908Z
 - title: "Plan: user-action-required handoff status"
 - description: Coordination milestone for adding a new handoffs status signalling the agent genuinely needs a user MANUAL/ENVIRONMENT action (not a question), and threading it through the flow prompts/schema.
-
-### M94 — open
-
-- createdAt: 2026-06-08T00:38:18.252Z
-- updatedAt: 2026-06-08T00:38:18.252Z
-- title: "G29 W: provider-qualified pi token grammar"
-- description: "G29 work milestone: make the cq pi token grammar `pi:<provider>/<model>`-only (drop bare), thread a structured provider through @cq/config + the ledger config-capability surfacing + the dispatch-extension mirror, migrate configs, test+doc. Resolves D36."
 
 ### M95 — open
 

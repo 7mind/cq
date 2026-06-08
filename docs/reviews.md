@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 304
+  item: 310
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -404,6 +404,11 @@ archives:
     summary: "G31 D38-verdict-enum fix COMPLETE: T240-T244 all merged (c24b02d/a74d9eb/3ee5bf1/567c415), D38 resolved. Two-layer fix (pi-context.md enum reinforcement + plan/implement advance.md fail-loud off-enum→abstention) + verify (bun run check 1037/0 + nix builds) + documented argument. All implement reviews go-ahead (R285-R289)."
     title: "G31 W: D38 verdict-enum fix (reinforce + fail-loud validate)"
     status: done
+  - id: M94
+    path: ./archive/reviews/M94.md
+    summary: "G29 provider-qualified pi token grammar COMPLETE: T231-T239 all merged + reviewed; D36 RESOLVED. pi:<provider>/<model> slash grammar (bare rejected) threaded through @cq/config (parseReviewerToken + resolvers), the @cq/ledger(-mcp) config-capability surface, and the cq-subagent-dispatch extension mirror (K50 cross-layer guard); cq.toml.example migrated + documented; fixtures adapted; final gate green (bun run check 1089/0 + nix builds + bare-pi audit clean). ACTIVATION TAIL: live cq.toml migration + get_config spot-check deferred to the rebuilt-MCP restart."
+    title: "G29 W: provider-qualified pi token grammar"
+    status: done
 ---
 
 # reviews
@@ -626,67 +631,6 @@ archives:
 - ledgerRefs: ["tasks:T245","goals:G30"]
 - sessionLogs: ["docs/logs/20260608-093215-ac9dd78a27033f3ce.md"]
 
-## M94
-
-### R291 — go-ahead
-
-- createdAt: 2026-06-08T09:40:25.542Z
-- updatedAt: 2026-06-08T09:40:25.542Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T231 APPROVE — UNANIMOUS full panel (opus + grok + minimax all approve). parseReviewerToken provider grammar correct: first-colon harness/model split preserved, first-slash provider extraction, pi requires pi:<provider>/<model> (bare pi rejected), claude rejects '/' qualifier, empty halves rejected; provider:string|null added to ReviewerToken; precise error messages. All 6 new parse-cases pass + edge cases (pi:p/a:b→model a:b; pi:p/a/b→provider p,model a/b). tsc -b + eslint clean. The 23 full-suite failures are exactly the deferred bare-pi legacy fixtures (22 cq-config + 1 ledger-mcp), explicitly out of this task's gate per T235/T238. Surgical (only the 3 cq-config files); no scope creep."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T231","goals:G29"]
-- sessionLogs: ["docs/logs/20260608-093215-ad95591b7354885bc.md","docs/logs/20260608-093215-pi-grok-T231.md","docs/logs/20260608-093215-pi-minimax-T231.md"]
-
-### R292 — go-ahead
-
-- createdAt: 2026-06-08T09:42:25.832Z
-- updatedAt: 2026-06-08T09:42:25.832Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T236 GO-AHEAD (orchestrator-verified ledger task). Locked decision K50 records the @cq/config↔extension mirror contract: pi:<provider>/<model> slash grammar (Q132), bare-pi rejected (Q134), pi-only qualifier (Q135), first-'/' both-halves-non-empty extraction; parseReviewerToken THROWS / tokenToChildModel returns null — both REFUSE bare; T238 is the regression guard; cites T225's live --provider ollama-cloud evidence (Q136). Meets every acceptance clause."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T236","goals:G29"]
-
-### R293 — go-ahead
-
-- createdAt: 2026-06-08T09:55:43.379Z
-- updatedAt: 2026-06-08T09:55:43.379Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T232 APPROVE (opus implement-reviewer). provider threaded through configCapability: added readonly provider:string|null to ResolvedReviewer/ResolvedPlanner/GetConfigResult aliases+tier-slots (@cq/ledger, config-agnostic); ledger-mcp computeReviewers/computePlanners map token.provider + projectConfig copies it; @cq/config resolvers already carry provider so config.ts untouched. 5 new tests assert end-to-end (ollama-cloud + claude→null). typecheck+lint clean; 23 legacy fixtures deferred T235. Surgical."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T232","goals:G29"]
-- sessionLogs: ["docs/logs/20260608-095457-ae6469bea28849ed7.md"]
-
-### R294 — go-ahead
-
-- createdAt: 2026-06-08T09:55:48.557Z
-- updatedAt: 2026-06-08T09:55:48.557Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T233 APPROVE (opus implement-reviewer). cq-subagent-dispatch.ts tokenToChildModel now refuses bare/empty-half pi (returns null, the D36 fix — was {provider:null,model}); qualified→{provider,model}; claude→null unchanged. Grammar mirrors T231 parseReviewerToken (first-slash, both-halves-non-empty, lenient null-vs-throw per K50). JSDoc/param/inline comments rewritten to qualified-only grammar + bare-pi refusal + mirror obligation. Standalone tsc --strict vs pi 0.78.0 clean; 6/6 cases pass."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T233","goals:G29"]
-- sessionLogs: ["docs/logs/20260608-095457-a281af6ad41c764a2.md"]
-
-### R298 — go-ahead
-
-- createdAt: 2026-06-08T10:19:02.460Z
-- updatedAt: 2026-06-08T10:19:02.460Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T235 APPROVE (opus). All bare-pi legacy fixtures migrated to qualified pi:<provider>/<model> (config.test.ts + ledger-mcp/main.test.ts); only two slash-free survivors remain, both inside .toThrow rejection cases; every ReviewerToken/config deep-assertion now asserts provider (null for claude); colon-preservation test replaced with pi:prov/a:b→model a:b (matches real parseReviewerToken first-/ split). No production change, no weakened assertions. Integrated `bun run check` GREEN: 1058 pass / 1 skip / 0 fail."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T235","goals:G29"]
-- sessionLogs: ["docs/logs/20260608-101505-a5fa5e861c049d049.md"]
-
 ## M100
 
 ### R295 — go-ahead
@@ -788,3 +732,28 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T247","goals:G30"]
 - sessionLogs: ["docs/logs/20260608-101505-abfc87a49b1c437a7.md"]
+
+## M101
+
+### R305 — go-ahead
+
+- createdAt: 2026-06-08T10:30:47.674Z
+- updatedAt: 2026-06-08T10:30:47.674Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- summary: "T255 APPROVE (opus). (a) HANDOFFS_SCHEMA unit test asserts user-action-required in statusValues + terminalStatuses + transitions [] + terminal (matches constants.ts), with four-token regression. (b) Four-table grep-invariant reads the four REAL cq command-prompt files and asserts each contains the token — VERIFIED TEETH (mutating implement/advance.md to drop the token failed the test). Test-only +65 lines, no scope creep. check green 1071/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T255","goals:G30"]
+- sessionLogs: ["docs/logs/20260608-112600-a06721d01c0ecd25d.md"]
+
+### R306 — go-ahead
+
+- createdAt: 2026-06-08T10:31:39.177Z
+- updatedAt: 2026-06-08T10:31:39.177Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- summary: "T256 GO-AHEAD (orchestrator-run G30 verification gate on integrated main). `bun run check` from nix/pkg/cq-ledgers/ = 1071 pass / 1 skip / 0 fail (tsc+eslint clean; all new G30 tests green: T247 records-survive, T250 TUI/web render, T255 schema+grep). `nix build .#llm-contexts .#llm-context-with-env .#llm-skills` from repo root all exit 0. No code diff (pure verification)."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T256","goals:G30"]

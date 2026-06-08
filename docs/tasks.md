@@ -289,6 +289,11 @@ archives:
     summary: "G31 D38-verdict-enum fix COMPLETE: T240-T244 all merged (c24b02d/a74d9eb/3ee5bf1/567c415), D38 resolved. Two-layer fix (pi-context.md enum reinforcement + plan/implement advance.md fail-loud off-enum→abstention) + verify (bun run check 1037/0 + nix builds) + documented argument. All implement reviews go-ahead (R285-R289)."
     title: "G31 W: D38 verdict-enum fix (reinforce + fail-loud validate)"
     status: done
+  - id: M94
+    path: ./archive/tasks/M94.md
+    summary: "G29 provider-qualified pi token grammar COMPLETE: T231-T239 all merged + reviewed; D36 RESOLVED. pi:<provider>/<model> slash grammar (bare rejected) threaded through @cq/config (parseReviewerToken + resolvers), the @cq/ledger(-mcp) config-capability surface, and the cq-subagent-dispatch extension mirror (K50 cross-layer guard); cq.toml.example migrated + documented; fixtures adapted; final gate green (bun run check 1089/0 + nix builds + bare-pi audit clean). ACTIVATION TAIL: live cq.toml migration + get_config spot-check deferred to the rebuilt-MCP restart."
+    title: "G29 W: provider-qualified pi token grammar"
+    status: done
 ---
 
 # tasks
@@ -367,180 +372,6 @@ archives:
 - resultCommit: 8727d15
 - completion: "ACCEPTANCE DEMO (Q128): an UNCHANGED cq plan-review prompt drove grok-build to fire dispatch_agent(agent=plan-reviewer); child returned a single fenced-json verdict with all 5 plan-review contract keys; orchestrator fence-strip+jq parse succeeded; cq-assets untouched; sandbox+implement-worker deferred-follow-up recorded. Off-enum verdict value filed as D38. Evidence in docs/drafts/20260608-0022-T227-reviewer-dispatch-demo.md. Merged."
 - sessionLogs: ["docs/logs/20260607-233329-afa0391d57f11518e.md","docs/logs/20260607-233329-T226-T227-reviews.md"]
-
-## M94
-
-### T231 — done
-
-- createdAt: 2026-06-08T00:38:55.557Z
-- updatedAt: 2026-06-08T09:40:30.126Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add provider field to @cq/config ReviewerToken + slash-extraction in parseReviewerToken; reject bare pi
-- description: "The hinge change. In `nix/pkg/cq-ledgers/packages/cq-config/src/types.ts`, extend `ReviewerToken` to `{ harness, model, provider: string | null }` (provider = the pi `--provider`; null for claude). In `config.ts parseReviewerToken`: keep the FIRST-colon harness/model split (UNCHANGED), then extract the provider from the model segment by splitting on the FIRST `/` (Q132 slash). Rules: (1) harness `pi` — the model segment MUST contain a `/`; split into provider=before, model=after, both non-empty (leading/trailing slash → CqConfigError); NO `/` → BARE pi → CqConfigError (Q134 drop bare, BREAKING). (2) harness `claude` — a `/` (provider qualifier) is a CqConfigError (Q135 pi-only); provider stays null. Keep existing empty-harness/empty-model/unknown-harness errors; add precise messages for the new rejections. [aliases]/[tiers]/[agent_tiers]/reviewers/planners all flow through parseReviewerToken, inheriting the grammar."
-- acceptance: "`bun test` in nix/pkg/cq-ledgers/ — the NEW parseReviewerToken parse-case tests pass: parseReviewerToken('pi:ollama-cloud/minimax-m3')==={harness:'pi',model:'minimax-m3',provider:'ollama-cloud'}; ('claude:opus-4.8[1m]')==={harness:'claude',model:'opus-4.8[1m]',provider:null}; ('pi:minimax-m3') THROWS CqConfigError (bare pi); ('claude:x/y') THROWS (provider on claude); ('pi:/m') & ('pi:p/') THROW (empty half). `bun run typecheck` clean. SCOPE NOTE: this task's gate is ONLY the new parse-case tests + typecheck — NOT a full pre-existing-suite green. The breaking grammar invalidates old bare-pi fixtures in config.test.ts; restoring the WHOLE suite to green is deferred to T235 (adapt fixtures), T238 (cross-layer tests), and the T239 closing gate. Do not block T231 on those legacy fixtures."
-- suggestedModel: frontier
-- ledgerRefs: ["goals:G29","defects:D36"]
-- resultCommit: 722a1d98f10c682bb9e92bb41c5ef07a36169c3e
-- completion: "ReviewerToken gains provider:string|null; parseReviewerToken does first-colon harness/model split then first-slash provider extraction (pi requires pi:<provider>/<model>, bare pi rejected BREAKING; claude rejects '/'; empty halves rejected). 6 new parse-cases + typecheck green. 23 legacy bare-pi fixtures left failing (deferred to T235/T238 per scope)."
-- sessionLogs: ["docs/logs/20260608-093215-aaabc652fcf46f1f0.md","docs/logs/20260608-093215-ad95591b7354885bc.md","docs/logs/20260608-093215-pi-grok-T231.md","docs/logs/20260608-093215-pi-minimax-T231.md"]
-
-### T232 — done
-
-- createdAt: 2026-06-08T00:39:26.796Z
-- updatedAt: 2026-06-08T09:56:09.389Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Thread provider through @cq/config resolvers + the ledger config-capability surfacing
-- description: "Propagate the new provider field end-to-end. (1) In @cq/config config.ts, ensure resolveReviewers/resolvePlanners/resolveTierToken/resolveAgentTier/resolveAgentModel carry `provider` from the parsed token through alias/tier resolution into the returned token objects. (2) In `packages/ledger/src/mcp/configCapability.ts` add `readonly provider: string | null` to the STRUCTURAL `ResolvedReviewer`/`ResolvedPlanner` interfaces and to `GetConfigResult`'s `aliases` value shape + each `tiers` slot shape (keep @cq/ledger core config-agnostic — a plain string|null needs no @cq/config import). (3) In `packages/ledger-mcp/src/configCapability.ts`: computeReviewers/computePlanners map `provider: token.provider`; projectConfig copies provider for every alias + each populated tier slot. So get_reviewers/get_planners/get_config consumers see the resolved provider."
-- acceptance: "`bun run typecheck` + `bun run lint` clean across packages/ledger + ledger-mcp. A test asserts computeReviewers(root) for a cq.toml with `minimax = \"pi:ollama-cloud/minimax-m3\"` returns `{harness:'pi',model:'minimax-m3',provider:'ollama-cloud',alias:'minimax'}`, computeConfig(root).aliases.minimax.provider==='ollama-cloud', and a claude alias has provider:null."
-- suggestedModel: standard
-- dependsOn: ["T231"]
-- ledgerRefs: ["goals:G29","defects:D36"]
-- resultCommit: 8ee5cd8
-- completion: "Threaded provider:string|null through @cq/ledger configCapability structural interfaces (ResolvedReviewer/ResolvedPlanner/GetConfigResult aliases+tier-slots) + ledger-mcp computeReviewers/computePlanners/projectConfig. 5 new tests. @cq/config already carried provider."
-- sessionLogs: ["docs/logs/20260608-095457-a8d59c45434698354.md","docs/logs/20260608-095457-ae6469bea28849ed7.md"]
-
-### T233 — done
-
-- createdAt: 2026-06-08T00:39:26.926Z
-- updatedAt: 2026-06-08T09:56:13.178Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Reject bare pi in the cq-subagent-dispatch extension's inlined mirror (tokenToChildModel)
-- description: |
-    Keep the extension's inlined mirror in sync with @cq/config (K46 mirror-don't-import). In `nix/pkg/pi-extensions/cq-subagent-dispatch.ts`, `tokenToChildModel` currently splits the model on `/` to emit provider+model but, when there is NO slash, FALLS BACK to `{provider:null, model}` — i.e. it accepts a bare `pi:<model>` and dispatches provider-less (exactly D36). Change it so a bare pi token is REFUSED, mirroring @cq/config's THROW-on-bare:
-    
-    Post-fix observable contract (state it precisely; do NOT use the misleading pre-D36 'parent fallback honored with a provider' framing):
-    - harness `pi`, model contains `/`, both halves non-empty → returns `{provider:<before>, model:<after>}` (e.g. `ollama-cloud/minimax-m3` → `{provider:'ollama-cloud', model:'minimax-m3'}`). DISPATCHES provider-qualified.
-    - harness `pi`, model has NO `/` (BARE) → returns `null`. The token is NOT honored as a provider-less pi dispatch; the extension's lenient design treats a null child-model as 'no override', so the child runs under the PARENT model — i.e. the bare pi token is NEVER dispatched with a provider, exactly as @cq/config now THROWS on it. (The lenient null still ultimately falls back to the parent, but the load-bearing point is: a bare `pi:<model>` is REFUSED, not silently dispatched provider-less.)
-    - harness `pi`, empty half (`p/` or `/m`) → returns `null` (refused).
-    - harness `claude` → unchanged: provider stays null; a `/` (provider qualifier) is not accepted for claude (mirror @cq/config's claude-rejects-qualifier). Returns the claude child model with no provider.
-    
-    Update the JSDoc/param comments: the `pi:<seg>` bullet and the param description that still advertises a bare `pi:grok-build` must be rewritten to the qualified-only grammar (`pi:<provider>/<model>`), and must note the @cq/config mirror obligation (parseReviewerToken THROWS on bare; this mirror returns null — both REFUSE bare). Keep the explicit-model-arg path consistent (a bare pi explicit override also returns null → parent fallback). Standalone tsc against pi 0.78.0 types stays clean.
-- acceptance: "Reading the source: tokenToChildModel({harness:'pi',model:'minimax-m3'}) returns null (BARE pi REFUSED — never dispatched provider-less; the lenient null falls back to the parent model); tokenToChildModel({harness:'pi',model:'ollama-cloud/minimax-m3'}) returns {provider:'ollama-cloud',model:'minimax-m3'}; tokenToChildModel({harness:'pi',model:'p/'}) and {model:'/m'} return null; a claude token returns its model with no provider and rejects a `/` qualifier. JSDoc/param comments document the qualified-only `pi:<provider>/<model>` grammar, the bare-pi refusal, and the @cq/config mirror obligation. Standalone tsc --strict of the extension (vs pi-coding-agent 0.78.0 types) is clean."
-- suggestedModel: frontier
-- dependsOn: ["T231"]
-- ledgerRefs: ["goals:G29","defects:D36"]
-- resultCommit: "6461752"
-- completion: "Extension mirror tokenToChildModel now refuses bare/empty-half pi (returns null — the D36 fix), qualified→{provider,model}, claude→null; mirrors T231 parseReviewerToken per K50. JSDoc rewritten. Standalone tsc --strict clean."
-- sessionLogs: ["docs/logs/20260608-095457-a79a8c8f57c81d87d.md","docs/logs/20260608-095457-a281af6ad41c764a2.md"]
-
-### T234 — planned
-
-- createdAt: 2026-06-08T00:39:34.966Z
-- updatedAt: 2026-06-08T00:52:37.812Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: Migrate every live pi token to the qualified form (live cq.toml + cq.toml.example) — BREAKING
-- description: |
-    Q134: no bare pi may remain. PATH CORRECTION: `cq.toml.example` lives at the REPO ROOT (`cq.toml.example`), NOT under `nix/pkg/cq-ledgers/`. It holds the `[aliases]` + `[tiers]` + `[agent_tiers]` blocks (verified: codex/grok=`pi:grok-build`, minimax=`pi:minimax-m3`, opus=`claude:opus-4.8[1m]`).
-    
-    (1) `cq.toml.example` (repo root): rewrite `[aliases]` codex/grok `"pi:grok-build"` → `"pi:grok-build/grok-build"`, minimax `"pi:minimax-m3"` → `"pi:ollama-cloud/minimax-m3"` (opus claude alias unchanged); qualify any pi value in `[tiers]`/`[agent_tiers]` (tier values that are alias NAMES stay as-is; only DIRECT pi tokens need qualifying).
-    
-    (2) The LIVE cq.toml driving the running ledger MCP — get_config confirms it carries the SAME bare aliases (pi/grok-build, pi/minimax-m3). Locate it via the ledger-mcp config root ($CQ_CONFIG / $CQ_PROJECT_ROOT/cq.toml / the path .#ledger-mcp launches with; cq.toml is gitignored) and apply the IDENTICAL migration to its [aliases] + any [tiers]/[agent_tiers].
-    
-    ACTIVATION-ORDERING HAZARD (must honor): T231 makes @cq/config loadConfig THROW on any bare `pi:<model>`, and the RUNNING ledger MCP re-reads the live cq.toml on EVERY get_config/get_reviewers/get_planners call. If T231's grammar activates (a rebuild + MCP restart) while the live cq.toml still holds bare pi tokens, every config read throws and the orchestrator breaks mid-flow. THEREFORE: the live-cq.toml migration (step 2) MUST land together with / before T231's activation — i.e. migrate the live config BEFORE any rebuild/restart that ships the breaking grammar. Treat step 2 as co-merged-with-T231, not a later step.
-    
-    PROVIDER MAPPING (D36/Q132, verified against nix/hm/dev-llm.nix): minimax-m3 → `ollama-cloud` (pi-ollama-cloud, OAuth $OLLAMA_API_KEY) — NOT the key-gated `minimax` provider (@sinamtz/pi-minimax-provider, $MINIMAX_API_KEY, which is what bare pi:minimax-m3 fuzzy-resolved to and caused the abstentions); grok-build → `grok-build` provider (pi-xai). SANITY CHECK each migrated `<model>` exists under its target provider's registered model list (guard typos like 'minmax' / wrong provider) — cross-check against the dev-llm.nix provider registrations.
-    
-    After migration the config still loads (no dangling alias, no bare-pi error).
-- acceptance: "REPRODUCIBLE (clean-checkout / CI) gate: a test loads `cq.toml.example` (repo root) and asserts its minimax alias resolves to {harness:'pi',model:'minimax-m3',provider:'ollama-cloud'} and codex/grok to {harness:'pi',model:'grok-build',provider:'grok-build'}; and a grep of `cq.toml.example` finds no bare `pi:<word>` (slash-free) token. LIVE-CONFIG local step (gitignored, NOT a CI assertion): after editing the live cq.toml, get_config re-read THIS session shows every pi alias/tier with a non-null provider (minimax→ollama-cloud, codex/grok→grok-build), configured:true, no load error — this is the documented local step the T239 gate spot-checks. Each migrated <model> verified present under its target provider per dev-llm.nix (no typo)."
-- suggestedModel: standard
-- dependsOn: ["T231","T232"]
-- ledgerRefs: ["goals:G29","defects:D36"]
-
-### T235 — done
-
-- createdAt: 2026-06-08T00:39:42.462Z
-- updatedAt: 2026-06-08T10:19:30.733Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Adapt the pre-existing @cq/config tests broken by the breaking grammar
-- description: |
-    The breaking grammar invalidates EXISTING fixtures across the workspace that use bare pi tokens and assertions expecting the old `{harness,model}` (no provider) shape. Migrate ALL of them — not only the @cq/config file:
-    
-    (1) `packages/cq-config/test/config.test.ts`: rewrite VALID_TOML / *_WITH_PLANNERS / *_WITH_TIERS / *_WITH_WEBUI so every pi alias/tier value is provider-qualified (`pi:<provider>/<model>`); update every ReviewerToken `toEqual` to include the new `provider` field (string for pi, null for claude); the existing 'preserves colons inside the model segment' (`pi:provider:model`) test must be re-examined — with slash extraction a slash-free model is now a BARE-pi error, so replace it with a slash-based case.
-    
-    (2) `@cq/ledger-mcp` config-capability tests: T232 adds `provider` to the STRUCTURAL ResolvedReviewer/ResolvedPlanner + GetConfigResult (aliases + tier slots) and the ledger-mcp projection. VERIFY whether any ledger-mcp test (e.g. packages/ledger-mcp/test/*config*; the computeReviewers/computePlanners/projectConfig/get_config|get_reviewers|get_planners coverage) DEEP-ASSERTS the old `{harness,model}` reviewer/config shape or uses bare-pi fixtures — if so, FOLD them into this task: add the `provider` field to those deep assertions and qualify their pi fixtures. Search the test tree (rg for `harness:` toEqual blocks, bare `pi:<word>` literals, and config-capability assertions) so NONE survive.
-    
-    (3) Any OTHER bare-pi fixture anywhere in nix/pkg/cq-ledgers (and the extension's own tests if present) — migrate it here too, so the T239 repo-wide `rg` audit has ZERO unplanned survivor.
-    
-    This task ADAPTS pre-existing tests broken by the grammar change; the NEW positive/negative grammar parse-cases live in T231's acceptance and the cross-layer consistency cases live in T238.
-- acceptance: "`bun test` in nix/pkg/cq-ledgers/ — the FULL pre-existing suite (config.test.ts AND every ledger-mcp config-capability test) passes against the new grammar; no bare pi fixture remains anywhere (a grep of the test tree finds no `\"pi:<word>\"` value lacking a `/`, except inside `expect(...).toThrow`/bare-pi-rejection cases); every reviewer/config deep-assertion that previously asserted `{harness,model}` now also asserts the `provider` field. The T239 repo-wide audit must find no survivor traceable to an un-migrated test fixture."
-- suggestedModel: standard
-- dependsOn: ["T231"]
-- ledgerRefs: ["goals:G29","defects:D36"]
-- resultCommit: 92efd10
-- completion: Migrated all bare-pi legacy fixtures (config.test.ts + ledger-mcp/main.test.ts) to qualified form + added provider to deep-assertions + slash-based colon test. Full suite green (1058/0 integrated).
-- sessionLogs: ["docs/logs/20260608-101505-a92573c7296d106a5.md","docs/logs/20260608-101505-a5fa5e861c049d049.md"]
-
-### T236 — done
-
-- createdAt: 2026-06-08T00:39:47.889Z
-- updatedAt: 2026-06-08T09:42:28.691Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: "Record a decisions item: the @cq/config grammar and the extension mirror MUST agree"
-- description: "Per Q133/K46 (the extension is a standalone store-path file that cannot import @cq/config), create a `locked` decisions item under M94/M92 capturing the contract BOTH copies implement: pi token grammar is `pi:<provider>/<model>` ONLY (slash, Q132); bare `pi:<model>` rejected (Q134, breaking); provider qualifier is pi-only and an error on claude: (Q135); provider extraction = split the model segment on the FIRST `/`, both halves non-empty. State that parseReviewerToken (THROWS on bare) and tokenToChildModel (returns null on bare — both REFUSE bare) are deliberate copies that must stay byte-parallel in GRAMMAR, and reference the cross-layer consistency test (T238) as the regression guard. EMPIRICAL ANCHOR (Q136): cite T225's recorded live evidence that pi dispatched minimax with `--provider ollama-cloud` successfully — that run is the empirical confirmation that the qualified form resolves correctly and is the reason no NEW live demo is required for this decision."
-- acceptance: "A `decisions` item exists (status `locked`, ledgerRefs goals:G29 + defects:D36) whose rationale names: the slash separator, the bare-pi rejection (breaking), the pi-only qualifier (claude rejects it), the FIRST-`/` both-halves-non-empty extraction, the @cq/config↔extension mirror obligation (parseReviewerToken THROWS / tokenToChildModel returns null — both refuse bare), T238 as the regression guard, AND cites T225's recorded live `--provider ollama-cloud` evidence (Q136) as the empirical anchor."
-- suggestedModel: fast
-- dependsOn: ["T231"]
-- ledgerRefs: ["goals:G29","defects:D36"]
-- completion: "Created locked decision K50 (the @cq/config grammar ↔ extension-mirror agreement contract: slash grammar, bare-pi reject, pi-only qualifier, first-'/' extraction; T238 regression guard; T225 live-evidence anchor). Ledger-only task."
-
-### T237 — planned
-
-- createdAt: 2026-06-08T00:40:04.664Z
-- updatedAt: 2026-06-08T00:53:08.699Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: "Document the pi:<provider>/<model> token grammar (cq.toml.example header + token-format docs)"
-- description: "Q136 docs. PATH CORRECTION: the example file is `cq.toml.example` at the REPO ROOT (NOT under nix/pkg/cq-ledgers/). Its header comment block currently documents only `<harness>:<model>` (lines ~24–26: 'Define reviewer instances as <harness>:<model> tokens'). Update that header to specify: a pi token MUST be `pi:<provider>/<model>` (provider = the pi --provider, slash-separated); bare `pi:<model>` is a config ERROR (BREAKING — call it out with the migration note minimax → `pi:ollama-cloud/minimax-m3`); `claude:<model>` is unchanged and a provider qualifier on `claude:` is an error (pi-only). Update any OTHER token-format doc found (search docs/ + the cq-config README + the toml.ts header/schema comments) identically; keep migration examples consistent with the T234 values (codex/grok → `pi:grok-build/grok-build`, minimax → `pi:ollama-cloud/minimax-m3`). Reference D36 as the motivating example."
-- acceptance: "The repo-root `cq.toml.example` header block CONTAINS the literal qualified grammar `pi:<provider>/<model>`, an explicit statement that a slash-free bare `pi:<model>` is a config error (BREAKING), the minimax migration example, and the claude-rejects-qualifier note; the in-file [aliases]/[tiers] example values are all provider-qualified (consistent with T234) so the example file still parses. Any other token-format doc found (docs/, cq-config README, toml.ts schema comments) carries the SAME qualified-grammar statement. `bun test` still passes (the example file loads without a bare-pi error)."
-- suggestedModel: fast
-- dependsOn: ["T234"]
-- ledgerRefs: ["goals:G29","defects:D36"]
-
-### T238 — planned
-
-- createdAt: 2026-06-08T00:40:10.074Z
-- updatedAt: 2026-06-08T00:53:27.418Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: Add @cq/config end-to-end + cross-layer consistency tests (qualified resolve; @cq/config↔extension agreement)
-- description: |
-    Q136 acceptance evidence. Add tests in `packages/cq-config/test/config.test.ts` (+ a ledger-mcp config test if capability tests live there): (1) a cq.toml with `[aliases] minimax="pi:ollama-cloud/minimax-m3"`, reviewers/planners referencing it, and a `[tiers]`/`[agent_tiers]` block, resolved END-TO-END — resolveReviewers/resolvePlanners + resolveAgentModel return tokens carrying provider:'ollama-cloud', model:'minimax-m3'; (2) bare pi anywhere (alias/tier value, or reviewers/planners alias resolving to bare) throws CqConfigError at parse/load.
-    
-    (3) CROSS-LAYER consistency test (Q136 option c) — specify the invariant CONCRETELY: for a SHARED token-fixture table, `parseReviewerToken(s)` ACCEPTS iff the extension's `tokenToChildModel(s)` accepts, and when both accept they AGREE on (harness, model, provider). The extension (`nix/pkg/pi-extensions/cq-subagent-dispatch.ts`) cannot be imported (standalone store-path file, K46), so IMPLEMENT this by COPYING the extension's `tokenToChildModel` parse logic into the test as a local replica (the test's own copy of the mirror), then for each fixture row assert the two parses agree:
-      - 'pi:ollama-cloud/minimax-m3' → parseReviewerToken returns {harness:'pi',model:'minimax-m3',provider:'ollama-cloud'} AND the replica returns {provider:'ollama-cloud',model:'minimax-m3'} (agree on model+provider; harness pi).
-      - 'pi:grok-build/grok-build' → both accept, agree.
-      - 'pi:minimax-m3' (BARE) → parseReviewerToken THROWS AND the replica returns null — BOTH REFUSE.
-      - 'pi:p/' and 'pi:/m' (empty half) → parseReviewerToken THROWS AND replica returns null — both refuse.
-      - 'claude:opus-4.8[1m]' → parseReviewerToken returns provider:null; replica returns the claude model with no provider; 'claude:x/y' → parseReviewerToken THROWS (claude rejects qualifier).
-    The table is the regression guard cited by T236: it FAILS if either layer's grammar drifts. Reuse T225's recorded live `--provider ollama-cloud` evidence for the dispatch-half empirical claim; NO new live demo required (Q136 option a).
-- acceptance: "`bun run check` from nix/pkg/cq-ledgers/ — `bun test` PASSES verifying: (a) an end-to-end resolve test asserting provider='ollama-cloud', model='minimax-m3' flows through resolveReviewers/resolvePlanners + resolveAgentModel + the get_reviewers/get_planners surface; (b) a bare-pi-rejection test at the resolve/load layer (CqConfigError); (c) the cross-layer fixture-table test that RUNS both parseReviewerToken and the in-test replica of tokenToChildModel over the shared table and asserts, per row, ACCEPT-iff-ACCEPT with agreement on (harness,model,provider) and REFUSE-iff-REFUSE for bare/empty-half tokens. Acceptance is run-and-observe (tests PASS), not merely 'tests added'."
-- suggestedModel: standard
-- dependsOn: ["T231","T232","T233","T234","T235"]
-- ledgerRefs: ["goals:G29","defects:D36"]
-
-### T239 — planned
-
-- createdAt: 2026-06-08T00:40:21.815Z
-- updatedAt: 2026-06-08T00:53:37.863Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: "Final verification gate: bun run check + nix builds + repo-wide bare-pi audit"
-- description: |
-    Closing gate (folded from the minimax candidate). From `nix/pkg/cq-ledgers/` run `bun run check` (typecheck + lint + test) GREEN. Standalone-typecheck the extension (`nix/pkg/pi-extensions/cq-subagent-dispatch.ts`) vs pi 0.78.0 types. From the repo root run `nix build .#ledger-mcp .#ledger-tui .#ledger-web` to confirm no FOD/build breakage (no new deps expected).
-    
-    LIVE-CONFIG SPOT-CHECK (activation-ordering, per T234): assert the LIVE cq.toml the running ledger MCP reads STILL LOADS after the breaking grammar — call get_config and confirm configured:true with every pi alias/tier carrying a non-null provider (minimax→ollama-cloud, codex/grok→grok-build) and NO load error. A throw here means the live config was not migrated before activation (the T231→T234 hazard) — report it as a blocker.
-    
-    REPO-WIDE bare-pi AUDIT — PATH CORRECTED: `cq.toml.example` is at the REPO ROOT. Run `rg -n 'pi:[A-Za-z0-9._-]+' nix/pkg/cq-ledgers cq.toml.example` (+ the live cq.toml path) and confirm every matched pi token has a `/` after the harness colon (i.e. is `pi:<provider>/<model>`), OR is a documented migration-callout string in docs. Any slash-free `pi:<word>` survivor outside a documented callout is a FAILURE.
-- acceptance: "`bun run check` green; the extension standalone tsc clean; `nix build .#ledger-mcp .#ledger-tui .#ledger-web` all succeed; get_config on the live config returns configured:true with all pi providers non-null and no load error; the `rg` bare-pi audit over `nix/pkg/cq-ledgers`, the repo-root `cq.toml.example`, and the live cq.toml returns ZERO slash-free pi tokens outside documented migration callouts. The gate FAILS LOUDLY with a remediation pointer — naming the offending file:line and instructing 'qualify to pi:<provider>/<model> per T234' — if any un-migrated bare-pi token (or a live-config load error) is found."
-- suggestedModel: standard
-- dependsOn: ["T231","T232","T233","T234","T235","T236","T237","T238"]
-- ledgerRefs: ["goals:G29","defects:D36"]
 
 ## M97
 
@@ -708,10 +539,10 @@ archives:
 
 ## M101
 
-### T255 — planned
+### T255 — done
 
 - createdAt: 2026-06-08T08:36:01.045Z
-- updatedAt: 2026-06-08T08:36:01.045Z
+- updatedAt: 2026-06-08T10:30:53.016Z
 - author: "opus-4.8[1m]"
 - session: $CLAUDE_CODE_SESSION_ID
 - headline: Add HANDOFFS_SCHEMA unit test + four-table grep-invariant test
@@ -720,11 +551,14 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T245","T251","T252","T253","T254"]
 - ledgerRefs: ["goals:G30"]
+- resultCommit: 3c08b66
+- completion: Added HANDOFFS_SCHEMA unit test (user-action-required in all 3 places + terminal) + four-table grep-invariant (reads the 4 real prompt files; teeth verified). check green.
+- sessionLogs: ["docs/logs/20260608-112600-adbcf1b71a34162e5.md","docs/logs/20260608-112600-a06721d01c0ecd25d.md"]
 
-### T256 — planned
+### T256 — done
 
 - createdAt: 2026-06-08T08:36:06.880Z
-- updatedAt: 2026-06-08T08:36:06.880Z
+- updatedAt: 2026-06-08T10:31:41.040Z
 - author: "opus-4.8[1m]"
 - session: $CLAUDE_CODE_SESSION_ID
 - headline: "Verify: bun run check + scoped nix build green"
@@ -733,3 +567,4 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T247","T250","T255"]
 - ledgerRefs: ["goals:G30"]
+- completion: "G30 verify gate PASSED (orchestrator-run on integrated main): bun run check 1071/1/0 (all new tests green); nix build .#llm-contexts .#llm-context-with-env .#llm-skills exit 0. No code diff."
