@@ -18,8 +18,9 @@
 #   YOLO_GPU_DEFAULT         - "1" to default --gpu on (CLI --no-gpu opts out)
 #   YOLO_EXTRA_RO_PATHS      - newline-separated list of host paths to ro-bind (missing paths are skipped)
 #   YOLO_EXTRA_RW_PATHS      - newline-separated list of host paths to rw-bind (missing paths are skipped)
-#   YOLO_SECRET_PATHS        - newline-separated list of provider/API-key secret files to ro-bind
-#                              (configured from smind.hm.dev.llm.secretEnv; missing paths are skipped)
+#   YOLO_SECRET_VARS         - newline-separated NAME=/path/to/secret list (smind.hm.dev.llm.yolo.
+#                              secretSessionVariables); each readable file's content is composed into
+#                              one 0600 file, bound once, and sourced inside the sandbox (never via argv)
 #   YOLO_SANDBOX_BIN         - bin dir of a buildEnv of extra packages (smind.hm.dev.llm.yolo.packages)
 #                              to prepend onto PATH inside the sandbox; empty means none
 #   YOLO_SESSION_VARS        - newline-separated NAME=VALUE list (smind.hm.dev.llm.yolo.sessionVariables)
@@ -218,17 +219,46 @@ if [[ -n "${YOLO_EXTRA_RW_PATHS:-}" ]]; then
   done <<< "$YOLO_EXTRA_RW_PATHS"
 fi
 
-# Provider / API-key secret files (configured via Nix from
-# smind.hm.dev.llm.secretEnv -> YOLO_SECRET_PATHS). Read-only binds so the
-# wrapped agents (piWrapped's launch prelude runs inside the sandbox) can read
-# them. Host-configured and agent-agnostic, so bound at the base level. The
-# llm-sandbox layer skips any path absent on this host, so a host missing a
-# secret degrades gracefully.
-SECRET_ARGS=()
-if [[ -n "${YOLO_SECRET_PATHS:-}" ]]; then
-  while IFS= read -r _s; do
-    [[ -n "$_s" ]] && SECRET_ARGS+=(--ro "$_s")
-  done <<< "$YOLO_SECRET_PATHS"
+# Secret session variables (configured via Nix from
+# smind.hm.dev.llm.yolo.secretSessionVariables -> YOLO_SECRET_VARS, one
+# NAME=/path/to/secret per line). Instead of ro-binding every secret file and
+# passing values via --env (which would land them in bwrap's argv, visible in
+# /proc/<pid>/cmdline), we:
+#   1. read each readable secret file's content on the host,
+#   2. compose ONE 0600 file of plain `NAME=VALUE` lines,
+#   3. ro-bind only that one file into the sandbox, and
+#   4. read it line-by-line inside the sandbox before exec (see the prelude at
+#      the end), exporting each via `export "$line"` so the value is taken
+#      verbatim and never re-parsed by the shell (no escaping needed),
+# so the vars reach EVERY harness's env (claude/codex/pi/shell/cmd) without ever
+# touching argv. The composed file lives in tmpfs and is removed on exit.
+# Values are single-line (API tokens); a value cannot contain a newline.
+SECRET_FILE_ARGS=()
+SECRET_TMPFILE=""
+SANDBOX_SECRETS_PATH="/run/yolo-secrets.env"
+if [[ -n "${YOLO_SECRET_VARS:-}" ]]; then
+  SECRET_TMPFILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/yolo-secrets.XXXXXX")"
+  _have_secret=0
+  while IFS= read -r _line; do
+    [[ -z "$_line" ]] && continue
+    _name="${_line%%=*}"
+    _path="${_line#*=}"
+    if [[ -r "$_path" ]]; then
+      # cat strips the trailing newline (API tokens are single-line). No quoting:
+      # the in-sandbox prelude re-exports the value verbatim, never re-parsing it.
+      printf '%s=%s\n' "$_name" "$(cat "$_path")" >> "$SECRET_TMPFILE"
+      _have_secret=1
+    else
+      echo "warning: secret for $_name not readable at $_path; skipping" >&2
+    fi
+  done <<< "$YOLO_SECRET_VARS"
+  if [[ $_have_secret -eq 1 ]]; then
+    SECRET_FILE_ARGS+=(--ro-bind "$SECRET_TMPFILE,$SANDBOX_SECRETS_PATH")
+    SECRET_FILE_ARGS+=(--env "YOLO_SECRETS_FILE=$SANDBOX_SECRETS_PATH")
+  else
+    rm -f "$SECRET_TMPFILE"
+    SECRET_TMPFILE=""
+  fi
 fi
 
 # Extra packages exposed only inside the sandbox (smind.hm.dev.llm.yolo.packages
@@ -299,7 +329,7 @@ BASE_ARGS=(
   "${AUDIO_ARGS[@]}"
   "${LLM_SSH_KEY_ARGS[@]}"
   "${EXTRA_PATH_ARGS[@]}"
-  "${SECRET_ARGS[@]}"
+  "${SECRET_FILE_ARGS[@]}"
   "${OLLAMA_ARGS[@]}"
   --ro "${HOME}/.config/git"
   --ro "${HOME}/.config/direnv"
@@ -434,10 +464,9 @@ add_codex_binds() {
 # so bind that read-only too.
 add_pi_binds() {
   EXTRA_ARGS+=(--ro "${HOME}/.config/mcp")
-  # Provider + web-search API-key secret files are ro-bound at the base level
-  # (SECRET_ARGS, from YOLO_SECRET_PATHS / smind.hm.dev.llm.secretEnv) since
-  # they're host-configured and agent-agnostic — see BASE_ARGS. The pi wrapper
-  # (piWrapped) reads them at launch.
+  # Provider + web-search API-key secrets reach pi (and every harness) via the
+  # composed secrets file sourced inside the sandbox — see the YOLO_SECRET_VARS
+  # handling / SECRET_FILE_ARGS near BASE_ARGS, not a per-secret bind here.
   # pi-search-hub config is HM-managed (declarative) under
   # ~/.pi/agent/extensions/search.json, shared read-only with the rest of
   # agent/extensions below — no separate writable mount needed.
@@ -630,6 +659,22 @@ case "$SUBCMD" in
     exit 1
     ;;
 esac
+
+# When secret session vars are in play, run the real command behind a tiny
+# in-sandbox prelude that reads the composed secrets file (bound read-only at
+# $SANDBOX_SECRETS_PATH, exposed as $YOLO_SECRETS_FILE), exports each NAME=VALUE
+# line verbatim, then exec's the command — so every harness inherits the
+# secrets. Without secrets we exec the sandbox directly (no extra shell layer,
+# no cleanup).
+if [[ -n "$SECRET_TMPFILE" ]]; then
+  # Remove the host-side composed file on exit; it lives in tmpfs regardless.
+  trap 'rm -f "$SECRET_TMPFILE"' EXIT
+  "$YOLO_LLM_SANDBOX" \
+    "${BASE_ARGS[@]}" \
+    "${EXTRA_ARGS[@]}" \
+    -- /bin/sh -c 'while IFS= read -r _l; do [ -n "$_l" ] && export "$_l"; done < "$YOLO_SECRETS_FILE"; exec "$@"' yolo-secrets "${EXEC_CMD[@]}"
+  exit $?
+fi
 
 exec "$YOLO_LLM_SANDBOX" \
   "${BASE_ARGS[@]}" \

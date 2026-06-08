@@ -15,7 +15,7 @@
   extraReadWritePaths ? [ ],
   ollamaModelsDir ? null,
   extraPromptFragments ? [ ],
-  secretPaths ? [ ],
+  secretSessionVariables ? { },
   sandboxPackages ? [ ],
   sessionVariables ? { },
 }:
@@ -49,11 +49,15 @@ let
   extraRwExports = lib.optionalString (extraReadWritePaths != [ ]) ''
     export YOLO_EXTRA_RW_PATHS=${lib.escapeShellArg (joinPaths extraReadWritePaths)}
   '';
-  # Provider/API-key secret file paths to ro-bind into the sandbox. Newline-
-  # joined like the extra-path lists; yolo.sh splits on newline and the
-  # llm-sandbox layer skips any path that is absent on this host.
-  secretPathExports = lib.optionalString (secretPaths != [ ]) ''
-    export YOLO_SECRET_PATHS=${lib.escapeShellArg (joinPaths secretPaths)}
+  # Secret session variables: ENV_VAR -> host secret-file path. Serialized as
+  # one newline-joined NAME=path line per entry (paths cannot contain newlines).
+  # yolo.sh reads each file's content on the host into a single 0600 NAME=VALUE
+  # file, binds only THAT file into the sandbox, and re-exports it inside — so
+  # secrets reach every harness's env without ever passing through bwrap argv
+  # (unlike --env) and without mounting each secret individually.
+  secretVarLines = lib.mapAttrsToList (name: path: "${name}=${path}") secretSessionVariables;
+  secretVarsExports = lib.optionalString (secretSessionVariables != { }) ''
+    export YOLO_SECRET_VARS=${lib.escapeShellArg (lib.concatStringsSep "\n" secretVarLines)}
   '';
   # Extra packages exposed only inside the sandbox: collect them into one
   # buildEnv and hand yolo.sh its bin dir (already reachable via the ro-bound
@@ -92,7 +96,7 @@ pkgs.writeShellScriptBin "yolo" ''
   ${ollamaExports}
   ${extraRoExports}
   ${extraRwExports}
-  ${secretPathExports}
+  ${secretVarsExports}
   ${sandboxBinExports}
   ${sessionVarsExports}
   ${promptExports}

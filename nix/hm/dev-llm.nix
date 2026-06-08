@@ -142,21 +142,11 @@ let
   # rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
 
-  # Secret-keyed env injected into Pi at launch from host secret files (read
-  # only if present, so hosts without them degrade gracefully). Keeps tokens out
-  # of the Nix store and at-rest env — they live only in pi's process env at
-  # runtime. The map (ENV_VAR -> host secret-file path) is the single source of
-  # truth, configurable by the consumer via `smind.hm.dev.llm.secretEnv` (option
-  # declared below); it drives BOTH this Pi env prelude AND the yolo-sandbox
-  # ro-binds (see yolo.nix's secretBindPaths), so the two can never drift apart.
-  secretEnv = config.smind.hm.dev.llm.secretEnv;
-  piSecretsPrelude = lib.concatStringsSep "\n" (
-    lib.mapAttrsToList
-      (
-        var: path: ''[ -r ${lib.escapeShellArg path} ] && export ${var}="$(cat ${lib.escapeShellArg path})"''
-      )
-      secretEnv
-  );
+  # Provider/API-key secrets are no longer injected by the pi wrapper. They are
+  # supplied to ALL harnesses by the yolo sandbox via
+  # `smind.hm.dev.llm.yolo.secretSessionVariables` (composed into one file,
+  # bound, and sourced inside the sandbox — see nix/hm/yolo.nix and pkg/yolo).
+
   # pi-search-hub's duckduckgo backend spawns `python3 -c "from ddgs import
   # DDGS …"` (no interpreter override; its `which ddgs` fallback only adds
   # ddgs's own site-packages, which under Nix omits ddgs's transitive deps, so
@@ -172,7 +162,6 @@ let
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postBuild = ''
       wrapProgram $out/bin/pi \
-        --run ${lib.escapeShellArg piSecretsPrelude} \
         --prefix PATH : ${ddgsPython}/bin \
         --run 'export CQ_AGENTS_DIR="$HOME/.pi/agent/cq-agents"'
     '';
@@ -182,9 +171,10 @@ let
   # reads ~/.pi/agent/extensions/search.json; we manage it as a read-only HM
   # store symlink (truly declarative — runtime `/search` mutations do not
   # persist; change a backend here). API keys are NOT stored here: each
-  # backend's `apiKey` names the env var injected by piWrapped from agenix
-  # (see piSecretEnv), resolved by pi-search-hub's "ALL_CAPS string => env var"
-  # rule. Tool names are unchanged (`web_search`, `web_read`), so the grok
+  # backend's `apiKey` names the env var supplied to the sandbox via
+  # `smind.hm.dev.llm.yolo.secretSessionVariables`, resolved by pi-search-hub's
+  # "ALL_CAPS string => env var" rule. Tool names are unchanged (`web_search`,
+  # `web_read`), so the grok
   # drop-client-web-search extension still applies.
   #
   # Fallback ORDER (selectionStrategy = "sequential"): pi-search-hub tries
@@ -407,36 +397,6 @@ in
         for the named servers (e.g. `[ "codegraph" "ledger" ]`), leaving the
         rest proxied. Pi-only: applied in `piMcpJson`, not leaked into the
         shared MCP registry used by claude/codex.
-      '';
-    };
-
-    smind.hm.dev.llm.secretEnv = lib.mkOption {
-      type = lib.types.attrsOf lib.types.str;
-      default = { };
-      example = lib.literalExpression ''
-        {
-          OPENROUTER_API_KEY = "/run/agenix/openrouter";
-          AI_GATEWAY_API_KEY = "/run/agenix/vercel"; # Vercel AI Gateway
-          EXA_API_KEY = "/run/agenix/exa";
-          BRAVE_SEARCH_API_KEY = "/run/agenix/brave";
-          FIRECRAWL_API_KEY = "/run/agenix/firecrawl";
-          OLLAMA_API_KEY = "/run/agenix/ollama"; # Ollama Cloud (reads $OLLAMA_API_KEY)
-          MINIMAX_API_KEY = "/run/agenix/minimax"; # MiniMax (reads $MINIMAX_API_KEY)
-          ANTHROPIC_API_KEY = config.age.secrets.anthropic.path;
-        }
-      '';
-      description = ''
-        Provider / API-key secrets exposed to the LLM harness, as a map from the
-        environment-variable name to the host path of the secret file. Single
-        source of truth for two consumers, kept in sync from one place:
-        (1) each file is ro-bound into the yolo bubblewrap sandbox; (2) at launch
-        the Pi wrapper exports `VAR="$(cat <path>)"` into its process env — only
-        when the file is readable, so a host missing a secret degrades gracefully
-        (the file is simply absent and skipped). Tokens stay out of the Nix store
-        and at-rest env. Empty by default: the consumer wires its own providers
-        downstream (e.g. pointing each `VAR` at an agenix secret path such as
-        `/run/agenix/<name>` or `config.age.secrets.<name>.path`). With an empty
-        map no provider secrets are bound or injected.
       '';
     };
   };

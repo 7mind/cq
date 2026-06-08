@@ -4,8 +4,9 @@
 # harness AND the sandbox) so the sandbox's options + package wiring live in one
 # focused module. Imported alongside dev-llm via `homeManagerModules.dev-llm`,
 # so it shares the same `config`: it reuses `smind.hm.dev.llm.enable` as its
-# on/off switch and reads `smind.hm.dev.llm.secretEnv` (declared in dev-llm.nix)
-# for the provider-secret ro-binds.
+# on/off switch. Provider/API-key secrets are wired here via
+# `smind.hm.dev.llm.yolo.secretSessionVariables` (composed + sourced inside the
+# sandbox), so every harness in the sandbox inherits them.
 #
 # Curried over the flake's `inputs` (for the codegraph package the per-project
 # index bootstrap needs). All host/hardware coupling (GPU flags, rootless-Podman
@@ -24,12 +25,6 @@ let
 
   cfg = config.smind.hm.dev.llm;
 
-  # Unique secret-file paths the sandbox must ro-bind so the wrapped agents
-  # (piWrapped's launch prelude runs INSIDE the sandbox) can read them at launch.
-  # Derived from the single-source-of-truth `secretEnv` map declared in
-  # dev-llm.nix, so the sandbox binds and Pi's env exports never drift apart.
-  secretBindPaths = lib.unique (lib.attrValues cfg.secretEnv);
-
   yoloPkg = pkgs.callPackage ../pkg/yolo/default.nix {
     codegraph = codegraphPkg;
     podmanSocketPath = cfg.podman.socketPath;
@@ -42,7 +37,6 @@ let
     extraReadOnlyPaths = cfg.yolo.extraReadOnlyPaths;
     extraReadWritePaths = cfg.yolo.extraReadWritePaths;
     extraPromptFragments = cfg.yolo.extraPromptFragments;
-    secretPaths = secretBindPaths;
     # Bind the host's ollama models dir (the consumer sets this from its own
     # services.ollama.models); null skips the bind.
     ollamaModelsDir = cfg.ollamaModelsDir;
@@ -50,6 +44,8 @@ let
     sandboxPackages = cfg.yolo.packages;
     # Declarative env vars set inside the sandbox session.
     sessionVariables = cfg.yolo.sessionVariables;
+    # Secret-file-backed env vars composed + sourced inside the sandbox.
+    secretSessionVariables = cfg.yolo.secretSessionVariables;
   };
 in
 {
@@ -187,6 +183,35 @@ in
         per-invocation by an explicit `--env NAME=VALUE` flag. Values may contain
         `=` but not newlines. Mirrors home-manager's `home.sessionVariables`, but
         scoped to the sandbox only — these are NOT exported into the host session.
+      '';
+    };
+
+    smind.hm.dev.llm.yolo.secretSessionVariables = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      example = lib.literalExpression ''
+        {
+          OPENROUTER_API_KEY   = "/run/agenix/openrouter";
+          BRAVE_SEARCH_API_KEY = config.age.secrets.brave.path;
+          ANTHROPIC_API_KEY    = config.age.secrets.anthropic.path;
+        }
+      '';
+      description = ''
+        Secret-file-backed environment variables for the sandbox, as a map from
+        the environment-variable name to the host path of the secret FILE (e.g.
+        an agenix secret under `/run/agenix`, or `config.age.secrets.<n>.path`).
+
+        Unlike {option}`smind.hm.dev.llm.yolo.sessionVariables` (literal values),
+        these never pass through bwrap's argv. At launch, yolo reads each readable
+        secret file's content on the host, composes a single mode-0600 file of
+        `NAME=VALUE` lines, binds ONLY that one file into the sandbox, and
+        re-exports each line verbatim inside before exec — so every harness
+        (claude/codex/pi/shell/cmd) inherits the vars, and tokens stay out of argv
+        and the Nix store. The composed file lives in tmpfs and is removed on
+        exit. A secret whose file is unreadable on this host is skipped with a
+        warning, so hosts missing a secret degrade gracefully. Values are
+        single-line (API tokens); use {option}`smind.hm.dev.llm.llmSshKeyPath`
+        for multi-line key files.
       '';
     };
   };
