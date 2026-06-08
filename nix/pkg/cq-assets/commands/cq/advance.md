@@ -57,14 +57,22 @@ At end-of-run, after you classify the run (see §End-of-run report), write ONE
 `handoffs` item via `create_item("handoffs", <milestone>, <status>, <fields>)`,
 mapping the report classification to the handoff `status`:
 
-| §End-of-run classification | handoff `status`     |
-| -------------------------- | -------------------- |
-| DRAINED                    | `drained`            |
-| BLOCKED-ON-QUESTIONS        | `answers-required`   |
-| MIXED                      | `mixed`              |
-| error / abort              | `illness-detected`   |
+| §End-of-run classification | handoff `status`       |
+| -------------------------- | ---------------------- |
+| DRAINED                    | `drained`              |
+| BLOCKED-ON-QUESTIONS        | `answers-required`     |
+| BLOCKED-ON-USER-ACTION      | `user-action-required` |
+| MIXED                      | `mixed`                |
+| error / abort              | `illness-detected`     |
 
-The `handoffs` ledger (idPrefix `HO`; all four statuses terminal; shipped in
+`user-action-required` is a DISTINCT classification from `answers-required`
+(Q139): `answers-required` is strictly gated on an `open` `questions` item (a
+user REQUIREMENTS/clarification ANSWER); `user-action-required` involves NO
+`questions` item — it is a manual/environment ACTION the agent cannot perform
+itself (re-activate an environment, provision a credential/secret, run a
+privileged/external command). See §Stop-condition gate for its narrow trigger.
+
+The `handoffs` ledger (idPrefix `HO`; all five statuses terminal; shipped in
 T137, now in `CANONICAL_LEDGERS`) carries this item shape:
 - `summary` (**required**) — the human-readable why-it-stopped (mirror the
   end-of-run report prose);
@@ -74,7 +82,9 @@ T137, now in `CANONICAL_LEDGERS`) carries this item shape:
 - `blockingQuestions` — `open` question ids for `answers-required`/`mixed` stops
   (mirrors the BLOCKED-ON-QUESTIONS enumeration);
 - `handoffReasons` — for a `mixed` stop, the component reasons (e.g.
-  `[drained, answers-required]`) explaining what is mixed (Q83);
+  `[drained, answers-required]`, or `[drained, answers-required,
+  user-action-required]` when a run lands work AND is blocked partly on an open
+  question AND partly on a user action) explaining what is mixed (Q83/Q139);
 - `sessionLogs` — the `docs/logs/<ts>-<agent-id>.md` path(s) produced during
   this run; populate them in the SAME `create_item` call that writes the handoff
   (do not write them in a separate update);
@@ -88,8 +98,10 @@ git operations on the already-written ledger files, not ledger writes.)
 
 **This write is the STOP GATE** (see §Stop condition). You may not conclude an
 `/cq:advance` run without it, and you may only write it once the run genuinely maps
-to one of the four statuses above — i.e. once the re-derived predicates show
-DRAINED or everything-blocked. If no status legitimately applies because a
+to one of the five statuses above — i.e. once the re-derived predicates show
+DRAINED, everything-blocked-on-questions, or a specific named item blocked solely
+on a user action whose every autonomous step is already done (see §Stop-condition
+gate). If no status legitimately applies because a
 predicate is still TRUE and unblocked, the run has NOT reached a legal stop:
 CONTINUE the cycle instead of writing a handoff. **Immediately after writing the
 handoff, perform the run-stop ledger commit (§Commit the ledger)** — that commit
@@ -261,11 +273,45 @@ cost effort. Before you may end a run you MUST do BOTH, in order:
    (BLOCKED / MIXED). If any predicate is TRUE and nothing blocks it, you have NOT
    reached a legal stop — **CONTINUE**.
 2. **Write the run-level `handoffs` record** (§Provenance / §End-of-run). This is
-   the GATE: its only legal statuses are `drained` / `answers-required` / `mixed`
-   / `illness-detected`, and each REQUIRES a specific predicate condition
-   (`drained` needs all three predicates FALSE; `answers-required` / `mixed` need a
-   non-empty `blockingQuestions[]`). There is deliberately **NO handoff status for
-   an effort-based stop**, so such a stop has no legal terminal artifact.
+   the GATE: its only legal statuses are `drained` / `answers-required` /
+   `user-action-required` / `mixed` / `illness-detected`, and each REQUIRES a
+   specific predicate condition (`drained` needs all three predicates FALSE;
+   `answers-required` / `mixed` need a non-empty `blockingQuestions[]`;
+   `user-action-required` needs a SPECIFIC NAMED item whose only remaining step is
+   the user's manual/environment action — see the user-action gate below — with
+   every autonomous step already done). There is deliberately **NO handoff status
+   for an effort-based stop**, so such a stop has no legal terminal artifact.
+
+**`user-action-required` — a LEGAL stop, narrowly pinned (Q138/Q139, hard
+gate).** This is permitted as a legal stop ONLY when a SPECIFIC, NAMED item
+cannot progress because its next physical step is *exclusively the user's* —
+re-activate an environment, provision a credential/secret, or run a
+privileged/external command the agent cannot run — AND the agent has ALREADY done
+every autonomous step for that item. **Operational test:** the agent MUST name
+the EXACT command/action the user runs AND the EXACT item it unblocks (like
+D37's `home-manager switch`). If it cannot name both, it is NOT
+`user-action-required` — **CONTINUE**. It is a sub-kind of the §Stop condition's
+already-admitted 'missing external access/credentials' BLOCKED case, so it is
+reached only once every P-predicate is FALSE-or-blocked; it NEVER authorizes
+ending while a P-predicate is TRUE-and-unblocked.
+
+This is **DISTINCT from `answers-required`** (Q139): `answers-required` is
+strictly open-question-gated (an `open` `questions` item — a user
+REQUIREMENTS/clarification ANSWER); `user-action-required` involves **NO
+`questions` item** — it is a manual/environment ACTION the agent cannot perform
+itself. When BOTH co-occur with landed work (a run that landed work, is blocked
+partly on an open question AND partly on a user action), classify `mixed` and
+list both components in `handoffReasons` (e.g. `[drained, answers-required,
+user-action-required]`).
+
+**These are NEVER `user-action-required` (anti-laundering, mirrors the
+confirmation ban):** magnitude / proportion / scope / disposition / 'a natural
+stopping point' / 'a substantial milestone has been reached' / 'the remaining fix
+is disproportionate to its value'. None of these is a user action; dressing an
+effort/confirmation stop as `user-action-required` is the SAME forbidden launder
+as filing a disposition question — do NOT do it; **CONTINUE and fix**. This does
+NOT weaken the rule above: there remains deliberately **NO handoff status for an
+effort-based stop**.
 
 **These are NOT stop conditions — NEVER end a run for any of them:**
 - the turn or cycle is "long", or has run for many steps;
@@ -409,21 +455,40 @@ report it. Mirror `/cq:implement:advance`'s end-of-pass report style
   ledgerRefs) and a one-line summary. Instruct the user: **answer the listed
   questions in the TUI/web, then re-run `/cq:advance`** to resume (the loop folds the
   answers back in and continues).
+- **BLOCKED-ON-USER-ACTION** — progress stopped ONLY because a SPECIFIC NAMED item's
+  next physical step is exclusively the user's (re-activate an environment,
+  provision a credential/secret, run a privileged/external command the agent cannot
+  run) AND every autonomous step for it is already done — and there is NO `open`
+  question gating it (it is NOT a requirements ambiguity; distinct from
+  BLOCKED-ON-QUESTIONS, per §Stop-condition gate). Report: the work that landed,
+  the EXACT user command/action, and the EXACT item it unblocks (like D37's
+  `home-manager switch`). Maps to handoff `user-action-required`. Next action:
+  perform the named action, then re-run `/cq:advance`.
 - **MIXED** — progress was made this run AND some actionable items remain blocked
-  on open questions. Report BOTH: (a) what landed (as in DRAINED), and (b) the
-  remaining blocking question ids with owning items (as in BLOCKED-ON-QUESTIONS).
-  Next action: answer the listed questions, then re-run `/cq:advance`.
+  on open questions and/or a user action. Report BOTH: (a) what landed (as in
+  DRAINED), and (b) the remaining blocking question ids with owning items (as in
+  BLOCKED-ON-QUESTIONS) and/or the named user action with the item it unblocks (as
+  in BLOCKED-ON-USER-ACTION). When the run lands work AND is blocked partly on an
+  open question AND partly on a user action, classify `mixed` and list both
+  components in `handoffReasons` (e.g. `[drained, answers-required,
+  user-action-required]`; Q139). Next action: answer the listed questions and/or
+  perform the named action, then re-run `/cq:advance`.
 
 To build the report, re-derive the three predicates one final time from the
 ledger: if all three are FALSE and no `open` question gates any actionable item →
 **DRAINED**; if the only thing standing between an item and progress is an
-unanswered question → **BLOCKED-ON-QUESTIONS** (or **MIXED** when the run also
-landed work). Always close with the concrete next action and (for the blocked
-categories) the exact list of question ids to answer.
+unanswered question → **BLOCKED-ON-QUESTIONS**; if the only thing standing between
+a SPECIFIC NAMED item and progress is a user manual/environment action (no `open`
+question involved) with every autonomous step already done →
+**BLOCKED-ON-USER-ACTION** (or **MIXED** when the run also landed work and/or both
+kinds of block co-occur). Always close with the concrete next action and (for the
+blocked categories) the exact list of question ids to answer and/or the exact
+user command/action with the item it unblocks.
 
 After emitting the report, persist it as the single run-level `handoffs` record
 — `/cq:advance`'s one and only ledger write — mapping this classification to the
 handoff `status` (DRAINED→`drained`, BLOCKED-ON-QUESTIONS→`answers-required`,
-MIXED→`mixed`, error/abort→`illness-detected`) and populating `summary`, `flow`,
-`ledgerRefs`, `blockingQuestions`, `handoffReasons` (for `mixed`), and
-`sessionLogs` in that one `create_item`. See §Provenance for the full item shape.
+BLOCKED-ON-USER-ACTION→`user-action-required`, MIXED→`mixed`,
+error/abort→`illness-detected`) and populating `summary`, `flow`, `ledgerRefs`,
+`blockingQuestions`, `handoffReasons` (for `mixed`), and `sessionLogs` in that
+one `create_item`. See §Provenance for the full item shape.
