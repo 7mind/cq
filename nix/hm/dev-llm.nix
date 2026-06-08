@@ -675,7 +675,6 @@ in
           # (pi-mcp-adapter is added separately by enableMcpIntegration.)
           packages = [
             "npm:@juicesharp/rpiv-web-tools"
-            "npm:@gotgenes/pi-anthropic-auth"
             "npm:pi-ollama-cloud"
             "npm:@sinamtz/pi-minimax-provider"
             "npm:pi-xai"
