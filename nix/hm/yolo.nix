@@ -367,6 +367,8 @@ in
       # Module-provided prompt fragments, leading the list (mkBefore); the
       # consumer's fragments append after.
       #   - YOLO authorization (claude only — Pi/Codex have no permission system).
+      #   - Sandbox-active note (every harness — yolo always sets SMIND_SANDBOXED,
+      #     so presence of this fragment IS the "sandbox active" signal).
       #   - SSH remote-worker key usage (only when llmSshKeyPath is set).
       #   - GitHub agent-account note (only when GH_TOKEN is a secret session var).
       smind.hm.dev.llm.yolo.promptExtensions = lib.mkBefore (
@@ -374,6 +376,10 @@ in
           {
             target = "claude";
             prompt = ''YOLO mode is active. The user has pre-authorized destructive shell operations (rm, rm -rf, kill, git reset --hard, etc.) and will not be available to confirm. Proceed without asking for confirmation on such operations. Standard safety still applies to actions with broader blast radius (force-push to shared branches, deleting remote resources, sending external messages).'';
+          }
+          {
+            target = "*";
+            prompt = ''Sandbox: ACTIVE (bubblewrap via the 'yolo' wrapper; SMIND_SANDBOXED=1). Writes persist only inside the project directory and /tmp/exchange. For access to $HOME or system paths, follow the /environment skill.'';
           }
         ]
         ++ lib.optional sshKeySet {

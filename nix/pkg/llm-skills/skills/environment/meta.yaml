@@ -1,5 +1,8 @@
 name: environment
 description: >-
-  Sandbox detection, bubblewrap sandbox workflow, nix/direnv environment setup.
-  TRIGGER when: $SMIND_SANDBOXED is set, working in a sandbox, need to run system
-  commands outside sandbox, or setting up nix/direnv environment.
+  Bubblewrap "yolo" sandbox escape workflow (exchange scripts for reaching
+  $HOME, system paths, or files outside the sandbox) plus in-sandbox nix/direnv
+  usage. TRIGGER only when $SMIND_SANDBOXED=1 — i.e. running inside the yolo
+  sandbox and you need to reach something outside it. SKIP entirely when
+  $SMIND_SANDBOXED is unset: you are unsandboxed, so write directly and ignore
+  this skill.

@@ -65,24 +65,18 @@ let
     '';
   });
 
-  # SessionStart hook: surfaces hostname and sandbox state on every session
-  # boot. Claude Code's injected environment block lists OS/shell/cwd but not
-  # hostname, so without this the model guesses (and tends to assume the wrong
-  # host). $SMIND_SANDBOXED is set by the yolo wrapper (pkg/yolo/yolo.sh) but
-  # the matching `environment` skill is passive — declaring sandbox state
-  # up-front avoids relying on the model to probe env vars.
+  # SessionStart hook: surfaces the hostname on every session boot. Claude
+  # Code's injected environment block lists OS/shell/cwd but not hostname, so
+  # without this the model guesses (and tends to assume the wrong host). Sandbox
+  # state is no longer reported here — it is a yolo concern, declared as a yolo
+  # promptExtension (the "Sandbox: ACTIVE …" note in nix/hm/yolo.nix) which is
+  # injected exactly when running under the wrapper that sets SMIND_SANDBOXED.
   claudeSessionStartHook = pkgs.writeShellScript "claude-session-start-context" ''
     set -eu
     HOST="''${HOSTNAME:-$(hostname 2>/dev/null || echo unknown)}"
-    if [ "''${SMIND_SANDBOXED:-0}" = "1" ]; then
-      SANDBOX_LINE="Sandbox: ACTIVE (bubblewrap via the 'yolo' wrapper; SMIND_SANDBOXED=1). Writes persist only inside the project directory and /tmp/exchange. For access to \$HOME or system paths, follow the 'environment' skill's exchange-script workflow."
-    else
-      SANDBOX_LINE="Sandbox: NOT ACTIVE (SMIND_SANDBOXED unset). Filesystem writes are unrestricted; the exchange-script workflow is unnecessary."
-    fi
     printf '%s\n' \
       'Runtime environment (injected by SessionStart hook):' \
-      "- Hostname: $HOST. Use this exact value where CLAUDE.md or scripts reference the current host; do not rely on \$HOSTNAME (zsh, the user's login shell, does not export it)." \
-      "- $SANDBOX_LINE"
+      "- Hostname: $HOST. Use this exact value where CLAUDE.md or scripts reference the current host; do not rely on \$HOSTNAME (zsh, the user's login shell, does not export it)."
   '';
 
   # Wiring common to every skill-aware harness: enable it, feed the shared
