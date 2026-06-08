@@ -370,17 +370,20 @@ archives:
 
 ## M94
 
-### T231 — planned
+### T231 — done
 
 - createdAt: 2026-06-08T00:38:55.557Z
-- updatedAt: 2026-06-08T00:52:04.361Z
+- updatedAt: 2026-06-08T09:40:30.126Z
 - author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- session: $CLAUDE_CODE_SESSION_ID
 - headline: Add provider field to @cq/config ReviewerToken + slash-extraction in parseReviewerToken; reject bare pi
 - description: "The hinge change. In `nix/pkg/cq-ledgers/packages/cq-config/src/types.ts`, extend `ReviewerToken` to `{ harness, model, provider: string | null }` (provider = the pi `--provider`; null for claude). In `config.ts parseReviewerToken`: keep the FIRST-colon harness/model split (UNCHANGED), then extract the provider from the model segment by splitting on the FIRST `/` (Q132 slash). Rules: (1) harness `pi` — the model segment MUST contain a `/`; split into provider=before, model=after, both non-empty (leading/trailing slash → CqConfigError); NO `/` → BARE pi → CqConfigError (Q134 drop bare, BREAKING). (2) harness `claude` — a `/` (provider qualifier) is a CqConfigError (Q135 pi-only); provider stays null. Keep existing empty-harness/empty-model/unknown-harness errors; add precise messages for the new rejections. [aliases]/[tiers]/[agent_tiers]/reviewers/planners all flow through parseReviewerToken, inheriting the grammar."
 - acceptance: "`bun test` in nix/pkg/cq-ledgers/ — the NEW parseReviewerToken parse-case tests pass: parseReviewerToken('pi:ollama-cloud/minimax-m3')==={harness:'pi',model:'minimax-m3',provider:'ollama-cloud'}; ('claude:opus-4.8[1m]')==={harness:'claude',model:'opus-4.8[1m]',provider:null}; ('pi:minimax-m3') THROWS CqConfigError (bare pi); ('claude:x/y') THROWS (provider on claude); ('pi:/m') & ('pi:p/') THROW (empty half). `bun run typecheck` clean. SCOPE NOTE: this task's gate is ONLY the new parse-case tests + typecheck — NOT a full pre-existing-suite green. The breaking grammar invalidates old bare-pi fixtures in config.test.ts; restoring the WHOLE suite to green is deferred to T235 (adapt fixtures), T238 (cross-layer tests), and the T239 closing gate. Do not block T231 on those legacy fixtures."
 - suggestedModel: frontier
 - ledgerRefs: ["goals:G29","defects:D36"]
+- resultCommit: 722a1d98f10c682bb9e92bb41c5ef07a36169c3e
+- completion: "ReviewerToken gains provider:string|null; parseReviewerToken does first-colon harness/model split then first-slash provider extraction (pi requires pi:<provider>/<model>, bare pi rejected BREAKING; claude rejects '/'; empty halves rejected). 6 new parse-cases + typecheck green. 23 legacy bare-pi fixtures left failing (deferred to T235/T238 per scope)."
+- sessionLogs: ["docs/logs/20260608-093215-aaabc652fcf46f1f0.md","docs/logs/20260608-093215-ad95591b7354885bc.md","docs/logs/20260608-093215-pi-grok-T231.md","docs/logs/20260608-093215-pi-minimax-T231.md"]
 
 ### T232 — planned
 
@@ -531,10 +534,10 @@ archives:
 
 ## M97
 
-### T245 — planned
+### T245 — done
 
 - createdAt: 2026-06-08T08:34:47.098Z
-- updatedAt: 2026-06-08T08:42:58.491Z
+- updatedAt: 2026-06-08T09:38:09.830Z
 - author: "opus-4.8[1m]"
 - session: $CLAUDE_CODE_SESSION_ID
 - headline: Add user-action-required to HANDOFFS_SCHEMA in constants.ts
@@ -542,6 +545,9 @@ archives:
 - acceptance: "constants.ts HANDOFFS_SCHEMA shows the literal `user-action-required` added in ALL THREE places — (a) statusValues, (b) terminalStatuses, (c) a `\"user-action-required\": []` transitions entry — with the other four tokens unchanged and NO new field added to HANDOFFS_SCHEMA.fields. Independently verifiable by reading the file (not deferred to T255); `bun run typecheck` (tsc -b) from nix/pkg/cq-ledgers passes."
 - suggestedModel: standard
 - ledgerRefs: ["goals:G30"]
+- resultCommit: a2d2359d034ebda57807552c0519bb2154a723ee
+- completion: "Added user-action-required as the 5th terminal status in HANDOFFS_SCHEMA (statusValues + terminalStatuses + transitions []) + JSDoc + test count 4->5. bun run check green 1038/0."
+- sessionLogs: ["docs/logs/20260608-093215-a87723c693b9e8f2a.md","docs/logs/20260608-093215-ac9dd78a27033f3ce.md"]
 
 ## M98
 

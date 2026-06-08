@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 290
+  item: 292
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -611,3 +611,31 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G30"]
 - sessionLogs: ["docs/logs/20260608-085336-a644adda2d79b52bb.md","docs/logs/20260608-085336-pi-codex.md","docs/logs/20260608-085336-pi-grok.md","docs/logs/20260608-085336-pi-minimax.md"]
+
+## M97
+
+### R290 — go-ahead
+
+- createdAt: 2026-06-08T09:38:07.183Z
+- updatedAt: 2026-06-08T09:38:07.183Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- summary: "T245 APPROVE (opus implement-reviewer). HANDOFFS_SCHEMA gains `user-action-required` in all three places (statusValues, terminalStatuses, transitions []), no new field, other four tokens unchanged; test count 4->5 sound (transitions test iterates statusValues so the new token is exercised); bun run check green 1038/0. Two files, no scope creep."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T245","goals:G30"]
+- sessionLogs: ["docs/logs/20260608-093215-ac9dd78a27033f3ce.md"]
+
+## M94
+
+### R291 — go-ahead
+
+- createdAt: 2026-06-08T09:40:25.542Z
+- updatedAt: 2026-06-08T09:40:25.542Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- summary: "T231 APPROVE — UNANIMOUS full panel (opus + grok + minimax all approve). parseReviewerToken provider grammar correct: first-colon harness/model split preserved, first-slash provider extraction, pi requires pi:<provider>/<model> (bare pi rejected), claude rejects '/' qualifier, empty halves rejected; provider:string|null added to ReviewerToken; precise error messages. All 6 new parse-cases pass + edge cases (pi:p/a:b→model a:b; pi:p/a/b→provider p,model a/b). tsc -b + eslint clean. The 23 full-suite failures are exactly the deferred bare-pi legacy fixtures (22 cq-config + 1 ledger-mcp), explicitly out of this task's gate per T235/T238. Surgical (only the 3 cq-config files); no scope creep."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T231","goals:G29"]
+- sessionLogs: ["docs/logs/20260608-093215-ad95591b7354885bc.md","docs/logs/20260608-093215-pi-grok-T231.md","docs/logs/20260608-093215-pi-minimax-T231.md"]

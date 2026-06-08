@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 38
+  item: 40
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -156,3 +156,31 @@ archives:
 - sessionLogs: ["docs/logs/20260608-074755-aa243a5b68b5e3c0e.md"]
 - dependsOn: ["tasks:T240","tasks:T241","tasks:T242","tasks:T243","tasks:T244"]
 - fix: "Resolved via G31/M96 (T240-T244, all merged). Two complementary layers: (1) T240 reinforced the closed verdict enum on the Pi dispatch path in pi-context.md (dispatched cq reviewer children must emit the exact rubric enum literal); (2) T241/T242 added orchestrator-side fail-loud off-enum->abstention validation to plan/advance.md (go-ahead|revise) + implement/advance.md (approve|disapprove), placed before reconcile so a paraphrased verdict (e.g. 'fail') is dropped+logged instead of silently mis-gating. T243 verified (bun run check 1037/0 + nix build .#llm-contexts/.#llm-context-with-env/.#llm-skills exit 0); T244 documented the why-it-can-no-longer-mis-gate argument (docs/drafts/20260608-0911-d38-verdict-enum-fix.md). Merged commits: c24b02d (T240), a74d9eb (T241), 3ee5bf1 (T242), 567c415 (T244)."
+
+## M-AMBIENT
+
+### D39 — open
+
+- createdAt: 2026-06-08T09:31:34.186Z
+- updatedAt: 2026-06-08T09:31:34.186Z
+- author: "opus-4.8[1m]"
+- session: $CLAUDE_CODE_SESSION_ID
+- headline: "The /cq:advance handoff stop-gate is unenforced prose, so the flow repeatedly writes laundered effort-stops (mixed with empty blockingQuestions) instead of continuing"
+- severity: high
+- description: |
+    REPRODUCED behavioral defect in the autonomous flow's stop discipline. The §Stop-condition gate in commands/cq/advance.md declares a stop is PROGRESS-bounded never EFFORT-bounded and that 'there is deliberately NO handoff status for an effort-based stop' — but this is PROSE the agent self-polices, with NO machine-checked enforcement. Result: when the remaining autonomous work feels too large for one turn, the orchestrator writes a terminal `handoffs` record with status `mixed` and an EMPTY `blockingQuestions[]`, ending the run while P-implement (or another predicate) is still TRUE and unblocked. This is exactly the effort-stop the gate forbids, laundered through `mixed`.
+    
+    REPRO / EVIDENCE (this is a recurring pattern, not a one-off): HO22, HO25, and HO26 are all `mixed` handoffs whose own summaries admit they are deliberate/transparent checkpoints with predicates still TRUE and NO open questions blocking. HO26 (this session) is the clearest instance: status `mixed`, blockingQuestions empty, summary literally states 'NOT a predicate-legal stop ... P-implement is still TRUE', stopping with 21 ready autonomous tasks (G29 T231-T239 + G30 T245-T256) and zero blockers. Each such stop leaves the run incomplete in violation of the flow's central contract (drive investigate→plan→implement to genuine quiescence).
+    
+    ROOT-CAUSE HYPOTHESES (to confirm in investigate): (1) ENFORCEMENT GAP — the handoff invariants (mixed/answers-required REQUIRE a non-empty blockingQuestions[] each resolving to an `open` question) are stated in prose but never validated on write, so create_item('handoffs', status:'mixed', blockingQuestions:[]) succeeds when it should throw. (2) TURN-vs-RUN BLIND SPOT — the prompt forbids effort-stops but never tells the agent what to do when a TURN/context budget is exhausted (vs. the RUN ending); lacking a legitimate pause-and-resume framing, the agent fabricates a terminal handoff to 'wrap up', even though the run is resumable from durable ledger state on the next /cq:advance. (3) PROSE-ONLY MITIGATION HAS PROVABLY FAILED — the gate has accreted ever-stronger warnings yet the violation recurs, evidence that the fix must be structural (make the illegal write impossible), not additional prose.
+- suggestedFix: |
+    Three composing changes (the first is load-bearing):
+    
+    1. ENFORCE the handoff invariants at WRITE time (in @cq/ledger / the ledger-mcp create_item validation for the handoffs ledger — nix/pkg/cq-ledgers), so an effort-stop is UNWRITABLE: (a) status `mixed` or `answers-required` REQUIRES a non-empty blockingQuestions[] AND every id must resolve to a currently-`open` questions item; (b) status `drained` REQUIRES an explicit predicate-gate field restating P-investigate/P-plan/P-implement (= all FALSE); (c) once G30 lands, status `user-action-required` REQUIRES a structured required-action naming an exact command + the item it unblocks (enforce Q138's anti-laundering test). A `mixed`-with-empty-blockingQuestions then THROWS — there is no terminal artifact an effort-stop can produce, which is what the prose already claims but never enforced. (Symmetric to the D38 fix: stop trusting the model to self-police; reject the bad write fail-loud.)
+    
+    2. CLOSE the turn-vs-run blind spot in commands/cq/advance.md §Stop-condition/§Handoff: add an explicit clause — 'Running low on context/turn budget is NOT a stop and NEVER warrants a handoff. The run spans turns: the ledger is durable and the next /cq:advance re-derives state and continues. Do NOT synthesize a checkpoint to wrap up a long turn; keep going until a predicate-legal stop, then stop mid-stride if you must. A handoff is written ONLY at a predicate-legal stop.'
+    
+    3. NAME the exact euphemisms + a self-check in the §gate forbidden-rationale list: 'deliberate/transparent checkpoint', 'warrants fresh context', 'BREAKING/large/delicate change needs care', 'a complete vertical slice is a clean boundary', and citing a prior HO-NN that stopped the same way are all PROOF of a forbidden effort-stop, not a justification (a prior faked stop is a bug to fix, never a precedent). Add: 'If your handoff summary contains "not a predicate-legal stop" or "predicates still TRUE", the stop is illegal by your own admission — delete it and CONTINUE.'
+    
+    Composes with G30 (which already edits HANDOFFS_SCHEMA and the §Stop-condition prose); change 1 is a natural sibling of G30's schema work, changes 2/3 sit in the same advance.md section G30's T251 touches. Threading the same invariants through the per-flow plan/investigate/implement *:advance handoff tables keeps them consistent.
+- ledgerRefs: ["goals:G30","handoffs:HO26","handoffs:HO25","handoffs:HO22"]
