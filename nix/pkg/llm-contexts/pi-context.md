@@ -73,6 +73,13 @@ Rules:
 - Emit the tool CALL — do not describe, paraphrase, or simulate the dispatch
   in prose. The whole point of the convention is that you actually fire the
   tool.
+- If YOU are the dispatched child and your rubric defines a `verdict` field,
+  emit the EXACT canonical enum literal — no paraphrase or synonym.
+  `verdict` is a CLOSED enum, not free text:
+  - plan-review: exactly `go-ahead` or `revise`
+  - implement-review: exactly `approve` or `disapprove`
+  The orchestrator drops any off-enum value as an abstention. Never emit
+  `fail`, `pass`, `ok`, `reject`, or any other synonym.
 - You cannot re-dispatch from within a child: a dispatched agent runs as an
   isolated child turn with `dispatch_agent` excluded, so if you ARE that child
   you do the task yourself instead of trying to dispatch again.
