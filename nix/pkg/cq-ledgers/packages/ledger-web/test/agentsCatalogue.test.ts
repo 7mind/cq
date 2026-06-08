@@ -280,9 +280,9 @@ describe("formatExposedTools — canonical display string (Q152–Q153)", () => 
 });
 
 describe("AGENT_ROLES placeholder re-export", () => {
-  it("re-exports AGENT_ROLES (empty placeholder until T276 regenerates)", () => {
+  it("re-exports the generated AGENT_ROLES (populated by T276 codegen)", () => {
     expect(Array.isArray(AGENT_ROLES)).toBe(true);
-    expect(AGENT_ROLES).toEqual([]);
+    expect(AGENT_ROLES.length).toBeGreaterThan(0);
   });
 
   it("the AgentRole type carries privilege + exposedTools (compile-time)", () => {

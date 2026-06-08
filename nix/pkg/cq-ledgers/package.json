@@ -10,7 +10,8 @@
     "format": "prettier --write .",
     "test": "bun test --pass-with-no-tests",
     "regen-bootstrap": "bun run scripts/regen-bootstrap.ts",
-    "link-prompts": "bun run scripts/link-prompts.ts"
+    "link-prompts": "bun run scripts/link-prompts.ts",
+    "gen-agents": "bun run packages/ledger-web/scripts/gen-agents-catalogue.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",
