@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 33
+  item: 34
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -233,3 +233,22 @@ archives:
     **Acceptance:** a unit test proving create_item('handoffs', status:'mixed'|'answers-required', blockingQuestions:[]) THROWS and a valid one (non-empty) succeeds; the advance.md turn-vs-run clause + euphemism blocklist present (grep-invariant); bun run check green + nix build. Builds on G30's HANDOFFS_SCHEMA + advance.md. Tasks must ledgerRef defects:D39.
 - milestones: ["M103","M104","M105","M106"]
 - sessionLogs: ["docs/logs/20260608-105000-a52e81205fe425a0e.md","docs/logs/20260608-110324-af50ed222aaddb4a5.md","docs/logs/20260608-111023-g32-round2-panel.md","docs/logs/20260608-111023-g32-round3-panel.md","docs/logs/20260608-111023-a18b40d5596a3b471.md"]
+
+## M108
+
+### G34 — clarifying
+
+- createdAt: 2026-06-08T15:05:54.899Z
+- updatedAt: 2026-06-08T15:09:50.849Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- title: Help-popup item-states rename + new Agents tab + cq.toml tiers triplet mapping
+- description: |
+    Three related changes to the cq flow UI and config:
+    
+    1) Rename the "State Machines" tab in the help popup to "Item States".
+    
+    2) Create a new tab — "Agents" — that shows all agentic roles we support in our flow (e.g. orchestrator/reviewer). The information should be detailed and structured/typed: what inputs are expected, outputs produced, input/output schemas, prompt template (folded by default), configured model classes (frontier/fast/standard) and per-harness mappings. More fields can be added to the list as useful.
+    
+    3) Improve the tiers mapping in cq.toml: currently it maps a class to a model name, but to make actual sense it should map a (harness + provider + model name) triplet to a class. (i.e. invert/restructure the mapping so a concrete harness/provider/model resolves to its tier class, rather than a class naming a single model name.)
+- sessionLogs: ["docs/logs/20260608-150928-abb5622a0a388a034.md"]

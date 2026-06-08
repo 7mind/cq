@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 144
+  item: 150
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -383,3 +383,77 @@ archives:
 - question: "All autonomous code work is landed, reviewed, and verified green — the remaining steps require YOUR environment/deploy action (the agent physically cannot perform them, and doing them against the OLD running ledger-mcp would cause data loss/breakage). Please perform, then re-run /cq:advance: (1) run `home-manager switch` to activate the merged pi extension (RESOLVES D37 — the stale ~/.pi/agent/settings.json store path); (2) DEPLOY the new build — rebuild + restart the ledger-mcp so the running server picks up the new @cq/ledger (G32 handoff-enforcement + G30 user-action-required status) and @cq/config (G29 provider-qualified grammar); (3) AFTER the new ledger-mcp is the running build, apply the deploy-coupled LIVE-CONFIG migrations — T246: add `user-action-required` to the live gitignored docs/ledgers.yaml handoffs schema block so init() does NOT backup-reinit (preserving HO records); and T234/T239: migrate the live gitignored cq.toml [aliases]/[tiers] pi tokens to the qualified `pi:<provider>/<model>` form (minimax→pi:ollama-cloud/minimax-m3, codex/grok→pi:grok-build/grok-build) so the new grammar loads without a bare-pi error. (These migrations must NOT run against the old MCP — the schema/grammar divergence would trigger backup-reinit / load errors NOW.) Reply when deployed, or tell me to proceed differently."
 - context: "Run state: P-investigate=FALSE (D36/D38/D39 resolved), P-plan=FALSE (G28-G32 planned), P-implement has no autonomously-actionable task (the only non-terminal task T246 is deploy-coupled). Everything autonomous is DONE; the remaining is exclusively user/deploy actions. This is the user-action-required class that G30 (now implemented in code) formalizes — but the running MCP is the old build and cannot express that status yet, so this open question is the legitimate blocking carrier. blocked items: D37 (home-manager switch); tasks T246/T234-live/T239-live (deploy + live-config migration)."
 - ledgerRefs: ["defects:D37","tasks:T246","goals:G30","goals:G29"]
+
+## M108
+
+### Q145 — open
+
+- createdAt: 2026-06-08T15:08:07.859Z
+- updatedAt: 2026-06-08T15:08:07.859Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- question: The help dialog with tabs (Keyboard shortcuts / State machines / Flows) lives ONLY in the web frontend (ledger-web/src/App.tsx HelpOverlay). The TUI (ledger-tui/src/app.tsx) has NO help overlay or tab UI at all. Should parts 1+2 (rename the tab, add the Agents tab) be applied to the web frontend ONLY, or must the TUI also gain an equivalent help/Agents view?
+- context: "Verified by reading both packages: HelpOverlay, the 'statemachines' tab and the Flows tab (G23/T205) are web-only React/SVG; the TUI is a two-pane ledger browser with key hints in a status bar but no help popup or tabs. Adding a parallel TUI help-popup with diagrams/tabs would be a substantial separate effort (no elk/SVG renderer in the TUI). The goal text says 'cq flow UI' and mentions 'TUI and web frontends' generically."
+- suggestions: ["Web frontend only — the help popup is a web feature; leave the TUI unchanged","Both — also build an equivalent help/tab/Agents view in the TUI (significantly larger scope)"]
+- recommendation: Web frontend only. The tabbed help dialog has only ever existed in the web UI; scoping parts 1+2 to ledger-web matches the existing design and keeps the change tractable. Part 3 (cq.toml grammar) is shared and applies regardless.
+- ledgerRefs: ["goals:G34"]
+
+### Q146 — open
+
+- createdAt: 2026-06-08T15:08:15.345Z
+- updatedAt: 2026-06-08T15:08:15.345Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- question: For part 1, the tab is RENAMED from 'State Machines' to 'Item States' — does this rename ALSO change the internal identifiers (the tab-state key 'statemachines', the data-testid values help-tab-statemachines / help-statemachines, and the per-diagram help-statemachine-<ledger> ids / CSS classes lw-statemachine*), or ONLY the human-visible button label text?
+- context: In ledger-web/src/App.tsx the tab is keyed by a string union ('shortcuts' | 'statemachines' | 'flows') and exposes data-testid=help-tab-statemachines / help-statemachines plus per-ledger help-statemachine-<ledger> ids that the happy-dom tests assert against. Renaming only the label is one-line; renaming the identifiers too churns tests and the diagram id scheme. The diagrams themselves still depict per-ledger STATUS state machines, so 'Item States' is purely a label change in meaning.
+- suggestions: ["Change only the visible label ('Item States'); keep all internal ids/testids/CSS as 'statemachines'","Rename label AND internal ids/testids/CSS to an item-states scheme (more churn, updates tests)"]
+- recommendation: Change only the visible label; keep the internal 'statemachines' identifiers and testids stable to avoid unnecessary test churn.
+- ledgerRefs: ["goals:G34"]
+
+### Q147 — open
+
+- createdAt: 2026-06-08T15:08:29.449Z
+- updatedAt: 2026-06-08T15:08:29.449Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- question: "For the new Agents tab (part 2): what is the AUTHORITATIVE SOURCE of the per-agent data (inputs, outputs, I/O schemas, prompt template, model classes)? The agent/command behaviour today lives ONLY as prose markdown under nix/pkg/cq-assets/ (agents/*.md, commands/cq/*.md) — there is no typed/structured catalogue of agents anywhere in the codebase. Should we (a) hand-author a static typed catalogue in ledger-web (mirroring how the Flows tab's FLOWS data was hand-authored in T204), or (b) extract/generate it from the cq-assets prompt files at build time, or (c) load it at runtime from a new MCP endpoint?"
+- context: "The Flows tab precedent (T204) is a hand-authored static FlowDefinition[] in the web bundle. There is no existing typed agent registry; prompt templates are the raw .md asset bodies (large). 'prompt template (folded by default)' implies embedding each agent's prompt text. Option (a) is self-contained and matches precedent but the data is manually kept in sync; (b)/(c) avoid drift but add a build step or server surface."
+- suggestions: ["(a) Hand-author a static typed agent catalogue in ledger-web (mirrors the Flows/FLOWS precedent); prompt templates embedded as text constants","(b) Generate the catalogue from cq-assets prompt files at build time (Bun.build / a codegen script) so it stays in sync","(c) Add a new MCP endpoint that serves the agent catalogue at runtime"]
+- recommendation: (a) Hand-author a static typed catalogue in ledger-web, mirroring the Flows tab. It is self-contained, testable under happy-dom, and consistent with how flow data was modeled. Drift risk is acceptable for a help/reference view; revisit codegen later if needed.
+- ledgerRefs: ["goals:G34"]
+
+### Q148 — open
+
+- createdAt: 2026-06-08T15:08:39.559Z
+- updatedAt: 2026-06-08T15:08:39.559Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- question: "Exactly WHICH agentic roles should the Agents tab enumerate? Candidate set, derived from cq-assets: the four flow orchestrators (cq:plan / cq:investigate / cq:implement loops + the top-level cq:advance sequencer), the plan-advance PLANNER (incl. its candidate-mode variant), the plan-REVIEWER, the implement-REVIEWER, the investigate explorer/adjudicator, and any synthesis judge. Should the tab list all of these, only the user-configurable ones (planners + reviewers, which map to cq.toml aliases), or a specific subset you have in mind?"
+- context: "The goal names 'orchestrator/reviewer' as examples ('e.g.'). The roles differ in nature: orchestrators are command loops (no model alias of their own per-se), whereas planners/reviewers are the model-backed roles configured via cq.toml [aliases]+planners/reviewers and resolved through get_planners/get_reviewers. 'configured model classes + per-harness mappings' only makes sense for the model-backed roles. The exact roster determines how many catalogue entries to author."
+- suggestions: ["All roles: 4 orchestrators + planner (+candidate mode) + plan-reviewer + implement-reviewer + investigator + synthesis judge","Only the model-backed configurable roles (planners + reviewers) that have cq.toml model/harness mappings","A subset — please name the exact roles to include"]
+- recommendation: Enumerate all distinct roles (orchestrators + planner + both reviewers + investigator + judge), but only populate the 'model classes / per-harness mappings' fields for the model-backed roles; orchestrators show their I/O + prompt-template fields with model fields marked N/A. This gives the most complete reference. Please confirm or trim the roster.
+- ledgerRefs: ["goals:G34"]
+
+### Q149 — open
+
+- createdAt: 2026-06-08T15:08:57.978Z
+- updatedAt: 2026-06-08T15:08:57.978Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- question: "Part 3 inverts [tiers] from class->model to (harness+provider+model)->class. Today the dispatch chain is agent -> tier (via [agent_tiers]) -> a CONCRETE model token (via [tiers], one model per class), used by resolveTierToken/resolveAgentModel to pick WHICH model to run for a given suggestedModel tier. If [tiers] becomes triplet->class, that 'tier -> concrete model' lookup no longer exists. How should a suggestedModel tier (frontier/standard/fast) resolve to a concrete model to dispatch AFTER the inversion?"
+- context: "cq-config/src/config.ts resolveAgentModel = resolveAgentTier (agent_tiers) then resolveTierToken (tiers[tier] -> ReviewerToken). The inverse map answers 'what class is THIS model?' but not 'which model do I run for class X?' — those are not the same function unless every class maps 1:1 to a model. Either (a) dispatch stops selecting a model from a tier (the planners/reviewers lists already name concrete tokens, and the triplet->class map is used only to LABEL/validate a token's tier, e.g. for the Agents tab and for choosing among already-listed candidates), or (b) we keep BOTH directions (a class still needs a default concrete model). This determines whether resolveTierToken/resolveAgentModel survive, change signature, or are removed, and is the core of part 3."
+- suggestions: ["(a) Inversion only: [tiers] becomes a triplet->class lookup used to ANNOTATE/validate the tier of concrete tokens already listed in planners/reviewers; remove the tier->single-model dispatch (no agent auto-picks a model purely from its tier)","(b) Keep both directions: triplet->class for labeling PLUS a separate way to pick a concrete model per class for dispatch (e.g. first listed token of that class)","(c) Something else — describe the intended end-to-end resolution"]
+- recommendation: "(a) Treat the new triplet->class map as a CLASSIFIER: it tells cq what tier any concrete (harness,provider,model) belongs to, so the Agents tab and dispatch can label/group already-configured tokens by class. Dispatch continues to use the explicitly-listed planner/reviewer tokens; a suggestedModel tier selects among the configured tokens whose class matches that tier (documented tie-break if several). This makes the mapping 'make actual sense' as the goal asks, without inventing a hidden default model per class. Please confirm the intended resolution direction."
+- ledgerRefs: ["goals:G34"]
+
+### Q150 — open
+
+- createdAt: 2026-06-08T15:09:09.475Z
+- updatedAt: 2026-06-08T15:09:09.475Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- question: "What concrete cq.toml TOML SURFACE SYNTAX do you want for the new triplet->class [tiers] table, and is a BREAKING change (no migration of old class->model [tiers]) acceptable? Today [tiers] is e.g. `frontier = \"opus\"`. A triplet->class form could be e.g. `[tiers]` with entries keyed by the existing token grammar: `\"claude:opus-4.8[1m]\" = \"frontier\"` and `\"pi:ollama-cloud/minimax-m3\" = \"standard\"` (reusing parseReviewerToken's harness:provider/model token as the key), value = the tier class."
+- context: "G29/T237 just made a BREAKING token-grammar change (pi:<provider>/<model>, claude:<model>); reusing that exact token form as the [tiers] KEY keeps one grammar. Project policy (CLAUDE.md) is 'no backwards compatibility in internal code', and current live cq.toml has tiers=null (no [tiers] table in use), so a breaking redefinition costs little. But the precise key spelling (full token string vs a [tiers.<harness>] sub-table vs an array of {harness,provider,model,class}) is a user-facing config decision I should not pick silently."
+- suggestions: ["Token-keyed inline table: `\"claude:opus-4.8[1m]\" = \"frontier\"` (key = the existing harness:provider/model token grammar; value = class). Breaking; no migration.","Array-of-tables: `[[tiers]]` entries each with explicit harness/provider/model/class fields","Nested sub-tables per harness/provider, e.g. [tiers.claude] / [tiers.pi.<provider>]","Keep the old [tiers] working too (non-breaking; support both shapes)"]
+- recommendation: "Token-keyed inline table reusing the existing parseReviewerToken grammar as the KEY (`\"<token>\" = \"<class>\"`), as a BREAKING replacement (no dual-shape support), since live config has no [tiers] today and project policy avoids internal backward-compat. Please confirm the syntax and that breaking is acceptable."
+- ledgerRefs: ["goals:G34"]

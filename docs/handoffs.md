@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 29
+  item: 30
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -237,3 +237,17 @@ archives:
 - ledgerRefs: ["goals:G30","defects:D37"]
 - blockingQuestions: ["Q137","Q138","Q139","Q140","Q141","Q142"]
 - sessionLogs: ["docs/logs/20260608-000631-acfb0df8dce386356.md"]
+
+## M108
+
+### HO30 — answers-required
+
+- createdAt: 2026-06-08T15:10:16.065Z
+- updatedAt: 2026-06-08T15:10:16.065Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "ANSWERS-REQUIRED. /cq:plan bootstrapped goal G34 (\"Help-popup item-states rename + new Agents tab + cq.toml tiers triplet mapping\") under coordination milestone M108. The planner grounded read-only and filed the first clarifying batch Q145-Q150, all linked goals:G34. Goal left in `clarifying`/awaiting-answers. Key findings: (1) the tabbed help dialog is WEB-ONLY — HelpOverlay in nix/pkg/cq-ledgers/packages/ledger-web/src/App.tsx (tab union 'shortcuts'|'statemachines'|'flows', testids help-tab-statemachines/help-statemachines); the TUI has no help popup, so parts 1+2 TUI scope is ambiguous (Q145). (2) The Flows tab (G23/T205) is a hand-authored static FLOWS: FlowDefinition[] rendered via elk DiagramSvg; there is NO typed agent catalogue — agent behaviour is only prose markdown under nix/pkg/cq-assets/ (Q147/Q148). (3) Part 3 is design-loaded: packages/cq-config/src/{types,config}.ts models [tiers] as class→ReviewerToken (dispatch chain agent→tier→model via resolveTierToken/resolveAgentModel); inverting to (harness+provider+model)→class removes the tier→model lookup dispatch depends on (Q149), and the TOML surface syntax / breaking-change tolerance is open (Q150). G29/T237's pi:<provider>/<model> + claude:<model> grammar could be reused for the new keys. NEXT (user): answer Q145-Q150 in the TUI/web (set each `answered` with a non-empty answer), then run /cq:plan:advance G34."
+- flow: plan
+- ledgerRefs: ["goals:G34"]
+- blockingQuestions: ["Q145","Q146","Q147","Q148","Q149","Q150"]
+- sessionLogs: ["docs/logs/20260608-150928-abb5622a0a388a034.md"]

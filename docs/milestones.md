@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 107
+  item: 108
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -556,3 +556,9 @@ archives:
 - updatedAt: 2026-06-08T10:48:54.877Z
 - title: "Plan: fix D39 — enforce handoff stop-gate invariants (make effort-stops unwritable)"
 - description: "Coordination milestone for the defect-seeded fix goal G32 (resolves D39). Root cause confirmed: the handoff stop-gate is unenforced prose (blockingQuestions optional, no per-status validation) + a turn-vs-run blind spot, producing laundered effort-stops (HO22/25/26). Fix: write-time enforcement of handoff invariants + advance.md turn-vs-run clause + euphemism blocklist."
+
+### M108 — open
+
+- createdAt: 2026-06-08T15:05:47.371Z
+- updatedAt: 2026-06-08T15:05:47.371Z
+- title: "Plan: help-popup item-states rename + Agents tab + tiers triplet mapping"
