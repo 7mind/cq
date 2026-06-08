@@ -25,7 +25,8 @@ import {
   resolveReviewers,
   resolvePlanners,
   resolveAgentTier,
-  resolveTierToken,
+  classifyToken,
+  selectTokensForTier,
   resolveAgentModel,
   parseConfig,
   parseReviewerToken,
@@ -469,45 +470,95 @@ my-agent = "ultra"
   });
 });
 
-describe("resolveAgentModel end-to-end (T223 acceptance c)", () => {
-  it("resolves agent-name -> tier -> provider+model", () => {
+describe("resolveAgentModel end-to-end (T223 acceptance c; T271 classifier)", () => {
+  // The active candidate set for these fixtures: all three aliased tokens.
+  // resolveAgentModel filters them by the agent's classified tier.
+  const ALL_TOKENS: ReviewerToken[] = [
+    { harness: "claude", model: "opus-4.8[1m]", provider: null }, // frontier
+    { harness: "pi", model: "minimax-m3", provider: "ollama-cloud" }, // fast
+    { harness: "pi", model: "grok-build", provider: "grok-build" }, // unclassified
+  ];
+
+  it("resolves agent-name -> tier -> first classified candidate", () => {
     const config = parseConfig(VALID_TOML_WITH_TIERS);
-    // investigate-explorer -> frontier -> opus alias -> claude:opus-4.8[1m]
-    expect(resolveAgentModel(config, "investigate-explorer")).toEqual({
+    // investigate-explorer -> frontier -> only opus classifies as frontier
+    expect(resolveAgentModel(config, "investigate-explorer", ALL_TOKENS)).toEqual({
       harness: "claude",
       model: "opus-4.8[1m]",
       provider: null,
     });
-    // implement-worker -> standard -> minimax alias -> pi:ollama-cloud/minimax-m3
-    expect(resolveAgentModel(config, "implement-worker")).toEqual({
-      harness: "pi",
-      model: "minimax-m3",
-      provider: "ollama-cloud",
-    });
+    // implement-worker -> standard. In VALID_TOML_WITH_TIERS, `minimax` (the
+    // alias KEY) classifies as standard; its token is pi:ollama-cloud/minimax-m3,
+    // which is also the fast-classified direct token — document-order in [tiers]
+    // means the direct `pi:...` key (fast) wins for that exact token. So no
+    // candidate classifies as standard here and resolveAgentModel throws.
+    expect(() =>
+      resolveAgentModel(config, "implement-worker", ALL_TOKENS),
+    ).toThrow(CqConfigError);
   });
 
-  it("resolves an unlisted agent through DEFAULT_TIER", () => {
+  it("throws for an unlisted agent when no candidate classifies to DEFAULT_TIER", () => {
     const config = parseConfig(VALID_TOML_WITH_TIERS);
-    // unlisted agent -> standard (DEFAULT_TIER) -> minimax alias -> pi:ollama-cloud/minimax-m3
-    const token = resolveAgentModel(config, "unlisted-agent");
-    expect(token).toEqual({
-      harness: "pi",
-      model: "minimax-m3",
-      provider: "ollama-cloud",
-    });
+    // unlisted agent -> standard (DEFAULT_TIER); no candidate classifies as
+    // standard (see note above), so resolveAgentModel throws.
+    expect(() =>
+      resolveAgentModel(config, "unlisted-agent", ALL_TOKENS),
+    ).toThrow(CqConfigError);
   });
 
-  it("resolveTierToken throws when [tiers] is absent", () => {
+  it("throws when [tiers] is absent (nothing classifies)", () => {
     const config = parseConfig(VALID_TOML);
-    expect(() => resolveTierToken(config, "standard")).toThrow(CqConfigError);
+    expect(() =>
+      resolveAgentModel(config, "any-agent", ALL_TOKENS),
+    ).toThrow(CqConfigError);
   });
 
-  it("resolveTierToken throws when the requested tier slot is not configured", () => {
+  it("classifyToken returns the configured class or undefined", () => {
+    const config = parseConfig(VALID_TOML_WITH_TIERS);
+    expect(
+      classifyToken(config, {
+        harness: "claude",
+        model: "opus-4.8[1m]",
+        provider: null,
+      }),
+    ).toBe("frontier");
+    expect(
+      classifyToken(config, {
+        harness: "pi",
+        model: "grok-build",
+        provider: "grok-build",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("classifyToken returns undefined when [tiers] is absent", () => {
+    const config = parseConfig(VALID_TOML);
+    expect(
+      classifyToken(config, {
+        harness: "claude",
+        model: "opus-4.8",
+        provider: null,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("selectTokensForTier preserves candidate order and drops non-matches", () => {
     const config = parseConfig(`
 [tiers]
-"claude:opus-4.8[1m]" = "frontier"
+"claude:a" = "frontier"
+"claude:b" = "frontier"
+"claude:c" = "fast"
 `);
-    expect(() => resolveTierToken(config, "fast")).toThrow(CqConfigError);
+    const candidates: ReviewerToken[] = [
+      { harness: "claude", model: "b", provider: null },
+      { harness: "claude", model: "c", provider: null },
+      { harness: "claude", model: "a", provider: null },
+    ];
+    // Order follows CANDIDATES (b before a), not [tiers] declaration order.
+    expect(selectTokensForTier(config, "frontier", candidates)).toEqual([
+      { harness: "claude", model: "b", provider: null },
+      { harness: "claude", model: "a", provider: null },
+    ]);
   });
 });
 

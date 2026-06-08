@@ -40,7 +40,6 @@ minimax = "pi:ollama-cloud/minimax-m3"
 opus    = "claude:opus-4.8[1m]"
 
 [tiers]
-"pi:ollama-cloud/minimax-m3" = "fast"
 minimax = "standard"
 opus     = "frontier"
 
@@ -81,7 +80,9 @@ describe("end-to-end resolve — minimax alias through reviewers/planners (T238)
 
   it("resolveAgentModel resolves implement-worker -> standard -> minimax -> provider+model", () => {
     const config = parseConfig(E2E_TOML);
-    expect(resolveAgentModel(config, "implement-worker")).toEqual({
+    // active candidate set = the resolved reviewers (minimax, opus).
+    const candidates = resolveReviewers(config);
+    expect(resolveAgentModel(config, "implement-worker", candidates)).toEqual({
       harness: "pi",
       model: "minimax-m3",
       provider: "ollama-cloud",
@@ -90,7 +91,10 @@ describe("end-to-end resolve — minimax alias through reviewers/planners (T238)
 
   it("resolveAgentModel resolves investigate-explorer -> frontier -> opus -> claude", () => {
     const config = parseConfig(E2E_TOML);
-    expect(resolveAgentModel(config, "investigate-explorer")).toEqual({
+    const candidates = resolveReviewers(config);
+    expect(
+      resolveAgentModel(config, "investigate-explorer", candidates),
+    ).toEqual({
       harness: "claude",
       model: "opus-4.8[1m]",
       provider: null,

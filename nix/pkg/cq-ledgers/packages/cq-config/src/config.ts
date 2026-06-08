@@ -274,44 +274,111 @@ export function resolveAgentTier(config: CqConfig, agentName: string): Tier {
 }
 
 /**
- * Resolve a tier name to a `ReviewerToken` using the `[tiers]` table.
+ * Structural equality for two {@link ReviewerToken}s.
  *
- * Throws a `CqConfigError` if `[tiers]` is absent or the requested tier slot
- * is not configured.
+ * Two tokens are equal iff their `harness`, `model`, and `provider` all match
+ * exactly (no normalization beyond the parse already performed by
+ * `parseReviewerToken` — the model string is compared verbatim, including any
+ * bracketed suffix such as `[1m]`). This is the comparison `classifyToken`
+ * uses to look a candidate token up in the inverted `[tiers]` classifier.
  */
-export function resolveTierToken(
-  config: CqConfig,
-  tier: Tier,
-): ReviewerToken {
-  if (config.tiers === null) {
-    throw new CqConfigError(
-      `cannot resolve tier "${tier}": [tiers] table is absent from cq.toml`,
-    );
-  }
-  // T268 minimal bridge: enumerate the classifier for an entry of this class.
-  // The full classifier resolver (classifyToken/selectTokensForTier) is owned
-  // by T271; here we pick the first entry assigned to `tier`.
-  const entry = config.tiers.entries.find((e) => e.class === tier);
-  if (entry === undefined) {
-    throw new CqConfigError(
-      `tier "${tier}" is not configured in [tiers] (no token classified as "${tier}")`,
-    );
-  }
-  return entry.token;
+function reviewerTokensEqual(a: ReviewerToken, b: ReviewerToken): boolean {
+  return (
+    a.harness === b.harness && a.model === b.model && a.provider === b.provider
+  );
 }
 
 /**
- * Resolve a named agent end-to-end: agent-name -> tier -> ReviewerToken.
+ * Classify a `ReviewerToken` against the inverted `[tiers]` classifier.
  *
- * Combines `resolveAgentTier` and `resolveTierToken`. Throws a
- * `CqConfigError` if the resolved tier has no entry in `[tiers]`.
+ * Looks `token` up among `config.tiers.entries` by STRUCTURAL token equality
+ * (harness + model + provider; see {@link reviewerTokensEqual}) and returns
+ * the {@link Tier} class it was assigned. Returns `undefined` when `[tiers]`
+ * is absent or no configured entry matches the token (i.e. the token is
+ * unclassified).
+ *
+ * If the same token were keyed to more than one class in `[tiers]`, the FIRST
+ * matching entry in configured order wins (parse order = TOML key order);
+ * `parseTiers` does not currently dedupe, so document-order is the tie-break.
+ */
+export function classifyToken(
+  config: CqConfig,
+  token: ReviewerToken,
+): Tier | undefined {
+  if (config.tiers === null) {
+    return undefined;
+  }
+  const entry = config.tiers.entries.find((e) =>
+    reviewerTokensEqual(e.token, token),
+  );
+  return entry === undefined ? undefined : entry.class;
+}
+
+/**
+ * Select, from a set of candidate tokens, those classified to `tier`.
+ *
+ * `candidates` is the active token set the caller cares about (typically the
+ * resolved `planners` or `reviewers` list — see `resolvePlanners` /
+ * `resolveReviewers`). Each candidate is classified via {@link classifyToken}
+ * and kept iff its class equals `tier`.
+ *
+ * TIE-BREAK (documented, deterministic): the result PRESERVES the order of
+ * `candidates` — the caller's configured order is authoritative. No sorting,
+ * de-duplication, or reordering is applied; a candidate that appears twice is
+ * returned twice. Callers that want a single token (e.g. `resolveAgentModel`)
+ * take the FIRST element. Candidates that do not classify (unclassified, or
+ * classified to a different tier) are dropped.
+ */
+export function selectTokensForTier(
+  config: CqConfig,
+  tier: Tier,
+  candidates: readonly ReviewerToken[],
+): ReviewerToken[] {
+  return candidates.filter((token) => classifyToken(config, token) === tier);
+}
+
+/**
+ * Resolve a named agent end-to-end to the token it should run at.
+ *
+ * Pipeline (Q149 classifier model): agent-name -> {@link resolveAgentTier}
+ * (via `[agent_tiers]`, falling back to `DEFAULT_TIER`) ->
+ * {@link selectTokensForTier} over `candidates` (the relevant ACTIVE set —
+ * the resolved planners/reviewers the caller is dispatching from) -> the
+ * FIRST candidate classified to that tier (the documented deterministic
+ * tie-break: configured candidate order).
+ *
+ * `[tiers]` is a CLASSIFIER, not a tier->single-model lookup: it does NOT pick
+ * a model on its own. The caller supplies which active tokens are eligible;
+ * `resolveAgentModel` only filters them by the agent's tier.
+ *
+ * Throws a precise `CqConfigError` when NO candidate classifies to the agent's
+ * tier (including the case where `[tiers]` is absent so nothing classifies).
  */
 export function resolveAgentModel(
   config: CqConfig,
   agentName: string,
+  candidates: readonly ReviewerToken[],
 ): ReviewerToken {
   const tier = resolveAgentTier(config, agentName);
-  return resolveTierToken(config, tier);
+  const selected = selectTokensForTier(config, tier, candidates);
+  const first = selected[0];
+  if (first === undefined) {
+    throw new CqConfigError(
+      `cannot resolve a model for agent "${agentName}": no active token classifies as tier "${tier}" in [tiers] (candidates: ${
+        candidates.length === 0
+          ? "<none>"
+          : candidates.map((t) => formatReviewerToken(t)).join(", ")
+      })`,
+    );
+  }
+  return first;
+}
+
+/** Render a {@link ReviewerToken} back to its `<harness>:<model>` grammar. */
+function formatReviewerToken(token: ReviewerToken): string {
+  return token.provider === null
+    ? `${token.harness}:${token.model}`
+    : `${token.harness}:${token.provider}/${token.model}`;
 }
 
 /**
