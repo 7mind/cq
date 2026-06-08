@@ -171,6 +171,19 @@ per-reviewer json into ONE reconciled verdict that drives the criticism loop
   REPORT that the configured panel was unavailable this pass (which aliases
   abstained + why). The flow NEVER blocks on an unavailable panel and NEVER
   approves with zero successful reviewers.
+- **Off-enum verdict ⇒ ABSTENTION (fail-loud, BEFORE reconcile).** After
+  parsing the verdict contract, VALIDATE the `verdict` string against the
+  closed implement-review enum `{approve, disapprove}` (the literal enum in
+  `commands/cq/implement-review.md`). If `verdict` is NOT EXACTLY `approve`
+  or `disapprove`, treat that reviewer as ABSTAINING — DROP it from the panel
+  (not counted `approve`, not counted `disapprove`), exactly as the
+  abstention rule above drops an unparseable verdict, and LOG it with the
+  reviewer's alias + the raw off-enum value + cause (§Session logs). Do
+  NOT normalize or recover synonyms — an off-enum value is an ABSTENTION,
+  NEVER a value to coerce into a canonical enum (silent coercion would
+  defeat the fail-loud contract). This validation runs BEFORE the
+  strictest-wins reconcile match (§3c) so an off-enum value can never reach
+  reconcile.
 - **Verdict (strictest-wins, over survivors):** ANY surviving reviewer
   `disapprove` → the reconciled verdict is `disapprove`. The reconciled verdict
   is `approve` ONLY when ALL surviving reviewers `approve` AND the worker's
