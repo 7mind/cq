@@ -174,7 +174,7 @@ let
     postBuild = ''
       wrapProgram $out/bin/pi \
         --run ${lib.escapeShellArg piSecretsPrelude} \
-        --set-default SEARXNG_URL https://searx.web.7mind.io \
+        --set-default SEARXNG_URL https://searx.net.7mind.io \
         --run 'export CQ_AGENTS_DIR="$HOME/.pi/agent/cq-agents"'
     '';
   };
@@ -185,7 +185,7 @@ let
   # NOT stored here — they come from the env injected by piWrapped.
   rpivWebToolsConfig = jsonFormat.generate "rpiv-web-tools-config.json" {
     provider = "searxng";
-    baseUrls.searxng = "https://searx.web.7mind.io";
+    baseUrls.searxng = "https://searx.net.7mind.io";
   };
 
   # Pi has no native MCP; pi-mcp-adapter (added via enableMcpIntegration)
@@ -696,6 +696,13 @@ in
             # child `pi -p` turn that cannot itself re-dispatch. See the
             # extension header for the Route-A subprocess mechanism (T221/T224).
             "${../pkg/pi-extensions/cq-subagent-dispatch.ts}"
+            # Fix pi-ollama-cloud's broken web-tool auth: its getCloudApiKey
+            # forgets to await the async getApiKey, so the OLLAMA_API_KEY env
+            # fallback is dead code and ollama_web_search/_fetch fail with
+            # "No Ollama Cloud API key configured" despite the key being set.
+            # We re-register both tools (at load, pre-empting the package's
+            # session_start registration) with corrected resolution. See header.
+            "${../pkg/pi-extensions/fix-ollama-cloud-web-tools-auth.ts}"
           ];
         };
       };
