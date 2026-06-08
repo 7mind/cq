@@ -429,6 +429,31 @@ archives:
     summary: "G32 W4 COMPLETE: 8-cell grep-invariant (4 prompts × 2 markers) + final verify (bun run check 1135/0 + nix build .#ledger-mcp); D39 reproduction closed. T264/T265 done, R321/R322 go-ahead."
     title: "G32 W4: verify + grep-invariant"
     status: done
+  - id: M90
+    path: ./archive/reviews/M90.md
+    summary: "G28 work (integration + tier wiring) COMPLETE: T225 (tier resolution wired) + T229 (Pi dispatch-trigger) done + reviewed; D36 (provider-ambiguous token, filed here) RESOLVED via G29. All items terminal."
+    title: Pi subagent dispatch — integration + tier wiring
+    status: done
+  - id: M97
+    path: ./archive/reviews/M97.md
+    summary: "G30 W1 COMPLETE: T245 added user-action-required to HANDOFFS_SCHEMA (now live post-redeploy). R290 go-ahead."
+    title: "G30 W1: schema — add user-action-required to HANDOFFS_SCHEMA"
+    status: done
+  - id: M99
+    path: ./archive/reviews/M99.md
+    summary: "G30 W3 COMPLETE: T248/T249 WARNING-bucket render (both status.ts) + T250 render tests. All reviews go-ahead."
+    title: "G30 W3: rendering — warning bucket (TUI + web)"
+    status: done
+  - id: M100
+    path: ./archive/reviews/M100.md
+    summary: "G30 W4 COMPLETE: user-action-required threaded through all 4 *:advance prompt tables (T251-T254). All reviews go-ahead."
+    title: "G30 W4: prompt threading (advance.md + 3 per-flow tables)"
+    status: done
+  - id: M101
+    path: ./archive/reviews/M101.md
+    summary: "G30 W5 COMPLETE: schema unit + four-table grep tests (T255) + verify (T256, bun run check + scoped nix build). All reviews go-ahead."
+    title: "G30 W5: verify — schema/grep tests + bun run check + scoped nix build"
+    status: done
 ---
 
 # reviews
@@ -482,32 +507,6 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G28"]
 - sessionLogs: ["docs/logs/20260607-201941-a176e1045eb180489.md","docs/logs/20260607-201941-pi-codex.md","docs/logs/20260607-201941-pi-grok.md","docs/logs/20260607-201941-pi-minimax.md"]
-
-## M90
-
-### R273 — go-ahead
-
-- createdAt: 2026-06-07T23:17:21.798Z
-- updatedAt: 2026-06-07T23:17:21.798Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- summary: "T225 GO-AHEAD (opus + grok approve; codex's lone disapprove VERIFIED FALSE against source — it claimed details.model/provider/modelSource/resolvedTier are never populated, but cq-subagent-dispatch.ts L609-617 builds `details = {...baseDetails, model, provider, modelSource, resolvedTier, ...}` from the resolved locals and the success path returns it; codex misread the split diff hunk; minimax abstained). Inlined flat-table TOML reader + resolver faithfully mirror @cq/config (probe-verified); precedence explicit>tier>parent; fallbacks safe; argv injection-safe; cq-assets untouched; standalone tsc strict clean. LIVE: investigate-explorer→frontier→grok-build vs investigate-prober→fast→ollama-cloud/minimax-m3 (different child models per [tiers]); override + 3 fallbacks hold. Agreed out-of-scope provider-ambiguity filed-and-deferred as D36."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T225","goals:G28"]
-- sessionLogs: ["docs/logs/20260607-230442-a54aba4d897e853d3.md","docs/logs/20260607-231649-T225-reviews.md"]
-
-### R274 — go-ahead
-
-- createdAt: 2026-06-07T23:17:26.902Z
-- updatedAt: 2026-06-07T23:17:26.902Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- summary: "T229 GO-AHEAD (UNANIMOUS: opus + codex + grok approve; minimax abstained). pi-context.md-only (+31): the appended 'Dispatching cq subagents' section maps the shared cq named-agent+task convention onto the EXACT dispatch_agent tool name + {agent,task,isolation?} arg shape (verified vs cq-subagent-dispatch.ts), states the no-re-dispatch boundary, strongly imperative anti-prose wording, trigger scoped to dispatch instructions. LIVE: an UNCHANGED cq-style instruction fired a real dispatch_agent toolCall + child execution (pi --mode json transcript), NOT prose; opus's misfire probe ('you ARE the agent') produced 0 dispatches. Only pi-context.md changed (already wired as programs.pi.appendSystemPrompt); cq-assets + dev-llm.nix untouched; bun run check green 1038/0; nix parse OK."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T229","goals:G28"]
-- sessionLogs: ["docs/logs/20260607-230442-a995278432781c6d1.md","docs/logs/20260607-231649-T229-reviews.md"]
 
 ## M91
 
@@ -637,108 +636,6 @@ archives:
 - ledgerRefs: ["goals:G30"]
 - sessionLogs: ["docs/logs/20260608-085336-a644adda2d79b52bb.md","docs/logs/20260608-085336-pi-codex.md","docs/logs/20260608-085336-pi-grok.md","docs/logs/20260608-085336-pi-minimax.md"]
 
-## M97
-
-### R290 — go-ahead
-
-- createdAt: 2026-06-08T09:38:07.183Z
-- updatedAt: 2026-06-08T09:38:07.183Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T245 APPROVE (opus implement-reviewer). HANDOFFS_SCHEMA gains `user-action-required` in all three places (statusValues, terminalStatuses, transitions []), no new field, other four tokens unchanged; test count 4->5 sound (transitions test iterates statusValues so the new token is exercised); bun run check green 1038/0. Two files, no scope creep."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T245","goals:G30"]
-- sessionLogs: ["docs/logs/20260608-093215-ac9dd78a27033f3ce.md"]
-
-## M100
-
-### R295 — go-ahead
-
-- createdAt: 2026-06-08T09:55:53.855Z
-- updatedAt: 2026-06-08T09:55:53.855Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T251 APPROVE (opus implement-reviewer). user-action-required threaded through advance.md (Q138/Q139): §Provenance status-table row; §End-of-run BLOCKED-ON-USER-ACTION outcome + mixed/handoffReasons composition; §Stop-condition narrowly-pinned LEGAL stop (named item + exact user command + all autonomous steps done), forbidden-look-alikes enumerated (magnitude/proportion/scope/disposition/natural-stopping-point), no-effort-stop gate INTACT, distinct from answers-required, listed among legal statuses. Anti-laundering sound; enforcement (D39) out of scope. Token verbatim 15x; typecheck+lint clean."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T251","goals:G30"]
-- sessionLogs: ["docs/logs/20260608-095457-a7996c3617e26840c.md"]
-
-### R301 — go-ahead
-
-- createdAt: 2026-06-08T10:19:16.419Z
-- updatedAt: 2026-06-08T10:19:16.419Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T252 GO-AHEAD (orchestrator-verified; symmetric to the opus-approved T251). plan/advance.md §Handoff-record table gains the user-action-required row (L580) with narrow-pinning trigger (specific named item + exact user command + all autonomous steps done), distinct-from-answers-required (L595: user ACTION not open-question answer, no questions item), mixed/handoffReasons co-occurrence (L599), gate-callout updated (L559). No new schema field (Q140). Integrated check green 1058/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T252","goals:G30"]
-- sessionLogs: ["docs/logs/20260608-101505-ab61d341a6ea0e8d3.md"]
-
-### R302 — go-ahead
-
-- createdAt: 2026-06-08T10:19:20.011Z
-- updatedAt: 2026-06-08T10:19:20.011Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: T253 GO-AHEAD (orchestrator-verified; symmetric to the opus-approved T251). investigate/advance.md §Handoff-record table gains the user-action-required row (L361) with narrow-pinning trigger (D37 home-manager switch example, L365), distinct-from-answers-required (L376), mixed/handoffReasons co-occurrence (L382), gate-callout updated (L341). No new schema field (Q140). Integrated check green 1058/0.
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T253","goals:G30"]
-- sessionLogs: ["docs/logs/20260608-101505-a382abfe0e3b578cd.md"]
-
-### R303 — go-ahead
-
-- createdAt: 2026-06-08T10:19:23.523Z
-- updatedAt: 2026-06-08T10:19:23.523Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: T254 GO-AHEAD (orchestrator-verified; symmetric to the opus-approved T251). implement/advance.md §Handoff-record table gains the user-action-required row (L439) with narrow-pinning trigger (specific task + exact command + exact item unblocked), distinct-from-answers-required, mixed/handoffReasons co-occurrence (L440), callout + field description updated (L419/L449). Did NOT touch the §3c off-enum section (T242). No new schema field (Q140). Integrated check green 1058/0.
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T254","goals:G30"]
-- sessionLogs: ["docs/logs/20260608-101505-ade34c4ec89fbe878.md"]
-
-## M99
-
-### R296 — go-ahead
-
-- createdAt: 2026-06-08T09:55:57.591Z
-- updatedAt: 2026-06-08T09:55:57.591Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T248 GO-AHEAD (orchestrator-verified trivial one-liner). ledger-tui/src/status.ts WARNING set `[\"revise\"]`→`[\"revise\",\"user-action-required\"]` so statusBucket('user-action-required') returns 'warning' (magenta) not green 'done'; other statuses unchanged. ledger-tui status tests 25/0; bun run check green."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T248","goals:G30"]
-- sessionLogs: ["docs/logs/20260608-095457-a4bd5b603bd673065.md"]
-
-### R297 — go-ahead
-
-- createdAt: 2026-06-08T09:56:00.957Z
-- updatedAt: 2026-06-08T09:56:00.957Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: T249 GO-AHEAD (orchestrator-verified trivial one-liner). ledger-web/src/status.ts WARNING set gains `user-action-required` → 'warning' bucket → lw-status-warning (amber); mirrored with tui (both status.ts WARNING sets in sync). ledger-web status tests 8/0; typecheck+lint clean. (Worker also re-touched the tui file already done by T248; only the ledger-web hunk was merged to avoid duplication.)
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T249","goals:G30"]
-- sessionLogs: ["docs/logs/20260608-095457-a3551001d3e2a1d51.md"]
-
-### R300 — go-ahead
-
-- createdAt: 2026-06-08T10:19:12.011Z
-- updatedAt: 2026-06-08T10:19:12.011Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T250 APPROVE (opus). TUI + web render tests POSITIVELY assert statusBucket('user-action-required',HANDOFFS_SCHEMA)='warning' + color (TUI magenta/ANSI 35; web lw-status-warning) AND that the other four handoff statuses bucket to 'done'. Genuine TEETH (empirically: reverting the TUI WARNING set → 3 failures, web → 2). Diff is the two test files only (+49/-2), no scope creep; suite 1058/0, typecheck+lint clean."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T250","goals:G30"]
-- sessionLogs: ["docs/logs/20260608-101505-ad88475efbcad5520.md"]
-
 ## M98
 
 ### R299 — go-ahead
@@ -752,31 +649,6 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T247","goals:G30"]
 - sessionLogs: ["docs/logs/20260608-101505-abfc87a49b1c437a7.md"]
-
-## M101
-
-### R305 — go-ahead
-
-- createdAt: 2026-06-08T10:30:47.674Z
-- updatedAt: 2026-06-08T10:30:47.674Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T255 APPROVE (opus). (a) HANDOFFS_SCHEMA unit test asserts user-action-required in statusValues + terminalStatuses + transitions [] + terminal (matches constants.ts), with four-token regression. (b) Four-table grep-invariant reads the four REAL cq command-prompt files and asserts each contains the token — VERIFIED TEETH (mutating implement/advance.md to drop the token failed the test). Test-only +65 lines, no scope creep. check green 1071/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T255","goals:G30"]
-- sessionLogs: ["docs/logs/20260608-112600-a06721d01c0ecd25d.md"]
-
-### R306 — go-ahead
-
-- createdAt: 2026-06-08T10:31:39.177Z
-- updatedAt: 2026-06-08T10:31:39.177Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "T256 GO-AHEAD (orchestrator-run G30 verification gate on integrated main). `bun run check` from nix/pkg/cq-ledgers/ = 1071 pass / 1 skip / 0 fail (tsc+eslint clean; all new G30 tests green: T247 records-survive, T250 TUI/web render, T255 schema+grep). `nix build .#llm-contexts .#llm-context-with-env .#llm-skills` from repo root all exit 0. No code diff (pure verification)."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T256","goals:G30"]
 
 ## M102
 

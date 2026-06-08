@@ -469,6 +469,31 @@ archives:
     summary: "G32 W4 COMPLETE: 8-cell grep-invariant (4 prompts × 2 markers) + final verify (bun run check 1135/0 + nix build .#ledger-mcp); D39 reproduction closed. T264/T265 done, R321/R322 go-ahead."
     title: "G32 W4: verify + grep-invariant"
     status: done
+  - id: M90
+    path: ./archive/milestones/M90.md
+    summary: "G28 work (integration + tier wiring) COMPLETE: T225 (tier resolution wired) + T229 (Pi dispatch-trigger) done + reviewed; D36 (provider-ambiguous token, filed here) RESOLVED via G29. All items terminal."
+    title: Pi subagent dispatch — integration + tier wiring
+    status: done
+  - id: M97
+    path: ./archive/milestones/M97.md
+    summary: "G30 W1 COMPLETE: T245 added user-action-required to HANDOFFS_SCHEMA (now live post-redeploy). R290 go-ahead."
+    title: "G30 W1: schema — add user-action-required to HANDOFFS_SCHEMA"
+    status: done
+  - id: M99
+    path: ./archive/milestones/M99.md
+    summary: "G30 W3 COMPLETE: T248/T249 WARNING-bucket render (both status.ts) + T250 render tests. All reviews go-ahead."
+    title: "G30 W3: rendering — warning bucket (TUI + web)"
+    status: done
+  - id: M100
+    path: ./archive/milestones/M100.md
+    summary: "G30 W4 COMPLETE: user-action-required threaded through all 4 *:advance prompt tables (T251-T254). All reviews go-ahead."
+    title: "G30 W4: prompt threading (advance.md + 3 per-flow tables)"
+    status: done
+  - id: M101
+    path: ./archive/milestones/M101.md
+    summary: "G30 W5 COMPLETE: schema unit + four-table grep tests (T255) + verify (T256, bun run check + scoped nix build). All reviews go-ahead."
+    title: "G30 W5: verify — schema/grep tests + bun run check + scoped nix build"
+    status: done
 ---
 
 # milestones
@@ -487,14 +512,6 @@ archives:
 - updatedAt: 2026-06-07T18:58:19.495Z
 - title: "Plan: pi-agent subagent support for cq flow"
 - description: Coordination milestone for the goal of enabling subagent support in the pi agent harness (which lacks it out of the box) so the cq flow/MCP can use subagents.
-
-### M90 — open
-
-- createdAt: 2026-06-07T19:38:54.692Z
-- updatedAt: 2026-06-07T19:38:54.692Z
-- title: Pi subagent dispatch — integration + tier wiring
-- description: "G28 work milestone 4/5: wire tier resolution into the dispatch extension and integrate the extension + projected agents + [tiers] into the pi harness so they load together. Depends on the extension (M88) and the [tiers] config layer (M89)."
-- dependsOn: ["M88","M89"]
 
 ### M91 — open
 
@@ -525,13 +542,6 @@ archives:
 - title: "Plan: fix D38 — pin verdict enum on the Pi subagent path"
 - description: "Coordination milestone for the defect-seeded fix goal G31 (resolves D38). Root cause confirmed via H27: the Pi dispatch path never re-asserts the cq agent's canonical verdict enum on the child, and no orchestrator-side step validates/normalizes the returned verdict before gating, so a Pi child can paraphrase the verdict (e.g. \"fail\") and silently mis-gate."
 
-### M97 — open
-
-- createdAt: 2026-06-08T08:34:20.314Z
-- updatedAt: 2026-06-08T08:34:20.314Z
-- title: "G30 W1: schema — add user-action-required to HANDOFFS_SCHEMA"
-- description: Synthesized from opus+grok+minimax. Add the `user-action-required` terminal status to the canonical HANDOFFS_SCHEMA (constants.ts). Root dependency for all other G30 work.
-
 ### M98 — open
 
 - createdAt: 2026-06-08T08:34:22.312Z
@@ -539,30 +549,6 @@ archives:
 - title: "G30 W2: in-place live-ledger migration (Q141)"
 - description: Edit this repo's live (gitignored) docs/ledgers.yaml handoffs schema block IN PLACE so init() does not backup-reinit (preserving the tracked handoffs.md HO records), plus a fixture-based records-survive regression test. Per Q141 user override.
 - dependsOn: ["M97"]
-
-### M99 — open
-
-- createdAt: 2026-06-08T08:34:29.161Z
-- updatedAt: 2026-06-08T08:34:29.161Z
-- title: "G30 W3: rendering — warning bucket (TUI + web)"
-- description: Add user-action-required to the WARNING set in both mirrored status.ts files + TUI/web render tests asserting it renders warning (not green). Per Q142.
-- dependsOn: ["M97"]
-
-### M100 — open
-
-- createdAt: 2026-06-08T08:34:31.979Z
-- updatedAt: 2026-06-08T08:34:31.979Z
-- title: "G30 W4: prompt threading (advance.md + 3 per-flow tables)"
-- description: "Thread user-action-required into the 4 cq command-prompt status tables: advance.md full treatment (status table + narrow-legal-stop + anti-laundering prose + mixed/handoffReasons composition, Q138/Q139) + plan/investigate/implement handoff-record table rows."
-- dependsOn: ["M97"]
-
-### M101 — open
-
-- createdAt: 2026-06-08T08:34:33.605Z
-- updatedAt: 2026-06-08T08:34:33.605Z
-- title: "G30 W5: verify — schema/grep tests + bun run check + scoped nix build"
-- description: Schema unit test + four-table grep-invariant test, then bun run check + scoped nix build (.#llm-contexts/.#llm-context-with-env/.#llm-skills) green. Per Q142 acceptance gates (a)/(b) + repo substantive guard.
-- dependsOn: ["M98","M99","M100"]
 
 ### M102 — open
 

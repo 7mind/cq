@@ -314,48 +314,34 @@ archives:
     summary: "G32 W4 COMPLETE: 8-cell grep-invariant (4 prompts × 2 markers) + final verify (bun run check 1135/0 + nix build .#ledger-mcp); D39 reproduction closed. T264/T265 done, R321/R322 go-ahead."
     title: "G32 W4: verify + grep-invariant"
     status: done
+  - id: M90
+    path: ./archive/tasks/M90.md
+    summary: "G28 work (integration + tier wiring) COMPLETE: T225 (tier resolution wired) + T229 (Pi dispatch-trigger) done + reviewed; D36 (provider-ambiguous token, filed here) RESOLVED via G29. All items terminal."
+    title: Pi subagent dispatch — integration + tier wiring
+    status: done
+  - id: M97
+    path: ./archive/tasks/M97.md
+    summary: "G30 W1 COMPLETE: T245 added user-action-required to HANDOFFS_SCHEMA (now live post-redeploy). R290 go-ahead."
+    title: "G30 W1: schema — add user-action-required to HANDOFFS_SCHEMA"
+    status: done
+  - id: M99
+    path: ./archive/tasks/M99.md
+    summary: "G30 W3 COMPLETE: T248/T249 WARNING-bucket render (both status.ts) + T250 render tests. All reviews go-ahead."
+    title: "G30 W3: rendering — warning bucket (TUI + web)"
+    status: done
+  - id: M100
+    path: ./archive/tasks/M100.md
+    summary: "G30 W4 COMPLETE: user-action-required threaded through all 4 *:advance prompt tables (T251-T254). All reviews go-ahead."
+    title: "G30 W4: prompt threading (advance.md + 3 per-flow tables)"
+    status: done
+  - id: M101
+    path: ./archive/tasks/M101.md
+    summary: "G30 W5 COMPLETE: schema unit + four-table grep tests (T255) + verify (T256, bun run check + scoped nix build). All reviews go-ahead."
+    title: "G30 W5: verify — schema/grep tests + bun run check + scoped nix build"
+    status: done
 ---
 
 # tasks
-
-## M90
-
-### T225 — done
-
-- createdAt: 2026-06-07T19:39:58.938Z
-- updatedAt: 2026-06-07T23:18:19.654Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: Wire tier resolution into the dispatch extension and integrate it into the pi harness
-- description: "Connect the two halves and confirm they load together. Teach the dispatch extension (T224) to resolve the child session's model from the DISPATCHED AGENT'S NAME via the cq.toml maps (T223): agent NAME -> tier (via [agent_tiers]) -> concrete provider+model (via [tiers]). The per-agent tier SOURCE is the cq.toml [agent_tiers] table keyed by agent name, NOT agent markdown frontmatter (which stays byte-identical per Q126/K44). Resolution precedence: an explicit model the orchestrator passes at dispatch wins; else the agent's tier via [agent_tiers]->[tiers]; else (agent unlisted, or no [tiers]/[agent_tiers] table) fall back to the parent Pi session's active model (documented default). The extension reads cq.toml using the runtime config-access strategy PINNED in T228 (e.g. parse cq.toml at the project root via the agreed env var). Confirm the new extension + the projected agents dir (T222) + the [tiers]/[agent_tiers] tables all load together under the wrapped pi harness."
-- acceptance: "Concrete, observable: (1) tiered resolution — dispatch two agents whose NAMES map to DIFFERENT tiers via [agent_tiers] (e.g. investigate-explorer -> frontier vs a fast-tier agent), launching pi from the repo root, and confirm from the captured pi session/provider log that each child session opened against the provider+model that [tiers] maps that agent's tier to (assert the two child models differ and match the table); (2) explicit-override — a dispatch passing an explicit model uses it regardless of tier (observable in the provider log); (3) fallback — with [tiers]/[agent_tiers] ABSENT (or the agent unlisted), the child falls back to the parent's active model WITHOUT error; (4) integrated load — `nix build`/eval of dev-llm succeeds and launching piWrapped (cwd = repo root) starts cleanly with extension + agents dir + tiers all wired (no load errors in the startup transcript). Capture mechanism: pi session/provider transcript + the dispatch invocations used."
-- suggestedModel: standard
-- dependsOn: ["T224","T223"]
-- ledgerRefs: ["goals:G28"]
-- blockedBy: ["Q131"]
-- resultCommit: 846a0a8
-- completion: "Tier resolution wired into cq-subagent-dispatch.ts: inlined flat-table TOML reader + resolver (mirrors @cq/config; copied per K46, no import) reads cq.toml via $CQ_CONFIG; child model = explicit-arg > agent-name tier ([agent_tiers]→[tiers]) > parent active model; pi:<provider>/<model> & pi:<model> token mapping; claude:/absent→parent fallback. LIVE: investigate-explorer→frontier→grok-build vs investigate-prober→fast→ollama-cloud/minimax-m3 (different child models per [tiers]); override + 3 fallbacks verified; tsc strict clean. Merged. Out-of-scope provider-ambiguity → D36."
-- sessionLogs: ["docs/logs/20260607-230442-a54aba4d897e853d3.md","docs/logs/20260607-231649-T225-reviews.md"]
-
-### T229 — done
-
-- createdAt: 2026-06-07T20:08:40.376Z
-- updatedAt: 2026-06-07T23:18:19.697Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: Author the harness-agnostic dispatch-trigger instruction in the Pi-side context asset
-- description: |
-    Close R266's COMPLETENESS gap: per decision K44 the UNCHANGED cq command prompts fire the Pi dispatch tool either because the registered tool's call shape matches the prompts' existing named-agent+task wording (T224's PRIMARY trigger) AND/OR because a harness-agnostic dispatch INSTRUCTION lives in a Pi-SIDE asset (K44's PERMITTED SUPPLEMENT). No current task AUTHORS or VERIFIES that Pi-side instruction — T224 only REGISTERS the tool, and T226/T227 merely ASSUME the unchanged prompt makes the Pi model emit a dispatch CALL rather than prose. This task authors that missing trigger.
-    
-    WHAT TO DO: add a harness-agnostic dispatch instruction to a PI-SIDE context asset — append to nix/pkg/llm-contexts/pi-context.md (which dev-llm.nix wires as programs.pi.appendSystemPrompt; a Pi-ONLY asset, NOT a cq command prompt, so it honors Q126/K44) telling the Pi model HOW to map the shared prompts' named-agent+task convention (an agent name + a task [+ optional isolation:"worktree"]) onto the registered dispatch tool (T224) — i.e. 'when a cq command instructs you to dispatch/launch a named subagent with a task, CALL the dispatch tool with {agent, task[, isolation]} rather than answering in prose; you cannot re-dispatch from within a child.' Reuse the exact tool name + arg shape T224 registers. Do NOT edit any file under nix/pkg/cq-assets (commands/agents/skills) and do NOT edit the Claude/Codex wiring — only the Pi-side asset (+ any programs.pi appendSystemPrompt wiring in nix/hm/dev-llm.nix needed to deliver it). This is the trigger half K44 names; it depends on T224 (the tool + its exact name/arg shape must exist to instruct against) and is a PREREQUISITE of the T226/T227 end-to-end demos (which assert an unchanged prompt actually fires the tool).
-- acceptance: "Observable, end-to-end: launching piWrapped (cwd = repo root) and running an UNCHANGED cq command prompt (the same kind T226/T227 drive) results in the Pi model FIRING the dispatch tool (a tool call visible in the captured pi transcript) rather than emitting prose describing the dispatch — i.e. the Pi-side instruction demonstrably converts the prompts' named-agent+task wording into an actual dispatch tool call. `git diff` asserts nix/pkg/cq-assets is UNTOUCHED (the trigger lives only in the Pi-side asset); the only changed files are nix/pkg/llm-contexts/pi-context.md (+ any programs.pi appendSystemPrompt wiring in nix/hm/dev-llm.nix). nix build/eval of dev-llm succeeds with the appended context."
-- suggestedModel: frontier
-- dependsOn: ["T224"]
-- ledgerRefs: ["goals:G28"]
-- blockedBy: ["Q131"]
-- resultCommit: cc2f326
-- completion: "Appended a 'Dispatching cq subagents' section to the Pi-side asset pi-context.md (already wired as programs.pi.appendSystemPrompt) mapping the shared cq named-agent+task convention onto the T224 dispatch_agent tool {agent,task,isolation?}. LIVE: an UNCHANGED cq-style instruction fired a real dispatch_agent toolCall + child execution (not prose); misfire probe ('you ARE the agent') → 0 dispatches. Only pi-context.md changed; cq-assets + dev-llm.nix untouched; bun run check green 1038/0. Merged."
-- sessionLogs: ["docs/logs/20260607-230442-a995278432781c6d1.md","docs/logs/20260607-231649-T229-reviews.md"]
 
 ## M91
 
@@ -393,23 +379,6 @@ archives:
 - completion: "ACCEPTANCE DEMO (Q128): an UNCHANGED cq plan-review prompt drove grok-build to fire dispatch_agent(agent=plan-reviewer); child returned a single fenced-json verdict with all 5 plan-review contract keys; orchestrator fence-strip+jq parse succeeded; cq-assets untouched; sandbox+implement-worker deferred-follow-up recorded. Off-enum verdict value filed as D38. Evidence in docs/drafts/20260608-0022-T227-reviewer-dispatch-demo.md. Merged."
 - sessionLogs: ["docs/logs/20260607-233329-afa0391d57f11518e.md","docs/logs/20260607-233329-T226-T227-reviews.md"]
 
-## M97
-
-### T245 — done
-
-- createdAt: 2026-06-08T08:34:47.098Z
-- updatedAt: 2026-06-08T09:38:09.830Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add user-action-required to HANDOFFS_SCHEMA in constants.ts
-- description: "In nix/pkg/cq-ledgers/packages/ledger/src/constants.ts (HANDOFFS_SCHEMA, ~L341-361) add the literal token `user-action-required` (kebab-case, Q137) in exactly three places, consistently: (a) statusValues (currently [drained, answers-required, mixed, illness-detected]); (b) terminalStatuses (it is TERMINAL per Q137); (c) the transitions map as `\"user-action-required\": []` (empty, mirroring the other four). Do NOT add any new schema field (Q140 — the required action is carried in the existing handoffReasons[]). idPrefix HO unchanged. Update the adjacent doc-comment if it enumerates the status set."
-- acceptance: "constants.ts HANDOFFS_SCHEMA shows the literal `user-action-required` added in ALL THREE places — (a) statusValues, (b) terminalStatuses, (c) a `\"user-action-required\": []` transitions entry — with the other four tokens unchanged and NO new field added to HANDOFFS_SCHEMA.fields. Independently verifiable by reading the file (not deferred to T255); `bun run typecheck` (tsc -b) from nix/pkg/cq-ledgers passes."
-- suggestedModel: standard
-- ledgerRefs: ["goals:G30"]
-- resultCommit: a2d2359d034ebda57807552c0519bb2154a723ee
-- completion: "Added user-action-required as the 5th terminal status in HANDOFFS_SCHEMA (statusValues + terminalStatuses + transitions []) + JSDoc + test count 4->5. bun run check green 1038/0."
-- sessionLogs: ["docs/logs/20260608-093215-a87723c693b9e8f2a.md","docs/logs/20260608-093215-ac9dd78a27033f3ce.md"]
-
 ## M98
 
 ### T246 — planned
@@ -440,151 +409,3 @@ archives:
 - resultCommit: 3f64515
 - completion: Added committed CI regression test (handoffs-additive-widening-init.test.ts) proving an additive HANDOFFS_SCHEMA statusValue preserves HO history (no backup-reinit; HO1 survives). Teeth empirically verified.
 - sessionLogs: ["docs/logs/20260608-101505-ae7059ac1de10074a.md","docs/logs/20260608-101505-abfc87a49b1c437a7.md"]
-
-## M99
-
-### T248 — done
-
-- createdAt: 2026-06-08T08:35:12.398Z
-- updatedAt: 2026-06-08T09:56:15.627Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add user-action-required to the WARNING set in ledger-tui status.ts
-- description: "Per Q142: in nix/pkg/cq-ledgers/packages/ledger-tui/src/status.ts, add `user-action-required` to the terminal-status WARNING set (~L28) so statusBucket() returns 'warning' (magenta) for the new terminal status instead of falling through to green 'done'. Change ONLY the WARNING set; leave the other four handoff statuses (drained/answers-required/mixed/illness-detected) and all other buckets unchanged (Q142 scope)."
-- acceptance: ledger-tui status.ts WARNING set contains `user-action-required`; statusBucket('user-action-required', HANDOFFS_SCHEMA) returns 'warning' (magenta); no other status's bucket changes; `bun run typecheck` passes.
-- suggestedModel: fast
-- dependsOn: ["T245"]
-- ledgerRefs: ["goals:G30"]
-- resultCommit: f5ba9d2
-- completion: ledger-tui status.ts WARNING set gains user-action-required → 'warning' (magenta) bucket.
-- sessionLogs: ["docs/logs/20260608-095457-a4bd5b603bd673065.md"]
-
-### T249 — done
-
-- createdAt: 2026-06-08T08:35:17.115Z
-- updatedAt: 2026-06-08T09:56:18.486Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add user-action-required to the WARNING set in ledger-web status.ts (mirror)
-- description: "Per Q142: in nix/pkg/cq-ledgers/packages/ledger-web/src/status.ts (mirror of the TUI helper), add `user-action-required` to the terminal-status WARNING set so statusBucket() maps it to 'warning' → `lw-status-warning` CSS class (amber), not green 'done'. Keep the two status.ts files' bucket logic mirrored/in-sync. Leave the other four handoff statuses unchanged."
-- acceptance: ledger-web status.ts WARNING set contains `user-action-required`; statusBucket('user-action-required', HANDOFFS_SCHEMA) returns 'warning' (→ lw-status-warning / amber); the two status.ts WARNING sets are in sync; no other status's bucket changes; `bun run typecheck` passes.
-- suggestedModel: fast
-- dependsOn: ["T245"]
-- ledgerRefs: ["goals:G30"]
-- resultCommit: 54bbf1a
-- completion: ledger-web status.ts WARNING set gains user-action-required → 'warning' (lw-status-warning/amber) bucket; mirrored with tui.
-- sessionLogs: ["docs/logs/20260608-095457-a3551001d3e2a1d51.md"]
-
-### T250 — done
-
-- createdAt: 2026-06-08T08:35:22.257Z
-- updatedAt: 2026-06-08T10:19:37.848Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add TUI + web render tests asserting user-action-required renders warning (not green)
-- description: "Add render/bucket tests (under the respective package test dirs) asserting a handoffs item with status `user-action-required` renders in the warning bucket and NOT done/green: (a) TUI — statusBucket/statusColor returns 'warning'/'magenta' for `user-action-required` against HANDOFFS_SCHEMA (plus a badge/DagView render assertion where the suite already does this for other statuses); (b) web — statusBucket returns 'warning' and the badge carries `lw-status-warning` (amber), not `lw-status-done` (use uncontrolled inputs/refs per repo happy-dom convention if a component is rendered). These tests MUST FAIL if either WARNING-set edit (T248/T249) is reverted."
-- acceptance: "Under `bun test`, new TUI and web tests POSITIVELY assert that for status `user-action-required`: (TUI) statusBucket returns 'warning' and statusColor returns 'magenta'; (web) statusBucket returns 'warning' and the badge carries the `lw-status-warning` (amber) class. Each test ALSO asserts the other four handoff statuses' buckets are unchanged (still their existing buckets). Reverting either WARNING-set addition (T248/T249) makes the corresponding test fail (observed 'done'/green)."
-- suggestedModel: standard
-- dependsOn: ["T248","T249"]
-- ledgerRefs: ["goals:G30"]
-- resultCommit: 4002bd1
-- completion: Added TUI + web render tests positively asserting user-action-required → warning bucket/magenta/lw-status-warning + the other four unchanged; teeth verified (revert WARNING → failures).
-- sessionLogs: ["docs/logs/20260608-101505-ab03157bbe6b9f9a1.md","docs/logs/20260608-101505-ad88475efbcad5520.md"]
-
-## M100
-
-### T251 — done
-
-- createdAt: 2026-06-08T08:35:37.823Z
-- updatedAt: 2026-06-08T09:56:21.715Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Full treatment of user-action-required in cq/advance.md (status table + stop-condition prose)
-- description: "In nix/pkg/cq-assets/commands/cq/advance.md give the new status the full treatment per Q138/Q139: (1) the §Provenance 'one write' status table (~L60-66) gains a row mapping the user-action classification → handoff status `user-action-required`; update adjacent prose that says 'all four statuses terminal' to reflect five. (2) §End-of-run report: add the user-action classification as a legal end-of-run outcome alongside DRAINED/BLOCKED-ON-QUESTIONS/MIXED (and note co-occurrence with an open-question block + landed work → `mixed` with handoffReasons listing both, e.g. [drained, answers-required, user-action-required], Q139). (3) §Stop-condition gate (~L253-325): make `user-action-required` a LEGAL stop, NARROWLY pinned per Q138 — permitted ONLY when a SPECIFIC NAMED item's next physical step is exclusively the user's (re-activate an environment, provision a credential/secret, run a privileged/external command the agent cannot run) AND every autonomous step is already done; the agent MUST name the EXACT user command/action AND the EXACT item it unblocks (like D37's `home-manager switch`). Enumerate the forbidden look-alikes — magnitude/proportion/scope/disposition/'natural stopping point'/'remaining fix disproportionate' are NEVER user-action-required — mirroring the existing anti-laundering prose, and WITHOUT weakening the 'There is deliberately NO handoff status for an effort-based stop' gate. Distinguish it explicitly from answers-required (strictly open-question-gated; user-action-required involves NO questions item). Add it to the gate's enumeration of legal handoff statuses with its specific predicate condition."
-- acceptance: advance.md status table contains a `user-action-required` row; the §End-of-run report lists the user-action outcome + the mixed/handoffReasons composition note; the §Stop-condition gate names the narrow trigger (specific item + exact user command + all autonomous steps done), enumerates magnitude/proportion/scope/disposition/natural-stopping-point as explicitly NOT user-action-required, keeps the no-effort-stop gate intact, distinguishes it from answers-required, and includes it in the legal-status list. The token `user-action-required` appears verbatim in advance.md.
-- suggestedModel: frontier
-- dependsOn: ["T245"]
-- ledgerRefs: ["goals:G30"]
-- resultCommit: 331c49b
-- completion: advance.md threads user-action-required through the §Provenance status table, §End-of-run report (BLOCKED-ON-USER-ACTION + mixed composition), and §Stop-condition gate (narrow legal stop + anti-laundering, no-effort-gate intact, distinct from answers-required).
-- sessionLogs: ["docs/logs/20260608-095457-a1234ac8ea9a07864.md","docs/logs/20260608-095457-a7996c3617e26840c.md"]
-
-### T252 — done
-
-- createdAt: 2026-06-08T08:35:42.984Z
-- updatedAt: 2026-06-08T10:19:40.331Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add user-action-required row to the plan/advance.md handoff status-table
-- description: "In nix/pkg/cq-assets/commands/cq/plan/advance.md, the §Handoff-record (STANDALONE) status-table (~L563-568) maps this round's stop to a handoff status. Add a row for the user-action case → `user-action-required`, with the SAME narrow-pinning language as advance.md (Q138) and the distinction from answers-required (a user ACTION the planner cannot perform, not an open-question answer; Q139); note co-occurrence with an open question → `mixed` with both in handoffReasons. Keep the field-set prose consistent (action carried in handoffReasons[] + ledgerRefs + summary per Q140; no new field)."
-- acceptance: "plan/advance.md §Handoff-record status-table contains a row mapping the user-action case -> `user-action-required` (token verbatim); the surrounding prose carries the narrow-pinning trigger (specific named item + exact user command + all autonomous steps done), the distinction from answers-required (a user ACTION not an open-question answer), and the co-occurrence -> `mixed` with handoffReasons listing both (Q138/Q139); the field-set prose references handoffReasons[] as the action carrier (no new schema field, Q140)."
-- suggestedModel: standard
-- dependsOn: ["T245"]
-- ledgerRefs: ["goals:G30"]
-- resultCommit: 9e06a5a
-- completion: plan/advance.md §Handoff-record table gains the user-action-required row + narrow-pinning/distinct/mixed prose.
-- sessionLogs: ["docs/logs/20260608-101505-ab61d341a6ea0e8d3.md"]
-
-### T253 — done
-
-- createdAt: 2026-06-08T08:35:46.822Z
-- updatedAt: 2026-06-08T10:19:42.564Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add user-action-required row to the investigate/advance.md handoff status-table
-- description: In nix/pkg/cq-assets/commands/cq/investigate/advance.md, the §Handoff-record (STANDALONE) status-table (~L355-360) maps this round's stop to a handoff status. Add a row for the user-action case → `user-action-required`, with the SAME narrow-pinning language (Q138; e.g. the motivating D37 `home-manager switch`) and the distinction from answers-required (Q139; co-occurrence → `mixed` listing both in handoffReasons). Keep the field-set prose consistent with Q140 (no new field).
-- acceptance: "investigate/advance.md §Handoff-record status-table contains a row mapping the user-action case -> `user-action-required` (token verbatim); the surrounding prose carries the narrow-pinning trigger (e.g. the motivating D37 `home-manager switch`), the distinction from answers-required, and the co-occurrence -> `mixed` with handoffReasons listing both (Q138/Q139); field-set prose references handoffReasons[] as the action carrier (no new schema field, Q140)."
-- suggestedModel: standard
-- dependsOn: ["T245"]
-- ledgerRefs: ["goals:G30"]
-- resultCommit: 5f611aa
-- completion: investigate/advance.md §Handoff-record table gains the user-action-required row + narrow-pinning (D37 example)/distinct/mixed prose.
-- sessionLogs: ["docs/logs/20260608-101505-a382abfe0e3b578cd.md"]
-
-### T254 — done
-
-- createdAt: 2026-06-08T08:35:54.467Z
-- updatedAt: 2026-06-08T10:19:44.834Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add user-action-required row to the implement/advance.md handoff status-table
-- description: "In nix/pkg/cq-assets/commands/cq/implement/advance.md, the §Handoff-record (STANDALONE) status-table (~L422-427) maps this pass's stop to a handoff status. Add a row for the user-action case → `user-action-required`, with the SAME narrow-pinning language (Q138; a specific task whose next physical step is exclusively the user's — provision a credential, re-activate an environment, run a privileged external command — all autonomous steps done) and the distinction from answers-required (Q139; co-occurrence → `mixed` with both in handoffReasons). Keep field-set prose consistent with Q140 (action in handoffReasons[] + ledgerRefs + summary; no new field)."
-- acceptance: "implement/advance.md §Handoff-record status-table contains a row mapping the user-action case -> `user-action-required` (token verbatim); the surrounding prose carries the narrow-pinning trigger (a specific task whose next physical step is exclusively the user's, all autonomous steps done), the distinction from answers-required, and the co-occurrence -> `mixed` with handoffReasons listing both (Q138/Q139); field-set prose references handoffReasons[] as the action carrier (no new schema field, Q140)."
-- suggestedModel: standard
-- dependsOn: ["T245"]
-- ledgerRefs: ["goals:G30"]
-- resultCommit: 1c02178
-- completion: implement/advance.md §Handoff-record table gains the user-action-required row + narrow-pinning/distinct/mixed prose (untouched the §3c off-enum section).
-- sessionLogs: ["docs/logs/20260608-101505-ade34c4ec89fbe878.md"]
-
-## M101
-
-### T255 — done
-
-- createdAt: 2026-06-08T08:36:01.045Z
-- updatedAt: 2026-06-08T10:30:53.016Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add HANDOFFS_SCHEMA unit test + four-table grep-invariant test
-- description: "Per Q142 acceptance gates (a) + (b). (1) Schema unit test (under nix/pkg/cq-ledgers/packages/ledger/test/, where the existing HANDOFFS_SCHEMA tests live): assert HANDOFFS_SCHEMA includes `user-action-required` in statusValues AND terminalStatuses AND has a `user-action-required: []` transitions entry, and that isTerminal reports it terminal; the other four tokens still pass their existing assertions. (2) Grep-invariant test: assert ALL FOUR prompt status-tables — nix/pkg/cq-assets/commands/cq/{advance.md, plan/advance.md, investigate/advance.md, implement/advance.md} — contain the literal token `user-action-required` (read each file, assert presence) so a future prompt edit dropping the token fails. cq-assets is eval-time-only (no per-file build target), so this grep test is the substantive guard for prompt threading."
-- acceptance: Under `bun test`, the new schema unit test + the four-table grep-invariant test pass; the schema test would have failed before T245; the grep test fails if any of the four prompt files lacks `user-action-required`.
-- suggestedModel: standard
-- dependsOn: ["T245","T251","T252","T253","T254"]
-- ledgerRefs: ["goals:G30"]
-- resultCommit: 3c08b66
-- completion: Added HANDOFFS_SCHEMA unit test (user-action-required in all 3 places + terminal) + four-table grep-invariant (reads the 4 real prompt files; teeth verified). check green.
-- sessionLogs: ["docs/logs/20260608-112600-adbcf1b71a34162e5.md","docs/logs/20260608-112600-a06721d01c0ecd25d.md"]
-
-### T256 — done
-
-- createdAt: 2026-06-08T08:36:06.880Z
-- updatedAt: 2026-06-08T10:31:41.040Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: "Verify: bun run check + scoped nix build green"
-- description: Final verification gate. From nix/pkg/cq-ledgers/ run `bun run check` (tsc -b + eslint . + bun test) and confirm exit 0 with all new tests (schema unit, grep-invariant, records-survive, TUI/web render) green and no regressions — the substantive guard. Then from the REPO ROOT run `nix build .#llm-contexts .#llm-context-with-env .#llm-skills` (the buildable attrs that exercise the cq-assets prompts + the edited llm-contexts; cq-assets is eval-time-only with no per-file target) and confirm each exits 0. Capture all outputs. If any check/build fails, fix the cause before this task is done.
-- acceptance: "`bun run check` (from nix/pkg/cq-ledgers/) exits 0 with captured output (all new + existing tests green); `nix build .#llm-contexts .#llm-context-with-env .#llm-skills` (from repo root) each exit 0 with captured output; both quoted in the completion."
-- suggestedModel: standard
-- dependsOn: ["T247","T250","T255"]
-- ledgerRefs: ["goals:G30"]
-- completion: "G30 verify gate PASSED (orchestrator-run on integrated main): bun run check 1071/1/0 (all new tests green); nix build .#llm-contexts .#llm-context-with-env .#llm-skills exit 0. No code diff."
