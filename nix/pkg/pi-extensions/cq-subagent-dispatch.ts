@@ -112,7 +112,7 @@ const DispatchParams = Type.Object({
   model: Type.Optional(
     Type.String({
       description:
-        'Optional explicit model OVERRIDE. Wins over the agent\'s tier. Either a "<harness>:<model>" token (e.g. "pi:grok-build") or a bare pi --model pattern. A "claude:" token cannot run under a child pi process and falls back to the parent model.',
+        'Optional explicit model OVERRIDE. Wins over the agent\'s tier. A "<harness>:<model>" token: a pi token MUST be qualified ("pi:<provider>/<model>", e.g. "pi:ollama-cloud/minimax-m3") — a BARE pi token ("pi:<model>", no provider) is REFUSED and falls back to the parent model (mirrors @cq/config). A "claude:" token cannot run under a child pi process and also falls back to the parent model.',
     }),
   ),
   isolation: Type.Optional(
@@ -308,22 +308,30 @@ function resolveAgentToken(config: CqConfigSubset, agentName: string): CqToken |
  * Map a resolved `<harness>:<model>` token to the child `pi -p` process's
  * provider/model selection.
  *
- * - `pi:<seg>`: `<seg>` is the pi `--model` pattern (pi's `--model` supports a
- *   `provider/id` form + fuzzy matching, so a bare `grok-build` resolves to the
- *   grok-build provider). If `<seg>` carries an explicit `provider/model` form,
- *   the provider half is also emitted as `--provider`.
+ * - `pi:<provider>/<model>`: the pi model segment MUST carry an explicit
+ *   `provider/model` qualifier; the provider half is emitted as `--provider`
+ *   and the model half as `--model`, BOTH non-empty. A BARE pi segment (NO
+ *   `/`) is REFUSED → null; an empty half (`p/` or `/m`) is also REFUSED →
+ *   null. This MIRRORS @cq/config's parseReviewerToken (T231,
+ *   packages/cq-config/src/config.ts), which THROWS on a bare/empty-half pi
+ *   token: both REFUSE bare (parseReviewerToken throws; this lenient mirror
+ *   returns null, so the caller falls back to the parent model rather than
+ *   dispatching provider-less — exactly D36). A bare `pi:<model>` MUST NOT be
+ *   dispatched with a null provider.
  * - `claude:<model>`: a Claude provider CANNOT be driven by a child `pi -p`
  *   process, so this yields null — the caller falls back to the parent's model.
+ *   (A `/` qualifier is pi-only; claude carries no provider here either way.)
  *
  * Returns the {provider, model} to pass to the child, or null to fall back.
  */
 function tokenToChildModel(token: CqToken): { provider: string | null; model: string } | null {
   if (token.harness !== "pi") return null;
   const slash = token.model.indexOf("/");
-  if (slash > 0) {
-    return { provider: token.model.slice(0, slash), model: token.model.slice(slash + 1) };
-  }
-  return { provider: null, model: token.model };
+  if (slash < 0) return null; // bare pi token — REFUSED (mirror @cq/config THROW)
+  const provider = token.model.slice(0, slash);
+  const model = token.model.slice(slash + 1);
+  if (provider === "" || model === "") return null; // empty half — REFUSED
+  return { provider, model };
 }
 
 /** Read + parse the named agent markdown from the cq-agents directory. */
@@ -564,8 +572,10 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
       const explicit = args.model && args.model.trim().length > 0 ? args.model.trim() : null;
       if (explicit !== null) {
         // An explicit override may be a "<harness>:<model>" token or a bare pi
-        // --model pattern. A claude: token can't drive a child pi process —
-        // fall back to the parent model in that case.
+        // --model pattern (a non-token string with no ':'). tokenToChildModel
+        // REFUSES (→null) a claude: token (can't drive a child pi process) AND
+        // a bare/empty-half pi: token (must be "pi:<provider>/<model>", mirror
+        // of @cq/config); a null child keeps the parent-model fallback.
         const token = parseCqToken(explicit);
         const child = token ? tokenToChildModel(token) : { provider: null, model: explicit };
         if (child !== null) {
