@@ -408,10 +408,10 @@ archives:
 - completion: Renamed the web help 'State Machines' tab to 'Item States' — every DOM-visible identifier migrated to the item-states scheme (tab-state union member, label, data-testids help-tab-item-states/help-item-states, per-ledger help-item-state-<ledger>, DiagramSvg idPrefix, CSS lw-item-state*) in App.tsx + styles.css; two happy-dom tests updated. Cherry-picked onto main (clean; worker worktree was stale-based). Reviewed APPROVE; integrated bun run check green 1135/1skip/0.
 - sessionLogs: ["docs/logs/20260608-180917-a27f1b85731cda97f.md","docs/logs/20260608-181727-a0ebdfdbc5ec7ed80.md","docs/logs/20260608-181727-pi-minimax-T267.md"]
 
-### T269 — planned
+### T269 — done
 
 - createdAt: 2026-06-08T16:57:16.294Z
-- updatedAt: 2026-06-08T16:57:16.294Z
+- updatedAt: 2026-06-08T18:19:48.963Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: Update happy-dom web tests for the renamed Item States tab
@@ -420,6 +420,9 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T267"]
 - ledgerRefs: ["goals:G34"]
+- resultCommit: 2b1a2e0
+- completion: "Satisfied within T267's commit (2b1a2e0): the T267 worker updated packages/ledger-web/test/{helpTabs.test.tsx,stateMachineTab.test.tsx} to the new item-states testids (help-tab-item-states / help-item-states / help-item-state-<ledger>) with per-ledger diagram coverage preserved, to keep `bun run check` green. Verified on main: `rg statemachine packages/ledger-web/test` returns nothing; the tests assert the renamed testids + per-ledger rendering; integrated bun run check green 1135/1skip/0. Those test files were part of the R327-reviewed T267 diff (reviewer noted coverage preserved). No separate worker needed."
+- sessionLogs: ["docs/logs/20260608-180917-a27f1b85731cda97f.md"]
 
 ## M110
 
@@ -438,10 +441,10 @@ archives:
 - completion: "Inverted the TiersConfig TYPE (cq-config/src/types.ts) to a token-keyed classifier (entries: ReadonlyArray<{token,raw,class}>, new TierEntry export); old per-tier ReviewerToken slots removed. Minimal compile-bridges in config.ts/index.ts/ledger-mcp configCapability.ts + 2 test assertions keep bun run check green; full parser/resolver/consumer/test rework deferred to T270/T271/T272/T273. Cherry-picked onto main (clean). Reviewed APPROVE; integrated check green 1135/1skip/0."
 - sessionLogs: ["docs/logs/20260608-180917-a8a9ef0963751a6ef.md","docs/logs/20260608-181727-a5a19d637a6699421.md","docs/logs/20260608-181727-pi-minimax-T268.md"]
 
-### T270 — planned
+### T270 — done
 
 - createdAt: 2026-06-08T16:57:23.755Z
-- updatedAt: 2026-06-08T17:18:23.681Z
+- updatedAt: 2026-06-08T18:35:13.275Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: Rewrite parseTiers to parse the token-keyed classifier and validate class values
@@ -450,6 +453,9 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T268"]
 - ledgerRefs: ["goals:G34"]
+- resultCommit: 9908c5c
+- completion: "Rewrote parseTiers(raw,aliases) for the inverted token-keyed [tiers]: iterates the record resolving each KEY→token (alias via [aliases], else parseReviewerToken G29 grammar) and validating each VALUE→Tier via isTier into TierEntry[] {token,raw:key,class}; non-Tier value + malformed/unknown key throw CqConfigError; dropped the now-unused TIERS import; updated toml.ts doc comments (RawToml.tiers stays Record<string,string>). Minimal [tiers] fixture inversions in 3 tests + cq.toml.example to keep check green. resolveTierToken left intact (T271). FF-merged to main (worktree based on HEAD); bun run check green 1136/0."
+- sessionLogs: ["docs/logs/20260608-183431-a416a06bdb13b79c1.md","docs/logs/20260608-183431-a985728ce61704eae.md","docs/logs/20260608-183431-pi-minimax-T270.md"]
 
 ### T271 — planned
 

@@ -560,10 +560,10 @@ archives:
 - updatedAt: 2026-06-08T15:05:47.371Z
 - title: "Plan: help-popup item-states rename + Agents tab + tiers triplet mapping"
 
-### M109 — open
+### M109 — done
 
 - createdAt: 2026-06-08T16:56:34.107Z
-- updatedAt: 2026-06-08T16:56:34.107Z
+- updatedAt: 2026-06-08T18:19:57.755Z
 - title: "G34-W1: ledger-web help popup — rename State Machines → Item States (label + ids/testids/CSS)"
 
 ### M110 — open

@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 328
+  item: 329
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -756,3 +756,15 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T268","goals:G34"]
 - sessionLogs: ["docs/logs/20260608-181727-a5a19d637a6699421.md","docs/logs/20260608-181727-pi-minimax-T268.md"]
+
+### R329 — go-ahead
+
+- createdAt: 2026-06-08T18:35:10.440Z
+- updatedAt: 2026-06-08T18:35:10.440Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "T270 implement review APPROVE (panel: opus[claude] + minimax[pi:ollama-cloud] both approve; grok+codex[pi:grok-build] excluded, documented stall). parseTiers rewritten to the inverted token-keyed classifier: KEY→token (alias-then-parseReviewerToken G29 grammar), VALUE→Tier via isTier, building TierEntry[] {token,raw,class}; non-Tier value + malformed/unknown key both throw CqConfigError; scope confined to parseTiers + toml.ts + minimal fixture/cq.toml.example inversions; resolveTierToken left intact (T271); bun run check green 1136/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T270","goals:G34"]
+- sessionLogs: ["docs/logs/20260608-183431-a985728ce61704eae.md","docs/logs/20260608-183431-pi-minimax-T270.md"]
