@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 150
+  item: 153
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -464,3 +464,39 @@ archives:
 - recommendation: "Token-keyed inline table reusing the existing parseReviewerToken grammar as the KEY (`\"<token>\" = \"<class>\"`), as a BREAKING replacement (no dual-shape support), since live config has no [tiers] today and project policy avoids internal backward-compat. Please confirm the syntax and that breaking is acceptable."
 - ledgerRefs: ["goals:G34"]
 - answer: as recommended
+
+### Q151 — open
+
+- createdAt: 2026-06-08T17:27:50.953Z
+- updatedAt: 2026-06-08T17:27:50.953Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- question: "Follow-up field PRIVILEGE CLASS (RO/RW): should it be DERIVED mechanically from the agent's existing frontmatter, or AUTHORED explicitly into the `## Catalogue` block? For the seven subagents, the frontmatter is a DENY-list (`disallowedTools`) — a role is RW iff it can still mutate (i.e. none of Write/Edit/MultiEdit/NotebookEdit/Bash is in `disallowedTools`), otherwise RO. By that rule: RW = implement-worker, implement-conflict-resolver, investigate-prober (these disallow only `Agent`, often + `isolation: worktree`); RO = plan-advance, plan-reviewer, implement-reviewer, investigate-explorer (these disallow the mutating tools). I can derive it deterministically in codegen from disallowedTools (and the parser already extracts that field per T275), which keeps it drift-free and freshness-guarded (T277). The alternative is to author `privilege: RO|RW` into each `## Catalogue` block explicitly."
+- context: "G34's locked plan (T275/T281/T276/T277) already establishes: agent frontmatter keys are name/description/disallowedTools/isolation (NOT a positive `tools` allow-list), parsed by parseAgentMarkdown; the `## Catalogue` yaml block (inputs/outputs/ioSchema) is the authored source of truth. Privilege class maps cleanly onto the deny-list: mutating-tool present in disallowedTools => RO. Deriving it reuses already-parsed data and is guarded by the freshness test; authoring it adds a per-file field but lets a role declare a privilege that differs from its raw tool set. The two are mutually exclusive design choices for this new field."
+- suggestions: ["DERIVE: codegen computes RO/RW from disallowedTools (RW iff no mutating tool — Write/Edit/MultiEdit/NotebookEdit/Bash — is disallowed); no new authored field, freshness-guarded","AUTHOR: add an explicit `privilege: RO|RW` key to each `## Catalogue` block; codegen parses it verbatim","HYBRID: derive by default, but allow an optional `## Catalogue` `privilege:` override when a role's effective privilege differs from its raw toolset"]
+- recommendation: DERIVE from disallowedTools (option 1). It is deterministic, reuses the field T275 already parses, stays automatically in sync with the assets, and is genuinely guarded by the T277 freshness test — matching the Q147 'generate, don't hand-curate' decision. Authoring invites the drift codegen was chosen to avoid.
+- ledgerRefs: ["goals:G34"]
+
+### Q152 — open
+
+- createdAt: 2026-06-08T17:28:06.541Z
+- updatedAt: 2026-06-08T17:28:06.541Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- question: "Follow-up field EXPOSED TOOLS: what exactly does the card show, given the two asset kinds encode tools OPPOSITELY? Subagent files carry a DENY-list (`disallowedTools`, e.g. `Write, Edit, MultiEdit, NotebookEdit, Bash, Agent`) — there is NO positive allow-list, so a subagent's exposed toolset is 'everything the host grants MINUS disallowedTools', which we cannot enumerate without knowing the host's full tool universe. Orchestrator COMMAND files instead carry a positive `allowed-tools` allow-list (e.g. `mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob`), and some commands (implement-review.md, the shared review-rubric prompts) carry NO tools frontmatter at all. So 'exposed tools' means different things per kind. Should the card show: (a) the RAW frontmatter verbatim per kind (subagents: 'disallowed: …'; commands: 'allowed: …'); (b) a NORMALIZED resolved allow-list (requires a defined host tool-universe to subtract the deny-list from); or (c) a curated short summary (e.g. subagents: 'read-only' / 'read+write+exec in worktree'; commands: the allow-list)?"
+- context: "Asymmetry confirmed by reading the assets: agents/*.md => disallowedTools (deny) + optional isolation; commands/cq/*.md => allowed-tools (allow) or nothing. T275's parser currently extracts disallowedTools+isolation for agents but does NOT parse command `allowed-tools`. A normalized allow-list (b) is only well-defined if we fix the host tool universe to subtract from — which the assets do not declare. Raw-per-kind (a) is faithful and parseable from what exists (but needs T275 to also parse command allowed-tools). Curated (c) is most readable but reintroduces hand-authoring unless encoded in `## Catalogue`."
+- suggestions: ["(a) RAW per-kind: subagents show their `disallowedTools` (+ isolation); commands show their `allowed-tools`; missing => 'none declared'. Requires T275 parser to also read command allowed-tools.","(b) NORMALIZED resolved allow-list: define a canonical host tool universe and show (universe minus disallowedTools) for agents and the literal allow-list for commands","(c) CURATED summary string authored per role (e.g. 'RO: Read/Grep/Glob/WebSearch'); encoded in the `## Catalogue` block so codegen parses it"]
+- recommendation: (a) RAW per-kind, labelled by semantics ('Disallowed tools' for subagents incl. isolation; 'Allowed tools' for commands; 'none declared' when absent). It is faithful to the actual assets, fully derivable (extend the T275 parser to also read command `allowed-tools` — a small addition to the existing frontmatter extraction), and freshness-guarded. (b) needs a host tool-universe the assets don't define; (c) reintroduces hand-curation. Please confirm, and confirm extending the parser to command allowed-tools is in scope.
+- ledgerRefs: ["goals:G34"]
+
+### Q153 — open
+
+- createdAt: 2026-06-08T17:28:20.554Z
+- updatedAt: 2026-06-08T17:28:20.554Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- question: "For ORCHESTRATOR roles (the cq:plan/investigate/implement :advance/:start/:follow-up + cq:advance commands) — what privilege class and exposed-tools do we display? These are command loops, not model-backed subagents, and several already show model = default/N-A (Q148). For privilege: a command like cq:plan/cq:investigate has `allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob` (it CAN write + dispatch subagents), so by its own allow-list it is RW; cq:advance allows `mcp__ledger__*, Read, Grep, Glob, Bash`; the planners/reviewers override commands allow only specific read-only MCP calls + Read (effectively RO). Should an orchestrator's privilege be derived from its own `allowed-tools` (RW iff it lists Write/Bash/Edit), shown as a fixed label (e.g. 'orchestrator'), or shown as the UNION of the privileges of the subagents it dispatches? And for 'exposed tools', is it the command's own `allowed-tools` list, or 'N/A' like the model field?"
+- context: Q148 already settled that non-configurable roles show model = default/N-A. The follow-up adds privilege + tools, which DO have a concrete source for commands (the `allowed-tools` allow-list) — unlike model. So unlike the model field, privilege/tools need NOT be N/A for orchestrators; they can be derived from allowed-tools. But orchestrators are a different conceptual unit (they dispatch RO/RW subagents), so a 'union of dispatched privileges' or a flat 'orchestrator' label is also defensible. This determines whether the privilege/tools columns are populated uniformly across both kinds or only for subagents.
+- suggestions: ["Derive orchestrator privilege from its OWN `allowed-tools` (RW iff it lists a mutating tool: Write/Edit/Bash); exposed tools = its `allowed-tools` list","Show orchestrators with a fixed privilege label 'orchestrator' (neither RO nor RW) and exposed tools = 'N/A' (consistent with the model=N/A treatment)","Show orchestrator privilege as the UNION of the RO/RW of the subagents it dispatches; exposed tools = its allowed-tools"]
+- recommendation: "Derive from the command's own `allowed-tools` (option 1): RW iff its allow-list contains a mutating tool (Write/Edit/Bash), else RO; exposed tools = the literal allowed-tools entries (or 'none declared' for the rubric prompt files that have no frontmatter). This keeps a single uniform, derivable, freshness-guarded rule across both kinds, and is more informative than a flat 'N/A'. Please confirm (or pick the 'orchestrator' label if you prefer the two kinds visibly distinct)."
+- ledgerRefs: ["goals:G34"]

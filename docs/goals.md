@@ -236,10 +236,10 @@ archives:
 
 ## M108
 
-### G34 — planned
+### G34 — clarifying
 
 - createdAt: 2026-06-08T15:05:54.899Z
-- updatedAt: 2026-06-08T17:24:13.737Z
+- updatedAt: 2026-06-08T17:28:58.397Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - title: Help-popup item-states rename + new Agents tab + cq.toml tiers triplet mapping
@@ -251,5 +251,8 @@ archives:
     2) Create a new tab — "Agents" — that shows all agentic roles we support in our flow (e.g. orchestrator/reviewer). The information should be detailed and structured/typed: what inputs are expected, outputs produced, input/output schemas, prompt template (folded by default), configured model classes (frontier/fast/standard) and per-harness mappings. More fields can be added to the list as useful.
     
     3) Improve the tiers mapping in cq.toml: currently it maps a class to a model name, but to make actual sense it should map a (harness + provider + model name) triplet to a class. (i.e. invert/restructure the mapping so a concrete harness/provider/model resolves to its tier class, rather than a class naming a single model name.)
-- sessionLogs: ["docs/logs/20260608-150928-abb5622a0a388a034.md","docs/logs/20260608-164941-a5d36f435cca65291.md","docs/logs/20260608-164941-pi-minimax.md","docs/logs/20260608-164941-pi-grok.md","docs/logs/20260608-171607-af1c0c727cb095306.md","docs/logs/20260608-171607-pi-minimax-review.md","docs/logs/20260608-171607-pi-grokbuild-reviewers.md","docs/logs/20260608-172307-a279480bcb33c7fd1.md","docs/logs/20260608-172307-pi-minimax-review2.md"]
+    
+    ## Follow-up (2026-06-08)
+    I forgot one thing: in the agent cards we should include agent privilege class (RO or RW) and exposed tools.
+- sessionLogs: ["docs/logs/20260608-150928-abb5622a0a388a034.md","docs/logs/20260608-164941-a5d36f435cca65291.md","docs/logs/20260608-164941-pi-minimax.md","docs/logs/20260608-164941-pi-grok.md","docs/logs/20260608-171607-af1c0c727cb095306.md","docs/logs/20260608-171607-pi-minimax-review.md","docs/logs/20260608-171607-pi-grokbuild-reviewers.md","docs/logs/20260608-172307-a279480bcb33c7fd1.md","docs/logs/20260608-172307-pi-minimax-review2.md","docs/logs/20260608-172840-a519de836685f06ad.md"]
 - milestones: ["M109","M110","M111","M112"]

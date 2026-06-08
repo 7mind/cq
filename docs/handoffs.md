@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 30
+  item: 31
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -251,3 +251,15 @@ archives:
 - ledgerRefs: ["goals:G34"]
 - blockingQuestions: ["Q145","Q146","Q147","Q148","Q149","Q150"]
 - sessionLogs: ["docs/logs/20260608-150928-abb5622a0a388a034.md"]
+
+### HO31 — answers-required
+
+- createdAt: 2026-06-08T17:29:12.013Z
+- updatedAt: 2026-06-08T17:29:12.013Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "ANSWERS-REQUIRED. /cq:plan:follow-up added new scope to goal G34 (already `planned` with a locked 15-task plan T267-T281 / decision K54): the Agents-tab cards should also show each role's PRIVILEGE CLASS (RO vs RW) and EXPOSED TOOLS. G34 re-opened planned->planning->clarifying; the original answered scope (Q145-Q150), the locked plan, and K54 were left untouched. The planner grounded read-only and filed a follow-up-scoped clarifying batch Q151-Q153 (all linked goals:G34). KEY FINDING: the two asset kinds encode tools OPPOSITELY — subagents (cq-assets/agents/*.md) carry a DENY-list `disallowedTools` (+ optional `isolation: worktree`); orchestrator commands (cq-assets/commands/cq/*.md) carry a positive `allowed-tools` allow-list; shared rubric prompts carry none. RO/RW maps cleanly onto the subagent deny-list (RW = implement-worker, implement-conflict-resolver, investigate-prober; RO = plan-advance, plan-reviewer, implement-reviewer, investigate-explorer). The locked T275 parser reads agent `disallowedTools`/`isolation` but NOT command `allowed-tools` — a likely small parser extension if privilege/tools are derived mechanically. Open questions: Q151 (RO/RW derived from disallowedTools vs authored), Q152 (definition of 'exposed tools' given the deny/allow asymmetry + parser extension), Q153 (how orchestrator commands show privilege/tools). NEXT (user): answer Q151-Q153 in the TUI/web, then run /cq:plan:advance G34 to fold the follow-up into the existing plan."
+- flow: plan
+- ledgerRefs: ["goals:G34"]
+- blockingQuestions: ["Q151","Q152","Q153"]
+- sessionLogs: ["docs/logs/20260608-172840-a519de836685f06ad.md"]
