@@ -15,6 +15,8 @@
   extraReadWritePaths ? [ ],
   ollamaModelsDir ? null,
   extraPromptFragments ? [ ],
+  secretPaths ? [ ],
+  sandboxPackages ? [ ],
 }:
 
 let
@@ -46,6 +48,23 @@ let
   extraRwExports = lib.optionalString (extraReadWritePaths != [ ]) ''
     export YOLO_EXTRA_RW_PATHS=${lib.escapeShellArg (joinPaths extraReadWritePaths)}
   '';
+  # Provider/API-key secret file paths to ro-bind into the sandbox. Newline-
+  # joined like the extra-path lists; yolo.sh splits on newline and the
+  # llm-sandbox layer skips any path that is absent on this host.
+  secretPathExports = lib.optionalString (secretPaths != [ ]) ''
+    export YOLO_SECRET_PATHS=${lib.escapeShellArg (joinPaths secretPaths)}
+  '';
+  # Extra packages exposed only inside the sandbox: collect them into one
+  # buildEnv and hand yolo.sh its bin dir (already reachable via the ro-bound
+  # /nix/store) to prepend onto the sandboxed command's PATH. Built lazily —
+  # only forced when the list is non-empty (the export below is otherwise "").
+  sandboxEnv = pkgs.buildEnv {
+    name = "yolo-sandbox-packages";
+    paths = sandboxPackages;
+  };
+  sandboxBinExports = lib.optionalString (sandboxPackages != [ ]) ''
+    export YOLO_SANDBOX_BIN=${sandboxEnv}/bin
+  '';
   promptExports = lib.optionalString (extraPromptFragments != [ ]) ''
     export YOLO_EXTRA_PROMPT=${lib.escapeShellArg (lib.concatStringsSep "\n\n" extraPromptFragments)}
   '';
@@ -64,6 +83,8 @@ pkgs.writeShellScriptBin "yolo" ''
   ${ollamaExports}
   ${extraRoExports}
   ${extraRwExports}
+  ${secretPathExports}
+  ${sandboxBinExports}
   ${promptExports}
   exec bash ${yoloScript} "$@"
 ''

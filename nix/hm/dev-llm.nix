@@ -85,13 +85,6 @@ let
     '';
   });
 
-  # Rootless-Podman socket (for container-in-sandbox access). Both values are
-  # null unless the consumer sets them; the consumer owns the gating logic
-  # (enabled only when its rootless-Podman service is on).
-  rootlessPodmanSocketPath = config.smind.hm.dev.llm.podman.socketPath;
-  rootlessPodmanSocketUri = config.smind.hm.dev.llm.podman.socketUri;
-  rootlessPodmanEnabled = rootlessPodmanSocketPath != null;
-
   # Prompt content lives in two sibling packages: pkg/llm-skills (SKILL.md set
   # + build-time validation) and pkg/llm-contexts (general context + Pi's
   # operating manual). Environment guidance is a skill for skill-aware agents;
@@ -149,25 +142,20 @@ let
   # rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
 
-  # Secret-keyed env injected into Pi at launch from agenix secret files (read
+  # Secret-keyed env injected into Pi at launch from host secret files (read
   # only if present, so hosts without them degrade gracefully). Keeps tokens out
   # of the Nix store and at-rest env — they live only in pi's process env at
-  # runtime. var -> agenix secret name under /run/agenix.
-  piSecretEnv = {
-    OPENROUTER_API_KEY = "openrouter";
-    AI_GATEWAY_API_KEY = "vercel"; # Vercel AI Gateway
-    EXA_API_KEY = "exa";
-    BRAVE_SEARCH_API_KEY = "brave";
-    FIRECRAWL_API_KEY = "firecrawl";
-    OLLAMA_API_KEY = "ollama"; # Ollama Cloud (pi-ollama-cloud reads $OLLAMA_API_KEY)
-    MINIMAX_API_KEY = "minimax"; # MiniMax (pi-minimax-provider reads $MINIMAX_API_KEY)
-  };
+  # runtime. The map (ENV_VAR -> host secret-file path) is the single source of
+  # truth, configurable by the consumer via `smind.hm.dev.llm.secretEnv` (option
+  # declared below); it drives BOTH this Pi env prelude AND the yolo-sandbox
+  # ro-binds (see yolo.nix's secretBindPaths), so the two can never drift apart.
+  secretEnv = config.smind.hm.dev.llm.secretEnv;
   piSecretsPrelude = lib.concatStringsSep "\n" (
     lib.mapAttrsToList
       (
-        var: secret: ''[ -r /run/agenix/${secret} ] && export ${var}="$(cat /run/agenix/${secret})"''
+        var: path: ''[ -r ${lib.escapeShellArg path} ] && export ${var}="$(cat ${lib.escapeShellArg path})"''
       )
-      piSecretEnv
+      secretEnv
   );
   # pi-search-hub's duckduckgo backend spawns `python3 -c "from ddgs import
   # DDGS …"` (no interpreter override; its `which ddgs` fallback only adds
@@ -324,54 +312,6 @@ in
   options = {
     smind.hm.dev.llm.enable = lib.mkEnableOption "LLM development environment variables";
 
-    # Host/hardware coupling surfaced as plain options; the consumer wires
-    # them from its own NixOS config (GPU hw flags, rootless-Podman socket,
-    # ollama models dir). All default to off/null so a bare consumer works.
-    smind.hm.dev.llm.podman.socketPath = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = ''
-        Host path of a rootless-Podman socket to bind into the yolo sandbox,
-        exposing container access to sandboxed agents. null disables it.
-      '';
-    };
-
-    smind.hm.dev.llm.podman.socketUri = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = ''
-        DOCKER_HOST-style URI for the rootless-Podman socket bound via
-        {option}`smind.hm.dev.llm.podman.socketPath`. null disables it.
-      '';
-    };
-
-    smind.hm.dev.llm.ollamaModelsDir = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = ''
-        Host directory holding the ollama models, ro-bound into the yolo
-        sandbox so local-model agents can read them. null skips the bind.
-      '';
-    };
-
-    smind.hm.dev.llm.yolo.gpu.nvidiaEnable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Host has an NVIDIA GPU the yolo `--gpu` flag should expose.";
-    };
-
-    smind.hm.dev.llm.yolo.gpu.amdEnable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Host has an AMD GPU the yolo `--gpu` flag should expose.";
-    };
-
-    smind.hm.dev.llm.yolo.gpu.intelEnable = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Host has an Intel GPU the yolo `--gpu` flag should expose.";
-    };
-
     # Read-only views of the merged asset bundles, exposed so sibling modules
     # can reuse the same skill set and memory text without re-folding
     # `assetBundles`/`memorySections`.
@@ -470,57 +410,35 @@ in
       '';
     };
 
-    smind.hm.dev.llm.llmSshKeyPath = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = ''
-        Path to an SSH private key to ro-bind into the yolo sandbox. Used on
-        llm-worker hosts to give the unattended `llm` user access to the
-        agenix-managed SSH key for git push / remote ssh from inside the
-        bubblewrap sandbox. The key is bound at the same path it lives at
-        on the host; agents must reference it explicitly
-        (e.g. `GIT_SSH_COMMAND='ssh -i <path>'`).
+    smind.hm.dev.llm.secretEnv = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = {
+        OPENROUTER_API_KEY = "/run/agenix/openrouter";
+        AI_GATEWAY_API_KEY = "/run/agenix/vercel"; # Vercel AI Gateway
+        EXA_API_KEY = "/run/agenix/exa";
+        BRAVE_SEARCH_API_KEY = "/run/agenix/brave";
+        FIRECRAWL_API_KEY = "/run/agenix/firecrawl";
+        OLLAMA_API_KEY = "/run/agenix/ollama"; # Ollama Cloud (pi-ollama-cloud reads $OLLAMA_API_KEY)
+        MINIMAX_API_KEY = "/run/agenix/minimax"; # MiniMax (pi-minimax-provider reads $MINIMAX_API_KEY)
+      };
+      example = lib.literalExpression ''
+        {
+          OPENROUTER_API_KEY = "/run/agenix/openrouter";
+          ANTHROPIC_API_KEY = config.age.secrets.anthropic.path;
+        }
       '';
-    };
-
-    smind.hm.dev.llm.yolo.extraReadOnlyPaths = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
       description = ''
-        Extra host paths to ro-bind into the yolo sandbox. Paths that don't
-        exist on the host are silently skipped (handled by llm-sandbox.sh).
-        Use this for per-host bulk storage (e.g. `/srv/nvme`) that should
-        be visible read-only to sandboxed agents.
-      '';
-    };
-
-    smind.hm.dev.llm.yolo.extraReadWritePaths = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = ''
-        Extra host paths to rw-bind into the yolo sandbox. Same skip-on-missing
-        semantics as `extraReadOnlyPaths`.
-      '';
-    };
-
-    smind.hm.dev.llm.yolo.gpuByDefault = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = ''
-        Default the `--gpu` flag on for `yolo` invocations on this host.
-        Users can still opt out with `--no-gpu`. Has no effect on hosts
-        with none of `smind.hw.{nvidia,amd.gpu,intel.gpu}.enable` set.
-      '';
-    };
-
-    smind.hm.dev.llm.yolo.extraPromptFragments = lib.mkOption {
-      type = lib.types.listOf lib.types.lines;
-      default = [ ];
-      description = ''
-        Extra text fragments appended (separated by blank lines) to the
-        claude `--append-system-prompt` after the YOLO authorization line.
-        Use for per-host context (e.g. "this is the home NAS, /srv/nvme
-        holds the photo library").
+        Provider / API-key secrets exposed to the LLM harness, as a map from the
+        environment-variable name to the host path of the secret file. Single
+        source of truth for two consumers, kept in sync from one place:
+        (1) each file is ro-bound into the yolo bubblewrap sandbox; (2) at launch
+        the Pi wrapper exports `VAR="$(cat <path>)"` into its process env — only
+        when the file is readable, so a host missing a secret degrades gracefully
+        (the file is simply absent and skipped). Tokens stay out of the Nix store
+        and at-rest env. The default points at the agenix-managed secrets under
+        `/run/agenix`; defining this option in a downstream flake replaces the
+        default map wholesale, so list the full set of providers to wire (drop a
+        secret by omitting its entry, add one with a new `VAR = path` pair).
       '';
     };
   };
@@ -790,7 +708,10 @@ in
       # like mcp.json above.
       home.file.".pi/agent/extensions/search.json".source = searchHubConfig;
 
-      # Linux-only: bubblewrap sandbox and yolo wrapper script
+      # The bubblewrap sandbox + `yolo` wrapper live in the sibling yolo.nix
+      # module (imported alongside this one). reattach-llm is a Linux-only tmux
+      # reattach helper for the agent terminals — not a sandbox concern, so it
+      # stays here.
       home.packages = [
         pkgs.gh
         pkgs.nodejs # required by claude-code plugins (.mjs scripts)
@@ -801,25 +722,7 @@ in
         inputs.claude-code-sandbox.packages.${system}.default
       ]
       ++ lib.optionals isLinux [
-        pkgs.bubblewrap
         (pkgs.callPackage ../pkg/reattach-llm/default.nix { })
-
-        (pkgs.callPackage ../pkg/yolo/default.nix {
-          codegraph = codegraphPkg;
-          podmanSocketPath = rootlessPodmanSocketPath;
-          podmanSocketUri = rootlessPodmanSocketUri;
-          hwNvidiaEnable = config.smind.hm.dev.llm.yolo.gpu.nvidiaEnable;
-          hwAmdGpuEnable = config.smind.hm.dev.llm.yolo.gpu.amdEnable;
-          hwIntelGpuEnable = config.smind.hm.dev.llm.yolo.gpu.intelEnable;
-          llmSshKeyPath = config.smind.hm.dev.llm.llmSshKeyPath;
-          gpuByDefault = config.smind.hm.dev.llm.yolo.gpuByDefault;
-          extraReadOnlyPaths = config.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
-          extraReadWritePaths = config.smind.hm.dev.llm.yolo.extraReadWritePaths;
-          extraPromptFragments = config.smind.hm.dev.llm.yolo.extraPromptFragments;
-          # Bind the host's ollama models dir (the consumer sets this from
-          # its own services.ollama.models); null skips the bind.
-          ollamaModelsDir = config.smind.hm.dev.llm.ollamaModelsDir;
-        })
       ];
     })
     (lib.mkIf config.smind.hm.dev.llm.enable {

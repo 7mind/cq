@@ -18,6 +18,10 @@
 #   YOLO_GPU_DEFAULT         - "1" to default --gpu on (CLI --no-gpu opts out)
 #   YOLO_EXTRA_RO_PATHS      - newline-separated list of host paths to ro-bind (missing paths are skipped)
 #   YOLO_EXTRA_RW_PATHS      - newline-separated list of host paths to rw-bind (missing paths are skipped)
+#   YOLO_SECRET_PATHS        - newline-separated list of provider/API-key secret files to ro-bind
+#                              (configured from smind.hm.dev.llm.secretEnv; missing paths are skipped)
+#   YOLO_SANDBOX_BIN         - bin dir of a buildEnv of extra packages (smind.hm.dev.llm.yolo.packages)
+#                              to prepend onto PATH inside the sandbox; empty means none
 #   YOLO_OLLAMA_MODELS_DIR   - host path to the ollama models directory (ro-bind); empty means no ollama on this host
 #   YOLO_EXTRA_PROMPT        - extra text appended to the claude system prompt (after the YOLO header)
 
@@ -212,6 +216,29 @@ if [[ -n "${YOLO_EXTRA_RW_PATHS:-}" ]]; then
   done <<< "$YOLO_EXTRA_RW_PATHS"
 fi
 
+# Provider / API-key secret files (configured via Nix from
+# smind.hm.dev.llm.secretEnv -> YOLO_SECRET_PATHS). Read-only binds so the
+# wrapped agents (piWrapped's launch prelude runs inside the sandbox) can read
+# them. Host-configured and agent-agnostic, so bound at the base level. The
+# llm-sandbox layer skips any path absent on this host, so a host missing a
+# secret degrades gracefully.
+SECRET_ARGS=()
+if [[ -n "${YOLO_SECRET_PATHS:-}" ]]; then
+  while IFS= read -r _s; do
+    [[ -n "$_s" ]] && SECRET_ARGS+=(--ro "$_s")
+  done <<< "$YOLO_SECRET_PATHS"
+fi
+
+# Extra packages exposed only inside the sandbox (smind.hm.dev.llm.yolo.packages
+# -> YOLO_SANDBOX_BIN, a buildEnv bin dir in the already-bound /nix/store).
+# Prepend it to PATH so sandboxed tools resolve these without the packages being
+# installed in the host profile. The agent binaries (claude/pi/codex) still
+# resolve via the inherited host PATH appended after it.
+SANDBOX_PKG_ARGS=()
+if [[ -n "${YOLO_SANDBOX_BIN:-}" ]]; then
+  SANDBOX_PKG_ARGS+=(--env "PATH=$YOLO_SANDBOX_BIN:$PATH")
+fi
+
 # Ollama models directory (read-only). Derived from services.ollama.models
 # at Nix-eval time; empty on hosts where ollama is not enabled.
 OLLAMA_ARGS=()
@@ -259,6 +286,7 @@ BASE_ARGS=(
   "${AUDIO_ARGS[@]}"
   "${LLM_SSH_KEY_ARGS[@]}"
   "${EXTRA_PATH_ARGS[@]}"
+  "${SECRET_ARGS[@]}"
   "${OLLAMA_ARGS[@]}"
   --ro "${HOME}/.config/git"
   --ro "${HOME}/.config/direnv"
@@ -266,6 +294,7 @@ BASE_ARGS=(
   --ro "${HOME}/.direnvrc"
   --ro-bind "${YOLO_NIX_LD},/lib64/ld-linux-x86-64.so.2"
   --env SMIND_SANDBOXED=1
+  "${SANDBOX_PKG_ARGS[@]}"
   "${ENV_ARGS[@]}"
 )
 
@@ -391,12 +420,10 @@ add_codex_binds() {
 # so bind that read-only too.
 add_pi_binds() {
   EXTRA_ARGS+=(--ro "${HOME}/.config/mcp")
-  # Provider + web-search API keys: agenix secret files, read-only. The pi
-  # wrapper (piWrapped) reads /run/agenix/<name> at launch. Missing files are
-  # skipped by the llm-sandbox layer (hosts without these secrets).
-  for _sec in openrouter vercel exa brave firecrawl ollama minimax; do
-    EXTRA_ARGS+=(--ro "/run/agenix/$_sec")
-  done
+  # Provider + web-search API-key secret files are ro-bound at the base level
+  # (SECRET_ARGS, from YOLO_SECRET_PATHS / smind.hm.dev.llm.secretEnv) since
+  # they're host-configured and agent-agnostic — see BASE_ARGS. The pi wrapper
+  # (piWrapped) reads them at launch.
   # pi-search-hub config is HM-managed (declarative) under
   # ~/.pi/agent/extensions/search.json, shared read-only with the rest of
   # agent/extensions below — no separate writable mount needed.
