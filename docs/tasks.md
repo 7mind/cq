@@ -593,10 +593,10 @@ archives:
 - completion: "Added the 'agents' tab to App.tsx HelpOverlay: tab button help-tab-agents (after Flows) + AgentsTab mapping all 19 AGENT_ROLES to one section per role (help-agent-<id>) showing name/kind/description/inputs/outputs/ioSchema, model class + per-harness mappings (N/A/default fallback), RO/RW privilege badge (help-agent-<id>-privilege), exposed-tools descriptor (help-agent-<id>-tools), and the prompt template in a COLLAPSED <details> (help-agent-<id>-prompt) via the Markdown component; lw-agent* CSS added. Scope App.tsx+styles.css only; existing tabs intact. Cherry-picked to main. bun run check green 1201/0. Review APPROVE (opus; minimax disapprove rejected as based on false premises — T278 adds no new module, privilege is a closed union, check green)."
 - sessionLogs: ["docs/logs/20260608-202739-T277-T278.md"]
 
-### T279 — planned
+### T279 — done
 
 - createdAt: 2026-06-08T16:58:59.950Z
-- updatedAt: 2026-06-08T17:36:12.481Z
+- updatedAt: 2026-06-08T20:37:08.006Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: Add happy-dom tests for the Agents tab
@@ -605,6 +605,9 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T278"]
 - ledgerRefs: ["goals:G34"]
+- resultCommit: d4935f4
+- completion: "Added agentsTab.test.tsx (6 happy-dom tests, flowsTab-harness): opens help, clicks Agents tab, iterates imported AGENT_ROLES asserting each help-agent-<id> section renders; spot-checks description+inputs+outputs+model (implement-worker); asserts help-agent-implement-worker-privilege=RW + help-agent-plan-reviewer-privilege=RO; every help-agent-<id>-tools non-empty; prompt <details> collapsed-by-default (no `open` + .open===false) then expands on toggle. Cherry-picked to main. bun run check green 1219/0. Review APPROVE (opus + minimax)."
+- sessionLogs: ["docs/logs/20260608-203646-T279.md"]
 
 ### T281 — done
 

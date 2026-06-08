@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 337
+  item: 338
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -866,3 +866,15 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T278","goals:G34"]
 - sessionLogs: ["docs/logs/20260608-202739-T277-T278.md"]
+
+### R338 — go-ahead
+
+- createdAt: 2026-06-08T20:37:04.600Z
+- updatedAt: 2026-06-08T20:37:04.600Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "T279 implement review APPROVE (panel: opus[claude] + minimax[pi:ollama-cloud] both approve; grok+codex[pi:grok-build] excluded, stall). agentsTab.test.tsx (6 happy-dom tests, mirrors flowsTab harness): opens help → clicks Agents tab → ITERATES imported AGENT_ROLES asserting each help-agent-<id> section renders (teeth on a dropped role, reinforced by the sibling gen freshness test's length-19+id-list within the same acceptance scope); exact RW/RO string spot-checks (implement-worker=RW, plan-reviewer=RO); every help-agent-<id>-tools non-empty; the prompt <details> collapsed-by-default (no `open` attr AND .open===false) + expands on toggle — fails on a stray `open`. Non-vacuous, real harness, scope = one test file; bun run check green 1219/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T279","goals:G34"]
+- sessionLogs: ["docs/logs/20260608-203646-T279.md"]
