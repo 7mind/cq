@@ -326,6 +326,8 @@ export const REVIEWS_SCHEMA: LedgerSchema = {
  *     answers-required); see `handoffReasons` for the exact mix (per Q83).
  *   - illness-detected: a defect or invariant violation was detected that the
  *     session could not resolve autonomously.
+ *   - user-action-required: the session stopped because a manual user action
+ *     (outside question answering) is needed before work can resume.
  *
  * Fields are bespoke (NOT spread from COMMON_REF_FIELDS):
  *   - summary: human-readable handoff summary (required).
@@ -339,14 +341,15 @@ export const REVIEWS_SCHEMA: LedgerSchema = {
  *   - sourceRefs: source file / commit / URL references.
  */
 export const HANDOFFS_SCHEMA: LedgerSchema = {
-  statusValues: ["drained", "answers-required", "mixed", "illness-detected"],
-  terminalStatuses: ["drained", "answers-required", "mixed", "illness-detected"],
+  statusValues: ["drained", "answers-required", "mixed", "illness-detected", "user-action-required"],
+  terminalStatuses: ["drained", "answers-required", "mixed", "illness-detected", "user-action-required"],
   idPrefix: "HO",
   transitions: {
     drained: [],
     "answers-required": [],
     mixed: [],
     "illness-detected": [],
+    "user-action-required": [],
   },
   fields: {
     summary: { type: "string", required: true },

@@ -569,16 +569,17 @@ describe("Req5: reviews summary field — all three registry copies", () => {
 // ---------------------------------------------------------------------------
 
 describe("HANDOFFS_SCHEMA shape", () => {
-  it("statusValues are exactly the 4 declared values", () => {
+  it("statusValues are exactly the 5 declared values", () => {
     expect(HANDOFFS_SCHEMA.statusValues).toEqual([
       "drained",
       "answers-required",
       "mixed",
       "illness-detected",
+      "user-action-required",
     ]);
   });
 
-  it("all four statusValues are terminal", () => {
+  it("all five statusValues are terminal", () => {
     expect(HANDOFFS_SCHEMA.terminalStatuses).toEqual(HANDOFFS_SCHEMA.statusValues);
   });
 
