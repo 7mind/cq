@@ -25,6 +25,7 @@ import { computeStateMachine } from "./stateMachine.js";
 import { layoutDiagram, type LaidOutDiagram, type DiagramModel, type DiagramNode } from "./diagramLayout.js";
 import { DiagramSvg } from "./DiagramSvg.js";
 import { FLOWS, type FlowDefinition, type FlowNodeKind } from "./flowData.js";
+import { AGENT_ROLES, type AgentRole } from "./agentsCatalogue.js";
 import { LiveManager, type LiveStats } from "@cq/ledger-live";
 import { defectFixTaskIds, hypothesisRelationships } from "@cq/ledger/relationships";
 import { HoldButton, type HoldClock } from "./HoldButton.js";
@@ -1494,7 +1495,7 @@ function HelpOverlay({
   onClose: () => void;
   client: LedgerClient | null;
 }): React.ReactElement {
-  const [tab, setTab] = useState<"shortcuts" | "item-states" | "flows">("shortcuts");
+  const [tab, setTab] = useState<"shortcuts" | "item-states" | "flows" | "agents">("shortcuts");
   const [schemas, setSchemas] = useState<NamedSchema[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
@@ -1555,6 +1556,16 @@ function HelpOverlay({
             >
               Flows
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "agents"}
+              className={`lw-help-tab${tab === "agents" ? " lw-help-tab-active" : ""}`}
+              data-testid="help-tab-agents"
+              onClick={() => setTab("agents")}
+            >
+              Agents
+            </button>
           </div>
           <button type="button" className="lw-close" data-testid="help-close" onClick={onClose}>
             ✕
@@ -1587,7 +1598,7 @@ function HelpOverlay({
                 ))
               )}
             </div>
-          ) : (
+          ) : tab === "flows" ? (
             <div className="lw-help-flows" data-testid="help-flows">
               {FLOWS.map((flow) => (
                 <section key={flow.id} className="lw-flow" data-testid={`help-flow-${flow.id}`}>
@@ -1596,9 +1607,95 @@ function HelpOverlay({
                 </section>
               ))}
             </div>
+          ) : (
+            <AgentsTab />
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Render one role's per-harness model mapping (T278). `modelMappings` is
+ * `{claude?: string[], pi?: string[]}`. When the role's configured `model` is
+ * `N/A` (not separately model-configurable, e.g. a pure orchestrator), show
+ * `N/A`; when no per-harness mapping is declared at all, show `default` (the
+ * role runs at the host's default model). Otherwise list each declared harness
+ * with its concrete model tokens.
+ */
+function AgentModelMappings({ role }: { role: AgentRole }): React.ReactElement {
+  if (role.model === "N/A") return <span className="lw-agent-model-na">N/A</span>;
+  const entries: [string, string[]][] = [];
+  if (role.modelMappings.claude !== undefined) entries.push(["claude", role.modelMappings.claude]);
+  if (role.modelMappings.pi !== undefined) entries.push(["pi", role.modelMappings.pi]);
+  if (entries.length === 0) return <span className="lw-agent-model-default">default</span>;
+  return (
+    <ul className="lw-field-list">
+      {entries.map(([harness, tokens]) => (
+        <li key={harness}>
+          <strong>{harness}:</strong> {tokens.length > 0 ? tokens.join(", ") : "default"}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Agents help tab (T278, goal G34): one section per Q148 role from the
+ * GENERATED {@link AGENT_ROLES} catalogue (re-exported by `agentsCatalogue.ts`).
+ * Static data only — like FLOWS, no MCP fetch. Each section shows the role's
+ * identity, IO model, configured model class + per-harness mappings, the
+ * MECHANICALLY-DERIVED privilege as an RO/RW badge, the exposed-tools
+ * descriptor, and the full prompt-template body folded inside a COLLAPSED
+ * `<details>` (no `open` attribute) so the (possibly large) markdown stays
+ * folded until the reader expands it. Per-role testids follow the documented
+ * scheme: `help-agent-<id>`, `-privilege`, `-tools`, `-prompt`.
+ */
+function AgentsTab(): React.ReactElement {
+  return (
+    <div className="lw-help-agents" data-testid="help-agents">
+      {AGENT_ROLES.map((role) => (
+        <section key={role.id} className="lw-agent" data-testid={`help-agent-${role.id}`}>
+          <div className="lw-agent-head">
+            <h4 className="lw-agent-name">{role.name}</h4>
+            <span
+              className={`lw-agent-privilege lw-agent-privilege-${role.privilege.toLowerCase()}`}
+              data-testid={`help-agent-${role.id}-privilege`}
+            >
+              {role.privilege}
+            </span>
+          </div>
+          <dl className="lw-agent-fields">
+            <dt>Kind</dt>
+            <dd>{role.kind}</dd>
+            <dt>Source</dt>
+            <dd>{role.source}</dd>
+            <dt>Description</dt>
+            <dd>{role.description}</dd>
+            <dt>Inputs</dt>
+            <dd>{role.inputs.length > 0 ? renderListField(role.inputs) : <span className="lw-empty">(none)</span>}</dd>
+            <dt>Outputs</dt>
+            <dd>{role.outputs.length > 0 ? renderListField(role.outputs) : <span className="lw-empty">(none)</span>}</dd>
+            <dt>IO schema</dt>
+            <dd>{role.ioSchema.length > 0 ? renderListField(role.ioSchema) : <span className="lw-empty">(none)</span>}</dd>
+            <dt>Model class</dt>
+            <dd>{role.model}</dd>
+            <dt>Model mappings</dt>
+            <dd>
+              <AgentModelMappings role={role} />
+            </dd>
+            <dt>Exposed tools</dt>
+            <dd className="lw-agent-tools" data-testid={`help-agent-${role.id}-tools`}>
+              {role.exposedTools}
+            </dd>
+          </dl>
+          <details className="lw-agent-prompt" data-testid={`help-agent-${role.id}-prompt`}>
+            <summary>Prompt template</summary>
+            <Markdown text={role.promptTemplate} />
+          </details>
+        </section>
+      ))}
     </div>
   );
 }

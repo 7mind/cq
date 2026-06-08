@@ -300,6 +300,72 @@ body {
 .lw-flow-svg text {
   user-select: none;
 }
+/* Agents help tab (T278, goal G34): one section per Q148 role from the
+   generated AGENT_ROLES catalogue. Same stacking rhythm as the Flows /
+   Item-States tabs; each role is a labelled detail list plus a folded
+   prompt-template <details>. */
+.lw-help-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.lw-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lw-agent-name {
+  margin: 0;
+}
+/* RO/RW privilege badge — RO reads as a muted/blocked tone, RW as an active
+   start tone, reusing the bucket palette idiom for consistency with the badges
+   used elsewhere in the help dialogs. */
+.lw-agent-privilege {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+.lw-agent-privilege-ro {
+  color: var(--dim);
+  background: #1a1410;
+}
+.lw-agent-privilege-rw {
+  color: var(--fg);
+  background: #0e1a14;
+}
+.lw-agent-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin: 8px 0 0;
+}
+.lw-agent-fields dt {
+  color: var(--dim);
+  font-weight: 600;
+}
+.lw-agent-fields dd {
+  margin: 0;
+}
+.lw-agent-tools {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  word-break: break-word;
+}
+.lw-agent-prompt {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.lw-agent-prompt > summary {
+  cursor: pointer;
+  color: var(--dim);
+  font-weight: 600;
+}
 /* Batch-answer modal (Q33): a wider HelpOverlay-style popup with focused font,
    stepping through open questions one at a time. Sized larger to accommodate
    longer question content; font reduced to 0.95rem for better readability. */
