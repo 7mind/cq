@@ -2,7 +2,7 @@
 ledger: tasks
 counters:
   milestone: 0
-  item: 281
+  item: 282
 archives:
   - id: M5
     path: ./archive/tasks/M5.md
@@ -537,3 +537,17 @@ archives:
 - resultCommit: dae5161
 - completion: "Updated cq.toml.example [tiers] to the inverted token-keyed classifier (demonstrating BOTH a full-token key — \"claude:opus-4.8[1m]\"=frontier, \"pi:grok-build/grok-build\"=standard — AND an alias key — minimax=fast, after round-2 criticism), with a classifier-not-dispatch explanatory comment + [agent_tiers] tie-break note + token-grammar [tiers]-key requirement doc note. Added cq-config regression tests (cq-toml-example.test.ts) that load repo-root cq.toml.example, assert parseConfig no-error, AND assert classifier semantics (classifyToken opus→frontier, minimax→fast; resolveAgentModel plan-reviewer→opus). 1 revise round (R1 disapprove on doc/example consistency + vacuous test). Cherry-picked range onto main (background committer rebases hashes). bun run check green 1177/0. Review APPROVE (opus + minimax round 2)."
 - sessionLogs: ["docs/logs/20260608-190417-T274-workers.md","docs/logs/20260608-190417-T274-reviews.md"]
+
+## M114
+
+### T282 — planned
+
+- createdAt: 2026-06-08T20:43:27.881Z
+- updatedAt: 2026-06-08T20:43:27.881Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- headline: "parseTiers: fail-loud (CqConfigError) on a duplicate-token [tiers] classification + tests"
+- description: "Fixes D42. In nix/pkg/cq-ledgers/packages/cq-config/src/config.ts parseTiers: after resolving each [tiers] KEY to its ReviewerToken (alias-or-parseReviewerToken, existing logic) and validating its class, BEFORE/at `entries.push(...)`, detect a DUPLICATE token classification — a token structurally equal (via the existing reviewerTokensEqual) to an already-recorded entry's token — and throw a precise CqConfigError naming BOTH conflicting raw keys + their classes (fail-loud, symmetric to the existing CqConfigError throws in parseTiers). This makes a contradictory config (same resolved token classified under two classes, e.g. a direct token key + an alias key resolving to it) fail at load instead of being silently first-matched by classifyToken. Keep classifyToken as-is (with the dedup guard, no token can be double-classified, so first-match is now unambiguous). Read parseTiers + reviewerTokensEqual + the existing CqConfigError throw sites first to match the error style."
+- acceptance: "From nix/pkg/cq-ledgers/: `bun run check` green with: (a) a NEW cq-config test — a [tiers] with two entries resolving to the SAME token (one case: a direct token key + an alias key resolving to it; one case: two direct keys for the same token, differing classes) THROWS CqConfigError whose message names BOTH conflicting keys; (b) a single-token-one-class [tiers] does NOT throw; (c) the existing valid fixtures (incl. cq.toml.example via cq-toml-example.test.ts) still parse. `rg` confirms the dup-token guard is in parseTiers. typecheck + lint + all tests green."
+- suggestedModel: frontier
+- ledgerRefs: ["goals:G35","defects:D42"]

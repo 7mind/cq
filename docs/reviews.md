@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 338
+  item: 339
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -809,3 +809,17 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T274","goals:G34"]
 - sessionLogs: ["docs/logs/20260608-190417-T274-workers.md","docs/logs/20260608-190417-T274-reviews.md"]
+
+## M113
+
+### R339 — go-ahead
+
+- createdAt: 2026-06-08T20:45:18.962Z
+- updatedAt: 2026-06-08T20:45:18.962Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "G35 plan review GO-AHEAD (opus[claude], configured mode; grok+codex[pi:grok-build] excluded as documented stall; minimax not run — tiny fully-specified defect-seeded plan, opus authoritative). The single task T282 (parseTiers fail-loud on duplicate-token [tiers] classification + tests) is right-sized, operationally testable (concrete throw/no-throw/regression cases + error-names-both-keys assertion + rg guard check + bun run check), grounded in the confirmed D42 root cause + real symbols (parseTiers/classifyToken/reviewerTokensEqual + existing CqConfigError throws + the cq-toml-example.test.ts regression fixture), and resolves D42. Keeping classifyToken unchanged is correctly justified (parse-time dedup makes first-match unambiguous)."
+- new_questions: []
+- criticism: []
+- ledgerRefs: ["goals:G35","defects:D42"]
+- sessionLogs: ["docs/logs/20260608-204503-G35-plan-review.md"]

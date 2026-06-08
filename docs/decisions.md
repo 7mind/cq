@@ -2,7 +2,7 @@
 ledger: decisions
 counters:
   milestone: 0
-  item: 55
+  item: 56
 archives:
   - id: M2
     path: ./archive/decisions/M2.md
@@ -269,3 +269,15 @@ archives:
 - headline: "G34 follow-up plan (privilege class + exposed tools) review: approved"
 - rationale: "The follow-up extension to G34 (add per-role PRIVILEGE class RO/RW + EXPOSED TOOLS to the Agents-tab cards) reached unanimous go-ahead at review R326 (panel opus[claude] + minimax[pi:ollama-cloud]; grok-build excluded as a documented operational stall). Per locked answers Q151-Q153 the two fields are DERIVED MECHANICALLY (not authored): subagent privilege = RW iff none of {Write,Edit,MultiEdit,NotebookEdit,Bash} in disallowedTools else RO; command privilege = RW iff allowed-tools contains {Write,Edit,Bash} else RO; exposed tools shown RAW per-kind (disallowedTools+isolation for subagents / allowed-tools for commands / 'none declared'); the T275 parser is extended to read command allowed-tools. The extension folds into the existing W3 tasks T275/T276/T278/T279/T281 (no new tasks) and leaves the R325-approved base (W1/W2/W4, decision K54) and its sequencing intact. Known faithful consequence (recorded, not a defect): implement-reviewer's frontmatter omits Bash, so the strict rule derives it RW. G34 -> planned (extends K54)."
 - ledgerRefs: ["goals:G34"]
+
+## M113
+
+### K56 — locked
+
+- createdAt: 2026-06-08T20:45:22.441Z
+- updatedAt: 2026-06-08T20:45:22.441Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- headline: "G35 plan review: approved"
+- rationale: "G35 (defect-seeded fix for D42 — fail-loud on duplicate-token [tiers] classification in parseTiers) reached go-ahead at plan review (opus[claude] authoritative; grok-build stall, minimax not run for this tiny fully-specified plan). Locked plan: 1 work milestone M114, 1 task T282 (parseTiers throws CqConfigError naming both conflicting keys on a duplicate-token classification + tests: dup-throws, single-no-throw, existing-fixtures-still-parse). Grounded in confirmed root cause H30. G35 -> planned."
+- ledgerRefs: ["goals:G35"]

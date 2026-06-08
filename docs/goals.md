@@ -259,10 +259,10 @@ archives:
 
 ## M113
 
-### G35 — planning
+### G35 — planned
 
 - createdAt: 2026-06-08T20:42:51.803Z
-- updatedAt: 2026-06-08T20:42:51.803Z
+- updatedAt: 2026-06-08T20:45:28.538Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - title: "Fix D42 — fail-loud on duplicate-token [tiers] classification in parseTiers"
@@ -274,3 +274,5 @@ archives:
     **Fix (per D42 suggestedFix):** In parseTiers, after resolving each KEY to its ReviewerToken, detect a DUPLICATE token classification (a token structurally equal via reviewerTokensEqual to an already-recorded entry's token) and throw a precise CqConfigError naming the two conflicting raw keys + classes (fail-loud, symmetric to the existing CqConfigError throws). Add cq-config tests: (a) two [tiers] entries resolving to the same token (direct+alias, and two-direct) THROW CqConfigError naming the conflicting keys; (b) a single token mapping to one class does NOT throw; (c) the existing valid fixtures still parse.
     
     **Acceptance:** `bun run check` green (from nix/pkg/cq-ledgers/) with the new dup-token-classification CqConfigError + the tests above; the error message names both conflicting [tiers] keys. Tasks must ledgerRef defects:D42.
+- milestones: ["M114"]
+- sessionLogs: ["docs/logs/20260608-204503-G35-plan-review.md"]

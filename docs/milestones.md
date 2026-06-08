@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 113
+  item: 114
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -587,3 +587,9 @@ archives:
 - createdAt: 2026-06-08T20:42:12.810Z
 - updatedAt: 2026-06-08T20:42:12.810Z
 - title: "Plan: fix D42 — fail-loud on duplicate-token [tiers] classification in parseTiers"
+
+### M114 — open
+
+- createdAt: 2026-06-08T20:43:11.482Z
+- updatedAt: 2026-06-08T20:43:11.482Z
+- title: "G35-W1: fail-loud dup-token [tiers] classification in parseTiers + tests"
