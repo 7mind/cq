@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 29
+  item: 30
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -171,3 +171,20 @@ archives:
 - title: Add provider-qualified token support to the cq config grammar
 - description: "Regarding the minimax issue (defect D36): obviously we should add provider support into our config, e.g. `minimax = \"pi:ollama-cloud:minimax-m3\"`. Extend the cq.toml token grammar so an [aliases]/[tiers]/[agent_tiers] value can name an EXPLICIT provider — a `pi:<provider>:<model>` form (user-proposed colon separator) — in addition to today's `pi:<model>` form. This resolves D36: minimax-m3 is registered under BOTH the `minimax` provider (needs $MINIMAX_API_KEY, absent) and the OAuth-authed `ollama-cloud` provider, so a bare `pi:minimax-m3` token emits no `--provider` and relies on pi's non-deterministic fuzzy matching (and the minimax reviewer/planner shellouts abstained all run because they resolved to `--provider minimax`). The change must be parsed by the @cq/config layer (parseReviewerToken + the [aliases]/[tiers]/[agent_tiers] resolution that get_planners/get_reviewers and the tier resolver expose) AND honored by the cq-subagent-dispatch extension's inlined resolver (which already added a `pi:<provider>/<model>` SLASH form in T225 — reconcile the separator: user proposes colon `:` vs T225's slash `/`). Update cq.toml.example + any token-format docs. End state: `minimax = \"pi:ollama-cloud:minimax-m3\"` (or the agreed separator) resolves to provider=ollama-cloud, model=minimax-m3 everywhere, so minimax works as a reviewer/planner and as a dispatch tier target."
 - sessionLogs: ["docs/logs/20260608-000022-afd464efe85dce401.md"]
+
+## M93
+
+### G30 — clarifying
+
+- createdAt: 2026-06-08T00:02:15.261Z
+- updatedAt: 2026-06-08T00:06:47.561Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- title: Add a user-action-required handoff status + thread it through the flow prompts
+- description: |
+    Also, we should extend the handoffs status set with a new action like 'user-action-required' — which the agent can use in situations like HO22, where it genuinely needs the user's manual/environment action. Accordingly, account for that new status in the prompts.
+    
+    Motivation: HO22 (this session) was forced to classify as `mixed`, but the real remaining blocker (defect D37) needed a USER ACTION — re-run `home-manager switch` to activate the merged pi extension — which is NOT an open `questions` item and NOT a requirements ambiguity. The current handoff status set (drained / answers-required / mixed / illness-detected) has no clean way to say 'I did everything I autonomously can; YOU must now perform a manual/environment action (re-activate, provision a credential, run an external command) before the flow can complete or verify.' This forces either a misleading `mixed`/`answers-required`, or an effort-looking stop with no legal status.
+    
+    Scope: (1) add the new terminal status to the handoffs schema (HANDOFFS_SCHEMA in @cq/ledger CANONICAL_LEDGERS — nix/pkg/cq-ledgers); (2) thread it through the flow command prompts that map end-of-run classifications to handoff statuses — /cq:advance (§Provenance status table + §End-of-run report + the STOP-GATE 'progress-bounded not effort-bounded' logic so a genuine user-action stop is a LEGAL stop distinct from answers-required) and the per-flow plan/investigate/implement *:advance §Handoff-record tables; (3) update any consumer/rendering (TUI/web handoff-status display, snapshot). The new status must be clearly distinguished from answers-required (a user REQUIREMENTS/clarification ANSWER) — it is a manual/environment ACTION the agent cannot perform itself. Consider whether it carries a structured 'required action' description so the user sees exactly what to do.
+- sessionLogs: ["docs/logs/20260608-000631-acfb0df8dce386356.md"]

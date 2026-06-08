@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 136
+  item: 142
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -253,38 +253,117 @@ archives:
 - ledgerRefs: ["goals:G29"]
 - answer: as recommended
 
-### Q134 — open
+### Q134 — answered
 
 - createdAt: 2026-06-07T23:59:38.157Z
-- updatedAt: 2026-06-07T23:59:38.157Z
-- author: "opus-4.8[1m]"
+- updatedAt: 2026-06-08T00:01:25.779Z
+- author: user
 - session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
 - question: "Should the bare `pi:<model>` form (no provider) keep working unchanged (provider omitted → pi's fuzzy match, exactly today's behavior), or should it be deprecated/warned now that an explicit-provider form exists?"
 - context: "GROUNDING — today a bare `pi:minimax-m3` resolves with NO `--provider` and lets pi's non-deterministic fuzzy matching pick — that IS the D36 defect. Many existing cq.toml entries (e.g. live `[aliases] grok = ...`, and the example's minimax) use the bare form and are unambiguous because their model registers under exactly one provider. Deprecating the bare form would be a breaking change to every existing config; keeping it backward-compatible means the bare form stays valid and only ambiguous models need the qualified form."
 - suggestions: ["Keep the bare `pi:<model>` form fully backward-compatible (provider omitted → unchanged fuzzy behavior); only ambiguous models need the qualified form","Keep it working but emit a warning when a bare token resolves to a model registered under multiple providers","Deprecate the bare form (require explicit provider for all pi tokens) — breaking change"]
 - recommendation: "Keep the bare `pi:<model>` form fully backward-compatible — it is non-breaking and the qualified form is purely additive; the bare form is only problematic for multi-provider models, which the user fixes by adding the provider. A multi-provider warning (option b) is a reasonable optional nicety but not required to resolve D36."
 - ledgerRefs: ["goals:G29"]
+- answer: Completely drop bare support
 
-### Q135 — open
+### Q135 — answered
 
 - createdAt: 2026-06-07T23:59:44.740Z
-- updatedAt: 2026-06-07T23:59:44.740Z
-- author: "opus-4.8[1m]"
+- updatedAt: 2026-06-08T00:01:53.116Z
+- author: user
 - session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
 - question: "Should the provider-qualified form apply ONLY to `pi:` tokens, or also to `claude:` tokens?"
 - context: "GROUNDING — the harnesses are exactly `claude` and `pi` (types.ts L11). The provider concept (and `--provider`) is a pi runtime feature: `tokenToChildModel` returns null for any non-`pi` harness (cq-subagent-dispatch.ts L320-321), and a `claude:` token cannot be driven by a child pi process at all. D36 is entirely about pi/minimax. So a provider-qualified `claude:<provider>/<model>` form has no consumer today and would be dead grammar."
 - suggestions: ["pi: only — a provider qualifier on a claude: token is a config error (or ignored)","Accept the qualifier syntactically on both, but it is only meaningful/honored for pi:"]
 - recommendation: "pi: only — the provider qualifier is meaningful exclusively for the pi harness; reject (or document-as-ignored) a provider qualifier on a claude: token rather than carrying dead grammar. This keeps the validation surface honest and matches where `--provider` is actually consumed."
 - ledgerRefs: ["goals:G29"]
+- answer: as recommended
 
-### Q136 — open
+### Q136 — answered
 
 - createdAt: 2026-06-07T23:59:55.797Z
-- updatedAt: 2026-06-07T23:59:55.797Z
-- author: "opus-4.8[1m]"
+- updatedAt: 2026-06-08T00:02:21.167Z
+- author: user
 - session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
 - question: "What is the acceptance bar that closes D36 — is `bun test` coverage in @cq/config for the new grammar (parse + resolve through tiers/reviewers/planners) PLUS an updated cq.toml.example sufficient, or do you also require a LIVE dispatch demonstration that `minimax = \"pi:ollama-cloud/...\"` actually emits `--provider ollama-cloud` and the minimax reviewer/planner no longer abstains?"
 - context: "GROUNDING — @cq/config is unit-tested via `bun test` (run from nix/pkg/cq-ledgers/). D36's live evidence in T225 already demonstrated `pi:ollama-cloud/minimax-m3` emitting the correct `--provider` via the dispatch extension's `details.childProvider`. The goal also notes the minimax reviewer/planner shellouts ABSTAINED every run because they resolved to `--provider minimax` (key-gated, $MINIMAX_API_KEY absent). Whether a fresh live minimax run is part of acceptance — or whether unit tests + the prior T225 evidence suffice — sets how big the verification tasks are. The cq.toml.example to update lives under nix/pkg/cq-ledgers/ (planner will confirm exact filename)."
 - suggestions: ["bun test coverage in @cq/config (parse the qualified token; resolve provider through tiers + get_reviewers/get_planners) + updated cq.toml.example + token-format docs — unit-level acceptance, reuse T225's prior live evidence for the dispatch half","The above PLUS a fresh live dispatch demo showing `--provider ollama-cloud` is emitted and a minimax reviewer/planner run no longer abstains","The above PLUS asserting the @cq/config copy and the extension's inlined copy agree on the same token (a cross-layer consistency test or a recorded decisions item)"]
 - recommendation: Unit tests in @cq/config + updated cq.toml.example + token-format docs, and rely on T225's already-recorded live `--provider ollama-cloud` evidence for the dispatch half (option a). A fresh live minimax run (option b) is the strongest closure of D36 if you want it, but it depends on ollama-cloud OAuth being available in the run environment; I'll plan it as a separate, clearly-marked acceptance-demo task if you want the live demonstration.
 - ledgerRefs: ["goals:G29"]
+- answer: as recommended
+
+## M93
+
+### Q137 — answered
+
+- createdAt: 2026-06-08T00:04:34.506Z
+- updatedAt: 2026-06-08T00:06:27.359Z
+- author: user
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- question: "What EXACT status string should the new handoff status be, and is it TERMINAL like the existing four? Proposed: `user-action-required`. Confirm the literal token (it goes into HANDOFFS_SCHEMA.statusValues + terminalStatuses + the transitions map, and is grepped verbatim across the four prompt status-tables)."
+- context: "HANDOFFS_SCHEMA (nix/pkg/cq-ledgers/packages/ledger/src/constants.ts L341-361) currently has statusValues = [drained, answers-required, mixed, illness-detected], all four ALSO listed in terminalStatuses with an empty transitions[] entry each (a handoff is an immutable one-session exit record). idPrefix HO. A new status must be added to all three places consistently. The goal text proposes `user-action-required`; alternatives could be `user-action-needed`, `manual-action-required`, `env-action-required`. The token style of the set is kebab-case."
+- suggestions: ["`user-action-required`, terminal (mirrors the other four — a handoff is an immutable exit record)","`user-action-required`, but NON-terminal (so the same handoff item can later be transitioned to `drained` once the user acts and a follow-up run verifies)","a different token (specify)"]
+- recommendation: "`user-action-required`, terminal — matches the existing 'handoff is an immutable record of one session's exit state' invariant; the follow-up verification is a NEW handoff on the re-run, not a transition of this one."
+- ledgerRefs: ["goals:G30"]
+- answer: as recommended
+
+### Q138 — answered
+
+- createdAt: 2026-06-08T00:04:52.362Z
+- updatedAt: 2026-06-08T00:07:03.392Z
+- author: user
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- question: "Is `user-action-required` a LEGAL stop even when a P-predicate (P-implement / P-investigate / P-plan) would otherwise be TRUE — i.e. does the agent stop with autonomous work still nominally available because a SPECIFIC remaining item genuinely requires the user's manual/environment action? And critically: what is the OPERATIONAL test that distinguishes a genuine user-action stop from a laundered effort/confirmation stop (the exact thing /cq:advance §Stop condition forbids)?"
+- context: "advance.md §Stop condition (L253-325) is emphatic: a stop is PROGRESS-bounded never EFFORT-bounded; 'There is deliberately NO handoff status for an effort-based stop'; the ONLY legitimate user-facing pause today is BLOCKED-ON-QUESTIONS (an `open` questions item that changes WHAT/HOW to build or unblocks otherwise-impossible work — e.g. missing external access/credentials). Adding a 5th status that is a legal stop is exactly the kind of escape hatch the gate was written to prevent, UNLESS its trigger is pinned just as narrowly. Note the gate ALREADY admits 'missing external access/credentials' and 'a reproduction that cannot be produced from the repo' as legitimate — `user-action-required` looks like a SUPERSET of those (the agent did all autonomous work; the remaining step is physically the user's: re-activate, provision a credential, run an external/privileged command). The motivating D37 ('re-run home-manager switch') is NOT a requirements ambiguity and NOT an open question, yet it is a real environment blocker. We must pin the trigger so 'I just don't want to continue' / 'this is a natural stopping point' / 'the remaining fix is disproportionate' can NEVER be dressed as user-action-required."
+- suggestions: ["LEGAL stop, narrowly pinned: permitted ONLY when a SPECIFIC, NAMED item cannot progress because the next physical step is exclusively the user's (re-activate an environment, provision a credential/secret, run a privileged/external command the agent cannot run) AND the agent has ALREADY done every autonomous step; never for magnitude/proportion/scope/disposition. Operational test: the agent must name the exact command/action the user runs and the exact item it unblocks (like D37's `home-manager switch`); if it cannot, it is NOT user-action-required — CONTINUE.","Treat it as a sub-kind of the existing 'missing external access/credentials' BLOCKED case — same gate, new status label only (so the predicate machinery is unchanged: it is reached only when every P-predicate is FALSE-or-blocked).","Keep it strictly NON-stop: it never authorizes ending while a P-predicate is TRUE-and-unblocked; it only re-labels a stop that was ALREADY legal under the existing blocked rules."]
+- recommendation: "Narrowly-pinned legal stop (suggestion 1) with the SAME anti-laundering prose the §Stop condition uses for confirmations: enumerate the forbidden look-alikes (magnitude/proportion/scope/disposition/'natural stopping point') as explicitly NOT user-action-required, and require the agent to name the exact user command + the exact unblocked item. This makes it a distinct, auditable status rather than an effort escape hatch."
+- ledgerRefs: ["goals:G30"]
+- answer: as recommended
+
+### Q139 — open
+
+- createdAt: 2026-06-08T00:05:10.088Z
+- updatedAt: 2026-06-08T00:05:10.088Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- question: Is the new status DISTINCT from `answers-required`, or should `answers-required` be generalized to cover user-actions too? And how does the agent CHOOSE between them at end-of-run when BOTH an open question and a user-action blocker are present — does that become a `mixed` stop, and if so does `mixed`'s handoffReasons need to be able to list `user-action-required` as a component?
+- context: "Today /cq:advance maps BLOCKED-ON-QUESTIONS→answers-required and ties answers-required/mixed to a non-empty blockingQuestions[] (advance.md L266-268). The goal explicitly wants the new status DISTINCT from answers-required: answers-required = a user REQUIREMENTS/clarification ANSWER (an `open` questions item); user-action-required = a manual/environment ACTION the agent cannot perform itself (no questions item involved). The `mixed` status already composes multiple reasons via handoffReasons[] (HANDOFFS_SCHEMA `handoffReasons: string[]`). If a run lands work AND is blocked partly on an open question AND partly on a user action, the natural classification is `mixed` with handoffReasons listing both components. The four prompt status-tables (advance.md L63-66, plan/advance.md L563-568, investigate/advance.md L355-360, implement/advance.md L422-427) each map an end-of-run classification to a handoff status and would each gain a row for the user-action case."
+- suggestions: ["DISTINCT new status; answers-required stays exactly as-is (open-question only). When BOTH an open-question block and a user-action block co-occur with landed work → classify `mixed` and list both as handoffReasons components (e.g. [drained, answers-required, user-action-required]).","Generalize answers-required to mean 'needs user input of any kind' (question OR action) — fewer statuses but loses the question-vs-action distinction the goal asked for (NOT recommended).","DISTINCT new status, and when a user-action block co-occurs with an open question, prefer the NEW status over mixed (treat user-action as the dominant classification)."]
+- recommendation: "DISTINCT new status (suggestion 1): keep answers-required strictly question-gated; introduce user-action-required as its own classification; and let `mixed` compose them via handoffReasons (which already exists for exactly this). This preserves the question-vs-action distinction the goal requires and reuses the existing mixed/handoffReasons machinery rather than inventing new composition rules."
+- ledgerRefs: ["goals:G30"]
+
+### Q140 — open
+
+- createdAt: 2026-06-08T00:05:23.450Z
+- updatedAt: 2026-06-08T00:05:23.450Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- question: "Does the new status need a STRUCTURED 'required action' field so the user sees exactly what to do (the exact command/action + which item it unblocks), or is the existing free-text `handoffReasons[]` + `summary` + `ledgerRefs` enough? And does `user-action-required` belong ONLY on the handoffs lifecycle, or should an analogous concept also exist on goals/defects (so e.g. D37 itself carries a 'blocked on user action' marker)?"
+- context: "HANDOFFS_SCHEMA fields today: summary (required), flow, ledgerRefs, blockingQuestions (ids of blocking questions — the structured carrier for answers-required), handoffReasons (string[]), sessionLogs, tags, sourceRefs. There is NO structured carrier for a user-action the way blockingQuestions structures the question case. Options: (a) reuse handoffReasons free-text; (b) add a new field e.g. `requiredActions: string[]` (each entry = one concrete action the user must take) parallel to blockingQuestions. The motivating D37 already encodes its action in defects.suggestedFix ('Re-run home-manager switch ...') and is an `open` defect — so the action detail can ALSO live on the linked defect via ledgerRefs. SCHEMA-COST NOTE: adding statusValues is a schema change (see the migration question); adding a NEW FIELD is also a schema change and triggers the same on-disk-divergence guard. Keeping to handoffReasons avoids a second schema-shape change. Separately: defects/goals have their own lifecycles — widening them is a much larger blast radius and likely out of scope."
+- suggestions: ["No new field: carry the required action in `handoffReasons[]` (one entry per action, e.g. 'user-action-required: run `home-manager switch` to activate the merged extension (unblocks D37)') + `ledgerRefs` to the blocked item + `summary` prose. Handoffs-only; do NOT touch goals/defects lifecycles.","Add a structured `requiredActions: string[]` field to HANDOFFS_SCHEMA (parallel to blockingQuestions) so the user-action is first-class and machine-readable; handoffs-only.","Both a new handoffs field AND an analogous marker on goals/defects (largest scope — likely defer the goals/defects part to a separate goal)."]
+- recommendation: Suggestion 1 (reuse handoffReasons, no new field, handoffs-only). The user-action detail is already capturable in handoffReasons + the linked defect's suggestedFix via ledgerRefs; adding a field is a second schema-shape change with its own migration cost for marginal benefit, and widening goals/defects lifecycles is out of scope for this goal. If a structured field is wanted, prefer suggestion 2 over 3 and keep it handoffs-only.
+- ledgerRefs: ["goals:G30"]
+
+### Q141 — open
+
+- createdAt: 2026-06-08T00:05:51.295Z
+- updatedAt: 2026-06-08T00:05:51.295Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- question: How should the schema change interact with the schema-divergence BACKUP-AND-REINIT behavior on existing deployments? Adding a value to HANDOFFS_SCHEMA.statusValues changes the canonical schema, so any ledger whose on-disk handoffs schema predates this change will DIVERGE on the next init() — and the DEFAULT (D2/G4 fix) is backup-and-reinit, which moves the existing handoffs file (all prior HO records) to docs/.backup/<ts>/ and writes a fresh-canonical (empty) handoffs ledger. Is that acceptable for this goal, or must existing handoff records be preserved in-place?
+- context: "FsLedgerStore.init() (packages/ledger/src/store/FsLedgerStore.ts) compares each on-disk ledger schema to its CANONICAL_LEDGERS schema; on divergence the DEFAULT onSchemaDivergence:'backup-reinit' (T95/T96) backs up the prior ledgers.yaml + the divergent .md file into docs/.backup/<sanitized-ts>/ and re-writes the affected ledger fresh-canonical (emitting one stderr WARNING with the backup path); the 'abort' opt-out preserves the old hard throw. So a deployed repo with existing HO records (e.g. THIS repo, which has HO22 etc.) would, on first run of the new binary, have its handoffs ledger reset and the old records relocated to the backup dir — NOT a silent loss, but the live handoffs ledger starts empty. This is the established/accepted migration mechanism for canonical-schema evolution in this codebase (it is how every prior statusValues addition has rolled out), but the goal should state explicitly whether that default is fine here or whether handoff history must survive in the live ledger."
+- suggestions: ["Accept the established backup-and-reinit default: it is the codebase's standard canonical-schema-evolution path (prior records preserved in docs/.backup/<ts>/, live ledger fresh-canonical, one WARNING). No special migration code; just note it in the goal/acceptance and confirm `bun test`'s divergence suite still passes with the new statusValues. The repo's own handoffs ledger will reinit on next run — acceptable since HO records are session-exit logs, not work items.","Require an in-place, NON-destructive migration that ADDS the new statusValues to an existing handoffs ledger WITHOUT reinitializing (preserve all prior HO records in the live ledger). This is NEW behavior beyond the current backup-reinit mechanism and a larger change.","Defer/avoid: keep handoffs schema as-is and model user-action via handoffReasons text only (no new statusValue) — sidesteps migration entirely (but contradicts the goal's scope item (1))."]
+- recommendation: Suggestion 1 (accept backup-and-reinit). It is the repo's established, tested mechanism for evolving a canonical schema (additive statusValues have always rolled out this way); records are preserved under docs/.backup/, not lost; and handoff items are immutable session-exit logs, so a fresh live ledger after one reinit is harmless. The only required test work is confirming the divergence suite still passes with the widened statusValues. Avoid building bespoke in-place migration (suggestion 2) unless preserving live HO history is an explicit requirement.
+- ledgerRefs: ["goals:G30"]
+
+### Q142 — open
+
+- createdAt: 2026-06-08T00:06:07.095Z
+- updatedAt: 2026-06-08T00:06:07.095Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- question: "For RENDERING (TUI/web): which semantic BUCKET should `user-action-required` map to, given that as a NEW terminal status it would otherwise default to the `done`/green bucket (mis-reading a 'you must act' state as complete)? And what is the acceptance bar overall — do you want (a) schema unit tests, (b) a grep-invariant that every handoff-writing prompt's status-table includes the new status, and (c) a TUI/web render test?"
+- context: "Rendering is fully data-driven by statusBucket(status, schema) in packages/ledger-{tui,web}/src/status.ts (mirrored). For TERMINAL statuses it returns: WARNING.has(s)?'warning' : DROPPED.has(s)?'dropped' : 'done'. The existing terminal handoff statuses (drained/answers-required/mixed/illness-detected) currently fall through to 'done' (green) — EXCEPT none is in WARNING/DROPPED. A new terminal `user-action-required` with no set membership would ALSO render green/done, which is misleading (it signals the user must DO something, not that the run finished clean). The codebase already has a 'warning' bucket (magenta TUI / amber web CSS lw-status-warning) used for `revise`/`inconclusive` — the natural fit for 'needs user attention'. Adding the status to the WARNING set (TUI status.ts L28 + the mirrored web status.ts) makes both frontends render it distinctly with NO other code change (DagView/badges derive from the shared bucket). NOTE: arguably answers-required/illness-detected SHOULD also be 'warning' today and aren't — confirm whether to (i) only add user-action-required to WARNING, or (ii) also reclassify the sibling attention-statuses (larger, possibly out of scope)."
+- suggestions: ["Map user-action-required to the existing 'warning' bucket (add it to WARNING in BOTH status.ts files); leave the other four handoff statuses' buckets unchanged (out of scope). Acceptance: (a) HANDOFFS_SCHEMA unit test asserting the new statusValue + terminal + transitions entry; (b) a grep/test invariant that all four prompt status-tables (advance/plan/investigate/implement) contain the new status token; (c) TUI + web render tests asserting user-action-required renders in the warning color/class (not green). `bun run check` green.","Same as 1 but ALSO reclassify answers-required + illness-detected into attention buckets for consistency (broader rendering change — likely a separate concern).","Introduce a NEW dedicated bucket (e.g. 'attention'/'action') distinct from 'warning', with its own TUI ink color + web CSS class, mapped only by user-action-required (more code, clearer semantics)."]
+- recommendation: "Suggestion 1: reuse the existing 'warning' bucket (single-line addition to the WARNING set in both mirrored status.ts files — distinct from green 'done', no DagView/badge changes needed), and take all three acceptance gates (schema unit test + prompt-table grep-invariant + TUI/web render test). Reclassifying sibling handoff statuses (suggestion 2) and a brand-new bucket (suggestion 3) are out of scope for this goal unless you want them."
+- ledgerRefs: ["goals:G30"]

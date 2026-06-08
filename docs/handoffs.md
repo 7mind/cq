@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 23
+  item: 24
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -130,3 +130,17 @@ archives:
 - ledgerRefs: ["goals:G29","defects:D36"]
 - blockingQuestions: ["Q133","Q134","Q135","Q136"]
 - sessionLogs: ["docs/logs/20260608-000022-afd464efe85dce401.md"]
+
+## M93
+
+### HO24 — answers-required
+
+- createdAt: 2026-06-08T00:07:03.351Z
+- updatedAt: 2026-06-08T00:07:03.351Z
+- author: "opus-4.8[1m]"
+- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
+- summary: "ANSWERS-REQUIRED. /cq:plan bootstrapped goal G30 (\"Add a user-action-required handoff status + thread it through the flow prompts\") under M93 — motivated by HO22, where the real blocker (D37, re-run home-manager activation) was a USER MANUAL/ENVIRONMENT ACTION with no clean handoff status (forced into `mixed`). The planner grounded read-only and filed clarifying batch Q137-Q142 (all linked goals:G30). Load-bearing sites found: HANDOFFS_SCHEMA at packages/ledger/src/constants.ts L341-361 (statusValues drained/answers-required/mixed/illness-detected, all terminal; no structured user-action carrier); the FOUR prompt status-tables in commands/cq/{advance,plan/advance,investigate/advance,implement/advance}.md (advance.md also has the §Stop-condition gate explicitly stating 'NO handoff status for an effort-based stop' — the new status must be a LEGAL stop without laundering an effort/confirmation stop); rendering is data-driven via statusBucket() in the mirrored ledger-{tui,web}/src/status.ts (a new status defaults to the green `done` bucket unless added to the `warning` set). MIGRATION CONSEQUENCE: adding a statusValue triggers the schema-divergence backup-and-reinit default (D2/G4) — a live deployment's handoffs ledger resets to fresh-canonical with prior records backed up. Open questions: Q137 (exact token + terminality), Q138 (legal-stop semantics + the operational anti-laundering test vs answers-required-only-pause gate), Q139 (distinct-from-answers-required vs generalize it), Q140 (structured required-action field vs reuse handoffReasons; handoffs-only or also goals/defects), Q141 (schema-migration handling), Q142 (rendering bucket + acceptance bar). NEXT (user): answer Q137-Q142 in the TUI/web, then run /cq:plan:advance G30."
+- flow: plan
+- ledgerRefs: ["goals:G30","defects:D37"]
+- blockingQuestions: ["Q137","Q138","Q139","Q140","Q141","Q142"]
+- sessionLogs: ["docs/logs/20260608-000631-acfb0df8dce386356.md"]

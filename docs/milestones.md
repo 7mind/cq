@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 92
+  item: 93
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -480,3 +480,10 @@ archives:
 - updatedAt: 2026-06-07T23:58:02.725Z
 - title: "Plan: provider-qualified token support in cq config"
 - description: "Coordination milestone for adding explicit-provider token support to the cq.toml config grammar (e.g. minimax = \"pi:ollama-cloud:minimax-m3\"), resolving the D36 provider-ambiguity."
+
+### M93 — open
+
+- createdAt: 2026-06-08T00:02:01.908Z
+- updatedAt: 2026-06-08T00:02:01.908Z
+- title: "Plan: user-action-required handoff status"
+- description: Coordination milestone for adding a new handoffs status signalling the agent genuinely needs a user MANUAL/ENVIRONMENT action (not a question), and threading it through the flow prompts/schema.
