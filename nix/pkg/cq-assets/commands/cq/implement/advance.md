@@ -452,6 +452,51 @@ context you are in.
   once at the stop, never updated. **Then commit the ledger** (§Commit the
   ledger, at-stop commit) — this is the final act of the standalone pass.
 
+  **TURN-vs-RUN clause (D39).** A RUN and a TURN are distinct scopes. A **RUN**
+  spans as many turns as needed and is durably resumable from ledger state on the
+  next `/cq:implement:advance` invocation — the ledger IS the durable resume
+  point. A **TURN** is a single context window; exhausting the turn/context
+  budget is **NOT a run-stop**. When a turn/context budget is exhausted
+  mid-stride, the agent **STOPS WITHOUT writing a handoff** — no `handoffs`
+  record, no `mixed`/effort terminal artifact — because the ledger already
+  captures every durable state change. The next `/cq:implement:advance` reads
+  ledger state and continues from where the previous turn left off. Contrast: a
+  **RUN-stop** = one of the five predicate-gated handoff statuses; a
+  **TURN-pause** = no artifact, just resume next invocation. Fabricating a
+  terminal handoff record to "wrap up" a turn that ran out of budget is the same
+  forbidden launder as an effort-based stop — there is deliberately **NO handoff
+  status for an effort-based stop**, and turn exhaustion is an effort-based fact,
+  not a predicate-gated one.
+
+  **Euphemism blocklist + self-check invariant (D39).** Before writing any
+  handoff record, scan your own about-to-be-written `summary` for the phrases
+  "NOT a predicate-legal stop", "predicates still TRUE", or any equivalent
+  admission that the stop is non-predicate-gated. If such a phrase appears — i.e.
+  if your own summary concedes that **predicates still TRUE** — the stop is ILLEGAL
+  by your own admission: **delete the handoff and CONTINUE** the pass. A summary
+  that contains "predicates still TRUE" is self-refuting; the correct action is
+  to **delete** the draft entry and **CONTINUE**, never to file it. The following
+  phrases, when used to justify a stop, are euphemisms for effort-based stops
+  (cited from HO22/HO25/HO26 as laundering patterns found there); each is
+  explicitly forbidden as a stop rationale — if any appears in a candidate
+  `summary`, treat it as evidence of "predicates still TRUE" and **delete** and
+  **CONTINUE**:
+  - **"deliberate/transparent checkpoint"** — an effort-stop dressed as intentionality;
+  - **"warrants fresh context"** — an effort-stop dressed as a quality concern;
+  - **"BREAKING/large/delicate change needs care"** — an effort-stop dressed as caution;
+  - **"a complete vertical slice is a clean boundary"** — an effort-stop dressed as scope hygiene.
+
+  **Enforced-invariant (D39 — write-time enforcement).** The `@cq/ledger`
+  `create_item` for `handoffs` THROWS if these buckets are empty when their
+  status requires them: a `mixed` or `answers-required` handoff MUST carry a
+  non-empty `blockingQuestions[]`; a `user-action-required` or `mixed` handoff
+  MUST carry a non-empty `handoffReasons[]`. An empty-bucket effort-stop is
+  literally UNWRITABLE — the ledger rejects it at write time. The only
+  remediation is to either populate the required fields with their genuine
+  predicate-gated content (real blocking question ids, real user-action reasons)
+  — which the predicates will ONLY supply if the stop is legitimate — or to
+  **not stop and CONTINUE** the pass instead.
+
 - **Run CHAINED INLINE by any wrapping flow command** (`/cq:advance`, or a
   `/<flow>:start` that runs this pass inline):
   **SUPPRESS this handoff write** — AND suppress the at-stop ledger commit (the
