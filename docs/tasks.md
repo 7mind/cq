@@ -294,6 +294,26 @@ archives:
     summary: "G29 provider-qualified pi token grammar COMPLETE: T231-T239 all merged + reviewed; D36 RESOLVED. pi:<provider>/<model> slash grammar (bare rejected) threaded through @cq/config (parseReviewerToken + resolvers), the @cq/ledger(-mcp) config-capability surface, and the cq-subagent-dispatch extension mirror (K50 cross-layer guard); cq.toml.example migrated + documented; fixtures adapted; final gate green (bun run check 1089/0 + nix builds + bare-pi audit clean). ACTIVATION TAIL: live cq.toml migration + get_config spot-check deferred to the rebuilt-MCP restart."
     title: "G29 W: provider-qualified pi token grammar"
     status: done
+  - id: M103
+    path: ./archive/tasks/M103.md
+    summary: "G32 W1 COMPLETE: write-time handoff invariant enforcement. assertHandoffInvariants pure helper (core.ts) wired into applyCreateItem+applyUpdateItem (both adapters); mixed/answers-required⇒non-empty blockingQuestions, user-action-required⇒non-empty handoffReasons, else SchemaValidationError. Dual-adapter tests reproduce HO26 as an asserted throw. K52 deferred the stretch hardenings. T257-T260 done, R314-R317 go-ahead."
+    title: "G32 W1: write-time handoff invariant enforcement (@cq/ledger, load-bearing)"
+    status: done
+  - id: M104
+    path: ./archive/tasks/M104.md
+    summary: "G32 W2 COMPLETE: advance.md §Stop-condition turn-vs-run clause (marker 'NOT a run-stop') — turn/context exhaustion is NOT a run-stop, needs no handoff, the ledger is the resume point. T261 done, R318 go-ahead."
+    title: "G32 W2: advance.md turn-vs-run stop clause"
+    status: done
+  - id: M105
+    path: ./archive/tasks/M105.md
+    summary: "G32 W3 COMPLETE: euphemism blocklist + self-check + enforced-invariant prose threaded across all 4 *:advance prompts (advance.md via T262; the 3 per-flow via T263). T262/T263 done, R319/R320 go-ahead."
+    title: "G32 W3: euphemism blocklist + self-check across the four *:advance prompts"
+    status: done
+  - id: M106
+    path: ./archive/tasks/M106.md
+    summary: "G32 W4 COMPLETE: 8-cell grep-invariant (4 prompts × 2 markers) + final verify (bun run check 1135/0 + nix build .#ledger-mcp); D39 reproduction closed. T264/T265 done, R321/R322 go-ahead."
+    title: "G32 W4: verify + grep-invariant"
+    status: done
 ---
 
 # tasks
@@ -568,126 +588,3 @@ archives:
 - dependsOn: ["T247","T250","T255"]
 - ledgerRefs: ["goals:G30"]
 - completion: "G30 verify gate PASSED (orchestrator-run on integrated main): bun run check 1071/1/0 (all new tests green); nix build .#llm-contexts .#llm-context-with-env .#llm-skills exit 0. No code diff."
-
-## M103
-
-### T257 — planned
-
-- createdAt: 2026-06-08T10:56:02.238Z
-- updatedAt: 2026-06-08T11:11:15.735Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add assertHandoffInvariants pure helper to @cq/ledger store/core.ts
-- description: "REPRODUCE-FIRST (CLAUDE.md §6a): BEFORE writing the helper, add a minimal repro assertion — createItem('handoffs', <active milestone>, {status:'mixed', fields:{summary, blockingQuestions:[]}}) SHOULD throw — and run it against the UNMODIFIED store; CONFIRM it FAILS because the bad write currently SUCCEEDS (this is D39 reproduced); capture that observation in the session log. (The per-task green-merge constraint means you do not COMMIT a red test on the branch; you demonstrate the reproduction by observing the pre-fix behavior, then ship test+fix green.) THEN add the handoffs-specific pure assertion in nix/pkg/cq-ledgers/packages/ledger/src/store/core.ts, modelled EXACTLY on the existing assertQuestionAnswerPrecondition (D29) and assertGoalPhasePreconditions (F2) — NOT a generic LedgerSchema `requiredWhen` DSL (core.ts ~L790 explicitly records that as out of scope). Signature: `export function assertHandoffInvariants(itemId, status, fields): void`. Rules: (a) status `mixed` OR `answers-required` REQUIRES a non-empty `blockingQuestions` array (Array.isArray && length>0) — else throw SchemaValidationError naming item/status/violated-invariant; (b) status `user-action-required` REQUIRES a non-empty `handoffReasons` array (the required-action carrier per G30/Q140) — else throw symmetric SchemaValidationError. The helper takes only (status, fields) — NO cross-ledger view, fully pure. DO NOT change any HANDOFFS_SCHEMA field (blockingQuestions stays {type:'id[]',required:false}; the requirement is conditional-on-status, enforced HERE not via flipping `required` — a drained/illness-detected handoff legitimately has none). Include a direct unit test of assertHandoffInvariants over the full status×field matrix."
-- acceptance: "core.ts exports assertHandoffInvariants(itemId,status,fields); a direct unit test THROWS SchemaValidationError for (mixed,blockingQuestions:[]), (answers-required,blockingQuestions:[]), (user-action-required,handoffReasons:[]); returns void for (mixed,blockingQuestions:['Q1']), (user-action-required,handoffReasons:['env']), (drained,{}), (illness-detected,{}). The session log records the reproduce-first observation (the mixed+empty write SUCCEEDED against the unmodified store before this fix). bun run typecheck passes; HANDOFFS_SCHEMA fields unchanged."
-- suggestedModel: frontier
-- ledgerRefs: ["goals:G32","defects:D39"]
-
-### T258 — planned
-
-- createdAt: 2026-06-08T10:56:02.277Z
-- updatedAt: 2026-06-08T10:56:02.277Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Invoke assertHandoffInvariants on the create AND update write paths in core.ts
-- description: "Wire the helper into BOTH mutation paths in core.ts so a violating handoff write throws before commit. (1) CREATE — in applyCreateItem (~L309), after validateFields + assertStatusAllowed, add `if (ledger.id === HANDOFFS_LEDGER) assertHandoffInvariants(<id/label>, init.status, init.fields);` (import HANDOFFS_LEDGER from ../constants.js). This covers BOTH adapters with ZERO per-store wiring (InMemoryLedgerStore + FsLedgerStore both route createItem through applyCreateItem — verified). The create path is load-bearing (handoffs terminal-on-create, written via create_item) — this makes the HO26 write (mixed, blockingQuestions:[]) THROW. (2) UPDATE — in applyUpdateItem (~L259), compute the EFFECTIVE status (patch.status ?? item.status) + EFFECTIVE fields (item.fields + patch.fields merge) and call assertHandoffInvariants for the handoffs ledger so an update can't launder into mixed-with-empty-blockingQuestions. Reuse the wired StatusChangePrecondition hook if it keeps consistency, else enforce inline keyed on ledger.id. Both adapters must behave identically (dual-tests will assert). Surgical — no validateFields refactor, no schema-field change."
-- acceptance: "Through the public store API (both InMemoryLedgerStore + FsLedgerStore): createItem('handoffs', M, {status:'mixed', fields:{summary:'x', blockingQuestions:[]}}) REJECTS with SchemaValidationError; with blockingQuestions:['Q1'] SUCCEEDS; an updateItem moving a handoff into mixed/answers-required with empty blockingQuestions (or user-action-required with empty handoffReasons) REJECTS. bun run typecheck passes; create path needs no per-store edit."
-- suggestedModel: frontier
-- dependsOn: ["T257"]
-- ledgerRefs: ["goals:G32","defects:D39"]
-
-### T259 — planned
-
-- createdAt: 2026-06-08T10:56:08.220Z
-- updatedAt: 2026-06-08T11:04:22.892Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add dual-adapter unit tests proving the handoff invariant throws + valid succeeds
-- description: "Add a test under nix/pkg/cq-ledgers/packages/ledger/test/ (e.g. handoffs-write-time-invariant.test.ts). Follow the package's DUAL-TESTS pattern: run the SAME assertions against BOTH InMemoryLedgerStore and FsLedgerStore (Fs against a TEMP dir, never live docs/ — mirror handoffs-additive-widening-init.test.ts). Cases: (1) THROWS — createItem('handoffs', <active milestone>, {status:'mixed', fields:{summary, blockingQuestions:[]}}) rejects with SchemaValidationError; same for 'answers-required'+empty blockingQuestions; same for 'user-action-required'+empty handoffReasons. (2) SUCCEEDS — 'mixed'+blockingQuestions:['Q1']+summary; 'user-action-required'+handoffReasons:['re-activate env']; 'drained' with empty blockingQuestions STILL succeeds (per-status, not blanket). (3) UPDATE — an updateItem laundering a valid handoff into mixed-with-empty-blockingQuestions rejects. Plus a direct unit test of assertHandoffInvariants(...) matrix. Reproduce the HO26 defect (mixed+empty blockingQuestions) as the headline asserted-throw case — the D39 reproduction made executable."
-- acceptance: "Under `bun test`, a new test (under nix/pkg/cq-ledgers/packages/ledger/test/, dual-adapter against BOTH InMemoryLedgerStore AND FsLedgerStore-on-a-temp-dir) passes with this FULL MATRIX: (a) HO26 REPRO — createItem('handoffs', M, {status:'mixed', fields:{summary, blockingQuestions:[]}}) THROWS SchemaValidationError (this exact write SUCCEEDED before T257/T258; the test comment notes that); (b) ALL THREE status×empty-field combos THROW SchemaValidationError — mixed+blockingQuestions:[], answers-required+blockingQuestions:[], user-action-required+handoffReasons:[]; (c) the VALID non-empty counterparts SUCCEED — mixed+blockingQuestions:['Q1'], answers-required+blockingQuestions:['Q1'], user-action-required+handoffReasons:['re-activate env'] — AND drained+empty + illness-detected+empty STILL succeed (per-status, not blanket); (d) BOTH the createItem path AND the updateItem path (an updateItem that moves/leaves a handoff at mixed/answers-required with empty blockingQuestions, or user-action-required with empty handoffReasons, via effective-fields, REJECTS); (e) a direct unit-test of assertHandoffInvariants(...) over the same matrix. Every assertion runs against both adapters; the Fs adapter uses temp fixtures (no live docs/)."
-- suggestedModel: frontier
-- dependsOn: ["T258"]
-- ledgerRefs: ["goals:G32","defects:D39"]
-
-### T260 — planned
-
-- createdAt: 2026-06-08T10:56:15.063Z
-- updatedAt: 2026-06-08T11:16:29.819Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: "Record the up-front scope-deferral decision (zero-code): cross-ledger + drained predicate-gate deferred"
-- description: "A ZERO-CODE, UP-FRONT scope-DECISION (made now, BEFORE the W1 implementation, so it informs nothing it needs to change — the decision is DEFER, so T257-T259 implement only the load-bearing non-empty checks regardless). The two OPTIONAL hardenings from D39.suggestedFix are DEFERRED with rationale: (A) cross-ledger 'each blockingQuestions id resolves to an EXISTING `open` question' — DEFERRED: a non-empty blockingQuestions[] already makes the reproduced HO22/25/26 launder (mixed + EMPTY blockingQuestions) unwritable; a dangling/closed id is a lower-likelihood + lower-severity case and would need cross-ledger store plumbing (F2-style) not justified now. (B) `drained` predicate-gate restatement — DEFERRED to the prompt layer (W2's turn-vs-run framing covers the legitimate-drained discipline; no machine-checkable field carries it). This task is purely the recorded decision (a `decisions` item or the completion note); it implements NO code and does NOT gate or alter T257-T259/T264/T265 (DAG leaf). If a future run wants (A), it is a separate goal."
-- acceptance: A recorded decision (a decisions item and/or this task's completion note) states both (A) and (B) are DEFERRED with the rationale above (the load-bearing non-empty checks fully close the reproduced launder). No code change in this task; no regression. (No test required — zero-code decision.)
-- suggestedModel: frontier
-- dependsOn: []
-- ledgerRefs: ["goals:G32","defects:D39"]
-
-## M104
-
-### T261 — planned
-
-- createdAt: 2026-06-08T10:56:36.156Z
-- updatedAt: 2026-06-08T10:56:36.156Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add the turn-vs-run clause to advance.md §Stop-condition
-- description: "In nix/pkg/cq-assets/commands/cq/advance.md, §Stop-condition / 'The stop is PROGRESS-bounded, never EFFORT-bounded (hard gate)' (~L265-329) and the 'These are NOT stop conditions' list, add the TURN-vs-RUN clause (D39 root-cause hypothesis 2 — the missing framing): turn/context-budget exhaustion is NOT a run-stop and needs NO handoff record; the RUN is durably resumable from ledger state on the next /cq:advance; the agent keeps going until a predicate-LEGAL stop, and when a turn/context budget is exhausted mid-stride it STOPS WITHOUT writing a handoff (the ledger is the resume point) rather than fabricating a terminal mixed/effort handoff to 'wrap up'. State the contrast: a RUN-stop (one of the five predicate-gated handoff statuses) vs a TURN-pause (no artifact, resume next invocation). This is the prompt complement to the now-enforced schema invariant (even though the laundered write THROWS, the agent must know the legitimate alternative is pause-without-handoff). Consistent with the existing 'NO handoff status for an effort-based stop' (extend, do not contradict). Surgical insertion matching the hard-gate style."
-- acceptance: advance.md §Stop-condition contains an explicit turn-vs-run clause stating (verbatim-checkable tokens for the W4 grep-invariant) that turn/context exhaustion is NOT a run-stop, needs no handoff, and the ledger is the durable resume point — distinct from the five predicate-gated run-stop statuses. The existing 'NO handoff status for an effort-based stop' text is preserved.
-- suggestedModel: standard
-- ledgerRefs: ["goals:G32","defects:D39"]
-
-## M105
-
-### T262 — planned
-
-- createdAt: 2026-06-08T10:56:36.219Z
-- updatedAt: 2026-06-08T11:11:20.711Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Expand the forbidden-rationale euphemism blocklist + self-check in advance.md
-- description: "In nix/pkg/cq-assets/commands/cq/advance.md, the 'These are NOT stop conditions' list + the anti-laundering prose, do BOTH: (1) Expand the forbidden-rationale list with the EXACT euphemisms D39 observed laundering effort-stops (cite a prior HO-NN for each): 'deliberate/transparent checkpoint' (HO22/HO25/HO26), 'warrants fresh context', 'BREAKING/large/delicate change', 'a complete vertical slice is a clean boundary'. Add the SELF-CHECK: if your own handoff summary contains a phrase like 'NOT a predicate-legal stop' or 'predicates still TRUE' (as HO26's literally did), the stop is ILLEGAL by your own admission — DELETE the handoff and CONTINUE. (2) ADD the ENFORCED-INVARIANT PROSE so advance.md (the 4th *:advance prompt) carries it too (consistent with T263's per-flow files): a `mixed`/`answers-required` run-level handoff MUST carry a non-empty blockingQuestions[] and a `user-action-required` handoff a non-empty handoffReasons[] — the @cq/ledger create_item now THROWS otherwise (the D39 write-time enforcement), so an empty-bucket effort-stop is literally UNWRITABLE; populate those fields or do not stop. Place it in/near §Provenance 'the one write' / §End-of-run where the handoff statuses are described. Consistent with the existing confirmation-ban content-not-channel rule. Surgical, matching the hard-rule bullet style."
-- acceptance: "advance.md contains the four named euphemisms (each citing a prior HO-NN) in the forbidden-rationale list, the self-check rule ('if your summary says not-a-predicate-legal-stop / predicates-still-TRUE → delete the handoff and CONTINUE'), AND the enforced-invariant prose (mixed/answers-required ⇒ non-empty blockingQuestions[], user-action-required ⇒ non-empty handoffReasons[], else the ledger write throws) — all as verbatim-checkable tokens for the W4 grep-invariant. No existing anti-laundering text removed."
-- suggestedModel: standard
-- dependsOn: ["T261"]
-- ledgerRefs: ["goals:G32","defects:D39"]
-
-### T263 — planned
-
-- createdAt: 2026-06-08T10:56:42.827Z
-- updatedAt: 2026-06-08T11:04:33.639Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: "Thread the turn-vs-run clause + euphemism blocklist into the three per-flow *:advance handoff sections"
-- description: "Make the stop discipline CONSISTENT across all FOUR *:advance prompts (the 4th is advance.md itself, edited by T261/T262; THIS task covers the THREE per-flow files). In nix/pkg/cq-assets/commands/cq/plan/advance.md, nix/pkg/cq-assets/commands/cq/investigate/advance.md, and nix/pkg/cq-assets/commands/cq/implement/advance.md, locate each §Handoff-record (STANDALONE)/stop section (the status-tables G30's T252/T253/T254 edited) and add ALL THREE of: (a) the TURN-vs-RUN clause (turn/context exhaustion is NOT a run-stop, no handoff, the ledger is the durable resume point) mirroring advance.md/T261; (b) the EUPHEMISM-BLOCKLIST + SELF-CHECK (the named euphemisms citing a prior HO-NN + the 'if your summary says not-a-predicate-legal-stop / predicates-still-TRUE → delete the handoff and CONTINUE' self-check) mirroring advance.md/T262 — NOT just the turn-vs-run clause; both token sets must land in every per-flow handoff section so all four prompts are consistent (and T264's four-table grep checks BOTH token sets across all four); (c) prose reflecting the now-ENFORCED schema invariant: a standalone handoff written `mixed`/`answers-required` MUST carry a non-empty blockingQuestions[] (and `user-action-required` a non-empty handoffReasons[]) or the @cq/ledger write THROWS — instruct populating those fields, never emitting an empty-bucket effort-stop. Adapt the vocabulary per flow (plan: a planning step; investigate: a research round; implement: a task/pass) but keep the SAME load-bearing tokens. Do NOT duplicate or remove G30's user-action-required rows; ADD the D39 content alongside. Surgical; preserve existing tables/prose."
-- acceptance: "Each of plan/advance.md, investigate/advance.md, implement/advance.md contains ALL THREE: the turn-vs-run clause, the euphemism-blocklist + self-check (same token set as advance.md), AND the enforced-invariant prose (mixed/answers-required ⇒ non-empty blockingQuestions[], user-action-required ⇒ non-empty handoffReasons[], else the write throws). Together with advance.md (T261/T262) all FOUR *:advance prompts carry the same stop discipline. G30's user-action-required rows remain intact. Verbatim-checkable tokens (both the turn-vs-run set AND the euphemism/self-check set) present in all four files for the W4 four-table grep-invariant."
-- suggestedModel: standard
-- dependsOn: ["T262"]
-- ledgerRefs: ["goals:G32","defects:D39"]
-
-## M106
-
-### T264 — planned
-
-- createdAt: 2026-06-08T10:57:02.800Z
-- updatedAt: 2026-06-08T11:11:25.040Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Add a four-table grep-invariant test for the turn-vs-run + euphemism tokens
-- description: "Extend the G30 four-table grep-invariant pattern (T255). Add a test under nix/pkg/cq-ledgers/packages/ledger/test/ (cq-assets is eval-time-only with no per-file build target, so this grep test is the substantive guard for prompt threading) that reads the four real prompt files — nix/pkg/cq-assets/commands/cq/{advance.md, plan/advance.md, investigate/advance.md, implement/advance.md} — and asserts the presence of the load-bearing tokens introduced in W2/W3: the turn-vs-run marker (a stable phrase the T261/T263 edits wrote verbatim, e.g. 'turn/context exhaustion is NOT a run-stop' or whatever exact token they settle on) and the euphemism-blocklist + self-check markers (the named euphemisms + the 'predicates still TRUE'/'delete ... CONTINUE' self-check). Choose tokens that W2/W3 wrote verbatim. FAILS if any of the four files drops a required token (regression guard). Keep consistent with the existing four-table grep test (T255) — do not duplicate boilerplate unnecessarily."
-- acceptance: "bun test runs the new grep-invariant. It reads the FOUR real prompt files — nix/pkg/cq-assets/commands/cq/{advance.md, plan/advance.md, investigate/advance.md, implement/advance.md} — and asserts an explicit 2×4 MATRIX = 8 cells, all populated: TOKEN SET 1 (the turn-vs-run clause marker, a verbatim phrase T261/T263 wrote, e.g. 'NOT a run-stop') present in each of the 4 files; TOKEN SET 2 (the euphemism-blocklist + self-check marker, e.g. the 'predicates still TRUE' / 'delete ... CONTINUE' self-check, T262/T263) present in each of the 4 files. The test FAILS if ANY of the 8 cells is missing (verify teeth by temporarily removing a token from one file). Choose marker strings that T261/T262/T263 wrote verbatim."
-- suggestedModel: standard
-- dependsOn: ["T259","T263"]
-- ledgerRefs: ["goals:G32","defects:D39"]
-
-### T265 — planned
-
-- createdAt: 2026-06-08T10:57:05.558Z
-- updatedAt: 2026-06-08T10:57:05.558Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: "Verify the whole goal: bun run check + new tests + nix build"
-- description: "Final end-to-end verification gate for G32. From nix/pkg/cq-ledgers/ run `bun run check` (bun test + tsc -b + eslint) green, including the new write-time-invariant dual-adapter tests (W1) and the four-table grep-invariant (W4). From the repo root run `nix build .#ledger-mcp` (+ .#ledger-tui/.#ledger-web if touched) to confirm the @cq/ledger change packages cleanly. Confirm the D39 reproduction is closed: the HO26-shaped write (create_item('handoffs', status:'mixed', blockingQuestions:[])) now THROWS, proven by the W1 test. Do NOT hand-edit docs/*.md. Any check failure is a blocker to resolve, not defer. Summarize the green run (test counts) in completion."
-- acceptance: "`bun run check` from nix/pkg/cq-ledgers green (all tests pass, typecheck+lint clean) with the new tests included; `nix build .#ledger-mcp` succeeds from repo root; the asserted-throw test for the HO26-shaped mixed+empty-blockingQuestions write passes (D39 reproduction closed)."
-- suggestedModel: standard
-- dependsOn: ["T264"]
-- ledgerRefs: ["goals:G32","defects:D39"]

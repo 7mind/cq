@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 314
+  item: 323
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -408,6 +408,26 @@ archives:
     path: ./archive/reviews/M94.md
     summary: "G29 provider-qualified pi token grammar COMPLETE: T231-T239 all merged + reviewed; D36 RESOLVED. pi:<provider>/<model> slash grammar (bare rejected) threaded through @cq/config (parseReviewerToken + resolvers), the @cq/ledger(-mcp) config-capability surface, and the cq-subagent-dispatch extension mirror (K50 cross-layer guard); cq.toml.example migrated + documented; fixtures adapted; final gate green (bun run check 1089/0 + nix builds + bare-pi audit clean). ACTIVATION TAIL: live cq.toml migration + get_config spot-check deferred to the rebuilt-MCP restart."
     title: "G29 W: provider-qualified pi token grammar"
+    status: done
+  - id: M103
+    path: ./archive/reviews/M103.md
+    summary: "G32 W1 COMPLETE: write-time handoff invariant enforcement. assertHandoffInvariants pure helper (core.ts) wired into applyCreateItem+applyUpdateItem (both adapters); mixed/answers-required⇒non-empty blockingQuestions, user-action-required⇒non-empty handoffReasons, else SchemaValidationError. Dual-adapter tests reproduce HO26 as an asserted throw. K52 deferred the stretch hardenings. T257-T260 done, R314-R317 go-ahead."
+    title: "G32 W1: write-time handoff invariant enforcement (@cq/ledger, load-bearing)"
+    status: done
+  - id: M104
+    path: ./archive/reviews/M104.md
+    summary: "G32 W2 COMPLETE: advance.md §Stop-condition turn-vs-run clause (marker 'NOT a run-stop') — turn/context exhaustion is NOT a run-stop, needs no handoff, the ledger is the resume point. T261 done, R318 go-ahead."
+    title: "G32 W2: advance.md turn-vs-run stop clause"
+    status: done
+  - id: M105
+    path: ./archive/reviews/M105.md
+    summary: "G32 W3 COMPLETE: euphemism blocklist + self-check + enforced-invariant prose threaded across all 4 *:advance prompts (advance.md via T262; the 3 per-flow via T263). T262/T263 done, R319/R320 go-ahead."
+    title: "G32 W3: euphemism blocklist + self-check across the four *:advance prompts"
+    status: done
+  - id: M106
+    path: ./archive/reviews/M106.md
+    summary: "G32 W4 COMPLETE: 8-cell grep-invariant (4 prompts × 2 markers) + final verify (bun run check 1135/0 + nix build .#ledger-mcp); D39 reproduction closed. T264/T265 done, R321/R322 go-ahead."
+    title: "G32 W4: verify + grep-invariant"
     status: done
 ---
 

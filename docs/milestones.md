@@ -449,6 +449,26 @@ archives:
     summary: "G29 provider-qualified pi token grammar COMPLETE: T231-T239 all merged + reviewed; D36 RESOLVED. pi:<provider>/<model> slash grammar (bare rejected) threaded through @cq/config (parseReviewerToken + resolvers), the @cq/ledger(-mcp) config-capability surface, and the cq-subagent-dispatch extension mirror (K50 cross-layer guard); cq.toml.example migrated + documented; fixtures adapted; final gate green (bun run check 1089/0 + nix builds + bare-pi audit clean). ACTIVATION TAIL: live cq.toml migration + get_config spot-check deferred to the rebuilt-MCP restart."
     title: "G29 W: provider-qualified pi token grammar"
     status: done
+  - id: M103
+    path: ./archive/milestones/M103.md
+    summary: "G32 W1 COMPLETE: write-time handoff invariant enforcement. assertHandoffInvariants pure helper (core.ts) wired into applyCreateItem+applyUpdateItem (both adapters); mixed/answers-required⇒non-empty blockingQuestions, user-action-required⇒non-empty handoffReasons, else SchemaValidationError. Dual-adapter tests reproduce HO26 as an asserted throw. K52 deferred the stretch hardenings. T257-T260 done, R314-R317 go-ahead."
+    title: "G32 W1: write-time handoff invariant enforcement (@cq/ledger, load-bearing)"
+    status: done
+  - id: M104
+    path: ./archive/milestones/M104.md
+    summary: "G32 W2 COMPLETE: advance.md §Stop-condition turn-vs-run clause (marker 'NOT a run-stop') — turn/context exhaustion is NOT a run-stop, needs no handoff, the ledger is the resume point. T261 done, R318 go-ahead."
+    title: "G32 W2: advance.md turn-vs-run stop clause"
+    status: done
+  - id: M105
+    path: ./archive/milestones/M105.md
+    summary: "G32 W3 COMPLETE: euphemism blocklist + self-check + enforced-invariant prose threaded across all 4 *:advance prompts (advance.md via T262; the 3 per-flow via T263). T262/T263 done, R319/R320 go-ahead."
+    title: "G32 W3: euphemism blocklist + self-check across the four *:advance prompts"
+    status: done
+  - id: M106
+    path: ./archive/milestones/M106.md
+    summary: "G32 W4 COMPLETE: 8-cell grep-invariant (4 prompts × 2 markers) + final verify (bun run check 1135/0 + nix build .#ledger-mcp); D39 reproduction closed. T264/T265 done, R321/R322 go-ahead."
+    title: "G32 W4: verify + grep-invariant"
+    status: done
 ---
 
 # milestones
@@ -550,34 +570,3 @@ archives:
 - updatedAt: 2026-06-08T10:48:54.877Z
 - title: "Plan: fix D39 — enforce handoff stop-gate invariants (make effort-stops unwritable)"
 - description: "Coordination milestone for the defect-seeded fix goal G32 (resolves D39). Root cause confirmed: the handoff stop-gate is unenforced prose (blockingQuestions optional, no per-status validation) + a turn-vs-run blind spot, producing laundered effort-stops (HO22/25/26). Fix: write-time enforcement of handoff invariants + advance.md turn-vs-run clause + euphemism blocklist."
-
-### M103 — open
-
-- createdAt: 2026-06-08T10:55:26.473Z
-- updatedAt: 2026-06-08T10:55:26.473Z
-- title: "G32 W1: write-time handoff invariant enforcement (@cq/ledger, load-bearing)"
-- description: assertHandoffInvariants pure helper (mixed/answers-required ⇒ non-empty blockingQuestions; user-action-required ⇒ non-empty handoffReasons) wired into applyCreateItem + applyUpdateItem; dual-adapter tests reproducing HO26 as an asserted throw; stretch scope decision for cross-ledger open-question resolution + drained predicate-gate.
-
-### M104 — open
-
-- createdAt: 2026-06-08T10:55:28.827Z
-- updatedAt: 2026-06-08T10:55:28.827Z
-- title: "G32 W2: advance.md turn-vs-run stop clause"
-- description: "advance.md §Stop-condition: turn/context exhaustion is NOT a run-stop and needs NO handoff; the ledger is the durable resume point; pause-without-handoff vs the five predicate-gated run-stop statuses."
-- dependsOn: ["M103"]
-
-### M105 — open
-
-- createdAt: 2026-06-08T10:55:31.180Z
-- updatedAt: 2026-06-08T10:55:31.180Z
-- title: "G32 W3: euphemism blocklist + self-check across the four *:advance prompts"
-- description: "Expand advance.md forbidden-rationale list with the exact euphemisms (citing HO22/25/26) + the self-check; thread the turn-vs-run clause + euphemism blocklist + the now-enforced mixed⇒non-empty-blockingQuestions instruction into plan/investigate/implement *:advance handoff sections."
-- dependsOn: ["M104"]
-
-### M106 — open
-
-- createdAt: 2026-06-08T10:55:32.741Z
-- updatedAt: 2026-06-08T10:55:32.741Z
-- title: "G32 W4: verify + grep-invariant"
-- description: Four-table grep-invariant for the new turn-vs-run + euphemism tokens; final verify (bun run check incl. the new write-time-invariant + grep tests + nix build .#ledger-mcp).
-- dependsOn: ["M103","M104","M105"]

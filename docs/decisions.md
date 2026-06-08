@@ -2,7 +2,7 @@
 ledger: decisions
 counters:
   milestone: 0
-  item: 52
+  item: 53
 archives:
   - id: M2
     path: ./archive/decisions/M2.md
@@ -158,6 +158,11 @@ archives:
     path: ./archive/decisions/M94.md
     summary: "G29 provider-qualified pi token grammar COMPLETE: T231-T239 all merged + reviewed; D36 RESOLVED. pi:<provider>/<model> slash grammar (bare rejected) threaded through @cq/config (parseReviewerToken + resolvers), the @cq/ledger(-mcp) config-capability surface, and the cq-subagent-dispatch extension mirror (K50 cross-layer guard); cq.toml.example migrated + documented; fixtures adapted; final gate green (bun run check 1089/0 + nix builds + bare-pi audit clean). ACTIVATION TAIL: live cq.toml migration + get_config spot-check deferred to the rebuilt-MCP restart."
     title: "G29 W: provider-qualified pi token grammar"
+    status: done
+  - id: M103
+    path: ./archive/decisions/M103.md
+    summary: "G32 W1 COMPLETE: write-time handoff invariant enforcement. assertHandoffInvariants pure helper (core.ts) wired into applyCreateItem+applyUpdateItem (both adapters); mixed/answers-required⇒non-empty blockingQuestions, user-action-required⇒non-empty handoffReasons, else SchemaValidationError. Dual-adapter tests reproduce HO26 as an asserted throw. K52 deferred the stretch hardenings. T257-T260 done, R314-R317 go-ahead."
+    title: "G32 W1: write-time handoff invariant enforcement (@cq/ledger, load-bearing)"
     status: done
 ---
 
