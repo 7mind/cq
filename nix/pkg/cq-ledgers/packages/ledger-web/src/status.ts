@@ -35,7 +35,7 @@ const BLOCKED = new Set(["blocked"]);
 // Non-terminal "file-and-defer" status: root cause captured, awaiting fix (defects lifecycle).
 const READY = new Set(["root-caused"]);
 // Terminal statuses that mean "needs changes" (rendered as a warning, not green).
-const WARNING = new Set(["revise"]);
+const WARNING = new Set(["revise", "user-action-required"]);
 // Non-terminal statuses that signal a parked/inconclusive state (rendered as warning/amber).
 const WARNING_ACTIVE = new Set(["inconclusive"]);
 const DROPPED = new Set([
