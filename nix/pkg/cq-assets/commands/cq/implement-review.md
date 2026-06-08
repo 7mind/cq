@@ -2,6 +2,29 @@
 description: Implement-flow adversarial per-task review rubric + stdout-JSON contract, as a portable promptTemplate for non-Claude harnesses (pi/Codex). Symmetric to cq:plan-review. Judges ONE task's implementation, splits findings into autonomously-fixable criticism[], user-only questions[], and out-of-scope defects[], and emits the verdict as JSON on stdout. Writes NOTHING to the ledger — the orchestrator records the terminal review.
 ---
 
+## Catalogue
+```yaml
+inputs:
+  - "task id with headline, description, and acceptance"
+  - "worktree path, branch (implement/<taskId>), and base commit"
+  - "worker structured result: resultCommit, checkSummary, filesTouched"
+  - "round number and prior criticism already addressed"
+outputs:
+  - "single fenced-json verdict block on stdout"
+ioSchema:
+  taskId: "<task id>"
+  verdict: "approve | disapprove"
+  criticism: []
+  questions: []
+  defects:
+    - headline: "<short title>"
+      description: "<what is wrong and where>"
+      severity: "low | medium | high | critical"
+      suggestedFix: "<optional>"
+  rationale: "<1-3 lines of decisive evidence>"
+  summary: "<optional one-line verdict summary>"
+```
+
 # Implement-review rubric (portable promptTemplate)
 
 > **Canonical source — DO NOT DRIFT.** The single authoritative copy of this

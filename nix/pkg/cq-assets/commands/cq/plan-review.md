@@ -4,6 +4,28 @@ argument-hint: <goalId> + the plan context (goal Q&A history, work milestones, p
 allowed-tools: Read, Grep, Glob, WebSearch, WebFetch
 ---
 
+## Catalogue
+```yaml
+inputs:
+  - "goal id G (passed by orchestrator)"
+  - "goal title, description, grounding"
+  - "full question/answer history for G"
+  - "emitted plan: work milestones and tasks with dependsOn edges and acceptance criteria"
+  - "prior reviews for G (so already-resolved criticism is not repeated)"
+outputs:
+  - "single fenced-json verdict block on stdout"
+ioSchema:
+  summary: "<one-line verdict>"
+  verdict: "go-ahead | revise"
+  new_questions: []
+  criticism: []
+  defects:
+    - headline: "<short title>"
+      severity: "low | medium | high | critical"
+      rootCause: "<optional>"
+      suggestedFix: "<optional>"
+```
+
 You are an **adversarial plan reviewer**. You are given a goal id **G** and the
 plan context (the goal's full question/answer history, the emitted work
 milestones and their tasks, and any prior reviews for G). You judge the emitted

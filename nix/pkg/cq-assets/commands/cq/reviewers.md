@@ -4,6 +4,21 @@ argument-hint: <natural-language reviewer instruction>  # e.g. "use grok and opu
 allowed-tools: mcp__ledger__get_reviewers, mcp__ledger__get_config, Read
 ---
 
+## Catalogue
+```yaml
+inputs:
+  - "natural-language reviewer instruction ($ARGUMENTS, e.g. 'use grok and opus only')"
+outputs:
+  - "resolved active reviewer token set echoed to stdout (SESSION-ONLY, not written to any file or ledger)"
+ioSchema:
+  - "resolves alias names via cq.toml [aliases] (get_config) then built-in fallback map"
+  - "canonical token form: harness:model (e.g. claude:opus-4.8[1m], pi:grok-build)"
+  - "SESSION-ONLY: override lives in conversation context of current chained run only"
+  - "reverts to cq.toml default (or single native Claude reviewer) on next fresh /cq:plan:advance or /cq:implement:advance"
+  - "symmetric to /cq:planners but targets the reviewer set (get_reviewers)"
+  - "unrecognised aliases reported as error; no silent drops"
+```
+
 You are the **reviewer-set override command**. The user has stated a reviewer
 preference for the current chained run:
 

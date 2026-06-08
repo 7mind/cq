@@ -4,6 +4,20 @@ argument-hint: <natural-language planner instruction>  # e.g. "use grok and opus
 allowed-tools: mcp__ledger__get_planners, mcp__ledger__get_config, Read
 ---
 
+## Catalogue
+```yaml
+inputs:
+  - "natural-language planner instruction ($ARGUMENTS, e.g. 'use grok and opus only')"
+outputs:
+  - "resolved active planner token set echoed to stdout (SESSION-ONLY, not written to any file or ledger)"
+ioSchema:
+  - "resolves alias names via cq.toml [aliases] (get_config) then built-in fallback map"
+  - "canonical token form: harness:model (e.g. claude:opus-4.8[1m], pi:grok-build)"
+  - "SESSION-ONLY: override lives in conversation context of current chained run only"
+  - "reverts to cq.toml default (or single native Claude planner) on next fresh run"
+  - "unrecognised aliases reported as error; no silent drops"
+```
+
 You are the **planner-set override command**. The user has stated a planner
 preference for the current chained run:
 
