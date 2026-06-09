@@ -599,6 +599,11 @@ archives:
     summary: "G39 (Fix D45 — mirror docs/ledgers.yaml on the 'create' op in cacheMirror) DONE: cacheMirror.ts mirrors layout.registryPath on op==='create'||'archive' + XDG_CACHE_HOME-redirected byte-equality test (T323); D45 resolved. Goal closed; coordination milestone archived."
     title: "Plan: fix D45 — cache mirror omits ledgers.yaml on createLedger"
     status: done
+  - id: M136
+    path: ./archive/reviews/M136.md
+    summary: "G41 item 1 COMPLETE (cq init writes cq.toml): T331 CQ_TOML_TEMPLATE constant in cq-cli (opus/sonnet/haiku active, pi commented) + synced cq.toml.example + parity/string-equality tests; T338 runInit writes cq.toml with skip-if-exists + --force overwrite per Q184. Reviews R401/R404 go-ahead. bun run check green. Merged 03a3ac7 (+ T331 e2179a3)."
+    title: G41-1 cq init writes cq.toml
+    status: done
 ---
 
 # reviews
@@ -666,28 +671,6 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G41"]
 - sessionLogs: ["docs/logs/20260609-194117-a529026c1e49518de.md","docs/logs/20260609-194117-pi-codex.md","docs/logs/20260609-194117-pi-grok.md","docs/logs/20260609-194117-pi-minimax.md"]
-
-## M136
-
-### R401 — go-ahead
-
-- createdAt: 2026-06-09T19:58:21.801Z
-- updatedAt: 2026-06-09T19:58:21.801Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: approve (T331) — CQ_TOML_TEMPLATE + synced cq.toml.example resolve exactly the opus/sonnet/haiku claude trio (string-equality + parity tests real, passing); full bun run check green 1385/0; surgical 6-file scope. Native opus implement-reviewer.
-- ledgerRefs: ["tasks:T331","goals:G41"]
-- sessionLogs: ["docs/logs/20260609-195301-a96245ea42545ec46.md"]
-
-### R404 — go-ahead
-
-- createdAt: 2026-06-09T20:20:14.604Z
-- updatedAt: 2026-06-09T20:20:14.604Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: approve (T338) — cq init writes cq.toml with skip/--force per Q184 (no symlink special-casing; reuses pathExists); tests assert create/skip/force + template equality; bun run check green 1400/0. Native opus implement-reviewer.
-- ledgerRefs: ["tasks:T338","goals:G41"]
-- sessionLogs: ["docs/logs/20260609-201031-a35d29a6ff9932cde.md"]
 
 ## M138
 

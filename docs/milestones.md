@@ -659,6 +659,11 @@ archives:
     summary: "G39 (Fix D45 — mirror docs/ledgers.yaml on the 'create' op in cacheMirror) DONE: cacheMirror.ts mirrors layout.registryPath on op==='create'||'archive' + XDG_CACHE_HOME-redirected byte-equality test (T323); D45 resolved. Goal closed; coordination milestone archived."
     title: "Plan: fix D45 — cache mirror omits ledgers.yaml on createLedger"
     status: done
+  - id: M136
+    path: ./archive/milestones/M136.md
+    summary: "G41 item 1 COMPLETE (cq init writes cq.toml): T331 CQ_TOML_TEMPLATE constant in cq-cli (opus/sonnet/haiku active, pi commented) + synced cq.toml.example + parity/string-equality tests; T338 runInit writes cq.toml with skip-if-exists + --force overwrite per Q184. Reviews R401/R404 go-ahead. bun run check green. Merged 03a3ac7 (+ T331 e2179a3)."
+    title: G41-1 cq init writes cq.toml
+    status: done
 ---
 
 # milestones
@@ -683,13 +688,6 @@ archives:
 - createdAt: 2026-06-09T18:45:36.463Z
 - updatedAt: 2026-06-09T18:45:36.463Z
 - title: "Plan: cq init cq.toml + prompt catalog + ledger git-branch + Flows-tab polish + Ideas ledger"
-
-### M136 — open
-
-- createdAt: 2026-06-09T19:07:17.380Z
-- updatedAt: 2026-06-09T19:07:17.380Z
-- title: G41-1 cq init writes cq.toml
-- description: "Work milestone for G41 item 1: `cq init` writes a fully-commented cq.toml (Opus/Sonnet/Haiku active, pi models commented out; skip-if-exists + --force). cq-cli + cq-config."
 
 ### M137 — open
 

@@ -454,42 +454,14 @@ archives:
     summary: "G38 follow-up #1 (ledger-web help-popup UX + deepened Flows tab) COMPLETE. 6 tasks: T324 FU-2 (.lw-help hard 90vw×90vh + pinned head), T325 FU-1 (AgentModelCell stale-server message), T326 FU-4 renderer+data foundation (agentId on DiagramNode/RoleNode + exported RoleKind/ROLE_KIND_FILL/fillForRoleKind + clickable/keyboard DiagramSvg nodes; renderer fill unchanged per Q181), T327 FU-4a/c/d catalogue (agentId map ∈ AGENT_ROLES + all formalized ops as edges/worktree-main-ledger infra nodes grounded in cq-assets prompts + roleKind fills), T328 FU-3 (HelpDocsLayout sidebar + IntersectionObserver scrollspy + exported scrollToHelpSection), T329 FU-4b/d (agentId-node cross-nav to Agents tab + roleKind legend). Reviews R392-R397 go-ahead (T325 took 1 criticism round). Merged 04cc14d/82c0b66/fe7205f/b2a9b9f/891a39f/768a10d. bun run check green 1368/0; nix build .#ledger-web exit 0. FU-1's underlying Agents-tab display issue is a deploy action (rebuild+restart), out of scope."
     title: "G38 follow-up #1 — ledger-web help-popup UX + deepened Flows tab"
     status: done
+  - id: M136
+    path: ./archive/tasks/M136.md
+    summary: "G41 item 1 COMPLETE (cq init writes cq.toml): T331 CQ_TOML_TEMPLATE constant in cq-cli (opus/sonnet/haiku active, pi commented) + synced cq.toml.example + parity/string-equality tests; T338 runInit writes cq.toml with skip-if-exists + --force overwrite per Q184. Reviews R401/R404 go-ahead. bun run check green. Merged 03a3ac7 (+ T331 e2179a3)."
+    title: G41-1 cq init writes cq.toml
+    status: done
 ---
 
 # tasks
-
-## M136
-
-### T331 — done
-
-- createdAt: 2026-06-09T19:08:19.620Z
-- updatedAt: 2026-06-09T20:00:54.959Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Write a fully-commented cq.toml template constant in cq-cli
-- description: "Add a new module (e.g. nix/pkg/cq-ledgers/packages/cq-cli/src/cqTomlTemplate.ts) exporting CQ_TOML_TEMPLATE: a static, fully-commented TOML string. **cq.toml.example already EXISTS at the repo root (read-basis, NOT new work — confirmed 5777 bytes, ships only the `opus`/`opus-high` aliases + [tiers]).** Model the template's prose/structure on it. Per Q184 the ACTIVE config must configure Opus, Sonnet AND Haiku as aliases AND list them active in `reviewers`/`planners`; every other pi-available model (the grok-build / minimax / ollama-cloud tokens) is present but COMMENTED OUT. cq.toml.example has NO Sonnet/Haiku alias today, so ADD them with these canonical token strings (cq alias grammar form, cross-checked against the live harness model ids — Sonnet 4.6, Haiku 4.5): `sonnet = \"claude:sonnet-4.6\"`, `haiku = \"claude:haiku-4.5\"` (keep `opus = \"claude:opus-4.8[1m]\"`). Include [aliases], reviewers, planners, [tiers] (opus=frontier, sonnet=standard, haiku=fast), [agent_tiers], each commented. cq-config has only a TOML PARSER (no serializer) → hand-authored literal. The template, once re-parsed by @cq/config parseConfig, MUST be schema-valid. NOTE: the `claude:<model>` grammar does NOT enum-validate the model id, so parseConfig passing does not by itself prove the token is a real dispatchable model — the acceptance below adds an explicit assertion that the three active aliases resolve to the intended opus/sonnet/haiku tokens."
-- acceptance: "A unit test feeds CQ_TOML_TEMPLATE through `parseConfig` (@cq/config) and asserts: it parses without throwing; resolveReviewers/resolvePlanners succeed; the active reviewers+planners resolve to EXACTLY the three claude tokens claude:opus-4.8[1m] / claude:sonnet-4.6 / claude:haiku-4.5 (string-equality on the resolved tokens, guarding against the no-enum-validation gap); and every commented pi model line is NOT in the active set. ALSO (R399-round2/codex #2): update the repo-root cq.toml.example to add the same sonnet/haiku aliases and make Opus/Sonnet/Haiku the active reviewers/planners, keeping it consistent with CQ_TOML_TEMPLATE — a test asserts cq.toml.example's resolved active model set EQUALS the template's (so the documented example never silently diverges from what `cq init` writes). `bun run typecheck` and `bun test` pass."
-- suggestedModel: standard
-- ledgerRefs: ["goals:G41"]
-- resultCommit: e2179a38ffa2c6ca8ad8709f0aee7216b4a3de00
-- completion: CQ_TOML_TEMPLATE constant in cq-cli (opus/sonnet/haiku active, pi commented) + synced cq.toml.example + parity/string-equality tests; bun run check green.
-- sessionLogs: ["docs/logs/20260609-195301-ae2b63ff41b615dc6.md","docs/logs/20260609-195301-a96245ea42545ec46.md"]
-
-### T338 — done
-
-- createdAt: 2026-06-09T19:09:22.607Z
-- updatedAt: 2026-06-09T20:20:30.674Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Make `cq init` write cq.toml with skip/--force semantics
-- description: "Extend runInit + parseSubcommandArgs in nix/pkg/cq-ledgers/packages/cq-cli/src/main.ts. After the existing FsLedgerStore.init(), write `<root>/cq.toml` (path.join(args.cwd, CQ_CONFIG_FILENAME); CQ_CONFIG_FILENAME='cq.toml' already defined) with CQ_TOML_TEMPLATE. Behaviour per Q184 (LITERAL): if cq.toml already exists, SKIP writing and print an informative message (e.g. `cq init: cq.toml already exists at <path>; re-run with --force to overwrite`) — do NOT error; add a `--force` flag (mirror existing `--yes` parsing in SubcommandArgs/parseSubcommandArgs) that OVERWRITES the existing file. (R399: the earlier 'fail-loud on symlink/dir even under --force' scope was REMOVED — it deviated from Q184's plain '--force overwrites'.) Update USAGE to document `cq init [--cwd <path>] [--force]`. Keep the existing 'initialised ledgers…' line; add a line reporting whether cq.toml was written, skipped, or overwritten."
-- acceptance: "New cq-cli tests (packages/cq-cli/test) using a temp dir assert: (1) `cq init` on an empty root creates cq.toml whose content === CQ_TOML_TEMPLATE; (2) a second `cq init` leaves the file byte-identical and emits the skip message (exit 0); (3) `cq init --force` overwrites a modified cq.toml back to the template. `bun test` and `bun run check` pass."
-- suggestedModel: standard
-- dependsOn: ["T331"]
-- ledgerRefs: ["goals:G41"]
-- resultCommit: 03a3ac7fb9a7b69dddadc490173f64844e59144a
-- completion: cq init writes cq.toml (CQ_TOML_TEMPLATE) with skip-if-exists + --force overwrite per Q184; create/skip/force tests; bun run check green.
-- sessionLogs: ["docs/logs/20260609-201031-a015ff215853dacb0.md","docs/logs/20260609-201031-a35d29a6ff9932cde.md"]
 
 ## M137
 
@@ -526,7 +498,7 @@ archives:
 ### T334 — wip
 
 - createdAt: 2026-06-09T19:08:42.468Z
-- updatedAt: 2026-06-09T19:43:57.938Z
+- updatedAt: 2026-06-09T20:21:24.424Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Make parallel/duplicate flow edges render with distinct visible labels
@@ -584,10 +556,10 @@ archives:
 - completion: plan.md I-id grammar (EITHER /^I\d+$/ ids OR free text) + named consume-an-idea sub-procedure (DRY, referenced by follow-up.md) + agentsCatalogue.gen.ts regen + 5 grep-invariants; bun run check green.
 - sessionLogs: ["docs/logs/20260609-201031-a6676de77b1de785c.md","docs/logs/20260609-201031-a03c758596a249aa0.md"]
 
-### T342 — planned
+### T342 — wip
 
 - createdAt: 2026-06-09T19:09:53.795Z
-- updatedAt: 2026-06-09T19:30:14.660Z
+- updatedAt: 2026-06-09T20:21:25.110Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: "Extend /cq:plan:follow-up to append idea text as new scope on an existing goal"
