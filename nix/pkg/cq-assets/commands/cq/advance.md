@@ -503,16 +503,22 @@ now-eligible coordination milestone automatically.
 
 ---
 
-## Commit the ledger (after every milestone archive + at the run stop)
+## Commit the ledger (after every milestone archive + every task merge-back + at the run stop)
 
 The ledger files are tracked git artifacts; persist them so a run never leaves
 the ledger uncommitted. Commit the ledger — and ONLY the ledger (its markdown +
 `docs/archive` + `docs/logs` session logs; NEVER `docs/ledgers.yaml`, the
-per-cwd runtime registry, which is gitignored; and NEVER code) — at TWO points:
+per-cwd runtime registry, which is gitignored; and NEVER code) — at these
+always-fire checkpoints:
 
 - **After every `archive_milestone`** (the sweep above, and any archive a
   chained sub-flow performs): commit immediately, so each completed milestone is
   a durable checkpoint.
+- **After every task merge-back** the chained implement sub-flow performs
+  (implement/advance.md §7.5): the chained implement pass's per-merge commit is
+  NOT suppressed — it fires even when the implement sub-flow runs chained under
+  `/cq:advance`, so each merged task is a durable checkpoint. This is an
+  always-fire checkpoint, on the same footing as the per-archive commit above.
 - **At the run STOP**, immediately after you write the run-level `handoffs`
   record (§Provenance / §The one write): one final commit capturing the
   end-of-run ledger state.
@@ -530,8 +536,10 @@ the `git add` to the ledger artifacts only; do NOT `git add -A` (code changes
 land on their own task branches; a ledger commit must contain only ledger
 files). **`/cq:advance` is the SOLE at-stop committer for a full run** — chained
 sub-flows SUPPRESS their own at-stop ledger commit (mirroring the handoff
-suppression), but a milestone archived inside a chained sub-flow's pass is still
-committed at the point of archive.
+suppression), and ONLY their at-stop commit is suppressed: a milestone archived
+inside a chained sub-flow's pass is still committed at the point of archive, and
+a task merged inside the chained implement pass is still committed at the point
+of merge-back (both are always-fire checkpoints, not at-stop commits).
 
 ---
 
