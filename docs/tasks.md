@@ -566,10 +566,10 @@ archives:
 - completion: Typed catalog store (DISPATCHED_ROLE_SIDECARS in @cq/config) + 7 per-role schema sidecars + gen-agents emits typed schemas for dispatched roles only (12 commands none), byte-deterministic + bidirectional drift guards + ledger-mcp import (no duplicate); bun run check green.
 - sessionLogs: ["docs/logs/20260609-211507-a794f0e8dad7a3580.md","docs/logs/20260609-211507-a04e57cf50abd9eed.md"]
 
-### T343 — planned
+### T343 — done
 
 - createdAt: 2026-06-09T19:09:59.608Z
-- updatedAt: 2026-06-09T19:09:59.608Z
+- updatedAt: 2026-06-09T21:43:12.195Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Expose fetch-prompt / validate-input / validate-output MCP endpoints in ledger-mcp
@@ -578,6 +578,9 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T341"]
 - ledgerRefs: ["goals:G41"]
+- resultCommit: dc87ba7649cde9d4e912ede4f7706bafeb6e2a26
+- completion: fetch_prompt/validate_input/validate_output MCP tools + injected PromptCatalogCapability (joins @cq/config sidecar schemas with the cq-assets prompt body, re-read per call); Ajv2020 structured errors; fail-fast unknown/command roles; registered in both stdio+SDK factories; bun run check green.
+- sessionLogs: ["docs/logs/20260609-213533-a94cc72a01a04d690.md","docs/logs/20260609-213533-a163b35d7f1455736.md"]
 
 ### T344 — planned
 
