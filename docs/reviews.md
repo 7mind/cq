@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 370
+  item: 371
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -931,3 +931,12 @@ archives:
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - summary: "T307 final-verify: PASS (orchestrator-run; per T300 precedent the verification gate IS the success criterion — no diff to dispatch a reviewer panel on). (1) SUBSTANTIVE gate — `bun run check` from nix/pkg/cq-ledgers/ = 1293 pass / 1 skip / 0 fail / 4249 expect() across 108 files, incl. the 4 T306 D43 file-scoped grep-invariant cells; tsc -b + eslint clean. (2) SMOKE — `nix build .#llm-skills` exit 0 (repo still builds; NOT prompt-content validation, cq-assets eval-time-only). (3) T305 repro doc present (docs/drafts/20260609-1007-D43-reflog-repro.md, 7001 bytes). All G37 acceptance met. LIVE-ACTIVATION user follow-up (like D37/D41): the deployed ~/.claude + ~/.pi assets refresh on the next `home-manager switch`; the SOURCE fix is merged on main."
 - ledgerRefs: ["tasks:T307","goals:G37","defects:D43"]
+
+### R371 — go-ahead
+
+- createdAt: 2026-06-09T10:47:45.215Z
+- updatedAt: 2026-06-09T10:47:45.215Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "T304 implement review: APPROVE (opus[claude] approve 0/0, authoritative; backfill — recorded post-merge after the orchestrator noticed T304 had been cherry-picked without an explicit per-task review). advance.md 'Commit the ledger' section carries both the per-merge always-fire clause ('the chained implement pass's per-merge commit is NOT suppressed ... an always-fire checkpoint, on the same footing as the per-archive commit') and the at-stop-only suppression-scope clause; the run-stop + per-archive commits are substantively unchanged; marker 'it fires even when the implement sub-flow runs chained under' verbatim at advance.md:519; edit scoped to the section; gen.ts regen mechanical; bun run check green 1293/0. NOTE: minimax not separately run for this backfill — T304 is the chained-twin of T303 (minimax approved R367) and its content is transitively verified by the T306 cell-4 grep-invariant (asserts THIS marker in advance.md) + T307 green. No defect found; the merge stands."
+- ledgerRefs: ["tasks:T304","goals:G37","defects:D43"]

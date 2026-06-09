@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 35
+  item: 36
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -322,3 +322,25 @@ archives:
 - ledgerRefs: ["goals:G36"]
 - blockingQuestions: ["Q160","Q161","Q162","Q163","Q164","Q165"]
 - sessionLogs: ["docs/logs/20260608-214433-a707e2b139c1f08ab.md"]
+
+## M122
+
+### HO36 — drained
+
+- createdAt: 2026-06-09T10:48:17.205Z
+- updatedAt: 2026-06-09T10:48:17.205Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: |
+    DRAINED. /cq:advance run reached quiescence: P-investigate=FALSE (all defects terminal: D37/D38/D39/D41 + D43 now RESOLVED) / P-plan=FALSE (no goal in clarifying|planning) / P-implement=FALSE (no non-terminal task) / open-Q-gate=none (41 questions, all answered).
+    
+    This run drove the D43 fix end-to-end (the data-loss defect: an implement-worker ran git reset --hard/checkout/cherry-pick in the MAIN checkout, discarding the run's uncommitted ledger). Chain: /cq:investigate:advance D43 (root-caused, H31 confirmed, seeded G37) → /cq:plan:advance G37 (multi-planner opus+minimax synthesis; reviewer panel opus+minimax revise R363 → go-ahead R364; K59 locked; G37 planned) → /cq:implement:advance (7 tasks T301-T307 built in isolated worktrees, merged by cherry-pick, each reviewed go-ahead R365-R371, ledger committed after the planning-lock + after every merge). Result: D43 RESOLVED. The fix: (a) implement-worker.md worktree-confinement hard Boundary (T301); (b) always-fire ledger-commit checkpoints after the planning-lock (T302) + after every task merge-back (T303) + advance.md chained-path clause (T304); (c) documented reflog repro (T305) + 4-cell file-scoped grep-invariant guard (T306). Final verify green (T307: bun run check 1293/0 incl. the grep-invariant + nix build .#llm-skills exit 0 smoke). M123/M124/M125 archived. grok+codex panels abstained all run (no API key); minimax(pi)+opus(claude) carried the panels.
+    
+    The run DOGFOODED its own fix: the ledger was committed after the G37 planning-lock and after each of the T301-T306 merges — D43 did NOT recur (contrast the original incident).
+    
+    USER FOLLOW-UPS (informational, NOT blockers — the flow is genuinely drained):
+    1. LIVE ACTIVATION (like D37/D41): the D43 fix SOURCE is merged on main, but the deployed ~/.claude + ~/.pi assets regenerate only on the next `home-manager switch`. Until then the running session still uses the pre-fix prompts.
+    2. GOAL CLOSURE: goals never auto-close (building→done is the user's action). G37 (building) + the previously-built G34/G36 and older G28-G32/G35 (all planned, work done+archived) await the user closing them to done in the TUI/web; their coordination milestones (e.g. M108/M115/M122) archive on the next sweep once closed.
+- flow: advance
+- ledgerRefs: ["defects:D43","goals:G37"]
+- sessionLogs: ["docs/logs/20260609-094843-acbd76d5c9472ebf8.md","docs/logs/20260609-095419-G37-review-r1-opus.md","docs/logs/20260609-100347-a2b3e6cf98362d441.md","docs/logs/20260609-1010-a06628017a2431ea0.md","docs/logs/20260609-1010-a5009f1013db471df.md","docs/logs/20260609-1010-af44ae98400fc02bd.md","docs/logs/20260609-1010-aab920f19e55117c1.md","docs/logs/20260609-1010-a210d0b4d71d1b4aa.md","docs/logs/20260609-1010-a95b30e12643ec732.md","docs/logs/20260609-1010-a98dd4079468ed2fc.md"]
