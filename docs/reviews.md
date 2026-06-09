@@ -554,6 +554,16 @@ archives:
     summary: G36 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Optional thinking-effort suffix in cq model-identifier tokens; work milestones M117/M119/M121 delivered (K58, R342-R344). Archived in the post-G37 cleanup sweep.
     title: "Plan: optional thinking-effort suffix in cq model-identifier tokens"
     status: done
+  - id: M129
+    path: ./archive/reviews/M129.md
+    summary: G38 item 2 (flows-tab per-role action diagrams, web-only) COMPLETE. T315 (roleActions.ts ROLE_FLOWS catalogue) + T316 (render Flows tab from ROLE_FLOWS via existing DiagramSvg, replacing flowData state diagrams; + latent DiagramSvg multigraph React-key fix). Reviews R377/R381 go-ahead. Merged ba7b026 + c875921. bun run check green.
+    title: G38 item 2 — flows-tab per-role action diagrams (ledger-web, web-only)
+    status: done
+  - id: M130
+    path: ./archive/reviews/M130.md
+    summary: G38 item 3 (TUI focus-respecting paging/jump keybindings, defect-aware) COMPLETE. T318 (LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump rows; no-Enter detail-scroll removed; module-scope matchHomeEnd helper) + T319 (CONTENT-focus Home/End reusing matchHomeEnd). Defect D44 RESOLVED. T320 abandoned (tests folded into T318/T319). Reviews R378/R382 go-ahead. Merged 46a0f95 + 0992cd3. bun run check green.
+    title: G38 item 3 — TUI focus-respecting paging/jump keybindings (defect-aware)
+    status: done
 ---
 
 # reviews
@@ -736,55 +746,3 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T313","goals:G38"]
 - sessionLogs: ["docs/logs/20260609-132507-a7451d211f2b0894f.md","docs/logs/20260609-132507-a4d8be792a9a2729e.md"]
-
-## M129
-
-### R377 — go-ahead
-
-- createdAt: 2026-06-09T13:07:26.773Z
-- updatedAt: 2026-06-09T13:07:26.773Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- summary: "T315 implement review: APPROVE (native opus implement-reviewer). roleActions.ts exports ROLE_FLOWS — 4 flows in canonical order (plan/investigate/implement/advance), each model type-assignable to the renderer's DiagramModel (RoleNode extends DiagramNode, RoleEdge = DiagramEdge; green typecheck); every edge endpoint resolves to a declared node id (test-enforced); ≥1 role node + ≥1 labeled action edge per flow with meaningful labels; isolated module, Flows tab/flowData.ts untouched (T316 scope preserved). check green 1301/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T315","goals:G38"]
-- sessionLogs: ["docs/logs/20260609-125621-a568453f0d59bd061.md","docs/logs/20260609-130634-ac6e5154210a5967d.md"]
-
-### R381 — go-ahead
-
-- createdAt: 2026-06-09T13:25:59.563Z
-- updatedAt: 2026-06-09T13:25:59.563Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- summary: "T316 implement review: APPROVE (native opus). Flows tab renders ROLE_FLOWS via the existing DiagramSvg/layoutDiagram, replacing flowData state machines; `grep flowData App.tsx` empty; testids help-tab-flows/help-flow-<id> stable; flowData.ts retained (flowData.test.ts imports it); tui+Agents tab untouched; orphaned imports cleaned. The extra DiagramSvg `edge-${index}` key is a LEGITIMATE multigraph latent-defect fix (parallel role-edges previously collided on the React key) that does NOT regress the non-multigraph State-machine tab (its tests pass); duplicate edge testid for parallel edges is benign + within the documented scheme. check green 1316/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T316","goals:G38"]
-- sessionLogs: ["docs/logs/20260609-132507-aae2834dc1f5e81ec.md","docs/logs/20260609-132507-af5a5ceaf72c69698.md"]
-
-## M130
-
-### R378 — go-ahead
-
-- createdAt: 2026-06-09T13:07:32.070Z
-- updatedAt: 2026-06-09T13:07:32.070Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- summary: "T318 implement review: APPROVE (native opus implement-reviewer; D44 part 1). LIST-focus PgUp/PgDn page the cursor by listInnerH (scroll:0); Home/End jump first/last via `key.home/key.end || matchHomeEnd(input)`; no-Enter detail-scroll affordance removed + comment updated; matchHomeEnd module-scope (shared with T319); 7 non-vacuous ink tests (exact cursor transitions + LIST-focus does-NOT-scroll-detail). Grounding correction VERIFIED: ink 7.0.5 exposes key.home/key.end + sets input='' (green typecheck confirms); matchHomeEnd kept as raw-bytes fallback per acceptance. 3 pre-existing T87/T89 hint assertions made whitespace-robust (L925 pattern). check green 1301/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T318","goals:G38"]
-- sessionLogs: ["docs/logs/20260609-125621-a3a6c0e90504c5f69.md","docs/logs/20260609-130634-af817be6d7f4da074.md"]
-
-### R382 — go-ahead
-
-- createdAt: 2026-06-09T13:26:03.651Z
-- updatedAt: 2026-06-09T13:26:03.651Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- summary: "T319 implement review: APPROVE (native opus; D44 part 2). CONTENT-focus Home/End reuses the module-level matchHomeEnd (no duplication); End→contentMaxScroll.current (no over-scroll, confirmed by the End-then-PgDn clamp test); Home→0; PgUp/PgDn CONTENT_PAGE unchanged; T318 LIST-focus untouched; no interference with the numeric-answer branch; 5 non-vacuous tests vs the 40-line HUGE_NOTE fixture. check green (typecheck 0, lint 0, 1313 pass/0 fail)."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T319","goals:G38","defects:D44"]
-- sessionLogs: ["docs/logs/20260609-132507-aa20b4ba803433a2c.md","docs/logs/20260609-132507-a8abd44acd2a5d3e8.md"]

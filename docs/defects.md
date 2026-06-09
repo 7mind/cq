@@ -129,6 +129,11 @@ archives:
     summary: G32 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D39 (write-time handoff stop-gate invariant enforcement + turn-vs-run clause + euphemism blocklist); work milestones M103-M106 delivered (K51, R310-R313). Archived in the post-G37 cleanup sweep.
     title: "Plan: fix D39 — enforce handoff stop-gate invariants (make effort-stops unwritable)"
     status: done
+  - id: M130
+    path: ./archive/defects/M130.md
+    summary: G38 item 3 (TUI focus-respecting paging/jump keybindings, defect-aware) COMPLETE. T318 (LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump rows; no-Enter detail-scroll removed; module-scope matchHomeEnd helper) + T319 (CONTENT-focus Home/End reusing matchHomeEnd). Defect D44 RESOLVED. T320 abandoned (tests folded into T318/T319). Reviews R378/R382 go-ahead. Merged 46a0f95 + 0992cd3. bun run check green.
+    title: G38 item 3 — TUI focus-respecting paging/jump keybindings (defect-aware)
+    status: done
 ---
 
 # defects
@@ -171,24 +176,6 @@ archives:
 - rootCause: "CONFIRMED (H31, validated against current cq-assets). A two-part prompt gap let a single stray worker git op erase the run's ledger: (a) PERMISSIVE-GAP in agents/implement-worker.md — its 'Boundaries (hard rules)' (L47-55) forbid merge/push/rebase + scope-creep but contain NO rule confining git to the worker's own worktree and NO ban on `git reset --hard`/checkout/cherry-pick against the MAIN checkout or other worktrees; the only sanctioned worker git mutation is `git add -A && git commit` on the task branch (L71-73). The base commit + worktree are PASSED IN by the harness (native isolation:worktree, L38-43), so the worker never establishes its own base — a STALE base (observed: worktree forked from 087b889 vs current main) is a harness-side fact the worker inherits with no sanctioned base-fixing procedure, so a worker improvising to 'fix' it reaches the main checkout unguarded. (b) DEFERRED-COMMIT window — implement/advance.md commits the ledger ONLY after archive_milestone + at the standalone stop (L395-405), suppressing the at-stop commit when chained (L542-549); advance.md commits after every archive + at the single run-stop (L506-518); plan/advance.md commits only at the standalone stop with no commit-after-planning-lock (L717+). So a long chained plan+implement run accrues a large UNCOMMITTED ledger between milestone archives that a `git reset --hard` erases with no git-recoverable trace (the observed incident: HEAD@{3} reset in the main checkout discarded M116-M121/T283-T300/R341-R348/K57-K58 + the Q154-Q165 answers)."
 - sessionLogs: ["docs/logs/20260609-093502-a4b0d0d4f781c94c2.md"]
 - dependsOn: ["tasks:T301","tasks:T302","tasks:T303","tasks:T304","tasks:T305","tasks:T306","tasks:T307"]
-
-## M130
-
-### D44 — resolved
-
-- createdAt: 2026-06-09T11:51:32.936Z
-- updatedAt: 2026-06-09T13:26:22.645Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: TUI paging keys do not respect the focused pane and lack Home/End support
-- severity: low
-- description: "Fault in ledger-tui/src/app.tsx useInput (L767-882). In LIST focus (top.focus==='list', L840-845) PageUp/PageDown scroll the CONTENT/detail pane (top.scroll, CONTENT_PAGE=10) WITHOUT switching focus — a deliberate prior no-Enter-detail-scroll affordance (comment L836-839) that conflicts with the focus model: paging keys should act on the focused pane (the items list), not the unfocused detail pane. Additionally, Home/End are NOT handled in either focus mode. ink's useInput `key` object exposes no key.home/key.end booleans — Home/End arrive as raw escape sequences in `input` (\\x1b[H / \\x1b[F or \\x1b[1~ / \\x1b[4~), so a fix must match those sequences directly. Routed defect-aware per Q172 (root cause already located, spec unambiguous — no separate /cq:investigate round); fix planned under G38 milestone M130 (tasks T318-T320). Desired behavior locked by Q173."
-- rootCause: Located by direct inspection (Q172/Q173 grounding). LIST-focus branch (app.tsx L840-845) routes key.pageUp/pageDown to top.scroll (the detail pane) instead of the list cursor — an intentional convenience (comment L836-839) that violates focus-respecting paging. No Home/End handling exists anywhere; ink surfaces Home/End only as raw ESC sequences in `input`, never as key.home/key.end.
-- suggestedFix: "In LIST focus: PgUp/PgDn page the cursor by one screenful (listInnerH rows), Home/End jump to first/last row, and REMOVE the no-Enter detail-scroll affordance (content scrolls only after Enter into CONTENT focus). In CONTENT focus: keep PgUp/PgDn paging by CONTENT_PAGE and ADD Home/End to jump to content top/bottom. Detect Home/End by matching the raw ESC sequences (\\x1b[H/\\x1b[F/\\x1b[1~/\\x1b[4~) in `input` via a shared helper used by both branches. Cover with ink-testing-library tests."
-- ledgerRefs: ["goals:G38"]
-- tags: ["tui","keybindings","ux"]
-- dependsOn: ["tasks:T318","tasks:T319"]
-- fix: Resolved by T318 (LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump rows; no-Enter detail-scroll removed; module-scope matchHomeEnd helper) + T319 (CONTENT-focus Home/End reusing matchHomeEnd; PgUp/PgDn keep CONTENT_PAGE), both merged + reviewed go-ahead (R378/R382). ledger-tui paging keys now respect the focused pane and support Home/End (via key.home/key.end || matchHomeEnd raw-ESC fallback for ink 7.0.5).
 
 ## M128
 

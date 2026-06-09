@@ -419,6 +419,16 @@ archives:
     summary: G34 W1 (Item-States rename) COMPLETE — all tasks terminal. Archived in the post-G37 cleanup sweep.
     title: "G34-W1: ledger-web help popup — rename State Machines → Item States (label + ids/testids/CSS)"
     status: done
+  - id: M129
+    path: ./archive/tasks/M129.md
+    summary: G38 item 2 (flows-tab per-role action diagrams, web-only) COMPLETE. T315 (roleActions.ts ROLE_FLOWS catalogue) + T316 (render Flows tab from ROLE_FLOWS via existing DiagramSvg, replacing flowData state diagrams; + latent DiagramSvg multigraph React-key fix). Reviews R377/R381 go-ahead. Merged ba7b026 + c875921. bun run check green.
+    title: G38 item 2 — flows-tab per-role action diagrams (ledger-web, web-only)
+    status: done
+  - id: M130
+    path: ./archive/tasks/M130.md
+    summary: G38 item 3 (TUI focus-respecting paging/jump keybindings, defect-aware) COMPLETE. T318 (LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump rows; no-Enter detail-scroll removed; module-scope matchHomeEnd helper) + T319 (CONTENT-focus Home/End reusing matchHomeEnd). Defect D44 RESOLVED. T320 abandoned (tests folded into T318/T319). Reviews R378/R382 go-ahead. Merged 46a0f95 + 0992cd3. bun run check green.
+    title: G38 item 3 — TUI focus-respecting paging/jump keybindings (defect-aware)
+    status: done
 ---
 
 # tasks
@@ -539,98 +549,6 @@ archives:
 - suggestedModel: "opus-4.8[1m]"
 - dependsOn: ["T312","T313"]
 - ledgerRefs: ["goals:G38"]
-
-## M129
-
-### T315 — done
-
-- createdAt: 2026-06-09T11:52:51.604Z
-- updatedAt: 2026-06-09T13:07:46.578Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: Author a hand-typed role→actions catalogue TS module for the Flows tab
-- description: "Add a NEW hand-authored TS data module under packages/ledger-web/src (e.g. roleActions.ts), node-free/browser-bundleable, mirroring the existing flowData.ts export style. For each cq flow (plan, investigate, implement, advance) model role NODES (orchestrator, planner, reviewer, worker, conflict-resolver, investigate-explorer, user as applicable) and labeled ACTION EDGES between roles — e.g. orchestrator→planner 'dispatches planner', planner→orchestrator 'emits candidate plan', reviewer→orchestrator 'returns verdict', orchestrator→main 'merges by SHA'. Shape each flow as the generic DiagramModel ({nodes, edges}) the existing layoutDiagram/DiagramSvg renderer consumes (so it is type-assignable to DiagramModel). Export ROLE_FLOWS in plan/investigate/implement/advance order. Hand-authored per Q170 (prose prompts are not a reliable structured source). Distinct from agentsCatalogue.ts (Agents tab)."
-- acceptance: "New unit test imports ROLE_FLOWS and asserts: 4 flows in order plan/investigate/implement/advance; every edge from/to references a node id declared in that flow's nodes[]; each flow has ≥1 role node and ≥1 labeled action edge (non-empty label); the model typechecks as DiagramModel. bun run typecheck green."
-- suggestedModel: sonnet-4.6
-- ledgerRefs: ["goals:G38"]
-- resultCommit: ba7b026
-- completion: roleActions.ts ROLE_FLOWS catalogue (4 flows, role nodes + labeled action edges, DiagramModel-assignable) + unit test.
-- sessionLogs: ["docs/logs/20260609-125621-a568453f0d59bd061.md","docs/logs/20260609-130634-ac6e5154210a5967d.md"]
-
-### T316 — done
-
-- createdAt: 2026-06-09T11:52:58.197Z
-- updatedAt: 2026-06-09T13:26:15.769Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: Render the Flows tab from ROLE_FLOWS, replacing the abstract state diagrams
-- description: In packages/ledger-web/src/App.tsx HelpOverlay Flows tab, REPLACE the flowData.ts state-machine rendering with ROLE_FLOWS rendered via the existing DiagramSvg/layoutDiagram per flow, keeping the testids help-tab-flows and help-flow-<id> stable. Drop the now-unused flowData import from App.tsx (remove flowData.ts only if nothing else imports it; otherwise leave the file). Map role-node/action-edge onto the renderer's existing node/edge/label props. WEB-ONLY (Q171) — do NOT touch ledger-tui. Keep the Agents tab (agentsCatalogue) untouched.
-- acceptance: "happy-dom render test: open help overlay, switch to Flows tab (help-tab-flows); for each flow plan/investigate/implement/advance the help-flow-<id> SVG contains role labels (e.g. 'planner','reviewer','orchestrator') and ≥1 action-edge label (e.g. 'returns verdict' / 'merges by SHA'); the prior bare state-node labels are no longer the Flows-tab content. grep -F 'flowData' on App.tsx returns nothing (import removed). bun run check green."
-- suggestedModel: "opus-4.8[1m]"
-- dependsOn: ["T315"]
-- ledgerRefs: ["goals:G38"]
-- resultCommit: c875921
-- completion: Flows tab renders ROLE_FLOWS via existing DiagramSvg (replaces flowData state diagrams); + latent DiagramSvg multigraph React-key fix.
-- sessionLogs: ["docs/logs/20260609-132507-aae2834dc1f5e81ec.md","docs/logs/20260609-132507-af5a5ceaf72c69698.md"]
-
-### T317 — abandoned
-
-- createdAt: 2026-06-09T11:53:02.900Z
-- updatedAt: 2026-06-09T12:14:36.230Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: "[FOLDED into T315/T316 — R372] Web Flows tab tests"
-- description: ABANDONED per R372 (codex+grok+minimax; also resolves the T317 '(dedupe with T315)' mislabel). The catalogue unit test is owned by T315; the happy-dom Flows-tab render test (role labels + action-edge labels + help-flow-<id> testids + flowData-import-removed assertion) is owned by T316.
-- acceptance: bun test (from nix/pkg/cq-ledgers/) passes the new ledger-web cells; bun run check green.
-- suggestedModel: sonnet-4.6
-- dependsOn: ["T316"]
-- ledgerRefs: ["goals:G38"]
-
-## M130
-
-### T318 — done
-
-- createdAt: 2026-06-09T11:53:11.427Z
-- updatedAt: 2026-06-09T13:07:49.238Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: Make LIST-focus PgUp/PgDn page the cursor + Home/End jump first/last row (remove no-Enter detail-scroll)
-- description: "Fixes D44 (part 1). In ledger-tui/src/app.tsx useInput LIST-focus branch (currently ~L840-845), CHANGE key.pageUp/pageDown to page the CURSOR by one screenful (listInnerH rows, defined ~L896) instead of scrolling top.scroll: pageUp → cursor = max(0, cursor - listInnerH) scroll:0; pageDown → cursor = min(totalRows-1, cursor + listInnerH) scroll:0. ADD Home/End in LIST focus: Home → cursor 0 scroll:0, End → cursor last row scroll:0. REMOVE the no-Enter detail-scroll affordance and update the L836-839 comment accordingly (Q173 (b)). SHARED HELPER (R372/codex): ink exposes no key.home/key.end — define a small module-level helper in ledger-tui/src/app.tsx, `matchHomeEnd(input: string): 'home' | 'end' | null` (matches the raw ESC sequences \\x1b[H or \\x1b[1~ = Home; \\x1b[F or \\x1b[4~ = End), and use it in BOTH the LIST branch (this task) and the CONTENT branch (T319) so the sequence-matching is defined ONCE, not duplicated. Keep ↑↓/j/k and Enter behaviour intact. This task OWNS its LIST-focus tests."
-- acceptance: "ink-testing-library test cells (authored here): with the items list focused and a list longer than listInnerH, PageDown advances the cursor by listInnerH rows (NOT the detail scroll); PageUp moves it back; Home selects row 0; End selects the last row; the detail pane no longer scrolls in LIST focus without pressing Enter first. Home/End fed as raw ESC sequences. The matchHomeEnd helper exists at module scope in app.tsx. bun run check green."
-- suggestedModel: "opus-4.8[1m]"
-- ledgerRefs: ["goals:G38","defects:D44"]
-- resultCommit: 46a0f95
-- completion: TUI LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump rows; no-Enter detail-scroll removed; module-scope matchHomeEnd helper (shared w/ T319); D44 part 1.
-- sessionLogs: ["docs/logs/20260609-125621-a3a6c0e90504c5f69.md","docs/logs/20260609-130634-af817be6d7f4da074.md"]
-
-### T319 — done
-
-- createdAt: 2026-06-09T11:53:16.153Z
-- updatedAt: 2026-06-09T13:26:18.523Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: Add Home/End to CONTENT focus (PgUp/PgDn keep paging by CONTENT_PAGE)
-- description: "Fixes D44 (part 2). In ledger-tui/src/app.tsx useInput CONTENT-focus branch (~L802-834), ADD Home/End: Home → scroll 0, End → scroll contentMaxScroll; PgUp/PgDn continue to page content by CONTENT_PAGE (unchanged). Detect Home/End via the SHARED module-level `matchHomeEnd(input)` helper introduced in T318 (do NOT duplicate the sequence-matching). This task OWNS its CONTENT-focus tests."
-- acceptance: "ink-testing-library test cells (authored here): enter an item (Enter → content focus) with content taller than the pane; End jumps scroll to the bottom (clamped to contentMaxScroll), Home returns to 0; PgUp/PgDn still move by CONTENT_PAGE. Home/End fed as raw ESC sequences via the shared matchHomeEnd helper. bun run check green."
-- suggestedModel: "opus-4.8[1m]"
-- dependsOn: ["T318"]
-- ledgerRefs: ["goals:G38","defects:D44"]
-- resultCommit: 0992cd3
-- completion: TUI CONTENT-focus Home/End (scroll top/bottom) reusing matchHomeEnd; PgUp/PgDn keep CONTENT_PAGE; D44 part 2.
-- sessionLogs: ["docs/logs/20260609-132507-aa20b4ba803433a2c.md","docs/logs/20260609-132507-a8abd44acd2a5d3e8.md"]
-
-### T320 — abandoned
-
-- createdAt: 2026-06-09T11:53:21.779Z
-- updatedAt: 2026-06-09T12:14:39.239Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: "[FOLDED into T318/T319 — R372] TUI focus paging tests"
-- description: "ABANDONED per R372 (codex+grok): the LIST-focus paging/Home-End cells are owned by T318 and the CONTENT-focus Home/End cells by T319 (each impl worktree must pass `bun run check` with its own ink-testing-library cells)."
-- acceptance: bun test (from nix/pkg/cq-ledgers/) passes the new ledger-tui cells; nix build .#ledger-tui succeeds; bun run check green.
-- suggestedModel: sonnet-4.6
-- dependsOn: ["T318","T319"]
-- ledgerRefs: ["goals:G38","defects:D44"]
 
 ## M131
 

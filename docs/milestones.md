@@ -614,6 +614,16 @@ archives:
     summary: G36 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Optional thinking-effort suffix in cq model-identifier tokens; work milestones M117/M119/M121 delivered (K58, R342-R344). Archived in the post-G37 cleanup sweep.
     title: "Plan: optional thinking-effort suffix in cq model-identifier tokens"
     status: done
+  - id: M129
+    path: ./archive/milestones/M129.md
+    summary: G38 item 2 (flows-tab per-role action diagrams, web-only) COMPLETE. T315 (roleActions.ts ROLE_FLOWS catalogue) + T316 (render Flows tab from ROLE_FLOWS via existing DiagramSvg, replacing flowData state diagrams; + latent DiagramSvg multigraph React-key fix). Reviews R377/R381 go-ahead. Merged ba7b026 + c875921. bun run check green.
+    title: G38 item 2 — flows-tab per-role action diagrams (ledger-web, web-only)
+    status: done
+  - id: M130
+    path: ./archive/milestones/M130.md
+    summary: G38 item 3 (TUI focus-respecting paging/jump keybindings, defect-aware) COMPLETE. T318 (LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump rows; no-Enter detail-scroll removed; module-scope matchHomeEnd helper) + T319 (CONTENT-focus Home/End reusing matchHomeEnd). Defect D44 RESOLVED. T320 abandoned (tests folded into T318/T319). Reviews R378/R382 go-ahead. Merged 46a0f95 + 0992cd3. bun run check green.
+    title: G38 item 3 — TUI focus-respecting paging/jump keybindings (defect-aware)
+    status: done
 ---
 
 # milestones
@@ -652,20 +662,6 @@ archives:
 - updatedAt: 2026-06-09T11:51:08.863Z
 - title: G38 item 1b — ledger ~/.cache mirror backup + restore CLI
 - description: "@cq/ledger mirrors each touched file to ${XDG_CACHE_HOME:-~/.cache}/cq/ledgers/${basename}-${sha256(absRoot).slice(0,12)}/ off the onMutation post-lock hook (atomic, swallows throws, overwrite-in-place, no journal); a shared path-scheme function is reused by a new `ledger-mcp restore --from-cache [--cwd]` subcommand that copies the mirror back into docs/. Resolves G38 item 1b (Q168/Q169)."
-
-### M129 — open
-
-- createdAt: 2026-06-09T11:51:11.211Z
-- updatedAt: 2026-06-09T11:51:11.211Z
-- title: G38 item 2 — flows-tab per-role action diagrams (ledger-web, web-only)
-- description: New hand-authored role→actions catalogue TS module (per-flow role nodes + labeled action edges) rendered via the existing elk DiagramSvg, REPLACING the abstract state diagrams in the ledger-web Flows help tab; testids help-tab-flows/help-flow-<id> preserved. Web-only (Q170/Q171).
-
-### M130 — open
-
-- createdAt: 2026-06-09T11:51:13.861Z
-- updatedAt: 2026-06-09T11:51:13.861Z
-- title: G38 item 3 — TUI focus-respecting paging/jump keybindings (defect-aware)
-- description: "ledger-tui/src/app.tsx useInput: LIST focus PgUp/PgDn page the cursor by one screenful (listInnerH) + Home/End jump first/last row, no-Enter detail-scroll affordance removed; CONTENT focus gains Home/End (PgUp/PgDn keep CONTENT_PAGE); Home/End matched via raw ESC sequences. Defect-aware (Q172): a minor defects record is filed + the fix tasks ledgerRef it. Behavior per Q173."
 
 ### M131 — open
 
