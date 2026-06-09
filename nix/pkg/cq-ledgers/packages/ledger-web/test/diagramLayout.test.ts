@@ -75,6 +75,19 @@ describe("layoutDiagram (pure elk)", () => {
     expect(out.width).toBeGreaterThan(0);
     expect(out.height).toBeGreaterThan(0);
   });
+
+  it("round-trips agentId, preserving it only on the node that carries one (T326)", async () => {
+    const withAgent: DiagramModel = {
+      nodes: [
+        { id: "a", label: "a", agentId: "wt-T326" },
+        { id: "b", label: "b" },
+      ],
+      edges: [{ from: "a", to: "b" }],
+    };
+    const out = await layoutDiagram(withAgent);
+    expect(out.nodes.find((n) => n.id === "a")!.agentId).toBe("wt-T326");
+    expect(out.nodes.find((n) => n.id === "b")!.agentId).toBeUndefined();
+  });
 });
 
 describe("DiagramSvg (renderer)", () => {

@@ -21,30 +21,70 @@
 import type { DiagramModel, DiagramNode, DiagramEdge } from "./diagramLayout.js";
 
 /**
+ * The kind of actor (or infra element) a {@link RoleNode} represents.
+ *
+ * Role actors:
+ * - `orchestrator` — the flow's controlling agent (owns ledger mutations).
+ * - `planner`       — produces / revises the plan candidate.
+ * - `reviewer`      — adversarially reviews outputs (plan or implementation).
+ * - `worker`        — the implement-flow worker subagent.
+ * - `conflict-resolver` — settles reviewer disputes.
+ * - `explore`       — read-only explorer spawned by investigate-flow.
+ * - `user`          — the human interacting via questions/answers.
+ * - `external`      — an external system or flow receiving a handoff.
+ *
+ * Infra elements (T327 — git/ledger substrate the agents act on):
+ * - `worktree`      — an isolated git worktree a worker operates in.
+ * - `main`          — the main checkout / branch merge-back targets.
+ * - `ledger`        — the markdown-backed planning ledger.
+ */
+export type RoleKind =
+  | "orchestrator"
+  | "planner"
+  | "reviewer"
+  | "worker"
+  | "conflict-resolver"
+  | "explore"
+  | "user"
+  | "external"
+  | "worktree"
+  | "main"
+  | "ledger";
+
+/**
+ * One distinct hue per {@link RoleKind}, keyed exhaustively on the named type
+ * (the `Record<RoleKind, string>` annotation forces every kind to be present).
+ * T327 authors `node.fill` from this map; the {@link DiagramSvg} renderer does
+ * NOT consult it — it honors only the authored `fill` (locked Q181).
+ */
+export const ROLE_KIND_FILL: Record<RoleKind, string> = {
+  orchestrator: "#4ea1ff",
+  planner: "#9d7bff",
+  reviewer: "#e0b341",
+  worker: "#57d18a",
+  "conflict-resolver": "#ff7b9d",
+  explore: "#41d6e0",
+  user: "#f0f0f0",
+  external: "#8b93a7",
+  worktree: "#c98a3a",
+  main: "#3a6ec9",
+  ledger: "#7bc94f",
+};
+
+/** Resolve the fill hue for a {@link RoleKind} from {@link ROLE_KIND_FILL}. */
+export function fillForRoleKind(kind: RoleKind): string {
+  return ROLE_KIND_FILL[kind];
+}
+
+/**
  * A role node in a flow diagram. Widens {@link DiagramNode} with a
- * `roleKind` discriminator for optional downstream styling. Assignable to
- * `DiagramNode`, so the array feeds `layoutDiagram` directly.
+ * `roleKind` discriminator for optional downstream styling, and an optional
+ * `agentId` (inherited from {@link DiagramNode}) that makes the node
+ * activatable in {@link DiagramSvg}. Assignable to `DiagramNode`, so the array
+ * feeds `layoutDiagram` directly.
  */
 export interface RoleNode extends DiagramNode {
-  /**
-   * - `orchestrator` — the flow's controlling agent (owns ledger mutations).
-   * - `planner`       — produces / revises the plan candidate.
-   * - `reviewer`      — adversarially reviews outputs (plan or implementation).
-   * - `worker`        — the implement-flow worker subagent.
-   * - `conflict-resolver` — settles reviewer disputes.
-   * - `explore`       — read-only explorer spawned by investigate-flow.
-   * - `user`          — the human interacting via questions/answers.
-   * - `external`      — an external system or flow receiving a handoff.
-   */
-  roleKind?:
-    | "orchestrator"
-    | "planner"
-    | "reviewer"
-    | "worker"
-    | "conflict-resolver"
-    | "explore"
-    | "user"
-    | "external";
+  roleKind?: RoleKind;
 }
 
 /** A role action edge — identical to the generic {@link DiagramEdge}. */

@@ -40,6 +40,13 @@ export interface DiagramSvgProps {
   model: LaidOutDiagram;
   /** Extra class on the root <svg> (the state-machine svg uses one). */
   className?: string;
+  /**
+   * Invoked with a node's `agentId` when an activatable node is clicked or
+   * keyboard-activated (Enter / Space). Nodes WITHOUT an `agentId` stay static
+   * and never call this. Optional — when absent, even agentId-bearing nodes are
+   * rendered but inert (no `role="button"`, no handlers).
+   */
+  onActivateAgent?: (agentId: string) => void;
 }
 
 /** Render an SVG polyline `points` attribute from routing points. */
@@ -51,7 +58,12 @@ function polylinePoints(points: { x: number; y: number }[]): string {
  * Render a laid-out diagram as inline SVG. Pure presentation: no layout, no
  * async — the caller has already resolved {@link layoutDiagram}.
  */
-export function DiagramSvg({ idPrefix, model, className }: DiagramSvgProps): React.ReactElement {
+export function DiagramSvg({
+  idPrefix,
+  model,
+  className,
+  onActivateAgent,
+}: DiagramSvgProps): React.ReactElement {
   // One arrowhead marker per instance so multiple diagrams on a page don't
   // collide on the marker id.
   const markerId = useMemo(() => `${idPrefix}-arrow`, [idPrefix]);
@@ -109,11 +121,34 @@ export function DiagramSvg({ idPrefix, model, className }: DiagramSvgProps): Rea
           ) : null}
         </React.Fragment>
       ))}
-      {model.nodes.map((n) => (
+      {model.nodes.map((n) => {
+        // A node is activatable only when it carries an agentId AND a handler
+        // was supplied. Otherwise it stays static / non-interactive.
+        const agentId = n.agentId;
+        const activatable = agentId !== undefined && onActivateAgent !== undefined;
+        const activate = activatable
+          ? (): void => onActivateAgent(agentId)
+          : undefined;
+        const interactiveProps = activatable
+          ? {
+              role: "button",
+              tabIndex: 0,
+              style: { cursor: "pointer" },
+              onClick: activate,
+              onKeyDown: (ev: React.KeyboardEvent): void => {
+                if (ev.key === "Enter" || ev.key === " ") {
+                  ev.preventDefault();
+                  activate!();
+                }
+              },
+            }
+          : {};
+        return (
         <g
           key={n.id}
           data-testid={`${idPrefix}-node-${n.id}`}
           transform={`translate(${n.x},${n.y})`}
+          {...interactiveProps}
         >
           <rect
             data-testid={`${idPrefix}-rect-${n.id}`}
@@ -135,7 +170,8 @@ export function DiagramSvg({ idPrefix, model, className }: DiagramSvgProps): Rea
             {n.label}
           </text>
         </g>
-      ))}
+        );
+      })}
     </svg>
   );
 }

@@ -27,6 +27,12 @@ export interface DiagramNode {
   terminal?: boolean;
   /** Hex fill; the renderer applies a default when absent. */
   fill?: string;
+  /**
+   * Identifies an agent this node represents. When present, the renderer makes
+   * the node activatable (click / Enter / Space → `onActivateAgent`); absent
+   * nodes stay static. Preserved through {@link layoutDiagram} like `fill`.
+   */
+  agentId?: string;
 }
 
 /** A directed edge in the caller's generic graph model. */
@@ -52,6 +58,8 @@ export interface LaidOutNode {
   h: number;
   terminal: boolean;
   fill?: string;
+  /** Carried through from {@link DiagramNode.agentId} (like `fill`). */
+  agentId?: string;
 }
 
 /** A laid-out edge: elk's routing polyline + optional label position. */
@@ -149,6 +157,7 @@ export async function layoutDiagram(model: DiagramModel): Promise<LaidOutDiagram
   const out = await elk.layout(graph);
 
   const fillById = new Map(model.nodes.map((n) => [n.id, n.fill]));
+  const agentIdById = new Map(model.nodes.map((n) => [n.id, n.agentId]));
   const terminalById = new Map(model.nodes.map((n) => [n.id, n.terminal === true]));
 
   const nodes: LaidOutNode[] = (out.children ?? []).map((c) => {
@@ -164,6 +173,8 @@ export async function layoutDiagram(model: DiagramModel): Promise<LaidOutDiagram
     };
     const fill = fillById.get(c.id);
     if (fill !== undefined) node.fill = fill;
+    const agentId = agentIdById.get(c.id);
+    if (agentId !== undefined) node.agentId = agentId;
     return node;
   });
 
