@@ -204,12 +204,12 @@ archives:
 
 ## M126
 
-### G38 — clarifying
+### G38 — planned
 
 - createdAt: 2026-06-09T11:05:44.034Z
-- updatedAt: 2026-06-09T11:10:09.249Z
+- updatedAt: 2026-06-09T12:37:01.507Z
 - author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
 - title: "Flow hardening + UI: worktree auto-cleanup, ledger ~/.cache backup, flows-tab role-actions, TUI focus keybindings"
 - description: |
     Four related flow-robustness + UI work items (bundled by the user in one /cq:plan invocation; the planner may decompose into separate work milestones, and item 4 may route to a defect — see note):
@@ -233,4 +233,5 @@ archives:
     **2 Flows tab** — Built by G23 (done): hand-authored TS flow-data module (T204) -> elk DiagramSvg renderer (T202) in ledger-web/src/App.tsx HelpOverlay, tab key 'flows', testids help-tab-flows / help-flow-<id>. Currently renders FLOW STATE diagrams (node kinds: waiting-for-input/handoff/state/terminal) — i.e. the 'abstract state machine' the user now wants REPLACED by per-role ACTIONS (orchestrator dispatches planner, planner emits candidate plan, reviewer returns verdict, orchestrator merges by SHA). Q114 (G23): the prose flow doc lives separately under cq-assets/docs (not single-source with the tab data). Q145 (G34, answered): the tabbed help dialog is WEB-ONLY; the TUI (ledger-tui/src/app.tsx) has NO help overlay/tabs. Role/action source candidates: derive from cq-assets agent+command prompts vs a hand-authored catalogue.
     
     **3 TUI focus keybinding** — ledger-tui/src/app.tsx useInput (L767-882). CONFIRMED current behavior: in LIST focus (top.focus==='list', L840-845) ↑↓/j/k move the cursor (reset scroll:0); key.pageUp/pageDown scroll the CONTENT/detail pane (top.scroll, CONTENT_PAGE=10) WITHOUT switching focus — an INTENTIONAL prior affordance (comment L836-839: 'scroll the detail pane in place WITHOUT switching focus, so the detail is scrollable without the Enter-to-focus step'). Enter (L846) switches focus to 'content'. In CONTENT focus (L802-834) pageUp/pageDown scroll content. There is NO Home/End handling anywhere (ink useInput key object may not expose Home/End — needs verification). So the requested change (list-focus PgUp/PgDn/Home/End page/jump the CURSOR; content scroll only after Enter) REVERSES the deliberate no-Enter-scroll design and ADDS Home/End. Established focus-gated-keys pattern exists (the !cursorInArchive guards, D24/H14). cq convention routes faults via /cq:investigate (reproduce->root-cause->defect-seeded fix); user labeled this a 'defect' — routing decision pending.
-- sessionLogs: ["docs/logs/20260609-110956-a9f05a8253269dee6.md"]
+- sessionLogs: ["docs/logs/20260609-110956-a9f05a8253269dee6.md","docs/logs/20260609-114934-ac3e829c2282bd91c.md","docs/logs/20260609-114934-pi-grok.md","docs/logs/20260609-114934-pi-minimax.md"]
+- milestones: ["M126","M127","M128","M129","M130","M131"]

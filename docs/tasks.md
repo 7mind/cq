@@ -2,7 +2,7 @@
 ledger: tasks
 counters:
   milestone: 0
-  item: 307
+  item: 323
 archives:
   - id: M5
     path: ./archive/tasks/M5.md
@@ -422,3 +422,203 @@ archives:
 ---
 
 # tasks
+
+## M127
+
+### T308 — planned
+
+- createdAt: 2026-06-09T11:51:55.260Z
+- updatedAt: 2026-06-09T12:13:10.201Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Add explicit per-task worktree teardown to implement/advance.md §7.3 (Claude path)
+- description: "In nix/pkg/cq-assets/commands/cq/implement/advance.md §7 merge-back step 3 (verified text at L310-311: 'Then remove the worktree (Claude: auto; Codex: `git worktree remove` + delete the branch).'), REPLACE the Claude-side 'auto' with an EXPLICIT teardown the orchestrator runs immediately after the per-task `done` ledger write, symmetric with the Codex path: `git worktree remove --force <wt> && git branch -D implement/<taskId> && git worktree prune`. Document WHY (Q167/grounding): native Agent isolation:worktree only auto-removes UNCHANGED worktrees, but a worker that committed its task IS changed, so it is never auto-removed — the source of the ~140 stale locked worktrees under .claude/worktrees/. Embed a verbatim grep-able marker on the new instruction: `G38-1a-post-done-cleanup`. Do NOT touch §5 (blocked-task worktrees stay intact). NOTE (R372/opus, VERIFIED): commands/cq/implement/advance.md IS catalogued by gen-agents-catalogue.ts (ROLES id 'implement/advance', body captured as promptTemplate), so editing its body changes agentsCatalogue.gen.ts — the regen is handled by the dedicated task T322 (do not regen here)."
+- acceptance: grep -F 'G38-1a-post-done-cleanup' nix/pkg/cq-assets/commands/cq/implement/advance.md returns exactly one line; the Claude-side per-merge removal is now an EXPLICIT command (the literal sequence 'git worktree remove --force' ... 'git branch -D implement/' ... 'git worktree prune' present in the §7 merge-back region) rather than the prior native-'auto'; §5's 'worktree INTACT' sentence (L281) is unchanged. bun run check (from nix/pkg/cq-ledgers/) green.
+- suggestedModel: sonnet-4.6
+- ledgerRefs: ["goals:G38"]
+
+### T309 — planned
+
+- createdAt: 2026-06-09T11:52:01.439Z
+- updatedAt: 2026-06-09T12:13:17.319Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Add a start-of-pass orphaned/locked-worktree prune sweep to implement/advance.md §1
+- description: "In nix/pkg/cq-assets/commands/cq/implement/advance.md §1 (Derive the READY-SET), alongside the resume-bookkeeping paragraph, ADD a start-of-pass sweep step: before deriving the ready-set, the orchestrator prunes orphaned/locked worktrees left by prior interrupted runs — `git worktree prune` plus, for each worktree under the implement worktree root whose `implement/<taskId>` task is already terminal (`done`/`abandoned`) in the ledger, `git worktree remove --force` + `git branch -D implement/<taskId>`. Explicitly EXCLUDE worktrees for tasks still `blocked`/`wip` (the §5 blocked worktrees MUST survive until resumed/abandoned). Embed a verbatim grep-able marker `G38-1a-start-sweep`. Addresses the ~140 stale locked worktrees observed. dependsOn T308 is a SAME-FILE SERIALIZATION edge (per R372/codex+grok): §1 and §7.3 are logically independent edits, but both mutate implement/advance.md — serializing them avoids a concurrent-worktree merge conflict on the same file; it is NOT a logical data prerequisite."
+- acceptance: grep -F 'G38-1a-start-sweep' nix/pkg/cq-assets/commands/cq/implement/advance.md returns exactly one line in §1; the sweep text references `git worktree prune` and is gated to terminal-task worktrees only (prose names blocked/wip worktrees as excluded). bun run check green.
+- suggestedModel: sonnet-4.6
+- dependsOn: ["T308"]
+- ledgerRefs: ["goals:G38"]
+
+### T310 — planned
+
+- createdAt: 2026-06-09T11:52:07.613Z
+- updatedAt: 2026-06-09T12:13:23.911Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Align agents/implement-worker.md with the orchestrator's post-done worktree teardown
+- description: "Update nix/pkg/cq-assets/agents/implement-worker.md so the worker prompt states that the orchestrator removes the worker's worktree (`git worktree remove --force` + `git worktree prune`) AFTER the per-task done write / merge-back, so the worker need not preserve it and must not improvise its own cross-checkout cleanup (consistent with the D43 worktree-confinement Boundary). This is item-1a prompt-only scope (worker.md is a cq-assets prompt; aligning it keeps the cleanup coherent across orchestrator + worker). Embed a verbatim grep-able marker `G38-1a-worker-ephemeral`. Do NOT run gen-agents here — the agentsCatalogue.gen.ts regen for ALL three 1a asset edits (this + the two advance.md edits) is the dedicated task T322. Terminology: use 'after the per-task done write / merge-back' (matches the locked Q167 phrasing), not 'post-merge teardown'."
+- acceptance: grep -F 'G38-1a-worker-ephemeral' nix/pkg/cq-assets/agents/implement-worker.md returns exactly one line; the new text states the orchestrator prunes the worktree after the per-task done write/merge-back; edit scoped to the relevant Boundaries/worktree region. bun run check green.
+- suggestedModel: sonnet-4.6
+- ledgerRefs: ["goals:G38"]
+
+### T311 — planned
+
+- createdAt: 2026-06-09T11:52:13.567Z
+- updatedAt: 2026-06-09T12:23:57.550Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Add file-scoped grep-invariant test cells for the 1a markers (sources + generated gen.ts)
+- description: "In nix/pkg/cq-ledgers/.../canonical-ledgers.test.ts (the existing eval-time-only prompt-marker guard, cf. the D43 T306 'grep invariants — file-scoped' describe block), add a describe block with cells that readFileSync each artifact and .toContain its verbatim marker: (SOURCES) nix/pkg/cq-assets/commands/cq/implement/advance.md contains 'G38-1a-post-done-cleanup' AND 'G38-1a-start-sweep'; nix/pkg/cq-assets/agents/implement-worker.md contains 'G38-1a-worker-ephemeral'; (GENERATED) packages/ledger-web/src/agentsCatalogue.gen.ts ALSO contains all three markers (the committed freshness guard catching a stale gen.ts — R372/opus; the gen module embeds the 'implement/advance' and 'implement-worker' promptTemplate bodies). Reuse the import.meta.dir path-resolution pattern from the existing T255/T264/T306 cells."
+- acceptance: bun test (from nix/pkg/cq-ledgers/) runs the new describe block; all source + gen.ts marker cells pass; deliberately breaking one marker in its source .md makes exactly that cell fail (teeth verified), restoring it returns to 0 fail; a stale (un-regenerated) agentsCatalogue.gen.ts fails the gen.ts cells. bun run check green.
+- suggestedModel: sonnet-4.6
+- dependsOn: ["T322"]
+- ledgerRefs: ["goals:G38"]
+
+### T322 — planned
+
+- createdAt: 2026-06-09T12:13:31.447Z
+- updatedAt: 2026-06-09T12:23:50.491Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Regenerate agentsCatalogue.gen.ts via gen-agents after all 1a asset edits
+- description: "After the three item-1a cq-assets edits land (T308 + T309 edit nix/pkg/cq-assets/commands/cq/implement/advance.md [catalogue key 'implement/advance']; T310 edits nix/pkg/cq-assets/agents/implement-worker.md [catalogue key 'implement-worker']), run `bun run gen-agents` FROM nix/pkg/cq-ledgers/ (the bun workspace root — per CLAUDE.md all bun commands run from there; gen-agents is a package script of packages/ledger-web, and the script reads the cq-assets tree via its own REPO_ROOT resolution) to regenerate packages/ledger-web/src/agentsCatalogue.gen.ts. REQUIRED (R372/opus, VERIFIED): gen-agents-catalogue.ts catalogues both 'implement/advance' (commands/cq/implement/advance.md) and 'implement-worker' (agents/implement-worker.md), capturing each body as promptTemplate — so the marker edits change the generated module and a stale gen.ts would otherwise ship. Commit the regenerated gen.ts. dependsOn T308, T309, T310 (regen runs AFTER all three edits)."
+- acceptance: "Run `bun run gen-agents` from nix/pkg/cq-ledgers/. Then: (a) `git diff packages/ledger-web/src/agentsCatalogue.gen.ts` is byte-faithful EXCEPT the promptTemplate string for the 'implement/advance' and 'implement-worker' entries (no spurious reordering/whitespace churn elsewhere); (b) the regenerated module's 'implement/advance' promptTemplate contains BOTH 'G38-1a-post-done-cleanup' and 'G38-1a-start-sweep', and the 'implement-worker' promptTemplate contains 'G38-1a-worker-ephemeral'. bun run check green."
+- suggestedModel: sonnet-4.6
+- dependsOn: ["T308","T309","T310"]
+- ledgerRefs: ["goals:G38"]
+
+## M128
+
+### T312 — planned
+
+- createdAt: 2026-06-09T11:52:27.205Z
+- updatedAt: 2026-06-09T12:24:08.557Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Add a ~/.cache mirror writer to @cq/ledger driven by onMutation, with a SHARED path-scheme function
+- description: "In packages/ledger/src/store add a node-only cache-mirror module. Factor ONE exported pure function `cacheMirrorDir(absRootDir: string): string` returning `path.join(cacheBase, 'cq', 'ledgers', `${path.basename(absRootDir)}-${createHash('sha256').update(absRootDir).digest('hex').slice(0, 12)}`)` where `cacheBase = process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), '.cache')` — this SAME function MUST be reused by the restore CLI (T313); never duplicate the hash logic. On each mutation, mirror ONLY the file(s) the op touched (per Q168): the changed docs/<ledgerId>.md, plus on an `archive` op the new archive file + docs/ledgers.yaml. Overwrite-in-place single latest mirror (no journal, no rotation). Reuse the store's existing atomic-write primitive (tmp + rename). Wire it into FsLedgerStore.fireMutation() AFTER the existing onMutation hook, guarded so a mirror failure is swallowed (logged to stderr) exactly like onMutation — it MUST NOT block or unwind the write path. onMutation(ledgerId, op) carries the ledgerId not a file path, so map ledgerId→ledgerPath internally (the store owns docsDir/archiveDir/registryPath/rootDir). TEST AFFORDANCE (R372/grok): rely on honoring XDG_CACHE_HOME to redirect the mirror into a temp dir under test — do NOT add a new FsLedgerStoreOpts flag unless honoring XDG_CACHE_HOME proves insufficient. This task OWNS its mirror tests."
+- acceptance: "New @cq/ledger test cells (authored here): construct an FsLedgerStore on a tmp root with XDG_CACHE_HOME set to another tmp dir; create_item then update_item; assert the mirror file at `${XDG_CACHE_HOME}/cq/ledgers/${path.basename(absRoot)}-${sha256hex(absRoot).slice(0,12)}/docs/<ledger>.md` exists and its bytes equal the in-repo docs/<ledger>.md; assert the computed cache dir NAME equals exactly `${path.basename(absRoot)}-<12 lowercase hex>` (full name, not just the suffix); on archive the archive file + ledgers.yaml also appear under the mirror; a deliberately-thrown mirror error is swallowed (write still succeeds, item present — post-lock isolation); the mirror write is atomic (tmp+rename, no partial file). bun run check green."
+- suggestedModel: "opus-4.8[1m]"
+- ledgerRefs: ["goals:G38"]
+
+### T313 — planned
+
+- createdAt: 2026-06-09T11:52:35.199Z
+- updatedAt: 2026-06-09T12:14:05.289Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: "Add `ledger-mcp restore --from-cache [--cwd <root>]` subcommand (+ update the main.ts header boundary)"
+- description: "packages/ledger-mcp/src/main.ts currently has NO subcommand dispatch (VERIFIED: parseArgs/main handle only --cwd/--http and launch the server). Introduce positional-subcommand parsing so `ledger-mcp restore --from-cache [--cwd <root>]` is recognized while the default (no subcommand) still launches the server UNCHANGED. The restore handler resolves the root (--cwd > $LEDGER_ROOT > CWD; absolute or resolved vs CWD per repo convention), recomputes the cache dir via the SHARED cacheMirrorDir() function from T312 (single import, no divergent copy), and atomically copies the mirror back into <root>/docs/ (symmetric with FsLedgerStore.reset(): read mirror, atomic tmp+rename onto each in-repo path). Refuse with a clear non-zero error if the cache dir is absent/empty. Print a per-ledger restored-file-count summary (ResetSummary style). Update --help/usage. IMPORTANT (R372/opus+codex+minimax): the main.ts header comment (L23-24) currently states lifecycle ops (backup+reinit, erase) live in the `cq` CLI and 'this server only serves the tool surface' — adding `restore` here CONTRADICTS that boundary, so UPDATE that header comment to record that `restore --from-cache` is now hosted by ledger-mcp (per the Q169 decision) while the other lifecycle ops remain in `cq`. This task OWNS its restore tests."
+- acceptance: "New test cells (authored in THIS task) drive restore via the parseArgs/handler entrypoint (not a real shellout): seed a cache mirror dir, run restore against an empty/wiped tmp docs/, assert docs/<ledger>.md reappear byte-identical to the mirror; absent-cache yields a non-zero/throwing error; `ledger-mcp` with no subcommand still parses to the server-launch path. The cache path is computed by the SAME cacheMirrorDir import used by T312 (no duplicated hash). The main.ts header comment no longer claims lifecycle ops live ONLY in `cq` (it documents the new restore subcommand). nix build .#ledger-mcp succeeds; bun run check green."
+- suggestedModel: "opus-4.8[1m]"
+- dependsOn: ["T312"]
+- ledgerRefs: ["goals:G38"]
+
+### T314 — abandoned
+
+- createdAt: 2026-06-09T11:52:41.272Z
+- updatedAt: 2026-06-09T12:14:32.934Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: "[FOLDED into T312/T313 — R372] Consolidated 1b tests"
+- description: "ABANDONED per R372 (codex+grok): a standalone test task is incoherent for this flow (each impl worktree must pass `bun run check` with its own cells). The six 1b test scenarios were folded into the owning impl tasks: mirror-on-write / archive-mirrors-archive+ledgers.yaml / path-scheme-12-hex / atomicity / post-lock-isolation → T312; restore-copies-back / absent-cache-error → T313."
+- acceptance: bun test (from nix/pkg/cq-ledgers/) passes all six cells across packages/ledger + packages/ledger-mcp; bun run check green.
+- suggestedModel: "opus-4.8[1m]"
+- dependsOn: ["T312","T313"]
+- ledgerRefs: ["goals:G38"]
+
+## M129
+
+### T315 — planned
+
+- createdAt: 2026-06-09T11:52:51.604Z
+- updatedAt: 2026-06-09T11:52:51.604Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Author a hand-typed role→actions catalogue TS module for the Flows tab
+- description: "Add a NEW hand-authored TS data module under packages/ledger-web/src (e.g. roleActions.ts), node-free/browser-bundleable, mirroring the existing flowData.ts export style. For each cq flow (plan, investigate, implement, advance) model role NODES (orchestrator, planner, reviewer, worker, conflict-resolver, investigate-explorer, user as applicable) and labeled ACTION EDGES between roles — e.g. orchestrator→planner 'dispatches planner', planner→orchestrator 'emits candidate plan', reviewer→orchestrator 'returns verdict', orchestrator→main 'merges by SHA'. Shape each flow as the generic DiagramModel ({nodes, edges}) the existing layoutDiagram/DiagramSvg renderer consumes (so it is type-assignable to DiagramModel). Export ROLE_FLOWS in plan/investigate/implement/advance order. Hand-authored per Q170 (prose prompts are not a reliable structured source). Distinct from agentsCatalogue.ts (Agents tab)."
+- acceptance: "New unit test imports ROLE_FLOWS and asserts: 4 flows in order plan/investigate/implement/advance; every edge from/to references a node id declared in that flow's nodes[]; each flow has ≥1 role node and ≥1 labeled action edge (non-empty label); the model typechecks as DiagramModel. bun run typecheck green."
+- suggestedModel: sonnet-4.6
+- ledgerRefs: ["goals:G38"]
+
+### T316 — planned
+
+- createdAt: 2026-06-09T11:52:58.197Z
+- updatedAt: 2026-06-09T11:52:58.197Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Render the Flows tab from ROLE_FLOWS, replacing the abstract state diagrams
+- description: In packages/ledger-web/src/App.tsx HelpOverlay Flows tab, REPLACE the flowData.ts state-machine rendering with ROLE_FLOWS rendered via the existing DiagramSvg/layoutDiagram per flow, keeping the testids help-tab-flows and help-flow-<id> stable. Drop the now-unused flowData import from App.tsx (remove flowData.ts only if nothing else imports it; otherwise leave the file). Map role-node/action-edge onto the renderer's existing node/edge/label props. WEB-ONLY (Q171) — do NOT touch ledger-tui. Keep the Agents tab (agentsCatalogue) untouched.
+- acceptance: "happy-dom render test: open help overlay, switch to Flows tab (help-tab-flows); for each flow plan/investigate/implement/advance the help-flow-<id> SVG contains role labels (e.g. 'planner','reviewer','orchestrator') and ≥1 action-edge label (e.g. 'returns verdict' / 'merges by SHA'); the prior bare state-node labels are no longer the Flows-tab content. grep -F 'flowData' on App.tsx returns nothing (import removed). bun run check green."
+- suggestedModel: "opus-4.8[1m]"
+- dependsOn: ["T315"]
+- ledgerRefs: ["goals:G38"]
+
+### T317 — abandoned
+
+- createdAt: 2026-06-09T11:53:02.900Z
+- updatedAt: 2026-06-09T12:14:36.230Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: "[FOLDED into T315/T316 — R372] Web Flows tab tests"
+- description: ABANDONED per R372 (codex+grok+minimax; also resolves the T317 '(dedupe with T315)' mislabel). The catalogue unit test is owned by T315; the happy-dom Flows-tab render test (role labels + action-edge labels + help-flow-<id> testids + flowData-import-removed assertion) is owned by T316.
+- acceptance: bun test (from nix/pkg/cq-ledgers/) passes the new ledger-web cells; bun run check green.
+- suggestedModel: sonnet-4.6
+- dependsOn: ["T316"]
+- ledgerRefs: ["goals:G38"]
+
+## M130
+
+### T318 — planned
+
+- createdAt: 2026-06-09T11:53:11.427Z
+- updatedAt: 2026-06-09T12:14:14.250Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Make LIST-focus PgUp/PgDn page the cursor + Home/End jump first/last row (remove no-Enter detail-scroll)
+- description: "Fixes D44 (part 1). In ledger-tui/src/app.tsx useInput LIST-focus branch (currently ~L840-845), CHANGE key.pageUp/pageDown to page the CURSOR by one screenful (listInnerH rows, defined ~L896) instead of scrolling top.scroll: pageUp → cursor = max(0, cursor - listInnerH) scroll:0; pageDown → cursor = min(totalRows-1, cursor + listInnerH) scroll:0. ADD Home/End in LIST focus: Home → cursor 0 scroll:0, End → cursor last row scroll:0. REMOVE the no-Enter detail-scroll affordance and update the L836-839 comment accordingly (Q173 (b)). SHARED HELPER (R372/codex): ink exposes no key.home/key.end — define a small module-level helper in ledger-tui/src/app.tsx, `matchHomeEnd(input: string): 'home' | 'end' | null` (matches the raw ESC sequences \\x1b[H or \\x1b[1~ = Home; \\x1b[F or \\x1b[4~ = End), and use it in BOTH the LIST branch (this task) and the CONTENT branch (T319) so the sequence-matching is defined ONCE, not duplicated. Keep ↑↓/j/k and Enter behaviour intact. This task OWNS its LIST-focus tests."
+- acceptance: "ink-testing-library test cells (authored here): with the items list focused and a list longer than listInnerH, PageDown advances the cursor by listInnerH rows (NOT the detail scroll); PageUp moves it back; Home selects row 0; End selects the last row; the detail pane no longer scrolls in LIST focus without pressing Enter first. Home/End fed as raw ESC sequences. The matchHomeEnd helper exists at module scope in app.tsx. bun run check green."
+- suggestedModel: "opus-4.8[1m]"
+- ledgerRefs: ["goals:G38","defects:D44"]
+
+### T319 — planned
+
+- createdAt: 2026-06-09T11:53:16.153Z
+- updatedAt: 2026-06-09T12:14:19.416Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Add Home/End to CONTENT focus (PgUp/PgDn keep paging by CONTENT_PAGE)
+- description: "Fixes D44 (part 2). In ledger-tui/src/app.tsx useInput CONTENT-focus branch (~L802-834), ADD Home/End: Home → scroll 0, End → scroll contentMaxScroll; PgUp/PgDn continue to page content by CONTENT_PAGE (unchanged). Detect Home/End via the SHARED module-level `matchHomeEnd(input)` helper introduced in T318 (do NOT duplicate the sequence-matching). This task OWNS its CONTENT-focus tests."
+- acceptance: "ink-testing-library test cells (authored here): enter an item (Enter → content focus) with content taller than the pane; End jumps scroll to the bottom (clamped to contentMaxScroll), Home returns to 0; PgUp/PgDn still move by CONTENT_PAGE. Home/End fed as raw ESC sequences via the shared matchHomeEnd helper. bun run check green."
+- suggestedModel: "opus-4.8[1m]"
+- dependsOn: ["T318"]
+- ledgerRefs: ["goals:G38","defects:D44"]
+
+### T320 — abandoned
+
+- createdAt: 2026-06-09T11:53:21.779Z
+- updatedAt: 2026-06-09T12:14:39.239Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: "[FOLDED into T318/T319 — R372] TUI focus paging tests"
+- description: "ABANDONED per R372 (codex+grok): the LIST-focus paging/Home-End cells are owned by T318 and the CONTENT-focus Home/End cells by T319 (each impl worktree must pass `bun run check` with its own ink-testing-library cells)."
+- acceptance: bun test (from nix/pkg/cq-ledgers/) passes the new ledger-tui cells; nix build .#ledger-tui succeeds; bun run check green.
+- suggestedModel: sonnet-4.6
+- dependsOn: ["T318","T319"]
+- ledgerRefs: ["goals:G38","defects:D44"]
+
+## M131
+
+### T321 — planned
+
+- createdAt: 2026-06-09T11:53:27.431Z
+- updatedAt: 2026-06-09T12:14:46.117Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: "Cross-cutting verification: full bun run check + grep-invariant audit + nix builds"
+- description: "Final gate after all four item-milestones (M127-M130) land. Run the full workspace gate and confirm the 1a prompt grep-invariant markers are present (in the sources AND the regenerated agentsCatalogue.gen.ts). dependsOn the terminal task of each item-milestone: T311 (1a guard, transitively covers T308/T309/T310/T322), T313 (1b mirror+restore, covers T312), T316 (web render+tests, covers T315), T319 (TUI content+tests, covers T318)."
+- acceptance: "`bun run check` (from nix/pkg/cq-ledgers/) exits 0 (typecheck + lint + test, including the T311 1a marker cells (sources + gen.ts), the T312/T313 1b backup/restore cells, the T315/T316 ledger-web Flows cells, and the T318/T319 ledger-tui keybinding cells). grep -F 'G38-1a-post-done-cleanup' and 'G38-1a-start-sweep' on implement/advance.md and 'G38-1a-worker-ephemeral' on agents/implement-worker.md each return exactly one line. nix build .#ledger-mcp .#ledger-tui .#ledger-web all exit 0. The §5 blocked-worktree path remains intact (manual grep check)."
+- suggestedModel: sonnet-4.6
+- dependsOn: ["T311","T313","T316","T319"]
+- ledgerRefs: ["goals:G38"]

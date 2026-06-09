@@ -2,7 +2,7 @@
 ledger: decisions
 counters:
   milestone: 0
-  item: 59
+  item: 61
 archives:
   - id: M2
     path: ./archive/decisions/M2.md
@@ -219,3 +219,15 @@ archives:
 - headline: "G37 plan review: approved (R364 go-ahead) — D43 fix LOCKED"
 - rationale: "G37 (defect-seeded fix for D43 — worktree-confine implement-worker + commit ledger after planning-lock and every merge) reached reconciled go-ahead at review round 2 (R364; panel opus[claude] + minimax[pi:ollama-cloud], both go-ahead; grok+codex abstained — no API key) after one revise round (R363, 6 criticisms). Locked plan: 3 work milestones M123/M124/M125, 7 tasks T301-T307 decomposing the Q166-locked fix (1b worker-confined-reset + commit-after-planning-lock + commit-after-every-merge + autonomous): T301 worktree-confinement hard Boundary in implement-worker.md (part a, general cross-checkout-git prohibition); T302 commit-after-planning-lock in plan/advance.md + T303 commit-after-every-merge-back in implement/advance.md §7 + T304 chained-path clause in advance.md (part b, override chained-suppression for THESE checkpoints only); T305 documented reflog repro (reproduction-first) + T306 file-scoped grep-invariant guard (4 distinct (file,marker) cells, extending the T255/T264 pattern) + T307 final verify. R363 fixes: T307+G37 nix-build claim demoted to a smoke — SUBSTANTIVE gate = bun run check + the T306 grep-invariant (cq-assets eval-time-only; matches the G31/R281 adjudication); T304 distinct-marker; T306 file-scoped; T301 generalized prohibition; T305 reproduction-first narration; live-activation home-manager-switch kept as a user follow-up note. DAG acyclic (T304→T303; T306→T301-T304; T307→T305+T306; rest no-dep). Resolves D43; every task ledgerRefs defects:D43. G37 → planned."
 - ledgerRefs: ["goals:G37","defects:D43"]
+
+## M126
+
+### K60 — locked
+
+- createdAt: 2026-06-09T12:37:00.524Z
+- updatedAt: 2026-06-09T12:37:00.524Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: "G38 plan review: approved (R374 go-ahead) — flow-hardening + UI plan LOCKED"
+- rationale: "G38 (4 bundled work items, all 7 clarifying questions Q167-Q173 answered 'as recommended') reached reconciled go-ahead at review round 3 (R374; full panel opus[claude] + codex/grok/minimax[pi]; opus+codex+minimax go-ahead, grok's lone revise ADJUDICATED non-blocking as a verification artifact — it judged the round-3 prompt's recap shorthand, not the live ledger, and every cited point is satisfied in the actual task items) after two revise rounds (R372: 12 substantive criticisms incl. the LOAD-BEARING gen-agents-catalogues-commands finding; R373: 3 precision nits). Multi-planner synthesis (opus[claude]+grok+minimax[pi] candidates, orchestrator-synthesized + persisted). Locked plan: 5 work milestones M127-M131, 14 active tasks (T308/T309/T310/T322/T311; T312/T313; T315/T316; T318/T319; T321), 3 abandoned (T314/T317/T320 folded into owners), + defect D44 (low) for item 3. Decomposition: (1a, prompt-only, M127) T308 advance.md §7.3 explicit `git worktree remove --force + branch -D + prune` after the per-task done write (marker G38-1a-post-done-cleanup) + T309 §1 start-of-pass orphan/locked sweep excluding blocked/wip (G38-1a-start-sweep) + T310 implement-worker.md alignment (G38-1a-worker-ephemeral) + T322 gen-agents regen (advance.md+worker.md ARE catalogued into agentsCatalogue.gen.ts — R372/opus, verified) + T311 file-scoped grep-invariant cells over sources AND the generated gen.ts. (1b, M128) T312 @cq/ledger onMutation-driven atomic post-lock non-blocking ~/.cache mirror via a SHARED cacheMirrorDir(absRoot)=${XDG_CACHE_HOME:-~/.cache}/cq/ledgers/${basename}-${sha256(absRoot).slice(0,12)} + T313 `ledger-mcp restore --from-cache [--cwd]` positional subcommand reusing cacheMirrorDir + updating the main.ts header boundary. (2, web-only, M129) T315 hand-authored roleActions.ts ROLE_FLOWS (role nodes + labeled action edges as DiagramModel) + T316 render the Flows tab from ROLE_FLOWS via the existing elk DiagramSvg, REPLACING the flowData state diagrams, testids preserved. (3, defect-aware, M130) T318 LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump first/last + remove no-Enter detail-scroll + module-level matchHomeEnd(input) ESC helper + T319 CONTENT-focus Home/End reusing the helper; both ledgerRef defects:D44. (M131) T321 cross-cutting verify (bun run check + grep the 3 markers + nix build ledger-mcp/-tui/-web + §5 intact). DAG acyclic (T309→T308 same-file serialization; T322→T308/T309/T310; T311→T322; T313→T312; T316→T315; T319→T318; T321→T311/T313/T316/T319). G38 → planned."
+- ledgerRefs: ["goals:G38","defects:D44"]

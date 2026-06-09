@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 126
+  item: 131
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -638,3 +638,39 @@ archives:
 - updatedAt: 2026-06-09T11:05:21.585Z
 - title: "Plan: worktree cleanup + ledger backup + flows-tab role-actions + TUI focus keybindings"
 - description: "Coordination milestone for a multi-item goal: (1a) auto-delete implement-worker worktrees after merge-back via the flow prompts; (1b) ledger code writes a restore-without-replay backup under ~/.cache/cq/ledgers/; (2) Flows help tab shows per-role actions (orchestrator dispatches planner, etc.) instead of an abstract state machine; (3) TUI focus-respecting keybindings (pgup/pgdown/home/end move the item cursor when items focused; scroll item content when inside item view)."
+
+### M127 — open
+
+- createdAt: 2026-06-09T11:51:06.035Z
+- updatedAt: 2026-06-09T11:51:06.035Z
+- title: G38 item 1a — implement-worker worktree auto-cleanup (prompt-only)
+- description: Prompt-only edits to nix/pkg/cq-assets so a Claude worker's CHANGED worktree is removed after merge-back (per-task §7.3 teardown + start-of-pass orphan sweep), §5 blocked worktrees stay intact, and implement-worker.md is aligned. Each edit carries a verbatim grep-invariant marker guarded by a canonical-ledgers.test.ts cell (eval-time-only regression guard). Resolves G38 item 1a (Q167).
+
+### M128 — open
+
+- createdAt: 2026-06-09T11:51:08.863Z
+- updatedAt: 2026-06-09T11:51:08.863Z
+- title: G38 item 1b — ledger ~/.cache mirror backup + restore CLI
+- description: "@cq/ledger mirrors each touched file to ${XDG_CACHE_HOME:-~/.cache}/cq/ledgers/${basename}-${sha256(absRoot).slice(0,12)}/ off the onMutation post-lock hook (atomic, swallows throws, overwrite-in-place, no journal); a shared path-scheme function is reused by a new `ledger-mcp restore --from-cache [--cwd]` subcommand that copies the mirror back into docs/. Resolves G38 item 1b (Q168/Q169)."
+
+### M129 — open
+
+- createdAt: 2026-06-09T11:51:11.211Z
+- updatedAt: 2026-06-09T11:51:11.211Z
+- title: G38 item 2 — flows-tab per-role action diagrams (ledger-web, web-only)
+- description: New hand-authored role→actions catalogue TS module (per-flow role nodes + labeled action edges) rendered via the existing elk DiagramSvg, REPLACING the abstract state diagrams in the ledger-web Flows help tab; testids help-tab-flows/help-flow-<id> preserved. Web-only (Q170/Q171).
+
+### M130 — open
+
+- createdAt: 2026-06-09T11:51:13.861Z
+- updatedAt: 2026-06-09T11:51:13.861Z
+- title: G38 item 3 — TUI focus-respecting paging/jump keybindings (defect-aware)
+- description: "ledger-tui/src/app.tsx useInput: LIST focus PgUp/PgDn page the cursor by one screenful (listInnerH) + Home/End jump first/last row, no-Enter detail-scroll affordance removed; CONTENT focus gains Home/End (PgUp/PgDn keep CONTENT_PAGE); Home/End matched via raw ESC sequences. Defect-aware (Q172): a minor defects record is filed + the fix tasks ledgerRef it. Behavior per Q173."
+
+### M131 — open
+
+- createdAt: 2026-06-09T11:51:20.750Z
+- updatedAt: 2026-06-09T11:51:20.750Z
+- title: G38 — cross-cutting verification (full check + grep-invariant audit + nix builds)
+- description: "Final gate after all four item-milestones land: bun run check (typecheck+lint+test) exits 0; the 1a grep-invariant markers present; nix build .#ledger-mcp .#ledger-tui .#ledger-web all succeed. Depends on M127-M130."
+- dependsOn: ["M127","M128","M129","M130"]

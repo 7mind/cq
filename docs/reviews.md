@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 371
+  item: 375
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -646,3 +646,41 @@ archives:
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - summary: "T304 implement review: APPROVE (opus[claude] approve 0/0, authoritative; backfill — recorded post-merge after the orchestrator noticed T304 had been cherry-picked without an explicit per-task review). advance.md 'Commit the ledger' section carries both the per-merge always-fire clause ('the chained implement pass's per-merge commit is NOT suppressed ... an always-fire checkpoint, on the same footing as the per-archive commit') and the at-stop-only suppression-scope clause; the run-stop + per-archive commits are substantively unchanged; marker 'it fires even when the implement sub-flow runs chained under' verbatim at advance.md:519; edit scoped to the section; gen.ts regen mechanical; bun run check green 1293/0. NOTE: minimax not separately run for this backfill — T304 is the chained-twin of T303 (minimax approved R367) and its content is transitively verified by the T306 cell-4 grep-invariant (asserts THIS marker in advance.md) + T307 green. No defect found; the merge stands."
 - ledgerRefs: ["tasks:T304","goals:G37","defects:D43"]
+
+## M126
+
+### R372 — revise
+
+- createdAt: 2026-06-09T12:12:07.035Z
+- updatedAt: 2026-06-09T12:12:50.106Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- summary: "REVISE (G38 round 1; full panel opus[claude]+codex+grok+minimax[pi], 4/4 usable, all revise → reconciled revise). Plan is fine-grained/acyclic/grounded/complete, but the agentsCatalogue.gen.ts regen for the advance.md edits is mis-sequenced (LOAD-BEARING, opus-verified against gen-agents-catalogue.ts L106/L142), the standalone test tasks are vague/duplicative, and several groundings/acceptances need correction. 0 new_questions, 0 out-of-scope defects."
+- new_questions: []
+- criticism: ["[opus] LOAD-BEARING: T308's parenthetical ('gen-agents covers agents/, not commands/ — no regen needed for a command file') is FALSE — VERIFIED against gen-agents-catalogue.ts: ROLES (L106) catalogues commands/cq/implement/advance.md (id 'implement/advance') and buildRole (L142) captures its full body as promptTemplate. Adding the markers to advance.md's BODY therefore DOES change agentsCatalogue.gen.ts and requires `bun run gen-agents`. Correct the justification.","[opus] Mis-sequencing + scope gap: T310 was the only task running gen-agents but had no dependsOn on T308/T309 and scoped the regen only around implement-worker.md; the advance.md body edits would silently desync agentsCatalogue.gen.ts, uncaught by T311/T321 which grep only the .md sources. FIX: make the gen-agents regen its OWN task depending on T308+T309+T310, and add a committed assertion that the regenerated gen.ts 'implement/advance' promptTemplate contains both advance.md markers.","[codex][grok] T309's dependsOn T308 has no logical prerequisite — the §1 sweep and §7.3 teardown edit disjoint sections of advance.md. Reconcile: re-justify the edge explicitly as SAME-FILE serialization (avoid a concurrent-worktree merge conflict on advance.md).","[codex][grok] T310 read as unjustified scope vs Q167 + used inconsistent 'post-merge teardown' vs the locked 'after the per-task done write' terminology. Resolve against the [opus] finding (regen IS required): keep worker.md alignment as item-1a prompt scope, align terminology, move the regen to its own sequenced task.","[codex][grok] Standalone test tasks T314/T317/T320 are vague 'consolidated/dedupe' meta-tasks while the impl acceptances already enumerate the same tests — and a separate test task is incoherent for this flow (each impl worktree must pass `bun run check` WITH its own tests). FIX: fold the test cells into the owning impl tasks and DROP T314/T317/T320.","[codex] D44 severity 'minor' vs Q172 'low/medium' — align it (defect already filed; no separate filing task needed).","[codex] T318/T319 'shared helper' for raw Home/End ESC sequences is unscoped — name the module/function (a module-level helper in ledger-tui/src/app.tsx, reused by both focus branches).","[grok] T312 mandates a new FsLedgerStoreOpts flag not implied by Q168/Q169; the only test-affordance needed is honoring XDG_CACHE_HOME. Drop/soften the flag.","[grok] T308 acceptance hinges on the literal 'Claude: auto' — VERIFIED present (implement/advance.md L310-311), so grounded; keep but phrase robustly.","[opus][codex][minimax] T313 adding `restore` CONTRADICTS the main.ts header (L23-24: lifecycle ops live in the `cq` CLI; 'this server only serves the tool surface') — VERIFIED main.ts only parses --cwd/--http. T313 must ALSO update that header comment.","[grok][minimax] T317's '(dedupe with T315)' mislabels its sibling (should be T316) — mooted by dropping T317.","[minimax] T310's acceptance mixes byte-faithful + contains-marker invariants — split (handled by moving the regen to its own task with split acceptance)."]
+- ledgerRefs: ["goals:G38"]
+- sessionLogs: ["docs/logs/20260609-121211-aae48f37b94d78869.md","docs/logs/20260609-121211-pi-codex.md","docs/logs/20260609-121211-pi-grok.md","docs/logs/20260609-121211-pi-minimax.md"]
+
+### R373 — revise
+
+- createdAt: 2026-06-09T12:23:02.922Z
+- updatedAt: 2026-06-09T12:23:37.195Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- summary: REVISE (G38 round 2; full panel 4/4 usable; opus+grok+minimax go-ahead, codex revise → reconciled revise STRICTEST-WINS). All 12 R372 criticisms verified resolved by all four reviewers (T308 justification, T322 regen task + gen.ts freshness guard, T309 serialization rationale, T310 scope/terminology, folded test tasks, D44=low, matchHomeEnd helper, T312 XDG affordance, T313 main.ts header update). codex raised 3 NEW minor plan-text PRECISION nits (no load-bearing/sequencing/testability/completeness defect; grok+minimax explicitly judged them non-blocking). Addressing them anyway for precision; convergent.
+- new_questions: []
+- criticism: ["[codex] Unify the prompt source-file references across M127: use the FULL path consistently — T308/T309 edit nix/pkg/cq-assets/commands/cq/implement/advance.md (catalogue key 'implement/advance'); T310 edits nix/pkg/cq-assets/agents/implement-worker.md (catalogue key 'implement-worker'). T311/T322 acceptance use the shorthand 'advance.md'/'implement-worker.md' — make them name the full path + catalogue key so there is no ambiguity about which artifact each marker/promptTemplate assertion targets.","[codex] T322 omits the invocation cwd for `bun run gen-agents`: the 1a edits live under nix/pkg/cq-assets/ but the gen-agents script is a package script of the cq-ledgers workspace — state explicitly that it runs from nix/pkg/cq-ledgers/ (per CLAUDE.md the bun commands run from there), to avoid an exec error.","[codex] T312's cacheMirrorDir formula writes a bare 'basename'/'sha256(absRoot)' — qualify it: path.basename(absRoot) and crypto.createHash('sha256').update(absRoot).digest('hex').slice(0,12), and have the acceptance pin the FULL computed dir name (basename + '-' + 12hex), not only the suffix regex."]
+- ledgerRefs: ["goals:G38"]
+- sessionLogs: ["docs/logs/20260609-122307-a07760806bf08cf92.md","docs/logs/20260609-122307-pi-codex.md","docs/logs/20260609-122307-pi-grok.md","docs/logs/20260609-122307-pi-minimax.md"]
+
+### R374 — go-ahead
+
+- createdAt: 2026-06-09T12:35:41.555Z
+- updatedAt: 2026-06-09T12:36:29.329Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- summary: "GO-AHEAD (G38 round 3; full panel 4/4 usable; opus+codex+minimax go-ahead, grok revise — ADJUDICATED non-blocking). codex (R373's own author) confirms its 3 round-2 precision nits are resolved and votes go-ahead; opus (reading the LIVE ledger) and minimax also go-ahead, confirming all R372+R373 fixes landed and the plan is fine-grained/acyclic/testable/grounded/complete. grok's lone revise is a VERIFICATION ARTIFACT, not a real plan defect: pi reviewers judge the plan TEXT supplied in the review prompt, and grok judged the round-3 prompt's COMPACT RECAP (which used shorthands like 'advance.md'/'gen.ts') as if it were the plan, concluding 'R373 #1/#3 did not land'. Validated against SOURCE (the actual ledger task items), every grok point is already satisfied: T308/T309 descriptions open 'In nix/pkg/cq-assets/commands/cq/implement/advance.md …' (full path); T310 'Update nix/pkg/cq-assets/agents/implement-worker.md …'; T322/T311 name packages/ledger-web/src/agentsCatalogue.gen.ts + the catalogue keys 'implement/advance'/'implement-worker'; T312 spells out cacheMirrorDir(absRootDir)=path.join(cacheBase,'cq','ledgers',`${path.basename(absRootDir)}-${createHash('sha256').update(absRootDir).digest('hex').slice(0,12)}`) with the full-dir-name acceptance. Because the criticism is FALSE against ground truth, the surviving real-criticism set is empty → reconciled go-ahead (citation-validation per the orchestrator's duty, NOT a laundered revise). Convergent: round1 12 substantive criticisms→fixed; round2 3 precision nits→fixed; round3 clean. Plan LOCKED."
+- new_questions: []
+- criticism: []
+- ledgerRefs: ["goals:G38"]
+- sessionLogs: ["docs/logs/20260609-123546-a7dc5893fcb1df067.md","docs/logs/20260609-123546-pi-codex.md","docs/logs/20260609-123546-pi-grok.md","docs/logs/20260609-123546-pi-minimax.md"]
