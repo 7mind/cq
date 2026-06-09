@@ -434,6 +434,11 @@ archives:
     summary: "G38 item 1a (implement-worker worktree auto-cleanup, prompt-only) COMPLETE. T308 (advance.md §7.3 explicit per-merge teardown), T309 (advance.md §1 start-of-pass orphan/locked sweep gated to terminal-task worktrees), T310 (implement-worker.md worktree-lifetime note), T311 (canonical-ledgers.test.ts grep-invariant cells over sources + gen.ts). T322 abandoned (freshness-guard discovery: each catalogued-asset edit regens gen.ts, so the last 1a edit produces the final cumulative gen.ts — a separate regen is a no-op; T311's gen.ts assertions are the committed guard). Markers G38-1a-post-done-cleanup/start-sweep/worker-ephemeral all present in sources + agentsCatalogue.gen.ts. Reviews R375/R379/R383/R384 go-ahead. Merged 4eca303/c6c723e/b61ae54/5dbae6b. bun run check green."
     title: G38 item 1a — implement-worker worktree auto-cleanup (prompt-only)
     status: done
+  - id: M131
+    path: ./archive/tasks/M131.md
+    summary: "G38 cross-cutting verification COMPLETE. T321 final-verify PASS (orchestrator-run, R385 go-ahead): bun run check 1332/0; grep-invariant markers G38-1a-post-done-cleanup/start-sweep (advance.md) + worker-ephemeral (implement-worker.md) each =1; §5 'worktree INTACT' intact; nix build .#ledger-mcp/.#ledger-tui/.#ledger-web all exit 0. All G38 items 1a/1b/2/3 landed + verified."
+    title: G38 — cross-cutting verification (full check + grep-invariant audit + nix builds)
+    status: done
 ---
 
 # tasks
@@ -482,19 +487,4 @@ archives:
 - acceptance: bun test (from nix/pkg/cq-ledgers/) passes all six cells across packages/ledger + packages/ledger-mcp; bun run check green.
 - suggestedModel: "opus-4.8[1m]"
 - dependsOn: ["T312","T313"]
-- ledgerRefs: ["goals:G38"]
-
-## M131
-
-### T321 — planned
-
-- createdAt: 2026-06-09T11:53:27.431Z
-- updatedAt: 2026-06-09T12:14:46.117Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: "Cross-cutting verification: full bun run check + grep-invariant audit + nix builds"
-- description: "Final gate after all four item-milestones (M127-M130) land. Run the full workspace gate and confirm the 1a prompt grep-invariant markers are present (in the sources AND the regenerated agentsCatalogue.gen.ts). dependsOn the terminal task of each item-milestone: T311 (1a guard, transitively covers T308/T309/T310/T322), T313 (1b mirror+restore, covers T312), T316 (web render+tests, covers T315), T319 (TUI content+tests, covers T318)."
-- acceptance: "`bun run check` (from nix/pkg/cq-ledgers/) exits 0 (typecheck + lint + test, including the T311 1a marker cells (sources + gen.ts), the T312/T313 1b backup/restore cells, the T315/T316 ledger-web Flows cells, and the T318/T319 ledger-tui keybinding cells). grep -F 'G38-1a-post-done-cleanup' and 'G38-1a-start-sweep' on implement/advance.md and 'G38-1a-worker-ephemeral' on agents/implement-worker.md each return exactly one line. nix build .#ledger-mcp .#ledger-tui .#ledger-web all exit 0. The §5 blocked-worktree path remains intact (manual grep check)."
-- suggestedModel: sonnet-4.6
-- dependsOn: ["T311","T313","T316","T319"]
 - ledgerRefs: ["goals:G38"]
