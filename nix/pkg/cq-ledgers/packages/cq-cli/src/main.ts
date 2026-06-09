@@ -28,6 +28,7 @@ import {
   defaultConfirmIo,
   confirmDestructive,
 } from "./confirm.js";
+import { CQ_TOML_TEMPLATE } from "./cqTomlTemplate.js";
 
 /**
  * The `cq.toml` config filename, resolved relative to the ledger root. Kept as
@@ -55,13 +56,15 @@ export interface SubcommandArgs {
   cwd: string;
   /** `--yes`/`-y`: skip the interactive confirmation (destructive subcommands). */
   yes: boolean;
+  /** `--force`: overwrite an existing cq.toml when running `cq init`. */
+  force: boolean;
 }
 
 export const USAGE = [
   "usage: cq <command> [options]",
   "",
   "commands:",
-  "  init   [--cwd <path>]             initialise the canonical ledger set",
+  "  init   [--cwd <path>] [--force]   initialise the canonical ledger set",
   "  reset  [--cwd <path>] [--yes|-y]  backup + reinitialise the ledgers (destructive)",
   "  erase  [--cwd <path>] [--yes|-y]  remove the ledger tree (destructive)",
   "",
@@ -89,10 +92,13 @@ export function resolveRoot(cwdArg: string | undefined): string {
 export function parseSubcommandArgs(argv: readonly string[]): SubcommandArgs {
   let cwd: string | undefined;
   let yes = false;
+  let force = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--yes" || a === "-y") {
       yes = true;
+    } else if (a === "--force") {
+      force = true;
     } else if (a === "--cwd") {
       i += 1;
       const v = argv[i];
@@ -104,7 +110,7 @@ export function parseSubcommandArgs(argv: readonly string[]): SubcommandArgs {
       cwd = a.slice("--cwd=".length);
     }
   }
-  return { cwd: resolveRoot(cwd), yes };
+  return { cwd: resolveRoot(cwd), yes, force };
 }
 
 /** Outcome of a dispatch: the process exit code main() should propagate. */
@@ -136,6 +142,22 @@ export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<Dis
   await store.dispose();
   const ledgerNames = CANONICAL_LEDGERS.map((c) => c.name).join(", ");
   io.out(`initialised ledgers at ${args.cwd} (${ledgerNames})`);
+
+  const configPath = path.join(args.cwd, CQ_CONFIG_FILENAME);
+  const configExists = await pathExists(configPath);
+  if (configExists && !args.force) {
+    io.out(
+      `cq init: ${CQ_CONFIG_FILENAME} already exists at ${configPath}; re-run with --force to overwrite`,
+    );
+  } else {
+    await fs.writeFile(configPath, CQ_TOML_TEMPLATE, "utf8");
+    if (configExists) {
+      io.out(`cq init: overwrote ${CQ_CONFIG_FILENAME} at ${configPath}`);
+    } else {
+      io.out(`cq init: wrote ${CQ_CONFIG_FILENAME} at ${configPath}`);
+    }
+  }
+
   return { exitCode: 0 };
 }
 

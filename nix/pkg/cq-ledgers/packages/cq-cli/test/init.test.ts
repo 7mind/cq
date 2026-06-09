@@ -1,21 +1,27 @@
 /**
- * T189: `cq init` — idempotent create-empty-ledgers-if-none.
+ * T189 + T338: `cq init` — idempotent create-empty-ledgers-if-none + cq.toml write.
  *
- * Asserts:
+ * T189 asserts:
  *   (a) On an empty dir, creates docs/ledgers.yaml + canonical docs/*.md files.
  *   (b) Running again is a no-op that preserves items written between runs.
- *   (c) No cq.toml is created.
+ *
+ * T338 asserts:
+ *   (c) `cq init` on an empty root creates cq.toml whose content === CQ_TOML_TEMPLATE.
+ *   (d) A second `cq init` leaves cq.toml byte-identical and emits the skip message (exit 0).
+ *   (e) `cq init --force` overwrites a modified cq.toml back to the template.
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, readdir, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
   dispatch,
+  CQ_CONFIG_FILENAME,
   type ConfirmIo,
   type DispatchIo,
 } from "../src/main.js";
+import { CQ_TOML_TEMPLATE } from "../src/cqTomlTemplate.js";
 import { FsLedgerStore, CANONICAL_LEDGERS, MILESTONES_AMBIENT_ID } from "@cq/ledger";
 
 const dirs: string[] = [];
@@ -95,11 +101,57 @@ describe("cq init", () => {
     expect(fetched.fields["headline"]).toBe("sentinel task");
   });
 
-  it("(c) no cq.toml is created", async () => {
+  it("(c) cq init creates cq.toml with content === CQ_TOML_TEMPLATE", async () => {
+    const root = await makeTmpDir();
+    const io = recordingIo();
+    const outcome = await dispatch(["init", "--cwd", root], io);
+    expect(outcome.exitCode).toBe(0);
+
+    const configPath = path.join(root, CQ_CONFIG_FILENAME);
+    const content = await readFile(configPath, "utf8");
+    expect(content).toBe(CQ_TOML_TEMPLATE);
+
+    // output should mention writing the config file
+    expect(io.outs.some((l) => l.includes("wrote") && l.includes(CQ_CONFIG_FILENAME))).toBe(true);
+  });
+
+  it("(d) second cq init leaves cq.toml byte-identical and emits skip message (exit 0)", async () => {
     const root = await makeTmpDir();
     await dispatch(["init", "--cwd", root], recordingIo());
 
-    const entries = await readdir(root, { recursive: false });
-    expect(entries).not.toContain("cq.toml");
+    const configPath = path.join(root, CQ_CONFIG_FILENAME);
+    const before = await readFile(configPath, "utf8");
+    expect(before).toBe(CQ_TOML_TEMPLATE);
+
+    const io2 = recordingIo();
+    const outcome2 = await dispatch(["init", "--cwd", root], io2);
+    expect(outcome2.exitCode).toBe(0);
+
+    const after = await readFile(configPath, "utf8");
+    expect(after).toBe(before);
+
+    // skip message should mention --force
+    expect(io2.outs.some((l) => l.includes("already exists") && l.includes("--force"))).toBe(true);
+  });
+
+  it("(e) cq init --force overwrites a modified cq.toml back to the template", async () => {
+    const root = await makeTmpDir();
+    await dispatch(["init", "--cwd", root], recordingIo());
+
+    const configPath = path.join(root, CQ_CONFIG_FILENAME);
+    // Modify the file
+    await writeFile(configPath, "# modified\n", "utf8");
+    const modified = await readFile(configPath, "utf8");
+    expect(modified).toBe("# modified\n");
+
+    const io2 = recordingIo();
+    const outcome2 = await dispatch(["init", "--cwd", root, "--force"], io2);
+    expect(outcome2.exitCode).toBe(0);
+
+    const after = await readFile(configPath, "utf8");
+    expect(after).toBe(CQ_TOML_TEMPLATE);
+
+    // output should mention overwriting
+    expect(io2.outs.some((l) => l.includes("overwrote") && l.includes(CQ_CONFIG_FILENAME))).toBe(true);
   });
 });

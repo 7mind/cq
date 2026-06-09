@@ -101,9 +101,10 @@ describe("parseSubcommandArgs", () => {
     const prev = process.env["LEDGER_ROOT"];
     delete process.env["LEDGER_ROOT"];
     try {
-      expect(parseSubcommandArgs(["--cwd=/a", "--yes"])).toEqual({ cwd: "/a", yes: true });
-      expect(parseSubcommandArgs(["-y", "--cwd", "/b"])).toEqual({ cwd: "/b", yes: true });
-      expect(parseSubcommandArgs([])).toEqual({ cwd: process.cwd(), yes: false });
+      expect(parseSubcommandArgs(["--cwd=/a", "--yes"])).toEqual({ cwd: "/a", yes: true, force: false });
+      expect(parseSubcommandArgs(["-y", "--cwd", "/b"])).toEqual({ cwd: "/b", yes: true, force: false });
+      expect(parseSubcommandArgs(["--force"])).toEqual({ cwd: process.cwd(), yes: false, force: true });
+      expect(parseSubcommandArgs([])).toEqual({ cwd: process.cwd(), yes: false, force: false });
     } finally {
       if (prev !== undefined) process.env["LEDGER_ROOT"] = prev;
     }
