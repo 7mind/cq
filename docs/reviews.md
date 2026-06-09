@@ -619,6 +619,16 @@ archives:
     summary: "G41 item 3 COMPLETE (orphan-branch feasibility SPIKE): T337 — verdict FEASIBLE-WITH-CAVEATS (GO) in locked decision K66, with an executed throwaway PoC proving the pure git-plumbing path (hash-object→scratch-index write-tree→commit-tree→CAS update-ref) advances an orphan ledger ref while the main checkout HEAD/worktree/index stay byte-identical; findings doc docs/drafts/20260609-221530-orphan-ledger-feasibility.md + PoC under debug/; no production code. A separate follow-up goal would implement a GitObjectLedgerBackend + drop the per-merge chore(ledger) commits + explicit push/fetch of the orphan ref. Review R415 go-ahead. Merged e108827."
     title: G41-3 Ledger-on-orphan-branch feasibility spike
     status: done
+  - id: M142
+    path: ./archive/reviews/M142.md
+    summary: "G42 (fix D47) COMPLETE: T346 (test-only, canonical-ledgers.test.ts) — the committed-vs-canon guard now boots with onSchemaDivergence:'abort' (structural drift THROWS instead of silently self-healing via the default backup-reinit) + a byte-equality assertion (committed docs/ledgers.yaml === serializeRegistry(CANONICAL_LEDGERS)) under bun run check + a reproduce-first proving the old default self-heals while abort rejects. D47 RESOLVED. Review R417 go-ahead. bun run check green (1488). Merged ffce89c."
+    title: "G42-fix: ledgers.yaml drift guard fails check"
+    status: done
+  - id: M138
+    path: ./archive/reviews/M138.md
+    summary: "G41 item 5 COMPLETE (Ideas ledger + idea-id command args): T335 ideas ledger schema in CANONICAL_LEDGERS (idPrefix I; title+description; open|planned|discarded|postponed, postponed→open); T339 'Ideas' sidebar group above Goals (flat list, generic updateItem); T340 /cq:plan accepts idea-ids (one goal per idea + named consume-an-idea sub-procedure); T342 /cq:plan:follow-up appends idea scope (DRY-references the sub-procedure). Defect D47 (filed by the T335 review) investigated→root-caused (H34)→fixed via G42/T346 and RESOLVED. Reviews R402/R406/R407/R409 go-ahead. bun run check green. Merged 9feb683/a39fd94/6aedb28/02ceded."
+    title: G41-5 Ideas ledger + idea-id command args
+    status: done
 ---
 
 # reviews
@@ -687,48 +697,6 @@ archives:
 - ledgerRefs: ["goals:G41"]
 - sessionLogs: ["docs/logs/20260609-194117-a529026c1e49518de.md","docs/logs/20260609-194117-pi-codex.md","docs/logs/20260609-194117-pi-grok.md","docs/logs/20260609-194117-pi-minimax.md"]
 
-## M138
-
-### R402 — go-ahead
-
-- createdAt: 2026-06-09T19:58:25.977Z
-- updatedAt: 2026-06-09T19:58:25.977Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: approve (T335) — ideas ledger schema added correctly (idPrefix I free; shape/transitions/terminalStatuses exact; CANONICAL_LEDGERS+index+ledgers.yaml consistent); full lifecycle + illegal-transition throws + flat M-AMBIENT no-user-milestone tests pass; bun run check green 1380/0. One low out-of-scope defect D47 filed (pre-existing fixture-drift guard gap). Native opus implement-reviewer.
-- ledgerRefs: ["tasks:T335","goals:G41"]
-- sessionLogs: ["docs/logs/20260609-195301-a9c0789cc58edc22e.md"]
-
-### R406 — go-ahead
-
-- createdAt: 2026-06-09T20:20:20.791Z
-- updatedAt: 2026-06-09T20:20:20.791Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "approve (T339) — ['ideas'] SIDEBAR_GROUPS entry above ['goals','milestones'] (ledger-ideas renders above ledger-goals); isGoals flat-list path reused for ideas (no milestone grouping); generic updateItem detail edit; pure MCP; ideasFlat 3/3 + bun run check green 1400/0. Native opus implement-reviewer."
-- ledgerRefs: ["tasks:T339","goals:G41"]
-- sessionLogs: ["docs/logs/20260609-201031-ab3a53a6728cc9212.md"]
-
-### R407 — go-ahead
-
-- createdAt: 2026-06-09T20:20:23.873Z
-- updatedAt: 2026-06-09T20:20:23.873Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: approve (T340) — plan.md documents the Q188 I-id grammar (no-interleave) + named 4-step consume-an-idea sub-procedure (DRY-referenced by follow-up.md); 5 structural grep-invariants pass; agentsCatalogue.gen.ts regen byte-for-byte faithful; bun run check green 1403/0. Native opus implement-reviewer.
-- ledgerRefs: ["tasks:T340","goals:G41"]
-- sessionLogs: ["docs/logs/20260609-201031-a03c758596a249aa0.md"]
-
-### R409 — go-ahead
-
-- createdAt: 2026-06-09T20:51:32.169Z
-- updatedAt: 2026-06-09T20:51:32.169Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: approve (T342) — follow-up.md documents the goalId-then-idea-ids grammar + append-as-scope via the existing re-open path + DRY reference to plan.md's consume-an-idea sub-procedure (anchors verified); gen.ts regen byte-faithful; grep invariants genuine; bun run check green 1418/0. Native opus implement-reviewer.
-- ledgerRefs: ["tasks:T342","goals:G41"]
-- sessionLogs: ["docs/logs/20260609-204431-a320c286875860a83.md"]
-
 ## M141
 
 ### R416 — go-ahead
@@ -742,15 +710,3 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G42","defects:D47"]
 - sessionLogs: ["docs/logs/20260609-223826-af9cdea865a37cb53.md"]
-
-## M142
-
-### R417 — go-ahead
-
-- createdAt: 2026-06-09T22:52:22.561Z
-- updatedAt: 2026-06-09T22:52:22.561Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: approve (T346, fix D47) — abort-mode change genuinely throws BootstrapViolationError on structural drift (the old default backup-reinit silently self-heals); byte-equality assertion matches regen-bootstrap exactly + independently byte-equal to the committed fixture (10529 bytes); reproduce-first genuine (WARNING trace proves old default self-heals while abort throws); test-only, no source change, bun run check green 1488/0. Native opus implement-reviewer.
-- ledgerRefs: ["tasks:T346","goals:G42","defects:D47"]
-- sessionLogs: ["docs/logs/20260609-224743-af85de69b2426462b.md"]

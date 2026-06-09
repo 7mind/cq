@@ -679,6 +679,16 @@ archives:
     summary: "G41 item 3 COMPLETE (orphan-branch feasibility SPIKE): T337 — verdict FEASIBLE-WITH-CAVEATS (GO) in locked decision K66, with an executed throwaway PoC proving the pure git-plumbing path (hash-object→scratch-index write-tree→commit-tree→CAS update-ref) advances an orphan ledger ref while the main checkout HEAD/worktree/index stay byte-identical; findings doc docs/drafts/20260609-221530-orphan-ledger-feasibility.md + PoC under debug/; no production code. A separate follow-up goal would implement a GitObjectLedgerBackend + drop the per-merge chore(ledger) commits + explicit push/fetch of the orphan ref. Review R415 go-ahead. Merged e108827."
     title: G41-3 Ledger-on-orphan-branch feasibility spike
     status: done
+  - id: M142
+    path: ./archive/milestones/M142.md
+    summary: "G42 (fix D47) COMPLETE: T346 (test-only, canonical-ledgers.test.ts) — the committed-vs-canon guard now boots with onSchemaDivergence:'abort' (structural drift THROWS instead of silently self-healing via the default backup-reinit) + a byte-equality assertion (committed docs/ledgers.yaml === serializeRegistry(CANONICAL_LEDGERS)) under bun run check + a reproduce-first proving the old default self-heals while abort rejects. D47 RESOLVED. Review R417 go-ahead. bun run check green (1488). Merged ffce89c."
+    title: "G42-fix: ledgers.yaml drift guard fails check"
+    status: done
+  - id: M138
+    path: ./archive/milestones/M138.md
+    summary: "G41 item 5 COMPLETE (Ideas ledger + idea-id command args): T335 ideas ledger schema in CANONICAL_LEDGERS (idPrefix I; title+description; open|planned|discarded|postponed, postponed→open); T339 'Ideas' sidebar group above Goals (flat list, generic updateItem); T340 /cq:plan accepts idea-ids (one goal per idea + named consume-an-idea sub-procedure); T342 /cq:plan:follow-up appends idea scope (DRY-references the sub-procedure). Defect D47 (filed by the T335 review) investigated→root-caused (H34)→fixed via G42/T346 and RESOLVED. Reviews R402/R406/R407/R409 go-ahead. bun run check green. Merged 9feb683/a39fd94/6aedb28/02ceded."
+    title: G41-5 Ideas ledger + idea-id command args
+    status: done
 ---
 
 # milestones
@@ -704,23 +714,9 @@ archives:
 - updatedAt: 2026-06-09T18:45:36.463Z
 - title: "Plan: cq init cq.toml + prompt catalog + ledger git-branch + Flows-tab polish + Ideas ledger"
 
-### M138 — open
-
-- createdAt: 2026-06-09T19:07:20.136Z
-- updatedAt: 2026-06-09T19:07:20.136Z
-- title: G41-5 Ideas ledger + idea-id command args
-- description: "Work milestone for G41 item 5: new 'Ideas' ledger (title+description; open|planned|discarded|postponed); 'Ideas' sidebar button above Goals; /cq:plan + /cq:plan:follow-up accept idea I-ids."
-
 ### M141 — open
 
 - createdAt: 2026-06-09T22:33:45.520Z
 - updatedAt: 2026-06-09T22:33:45.520Z
 - title: "Plan: fix D47 — ledgers.yaml bootstrap-drift guard"
 - description: "Coordination milestone for the defect-seeded fix of D47 (low): the committed docs/ledgers.yaml fixture can silently drift from constants.ts because the existing guard test (canonical-ledgers.test.ts:504) boots in default backup-reinit mode (self-heals) instead of abort mode, and there is no byte/canonical committed-vs-regen assertion in `bun run check`."
-
-### M142 — open
-
-- createdAt: 2026-06-09T22:36:11.383Z
-- updatedAt: 2026-06-09T22:36:11.383Z
-- title: "G42-fix: ledgers.yaml drift guard fails check"
-- description: "Work milestone for G42 (fix D47): make the committed-fixture-vs-canon guard actually fail `bun run check` on constants.ts→docs/ledgers.yaml drift."

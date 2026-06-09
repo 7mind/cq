@@ -474,88 +474,16 @@ archives:
     summary: "G41 item 3 COMPLETE (orphan-branch feasibility SPIKE): T337 — verdict FEASIBLE-WITH-CAVEATS (GO) in locked decision K66, with an executed throwaway PoC proving the pure git-plumbing path (hash-object→scratch-index write-tree→commit-tree→CAS update-ref) advances an orphan ledger ref while the main checkout HEAD/worktree/index stay byte-identical; findings doc docs/drafts/20260609-221530-orphan-ledger-feasibility.md + PoC under debug/; no production code. A separate follow-up goal would implement a GitObjectLedgerBackend + drop the per-merge chore(ledger) commits + explicit push/fetch of the orphan ref. Review R415 go-ahead. Merged e108827."
     title: G41-3 Ledger-on-orphan-branch feasibility spike
     status: done
+  - id: M142
+    path: ./archive/tasks/M142.md
+    summary: "G42 (fix D47) COMPLETE: T346 (test-only, canonical-ledgers.test.ts) — the committed-vs-canon guard now boots with onSchemaDivergence:'abort' (structural drift THROWS instead of silently self-healing via the default backup-reinit) + a byte-equality assertion (committed docs/ledgers.yaml === serializeRegistry(CANONICAL_LEDGERS)) under bun run check + a reproduce-first proving the old default self-heals while abort rejects. D47 RESOLVED. Review R417 go-ahead. bun run check green (1488). Merged ffce89c."
+    title: "G42-fix: ledgers.yaml drift guard fails check"
+    status: done
+  - id: M138
+    path: ./archive/tasks/M138.md
+    summary: "G41 item 5 COMPLETE (Ideas ledger + idea-id command args): T335 ideas ledger schema in CANONICAL_LEDGERS (idPrefix I; title+description; open|planned|discarded|postponed, postponed→open); T339 'Ideas' sidebar group above Goals (flat list, generic updateItem); T340 /cq:plan accepts idea-ids (one goal per idea + named consume-an-idea sub-procedure); T342 /cq:plan:follow-up appends idea scope (DRY-references the sub-procedure). Defect D47 (filed by the T335 review) investigated→root-caused (H34)→fixed via G42/T346 and RESOLVED. Reviews R402/R406/R407/R409 go-ahead. bun run check green. Merged 9feb683/a39fd94/6aedb28/02ceded."
+    title: G41-5 Ideas ledger + idea-id command args
+    status: done
 ---
 
 # tasks
-
-## M138
-
-### T335 — done
-
-- createdAt: 2026-06-09T19:08:49.874Z
-- updatedAt: 2026-06-09T20:01:01.082Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Add the `ideas` ledger schema to CANONICAL_LEDGERS
-- description: "In nix/pkg/cq-ledgers/packages/ledger/src/constants.ts add IDEAS_LEDGER='ideas' and IDEAS_SCHEMA: idPrefix 'I' (verified FREE against M/D/T/H/Q/K/G/R/HO), fields { title:{string,required:true}, description:{string,required:false} } (Q188). statusValues ['open','planned','discarded','postponed']. DECIDED (R399, no longer provisional): terminalStatuses = ['planned','discarded'] — `planned` IS terminal because the consume-an-idea flow moves a consumed idea to 'planned' when its goal is seeded and it must STAY there; `discarded` is terminal; `postponed` is NON-terminal and returns to open per Q188; `open` is non-terminal. transitions: open→[planned,discarded,postponed]; postponed→[open,planned,discarded]; planned→[]; discarded→[]. Append { name: IDEAS_LEDGER, schema: IDEAS_SCHEMA } to CANONICAL_LEDGERS so bootstrap/`cq init` provisions it. RECONCILE 'no milestones' with the milestone-attachment model: ideas items attach to the immortal bootstrap milestone M-AMBIENT (MILESTONES_AMBIENT_ID) and render as a flat list (like goals via T83) — no per-idea milestone; document this in the schema doc-comment."
-- acceptance: "A ledger unit test bootstraps a fresh FsLedgerStore, asserts the `ideas` ledger exists with the expected schema (statusValues + terminalStatuses=['planned','discarded']), creates an idea under M-AMBIENT with title+description and status open, exercises open→postponed→open and open→planned, and asserts illegal transitions (planned→open, discarded→open) throw. ALSO (R399-round2/codex #3 — the 'no milestones' Q188 requirement): assert ideas carry NO user-milestone association — a created idea attaches ONLY to the ambient M-AMBIENT (not any user milestone), the schema declares no required milestone field beyond the ambient attachment, and ideas are enumerable/rendered as a FLAT list (never grouped under a user milestone). `bun test` passes."
-- suggestedModel: frontier
-- ledgerRefs: ["goals:G41"]
-- resultCommit: 9feb68381abac58398ddddd04caabd148a68592c
-- completion: ideas ledger schema (idPrefix I, title+description, open|planned|discarded|postponed, postponed→open) in CANONICAL_LEDGERS + ledgers.yaml regen + lifecycle/illegal-transition/flat-attachment tests; bun run check green.
-- sessionLogs: ["docs/logs/20260609-195301-af0e8528968c08a21.md","docs/logs/20260609-195301-a9c0789cc58edc22e.md"]
-
-### T339 — done
-
-- createdAt: 2026-06-09T19:09:28.422Z
-- updatedAt: 2026-06-09T20:20:38.782Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Surface the Ideas ledger in ledger-web with an 'Ideas' sidebar button above Goals
-- description: "In nix/pkg/cq-ledgers/packages/ledger-web/src/App.tsx add an `ideas` entry to SIDEBAR_GROUPS as a NEW group placed immediately ABOVE ['goals','milestones'] (Q188: Ideas button above Goals). Define an IDEAS_LEDGER const. Ideas render as a FLAT list (no milestone subsections) like goals (T83) — reuse the goals flat-list path / ItemTable; the generic detail panel edits title/description/status through updateItem. Ensure the sidebar group divider logic still renders correctly with the new non-empty group. Pure MCP client — no direct ledger-file reads. TUI gets the Ideas ledger automatically (it lists all canonical ledgers); no special TUI work required."
-- acceptance: A happy-dom App test with a fake client exposing an `ideas` ledger asserts the `ledger-ideas` sidebar button renders ABOVE `ledger-goals` in DOM order, opening it shows the ideas items as a flat table, and an idea's detail panel edits title/description/status via updateItem. `bun test` passes.
-- suggestedModel: standard
-- dependsOn: ["T335"]
-- ledgerRefs: ["goals:G41"]
-- resultCommit: a39fd9433bc6d5de45a1bc86a5cc08e11db70e2a
-- completion: "'Ideas' sidebar group above Goals in ledger-web App.tsx; ideas reuse the flat goals list path + generic updateItem detail edit; ideasFlat tests; bun run check green. (Recovered via format-patch + git am — worker commit was unreachable from main's object db.)"
-- sessionLogs: ["docs/logs/20260609-201031-a2e9e3e7a4527c18c.md","docs/logs/20260609-201031-ab3a53a6728cc9212.md"]
-
-### T340 — done
-
-- createdAt: 2026-06-09T19:09:36.098Z
-- updatedAt: 2026-06-09T20:20:42.883Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: "Extend /cq:plan command grammar to accept idea-ids (one goal per idea)"
-- description: "EDIT LOCUS: nix/pkg/cq-assets/commands/cq/plan.md ONLY (a slash-command prompt the orchestrator executes; there is NO cq-cli arg-parser for slash commands — the 'grammar' is the documented procedure the orchestrator follows + the ledger MCP ops it performs). Extend plan.md so the orchestrator accepts I-ids as arguments. Grammar (Q188, NO 'mixed' interleaving — R399 dropped that ungrounded scope): the argument is EITHER one or more whitespace-separated idea-ids each matching /^I\\d+$/, OR free text (today's path) — not both interleaved. `/cq:plan I01 I02 I03` creates ONE goal PER idea. Define a named **consume-an-idea sub-procedure** ONCE (a numbered sub-section): (i) fetch_item the idea from the `ideas` ledger; (ii) bootstrap a new goal seeding its title from the idea title and description VERBATIM from the idea description (then the normal clarifying bootstrap); (iii) link bidirectionally — add `ideas:<I>` to the goal's ledgerRefs and `goals:<G>` to the idea's ledgerRefs; (iv) update the idea status to 'planned'. plan.md must reference this sub-procedure so /cq:plan:follow-up reuses it (DRY). Keep the existing defect-vs-goal intake guard, provenance + handoff sections."
-- acceptance: "OBSERVABLE: (1) plan.md contains a section documenting the I-id token grammar (the /^I\\d+$/ rule) and the EITHER-idea-ids-OR-free-text (no interleave) rule; (2) it contains the named consume-an-idea sub-procedure with the four steps (fetch → seed verbatim → bidirectional ledgerRefs link → idea→planned); (3) one-goal-per-idea is stated explicitly. Verified by a structural grep/asset test asserting those sections/anchors exist, plus `bun run check` stays green (no code touched). No nonexistent symbol/file is referenced."
-- suggestedModel: frontier
-- dependsOn: ["T335"]
-- ledgerRefs: ["goals:G41"]
-- resultCommit: 6aedb28c362ddc99aa7f1ec8a37bfd75546b0a30
-- completion: plan.md I-id grammar (EITHER /^I\d+$/ ids OR free text) + named consume-an-idea sub-procedure (DRY, referenced by follow-up.md) + agentsCatalogue.gen.ts regen + 5 grep-invariants; bun run check green.
-- sessionLogs: ["docs/logs/20260609-201031-a6676de77b1de785c.md","docs/logs/20260609-201031-a03c758596a249aa0.md"]
-
-### T342 — done
-
-- createdAt: 2026-06-09T19:09:53.795Z
-- updatedAt: 2026-06-09T20:51:38.438Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: "Extend /cq:plan:follow-up to append idea text as new scope on an existing goal"
-- description: "EDIT LOCUS: nix/pkg/cq-assets/commands/cq/plan/follow-up.md ONLY. Make `/cq:plan:follow-up G35 I01` accepted: the FIRST token is the target goal id, the remaining tokens are idea-ids (/^I\\d+$/). For each idea: fetch it from the `ideas` ledger and APPEND its title+description as new scope onto the existing goal G35's description, using follow-up.md's EXISTING re-open mechanism (the same goal re-open path it already documents for adding scope to a planned/building goal — R399: this is the pre-existing follow-up re-open behaviour, NOT a new 're-open semantics' invented here). Then invoke the SAME shared consume-an-idea sub-procedure defined in plan.md for the link + transition (add `goals:G35` to the idea's ledgerRefs + `ideas:I01` to the goal's; set the idea status to 'planned'). Free-text follow-up still supported. Reference (do NOT duplicate) plan.md's consume-an-idea sub-procedure for DRY."
-- acceptance: "OBSERVABLE: (1) follow-up.md documents the argument grammar (first token = goal id; remaining /^I\\d+$/ tokens = ideas) and that each idea's title+description is appended as new scope via the existing re-open path; (2) it REFERENCES (by name/anchor) plan.md's shared consume-an-idea sub-procedure for the link + idea→planned transition (no duplicated procedure text). Verified by a structural grep/asset test asserting the grammar section + the cross-reference exist, plus `bun run check` stays green. No nonexistent symbol/file referenced."
-- suggestedModel: frontier
-- dependsOn: ["T340"]
-- ledgerRefs: ["goals:G41"]
-- resultCommit: 02ceded75c4634b95c1ec52360b9b8eaeeb88b68
-- completion: "/cq:plan:follow-up.md accepts `<goalId> I..` — appends idea title+description as new scope via the existing re-open path + references plan.md's consume-an-idea sub-procedure (DRY); gen.ts regen + grep invariants; bun run check green."
-- sessionLogs: ["docs/logs/20260609-204431-aae55e850271aa44a.md","docs/logs/20260609-204431-a320c286875860a83.md"]
-
-## M142
-
-### T346 — done
-
-- createdAt: 2026-06-09T22:36:29.639Z
-- updatedAt: 2026-06-09T22:52:26.308Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Make the committed ledgers.yaml-vs-canon guard fail `bun run check` on drift (fix D47)
-- description: "Fixes D47 (root cause confirmed via H34). EDIT LOCUS: packages/ledger/test/canonical-ledgers.test.ts (test-only). Two changes: (1) PRIMARY — the existing 'repo docs/ledgers.yaml matches canon (no bootstrap divergence)' test (~L504-522) constructs `new FsLedgerStore({ root: dir })` in DEFAULT 'backup-reinit' mode, which SILENTLY self-heals on divergence so a stale committed fixture passes. Change it to `new FsLedgerStore({ root: dir, onSchemaDivergence: 'abort' })` so any STRUCTURAL divergence (missing field/status, etc.) THROWS BootstrapViolationError and FAILS `bun test`; fix the now-accurate test comment. (2) STRONGER — add a `bun test` (so it runs under `bun run check`) asserting the committed nix/pkg/cq-ledgers/docs/ledgers.yaml BYTE-EQUALS `serializeRegistry({ version: 1, ledgers: CANONICAL_LEDGERS.map(c => ({ name: c.name, schema: c.schema })) })` — the exact byte-source scripts/regen-bootstrap.ts emits — so even serialization-order/formatting drift fails. (3) examples/sample-ledger/docs/ledgers.yaml is an INTENTIONALLY frozen/divergent demo fixture — EXCLUDE it from the byte-equality assertion (do NOT force it to track canon). REPRODUCE-FIRST is mandatory: before the fix, add a test (or temporarily stale a copy of the fixture in a temp dir) that demonstrates the PRE-fix guard PASSES against a deliberately-staled committed fixture, then confirm the abort-mode + byte-equality changes make it FAIL; the committed repo fixture itself is currently in-sync (T335 regenerated it), so the byte-equality assertion passes on the real file today."
-- acceptance: "(1) The committed-vs-canon test uses onSchemaDivergence:'abort' and its comment is accurate. (2) A new test asserts readFile(docs/ledgers.yaml) byte-equals serializeRegistry(CANONICAL_LEDGERS) and PASSES on the current in-sync fixture; a reproduce-first check demonstrates it (and/or the abort-mode boot) FAILS against a deliberately-staled fixture copy. (3) examples/sample-ledger is excluded from the byte-equality. (4) `bun run check` green (the real committed fixture is in-sync, so the new assertions pass). No production source change outside the test (the guard semantics already exist via onSchemaDivergence + serializeRegistry)."
-- suggestedModel: standard
-- ledgerRefs: ["goals:G42","defects:D47"]
-- resultCommit: ffce89c5268c025bc452d2d58423348d11c225b0
-- completion: "canonical-ledgers.test.ts guard now uses onSchemaDivergence:'abort' (catches structural drift) + a byte-equality assertion (committed ledgers.yaml === serializeRegistry(CANONICAL_LEDGERS)) under bun run check + a reproduce-first proving the old default self-heals; D47 resolved. bun run check green."
-- sessionLogs: ["docs/logs/20260609-224743-a54559a2e0fb31e45.md","docs/logs/20260609-224743-af85de69b2426462b.md"]
