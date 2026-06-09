@@ -4,6 +4,7 @@
  */
 
 import type {
+  AgentModelEntry,
   AgentModelsResult,
   ArchiveContent,
   FetchedLedger,
@@ -97,6 +98,80 @@ interface ArchiveEntry {
   content: ArchiveContent;
 }
 
+/**
+ * Controls which Q157 state {@link FakeClient.getAgentModels} emits.
+ *
+ * - `'resolved'`               — synthetic LIVE overlay with distinct modelClass/tokens vs
+ *                                build-time catalogue values for implement-worker and
+ *                                plan-reviewer; the full agent roster gets entries.
+ * - `'no-live-token'`          — configured:true but every model-configurable role carries
+ *                                status:'no-live-token' and modelClass:null.
+ * - `'not-configured'`         — configured:false, agents:[]; mirrors a repo with no cq.toml.
+ * - `'not-model-configurable'` — configured:true, but ALL entries carry
+ *                                status:'not-model-configurable' (exercises the orchestrator-
+ *                                command role path).
+ * - `'throw'`                  — getAgentModels rejects with a synthetic Error (exercises
+ *                                the catch-any-error -> distinguished offline path, Q155).
+ */
+export type AgentModelsMode =
+  | "resolved"
+  | "no-live-token"
+  | "not-configured"
+  | "not-model-configurable"
+  | "throw";
+
+/** Roles with model≠N/A (the agent-subagents that ARE model-configurable). */
+const MODEL_CONFIGURABLE_ROLE_IDS = [
+  "plan-advance",
+  "plan-reviewer",
+  "implement-worker",
+  "implement-reviewer",
+  "implement-conflict-resolver",
+  "investigate-explorer",
+  "investigate-prober",
+] as const;
+
+/** Roles with model=N/A (orchestrator commands that are NOT model-configurable). */
+const NOT_MODEL_CONFIGURABLE_ROLE_IDS = [
+  "advance",
+  "plan",
+  "plan/advance",
+  "plan/follow-up",
+  "investigate",
+  "investigate/advance",
+  "implement/start",
+  "implement/advance",
+  "plan-review",
+  "implement-review",
+  "planners",
+  "reviewers",
+] as const;
+
+/**
+ * Synthetic LIVE resolved entries used by the 'resolved' mode. Values
+ * intentionally differ from the build-time catalogue (agentsCatalogue.gen.ts):
+ *
+ * - implement-worker build-time: model=standard, mappings={pi:["grok-build/grok-build"]}
+ *   => live override: modelClass=standard, mappings={claude:["sonnet-4.6"]}
+ * - plan-reviewer build-time:   model=frontier, mappings={claude:["opus-4.8[1m]"]}
+ *   => live override: modelClass=frontier, mappings={claude:["opus-4.8[2m]"]}
+ *
+ * The DISTINCT tokens ensure T297 can assert that the overlay DIFFERS from any
+ * build-time value in the catalogue (per R341 requirement).
+ */
+const RESOLVED_LIVE_ENTRIES: readonly AgentModelEntry[] = [
+  { id: "plan-advance",                  status: "resolved", modelClass: "frontier", modelMappings: { claude: ["sonnet-4.7"]           } },
+  { id: "plan-reviewer",                 status: "resolved", modelClass: "frontier", modelMappings: { claude: ["opus-4.8[2m]"]          } },
+  { id: "implement-worker",              status: "resolved", modelClass: "standard", modelMappings: { claude: ["sonnet-4.6"]            } },
+  { id: "implement-reviewer",            status: "resolved", modelClass: "frontier", modelMappings: { claude: ["sonnet-4.7"]            } },
+  { id: "implement-conflict-resolver",   status: "resolved", modelClass: "standard", modelMappings: { claude: ["sonnet-4.6"]            } },
+  { id: "investigate-explorer",          status: "resolved", modelClass: "frontier", modelMappings: { claude: ["sonnet-4.7"]            } },
+  { id: "investigate-prober",            status: "resolved", modelClass: "standard", modelMappings: { claude: ["sonnet-4.6"]            } },
+  ...NOT_MODEL_CONFIGURABLE_ROLE_IDS.map(
+    (id): AgentModelEntry => ({ id, status: "not-model-configurable", modelClass: null, modelMappings: {} }),
+  ),
+];
+
 export class FakeClient implements LedgerClient {
   closed = false;
   /** Per-`<ledger>/<archiveId>` count of fetchLedgerArchive calls (lazy-fetch assertions). */
@@ -110,6 +185,13 @@ export class FakeClient implements LedgerClient {
    * If the path is not present, a default stub result is returned.
    */
   readonly readLogResults: Map<string, ReadLogResult | Error> = new Map();
+  /**
+   * Controls which Q157 state {@link getAgentModels} emits. Defaults to
+   * `'not-configured'` so existing tests that do not care about agent-model
+   * overlays receive the same stable `{configured:false, agents:[]}` the T289
+   * stub returned. Tests that exercise the overlay (T297) set this explicitly.
+   */
+  agentModelsMode: AgentModelsMode = "not-configured";
   private readonly _displayName: string;
   private msCounter = 1;
   private itemCounter = 1;
@@ -374,8 +456,38 @@ export class FakeClient implements LedgerClient {
     return it;
   }
   async getAgentModels(): Promise<AgentModelsResult> {
-    // Minimal stub — full implementation deferred to T291.
-    return { configured: false, agents: [] };
+    switch (this.agentModelsMode) {
+      case "throw":
+        throw new Error("FakeClient: getAgentModels simulated failure (agentModelsMode='throw')");
+      case "not-configured":
+        return { configured: false, agents: [] };
+      case "resolved":
+        return { configured: true, agents: RESOLVED_LIVE_ENTRIES };
+      case "no-live-token":
+        return {
+          configured: true,
+          agents: [
+            ...MODEL_CONFIGURABLE_ROLE_IDS.map(
+              (id): AgentModelEntry => ({ id, status: "no-live-token", modelClass: null, modelMappings: {} }),
+            ),
+            ...NOT_MODEL_CONFIGURABLE_ROLE_IDS.map(
+              (id): AgentModelEntry => ({ id, status: "not-model-configurable", modelClass: null, modelMappings: {} }),
+            ),
+          ],
+        };
+      case "not-model-configurable":
+        return {
+          configured: true,
+          agents: [
+            ...MODEL_CONFIGURABLE_ROLE_IDS.map(
+              (id): AgentModelEntry => ({ id, status: "not-model-configurable", modelClass: null, modelMappings: {} }),
+            ),
+            ...NOT_MODEL_CONFIGURABLE_ROLE_IDS.map(
+              (id): AgentModelEntry => ({ id, status: "not-model-configurable", modelClass: null, modelMappings: {} }),
+            ),
+          ],
+        };
+    }
   }
   async readLog(path: string): Promise<ReadLogResult> {
     const override = this.readLogResults.get(path);
