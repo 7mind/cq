@@ -166,6 +166,7 @@ export function DiagramSvg({
             fontSize={12}
             fontWeight={700}
             textAnchor="middle"
+            style={activatable ? { textDecoration: "underline" } : undefined}
           >
             {n.label}
           </text>

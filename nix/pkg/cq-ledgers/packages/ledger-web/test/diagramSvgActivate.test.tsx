@@ -138,6 +138,31 @@ describe("DiagramSvg agentId activation (T326)", () => {
     await unmount(container, root);
   });
 
+  it("activatable node label has text-decoration:underline; plain node label has none (T332)", async () => {
+    const { container, root } = await mount(
+      createElement(DiagramSvg, {
+        idPrefix: "diag",
+        model: model(),
+        onActivateAgent: (_id: string) => {},
+      }),
+    );
+
+    // The <text> element is a child of the <g> node group.
+    const agentGroup = container.querySelector('[data-testid="diag-node-agent"]');
+    const plainGroup = container.querySelector('[data-testid="diag-node-plain"]');
+    const agentLabel = agentGroup?.querySelector("text") as SVGTextElement | null;
+    const plainLabel = plainGroup?.querySelector("text") as SVGTextElement | null;
+
+    expect(agentLabel).not.toBeNull();
+    expect(plainLabel).not.toBeNull();
+
+    // happy-dom exposes inline styles via the style attribute or CSSStyleDeclaration
+    expect((agentLabel as SVGTextElement).style.textDecoration).toBe("underline");
+    expect((plainLabel as SVGTextElement).style.textDecoration).toBe("");
+
+    await unmount(container, root);
+  });
+
   it("renders authored fill verbatim and DEFAULT_FILL otherwise (n.fill ?? DEFAULT_FILL unchanged)", async () => {
     const { container, root } = await mount(
       createElement(DiagramSvg, { idPrefix: "diag", model: model() }),
