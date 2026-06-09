@@ -51,6 +51,24 @@ The orchestrator passes you, in the prompt:
   prefer the prompt.)
 - **No merge, no push, no rebase.** Stay on your task branch inside the
   worktree. Merge-back is the orchestrator's job (T9 step 7).
+- **Worktree confinement.** You operate **ONLY inside your own worktree**
+  directory (the path the harness gave you via native `isolation: worktree`).
+  As a GENERAL rule — not a closed list — you MUST NOT run *any* git command
+  that switches, mutates, or writes the refs/working tree of ANY tree OTHER
+  THAN your own; in particular you **MUST NOT run git against the main checkout**
+  or any sibling worktree. `git checkout`, `git reset --hard`, `git cherry-pick`,
+  and any `git -C <other-path>` / `git --git-dir=<other>` / `--work-tree=<other>`
+  aimed at another tree are NON-EXHAUSTIVE EXEMPLARS of this prohibition, not
+  its full extent. This is additive to "No merge, no push, no rebase" above and
+  does not weaken it.
+  - *Sanctioned base-refresh.* When you must refresh your base, run
+    `git reset --hard <base>` **ONLY within your own worktree** — never against
+    another checkout.
+  - *Stale/wrong-base escalation.* If the base the harness passed in (via native
+    `isolation: worktree`) is stale or wrong such that you cannot proceed, report
+    `status: "fail"` with the reason in `blockedReason` (per the Output contract)
+    RATHER THAN improvising cross-checkout git. You commit on your own worktree
+    branch and report the `resultCommit` SHA; the orchestrator merges by that SHA.
 - **Scope = this task only.** Don't fix unrelated code or touch other tasks'
   files. Surgical changes; match surrounding style (see CLAUDE.md).
 
