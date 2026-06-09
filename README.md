@@ -157,6 +157,34 @@ The harness building blocks are also exposed as individual packages —
 `packages.<system>.{yolo,claude-code,codex,pi-coding-agent,llm-skills,
 llm-contexts,reattach-llm}` — so they can be built or consumed directly.
 
+## How you drive it (the cq flow)
+
+The harness gives the agent a planning loop backed by the ledger, and exposes
+it through a tiny command surface — you mostly only ever type four things:
+`/cq:plan`, `/cq:investigate`, `/cq:plan:follow-up`, and `/cq:advance`. The
+agent does the rest; the ledger is where you and it meet.
+
+A typical run:
+
+1. **Stand up the sandbox.** Bring up the `yolo` bubblewrap sandbox so the
+   agent runs without per-action permission prompts.
+2. **Install the assets.** Bring in the MCP servers and the prompt/skill/command
+   bundles — via the `homeManagerModules.dev-llm` module this is one import; that
+   is what makes the `/cq:*` commands and the `ledger` MCP server available.
+3. **Kick off the work.** Start the agent and give it one of:
+   - `/cq:plan <task description>` — start planning a new piece of work, or
+   - `/cq:investigate <defect description>` — start root-causing a defect.
+4. **Answer its questions.** The agent stops and files clarifying questions into
+   the ledger. Open a frontend (`ledger-web` or `ledger-tui`) and answer them
+   there — your answers feed straight back into the plan.
+5. **Refine the plan (optional, repeatable).** Use
+   `/cq:plan:follow-up <goal id> <additional scope>` to extend or adjust the
+   plan, then answer the next round of questions. Repeat steps 4–5 until you are
+   satisfied with the plan.
+6. **Let it run.** `/cq:advance` drives the whole flow — investigate → plan →
+   implement — autonomously, pausing only when it needs something from you
+   (an unanswered question or a user action). Re-run it after you unblock it.
+
 ---
 
 ## Development (ledger workspace)
