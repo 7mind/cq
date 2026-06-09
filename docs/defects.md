@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 44
+  item: 46
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -188,3 +188,18 @@ archives:
 - ledgerRefs: ["goals:G38"]
 - tags: ["tui","keybindings","ux"]
 - dependsOn: ["tasks:T318","tasks:T319"]
+
+## M128
+
+### D45 — open
+
+- createdAt: 2026-06-09T13:07:11.710Z
+- updatedAt: 2026-06-09T13:07:11.710Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- headline: Cache mirror omits ledgers.yaml on createLedger (registry mirror lags until next archive)
+- description: "Filed by the T312 implement-reviewer (file-and-defer, out-of-scope to T312 whose acceptance explicitly scoped registry mirroring to the archive op). mirrorMutation (packages/ledger/src/store/cacheMirror.ts) mirrors docs/ledgers.yaml only on the 'archive' op. FsLedgerStore.createLedger() rewrites docs/ledgers.yaml (writeRegistry()) then fires fireMutation(name,'create'); the mirror for a 'create' op copies only docs/<name>.md, so the mirrored registry does not reflect a newly-created ledger until a later archive op re-mirrors ledgers.yaml. Low severity: createLedger is rare in this repo (the canonical set is created in init(), which does not route through fireMutation at all), so a restored mirror would carry a slightly stale registry only in the narrow window between a createLedger and the next archive. Default disposition FIX (separate task)."
+- severity: low
+- suggestedFix: Mirror layout.registryPath on any op whose write path rewrote the registry (createLedger), not just on archive — or mirror the registry unconditionally on every mutation (it is small).
+- ledgerRefs: ["tasks:T312","goals:G38"]
+- tags: ["ledger","cache-mirror"]

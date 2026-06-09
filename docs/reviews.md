@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 375
+  item: 379
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -684,3 +684,59 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G38"]
 - sessionLogs: ["docs/logs/20260609-123546-a7dc5893fcb1df067.md","docs/logs/20260609-123546-pi-codex.md","docs/logs/20260609-123546-pi-grok.md","docs/logs/20260609-123546-pi-minimax.md"]
+
+## M127
+
+### R375 — go-ahead
+
+- createdAt: 2026-06-09T13:07:17.357Z
+- updatedAt: 2026-06-09T13:07:17.357Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- summary: "T308 implement review: APPROVE (native opus implement-reviewer, authoritative). advance.md §7.3 Claude-side worktree teardown is now explicit (`git worktree remove --force`/`git branch -D`/`git worktree prune`), marker G38-1a-post-done-cleanup ×1, §5 'worktree INTACT' (L281) untouched; gen.ts faithfully regenerated (the freshness guard FORCED a per-task gen-agents regen — this corrects the plan's 'do not regen here' note; T322 remains the final reconciling regen). check green 1294/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T308","goals:G38"]
+- sessionLogs: ["docs/logs/20260609-125621-a9ae81be184eedffd.md","docs/logs/20260609-130634-ab05a6689d34eb44e.md"]
+
+## M128
+
+### R376 — go-ahead
+
+- createdAt: 2026-06-09T13:07:22.064Z
+- updatedAt: 2026-06-09T13:07:22.064Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- summary: "T312 implement review: APPROVE (native opus implement-reviewer). @cq/ledger ~/.cache mirror: shared exported cacheMirrorDir matches the spec formula byte-for-byte; atomicWrite extracted to fsAtomic.ts (byte-identical, no dup hash); mirror is fire-and-forget tracked in pendingMirrors + drained by dispose() (write-path timing unchanged, deterministic test drain); fires after lockfile release; 4 tests assert byte-equality/archive+ledgers.yaml/swallow-path/atomicity. check green 1300/0. Filed 1 out-of-scope defect D45 (low): registry not mirrored on createLedger (file-and-defer, does not block merge)."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T312","goals:G38"]
+- sessionLogs: ["docs/logs/20260609-125621-abae75975ed510c6f.md","docs/logs/20260609-130634-a016ed28d484b2e10.md"]
+
+## M129
+
+### R377 — go-ahead
+
+- createdAt: 2026-06-09T13:07:26.773Z
+- updatedAt: 2026-06-09T13:07:26.773Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- summary: "T315 implement review: APPROVE (native opus implement-reviewer). roleActions.ts exports ROLE_FLOWS — 4 flows in canonical order (plan/investigate/implement/advance), each model type-assignable to the renderer's DiagramModel (RoleNode extends DiagramNode, RoleEdge = DiagramEdge; green typecheck); every edge endpoint resolves to a declared node id (test-enforced); ≥1 role node + ≥1 labeled action edge per flow with meaningful labels; isolated module, Flows tab/flowData.ts untouched (T316 scope preserved). check green 1301/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T315","goals:G38"]
+- sessionLogs: ["docs/logs/20260609-125621-a568453f0d59bd061.md","docs/logs/20260609-130634-ac6e5154210a5967d.md"]
+
+## M130
+
+### R378 — go-ahead
+
+- createdAt: 2026-06-09T13:07:32.070Z
+- updatedAt: 2026-06-09T13:07:32.070Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- summary: "T318 implement review: APPROVE (native opus implement-reviewer; D44 part 1). LIST-focus PgUp/PgDn page the cursor by listInnerH (scroll:0); Home/End jump first/last via `key.home/key.end || matchHomeEnd(input)`; no-Enter detail-scroll affordance removed + comment updated; matchHomeEnd module-scope (shared with T319); 7 non-vacuous ink tests (exact cursor transitions + LIST-focus does-NOT-scroll-detail). Grounding correction VERIFIED: ink 7.0.5 exposes key.home/key.end + sets input='' (green typecheck confirms); matchHomeEnd kept as raw-bytes fallback per acceptance. 3 pre-existing T87/T89 hint assertions made whitespace-robust (L925 pattern). check green 1301/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T318","goals:G38"]
+- sessionLogs: ["docs/logs/20260609-125621-a3a6c0e90504c5f69.md","docs/logs/20260609-130634-af817be6d7f4da074.md"]

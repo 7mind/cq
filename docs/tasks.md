@@ -425,10 +425,10 @@ archives:
 
 ## M127
 
-### T308 — planned
+### T308 — done
 
 - createdAt: 2026-06-09T11:51:55.260Z
-- updatedAt: 2026-06-09T12:13:10.201Z
+- updatedAt: 2026-06-09T13:07:41.029Z
 - author: "opus-4.8[1m]"
 - session: 242ca46f-d593-40f1-9dc2-480c12cf887c
 - headline: Add explicit per-task worktree teardown to implement/advance.md §7.3 (Claude path)
@@ -436,6 +436,9 @@ archives:
 - acceptance: grep -F 'G38-1a-post-done-cleanup' nix/pkg/cq-assets/commands/cq/implement/advance.md returns exactly one line; the Claude-side per-merge removal is now an EXPLICIT command (the literal sequence 'git worktree remove --force' ... 'git branch -D implement/' ... 'git worktree prune' present in the §7 merge-back region) rather than the prior native-'auto'; §5's 'worktree INTACT' sentence (L281) is unchanged. bun run check (from nix/pkg/cq-ledgers/) green.
 - suggestedModel: sonnet-4.6
 - ledgerRefs: ["goals:G38"]
+- resultCommit: 4eca303
+- completion: advance.md §7.3 explicit Claude-side worktree teardown + marker G38-1a-post-done-cleanup; gen.ts regenerated.
+- sessionLogs: ["docs/logs/20260609-125621-a9ae81be184eedffd.md","docs/logs/20260609-130634-ab05a6689d34eb44e.md"]
 
 ### T309 — planned
 
@@ -450,10 +453,10 @@ archives:
 - dependsOn: ["T308"]
 - ledgerRefs: ["goals:G38"]
 
-### T310 — planned
+### T310 — wip
 
 - createdAt: 2026-06-09T11:52:07.613Z
-- updatedAt: 2026-06-09T12:13:23.911Z
+- updatedAt: 2026-06-09T12:39:21.358Z
 - author: "opus-4.8[1m]"
 - session: 242ca46f-d593-40f1-9dc2-480c12cf887c
 - headline: Align agents/implement-worker.md with the orchestrator's post-done worktree teardown
@@ -490,10 +493,10 @@ archives:
 
 ## M128
 
-### T312 — planned
+### T312 — done
 
 - createdAt: 2026-06-09T11:52:27.205Z
-- updatedAt: 2026-06-09T12:24:08.557Z
+- updatedAt: 2026-06-09T13:07:43.756Z
 - author: "opus-4.8[1m]"
 - session: 242ca46f-d593-40f1-9dc2-480c12cf887c
 - headline: Add a ~/.cache mirror writer to @cq/ledger driven by onMutation, with a SHARED path-scheme function
@@ -501,6 +504,9 @@ archives:
 - acceptance: "New @cq/ledger test cells (authored here): construct an FsLedgerStore on a tmp root with XDG_CACHE_HOME set to another tmp dir; create_item then update_item; assert the mirror file at `${XDG_CACHE_HOME}/cq/ledgers/${path.basename(absRoot)}-${sha256hex(absRoot).slice(0,12)}/docs/<ledger>.md` exists and its bytes equal the in-repo docs/<ledger>.md; assert the computed cache dir NAME equals exactly `${path.basename(absRoot)}-<12 lowercase hex>` (full name, not just the suffix); on archive the archive file + ledgers.yaml also appear under the mirror; a deliberately-thrown mirror error is swallowed (write still succeeds, item present — post-lock isolation); the mirror write is atomic (tmp+rename, no partial file). bun run check green."
 - suggestedModel: "opus-4.8[1m]"
 - ledgerRefs: ["goals:G38"]
+- resultCommit: b681160
+- completion: "@cq/ledger ~/.cache mirror via onMutation + shared exported cacheMirrorDir + fsAtomic extraction; fire-and-forget drained by dispose(). Filed D45 (low, deferred)."
+- sessionLogs: ["docs/logs/20260609-125621-abae75975ed510c6f.md","docs/logs/20260609-130634-a016ed28d484b2e10.md"]
 
 ### T313 — planned
 
@@ -530,10 +536,10 @@ archives:
 
 ## M129
 
-### T315 — planned
+### T315 — done
 
 - createdAt: 2026-06-09T11:52:51.604Z
-- updatedAt: 2026-06-09T11:52:51.604Z
+- updatedAt: 2026-06-09T13:07:46.578Z
 - author: "opus-4.8[1m]"
 - session: 242ca46f-d593-40f1-9dc2-480c12cf887c
 - headline: Author a hand-typed role→actions catalogue TS module for the Flows tab
@@ -541,6 +547,9 @@ archives:
 - acceptance: "New unit test imports ROLE_FLOWS and asserts: 4 flows in order plan/investigate/implement/advance; every edge from/to references a node id declared in that flow's nodes[]; each flow has ≥1 role node and ≥1 labeled action edge (non-empty label); the model typechecks as DiagramModel. bun run typecheck green."
 - suggestedModel: sonnet-4.6
 - ledgerRefs: ["goals:G38"]
+- resultCommit: ba7b026
+- completion: roleActions.ts ROLE_FLOWS catalogue (4 flows, role nodes + labeled action edges, DiagramModel-assignable) + unit test.
+- sessionLogs: ["docs/logs/20260609-125621-a568453f0d59bd061.md","docs/logs/20260609-130634-ac6e5154210a5967d.md"]
 
 ### T316 — planned
 
@@ -570,10 +579,10 @@ archives:
 
 ## M130
 
-### T318 — planned
+### T318 — done
 
 - createdAt: 2026-06-09T11:53:11.427Z
-- updatedAt: 2026-06-09T12:14:14.250Z
+- updatedAt: 2026-06-09T13:07:49.238Z
 - author: "opus-4.8[1m]"
 - session: 242ca46f-d593-40f1-9dc2-480c12cf887c
 - headline: Make LIST-focus PgUp/PgDn page the cursor + Home/End jump first/last row (remove no-Enter detail-scroll)
@@ -581,6 +590,9 @@ archives:
 - acceptance: "ink-testing-library test cells (authored here): with the items list focused and a list longer than listInnerH, PageDown advances the cursor by listInnerH rows (NOT the detail scroll); PageUp moves it back; Home selects row 0; End selects the last row; the detail pane no longer scrolls in LIST focus without pressing Enter first. Home/End fed as raw ESC sequences. The matchHomeEnd helper exists at module scope in app.tsx. bun run check green."
 - suggestedModel: "opus-4.8[1m]"
 - ledgerRefs: ["goals:G38","defects:D44"]
+- resultCommit: 46a0f95
+- completion: TUI LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump rows; no-Enter detail-scroll removed; module-scope matchHomeEnd helper (shared w/ T319); D44 part 1.
+- sessionLogs: ["docs/logs/20260609-125621-a3a6c0e90504c5f69.md","docs/logs/20260609-130634-af817be6d7f4da074.md"]
 
 ### T319 — planned
 
