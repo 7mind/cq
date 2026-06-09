@@ -47,3 +47,12 @@ export type { RawToml, RawWebui } from "./toml.js";
 export { parseToml } from "./toml.js";
 export type { AgentRoleTier } from "./agentRoster.js";
 export { AGENT_ROLE_TIERS } from "./agentRoster.js";
+export type {
+  RoleKind,
+  ModelTier,
+  JSONSchema,
+  JSONSchemaType,
+  PromptCatalogEntry,
+  RoleSchemaSidecar,
+} from "./promptCatalog.js";
+export { planAdvanceSidecar, PLAN_ADVANCE_STATUS_TOKENS } from "./schemas/plan-advance.js";

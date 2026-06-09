@@ -114,7 +114,7 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           # Refresh after dependency changes (see README § Nix).
-          outputHash = "sha256-vCfIJBEcTWTcEQGWHo59PIAAcsSXxYX9w1CUsnmvd/Y=";
+          outputHash = "sha256-kG79B/z1rHAXOhb2dYvBvUkzjJVoyv8xLwu6RrCyk5U=";
         };
 
         # Shell fragment: stage the @cq/ledger + @cq/ledger-mcp source and
