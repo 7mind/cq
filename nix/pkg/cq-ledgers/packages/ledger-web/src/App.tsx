@@ -1754,7 +1754,12 @@ function AgentModelCell({ view }: { view: AgentModelView }): React.ReactElement 
             <ul className="lw-field-list">
               {entries.map(([harness, tokens]) => (
                 <li key={harness}>
-                  <strong>{harness}:</strong> {tokens.length > 0 ? tokens.join(", ") : "default"}
+                  <strong>{harness}:</strong>{" "}
+                  {tokens.length > 0
+                    ? tokens.map((t, i) => (
+                        <span key={i} className="lw-token-chip">{t}</span>
+                      ))
+                    : "default"}
                 </li>
               ))}
             </ul>

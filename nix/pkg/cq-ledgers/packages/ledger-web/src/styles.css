@@ -366,6 +366,19 @@ body {
   color: var(--dim);
   font-weight: 600;
 }
+/* Token chip: each resolved model token rendered as a distinct inline pill
+   (T295 — distinct chips instead of a raw join). */
+.lw-token-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 1px 3px 1px 0;
+  background: var(--badge-bg, rgba(128,128,128,0.15));
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-family: monospace;
+  white-space: nowrap;
+}
 /* Batch-answer modal (Q33): a wider HelpOverlay-style popup with focused font,
    stepping through open questions one at a time. Sized larger to accommodate
    longer question content; font reduced to 0.95rem for better readability. */
