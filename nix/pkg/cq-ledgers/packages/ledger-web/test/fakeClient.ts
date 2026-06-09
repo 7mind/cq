@@ -105,7 +105,10 @@ interface ArchiveEntry {
  *                                build-time catalogue values for implement-worker and
  *                                plan-reviewer; the full agent roster gets entries.
  * - `'no-live-token'`          — configured:true but every model-configurable role carries
- *                                status:'no-live-token' and modelClass:null.
+ *                                status:'no-live-token' and modelClass set to the role's
+ *                                tier (e.g. 'standard' for implement-worker), mirroring
+ *                                computeAgentModels which always sets modelClass=tier even
+ *                                when no live token is present (Q157).
  * - `'not-configured'`         — configured:false, agents:[]; mirrors a repo with no cq.toml.
  * - `'not-model-configurable'` — configured:true, but ALL entries carry
  *                                status:'not-model-configurable' (exercises the orchestrator-
@@ -171,6 +174,20 @@ const RESOLVED_LIVE_ENTRIES: readonly AgentModelEntry[] = [
     (id): AgentModelEntry => ({ id, status: "not-model-configurable", modelClass: null, modelMappings: {} }),
   ),
 ];
+
+/**
+ * Per-role tier for the 'no-live-token' mode: mirrors the modelClass that
+ * computeAgentModels returns for each model-configurable role (resolveAgentTier
+ * returns the tier regardless of whether live tokens exist, so modelClass is
+ * always set to the tier string, never null, in the no-live-token path).
+ * Derived from the same tiers as RESOLVED_LIVE_ENTRIES to stay in sync.
+ */
+const MODEL_CONFIGURABLE_ROLE_TIERS: Record<string, "frontier" | "standard" | "fast"> = Object.fromEntries(
+  RESOLVED_LIVE_ENTRIES
+    .filter((e): e is AgentModelEntry & { modelClass: "frontier" | "standard" | "fast" } =>
+      e.status === "resolved" && e.modelClass !== null)
+    .map((e) => [e.id, e.modelClass]),
+);
 
 export class FakeClient implements LedgerClient {
   closed = false;
@@ -480,11 +497,18 @@ export class FakeClient implements LedgerClient {
       case "resolved":
         return { configured: true, agents: RESOLVED_LIVE_ENTRIES };
       case "no-live-token":
+        // Mirror computeAgentModels: modelClass is set to the role's tier (from
+        // resolveAgentTier), NOT null — even when no live token is present (Q157).
         return {
           configured: true,
           agents: [
             ...MODEL_CONFIGURABLE_ROLE_IDS.map(
-              (id): AgentModelEntry => ({ id, status: "no-live-token", modelClass: null, modelMappings: {} }),
+              (id): AgentModelEntry => ({
+                id,
+                status: "no-live-token",
+                modelClass: MODEL_CONFIGURABLE_ROLE_TIERS[id] ?? null,
+                modelMappings: {},
+              }),
             ),
             ...NOT_MODEL_CONFIGURABLE_ROLE_IDS.map(
               (id): AgentModelEntry => ({ id, status: "not-model-configurable", modelClass: null, modelMappings: {} }),

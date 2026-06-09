@@ -99,6 +99,12 @@ afterEach(() => {
   container.remove();
 });
 
+// Note: FakeClient defaults to agentModelsMode='not-configured', which populates
+// agents[] with not-configured/not-model-configurable entries. This does NOT affect
+// the T279 static-field assertions below because those assertions target description,
+// inputs, outputs, privilege, tools, and prompt — all static catalogue data rendered
+// regardless of the live overlay. The overlay only drives the help-agent-<id>-model
+// cell, which T279 does not assert.
 describe("Agents tab (T279)", () => {
   it("exposes a selectable Agents tab button", async () => {
     await mount();
@@ -256,23 +262,24 @@ describe("Agents tab — live model overlay (T297)", () => {
     expect(cell!.textContent?.trim()).toBe("not configured (no cq.toml)");
   });
 
-  it("'no-live-token' mode: model-configurable role shows 'no live token for ...'", async () => {
-    // FakeClient 'no-live-token' mode returns entries with status:'no-live-token'
-    // and modelClass:null for model-configurable roles.
-    // resolveAgentModelView -> { kind: "no-live-token", tier: null } ->
-    // "no live token for ?" (tier=null falls back to "?").
+  it("'no-live-token' mode: model-configurable role shows 'no live token for <tier>'", async () => {
+    // FakeClient 'no-live-token' mode mirrors computeAgentModels: modelClass is
+    // set to the role's tier (NOT null), so AgentModelCell interpolates the tier
+    // string. implement-worker has tier='standard' (from agentsCatalogue.gen.ts
+    // and RESOLVED_LIVE_ENTRIES), so the expected label is 'no live token for standard'.
     await openAgentsTabWithMode("no-live-token");
 
     const cell = testid("help-agent-implement-worker-model");
     expect(cell).not.toBeNull();
-    // The label always starts with "no live token for".
-    expect(cell!.textContent).toContain("no live token for");
+    // Full string check: the tier 'standard' must be interpolated, not '?'.
+    expect(cell!.textContent?.trim()).toBe("no live token for standard");
   });
 
   it("orchestrator-command role renders 'N/A' regardless of mode (not-model-configurable)", async () => {
-    // "advance" is one of the 12 orchestrator-command roles (model=N/A in the
-    // catalogue). The 'resolved' FakeClient mode includes a not-model-configurable
-    // entry for it, producing AgentModelCell kind:'not-model-configurable' -> "N/A".
+    // "advance" is confirmed as an orchestrator-command role: agentTierKey===null in
+    // AGENT_ROLE_TIERS (agentRoster.ts), model="N/A" in agentsCatalogue.gen.ts.
+    // The 'resolved' FakeClient mode includes a not-model-configurable entry for it,
+    // producing AgentModelCell kind:'not-model-configurable' -> "N/A".
     await openAgentsTabWithMode("resolved");
 
     const cell = testid("help-agent-advance-model");
