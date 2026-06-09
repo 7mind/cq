@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 34
+  item: 35
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -146,6 +146,19 @@ archives:
 - blockingQuestions: ["Q143"]
 - handoffReasons: ["drained: D36/D38/D39 resolved + G29/G30/G31/G32 implemented (now live post-redeploy); this run migrated the live cq.toml (get_config loads with provider field) and archived 5 work milestones (M90/M97/M99/M100/M101)","user-action-required (carried by Q143): D37 needs `home-manager switch` to activate the merged pi extension — the last genuine user action; Q143's deploy + ledgers.yaml + cq.toml asks are now satisfied"]
 - sessionLogs: ["docs/logs/20260608-142635-RECOVERY-redeploy-reinit.md"]
+
+### HO35 — mixed
+
+- createdAt: 2026-06-09T02:32:24.830Z
+- updatedAt: 2026-06-09T02:32:24.830Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "MIXED. LANDED: recovered the entire lost-by-git-reset ledger (replayed M116-M121, T283-T300, R341-R362, K57/K58, restored Q154-Q165 answers) AND implemented + verified BOTH goals end-to-end — G34 follow-up #2 (Agents tab shows ONLY live-configured models via the new get_agent_models MCP capability + ledger-web overlay; build-time model fields dropped) and G36 (optional thinking-effort token suffix threaded through @cq/config parser/identity/wire-shapes + the cq-subagent-dispatch pi-extension). All 18 tasks T283-T300 done + reviewed (opus+minimax panel; grok+codex abstained — no API key); work milestones M116-M121 archived; bun run check 1289-1290/0; nix build .#ledger-mcp + .#ledger-web exit 0; commit-after-every-merge hardening adopted (commits 4bcd1fc..02561ac, rebased by the background committer). BLOCKED: D43 (major, open) — the worker-git-reset-in-main-checkout data-loss defect — remains; its fix changes the flow's OWN governance prompts and has a genuine design choice, surfaced to the user as Q166 (HOW to fix, not whether). NOTE: G34 + G36 goals stay 'planned' (goals never auto-close; their coordination milestones M108/M115 stay open) — the user closes building->done in the TUI/web. grok/codex providers still have no API key in this redeployed session (auth.json empty)."
+- flow: advance
+- ledgerRefs: ["goals:G34","goals:G36","defects:D43"]
+- blockingQuestions: ["Q166"]
+- handoffReasons: ["drained","answers-required"]
+- sessionLogs: ["docs/logs/20260609-005204-T299-worker-review.md","docs/logs/20260609-005204-T300-verify.md"]
 
 ## M86
 
