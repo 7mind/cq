@@ -460,10 +460,10 @@ archives:
 
 ## M136
 
-### T331 — planned
+### T331 — done
 
 - createdAt: 2026-06-09T19:08:19.620Z
-- updatedAt: 2026-06-09T19:40:54.463Z
+- updatedAt: 2026-06-09T20:00:54.959Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Write a fully-commented cq.toml template constant in cq-cli
@@ -471,6 +471,9 @@ archives:
 - acceptance: "A unit test feeds CQ_TOML_TEMPLATE through `parseConfig` (@cq/config) and asserts: it parses without throwing; resolveReviewers/resolvePlanners succeed; the active reviewers+planners resolve to EXACTLY the three claude tokens claude:opus-4.8[1m] / claude:sonnet-4.6 / claude:haiku-4.5 (string-equality on the resolved tokens, guarding against the no-enum-validation gap); and every commented pi model line is NOT in the active set. ALSO (R399-round2/codex #2): update the repo-root cq.toml.example to add the same sonnet/haiku aliases and make Opus/Sonnet/Haiku the active reviewers/planners, keeping it consistent with CQ_TOML_TEMPLATE — a test asserts cq.toml.example's resolved active model set EQUALS the template's (so the documented example never silently diverges from what `cq init` writes). `bun run typecheck` and `bun test` pass."
 - suggestedModel: standard
 - ledgerRefs: ["goals:G41"]
+- resultCommit: e2179a38ffa2c6ca8ad8709f0aee7216b4a3de00
+- completion: CQ_TOML_TEMPLATE constant in cq-cli (opus/sonnet/haiku active, pi commented) + synced cq.toml.example + parity/string-equality tests; bun run check green.
+- sessionLogs: ["docs/logs/20260609-195301-ae2b63ff41b615dc6.md","docs/logs/20260609-195301-a96245ea42545ec46.md"]
 
 ### T338 — planned
 
@@ -487,10 +490,10 @@ archives:
 
 ## M137
 
-### T332 — planned
+### T332 — done
 
 - createdAt: 2026-06-09T19:08:24.319Z
-- updatedAt: 2026-06-09T19:08:24.319Z
+- updatedAt: 2026-06-09T20:00:57.778Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Underline activatable node names in DiagramSvg
@@ -498,11 +501,14 @@ archives:
 - acceptance: A happy-dom test renders a flow model with at least one agentId-bearing node and one plain node, passes onActivateAgent, and asserts the activatable node's label <text> has text-decoration underline while the plain node's does not. `bun test` passes.
 - suggestedModel: standard
 - ledgerRefs: ["goals:G41"]
+- resultCommit: 3f14794453b8434e77174edd3b553b55f5c935d3
+- completion: Underline on activatable DiagramSvg node labels (gated on the existing activatable boolean) + happy-dom test; bun run check green.
+- sessionLogs: ["docs/logs/20260609-195301-a980130128544a7a0.md","docs/logs/20260609-195301-a419a03c786bd7181.md"]
 
-### T333 — planned
+### T333 — wip
 
 - createdAt: 2026-06-09T19:08:29.519Z
-- updatedAt: 2026-06-09T19:28:44.323Z
+- updatedAt: 2026-06-09T19:43:38.954Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Render terminal (no-outgoing-edge) flow nodes as visually distinct
@@ -511,10 +517,10 @@ archives:
 - suggestedModel: standard
 - ledgerRefs: ["goals:G41"]
 
-### T334 — planned
+### T334 — wip
 
 - createdAt: 2026-06-09T19:08:42.468Z
-- updatedAt: 2026-06-09T19:29:00.301Z
+- updatedAt: 2026-06-09T19:43:57.938Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Make parallel/duplicate flow edges render with distinct visible labels
@@ -525,10 +531,10 @@ archives:
 
 ## M138
 
-### T335 — planned
+### T335 — done
 
 - createdAt: 2026-06-09T19:08:49.874Z
-- updatedAt: 2026-06-09T19:40:59.082Z
+- updatedAt: 2026-06-09T20:01:01.082Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Add the `ideas` ledger schema to CANONICAL_LEDGERS
@@ -536,6 +542,9 @@ archives:
 - acceptance: "A ledger unit test bootstraps a fresh FsLedgerStore, asserts the `ideas` ledger exists with the expected schema (statusValues + terminalStatuses=['planned','discarded']), creates an idea under M-AMBIENT with title+description and status open, exercises open→postponed→open and open→planned, and asserts illegal transitions (planned→open, discarded→open) throw. ALSO (R399-round2/codex #3 — the 'no milestones' Q188 requirement): assert ideas carry NO user-milestone association — a created idea attaches ONLY to the ambient M-AMBIENT (not any user milestone), the schema declares no required milestone field beyond the ambient attachment, and ideas are enumerable/rendered as a FLAT list (never grouped under a user milestone). `bun test` passes."
 - suggestedModel: frontier
 - ledgerRefs: ["goals:G41"]
+- resultCommit: 9feb68381abac58398ddddd04caabd148a68592c
+- completion: ideas ledger schema (idPrefix I, title+description, open|planned|discarded|postponed, postponed→open) in CANONICAL_LEDGERS + ledgers.yaml regen + lifecycle/illegal-transition/flat-attachment tests; bun run check green.
+- sessionLogs: ["docs/logs/20260609-195301-af0e8528968c08a21.md","docs/logs/20260609-195301-a9c0789cc58edc22e.md"]
 
 ### T339 — planned
 

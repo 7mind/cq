@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 46
+  item: 47
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -181,3 +181,17 @@ archives:
 - rootCause: "CONFIRMED (H31, validated against current cq-assets). A two-part prompt gap let a single stray worker git op erase the run's ledger: (a) PERMISSIVE-GAP in agents/implement-worker.md — its 'Boundaries (hard rules)' (L47-55) forbid merge/push/rebase + scope-creep but contain NO rule confining git to the worker's own worktree and NO ban on `git reset --hard`/checkout/cherry-pick against the MAIN checkout or other worktrees; the only sanctioned worker git mutation is `git add -A && git commit` on the task branch (L71-73). The base commit + worktree are PASSED IN by the harness (native isolation:worktree, L38-43), so the worker never establishes its own base — a STALE base (observed: worktree forked from 087b889 vs current main) is a harness-side fact the worker inherits with no sanctioned base-fixing procedure, so a worker improvising to 'fix' it reaches the main checkout unguarded. (b) DEFERRED-COMMIT window — implement/advance.md commits the ledger ONLY after archive_milestone + at the standalone stop (L395-405), suppressing the at-stop commit when chained (L542-549); advance.md commits after every archive + at the single run-stop (L506-518); plan/advance.md commits only at the standalone stop with no commit-after-planning-lock (L717+). So a long chained plan+implement run accrues a large UNCOMMITTED ledger between milestone archives that a `git reset --hard` erases with no git-recoverable trace (the observed incident: HEAD@{3} reset in the main checkout discarded M116-M121/T283-T300/R341-R348/K57-K58 + the Q154-Q165 answers)."
 - sessionLogs: ["docs/logs/20260609-093502-a4b0d0d4f781c94c2.md"]
 - dependsOn: ["tasks:T301","tasks:T302","tasks:T303","tasks:T304","tasks:T305","tasks:T306","tasks:T307"]
+
+## M138
+
+### D47 — open
+
+- createdAt: 2026-06-09T19:58:13.904Z
+- updatedAt: 2026-06-09T19:58:13.904Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- headline: docs/ledgers.yaml bootstrap fixture can silently drift from source constants.ts (regen/guard gap)
+- description: "Filed by the T335 implement-reviewer (file-and-defer, K13). At base 155d378 the committed nix/pkg/cq-ledgers/docs/ledgers.yaml was STALE relative to packages/ledger/src/constants.ts: it lacked the `sessionLogs` field on defects/tasks/hypothesis and the handoffs `user-action-required` status — both already in source at that base. T335's regen-bootstrap correctly swept these into the fixture (faithful, in-scope for T335). The underlying fault: the bootstrap idempotence/divergence GUARD did not flag the drift earlier, so a prior task committed source changes without regenerating the fixture and it accumulated silently. Out of scope for T335 (an ideas-ledger task). Severity low."
+- severity: low
+- suggestedFix: Add a check-time (bun run check / CI) assertion that the committed nix/pkg/cq-ledgers/docs/ledgers.yaml is byte-identical to a fresh `regen-bootstrap` output, so any source/fixture drift FAILS the check instead of silently accumulating; audit why the existing bootstrap-divergence guard did not catch the pre-T335 drift.
+- ledgerRefs: ["tasks:T335","goals:G41"]

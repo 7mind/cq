@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 400
+  item: 403
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -666,3 +666,39 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G41"]
 - sessionLogs: ["docs/logs/20260609-194117-a529026c1e49518de.md","docs/logs/20260609-194117-pi-codex.md","docs/logs/20260609-194117-pi-grok.md","docs/logs/20260609-194117-pi-minimax.md"]
+
+## M136
+
+### R401 — go-ahead
+
+- createdAt: 2026-06-09T19:58:21.801Z
+- updatedAt: 2026-06-09T19:58:21.801Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: approve (T331) — CQ_TOML_TEMPLATE + synced cq.toml.example resolve exactly the opus/sonnet/haiku claude trio (string-equality + parity tests real, passing); full bun run check green 1385/0; surgical 6-file scope. Native opus implement-reviewer.
+- ledgerRefs: ["tasks:T331","goals:G41"]
+- sessionLogs: ["docs/logs/20260609-195301-a96245ea42545ec46.md"]
+
+## M138
+
+### R402 — go-ahead
+
+- createdAt: 2026-06-09T19:58:25.977Z
+- updatedAt: 2026-06-09T19:58:25.977Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: approve (T335) — ideas ledger schema added correctly (idPrefix I free; shape/transitions/terminalStatuses exact; CANONICAL_LEDGERS+index+ledgers.yaml consistent); full lifecycle + illegal-transition throws + flat M-AMBIENT no-user-milestone tests pass; bun run check green 1380/0. One low out-of-scope defect D47 filed (pre-existing fixture-drift guard gap). Native opus implement-reviewer.
+- ledgerRefs: ["tasks:T335","goals:G41"]
+- sessionLogs: ["docs/logs/20260609-195301-a9c0789cc58edc22e.md"]
+
+## M137
+
+### R403 — go-ahead
+
+- createdAt: 2026-06-09T19:58:28.675Z
+- updatedAt: 2026-06-09T19:58:28.675Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: approve (T332) — underline correctly gated on the existing `activatable` boolean (agentId && onActivateAgent); happy-dom test asserts both cases via style.textDecoration; no layout/testid change; bun run check green 1369/0. Native opus implement-reviewer.
+- ledgerRefs: ["tasks:T332","goals:G41"]
+- sessionLogs: ["docs/logs/20260609-195301-a419a03c786bd7181.md"]
