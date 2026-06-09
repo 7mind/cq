@@ -187,9 +187,11 @@ export class FakeClient implements LedgerClient {
   readonly readLogResults: Map<string, ReadLogResult | Error> = new Map();
   /**
    * Controls which Q157 state {@link getAgentModels} emits. Defaults to
-   * `'not-configured'` so existing tests that do not care about agent-model
-   * overlays receive the same stable `{configured:false, agents:[]}` the T289
-   * stub returned. Tests that exercise the overlay (T297) set this explicitly.
+   * `'not-configured'`: returns `configured:false` with a populated `agents[]`
+   * — model-configurable roles carry `status:'not-configured'`, orchestrator-
+   * command roles carry `status:'not-model-configurable'` — mirroring
+   * `computeAgentModels` when `config===null`. Tests that exercise the live
+   * overlay (T297) set this to `'resolved'` or another mode explicitly.
    */
   agentModelsMode: AgentModelsMode = "not-configured";
   private readonly _displayName: string;
