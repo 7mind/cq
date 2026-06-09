@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 121
+  item: 125
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -627,3 +627,28 @@ archives:
 - createdAt: 2026-06-08T21:39:32.717Z
 - updatedAt: 2026-06-08T21:39:32.717Z
 - title: "Plan: optional thinking-effort suffix in cq model-identifier tokens"
+
+### M122 — open
+
+- createdAt: 2026-06-09T09:36:31.962Z
+- updatedAt: 2026-06-09T09:36:31.962Z
+- title: "Plan: fix D43 — worktree-confine implement-worker + commit ledger after planning/every-merge"
+
+### M123 — open
+
+- createdAt: 2026-06-09T09:46:18.552Z
+- updatedAt: 2026-06-09T09:46:18.552Z
+- title: "D43 W1: implement-worker worktree-confinement Boundary"
+
+### M124 — open
+
+- createdAt: 2026-06-09T09:46:22.697Z
+- updatedAt: 2026-06-09T09:46:22.697Z
+- title: "D43 W2: durable-ledger-commit checkpoints (after planning-lock + every merge-back)"
+
+### M125 — open
+
+- createdAt: 2026-06-09T09:46:27.102Z
+- updatedAt: 2026-06-09T09:46:27.102Z
+- title: "D43 W3: documented repro + grep-invariant guard + verify"
+- dependsOn: ["M123","M124"]

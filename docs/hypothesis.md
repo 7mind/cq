@@ -2,7 +2,7 @@
 ledger: hypothesis
 counters:
   milestone: 0
-  item: 30
+  item: 31
 archives:
   - id: M14
     path: ./archive/hypothesis/M14.md
@@ -112,3 +112,17 @@ archives:
 - description: "Known-cause user-action defect: the fix is `home-manager switch` (re-activation), not a repo code change. This round verifies (a) the documented cause and (b) that the user's reported re-deploy (Q143 answer: \"I've redeployed.\") actually remediated it, by direct static inspection of the live environment."
 - evidence: ["[correct] ~/.pi/agent/settings.json `extensions[]` now lists `/nix/store/zs2p73sj31k2140y4ylb245wn433wigb-cq-subagent-dispatch.ts` (read 2026-06-08 from the live home-manager-activated file) — i.e. activation regenerated settings.json after the merge, pointing the dispatch extension at a current store path, not the stale pre-T225 one D37 reported.","[correct] `diff /nix/store/zs2p73sj31k2140y4ylb245wn433wigb-cq-subagent-dispatch.ts nix/pkg/pi-extensions/cq-subagent-dispatch.ts` exits 0 (byte-identical, 30452 bytes) — the registered extension is exactly the repo's current MERGED post-T222/T224/T225 source, confirming the stale-path condition no longer holds and the merged extension is what the locally-installed pi now loads (no PI_CODING_AGENT_DIR override needed).","[correct] Q143 (status:answered, author:user) answer = \"I've redeployed.\" — its step (1) is `home-manager switch` annotated \"(RESOLVES D37)\"; the static evidence above confirms that activation took effect."]
 - ledgerRefs: ["defects:D37"]
+
+## M-AMBIENT
+
+### H31 — confirmed
+
+- createdAt: 2026-06-09T09:33:21.822Z
+- updatedAt: 2026-06-09T09:35:40.241Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- headline: "D43 root cause = a two-part prompt gap: (a) the implement-worker agent prompt does not confine the worker to its own worktree (no ban on git ops against the main checkout) while native isolation:worktree's stale-base drives cross-checkout git surgery; (b) the *:advance commit discipline defers ledger commits (only after archive_milestone + at run-stop), so a long run accrues uncommitted ledger a stray reset erases"
+- description: "What would make this true: (a) nix/pkg/cq-assets/agents/implement-worker.md contains NO instruction forbidding the worker from running git against the main checkout / other worktrees and no 'reset only within your own worktree' rule; the native worktree forks from a stale base (observed 087b889 vs current main). (b) nix/pkg/cq-assets/commands/cq/advance.md + commands/cq/implement/advance.md commit the ledger ONLY after archive_milestone + at the run/standalone stop (no commit-after-every-merge), and commands/cq/plan/advance.md has no commit-after-planning-lock; chained sub-flows suppress at-stop commits. Confirm by reading the current prompt files. Evidence basis: this session's reflog (HEAD@{3} reset in the MAIN checkout discarded uncommitted docs/*.md) is already captured in D43.description."
+- ledgerRefs: ["defects:D43"]
+- evidence: ["[correct] agents/implement-worker.md:47-55 — 'Boundaries (hard rules)': 'No merge, no push, no rebase. Stay on your task branch inside the worktree' + 'Scope = this task only' — forbids merge/push/rebase + scope but NO rule confining git ops to the worktree / forbidding git against the main checkout. Validated: excerpt matches source. [part a]","[correct] agents/implement-worker.md:25-29 — 'working entirely inside your own isolated git worktree' is a descriptive premise, not an enforceable prohibition with examples of forbidden cross-checkout git. [part a]","[correct] agents/implement-worker.md:38-43 — the base commit + worktree path are PASSED IN by the harness (Claude native isolation:worktree); the worker does NOT establish its own base, so a stale base is a harness-side fact the worker inherits with no sanctioned base-fixing procedure. [part a / stale-base trigger]","[correct] agents/implement-worker.md:71-73 — the ONLY sanctioned worker git mutation is `git add -A && git commit` on the task branch + report the SHA; no instruction restricting git invocation to the worktree dir. Validated: matches source. [part a]","[correct] commands/cq/implement/advance.md:293-302 — merge-back (rebase + ff merge) is the ORCHESTRATOR's job, confirming the worker's git role is solely commit-on-branch + report-SHA. [part a]","[correct] commands/cq/implement/advance.md:395-405 — 'Commit the ledger (after every milestone archive + at the standalone stop)': commits ONLY after archive_milestone + at the standalone at-stop (suppressed when chained). No commit-after-every-task-merge. Validated: matches source. [part b]","[correct] commands/cq/advance.md:506-518 — top-level wrapper commits after every archive + at the single run-stop, NOT after every task merge. [part b]","[correct] commands/cq/plan/advance.md:717+ — 'Commit the ledger (standalone stop)': only commit is at the standalone stop, suppressed when chained; no commit-after-planning-lock checkpoint. Validated: section present at L717. [part b]","[correct] commands/cq/implement/advance.md:542-549 — chained sub-flows SUPPRESS the at-stop commit; under /cq:advance only the wrapper's run-stop + per-archive commits fire, maximizing the uncommitted-ledger window between archives. [part b]"]
+- sessionLogs: ["docs/logs/20260609-093502-a4b0d0d4f781c94c2.md"]

@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 362
+  item: 364
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -851,3 +851,29 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G36"]
 - sessionLogs: ["docs/logs/20260608-223229-a774de5084c76524c.md","docs/logs/20260608-223229-pi-minimax-G36-review2.md"]
+
+## M122
+
+### R363 — revise
+
+- createdAt: 2026-06-09T09:58:08.472Z
+- updatedAt: 2026-06-09T09:58:08.472Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "REVISE (G37 round 1; 2/4 reviewers usable — grok+codex abstained, no API key; panel = opus[claude] + minimax[pi]). Both voted revise; reconciled revise. LOAD-BEARING (opus, precedent-cited): T307 acceptance falsely presumes `nix build .#llm-skills` validates the 4 edited cq-assets governance prompts — FALSE: cq-assets is consumed EVAL-TIME-ONLY (assets.nix builtins.readFile/readDir); .#llm-skills builds nix/pkg/llm-skills and never reads cq-assets/agents|commands; no buildable derivation vendors the prompt files, so the nix build exits 0 regardless of T301-T304's edits (ZERO regression coverage). Identical to G31 (R280 revise → R281 go-ahead). Fix: drop the nix-build-validates claim; make `bun run check` + the T306 grep-invariant the SUBSTANTIVE gate; fix the goal's acceptance note. REAL (minimax): T304's 'same marker' wording contradicts T306's 4-distinct-cells assertion — reconcile to 4 distinct (file,marker) cells. Plus minimax hardening: make T306 file-scoped explicit; tighten T301's general cross-checkout-git prohibition; add T305 reproduction-first narration; keep the home-manager-switch live-activation note explicit (already present, not a new autonomous task — user/environment deploy action like D37/D41). Otherwise both confirm: T301 closes part-a; T302/T303/T304 close part-b non-regressively; DAG acyclic; T306 grep-invariant is the right guard for eval-time-only prompts."
+- new_questions: []
+- criticism: ["[opus, LOAD-BEARING] T307 acceptance presumes `nix build .#llm-skills` validates the 4 edited cq-assets governance prompts — FALSE. .#llm-skills builds nix/pkg/llm-skills; it never reads nix/pkg/cq-assets/agents/ or commands/. cq-assets is EVAL-TIME-ONLY (assets.nix readFile/readDir); no buildable derivation vendors the prompt files, so .#llm-skills exits 0 regardless of T301-T304 (zero coverage). SAME defect as G31/R280→R281. Fix: drop the nix-build-validates claim from T307; make `bun run check` + the T306 grep-invariant the SUBSTANTIVE gate; update the goal G37 acceptance note.","[minimax, REAL] T304 'same marker' wording vs T306 '4 verbatim markers' contradiction: T303 (implement/advance.md) and T304 (advance.md) are distinct files. Reconcile to the 4-distinct-(file,marker)-cells reading and drop the misleading 'same marker' implication on T304.","[minimax] T306: make file-scoped explicit — each assertion reads a SPECIFIC file path and asserts its marker in THAT file (not repo-wide grep).","[minimax] T301: tighten the cross-checkout-git prohibition to an unambiguous general rule (any git op that switches/mutates/writes refs of a working tree other than the worker's own), beyond the checkout/reset/cherry-pick exemplars.","[minimax] T305: add a one-line reproduction-first narration (the repro captures the failure on the UNFIXED code; pairs with T306's after-state assertion).","[minimax, ADJUDICATED-noted] Live activation: D43 stays live in the user's session until `home-manager switch` regenerates ~/.claude + ~/.pi. Kept as an explicit user-follow-up note on T307 + G37 (deploy action like D37/D41), NOT a new autonomous task."]
+- ledgerRefs: ["goals:G37","defects:D43"]
+- sessionLogs: ["docs/logs/20260609-095419-G37-review-r1-opus.md","docs/logs/20260609-095419-G37-review-r1-minimax.md"]
+
+### R364 — go-ahead
+
+- createdAt: 2026-06-09T10:04:43.492Z
+- updatedAt: 2026-06-09T10:04:43.492Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "GO-AHEAD (G37 round 2; 2/4 reviewers usable — grok+codex abstained, no API key; panel = opus[claude] + minimax[pi]). BOTH go-ahead → reconciled go-ahead. All six R363 round-1 criticisms verified correctly + completely addressed: (1) T307 + G37 acceptance re-scoped — `bun run check` + the T306 file-scoped grep-invariant is the SUBSTANTIVE gate, `nix build .#llm-skills` demoted to a repo-builds smoke explicitly NOT validating prompt content (matches the G31/R281 eval-time-only adjudication); (2) T304 writes its OWN distinct file-scoped marker (4 distinct (file,marker) cells, no shared marker); (3) T306 file-scoped explicit (readFileSync(<path>).toContain, not repo-wide); (4) T301 prohibition generalized (any git op switching/mutating/writing-refs of another tree; exemplars non-exhaustive; existing no-merge/push/rebase ban intact); (5) T305 reproduction-first narration added; (6) live-activation home-manager-switch kept as an explicit user follow-up note. opus read the ledger + verified all four target prompt files (implement-worker.md L47-55, plan/advance.md L717-728, implement/advance.md L395-416, advance.md L506-534) + the canonical-ledgers.test.ts T255/T264 pattern against the actual repo. DAG acyclic (verified in-ledger: T301/T302/T303/T305 no-dep; T304→T303; T306→T301-T304; T307→T305+T306). minimax's 2 nitpicks adjudicated non-blocking (the 'over-constrained T303' was prompt prose, not the ledger — T303 confirmed no-dep; T306 path-resolution inherited from the existing test boilerplate). Plan LOCKED."
+- new_questions: []
+- criticism: []
+- ledgerRefs: ["goals:G37","defects:D43"]
+- sessionLogs: ["docs/logs/20260609-100347-a2b3e6cf98362d441.md","docs/logs/20260609-100347-G37-review-r2-minimax.md"]

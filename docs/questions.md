@@ -664,14 +664,15 @@ archives:
 
 ## M-AMBIENT
 
-### Q166 — open
+### Q166 — answered
 
 - createdAt: 2026-06-09T02:32:03.252Z
-- updatedAt: 2026-06-09T02:32:03.252Z
-- author: "opus-4.8[1m]"
+- updatedAt: 2026-06-09T09:31:18.545Z
+- author: user
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - question: "D43 fix approach (flow-governance change you wanted to steer): which design for each part? (1) STALE-WORKTREE-BASE root cause — (a) orchestrator creates MANUAL worktrees from the current main HEAD (git worktree add <path> -b impl-<T> <mainSha>) and passes that path to the worker, OR (b) keep native isolation:worktree but the implement-worker prompt FORBIDS any git op against the main checkout / other worktrees and the worker resets ONLY within its own worktree (this run's ad-hoc mitigation, which worked)? (2) COMMIT DISCIPLINE — thread 'commit ledger after planning-lock + after EVERY task merge-back' permanently into advance.md + implement/advance.md + plan/advance.md (overriding the chained-suppression for these checkpoints)? (3) Do you want to drive these cq-assets prompt edits yourself, or have me plan+implement the full D43 suggestedFix autonomously via a normal /cq:advance cycle?"
 - context: "D43 (major, open) is the data-loss defect: an implement-worker under native isolation:worktree ran `git reset --hard`/checkout/cherry-pick in the MAIN checkout (not just its worktree), discarding the run's uncommitted ledger writes (recovered via replay, commit 343ef67-era; the loss was only recoverable because the reverted counters reproduced identical IDs). Root cause is CONFIRMED by inspection (reflog + prompt analysis) and documented in D43 with a 3-part suggestedFix. The LOAD-BEARING part (commit-after-merge) was ADOPTED ad-hoc THIS run (committed the ledger after every merge-back; D43 never recurred). Remaining: (b)/the prompt edits forbidding cross-checkout worker git ops + the stale-base fix. Because these edits change the flow's OWN governance and you signalled you want to steer the flow-fix, this is surfaced for your direction rather than auto-implemented mid-run. This question is HOW-to-fix (design/ownership), not whether-to-fix (D43's default disposition is FIX)."
 - suggestions: ["(1b)+(2 yes)+(3 autonomous): keep native worktrees but harden the implement-worker prompt to forbid main-checkout git ops + worker-confined reset; permanently thread commit-after-planning/after-merge; let me plan+implement via /cq:advance","(1a)+(2 yes)+(3 autonomous): switch to orchestrator-managed manual worktrees; thread the commit discipline; autonomous implement","(3 steer): you take the cq-assets prompt edits yourself (I've adopted commit-after-merge already this run); leave D43 open for your manual fix"]
 - recommendation: (1b) + (2 yes) + (3 autonomous). (1b) is the minimal, proven mitigation (it worked flawlessly across the 12 worker dispatches after the incident) and avoids the orchestrator-managed-worktree complexity; (2) makes the durable-ledger guarantee structural; (3) autonomous keeps momentum — but defer to you on ownership since it edits the flow's own prompts.
 - ledgerRefs: ["defects:D43"]
+- answer: as recommended

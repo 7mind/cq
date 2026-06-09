@@ -2,7 +2,7 @@
 ledger: decisions
 counters:
   milestone: 0
-  item: 58
+  item: 59
 archives:
   - id: M2
     path: ./archive/decisions/M2.md
@@ -303,3 +303,15 @@ archives:
 - headline: "G36 plan LOCKED (go-ahead R344): optional thinking-effort suffix in cq model-identifier tokens"
 - rationale: "Plan for G36 locked after a 2-round multi-planner/reviewer cycle (planners opus+minimax synthesized, grok abstained; reviewers opus+minimax both go-ahead R2, grok/codex abstained — no API keys). 3 work milestones (M117 @cq/config core / M119 wire+extension / M121 docs+check), 8 tasks T284-T298. Locked design: trailing ':<effort>' off the LAST colon (Q160), gated by isEffort(harness,suffix) so opus-4.8[1m] stays unambiguous; ':' RESERVED in BOTH model halves; FIXED VALIDATED PER-HARNESS enums (Q161 — PI_EFFORTS off/minimal/low/medium/high/xhigh, CLAUDE_EFFORTS low/medium/high/xhigh/max) w/ fail-fast; effort IS part of token identity (reviewerTokensEqual; Q162); pi emits effort via the '--model provider/model:<effort>' SHORTHAND (R342 correction — NOT a --thinking flag), claude path inert in the pi-extension (Q163); optional effort on get_planners/get_reviewers/get_config (Q164). R342 corrected the wrong '--thinking' emission + 2 spurious dependsOn edges + the pi-model-half colon-reservation gap; R344 confirmed go-ahead."
 - ledgerRefs: ["goals:G36"]
+
+## M122
+
+### K59 — locked
+
+- createdAt: 2026-06-09T10:05:22.355Z
+- updatedAt: 2026-06-09T10:05:22.355Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- headline: "G37 plan review: approved (R364 go-ahead) — D43 fix LOCKED"
+- rationale: "G37 (defect-seeded fix for D43 — worktree-confine implement-worker + commit ledger after planning-lock and every merge) reached reconciled go-ahead at review round 2 (R364; panel opus[claude] + minimax[pi:ollama-cloud], both go-ahead; grok+codex abstained — no API key) after one revise round (R363, 6 criticisms). Locked plan: 3 work milestones M123/M124/M125, 7 tasks T301-T307 decomposing the Q166-locked fix (1b worker-confined-reset + commit-after-planning-lock + commit-after-every-merge + autonomous): T301 worktree-confinement hard Boundary in implement-worker.md (part a, general cross-checkout-git prohibition); T302 commit-after-planning-lock in plan/advance.md + T303 commit-after-every-merge-back in implement/advance.md §7 + T304 chained-path clause in advance.md (part b, override chained-suppression for THESE checkpoints only); T305 documented reflog repro (reproduction-first) + T306 file-scoped grep-invariant guard (4 distinct (file,marker) cells, extending the T255/T264 pattern) + T307 final verify. R363 fixes: T307+G37 nix-build claim demoted to a smoke — SUBSTANTIVE gate = bun run check + the T306 grep-invariant (cq-assets eval-time-only; matches the G31/R281 adjudication); T304 distinct-marker; T306 file-scoped; T301 generalized prohibition; T305 reproduction-first narration; live-activation home-manager-switch kept as a user follow-up note. DAG acyclic (T304→T303; T306→T301-T304; T307→T305+T306; rest no-dep). Resolves D43; every task ledgerRefs defects:D43. G37 → planned."
+- ledgerRefs: ["goals:G37","defects:D43"]

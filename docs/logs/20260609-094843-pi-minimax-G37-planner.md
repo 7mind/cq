@@ -1,0 +1,5 @@
+# Plan candidate log — G37 (planner, pi:ollama-cloud/minimax-m3)
+
+- Goal G37 (M122), defect-seeded D43 fix, multi-planner round 1, candidate emitted (exit 0). grok+codex abstained (no API key).
+
+minimax candidate: 4 milestones / 8 tasks (reproduction-first; worktree-confinement Boundary; 3 per-file commit checkpoints + a dedicated "verify existing commits preserved" task; grep-invariant guard + separate final nix build). REJECTED fold-ins: wrong file paths (it used agents/implement/advance.md, agents/advance.md, agents/plan/advance.md — the commands live under commands/cq/, not agents/) and a wrong repro location (nix/pkg/cq-assets/docs/drafts vs the repo-root docs/drafts/ convention per CLAUDE.md §8). ACCEPTED fold-ins: (a) split the final verify into its own task (T307, separate from the guard T306 — matches the G34/G36 pattern); (b) explicit "existing after-archive/run-stop commits preserved (no deletion)" acceptance on the commit-checkpoint tasks. Verbatim candidate JSON captured in the run transcript.

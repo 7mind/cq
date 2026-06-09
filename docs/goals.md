@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 36
+  item: 37
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -299,3 +299,27 @@ archives:
     Note: parseReviewerToken structural equality (reviewerTokensEqual) + the D42 dup-token guard + the [tiers] classifier all consume ReviewerToken — decide whether effort participates in token IDENTITY/equality (e.g. is claude:opus:high a different token from claude:opus:low for classification/dedup purposes?).
 - sessionLogs: ["docs/logs/20260608-214433-a707e2b139c1f08ab.md","docs/logs/20260608-222414-aadaf1a943efd555c.md","docs/logs/20260608-222414-pi-minimax-G36-planner.md"]
 - milestones: ["M117","M119","M121"]
+
+## M122
+
+### G37 — planned
+
+- createdAt: 2026-06-09T09:37:23.590Z
+- updatedAt: 2026-06-09T10:05:28.359Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- title: Fix D43 — confine implement-worker git to its worktree + commit ledger after planning-lock and every merge
+- description: |
+    Defect-seeded goal (resolves D43; root cause CONFIRMED via H31, so SKIP clarification — K8 pt4). Linked defects:D43 (back-linked on D43.ledgerRefs). User answered the approach in Q166: (1b) + (2 yes) + (3 autonomous).
+    
+    **Confirmed root cause (H31, validated against current cq-assets):** a two-part prompt gap let one stray worker git op erase the run's uncommitted ledger. (a) PERMISSIVE GAP — agents/implement-worker.md 'Boundaries (hard rules)' (L47-55) forbid merge/push/rebase + scope but have NO rule confining git to the worker's own worktree and NO ban on git reset --hard/checkout/cherry-pick against the MAIN checkout/other worktrees; the base+worktree are passed in by the harness (native isolation:worktree, L38-43) so the worker inherits a possibly-STALE base with no sanctioned base-fixing procedure, and improvising reaches the main checkout unguarded. (b) DEFERRED-COMMIT window — implement/advance.md commits the ledger only after archive_milestone + at the standalone stop (suppressed when chained, L395-405/L542-549); advance.md only after every archive + at the run-stop (L506-518); plan/advance.md only at the standalone stop, no commit-after-planning-lock (L717+). A long chained run accrues a large uncommitted ledger a git reset --hard erases with no trace.
+    
+    **Fix (the locked approach, Q166):**
+    1. **implement-worker.md (part a):** add a hard Boundary — the worker operates ONLY inside its own worktree dir; MUST NOT run git against the main checkout or any other worktree (no checkout/reset --hard/cherry-pick that switches or mutates another working tree); commits on its own worktree branch and reports the resultCommit SHA (orchestrator merges by SHA); if its base is stale/wrong it reports status=fail with the reason rather than improvising cross-checkout git. (1b) When it must refresh its base it `git reset --hard <base>` ONLY within its own worktree.
+    2. **commit discipline (2):** thread a permanent ledger-commit checkpoint AFTER the planning-lock (commands/cq/plan/advance.md — when a goal reaches `planned`) and AFTER EVERY task merge-back (commands/cq/implement/advance.md §7 + the chained path in commands/cq/advance.md), overriding the chained-suppression for THESE specific checkpoints (the existing after-archive + run-stop commits stay). So the durable ledger is never more than one task/plan behind.
+    3. **repro/guard:** add a documented repro of the reflog sequence and a grep-invariant guard test (implement-worker.md carries the worktree-confinement Boundary; advance.md/implement/advance.md/plan/advance.md carry the new commit checkpoints).
+    
+    **Acceptance (R363 — corrected per G31/R281):** the cq-assets prompt edits present, asserted by the T306 grep-invariant (4 FILE-SCOPED cells: worktree-confinement Boundary in implement-worker.md + commit-after-planning-lock in plan/advance.md + commit-after-every-merge-back in implement/advance.md + the chained-path commit-after-every-merge in advance.md) running green under `bun run check` — this grep-invariant + `bun run check` IS the SUBSTANTIVE regression gate, because cq-assets is consumed EVAL-TIME-ONLY (assets.nix builtins.readFile/readDir) and NO buildable nix derivation vendors the prompt files, so NO `nix build` exercises the prompts' content (same adjudication as G31/R280→R281; `nix build .#llm-skills` is at most a repo-still-builds smoke, NOT prompt-content validation). Plus a documented repro (T305). NOTE (live activation, like D37/D41): deployed ~/.claude + ~/.pi assets regenerate on `home-manager switch` — source fix lands here; live activation is a separate deploy step. Tasks must ledgerRef defects:D43.
+- grounding: "Confirmed root cause H31 (9 validated [correct] citations). Fix files: nix/pkg/cq-assets/agents/implement-worker.md (Boundaries), nix/pkg/cq-assets/commands/cq/{advance,implement/advance,plan/advance}.md (Commit-the-ledger sections). Builds on the commit-after-merge discipline already adopted ad-hoc this run (proven across 12 post-incident dispatches)."
+- milestones: ["M123","M124","M125"]
+- sessionLogs: ["docs/logs/20260609-094843-acbd76d5c9472ebf8.md","docs/logs/20260609-094843-pi-minimax-G37-planner.md","docs/logs/20260609-095419-G37-review-r1-opus.md","docs/logs/20260609-095419-G37-review-r1-minimax.md","docs/logs/20260609-100347-a2b3e6cf98362d441.md","docs/logs/20260609-100347-G37-review-r2-minimax.md"]
