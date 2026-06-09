@@ -532,10 +532,10 @@ archives:
 - completion: "FU-3: HelpDocsLayout sidebar + IntersectionObserver scrollspy on Item-States/Flows/Agents; exported scrollToHelpSection; additive DOM ids on the existing anchors."
 - sessionLogs: ["docs/logs/20260609-165949-a3a4c146c1a4e149a.md","docs/logs/20260609-165949-a63707e7defcd3526.md"]
 
-### T329 — planned
+### T329 — done
 
 - createdAt: 2026-06-09T15:40:15.660Z
-- updatedAt: 2026-06-09T15:55:28.062Z
+- updatedAt: 2026-06-09T17:15:45.644Z
 - author: "opus-4.8[1m]"
 - session: 242ca46f-d593-40f1-9dc2-480c12cf887c
 - headline: "FU-4b/d wiring: Flows-tab clickable-node cross-nav to Agents tab + roleKind color legend"
@@ -544,3 +544,6 @@ archives:
 - suggestedModel: "opus-4.8[1m]"
 - dependsOn: ["T326","T327","T328"]
 - ledgerRefs: ["goals:G38"]
+- resultCommit: 768a10d
+- completion: "FU-4b/d: Flows-tab agentId-node cross-nav to Agents tab (exact help-agent-<id> anchor via scrollToHelpSection, rAF-sequenced) + roleKind color legend from ROLE_KIND_FILL."
+- sessionLogs: ["docs/logs/20260609-171522-a75d30bbc69d91b5c.md","docs/logs/20260609-171522-aae0c7ae76a4db924.md"]

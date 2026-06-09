@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 397
+  item: 398
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -838,3 +838,15 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T328","goals:G38"]
 - sessionLogs: ["docs/logs/20260609-165949-a3a4c146c1a4e149a.md","docs/logs/20260609-165949-a63707e7defcd3526.md"]
+
+### R397 — go-ahead
+
+- createdAt: 2026-06-09T17:15:42.957Z
+- updatedAt: 2026-06-09T17:15:42.957Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- summary: "T329 implement review: APPROVE (native opus; verified at commit in an isolated worktree). FU-4b: Flows-tab onActivateAgent threaded FlowDiagram→DiagramSvg; activating an agentId node flips the help tab to 'agents' then rAF-scrolls help-agent-<agentId> via T328's exported scrollToHelpSection (exact anchor; correct tab-flip-then-scroll [tab,anchor]-effect sequencing); abstract nodes inert (gated on agentId!==undefined && onActivateAgent!==undefined). FU-4d: FlowLegend from exported ROLE_KIND_FILL (one swatch/roleKind, correct colors). Tests non-vacuous (click+Enter cross-nav to help-agent-plan-advance, abstract-inert + zero-scroll, per-kind swatch color). Required onActivateAgent prop on FlowDiagram sound (single always-supplying caller). check green 1368/0; nix build .#ledger-web exit 0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T329","goals:G38"]
+- sessionLogs: ["docs/logs/20260609-171522-a75d30bbc69d91b5c.md","docs/logs/20260609-171522-aae0c7ae76a4db924.md"]
