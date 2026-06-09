@@ -564,6 +564,56 @@ archives:
     summary: "G37 W3 (D43 part-3 repro/guard + verify) COMPLETE: T305 documented reflog repro (25e2fe6, R368); T306 4-cell file-scoped grep-invariant guard in canonical-ledgers.test.ts (169b032, R369, teeth-verified); T307 final verify PASS (R370: bun run check 1293/0 incl. the grep-invariant + nix build .#llm-skills exit 0). D43 RESOLVED. Live-activation via home-manager switch is a user follow-up."
     title: "D43 W3: documented repro + grep-invariant guard + verify"
     status: done
+  - id: M86
+    path: ./archive/milestones/M86.md
+    summary: G28 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Enabled pi-harness subagent support for the cq flow; work milestones M87-M91 delivered (K44-K46 decisions, R265-R268 reviews). Closed + archived in the post-G37 cleanup sweep.
+    title: "Plan: pi-agent subagent support for cq flow"
+    status: done
+  - id: M91
+    path: ./archive/milestones/M91.md
+    summary: G28 W5 (pi subagent dispatch acceptance demo) COMPLETE — all tasks terminal. Archived in the post-G37 cleanup sweep.
+    title: Pi subagent dispatch — acceptance demo
+    status: done
+  - id: M92
+    path: ./archive/milestones/M92.md
+    summary: G29 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Provider-qualified pi token grammar (pi:<provider>/<model>); D36 resolved; work milestone M94 delivered (K47, R277-R278). Archived in the post-G37 cleanup sweep.
+    title: "Plan: provider-qualified token support in cq config"
+    status: done
+  - id: M93
+    path: ./archive/milestones/M93.md
+    summary: G30 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Added the user-action-required handoff status threaded through the flow prompts/schema; work milestones M97-M101 delivered (K49, R282-R284). Archived in the post-G37 cleanup sweep.
+    title: "Plan: user-action-required handoff status"
+    status: done
+  - id: M95
+    path: ./archive/milestones/M95.md
+    summary: G31 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D38 (pinned the cq verdict enum on the Pi subagent path + fail-loud off-enum validation); work milestone M96 delivered (K48, R279-R281). Archived in the post-G37 cleanup sweep.
+    title: "Plan: fix D38 — pin verdict enum on the Pi subagent path"
+    status: done
+  - id: M102
+    path: ./archive/milestones/M102.md
+    summary: G32 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D39 (write-time handoff stop-gate invariant enforcement + turn-vs-run clause + euphemism blocklist); work milestones M103-M106 delivered (K51, R310-R313). Archived in the post-G37 cleanup sweep.
+    title: "Plan: fix D39 — enforce handoff stop-gate invariants (make effort-stops unwritable)"
+    status: done
+  - id: M108
+    path: ./archive/milestones/M108.md
+    summary: G34 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Help-popup Item-States rename + Agents tab + cq.toml [tiers] triplet mapping + the two follow-ups (privilege/exposed-tools; live-model runtime overlay via get_agent_models); work milestones M109-M112/M116/M118/M120 delivered (K54/K55/K57, R324-R343). Archived in the post-G37 cleanup sweep.
+    title: "Plan: help-popup item-states rename + Agents tab + tiers triplet mapping"
+    status: done
+  - id: M109
+    path: ./archive/milestones/M109.md
+    summary: G34 W1 (Item-States rename) COMPLETE — all tasks terminal. Archived in the post-G37 cleanup sweep.
+    title: "G34-W1: ledger-web help popup — rename State Machines → Item States (label + ids/testids/CSS)"
+    status: done
+  - id: M113
+    path: ./archive/milestones/M113.md
+    summary: G35 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D42 (fail-loud on duplicate-token [tiers] classification in parseTiers); work milestone M114 delivered (K56, T282). Archived in the post-G37 cleanup sweep.
+    title: "Plan: fix D42 — fail-loud on duplicate-token [tiers] classification in parseTiers"
+    status: done
+  - id: M115
+    path: ./archive/milestones/M115.md
+    summary: G36 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Optional thinking-effort suffix in cq model-identifier tokens; work milestones M117/M119/M121 delivered (K58, R342-R344). Archived in the post-G37 cleanup sweep.
+    title: "Plan: optional thinking-effort suffix in cq model-identifier tokens"
+    status: done
 ---
 
 # milestones
@@ -575,73 +625,6 @@ archives:
 - createdAt: 2026-06-01T19:15:33.341Z
 - updatedAt: 2026-06-01T19:15:33.341Z
 - title: ambient
-
-### M86 — open
-
-- createdAt: 2026-06-07T18:58:19.495Z
-- updatedAt: 2026-06-07T18:58:19.495Z
-- title: "Plan: pi-agent subagent support for cq flow"
-- description: Coordination milestone for the goal of enabling subagent support in the pi agent harness (which lacks it out of the box) so the cq flow/MCP can use subagents.
-
-### M91 — open
-
-- createdAt: 2026-06-07T19:38:58.589Z
-- updatedAt: 2026-06-07T19:38:58.589Z
-- title: Pi subagent dispatch — acceptance demo
-- description: "G28 work milestone 5/5: demonstrate the acceptance bar (Q128) — one read-only explorer dispatch AND one reviewer dispatch complete under pi on THIS repo (non-sandboxed) returning parseable structured results. Sandbox + implement-worker validation is a deferred follow-up."
-- dependsOn: ["M90"]
-
-### M92 — open
-
-- createdAt: 2026-06-07T23:58:02.725Z
-- updatedAt: 2026-06-07T23:58:02.725Z
-- title: "Plan: provider-qualified token support in cq config"
-- description: "Coordination milestone for adding explicit-provider token support to the cq.toml config grammar (e.g. minimax = \"pi:ollama-cloud:minimax-m3\"), resolving the D36 provider-ambiguity."
-
-### M93 — open
-
-- createdAt: 2026-06-08T00:02:01.908Z
-- updatedAt: 2026-06-08T00:02:01.908Z
-- title: "Plan: user-action-required handoff status"
-- description: Coordination milestone for adding a new handoffs status signalling the agent genuinely needs a user MANUAL/ENVIRONMENT action (not a question), and threading it through the flow prompts/schema.
-
-### M95 — open
-
-- createdAt: 2026-06-08T07:49:55.614Z
-- updatedAt: 2026-06-08T07:49:55.614Z
-- title: "Plan: fix D38 — pin verdict enum on the Pi subagent path"
-- description: "Coordination milestone for the defect-seeded fix goal G31 (resolves D38). Root cause confirmed via H27: the Pi dispatch path never re-asserts the cq agent's canonical verdict enum on the child, and no orchestrator-side step validates/normalizes the returned verdict before gating, so a Pi child can paraphrase the verdict (e.g. \"fail\") and silently mis-gate."
-
-### M102 — open
-
-- createdAt: 2026-06-08T10:48:54.877Z
-- updatedAt: 2026-06-08T10:48:54.877Z
-- title: "Plan: fix D39 — enforce handoff stop-gate invariants (make effort-stops unwritable)"
-- description: "Coordination milestone for the defect-seeded fix goal G32 (resolves D39). Root cause confirmed: the handoff stop-gate is unenforced prose (blockingQuestions optional, no per-status validation) + a turn-vs-run blind spot, producing laundered effort-stops (HO22/25/26). Fix: write-time enforcement of handoff invariants + advance.md turn-vs-run clause + euphemism blocklist."
-
-### M108 — open
-
-- createdAt: 2026-06-08T15:05:47.371Z
-- updatedAt: 2026-06-08T15:05:47.371Z
-- title: "Plan: help-popup item-states rename + Agents tab + tiers triplet mapping"
-
-### M109 — done
-
-- createdAt: 2026-06-08T16:56:34.107Z
-- updatedAt: 2026-06-08T18:19:57.755Z
-- title: "G34-W1: ledger-web help popup — rename State Machines → Item States (label + ids/testids/CSS)"
-
-### M113 — open
-
-- createdAt: 2026-06-08T20:42:12.810Z
-- updatedAt: 2026-06-08T20:42:12.810Z
-- title: "Plan: fix D42 — fail-loud on duplicate-token [tiers] classification in parseTiers"
-
-### M115 — open
-
-- createdAt: 2026-06-08T21:39:32.717Z
-- updatedAt: 2026-06-08T21:39:32.717Z
-- title: "Plan: optional thinking-effort suffix in cq model-identifier tokens"
 
 ### M122 — open
 

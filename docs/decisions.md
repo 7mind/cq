@@ -164,145 +164,49 @@ archives:
     summary: "G32 W1 COMPLETE: write-time handoff invariant enforcement. assertHandoffInvariants pure helper (core.ts) wired into applyCreateItem+applyUpdateItem (both adapters); mixed/answers-required⇒non-empty blockingQuestions, user-action-required⇒non-empty handoffReasons, else SchemaValidationError. Dual-adapter tests reproduce HO26 as an asserted throw. K52 deferred the stretch hardenings. T257-T260 done, R314-R317 go-ahead."
     title: "G32 W1: write-time handoff invariant enforcement (@cq/ledger, load-bearing)"
     status: done
+  - id: M86
+    path: ./archive/decisions/M86.md
+    summary: G28 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Enabled pi-harness subagent support for the cq flow; work milestones M87-M91 delivered (K44-K46 decisions, R265-R268 reviews). Closed + archived in the post-G37 cleanup sweep.
+    title: "Plan: pi-agent subagent support for cq flow"
+    status: done
+  - id: M92
+    path: ./archive/decisions/M92.md
+    summary: G29 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Provider-qualified pi token grammar (pi:<provider>/<model>); D36 resolved; work milestone M94 delivered (K47, R277-R278). Archived in the post-G37 cleanup sweep.
+    title: "Plan: provider-qualified token support in cq config"
+    status: done
+  - id: M93
+    path: ./archive/decisions/M93.md
+    summary: G30 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Added the user-action-required handoff status threaded through the flow prompts/schema; work milestones M97-M101 delivered (K49, R282-R284). Archived in the post-G37 cleanup sweep.
+    title: "Plan: user-action-required handoff status"
+    status: done
+  - id: M95
+    path: ./archive/decisions/M95.md
+    summary: G31 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D38 (pinned the cq verdict enum on the Pi subagent path + fail-loud off-enum validation); work milestone M96 delivered (K48, R279-R281). Archived in the post-G37 cleanup sweep.
+    title: "Plan: fix D38 — pin verdict enum on the Pi subagent path"
+    status: done
+  - id: M102
+    path: ./archive/decisions/M102.md
+    summary: G32 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D39 (write-time handoff stop-gate invariant enforcement + turn-vs-run clause + euphemism blocklist); work milestones M103-M106 delivered (K51, R310-R313). Archived in the post-G37 cleanup sweep.
+    title: "Plan: fix D39 — enforce handoff stop-gate invariants (make effort-stops unwritable)"
+    status: done
+  - id: M108
+    path: ./archive/decisions/M108.md
+    summary: G34 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Help-popup Item-States rename + Agents tab + cq.toml [tiers] triplet mapping + the two follow-ups (privilege/exposed-tools; live-model runtime overlay via get_agent_models); work milestones M109-M112/M116/M118/M120 delivered (K54/K55/K57, R324-R343). Archived in the post-G37 cleanup sweep.
+    title: "Plan: help-popup item-states rename + Agents tab + tiers triplet mapping"
+    status: done
+  - id: M113
+    path: ./archive/decisions/M113.md
+    summary: G35 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D42 (fail-loud on duplicate-token [tiers] classification in parseTiers); work milestone M114 delivered (K56, T282). Archived in the post-G37 cleanup sweep.
+    title: "Plan: fix D42 — fail-loud on duplicate-token [tiers] classification in parseTiers"
+    status: done
+  - id: M115
+    path: ./archive/decisions/M115.md
+    summary: G36 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Optional thinking-effort suffix in cq model-identifier tokens; work milestones M117/M119/M121 delivered (K58, R342-R344). Archived in the post-G37 cleanup sweep.
+    title: "Plan: optional thinking-effort suffix in cq model-identifier tokens"
+    status: done
 ---
 
 # decisions
-
-## M86
-
-### K44 — locked
-
-- createdAt: 2026-06-07T19:55:48.265Z
-- updatedAt: 2026-06-07T19:55:48.265Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: "Pi dispatch trigger: a Pi-side context asset MAY carry the harness-agnostic dispatch instruction; cq command prompts stay byte-unchanged"
-- rationale: "Resolves R265's new_question from the LOCKED answers + repo grounding (no fresh user input needed). Q126 (\"prompts work unchanged in all harnesses\") constrains the SHARED cq command prompts in nix/pkg/cq-assets (which encode only Claude Agent/subagent_type + Codex multi_agent, no Pi branch) — it does NOT constrain Pi's own system context. pi-context.md (nix/pkg/llm-contexts/pi-context.md) and an APPEND_SYSTEM-style Pi asset are ALREADY harness-specific, additive, Pi-only assets — not cq command prompts and not consumed by Claude/Codex. Therefore the dispatch trigger may be supplied two complementary ways, BOTH in scope and BOTH honoring Q126: (1) PRIMARY — register the Pi tool with a call shape/name that matches what the shared prompts ALREADY say (agent name + task [+ isolation:worktree]) per the locked Q130 recommendation, so the existing wording itself can fire it; (2) PERMITTED SUPPLEMENT — add a harness-agnostic dispatch instruction to a Pi-SIDE asset (pi-context.md / an APPEND_SYSTEM addition) telling the Pi model HOW to map the prompts' named-agent+task convention onto the dispatch tool. What stays byte-identical: every file under nix/pkg/cq-assets (commands + agents + skills) and the Claude/Codex wiring. What may change: Pi-side assets (pi-context.md / APPEND_SYSTEM) and nix/hm/dev-llm.nix programs.pi wiring. T224's dispatch design and T226/T227's end-to-end demo are bound by this decision (the demo drives the UNCHANGED cq prompt under Pi and asserts via git diff that nix/pkg/cq-assets is untouched)."
-- ledgerRefs: ["goals:G28"]
-
-### K45 — locked
-
-- createdAt: 2026-06-07T20:20:28.362Z
-- updatedAt: 2026-06-07T20:20:28.362Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: "plan review: approved"
-- rationale: Reviewer go-ahead (R268, round 4) — unanimous opus + grok + codex (minimax abstained, no API key); no new_questions, no criticism, no defects. G28 plan (work milestones M87-M91, tasks T221-T229) is fine-grained, sequenced, testable, grounded, and complete to Q128's acceptance bar; milestone DAG acyclic and consistent with task dependsOn. G28 plan LOCKED/approved.
-- ledgerRefs: ["goals:G28"]
-
-### K46 — locked
-
-- createdAt: 2026-06-07T20:50:42.751Z
-- updatedAt: 2026-06-07T20:50:42.751Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: K46 — Pi dispatch extension reads cq.toml at runtime via $CQ_CONFIG (default $CQ_PROJECT_ROOT/cq.toml) with an INLINED flat-table TOML reader + INLINED resolver (Route A; no cross-workspace import)
-- rationale: "T228 deliverable. The dispatch extension is a standalone store-path .ts loaded by the pi runtime (jiti) via programs.pi.settings.extensions — NOT in the @cq/cq-ledgers workspace, so it CANNOT import @cq/config/@cq/ledger at runtime (rejected option B) and must NOT bake values at build time (rejected option C). CHOSEN (Route A): the extension locates cq.toml via env var CQ_CONFIG (else $CQ_PROJECT_ROOT/cq.toml, else process.cwd()/cq.toml), with CQ_CONFIG/CQ_PROJECT_ROOT set on the piWrapped wrapper in nix/hm/dev-llm.nix ALONGSIDE CQ_AGENTS_DIR (T222). It parses [tiers]+[agent_tiers] with an INLINED, dependency-free reader for cq.toml's flat string-table subset ([table] headers + key=\"value\"; do NOT import smol-toml — a workspace dep the store-path extension can't resolve). The agent-name->tier->provider+model resolution is an INLINED tiny helper mirroring @cq/config's resolveAgentTier/resolveTierToken/resolveAgentModel (copied, not imported); T224's tests assert it matches @cq/config on the same cq.toml. Missing cq.toml / unlisted agent / absent table -> fall back to the parent pi session's active model. CONSUMPTION: T224 implements the extension's config read against THIS contract and T225 reuses the SAME inlined helper — neither re-decides the access strategy; both cite K46. Full backing note: docs/drafts/20260607-2049-pi-runtime-config-access.md."
-- ledgerRefs: ["goals:G28","tasks:T224","tasks:T225"]
-
-## M92
-
-### K47 — locked
-
-- createdAt: 2026-06-08T01:01:35.528Z
-- updatedAt: 2026-06-08T01:01:35.528Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: "plan review: approved"
-- rationale: Reviewer go-ahead on the G29 plan (work milestone M94, tasks T231-T239), ref review R278 — opus + codex + grok all go-ahead, all 9 R277 criticisms verified resolved; DAG acyclic, fine-grained/sequenced/testable/grounded/complete, honors locked Q132-Q136. Locking the plan; G29 -> planned.
-- ledgerRefs: ["goals:G29"]
-
-## M95
-
-### K48 — locked
-
-- createdAt: 2026-06-08T08:24:44.646Z
-- updatedAt: 2026-06-08T08:24:56.207Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: "G31 plan review: approved"
-- rationale: "G31 (fix D38 — pin the cq verdict enum on the Pi subagent path) reached unanimous go-ahead (R281) after a 3-round planner↔reviewer loop (R279 revise → R280 revise → R281 go-ahead). Locked plan: work milestone M96, tasks T240 (reinforce verdict enum in pi-context.md), T241/T242 (symmetric fail-loud off-enum→abstention validation in plan/advance.md + implement/advance.md, no synonym coercion), T243 (verify: bun run check + scoped nix build), T244 (documented why-it-can-no-longer-mis-gate argument). All tasks ledgerRef defects:D38."
-- ledgerRefs: ["goals:G31"]
-
-## M93
-
-### K49 — locked
-
-- createdAt: 2026-06-08T08:54:05.369Z
-- updatedAt: 2026-06-08T08:54:05.369Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: "G30 plan review: approved"
-- rationale: "G30 (add a `user-action-required` handoff status + thread it through the flow prompts) reached unanimous go-ahead (R284) after a 3-round planner↔reviewer loop (R282 revise → R283 revise → R284 go-ahead). Locked plan: 5 work milestones M97-M101, 12 tasks T245-T256. Honors locked answers Q137 (token=user-action-required, terminal), Q138 (narrow legal stop + anti-laundering, no-effort-gate intact), Q139 (distinct from answers-required, mixed via handoffReasons, 4 prompt tables), Q140 (no new schema field), Q141 (in-place schema edit, no backup-reinit, preserve HO records — committed: constants.ts + CI fixture test; operational: gitignored ledgers.yaml on main checkout), Q142 (warning bucket render + schema unit/grep-invariant/render tests + bun run check + scoped nix build)."
-- ledgerRefs: ["goals:G30"]
-
-## M102
-
-### K51 — locked
-
-- createdAt: 2026-06-08T11:18:52.721Z
-- updatedAt: 2026-06-08T11:18:52.721Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: "G32 plan review: approved"
-- rationale: "G32 (fix D39 — enforce handoff stop-gate invariants at write time + close the turn-vs-run blind spot) reached go-ahead (R313) after a 4-round planner↔reviewer loop (R310 revise → R311 revise → R312 revise → R313 go-ahead; opus go-ahead rounds 1-4, codex go-ahead round 3). Locked plan: 4 work milestones M103-M106, 9 tasks T257-T265. Design: a handoffs-specific PURE assertHandoffInvariants helper in @cq/ledger store/core.ts (modelled on assertQuestionAnswerPrecondition/D29 + assertGoalPhasePreconditions/F2; mixed/answers-required⇒non-empty blockingQuestions, user-action-required⇒non-empty handoffReasons, else SchemaValidationError), invoked in applyCreateItem (both stores route through it) + applyUpdateItem; NOT a generic schema DSL (core.ts:790 out-of-scope); the schema field stays required:false (conditional-on-status). Reproduce-first; dual-adapter tests reproducing HO26 as an asserted throw; advance.md + 3 per-flow prompts get the turn-vs-run clause + euphemism blocklist + self-check + enforced-invariant prose; 8-cell grep-invariant; verify gate. Stretch (cross-ledger open-question resolution + drained predicate-gate) deferred (T260, zero-code). All tasks ledgerRef defects:D39."
-- ledgerRefs: ["goals:G32"]
-
-## M108
-
-### K54 — locked
-
-- createdAt: 2026-06-08T17:24:03.339Z
-- updatedAt: 2026-06-08T17:24:03.339Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: "G34 plan review: approved"
-- rationale: "G34's plan (W1 rename M109 / W2 cq-config [tiers] inversion M110 / W3 Agents codegen+tab M111 / W4 verify M112; tasks T267–T281) reached unanimous go-ahead at review round 2 (R325) from the surviving reviewer panel opus[claude] + minimax[pi:ollama-cloud], after one revise round (R324, 10 criticisms) that added the `## Catalogue` structured source-of-truth convention (T275/T281), fixed the W3 dependency chain, and tightened acceptances. The grok-build reviewers (grok+codex) abstained as a documented operational stall this run. Honors locked answers: Q145 (web-only), Q146 (rename label + internal ids/testids/CSS), Q147 (build-time codegen from cq-assets), Q148 (all roles, default/N/A for non-configurable), Q149 ([tiers] as classifier, resolveTierToken removed / classifyToken+selectTokensForTier added, include claude mappings), Q150 (token-keyed inline [tiers], breaking, no migration). Plan locked; G34 -> planned."
-- ledgerRefs: ["goals:G34"]
-
-### K55 — locked
-
-- createdAt: 2026-06-08T17:39:51.804Z
-- updatedAt: 2026-06-08T17:39:51.804Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: "G34 follow-up plan (privilege class + exposed tools) review: approved"
-- rationale: "The follow-up extension to G34 (add per-role PRIVILEGE class RO/RW + EXPOSED TOOLS to the Agents-tab cards) reached unanimous go-ahead at review R326 (panel opus[claude] + minimax[pi:ollama-cloud]; grok-build excluded as a documented operational stall). Per locked answers Q151-Q153 the two fields are DERIVED MECHANICALLY (not authored): subagent privilege = RW iff none of {Write,Edit,MultiEdit,NotebookEdit,Bash} in disallowedTools else RO; command privilege = RW iff allowed-tools contains {Write,Edit,Bash} else RO; exposed tools shown RAW per-kind (disallowedTools+isolation for subagents / allowed-tools for commands / 'none declared'); the T275 parser is extended to read command allowed-tools. The extension folds into the existing W3 tasks T275/T276/T278/T279/T281 (no new tasks) and leaves the R325-approved base (W1/W2/W4, decision K54) and its sequencing intact. Known faithful consequence (recorded, not a defect): implement-reviewer's frontmatter omits Bash, so the strict rule derives it RW. G34 -> planned (extends K54)."
-- ledgerRefs: ["goals:G34"]
-
-### K57 — locked
-
-- createdAt: 2026-06-08T23:46:57.362Z
-- updatedAt: 2026-06-08T23:46:57.362Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: "G34 follow-up #2 plan LOCKED (go-ahead R343): live-model Agents-tab overlay via runtime get_agent_models"
-- rationale: "Plan for G34 follow-up #2 locked after a 2-round multi-planner/reviewer cycle (planners opus+minimax synthesized by the orchestrator, grok abstained; reviewers opus go-ahead + minimax abstained R2, grok/codex abstained — no API keys). 3 work milestones (M116 server / M118 web / M120 codegen), 10 tasks T283-T300. Architecture: NEW dedicated get_agent_models MCP tool (server-resolved 4-state overlay: resolved/not-configured/no-live-token/not-model-configurable) over the fixed 19-role roster keyed by AgentRole.id; ledger-web overlays it and DROPS the build-time model/modelMappings entirely (Q155), rendering distinguished labels (incl. 'default / not configured' on overlay-unavailable) with a catch-ANY-error fallback. R341 corrected the candidate planners' KEEP-as-fallback misread of Q155 + a LedgerToolError-narrowing gap + a false enum-identity claim + test-coverage gaps; R343 confirmed go-ahead."
-- ledgerRefs: ["goals:G34"]
-
-## M113
-
-### K56 — locked
-
-- createdAt: 2026-06-08T20:45:22.441Z
-- updatedAt: 2026-06-08T20:45:22.441Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: "G35 plan review: approved"
-- rationale: "G35 (defect-seeded fix for D42 — fail-loud on duplicate-token [tiers] classification in parseTiers) reached go-ahead at plan review (opus[claude] authoritative; grok-build stall, minimax not run for this tiny fully-specified plan). Locked plan: 1 work milestone M114, 1 task T282 (parseTiers throws CqConfigError naming both conflicting keys on a duplicate-token classification + tests: dup-throws, single-no-throw, existing-fixtures-still-parse). Grounded in confirmed root cause H30. G35 -> planned."
-- ledgerRefs: ["goals:G35"]
-
-## M115
-
-### K58 — locked
-
-- createdAt: 2026-06-08T23:47:06.291Z
-- updatedAt: 2026-06-08T23:47:06.291Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: "G36 plan LOCKED (go-ahead R344): optional thinking-effort suffix in cq model-identifier tokens"
-- rationale: "Plan for G36 locked after a 2-round multi-planner/reviewer cycle (planners opus+minimax synthesized, grok abstained; reviewers opus+minimax both go-ahead R2, grok/codex abstained — no API keys). 3 work milestones (M117 @cq/config core / M119 wire+extension / M121 docs+check), 8 tasks T284-T298. Locked design: trailing ':<effort>' off the LAST colon (Q160), gated by isEffort(harness,suffix) so opus-4.8[1m] stays unambiguous; ':' RESERVED in BOTH model halves; FIXED VALIDATED PER-HARNESS enums (Q161 — PI_EFFORTS off/minimal/low/medium/high/xhigh, CLAUDE_EFFORTS low/medium/high/xhigh/max) w/ fail-fast; effort IS part of token identity (reviewerTokensEqual; Q162); pi emits effort via the '--model provider/model:<effort>' SHORTHAND (R342 correction — NOT a --thinking flag), claude path inert in the pi-extension (Q163); optional effort on get_planners/get_reviewers/get_config (Q164). R342 corrected the wrong '--thinking' emission + 2 spurious dependsOn edges + the pi-model-half colon-reservation gap; R344 confirmed go-ahead."
-- ledgerRefs: ["goals:G36"]
 
 ## M122
 

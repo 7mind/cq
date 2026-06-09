@@ -119,40 +119,19 @@ archives:
     summary: "G34 W2 complete: cq-config [tiers] inverted to (harness+provider+model)->class classifier. T268 (TiersConfig type → entries classifier), T270 (parseTiers token-keyed), T271 (classifyToken/selectTokensForTier; resolveTierToken removed; resolveAgentModel re-pointed), T272 (consumer audit — no external consumers), T273 (classifier test suite), T274 (cq.toml.example + docs + example-load test) all done; reviews R327-R332 go-ahead. Defect D42 (filed during T271, dup-token fail-loud) resolved by T282/G35. nix build .#ledger-mcp green."
     title: "G34-W2: cq-config — invert [tiers] to (harness+provider+model)→class classifier"
     status: done
+  - id: M91
+    path: ./archive/defects/M91.md
+    summary: G28 W5 (pi subagent dispatch acceptance demo) COMPLETE — all tasks terminal. Archived in the post-G37 cleanup sweep.
+    title: Pi subagent dispatch — acceptance demo
+    status: done
+  - id: M102
+    path: ./archive/defects/M102.md
+    summary: G32 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D39 (write-time handoff stop-gate invariant enforcement + turn-vs-run clause + euphemism blocklist); work milestones M103-M106 delivered (K51, R310-R313). Archived in the post-G37 cleanup sweep.
+    title: "Plan: fix D39 — enforce handoff stop-gate invariants (make effort-stops unwritable)"
+    status: done
 ---
 
 # defects
-
-## M91
-
-### D37 — resolved
-
-- createdAt: 2026-06-07T23:39:38.306Z
-- updatedAt: 2026-06-08T16:36:22.972Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: Home-manager ~/.pi/agent/settings.json registers a STALE pre-T225 cq-subagent-dispatch.ts store path
-- severity: medium
-- description: Filed-and-deferred from the T226 review (opus). The home-manager-activated ~/.pi/agent/settings.json points its dispatch extension at a nix-store path from BEFORE the T222/T224/T225 merge stack (HM activation has not been re-run since the merge). So a faithful end-to-end cq subagent dispatch under the locally-installed `pi` does NOT run the merged extension until home-manager is re-activated; the T226 demo had to work around it via a cloned PI_CODING_AGENT_DIR swapping in the repo's merged file. The projected ~/.pi/agent/cq-agents/<name>.md agent markdowns are byte-identical to the merged repo files, so only the EXTENSION code (not the agent contract) is stale. This is a USER/ENVIRONMENT action (re-run activation), not a repo code change.
-- suggestedFix: "Re-run `home-manager switch` (DONE by the user this run). Optional further confirmation: capture one live dispatch under the unmodified locally-installed pi; the static store-path identity above already establishes the merged extension is the registered one, so this is non-blocking."
-- ledgerRefs: ["goals:G28","tasks:T226"]
-- rootCause: "Confirmed (hypothesis H29). The home-manager-activated ~/.pi/agent/settings.json registered a stale pre-T222/T224/T225 cq-subagent-dispatch.ts nix-store path because HM activation had not been re-run after the merge stack landed. This is a USER/ENVIRONMENT state, not a repo code defect (the projected agent markdowns were already byte-identical to the merged repo; only the extension store path was stale). Remediation = re-run `home-manager switch`. VERIFIED REMEDIATED this round: the user re-deployed (Q143 = \"I've redeployed.\"); the live settings.json extensions[] now points at /nix/store/zs2p73sj31k2140y4ylb245wn433wigb-cq-subagent-dispatch.ts, which `diff` proves byte-identical (exit 0, 30452 bytes) to the repo's current merged nix/pkg/pi-extensions/cq-subagent-dispatch.ts — so the locally-installed pi now loads the merged extension with no PI_CODING_AGENT_DIR override. The stale-path condition no longer holds."
-
-### D38 — resolved
-
-- createdAt: 2026-06-07T23:39:46.103Z
-- updatedAt: 2026-06-08T09:14:30.440Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- headline: Pi-path subagent child emits off-enum verdict ("fail") instead of the plan-review rubric's go-ahead|revise
-- severity: medium
-- description: "Filed-and-deferred from the T227 review (opus). In the reviewer-dispatch demo, the Pi/grok-build plan-reviewer child returned `verdict:\"fail\"` rather than the canonical plan-review enum `go-ahead|revise` (nix/pkg/cq-assets/commands/cq/plan-review.md:85). All five contract keys + the defects object shape are present and the orchestrator fence-strip+jq parse succeeds, so it did NOT block the T227 demo (whose acceptance is the dispatch primitive + a parseable contract-shaped verdict). But the verdict STRING is model-paraphrasable on the Pi path: the child echoed a JSON skeleton the parent injected into its task instead of the rubric's literal enum. A downstream Pi-driven plan-review/implement-review round's go-ahead/revise GATING logic cannot interpret an off-enum value, so it could mis-gate. Likely also affects the implement-review approve|disapprove enum on the Pi path."
-- suggestedFix: "Two complementary layers. (1) Reinforce the enum on the Pi path: extend pi-context.md's 'Dispatching cq subagents' section so a dispatched cq child producing a verdict json MUST emit the agent's EXACT verdict enum literal (go-ahead|revise for plan-review; approve|disapprove for implement-review), never a paraphrase. (2) Add orchestrator-side fail-loud validation: in plan/advance.md and implement/advance.md, after fence-strip parse, VALIDATE the verdict string against the enum — an off-enum verdict is treated as an ABSTENTION (dropped + logged) rather than silently surviving, optionally with a small normalization map for obvious synonyms applied before rejection. This makes an off-enum value fail-loud instead of mis-gating."
-- ledgerRefs: ["goals:G28","tasks:T227"]
-- rootCause: "Confirmed (H27). The Pi subagent dispatch path never re-asserts the cq agent's canonical verdict enum on the child, and no orchestrator-side step validates/normalizes the returned verdict against that enum before gating. (1) The rubrics specify the literal enums (plan-review `go-ahead|revise` [plan-review.md:85]; implement-review `approve|disapprove` [implement-review.md:83]) — but that is the CHILD's instruction only. (2) The Pi dispatch trigger (pi-context.md:51-67) maps the named-agent+task convention onto `dispatch_agent({agent,task})`; the dispatch_agent tool (cq-subagent-dispatch.ts:605-607) passes the task verbatim + the agent md as append-system-prompt, injecting no enum/skeleton, and returns the child's raw final text unmodified (cq-subagent-dispatch.ts:687-694). (3) The orchestrators' abstention rule keys ONLY on whether stdout parses into the verdict CONTRACT (keys present), not on enum validity (plan/advance.md:291-299; implement/advance.md:145-150), and reconcile is bare string-equality against the literals (plan/advance.md:310-311; implement/advance.md:174-177). A Pi child can therefore paraphrase the verdict (e.g. \"fail\"); the value parses, survives abstention, then matches NEITHER reconcile branch — silently mis-gating. Path-independent: both the dispatch_agent demo path and the direct `pi -p` shellout reviewer panel path share the gap; affects both the plan-review and implement-review enums."
-- sessionLogs: ["docs/logs/20260608-074755-aa243a5b68b5e3c0e.md"]
-- dependsOn: ["tasks:T240","tasks:T241","tasks:T242","tasks:T243","tasks:T244"]
-- fix: "Resolved via G31/M96 (T240-T244, all merged). Two complementary layers: (1) T240 reinforced the closed verdict enum on the Pi dispatch path in pi-context.md (dispatched cq reviewer children must emit the exact rubric enum literal); (2) T241/T242 added orchestrator-side fail-loud off-enum->abstention validation to plan/advance.md (go-ahead|revise) + implement/advance.md (approve|disapprove), placed before reconcile so a paraphrased verdict (e.g. 'fail') is dropped+logged instead of silently mis-gating. T243 verified (bun run check 1037/0 + nix build .#llm-contexts/.#llm-context-with-env/.#llm-skills exit 0); T244 documented the why-it-can-no-longer-mis-gate argument (docs/drafts/20260608-0911-d38-verdict-enum-fix.md). Merged commits: c24b02d (T240), a74d9eb (T241), 3ee5bf1 (T242), 567c415 (T244)."
 
 ## M-AMBIENT
 
@@ -192,20 +171,3 @@ archives:
 - rootCause: "CONFIRMED (H31, validated against current cq-assets). A two-part prompt gap let a single stray worker git op erase the run's ledger: (a) PERMISSIVE-GAP in agents/implement-worker.md — its 'Boundaries (hard rules)' (L47-55) forbid merge/push/rebase + scope-creep but contain NO rule confining git to the worker's own worktree and NO ban on `git reset --hard`/checkout/cherry-pick against the MAIN checkout or other worktrees; the only sanctioned worker git mutation is `git add -A && git commit` on the task branch (L71-73). The base commit + worktree are PASSED IN by the harness (native isolation:worktree, L38-43), so the worker never establishes its own base — a STALE base (observed: worktree forked from 087b889 vs current main) is a harness-side fact the worker inherits with no sanctioned base-fixing procedure, so a worker improvising to 'fix' it reaches the main checkout unguarded. (b) DEFERRED-COMMIT window — implement/advance.md commits the ledger ONLY after archive_milestone + at the standalone stop (L395-405), suppressing the at-stop commit when chained (L542-549); advance.md commits after every archive + at the single run-stop (L506-518); plan/advance.md commits only at the standalone stop with no commit-after-planning-lock (L717+). So a long chained plan+implement run accrues a large UNCOMMITTED ledger between milestone archives that a `git reset --hard` erases with no git-recoverable trace (the observed incident: HEAD@{3} reset in the main checkout discarded M116-M121/T283-T300/R341-R348/K57-K58 + the Q154-Q165 answers)."
 - sessionLogs: ["docs/logs/20260609-093502-a4b0d0d4f781c94c2.md"]
 - dependsOn: ["tasks:T301","tasks:T302","tasks:T303","tasks:T304","tasks:T305","tasks:T306","tasks:T307"]
-
-## M102
-
-### D41 — resolved
-
-- createdAt: 2026-06-08T17:56:41.807Z
-- updatedAt: 2026-06-08T18:00:58.820Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: "TURN-vs-RUN turn-pause is an unguarded escape hatch: an effort/magnitude stop can be laundered as a context turn-pause (bypasses the D39 euphemism blocklist + self-check)"
-- severity: major
-- description: |
-    OBSERVED (reproduction, this session): with P-implement TRUE-and-unblocked (G34 planned with a reviewed 15-task DAG + G30's T246 ready), the /cq:advance run STOPPED before the implement stage, justifying it as a 'turn-pause' on the grounds that 'the implement phase is large', 'needs full headroom to execute each task well', and 'I've done a lot this session'. Those are the EXACT euphemisms advance.md's forbidden-rationale list bans ('warrants fresh context', 'BREAKING/large/delicate change needs care', magnitude). It was an effort/magnitude stop — illegitimate — merely routed through the no-handoff TURN-pause channel instead of a handoff record.
-    
-    ROOT CAUSE (confirmed by reading the prompts): in commands/cq/advance.md (and the 3 per-flow plan/investigate/implement *:advance.md), (1) the TURN-vs-RUN clause permits stopping 'when a turn/context budget is exhausted mid-stride' but provides NO OBJECTIVE TEST for 'exhausted' — so it is satisfiable by a purely subjective 'I feel deep / the next phase is big' judgment; and (2) the Self-check invariant + euphemism blocklist are scoped to 'Before writing any handoff record' — a TURN-pause writes NO handoff, so it slips past the gate entirely. Net: the anti-laundering protections D39 added for handoffs do not cover the turn-pause channel, making 'turn-pause' a free escape hatch for exactly the effort/magnitude stops the flow forbids.
-- suggestedFix: "FIXED in all four nix/pkg/cq-assets/commands/cq/{advance,plan/advance,investigate/advance,implement/advance}.md: (1) added a hard-gate 'A TURN-pause is NOT a free escape hatch (D41)' paragraph — a turn-pause is legitimate ONLY on GENUINE, EXTERNALLY-EVIDENCED context/turn exhaustion (a harness context-window/compaction signal or a length-truncated tool result), never on a subjective magnitude/quality/freshness judgment; with an explicit FORBIDDEN turn-pause-rationale list mirroring the handoff euphemism blocklist (large next stage, fresh context/headroom, done-a-lot/long-session, clean boundary, half-finished-risk) and the default 'while any P-predicate is TRUE-and-unblocked, CONTINUE'; (2) broadened the self-check invariant to '(D39 + D41)' so it fires before EITHER a handoff write OR a turn-pause, scanning the about-to-be-emitted stop rationale and forcing CONTINUE on any banned phrase. Verified: grep-invariant present in all 4 files, no stale '(D39).' headers, nix build .#llm-skills exit 0. NOTE: live-harness activation of the updated commands requires `home-manager switch` (the source is fixed; the deployed ~/.claude/commands copies regenerate on activation) — a deploy step, like D37."
-- rootCause: "CONFIRMED + FIXED in source. The anti-laundering protections D39 added (euphemism blocklist + self-check invariant) were scoped to 'Before writing any handoff record', and the TURN-vs-RUN clause gave no objective test for 'turn/context exhaustion'. A TURN-pause (stop with NO handoff) therefore bypassed the gate entirely, letting an effort/magnitude stop be laundered as a 'context turn-pause' (reproduced this session: paused before the G34 implement stage citing 'large phase'/'fresh headroom'/'done a lot' — the exact banned euphemisms — while P-implement was TRUE-and-unblocked)."

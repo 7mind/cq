@@ -409,82 +409,16 @@ archives:
     summary: "G37 W3 (D43 part-3 repro/guard + verify) COMPLETE: T305 documented reflog repro (25e2fe6, R368); T306 4-cell file-scoped grep-invariant guard in canonical-ledgers.test.ts (169b032, R369, teeth-verified); T307 final verify PASS (R370: bun run check 1293/0 incl. the grep-invariant + nix build .#llm-skills exit 0). D43 RESOLVED. Live-activation via home-manager switch is a user follow-up."
     title: "D43 W3: documented repro + grep-invariant guard + verify"
     status: done
+  - id: M91
+    path: ./archive/tasks/M91.md
+    summary: G28 W5 (pi subagent dispatch acceptance demo) COMPLETE — all tasks terminal. Archived in the post-G37 cleanup sweep.
+    title: Pi subagent dispatch — acceptance demo
+    status: done
+  - id: M109
+    path: ./archive/tasks/M109.md
+    summary: G34 W1 (Item-States rename) COMPLETE — all tasks terminal. Archived in the post-G37 cleanup sweep.
+    title: "G34-W1: ledger-web help popup — rename State Machines → Item States (label + ids/testids/CSS)"
+    status: done
 ---
 
 # tasks
-
-## M91
-
-### T226 — done
-
-- createdAt: 2026-06-07T19:40:07.318Z
-- updatedAt: 2026-06-07T23:40:32.607Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: "Acceptance demo: one read-only explorer dispatch under Pi returning parseable evidence-json"
-- description: "Per Q128 (acceptance, 'as recommended') AND R265's END-TO-END Q126 verification gap: demonstrate ONE read-only explorer dispatch (investigate-style) completing UNDER PI on THIS repo in the NORMAL non-sandboxed env, DRIVEN BY THE ACTUAL UNCHANGED cq command prompt — NOT by a hand-written dispatch_agent({...}) call. Launch the wrapped pi harness (piWrapped, cwd = repo root) and run an UNCHANGED cq command that fires an investigate-explorer dispatch (e.g. the investigate/advance promptTemplate against a real hypothesis + branch context about this repo). Per decision K44 the prompt text itself stays byte-identical (any Pi-side trigger lives in a Pi-side context asset, never in nix/pkg/cq-assets). Observe the Pi model fire the dispatch tool from that unchanged prompt, the child run read-only (filtered toolset: no Write/Bash/dispatch per investigate-explorer's disallowedTools), and the child return the explorer's structured evidence block (numbered file:line + excerpt + relevance) that the orchestrator can parse. Capture the prompt invocation, the dispatch the model emitted, the child's filtered toolset, and the returned structured result as evidence."
-- acceptance: "Captured pi transcript shows, end-to-end from an UNCHANGED cq prompt: (1) the unchanged cq command/promptTemplate was run under piWrapped (cwd = repo root) — record the exact command/template invoked and its capture (pi transcript/log); (2) the Pi model fired the dispatch tool for investigate-explorer FROM the unchanged prompt text (not a manual dispatch_agent call); (3) the child ran read-only (its toolset shows NO Write/Bash/dispatch, matching investigate-explorer.md's disallowedTools); (4) the child returned a parseable structured evidence block matching investigate-explorer.md's contract and the orchestrator-side parse of it succeeds; (5) `git diff` asserts nix/pkg/cq-assets is UNTOUCHED after the run (the prompts truly ran unchanged). Demonstrated on THIS repo, non-sandboxed."
-- suggestedModel: frontier
-- dependsOn: ["T225","T229"]
-- ledgerRefs: ["goals:G28"]
-- blockedBy: ["Q131"]
-- resultCommit: fa5bc9e
-- completion: "ACCEPTANCE DEMO (Q128): an UNCHANGED cq investigate-explorer dispatch prompt drove grok-build to fire dispatch_agent(agent=investigate-explorer); child ran read-only (excludedTools=[dispatch_agent,write,edit,bash]) and returned a parseable fenced-json evidence block (8 file:line citations); orchestrator parse succeeded; cq-assets untouched. Evidence in docs/drafts/20260608-0029-T226-explorer-dispatch-demo.md. Merged."
-- sessionLogs: ["docs/logs/20260607-233329-aa0c624118a6e9655.md","docs/logs/20260607-233329-T226-T227-reviews.md"]
-
-### T227 — done
-
-- createdAt: 2026-06-07T19:40:15.244Z
-- updatedAt: 2026-06-07T23:40:36.336Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- headline: "Acceptance demo: one reviewer dispatch under Pi returning a parseable verdict-json"
-- description: "Per Q128 AND R265's END-TO-END Q126 verification gap: demonstrate ONE reviewer dispatch (plan-review-style) completing UNDER PI on THIS repo non-sandboxed, DRIVEN BY THE ACTUAL UNCHANGED cq command prompt — NOT a hand-written dispatch_agent({...}) call. Launch piWrapped (cwd = repo root) and run an UNCHANGED cq command that fires a plan-reviewer dispatch (e.g. the plan/advance flow's review step, or the cq:plan-review rubric prompt, against a real or sample emitted plan). Per decision K44 the cq command prompt stays byte-identical (any Pi-side trigger lives in a Pi-side context asset). Observe the Pi model fire the dispatch from the unchanged prompt and the child return the single fenced-json verdict ({ summary, verdict, new_questions, criticism, defects }) that the orchestrator parses. Together with the explorer demo (T226) this proves the dispatch primitive works for BOTH the read-only-explorer and reviewer subagent shapes. Record explicitly that full unattended-sandbox + implement-worker (worktree-isolation) validation is the deferred FOLLOW-UP, out of scope for G28. INDEPENDENT of T226 — both depend only on T225."
-- acceptance: "Captured pi transcript shows, end-to-end from an UNCHANGED cq prompt: (1) the unchanged cq command/promptTemplate (plan-review step / cq:plan-review rubric) was run under piWrapped (cwd = repo root) — record the exact command invoked and its capture; (2) the Pi model fired the dispatch for plan-reviewer FROM the unchanged prompt text; (3) the child returned a SINGLE fenced-json verdict conforming to the plan-review contract (parseable new_questions[]/criticism[]/defects[]/verdict) and the orchestrator-side parse succeeds; (4) `git diff` asserts nix/pkg/cq-assets is UNTOUCHED after the run. Demonstrated on THIS repo, non-sandboxed. A short note records that sandbox + implement-worker validation is deferred to a follow-up goal."
-- suggestedModel: frontier
-- dependsOn: ["T225","T229"]
-- ledgerRefs: ["goals:G28"]
-- blockedBy: ["Q131"]
-- resultCommit: 8727d15
-- completion: "ACCEPTANCE DEMO (Q128): an UNCHANGED cq plan-review prompt drove grok-build to fire dispatch_agent(agent=plan-reviewer); child returned a single fenced-json verdict with all 5 plan-review contract keys; orchestrator fence-strip+jq parse succeeded; cq-assets untouched; sandbox+implement-worker deferred-follow-up recorded. Off-enum verdict value filed as D38. Evidence in docs/drafts/20260608-0022-T227-reviewer-dispatch-demo.md. Merged."
-- sessionLogs: ["docs/logs/20260607-233329-afa0391d57f11518e.md","docs/logs/20260607-233329-T226-T227-reviews.md"]
-
-## M109
-
-### T267 — done
-
-- createdAt: 2026-06-08T16:56:59.978Z
-- updatedAt: 2026-06-08T18:18:13.497Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: Rename the State Machines tab to Item States (label + ALL internal identifiers)
-- description: |
-    In nix/pkg/cq-ledgers/packages/ledger-web/src/App.tsx (HelpOverlay) and styles.css, rename the 'State Machines' help tab to 'Item States' per Q146 — BOTH the visible label AND every internal identifier:
-    - tab-state union member 'statemachines' -> 'item-states' (the useState<...> type + every setTab/comparison);
-    - visible label text 'State machines'/'State Machines' -> 'Item States';
-    - data-testid help-tab-statemachines -> help-tab-item-states, help-statemachines -> help-item-states;
-    - per-ledger diagram ids/section testids help-statemachine-<ledger> -> help-item-state-<ledger> (the StateMachineDiagram component + its DiagramSvg idPrefix);
-    - CSS classes lw-statemachine* (e.g. lw-help-statemachines, lw-statemachine, lw-statemachine-svg) -> lw-item-state* in App.tsx AND styles.css.
-    Per Q145 the TUI has no help popup and is LEFT UNCHANGED. Surgical: do not touch the Shortcuts or Flows tabs. The internal React function name (StateMachineDiagram) may stay if convenient, but every DOM-visible id/class/testid/label moves to the item-states scheme.
-- acceptance: "From nix/pkg/cq-ledgers/: (negative) `rg -n 'statemachine|State machines|State Machines' packages/ledger-web/src` returns no DOM id/class/testid/label matches; (positive) `rg -n 'item-state' packages/ledger-web/src` shows the new testids/ids/classes AND the tab-state union now contains 'item-states' AND HelpOverlay renders the renamed 'Item States' tab button (data-testid help-tab-item-states) with one diagram per ledger under help-item-state-<ledger>; `bun run typecheck` green. (Render assertions are exercised by the W1 happy-dom test T269.)"
-- suggestedModel: standard
-- ledgerRefs: ["goals:G34"]
-- resultCommit: 2b1a2e0
-- completion: Renamed the web help 'State Machines' tab to 'Item States' — every DOM-visible identifier migrated to the item-states scheme (tab-state union member, label, data-testids help-tab-item-states/help-item-states, per-ledger help-item-state-<ledger>, DiagramSvg idPrefix, CSS lw-item-state*) in App.tsx + styles.css; two happy-dom tests updated. Cherry-picked onto main (clean; worker worktree was stale-based). Reviewed APPROVE; integrated bun run check green 1135/1skip/0.
-- sessionLogs: ["docs/logs/20260608-180917-a27f1b85731cda97f.md","docs/logs/20260608-181727-a0ebdfdbc5ec7ed80.md","docs/logs/20260608-181727-pi-minimax-T267.md"]
-
-### T269 — done
-
-- createdAt: 2026-06-08T16:57:16.294Z
-- updatedAt: 2026-06-08T18:19:48.963Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: Update happy-dom web tests for the renamed Item States tab
-- description: "Update the ledger-web happy-dom test(s) that assert on the old help testids (help-tab-statemachines / help-statemachines / help-statemachine-<ledger>) to the new item-states testids (help-tab-item-states / help-item-states / help-item-state-<ledger>). Preserve test intent: clicking the tab still loads one per-ledger diagram. Find the test file via `rg -n 'help-tab-statemachines|help-statemachines|statemachine' nix/pkg/cq-ledgers/packages/ledger-web/test`."
-- acceptance: "From nix/pkg/cq-ledgers/: `bun test packages/ledger-web` green; `rg -n 'statemachine' packages/ledger-web/test` returns nothing; the help test asserts the renamed item-states testids and still covers per-ledger diagram rendering."
-- suggestedModel: standard
-- dependsOn: ["T267"]
-- ledgerRefs: ["goals:G34"]
-- resultCommit: 2b1a2e0
-- completion: "Satisfied within T267's commit (2b1a2e0): the T267 worker updated packages/ledger-web/test/{helpTabs.test.tsx,stateMachineTab.test.tsx} to the new item-states testids (help-tab-item-states / help-item-states / help-item-state-<ledger>) with per-ledger diagram coverage preserved, to keep `bun run check` green. Verified on main: `rg statemachine packages/ledger-web/test` returns nothing; the tests assert the renamed testids + per-ledger rendering; integrated bun run check green 1135/1skip/0. Those test files were part of the R327-reviewed T267 diff (reviewer noted coverage preserved). No separate worker needed."
-- sessionLogs: ["docs/logs/20260608-180917-a27f1b85731cda97f.md"]

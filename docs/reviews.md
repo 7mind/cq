@@ -504,353 +504,59 @@ archives:
     summary: "G36 W3 — docs + verify. T296 (cq.toml.example + token-format docs for the :<effort> suffix; reserved ':' both halves, per-harness enums, pi --model shorthand), T298 (G36 verify: bun run check 1286/0 + nix build .#ledger-mcp exit 0) done + reviewed (R357/R358 go-ahead). Merged to main."
     title: "G36 W3: docs, cq.toml.example, full check + nix build"
     status: done
+  - id: M86
+    path: ./archive/reviews/M86.md
+    summary: G28 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Enabled pi-harness subagent support for the cq flow; work milestones M87-M91 delivered (K44-K46 decisions, R265-R268 reviews). Closed + archived in the post-G37 cleanup sweep.
+    title: "Plan: pi-agent subagent support for cq flow"
+    status: done
+  - id: M91
+    path: ./archive/reviews/M91.md
+    summary: G28 W5 (pi subagent dispatch acceptance demo) COMPLETE — all tasks terminal. Archived in the post-G37 cleanup sweep.
+    title: Pi subagent dispatch — acceptance demo
+    status: done
+  - id: M92
+    path: ./archive/reviews/M92.md
+    summary: G29 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Provider-qualified pi token grammar (pi:<provider>/<model>); D36 resolved; work milestone M94 delivered (K47, R277-R278). Archived in the post-G37 cleanup sweep.
+    title: "Plan: provider-qualified token support in cq config"
+    status: done
+  - id: M93
+    path: ./archive/reviews/M93.md
+    summary: G30 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Added the user-action-required handoff status threaded through the flow prompts/schema; work milestones M97-M101 delivered (K49, R282-R284). Archived in the post-G37 cleanup sweep.
+    title: "Plan: user-action-required handoff status"
+    status: done
+  - id: M95
+    path: ./archive/reviews/M95.md
+    summary: G31 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D38 (pinned the cq verdict enum on the Pi subagent path + fail-loud off-enum validation); work milestone M96 delivered (K48, R279-R281). Archived in the post-G37 cleanup sweep.
+    title: "Plan: fix D38 — pin verdict enum on the Pi subagent path"
+    status: done
+  - id: M102
+    path: ./archive/reviews/M102.md
+    summary: G32 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D39 (write-time handoff stop-gate invariant enforcement + turn-vs-run clause + euphemism blocklist); work milestones M103-M106 delivered (K51, R310-R313). Archived in the post-G37 cleanup sweep.
+    title: "Plan: fix D39 — enforce handoff stop-gate invariants (make effort-stops unwritable)"
+    status: done
+  - id: M108
+    path: ./archive/reviews/M108.md
+    summary: G34 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Help-popup Item-States rename + Agents tab + cq.toml [tiers] triplet mapping + the two follow-ups (privilege/exposed-tools; live-model runtime overlay via get_agent_models); work milestones M109-M112/M116/M118/M120 delivered (K54/K55/K57, R324-R343). Archived in the post-G37 cleanup sweep.
+    title: "Plan: help-popup item-states rename + Agents tab + tiers triplet mapping"
+    status: done
+  - id: M109
+    path: ./archive/reviews/M109.md
+    summary: G34 W1 (Item-States rename) COMPLETE — all tasks terminal. Archived in the post-G37 cleanup sweep.
+    title: "G34-W1: ledger-web help popup — rename State Machines → Item States (label + ids/testids/CSS)"
+    status: done
+  - id: M113
+    path: ./archive/reviews/M113.md
+    summary: G35 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Fixed D42 (fail-loud on duplicate-token [tiers] classification in parseTiers); work milestone M114 delivered (K56, T282). Archived in the post-G37 cleanup sweep.
+    title: "Plan: fix D42 — fail-loud on duplicate-token [tiers] classification in parseTiers"
+    status: done
+  - id: M115
+    path: ./archive/reviews/M115.md
+    summary: G36 coordination COMPLETE — goal closed done (user-authorized 2026-06-09). Optional thinking-effort suffix in cq model-identifier tokens; work milestones M117/M119/M121 delivered (K58, R342-R344). Archived in the post-G37 cleanup sweep.
+    title: "Plan: optional thinking-effort suffix in cq model-identifier tokens"
+    status: done
 ---
 
 # reviews
-
-## M86
-
-### R265 — revise
-
-- createdAt: 2026-06-07T19:53:17.679Z
-- updatedAt: 2026-06-07T19:54:02.700Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- summary: REVISE (3/4 reviewers usable; minimax abstained — no API key). opus + grok + codex all voted revise. Plan is well-grounded and largely fine-grained/testable, but has a critical feasibility hole (no per-agent tier SOURCE), a false dependency edge, a runtime-config-access gap, T222 mis-grounding, a Q126 end-to-end-verification gap, and acceptance imprecision. One user-only new_question on the Q126 dispatch-trigger mechanism.
-- new_questions: ["[opus] Q126/Q130 require the shared cq command prompts to work byte-for-byte UNCHANGED under Pi, yet those prompts currently encode only a Claude ('Agent tool + subagent_type') and Codex ('native multi_agent') dispatch branch with NO Pi branch. How is the new Pi dispatch tool expected to be invoked from the unchanged prompt text — must it be named/shaped so the existing 'Agent'/'subagent_type' wording already triggers it, or is a harness-agnostic dispatch instruction to be added to a Pi-side asset (e.g. pi-context.md / APPEND_SYSTEM.md — itself an asset addition, though NOT a cq command-prompt edit)? This determines whether 'prompts unchanged' is achievable Pi-side at all, and whether a (permitted) Pi-side context addition is in scope."]
-- criticism: ["[opus+grok+codex] CRITICAL feasibility hole: the plan assumes each agent carries a tier so T225 can 'resolve child model from the agent tier via [tiers]', but the cq agent markdown frontmatter is name/description/disallowedTools ONLY (no suggestedModel/tier field), and cq-assets must stay byte-identical (Q126). As written T225 is unimplementable. The revised plan MUST define the per-agent tier SOURCE — e.g. (a) an additive agent-name->tier map alongside [tiers] in cq.toml, (b) the orchestrator passes the tier explicitly at dispatch (Q127: 'orchestrator names which agent to run'), or (c) add a tier field to agent frontmatter (assess Q126 impact + whether Claude tolerates it) — then thread it through T222/T224/T225.","[opus+grok] T223 (add [tiers] + parse in @cq/ledger config layer) declares dependsOn T221 but is pure TypeScript/TOML config work independent of the child-session-spawn spike (its own description says 'independent of the extension implementation'). Remove the false T221 edge so M89/T223 runs concurrently with the spike.","[grok+codex] No task addresses how the standalone store-path .ts extension (loaded by the vendored pi-coding-agent runtime via settings.extensions) obtains the [tiers]/agent-tier config AT RUNTIME — cross-workspace import from @cq/ledger vs locating+parsing cq.toml directly vs inlining. T225 requires this resolution INSIDE the extension; add a task/step pinning the runtime config-access strategy.","[grok+codex] T222 mis-grounds + mis-scopes: it says 'materialize mergedAgents' but the extension (T224) reads individual nix/pkg/cq-assets/agents/<name>.md files — name the exact discoverable dir/files; and its git-diff acceptance wrongly includes '+ new pi-extensions files' (extension authoring/registration happen in T224/T225, not T222).","[opus] No task verifies the central Q126 constraint END-TO-END: T226/T227 invoke the tool DIRECTLY (dispatch_agent({agent,task})) rather than driving the actual unchanged cq command prompt under the wrapped Pi harness and observing it fire the dispatch. Add an acceptance step that runs an unchanged cq prompt under Pi AND a `git diff` assertion that nix/pkg/cq-assets is untouched.","[opus] T221 acceptance is internally inconsistent: it enumerates FIVE primitives {registerTool, child-session spawn, tool-filtering, model/provider pin, output capture} but states 'GO = all four primitives'. Fix the count (the two existing extensions prove registerProvider/on but NOT registerTool, so registerTool genuinely needs confirming).","[opus+codex] T222 acceptance only asserts the agent files EXIST on disk and leaves the exposure mechanism undecided (env var vs pi settings field); it does not assert the path is reachable/readable by the extension at runtime. Pin the exposure mechanism and add a runtime-resolve check to the T222->T224 hand-off.","[grok+codex] Acceptance for T224/T225/T226/T227 lacks an exact command/invocation/capture mechanism (pi flags, cwd, transcript capture) unlike the concrete 'bun test' / 'nix build' criteria — tighten each to a verifiable command + observable.","[codex] No task isolates/sequences the dev-llm.nix settings.extensions REGISTRATION of the new extension separately from its authoring; T224 acceptance leans on `nix build` succeeding (implying the wiring) but the registration step is not called out.","[codex contingency] Make T221's NO-GO branch a first-class contingency in the plan: if Pi 0.78.0's ExtensionAPI lacks the child-session-spawn / tool-filtering / per-child model-pin primitives, the locked mechanism (Q125/Q130) and possibly G28 scope must be revisited rather than every later milestone proceeding on an assumed GO. (Largely subsumed by T221 — add it as an explicit contingency note, not a separately-filed defect.)"]
-- ledgerRefs: ["goals:G28"]
-- sessionLogs: ["docs/logs/20260607-195324-a977c6128b17f3af5.md","docs/logs/20260607-195324-pi-codex.md","docs/logs/20260607-195324-pi-grok.md","docs/logs/20260607-195324-pi-minimax.md"]
-
-### R266 — revise
-
-- createdAt: 2026-06-07T20:06:21.082Z
-- updatedAt: 2026-06-07T20:06:56.320Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- summary: "ROUND 2 REVISE (opus go-ahead; grok + codex revise; minimax abstained — no API key). All ten R265 findings confirmed resolved and K44's Q126 reasoning judged sound. Remaining: planner-fixable sequencing/milestone-placement violation + a real completeness gap (no task authors/verifies the Pi-side dispatch-trigger instruction K44 relies on) + two minor labeling/acceptance tightenings. No new_questions, no out-of-scope defects — converging."
-- new_questions: []
-- criticism: ["[grok+codex] SEQUENCING/MILESTONE violation: T224 is in M88 (whose only milestone dep is M87) but dependsOn T228, which is in M89 (deps T223). So a task in M88 depends on a task in a LATER milestone (M89), and M88's milestone-level deps don't reflect it. Restructure so the real order T223->T228->T224 is consistent: e.g. move T228 (and/or T224) so no task depends on a later-milestone task, OR add the M88<-M89 milestone edge, OR fold the tier-routing prerequisites (T223/T228) into a milestone that precedes the extension. Fix the milestone graph + task placement to match the dependsOn edges.","[codex] COMPLETENESS gap (the dispatch trigger K44 relies on is never authored): per K44 the unchanged cq command prompt fires the Pi dispatch tool either because the tool's shape matches the existing named-agent+task wording AND/OR because a harness-agnostic dispatch instruction lives in a Pi-side asset (pi-context.md / APPEND_SYSTEM / programs.pi wiring). But NO task authors or verifies that Pi-side dispatch instruction — T224 only registers the tool + dispatch shape + settings.extensions entry, and T226/T227 ASSUME the unchanged promptTemplate (run under piWrapped) makes the model EMIT the dispatch call rather than prose. Add an explicit task (prerequisite of the T226/T227 end-to-end demos) that authors the Pi-side dispatch-trigger instruction (pi-context.md/APPEND_SYSTEM addition + any programs.pi wiring) and whose acceptance confirms an unchanged prompt actually fires the tool — without it the acceptance demos cannot pass.","[codex] T228 acceptance is underspecified: it requires only 'a written decision concrete enough for T224' but does not name the ARTIFACT location (a decisions ledger item / docs/drafts/*.md / a pinned source comment) nor how T224/T225 reference+consume it without re-deciding. Pin the artifact location and the consumption contract.","[codex] Labeling/ordering artifacts reduce sequenced-flow clarity: non-sequential task IDs (T223, T228, then T224-T227), T228 under M89 directly feeding T224 under M88, and T223 labeled 'deps NONE, runs concurrently' while its outputs are strict prereqs of T228/T224/T225. Clean up the milestone/label structure so the sequenced flow is unambiguous (consequence of the sequencing fix above)."]
-- ledgerRefs: ["goals:G28"]
-- sessionLogs: ["docs/logs/20260607-200625-a31a47f86fd863c5a.md","docs/logs/20260607-200625-pi-codex.md","docs/logs/20260607-200625-pi-grok.md","docs/logs/20260607-200625-pi-minimax.md"]
-
-### R267 — revise
-
-- createdAt: 2026-06-07T20:15:40.314Z
-- updatedAt: 2026-06-07T20:16:11.670Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- summary: "ROUND 3 REVISE (opus go-ahead + grok go-ahead; codex revise; minimax abstained). All R266 findings confirmed resolved. Only codex's 3 MINOR planner-fixable nitpicks remain: a spurious M89->M87 milestone edge, and T224 acceptance not stating explicitly that the child uses the parent-model DEFAULT there (tier resolution is deliberately T225). Converging — no new_questions, no out-of-scope defects."
-- new_questions: []
-- criticism: ["[codex] Spurious milestone edge: M89.dependsOn=[M87] is not backed by any task dependency — T223 has no deps and T228 depends only on T223; neither depends on T221 (the M87 spike). Remove M87 from M89.dependsOn (M89 config/tier work is independent of the child-session spike), so milestone deps reflect real task deps. (Minor/advisory — the prior round added the M88<-M89 edge correctly; this is the symmetric cleanup on M89 itself.)","[codex] T224 acceptance clarity: T224 deliberately defaults the child model to the PARENT's active model (full tier resolution is T225's job), but neither the acceptance nor codex's reading makes that explicit — codex misread it as an inverted prerequisite (T224 'requiring' tier resolution). Reword T224's description/acceptance to state plainly that tiered/per-agent model selection is NOT exercised in T224 (child uses parent-model default) and is added+verified in T225, so the T224->T225 split is unambiguous.","[codex] T224 acceptance is less concrete than T229/T226/T227 on what the 'dispatch' step exercises: state that the manual dispatch_agent probe in T224 verifies tool registration + filtered-child-spawn + result capture ONLY (NOT tier selection), with the concrete observable (non-empty result + child lacks the dispatch tool) — tighten to match the precision of the other tasks' acceptance."]
-- ledgerRefs: ["goals:G28"]
-- sessionLogs: ["docs/logs/20260607-201545-a73539c14aa6b2921.md","docs/logs/20260607-201545-pi-grok.md","docs/logs/20260607-201545-pi-codex.md","docs/logs/20260607-201545-pi-minimax.md"]
-
-### R268 — go-ahead
-
-- createdAt: 2026-06-07T20:19:37.945Z
-- updatedAt: 2026-06-07T20:20:02.631Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- summary: "ROUND 4 GO-AHEAD (unanimous: opus + grok + codex all go-ahead; minimax abstained — no API key). All three R267 minor findings confirmed fixed with no regressions: M89.dependsOn now [] (spurious M87 edge removed), T224 description carries an explicit child-model-default / T225 scope-boundary paragraph (tier selection NOT exercised in T224), and T224 acceptance scopes the dispatch probe to tool-registration + filtered-child-spawn + result-capture only. Milestone DAG (M87(—), M89(—), M88[M87,M89], M90[M88,M89], M91[M90]) is acyclic and consistent with every task's dependsOn; no task depends on a later-milestone task. Plan is fine-grained, sequenced, testable, grounded, and complete to Q128's acceptance bar. Ready to lock."
-- new_questions: []
-- criticism: []
-- ledgerRefs: ["goals:G28"]
-- sessionLogs: ["docs/logs/20260607-201941-a176e1045eb180489.md","docs/logs/20260607-201941-pi-codex.md","docs/logs/20260607-201941-pi-grok.md","docs/logs/20260607-201941-pi-minimax.md"]
-
-## M91
-
-### R275 — go-ahead
-
-- createdAt: 2026-06-07T23:40:02.577Z
-- updatedAt: 2026-06-07T23:40:02.577Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- summary: "T226 GO-AHEAD (opus approve, sole usable verdict; codex+grok pi shellouts abstained on `argument list too long` from the capture-heavy prompt; minimax abstained). ACCEPTANCE DEMO MET: opus re-parsed the committed capture — the grok-build model GENUINELY fired dispatch_agent(agent=investigate-explorer) from UNCHANGED cq-convention prompt wording (not a hand-written call); child ran read-only (excludedTools=[dispatch_agent,write,edit,bash] matching investigate-explorer.md); child returned a fenced-json evidence block (8/8 file:line citations, contract-valid), live orchestrator parse succeeded; docs-only, cq-assets+nix/ untouched. Out-of-scope defect D37 (stale HM pi settings) filed."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T226","goals:G28"]
-- sessionLogs: ["docs/logs/20260607-233329-aa0c624118a6e9655.md","docs/logs/20260607-233329-T226-T227-reviews.md"]
-
-### R276 — go-ahead
-
-- createdAt: 2026-06-07T23:40:07.461Z
-- updatedAt: 2026-06-07T23:40:07.461Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- summary: "T227 GO-AHEAD (UNANIMOUS usable: opus + codex + grok approve; minimax abstained). ACCEPTANCE DEMO MET: from an UNCHANGED cq plan-review prompt under pi grok-build (extension + pi-context trigger), the model GENUINELY fired dispatch_agent(agent=plan-reviewer); the isolated child returned a SINGLE fenced-json verdict with all 5 plan-review contract keys + correct defects-object shape, and the orchestrator fence-strip+jq parse succeeded (exit 0); docs-only, cq-assets byte-identical, sandbox+implement-worker validation recorded as deferred follow-up. The child's off-enum verdict:\"fail\" (vs go-ahead|revise) is an out-of-scope Pi-path model-paraphrase artifact (does NOT violate the shape/parse acceptance) — filed as defect D38, not a T227 gap."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T227","goals:G28"]
-- sessionLogs: ["docs/logs/20260607-233329-afa0391d57f11518e.md","docs/logs/20260607-233329-T226-T227-reviews.md"]
-
-## M92
-
-### R277 — revise
-
-- createdAt: 2026-06-08T00:50:32.880Z
-- updatedAt: 2026-06-08T00:51:04.276Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- summary: "G29 plan REVISE (UNANIMOUS usable: opus + codex + grok + minimax-via-ollama-cloud all revise; full 4-way panel — minimax now works). Plan is well-structured + correctly grounded in the 3-layer architecture, DAG acyclic; but carries a wrong cq.toml.example path, a missing T234→T232 edge + an activation-ordering hazard that can break the running MCP, T233 wording contradicting the bare-reject, incomplete test-migration scope, and underspecified cross-layer-test/acceptance precision. All planner-fixable; no new_questions; no out-of-scope defects."
-- new_questions: []
-- criticism: ["[opus] WRONG PATH: cq.toml.example is at the REPO ROOT (`cq.toml.example`), NOT `nix/pkg/cq-ledgers/cq.toml.example` — it holds the [tiers] block T234 must qualify. Fix the path in T234 (migrate), T237 (docs header), and T239 (the `rg` bare-pi audit path).","[opus+codex+grok] T234 is missing `dependsOn: T232`: its acceptance uses `get_config`/computeReviewers to show provider-qualified tokens, which REQUIRES T232's provider-surfacing through @cq/ledger + @cq/ledger-mcp. Add T232 to T234's dependsOn.","[opus] ACTIVATION-ORDERING HAZARD (T231→T234): T231 makes @cq/config loadConfig THROW on any bare `pi:<model>`, and the live (gitignored) repo-root cq.toml — codex/grok=`pi:grok-build`, minimax=`pi:minimax-m3` — is the exact config the RUNNING ledger MCP re-reads on every get_config/get_reviewers/get_planners call. A build+MCP-restart in the T231→T234 window throws on every read and breaks the orchestrator mid-flow. Constrain the live-cq.toml migration (T234) to co-merge with / precede T231's activation, and have the T239 gate assert the live config loads.","[codex+grok+minimax] T233 wording is contradictory: 'no `/` → null → parent fallback' reads like the PRE-D36 behavior. Reword to the post-fix observable: the extension mirror REFUSES a bare `pi:<model>` (tokenToChildModel returns null so it never dispatches provider-less), consistent with @cq/config THROWING on bare; T238 asserts BOTH layers refuse bare. State precisely what is returned/thrown for bare vs qualified, pi vs claude.","[opus+codex+grok] T235 test-migration scope may be incomplete: it adapts ONLY `packages/cq-config/test/config.test.ts`. Adding `provider` to the structural ResolvedReviewer/GetConfigResult + ledger-mcp projection (T232) can break any @cq/ledger-mcp config-capability test that deep-asserts the old `{harness,model}` shape. Verify and FOLD any such ledger-mcp test (and any other bare-pi fixture anywhere) into T235, so the T239 repo-wide `rg` audit has no unplanned survivor (and a remediation path if it finds one).","[codex+grok] T238 (end-to-end + cross-layer tests) `dependsOn` omits T235 — it shares config.test.ts and needs the pre-existing suite stable. Add T235. Also SPECIFY the cross-layer invariant concretely: for a shared token-fixture table, parseReviewerToken(s) accepts iff the extension's tokenToChildModel(s) accepts, and both agree on (harness, model, provider) — implemented by copying the extension's parse into the test (it cannot be imported). Make T238's acceptance 'bun test PASSES verifying X' (run+observe), not merely 'add test'.","[grok] T234 acceptance is not reproducible in a clean checkout/CI because the live cq.toml is gitignored: scope the REPRODUCIBLE acceptance assertion to `cq.toml.example` (a test loads it and resolves minimax→ollama-cloud), and treat the live-cq.toml edit as a documented local step that the T239 gate spot-checks via get_config in this session.","[grok] T239 `dependsOn` omits T231 explicitly (it is transitively covered via T232 etc.) — add T231 for an unambiguous gate; and the verification gate should fail loudly with a remediation pointer if the `rg` audit finds any un-migrated bare-pi token.","[grok+codex] Acceptance-precision + minor redundancy: make T236 (decisions item) cite T225's recorded live `--provider ollama-cloud` evidence as the empirical anchor (Q136), and tighten T237 doc acceptance to a concrete observable; T231's gate should be scoped to the NEW parse-case tests + typecheck (full pre-existing suite pass is deferred to T235/T238/T239 since the breaking grammar breaks old fixtures until T235). [minimax] add a sanity check in T234 that each migrated `<model>` exists under its target provider (guard against a typo like 'minmax')."]
-- ledgerRefs: ["goals:G29","defects:D36"]
-- sessionLogs: ["docs/logs/20260608-004043-G29-planners.md","docs/logs/20260608-004043-G29-reviews.md"]
-
-### R278 — go-ahead
-
-- createdAt: 2026-06-08T01:00:58.992Z
-- updatedAt: 2026-06-08T01:00:58.992Z
-- author: "opus-4.8[1m]"
-- session: 994b02a0-7e3f-40df-81ed-b12b9ce6b13e
-- summary: "G29 plan ROUND 2 GO-AHEAD (opus + codex + grok all go-ahead; minimax-via-ollama-cloud was an operational stall — too slow, killed). All 9 R277 criticisms verified resolved against task source + repo: repo-root cq.toml.example path (T234/T237/T239); T234 dependsOn [T231,T232] + the T231→T234 activation-ordering hazard + T239 live-config load spot-check; T233 reworded to the bare-pi REFUSE contract matching the actual tokenToChildModel; T235 broadened to all bare-pi fixtures incl. @cq/ledger-mcp; T238 cross-layer ACCEPT-iff/REFUSE-iff invariant via an in-test replica + dependsOn T235; T234 reproducible-vs-live acceptance split + per-model provider sanity; T239 dependsOn T231 + fail-loud audit remediation; T236 cites the real done T225 live evidence, T237 concrete acceptance, T231 gate scoped to new parse-cases+typecheck. DAG acyclic + consistent; fine-grained/sequenced/testable/grounded/complete; honors locked Q132-Q136. Ready to lock."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["goals:G29","defects:D36"]
-- sessionLogs: ["docs/logs/20260608-010041-G29-review2.md"]
-
-## M95
-
-### R279 — revise
-
-- createdAt: 2026-06-08T08:11:20.561Z
-- updatedAt: 2026-06-08T08:11:20.561Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "G31 plan ROUND 1 REVISE (3/4 revise: codex+grok+minimax revise; opus go-ahead). Plan is well-grounded in the confirmed D38 root cause and the DAG is acyclic, but carries an unjustified T242←T241 edge, a synonym-normalization layer that is scope-creep AND contradicts fail-loud, imprecise acceptance (bare paths + approx line numbers), an underspecified nix-build product list, and a T244 path-traceability wording gap. All planner-fixable; no new_questions; no out-of-scope defects."
-- new_questions: []
-- criticism: ["[codex,grok] T242 dependsOn [T241] is unjustified: the two orchestrator validation edits target INDEPENDENT files (plan/advance.md vs implement/advance.md) with no shared output/state/prerequisite — violates correctly-sequenced. Remove the edge (make both roots) and preserve symmetry by fully specifying the IDENTICAL block shape in both task descriptions.","[codex,minimax] T241/T242 prescribe a synonym-normalization map that (a) is NOT in G31's required fix (scope creep) and (b) CONTRADICTS fail-loud — normalizing a paraphrase into a canonical enum silently RECOVERS it instead of abstaining. Remove the synonym map entirely; the required behavior is: any verdict not EXACTLY an enum literal is dropped+logged as an ABSTENTION.","[codex] T240/T241/T242 acceptance uses bare filenames + approximate line numbers; use fully-qualified repo paths (nix/pkg/llm-contexts/pi-context.md, nix/pkg/cq-assets/commands/cq/{plan,implement}/advance.md) and content-presence observables (grep for the new rule text) rather than line-number assertions that won't match git diff output.","[minimax] T243 acceptance underspecifies the nix build: enumerate the CONCRETE product attrs that vendor nix/pkg/cq-assets + nix/pkg/llm-contexts and give the exact `nix build` command from repo root (the changed assets feed the home-manager LLM bundle, NOT the ledger-mcp/tui/web Bun apps).","[codex] T244 'both dispatch paths' must be made explicitly TRACEABLE to D38's path-independent root cause: the dispatch_agent child path is closed by the T240 pi-context.md reinforcement and the direct `pi -p` reviewer-panel path by the T241/T242 orchestrator validation."]
-- ledgerRefs: ["goals:G31"]
-- sessionLogs: ["docs/logs/20260608-080957-a7a8b2a4d39a4f50c.md","docs/logs/20260608-080957-pi-codex.md","docs/logs/20260608-080957-pi-grok.md","docs/logs/20260608-080957-pi-minimax.md"]
-
-### R280 — revise
-
-- createdAt: 2026-06-08T08:20:41.717Z
-- updatedAt: 2026-06-08T08:20:41.717Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "G31 plan ROUND 2 REVISE (opus revise; codex + grok go-ahead; minimax abstained — shellout timeout exit 124). All five R279 points verified resolved. One residual planner-fixable criticism from opus: T243's nix-build acceptance presumes a buildable attr vendoring cq-assets, but cq-assets is eval-time-only. Converging."
-- new_questions: []
-- criticism: ["[opus] T243 acceptance presumes a `nix build .#<attr>` target that VENDORS nix/pkg/cq-assets, but cq-assets is consumed EVAL-TIME-ONLY via nix/pkg/cq-assets/assets.nix (builtins.readFile/readDir) and surfaces as the flake-level `llmAssets` output — it has NO buildable packages.* derivation. Only `llm-contexts` / `llm-context-with-env` / `llm-skills` are buildable, and of those only `llm-contexts` vendors the T240-edited nix/pkg/llm-contexts; none builds the T241/T242-edited cq-assets Markdown (read via readFile, so a green build would not exercise them anyway). Tighten T243: state cq-assets is eval-time-only, drop the implied per-file cq-assets build target, scope the nix-build gate to `llm-contexts` (+ `llm-context-with-env`/`llm-skills` for asset-validation-into-the-graph), and make `bun run check` the substantive guard — so the acceptance is satisfiable as written."]
-- ledgerRefs: ["goals:G31"]
-- sessionLogs: ["docs/logs/20260608-082009-a321657379502d04a.md","docs/logs/20260608-082009-pi-codex.md","docs/logs/20260608-082009-pi-grok.md","docs/logs/20260608-082009-pi-minimax.md"]
-
-### R281 — go-ahead
-
-- createdAt: 2026-06-08T08:24:40.350Z
-- updatedAt: 2026-06-08T08:24:40.350Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "G31 plan ROUND 3 GO-AHEAD (UNANIMOUS: opus + codex + grok + minimax all go-ahead; minimax now returned within timeout). R280's sole criticism (T243 presuming a buildable cq-assets attr) verified resolved: T243 records cq-assets eval-time-only, scopes the nix-build gate to the real buildable attrs (.#llm-contexts vendors the T240 pi-context.md edit, +.#llm-context-with-env/.#llm-skills for asset-graph validation), bun run check the substantive guard. DAG acyclic (T240/T241/T242 roots; T243/T244←all three); off-enum→abstention edits symmetric + fail-loud (no synonym coercion); plan fully achieves D38 across both dispatch paths + both enums. Ready to lock."
-- new_questions: []
-- criticism: []
-- ledgerRefs: ["goals:G31"]
-- sessionLogs: ["docs/logs/20260608-082403-a7069cb62865e8e08.md","docs/logs/20260608-082403-pi-codex.md","docs/logs/20260608-082403-pi-grok.md","docs/logs/20260608-082403-pi-minimax.md"]
-
-## M93
-
-### R282 — revise
-
-- createdAt: 2026-06-08T08:42:40.311Z
-- updatedAt: 2026-06-08T08:42:40.311Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: G30 plan ROUND 1 REVISE (opus + codex + minimax go-ahead; grok revise). Plan well-grounded, acyclic, honors all locked answers Q137-Q142; one substantive sequencing fix + three acceptance-precision tightenings from grok. All planner-fixable; no new_questions; no out-of-scope defects.
-- new_questions: []
-- criticism: ["[grok] T247 (committed fixture records-survive test) incorrectly dependsOn T246 (the LOCAL gitignored docs/ledgers.yaml edit). Per Q141 the live edit is a non-committed local runtime migration; the committed fixture test must be CI-independent and depend ONLY on T245 (constants.ts). Repoint T247 dependsOn -> [T245]; note the live ledgers.yaml edit (T246) is a separate operational step.","[grok] T245 description should explicitly enumerate the precise edits (add token to statusValues + terminalStatuses + a transitions empty entry) so it is independently testable, not deferring verifiability to T255.","[grok] T252/T253/T254 acceptance is too terse ('handoff table row'); each must require the row's surrounding text to carry the narrow-legal-stop / forbidden-look-alikes / no-effort-stop-gate-intact / distinct-from-answers-required / mixed-handoffReasons cross-references (Q138/Q139), so each of the four tables is individually verifiable.","[grok] T250 acceptance 'warning not green' is indirect/negative; positively assert the warning bucket/class/color for user-action-required in BOTH mirrored status.ts AND that the other four handoff statuses' buckets are unchanged."]
-- ledgerRefs: ["goals:G30"]
-- sessionLogs: ["docs/logs/20260608-084157-aa6b092e7b5729c43.md","docs/logs/20260608-084157-pi-codex.md","docs/logs/20260608-084157-pi-grok.md","docs/logs/20260608-084157-pi-minimax.md"]
-
-### R283 — revise
-
-- createdAt: 2026-06-08T08:49:26.703Z
-- updatedAt: 2026-06-08T08:49:26.703Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "G30 plan ROUND 2 REVISE (opus + grok go-ahead; codex + minimax revise). All four R282 fixes verified applied. Of the new findings: codex#2/codex#3/minimax#1 are ARTIFACTS of the abbreviated round-2 review PROMPT (the actual ledger tasks already name the three nix attrs in T256 and the four prompt tables in T251-T254 + the T255 grep-invariant) — no plan change needed for those. The one substantive fix: codex#1 — T246 (in-place edit of the GITIGNORED docs/ledgers.yaml) is an OPERATIONAL main-checkout migration, not a worktree code task (a worktree edit to a gitignored file cannot merge back). Reframed accordingly."
-- new_questions: []
-- criticism: ["[codex] T246 is an OPERATIONAL live-ledger migration of the gitignored docs/ledgers.yaml — it must be performed on the MAIN checkout (it produces no committed diff, and a worktree task editing a gitignored file cannot merge back). The committed Q141 deliverables are T245 (constants.ts) + T247 (CI fixture test). Reframe T246 as operational + ensure the verify path (T256 task-level deps T247/T250/T255) gates on the COMMITTED test T247, not on operational T246.","[codex,minimax — PROMPT ARTIFACT, no change] T256 already names `.#llm-contexts .#llm-context-with-env .#llm-skills` in its acceptance; the 'vague scoped nix build' read came from the abbreviated review prompt, not the task.","[codex — PROMPT ARTIFACT, no change] all four prompt tables ARE covered: T251 (advance.md), T252 (plan), T253 (investigate), T254 (implement), with T255 the four-table grep-invariant; the round-3 prompt states this explicitly."]
-- ledgerRefs: ["goals:G30"]
-- sessionLogs: ["docs/logs/20260608-084846-ad018a304777bde16.md","docs/logs/20260608-084846-pi-codex.md","docs/logs/20260608-084846-pi-grok.md","docs/logs/20260608-084846-pi-minimax.md"]
-
-### R284 — go-ahead
-
-- createdAt: 2026-06-08T08:53:59.842Z
-- updatedAt: 2026-06-08T08:53:59.842Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "G30 plan ROUND 3 GO-AHEAD (UNANIMOUS: opus + codex + grok + minimax). T246 operational reframe sound; T256 verify gates on committed T247 (not operational T246). All locked answers Q137-Q142 honored; DAG acyclic; all R282/R283 fixes applied; prior round-2 prompt-artifact findings confirmed non-issues. Ready to lock."
-- new_questions: []
-- criticism: []
-- ledgerRefs: ["goals:G30"]
-- sessionLogs: ["docs/logs/20260608-085336-a644adda2d79b52bb.md","docs/logs/20260608-085336-pi-codex.md","docs/logs/20260608-085336-pi-grok.md","docs/logs/20260608-085336-pi-minimax.md"]
-
-## M102
-
-### R310 — revise
-
-- createdAt: 2026-06-08T11:03:58.553Z
-- updatedAt: 2026-06-08T11:03:58.553Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "G32 plan ROUND 1 REVISE (opus go-ahead; codex + grok + minimax revise). Design verified grounded + sound (assertHandoffInvariants pure helper in core.ts, both apply* paths, schema-field correctly unchanged, T260 gated leaf, DAG acyclic). Planner-fixable: (A) T263 4-prompt-coverage clarity + thread euphemism+self-check into the 3 per-flow too; (B) T259 acceptance matrix (status×empty-field + create/update + both adapters + SchemaValidationError + HO26 pre/post); (C) T260 reframe to default-defer (not scope creep). No new_questions; no real out-of-scope defects (T260's stretch IS in D39's suggestedFix, reframed default-defer)."
-- new_questions: []
-- criticism: ["[codex,grok,minimax] T263 names only the 3 per-flow prompts but the goal says 'the 4 *:advance prompts'. Clarify: the 4th is advance.md (T261/T262); T263 covers plan/investigate/implement advance.md. AND thread BOTH the turn-vs-run clause AND the euphemism-blocklist+self-check into the 3 per-flow files (not just turn-vs-run) so all four are consistent; T264's four-table grep then checks all four for both token sets.","[codex,grok,minimax] T259 acceptance is too vague. Require explicitly: (a) the HO26 repro — mixed+empty blockingQuestions THROWS post-fix (and note it succeeded pre-fix); (b) all three status×empty-field combos — mixed+[], answers-required+[] (blockingQuestions), user-action-required+[] (handoffReasons) — each THROWS SchemaValidationError; (c) the valid non-empty counterparts SUCCEED + drained/illness with empty still succeed; (d) BOTH createItem and updateItem (effective-fields) paths; (e) BOTH InMemoryLedgerStore and FsLedgerStore (Fs on temp fixtures).","[codex,grok] T260 reads as scope-creep inside the enforcement milestone. Reframe to DEFAULT-DEFER: the load-bearing non-empty checks (T257-T259) fully close the reproduced HO22/25/26 launder; the cross-ledger open-question-resolution (A) is implemented ONLY if trivially cheap given F2 plumbing, else deferred-with-rationale; the `drained` predicate-gate (B) defers to the prompt layer. T260 is a cheap scope-DECISION (already a DAG leaf — nothing depends on it), not optional implementation work that blocks M103."]
-- ledgerRefs: ["goals:G32"]
-- sessionLogs: ["docs/logs/20260608-110324-af50ed222aaddb4a5.md","docs/logs/20260608-110324-pi-codex.md","docs/logs/20260608-110324-pi-grok.md","docs/logs/20260608-110324-pi-minimax.md"]
-
-### R311 — revise
-
-- createdAt: 2026-06-08T11:10:53.681Z
-- updatedAt: 2026-06-08T11:10:53.681Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "G32 plan ROUND 2 REVISE (opus go-ahead; codex+grok+minimax revise). All 3 R310 fixes verified. Two genuinely-valid new points + artifacts. Substantive: (A) reproduce-first — the enforcement task must write the FAILING repro first (confirm the mixed+empty write SUCCEEDS pre-fix = D39 reproduced) then fix, green-merge-compatible; (B) advance.md (T261/T262) must also carry the enforced-invariant prose, not only the 3 per-flow (T263); (C) T264 name the explicit 2-token-set × 4-prompt matrix. The 'T257/T258 too terse / re-anchor both-stores + no-schema-change' criticisms are ARTIFACTS of the abbreviated round-2 prompt — the actual ledger tasks already cite D29/F2 + SchemaValidationError + 'both stores route through applyCreateItem' + 'do NOT change any HANDOFFS_SCHEMA field'."
-- new_questions: []
-- criticism: ["[codex] Reproduce-first (CLAUDE.md §6a): the enforcement task must FIRST author the minimal repro assertion (createItem('handoffs', mixed, blockingQuestions:[]) should throw) and confirm it FAILS against the unmodified store (the bad write currently SUCCEEDS = D39 reproduced; capture it in the session log), THEN add the helper+wiring so it passes. The per-task green-merge constraint forbids committing a red test on a branch, so this is satisfied by demonstrating TEETH within the enforcement task (the bad write succeeds without the assertion). T259 must also demonstrate the reproduction (bad write succeeds without the enforcement).","[codex,grok] advance.md (the 4th *:advance prompt) must ALSO carry the enforced-invariant prose (a standalone mixed/answers-required handoff REQUIRES a non-empty blockingQuestions[], user-action-required a non-empty handoffReasons[], else the @cq/ledger write THROWS) — currently only T263 (the 3 per-flow) adds it. Add it to T262's scope (advance.md) so all four prompts are consistent.","[codex,grok,minimax] T264 acceptance: name the EXPLICIT matrix — 2 token sets (turn-vs-run clause; euphemism-blocklist + self-check) × 4 prompt files (advance.md + plan/investigate/implement advance.md) = 8 cells all populated; FAILS if any cell is missing."]
-- ledgerRefs: ["goals:G32"]
-- sessionLogs: ["docs/logs/20260608-111023-g32-round2-panel.md","docs/logs/20260608-110324-af50ed222aaddb4a5.md"]
-
-### R312 — revise
-
-- createdAt: 2026-06-08T11:16:44.885Z
-- updatedAt: 2026-06-08T11:16:44.885Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "G32 plan ROUND 3 (opus + codex go-ahead; grok revise). grok's revise: (1) M104 'self-reference [deps M104]' — MISREAD, M104 dependsOn ['M103'] (verified); (2) T261/T262 same-file split + W1-W4 fragmentation — granularity judgment (opus+codex accept; maps to the 3 fix layers + verify); (3) T260 scope-decision should PRECEDE implementation — semi-valid, ADDRESSED: T260 reframed as an up-front ZERO-CODE deferral (deps [], decides to DEFER both stretch hardenings — cross-ledger + drained-gate — so it gates/alters nothing). Only the T260 reframe was applied; the self-dep is false and the fragmentation is the intended layer mapping."
-- new_questions: []
-- criticism: ["[grok] T260 (stretch scope-decision) was sequenced AFTER the helper/tests; a scope decision conceptually precedes the implementation it could affect. FIXED: T260 reframed as an UP-FRONT zero-code deferral (dependsOn [] — it now precedes/parallels W1), explicitly DEFERRING both optional hardenings (the load-bearing non-empty checks fully close the reproduced launder), so it implements nothing and gates nothing."]
-- ledgerRefs: ["goals:G32"]
-- sessionLogs: ["docs/logs/20260608-111023-g32-round3-panel.md"]
-
-### R313 — go-ahead
-
-- createdAt: 2026-06-08T11:18:45.516Z
-- updatedAt: 2026-06-08T11:18:45.516Z
-- author: "opus-4.8[1m]"
-- session: $CLAUDE_CODE_SESSION_ID
-- summary: "G32 plan ROUND 4 GO-AHEAD (opus confirming reviewer; reconciled with codex go-ahead round 3). The sole remaining R312 point (T260 ordering) is fixed — T260 verified as an up-front zero-code deferral (deps [], no code, gates nothing). grok's round-3 'M104 self-reference' was a verified misread (M104 dependsOn ['M103']); its fragmentation concern is the intended 3-layer + verify mapping (opus+codex accept). Plan complete + acyclic + grounded against real code (applyCreateItem L309 / applyUpdateItem L259 / assertGoalPhasePreconditions L808 / no-DSL note ~L789 / HANDOFFS_SCHEMA L343 with fields correctly left required:false / all four *:advance prompts). Reproduce-first + dual-adapter + grep-invariant + verify present. Ready to lock."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["goals:G32"]
-- sessionLogs: ["docs/logs/20260608-111023-a18b40d5596a3b471.md"]
-
-## M108
-
-### R324 — revise
-
-- createdAt: 2026-06-08T17:17:21.876Z
-- updatedAt: 2026-06-08T17:17:21.876Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- summary: "G34 plan review round 1 (panel: opus[claude] + minimax[pi:ollama-cloud]; grok+codex[pi:grok-build] DROPPED — operational stall). Reconciled verdict REVISE (both survivors revise). Plan is well-sequenced and parts 1+3 are solid; the load-bearing fix is part 2's missing source-of-truth for the structured inputs/outputs/IO-schema fields."
-- new_questions: []
-- criticism: ["[opus] Part 2 (Agents tab) has NO defined source of truth for the STRUCTURED inputs/outputs/input-output-schema fields Q148+goal require. cq-assets agent .md files carry only frontmatter (name/description/disallowedTools) + prose body; parseAgentMarkdown (T275) extracts only {frontmatter,body}, so codegen can derive description + prompt-template body but NOT inputs/outputs/schemas. A hardcoded per-role table in the codegen script reintroduces the manual-drift Q147 chose codegen to avoid, AND is invisible to the T277 freshness test (regen reproduces the same hardcoded data). FIX: name the source of truth — preferred per Q147 'stay in sync': add a STRUCTURED inputs/outputs/ioSchema convention (frontmatter or a parseable section) to the cq-assets agent+command files and have codegen PARSE it (so freshness genuinely guards it); add the task(s) to introduce that structured data to the assets. (Alternative, weaker: explicitly scope those fields as hand-curated outside the freshness guard.)","[opus] T275 parseAgentMarkdown spec says extract frontmatter 'tools', but the real cq-assets frontmatter uses 'disallowedTools' (+ 'isolation' on implement-worker), not 'tools' — fix the field mapping to the real keys or the tools field is empty for every role.","[minimax] W3 sequencing: T278 (Agents tab) depends only on T276, but it consumes the AgentRole types / AGENT_ROLES export defined in T275 — add T275 to T278's dependsOn (or merge T275/T276).","[minimax] T276 acceptance 'documents why committed...' is a code comment, not a testable criterion — keep the rationale as a code comment and let the testable acceptance be 'script writes the .gen.ts + typecheck green + byte-deterministic re-run'; the committed-equals-regenerated equality is T277's job.","[minimax] T270 acceptance conflates grammars: 'parse token KEY (alias or parseReviewerToken grammar)' — 'alias' resolution must cite where aliases are parsed ([aliases] table) or be removed; keep it unambiguous and grounded.","[minimax] T272 names 'tui, cli' as TS consumers, but frontends are pure MCP clients and cq-cli does not depend on cq-config — restate the audit to name the ACTUAL files/symbols touched (cq-config + ledger-mcp config capability) rather than a loose 'audit+update' list.","[minimax] T273 should add an explicit absent-[tiers]-section test at the config-load level (parseTiers / parseConfig with no [tiers] => tiers=null), not only the end-to-end resolveAgentModel path.","[minimax] T267 acceptance is a negative rg check only — add a positive assertion that the tab-state union contains 'item-states' AND HelpOverlay renders the renamed tab.","[minimax] W4 T280 dependsOn skips implementation tasks (T268/T271/T275/T276/T278 etc.) — list the full set it verifies (or restate so an incomplete upstream tree makes T280 fail), so the final gate cannot 'pass' against an incomplete tree.","[minimax] T275 should add a parseAgentMarkdown unit-test acceptance (exercise the parser on a fixture), not only the 'no node:fs import' check."]
-- ledgerRefs: ["goals:G34"]
-- sessionLogs: ["docs/logs/20260608-171607-af1c0c727cb095306.md","docs/logs/20260608-171607-pi-minimax-review.md","docs/logs/20260608-171607-pi-grokbuild-reviewers.md"]
-
-### R325 — go-ahead
-
-- createdAt: 2026-06-08T17:23:35.779Z
-- updatedAt: 2026-06-08T17:23:35.779Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- summary: "G34 plan review round 2 (panel: opus[claude] + minimax[pi:ollama-cloud]; grok+codex[pi:grok-build] excluded — documented operational stall this run). Reconciled verdict GO-AHEAD (both survivors go-ahead). All 10 R324 criticisms confirmed resolved on the merits; the load-bearing source-of-truth fix (`## Catalogue` convention in T275 + T281 authoring it into the assets + T276 parsing it + T277 freshness guard) is coherent, parseable, and correctly sequenced (T276 dependsOn [T275,T281]); revisions introduced no new plan defects. Minor non-blocking grounding notes for implementers: cq.toml.example is at repo root (two levels up); use parseConfig not loadConfig to read it; orchestrator command frontmatter (description/argument-hint/allowed-tools) differs from agent frontmatter but the `## Catalogue` block is the authoritative structured source regardless."
-- new_questions: []
-- criticism: []
-- ledgerRefs: ["goals:G34"]
-- sessionLogs: ["docs/logs/20260608-172307-a279480bcb33c7fd1.md","docs/logs/20260608-172307-pi-minimax-review2.md"]
-
-### R326 — go-ahead
-
-- createdAt: 2026-06-08T17:39:41.578Z
-- updatedAt: 2026-06-08T17:39:41.578Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- summary: "G34 follow-up-extension review (panel: opus[claude] + minimax[pi:ollama-cloud]; grok+codex[pi:grok-build] excluded — documented operational stall). Reconciled GO-AHEAD (both go-ahead). The privilege(RO/RW)+exposed-tools extension is grounded against the real agent/command frontmatter, DERIVES mechanically per locked Q151-Q153 (subagent deny-list 5-tool rule; command allow-list 3-tool rule), leaves T281 frontmatter/prose untouched (Catalogue holds only inputs/outputs/ioSchema), and folds into the existing W3 tasks (T275/T276/T278/T279/T281) without disturbing the R325-approved base or its sequencing. NON-BLOCKING NOTES (no action needed; recorded for implementers): (1) implement-reviewer's frontmatter omits Bash from disallowedTools, so the strict Q151 rule derives it as RW — a faithful consequence of the locked rule; the plan pins no implement-reviewer outcome in acceptances, so it is self-consistent. (2) T281's anti-authoring guard is a prose NOTE, not parser-enforced (stylistic, consistent with base style)."
-- new_questions: []
-- criticism: []
-- ledgerRefs: ["goals:G34"]
-- sessionLogs: ["docs/logs/20260608-173914-afe412ded4d773ce0.md","docs/logs/20260608-173914-pi-minimax-review3.md"]
-
-### R341 — revise
-
-- createdAt: 2026-06-08T23:45:49.795Z
-- updatedAt: 2026-06-08T23:45:49.795Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- summary: "revise (opus+minimax concur; grok+codex abstained — no key): the ff#2 plan CONTRADICTS the authoritative Q155 answer (DROP build-time model fields) by keeping them as a static fallback; plus a fallback error-type gap and a server/web modelClass enum mismatch. [round 1]"
-- new_questions: []
-- criticism: ["[opus+minimax] Q155 is answered 'as recommended' = DROP the build-time model/modelMappings fields; the plan does the OPPOSITE (T299 keeps gen-agents emitting them, T293/T295 render the static value on overlay error). Rework T283/T293/T295/T299 to DROP + render the distinguished states on the no-overlay path. Q155 is already answered — conform, do NOT bounce to the user.","[opus] T289/T293 key the overlay fallback on a thrown LedgerToolError, but an older/embedded server lacking get_agent_models surfaces a generic JSON-RPC unknown-tool error (not LedgerToolError); the mount fetch must catch ANY thrown error.","[opus] T283 falsely claims server modelClass enum identity with the web ModelClass ('N/A'/'default' exist only client-side); the status->label mapping (T293/T295) is the source of truth.","[minimax] T297 omits the 'not-model-configurable' (N/A) test branch that 12/19 roles hit (Q158) — add it.","[minimax] FakeClient (T291) should drive ALL FOUR states, not just an error switch + configured:false."]
-- ledgerRefs: ["goals:G34"]
-- sessionLogs: ["docs/logs/20260608-222414-ada3efe664c6d902e.md","docs/logs/20260608-222414-pi-minimax-G34-review.md"]
-
-### R343 — go-ahead
-
-- createdAt: 2026-06-08T23:46:09.775Z
-- updatedAt: 2026-06-08T23:46:09.775Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- summary: "go-ahead (round 2; opus go-ahead, minimax abstained [unparseable], grok+codex abstained [no key]). All five R341 criticisms resolved: Q155 DROP honored (T299 removes model/modelMappings from gen-agents + AgentRole, narrows freshness test; T283/T293/T295 no build-time fallback, distinguished states incl. 'default / not configured'); catch-ANY-error fallback (T289/T293); false enum-identity claim dropped (T283); T297 adds the N/A branch; T291 FakeClient drives all 4 states. DAG linear/acyclic; T300 = bun run check + nix build .#ledger-mcp/.#ledger-web."
-- new_questions: []
-- criticism: []
-- ledgerRefs: ["goals:G34"]
-- sessionLogs: ["docs/logs/20260608-223229-a613b3ee33ccc93fe.md","docs/logs/20260608-223229-pi-minimax-G34-review2.md"]
-
-## M109
-
-### R327 — go-ahead
-
-- createdAt: 2026-06-08T18:18:11.896Z
-- updatedAt: 2026-06-08T18:18:11.896Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- summary: "T267 implement review APPROVE (panel: opus[claude] approve; minimax[pi:ollama-cloud] abstained — inert tool-call under --no-tools, no verdict; grok+codex[pi:grok-build] excluded, documented stall). Rename State Machines→Item States complete: every DOM id/class/testid/label migrated to the item-states scheme, bun run check green 1136/0, no Shortcuts/Flows/TUI scope creep (lone leftover is an out-of-scope JSDoc comment in untouched stateMachine.ts)."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T267","goals:G34"]
-- sessionLogs: ["docs/logs/20260608-181727-a0ebdfdbc5ec7ed80.md","docs/logs/20260608-181727-pi-minimax-T267.md"]
-
-## M113
-
-### R339 — go-ahead
-
-- createdAt: 2026-06-08T20:45:18.962Z
-- updatedAt: 2026-06-08T20:45:18.962Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- summary: "G35 plan review GO-AHEAD (opus[claude], configured mode; grok+codex[pi:grok-build] excluded as documented stall; minimax not run — tiny fully-specified defect-seeded plan, opus authoritative). The single task T282 (parseTiers fail-loud on duplicate-token [tiers] classification + tests) is right-sized, operationally testable (concrete throw/no-throw/regression cases + error-names-both-keys assertion + rg guard check + bun run check), grounded in the confirmed D42 root cause + real symbols (parseTiers/classifyToken/reviewerTokensEqual + existing CqConfigError throws + the cq-toml-example.test.ts regression fixture), and resolves D42. Keeping classifyToken unchanged is correctly justified (parse-time dedup makes first-match unambiguous)."
-- new_questions: []
-- criticism: []
-- ledgerRefs: ["goals:G35","defects:D42"]
-- sessionLogs: ["docs/logs/20260608-204503-G35-plan-review.md"]
-
-## M115
-
-### R342 — revise
-
-- createdAt: 2026-06-08T23:46:01.349Z
-- updatedAt: 2026-06-08T23:46:01.349Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- summary: "revise (opus+minimax concur; grok+codex abstained — no key): the effort plan is sound but T294 emits the pi effort as a wrong '--thinking <effort>' flag (pi uses the '--model provider/model:level' shorthand), and T292/T294 carry spurious dependsOn edges. [round 1]"
-- new_questions: []
-- criticism: ["[opus; minimax-corroborated] T294 hard-asserts a separate '--thinking <effort>' flag; pi's mechanism is the thinking-level SHORTHAND on the model token ('--model provider/model:high', same trailing-colon syntax) — NOT a flag. Rewrite T294's emission + acceptance to append ':<effort>' to --model; fix T296 docs.","[opus+minimax] T292 dependsOn [T288,T290] but projecting effort onto the wire shapes only needs the parsed effort field (T286) — repoint to [T286].","[opus] T294 dependsOn [T288] but the inlined resolver shares no code with formatReviewerToken; its prerequisite is the T286 parse/reserved-':' design — repoint to [T286].","[opus] T286 + the T294 mirror should reserve ':' in the pi MODEL HALF too (the shorthand collides if the model id carried a ':'); cover a colon in the pi model half in the reserved-':' test.","[minimax] Pin the per-harness enums as the single source of truth (types.ts exports; the inlined mirror copies w/ a keep-in-sync note).","[minimax] T294 should enumerate its test surface (pi->--model:effort; claude->inert no-flag; unsupported->documented)."]
-- ledgerRefs: ["goals:G36"]
-- sessionLogs: ["docs/logs/20260608-222414-af7713bef5bb3a3fa.md","docs/logs/20260608-222414-pi-minimax-G36-review.md"]
-
-### R344 — go-ahead
-
-- createdAt: 2026-06-08T23:46:16.830Z
-- updatedAt: 2026-06-08T23:46:16.830Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- summary: "go-ahead (round 2; opus + minimax both go-ahead, grok+codex abstained [no key]). All six R342 criticisms resolved: T294 emits pi effort via the '--model provider/model:<effort>' shorthand (no --thinking) + confirm-against-CLI; T296 docs match; T292/T294 dependsOn repointed to [T286]; ':' reserved in the pi model half too w/ a CqConfigError test; T284 pins PI_EFFORTS/CLAUDE_EFFORTS as single source of truth + keep-in-sync mirror; T294 enumerates its test surface. DAG acyclic; T298 = bun run check + nix build .#ledger-mcp."
-- new_questions: []
-- criticism: []
-- ledgerRefs: ["goals:G36"]
-- sessionLogs: ["docs/logs/20260608-223229-a774de5084c76524c.md","docs/logs/20260608-223229-pi-minimax-G36-review2.md"]
 
 ## M122
 
