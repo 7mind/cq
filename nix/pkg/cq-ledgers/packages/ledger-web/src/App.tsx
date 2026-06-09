@@ -430,8 +430,8 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         // catch-ALL: any thrown error — a LedgerToolError, or a generic SDK
         // unknown-tool error from an older/embedded server that does not
         // advertise get_agent_models — flips overlayError so the Agents tab
-        // renders the 'default / not configured' fallback rather than a stale
-        // or build-time value.
+        // renders the overlay-unavailable / stale-server fallback rather than
+        // a stale or build-time value.
         try {
           const overlay = await c.getAgentModels();
           if (!alive) {
@@ -1682,7 +1682,7 @@ export type AgentModelView =
 /**
  * Resolve a role's {@link AgentModelView} from the live overlay (T293). When the
  * overlay fetch failed (`overlayError`) OR the role has no entry, the view is
- * `unavailable` (the 'default / not configured' fallback). A `resolved` entry
+ * `unavailable` (the overlay-unavailable / stale-server fallback). A `resolved` entry
  * with a null `modelClass` is treated as `no-live-token` — a resolved tier class
  * is the operational precondition for the resolved label.
  */
@@ -1713,7 +1713,7 @@ export function resolveAgentModelView(
  * - `no-live-token`         → `no live token for <tier>`;
  * - `not-configured`        → `not configured (no cq.toml)`;
  * - `not-model-configurable`→ `N/A`;
- * - `unavailable`           → `default / not configured`.
+ * - `unavailable`           → stale-server message (overlay unavailable; rebuild + restart).
  */
 function AgentModelCell({ view }: { view: AgentModelView }): React.ReactElement {
   switch (view.kind) {
@@ -1748,7 +1748,7 @@ function AgentModelCell({ view }: { view: AgentModelView }): React.ReactElement 
     case "not-model-configurable":
       return <span className="lw-agent-model-na">N/A</span>;
     case "unavailable":
-      return <span className="lw-agent-model-default">default / not configured</span>;
+      return <span className="lw-agent-model-unavailable">model overlay unavailable — server predates get_agent_models; rebuild + restart ledger-web/ledger-mcp</span>;
   }
 }
 

@@ -238,15 +238,20 @@ describe("Agents tab — live model overlay (T297)", () => {
     expect(text).not.toContain("grok-build");
   });
 
-  it("'throw' mode: implement-worker model cell shows 'default / not configured' (overlay unavailable)", async () => {
+  it("'throw' mode: implement-worker model cell shows stale-server message (overlay unavailable)", async () => {
     // getAgentModels() throws -> overlayError=true ->
     // resolveAgentModelView(undefined, true) -> unavailable ->
-    // "default / not configured"
+    // stale-server message distinct from 'not-configured'
     await openAgentsTabWithMode("throw");
 
     const cell = testid("help-agent-implement-worker-model");
     expect(cell).not.toBeNull();
-    expect(cell!.textContent?.trim()).toBe("default / not configured");
+    const text = cell!.textContent ?? "";
+    expect(text).toContain("overlay unavailable");
+    expect(text).toContain("rebuild");
+    expect(text).toContain("get_agent_models");
+    // Must be distinct from the genuine not-configured label.
+    expect(text).not.toContain("not configured (no cq.toml)");
   });
 
   it("'not-configured' mode: model-configurable role shows 'not configured (no cq.toml)'", async () => {
