@@ -504,10 +504,10 @@ archives:
 - ledgerRefs: ["goals:G37","defects:D43"]
 - resultCommit: 147d589
 
-### T303 — wip
+### T303 — done
 
 - createdAt: 2026-06-09T09:47:14.115Z
-- updatedAt: 2026-06-09T10:06:20.152Z
+- updatedAt: 2026-06-09T10:24:33.002Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: Add commit-after-every-merge-back checkpoint to implement/advance.md §7
@@ -515,6 +515,7 @@ archives:
 - acceptance: "implement/advance.md §7 contains a per-merged-task ledger-commit checkpoint, and the 'Commit the ledger' section documents it as (1) firing after EVERY merge-back, (2) firing even when chained under /cq:advance (overriding chained-suppression for THIS checkpoint), with (3) the existing after-archive commit + (4) the chained-suppressed at-stop commit both intact + clearly distinguished (no deletion of existing commit steps). The grep marker phrase present verbatim. Edit scoped to §7 + the Commit-the-ledger section. bun run check green."
 - suggestedModel: frontier
 - ledgerRefs: ["goals:G37","defects:D43"]
+- resultCommit: 1252c98
 
 ### T304 — planned
 
