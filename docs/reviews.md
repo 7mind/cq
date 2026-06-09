@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 383
+  item: 384
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -720,6 +720,18 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T310","goals:G38"]
 - sessionLogs: ["docs/logs/20260609-132507-a38dc8212b005ac2e.md","docs/logs/20260609-132507-af39e6301b4ac9520.md"]
+
+### R383 — go-ahead
+
+- createdAt: 2026-06-09T13:38:42.479Z
+- updatedAt: 2026-06-09T13:38:42.479Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- summary: "T309 implement review: APPROVE (native opus). advance.md §1 start-of-pass worktree-prune sweep (marker G38-1a-start-sweep, 1 line); `git worktree prune` + removes TERMINAL-task worktrees only, with an explicit clause protecting blocked/wip worktrees (never destroys un-merged work — critical safety invariant); §5 + §7.3 untouched; gen.ts regen faithful with all 3 cumulative G38-1a markers (post-done-cleanup + start-sweep + worker-ephemeral). check green 1327/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T309","goals:G38"]
+- sessionLogs: ["docs/logs/20260609-133828-acc4d56466f28fe84.md","docs/logs/20260609-133828-a22880d8aa1e5a2bc.md"]
 
 ## M128
 

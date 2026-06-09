@@ -450,10 +450,10 @@ archives:
 - completion: advance.md §7.3 explicit Claude-side worktree teardown + marker G38-1a-post-done-cleanup; gen.ts regenerated.
 - sessionLogs: ["docs/logs/20260609-125621-a9ae81be184eedffd.md","docs/logs/20260609-130634-ab05a6689d34eb44e.md"]
 
-### T309 — planned
+### T309 — done
 
 - createdAt: 2026-06-09T11:52:01.439Z
-- updatedAt: 2026-06-09T12:13:17.319Z
+- updatedAt: 2026-06-09T13:38:44.714Z
 - author: "opus-4.8[1m]"
 - session: 242ca46f-d593-40f1-9dc2-480c12cf887c
 - headline: Add a start-of-pass orphaned/locked-worktree prune sweep to implement/advance.md §1
@@ -462,6 +462,9 @@ archives:
 - suggestedModel: sonnet-4.6
 - dependsOn: ["T308"]
 - ledgerRefs: ["goals:G38"]
+- resultCommit: c6c723e
+- completion: advance.md §1 start-of-pass orphaned/locked-worktree prune sweep + marker G38-1a-start-sweep; gen.ts regenerated (all 3 cumulative 1a markers).
+- sessionLogs: ["docs/logs/20260609-133828-acc4d56466f28fe84.md","docs/logs/20260609-133828-a22880d8aa1e5a2bc.md"]
 
 ### T310 — done
 
@@ -481,24 +484,24 @@ archives:
 ### T311 — planned
 
 - createdAt: 2026-06-09T11:52:13.567Z
-- updatedAt: 2026-06-09T12:23:57.550Z
+- updatedAt: 2026-06-09T13:28:09.499Z
 - author: "opus-4.8[1m]"
 - session: 242ca46f-d593-40f1-9dc2-480c12cf887c
 - headline: Add file-scoped grep-invariant test cells for the 1a markers (sources + generated gen.ts)
 - description: "In nix/pkg/cq-ledgers/.../canonical-ledgers.test.ts (the existing eval-time-only prompt-marker guard, cf. the D43 T306 'grep invariants — file-scoped' describe block), add a describe block with cells that readFileSync each artifact and .toContain its verbatim marker: (SOURCES) nix/pkg/cq-assets/commands/cq/implement/advance.md contains 'G38-1a-post-done-cleanup' AND 'G38-1a-start-sweep'; nix/pkg/cq-assets/agents/implement-worker.md contains 'G38-1a-worker-ephemeral'; (GENERATED) packages/ledger-web/src/agentsCatalogue.gen.ts ALSO contains all three markers (the committed freshness guard catching a stale gen.ts — R372/opus; the gen module embeds the 'implement/advance' and 'implement-worker' promptTemplate bodies). Reuse the import.meta.dir path-resolution pattern from the existing T255/T264/T306 cells."
 - acceptance: bun test (from nix/pkg/cq-ledgers/) runs the new describe block; all source + gen.ts marker cells pass; deliberately breaking one marker in its source .md makes exactly that cell fail (teeth verified), restoring it returns to 0 fail; a stale (un-regenerated) agentsCatalogue.gen.ts fails the gen.ts cells. bun run check green.
 - suggestedModel: sonnet-4.6
-- dependsOn: ["T322"]
+- dependsOn: ["T308","T309","T310"]
 - ledgerRefs: ["goals:G38"]
 
-### T322 — planned
+### T322 — abandoned
 
 - createdAt: 2026-06-09T12:13:31.447Z
-- updatedAt: 2026-06-09T12:23:50.491Z
+- updatedAt: 2026-06-09T13:28:08.143Z
 - author: "opus-4.8[1m]"
 - session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: Regenerate agentsCatalogue.gen.ts via gen-agents after all 1a asset edits
-- description: "After the three item-1a cq-assets edits land (T308 + T309 edit nix/pkg/cq-assets/commands/cq/implement/advance.md [catalogue key 'implement/advance']; T310 edits nix/pkg/cq-assets/agents/implement-worker.md [catalogue key 'implement-worker']), run `bun run gen-agents` FROM nix/pkg/cq-ledgers/ (the bun workspace root — per CLAUDE.md all bun commands run from there; gen-agents is a package script of packages/ledger-web, and the script reads the cq-assets tree via its own REPO_ROOT resolution) to regenerate packages/ledger-web/src/agentsCatalogue.gen.ts. REQUIRED (R372/opus, VERIFIED): gen-agents-catalogue.ts catalogues both 'implement/advance' (commands/cq/implement/advance.md) and 'implement-worker' (agents/implement-worker.md), capturing each body as promptTemplate — so the marker edits change the generated module and a stale gen.ts would otherwise ship. Commit the regenerated gen.ts. dependsOn T308, T309, T310 (regen runs AFTER all three edits)."
+- headline: "[ABANDONED — freshness-guard discovery] separate gen-agents regen"
+- description: "ABANDONED. Implementation discovery (T308/T310): a `bun run check` freshness-guard test runs `gen-agents` and asserts agentsCatalogue.gen.ts is byte-identical, so EVERY catalogued-asset edit (T308 advance.md §7.3, T310 implement-worker.md, T309 advance.md §1) MUST regenerate gen.ts in its OWN worktree to pass check — which they do. Therefore the last 1a asset edit (T309) produces the final cumulative gen.ts (all three markers), and a separate final-regen task is a verified no-op. T322's deliverable (gen.ts reflects all 1a markers) is satisfied by T308+T310+T309's per-task regens; the committed guard is T311's gen.ts marker assertions. T311 dep repointed to [T308,T309,T310]."
 - acceptance: "Run `bun run gen-agents` from nix/pkg/cq-ledgers/. Then: (a) `git diff packages/ledger-web/src/agentsCatalogue.gen.ts` is byte-faithful EXCEPT the promptTemplate string for the 'implement/advance' and 'implement-worker' entries (no spurious reordering/whitespace churn elsewhere); (b) the regenerated module's 'implement/advance' promptTemplate contains BOTH 'G38-1a-post-done-cleanup' and 'G38-1a-start-sweep', and the 'implement-worker' promptTemplate contains 'G38-1a-worker-ephemeral'. bun run check green."
 - suggestedModel: sonnet-4.6
 - dependsOn: ["T308","T309","T310"]
