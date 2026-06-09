@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 357
+  item: 359
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -948,6 +948,18 @@ archives:
 - ledgerRefs: ["tasks:T293","goals:G34"]
 - sessionLogs: ["docs/logs/20260609-005204-T293-T296-workers-reviews.md"]
 
+### R359 — go-ahead
+
+- createdAt: 2026-06-09T01:27:20.663Z
+- updatedAt: 2026-06-09T01:27:20.663Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "go-ahead (opus + minimax both approve; grok+codex abstained — no key). T295 finalizes the AgentModelCell 'resolved' branch: per-token <span class=lw-token-chip> chips + a CSS pill rule (replacing tokens.join). All 5 distinguished labels verbatim, help-agent-<id>-model per-role, overlay-only, agentsTab.test.tsx + transitional static rows untouched. Cherry-picked to main 9acd7e7; integrated bun run check 1285/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T295","goals:G34"]
+- sessionLogs: ["docs/logs/20260609-005204-T295-worker-review.md"]
+
 ## M119
 
 ### R354 — go-ahead
@@ -987,3 +999,15 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T296","goals:G36"]
 - sessionLogs: ["docs/logs/20260609-005204-T293-T296-workers-reviews.md"]
+
+### R358 — go-ahead
+
+- createdAt: 2026-06-09T01:24:57.103Z
+- updatedAt: 2026-06-09T01:24:57.103Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "go-ahead (verification gate, orchestrator-recorded — no diff to review). T298 ran the G36 Q165 bar at d99981b: bun run check 1286/0 (tsc+eslint clean) AND nix build .#ledger-mcp exit 0 (local build; remote builder unreachable but fell back successfully). No code changes needed; all G36 code (T284-T296) merged + verified green end to end."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T298","goals:G36"]
+- sessionLogs: ["docs/logs/20260609-005204-T298-verify.md"]

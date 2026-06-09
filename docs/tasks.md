@@ -608,10 +608,10 @@ archives:
 - completion: App.tsx fetches get_agent_models on mount (catch-ALL fallback) + overlay-only resolveAgentModelView/AgentModelCell (5 labels, T299-independent); build-time rows kept transitionally; cherry-picked to main (integrated 1285/0).
 - sessionLogs: ["docs/logs/20260609-005204-T293-T296-workers-reviews.md"]
 
-### T295 — planned
+### T295 — done
 
 - createdAt: 2026-06-08T23:44:44.382Z
-- updatedAt: 2026-06-08T23:44:44.382Z
+- updatedAt: 2026-06-09T01:27:23.005Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: Render the distinguished model-state labels in the AgentsTab card
@@ -620,6 +620,9 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T293"]
 - ledgerRefs: ["goals:G34"]
+- resultCommit: 9acd7e7
+- completion: Finalized AgentModelCell resolved-branch token chips (+CSS pill); 5 labels verbatim, per-role testid, overlay-only. Cherry-picked to main (integrated 1285/0).
+- sessionLogs: ["docs/logs/20260609-005204-T295-worker-review.md"]
 
 ### T297 — planned
 
@@ -686,10 +689,10 @@ archives:
 - completion: "Documented the optional :<effort> grammar in cq.toml.example + parseReviewerToken jsdoc (comment-only) + 2 effort-suffixed example aliases; cherry-picked to main (integrated 1285/0)."
 - sessionLogs: ["docs/logs/20260609-005204-T293-T296-workers-reviews.md"]
 
-### T298 — planned
+### T298 — done
 
 - createdAt: 2026-06-08T23:45:11.084Z
-- updatedAt: 2026-06-08T23:45:11.084Z
+- updatedAt: 2026-06-09T01:24:57.149Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: "Full green check: bun run check + nix build .#ledger-mcp"
@@ -698,6 +701,9 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T296"]
 - ledgerRefs: ["goals:G36"]
+- resultCommit: d99981b
+- completion: "G36 verification gate (Q165): bun run check 1286/0 + nix build .#ledger-mcp exit 0 (local build). No code changes needed; G36 fully verified."
+- sessionLogs: ["docs/logs/20260609-005204-T298-verify.md"]
 
 ## M120
 
