@@ -460,7 +460,21 @@ export class FakeClient implements LedgerClient {
       case "throw":
         throw new Error("FakeClient: getAgentModels simulated failure (agentModelsMode='throw')");
       case "not-configured":
-        return { configured: false, agents: [] };
+        // Mirror computeAgentModels(repoRoot) when config===null: model-configurable
+        // roles get status:'not-configured'; orchestrator-command roles get
+        // status:'not-model-configurable'. agents[] is non-empty so the web
+        // client can render the 'not configured (no cq.toml)' label per-role.
+        return {
+          configured: false,
+          agents: [
+            ...MODEL_CONFIGURABLE_ROLE_IDS.map(
+              (id): AgentModelEntry => ({ id, status: "not-configured", modelClass: null, modelMappings: {} }),
+            ),
+            ...NOT_MODEL_CONFIGURABLE_ROLE_IDS.map(
+              (id): AgentModelEntry => ({ id, status: "not-model-configurable", modelClass: null, modelMappings: {} }),
+            ),
+          ],
+        };
       case "resolved":
         return { configured: true, agents: RESOLVED_LIVE_ENTRIES };
       case "no-live-token":

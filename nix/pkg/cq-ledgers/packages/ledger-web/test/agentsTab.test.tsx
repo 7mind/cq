@@ -24,7 +24,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "../src/App";
-import { FakeClient } from "./fakeClient";
+import { FakeClient, type AgentModelsMode } from "./fakeClient";
 import { AGENT_ROLES } from "../src/agentsCatalogue";
 
 let container: HTMLElement;
@@ -62,6 +62,26 @@ async function mount(): Promise<void> {
 
 async function openAgentsTab(): Promise<void> {
   await mount();
+  press("?");
+  await flush();
+  click(testid("help-tab-agents"));
+  await flush();
+}
+
+/**
+ * Mount the app with a specific agentModelsMode set on the FakeClient BEFORE
+ * the first render, then open the Agents tab. The mode must be set before
+ * mount because getAgentModels() is called on connect (inside the act() that
+ * renders the app); the extra flush() ensures the async overlay promise settles
+ * before any assertion.
+ */
+async function openAgentsTabWithMode(mode: AgentModelsMode): Promise<void> {
+  fake = new FakeClient();
+  fake.agentModelsMode = mode;
+  await act(async () => {
+    root.render(createElement(App, { connect: async () => fake, initialUrl: "http://x/mcp" }));
+  });
+  await flush();
   press("?");
   await flush();
   click(testid("help-tab-agents"));
@@ -180,5 +200,83 @@ describe("Agents tab (T279)", () => {
     await flush();
 
     expect(details!.open).toBe(true);
+  });
+});
+
+/**
+ * T297: AgentModelCell overlay assertions.
+ *
+ * Five tests covering all Q157 render paths via the FakeClient agentModelsMode
+ * switch (T291). Each test sets the mode BEFORE mount so getAgentModels() is
+ * called with the right behaviour on first connect.
+ *
+ * The help-agent-<id>-model testid is rendered by AgentModelCell (T293/T295)
+ * and reads ONLY the live overlay — never AgentRole.model — so the resolved-
+ * overlay test would fail if the UI fell back to the build-time value.
+ */
+describe("Agents tab — live model overlay (T297)", () => {
+  it("'resolved' mode: implement-worker model cell shows LIVE class + token (overlay precedence)", async () => {
+    // The FakeClient 'resolved' mode returns:
+    //   { id: "implement-worker", status: "resolved", modelClass: "standard",
+    //     modelMappings: { claude: ["sonnet-4.6"] } }
+    // This DIFFERS from the build-time catalogue (model:"standard",
+    // modelMappings:{pi:["grok-build/grok-build"]}), proving overlay precedence.
+    await openAgentsTabWithMode("resolved");
+
+    const cell = testid("help-agent-implement-worker-model");
+    expect(cell).not.toBeNull();
+    const text = cell!.textContent ?? "";
+
+    // The live modelClass "standard" must appear in the cell.
+    expect(text).toContain("standard");
+    // The live token "sonnet-4.6" (claude harness chip) must appear.
+    expect(text).toContain("sonnet-4.6");
+    // The build-time pi token "grok-build" must NOT appear — overlay takes precedence.
+    expect(text).not.toContain("grok-build");
+  });
+
+  it("'throw' mode: implement-worker model cell shows 'default / not configured' (overlay unavailable)", async () => {
+    // getAgentModels() throws -> overlayError=true ->
+    // resolveAgentModelView(undefined, true) -> unavailable ->
+    // "default / not configured"
+    await openAgentsTabWithMode("throw");
+
+    const cell = testid("help-agent-implement-worker-model");
+    expect(cell).not.toBeNull();
+    expect(cell!.textContent?.trim()).toBe("default / not configured");
+  });
+
+  it("'not-configured' mode: model-configurable role shows 'not configured (no cq.toml)'", async () => {
+    // FakeClient 'not-configured' mode returns entries with status:'not-configured'
+    // for model-configurable roles, mirroring computeAgentModels when config===null.
+    await openAgentsTabWithMode("not-configured");
+
+    const cell = testid("help-agent-implement-worker-model");
+    expect(cell).not.toBeNull();
+    expect(cell!.textContent?.trim()).toBe("not configured (no cq.toml)");
+  });
+
+  it("'no-live-token' mode: model-configurable role shows 'no live token for ...'", async () => {
+    // FakeClient 'no-live-token' mode returns entries with status:'no-live-token'
+    // and modelClass:null for model-configurable roles.
+    // resolveAgentModelView -> { kind: "no-live-token", tier: null } ->
+    // "no live token for ?" (tier=null falls back to "?").
+    await openAgentsTabWithMode("no-live-token");
+
+    const cell = testid("help-agent-implement-worker-model");
+    expect(cell).not.toBeNull();
+    // The label always starts with "no live token for".
+    expect(cell!.textContent).toContain("no live token for");
+  });
+
+  it("orchestrator-command role renders 'N/A' regardless of mode (not-model-configurable)", async () => {
+    // "advance" is one of the 12 orchestrator-command roles (model=N/A in the
+    // catalogue). The 'resolved' FakeClient mode includes a not-model-configurable
+    // entry for it, producing AgentModelCell kind:'not-model-configurable' -> "N/A".
+    await openAgentsTabWithMode("resolved");
+
+    const cell = testid("help-agent-advance-model");
+    expect(cell).not.toBeNull();
+    expect(cell!.textContent?.trim()).toBe("N/A");
   });
 });
