@@ -352,6 +352,27 @@ body {
 .lw-flow-svg text {
   user-select: none;
 }
+/* Flows-tab color legend (T329, FU-4d): one swatch + label per RoleKind,
+   generated from ROLE_KIND_FILL so the node hues are interpretable. */
+.lw-flow-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.lw-flow-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.lw-flow-legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid #171a21;
+}
 /* Agents help tab (T278, goal G34): one section per Q148 role from the
    generated AGENT_ROLES catalogue. Same stacking rhythm as the Flows /
    Item-States tabs; each role is a labelled detail list plus a folded

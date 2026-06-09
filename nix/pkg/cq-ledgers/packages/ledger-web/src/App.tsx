@@ -24,7 +24,7 @@ import { loadDagData, type DagData } from "./dagData.js";
 import { computeStateMachine } from "./stateMachine.js";
 import { layoutDiagram, type LaidOutDiagram, type DiagramModel } from "./diagramLayout.js";
 import { DiagramSvg } from "./DiagramSvg.js";
-import { ROLE_FLOWS, type RoleFlowDefinition } from "./roleActions.js";
+import { ROLE_FLOWS, ROLE_KIND_FILL, type RoleFlowDefinition, type RoleKind } from "./roleActions.js";
 import { AGENT_ROLES } from "./agentsCatalogue.js";
 import { LiveManager, type LiveStats } from "@cq/ledger-live";
 import { defectFixTaskIds, hypothesisRelationships } from "@cq/ledger/relationships";
@@ -1656,6 +1656,35 @@ function HelpOverlay({
   const [tab, setTab] = useState<"shortcuts" | "item-states" | "flows" | "agents">("shortcuts");
   const [schemas, setSchemas] = useState<NamedSchema[] | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  // FU-4b cross-nav (T329): the Agents-tab anchor a Flows-diagram node
+  // activation wants scrolled into view, applied AFTER the tab flips to
+  // 'agents' (so the section is mounted). Cleared once consumed.
+  const [pendingAgentAnchor, setPendingAgentAnchor] = useState<string | null>(null);
+
+  // Activating an agentId-bearing Flows node: flip to the Agents tab and
+  // remember the target anchor; the effect below scrolls it once the tab — and
+  // thus the section — is mounted. agentId is the AGENT_ROLES id T327 authored
+  // on the node; the anchor is the documented `help-agent-<id>` scheme.
+  const activateAgent = useCallback((agentId: string): void => {
+    setTab("agents");
+    setPendingAgentAnchor(`help-agent-${agentId}`);
+  }, []);
+
+  // Consume the pending anchor once the Agents tab is active. A rAF defers the
+  // scroll to after the Agents-tab sections mount/paint; under happy-dom (no
+  // real frames) the fallback timer drives the same path.
+  useEffect(() => {
+    if (tab !== "agents" || pendingAgentAnchor === null) return;
+    const anchor = pendingAgentAnchor;
+    setPendingAgentAnchor(null);
+    const raf: (cb: FrameRequestCallback) => void =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame
+        : (cb) => {
+            setTimeout(() => cb(0), 0);
+          };
+    raf(() => scrollToHelpSection(anchor));
+  }, [tab, pendingAgentAnchor]);
 
   // Batched, cached fetch of every ledger's schema — runs once, the first time
   // the state-machines tab is shown.
@@ -1782,6 +1811,7 @@ function HelpOverlay({
               }))}
             >
               <div className="lw-help-flows" data-testid="help-flows">
+                <FlowLegend />
                 {ROLE_FLOWS.map((flow) => (
                   <section
                     key={flow.id}
@@ -1790,7 +1820,7 @@ function HelpOverlay({
                     data-testid={`help-flow-${flow.id}`}
                   >
                     <h4>{flow.title}</h4>
-                    <FlowDiagram flow={flow} />
+                    <FlowDiagram flow={flow} onActivateAgent={activateAgent} />
                   </section>
                 ))}
               </div>
@@ -2015,7 +2045,14 @@ function StateMachineDiagram({ ledger, schema }: { ledger: string; schema: Ledge
  * `${idPrefix}-edge-label-…`). The data is static (no MCP fetch), so it lays
  * out on first tab open.
  */
-function FlowDiagram({ flow }: { flow: RoleFlowDefinition }): React.ReactElement {
+function FlowDiagram({
+  flow,
+  onActivateAgent,
+}: {
+  flow: RoleFlowDefinition;
+  /** FU-4b (T329): forwarded to {@link DiagramSvg} so agentId nodes cross-nav. */
+  onActivateAgent: (agentId: string) => void;
+}): React.ReactElement {
   const model: DiagramModel = flow.model;
   const [laid, setLaid] = useState<LaidOutDiagram | null>(null);
   useEffect(() => {
@@ -2029,7 +2066,38 @@ function FlowDiagram({ flow }: { flow: RoleFlowDefinition }): React.ReactElement
     };
   }, [model]);
   if (laid === null) return <p className="lw-empty">(laying out…)</p>;
-  return <DiagramSvg idPrefix={`help-flow-${flow.id}`} model={laid} className="lw-flow-svg" />;
+  return (
+    <DiagramSvg
+      idPrefix={`help-flow-${flow.id}`}
+      model={laid}
+      className="lw-flow-svg"
+      onActivateAgent={onActivateAgent}
+    />
+  );
+}
+
+/**
+ * Flows-tab color legend (FU-4d, T329): one swatch + label per {@link RoleKind},
+ * generated from the EXPORTED {@link ROLE_KIND_FILL} palette so the node hues on
+ * the flow diagrams are interpretable. The swatch background-color is exactly
+ * `ROLE_KIND_FILL[kind]` (asserted by the happy-dom test).
+ */
+function FlowLegend(): React.ReactElement {
+  const kinds = Object.keys(ROLE_KIND_FILL) as RoleKind[];
+  return (
+    <div className="lw-flow-legend" data-testid="help-flow-legend" aria-label="role color legend">
+      {kinds.map((kind) => (
+        <span key={kind} className="lw-flow-legend-item" data-testid={`help-flow-legend-${kind}`}>
+          <span
+            className="lw-flow-legend-swatch"
+            data-testid={`help-flow-legend-swatch-${kind}`}
+            style={{ backgroundColor: ROLE_KIND_FILL[kind] }}
+          />
+          {kind}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 /**
