@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 384
+  item: 385
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -564,6 +564,11 @@ archives:
     summary: G38 item 3 (TUI focus-respecting paging/jump keybindings, defect-aware) COMPLETE. T318 (LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump rows; no-Enter detail-scroll removed; module-scope matchHomeEnd helper) + T319 (CONTENT-focus Home/End reusing matchHomeEnd). Defect D44 RESOLVED. T320 abandoned (tests folded into T318/T319). Reviews R378/R382 go-ahead. Merged 46a0f95 + 0992cd3. bun run check green.
     title: G38 item 3 — TUI focus-respecting paging/jump keybindings (defect-aware)
     status: done
+  - id: M127
+    path: ./archive/reviews/M127.md
+    summary: "G38 item 1a (implement-worker worktree auto-cleanup, prompt-only) COMPLETE. T308 (advance.md §7.3 explicit per-merge teardown), T309 (advance.md §1 start-of-pass orphan/locked sweep gated to terminal-task worktrees), T310 (implement-worker.md worktree-lifetime note), T311 (canonical-ledgers.test.ts grep-invariant cells over sources + gen.ts). T322 abandoned (freshness-guard discovery: each catalogued-asset edit regens gen.ts, so the last 1a edit produces the final cumulative gen.ts — a separate regen is a no-op; T311's gen.ts assertions are the committed guard). Markers G38-1a-post-done-cleanup/start-sweep/worker-ephemeral all present in sources + agentsCatalogue.gen.ts. Reviews R375/R379/R383/R384 go-ahead. Merged 4eca303/c6c723e/b61ae54/5dbae6b. bun run check green."
+    title: G38 item 1a — implement-worker worktree auto-cleanup (prompt-only)
+    status: done
 ---
 
 # reviews
@@ -694,44 +699,6 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G38"]
 - sessionLogs: ["docs/logs/20260609-123546-a7dc5893fcb1df067.md","docs/logs/20260609-123546-pi-codex.md","docs/logs/20260609-123546-pi-grok.md","docs/logs/20260609-123546-pi-minimax.md"]
-
-## M127
-
-### R375 — go-ahead
-
-- createdAt: 2026-06-09T13:07:17.357Z
-- updatedAt: 2026-06-09T13:07:17.357Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- summary: "T308 implement review: APPROVE (native opus implement-reviewer, authoritative). advance.md §7.3 Claude-side worktree teardown is now explicit (`git worktree remove --force`/`git branch -D`/`git worktree prune`), marker G38-1a-post-done-cleanup ×1, §5 'worktree INTACT' (L281) untouched; gen.ts faithfully regenerated (the freshness guard FORCED a per-task gen-agents regen — this corrects the plan's 'do not regen here' note; T322 remains the final reconciling regen). check green 1294/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T308","goals:G38"]
-- sessionLogs: ["docs/logs/20260609-125621-a9ae81be184eedffd.md","docs/logs/20260609-130634-ab05a6689d34eb44e.md"]
-
-### R379 — go-ahead
-
-- createdAt: 2026-06-09T13:25:49.628Z
-- updatedAt: 2026-06-09T13:25:49.628Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- summary: "T310 implement review: APPROVE (native opus). Marker G38-1a-worker-ephemeral ×1 in implement-worker.md Boundaries region; gen.ts cumulative (T308 + T310 markers); gen-agents regeneration byte-identical at the commit; scoped edit; check green 1314/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T310","goals:G38"]
-- sessionLogs: ["docs/logs/20260609-132507-a38dc8212b005ac2e.md","docs/logs/20260609-132507-af39e6301b4ac9520.md"]
-
-### R383 — go-ahead
-
-- createdAt: 2026-06-09T13:38:42.479Z
-- updatedAt: 2026-06-09T13:38:42.479Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- summary: "T309 implement review: APPROVE (native opus). advance.md §1 start-of-pass worktree-prune sweep (marker G38-1a-start-sweep, 1 line); `git worktree prune` + removes TERMINAL-task worktrees only, with an explicit clause protecting blocked/wip worktrees (never destroys un-merged work — critical safety invariant); §5 + §7.3 untouched; gen.ts regen faithful with all 3 cumulative G38-1a markers (post-done-cleanup + start-sweep + worker-ephemeral). check green 1327/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T309","goals:G38"]
-- sessionLogs: ["docs/logs/20260609-133828-acc4d56466f28fe84.md","docs/logs/20260609-133828-a22880d8aa1e5a2bc.md"]
 
 ## M128
 

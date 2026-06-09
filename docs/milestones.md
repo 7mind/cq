@@ -624,6 +624,11 @@ archives:
     summary: G38 item 3 (TUI focus-respecting paging/jump keybindings, defect-aware) COMPLETE. T318 (LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump rows; no-Enter detail-scroll removed; module-scope matchHomeEnd helper) + T319 (CONTENT-focus Home/End reusing matchHomeEnd). Defect D44 RESOLVED. T320 abandoned (tests folded into T318/T319). Reviews R378/R382 go-ahead. Merged 46a0f95 + 0992cd3. bun run check green.
     title: G38 item 3 — TUI focus-respecting paging/jump keybindings (defect-aware)
     status: done
+  - id: M127
+    path: ./archive/milestones/M127.md
+    summary: "G38 item 1a (implement-worker worktree auto-cleanup, prompt-only) COMPLETE. T308 (advance.md §7.3 explicit per-merge teardown), T309 (advance.md §1 start-of-pass orphan/locked sweep gated to terminal-task worktrees), T310 (implement-worker.md worktree-lifetime note), T311 (canonical-ledgers.test.ts grep-invariant cells over sources + gen.ts). T322 abandoned (freshness-guard discovery: each catalogued-asset edit regens gen.ts, so the last 1a edit produces the final cumulative gen.ts — a separate regen is a no-op; T311's gen.ts assertions are the committed guard). Markers G38-1a-post-done-cleanup/start-sweep/worker-ephemeral all present in sources + agentsCatalogue.gen.ts. Reviews R375/R379/R383/R384 go-ahead. Merged 4eca303/c6c723e/b61ae54/5dbae6b. bun run check green."
+    title: G38 item 1a — implement-worker worktree auto-cleanup (prompt-only)
+    status: done
 ---
 
 # milestones
@@ -648,13 +653,6 @@ archives:
 - updatedAt: 2026-06-09T11:05:21.585Z
 - title: "Plan: worktree cleanup + ledger backup + flows-tab role-actions + TUI focus keybindings"
 - description: "Coordination milestone for a multi-item goal: (1a) auto-delete implement-worker worktrees after merge-back via the flow prompts; (1b) ledger code writes a restore-without-replay backup under ~/.cache/cq/ledgers/; (2) Flows help tab shows per-role actions (orchestrator dispatches planner, etc.) instead of an abstract state machine; (3) TUI focus-respecting keybindings (pgup/pgdown/home/end move the item cursor when items focused; scroll item content when inside item view)."
-
-### M127 — open
-
-- createdAt: 2026-06-09T11:51:06.035Z
-- updatedAt: 2026-06-09T11:51:06.035Z
-- title: G38 item 1a — implement-worker worktree auto-cleanup (prompt-only)
-- description: Prompt-only edits to nix/pkg/cq-assets so a Claude worker's CHANGED worktree is removed after merge-back (per-task §7.3 teardown + start-of-pass orphan sweep), §5 blocked worktrees stay intact, and implement-worker.md is aligned. Each edit carries a verbatim grep-invariant marker guarded by a canonical-ledgers.test.ts cell (eval-time-only regression guard). Resolves G38 item 1a (Q167).
 
 ### M128 — open
 

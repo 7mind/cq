@@ -429,83 +429,14 @@ archives:
     summary: G38 item 3 (TUI focus-respecting paging/jump keybindings, defect-aware) COMPLETE. T318 (LIST-focus PgUp/PgDn page cursor by listInnerH + Home/End jump rows; no-Enter detail-scroll removed; module-scope matchHomeEnd helper) + T319 (CONTENT-focus Home/End reusing matchHomeEnd). Defect D44 RESOLVED. T320 abandoned (tests folded into T318/T319). Reviews R378/R382 go-ahead. Merged 46a0f95 + 0992cd3. bun run check green.
     title: G38 item 3 — TUI focus-respecting paging/jump keybindings (defect-aware)
     status: done
+  - id: M127
+    path: ./archive/tasks/M127.md
+    summary: "G38 item 1a (implement-worker worktree auto-cleanup, prompt-only) COMPLETE. T308 (advance.md §7.3 explicit per-merge teardown), T309 (advance.md §1 start-of-pass orphan/locked sweep gated to terminal-task worktrees), T310 (implement-worker.md worktree-lifetime note), T311 (canonical-ledgers.test.ts grep-invariant cells over sources + gen.ts). T322 abandoned (freshness-guard discovery: each catalogued-asset edit regens gen.ts, so the last 1a edit produces the final cumulative gen.ts — a separate regen is a no-op; T311's gen.ts assertions are the committed guard). Markers G38-1a-post-done-cleanup/start-sweep/worker-ephemeral all present in sources + agentsCatalogue.gen.ts. Reviews R375/R379/R383/R384 go-ahead. Merged 4eca303/c6c723e/b61ae54/5dbae6b. bun run check green."
+    title: G38 item 1a — implement-worker worktree auto-cleanup (prompt-only)
+    status: done
 ---
 
 # tasks
-
-## M127
-
-### T308 — done
-
-- createdAt: 2026-06-09T11:51:55.260Z
-- updatedAt: 2026-06-09T13:07:41.029Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: Add explicit per-task worktree teardown to implement/advance.md §7.3 (Claude path)
-- description: "In nix/pkg/cq-assets/commands/cq/implement/advance.md §7 merge-back step 3 (verified text at L310-311: 'Then remove the worktree (Claude: auto; Codex: `git worktree remove` + delete the branch).'), REPLACE the Claude-side 'auto' with an EXPLICIT teardown the orchestrator runs immediately after the per-task `done` ledger write, symmetric with the Codex path: `git worktree remove --force <wt> && git branch -D implement/<taskId> && git worktree prune`. Document WHY (Q167/grounding): native Agent isolation:worktree only auto-removes UNCHANGED worktrees, but a worker that committed its task IS changed, so it is never auto-removed — the source of the ~140 stale locked worktrees under .claude/worktrees/. Embed a verbatim grep-able marker on the new instruction: `G38-1a-post-done-cleanup`. Do NOT touch §5 (blocked-task worktrees stay intact). NOTE (R372/opus, VERIFIED): commands/cq/implement/advance.md IS catalogued by gen-agents-catalogue.ts (ROLES id 'implement/advance', body captured as promptTemplate), so editing its body changes agentsCatalogue.gen.ts — the regen is handled by the dedicated task T322 (do not regen here)."
-- acceptance: grep -F 'G38-1a-post-done-cleanup' nix/pkg/cq-assets/commands/cq/implement/advance.md returns exactly one line; the Claude-side per-merge removal is now an EXPLICIT command (the literal sequence 'git worktree remove --force' ... 'git branch -D implement/' ... 'git worktree prune' present in the §7 merge-back region) rather than the prior native-'auto'; §5's 'worktree INTACT' sentence (L281) is unchanged. bun run check (from nix/pkg/cq-ledgers/) green.
-- suggestedModel: sonnet-4.6
-- ledgerRefs: ["goals:G38"]
-- resultCommit: 4eca303
-- completion: advance.md §7.3 explicit Claude-side worktree teardown + marker G38-1a-post-done-cleanup; gen.ts regenerated.
-- sessionLogs: ["docs/logs/20260609-125621-a9ae81be184eedffd.md","docs/logs/20260609-130634-ab05a6689d34eb44e.md"]
-
-### T309 — done
-
-- createdAt: 2026-06-09T11:52:01.439Z
-- updatedAt: 2026-06-09T13:38:44.714Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: Add a start-of-pass orphaned/locked-worktree prune sweep to implement/advance.md §1
-- description: "In nix/pkg/cq-assets/commands/cq/implement/advance.md §1 (Derive the READY-SET), alongside the resume-bookkeeping paragraph, ADD a start-of-pass sweep step: before deriving the ready-set, the orchestrator prunes orphaned/locked worktrees left by prior interrupted runs — `git worktree prune` plus, for each worktree under the implement worktree root whose `implement/<taskId>` task is already terminal (`done`/`abandoned`) in the ledger, `git worktree remove --force` + `git branch -D implement/<taskId>`. Explicitly EXCLUDE worktrees for tasks still `blocked`/`wip` (the §5 blocked worktrees MUST survive until resumed/abandoned). Embed a verbatim grep-able marker `G38-1a-start-sweep`. Addresses the ~140 stale locked worktrees observed. dependsOn T308 is a SAME-FILE SERIALIZATION edge (per R372/codex+grok): §1 and §7.3 are logically independent edits, but both mutate implement/advance.md — serializing them avoids a concurrent-worktree merge conflict on the same file; it is NOT a logical data prerequisite."
-- acceptance: grep -F 'G38-1a-start-sweep' nix/pkg/cq-assets/commands/cq/implement/advance.md returns exactly one line in §1; the sweep text references `git worktree prune` and is gated to terminal-task worktrees only (prose names blocked/wip worktrees as excluded). bun run check green.
-- suggestedModel: sonnet-4.6
-- dependsOn: ["T308"]
-- ledgerRefs: ["goals:G38"]
-- resultCommit: c6c723e
-- completion: advance.md §1 start-of-pass orphaned/locked-worktree prune sweep + marker G38-1a-start-sweep; gen.ts regenerated (all 3 cumulative 1a markers).
-- sessionLogs: ["docs/logs/20260609-133828-acc4d56466f28fe84.md","docs/logs/20260609-133828-a22880d8aa1e5a2bc.md"]
-
-### T310 — done
-
-- createdAt: 2026-06-09T11:52:07.613Z
-- updatedAt: 2026-06-09T13:26:10.051Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: Align agents/implement-worker.md with the orchestrator's post-done worktree teardown
-- description: "Update nix/pkg/cq-assets/agents/implement-worker.md so the worker prompt states that the orchestrator removes the worker's worktree (`git worktree remove --force` + `git worktree prune`) AFTER the per-task done write / merge-back, so the worker need not preserve it and must not improvise its own cross-checkout cleanup (consistent with the D43 worktree-confinement Boundary). This is item-1a prompt-only scope (worker.md is a cq-assets prompt; aligning it keeps the cleanup coherent across orchestrator + worker). Embed a verbatim grep-able marker `G38-1a-worker-ephemeral`. Do NOT run gen-agents here — the agentsCatalogue.gen.ts regen for ALL three 1a asset edits (this + the two advance.md edits) is the dedicated task T322. Terminology: use 'after the per-task done write / merge-back' (matches the locked Q167 phrasing), not 'post-merge teardown'."
-- acceptance: grep -F 'G38-1a-worker-ephemeral' nix/pkg/cq-assets/agents/implement-worker.md returns exactly one line; the new text states the orchestrator prunes the worktree after the per-task done write/merge-back; edit scoped to the relevant Boundaries/worktree region. bun run check green.
-- suggestedModel: sonnet-4.6
-- ledgerRefs: ["goals:G38"]
-- resultCommit: b61ae54
-- completion: implement-worker.md worktree-lifetime note + marker G38-1a-worker-ephemeral; gen.ts regenerated (cumulative with T308).
-- sessionLogs: ["docs/logs/20260609-132507-a38dc8212b005ac2e.md","docs/logs/20260609-132507-af39e6301b4ac9520.md"]
-
-### T311 — planned
-
-- createdAt: 2026-06-09T11:52:13.567Z
-- updatedAt: 2026-06-09T13:28:09.499Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: Add file-scoped grep-invariant test cells for the 1a markers (sources + generated gen.ts)
-- description: "In nix/pkg/cq-ledgers/.../canonical-ledgers.test.ts (the existing eval-time-only prompt-marker guard, cf. the D43 T306 'grep invariants — file-scoped' describe block), add a describe block with cells that readFileSync each artifact and .toContain its verbatim marker: (SOURCES) nix/pkg/cq-assets/commands/cq/implement/advance.md contains 'G38-1a-post-done-cleanup' AND 'G38-1a-start-sweep'; nix/pkg/cq-assets/agents/implement-worker.md contains 'G38-1a-worker-ephemeral'; (GENERATED) packages/ledger-web/src/agentsCatalogue.gen.ts ALSO contains all three markers (the committed freshness guard catching a stale gen.ts — R372/opus; the gen module embeds the 'implement/advance' and 'implement-worker' promptTemplate bodies). Reuse the import.meta.dir path-resolution pattern from the existing T255/T264/T306 cells."
-- acceptance: bun test (from nix/pkg/cq-ledgers/) runs the new describe block; all source + gen.ts marker cells pass; deliberately breaking one marker in its source .md makes exactly that cell fail (teeth verified), restoring it returns to 0 fail; a stale (un-regenerated) agentsCatalogue.gen.ts fails the gen.ts cells. bun run check green.
-- suggestedModel: sonnet-4.6
-- dependsOn: ["T308","T309","T310"]
-- ledgerRefs: ["goals:G38"]
-
-### T322 — abandoned
-
-- createdAt: 2026-06-09T12:13:31.447Z
-- updatedAt: 2026-06-09T13:28:08.143Z
-- author: "opus-4.8[1m]"
-- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
-- headline: "[ABANDONED — freshness-guard discovery] separate gen-agents regen"
-- description: "ABANDONED. Implementation discovery (T308/T310): a `bun run check` freshness-guard test runs `gen-agents` and asserts agentsCatalogue.gen.ts is byte-identical, so EVERY catalogued-asset edit (T308 advance.md §7.3, T310 implement-worker.md, T309 advance.md §1) MUST regenerate gen.ts in its OWN worktree to pass check — which they do. Therefore the last 1a asset edit (T309) produces the final cumulative gen.ts (all three markers), and a separate final-regen task is a verified no-op. T322's deliverable (gen.ts reflects all 1a markers) is satisfied by T308+T310+T309's per-task regens; the committed guard is T311's gen.ts marker assertions. T311 dep repointed to [T308,T309,T310]."
-- acceptance: "Run `bun run gen-agents` from nix/pkg/cq-ledgers/. Then: (a) `git diff packages/ledger-web/src/agentsCatalogue.gen.ts` is byte-faithful EXCEPT the promptTemplate string for the 'implement/advance' and 'implement-worker' entries (no spurious reordering/whitespace churn elsewhere); (b) the regenerated module's 'implement/advance' promptTemplate contains BOTH 'G38-1a-post-done-cleanup' and 'G38-1a-start-sweep', and the 'implement-worker' promptTemplate contains 'G38-1a-worker-ephemeral'. bun run check green."
-- suggestedModel: sonnet-4.6
-- dependsOn: ["T308","T309","T310"]
-- ledgerRefs: ["goals:G38"]
 
 ## M128
 
