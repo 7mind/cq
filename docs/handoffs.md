@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 42
+  item: 43
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -251,6 +251,31 @@ archives:
 - blockingQuestions: ["Q183","Q184","Q185","Q186","Q187","Q188"]
 - sessionLogs: ["docs/logs/20260609-184831-a49faaf4d8748e870.md"]
 - tags: ["G41","plan","answers-required"]
+
+### HO43 — drained
+
+- createdAt: 2026-06-09T22:54:15.606Z
+- updatedAt: 2026-06-09T22:54:15.606Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: |
+    DRAINED. Final predicate gate: P-investigate=FALSE (every defect terminal — D39/D43/D47 resolved) / P-plan=FALSE (G38/G41/G42 all planned; no clarifying|planning goal) / P-implement=FALSE (no non-terminal task). open-Q-gate: none (all 21 questions answered). Nothing actionable remains.
+    
+    This /cq:advance run folded in the user's answers to Q183-Q188 (answered between /cq:plan and this run) and drove the 5-item G41 'next batch' goal from planning through implementation to landed+verified code, then auto-discovered→root-caused→fixed a follow-up defect (D47) end-to-end.
+    
+    PLAN G41: configured multi-planner synthesis (opus[claude] base + grok+minimax[pi] fold-ins, orchestrator-persisted) → reviewer panel (opus+codex+grok+minimax). 2 rounds: R399 revise (12 planner-fixable criticisms) → R400 go-ahead (codex's lone round-2 revise adjudicated: its #2 cq.toml.example-sync + #3 ideas-no-milestone-assertion APPLIED; its #1 milestone-dep-ordering ADJUDICATED non-blocking, honoring Q183's quick-wins-first sequencing). K64 locked; 5 work milestones M136-M140, 15 tasks.
+    
+    IMPLEMENT G41: all 15 tasks merged across waves, each per-task review go-ahead (R401-R415, native opus implement-reviewer; pi panel conserved per HO38/HO40). M136 cq init writes cq.toml (T331 CQ_TOML_TEMPLATE opus/sonnet/haiku-active + cq.toml.example sync; T338 skip/--force). M137 Flows-tab polish (T332 underline activatable; T333 withTerminalNodes rx=4; T334 parallel-edge per-index testids — ELK already separates labels, the real defect was a testid collision). M138 Ideas ledger (T335 schema idPrefix I open|planned|discarded|postponed; T339 sidebar-above-Goals; T340 /cq:plan I-id grammar + consume-an-idea sub-proc; T342 /cq:plan:follow-up). M139 typed MCP prompt catalog (T336 PromptCatalogEntry+plan-advance schemas in @cq/config + Ajv2020+FOD refresh, K65; T341 catalog store + 7 dispatched-role sidecars + gen-agents; T343 fetch_prompt/validate_input/validate_output MCP tools; T344 plan-advance dispatch wired + Agents tab typed-schema render; T345 ALL dispatched subagents wired + prose-ioSchema dedup). M140 orphan-branch SPIKE (T337 K66 FEASIBLE-WITH-CAVEATS/GO + executed PoC proving orphan-ref plumbing leaves main HEAD/worktree byte-identical; no prod code). Archived M136/M137/M138/M139/M140.
+    
+    FOLLOW-UP DEFECT D47 (filed by the T335 review, file-and-defer): INVESTIGATE → H34 confirmed (the committed-fixture-vs-canon guard test canonical-ledgers.test.ts:504 boots in DEFAULT backup-reinit mode that SILENTLY self-heals + no byte-equality assertion, so a stale committed docs/ledgers.yaml passes check) → seeded defect-seeded goal G42. PLAN G42 (orchestrator-authored, single opus plan-review → R416 go-ahead; K67 locked). IMPLEMENT G42: T346 test-only fix (onSchemaDivergence:'abort' + committed-vs-serializeRegistry byte-equality + reproduce-first proving the old default self-heals while abort throws); D47 RESOLVED. Archived M142.
+    
+    VERIFY: bun run check green at every merge (final 1488 pass / 0 fail; tsc+eslint clean); nix build .#node-modules green after the Ajv FOD refresh. Dogfooded the D43 worktree-confinement + per-merge/per-archive/per-planning-lock ledger-commit discipline throughout (workers reset only their own worktrees; one worker commit unreachable from main's object store was recovered via format-patch + git am — no data loss). Both pi providers worked (grok-build + ollama-cloud/minimax).
+    
+    NEXT (user, optional — NOT blockers; genuinely drained): (1) GOAL CLOSURE — goals never auto-close: G41 + G42 (+ the older G38) are planned/built and await you setting them `done` in the TUI/web; their coordination milestones (M135/M141/M126) archive on the next /cq:advance sweep once closed. (2) LIVE ACTIVATION (the recurring deploy gap): all of G41/G42's source is merged on main, but the deployed ~/.claude + ~/.pi assets (the cq-assets prompt-catalog wiring + /cq:plan idea-id grammar) and the running ledger-mcp/ledger-web (new fetch_prompt/validate tools, Ideas ledger, cq init cq.toml, Agents-tab typed schemas) regenerate only on the next `home-manager switch` + MCP/web restart. (3) ITEM 3 was a SPIKE: K66 recorded FEASIBLE-WITH-CAVEATS (GO) — a SEPARATE follow-up goal would implement the orphan-ref GitObjectLedgerBackend (findings: docs/drafts/20260609-221530-orphan-ledger-feasibility.md).
+- flow: advance
+- ledgerRefs: ["goals:G41","goals:G42","defects:D47"]
+- sessionLogs: ["docs/logs/20260609-191048-a7da7daa089abaf95.md","docs/logs/20260609-192700-ab459aecc48c00e6d.md","docs/logs/20260609-194117-a529026c1e49518de.md","docs/logs/20260609-223242-a50cdfb0c5b11b490.md","docs/logs/20260609-223826-af9cdea865a37cb53.md","docs/logs/20260609-224743-af85de69b2426462b.md"]
+- tags: ["G41","G42","D47","drained"]
 
 ## M126
 
