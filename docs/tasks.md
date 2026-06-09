@@ -394,6 +394,21 @@ archives:
     summary: "G36 W3 — docs + verify. T296 (cq.toml.example + token-format docs for the :<effort> suffix; reserved ':' both halves, per-harness enums, pi --model shorthand), T298 (G36 verify: bun run check 1286/0 + nix build .#ledger-mcp exit 0) done + reviewed (R357/R358 go-ahead). Merged to main."
     title: "G36 W3: docs, cq.toml.example, full check + nix build"
     status: done
+  - id: M123
+    path: ./archive/tasks/M123.md
+    summary: "G37 W1 (D43 part-a) COMPLETE: T301 added the worktree-confinement hard Boundary to implement-worker.md — a GENERAL prohibition on any git op switching/mutating/writing-refs of a tree other than the worker's own (checkout/reset --hard/cherry-pick + git -C/--git-dir as non-exhaustive exemplars), sanctioned reset --hard <base> only within own worktree, status=fail escalation on a stale base. Merged 5d0f12a; reviewed R365 go-ahead. Marker 'MUST NOT run git against the main checkout'."
+    title: "D43 W1: implement-worker worktree-confinement Boundary"
+    status: done
+  - id: M124
+    path: ./archive/tasks/M124.md
+    summary: "G37 W2 (D43 part-b, commit discipline) COMPLETE: T302 after-planning-lock always-fire checkpoint in plan/advance.md (147d589, R366); T303 §7.5 after-every-task-merge-back always-fire checkpoint + three-checkpoint distinction in implement/advance.md (1252c98, R367); T304 advance.md acknowledges the chained per-merge commit as always-fire (2acd3f7, all go-ahead). Existing after-archive + at-stop commits intact."
+    title: "D43 W2: durable-ledger-commit checkpoints (after planning-lock + every merge-back)"
+    status: done
+  - id: M125
+    path: ./archive/tasks/M125.md
+    summary: "G37 W3 (D43 part-3 repro/guard + verify) COMPLETE: T305 documented reflog repro (25e2fe6, R368); T306 4-cell file-scoped grep-invariant guard in canonical-ledgers.test.ts (169b032, R369, teeth-verified); T307 final verify PASS (R370: bun run check 1293/0 incl. the grep-invariant + nix build .#llm-skills exit 0). D43 RESOLVED. Live-activation via home-manager switch is a user follow-up."
+    title: "D43 W3: documented repro + grep-invariant guard + verify"
+    status: done
 ---
 
 # tasks
@@ -473,102 +488,3 @@ archives:
 - resultCommit: 2b1a2e0
 - completion: "Satisfied within T267's commit (2b1a2e0): the T267 worker updated packages/ledger-web/test/{helpTabs.test.tsx,stateMachineTab.test.tsx} to the new item-states testids (help-tab-item-states / help-item-states / help-item-state-<ledger>) with per-ledger diagram coverage preserved, to keep `bun run check` green. Verified on main: `rg statemachine packages/ledger-web/test` returns nothing; the tests assert the renamed testids + per-ledger rendering; integrated bun run check green 1135/1skip/0. Those test files were part of the R327-reviewed T267 diff (reviewer noted coverage preserved). No separate worker needed."
 - sessionLogs: ["docs/logs/20260608-180917-a27f1b85731cda97f.md"]
-
-## M123
-
-### T301 — done
-
-- createdAt: 2026-06-09T09:46:48.937Z
-- updatedAt: 2026-06-09T10:23:59.352Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: Add worktree-confinement hard Boundary to implement-worker.md
-- description: "Edit nix/pkg/cq-assets/agents/implement-worker.md 'Boundaries (hard rules)' (~L47-55). Add a hard rule (D43 part-a, Q166 1b) closing the permissive gap H31 confirmed. GENERAL RULE (R363/minimax — make it unambiguous, not just exemplars): the worker operates ONLY inside its own isolated worktree dir and MUST NOT run ANY git command that switches, mutates, or writes the refs of a working tree OTHER THAN its own — the `git checkout`/`git reset --hard`/`git cherry-pick` cases are non-exhaustive EXEMPLARS of that general prohibition, which also covers `git -C <other>` / `--git-dir` targeting another tree and any branch/ref write against it (push/rebase/merge are ALREADY globally banned by the existing Boundary, L53-54 — do not weaken that). State the sanctioned base-refresh: when it must refresh its base it runs `git reset --hard <base>` ONLY within its own worktree. State the stale/wrong-base escalation: if its inherited base (passed in by the harness via native isolation:worktree, L38-43) is stale/wrong such that it cannot proceed, it reports status=fail with the reason (via the existing result contract / blockedReason) RATHER THAN improvising cross-checkout git. Reinforce: commits on its own worktree branch + reports the resultCommit SHA; the orchestrator merges by SHA (consistent with L71-73 + the L53-54 no-merge rule). Surgical: extend the Boundaries list (+ minimally tighten the L25-29 descriptive premise into an enforceable prohibition if needed); match the file's bullet style. Pick a STABLE verbatim marker phrase (e.g. 'ONLY inside its own worktree' / 'MUST NOT run git against the main checkout') for the T306 grep-invariant."
-- acceptance: "implement-worker.md 'Boundaries (hard rules)' contains a new hard rule with all 4 clauses: (1) git confined to the worker's own worktree dir — a GENERAL prohibition on any git op that switches/mutates/writes-refs of another working tree (checkout/reset --hard/cherry-pick named as non-exhaustive exemplars; git -C/--git-dir against another tree covered); (2) the prohibition is general (not just the three exemplars) and does not weaken the existing no-merge/push/rebase ban; (3) `git reset --hard <base>` permitted ONLY within its own worktree; (4) status=fail on a stale/wrong base instead of cross-checkout git. The chosen verbatim marker phrase is grep-able. git diff scoped to the Boundaries region (+ minimal L25-29). bun run check stays green."
-- suggestedModel: frontier
-- ledgerRefs: ["goals:G37","defects:D43"]
-- resultCommit: 5d0f12a
-
-## M124
-
-### T302 — done
-
-- createdAt: 2026-06-09T09:47:01.233Z
-- updatedAt: 2026-06-09T10:24:19.316Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: Add commit-after-planning-lock checkpoint to plan/advance.md
-- description: "Edit nix/pkg/cq-assets/commands/cq/plan/advance.md 'Commit the ledger (standalone stop)' section (~L717-728). D43 part-b, Q166 (2). TODAY plan/advance.md commits the ledger ONLY at the standalone stop (suppressed when chained), so a planning round that reaches `planned` while chained under /cq:advance leaves the plan's milestones/tasks/locked-decision uncommitted (H31 part-b). Add a PERMANENT ledger-commit checkpoint that fires AFTER the planning-lock — immediately after a goal reaches `planned` (decision locked + status planned, the planner's `completed` outcome / sub-step 1c). This checkpoint MUST fire EVEN WHEN CHAINED under /cq:advance (it OVERRIDES the chained-suppression for THIS checkpoint), while the existing standalone at-stop commit + its chained-suppression for the AT-STOP commit remain unchanged. Reuse the existing idempotent commit form (`git add docs/ ... && git diff --cached --quiet -- docs/ || git commit`), ledger-artifacts-only scope (docs/*.md + docs/archive + docs/logs; never docs/ledgers.yaml; never code), message e.g. `chore(ledger): /cq:plan:advance — planned: <G>`. Pick a STABLE verbatim marker phrase (e.g. 'after the planning-lock' / 'after a goal reaches `planned`') for the T306 grep-invariant."
-- acceptance: "plan/advance.md contains a permanent commit checkpoint that (1) fires after a goal reaches `planned`, (2) explicitly fires even when chained under /cq:advance (overriding chained-suppression for THIS checkpoint), (3) leaves the existing standalone at-stop commit + its chained-suppression unchanged (verify the standalone-stop block still present, no deletion). The grep marker phrase present verbatim. Edit scoped to the Commit-the-ledger section. bun run check green."
-- suggestedModel: frontier
-- ledgerRefs: ["goals:G37","defects:D43"]
-- resultCommit: 147d589
-
-### T303 — done
-
-- createdAt: 2026-06-09T09:47:14.115Z
-- updatedAt: 2026-06-09T10:24:33.002Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: Add commit-after-every-merge-back checkpoint to implement/advance.md §7
-- description: "Edit nix/pkg/cq-assets/commands/cq/implement/advance.md. D43 part-b, Q166 (2). TODAY (~L395-416 'Commit the ledger') the ledger is committed after every archive_milestone (always, even chained) + at the standalone stop (suppressed when chained) — but NOT after every individual task merge-back, so a long chained run accrues a large uncommitted ledger between archives (H31 part-b). Add a PERMANENT ledger-commit checkpoint that fires AFTER EVERY task merge-back — at the end of §7 step 3/step 4 (after `update_item('tasks', <id>, status:'done', ...)` + the orchestrator-owned defect closure), once per merged task. This checkpoint MUST fire EVEN WHEN CHAINED under /cq:advance (OVERRIDING chained-suppression for THIS checkpoint), while the existing after-archive commit (already always-fires) + the standalone at-stop commit (still suppressed when chained) remain UNCHANGED. Reuse the idempotent commit form; ledger-artifacts-only scope; message e.g. `chore(ledger): /cq:implement:advance — merged <Txx>`. Update the 'Commit the ledger' section prose so the two always-fire checkpoints (after-archive + after-every-merge) are clearly distinguished from the chained-suppressed at-stop commit. Surgical: add the checkpoint at the §7 merge-back site + document it in the section. STABLE verbatim marker phrase (e.g. 'after every task merge-back') for T306."
-- acceptance: "implement/advance.md §7 contains a per-merged-task ledger-commit checkpoint, and the 'Commit the ledger' section documents it as (1) firing after EVERY merge-back, (2) firing even when chained under /cq:advance (overriding chained-suppression for THIS checkpoint), with (3) the existing after-archive commit + (4) the chained-suppressed at-stop commit both intact + clearly distinguished (no deletion of existing commit steps). The grep marker phrase present verbatim. Edit scoped to §7 + the Commit-the-ledger section. bun run check green."
-- suggestedModel: frontier
-- ledgerRefs: ["goals:G37","defects:D43"]
-- resultCommit: 1252c98
-
-### T304 — done
-
-- createdAt: 2026-06-09T09:47:27.024Z
-- updatedAt: 2026-06-09T10:29:05.180Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: Add chained-path commit-after-every-merge clause to advance.md
-- description: "Edit nix/pkg/cq-assets/commands/cq/advance.md 'Commit the ledger (after every milestone archive + at the run stop)' section (~L506-534). D43 part-b, Q166 (2) — the chained/top-level half of T303. /cq:advance is the SOLE at-stop committer for a full run + owns the chained sub-flows' suppressed at-stop commits; it must ALSO acknowledge the new after-every-merge-back checkpoint when implement/advance.md runs chained under it. Add prose making explicit that the after-every-task-merge-back ledger commit (the checkpoint added in T303) FIRES even when implement runs CHAINED under /cq:advance — i.e. the chained implement pass's per-merge commit is NOT suppressed (it is one of the always-fire checkpoints, alongside the per-archive commit); only the chained sub-flow's AT-STOP commit stays suppressed (the wrapper owns the single run-stop commit). Keep the per-archive 'always fires even when chained' rule + the run-stop commit unchanged; reuse the idempotent commit form + ledger-artifacts-only scope. Surgical: extend the section's bullet list to name the per-merge checkpoint as a third always-fire checkpoint. Marker (R363/minimax): pick a STABLE verbatim marker phrase for THIS file (advance.md). It MAY share wording with T303's phrase (e.g. 'after every task merge-back') but is a DISTINCT file-scoped marker — T306 asserts it as its OWN cell (cell 4, grepped in advance.md), separate from T303's cell 3 (grepped in implement/advance.md). There are 4 distinct (file, marker) cells total, NOT one shared marker reused across files."
-- acceptance: "advance.md 'Commit the ledger' section states the after-every-task-merge-back commit fires even when the implement sub-flow runs chained under /cq:advance (NOT suppressed; an always-fire checkpoint alongside per-archive), while ONLY the chained sub-flow's at-stop commit stays suppressed + the run-stop + per-archive commits are unchanged. The per-merge always-fire clause + the suppression-scope (at-stop only) clause both present; grep marker phrase verbatim. Edit scoped to the Commit-the-ledger section. bun run check green."
-- suggestedModel: frontier
-- dependsOn: ["T303"]
-- ledgerRefs: ["goals:G37","defects:D43"]
-- resultCommit: 2acd3f7
-
-## M125
-
-### T305 — done
-
-- createdAt: 2026-06-09T09:47:42.722Z
-- updatedAt: 2026-06-09T10:24:45.709Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: Add a documented repro of the reflog data-loss sequence
-- description: "D43 fix part 3 (documented repro). A test reproducing a real cross-checkout `git reset --hard` against a live shared checkout is impractical/destructive, so per CLAUDE.md §6a ('when a test is impractical, write a documented repro — exact commands, inputs, observed vs expected output') author a documented repro at docs/drafts/{YYYYMMDD-HHMM}-D43-reflog-repro.md (repo-root docs/drafts convention) capturing the exact reflog sequence H31/D43 confirmed: a worker under native isolation:worktree cut from a STALE base runs `git reset --hard`/checkout in the MAIN checkout (not its worktree); the HEAD@{n} reset discards the run's UNCOMMITTED docs/*.md ledger writes (the data loss), recovered only by replay because reverted counters reproduced identical ids (cite the 343ef67-era recovery + D43.description). Document: (a) precondition (uncommitted ledger + stale-base worktree), (b) the exact stray cross-checkout git op (commands, main-checkout path vs worker worktree path, pre/post `git -C <main> status --porcelain` + reflog excerpts), (c) observed outcome (uncommitted docs/ erased, worker's own worktree intact, no trace in the branch), (d) expected post-fix outcome (T301 Boundary forbids the cross-checkout op; T302/T303/T304 commit-after-planning-lock/merge-back bound the uncommitted window to <= one task/plan). Reproduction-first (CLAUDE.md §6a; R363/minimax): this repro documents the failure on the UNFIXED code — T305 carries NO dep on T301-T304 and is authored BEFORE they land; it pairs with T306's after-state grep-invariant as the before/after of the fix. Reference D43/H31/Q166 for traceability. Documentation, not executable code."
-- acceptance: A repro doc exists at docs/drafts/<timestamp>-D43-reflog-repro.md with the 4 documented elements (precondition; exact stray cross-checkout git op; observed data-loss outcome; expected post-fix outcome) + references to D43/H31/Q166 + the T301/T302-304 fix linkage; the reflog sequence matches D43.description. bun run check stays green (doc adds no code; must not break lint).
-- suggestedModel: standard
-- ledgerRefs: ["goals:G37","defects:D43"]
-- resultCommit: 25e2fe6
-
-### T306 — done
-
-- createdAt: 2026-06-09T09:47:54.769Z
-- updatedAt: 2026-06-09T10:39:11.280Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: Add grep-invariant guard test for the D43 prompt tokens
-- description: "D43 fix part 3 (grep-invariant guard), following the established T255/T264 pattern. Extend the existing grep-invariant test in nix/pkg/cq-ledgers/packages/ledger/test/canonical-ledgers.test.ts (where T255's four-table + T264's 8-cell grep-invariants live — reuse that boilerplate, do NOT duplicate). cq-assets is eval-time-only with no per-file build target, so this bun grep-invariant IS the substantive regression guard for the prompt threading (per R363/G31-R281 — no nix build validates the prompt content). FILE-SCOPED (R363/minimax): each assertion reads a SPECIFIC prompt file path and asserts its marker IN THAT FILE (e.g. readFileSync(<path>).toContain(<marker>)) — NOT a repo-wide grep that would pass on a stray match elsewhere. Add 4 distinct (file, marker) cells asserting the verbatim markers T301-T304 wrote: (1) nix/pkg/cq-assets/agents/implement-worker.md contains the worktree-confinement Boundary marker (from T301); (2) commands/cq/plan/advance.md contains the commit-after-planning-lock marker (T302); (3) commands/cq/implement/advance.md contains the commit-after-every-merge-back marker (T303); (4) commands/cq/advance.md contains the chained-path commit-after-every-merge marker (T304). Use the EXACT verbatim marker strings T301-T304 settled on (read them from the edited files). Verify TEETH: temporarily remove a token from one file, confirm the test fails, restore."
-- acceptance: "Under bun test, canonical-ledgers.test.ts asserts all 4 D43 prompt-token cells, each FILE-SCOPED (reads its OWN specific file path and asserts the verbatim marker in THAT file, not repo-wide): implement-worker.md worktree-confinement; plan/advance.md commit-after-planning-lock; implement/advance.md commit-after-every-merge-back; advance.md chained commit-after-every-merge. The test FAILS if any cell's verbatim token is missing from its file (teeth verified by temporary removal then restore). bun run check green (full suite incl. the new assertions)."
-- suggestedModel: standard
-- dependsOn: ["T301","T302","T303","T304"]
-- ledgerRefs: ["goals:G37","defects:D43"]
-- resultCommit: 169b032
-
-### T307 — wip
-
-- createdAt: 2026-06-09T09:48:04.242Z
-- updatedAt: 2026-06-09T10:39:12.469Z
-- author: "opus-4.8[1m]"
-- session: ae90ac43-977e-46cc-89a7-1814996d3f61
-- headline: "Final verify: bun run check (substantive) + nix build .#llm-skills (smoke)"
-- description: "D43 fix final gate. SUBSTANTIVE gate (R363 opus, per G31/R281): cq-assets is consumed EVAL-TIME-ONLY (assets.nix builtins.readFile/readDir) and NO buildable nix derivation vendors the prompt files, so NO `nix build` exercises the 4 edited governance prompts' content. The substantive regression gate is therefore `bun run check` from nix/pkg/cq-ledgers/ (tsc + eslint + bun test) INCLUDING the new T306 grep-invariant — it must pass. Additionally run `nix build .#llm-skills` from the repo root as a repo-still-builds SMOKE (must exit 0) — explicitly NOT a validator of the 4 prompts' content (it builds nix/pkg/llm-skills and does not read cq-assets/agents|commands). Triage/fix any fallout. Confirm the documented repro (T305) is present. NOTE: live activation of the edited ~/.claude + ~/.pi assets requires `home-manager switch` (a deploy step like D37/D41) — out of scope for this task (source fix only); flag it in the completion for the user."
-- acceptance: "`bun run check` exits 0 from nix/pkg/cq-ledgers/ (full suite incl. the T306 D43 grep-invariant) — THIS is the substantive gate; `nix build .#llm-skills` exits 0 from the repo root as a build smoke ONLY (explicitly NOT prompt-content validation — cq-assets is eval-time-only, same as G31/R281); the T305 repro doc exists. Capture the bun-test pass/fail counts + the nix exit code in the completion notes; note the home-manager-switch live-activation deploy step for the user."
-- suggestedModel: standard
-- dependsOn: ["T305","T306"]
-- ledgerRefs: ["goals:G37","defects:D43"]

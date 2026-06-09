@@ -549,6 +549,21 @@ archives:
     summary: "G36 W3 — docs + verify. T296 (cq.toml.example + token-format docs for the :<effort> suffix; reserved ':' both halves, per-harness enums, pi --model shorthand), T298 (G36 verify: bun run check 1286/0 + nix build .#ledger-mcp exit 0) done + reviewed (R357/R358 go-ahead). Merged to main."
     title: "G36 W3: docs, cq.toml.example, full check + nix build"
     status: done
+  - id: M123
+    path: ./archive/milestones/M123.md
+    summary: "G37 W1 (D43 part-a) COMPLETE: T301 added the worktree-confinement hard Boundary to implement-worker.md — a GENERAL prohibition on any git op switching/mutating/writing-refs of a tree other than the worker's own (checkout/reset --hard/cherry-pick + git -C/--git-dir as non-exhaustive exemplars), sanctioned reset --hard <base> only within own worktree, status=fail escalation on a stale base. Merged 5d0f12a; reviewed R365 go-ahead. Marker 'MUST NOT run git against the main checkout'."
+    title: "D43 W1: implement-worker worktree-confinement Boundary"
+    status: done
+  - id: M124
+    path: ./archive/milestones/M124.md
+    summary: "G37 W2 (D43 part-b, commit discipline) COMPLETE: T302 after-planning-lock always-fire checkpoint in plan/advance.md (147d589, R366); T303 §7.5 after-every-task-merge-back always-fire checkpoint + three-checkpoint distinction in implement/advance.md (1252c98, R367); T304 advance.md acknowledges the chained per-merge commit as always-fire (2acd3f7, all go-ahead). Existing after-archive + at-stop commits intact."
+    title: "D43 W2: durable-ledger-commit checkpoints (after planning-lock + every merge-back)"
+    status: done
+  - id: M125
+    path: ./archive/milestones/M125.md
+    summary: "G37 W3 (D43 part-3 repro/guard + verify) COMPLETE: T305 documented reflog repro (25e2fe6, R368); T306 4-cell file-scoped grep-invariant guard in canonical-ledgers.test.ts (169b032, R369, teeth-verified); T307 final verify PASS (R370: bun run check 1293/0 incl. the grep-invariant + nix build .#llm-skills exit 0). D43 RESOLVED. Live-activation via home-manager switch is a user follow-up."
+    title: "D43 W3: documented repro + grep-invariant guard + verify"
+    status: done
 ---
 
 # milestones
@@ -633,22 +648,3 @@ archives:
 - createdAt: 2026-06-09T09:36:31.962Z
 - updatedAt: 2026-06-09T09:36:31.962Z
 - title: "Plan: fix D43 — worktree-confine implement-worker + commit ledger after planning/every-merge"
-
-### M123 — open
-
-- createdAt: 2026-06-09T09:46:18.552Z
-- updatedAt: 2026-06-09T09:46:18.552Z
-- title: "D43 W1: implement-worker worktree-confinement Boundary"
-
-### M124 — open
-
-- createdAt: 2026-06-09T09:46:22.697Z
-- updatedAt: 2026-06-09T09:46:22.697Z
-- title: "D43 W2: durable-ledger-commit checkpoints (after planning-lock + every merge-back)"
-
-### M125 — open
-
-- createdAt: 2026-06-09T09:46:27.102Z
-- updatedAt: 2026-06-09T09:46:27.102Z
-- title: "D43 W3: documented repro + grep-invariant guard + verify"
-- dependsOn: ["M123","M124"]

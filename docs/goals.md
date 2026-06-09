@@ -302,10 +302,10 @@ archives:
 
 ## M122
 
-### G37 — planned
+### G37 — building
 
 - createdAt: 2026-06-09T09:37:23.590Z
-- updatedAt: 2026-06-09T10:05:28.359Z
+- updatedAt: 2026-06-09T10:41:31.850Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - title: Fix D43 — confine implement-worker git to its worktree + commit ledger after planning-lock and every merge

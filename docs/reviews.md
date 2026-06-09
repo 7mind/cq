@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 369
+  item: 370
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -922,3 +922,12 @@ archives:
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - summary: "T306 implement review: APPROVE (reconciled; opus[claude] approve 0/0 authoritative + INDEPENDENTLY teeth-verified; minimax[pi] approve with 2 minor nits ADJUDICATED non-blocking; grok+codex abstained). canonical-ledgers.test.ts gained a 'D43: T301-T304 prompt-hardening grep invariants — file-scoped' describe block with 4 cells, each readFile-ing ONE specific cq-assets prompt file (reusing the T255/T264 import.meta.dir path-resolution) and .toContain-ing its verbatim marker: T301 implement-worker.md 'MUST NOT run git against the main checkout'; T302 plan/advance.md 'after the planning-lock'; T303 implement/advance.md 'after every task merge-back'; T304 advance.md 'it fires even when the implement sub-flow runs chained under'. opus independently verified teeth (broke the cell-4 marker → 1 fail; restored → 0 fail). bun run check green 1294/0. ADJUDICATION: minimax nit#1 — cell-4's comment 'absent from implement/advance.md, confirming file-specificity' describes a TRUE-but-unasserted property (the marker IS verified absent from implement/advance.md: grep 0× by both opus and orchestrator); it is a comment documenting marker SELECTION rationale, not a claimed test assertion — factually correct, non-blocking (a comment-wording fix would need a disproportionate worker+merge round). minimax nit#2 (long-exact-marker brittleness) is BY DESIGN for grep-invariants (matches T255/T264). Optional future strengthening: add an explicit toNotContain assertion in implement/advance.md to make cell-4's file-specificity a tested invariant."
 - ledgerRefs: ["tasks:T306","goals:G37","defects:D43"]
+
+### R370 — go-ahead
+
+- createdAt: 2026-06-09T10:42:17.717Z
+- updatedAt: 2026-06-09T10:42:17.717Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "T307 final-verify: PASS (orchestrator-run; per T300 precedent the verification gate IS the success criterion — no diff to dispatch a reviewer panel on). (1) SUBSTANTIVE gate — `bun run check` from nix/pkg/cq-ledgers/ = 1293 pass / 1 skip / 0 fail / 4249 expect() across 108 files, incl. the 4 T306 D43 file-scoped grep-invariant cells; tsc -b + eslint clean. (2) SMOKE — `nix build .#llm-skills` exit 0 (repo still builds; NOT prompt-content validation, cq-assets eval-time-only). (3) T305 repro doc present (docs/drafts/20260609-1007-D43-reflog-repro.md, 7001 bytes). All G37 acceptance met. LIVE-ACTIVATION user follow-up (like D37/D41): the deployed ~/.claude + ~/.pi assets refresh on the next `home-manager switch`; the SOURCE fix is merged on main."
+- ledgerRefs: ["tasks:T307","goals:G37","defects:D43"]
