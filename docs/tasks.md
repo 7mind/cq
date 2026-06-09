@@ -542,10 +542,10 @@ archives:
 - completion: "formatReviewerToken round-trips the optional :<effort> suffix on both harness branches; cherry-picked to main (integrated check 1262/0)."
 - sessionLogs: ["docs/logs/20260608-230534-af11cee7394e100ce.md","docs/logs/20260609-001520-T288-review.md"]
 
-### T290 — planned
+### T290 — done
 
 - createdAt: 2026-06-08T23:43:12.225Z
-- updatedAt: 2026-06-08T23:43:12.225Z
+- updatedAt: 2026-06-09T00:29:44.052Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: Make effort part of token identity in reviewerTokensEqual + verify classify/D42
@@ -554,13 +554,16 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T286"]
 - ledgerRefs: ["goals:G36"]
+- resultCommit: 8a52419
+- completion: reviewerTokensEqual now folds effort into token identity (Q162; undefined/null one class); classifyToken + D42 delegate unchanged; cherry-picked to main (integrated check 1271/0).
+- sessionLogs: ["docs/logs/20260609-002900-ad1af1f2ecf8fa54e.md","docs/logs/20260609-002900-T290-review.md"]
 
 ## M118
 
-### T289 — planned
+### T289 — done
 
 - createdAt: 2026-06-08T23:43:02.233Z
-- updatedAt: 2026-06-08T23:43:02.233Z
+- updatedAt: 2026-06-09T00:29:42.846Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: Add getAgentModels to the web LedgerClient interface + McpLedgerClient
@@ -569,6 +572,9 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T287"]
 - ledgerRefs: ["goals:G34"]
+- resultCommit: a2dff68
+- completion: Added getAgentModels to the web LedgerClient + McpLedgerClient (errors propagate per R341; minimal fakes deferred to T291); cherry-picked to main (integrated check 1271/0).
+- sessionLogs: ["docs/logs/20260609-002900-ad0959d0752198df4.md","docs/logs/20260609-002900-T289-review.md"]
 
 ### T291 — planned
 

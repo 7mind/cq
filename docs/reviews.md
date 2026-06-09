@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 350
+  item: 352
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -897,3 +897,29 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T288","goals:G36"]
 - sessionLogs: ["docs/logs/20260609-001520-T288-review.md"]
+
+### R352 — go-ahead
+
+- createdAt: 2026-06-09T00:29:42.750Z
+- updatedAt: 2026-06-09T00:29:42.750Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: go-ahead (opus + minimax both approve; grok+codex abstained — no key). T290 folds effort into reviewerTokensEqual identity ((a.effort ?? null)===(b.effort ?? null); undefined/null one class); classifyToken + parseTiers D42 delegate unchanged; tests cover high!=low, same==, effortless==, D42 effort-differing-accepted + same-effort-collision (alias+direct key), classifyToken per-effort classes. Cherry-picked to main 8a52419; integrated bun run check 1271/0.
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T290","goals:G36"]
+- sessionLogs: ["docs/logs/20260609-002900-ad1af1f2ecf8fa54e.md","docs/logs/20260609-002900-T290-review.md"]
+
+## M118
+
+### R351 — go-ahead
+
+- createdAt: 2026-06-09T00:29:42.437Z
+- updatedAt: 2026-06-09T00:29:42.437Z
+- author: "opus-4.8[1m]"
+- session: ae90ac43-977e-46cc-89a7-1814996d3f61
+- summary: "go-ahead (opus + minimax both approve; grok+codex abstained — no key). T289 adds getAgentModels to the web LedgerClient + McpLedgerClient (one get_agent_models call, errors propagate unchanged per R341), minimal {configured:false,agents:[]} stubs on the four other LedgerClient impls deferred to T291. Cherry-picked to main a2dff68; integrated bun run check 1271/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T289","goals:G34"]
+- sessionLogs: ["docs/logs/20260609-002900-ad0959d0752198df4.md","docs/logs/20260609-002900-T289-review.md"]
