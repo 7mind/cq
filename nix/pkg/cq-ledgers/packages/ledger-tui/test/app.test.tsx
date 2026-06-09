@@ -2176,3 +2176,102 @@ describe("ledger-tui LIST-focus paging + Home/End (T318 / D44 part 1)", () => {
     h.unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// CONTENT-focus Home/End jump scroll to top/bottom; PgUp/PgDn keep paging the
+// detail scroll by CONTENT_PAGE (T319 / D44 part 2).
+//
+// Fixture: the bugs ledger's D2 item carries HUGE_NOTE (40 "Line N:" rows), far
+// taller than the content pane, so the scroll has real range. We focus the
+// content pane (Enter) and assert which "Line N:" rows are visible:
+//   - End      → bottom revealed (Line 40:), clamped at contentMaxScroll
+//   - Home     → back to the top (Line 1: visible, Line 40: hidden)
+//   - PgDn/PgUp→ still page the detail by CONTENT_PAGE rows (unchanged)
+// Home/End are detected via the SHARED module-level matchHomeEnd(input) helper
+// (T318), mirrored with key.home/key.end || matchHomeEnd(input). The raw CSI
+// (ESC [ H / ESC [ F) and numeric VT (ESC [ 1 ~ / ESC [ 4 ~) forms are fed via
+// stdin.write — the same sequences exercised by the T318 LIST-focus tests.
+// ---------------------------------------------------------------------------
+
+describe("ledger-tui CONTENT-focus Home/End + paging (T319 / D44 part 2)", () => {
+  const HOME_CSI = "\x1b[H"; // ESC [ H  → key.home
+  const END_CSI = "\x1b[F"; // ESC [ F  → key.end
+  const HOME_VT = "\x1b[1~"; // ESC [ 1 ~ → key.home (numeric VT form)
+  const END_VT = "\x1b[4~"; // ESC [ 4 ~ → key.end  (numeric VT form)
+  const PG_UP = "\x1b[5~"; // ESC [ 5 ~ → key.pageUp
+  const PG_DN = "\x1b[6~"; // ESC [ 6 ~ → key.pageDown
+
+  /** Open bugs, move cursor to the tall D2 item, focus its content pane. */
+  async function focusD2Content(): Promise<Harness> {
+    const h = await mount();
+    await h.key(ENTER); // open bugs
+    await waitForFrame(() => h.frame(), "D2");
+    await h.key(DOWN); // cursor → D2 (HUGE_NOTE overflows the pane)
+    await waitForFrame(() => h.frame(), "D2 @ bugs");
+    await h.key(ENTER); // focus the content pane
+    await waitForFrame(() => h.frame(), "scroll · ");
+    return h;
+  }
+
+  it("End jumps the scroll to the bottom (clamped to contentMaxScroll)", async () => {
+    const h = await focusD2Content();
+    expect(h.frame()).toContain("Line 1:"); // starts at the top
+    expect(h.frame()).not.toContain("Line 40:"); // bottom below the fold
+    await h.key(END_CSI);
+    await tick(20);
+    expect(h.frame()).toContain("Line 40:"); // bottom now revealed
+    h.unmount();
+  });
+
+  it("Home returns the scroll to 0", async () => {
+    const h = await focusD2Content();
+    await h.key(END_CSI); // jump to bottom first
+    await tick(20);
+    expect(h.frame()).toContain("Line 40:");
+    await h.key(HOME_CSI);
+    await tick(20);
+    expect(h.frame()).toContain("Line 1:"); // top of the field
+    expect(h.frame()).not.toContain("Line 40:"); // bottom hidden again
+    h.unmount();
+  });
+
+  it("the numeric VT Home/End forms also jump bottom/top", async () => {
+    const h = await focusD2Content();
+    await h.key(END_VT); // ESC [ 4 ~
+    await tick(20);
+    expect(h.frame()).toContain("Line 40:");
+    await h.key(HOME_VT); // ESC [ 1 ~
+    await tick(20);
+    expect(h.frame()).toContain("Line 1:");
+    expect(h.frame()).not.toContain("Line 40:");
+    h.unmount();
+  });
+
+  it("End clamps: pressing End then PgDn does not scroll past the bottom", async () => {
+    const h = await focusD2Content();
+    await h.key(END_CSI);
+    await tick(20);
+    const atBottom = h.frame();
+    expect(atBottom).toContain("Line 40:");
+    await h.key(PG_DN); // already clamped at contentMaxScroll → no further reveal
+    await tick(20);
+    expect(h.frame()).toContain("Line 40:"); // still pinned to the bottom
+    h.unmount();
+  });
+
+  it("PgDn/PgUp still page the detail scroll by CONTENT_PAGE (unchanged)", async () => {
+    const h = await focusD2Content();
+    expect(h.frame()).toContain("Line 1:");
+    expect(h.frame()).not.toContain("Line 40:");
+    // One PgDn pages by CONTENT_PAGE (10) rows — short of the 40-row bottom.
+    await h.key(PG_DN);
+    await tick(20);
+    expect(h.frame()).not.toContain("Line 1:"); // top scrolled out of view
+    expect(h.frame()).not.toContain("Line 40:"); // but bottom not yet reached
+    // Page back up returns toward the top.
+    await h.key(PG_UP);
+    await tick(20);
+    expect(h.frame()).toContain("Line 1:"); // back at the top (clamped at 0)
+    h.unmount();
+  });
+});

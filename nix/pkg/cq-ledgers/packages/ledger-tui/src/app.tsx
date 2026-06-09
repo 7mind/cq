@@ -814,10 +814,19 @@ export function App({
       const cursorInArchive = top.showArchive && top.cursor >= activeCount;
       if (top.focus === "content") {
         const clampScroll = (s: number): number => Math.max(0, Math.min(s, contentMaxScroll.current));
+        // Home/End jump the detail scroll to the top / bottom of the content.
+        // Mirrors T318's LIST-focus detection: ink (>=7) decodes the raw ESC
+        // sequence into key.home/key.end with an empty `input`; matchHomeEnd is
+        // the fallback for terminals/ink versions surfacing the raw bytes.
+        const homeEnd = matchHomeEnd(input);
+        const isHome = key.home || homeEnd === "home";
+        const isEnd = key.end || homeEnd === "end";
         if (key.upArrow || input === "k") patchTop({ scroll: clampScroll(top.scroll - 1) });
         else if (key.downArrow || input === "j") patchTop({ scroll: clampScroll(top.scroll + 1) });
         else if (key.pageUp) patchTop({ scroll: clampScroll(top.scroll - CONTENT_PAGE) });
         else if (key.pageDown) patchTop({ scroll: clampScroll(top.scroll + CONTENT_PAGE) });
+        else if (isHome) patchTop({ scroll: 0 });
+        else if (isEnd) patchTop({ scroll: contentMaxScroll.current });
         else if (key.escape) patchTop({ focus: "list", scroll: 0 });
         // Edit/transition/answer keys are inert for archived items.
         else if (input === "s" && cur && !cursorInArchive) setOverlay({ t: "status", row: cur });
