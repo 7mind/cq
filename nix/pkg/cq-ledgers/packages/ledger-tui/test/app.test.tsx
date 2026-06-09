@@ -1776,7 +1776,9 @@ describe("ledger-tui number-key suggestion picker (T87)", () => {
     await openQuestions(h);
     await h.key(DOWN); // → Q2 (has suggestions)
     await tick(20);
-    const hints = h.frame();
+    // Collapse whitespace before matching: the hint bar wraps at the terminal
+    // width, so the token can straddle a line break in the raw frame.
+    const hints = h.frame().replace(/\s+/g, " ");
     expect(hints).toContain("1-9 pick suggestion");
     h.unmount();
   });
@@ -1785,7 +1787,7 @@ describe("ledger-tui number-key suggestion picker (T87)", () => {
     const h = await mount();
     await openQuestions(h);
     // Q1 has no suggestions
-    const hints = h.frame();
+    const hints = h.frame().replace(/\s+/g, " ");
     expect(hints).not.toContain("1-9 pick suggestion");
     h.unmount();
   });
@@ -1891,7 +1893,7 @@ describe("ledger-tui inert r/1-9 when persisted answer non-empty (T89)", () => {
   it("key hints hide '1-9 pick suggestion' when persisted answer is non-empty", async () => {
     const h = await mount();
     await openQ3(h); // Q3 has suggestions but non-empty answer
-    const f = h.frame();
+    const f = h.frame().replace(/\s+/g, " ");
     expect(f).not.toContain("1-9 pick suggestion");
     h.unmount();
   });
@@ -2011,6 +2013,166 @@ describe("ledger-tui D29: empty answer Enter is a no-op (T164)", () => {
     const q = await h.client.fetchItem("questions", "Q1");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("ship it");
+    h.unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LIST-focus PgUp/PgDn page the cursor + Home/End jump first/last row (T318)
+// Fixes defect D44 (part 1): in LIST focus PageUp/PageDown move the cursor by
+// one screenful (listInnerH rows) instead of scrolling the detail pane, and
+// Home/End jump to the first/last row. The detail pane no longer scrolls in
+// LIST focus without first pressing Enter to focus it.
+//
+// Geometry: the test harness reports an 80×24 terminal (useTermSize fallback),
+// the panel defaults to a right-split at ratio 0.5, so listOuterH = bodyRows =
+// rows - 1 - STATUS_ROWS = 24 - 1 - 2 = 21 and listInnerH = 21 - 2 = 19. One
+// PageDown therefore advances the cursor by 19 rows. We assert on the rendered
+// `› ` selection marker rather than internal state.
+// ---------------------------------------------------------------------------
+
+const LIST_INNER_H = 19; // listInnerH at the 80×24 test geometry (see note above)
+
+// Raw ESC sequences for the paging/jump keys, fed verbatim via stdin.write.
+// The ESC prefix is REQUIRED: ink's keypress parser only recognises the CSI
+// form (ESC [ …) as a named key (pageup/pagedown/home/end); a bare "[5~"
+// arrives as literal printable input and is NOT decoded as a page key.
+const PAGE_UP = "\x1b[5~"; // ESC [ 5 ~  → key.pageUp
+const PAGE_DOWN = "\x1b[6~"; // ESC [ 6 ~  → key.pageDown
+const HOME = "\x1b[H"; // ESC [ H    → key.home
+const END = "\x1b[F"; // ESC [ F    → key.end
+
+/**
+ * Read back the item index carried by the currently-selected list row. The
+ * ScrollList renders the selected row as `› task <n>` (ManyItemsClient labels
+ * items "task 0".."task N-1"); we find that marker line and parse the trailing
+ * integer. Returns null when no selected row is on screen.
+ */
+function selectedRowIndex(frame: string): number | null {
+  for (const line of frame.split("\n")) {
+    const i = line.indexOf("› ");
+    if (i < 0) continue;
+    const m = /task (\d+)/.exec(line.slice(i));
+    if (m) return parseInt(m[1]!, 10);
+  }
+  return null;
+}
+
+/** Mount the App against a ManyItemsClient(n) and open its only ledger. */
+async function mountManyItems(n: number): Promise<{
+  frame: () => string;
+  key: (s: string) => Promise<void>;
+  unmount: () => void;
+}> {
+  const client = new ManyItemsClient(n);
+  const r = render(<App client={client} />);
+  await tick();
+  r.stdin.write(ENTER); // open the only ledger
+  await waitForFrame(() => r.lastFrame() ?? "", "task 0", 5000);
+  return {
+    frame: () => r.lastFrame() ?? "",
+    key: async (s: string) => {
+      r.stdin.write(s);
+      await tick();
+    },
+    unmount: r.unmount,
+  };
+}
+
+describe("ledger-tui LIST-focus paging + Home/End (T318 / D44 part 1)", () => {
+  it("PageDown advances the cursor by listInnerH rows (not the detail scroll)", async () => {
+    const h = await mountManyItems(60);
+    expect(selectedRowIndex(h.frame())).toBe(0); // cursor starts on the first row
+    await h.key(PAGE_DOWN);
+    await tick(20);
+    expect(selectedRowIndex(h.frame())).toBe(LIST_INNER_H); // 0 + 19
+    h.unmount();
+  });
+
+  it("PageUp moves the cursor back by listInnerH rows", async () => {
+    const h = await mountManyItems(60);
+    await h.key(PAGE_DOWN); // → cursor 19
+    await tick(10);
+    expect(selectedRowIndex(h.frame())).toBe(LIST_INNER_H);
+    await h.key(PAGE_UP);
+    await tick(20);
+    expect(selectedRowIndex(h.frame())).toBe(0); // max(0, 19 - 19)
+    h.unmount();
+  });
+
+  it("PageDown clamps the cursor at the last row", async () => {
+    const h = await mountManyItems(60);
+    for (let i = 0; i < 5; i++) {
+      await h.key(PAGE_DOWN); // 5 × 19 = 95 > 59 → clamps at the last row
+      await tick(8);
+    }
+    expect(selectedRowIndex(h.frame())).toBe(59); // totalRows - 1
+    h.unmount();
+  });
+
+  it("Home selects the first row", async () => {
+    const h = await mountManyItems(60);
+    await h.key(PAGE_DOWN); // move the cursor off row 0 first
+    await tick(10);
+    expect(selectedRowIndex(h.frame())).toBe(LIST_INNER_H);
+    await h.key(HOME); // raw ESC [ H
+    await tick(20);
+    expect(selectedRowIndex(h.frame())).toBe(0);
+    h.unmount();
+  });
+
+  it("End selects the last row", async () => {
+    const h = await mountManyItems(60);
+    expect(selectedRowIndex(h.frame())).toBe(0);
+    await h.key(END); // raw ESC [ F
+    await tick(20);
+    expect(selectedRowIndex(h.frame())).toBe(59); // totalRows - 1
+    h.unmount();
+  });
+
+  it("the numeric VT Home/End forms (ESC [ 1 ~ / ESC [ 4 ~) also jump first/last", async () => {
+    // matchHomeEnd recognises both the CSI (ESC [ H / ESC [ F) and the numeric
+    // VT (ESC [ 1 ~ / ESC [ 4 ~) sequences; verify the numeric forms here.
+    const h = await mountManyItems(60);
+    await h.key("\x1b[4~"); // End (numeric VT form)
+    await tick(20);
+    expect(selectedRowIndex(h.frame())).toBe(59);
+    await h.key("\x1b[1~"); // Home (numeric VT form)
+    await tick(20);
+    expect(selectedRowIndex(h.frame())).toBe(0);
+    h.unmount();
+  });
+
+  it("the detail pane does NOT scroll in LIST focus without pressing Enter first", async () => {
+    // The bugs ledger's D2 item has a `note` far taller than the content pane.
+    // In LIST focus, PageDown must page the CURSOR — it must NOT scroll the
+    // detail pane to reveal deep content (the removed no-Enter detail-scroll).
+    // The bugs ledger has only D1, D2; with the cursor on the LAST row (D2),
+    // PageDown leaves the cursor in place (clamped), so the detail pane stays
+    // on D2 throughout — any reveal of "Line 40:" would mean a stray detail
+    // scroll, the very affordance this task removes.
+    const h = await mount();
+    await h.key(ENTER); // open bugs
+    await waitForFrame(() => h.frame(), "D2"); // list shows the tall item
+    await h.key(DOWN); // cursor → D2 (its note overflows the pane), the last row
+    await waitForFrame(() => h.frame(), "D2 @ bugs");
+    expect(h.frame()).toContain("Line 1:"); // top of the long field is visible
+    expect(h.frame()).not.toContain("Line 40:"); // the end is below the fold
+    // PageDown in LIST focus must NOT scroll the detail pane to deep content.
+    await h.key(PAGE_DOWN);
+    await tick(20);
+    expect(h.frame()).toContain("D2 @ bugs"); // cursor still on D2 (clamped at last row)
+    expect(h.frame()).toContain("Line 1:"); // detail still shows the top of the field
+    expect(h.frame()).not.toContain("Line 40:"); // deep content STILL not revealed
+    // After pressing Enter to focus the content pane, PageDown DOES scroll it —
+    // confirming the scroll affordance moved behind the Enter-to-focus gate.
+    await h.key(ENTER); // focus the content pane
+    await waitForFrame(() => h.frame(), "scroll · ");
+    for (let i = 0; i < 4; i++) {
+      await h.key(PAGE_DOWN); // CONTENT-focus paging scrolls the detail
+      await tick(8);
+    }
+    expect(h.frame()).toContain("Line 40:"); // deep content now revealed in CONTENT focus
     h.unmount();
   });
 });

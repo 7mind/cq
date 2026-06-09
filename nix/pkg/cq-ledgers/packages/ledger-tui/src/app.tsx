@@ -72,6 +72,19 @@ const PANEL_DEFAULT: PanelLayout = { orientation: "right", ratio: 0.5 };
 const STATUS_ROWS = 2;
 /** Rows scrolled per PageUp/PageDown in the detail content pane. */
 const CONTENT_PAGE = 10;
+/**
+ * Map the raw stdin bytes for the Home/End keys to a logical action. ink's
+ * `useInput` does not expose `key.home`/`key.end`, so these arrive only as the
+ * raw `input` string (the ESC sequence). Both the xterm CSI forms (`ESC [ H` /
+ * `ESC [ F`) and the VT-style numeric forms (`ESC [ 1 ~` / `ESC [ 4 ~`) are
+ * recognised. Shared by the LIST-focus (T318) and CONTENT-focus (T319)
+ * handlers, so it is defined once at module scope.
+ */
+function matchHomeEnd(input: string): "home" | "end" | null {
+  if (input === "\x1b[H" || input === "\x1b[1~") return "home";
+  if (input === "\x1b[F" || input === "\x1b[4~") return "end";
+  return null;
+}
 const PANEL_MIN_RATIO = 0.2;
 const PANEL_MAX_RATIO = 0.8;
 const PANEL_STEP = 0.05;
@@ -834,15 +847,24 @@ export function App({
         return;
       }
       // focus === list. ↑↓ move the cursor (resetting the detail scroll to the
-      // top of the newly-selected item); PageUp/PageDown scroll the detail pane
-      // in place WITHOUT switching focus, so the detail is scrollable without the
-      // Enter-to-focus step; Enter focuses the pane for ↑↓ line scrolling.
+      // top of the newly-selected item); PageUp/PageDown page the CURSOR by one
+      // screenful (listInnerH rows); Home/End jump the cursor to the first/last
+      // row. None of these mutate the detail scroll without first pressing Enter
+      // to focus the pane — the detail is scrolled only in CONTENT focus.
+      // Home/End: ink (>=7) decodes the raw ESC sequence into key.home/key.end
+      // with an empty `input`; matchHomeEnd(input) is the fallback for terminals
+      // or ink versions that surface the raw bytes in `input` instead.
+      const homeEnd = matchHomeEnd(input);
+      const isHome = key.home || homeEnd === "home";
+      const isEnd = key.end || homeEnd === "end";
       if (key.upArrow || input === "k") patchTop({ cursor: Math.max(0, top.cursor - 1), scroll: 0 });
       else if (key.downArrow || input === "j")
         patchTop({ cursor: Math.min(totalRows - 1, top.cursor + 1), scroll: 0 });
-      else if (key.pageUp) patchTop({ scroll: Math.max(0, top.scroll - CONTENT_PAGE) });
+      else if (key.pageUp) patchTop({ cursor: Math.max(0, top.cursor - listInnerH), scroll: 0 });
       else if (key.pageDown)
-        patchTop({ scroll: Math.min(contentMaxScroll.current, top.scroll + CONTENT_PAGE) });
+        patchTop({ cursor: Math.min(totalRows - 1, top.cursor + listInnerH), scroll: 0 });
+      else if (isHome) patchTop({ cursor: 0, scroll: 0 });
+      else if (isEnd) patchTop({ cursor: Math.max(0, totalRows - 1), scroll: 0 });
       else if (key.return) {
         if (cur) patchTop({ focus: "content", scroll: 0 });
       } else if (key.escape) setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
@@ -969,7 +991,7 @@ export function App({
     hints =
       top.focus === "content"
         ? `↑↓/PgUp/Dn scroll · s status${answerHint} · e edit · o/[ ] panes · Esc back to list${cursorInArchive ? " [read-only]" : ""}`
-        : `↑↓ move · PgUp/Dn scroll detail · Enter focus · s status${answerHint} · e edit · n new · b batch-answer · f filter · c columns · / search · o/[ ] panes${archiveHint} · Esc back`;
+        : `↑↓ move · PgUp/Dn page · Home/End first/last · Enter focus · s status${answerHint} · e edit · n new · b batch-answer · f filter · c columns · / search · o/[ ] panes${archiveHint} · Esc back`;
     // Column widths (T62) computed over all displayed rows, and the active
     // list entries — both from the memoized bundle (see ItemsDerived). The
     // archive section header + rows are appended cheaply below.
