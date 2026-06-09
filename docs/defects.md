@@ -184,10 +184,10 @@ archives:
 
 ## M138
 
-### D47 — root-caused
+### D47 — resolved
 
 - createdAt: 2026-06-09T19:58:13.904Z
-- updatedAt: 2026-06-09T22:35:37.530Z
+- updatedAt: 2026-06-09T22:52:29.463Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: docs/ledgers.yaml bootstrap fixture can silently drift from source constants.ts (regen/guard gap)
@@ -197,3 +197,4 @@ archives:
 - ledgerRefs: ["tasks:T335","goals:G41","goals:G42"]
 - rootCause: "CONFIRMED (H34). The repo DOES have a committed-fixture-vs-canon guard test — packages/ledger/test/canonical-ledgers.test.ts:504-522 ('repo docs/ledgers.yaml matches canon (no bootstrap divergence)') reads the committed nix/pkg/cq-ledgers/docs/ledgers.yaml [:506], copies it to a temp dir [:511], and boots an FsLedgerStore against it [:513]. BUT it constructs `new FsLedgerStore({ root: dir })` WITHOUT `onSchemaDivergence: 'abort'`, so it runs in the DEFAULT 'backup-reinit' mode (FsLedgerStore.ts:200) which SILENTLY backs up + reinitialises the canonical files on divergence instead of throwing BootstrapViolationError. The test's own comment [:514 'init() throws BootstrapViolationError on any divergence'] is WRONG for the mode it actually uses. Consequently, when the committed fixture is STALE vs constants.ts (e.g. missing the sessionLogs field / handoffs user-action-required status, as at base 155d378), init() self-heals the temp copy and store.enumerate() [:518] still returns the canonical names → the assertion PASSES and the drift goes UNDETECTED. Secondary gaps: (i) even in abort mode the guard relies on schemasEqual (FsLedgerStore.ts:1515 — a STRUCTURAL parsed-schema compare of idPrefix/statusValues(order)/terminalStatuses/fields/transitions) which would catch a missing field/status but NOT pure serialization/formatting drift; there is NO byte/canonical equality (committed === serializeRegistry(CANONICAL_LEDGERS)) assertion. (ii) regen-bootstrap (scripts/regen-bootstrap.ts, the generator) is a MANUAL `bun run` script NOT wired into `bun run check` (= tsc -b && eslint . && bun test). So a constants.ts edit committed without re-running regen-bootstrap leaves the fixture stale and nothing fails check."
 - sessionLogs: ["docs/logs/20260609-223242-a50cdfb0c5b11b490.md"]
+- fix: "T346 (ffce89c): the committed-vs-canon guard test now boots with onSchemaDivergence:'abort' (so structural drift THROWS instead of silently self-healing via the default backup-reinit) AND a new byte-equality test asserts the committed docs/ledgers.yaml === serializeRegistry(CANONICAL_LEDGERS) under `bun run check` (catches serialization-order drift too); a reproduce-first test proves the old default mode self-healed while abort rejects. The fixture-drift the T335 reviewer observed would now fail check."

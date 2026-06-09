@@ -545,10 +545,10 @@ archives:
 
 ## M142
 
-### T346 — planned
+### T346 — done
 
 - createdAt: 2026-06-09T22:36:29.639Z
-- updatedAt: 2026-06-09T22:36:29.639Z
+- updatedAt: 2026-06-09T22:52:26.308Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Make the committed ledgers.yaml-vs-canon guard fail `bun run check` on drift (fix D47)
@@ -556,3 +556,6 @@ archives:
 - acceptance: "(1) The committed-vs-canon test uses onSchemaDivergence:'abort' and its comment is accurate. (2) A new test asserts readFile(docs/ledgers.yaml) byte-equals serializeRegistry(CANONICAL_LEDGERS) and PASSES on the current in-sync fixture; a reproduce-first check demonstrates it (and/or the abort-mode boot) FAILS against a deliberately-staled fixture copy. (3) examples/sample-ledger is excluded from the byte-equality. (4) `bun run check` green (the real committed fixture is in-sync, so the new assertions pass). No production source change outside the test (the guard semantics already exist via onSchemaDivergence + serializeRegistry)."
 - suggestedModel: standard
 - ledgerRefs: ["goals:G42","defects:D47"]
+- resultCommit: ffce89c5268c025bc452d2d58423348d11c225b0
+- completion: "canonical-ledgers.test.ts guard now uses onSchemaDivergence:'abort' (catches structural drift) + a byte-equality assertion (committed ledgers.yaml === serializeRegistry(CANONICAL_LEDGERS)) under bun run check + a reproduce-first proving the old default self-heals; D47 resolved. bun run check green."
+- sessionLogs: ["docs/logs/20260609-224743-a54559a2e0fb31e45.md","docs/logs/20260609-224743-af85de69b2426462b.md"]

@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 416
+  item: 417
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -742,3 +742,15 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G42","defects:D47"]
 - sessionLogs: ["docs/logs/20260609-223826-af9cdea865a37cb53.md"]
+
+## M142
+
+### R417 — go-ahead
+
+- createdAt: 2026-06-09T22:52:22.561Z
+- updatedAt: 2026-06-09T22:52:22.561Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: approve (T346, fix D47) — abort-mode change genuinely throws BootstrapViolationError on structural drift (the old default backup-reinit silently self-heals); byte-equality assertion matches regen-bootstrap exactly + independently byte-equal to the committed fixture (10529 bytes); reproduce-first genuine (WARNING trace proves old default self-heals while abort throws); test-only, no source change, bun run check green 1488/0. Native opus implement-reviewer.
+- ledgerRefs: ["tasks:T346","goals:G42","defects:D47"]
+- sessionLogs: ["docs/logs/20260609-224743-af85de69b2426462b.md"]
