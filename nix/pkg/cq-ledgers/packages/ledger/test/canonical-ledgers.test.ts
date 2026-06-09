@@ -32,7 +32,11 @@ import {
   REVIEWS_SCHEMA,
   HANDOFFS_LEDGER,
   HANDOFFS_SCHEMA,
+  IDEAS_LEDGER,
+  IDEAS_SCHEMA,
+  MILESTONES_AMBIENT_ID,
   InvalidStatusError,
+  InvalidTransitionError,
   SchemaValidationError,
   DEFECTS_SCHEMA,
   TASKS_SCHEMA,
@@ -147,6 +151,15 @@ const CASES: LedgerCase[] = [
     // direct legal edge to `done`.
     createStatus: "building",
   },
+  {
+    ledger: IDEAS_LEDGER,
+    prefix: "I",
+    create: { title: "Cross-nav from idea to seeded goal", description: "Link a consumed idea to its goal" },
+    update: { status: "discarded", fields: { description: "superseded by an existing goal" } },
+    searchNeedle: "cross-nav",
+    terminalStatus: "discarded",
+    // open → discarded is a legal direct edge; `open` is the first status.
+  },
 ];
 
 for (const factory of [inMem, fs_]) {
@@ -227,7 +240,7 @@ for (const factory of [inMem, fs_]) {
           const m2 = id.match(/^([A-Z]+)\d+$/);
           return m2 ? m2[1] : id;
         });
-        expect(prefixes.sort()).toEqual(["D", "G", "H", "HO", "K", "Q", "R", "T"]);
+        expect(prefixes.sort()).toEqual(["D", "G", "H", "HO", "I", "K", "Q", "R", "T"]);
       } finally {
         await store.dispose();
       }
@@ -338,6 +351,7 @@ describe("bootstrap idempotence + divergence guard", () => {
     [DECISIONS_LEDGER, DECISIONS_SCHEMA],
     [GOALS_LEDGER, GOALS_SCHEMA],
     [HANDOFFS_LEDGER, HANDOFFS_SCHEMA],
+    [IDEAS_LEDGER, IDEAS_SCHEMA],
   ];
 
   for (const [name] of schemas) {
@@ -637,9 +651,9 @@ describe("HANDOFFS_SCHEMA shape", () => {
     expect(f!.required).toBe(false);
   });
 
-  it("CANONICAL_LEDGERS has 9 entries and handoffs is last", () => {
-    expect(CANONICAL_LEDGERS).toHaveLength(9);
-    expect(CANONICAL_LEDGERS[CANONICAL_LEDGERS.length - 1]!.name).toBe(HANDOFFS_LEDGER);
+  it("CANONICAL_LEDGERS has 10 entries and ideas is last", () => {
+    expect(CANONICAL_LEDGERS).toHaveLength(10);
+    expect(CANONICAL_LEDGERS[CANONICAL_LEDGERS.length - 1]!.name).toBe(IDEAS_LEDGER);
   });
 });
 
@@ -1018,5 +1032,144 @@ describe("G38 item 1a prompt-hardening grep invariants — file-scoped", () => {
     expect(text).toContain("G38-1a-post-done-cleanup");
     expect(text).toContain("G38-1a-start-sweep");
     expect(text).toContain("G38-1a-worker-ephemeral");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T335 — ideas ledger (Q188): schema shape, bootstrap presence, the
+// open/postponed/planned/discarded lifecycle (incl. illegal-transition guard),
+// and the M-AMBIENT flat-list attachment model (no per-idea user milestone).
+// ---------------------------------------------------------------------------
+
+describe("T335: IDEAS_SCHEMA shape", () => {
+  it("statusValues are exactly open, planned, discarded, postponed", () => {
+    expect(IDEAS_SCHEMA.statusValues).toEqual(["open", "planned", "discarded", "postponed"]);
+  });
+
+  it("terminalStatuses are exactly planned + discarded", () => {
+    expect(IDEAS_SCHEMA.terminalStatuses).toEqual(["planned", "discarded"]);
+  });
+
+  it("idPrefix is I", () => {
+    expect(IDEAS_SCHEMA.idPrefix).toBe("I");
+  });
+
+  it("declares exactly two fields: title (required), description (optional)", () => {
+    expect(Object.keys(IDEAS_SCHEMA.fields).sort()).toEqual(["description", "title"]);
+    expect(IDEAS_SCHEMA.fields["title"]).toEqual({ type: "string", required: true });
+    expect(IDEAS_SCHEMA.fields["description"]).toEqual({ type: "string", required: false });
+  });
+
+  it("declares NO required milestone field beyond the ambient attachment", () => {
+    // The ambient attachment is supplied by the store (createItem's milestoneId
+    // argument), NOT by a schema field. No field named `milestone(s)` exists,
+    // and the only required field is `title`.
+    expect(IDEAS_SCHEMA.fields["milestone"]).toBeUndefined();
+    expect(IDEAS_SCHEMA.fields["milestones"]).toBeUndefined();
+    const required = Object.entries(IDEAS_SCHEMA.fields)
+      .filter(([, f]) => f.required)
+      .map(([name]) => name);
+    expect(required).toEqual(["title"]);
+  });
+
+  it("transitions: planned + discarded are terminal (empty); open + postponed route correctly", () => {
+    const t = IDEAS_SCHEMA.transitions!;
+    expect(t["open"]).toEqual(["planned", "discarded", "postponed"]);
+    expect(t["postponed"]).toEqual(["open", "planned", "discarded"]);
+    expect(t["planned"]).toEqual([]);
+    expect(t["discarded"]).toEqual([]);
+  });
+
+  it("CANONICAL_LEDGERS includes ideas", () => {
+    expect(CANONICAL_LEDGERS.map((c) => c.name)).toContain(IDEAS_LEDGER);
+  });
+});
+
+describe("T335: ideas ledger — fresh FsLedgerStore bootstrap + lifecycle + flat M-AMBIENT attachment", () => {
+  it("bootstraps `ideas` with the expected schema and exercises the full lifecycle", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ledger-ideas-"));
+    dirs.push(dir);
+    const store = new FsLedgerStore({ root: dir });
+    await store.init();
+    try {
+      // (1) the ledger exists with the canonical schema after a fresh bootstrap.
+      expect(store.enumerate()).toContain(IDEAS_LEDGER);
+
+      // (2) create an idea under the ambient M-AMBIENT with title+description,
+      //     status open.
+      const idea = await store.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "open",
+        fields: { title: "Adopt the ideas ledger", description: "Capture loose ideas here" },
+      });
+      expect(idea.id).toBe("I1");
+      expect(idea.status).toBe("open");
+      expect(idea.milestoneId).toBe(MILESTONES_AMBIENT_ID);
+      expect(idea.fields["title"]).toBe("Adopt the ideas ledger");
+      expect(idea.fields["description"]).toBe("Capture loose ideas here");
+
+      // (3a) open → postponed → open (reversible hold).
+      const postponed = await store.updateItem(IDEAS_LEDGER, idea.id, { status: "postponed" });
+      expect(postponed.status).toBe("postponed");
+      const reopened = await store.updateItem(IDEAS_LEDGER, idea.id, { status: "open" });
+      expect(reopened.status).toBe("open");
+
+      // (3b) open → planned (consume-an-idea; terminal).
+      const planned = await store.updateItem(IDEAS_LEDGER, idea.id, { status: "planned" });
+      expect(planned.status).toBe("planned");
+
+      // (4) illegal transitions throw. planned is terminal → planned→open illegal.
+      await expect(
+        store.updateItem(IDEAS_LEDGER, idea.id, { status: "open" }),
+      ).rejects.toThrow(InvalidTransitionError);
+
+      // discarded is terminal → discarded→open illegal. Use a second idea.
+      const idea2 = await store.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "open",
+        fields: { title: "An idea to discard" },
+      });
+      await store.updateItem(IDEAS_LEDGER, idea2.id, { status: "discarded" });
+      await expect(
+        store.updateItem(IDEAS_LEDGER, idea2.id, { status: "open" }),
+      ).rejects.toThrow(InvalidTransitionError);
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  it("ideas attach ONLY to the ambient M-AMBIENT (no user milestone) and enumerate as a FLAT list", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ledger-ideas-flat-"));
+    dirs.push(dir);
+    const store = new FsLedgerStore({ root: dir });
+    await store.init();
+    try {
+      // A user milestone exists, but ideas must NOT attach to it.
+      const userMilestone = await store.createMilestone({ title: "a user milestone" });
+
+      const a = await store.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "open",
+        fields: { title: "idea A" },
+      });
+      const b = await store.createItem(IDEAS_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "open",
+        fields: { title: "idea B" },
+      });
+
+      // Each created idea's milestone association is the ambient one ONLY.
+      expect(a.milestoneId).toBe(MILESTONES_AMBIENT_ID);
+      expect(b.milestoneId).toBe(MILESTONES_AMBIENT_ID);
+
+      // The user milestone carries NO ideas (flat-list lives under M-AMBIENT).
+      const userGrouped = store.listMilestoneItems(userMilestone.id);
+      expect(userGrouped[IDEAS_LEDGER]).toBeUndefined();
+
+      // Under M-AMBIENT the ideas enumerate as a single FLAT array (no nesting,
+      // no per-idea sub-milestone) — exactly the goals/T83 pattern.
+      const ambientGrouped = store.listMilestoneItems(MILESTONES_AMBIENT_ID);
+      const ideaList = ambientGrouped[IDEAS_LEDGER];
+      expect(Array.isArray(ideaList)).toBe(true);
+      expect(ideaList!.map((i) => i.id).sort()).toEqual(["I1", "I2"]);
+    } finally {
+      await store.dispose();
+    }
   });
 });

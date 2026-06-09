@@ -84,6 +84,7 @@ export const GOALS_LEDGER = "goals" as const;
 export const QUESTIONS_ANSWER_FIELD = "answer" as const;
 export const REVIEWS_LEDGER = "reviews" as const;
 export const HANDOFFS_LEDGER = "handoffs" as const;
+export const IDEAS_LEDGER = "ideas" as const;
 
 /**
  * Common cross-cutting fields shared by the canonical ledgers (§1). Spread
@@ -364,6 +365,55 @@ export const HANDOFFS_SCHEMA: LedgerSchema = {
 };
 
 /**
+ * ideas ledger (Q188). idPrefix `I` — verified FREE against every existing
+ * single/double-char prefix in the canon (M/D/T/H/Q/K/G/R/HO).
+ *
+ * Lifecycle (DECIDED): an idea is captured `open`, then either parked
+ * (`postponed`, a reversible hold that returns to `open`), consumed
+ * (`planned`), or dropped (`discarded`).
+ *
+ * Terminal statuses are `planned` AND `discarded`:
+ *   - `planned` IS terminal — the consume-an-idea flow moves a consumed idea
+ *     to `planned` once its goal has been seeded, and it must STAY there (the
+ *     idea is spent; its continuation lives in the seeded goal, not back in the
+ *     ideas list). A terminal status carries no outgoing transitions.
+ *   - `discarded` is terminal — the idea is abandoned.
+ *   - `postponed` is NON-terminal — a reversible hold that returns to `open`
+ *     (and may also still be consumed/discarded directly).
+ *   - `open` is the non-terminal working state.
+ *
+ * transitions:
+ *   open      → [planned, discarded, postponed]
+ *   postponed → [open, planned, discarded]
+ *   planned   → []   (terminal)
+ *   discarded → []   (terminal)
+ *
+ * Milestone-attachment model (RECONCILE "no per-idea milestone" with the
+ * unified-milestones design): ideas DO NOT get a milestone of their own and
+ * carry no required milestone field beyond the ambient attachment. Like goals
+ * (T83), every idea attaches to the immortal bootstrap milestone
+ * `M-AMBIENT` (`MILESTONES_AMBIENT_ID`) and renders as a FLAT list — there is
+ * no per-idea user milestone. The schema therefore declares only `title`
+ * (required) and `description` (optional); the ambient attachment is supplied
+ * by the store, not by a schema field.
+ */
+export const IDEAS_SCHEMA: LedgerSchema = {
+  statusValues: ["open", "planned", "discarded", "postponed"],
+  terminalStatuses: ["planned", "discarded"],
+  idPrefix: "I",
+  transitions: {
+    open: ["planned", "discarded", "postponed"],
+    postponed: ["open", "planned", "discarded"],
+    planned: [],
+    discarded: [],
+  },
+  fields: {
+    title: { type: "string", required: true },
+    description: { type: "string", required: false },
+  },
+};
+
+/**
  * Bootstrap manifest. `milestones` MUST be first (the others reference it
  * for milestone-group resolution). On init() every entry is provisioned if
  * its file is absent and guarded against on-disk schema divergence.
@@ -378,6 +428,7 @@ export const CANONICAL_LEDGERS: ReadonlyArray<{ name: string; schema: LedgerSche
   { name: GOALS_LEDGER, schema: GOALS_SCHEMA },
   { name: REVIEWS_LEDGER, schema: REVIEWS_SCHEMA },
   { name: HANDOFFS_LEDGER, schema: HANDOFFS_SCHEMA },
+  { name: IDEAS_LEDGER, schema: IDEAS_SCHEMA },
 ];
 
 /**

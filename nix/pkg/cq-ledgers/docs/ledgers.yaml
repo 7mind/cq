@@ -68,6 +68,9 @@ ledgers:
         severity:
           type: string
           required: true
+        sessionLogs:
+          type: string[]
+          required: false
         sourceRefs:
           type: string[]
           required: false
@@ -85,9 +88,6 @@ ledgers:
           required: false
         suggestedModel:
           type: string
-          required: false
-        sessionLogs:
-          type: string[]
           required: false
       idPrefix: D
       transitions:
@@ -142,6 +142,9 @@ ledgers:
         severity:
           type: string
           required: false
+        sessionLogs:
+          type: string[]
+          required: false
         sourceRefs:
           type: string[]
           required: false
@@ -159,9 +162,6 @@ ledgers:
           required: false
         suggestedModel:
           type: string
-          required: false
-        sessionLogs:
-          type: string[]
           required: false
       idPrefix: T
       transitions:
@@ -207,6 +207,9 @@ ledgers:
         evidence:
           type: string[]
           required: false
+        sessionLogs:
+          type: string[]
+          required: false
         sourceRefs:
           type: string[]
           required: false
@@ -224,9 +227,6 @@ ledgers:
           required: false
         suggestedModel:
           type: string
-          required: false
-        sessionLogs:
-          type: string[]
           required: false
       idPrefix: H
       transitions:
@@ -433,11 +433,13 @@ ledgers:
         - answers-required
         - mixed
         - illness-detected
+        - user-action-required
       terminalStatuses:
         - drained
         - answers-required
         - mixed
         - illness-detected
+        - user-action-required
       fields:
         summary:
           type: string
@@ -469,3 +471,33 @@ ledgers:
         answers-required: []
         mixed: []
         illness-detected: []
+        user-action-required: []
+  - name: ideas
+    schema:
+      statusValues:
+        - open
+        - planned
+        - discarded
+        - postponed
+      terminalStatuses:
+        - planned
+        - discarded
+      fields:
+        title:
+          type: string
+          required: true
+        description:
+          type: string
+          required: false
+      idPrefix: I
+      transitions:
+        open:
+          - planned
+          - discarded
+          - postponed
+        postponed:
+          - open
+          - planned
+          - discarded
+        planned: []
+        discarded: []
