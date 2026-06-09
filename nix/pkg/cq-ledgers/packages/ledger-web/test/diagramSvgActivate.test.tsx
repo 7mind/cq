@@ -175,4 +175,46 @@ describe("DiagramSvg agentId activation (T326)", () => {
 
     await unmount(container, root);
   });
+
+  // Edge labels render directly on the help-panel background (var(--panel) ===
+  // #171a21). A hard-coded dark fill made them invisible in the dark theme. They
+  // must use the themed foreground var(--fg); node labels (on a filled rect) keep
+  // the dark #171a21 fill.
+  it("edge labels use themed var(--fg) fill (not the #171a21 panel background); node labels keep #171a21", async () => {
+    const withEdge: LaidOutDiagram = {
+      width: 400,
+      height: 200,
+      edges: [
+        {
+          from: "agent",
+          to: "plain",
+          points: [
+            { x: 60, y: 40 },
+            { x: 60, y: 80 },
+          ],
+          label: "dispatches",
+          labelPos: { x: 60, y: 60 },
+        },
+      ],
+      nodes: model().nodes,
+    };
+    const { container, root } = await mount(
+      createElement(DiagramSvg, { idPrefix: "diag", model: withEdge }),
+    );
+
+    const edgeLabel = container.querySelector(
+      '[data-testid="diag-edge-label-agent-plain-0"]',
+    );
+    expect(edgeLabel).not.toBeNull();
+    expect(edgeLabel!.getAttribute("fill")).toBe("var(--fg)");
+    expect(edgeLabel!.getAttribute("fill")).not.toBe("#171a21");
+
+    // Node labels (on a filled rect) stay the dark fill for contrast.
+    const nodeLabel = container
+      .querySelector('[data-testid="diag-node-plain"]')
+      ?.querySelector("text");
+    expect(nodeLabel!.getAttribute("fill")).toBe("#171a21");
+
+    await unmount(container, root);
+  });
 });

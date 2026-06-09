@@ -30,7 +30,12 @@ import type { LaidOutDiagram } from "./diagramLayout.js";
 const DEFAULT_FILL = "#8b93a7";
 const EDGE_STROKE = "#566";
 const NODE_STROKE = "#171a21";
+// Node labels sit on a filled <rect> (DEFAULT_FILL grey or a roleKind colour),
+// so a dark fill always contrasts. EDGE labels render directly on the help-panel
+// background — which is exactly #171a21 (var(--panel)), so a hard-coded dark fill
+// is invisible. Edge labels therefore use the themed foreground var instead.
 const LABEL_FILL = "#171a21";
+const EDGE_LABEL_FILL = "var(--fg)";
 // Carried over from StateMachineDiagram: rx values + outline weights.
 const RX_TERMINAL = 4;
 const RX_NORMAL = 14;
@@ -114,7 +119,7 @@ export function DiagramSvg({
               data-testid={`${idPrefix}-edge-label-${e.from}-${e.to}-${i}`}
               x={e.labelPos.x}
               y={e.labelPos.y}
-              fill={LABEL_FILL}
+              fill={EDGE_LABEL_FILL}
               fontSize={11}
               textAnchor="middle"
               dominantBaseline="middle"
