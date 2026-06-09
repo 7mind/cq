@@ -532,10 +532,10 @@ archives:
 
 ## M125
 
-### T305 — wip
+### T305 — done
 
 - createdAt: 2026-06-09T09:47:42.722Z
-- updatedAt: 2026-06-09T10:06:21.851Z
+- updatedAt: 2026-06-09T10:24:45.709Z
 - author: "opus-4.8[1m]"
 - session: ae90ac43-977e-46cc-89a7-1814996d3f61
 - headline: Add a documented repro of the reflog data-loss sequence
@@ -543,6 +543,7 @@ archives:
 - acceptance: A repro doc exists at docs/drafts/<timestamp>-D43-reflog-repro.md with the 4 documented elements (precondition; exact stray cross-checkout git op; observed data-loss outcome; expected post-fix outcome) + references to D43/H31/Q166 + the T301/T302-304 fix linkage; the reflog sequence matches D43.description. bun run check stays green (doc adds no code; must not break lint).
 - suggestedModel: standard
 - ledgerRefs: ["goals:G37","defects:D43"]
+- resultCommit: 25e2fe6
 
 ### T306 — planned
 
