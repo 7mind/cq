@@ -119,6 +119,21 @@ function roleNode(
   return node;
 }
 
+/**
+ * Post-processing pass (T333): mark each node whose id appears as the source
+ * of zero edges in the given `edges` array as `terminal: true`. Nodes that
+ * DO have at least one outgoing edge leave `terminal` unset (i.e. the
+ * DiagramSvg default, non-terminal, applies).
+ *
+ * Pure function — returns new node objects; does not mutate the input arrays.
+ */
+function withTerminalNodes(nodes: RoleNode[], edges: RoleEdge[]): RoleNode[] {
+  const hasSources = new Set(edges.map((e) => e.from));
+  return nodes.map((n) =>
+    hasSources.has(n.id) ? n : { ...n, terminal: true },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Plan flow — orchestrator ↔ planner ↔ reviewer ↔ user, over the ledger.
 // Formalized ops (commands/cq/plan/advance.md): dispatch planner / reviewer,
@@ -157,7 +172,7 @@ const planRoleEdges: RoleEdge[] = [
 const planRoleFlow: RoleFlowDefinition = {
   id: "plan",
   title: "Plan flow — roles & actions",
-  model: { nodes: planRoleNodes, edges: planRoleEdges },
+  model: { nodes: withTerminalNodes(planRoleNodes, planRoleEdges), edges: planRoleEdges },
 };
 
 // ---------------------------------------------------------------------------
@@ -200,7 +215,7 @@ const investigateRoleEdges: RoleEdge[] = [
 const investigateRoleFlow: RoleFlowDefinition = {
   id: "investigate",
   title: "Investigate flow — roles & actions",
-  model: { nodes: investigateRoleNodes, edges: investigateRoleEdges },
+  model: { nodes: withTerminalNodes(investigateRoleNodes, investigateRoleEdges), edges: investigateRoleEdges },
 };
 
 // ---------------------------------------------------------------------------
@@ -256,7 +271,7 @@ const implementRoleEdges: RoleEdge[] = [
 const implementRoleFlow: RoleFlowDefinition = {
   id: "implement",
   title: "Implement flow — roles & actions",
-  model: { nodes: implementRoleNodes, edges: implementRoleEdges },
+  model: { nodes: withTerminalNodes(implementRoleNodes, implementRoleEdges), edges: implementRoleEdges },
 };
 
 // ---------------------------------------------------------------------------
@@ -295,7 +310,7 @@ const advanceRoleEdges: RoleEdge[] = [
 const advanceRoleFlow: RoleFlowDefinition = {
   id: "advance",
   title: "Advance sequencer — roles & actions",
-  model: { nodes: advanceRoleNodes, edges: advanceRoleEdges },
+  model: { nodes: withTerminalNodes(advanceRoleNodes, advanceRoleEdges), edges: advanceRoleEdges },
 };
 
 // ---------------------------------------------------------------------------

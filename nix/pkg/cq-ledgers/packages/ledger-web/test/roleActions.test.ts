@@ -212,6 +212,42 @@ describe("formalized ops surfaced as edges + infra nodes (T327 (b))", () => {
 });
 
 // ---------------------------------------------------------------------------
+// T333 — terminal nodes: zero outgoing edges ↔ terminal===true.
+// ---------------------------------------------------------------------------
+
+describe("terminal-node derivation (T333)", () => {
+  it("every node with zero outgoing edges has terminal===true in every flow", () => {
+    for (const f of ROLE_FLOWS) {
+      const sources = new Set(f.model.edges.map((e) => e.from));
+      for (const node of f.model.nodes as RoleNode[]) {
+        if (!sources.has(node.id)) {
+          expect({ flow: f.id, id: node.id, terminal: node.terminal }).toEqual({
+            flow: f.id,
+            id: node.id,
+            terminal: true,
+          });
+        }
+      }
+    }
+  });
+
+  it("every node with ≥1 outgoing edge has terminal!==true in every flow", () => {
+    for (const f of ROLE_FLOWS) {
+      const sources = new Set(f.model.edges.map((e) => e.from));
+      for (const node of f.model.nodes as RoleNode[]) {
+        if (sources.has(node.id)) {
+          expect({ flow: f.id, id: node.id, terminal: node.terminal }).toEqual({
+            flow: f.id,
+            id: node.id,
+            terminal: undefined,
+          });
+        }
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // T327 (c) — every node's fill is authored from its roleKind.
 // ---------------------------------------------------------------------------
 
