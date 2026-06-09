@@ -1,14 +1,21 @@
 /**
- * cq.toml parse / resolve / load logic (T170, T237).
+ * cq.toml parse / resolve / load logic (T170, T237, T286).
  *
  * Pure module: validates at the boundary and fails fast with precise errors.
  * No transport/MCP concerns — that lands in the next task (T171).
  *
- * Token grammar (T237 BREAKING change):
- *  - pi tokens MUST be `pi:<provider>/<model>` (e.g. pi:ollama-cloud/minimax-m3)
- *  - claude tokens MUST be `claude:<model>` (e.g. claude:opus-4.8[1m])
- * Bare pi tokens and provider qualifiers on claude tokens are rejected as
- * CqConfigErrors. See parseReviewerToken for the full grammar.
+ * Token grammar (T237 BREAKING change + T286 effort suffix):
+ *  - pi tokens MUST be `pi:<provider>/<model>[:<effort>]`
+ *    E.g. `pi:ollama-cloud/minimax-m3`, `pi:grok-build/grok-build:xhigh`
+ *    Legal pi efforts: off | minimal | low | medium | high | xhigh
+ *    `:` is RESERVED in the model name (collides with the `--model` shorthand, R342).
+ *  - claude tokens MUST be `claude:<model>[:<effort>]`
+ *    E.g. `claude:opus-4.8[1m]`, `claude:opus-4.8[1m]:high`
+ *    Legal claude efforts: low | medium | high | xhigh | max
+ *    `:` is RESERVED in the model name (T286).
+ * Bare pi tokens, provider qualifiers on claude tokens, and invalid effort
+ * suffixes are rejected as CqConfigErrors. See parseReviewerToken for the full
+ * grammar and fail-fast effort validation (T286).
  */
 
 import { existsSync, readFileSync } from "node:fs";

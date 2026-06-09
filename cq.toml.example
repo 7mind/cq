@@ -23,28 +23,41 @@ planners = ["opus", "grok"]
 
 # [aliases] — Define reviewer instances as reviewer tokens.
 #
-# Token grammar (BREAKING in this version):
-#   - pi tokens MUST be: pi:<provider>/<model>
+# Token grammar (BREAKING in this version, with T286 effort suffix):
+#   - pi tokens MUST be: pi:<provider>/<model>[:<effort>]
 #     The provider is the pi `--provider` flag value; model is the pi `--model`.
 #     E.g.: pi:ollama-cloud/minimax-m3, pi:grok-build/grok-build
 #     A bare pi token WITHOUT a provider qualifier (e.g. pi:minimax) is a
 #     CONFIG ERROR and will be rejected at parse time.
 #     MIGRATION: if you were using pi:minimax, update to pi:ollama-cloud/minimax-m3
-#   - claude tokens MUST be: claude:<model>
+#     EFFORT SUFFIX (optional): append `:<effort>` to override the default thinking level.
+#       Legal pi efforts: off | minimal | low | medium | high | xhigh
+#       Omitted effort uses the provider/model default (current behavior unchanged).
+#       The pi `--model provider/model:effort` shorthand uses this suffix.
+#       `:` is RESERVED in the model name; a model cannot contain `:` (T286, R342).
+#   - claude tokens MUST be: claude:<model>[:<effort>]
 #     The model is the Claude model identifier (e.g. opus-4.8[1m], haiku-4.5).
 #     Provider qualifiers (/) are NOT permitted on claude tokens and will
 #     be rejected as a CONFIG ERROR.
+#     EFFORT SUFFIX (optional): append `:<effort>` to encode dispatch effort.
+#       Legal claude efforts: low | medium | high | xhigh | max
+#       Omitted effort uses the provider/model default (current behavior unchanged).
+#       Claude effort is currently recorded in the config but inert during dispatch.
+#       `:` is RESERVED in the model name; a model cannot contain `:` (T286).
 #
 # [tiers] KEY grammar (same as above): keys must be valid ReviewerTokens — either
 # an alias name from this [aliases] table, or a full token in the grammar above
-# (claude:<model> | pi:<provider>/<model>).  A bare pi key or unknown harness in
-# a [tiers] key is rejected as a CONFIG ERROR at parse time.
+# (claude:<model>[:<effort>] | pi:<provider>/<model>[:<effort>]).  A bare pi key
+# or unknown harness in a [tiers] key is rejected as a CONFIG ERROR at parse time.
+# Tokens with effort suffixes are classified separately from those without.
 #
-# Reference: D36 (pi provider routing)
+# Reference: D36 (pi provider routing), T286 (effort suffix)
 [aliases]
   codex = "pi:grok-build/grok-build"
   grok = "pi:grok-build/grok-build"
+  grok-xhigh = "pi:grok-build/grok-build:xhigh"
   opus = "claude:opus-4.8[1m]"
+  opus-high = "claude:opus-4.8[1m]:high"
   minimax = "pi:ollama-cloud/minimax-m3"
 
 # [tiers] — CLASSIFIER: maps each concrete (harness, provider, model) token to
@@ -69,8 +82,10 @@ planners = ["opus", "grok"]
 #   frontier — most capable (e.g. Claude Opus or Grok)
 [tiers]
   "claude:opus-4.8[1m]"           = "frontier"    # full token key
+  "claude:opus-4.8[1m]:high"      = "frontier"    # full token key with effort suffix
   minimax                          = "fast"         # alias key (resolves to pi:ollama-cloud/minimax-m3)
   "pi:grok-build/grok-build"      = "standard"    # full token key
+  grok-xhigh                       = "frontier"    # alias key with effort suffix (resolves to pi:grok-build/grok-build:xhigh)
 
 # [agent_tiers] — Map each named cq agent to its dispatch tier.
 # An agent with NO entry here falls back to the "standard" tier.
