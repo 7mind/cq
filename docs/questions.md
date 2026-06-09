@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 173
+  item: 175
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -250,3 +250,15 @@ archives:
 - recommendation: "Suggestion 1: in LIST focus, PgUp/PgDn page the cursor by one visible screenful (listInnerH rows — more natural than a fixed 10 for list paging) and Home/End jump to first/last row; remove the no-Enter detail-scroll (Enter-then-scroll is the consistent model the spec asks for). In CONTENT focus, PgUp/PgDn page content by CONTENT_PAGE and add Home/End to jump to content top/bottom. Implement Home/End by matching the raw escape sequences in `input` since ink exposes no key.home/key.end."
 - ledgerRefs: ["goals:G38"]
 - answer: as recommended
+
+## M132
+
+### Q174 — open
+
+- createdAt: 2026-06-09T13:56:38.293Z
+- updatedAt: 2026-06-09T13:56:38.293Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- question: Root cause of D45 confirmed (H32) and a defect-seeded goal G39 is ready to plan — the fix is a one-line cacheMirror change (mirror docs/ledgers.yaml on the 'create' op). Traceability only.
+- context: "Auto-launched inside /cq:advance (NOT standalone): this investigation was chained, so the parent /cq:advance session auto-resumes G39 in its plan stage — a manual /cq:plan:advance G39 is NOT needed. Root cause: cacheMirror.ts:82 early-returns before mirroring registryPath; createLedger fires a 'create' op. Fix: mirror registryPath on 'create' too. This question is filed for traceability per the file-and-defer step."
+- ledgerRefs: ["defects:D45","goals:G39"]

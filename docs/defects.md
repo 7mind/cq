@@ -179,15 +179,17 @@ archives:
 
 ## M128
 
-### D45 — open
+### D45 — root-caused
 
 - createdAt: 2026-06-09T13:07:11.710Z
-- updatedAt: 2026-06-09T13:07:11.710Z
+- updatedAt: 2026-06-09T13:56:57.522Z
 - author: "opus-4.8[1m]"
 - session: 242ca46f-d593-40f1-9dc2-480c12cf887c
 - headline: Cache mirror omits ledgers.yaml on createLedger (registry mirror lags until next archive)
 - description: "Filed by the T312 implement-reviewer (file-and-defer, out-of-scope to T312 whose acceptance explicitly scoped registry mirroring to the archive op). mirrorMutation (packages/ledger/src/store/cacheMirror.ts) mirrors docs/ledgers.yaml only on the 'archive' op. FsLedgerStore.createLedger() rewrites docs/ledgers.yaml (writeRegistry()) then fires fireMutation(name,'create'); the mirror for a 'create' op copies only docs/<name>.md, so the mirrored registry does not reflect a newly-created ledger until a later archive op re-mirrors ledgers.yaml. Low severity: createLedger is rare in this repo (the canonical set is created in init(), which does not route through fireMutation at all), so a restored mirror would carry a slightly stale registry only in the narrow window between a createLedger and the next archive. Default disposition FIX (separate task)."
 - severity: low
-- suggestedFix: Mirror layout.registryPath on any op whose write path rewrote the registry (createLedger), not just on archive — or mirror the registry unconditionally on every mutation (it is small).
-- ledgerRefs: ["tasks:T312","goals:G38"]
+- suggestedFix: "In cacheMirror.ts `mirrorMutation`, mirror `layout.registryPath` (docs/ledgers.yaml) on the 'create' op too — since createLedger rewrites the registry. Cleanest: mirror the registry whenever op is 'create' OR 'archive' (createLedger + archive are the two ops that rewrite ledgers.yaml; 'update' never touches the registry), OR mirror the registry unconditionally on every mutation (it is small). Update the function docstring (cacheMirror.ts:56-64) to match. Add a test cell: createLedger on a tmp root with XDG_CACHE_HOME redirected, then assert the mirror's docs/ledgers.yaml reflects the new ledger (byte-equal to the in-repo registry)."
+- ledgerRefs: ["tasks:T312","goals:G38","goals:G39"]
 - tags: ["ledger","cache-mirror"]
+- rootCause: "CONFIRMED (H32, citations validated against source verbatim). packages/ledger/src/store/cacheMirror.ts `mirrorMutation` copies docs/<ledgerId>.md for EVERY op, then executes `if (op !== \"archive\") return;` (cacheMirror.ts:82) BEFORE mirroring `layout.registryPath` (cacheMirror.ts:84) — so docs/ledgers.yaml (the registry) is mirrored ONLY on the 'archive' op. FsLedgerStore.createLedger() pushes the new ledger to this.registry.ledgers, calls writeRegistry() (rewrites docs/ledgers.yaml, FsLedgerStore.ts:756), then fires fireMutation(name, 'create') (FsLedgerStore.ts:759); fireMutation→scheduleMirror forwards op='create' verbatim into mirrorMutation (registryPath IS plumbed into the layout, so the omission is purely the op-gated early return). Consequence: after a createLedger, the ~/.cache mirror's docs/ledgers.yaml does NOT reflect the new ledger until a later 'archive' op re-mirrors it — a restored mirror would carry a stale registry in that window. Low severity: createLedger is rare (the canonical set is created via init(), which does not route through fireMutation)."
+- sessionLogs: ["docs/logs/20260609-135544-a93c151fe66352f62.md"]

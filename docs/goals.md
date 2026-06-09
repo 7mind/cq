@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 38
+  item: 40
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -235,3 +235,15 @@ archives:
     **3 TUI focus keybinding** — ledger-tui/src/app.tsx useInput (L767-882). CONFIRMED current behavior: in LIST focus (top.focus==='list', L840-845) ↑↓/j/k move the cursor (reset scroll:0); key.pageUp/pageDown scroll the CONTENT/detail pane (top.scroll, CONTENT_PAGE=10) WITHOUT switching focus — an INTENTIONAL prior affordance (comment L836-839: 'scroll the detail pane in place WITHOUT switching focus, so the detail is scrollable without the Enter-to-focus step'). Enter (L846) switches focus to 'content'. In CONTENT focus (L802-834) pageUp/pageDown scroll content. There is NO Home/End handling anywhere (ink useInput key object may not expose Home/End — needs verification). So the requested change (list-focus PgUp/PgDn/Home/End page/jump the CURSOR; content scroll only after Enter) REVERSES the deliberate no-Enter-scroll design and ADDS Home/End. Established focus-gated-keys pattern exists (the !cursorInArchive guards, D24/H14). cq convention routes faults via /cq:investigate (reproduce->root-cause->defect-seeded fix); user labeled this a 'defect' — routing decision pending.
 - sessionLogs: ["docs/logs/20260609-110956-a9f05a8253269dee6.md","docs/logs/20260609-114934-ac3e829c2282bd91c.md","docs/logs/20260609-114934-pi-grok.md","docs/logs/20260609-114934-pi-minimax.md"]
 - milestones: ["M126","M127","M128","M129","M130","M131"]
+
+## M132
+
+### G39 — planning
+
+- createdAt: 2026-06-09T13:56:55.520Z
+- updatedAt: 2026-06-09T13:56:55.520Z
+- author: "opus-4.8[1m]"
+- session: 242ca46f-d593-40f1-9dc2-480c12cf887c
+- title: Fix D45 — mirror docs/ledgers.yaml on the 'create' op in cacheMirror
+- description: "Defect-seeded (D45, severity low; the defect's ledgerRefs back-link goals:G39). CONFIRMED ROOT CAUSE (H32): packages/ledger/src/store/cacheMirror.ts `mirrorMutation` mirrors docs/<ledgerId>.md for every op, then `if (op !== \"archive\") return;` (cacheMirror.ts:82) BEFORE mirroring `layout.registryPath` (cacheMirror.ts:84) — so docs/ledgers.yaml is mirrored ONLY on 'archive'. But FsLedgerStore.createLedger() rewrites the registry (writeRegistry, FsLedgerStore.ts:756) then fires fireMutation(name,'create') (FsLedgerStore.ts:759), so after a createLedger the ~/.cache mirror's ledgers.yaml lags the in-repo registry until the next archive. SUGGESTED FIX (verbatim): in cacheMirror.ts mirrorMutation, mirror `layout.registryPath` on the 'create' op too (createLedger + archive are the two ops that rewrite ledgers.yaml; 'update' never touches it) — e.g. mirror the registry when op==='create' || op==='archive', or unconditionally (it is small); update the function docstring (cacheMirror.ts:56-64) to match; add a test: createLedger on a tmp root with XDG_CACHE_HOME redirected, then assert the mirror's docs/ledgers.yaml is byte-equal to the in-repo registry. Likely a single fix task; the fix task must ledgerRef defects:D45. bun run check + nix build .#ledger-mcp green."
+- grounding: "Root cause H32 confirmed via validated citations: cacheMirror.ts:79-84 (op-gated early return before registryPath mirror) + FsLedgerStore.ts:754-759 (createLedger writeRegistry + fireMutation 'create'). Fix locus: cacheMirror.ts mirrorMutation op-gate. Test affordance: XDG_CACHE_HOME redirection (per the existing T312 cache-mirror tests in packages/ledger/test/cache-mirror.test.ts)."

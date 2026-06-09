@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 131
+  item: 132
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -665,3 +665,10 @@ archives:
 - updatedAt: 2026-06-09T11:51:08.863Z
 - title: G38 item 1b — ledger ~/.cache mirror backup + restore CLI
 - description: "@cq/ledger mirrors each touched file to ${XDG_CACHE_HOME:-~/.cache}/cq/ledgers/${basename}-${sha256(absRoot).slice(0,12)}/ off the onMutation post-lock hook (atomic, swallows throws, overwrite-in-place, no journal); a shared path-scheme function is reused by a new `ledger-mcp restore --from-cache [--cwd]` subcommand that copies the mirror back into docs/. Resolves G38 item 1b (Q168/Q169)."
+
+### M132 — open
+
+- createdAt: 2026-06-09T13:56:20.739Z
+- updatedAt: 2026-06-09T13:56:20.739Z
+- title: "Plan: fix D45 — cache mirror omits ledgers.yaml on createLedger"
+- description: "Defect-seeded fix for D45 (low): the ~/.cache mirror's mirrorMutation only mirrors docs/ledgers.yaml on the 'archive' op (early return at cacheMirror.ts:82 before the registry mirror at :84), but createLedger rewrites the registry and fires a 'create' op — so a restored mirror carries a stale registry until the next archive. Fix: mirror the registry on 'create' too."
