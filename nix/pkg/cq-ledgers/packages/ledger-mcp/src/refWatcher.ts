@@ -106,8 +106,12 @@ export function startLedgerRefWatcher(
     })();
   };
 
-  // Start the first poll after one interval (lets the store finish init first).
-  timer = setTimeout(poll, pollMs);
+  // Establish the baseline sha IMMEDIATELY rather than after one interval: a ref
+  // advance occurring in the first poll window (between watcher start and the
+  // first tick) would otherwise be captured AS the baseline and silently missed.
+  // The caller has already awaited store.init(), so an immediate read is safe.
+  // poll() kicks off the baseline read synchronously and schedules the next tick.
+  poll();
 
   return {
     close(): void {

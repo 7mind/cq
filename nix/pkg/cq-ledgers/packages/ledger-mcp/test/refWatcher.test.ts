@@ -119,17 +119,19 @@ describe("startLedgerRefWatcher — cross-instance coherence", () => {
       fields: { note: "from A" },
     });
 
-    // After the watcher fires, B should see the item A wrote.
-    const coherent = await waitUntil(
-      () =>
-        storeB
-          .fetch("widgets")
-          .milestones.flatMap((g) => g.items)
-          .some((i) => i.fields["note"] === "from A"),
-    );
-    expect(coherent).toBe(true);
+    // Gate on the onChange signal — the watcher loop runs `await invalidate(id)`
+    // BEFORE `onChange(id)`, so once "widgets" appears in changedIds, B's cache
+    // has already been re-read (coherence is implied, no race vs the fetch).
+    const fired = await waitUntil(() => changedIds.includes("widgets"));
+    expect(fired).toBe(true);
 
-    // onChange was called with the "widgets" ledger id.
+    // B now reflects A's write, and onChange was called with the ledger id.
+    expect(
+      storeB
+        .fetch("widgets")
+        .milestones.flatMap((g) => g.items)
+        .some((i) => i.fields["note"] === "from A"),
+    ).toBe(true);
     expect(changedIds).toContain("widgets");
 
     watcher.close();
@@ -187,14 +189,16 @@ describe("startLedgerRefWatcher — git-dir indirection robustness", () => {
     // The watcher on the LINKED worktree must still detect the advance because
     // it uses `git rev-parse --verify` (which follows .git-file indirection),
     // NOT a hard-coded `.git/refs/heads/cq-ledger` path.
-    const coherent = await waitUntil(
-      () =>
-        storeB
-          .fetch("widgets")
-          .milestones.flatMap((g) => g.items)
-          .some((i) => i.fields["note"] === "via indirection"),
-    );
-    expect(coherent).toBe(true);
+    // Gate on the onChange signal (fired after invalidate completes) to avoid a
+    // race vs the fetch — coherence is implied once "widgets" is in changedIds.
+    const fired = await waitUntil(() => changedIds.includes("widgets"));
+    expect(fired).toBe(true);
+    expect(
+      storeB
+        .fetch("widgets")
+        .milestones.flatMap((g) => g.items)
+        .some((i) => i.fields["note"] === "via indirection"),
+    ).toBe(true);
     expect(changedIds).toContain("widgets");
 
     watcher.close();
