@@ -203,7 +203,10 @@ export function createLedgerMcpTools(
   readLog?: ReadLogCapability,
   configCapability?: ConfigCapability,
   promptCatalog?: PromptCatalogCapability,
+  toolPrefix: string = "",
 ): AnyTool[] {
+  // Fail fast on an invalid prefix at the system boundary (Q205 / T373).
+  assertToolPrefix(toolPrefix);
   // ---- Item / ledger surface (9) -----------------------------------------
 
   const enumerateLedgers = tool(
@@ -705,7 +708,7 @@ ${QUERY_LANGUAGE_HELP}`,
     },
   );
 
-  return [
+  const tools = [
     enumerateLedgers,
     fetchLedger,
     fetchLedgerArchive,
@@ -733,6 +736,12 @@ ${QUERY_LANGUAGE_HELP}`,
     validateInput,
     validateOutput,
   ] as unknown as AnyTool[];
+
+  // Pure name transform (Q208): register each tool under its prefixed name.
+  // Default `''` leaves every name byte-identical; handler bodies and Zod input
+  // schemas are untouched. Derived ONCE here rather than at each tool() literal.
+  if (toolPrefix === "") return tools;
+  return tools.map((t) => ({ ...t, name: prefixToolName(toolPrefix, t.name) }));
 }
 
 // ---------------------------------------------------------------------------
