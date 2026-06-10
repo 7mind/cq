@@ -260,12 +260,18 @@ export class GitPlumbing {
    */
   async updateRef(ref: string, newSha: string, expectedOld: string | null): Promise<void> {
     const oldArg = expectedOld ?? ZERO_OID;
-    const res = await this.run(["update-ref", ref, newSha, oldArg]);
+    const args = ["update-ref", ref, newSha, oldArg] as const;
+    const res = await this.run(args);
     if (res.code === 0) return;
-    // git's CAS-mismatch diagnostics mention the old value not matching; treat
-    // any non-zero exit of the 3-arg update-ref as a stale-ref CAS failure
-    // (the only failure mode of a well-formed CAS against a valid new SHA).
-    throw new StaleRefError(ref, expectedOld, res.stderr.trim());
+    // A genuine CAS / locking failure from git update-ref always mentions
+    // "cannot lock ref" in stderr (e.g. "is at <sha> but expected <sha>",
+    // "reference already exists"). Any other non-zero exit (e.g. a malformed
+    // or nonexistent newSha) is a programming error and must surface as
+    // GitCommandError so it is not silently swallowed as a concurrency signal.
+    if (res.stderr.includes("cannot lock ref")) {
+      throw new StaleRefError(ref, expectedOld, res.stderr.trim());
+    }
+    throw new GitCommandError(args, res.code, res.stderr);
   }
 
   /**

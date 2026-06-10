@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { GitPlumbing, StaleRefError } from "../src/index.js";
+import { GitCommandError, GitPlumbing, StaleRefError } from "../src/index.js";
 
 const exec = promisify(execFile);
 
@@ -158,6 +158,49 @@ describe("GitPlumbing", () => {
     await expect(plumbing.updateRef(LEDGER_BRANCH, commit, null)).rejects.toBeInstanceOf(
       StaleRefError,
     );
+  });
+
+  // D49: updateRef must distinguish CAS mismatch from other git failures.
+
+  it("D49: CAS mismatch with a genuinely stale expectedOld throws StaleRefError (not GitCommandError)", async () => {
+    // The ref is currently at some commit; supply a stale (wrong) expectedOld so
+    // git rejects the CAS with "is at ... but expected ...".
+    const current = await plumbing.readRef(LEDGER_BRANCH);
+    expect(current).not.toBeNull();
+
+    const blob = await plumbing.hashObject("# tasks\n\nD49 CAS test\n");
+    const tree = await plumbing.writeTree([{ mode: "100644", sha: blob, path: LEDGER_PATH }]);
+    const newCommit = await plumbing.commitTree(tree, current, "ledger: D49 cas attempt");
+
+    const staleOld = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const err = await plumbing
+      .updateRef(LEDGER_BRANCH, newCommit, staleOld)
+      .then(() => null)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(StaleRefError);
+    expect(err).not.toBeInstanceOf(GitCommandError);
+    // The ref must not have moved.
+    expect(await plumbing.readRef(LEDGER_BRANCH)).toBe(current);
+  });
+
+  it("D49: updateRef with a nonexistent newSha throws GitCommandError (not StaleRefError)", async () => {
+    // A well-formed but nonexistent SHA as newSha triggers "nonexistent object"
+    // in git's stderr — this is a programming error, not a concurrency signal,
+    // and must surface as GitCommandError.
+    const current = await plumbing.readRef(LEDGER_BRANCH);
+    expect(current).not.toBeNull();
+
+    const nonexistentSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const err = await plumbing
+      .updateRef(LEDGER_BRANCH, nonexistentSha, current)
+      .then(() => null)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(GitCommandError);
+    expect(err).not.toBeInstanceOf(StaleRefError);
+    // The ref must not have moved.
+    expect(await plumbing.readRef(LEDGER_BRANCH)).toBe(current);
   });
 
   it("builds nested-path subtrees automatically (multi-file tree)", async () => {
