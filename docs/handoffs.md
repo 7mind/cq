@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 48
+  item: 49
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -379,3 +379,14 @@ archives:
 - ledgerRefs: ["goals:G45"]
 - blockingQuestions: ["Q205","Q206","Q207","Q208","Q209","Q210","Q211"]
 - sessionLogs: ["docs/logs/20260610-181859-a32e582a6958bd074.md"]
+
+### HO49 — drained
+
+- createdAt: 2026-06-10T21:49:38.585Z
+- updatedAt: 2026-06-10T21:49:38.585Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "DRAINED. /cq:advance drove G45 (Reusable ledger-MCP library + tool-name namespacing) end-to-end: plan stage (3-planner synthesis → 4-reviewer panel: R450 revise → surgical revision → R451 unanimous go-ahead → K71 locked) then implement stage (11 tasks T373-T383 across W1/W2/W3, each adversarially 4-reviewer-panel-reviewed, merged, with two grounded-adjudications of pi dissents; final gate confirmed Q211 1-5 green, bun run check 1668/0). During T379 review a pre-existing out-of-scope defect D56 (ledger-mcp has no --help flag) was filed file-and-defer; the run then root-caused it (investigate: H35 confirmed), seeded defect-goal G46, planned it (G42/K67-precedent single-reviewer, K72 locked), implemented the fix (T384, round-2 unanimous after a criticism-loop), resolved D56, and answered the Q212 traceability marker. Work milestones M157/M158/M159 (G45) + M161 (G46) archived. Predicate gate at stop: P-investigate=FALSE (no actionable defect) / P-plan=FALSE (no clarifying/planning goal) / P-implement=FALSE (no non-terminal task) / open-Q-gate=clear (all answered). Goals G45 + G46 are READY TO CLOSE — their work is fully delivered + merged; the user sets them `done` in the TUI/web (goals never auto-close), after which the next sweep archives their coordination milestones M156/M160."
+- flow: advance
+- ledgerRefs: ["goals:G45","goals:G46","defects:D56"]
+- sessionLogs: ["docs/logs/20260610-183746-af1adff17be3c82df.md","docs/logs/20260610-185929-a9150c4642dba4d0c.md","docs/logs/20260610-210335-T383-final-gate.md","docs/logs/20260610-211135-a7fba63841593ac83.md","docs/logs/20260610-214656-a5e1f722c1122af41.md"]
