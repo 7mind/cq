@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 46
+  item: 47
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -376,3 +376,24 @@ archives:
 - milestones: ["M161"]
 - grounding: "Defect-seeded fix of D56 (confirmed root cause H35). Single-file fix: extract TOP_LEVEL_USAGE runtime constant + add a --help/-h branch in main() that prints usage to stdout + returns (no server launch). 1 work milestone M161, 1 task T384. Orchestrator-authored (G42/K67 precedent: confirmed cause + exact single-file fix locus leave nothing for parallel candidate planners to diverge on) + single opus reviewer."
 - sessionLogs: ["docs/logs/20260610-211627-a96067fca8e7b2d86.md"]
+
+## M163
+
+### G47 — planning
+
+- createdAt: 2026-06-10T21:58:57.627Z
+- updatedAt: 2026-06-10T21:58:57.627Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- title: Fix D57 — pretty-print + colorize JSON in the ledger-web session-log viewer
+- description: |
+    DEFECT-SEEDED goal (clarify-skipped per K8 pt4; confirmed root cause embedded). Fix D57 (low): the ledger-web session-log markdown viewer renders ```json code fences (e.g. the pi-log 'Captured stdout (verbatim)' blocks, a single minified line) as one unwrapped ultra-long horizontally-overflowing line — not pretty-printed, not colorized, not wrapped.
+    
+    ## CONFIRMED ROOT CAUSE (D57 / H36; ledger-web only)
+    The session-log popup LogModal (packages/ledger-web/src/App.tsx:3574-3582) renders the log content via the SHARED Markdown component (packages/ledger-web/src/Markdown.tsx:14-22) — a bare `<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>` with NO `components` override for code/pre, NO syntax-highlight plugin, and NO JSON pretty-print. So a ```json fence renders to ReactMarkdown's default <pre><code> with the raw minified one-line content. The `.lw-md pre` CSS (packages/ledger-web/src/styles.css:962-968) sets `overflow: auto` with NO `white-space: pre-wrap`/`overflow-wrap`/`word-break`, so the one line overflows horizontally. package.json has no highlight/prism/JSON dependency. ledger-tui is unaffected (Q122: no log-content rendering).
+    
+    ## SUGGESTED FIX
+    (1) Add a react-markdown `components.code` renderer (in Markdown.tsx or a popup-scoped variant) that, for a `language-json` fence OR content that JSON.parse-es successfully, re-serializes via JSON.stringify(parsed, null, 2) before render, and optionally syntax-colorizes (a small theme-var-keyed token colorizer, or a lightweight highlighter dep). (2) Add line-wrapping CSS to the code block (`.lw-md pre`/`pre code`, or popup-scoped `.lw-log-content pre`): `white-space: pre-wrap; overflow-wrap: anywhere;`.
+    
+    ## SCOPE DECISION for the planner
+    The Markdown component is SHARED by all markdown field rendering (App.tsx renderVal/detail fields, e.g. L3179/L3326), so the plan must decide: apply the json-pretty-print + wrap GLOBALLY (every markdown code fence in ledger-web) or ONLY in the log popup (via a Markdown `prettyJson`/`wrap` prop or popup-scoped CSS + a popup-only code renderer). The pretty-print MUST be SAFE (parse-failure falls back to raw text unchanged, never throws) and preserve rehype-sanitize. Acceptance: a happy-dom test asserting a single-line ```json fence renders multi-line/pretty-printed (and, if colorized, with the expected token spans/classes) + wraps; existing Markdown tests unchanged; bun run check green. Linked defect: D57.

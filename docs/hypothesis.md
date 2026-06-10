@@ -2,7 +2,7 @@
 ledger: hypothesis
 counters:
   milestone: 0
-  item: 35
+  item: 36
 archives:
   - id: M14
     path: ./archive/hypothesis/M14.md
@@ -121,3 +121,17 @@ archives:
 - ledgerRefs: ["defects:D43"]
 - evidence: ["[correct] agents/implement-worker.md:47-55 — 'Boundaries (hard rules)': 'No merge, no push, no rebase. Stay on your task branch inside the worktree' + 'Scope = this task only' — forbids merge/push/rebase + scope but NO rule confining git ops to the worktree / forbidding git against the main checkout. Validated: excerpt matches source. [part a]","[correct] agents/implement-worker.md:25-29 — 'working entirely inside your own isolated git worktree' is a descriptive premise, not an enforceable prohibition with examples of forbidden cross-checkout git. [part a]","[correct] agents/implement-worker.md:38-43 — the base commit + worktree path are PASSED IN by the harness (Claude native isolation:worktree); the worker does NOT establish its own base, so a stale base is a harness-side fact the worker inherits with no sanctioned base-fixing procedure. [part a / stale-base trigger]","[correct] agents/implement-worker.md:71-73 — the ONLY sanctioned worker git mutation is `git add -A && git commit` on the task branch + report the SHA; no instruction restricting git invocation to the worktree dir. Validated: matches source. [part a]","[correct] commands/cq/implement/advance.md:293-302 — merge-back (rebase + ff merge) is the ORCHESTRATOR's job, confirming the worker's git role is solely commit-on-branch + report-SHA. [part a]","[correct] commands/cq/implement/advance.md:395-405 — 'Commit the ledger (after every milestone archive + at the standalone stop)': commits ONLY after archive_milestone + at the standalone at-stop (suppressed when chained). No commit-after-every-task-merge. Validated: matches source. [part b]","[correct] commands/cq/advance.md:506-518 — top-level wrapper commits after every archive + at the single run-stop, NOT after every task merge. [part b]","[correct] commands/cq/plan/advance.md:717+ — 'Commit the ledger (standalone stop)': only commit is at the standalone stop, suppressed when chained; no commit-after-planning-lock checkpoint. Validated: section present at L717. [part b]","[correct] commands/cq/implement/advance.md:542-549 — chained sub-flows SUPPRESS the at-stop commit; under /cq:advance only the wrapper's run-stop + per-archive commits fire, maximizing the uncommitted-ledger window between archives. [part b]"]
 - sessionLogs: ["docs/logs/20260609-093502-a4b0d0d4f781c94c2.md"]
+
+## M162
+
+### H36 — confirmed
+
+- createdAt: 2026-06-10T21:55:15.931Z
+- updatedAt: 2026-06-10T21:58:22.476Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- headline: The session-log markdown renderer(s) render fenced code blocks verbatim in a non-wrapping <pre>/<code> with NO JSON pretty-print and NO syntax highlighting; a single-line minified-JSON fence therefore overflows as one ultra-long line
+- description: "If TRUE: the ledger-web (G26) session-log markdown popup — and any ledger-tui session-log markdown view — render ```json fenced code blocks through a generic markdown→element path (a markdown parser/component) that emits the raw fence content into a code/pre element. There is NO logic to (a) detect a json language fence or json-parseable content, (b) re-serialize it pretty-printed (JSON.stringify(parsed,null,2)), or (c) syntax-colorize it; and the code-block CSS does not wrap long lines (no white-space:pre-wrap / overflow-wrap). So the pi-log 'Captured stdout (verbatim)' json (one minified line) shows as one overflowing line. Fix locus: the session-log markdown rendering component(s) + their code-fence/code-block handling + CSS."
+- ledgerRefs: ["defects:D57"]
+- evidence: ["[correct] packages/ledger-web/src/Markdown.tsx:14-22 — the shared Markdown component is a bare `<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>` with NO `components` override for code/pre, NO syntax-highlight plugin, NO JSON pretty-print; a ```json fence renders to ReactMarkdown's default <pre><code> with the raw minified single-line content (orchestrator re-read + verified).","[correct] packages/ledger-web/src/styles.css:962-968 — `.lw-md pre` sets `overflow: auto` and NO `white-space: pre-wrap`/`overflow-wrap`/`word-break`, so a single minified-JSON line does not wrap and overflows horizontally (the reported symptom). The decisive CSS (orchestrator re-read + verified).","[correct] packages/ledger-web/src/App.tsx:3574-3582 — the session-log popup (LogModal ok-branch) renders the fetched content via `<Markdown text={state.content} />` inside `.lw-log-content`; fence handling is fully delegated to the shared Markdown component (orchestrator re-read + verified).","[correct] packages/ledger-web/package.json deps — only react-markdown/remark-gfm/rehype-sanitize; NO highlight/prism/JSON-pretty-print dependency, so there is no installed mechanism to highlight or re-format fenced JSON.","[correct] ledger questions:Q122 (answered 'ledger-web only') — ledger-tui has no log-content rendering (no readLog, no markdown view), so the defect is ledger-web ONLY."]
+- sessionLogs: ["docs/logs/20260610-215726-ab96c0f29862c38fd.md"]

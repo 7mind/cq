@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 161
+  item: 163
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -818,3 +818,15 @@ archives:
 - createdAt: 2026-06-10T21:12:47.366Z
 - updatedAt: 2026-06-10T21:12:47.366Z
 - title: "Plan: fix D56 — ledger-mcp --help flag"
+
+### M162 — open
+
+- createdAt: 2026-06-10T21:54:44.182Z
+- updatedAt: 2026-06-10T21:54:44.182Z
+- title: "Investigate: session-log-json-not-pretty-printed"
+
+### M163 — open
+
+- createdAt: 2026-06-10T21:58:40.719Z
+- updatedAt: 2026-06-10T21:58:40.719Z
+- title: "Plan: fix D57 — pretty-print + colorize JSON in session-log viewer"

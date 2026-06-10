@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 212
+  item: 213
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -635,3 +635,15 @@ archives:
 - recommendation: Adopt criteria 1–4 as written; the two-prefixed-servers-in-one-process test (zero collision + both functional) is the core acceptance gate, the unchanged cq drift-guard proves no regression, and `bun run check` is the standing repo gate. Include the doc/example only if Q207 keeps the public builder in scope; add the instructions-naming assertion (suggestion 3) since the prefix touches the instructions text per Q208.
 - ledgerRefs: ["goals:G45"]
 - answer: as recommended
+
+## M162
+
+### Q213 — open
+
+- createdAt: 2026-06-10T21:59:34.747Z
+- updatedAt: 2026-06-10T21:59:34.747Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "Root cause of D57 confirmed (ledger-web's shared Markdown component renders ```json fences via bare react-markdown — no pretty-print/highlight — into a non-wrapping `.lw-md pre`) and a defect-seeded goal G47 is ready in `planning`. Run `/cq:plan:advance G47` to produce the reviewed fix tasks. The plan should decide the SCOPE (global vs log-popup-only) since the Markdown component is shared by all markdown fields."
+- context: "Confirmed root cause (H36): App.tsx:3574-3582 LogModal → Markdown.tsx:14-22 bare ReactMarkdown (no components.code, no highlighter, no JSON pretty-print) + styles.css:962-968 `.lw-md pre` overflow:auto with no wrap. Suggested fix: a react-markdown components.code renderer that JSON.stringify(parse,null,2)-pretty-prints + (optionally) colorizes json fences, plus white-space:pre-wrap/overflow-wrap CSS; SAFE parse-failure fallback; preserve rehype-sanitize. ledger-web only (Q122: ledger-tui has no log view). Low severity."
+- ledgerRefs: ["defects:D57","goals:G47"]
