@@ -117,6 +117,15 @@ describe("CQ_TOML_TEMPLATE (T331)", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
     expect(config.agentTiers).not.toBeNull();
   });
+
+  it("[ledger] block is COMMENTED-OUT/inert — backend resolves to fs (ledger null)", () => {
+    // Guards the T349 acceptance against the REAL exported constant: if a future
+    // edit uncomments the template's [ledger] block (silently activating
+    // git-object), this fails. A synthetic copy in config.test.ts cannot catch
+    // that drift — only parsing CQ_TOML_TEMPLATE itself can.
+    const config = parseConfig(CQ_TOML_TEMPLATE);
+    expect(config.ledger).toBeNull();
+  });
 });
 
 describe("cq.toml.example active model set equals CQ_TOML_TEMPLATE (T331)", () => {
@@ -155,5 +164,10 @@ describe("cq.toml.example active model set equals CQ_TOML_TEMPLATE (T331)", () =
     const config = parseConfig(readFileSync(EXAMPLE_PATH, "utf8"));
     const formatted = resolvePlanners(config).map(formatReviewerToken);
     expect(formatted).toEqual(EXPECTED_ACTIVE);
+  });
+
+  it("cq.toml.example [ledger] block is COMMENTED-OUT/inert — backend resolves to fs", () => {
+    const config = parseConfig(readFileSync(EXAMPLE_PATH, "utf8"));
+    expect(config.ledger).toBeNull();
   });
 });
