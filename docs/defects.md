@@ -164,6 +164,11 @@ archives:
     summary: "G45 W2 (public builder + CLI + instructions) COMPLETE: T377 buildServerInstructions(toolPrefix) reusing prefixToolName over live LEDGER_TOOL_NAMES (empty byte-identical); T378 public createLedgerMcpServer({store,displayName,toolPrefix?}) + CreateLedgerMcpServerOptions extracted from @cq/ledger-mcp, buildServer kept as a byte-identical thin wrapper; T379 --tool-prefix CLI flag threaded through the FULL main()→serveHttp→attachMcpHttp HTTP chain + STDIO with optional default-'' params (R450 fix) + e2e HTTP registration test. All 3 tasks done + reviewed (R455/R457/R459 go-ahead; T379 minimax-dissent adjudicated invalid). ALSO carried defect D56 (filed file-and-defer during T379 review): root-caused via investigate (H35 confirmed), seeded defect-goal G46, fixed by T384 → D56 RESOLVED; traceability Q212 answered. Merged 3b7eb76/2b63911/24e2647. check green."
     title: "W2: public builder + CLI flag + prefixed SERVER_INSTRUCTIONS"
     status: done
+  - id: M162
+    path: ./archive/defects/M162.md
+    summary: "Investigate D57 (session-log JSON not pretty-printed) COMPLETE: H36 confirmed (ledger-web shared Markdown is bare react-markdown — no components.code/highlighter/pretty-print; .lw-md pre overflow:auto no-wrap; ledger-tui unaffected per Q122), D57 root-caused → seeded defect-goal G47 → fixed by T385 → D57 RESOLVED; Q213 traceability answered; HO50 investigate handoff. All items terminal."
+    title: "Investigate: session-log-json-not-pretty-printed"
+    status: done
 ---
 
 # defects
@@ -264,23 +269,3 @@ archives:
 - rootCause: "User-reported (G41 item-4 follow-up). DiagramSvg edge labels rendered with `fill={LABEL_FILL}` where LABEL_FILL='#171a21' — EXACTLY equal to the help-panel background var(--panel)='#171a21' (styles.css :root). Node labels share LABEL_FILL but sit on a filled <rect> (DEFAULT_FILL grey / roleKind colour) so they contrast; EDGE labels render directly on the panel background, so the dark fill is identical to the background and the labels are invisible in the (default dark) theme."
 - fix: "DiagramSvg.tsx: edge labels now use a new EDGE_LABEL_FILL='var(--fg)' (themed foreground #e6e9ef) instead of LABEL_FILL; node labels keep LABEL_FILL='#171a21' (still contrasts on their filled rects). Theme-aware (tracks the palette if a light theme is added). Regression test in diagramSvgActivate.test.tsx asserts the edge-label fill is var(--fg) (not #171a21) while node-label fill stays #171a21. bun run check green (1488/0)."
 - ledgerRefs: ["goals:G41"]
-
-## M162
-
-### D57 — resolved
-
-- createdAt: 2026-06-10T21:54:54.962Z
-- updatedAt: 2026-06-10T23:40:13.906Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Session-log markdown viewer renders JSON code fences (e.g. 'Captured stdout (verbatim)') as one unwrapped ultra-long line — should pretty-print + colorize JSON
-- description: |
-    User-reported (verbatim): minor defect: "Captured stdout (verbatim)" now displays one unformatted ultra-long json line. If there is JSON, we should pretty-print and colorize it.
-    
-    Context: the pi-reviewer/planner session-log files (docs/logs/*.md) embed a fenced ```json block under a '### Captured stdout (verbatim)' header containing the pi CLI's stdout, which is a SINGLE line of minified JSON. When the session-log markdown viewer (added in G26 — 'render session logs as markdown in a popup', primarily ledger-web; possibly also a ledger-tui markdown popup) renders that code fence, it shows one ultra-long horizontally-overflowing line (not wrapped, not pretty-printed, not syntax-colorized). Desired behavior: when a fenced code block is JSON (or its content parses as JSON), pretty-print it (e.g. JSON.stringify(parsed, null, 2)) and syntax-colorize/highlight it; at minimum, long lines should wrap. Severity low (cosmetic display).
-- severity: low
-- rootCause: "CONFIRMED (H36, ledger-web only). The session-log popup LogModal (App.tsx:3574-3582) renders the log content via the SHARED Markdown component (Markdown.tsx:14-22), a bare `<ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>` with NO `components` override for code/pre, NO syntax-highlight plugin, and NO JSON pretty-print — so a ```json fence (the pi-log 'Captured stdout (verbatim)' blocks, which are a single minified line) renders to ReactMarkdown's default <pre><code> with the raw one-line content. The `.lw-md pre` CSS (styles.css:962-968) sets `overflow: auto` with NO `white-space: pre-wrap`/`overflow-wrap`/`word-break`, so that one line does not wrap and overflows horizontally. package.json carries no highlight/prism/JSON dependency. ledger-tui is unaffected (Q122: no log-content rendering)."
-- suggestedFix: "ledger-web. (1) Add a `components.code` renderer to react-markdown (in Markdown.tsx, or a popup-scoped Markdown variant) that, for a `language-json` fence OR content that JSON.parse-es successfully, re-serializes via JSON.stringify(parsed, null, 2) before rendering, and optionally syntax-colorizes (a tiny token-regex colorizer keyed to the existing theme CSS vars, or add a lightweight highlighter dep — e.g. rehype-highlight/highlight.js or prismjs). (2) Add line-wrapping CSS to the code block (`.lw-md pre`/`.lw-md pre code` or a popup-scoped `.lw-log-content pre`): `white-space: pre-wrap; overflow-wrap: anywhere;` so any long line wraps. SCOPE DECISION (planner): the Markdown component is shared by all markdown fields (renderVal/detail fields), so decide whether the json-pretty-print + wrap applies globally (all markdown code fences) or only the log popup (a Markdown `prettyJson`/`wrap` prop, or popup-scoped CSS + a popup-only code renderer). The pretty-print must be SAFE: parse-failure falls back to the raw text unchanged (never throw); preserve rehype-sanitize."
-- sessionLogs: ["docs/logs/20260610-215726-ab96c0f29862c38fd.md"]
-- ledgerRefs: ["goals:G47"]
-- fix: "Resolved by T385 (merged c3fdbe4): the ledger-web shared Markdown component now renders json code fences via a components.code renderer that JSON.stringify(parse,null,2)-pretty-prints + theme-var-colorizes (lw-json-* spans) with a SAFE try/catch raw fallback, and .lw-md pre now sets white-space:pre-wrap/overflow-wrap so long lines wrap. The pi-log 'Captured stdout (verbatim)' json blocks now render multi-line, colorized, and wrapped. Fix task set {T385} done → D57 resolved. check 1678/0 + nix build .#ledger-web green."

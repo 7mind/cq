@@ -769,6 +769,16 @@ archives:
     summary: "G45 W2 (public builder + CLI + instructions) COMPLETE: T377 buildServerInstructions(toolPrefix) reusing prefixToolName over live LEDGER_TOOL_NAMES (empty byte-identical); T378 public createLedgerMcpServer({store,displayName,toolPrefix?}) + CreateLedgerMcpServerOptions extracted from @cq/ledger-mcp, buildServer kept as a byte-identical thin wrapper; T379 --tool-prefix CLI flag threaded through the FULL main()→serveHttp→attachMcpHttp HTTP chain + STDIO with optional default-'' params (R450 fix) + e2e HTTP registration test. All 3 tasks done + reviewed (R455/R457/R459 go-ahead; T379 minimax-dissent adjudicated invalid). ALSO carried defect D56 (filed file-and-defer during T379 review): root-caused via investigate (H35 confirmed), seeded defect-goal G46, fixed by T384 → D56 RESOLVED; traceability Q212 answered. Merged 3b7eb76/2b63911/24e2647. check green."
     title: "W2: public builder + CLI flag + prefixed SERVER_INSTRUCTIONS"
     status: done
+  - id: M165
+    path: ./archive/milestones/M165.md
+    summary: "G47 (fix D57) COMPLETE: T385 added a react-markdown components.code renderer to the ledger-web shared Markdown component that pretty-prints (JSON.stringify(parse,null,2)) + theme-var-colorizes json code fences (lw-json-* spans) with a SAFE try/catch raw fallback, + .lw-md pre white-space:pre-wrap so long lines wrap. Round-2 criticism-loop (grok caught a nested-<pre> defect the majority missed; verified + fixed: bare <code> in all fenced paths, react-markdown owns the <pre>). Reviewed round-2 UNANIMOUS go-ahead (R468). Merged cbde746+c3fdbe4. RESOLVES D57. check 1678/0 + nix build .#ledger-web green."
+    title: "W: ledger-web JSON pretty-print + colorize + wrap (D57)"
+    status: done
+  - id: M162
+    path: ./archive/milestones/M162.md
+    summary: "Investigate D57 (session-log JSON not pretty-printed) COMPLETE: H36 confirmed (ledger-web shared Markdown is bare react-markdown — no components.code/highlighter/pretty-print; .lw-md pre overflow:auto no-wrap; ledger-tui unaffected per Q122), D57 root-caused → seeded defect-goal G47 → fixed by T385 → D57 RESOLVED; Q213 traceability answered; HO50 investigate handoff. All items terminal."
+    title: "Investigate: session-log-json-not-pretty-printed"
+    status: done
 ---
 
 # milestones
@@ -819,12 +829,6 @@ archives:
 - updatedAt: 2026-06-10T21:12:47.366Z
 - title: "Plan: fix D56 — ledger-mcp --help flag"
 
-### M162 — open
-
-- createdAt: 2026-06-10T21:54:44.182Z
-- updatedAt: 2026-06-10T21:54:44.182Z
-- title: "Investigate: session-log-json-not-pretty-printed"
-
 ### M163 — open
 
 - createdAt: 2026-06-10T21:58:40.719Z
@@ -836,12 +840,6 @@ archives:
 - createdAt: 2026-06-10T22:02:13.252Z
 - updatedAt: 2026-06-10T22:02:13.252Z
 - title: "Plan: unify CLI tools into a single cq binary"
-
-### M165 — open
-
-- createdAt: 2026-06-10T22:12:36.201Z
-- updatedAt: 2026-06-10T22:12:36.201Z
-- title: "W: ledger-web JSON pretty-print + colorize + wrap (D57)"
 
 ### M166 — open
 

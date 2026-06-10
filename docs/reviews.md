@@ -709,6 +709,11 @@ archives:
     summary: "G45 W2 (public builder + CLI + instructions) COMPLETE: T377 buildServerInstructions(toolPrefix) reusing prefixToolName over live LEDGER_TOOL_NAMES (empty byte-identical); T378 public createLedgerMcpServer({store,displayName,toolPrefix?}) + CreateLedgerMcpServerOptions extracted from @cq/ledger-mcp, buildServer kept as a byte-identical thin wrapper; T379 --tool-prefix CLI flag threaded through the FULL main()→serveHttp→attachMcpHttp HTTP chain + STDIO with optional default-'' params (R450 fix) + e2e HTTP registration test. All 3 tasks done + reviewed (R455/R457/R459 go-ahead; T379 minimax-dissent adjudicated invalid). ALSO carried defect D56 (filed file-and-defer during T379 review): root-caused via investigate (H35 confirmed), seeded defect-goal G46, fixed by T384 → D56 RESOLVED; traceability Q212 answered. Merged 3b7eb76/2b63911/24e2647. check green."
     title: "W2: public builder + CLI flag + prefixed SERVER_INSTRUCTIONS"
     status: done
+  - id: M165
+    path: ./archive/reviews/M165.md
+    summary: "G47 (fix D57) COMPLETE: T385 added a react-markdown components.code renderer to the ledger-web shared Markdown component that pretty-prints (JSON.stringify(parse,null,2)) + theme-var-colorizes json code fences (lw-json-* spans) with a SAFE try/catch raw fallback, + .lw-md pre white-space:pre-wrap so long lines wrap. Round-2 criticism-loop (grok caught a nested-<pre> defect the majority missed; verified + fixed: bare <code> in all fenced paths, react-markdown owns the <pre>). Reviewed round-2 UNANIMOUS go-ahead (R468). Merged cbde746+c3fdbe4. RESOLVES D57. check 1678/0 + nix build .#ledger-web green."
+    title: "W: ledger-web JSON pretty-print + colorize + wrap (D57)"
+    status: done
 ---
 
 # reviews
@@ -882,20 +887,6 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G48"]
 - sessionLogs: ["docs/logs/20260610-224531-a2a5b452e81bbba55.md","docs/logs/20260610-224531-pi-codex-g48.md","docs/logs/20260610-224531-pi-grok-g48.md","docs/logs/20260610-224531-pi-minimax-g48.md"]
-
-## M165
-
-### R468 — go-ahead
-
-- createdAt: 2026-06-10T23:40:06.934Z
-- updatedAt: 2026-06-10T23:40:06.934Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T385 — UNANIMOUS approve at round 2 (4-reviewer panel). Round 1: grok DISAPPROVE caught a real nested-<pre> defect (CodeBlock returned <pre><code> nested inside react-markdown's own <pre>) that the 3 approving reviewers missed — orchestrator verified it against source → criticism loop. Round 2 (bare <code> in all fenced paths, react-markdown the sole <pre> + no-nesting test assertions): all 4 approve. D57 fix; check 1678/0 + nix build .#ledger-web green."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T385","goals:G47","defects:D57"]
-- sessionLogs: ["docs/logs/20260610-233921-T385-reviews.md"]
 
 ## M166
 
