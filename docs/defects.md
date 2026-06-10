@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 55
+  item: 56
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -259,3 +259,17 @@ archives:
 - rootCause: "User-reported (G41 item-4 follow-up). DiagramSvg edge labels rendered with `fill={LABEL_FILL}` where LABEL_FILL='#171a21' — EXACTLY equal to the help-panel background var(--panel)='#171a21' (styles.css :root). Node labels share LABEL_FILL but sit on a filled <rect> (DEFAULT_FILL grey / roleKind colour) so they contrast; EDGE labels render directly on the panel background, so the dark fill is identical to the background and the labels are invisible in the (default dark) theme."
 - fix: "DiagramSvg.tsx: edge labels now use a new EDGE_LABEL_FILL='var(--fg)' (themed foreground #e6e9ef) instead of LABEL_FILL; node labels keep LABEL_FILL='#171a21' (still contrasts on their filled rects). Theme-aware (tracks the palette if a light theme is added). Regression test in diagramSvgActivate.test.tsx asserts the edge-label fill is var(--fg) (not #171a21) while node-label fill stays #171a21. bun run check green (1488/0)."
 - ledgerRefs: ["goals:G41"]
+
+## M158
+
+### D56 — open
+
+- createdAt: 2026-06-10T20:51:11.650Z
+- updatedAt: 2026-06-10T20:51:11.650Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- headline: ledger-mcp CLI has no --help flag; `ledger-mcp --help` silently launches the stdio server
+- severity: low
+- description: "Pre-existing UX gap surfaced by the opus reviewer during T379 review (file-and-defer, NOT caused by T379 — present at base 0ebbf42). packages/ledger-mcp/src/main.ts has no `--help`/`-h` handler in parseArgs/main(): running `ledger-mcp --help` treats `--help` as an unknown ignored arg and starts the stdio MCP server instead of printing usage. The CLI's only usage surface is the file-header doc-comment block (which T379 correctly updated to document --tool-prefix). Out of scope for G45's tool-name-prefix work; tracked for a future cleanup task."
+- suggestedFix: Add an explicit `--help`/`-h` branch in main() (and the restore subcommand) that prints the header usage text (including `--cwd`, `--http`, `--tool-prefix`, and the `restore` subcommand) to stdout and exits 0.
+- ledgerRefs: ["tasks:T379","goals:G45"]

@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 458
+  item: 460
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -885,6 +885,18 @@ archives:
 - ledgerRefs: ["tasks:T378","goals:G45"]
 - sessionLogs: ["docs/logs/20260610-202419-a50d50fa0e663b051.md","docs/logs/20260610-202419-pi-codex-T378.md","docs/logs/20260610-202419-pi-grok-T378.md","docs/logs/20260610-202419-pi-minimax-T378.md"]
 
+### R459 — go-ahead
+
+- createdAt: 2026-06-10T20:52:22.834Z
+- updatedAt: 2026-06-10T20:52:22.834Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T379 — reconciled approve (3 of 4 reviewers approve; the grok-instance disapprove ADJUDICATED INVALID — all 3 criticisms refuted against the diff/repo). --tool-prefix threaded through the FULL HTTP chain (R450 fix) + STDIO; e2e HTTP registration test genuine; check 1668/0. The grok-instance's criticisms: (1) 'buildServer dead code' — false, still called by capabilityGating.test.ts:55 + main.test.ts:166, public API; (2) 'incomplete --help' — false, no --help handler exists (filed pre-existing low defect D56), header usage surface correctly updated; (3) '--tool-prefix= no throw' — false, '' is the valid default prefix. opus filed pre-existing low defect D56 (no --help flag)."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T379","goals:G45","defects:D56"]
+- sessionLogs: ["docs/logs/20260610-205105-a16acdb5a260854ef.md","docs/logs/20260610-205105-pi-codex-T379.md","docs/logs/20260610-205105-pi-grok-T379.md","docs/logs/20260610-205105-pi-minimax-T379.md"]
+
 ## M159
 
 ### R458 — go-ahead
@@ -898,3 +910,15 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T381","goals:G45"]
 - sessionLogs: ["docs/logs/20260610-202419-a54fbffbbf0f0c60d.md","docs/logs/20260610-202419-pi-codex-T381.md","docs/logs/20260610-202419-pi-grok-T381.md","docs/logs/20260610-202419-pi-minimax-T381.md"]
+
+### R460 — go-ahead
+
+- createdAt: 2026-06-10T20:52:26.401Z
+- updatedAt: 2026-06-10T20:52:26.401Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T380 — UNANIMOUS approve (4-reviewer panel). The Q211-1 core acceptance test: two co-resident prefixed/unprefixed servers, disjoint tool-name sets (zero collision) + both functional end-to-end via real tool calls; opus reran 3× no flake; check 1660/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T380","goals:G45"]
+- sessionLogs: ["docs/logs/20260610-205105-afe55dfdee9480c17.md","docs/logs/20260610-205105-pi-codex-T380.md","docs/logs/20260610-205105-pi-grok-T380.md","docs/logs/20260610-205105-pi-minimax-T380.md"]

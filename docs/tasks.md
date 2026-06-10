@@ -643,10 +643,10 @@ archives:
 - completion: "Public createLedgerMcpServer({store,displayName,toolPrefix?}) + CreateLedgerMcpServerOptions extracted from ledger-mcp/main.ts; buildServer now a byte-identical thin wrapper; in-memory round-trip test pins prefixed/default surfaces. check 1658/0."
 - sessionLogs: ["docs/logs/20260610-202419-a164cd7faaca6b3c9.md","docs/logs/20260610-202419-a50d50fa0e663b051.md","docs/logs/20260610-202419-pi-codex-T378.md","docs/logs/20260610-202419-pi-grok-T378.md","docs/logs/20260610-202419-pi-minimax-T378.md"]
 
-### T379 — planned
+### T379 — done
 
 - createdAt: 2026-06-10T18:39:43.616Z
-- updatedAt: 2026-06-10T18:54:08.667Z
+- updatedAt: 2026-06-10T20:52:12.937Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Add a ledger-mcp --tool-prefix <p> CLI flag wired into the standalone server launch
@@ -655,13 +655,16 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T378"]
 - ledgerRefs: ["goals:G45"]
+- resultCommit: "24e2647"
+- completion: --tool-prefix CLI flag (parseArgs + fail-fast assertToolPrefix) threaded through BOTH launch paths incl. the full HTTP chain main()→serveHttp→attachMcpHttp→createLedgerMcpServer (R450 fix); e2e HTTP registration test. check 1668/0.
+- sessionLogs: ["docs/logs/20260610-205105-ae77ec60bdea6d2a6.md","docs/logs/20260610-205105-a16acdb5a260854ef.md","docs/logs/20260610-205105-pi-codex-T379.md","docs/logs/20260610-205105-pi-grok-T379.md","docs/logs/20260610-205105-pi-minimax-T379.md"]
 
 ## M159
 
-### T380 — planned
+### T380 — done
 
 - createdAt: 2026-06-10T18:39:54.875Z
-- updatedAt: 2026-06-10T18:54:25.558Z
+- updatedAt: 2026-06-10T20:52:16.237Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: "Acceptance test: two prefixed ledger-MCP servers in one process — zero tool-name collision, both functional"
@@ -670,6 +673,9 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T378"]
 - ledgerRefs: ["goals:G45"]
+- resultCommit: d4634aa
+- completion: "Two-prefixed-servers-in-one-process acceptance test (Q211-1): disjoint name sets + both functional end-to-end via real tool calls; deterministic across 3 reruns. check 1660/0."
+- sessionLogs: ["docs/logs/20260610-205105-af450839414625050.md","docs/logs/20260610-205105-afe55dfdee9480c17.md","docs/logs/20260610-205105-pi-codex-T380.md","docs/logs/20260610-205105-pi-grok-T380.md","docs/logs/20260610-205105-pi-minimax-T380.md"]
 
 ### T381 — done
 
