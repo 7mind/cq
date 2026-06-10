@@ -79,6 +79,46 @@ let
       "- Hostname: $HOST. Use this exact value where CLAUDE.md or scripts reference the current host; do not rely on \$HOSTNAME (zsh, the user's login shell, does not export it)."
   '';
 
+  # Stop hook (G44, fixes D50): the THIN Claude-Code-specific translator that
+  # turns the neutral `cq advance-gate` verdict into a Claude Code Stop-hook
+  # response. The reusable gate logic lives in the `cq advance-gate` CLI (on
+  # PATH via tools.nix's ledgerTools); this wrapper only adapts its exit code +
+  # stdout to Claude Code's `{decision:block,reason}` protocol, so other
+  # harnesses can reuse the same neutral CLI (D50 LIMITS). Authored here as a
+  # sibling let-binding; registration into settings.hooks is a separate task
+  # (T369) and the integration test is T372 — this binding is intentionally
+  # NOT yet wired into settings.hooks below.
+  #
+  # Protocol: emit `{"decision":"block","reason":"…"}` on stdout to FORCE the
+  # model to continue (reason fed back); emit nothing / exit 0 to ALLOW the
+  # stop. The gate's verdict JSON is `{block,reason,predicates}` with exit
+  # 0 = allow, non-zero = block.
+  #
+  # jq is referenced explicitly (like the statusLine below); `cq` resolves from
+  # PATH (like `hostname` in claudeSessionStartHook) — tools.nix installs it via
+  # ledgerTools. The wrapper passes the gate's stdout to jq even on a non-zero
+  # exit, so the BLOCK reason is read out of the captured verdict.
+  claudeStopGateHook = pkgs.writeShellScript "claude-stop-advance-gate" ''
+    set -u
+    # (1) No session id → the gate can't engage; allow the stop.
+    if [ -z "''${CLAUDE_CODE_SESSION_ID:-}" ]; then
+      exit 0
+    fi
+    # (2) Invoke the neutral gate, capturing its stdout (verdict JSON) + exit.
+    #     --cwd passes through the harness CWD; the gate handles marker-absent.
+    verdict="$(cq advance-gate --session "$CLAUDE_CODE_SESSION_ID" --cwd "$PWD")"
+    gate_status=$?
+    # (3) Non-zero → BLOCK: re-emit as Claude Code's hook response, lifting the
+    #     gate's .reason and letting jq handle JSON escaping.
+    if [ "$gate_status" -ne 0 ]; then
+      printf '%s' "$verdict" | ${pkgs.jq}/bin/jq -c \
+        '{decision: "block", reason: .reason}'
+      exit 0
+    fi
+    # (4) Exit 0 → ALLOW: emit nothing and let the stop proceed.
+    exit 0
+  '';
+
   # Wiring common to every skill-aware harness: enable it, feed the shared
   # programs.mcp registry, install the merged skill set, and the shared memory
   # text. Spread with `//` into the programs.claude-code block (no key overlap).
