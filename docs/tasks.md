@@ -505,10 +505,10 @@ archives:
 - completion: LedgerPersistence byte-I/O seam interface (packages/ledger/src/store/LedgerPersistence.ts, exported) capturing every FsLedgerStore fs.*/atomicWrite op + 2 git-parity methods; interface-only (no impl moved); bun run check green.
 - sessionLogs: ["docs/logs/20260610-093502-a86a4af4aa7334adf.md","docs/logs/20260610-093502-aa3adc9ec2a34495f.md"]
 
-### T350 — planned
+### T350 — done
 
 - createdAt: 2026-06-10T09:03:04.100Z
-- updatedAt: 2026-06-10T09:03:04.100Z
+- updatedAt: 2026-06-10T09:58:52.451Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Extract AbstractLedgerStore base holding shared map/parse/FTS/lock/divergence logic over the seam
@@ -517,6 +517,9 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T347"]
 - ledgerRefs: ["goals:G43"]
+- resultCommit: b7c64ce5aac02acb10be98cad187d8f180fb5007
+- completion: "Extracted AbstractLedgerStore<P extends LedgerPersistence> (shared map/init/read/mutation/lock/FTS/divergence/dispose logic, all byte-I/O via the seam) + FsPersistence seam impl; FsLedgerStore extends base (1576→339 lines), keeps only FS-only concerns (locks/cacheMirror/read_log/reset). Behaviour-preserving: all ledger tests pass UNCHANGED; check green 1488/0/1skip on main. No shared signature changed."
+- sessionLogs: ["docs/logs/20260610-095829-aa213efc31f0f323e.md","docs/logs/20260610-095829-af6621d3397105715.md"]
 
 ### T351 — planned
 
