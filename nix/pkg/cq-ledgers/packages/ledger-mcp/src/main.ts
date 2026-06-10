@@ -191,6 +191,21 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   return { cwd: resolveRoot(cwd), http, toolPrefix };
 }
 
+/** Top-level CLI usage text (mirrors the file-header JSDoc; printed by --help/-h). */
+export const TOP_LEVEL_USAGE = [
+  "usage: ledger-mcp [options]                            # stdio MCP server",
+  "       ledger-mcp restore --from-cache [--cwd <path>] # restore docs/ from cache",
+  "",
+  "options:",
+  "  --cwd <path>          Ledger root (default: $LEDGER_ROOT or current working directory)",
+  "  --http [host:]port    Serve Streamable HTTP instead of stdio (default host: 127.0.0.1)",
+  "  --tool-prefix <p>     Prefix all tool names with \"<p>_\"",
+  "  -h, --help            Print this usage and exit",
+  "",
+  "subcommands:",
+  "  restore --from-cache  Restore <root>/docs/ from the per-root XDG cache mirror",
+].join("\n");
+
 /** The single recognised positional subcommand. */
 export const RESTORE_SUBCOMMAND = "restore";
 
@@ -637,6 +652,11 @@ export async function runRestore(args: RestoreArgs): Promise<void> {
 }
 
 export async function main(argv: readonly string[]): Promise<void> {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    process.stdout.write(TOP_LEVEL_USAGE + "\n");
+    return;
+  }
+
   // Positional-subcommand dispatch: the DEFAULT (no subcommand) launches the
   // server unchanged; the only recognised subcommand is `restore`.
   if (argv[0] === RESTORE_SUBCOMMAND) {
