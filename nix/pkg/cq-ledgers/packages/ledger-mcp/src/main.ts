@@ -62,6 +62,7 @@ export type { RestoreSummary } from "./restore.js";
 // Re-export so in-process hosts (ledger-tui embedded, ledger-web embedded) can
 // wire live refresh against the same watcher the standalone binary uses.
 export { startLedgerWatcher, type LedgerWatcher } from "./watcher.js";
+export { startLedgerRefWatcher, type LedgerRefWatcher, REF_POLL_MS } from "./refWatcher.js";
 
 const SERVER_INFO = { name: "ledger-mcp", version: "0.0.1" } as const;
 const DEFAULT_HTTP_HOST = "127.0.0.1";
