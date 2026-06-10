@@ -605,10 +605,10 @@ archives:
 
 ## M161
 
-### T384 — planned
+### T384 — done
 
 - createdAt: 2026-06-10T21:15:05.482Z
-- updatedAt: 2026-06-10T21:15:05.482Z
+- updatedAt: 2026-06-10T21:47:47.514Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Add a ledger-mcp --help/-h flag printing top-level usage (fix D56)
@@ -617,3 +617,6 @@ archives:
 - suggestedModel: standard
 - dependsOn: []
 - ledgerRefs: ["goals:G46","defects:D56"]
+- resultCommit: "5998681"
+- completion: "Added a ledger-mcp --help/-h flag: TOP_LEVEL_USAGE runtime constant + an early-return branch in main() that prints usage to stdout before any server construction; help.test.ts covers both flags (stdout tokens + no-'serving'-on-stderr) + argv-position precedence. Fixes D56. check 1675/0."
+- sessionLogs: ["docs/logs/20260610-214656-a2a80bb022404e87d.md","docs/logs/20260610-214656-ade3dc3ca614cfcb5.md","docs/logs/20260610-214656-a053096a9302dd4b9.md","docs/logs/20260610-214656-a5e1f722c1122af41.md","docs/logs/20260610-214656-pi-codex-T384.md","docs/logs/20260610-214656-pi-grok-T384.md","docs/logs/20260610-214656-pi-minimax-T384.md"]

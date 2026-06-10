@@ -262,10 +262,10 @@ archives:
 
 ## M158
 
-### D56 — root-caused
+### D56 — resolved
 
 - createdAt: 2026-06-10T20:51:11.650Z
-- updatedAt: 2026-06-10T21:13:23.558Z
+- updatedAt: 2026-06-10T21:47:56.435Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: ledger-mcp CLI has no --help flag; `ledger-mcp --help` silently launches the stdio server
@@ -275,3 +275,4 @@ archives:
 - ledgerRefs: ["tasks:T379","goals:G45","goals:G46"]
 - rootCause: "CONFIRMED (H35): packages/ledger-mcp/src/main.ts has no top-level --help handling. parseArgs's argument loop (main.ts:155-185) handles only --cwd/--http/--tool-prefix (+ their = forms) and has NO --help/-h/help case and NO terminal else, so an unrecognized flag is silently dropped. main() (main.ts:639-647) has no help-printing early-exit — its only positional dispatch is the `restore` subcommand; for anything else (including `--help`) it falls through to parseArgs and the default path (main.ts:680-698) which constructs createLedgerMcpServer + a StdioServerTransport and connects, i.e. launches the stdio MCP server. The only top-level usage text is the file-header JSDoc comment (main.ts:16-31), never printed to stdout (RESTORE_USAGE at L204-209 is scoped to the `restore` subcommand only)."
 - sessionLogs: ["docs/logs/20260610-211135-a7fba63841593ac83.md"]
+- fix: "Resolved by T384 (merged 5998681): added a runtime TOP_LEVEL_USAGE constant + a --help/-h branch at the top of main() in packages/ledger-mcp/src/main.ts that prints usage to stdout and returns before any server construction. help.test.ts asserts both flags print the usage (incl. --tool-prefix/--cwd/--http/restore) and start no server. Fix task set {T384} all done → D56 resolved."

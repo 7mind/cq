@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 463
+  item: 464
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -870,3 +870,17 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G46","defects:D56"]
 - sessionLogs: ["docs/logs/20260610-211627-a96067fca8e7b2d86.md"]
+
+## M161
+
+### R464 — go-ahead
+
+- createdAt: 2026-06-10T21:47:53.153Z
+- updatedAt: 2026-06-10T21:47:53.153Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T384 — UNANIMOUS approve at round 2 (4-reviewer panel). Round 1: grok disapprove (4 criticisms; #3 'doesn't mirror RESTORE_USAGE' adjudicated INVALID, but #1 stale-test-comment + #2 -h-coverage VALID → criticism-loop). Round 2 (test-only): accurate header comment + -h no-'serving' assertion added; source unchanged; all 4 reviewers approve. --help/-h early-returns before server launch; check 1675/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T384","goals:G46","defects:D56"]
+- sessionLogs: ["docs/logs/20260610-214656-a053096a9302dd4b9.md","docs/logs/20260610-214656-a5e1f722c1122af41.md","docs/logs/20260610-214656-pi-codex-T384.md","docs/logs/20260610-214656-pi-grok-T384.md","docs/logs/20260610-214656-pi-minimax-T384.md"]

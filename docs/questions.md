@@ -633,12 +633,13 @@ archives:
 
 ## M158
 
-### Q212 — open
+### Q212 — answered
 
 - createdAt: 2026-06-10T21:13:29.975Z
-- updatedAt: 2026-06-10T21:13:29.975Z
+- updatedAt: 2026-06-10T21:47:59.888Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - question: "Root cause of D56 confirmed (ledger-mcp has no top-level --help handler) and a defect-seeded goal G46 is ready in `planning`. This investigation was AUTO-LAUNCHED inside the /cq:advance run, so the wrapping run auto-resumes G46's plan stage — no manual /cq:plan:advance is needed."
 - context: "Root cause (H35, confirmed): main.ts parseArgs (L155-185) has no --help/-h case + no terminal else, and main() (L639-647) only dispatches the `restore` subcommand, so --help falls through to the default stdio-launch path (L680-698). Suggested fix: add a --help/-h branch in main() printing a runtime TOP_LEVEL_USAGE constant (covering --cwd/--http/--tool-prefix/restore) to stdout + exit 0, with a unit test. Low severity, single-file + test."
 - ledgerRefs: ["defects:D56","goals:G46"]
+- answer: "Auto-resumed within the same /cq:advance run (no manual /cq:plan:advance needed, as noted): G46 planned (K72, single opus reviewer R463 go-ahead), task T384 implemented + adversarially reviewed (round-2 unanimous, R464) + merged (5998681), and D56 RESOLVED. This was a traceability marker whose auto-resume premise is now fulfilled; closed by the orchestrator (no user action was required)."
