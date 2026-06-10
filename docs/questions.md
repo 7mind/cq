@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 196
+  item: 197
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -144,6 +144,11 @@ archives:
     summary: "G39 (Fix D45 — mirror docs/ledgers.yaml on the 'create' op in cacheMirror) DONE: cacheMirror.ts mirrors layout.registryPath on op==='create'||'archive' + XDG_CACHE_HOME-redirected byte-equality test (T323); D45 resolved. Goal closed; coordination milestone archived."
     title: "Plan: fix D45 — cache mirror omits ledgers.yaml on createLedger"
     status: done
+  - id: M143
+    path: ./archive/questions/M143.md
+    summary: "G43 (GitObjectLedgerBackend) planned + DELIVERED. The orphan-git-ref ledger backend is implemented end-to-end (15 tasks across W1-W6/M144-M149, all adversarially reviewed + merged; 5 hardening defects D49/D51/D52/D53/D54 resolved; check green 1597/0) and sits behind the same LedgerStore surface as FsLedgerStore, opt-in via cq.toml [ledger] backend='git-object'. Planning Q189-Q196 answered; multi-planner synthesis + revise→go-ahead review loop (R418/R419). One follow-up pending user sequencing: D50 (turn-pause-loophole Stop-hook gate, Q197)."
+    title: "Plan: ledger-on-orphan-git-branch storage backend (GitObjectLedgerBackend)"
+    status: done
 ---
 
 # questions
@@ -162,6 +167,18 @@ archives:
 - recommendation: (1b) + (2 yes) + (3 autonomous). (1b) is the minimal, proven mitigation (it worked flawlessly across the 12 worker dispatches after the incident) and avoids the orchestrator-managed-worktree complexity; (2) makes the durable-ledger guarantee structural; (3) autonomous keeps momentum — but defer to you on ownership since it edits the flow's own prompts.
 - ledgerRefs: ["defects:D43"]
 - answer: as recommended
+
+### Q197 — open
+
+- createdAt: 2026-06-10T13:47:56.610Z
+- updatedAt: 2026-06-10T13:47:56.610Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "D50 (cq:advance turn-pause loophole / Stop-hook gate): sequence it NOW as its own plan-flow goal, or DEFER to a later session?"
+- context: "You raised the cq:advance turn-pause loophole this session (filed as D50, root-caused: the handoff exit is write-time-enforced but the turn-pause exit is pure honor-system; proposed fix = a Claude Code `Stop` hook that re-derives the three predicates via a `cq advance-gate` CLI and BLOCKS a premature stop unless a verbatim external-signal is recorded, with a run-active session marker so it never blocks ordinary chat). I recommended doing it AFTER G43 as its own goal (it shares the cq-cli surface G43 just extended). G43 is now COMPLETE (15/15 tasks merged + reviewed, check green) and its four low hardening defects (D49/D51/D52/D53) are fixed. So D50 is the only substantive item left, and it's yours to sequence."
+- suggestions: ["Start D50 now: I bootstrap a plan-flow goal for the Stop-hook gate via /cq:plan (builds the `cq advance-gate` CLI + the Stop hook + the run-active marker)","Defer D50 to a later session (it stays root-caused + durable in the ledger; re-invoke /cq:plan when ready)"]
+- recommendation: Either is fine — D50 is durable. If you want the loophole closed soon, start it now (option a); the `cq advance-gate` CLI is a natural extension of the cq-cli work G43 just landed. Otherwise defer.
+- ledgerRefs: ["defects:D50","goals:G43"]
 
 ## M126
 
@@ -426,109 +443,3 @@ archives:
 - recommendation: "Idea shape: title + description + status open→planned→discarded (no milestones). /cq:plan I01 I02 I03 creates ONE goal per idea by default (each idea's description seeds that goal's description), and /cq:plan:follow-up G35 I01 appends idea I01's text as new scope on G35; in all cases the consumed idea is linked to the goal (ledgerRefs) and moved to status 'planned'."
 - ledgerRefs: ["goals:G41"]
 - answer: as recommended but I think the statuses should be open|planned|discarded|postponed, postponed is non-terminal and can go back to open.
-
-## M143
-
-### Q189 — answered
-
-- createdAt: 2026-06-09T23:31:22.486Z
-- updatedAt: 2026-06-10T08:40:52.168Z
-- author: user
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- question: "What is the exact opt-in/selection mechanism for the GitObjectLedgerBackend, and what is its default? Specifically: (a) what config surface selects it — a cq.toml key (e.g. [ledger] backend = \"git-object\" | \"fs\"), an env var, or an MCP --flag; (b) is the choice global to a server/cwd, or per-store; (c) for THIS goal, does the git-object backend ship as opt-in-experimental with FsLedgerStore remaining the default, or does it become the new default with FsLedgerStore as fallback?"
-- context: K66 says the new backend must be 'a DROP-IN alternative selected by config / opt-in (not a forced replacement)', but does not name the config key, scope, or default. The store today is constructed directly (FsLedgerStore in ledger-mcp). I need the concrete selection surface + default before I can plan the config-plumbing tasks and the backend's construction site. This is a requirements decision only you can make.
-- suggestions: ["cq.toml [ledger] backend key, server/cwd-global, opt-in-experimental (FsLedgerStore stays default)","cq.toml key, but new default with FsLedgerStore as explicit fallback","env var / MCP --backend flag, opt-in-experimental"]
-- recommendation: "cq.toml [ledger] backend key, server/cwd-global, opt-in-experimental for this goal (FsLedgerStore stays default until proven in dogfooding)"
-- ledgerRefs: ["goals:G43"]
-- answer: as recommended
-
-### Q190 — answered
-
-- createdAt: 2026-06-09T23:31:33.365Z
-- updatedAt: 2026-06-10T08:41:12.020Z
-- author: user
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- question: "How should the git-object backend relate structurally to FsLedgerStore — extract a shared abstract base / shared helpers that both subclass, compose FsLedgerStore's reusable pieces (atomicWrite-free: the in-memory ledger map, parse/serialize, FTS index, AsyncMutex, lockfile, schema-divergence/backup logic), or a standalone GitObjectLedgerBackend that re-uses only the lock + parse/serialize modules and implements its own persistence?"
-- context: Both FsLedgerStore (~1576 lines) and InMemoryLedgerStore already implement the LedgerStore interface, so a third implementation needs NO new interface. But FsLedgerStore intertwines genuinely git-portable logic (in-memory map, parse/serialize, FTS index rebuild, lock discipline, schema-divergence handling) with FS-specific persistence (atomicWrite per file, ledgers.yaml on disk, archive files on disk). The persistence layer is the only part that changes (atomicWrite(file) -> blob/scratch-index/commit-tree/CAS-update-ref per K66 caveat 1). Whether to refactor a shared core vs. duplicate-and-diverge is an architecture call with long-term maintenance consequences.
-- suggestions: ["Extract a shared abstract base (in-memory map + parse/serialize + FTS + locks + divergence) with an abstract persistence seam (writeLedgerFile/readLedgerFile/writeArchive); FsLedgerStore and GitObjectLedgerBackend each implement only the seam","Compose: GitObjectLedgerBackend wraps/reuses FsLedgerStore's pieces via delegation","Standalone GitObjectLedgerBackend sharing only the lock + parser/serializer modules"]
-- recommendation: Extract a shared abstract base with a narrow persistence seam — it keeps the lock discipline, FTS coherence, and schema-divergence behavior identical across both backends (the riskiest things to let drift) and isolates the git plumbing to the seam.
-- ledgerRefs: ["goals:G43"]
-- answer: as recommended
-
-### Q191 — answered
-
-- createdAt: 2026-06-09T23:31:48.812Z
-- updatedAt: 2026-06-10T08:41:42.448Z
-- author: user
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- question: How should reads work in the git-object backend, given that FsLedgerStore today serves reads SYNCHRONOUSLY from an in-memory ledger map (fetch/fetchItem/listMilestoneItems/snapshot/search are all FS-free), with disk touched only on init() and writes? Should the git backend (a) keep the same model — load all ledgers into memory at init() via git cat-file/ls-tree, then serve reads from memory and keep the map coherent on write (mirroring FsLedgerStore), with `git cat-file` used ONLY at init and as the source of a coherence-reload; or (b) read per-call via git cat-file on every fetch? And how is the in-memory map kept coherent when the orphan ref is advanced by ANOTHER process (the existing cross-process `invalidate` path watches docs/ file mtimes — there are no docs/*.md files to watch under a git store)?
-- context: "K66 caveat 3 lists `git cat-file -p <ref>:<path>` as the read mechanism, but FsLedgerStore's actual read path is in-memory (the LedgerStore interface marks reads sync). A per-call cat-file shellout would change read semantics AND performance and would make fetch/fetchItem async. The harder design point: the current cross-process coherence (FsLedgerStore.invalidate + the frontends' file-watcher) keys on docs/*.md file changes; with no docs/*.md files, the trigger that invalidates a peer's in-memory map disappears. I need your intent on the read model and the coherence trigger (e.g. poll the ref sha, a git hook, or watch .git/refs/heads/cq-ledger) before planning the read/coherence tasks."
-- suggestions: ["Keep in-memory map; load via cat-file/ls-tree at init; coherence via polling/watching the orphan ref sha (refs/heads/cq-ledger), invalidating the map when the sha changes — reads stay sync","Per-call git cat-file reads (no in-memory map); accept async reads + shellout cost","In-memory map with an explicit cache invalidated by ref-sha compare, hybrid"]
-- recommendation: "Keep the in-memory map (reads stay synchronous, no interface change): load via cat-file/ls-tree at init, advance the orphan ref on write, and replace the file-watcher coherence trigger with a ref-sha watch/poll on refs/heads/cq-ledger that drives the existing invalidate() path."
-- ledgerRefs: ["goals:G43"]
-- answer: as recommended
-
-### Q192 — answered
-
-- createdAt: 2026-06-09T23:31:59.191Z
-- updatedAt: 2026-06-10T08:42:08.464Z
-- author: user
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- question: How do the MCP-only frontends (TUI/web) interact with a git-object store, given they rely on the store's onMutation hook + a file-watcher over docs/*.md to learn about changes? With the ledger living on the orphan ref and NO docs/*.md files present (they are gitignored on the working branch), what replaces the file-watch signal the frontends use to refresh — the same orphan-ref-sha watch as the backend's coherence path, the existing internal WS `ledger.changed` channel only, or something else? Are embedded-mode frontends (TUI/web with no --mcp-url, co-hosting the store in-process) automatically covered, leaving only the separate-process case to solve?
-- context: CLAUDE.md states frontends are pure MCP clients and never read docs/ directly, even in embedded mode. The store's onMutation + WS `ledger.changed` (D-COHERENCE) already broadcasts in-process and cross-process invalidations. If that channel is the ONLY refresh signal the frontends use, a git store may need no frontend change; but if any path depends on watching docs/*.md mtimes, that path breaks when those files no longer exist. I need to know which refresh signals are in play so I can scope (or rule out) frontend tasks.
-- suggestions: ["Frontends already refresh solely via the WS `ledger.changed` channel; git store needs no frontend change (only the backend's own ref-sha coherence trigger)","Some refresh path watches docs/*.md mtimes and must be re-pointed at the orphan-ref-sha","Keep a mirror of docs/*.md on the FS purely so existing watchers keep working"]
-- recommendation: Confirm the frontends refresh purely via the internal WS `ledger.changed` channel (which the store fires on every mutation regardless of persistence backend) — if so, scope zero frontend changes and concentrate the coherence work in the backend's ref-sha trigger.
-- ledgerRefs: ["goals:G43"]
-- answer: as recommended
-
-### Q193 — answered
-
-- createdAt: 2026-06-09T23:32:11.698Z
-- updatedAt: 2026-06-10T08:42:54.168Z
-- author: user
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- question: "How should the EXISTING in-repo docs/*.md ledger be migrated onto the orphan ref when the git backend is first activated? Specifically: (a) a one-time import that seeds refs/heads/cq-ledger from the current docs/ tree (its own commit, or replaying history?); (b) after import, do we gitignore docs/*.md AND `git rm --cached` them on the working branch so they stop being tracked, while keeping/removing the working-tree copies; (c) is the old in-repo tracked copy retained (frozen) for history, or removed?"
-- context: G43 requires 'Stop tracking docs/*.md on the working branch (gitignore) when the orphan-branch backend is active.' The repo currently TRACKS docs/*.md (the .gitignore only excludes .locks/, .backup/, ledgers.yaml). Flipping gitignore alone does not untrack already-tracked files — a `git rm --cached` is needed — and the live ledger content must be transplanted onto the orphan ref or it is lost. The migration mechanics + disposition of the old tracked copy are a one-time operational decision with data-safety implications.
-- suggestions: ["One-time import: snapshot current docs/ tree as the orphan ref's first (orphan) commit; then `git rm --cached docs/*.md` + gitignore on the working branch, keep working-tree files until next clean; leave the old tracked history in place (frozen) for audit","Import + remove the old tracked copy entirely in the same commit","Replay docs/ git history onto the orphan ref (full audit trail) rather than a single snapshot import"]
-- recommendation: One-time snapshot import to the orphan ref's first commit, then `git rm --cached` + gitignore docs/*.md on the working branch, leaving the pre-migration tracked history frozen in place for audit — simplest and lossless; full-history replay is not worth the complexity for this goal.
-- ledgerRefs: ["goals:G43"]
-- answer: we should add "move-ledger" command to our "cq" cli tool which would allow to move between git<->local directory
-
-### Q194 — answered
-
-- createdAt: 2026-06-09T23:32:21.672Z
-- updatedAt: 2026-06-10T08:43:11.929Z
-- author: user
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- question: "What is the push/fetch policy for refs/heads/cq-ledger (K66 caveat 5)? Specifically: (a) which remote (origin, or configurable); (b) is push automatic-per-write, automatic-at-end-of-a-/cq:*-command, or fully manual; (c) same for fetch (auto on command start, or manual); (d) the exact non-fast-forward protection (rely on CAS update-ref locally + `git push` without --force, plus a server-side hook, or a documented runbook only); (e) is there a CI hook to fetch the ref so single-branch/shallow clones get the ledger?"
-- context: "K66 caveat 5 requires wiring an EXPLICIT push/fetch refspec for the orphan ref with non-fast-forward protection (a default push of a feature branch does NOT carry it; a shallow/single-branch clone won't have it). The auto-vs-manual cadence and the remote choice are policy decisions that determine where in the /cq:* commands (or CI) the refspec is wired and how aggressively. CAS update-ref protects local lost-updates but cross-machine push races still need a non-ff rule."
-- suggestions: ["origin, manual push/fetch documented in a runbook + an opt-in `git push origin cq-ledger` step; non-ff protection = never --force + CAS update-ref locally","Auto-fetch at /cq:* command start and auto-push at command end (refspec in the commands); origin; non-ff = plain push (no --force) so a diverged ref fails loudly","Per-write auto-push (chatty) with a CI fetch hook"]
-- recommendation: "Configurable remote defaulting to origin; auto-fetch at the start and auto-push at the end of each /cq:* command (the natural sync points), plain non-forced push so divergence fails loudly, with a documented manual-recovery runbook — avoid per-write push (too chatty for the object DB / network)."
-- ledgerRefs: ["goals:G43"]
-- answer: as recommended
-
-### Q195 — answered
-
-- createdAt: 2026-06-09T23:32:37.048Z
-- updatedAt: 2026-06-10T08:44:21.240Z
-- author: user
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- question: "Two related persistence-side questions for the git backend: (1) What is the git-object analogue of FsLedgerStore's schema-divergence backupAndReinit (K66 caveat 6)? E.g. on detected divergence, tag the current orphan head (refs/tags/cq-ledger-backup-<ts>) before reinitialising the ref — confirm the tag scheme + whether the divergence DETECTION logic (schema-vs-canonical compare) is unchanged. (2) What happens to the ~/.cache mirror (G39, cacheMirror.ts) under a git store — is it kept (the orphan ref's objects already live in .git, arguably making the file mirror redundant), dropped for the git backend, or repurposed?"
-- context: FsLedgerStore.backupAndReinit copies divergent files into docs/.backup/<ts>/ and rewrites canonical files; cacheMirror mirrors each touched docs file into ~/.cache on every mutation (a redundant-copy safety net). With a git store, (1) the file-copy backup has a natural git analogue (a backup tag/ref before reinit), and (2) the cache mirror's rationale (a redundant copy outside the working tree) is partly subsumed by the orphan ref's objects living in .git and being pushable. I need your intent on both so I can plan (or drop) those tasks.
-- suggestions: ["(1) Tag refs/tags/cq-ledger-backup-<ts> at the current head before reinit, detection logic unchanged; (2) DROP the ~/.cache mirror for the git backend (objects in .git + pushed ref already provide redundancy)","(1) Tag-on-reinit; (2) KEEP the ~/.cache mirror as-is for parity/restore-CLI reuse","(1) Keep a file-copy backup analogue even under git; (2) keep the mirror"]
-- recommendation: (1) Tag refs/tags/cq-ledger-backup-<ts> at the orphan head before reinit, with the schema-divergence DETECTION logic unchanged; (2) DROP the ~/.cache mirror for the git backend (the orphan ref's objects in .git, plus the pushed ref, already provide the redundancy the mirror gave) — unless you want to keep restore-CLI parity, in which case keep it.
-- ledgerRefs: ["goals:G43"]
-- answer: as recommended
-
-### Q196 — answered
-
-- createdAt: 2026-06-09T23:32:47.855Z
-- updatedAt: 2026-06-10T08:44:26.159Z
-- author: user
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- question: "What is the testing strategy for the git-object backend? Should the LedgerStore conformance suite (the abstract test body the existing store tests run) be executed against the GitObjectLedgerBackend pointed at a throwaway git repo created per-test (the dual-tests pattern: one abstract suite run against FsLedgerStore, InMemoryLedgerStore, AND the new backend) — confirming reads/writes/archive/concurrency/CAS-conflict behavior parity? And do you want explicit tests for the git-specific invariants the K66 PoC proved (working-tree/HEAD/index stay byte-identical after writes; orphan ref advances; CAS update-ref rejects a stale expected-old; lockfiles stay on FS, never committed to the orphan ref)?"
-- context: The repo's store tests already use an abstract suite + a throwaway-repo style (CLAUDE.md dual-tests). Whether the new backend joins that shared conformance suite (best for parity, prevents drift) plus adds git-specific invariant tests (byte-identical working tree, CAS-conflict, lock-not-committed) determines the test tasks I plan. This is a strategy choice you may have a preference on (e.g. how heavily to assert the no-working-tree-switch invariant).
-- suggestions: ["Run the shared abstract LedgerStore conformance suite against GitObjectLedgerBackend (throwaway repo per test) AND add explicit git-invariant tests (byte-identical tree/index/HEAD, orphan-ref advance, CAS stale-old rejection, lockfiles-not-committed)","Conformance suite only; skip the git-invariant assertions (rely on the PoC)","Git-invariant tests only; do not extend the shared conformance suite"]
-- recommendation: "Both: run the shared abstract conformance suite against the new backend (parity, anti-drift) AND add the git-specific invariant tests the K66 PoC validated (byte-identical working tree/index/HEAD after writes, orphan-ref advance, CAS stale-expected-old rejection, lockfiles never committed) — these invariants are the whole point of the backend and must be regression-guarded."
-- ledgerRefs: ["goals:G43"]
-- answer: as recommended

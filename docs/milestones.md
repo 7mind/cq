@@ -699,6 +699,31 @@ archives:
     summary: "G43-W6 complete: the shared LedgerStore conformance suite now runs against all three backends (Fs/InMemory/Git) with concurrency parity (T356), plus a dedicated git-invariant regression-guard suite (T359) covering host-checkout byte-identity, orphan-ref one-commit-per-mutation + parentless root, CAS stale-reject (StaleRefError — new coverage), lockfiles-never-committed, and backup-tag-before-reinit. All mutation-verified; check green 1582/0."
     title: "G43-W6: conformance + git-invariant test suites (Q196)"
     status: done
+  - id: M145
+    path: ./archive/milestones/M145.md
+    summary: "G43-W2 complete: GitPlumbing (T348) + GitObjectLedgerBackend over the orphan ref via GitPersistence (T352) + ref-sha coherence watcher (T353). Reads sync from the in-memory map (cat-file/ls-tree at init only); writes do read-old→rebuild-tree→commit-tree→CAS update-ref in the lock (StaleRefError on lost-update); host checkout byte-identical; backup-tag on divergence. Hardening D49+D54 (updateRef CAS-vs-error discriminator + LC_ALL=C) resolved."
+    title: "G43-W2: GitObjectLedgerBackend plumbing + reads + coherence (Q191)"
+    status: done
+  - id: M146
+    path: ./archive/milestones/M146.md
+    summary: "G43-W3 complete: cq.toml [ledger] backend key (T349, git-object|fs default fs/opt-in) + createLedgerStore factory routing all construction sites with git-env fail-fast + capability gating + per-backend watcher selection (T357) + zero-frontend-change confirmation (T360, decision K69). Hardening D51 (embedded-TUI uses startLedgerCoherenceWatcher) resolved."
+    title: "G43-W3: config selection + construction wiring + frontend confirm (Q189/Q192)"
+    status: done
+  - id: M147
+    path: ./archive/milestones/M147.md
+    summary: "G43-W4 complete: `cq move-ledger --to git|local` (T354) — lossless bidirectional ledger transplant between docs/ and the orphan ref (snapshot→git rm --cached→gitignore block→cq.toml flip, and the exact reverse), files left in place per R418, round-trip byte-lossless + tracked→untracked→tracked. The new index-touching GitPlumbing methods are used ONLY by move-ledger, never the backend (host-byte-identity invariant intact)."
+    title: "G43-W4: cq move-ledger CLI — bidirectional git↔local migration (Q193)"
+    status: done
+  - id: M148
+    path: ./archive/milestones/M148.md
+    summary: "G43-W5 complete: backend-guarded auto-fetch(start)/non-forced-push(end) of refs/heads/cq-ledger in all four /cq:* advance prompts + recovery runbook (T355), and the per-merge/run-stop `chore(ledger)` command commits made backend-conditional — skipped under git-object (T358 for the four advance files; D53 for the three start/wrapper commands). Exactly one fetch+push per run via chaining suppression."
+    title: "G43-W5: push/fetch sync wiring + drop per-merge ledger-commit steps (Q194/K66-4)"
+    status: done
+  - id: M143
+    path: ./archive/milestones/M143.md
+    summary: "G43 (GitObjectLedgerBackend) planned + DELIVERED. The orphan-git-ref ledger backend is implemented end-to-end (15 tasks across W1-W6/M144-M149, all adversarially reviewed + merged; 5 hardening defects D49/D51/D52/D53/D54 resolved; check green 1597/0) and sits behind the same LedgerStore surface as FsLedgerStore, opt-in via cq.toml [ledger] backend='git-object'. Planning Q189-Q196 answered; multi-planner synthesis + revise→go-ahead review loop (R418/R419). One follow-up pending user sequencing: D50 (turn-pause-loophole Stop-hook gate, Q197)."
+    title: "Plan: ledger-on-orphan-git-branch storage backend (GitObjectLedgerBackend)"
+    status: done
 ---
 
 # milestones
@@ -730,41 +755,3 @@ archives:
 - updatedAt: 2026-06-09T22:33:45.520Z
 - title: "Plan: fix D47 — ledgers.yaml bootstrap-drift guard"
 - description: "Coordination milestone for the defect-seeded fix of D47 (low): the committed docs/ledgers.yaml fixture can silently drift from constants.ts because the existing guard test (canonical-ledgers.test.ts:504) boots in default backup-reinit mode (self-heals) instead of abort mode, and there is no byte/canonical committed-vs-regen assertion in `bun run check`."
-
-### M143 — open
-
-- createdAt: 2026-06-09T23:29:39.687Z
-- updatedAt: 2026-06-09T23:29:39.687Z
-- title: "Plan: ledger-on-orphan-git-branch storage backend (GitObjectLedgerBackend)"
-
-### M145 — open
-
-- createdAt: 2026-06-10T09:01:14.208Z
-- updatedAt: 2026-06-10T09:01:14.208Z
-- title: "G43-W2: GitObjectLedgerBackend plumbing + reads + coherence (Q191)"
-- description: A tested GitPlumbing wrapper (hash-object → scratch-index write-tree → commit-tree → CAS update-ref) + GitObjectLedgerBackend over an orphan ref (in-memory sync reads loaded via cat-file/ls-tree at init; writes inside the lock with CAS lost-update protection) + ref-sha coherence watcher driving invalidate().
-- dependsOn: ["M144"]
-
-### M146 — open
-
-- createdAt: 2026-06-10T09:01:18.968Z
-- updatedAt: 2026-06-10T09:01:18.968Z
-- title: "G43-W3: config selection + construction wiring + frontend confirm (Q189/Q192)"
-- description: "cq.toml [ledger] backend key (git-object|fs, default fs/opt-in) + a single backend factory routing every store construction site (incl. git-env validation when git-object) + the Q192 zero-frontend-change confirmation."
-- dependsOn: ["M145"]
-
-### M147 — open
-
-- createdAt: 2026-06-10T09:01:23.622Z
-- updatedAt: 2026-06-10T09:19:54.033Z
-- title: "G43-W4: cq move-ledger CLI — bidirectional git↔local migration (Q193)"
-- description: The user-requested `cq move-ledger` CLI subcommand for LOSSLESS bidirectional transplant of the live ledger between docs/ and the orphan ref (git rm --cached + gitignore flip when moving to git, and reversal back), leaving pre-migration tracked history frozen.
-- dependsOn: ["M145","M146"]
-
-### M148 — open
-
-- createdAt: 2026-06-10T09:01:30.301Z
-- updatedAt: 2026-06-10T09:01:30.301Z
-- title: "G43-W5: push/fetch sync wiring + drop per-merge ledger-commit steps (Q194/K66-4)"
-- description: "Auto-fetch-at-start / non-forced auto-push-at-end of refs/heads/cq-ledger into the /cq:* commands (configurable remote=origin) + a manual-recovery runbook + make the per-merge/per-archive `git add docs/ … chore(ledger)` command steps backend-conditional (skip under git-object; the backend commits continuously)."
-- dependsOn: ["M146"]

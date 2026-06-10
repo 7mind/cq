@@ -229,6 +229,16 @@ archives:
     summary: "G41 item 3 COMPLETE (orphan-branch feasibility SPIKE): T337 — verdict FEASIBLE-WITH-CAVEATS (GO) in locked decision K66, with an executed throwaway PoC proving the pure git-plumbing path (hash-object→scratch-index write-tree→commit-tree→CAS update-ref) advances an orphan ledger ref while the main checkout HEAD/worktree/index stay byte-identical; findings doc docs/drafts/20260609-221530-orphan-ledger-feasibility.md + PoC under debug/; no production code. A separate follow-up goal would implement a GitObjectLedgerBackend + drop the per-merge chore(ledger) commits + explicit push/fetch of the orphan ref. Review R415 go-ahead. Merged e108827."
     title: G41-3 Ledger-on-orphan-branch feasibility spike
     status: done
+  - id: M146
+    path: ./archive/decisions/M146.md
+    summary: "G43-W3 complete: cq.toml [ledger] backend key (T349, git-object|fs default fs/opt-in) + createLedgerStore factory routing all construction sites with git-env fail-fast + capability gating + per-backend watcher selection (T357) + zero-frontend-change confirmation (T360, decision K69). Hardening D51 (embedded-TUI uses startLedgerCoherenceWatcher) resolved."
+    title: "G43-W3: config selection + construction wiring + frontend confirm (Q189/Q192)"
+    status: done
+  - id: M143
+    path: ./archive/decisions/M143.md
+    summary: "G43 (GitObjectLedgerBackend) planned + DELIVERED. The orphan-git-ref ledger backend is implemented end-to-end (15 tasks across W1-W6/M144-M149, all adversarially reviewed + merged; 5 hardening defects D49/D51/D52/D53/D54 resolved; check green 1597/0) and sits behind the same LedgerStore surface as FsLedgerStore, opt-in via cq.toml [ledger] backend='git-object'. Planning Q189-Q196 answered; multi-planner synthesis + revise→go-ahead review loop (R418/R419). One follow-up pending user sequencing: D50 (turn-pause-loophole Stop-hook gate, Q197)."
+    title: "Plan: ledger-on-orphan-git-branch storage backend (GitObjectLedgerBackend)"
+    status: done
 ---
 
 # decisions
@@ -281,39 +291,3 @@ archives:
 - headline: "G42 plan review: approved (go-ahead) — D47 fix plan LOCKED (single test-only task T346)"
 - rationale: "Defect-seeded goal G42 (fix D47, root cause confirmed via H34, clarification skipped). Orchestrator-authored plan (the confirmed root cause + exact fix locus leave nothing for parallel candidate planners to diverge on) reviewed by a single opus plan-reviewer → go-ahead (0 criticisms; all cited symbols verified against source). LOCKED plan: 1 work milestone M142, 1 task T346 (standard). T346 (test-only, packages/ledger/test/canonical-ledgers.test.ts): (1) flip the existing committed-vs-canon guard test to `new FsLedgerStore({root, onSchemaDivergence:'abort'})` so structural drift THROWS instead of silently self-healing (default backup-reinit); (2) add a byte-equality assertion (committed docs/ledgers.yaml === serializeRegistry(CANONICAL_LEDGERS)) running under bun run check so serialization-order drift fails too; (3) exclude the intentionally-frozen examples/sample-ledger fixture; reproduce-first against a deliberately-staled fixture copy. G42 → planned."
 - ledgerRefs: ["goals:G42","defects:D47"]
-
-## M143
-
-### K68 — locked
-
-- createdAt: 2026-06-10T09:28:50.527Z
-- updatedAt: 2026-06-10T09:28:50.527Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: "G43 plan review: approved (R419 go-ahead) — GitObjectLedgerBackend plan LOCKED"
-- rationale: |
-    G43 (ledger-on-orphan-git-branch storage backend, the K66-spike production follow-up; all 8 clarifying questions Q189-Q196 answered) reached reconciled go-ahead at review round 2 (R419; opus[claude]+codex+minimax[pi], 3/4 panel — grok conserved on the surgical convergence round; unanimous go-ahead) after one revise round (R418: 7 substantive criticisms, all applied; pi 'mega-task' splits adjudicated non-blocking per the repo-grounded opus reviewer). Multi-planner synthesis (opus[claude] base + minimax git-env-validation fold-in). LOCKED plan: 6 work milestones M144-M149, 14 tasks T347-T360.
-    
-    M144 (Q190 shared-base refactor): T347 LedgerPersistence seam interface → T350 AbstractLedgerStore base (map/parse/FTS/AsyncMutex/lockfile/schema-divergence shared) → T351 FsLedgerStore = base + FsPersistence (behaviour-preserving; canonical-ledgers guard still passes; ~/.cache mirror stays FS-only). M145 (Q191): T348 GitPlumbing (hash-object→scratch-index write-tree→commit-tree→CAS update-ref/StaleRefError) → T352 GitObjectLedgerBackend (in-memory sync reads via cat-file/ls-tree at init; writes-in-lock with CAS; orphan ref; backup-tag on reinit; no cache mirror) → T353 ref-sha coherence watcher (resolves ref via git rev-parse --git-path; per-backend). M146 (Q189/Q192): T349 cq.toml [ledger] backend key (git-object|fs default fs) → T357 createLedgerStore factory at all sites + git-env fail-fast + fresh-init gitignore + capability-gate generalisation → T360 zero-frontend-change confirmation. M147 (Q193, depsOn M145+M146): T354 native `cq move-ledger --to git|local` lossless bidirectional (git rm --cached + reversible gitignore + docs left-in-place + cq.toml flip). M148 (Q194/K66-4, depsOn M146): T355 backend-guarded auto-fetch/non-forced-push of refs/heads/cq-ledger in all FOUR commands + concrete runbook (rejected-push/shallow-clone/linked-worktree fallback) → T358 make the chore(ledger) commit steps in all four commands backend-conditional. M149 (Q196, depsOn M145): T356 shared conformance suite over Fs+InMemory+Git (throwaway repo per test) → T359 git-invariant tests (byte-identical tree/HEAD/index, orphan-ref advance + parentless first, CAS stale reject, lock-not-committed, backup-tag). Milestone DAG acyclic. G43 → planned.
-- ledgerRefs: ["goals:G43"]
-
-## M146
-
-### K69 — locked
-
-- createdAt: 2026-06-10T12:48:25.608Z
-- updatedAt: 2026-06-10T12:48:25.608Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: "T360: frontends key change-detection on the WS `changed` frame only — no docs/*.md-mtime dependency (git-backend-safe), with one embedded-TUI watcher gap (→ D51)"
-- rationale: |
-    Read-through verification (Q192) of ledger-tui + ledger-web refresh paths. FINDING: both frontends learn of changes ONLY via the internal WS `changed` frame and refetch through MCP — NEITHER reads docs/*.md mtimes for change detection (grep of both src/ trees: zero fs.stat/mtime/watch/readdir on docs). So the frontend code itself needs ZERO change under the git-object backend.
-    
-    Exact refresh paths:
-    - ledger-web (remote+embedded): App.tsx:750-772 LiveManager({url, onChanged:()=>refreshRef.current()}) over /ws; the `changed` frame is parsed in ledger-live/src/index.ts:242-244 (msg.type==changed → onChanged(msg.ledger)); refreshRef refetches via MCP enumerateLedgers()+reload().
-    - ledger-tui (remote): app.tsx:513-534 LiveManager over /ws → onChanged → refreshRef.current() → MCP refetch.
-    - `changed` frame is server-emitted backend-agnostically: ledger-mcp/src/main.ts changedFrame() on LEDGER_TOPIC; per-backend coherence watcher selected SERVER-side by startLedgerCoherenceWatcher (main.ts:319-328 — startLedgerRefWatcher for git-object, startLedgerWatcher for fs), both firing the SAME onChange → same frame. ledger-web embedded correctly uses startLedgerCoherenceWatcher (serve.ts:321).
-    - All frontend DATA reads go through MCP tool calls (tui/web mcpClient.ts), never direct docs/ reads. read_log (docs/logs) is an MCP FS-only capability, not change detection.
-    
-    CONCLUSION: zero frontend SOURCE change for the git backend — verification holds. ONE GAP filed as D51 (out of scope per T360, not a trivial repoint): the EMBEDDED TUI wires the FS file-watcher directly (main.tsx:128 startLedgerWatcher) instead of the backend-selecting startLedgerCoherenceWatcher; EmbeddedContext (mcpClient.ts:46-50) exposes no backend descriptor. Under embedded-TUI + git-object, that watcher (purpose: catch EXTERNAL edits) watches a static docs/ and won't fire; self-edits still refetch.
-- ledgerRefs: ["tasks:T360","goals:G43","defects:D51"]

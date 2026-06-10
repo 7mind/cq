@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 434
+  item: 437
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -639,6 +639,31 @@ archives:
     summary: "G43-W6 complete: the shared LedgerStore conformance suite now runs against all three backends (Fs/InMemory/Git) with concurrency parity (T356), plus a dedicated git-invariant regression-guard suite (T359) covering host-checkout byte-identity, orphan-ref one-commit-per-mutation + parentless root, CAS stale-reject (StaleRefError — new coverage), lockfiles-never-committed, and backup-tag-before-reinit. All mutation-verified; check green 1582/0."
     title: "G43-W6: conformance + git-invariant test suites (Q196)"
     status: done
+  - id: M145
+    path: ./archive/reviews/M145.md
+    summary: "G43-W2 complete: GitPlumbing (T348) + GitObjectLedgerBackend over the orphan ref via GitPersistence (T352) + ref-sha coherence watcher (T353). Reads sync from the in-memory map (cat-file/ls-tree at init only); writes do read-old→rebuild-tree→commit-tree→CAS update-ref in the lock (StaleRefError on lost-update); host checkout byte-identical; backup-tag on divergence. Hardening D49+D54 (updateRef CAS-vs-error discriminator + LC_ALL=C) resolved."
+    title: "G43-W2: GitObjectLedgerBackend plumbing + reads + coherence (Q191)"
+    status: done
+  - id: M146
+    path: ./archive/reviews/M146.md
+    summary: "G43-W3 complete: cq.toml [ledger] backend key (T349, git-object|fs default fs/opt-in) + createLedgerStore factory routing all construction sites with git-env fail-fast + capability gating + per-backend watcher selection (T357) + zero-frontend-change confirmation (T360, decision K69). Hardening D51 (embedded-TUI uses startLedgerCoherenceWatcher) resolved."
+    title: "G43-W3: config selection + construction wiring + frontend confirm (Q189/Q192)"
+    status: done
+  - id: M147
+    path: ./archive/reviews/M147.md
+    summary: "G43-W4 complete: `cq move-ledger --to git|local` (T354) — lossless bidirectional ledger transplant between docs/ and the orphan ref (snapshot→git rm --cached→gitignore block→cq.toml flip, and the exact reverse), files left in place per R418, round-trip byte-lossless + tracked→untracked→tracked. The new index-touching GitPlumbing methods are used ONLY by move-ledger, never the backend (host-byte-identity invariant intact)."
+    title: "G43-W4: cq move-ledger CLI — bidirectional git↔local migration (Q193)"
+    status: done
+  - id: M148
+    path: ./archive/reviews/M148.md
+    summary: "G43-W5 complete: backend-guarded auto-fetch(start)/non-forced-push(end) of refs/heads/cq-ledger in all four /cq:* advance prompts + recovery runbook (T355), and the per-merge/run-stop `chore(ledger)` command commits made backend-conditional — skipped under git-object (T358 for the four advance files; D53 for the three start/wrapper commands). Exactly one fetch+push per run via chaining suppression."
+    title: "G43-W5: push/fetch sync wiring + drop per-merge ledger-commit steps (Q194/K66-4)"
+    status: done
+  - id: M143
+    path: ./archive/reviews/M143.md
+    summary: "G43 (GitObjectLedgerBackend) planned + DELIVERED. The orphan-git-ref ledger backend is implemented end-to-end (15 tasks across W1-W6/M144-M149, all adversarially reviewed + merged; 5 hardening defects D49/D51/D52/D53/D54 resolved; check green 1597/0) and sits behind the same LedgerStore surface as FsLedgerStore, opt-in via cq.toml [ledger] backend='git-object'. Planning Q189-Q196 answered; multi-planner synthesis + revise→go-ahead review loop (R418/R419). One follow-up pending user sequencing: D50 (turn-pause-loophole Stop-hook gate, Q197)."
+    title: "Plan: ledger-on-orphan-git-branch storage backend (GitObjectLedgerBackend)"
+    status: done
 ---
 
 # reviews
@@ -720,127 +745,3 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G42","defects:D47"]
 - sessionLogs: ["docs/logs/20260609-223826-af9cdea865a37cb53.md"]
-
-## M143
-
-### R418 — revise
-
-- createdAt: 2026-06-10T09:19:33.191Z
-- updatedAt: 2026-06-10T09:19:33.191Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "REVISE (G43 round 1; full panel opus[claude]+codex+grok+minimax[pi], 4/4 usable, ALL revise → reconciled revise). Plan is fine-grained/acyclic/grounded/complete across all 8 answers + 6 K66 caveats (opus + minimax both judged the granularity + grounding sound). ~7 actionable planner-fixable criticisms below; the pi 'mega-task' splits are ADJUDICATED non-blocking (opus, the repo-grounded reviewer, judged the 14-task granularity appropriate — each task is one cohesive deliverable; splitting T352/T354/T357 would create artificial sub-tasks). 0 user-only questions (codex's move-ledger native-vs-prompt question is repo-resolvable — native cq-cli subcommand like runInit/runReset — already specified in T354). 0 out-of-scope defects (the pi defects[] are all pre-existing facts — instanceof gating, docs tracked, watcher fs-based, unconditional chore steps — that the plan ALREADY fixes)."
-- new_questions: []
-- criticism: ["[minimax][codex][grok] MILESTONE DEP ERRORS: (a) M147 (move-ledger) declares depsOn [M145] but its task T354 deps T349 (in M146) → set M147 depsOn [M145, M146]. (b) M149 (tests) declares depsOn [M145, M147] but T356 deps only T352 + T359 deps T356 (the tests don't need the move-ledger CLI) → drop the spurious M147 edge, M149 depsOn [M145].","[codex][grok][minimax] T351's acceptance references 'T346 guard still passes' — T346 is a real committed test (the canonical-ledgers.test.ts ledgers.yaml-vs-canon guard from G42) but the bare out-of-plan task-id reads as a nonexistent reference. FIX: rephrase to 'the committed canonical-ledgers.test.ts committed-vs-canon guard still passes' (name the test, not the foreign task id).","[opus] T353 (ref-sha coherence watcher) hard-codes watching/polling `.git/refs/heads/cq-ledger` (+ packed-refs), which BREAKS whenever the git dir is not a literal `.git/` at the root — a linked worktree (`.git` is a file), a submodule, or a $GIT_DIR override. K66 keeps the linked-worktree approach as the documented FALLBACK, so this path is reachable. FIX: resolve the ref's real location via `git rev-parse --git-path refs/heads/<branch>` (+ `--git-path packed-refs`) rather than assuming `.git/refs/...`; state it in the acceptance.","[opus] T354 (`cq move-ledger --to git`) does `git rm --cached docs/*.md` + gitignore flip but does NOT pin the disposition of the now-UNTRACKED-but-PRESENT working-tree docs/*.md files (Q193's recommendation said 'keep working-tree files until next clean'). FIX: state the working-tree-file disposition (leave-in-place vs delete) and add it to the round-trip acceptance so --to git then --to local is provably lossless INCLUDING on-disk file state.","[opus] Inconsistent command-file scope for investigate/advance.md: T355 hedges ('investigate/advance.md IF it has a ledger-commit tail') while T358 omits it entirely. FIX: resolve whether investigate/advance.md carries a `git add docs/ … chore(ledger)` tail and make T355 (fetch/push) + T358 (conditional commit) cover it consistently (+ gen-agents regen since command files are catalogued).","[codex][grok] FRESH-INIT GITIGNORE GAP: only T354 (migration) handles the docs/*.md gitignore; a FRESH `cq init` with [ledger] backend='git-object' (no prior ledger to migrate) has no task ensuring docs/*.md are gitignored from the start. FIX: have T357's cq-init path (or T349's template) gitignore docs/*.md + docs/ledgers.yaml when backend='git-object' on a fresh init.","[grok] Two precision nits: (a) T353's 'keep the FS file-watcher' reads as conflicting with Q191's 'replace docs/*.md file-watch' — reword to make clear the replacement is PER-BACKEND (the construction site T357 selects file-watch for fs, ref-sha-watch for git-object); (b) T355's runbook acceptance ('runbook exists') is vague — pin a concrete location (a docs/ note) AND document the linked-worktree fallback there (grok+minimax: the fallback currently only appears in T354 help)."]
-- ledgerRefs: ["goals:G43"]
-- sessionLogs: ["docs/logs/20260610-091837-af979f39285036dfd.md","docs/logs/20260610-091837-pi-codex.md","docs/logs/20260610-091837-pi-grok.md","docs/logs/20260610-091837-pi-minimax.md"]
-
-### R419 — go-ahead
-
-- createdAt: 2026-06-10T09:28:32.731Z
-- updatedAt: 2026-06-10T09:28:32.731Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "GO-AHEAD (G43 round 2; opus[claude]+codex+minimax[pi] — 3/4 of the configured panel, grok conserved on this surgical convergence round; ALL 3 go-ahead, unanimous). All 7 R418 criticisms verified RESOLVED against the revised tasks + the actual repo by the repo-grounded opus reviewer: C1 milestone DAG corrected (M147→[M145,M146], M149→[M145]; acyclic); C2 T351 names canonical-ledgers.test.ts (not the foreign T346 id); C3 T353 resolves the ref via git rev-parse --git-path/--verify (no literal .git path) + non-default-git-dir test + per-backend 'INSTEAD' wording; C4 T354 leaves working-tree docs in place + on-disk-bytes+tracked-state round-trip acceptance + native cq-cli subcommand; C5 investigate/advance.md (its standalone-stop chore(ledger) commit confirmed at advance.md:536-547) covered by both T355+T358 (all four command files); C6 T357 fresh-init gitignore; C7 T355 concrete runbook file (rejected-push + shallow-clone + linked-worktree fallback). Construction sites (main.ts createEmbeddedStore/main, cq-cli runInit/runReset, instanceof-FsLedgerStore capability gating) verified grounded. 0 criticisms / 0 questions / 0 out-of-scope defects. Convergent: round1 7 substantive criticisms → fixed; round2 clean. Plan LOCKED."
-- new_questions: []
-- criticism: []
-- ledgerRefs: ["goals:G43"]
-- sessionLogs: ["docs/logs/20260610-092800-a320db9dedf477d3f.md","docs/logs/20260610-092800-pi-codex.md","docs/logs/20260610-092800-pi-minimax.md"]
-
-## M145
-
-### R422 — go-ahead
-
-- createdAt: 2026-06-10T10:14:41.397Z
-- updatedAt: 2026-06-10T10:14:41.397Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T348 implement-review — approve. Opus reviewer round 1, 0 criticism / 0 questions / 1 out-of-scope defect (low, D49). Every acceptance clause verified operationally with independent /tmp-repo probes: GIT_INDEX_FILE isolation leaves the real index byte-identical + status clean, commit-tree parent=null is a true orphan, stale expectedOld throws StaleRefError with ref unmoved, catFile/lsTree read with no checkout, readRef null on missing. check green 1496/0; tsc+lint clean; exports additive. Merged as a105cf7."
-- ledgerRefs: ["tasks:T348","goals:G43"]
-
-### R423 — go-ahead
-
-- createdAt: 2026-06-10T10:35:38.654Z
-- updatedAt: 2026-06-10T10:35:38.654Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T352 implement-review — approve. Opus reviewer round 1, 0 criticism / 0 questions / 0 defects. All acceptance clauses verified with `bun run check` green 1537/0: host checkout HEAD/working-tree/index byte-identical + status clean after create/update/archive; orphan ref +1 per single-write mutation; no .locks in `git ls-tree -r cq-ledger`; cq-ledger-backup-<ts> tag before reinit; writeTree uses isolated scratch GIT_INDEX_FILE (never repo index); CAS expectedOld inside the lock with StaleRefError; full shared abstract suite passes against the git backend (FS-parity). Merged as 3167649."
-- ledgerRefs: ["tasks:T352","goals:G43"]
-
-### R424 — revise
-
-- createdAt: 2026-06-10T11:17:15.199Z
-- updatedAt: 2026-06-10T11:17:15.199Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T353 implement-review ROUND 1 — disapprove. Opus reviewer: production watcher logic correct (R418 rev-parse indirection, scope, sentinel) but `bun run check` RED — the new refWatcher.test.ts failed 2/4 deterministically under full-suite timing (reproduced 1539/2). Routed back for fix. Round 2 (R425) approves after the orchestrator fixed a deeper baseline race in the watcher itself."
-- ledgerRefs: ["tasks:T353","goals:G43"]
-
-### R425 — go-ahead
-
-- createdAt: 2026-06-10T11:17:18.965Z
-- updatedAt: 2026-06-10T11:17:18.965Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T353 implement-review ROUND 2 — approve. Opus reviewer: round-1 flake resolved by the orchestrator's round-2 fix (establish baseline sha immediately via poll() at startup instead of at the first tick — a real production defect where a ref advance in the start→first-tick window was silently swallowed). Verified determinism 8/8 isolated + 3/3 full-suite (1541/0); immediate-poll change correct (undefined-sentinel guards spurious fire, single timer schedule, safe close race, test-4 timing preserved); R418 indirection + re-export-only scope intact. Merged as ed1837e."
-- ledgerRefs: ["tasks:T353","goals:G43"]
-
-## M146
-
-### R426 — revise
-
-- createdAt: 2026-06-10T12:00:23.316Z
-- updatedAt: 2026-06-10T12:00:23.316Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T349 implement-review ROUND 1 — disapprove. Opus reviewer: code correct + check green 1550/0, but the 'CQ_TOML_TEMPLATE inert' acceptance was only tested against a SYNTHETIC TOML copy, not the real exported constant — a regression uncommenting the template's [ledger] block would pass every test. Round 2 (R427) approves after the orchestrator added the assertion against the real CQ_TOML_TEMPLATE + cq.toml.example constants."
-- ledgerRefs: ["tasks:T349","goals:G43"]
-
-### R427 — go-ahead
-
-- createdAt: 2026-06-10T12:00:27.152Z
-- updatedAt: 2026-06-10T12:00:27.152Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T349 implement-review ROUND 2 — approve. Round-1 acceptance gap closed: orchestrator added `expect(parseConfig(CQ_TOML_TEMPLATE).ledger).toBeNull()` + the cq.toml.example equivalent to the existing T331 describe blocks (the assertions pass, confirming the .ledger-null shape). Test-only delta; full check green 1552/0 in-worktree, 1557/0 combined on main. Merged as 054a64c."
-- ledgerRefs: ["tasks:T349","goals:G43"]
-
-### R430 — go-ahead
-
-- createdAt: 2026-06-10T12:42:54.944Z
-- updatedAt: 2026-06-10T12:42:54.944Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T357 implement-review — approve. Opus reviewer round 1, 0 criticism / 0 questions / 0 defects. All acceptance verified: fs/no-cq.toml byte-identical (same FsLedgerStore options, all 6 sites via factory); git-object activation + orphan-ref + gitignore proven by createLedgerStore.test + init-git-object.test; no @cq/config↔@cq/ledger cycle; capability gating (read_log FS-only, config/promptCatalog backend-independent); git-env fail-fast; idempotent gitignore; runReset rejects git-object. The worker's 'configured:false' quirk scrutinised = test-fixture artifact, not masked fs-fallback. check green 1577/0. Merged as 16903fc."
-- ledgerRefs: ["tasks:T357","goals:G43"]
-
-## M147
-
-### R432 — go-ahead
-
-- createdAt: 2026-06-10T13:17:06.221Z
-- updatedAt: 2026-06-10T13:17:06.221Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T354 implement-review — approve. Opus reviewer round 1, 0 criticism / 0 questions / 1 out-of-scope low defect (D52). Critical invariant holds: GitPlumbing.add/rmCached/lsFiles called ONLY from moveLedger.ts, never the backend (gitInvariants byte-identity 6/6) — host index untouched by normal writes. Lossless round-trip proven (byte-identity + tracked→untracked→tracked + R418 left-in-place, real archive seeded). --to/--force guards tested both directions; .gitignore add/remove byte-inverse; docs-relative tree matches GitPersistence. check green 1592/0. Merged as 590c203."
-- ledgerRefs: ["tasks:T354","goals:G43"]
-
-## M148
-
-### R433 — go-ahead
-
-- createdAt: 2026-06-10T13:17:09.979Z
-- updatedAt: 2026-06-10T13:17:09.979Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T355 implement-review — approve. Opus reviewer round 1, 0 criticism / 0 questions / 0 defects. All four /cq:* advance prompts carry backend-guarded START fetch + END plain NON-FORCED push of refs/heads/cq-ledger against the configured [ledger] remote (NO --force/force-with-lease/+ anywhere); chaining suppression yields exactly one fetch + one push per run; runbook file present covering rejected-push recovery + shallow-clone fetch + linked-worktree fallback; existing per-merge commit steps untouched (T358 scope intact); gen-agents regen leaves no drift; check green 1583/0. Merged as 2d4d932."
-- ledgerRefs: ["tasks:T355","goals:G43"]
-
-### R434 — go-ahead
-
-- createdAt: 2026-06-10T13:33:16.613Z
-- updatedAt: 2026-06-10T13:33:16.613Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T358 implement-review — approve. Opus reviewer round 1, 0 criticism / 0 questions / 1 out-of-scope defect (D53). All five chore(ledger) commit blocks in the four advance prompts backend-gated (fs keeps, git-object skips; no inversion); catalogue regenerated no drift; T355 steps untouched; check green 1592/0. D53 filed: the three start/wrapper commands (plan.md/investigate.md/plan/follow-up.md) carry the same unguarded run-stop chore(ledger) commit — out of T358's four-advance-file scope. Merged as 01c3157."
-- ledgerRefs: ["tasks:T358","goals:G43"]

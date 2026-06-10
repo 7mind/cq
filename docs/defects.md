@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 53
+  item: 54
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -144,6 +144,21 @@ archives:
     summary: "G41 item 5 COMPLETE (Ideas ledger + idea-id command args): T335 ideas ledger schema in CANONICAL_LEDGERS (idPrefix I; title+description; open|planned|discarded|postponed, postponed→open); T339 'Ideas' sidebar group above Goals (flat list, generic updateItem); T340 /cq:plan accepts idea-ids (one goal per idea + named consume-an-idea sub-procedure); T342 /cq:plan:follow-up appends idea scope (DRY-references the sub-procedure). Defect D47 (filed by the T335 review) investigated→root-caused (H34)→fixed via G42/T346 and RESOLVED. Reviews R402/R406/R407/R409 go-ahead. bun run check green. Merged 9feb683/a39fd94/6aedb28/02ceded."
     title: G41-5 Ideas ledger + idea-id command args
     status: done
+  - id: M145
+    path: ./archive/defects/M145.md
+    summary: "G43-W2 complete: GitPlumbing (T348) + GitObjectLedgerBackend over the orphan ref via GitPersistence (T352) + ref-sha coherence watcher (T353). Reads sync from the in-memory map (cat-file/ls-tree at init only); writes do read-old→rebuild-tree→commit-tree→CAS update-ref in the lock (StaleRefError on lost-update); host checkout byte-identical; backup-tag on divergence. Hardening D49+D54 (updateRef CAS-vs-error discriminator + LC_ALL=C) resolved."
+    title: "G43-W2: GitObjectLedgerBackend plumbing + reads + coherence (Q191)"
+    status: done
+  - id: M146
+    path: ./archive/defects/M146.md
+    summary: "G43-W3 complete: cq.toml [ledger] backend key (T349, git-object|fs default fs/opt-in) + createLedgerStore factory routing all construction sites with git-env fail-fast + capability gating + per-backend watcher selection (T357) + zero-frontend-change confirmation (T360, decision K69). Hardening D51 (embedded-TUI uses startLedgerCoherenceWatcher) resolved."
+    title: "G43-W3: config selection + construction wiring + frontend confirm (Q189/Q192)"
+    status: done
+  - id: M148
+    path: ./archive/defects/M148.md
+    summary: "G43-W5 complete: backend-guarded auto-fetch(start)/non-forced-push(end) of refs/heads/cq-ledger in all four /cq:* advance prompts + recovery runbook (T355), and the per-merge/run-stop `chore(ledger)` command commits made backend-conditional — skipped under git-object (T358 for the four advance files; D53 for the three start/wrapper commands). Exactly one fetch+push per run via chaining suppression."
+    title: "G43-W5: push/fetch sync wiring + drop per-merge ledger-commit steps (Q194/K66-4)"
+    status: done
 ---
 
 # defects
@@ -207,10 +222,10 @@ archives:
     LIMITS: the hook refuses a PREMATURE stop, it cannot make a genuinely exhausted model productive (degraded forced-continuation is still better than a silent premature stop; the external-signal escape covers the real case). Closes the loophole for Claude Code runs; other harnesses need their own stop-hook equivalent, with the prose as fallback. The `cq advance-gate` CLI dovetails with the cq-cli work in G43 (T349/T354/T357).
 - ledgerRefs: ["decisions:K?"]
 
-### D52 — open
+### D52 — resolved
 
 - createdAt: 2026-06-10T13:16:18.219Z
-- updatedAt: 2026-06-10T13:16:18.219Z
+- updatedAt: 2026-06-10T13:59:37.428Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Git-object abstract-suite tests can exceed bun's 5000ms default timeout under full-suite parallel load (flaky check)
@@ -231,45 +246,3 @@ archives:
 - rootCause: "User-reported (G41 item-4 follow-up). DiagramSvg edge labels rendered with `fill={LABEL_FILL}` where LABEL_FILL='#171a21' — EXACTLY equal to the help-panel background var(--panel)='#171a21' (styles.css :root). Node labels share LABEL_FILL but sit on a filled <rect> (DEFAULT_FILL grey / roleKind colour) so they contrast; EDGE labels render directly on the panel background, so the dark fill is identical to the background and the labels are invisible in the (default dark) theme."
 - fix: "DiagramSvg.tsx: edge labels now use a new EDGE_LABEL_FILL='var(--fg)' (themed foreground #e6e9ef) instead of LABEL_FILL; node labels keep LABEL_FILL='#171a21' (still contrasts on their filled rects). Theme-aware (tracks the palette if a light theme is added). Regression test in diagramSvgActivate.test.tsx asserts the edge-label fill is var(--fg) (not #171a21) while node-label fill stays #171a21. bun run check green (1488/0)."
 - ledgerRefs: ["goals:G41"]
-
-## M145
-
-### D49 — open
-
-- createdAt: 2026-06-10T10:14:38.126Z
-- updatedAt: 2026-06-10T10:14:38.126Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: GitPlumbing.updateRef maps every non-zero 3-arg update-ref exit to StaleRefError, masking non-CAS failures
-- severity: low
-- description: "In updateRef (GitPlumbing.ts) any non-zero exit of `git update-ref <ref> <new> <old>` is translated to StaleRefError, ignoring stderr. Verified in a /tmp repo: a malformed/nonexistent new-SHA exits 128 with stderr 'nonexistent object …' / 'not a valid SHA1', the SAME exit-code as a genuine CAS mismatch (exit 128, 'cannot lock ref … is at … but expected …'). The two are distinguishable only by stderr, which the mapping discards. Cannot arise within GitPlumbing's own contract (newSha always comes from a prior commitTree/hashObject), so it does NOT affect T348 acceptance and is documented in-code; but the seam is public/injectable and T352's GitObjectLedgerBackend would receive a mislabeled StaleRefError on a programming error rather than a distinct GitCommandError. Out of scope for T348 — robustness hardening for a later task. Suggested fix: inspect stderr (or pre-validate newSha) — map only the 'cannot lock ref … but expected …' lock-failure pattern to StaleRefError; route other non-zero exits through GitCommandError."
-- ledgerRefs: ["tasks:T348","goals:G43"]
-
-## M146
-
-### D51 — open
-
-- createdAt: 2026-06-10T12:48:09.896Z
-- updatedAt: 2026-06-10T12:48:09.896Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Embedded TUI hardcodes the FS file-watcher (startLedgerWatcher) — external-change coherence lost under the git-object backend
-- severity: low
-- description: |
-    Surfaced by T360's frontend read-through. The embedded ledger-tui wires its live-refresh watcher in main.tsx:124-131 as `startLedgerWatcher(ctx.store, ctx.cwd, ...)` — the FS docs/*.md file-watcher — directly, NOT the backend-selecting `startLedgerCoherenceWatcher` (ledger-mcp/src/main.ts:319-328) that the web embedded path uses (serve.ts:321). Since T357 made createEmbeddedStore backend-aware, the embedded TUI store CAN be a GitObjectLedgerBackend; under that backend docs/*.md do not change on the working branch, so the FS watcher never fires. EFFECT: in embedded-TUI + git-object mode, EXTERNAL edits (another process / the agent's stdio server / git advancing refs/heads/cq-ledger / a second UI) do NOT refresh the TUI view — defeating the stated purpose of that watcher (main.tsx:121-123 comment). Self-edits are unaffected (the TUI refetches post-mutation). Remote (--mcp-url) TUI mode is unaffected (uses /ws LiveManager). ledger-web embedded is unaffected (uses startLedgerCoherenceWatcher).
-    
-    NOT a trivial repoint (so deferred per T360): the fix must thread the RESOLVED backend descriptor (backend kind + branch) from createEmbeddedStore through EmbeddedContext (mcpClient.ts:46-50, currently {store, cwd}) to main.tsx so it can call startLedgerCoherenceWatcher (which needs a ResolvedLedgerStore). Suggested fix: have createEmbeddedStore return the ResolvedLedgerStore (it already computes it), expose it on EmbeddedContext, and replace main.tsx:128's startLedgerWatcher with startLedgerCoherenceWatcher(resolved, ctx.cwd, onChange). Then the embedded TUI gets ref-sha coherence under git-object, matching the web frontend.
-- ledgerRefs: ["tasks:T360","goals:G43"]
-
-## M148
-
-### D53 — open
-
-- createdAt: 2026-06-10T13:33:25.126Z
-- updatedAt: 2026-06-10T13:33:25.126Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: "Start/wrapper commands (/cq:plan, /cq:investigate, /cq:plan:follow-up) carry unguarded run-stop `git add docs/ … chore(ledger)` commits (not backend-gated)"
-- severity: low
-- description: "Surfaced by T358's review. T358 backend-gated the five chore(ledger) commit blocks in the four `*/advance.md` files, but the SAME unconditional `git add docs/ 2>/dev/null && git diff --cached --quiet -- docs/ || git commit … chore(ledger)` run-stop pattern survives UNGUARDED in three outermost-wrapper START commands: plan.md (§8, ~L199-200), investigate.md (~L135-136), plan/follow-up.md (~L210-211). Each is described as owning 'the single run-stop ledger commit'. Under [ledger] backend='git-object' these should SKIP (the orphan ref already carries each write). ACTUAL IMPACT (operational analysis): under git-object the docs/*.md are gitignored, so `git add docs/` stages NOTHING → `git diff --cached --quiet -- docs/` is TRUE → the `|| git commit` SHORT-CIRCUITS (no commit fires). So today it is a HARMLESS NO-OP, not a wrong commit — hence severity low (the reviewer rated it medium for scope-consistency). Still worth fixing for clarity + correctness-under-edge-cases (e.g. if docs/ is only partially gitignored, or a non-docs path sneaks in). FIX (small follow-up): apply the identical T358 backend guard ('when [ledger] backend is fs (the default); SKIP under git-object') to the run-stop ledger-commit blocks in plan.md, investigate.md, plan/follow-up.md; regenerate agentsCatalogue.gen.ts; bun run check."
-- ledgerRefs: ["goals:G43","tasks:T358"]

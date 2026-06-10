@@ -184,6 +184,11 @@ archives:
     summary: "G39 (Fix D45 — mirror docs/ledgers.yaml on the 'create' op in cacheMirror) DONE: cacheMirror.ts mirrors layout.registryPath on op==='create'||'archive' + XDG_CACHE_HOME-redirected byte-equality test (T323); D45 resolved. Goal closed; coordination milestone archived."
     title: "Plan: fix D45 — cache mirror omits ledgers.yaml on createLedger"
     status: done
+  - id: M143
+    path: ./archive/goals/M143.md
+    summary: "G43 (GitObjectLedgerBackend) planned + DELIVERED. The orphan-git-ref ledger backend is implemented end-to-end (15 tasks across W1-W6/M144-M149, all adversarially reviewed + merged; 5 hardening defects D49/D51/D52/D53/D54 resolved; check green 1597/0) and sits behind the same LedgerStore surface as FsLedgerStore, opt-in via cq.toml [ledger] backend='git-object'. Planning Q189-Q196 answered; multi-planner synthesis + revise→go-ahead review loop (R418/R419). One follow-up pending user sequencing: D50 (turn-pause-loophole Stop-hook gate, Q197)."
+    title: "Plan: ledger-on-orphan-git-branch storage backend (GitObjectLedgerBackend)"
+    status: done
 ---
 
 # goals
@@ -281,41 +286,3 @@ archives:
 - milestones: ["M142"]
 - grounding: "Defect-seeded fix for D47 (confirmed H34). Single test-only task T346 under M142: switch the committed-vs-canon guard test to onSchemaDivergence:'abort' + add a byte-equality assertion (committed docs/ledgers.yaml === serializeRegistry(CANONICAL_LEDGERS)) running under bun run check; exclude the intentionally-frozen examples/sample-ledger fixture; reproduce-first against a deliberately-staled fixture copy. Fix locus: packages/ledger/test/canonical-ledgers.test.ts."
 - sessionLogs: ["docs/logs/20260609-223826-af9cdea865a37cb53.md"]
-
-## M143
-
-### G43 — planned
-
-- createdAt: 2026-06-09T23:30:00.288Z
-- updatedAt: 2026-06-10T09:28:53.725Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- title: Ledger-on-orphan-git-branch storage backend (GitObjectLedgerBackend)
-- description: |
-    Implement the ledger-on-orphan-git-branch storage backend (a GitObjectLedgerBackend) — the production follow-up to the K66 spike (verdict FEASIBLE-WITH-CAVEATS / GO; from G41 item 3 / T337, which was SPIKE-ONLY and shipped no code).
-    
-    ## Goal
-    Store the ledger (docs/*.md) on a SEPARATE git branch rooted at the zero/empty commit (an orphan ref, e.g. refs/heads/cq-ledger), with writes via pure git plumbing — `git hash-object -w` → scratch-index `git write-tree` (GIT_INDEX_FILE → throwaway path, never the real index) → `git commit-tree` → CAS `git update-ref <ref> <new> <expected-old>` — that NEVER switch the working tree to that branch. The PoC (nix/pkg/cq-ledgers/debug/20260609-221530-orphan-ledger-poc.sh) proved the orphan ref advances while the main checkout's HEAD ref, working tree, and index stay byte-identical and `git status` stays clean.
-    
-    ## Honor the K66 caveats (the spike's surfaced risks)
-    1. Run the read-current-tree → commit-tree → update-ref sequence INSIDE the existing per-ledger AsyncMutex + lockfile critical section (packages/ledger/src/store/lockfile.ts), and use CAS `update-ref <new> <expected-old>` so a lost-update race surfaces as an error instead of silent last-writer-wins.
-    2. Keep the advisory .lock files on the real FS (gitignored), NEVER committed to the orphan ref (they are pid-scoped/ephemeral).
-    3. Reads via `git cat-file -p <ref>:<path>` / `git show <ref>:<path>` / `git ls-tree -r <ref>` — no checkout.
-    4. Because the backend commits continuously per write, DROP the per-merge/per-archive `git add docs/ … chore(ledger)` commit steps from the /cq:* commands (commands/cq/advance.md + implement/advance.md + plan/advance.md) — the ledger is committed continuously by the backend, not by the flow prompts.
-    5. Wire EXPLICIT push/fetch of refs/heads/cq-ledger (a refspec) into the cq commands / CI, with non-fast-forward protection (the ref is not carried by a default push/clone; a shallow/single-branch clone won't have it unless it fetches it).
-    6. Provide a git-object analogue for the .backup/divergence reinit (e.g. tag the orphan head before reinit) — simpler than the current in-repo file-copy backup.
-    
-    ## Architecture constraints
-    - The new backend sits behind the SAME LedgerStore read/write surface as FsLedgerStore (packages/ledger/src/store/FsLedgerStore.ts), so it is a DROP-IN alternative selected by config / opt-in (not a forced replacement).
-    - Keep the linked-worktree approach (`git worktree add <dir> cq-ledger`) as the documented FALLBACK.
-    - Stop tracking docs/*.md on the working branch (gitignore) when the orphan-branch backend is active.
-    
-    ## Grounding
-    - decision K66 (locked, the spike verdict + exact plumbing sequence + concurrency/locking assessment + GO recommendation with these 6 follow-up items)
-    - findings doc docs/drafts/20260609-221530-orphan-ledger-feasibility.md
-    - PoC nix/pkg/cq-ledgers/debug/20260609-221530-orphan-ledger-poc.sh
-    - packages/ledger/src/store/{FsLedgerStore.ts, lockfile.ts}
-    - the new G41/T343 catalog MCP tools (fetch_prompt/validate_input/validate_output) are now LIVE (the user redeployed), but are orthogonal to this backend.
-- sessionLogs: ["docs/logs/20260609-233314-a6759b079c538e025.md","docs/logs/20260610-090525-aa446d5d556d10ea3.md","docs/logs/20260610-090525-pi-grok.md","docs/logs/20260610-090525-pi-minimax.md","docs/logs/20260610-091837-af979f39285036dfd.md","docs/logs/20260610-092800-a320db9dedf477d3f.md"]
-- milestones: ["M144","M145","M146","M147","M148","M149"]
-- grounding: "Synthesized multi-planner plan (opus base + minimax git-env-validation fold-in; grok/minimax concurred on the spine). 6 work milestones, 14 tasks, honoring all 8 answers. W1/M144 (Q190 shared-base refactor): T347 LedgerPersistence seam interface → T350 AbstractLedgerStore base (map/parse/FTS/AsyncMutex/lockfile/schema-divergence shared) → T351 FsLedgerStore = base + FsPersistence (behaviour-preserving; ~/.cache mirror stays FS-only per Q195(2)). W2/M145 (Q191): T348 GitPlumbing (hash-object→scratch-index write-tree→commit-tree→CAS update-ref, StaleRefError) → T352 GitObjectLedgerBackend (in-memory sync reads via cat-file/ls-tree at init; writes-in-lock with CAS; orphan ref; backup-tag on reinit Q195(1)) → T353 ref-sha coherence watcher driving invalidate(). W3/M146 (Q189/Q192): T349 cq.toml [ledger] backend key (git-object|fs, default fs) → T357 backend factory at all construction sites + git-env fail-fast → T360 zero-frontend-change confirmation. W4/M147 (Q193 user request): T354 `cq move-ledger --to git|local` lossless bidirectional migration (git rm --cached + gitignore flip + cq.toml flip). W5/M148 (Q194/K66-4): T355 auto-fetch-start/non-forced-push-end refspec + runbook → T358 make the per-merge chore(ledger) command steps backend-conditional. W6/M149 (Q196): T356 shared conformance suite over Fs+InMemory+Git (throwaway repo per test) → T359 git-invariant tests (byte-identical tree/HEAD/index, orphan-ref advance, CAS reject, lock-not-committed, backup-tag). Milestone dependsOn encodes the build order (advisory). Key groundings: LedgerStore is already the abstraction (FsLedgerStore + InMemoryLedgerStore implement it); reads are SYNC from an in-memory map (so cat-file is init/coherence-only, not per-call); docs/*.md are currently TRACKED (migration needs git rm --cached); coherence + frontends key on file-watch/WS today (re-point coherence to ref-sha; confirm frontends need no change)."
