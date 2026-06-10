@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 48
+  item: 49
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -200,3 +200,16 @@ archives:
 - rootCause: "User-reported (G41 item-4 follow-up). DiagramSvg edge labels rendered with `fill={LABEL_FILL}` where LABEL_FILL='#171a21' — EXACTLY equal to the help-panel background var(--panel)='#171a21' (styles.css :root). Node labels share LABEL_FILL but sit on a filled <rect> (DEFAULT_FILL grey / roleKind colour) so they contrast; EDGE labels render directly on the panel background, so the dark fill is identical to the background and the labels are invisible in the (default dark) theme."
 - fix: "DiagramSvg.tsx: edge labels now use a new EDGE_LABEL_FILL='var(--fg)' (themed foreground #e6e9ef) instead of LABEL_FILL; node labels keep LABEL_FILL='#171a21' (still contrasts on their filled rects). Theme-aware (tracks the palette if a light theme is added). Regression test in diagramSvgActivate.test.tsx asserts the edge-label fill is var(--fg) (not #171a21) while node-label fill stays #171a21. bun run check green (1488/0)."
 - ledgerRefs: ["goals:G41"]
+
+## M145
+
+### D49 — open
+
+- createdAt: 2026-06-10T10:14:38.126Z
+- updatedAt: 2026-06-10T10:14:38.126Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- headline: GitPlumbing.updateRef maps every non-zero 3-arg update-ref exit to StaleRefError, masking non-CAS failures
+- severity: low
+- description: "In updateRef (GitPlumbing.ts) any non-zero exit of `git update-ref <ref> <new> <old>` is translated to StaleRefError, ignoring stderr. Verified in a /tmp repo: a malformed/nonexistent new-SHA exits 128 with stderr 'nonexistent object …' / 'not a valid SHA1', the SAME exit-code as a genuine CAS mismatch (exit 128, 'cannot lock ref … is at … but expected …'). The two are distinguishable only by stderr, which the mapping discards. Cannot arise within GitPlumbing's own contract (newSha always comes from a prior commitTree/hashObject), so it does NOT affect T348 acceptance and is documented in-code; but the seam is public/injectable and T352's GitObjectLedgerBackend would receive a mislabeled StaleRefError on a programming error rather than a distinct GitCommandError. Out of scope for T348 — robustness hardening for a later task. Suggested fix: inspect stderr (or pre-validate newSha) — map only the 'cannot lock ref … but expected …' lock-failure pattern to StaleRefError; route other non-zero exits through GitCommandError."
+- ledgerRefs: ["tasks:T348","goals:G43"]

@@ -495,10 +495,10 @@ archives:
 
 ## M145
 
-### T348 — planned
+### T348 — done
 
 - createdAt: 2026-06-10T09:02:30.973Z
-- updatedAt: 2026-06-10T09:02:30.973Z
+- updatedAt: 2026-06-10T10:14:32.094Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Add a GitPlumbing helper wrapping hash-object/scratch-index/commit-tree/CAS update-ref
@@ -506,6 +506,9 @@ archives:
 - acceptance: "A focused test against a throwaway /tmp git repo: writing two files advances an orphan ref two commits while `git status`/HEAD/working-tree/index stay byte-identical (mirrors the PoC proof); a CAS updateRef with a stale expectedOld throws StaleRefError; catFile/lsTree read back content with no checkout. tsc -b + lint clean."
 - suggestedModel: frontier
 - ledgerRefs: ["goals:G43"]
+- resultCommit: a105cf765ffd37382be3ea871cb6509fe78a9c70
+- completion: "GitPlumbing.ts: injectable GitRunner-seam wrapper (default nodeGitRunner via child_process.execFile) over hashObject/writeTree(isolated GIT_INDEX_FILE)/commitTree(orphan when parent null)/CAS updateRef(StaleRefError)/readRef/catFile/lsTree/tagRef — the exact K66-PoC invocations. 7-test suite proves orphan-ref byte-identical isolation (HEAD/status/index unchanged), stale-CAS StaleRefError, no-checkout reads. check green 1496/0 on main (gitPlumbing suite 7/0). Reviewer filed 1 low future-hardening defect D49 (over-broad updateRef error mapping)."
+- sessionLogs: ["docs/logs/20260610-101400-aaabcbef451ca7e95.md","docs/logs/20260610-101400-a347b100deadd738d.md"]
 
 ### T352 — planned
 

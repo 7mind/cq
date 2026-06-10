@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 421
+  item: 422
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -741,3 +741,14 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G43"]
 - sessionLogs: ["docs/logs/20260610-092800-a320db9dedf477d3f.md","docs/logs/20260610-092800-pi-codex.md","docs/logs/20260610-092800-pi-minimax.md"]
+
+## M145
+
+### R422 — go-ahead
+
+- createdAt: 2026-06-10T10:14:41.397Z
+- updatedAt: 2026-06-10T10:14:41.397Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T348 implement-review — approve. Opus reviewer round 1, 0 criticism / 0 questions / 1 out-of-scope defect (low, D49). Every acceptance clause verified operationally with independent /tmp-repo probes: GIT_INDEX_FILE isolation leaves the real index byte-identical + status clean, commit-tree parent=null is a true orphan, stale expectedOld throws StaleRefError with ref unmoved, catFile/lsTree read with no checkout, readRef null on missing. check green 1496/0; tsc+lint clean; exports additive. Merged as a105cf7."
+- ledgerRefs: ["tasks:T348","goals:G43"]
