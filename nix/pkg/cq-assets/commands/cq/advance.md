@@ -132,8 +132,18 @@ on a user action whose every autonomous step is already done (see §Stop-conditi
 gate). If no status legitimately applies because a
 predicate is still TRUE and unblocked, the run has NOT reached a legal stop:
 CONTINUE the cycle instead of writing a handoff. **Immediately after writing the
-handoff, perform the run-stop ledger commit (§Commit the ledger)** — that commit
-is the final act of the run.
+handoff, unlink the run-active marker and perform the run-stop ledger commit
+(§Commit the ledger)** — the marker removal and the terminal handoff are coupled
+so they cannot diverge: remove the marker as the final act of the
+handoff+commit sequence:
+
+```sh
+rm -f "${XDG_RUNTIME_DIR:-/tmp}/cq-advance-active-$CLAUDE_CODE_SESSION_ID"
+```
+
+Run this immediately after the `create_item` call that writes the handoff
+record, then proceed to the run-stop ledger commit. That commit is the final
+act of the run.
 
 ## Session logs
 This command spawns no subagents, so it writes no session-log file of its own.
@@ -165,6 +175,20 @@ failure here means the local ref diverged from the remote — STOP and follow th
 runbook's rejected-push / divergence recovery rather than forcing the ref.
 
 ## Bootstrap recipe (T156 / Q79 — derive_predicates-first start)
+
+At the very start of each `/cq:advance` run (ONCE per run invocation, NOT
+repeated each cycle), before calling `derive_predicates`, **drop the
+run-active marker** — a session-keyed sentinel file that engages the Stop
+hook ONLY while an active `/cq:advance` run is in progress:
+
+```sh
+touch "${XDG_RUNTIME_DIR:-/tmp}/cq-advance-active-$CLAUDE_CODE_SESSION_ID"
+```
+
+Run this shell command as the **FIRST action of the run** (after the
+git-object run-START fetch step above, BEFORE the `derive_predicates` call
+below). This is the switch that causes the `claudeStopGateHook` (§Stop-condition
+gate) to block premature stops for the lifetime of this run.
 
 At the very start of each `/cq:advance` run (and at the start of each cycle),
 obtain **all four detection values** (P-investigate, P-plan, P-implement, and
@@ -458,6 +482,20 @@ externally-evidenced context limit — the stop is ILLEGAL by your own admission
 SYMMETRICALLY to both stop channels: there is deliberately **NO handoff status
 for an effort-based stop, AND NO TURN-pause for an effort-based stop**. (Mirrors
 HO26's laundered handoff and the laundered turn-pause that motivated D41.)
+The `claudeStopGateHook` registered via `nix/hm/claude.nix` (backed by
+`cq advance-gate` + the shared `derivePredicates`) now **MECHANICALLY enforces
+this gate for Claude Code runs**: while the run-active marker is present, the
+hook BLOCKS a premature stop unless a predicate-gated handoff was written OR a
+verbatim external-signal is recorded in the marker file. To legitimately end a
+run on GENUINE harness-evidenced context/compaction exhaustion, append a line
+
+```
+external-signal: "<verbatim harness warning text>"
+```
+
+to the marker file BEFORE stopping (the gate greps that line and allows the
+stop). The D41 prose above remains the authoritative specification for ALL
+harnesses; the Stop hook is its mechanical enforcement layer for Claude Code.
 
 **Default disposition for every defect is FIX (hard rule).** Every
 `open`/`wip`/`root-caused`/`inconclusive` defect is fixed, properly, now. The
