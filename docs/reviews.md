@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 419
+  item: 420
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -736,3 +736,15 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G43"]
 - sessionLogs: ["docs/logs/20260610-092800-a320db9dedf477d3f.md","docs/logs/20260610-092800-pi-codex.md","docs/logs/20260610-092800-pi-minimax.md"]
+
+## M144
+
+### R420 — go-ahead
+
+- createdAt: 2026-06-10T09:39:04.489Z
+- updatedAt: 2026-06-10T09:39:04.489Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: approve (T347) — LedgerPersistence seam interface complete (every distinct fs.*/atomicWrite byte-I/O op in FsLedgerStore.ts maps to one method; excluded fs calls documented out-of-scope), narrow (string/Promise signatures, no fs-type/path leakage), accurately call-site-referenced; readArchiveDir/currentSourceToken documented honestly as git-backend parity (not fabricated); scope respected (FsLedgerStore + LedgerStore.ts unchanged); tsc+eslint reproduced green, bun run check 1489/0. Native opus implement-reviewer.
+- ledgerRefs: ["tasks:T347","goals:G43"]
+- sessionLogs: ["docs/logs/20260610-093502-aa3adc9ec2a34495f.md"]

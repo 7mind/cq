@@ -490,10 +490,10 @@ archives:
 
 ## M144
 
-### T347 — planned
+### T347 — done
 
 - createdAt: 2026-06-10T09:02:22.982Z
-- updatedAt: 2026-06-10T09:02:22.982Z
+- updatedAt: 2026-06-10T09:39:14.450Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Define the abstract LedgerPersistence seam interface
@@ -501,6 +501,9 @@ archives:
 - acceptance: tsc -b passes; the interface enumerates every distinct byte-I/O operation FsLedgerStore performs, each with a doc comment naming its FsLedgerStore call-site; `bun run lint` clean. No behaviour change yet (no implementation moved).
 - suggestedModel: frontier
 - ledgerRefs: ["goals:G43"]
+- resultCommit: 4ca818914486796d0823a2f656981a0acba2c7af
+- completion: LedgerPersistence byte-I/O seam interface (packages/ledger/src/store/LedgerPersistence.ts, exported) capturing every FsLedgerStore fs.*/atomicWrite op + 2 git-parity methods; interface-only (no impl moved); bun run check green.
+- sessionLogs: ["docs/logs/20260610-093502-a86a4af4aa7334adf.md","docs/logs/20260610-093502-aa3adc9ec2a34495f.md"]
 
 ### T350 — planned
 
