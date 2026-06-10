@@ -540,10 +540,10 @@ archives:
 
 ## M155
 
-### T365 — planned
+### T365 — done
 
 - createdAt: 2026-06-10T15:33:03.019Z
-- updatedAt: 2026-06-10T15:33:03.019Z
+- updatedAt: 2026-06-10T17:38:37.663Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Add a grep-invariant test pinning the new advance.md marker + external-signal steps (mirror D39's guard)
@@ -551,6 +551,9 @@ archives:
 - acceptance: A grep-invariant test FAILS if any of the marker-drop / marker-unlink / external-signal / hook-cross-ref / derive_predicates strings are removed from advance.md, and PASSES on the edited file; bun run check green.
 - suggestedModel: standard
 - ledgerRefs: ["goals:G44","defects:D50"]
+- resultCommit: 81fcc1e
+- completion: "Grep-invariant guard (canonical-ledgers.test.ts, beside D39's T264) pinning the 5 G44 load-bearing advance.md enforcement strings (marker-drop touch / marker-unlink rm-f / external-signal: / claudeStopGateHook / mcp__ledger__derive_predicates) — reads the real advance.md + toContain per token; teeth proven (token-removal fails). opus review approve; check 1630/0."
+- sessionLogs: ["docs/logs/20260610-173815-a89c7f25f5bd2db78.md"]
 
 ### T371 — planned
 
