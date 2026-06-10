@@ -514,39 +514,14 @@ archives:
     summary: "G43-W5 complete: backend-guarded auto-fetch(start)/non-forced-push(end) of refs/heads/cq-ledger in all four /cq:* advance prompts + recovery runbook (T355), and the per-merge/run-stop `chore(ledger)` command commits made backend-conditional — skipped under git-object (T358 for the four advance files; D53 for the three start/wrapper commands). Exactly one fetch+push per run via chaining suppression."
     title: "G43-W5: push/fetch sync wiring + drop per-merge ledger-commit steps (Q194/K66-4)"
     status: done
+  - id: M151
+    path: ./archive/tasks/M151.md
+    summary: "G44-W1 complete: shared derivePredicates(store) engine in @cq/ledger (T361) — single source of truth for the /cq:advance detection predicates (pInvestigate/pPlan/pImplement/openQuestionGate), pure+sync, advance.md §Detection-predicates verbatim — plus a dual-adapter fixture suite (T366, 9×2=18 tests vs FsLedgerStore + InMemoryLedgerStore, teeth-verified). Panel approve (T361: opus+codex+minimax; T366: opus). check 1616/0."
+    title: "G44-W1: shared derivePredicates engine in @cq/ledger"
+    status: done
 ---
 
 # tasks
-
-## M151
-
-### T361 — done
-
-- createdAt: 2026-06-10T15:32:37.607Z
-- updatedAt: 2026-06-10T16:09:49.389Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Add shared derivePredicates(store) to @cq/ledger
-- description: "Create the shared predicate-derivation function (single source of truth for the flow's three predicates), e.g. packages/ledger/src/store/predicates.ts (or in store/core.ts beside assertHandoffInvariants) exporting `derivePredicates(store: LedgerStore): { pInvestigate, pPlan, pImplement, openQuestionGate }`, each as `{ value: boolean, items: string[] }` so a verdict can NAME the TRUE-and-unblocked item ids. Implement EXACTLY advance.md §Detection-predicates semantics by reading the store SYNCHRONOUSLY (store.fetch('defects'|'goals'|'tasks'|'questions'|'milestones'), cross-referencing fields.ledgerRefs for the open-question gate): P-investigate = a defect in {open,wip,inconclusive} NOT solely blocked on an open linked question AND NOT owned by a clarifying/planning goal; P-plan = a goal in {clarifying-with-no-open-linked-question, planning}; P-implement = a planned/building goal with a DAG-ready non-terminal non-blocked task whose dependsOn tasks are all done, milestone dependsOn satisfied, no linked open question. Pure function over store reads (mirror the assertHandoffInvariants/assertGoalPhasePreconditions style). Export from the package barrel (src/index.ts) so @cq/cli and @cq/ledger-mcp both import it. NO MCP dependency."
-- acceptance: derivePredicates exported from @cq/ledger; tsc -b + lint clean; compiles against the LedgerStore interface with no MCP dependency. (Tests in the next task.)
-- suggestedModel: frontier
-- ledgerRefs: ["goals:G44","defects:D50"]
-- resultCommit: c2faf669d75967452459877e57229d4eb5e05e89
-- completion: "Shared derivePredicates(store) in @cq/ledger (packages/ledger/src/store/predicates.ts) — single source of truth for the /cq:advance detection predicates (pInvestigate/pPlan/pImplement/openQuestionGate, each {value,items[]}), pure+sync over store reads, advance.md §Detection-predicates verbatim, no MCP dep, exported from the barrel. Panel approve (opus+codex+minimax, 0 findings); check 1602/0; smoke test 4/0 on main."
-- sessionLogs: ["docs/logs/20260610-160922-ab2a5b5513cf25dc4.md","docs/logs/20260610-160922-T361-review-panel.md"]
-
-### T366 — planned
-
-- createdAt: 2026-06-10T15:33:16.703Z
-- updatedAt: 2026-06-10T15:33:16.703Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Dual-adapter unit tests for derivePredicates against synthetic ledger states
-- description: "Add packages/ledger/test/predicates.test.ts running ONE abstract suite against BOTH the production FsLedgerStore (temp docs/) AND the InMemoryLedgerStore dummy (the repo's dual-tests pattern). Fixtures: (a) actionable open defect not goal-owned → pInvestigate TRUE; (b) defect owned by a planning/clarifying goal → pInvestigate FALSE; (c) clarifying goal with an open linked question → pPlan FALSE, without → TRUE; a planning goal → pPlan TRUE; (d) a planned goal with a DAG-ready task → pImplement TRUE; the same task blocked by an open linked question or an unfinished dependsOn → FALSE; (e) all-terminal ledger → all three FALSE. Assert the returned items[] name the exact expected ids."
-- acceptance: "`bun test predicates.test.ts` green; the suite executes against BOTH FsLedgerStore and InMemoryLedgerStore (each fixture asserted twice); bun run check passes."
-- suggestedModel: frontier
-- dependsOn: ["T361"]
-- ledgerRefs: ["goals:G44","defects:D50"]
 
 ## M152
 

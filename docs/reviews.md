@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 439
+  item: 440
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -664,6 +664,11 @@ archives:
     summary: "G43 (GitObjectLedgerBackend) planned + DELIVERED. The orphan-git-ref ledger backend is implemented end-to-end (15 tasks across W1-W6/M144-M149, all adversarially reviewed + merged; 5 hardening defects D49/D51/D52/D53/D54 resolved; check green 1597/0) and sits behind the same LedgerStore surface as FsLedgerStore, opt-in via cq.toml [ledger] backend='git-object'. Planning Q189-Q196 answered; multi-planner synthesis + revise→go-ahead review loop (R418/R419). One follow-up pending user sequencing: D50 (turn-pause-loophole Stop-hook gate, Q197)."
     title: "Plan: ledger-on-orphan-git-branch storage backend (GitObjectLedgerBackend)"
     status: done
+  - id: M151
+    path: ./archive/reviews/M151.md
+    summary: "G44-W1 complete: shared derivePredicates(store) engine in @cq/ledger (T361) — single source of truth for the /cq:advance detection predicates (pInvestigate/pPlan/pImplement/openQuestionGate), pure+sync, advance.md §Detection-predicates verbatim — plus a dual-adapter fixture suite (T366, 9×2=18 tests vs FsLedgerStore + InMemoryLedgerStore, teeth-verified). Panel approve (T361: opus+codex+minimax; T366: opus). check 1616/0."
+    title: "G44-W1: shared derivePredicates engine in @cq/ledger"
+    status: done
 ---
 
 # reviews
@@ -757,14 +762,3 @@ archives:
 - summary: "G44 plan review (multi-reviewer, configured panel) — UNANIMOUS go-ahead (reconciled strictest-wins over 4 surviving reviewers [opus]+[codex]+[grok]+[minimax], 0 abstentions, 0 criticism / 0 new_questions / 0 defects). All four confirmed the 5-milestone/12-task DAG (M151-M155, T361-T372) is acyclic + correctly sequenced (engine→CLI+MCP-tool→wrapper+nix+wiring→hardening), honors ALL 7 locked decisions Q198-Q204, maps every component+decision to ≥1 task (marker drop/unlink=T370; derive_predicates built T363 + consumed T368; wrapper authored T364 + registered T369 + integration-tested T372; full Q204 bar across T365-T367/T371-T372), with verifiable acceptance, grounded against the real seams (createLedgerStore, sync LedgerStore reads, registerLedgerStdioTools, claudeSessionStartHook/settings.hooks). [minimax] noted two non-blocking implementer-resolvable nits (T362 exact reason text; T368/T370 both touch advance.md §Bootstrap) — not gaps. Plan LOCKED. Reviewer logs: docs/logs/20260610-154315-a71ad469deb41bf5f.md (opus) + 20260610-154315-pi-{codex,grok,minimax}-reviewer.md."
 - ledgerRefs: ["goals:G44"]
 - sessionLogs: ["docs/logs/20260610-154315-a71ad469deb41bf5f.md","docs/logs/20260610-154315-pi-codex-reviewer.md","docs/logs/20260610-154315-pi-grok-reviewer.md","docs/logs/20260610-154315-pi-minimax-reviewer.md"]
-
-## M151
-
-### R439 — go-ahead
-
-- createdAt: 2026-06-10T16:09:53.507Z
-- updatedAt: 2026-06-10T16:09:53.507Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T361 implement-review — reconciled go-ahead (multi-reviewer panel [opus]+[codex]+[minimax], strictest-wins, 0 abstentions, 0 criticism / 0 questions / 0 defects). All three confirmed derivePredicates matches advance.md §Detection-predicates verbatim (open-question gate + planning-goal-ownership exclusion + DAG/milestone-deps-satisfied), is pure+synchronous with no MCP dependency, degrades gracefully on an unregistered ledger, named types/no any; check green 1602/0. Merged c2faf66. Logs: docs/logs/20260610-160922-{ab2a5b5513cf25dc4,T361-review-panel}.md."
-- ledgerRefs: ["tasks:T361","goals:G44"]

@@ -724,6 +724,11 @@ archives:
     summary: "G43 (GitObjectLedgerBackend) planned + DELIVERED. The orphan-git-ref ledger backend is implemented end-to-end (15 tasks across W1-W6/M144-M149, all adversarially reviewed + merged; 5 hardening defects D49/D51/D52/D53/D54 resolved; check green 1597/0) and sits behind the same LedgerStore surface as FsLedgerStore, opt-in via cq.toml [ledger] backend='git-object'. Planning Q189-Q196 answered; multi-planner synthesis + revise→go-ahead review loop (R418/R419). One follow-up pending user sequencing: D50 (turn-pause-loophole Stop-hook gate, Q197)."
     title: "Plan: ledger-on-orphan-git-branch storage backend (GitObjectLedgerBackend)"
     status: done
+  - id: M151
+    path: ./archive/milestones/M151.md
+    summary: "G44-W1 complete: shared derivePredicates(store) engine in @cq/ledger (T361) — single source of truth for the /cq:advance detection predicates (pInvestigate/pPlan/pImplement/openQuestionGate), pure+sync, advance.md §Detection-predicates verbatim — plus a dual-adapter fixture suite (T366, 9×2=18 tests vs FsLedgerStore + InMemoryLedgerStore, teeth-verified). Panel approve (T361: opus+codex+minimax; T366: opus). check 1616/0."
+    title: "G44-W1: shared derivePredicates engine in @cq/ledger"
+    status: done
 ---
 
 # milestones
@@ -761,12 +766,6 @@ archives:
 - createdAt: 2026-06-10T15:01:37.384Z
 - updatedAt: 2026-06-10T15:01:37.384Z
 - title: "Plan: cq:advance turn-pause Stop-hook gate (D50)"
-
-### M151 — open
-
-- createdAt: 2026-06-10T15:31:42.848Z
-- updatedAt: 2026-06-10T15:31:42.848Z
-- title: "G44-W1: shared derivePredicates engine in @cq/ledger"
 
 ### M152 — open
 
