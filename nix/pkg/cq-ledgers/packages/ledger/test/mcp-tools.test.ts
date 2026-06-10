@@ -13,6 +13,7 @@ import {
   LEDGER_TOOL_NAMES,
   CANONICAL_LEDGERS,
   createLedgerMcpTools,
+  prefixedToolNames,
   derivePredicates,
   type DerivedPredicates,
   type LedgerSchema,
@@ -74,6 +75,13 @@ describe("ledger MCP tools", () => {
     expect(LEDGER_TOOL_NAMES).toContain("fetch_prompt");
     expect(LEDGER_TOOL_NAMES).toContain("validate_input");
     expect(LEDGER_TOOL_NAMES).toContain("validate_output");
+  });
+
+  it("prefixed factory names equal prefixedToolNames(prefix) — drift guard", async () => {
+    const store = await buildStore();
+    const prefix = "myproj";
+    const tools = createLedgerMcpTools(store, undefined, undefined, undefined, prefix);
+    expect(tools.map((t) => t.name).sort()).toEqual(prefixedToolNames(prefix).sort());
   });
 
   it("read_log against the in-memory store throws the documented not-implemented error", async () => {
