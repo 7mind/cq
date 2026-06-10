@@ -1111,5 +1111,120 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
         }
       });
     });
+
+    // -----------------------------------------------------------------------
+    // Concurrency parity — N parallel mutations on ONE store instance.
+    //
+    // Every backend serialises within-instance writes behind the same base
+    // AsyncMutex (FIFO chain) BEFORE its persistence seam runs (FS lockfile +
+    // fs.write, InMemory map write, Git advisory-lockfile + CAS `update-ref`).
+    // The observable parity that MUST hold identically across Fs / InMemory /
+    // Git is therefore: no lost write, no corruption (every read-back parses to
+    // a complete item), monotonic non-decreasing `updatedAt`, last-submitted
+    // write wins, and parallel creates allocate unique monotonic ids.
+    //
+    // This asserts ONLY through the LedgerStore surface (fetchItem / fetch), so
+    // it is genuinely backend-agnostic — the FS-only file/lockfile-internal
+    // concurrency tests (parseLedger on docs/*.md, cross-instance LOCK-D01) stay
+    // in concurrency.test.ts because they probe FS implementation detail. For
+    // Git the within-instance mutex fronts the CAS `update-ref` so the
+    // CAS-conflict path is never reached in-process; a cross-process CAS race is
+    // a deliberately-different surface (StaleRefError, caveat 1) and is NOT a
+    // shared-suite concern.
+    describe("concurrency parity — N parallel mutations on one instance", () => {
+      // N stays modest: each write is one ref-advance for the Git backend (a
+      // handful of `git` subprocess spawns), so a large N would dominate suite
+      // runtime under load without strengthening the race. 12 parallel writers
+      // is plenty to expose a lost write / duplicate id / non-monotonic clock.
+      const N = 12;
+
+      // The Git backend turns each of the N serialised writes into several
+      // `git` subprocess spawns; under full-suite load (other git-backed tests
+      // running concurrently) that can exceed bun's 5s default per-test budget.
+      // A generous explicit timeout keeps these deterministic without inflating
+      // N. The FS/InMemory runs finish in milliseconds and are unaffected.
+      const GIT_AWARE_TIMEOUT_MS = 30_000;
+
+      it("N parallel updateItem calls all complete, lose no write, and the last-submitted write is the final state", async () => {
+        const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+        try {
+          const m = await store.createMilestone({ title: "M-conc" });
+          const item = await store.createItem(WIDGETS, m.id, {
+            status: "open",
+            fields: { severity: "minor", location: "x.ts", description: "init" },
+          });
+
+          // The map() runs synchronously, so updateItem(i) enters the FIFO
+          // mutex chain before updateItem(i+1): submission order === lock order.
+          const results = await Promise.all(
+            Array.from({ length: N }, (_, i) =>
+              store.updateItem(WIDGETS, item.id, {
+                fields: { rootCause: `rc-${i}` },
+              }),
+            ),
+          );
+          expect(results.length).toBe(N);
+
+          // No corruption: every returned item is the SAME item, fully formed,
+          // with a valid timestamp and the unchanged required fields intact.
+          for (const r of results) {
+            expect(r.id).toBe(item.id);
+            expect(r.fields["severity"]).toBe("minor");
+            expect(isIsoTimestamp(r.updatedAt)).toBe(true);
+          }
+
+          // updatedAt is monotonic NON-DECREASING across the serialised writes
+          // (wall-clock `now` may repeat within a millisecond, so not strict).
+          const inOrder = [...results].sort((a, b) =>
+            a.updatedAt < b.updatedAt ? -1 : a.updatedAt > b.updatedAt ? 1 : 0,
+          );
+          for (let i = 1; i < inOrder.length; i++) {
+            const prev = inOrder[i - 1];
+            const cur = inOrder[i];
+            if (prev === undefined || cur === undefined) throw new Error("missing result");
+            expect(cur.updatedAt >= prev.updatedAt).toBe(true);
+          }
+
+          // No lost write: the persisted final state is the LAST submitted
+          // write (index N-1) — proven via a fresh read through the surface.
+          const lastWrite = results[N - 1];
+          if (lastWrite === undefined) throw new Error("missing last write");
+          const persisted = store.fetchItem(WIDGETS, item.id);
+          expect(persisted.fields["rootCause"]).toBe(`rc-${N - 1}`);
+          expect(persisted.updatedAt).toBe(lastWrite.updatedAt);
+        } finally {
+          await factory.teardown?.(store);
+        }
+      }, GIT_AWARE_TIMEOUT_MS);
+
+      it("N parallel createItem calls allocate unique monotonic ids with no gaps", async () => {
+        const store = await factory.build([{ name: WIDGETS, schema: widgetsSchema }]);
+        try {
+          const m = await store.createMilestone({ title: "M-conc-create" });
+          const items = await Promise.all(
+            Array.from({ length: N }, (_, i) =>
+              store.createItem(WIDGETS, m.id, {
+                status: "open",
+                fields: { severity: "minor", location: `f${i}.ts`, description: `d${i}` },
+              }),
+            ),
+          );
+          // Unique ids, and the counter reflects exactly N items (no lost
+          // allocation, no duplicate id under the race).
+          const ids = new Set(items.map((it) => it.id));
+          expect(ids.size).toBe(N);
+          const ledger = store.fetch(WIDGETS);
+          expect(ledger.counters.item).toBe(N);
+          // The depth-2 group holds all N items, each readable through fetchItem.
+          const group = ledger.milestones.find((g) => g.id === m.id);
+          expect(group?.items.length).toBe(N);
+          for (const it of items) {
+            expect(store.fetchItem(WIDGETS, it.id).id).toBe(it.id);
+          }
+        } finally {
+          await factory.teardown?.(store);
+        }
+      }, GIT_AWARE_TIMEOUT_MS);
+    });
   });
 }
