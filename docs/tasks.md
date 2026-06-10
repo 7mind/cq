@@ -529,71 +529,14 @@ archives:
     summary: "G44-W3 complete: derive_predicates read-only MCP tool (T363) registered in both ledger tool factories (stdio/HTTP/embedded), delegating to the shared derivePredicates(store) (Q202 user extension) — plus advance.md §Bootstrap/§Detection-predicates rewired to call mcp__ledger__derive_predicates as the authoritative predicate source with an anti-drift note that the same logic backs cq advance-gate (T368, round-2 doc-shape fix). opus approve; check 1621/0."
     title: "G44-W3: derive_predicates MCP tool + advance.md detection rewire"
     status: done
+  - id: M154
+    path: ./archive/tasks/M154.md
+    summary: "G44-W4 complete: the thin Claude-Code Stop-hook wrapper claudeStopGateHook (T364, translates the neutral cq advance-gate verdict → {decision:block}), REGISTERED in nix/hm/claude.nix settings.hooks (T369, Q198 install in-scope), the run-active-marker + external-signal lifecycle wired into advance.md §Bootstrap/§The one write/§Stop-condition (T370 — marker path byte-identical to advanceGate.ts), and a hermetic wrapper integration test (T372 — extracts the live body, mutation-proven teeth). All opus-reviewed; check 1625/0."
+    title: "G44-W4: Stop-hook wrapper + nix registration + marker/escape lifecycle wiring"
+    status: done
 ---
 
 # tasks
-
-## M154
-
-### T364 — done
-
-- createdAt: 2026-06-10T15:32:57.665Z
-- updatedAt: 2026-06-10T17:02:29.435Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: "Author the thin Claude-Code Stop-hook wrapper script (gate verdict → {decision:block})"
-- description: "Create the wrapper as a `pkgs.writeShellScript` in nix/hm/claude.nix (sibling to the existing claudeSessionStartHook — the actual locus of Claude Code settings.hooks; nix/hm/dev-llm.nix composes claude.nix). The Stop hook receives the session id on stdin/env; the wrapper reads $CLAUDE_CODE_SESSION_ID, invokes `cq advance-gate --session <id> --cwd <ledger-root>` capturing stdout+exit, and: if exit is NON-ZERO (block) prints to stdout the Claude-Code hook JSON `{\"decision\":\"block\",\"reason\":<the gate's reason>}`; otherwise prints nothing / `{}` (allow the stop). Marker-absent / external-signal / all-FALSE all flow through as allow because the CLI already returned exit 0. Keep the wrapper minimal + harness-specific (the neutral CLI stays reusable by other harnesses per D50's LIMITS); no $CLAUDE_CODE_SESSION_ID → allow (exit 0)."
-- acceptance: "The wrapper script exists in claude.nix and the home-manager/dev-llm build (or `nix flake check`) evaluates without error; the script invokes `cq advance-gate` and emits {decision:block,reason} ONLY on a non-zero gate exit, allow otherwise. (Registration + integration test in later tasks.)"
-- suggestedModel: frontier
-- ledgerRefs: ["goals:G44","defects:D50"]
-- resultCommit: 0d6c7df
-- completion: "claudeStopGateHook (pkgs.writeShellScript) in nix/hm/claude.nix — thin Claude-Code Stop-hook translator: no-session→allow; `cq advance-gate` exit non-zero→emit {\"decision\":\"block\",\"reason\":.reason} via jq; exit 0→allow. cq on PATH via ledgerTools; jq via ${pkgs.jq}. Not yet wired into settings.hooks (T369). nix eval verified; opus review approve (0 findings)."
-- sessionLogs: ["docs/logs/20260610-170206-a582052be0f2e15a5.md"]
-
-### T369 — done
-
-- createdAt: 2026-06-10T15:33:33.702Z
-- updatedAt: 2026-06-10T17:15:42.441Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Register the Stop hook in nix/hm/claude.nix settings.hooks
-- description: "Per Q198: add a `Stop` entry to the settings.hooks block in nix/hm/claude.nix (currently only SessionStart), matcher `*`, `{ type = \"command\"; command = \"${claudeStopGateHook}\"; }` pointing at the wrapper from T364. This ships the gate via the SAME Nix home-manager mechanism that already provisions advance.md + the `cq` CLI (installation in-scope per Q198). Ensure `cq` is on PATH for the hook process (it already is via the dev-llm provisioning)."
-- acceptance: claude.nix settings.hooks.Stop present + references the wrapper; the home-manager/dev-llm build (or `nix flake check`) evaluates; rendered settings.json (inspected from the built profile) contains the Stop hook.
-- suggestedModel: standard
-- dependsOn: ["T364"]
-- ledgerRefs: ["goals:G44","defects:D50"]
-- resultCommit: 7b04682
-- completion: "settings.hooks.Stop entry in nix/hm/claude.nix referencing ${claudeStopGateHook} (T364), mirroring SessionStart structure — ships the Stop-hook gate via home-manager (Q198 install in-scope). nix eval ok. opus review approve."
-- sessionLogs: ["docs/logs/20260610-171519-T369-T370.md"]
-
-### T370 — done
-
-- createdAt: 2026-06-10T15:33:41.309Z
-- updatedAt: 2026-06-10T17:15:46.630Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Wire the run-active marker + external-signal lifecycle into advance.md (§Bootstrap, §The one write, §Stop-condition gate)
-- description: "Per Q203 (scope = /cq:advance ONLY): edit nix/pkg/cq-assets/commands/cq/advance.md. §Bootstrap recipe: after the git-object run-START fetch, DROP the session-keyed marker `${XDG_RUNTIME_DIR:-/tmp}/cq-advance-active-$CLAUDE_CODE_SESSION_ID` as the first run-start action. §End-of-run / §The one write: UNLINK the marker ATOMICALLY in the SAME step that writes the terminal handoffs create_item (so they cannot diverge). §Stop-condition gate: cross-reference the new Stop hook + the external-signal escape (to legitimately end on genuine harness-evidenced exhaustion, append `external-signal: \"<verbatim harness quote>\"` to the marker before stopping). KEEP the existing D41 turn-pause prose / euphemism blocklist / self-check intact as the documented fallback for non-Claude harnesses, ADDING one sentence that the Stop hook now mechanically enforces it for Claude Code. Do NOT touch the sub-commands. Re-run gen-agents-catalogue (freshness guard)."
-- acceptance: advance.md contains the marker-drop step in §Bootstrap, the atomic marker-unlink in §The one write/§End-of-run, and the hook + external-signal cross-reference in §Stop-condition gate; D41 prose retained + the enforcement sentence added; diff confined to those sections; sub-commands untouched; agentsCatalogue regen no drift; bun run check green.
-- suggestedModel: standard
-- dependsOn: ["T364"]
-- ledgerRefs: ["goals:G44","defects:D50"]
-- resultCommit: 2011ba0
-- completion: "advance.md run-active marker lifecycle (Q200/Q201/Q203): §Bootstrap touches `${XDG_RUNTIME_DIR:-/tmp}/cq-advance-active-$CLAUDE_CODE_SESSION_ID` first; §The one write rm -f's it atomically with the terminal handoff; §Stop-condition gate cross-refs the Stop hook + the `external-signal: \"...\"` escape; D41 prose retained + enforcement sentence; sub-commands untouched; gen.ts regen. opus review approve — marker path BYTE-FOR-BYTE == advanceGate.ts (T362); check 1622/0."
-- sessionLogs: ["docs/logs/20260610-171519-T369-T370.md"]
-
-### T372 — wip
-
-- createdAt: 2026-06-10T15:34:00.134Z
-- updatedAt: 2026-06-10T17:15:51.808Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Integration test of the Stop-hook wrapper's stdout/exit contract against a stub gate
-- description: "Per Q204 item (2): add a test (subprocess-based; under cq-cli/test or a dedicated hook test) that invokes the wrapper script with the `cq` binary STUBBED/shimmed (via PATH) to return: (a) exit non-zero + neutral verdict JSON with a reason → assert the wrapper's stdout is exactly `{\"decision\":\"block\",\"reason\":\"P-… continue per D41 …\"}`; (b) exit 0 → assert the wrapper ALLOWS (empty/`{}` stdout, no block). Drive the session id + marker path via env so the test is hermetic. Covers the hook-wrapper stdout/exit contract independent of the live harness."
-- acceptance: "The integration test runs the wrapper against a stubbed gate and asserts {decision:block} on non-zero exit + allow on exit 0; green in bun run check (or the documented hook-test command)."
-- suggestedModel: frontier
-- dependsOn: ["T369"]
-- ledgerRefs: ["goals:G44","defects:D50"]
 
 ## M155
 

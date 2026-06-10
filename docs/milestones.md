@@ -739,6 +739,11 @@ archives:
     summary: "G44-W3 complete: derive_predicates read-only MCP tool (T363) registered in both ledger tool factories (stdio/HTTP/embedded), delegating to the shared derivePredicates(store) (Q202 user extension) — plus advance.md §Bootstrap/§Detection-predicates rewired to call mcp__ledger__derive_predicates as the authoritative predicate source with an anti-drift note that the same logic backs cq advance-gate (T368, round-2 doc-shape fix). opus approve; check 1621/0."
     title: "G44-W3: derive_predicates MCP tool + advance.md detection rewire"
     status: done
+  - id: M154
+    path: ./archive/milestones/M154.md
+    summary: "G44-W4 complete: the thin Claude-Code Stop-hook wrapper claudeStopGateHook (T364, translates the neutral cq advance-gate verdict → {decision:block}), REGISTERED in nix/hm/claude.nix settings.hooks (T369, Q198 install in-scope), the run-active-marker + external-signal lifecycle wired into advance.md §Bootstrap/§The one write/§Stop-condition (T370 — marker path byte-identical to advanceGate.ts), and a hermetic wrapper integration test (T372 — extracts the live body, mutation-proven teeth). All opus-reviewed; check 1625/0."
+    title: "G44-W4: Stop-hook wrapper + nix registration + marker/escape lifecycle wiring"
+    status: done
 ---
 
 # milestones
@@ -776,13 +781,6 @@ archives:
 - createdAt: 2026-06-10T15:01:37.384Z
 - updatedAt: 2026-06-10T15:01:37.384Z
 - title: "Plan: cq:advance turn-pause Stop-hook gate (D50)"
-
-### M154 — open
-
-- createdAt: 2026-06-10T15:32:01.565Z
-- updatedAt: 2026-06-10T15:32:01.565Z
-- title: "G44-W4: Stop-hook wrapper + nix registration + marker/escape lifecycle wiring"
-- dependsOn: ["M152"]
 
 ### M155 — open
 

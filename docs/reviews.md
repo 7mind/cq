@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 446
+  item: 447
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -679,6 +679,11 @@ archives:
     summary: "G44-W3 complete: derive_predicates read-only MCP tool (T363) registered in both ledger tool factories (stdio/HTTP/embedded), delegating to the shared derivePredicates(store) (Q202 user extension) — plus advance.md §Bootstrap/§Detection-predicates rewired to call mcp__ledger__derive_predicates as the authoritative predicate source with an anti-drift note that the same logic backs cq advance-gate (T368, round-2 doc-shape fix). opus approve; check 1621/0."
     title: "G44-W3: derive_predicates MCP tool + advance.md detection rewire"
     status: done
+  - id: M154
+    path: ./archive/reviews/M154.md
+    summary: "G44-W4 complete: the thin Claude-Code Stop-hook wrapper claudeStopGateHook (T364, translates the neutral cq advance-gate verdict → {decision:block}), REGISTERED in nix/hm/claude.nix settings.hooks (T369, Q198 install in-scope), the run-active-marker + external-signal lifecycle wired into advance.md §Bootstrap/§The one write/§Stop-condition (T370 — marker path byte-identical to advanceGate.ts), and a hermetic wrapper integration test (T372 — extracts the live body, mutation-proven teeth). All opus-reviewed; check 1625/0."
+    title: "G44-W4: Stop-hook wrapper + nix registration + marker/escape lifecycle wiring"
+    status: done
 ---
 
 # reviews
@@ -772,23 +777,3 @@ archives:
 - summary: "G44 plan review (multi-reviewer, configured panel) — UNANIMOUS go-ahead (reconciled strictest-wins over 4 surviving reviewers [opus]+[codex]+[grok]+[minimax], 0 abstentions, 0 criticism / 0 new_questions / 0 defects). All four confirmed the 5-milestone/12-task DAG (M151-M155, T361-T372) is acyclic + correctly sequenced (engine→CLI+MCP-tool→wrapper+nix+wiring→hardening), honors ALL 7 locked decisions Q198-Q204, maps every component+decision to ≥1 task (marker drop/unlink=T370; derive_predicates built T363 + consumed T368; wrapper authored T364 + registered T369 + integration-tested T372; full Q204 bar across T365-T367/T371-T372), with verifiable acceptance, grounded against the real seams (createLedgerStore, sync LedgerStore reads, registerLedgerStdioTools, claudeSessionStartHook/settings.hooks). [minimax] noted two non-blocking implementer-resolvable nits (T362 exact reason text; T368/T370 both touch advance.md §Bootstrap) — not gaps. Plan LOCKED. Reviewer logs: docs/logs/20260610-154315-a71ad469deb41bf5f.md (opus) + 20260610-154315-pi-{codex,grok,minimax}-reviewer.md."
 - ledgerRefs: ["goals:G44"]
 - sessionLogs: ["docs/logs/20260610-154315-a71ad469deb41bf5f.md","docs/logs/20260610-154315-pi-codex-reviewer.md","docs/logs/20260610-154315-pi-grok-reviewer.md","docs/logs/20260610-154315-pi-minimax-reviewer.md"]
-
-## M154
-
-### R445 — go-ahead
-
-- createdAt: 2026-06-10T17:02:32.758Z
-- updatedAt: 2026-06-10T17:02:32.758Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T364 implement-review — approve (opus, 0 findings). Thin Stop-hook wrapper (claudeStopGateHook in claude.nix) correct on all branches (no-session→allow; gate-exit≠0+verdict→{decision:block} jq-escaped; gate-exit 0→allow); exit-code capture correct; cq on PATH via ledgerTools; module evals; not wired into settings.hooks (T369 scope). Crash fails-open (safe default). Merged 0d6c7df."
-- ledgerRefs: ["tasks:T364","goals:G44"]
-
-### R446 — go-ahead
-
-- createdAt: 2026-06-10T17:15:51.497Z
-- updatedAt: 2026-06-10T17:15:51.497Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T369 + T370 implement-review — both approve (opus, 0 findings). T369: settings.hooks.Stop registered in claude.nix referencing claudeStopGateHook, mirrors SessionStart, module evals. T370: advance.md marker drop(§Bootstrap)/unlink(§The one write, coupled to terminal handoff)/external-signal+hook cross-ref(§Stop-condition), D41 prose retained; CRITICAL — marker path == advanceGate.ts BYTE-FOR-BYTE + external-signal format matches the gate parser; gen.ts zero-diff regen; check 1622/0. Merged 7b04682 + 2011ba0."
-- ledgerRefs: ["tasks:T369","tasks:T370","goals:G44"]
