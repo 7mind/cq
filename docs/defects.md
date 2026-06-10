@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 54
+  item: 55
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -232,6 +232,18 @@ archives:
 - severity: low
 - description: "Surfaced by T354's review. The shared LedgerStore abstract suite (packages/ledger/test/store-abstract.ts, runStoreAbstractSuite) runs against GitObjectLedgerBackend, where EACH store op shells out to git (hash-object/ls-tree/write-tree/commit-tree/update-ref). Under the full `bun run check` parallel load, individual abstract-suite tests bound to the git backend can exceed bun's 5000ms DEFAULT per-test timeout — observed once on 'T143 — snapshot ... groups active items by ledger × status' (gitObjectLedgerBackend.test.ts), which passes deterministically in isolation (43/43); subsequent full-check runs were green (intermittent). EFFECT: `bun run check` can intermittently redden on a timeout (not a logic failure), undermining the green-check gate's determinism. Only the git-object binding is affected (Fs/InMemory finish in ms). FIX (small, separate task): give the git-object-bound abstract suite a git-aware per-test timeout (the suite already defines GIT_AWARE_TIMEOUT_MS=30_000 for its concurrency tests — generalise it: thread an optional timeoutMs through AbstractStoreFactory and apply it to the heavier tests, OR raise the global bun test timeout). Mirrors T356's concurrency-test timeout precedent."
 - ledgerRefs: ["goals:G43","tasks:T354","tasks:T356"]
+
+### D55 — resolved
+
+- createdAt: 2026-06-10T14:47:33.170Z
+- updatedAt: 2026-06-10T14:47:33.170Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- headline: "Nix-built products crash at startup: 'Cannot find module @cq/config' from @cq/ledger (T357 regression; user-reported)"
+- severity: high
+- rootCause: "User-reported (nix run .#ledger-web). T357 made @cq/ledger's createLedgerStore() call loadConfig() at EVERY store startup, newly importing @cq/config from inside @cq/ledger/src. The Nix products bundle @cq/ledger as TS SOURCE and resolve workspace @cq/* deps via per-package tsconfig `paths` (the node_modules symlinks + package.json `exports` all point at `dist/`, which the bundle never builds). packages/ledger/tsconfig.json had a `references:[{path:../cq-config}]` but NO `paths` entry for @cq/config — so from @cq/ledger/src bun fell through to node_modules → @cq/config exports → ./dist/src/index.js (ABSENT in the bundle) → 'Cannot find module @cq/config'. EMPIRICALLY confirmed via Bun.resolveSync: from packages/ledger-web/src @cq/config resolves (ledger-web/tsconfig has the paths mapping) but from packages/ledger/src/store it fails (ledger/tsconfig lacks it). LATENT pre-T357 (config was lazy — @cq/config only imported on a get_config tool call, ~never in embedded TUI/web); T357 made it eager. `bun run check` MASKED it because the dev workspace builds cq-config/dist (so node_modules+exports resolves in dev). GAP IN VERIFICATION: I ran `bun run check` + `nix build .#node-modules` but did NOT rebuild/run .#ledger-web after T357."
+- fix: "(1) Added `paths:{\"@cq/config\":[\"../cq-config/src/index.ts\"]}` to packages/ledger/tsconfig.json (mirrors ledger-web/-tui/-mcp tsconfigs) — the PRIMARY fix; makes bun resolve @cq/config to source, no dist needed. (2) flake.nix: new cqConfigForLedger shell fragment stages @cq/config's own runtime deps (ajv + smol-toml) into packages/cq-config/node_modules and links @cq/config under @cq/ledger's node_modules; wired into embedServerClosure (tui+web), ledgerMcp, and cqCli. VERIFIED: nix-built ledger-web starts clean on both fs (default) AND git-object backends (orphan ref refs/heads/cq-ledger created at startup, host working tree untouched); cq init + ledger-mcp stdio start clean; all four products build; bun run check green 1597/0. Commit fixes the regression end-to-end. FOLLOW-UP HARDENING (not done here): a CI/check step that actually BUILDS + smoke-runs each nix product would have caught this (bun run check alone can't, since dev has dist/)."
+- ledgerRefs: ["goals:G43","tasks:T357"]
 
 ## M135
 
