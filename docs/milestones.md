@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 155
+  item: 156
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -786,3 +786,9 @@ archives:
 - createdAt: 2026-06-10T15:01:37.384Z
 - updatedAt: 2026-06-10T15:01:37.384Z
 - title: "Plan: cq:advance turn-pause Stop-hook gate (D50)"
+
+### M156 — open
+
+- createdAt: 2026-06-10T18:15:31.706Z
+- updatedAt: 2026-06-10T18:15:31.706Z
+- title: "Plan: reusable ledger-MCP library + tool-name namespacing"

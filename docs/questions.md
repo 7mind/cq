@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 204
+  item: 211
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -537,3 +537,89 @@ archives:
 - recommendation: Option 1 — unit-test the CLI verdict logic via the dual-tests pattern (synthetic ledger fixtures covering predicate-TRUE-and-unblocked => block, all-FALSE => allow, external-signal-present => allow, marker-absent => allow), add an integration test of the hook script's stdout/exit contract, document a manual repro for the irreducible behavioral edge, and add a grep-invariant pinning the new advance.md marker/external-signal steps exactly as D39 guarded its prose. Explicitly accept (per D50's LIMITS) that the end-to-end 'model stops turn-pausing' property is covered by the forced-continuation mechanism, not by a deterministic test. Confirm this is the acceptance bar.
 - ledgerRefs: ["goals:G44"]
 - answer: "Bar = the above PLUS a recorded live /cq:advance session demonstrating the hook firing end-to-end (strongest evidence, but depends on a live harness run that cannot be a CI gate)"
+
+## M156
+
+### Q205 — open
+
+- createdAt: 2026-06-10T18:17:27.857Z
+- updatedAt: 2026-06-10T18:17:27.857Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "Namespacing mechanism, separator, and DEFAULT for cq products: should namespacing be a tool-name PREFIX (e.g. `myproj_create_item`), and critically — does cq keep its CURRENT UNPREFIXED names (`create_item`, `snapshot`, `fetch_ledger`, …) by default so the frontends and `mcp__ledger__<tool>` command references DON'T break, with the prefix being opt-in only for 3rd-party consumers?"
+- context: "LEDGER_TOOL_NAMES (ledgerTools.ts:739-766) is a hardcoded 26-name array; the same literals are registered in BOTH factories (createLedgerMcpTools tool() + registerLedgerStdioTools server.registerTool). MCP tool names must match `^[a-zA-Z0-9_-]+$` (safeIdSchema regex in both factories uses exactly this charset for ids). The frontends + cq command prompts address tools as `mcp__ledger__create_item` etc., so any change to cq's own names is breaking. The goal description already hypothesizes cq's default prefix stays empty."
+- suggestions: ["PREFIX with `_` separator (e.g. `myproj_create_item`); cq default prefix = empty (names unchanged); prefix validated as `^[a-zA-Z0-9]+$` so prefix+`_`+name stays within `^[a-zA-Z0-9_-]+$`","PREFIX with `_`, but allow any MCP-safe prefix matching `^[a-zA-Z0-9-]+$`","A more general namespacing scheme (e.g. configurable transform fn) rather than a fixed prefix+separator"]
+- recommendation: "Tool-name PREFIX with `_` separator; cq's default prefix is EMPTY so all current names + frontend/command references are byte-identical; prefix constrained to `^[a-zA-Z0-9]+$` (letters/digits) so `<prefix>_<name>` always satisfies the MCP-safe `^[a-zA-Z0-9_-]+$` charset. Opt-in only for 3rd-party consumers."
+- ledgerRefs: ["goals:G45"]
+
+### Q206 — open
+
+- createdAt: 2026-06-10T18:17:35.843Z
+- updatedAt: 2026-06-10T18:17:35.843Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "Where is the prefix configured? The 3rd-party path is programmatic (they import @cq/ledger and call the factory), but should the prefix ALSO be reachable via a cq.toml `[ledger]` key and/or a `ledger-mcp` CLI flag (e.g. `--tool-prefix`)? Or is the programmatic parameter the only surface, with cq itself never setting a prefix?"
+- context: "createLedgerMcpTools / registerLedgerStdioTools / buildServer take no prefix today. The 3rd-party reusable path is programmatic: a consumer calls registerLedgerStdioTools(server, store, …) (exported from @cq/ledger, index.ts:84) or builds their own server. cq's own ledger-mcp main.ts parses --cwd/--http and reads cq.toml `[ledger]` (backend/branch) via createLedgerStore. If cq's default prefix is empty, cq's server may need NO new flag at all."
+- suggestions: ["Programmatic parameter ONLY (thread `toolPrefix` through the two factories + buildServer); no cq.toml key, no CLI flag — cq never sets a prefix","Programmatic parameter PLUS a `ledger-mcp --tool-prefix <p>` CLI flag for standalone reuse without writing code","Programmatic + CLI flag + cq.toml `[ledger] toolPrefix` key (all three surfaces)"]
+- recommendation: Programmatic parameter as the primary surface (threaded through both factories + buildServer), PLUS a `ledger-mcp --tool-prefix <p>` CLI flag so a 3rd party can stand up a prefixed standalone server without writing TS. No cq.toml key needed (cq's default stays empty / unprefixed).
+- ledgerRefs: ["goals:G45"]
+
+### Q207 — open
+
+- createdAt: 2026-06-10T18:17:44.833Z
+- updatedAt: 2026-06-10T18:17:44.833Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "Scope of 'reusable component': is the deliverable JUST the prefix knob threaded through the tool factories + drift-guard + instructions? Or ALSO (a) a documented PUBLIC builder API (e.g. `createLedgerMcpServer({ store, toolPrefix, … })`) as a first-class @cq/ledger / @cq/ledger-mcp export, (b) an explicit packaging/exports decision (what becomes public vs internal), and (c) a short example/doc showing a 3rd party building their own ledger MCP?"
+- context: "@cq/ledger already exports the building blocks (createLedgerMcpTools, registerLedgerStdioTools, LEDGER_TOOL_NAMES, createLedgerStore — index.ts:62,83,84). But the cohesive 'build-your-own server' wrapper is buildServer(), which lives in @cq/ledger-mcp/main.ts and is NOT exported as a public API; a 3rd party would today have to hand-assemble McpServer + registerLedgerStdioTools + createLedgerStore themselves. The user called this a MINOR feature."
+- suggestions: ["Prefix knob ONLY — thread toolPrefix through the existing exported factories; no new wrapper, no doc (3rd parties assemble from existing exports)","Prefix knob + a thin documented public builder (`createLedgerMcpServer({ store, toolPrefix })`) exported from @cq/ledger-mcp + a short README example","Prefix knob + public builder + a worked example package/dir + packaging/exports review"]
+- recommendation: "Prefix knob PLUS a thin documented public builder (extract/export the existing buildServer as `createLedgerMcpServer({ store, displayName, toolPrefix })` from @cq/ledger-mcp) PLUS a short README example. This is the minimal surface that makes it genuinely reusable without an API overhaul — matches 'MINOR'."
+- ledgerRefs: ["goals:G45"]
+
+### Q208 — open
+
+- createdAt: 2026-06-10T18:17:55.199Z
+- updatedAt: 2026-06-10T18:17:55.199Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "Prefix-propagation completeness: must the prefix apply consistently to ALL tool names across (1) the Claude tool() factory, (2) the raw registerTool factory, (3) the LEDGER_TOOL_NAMES-derived drift-guard test, and (4) the server `instructions` overview text (which names tools like snapshot/derive_predicates/fetch_ledger/create_item)? And do you confirm the prefix is PURELY a name transformation — handler bodies, Zod input schemas, and the `mcp__ledger__` MCP-server-namespace component are all unchanged?"
+- context: "There are 4 places tool NAMES appear: createLedgerMcpTools (ledgerTools.ts), registerLedgerStdioTools (stdioLedgerTools.ts), the LEDGER_TOOL_NAMES array (ledgerTools.ts:739), and SERVER_INSTRUCTIONS (main.ts:229-277, e.g. lines naming `create_item`, `snapshot()`, `derive_predicates()`, `fetch_ledger`). A drift-guard test asserts the registered tool set equals LEDGER_TOOL_NAMES. The `mcp__<server>__<tool>` prefix is applied by the host/SDK from the SERVER name, which is a separate axis from the per-tool prefix."
+- suggestions: ["Prefix applies to all 4 surfaces; instructions text is regenerated to use prefixed names when a prefix is set; handlers/schemas unchanged; `mcp__ledger__` server component untouched","Prefix applies to the registered tool names + drift-guard only; leave instructions naming the BARE names (documented as logical names)","Prefix applies to tools + drift-guard + instructions, AND a helper exposes the resolved prefixed name list for tests/consumers"]
+- recommendation: "Apply the prefix to all 4 surfaces (both factories, the drift-guard, and the instructions overview, regenerated to show prefixed names when set), as a PURE name transformation: handler bodies, Zod schemas, and the `mcp__<server>__` server-namespace component are untouched. Derive LEDGER_TOOL_NAMES-prefixed once and reuse so the drift-guard stays the single source of truth."
+- ledgerRefs: ["goals:G45"]
+
+### Q209 — open
+
+- createdAt: 2026-06-10T18:18:07.193Z
+- updatedAt: 2026-06-10T18:18:07.193Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "Frontend/client impact and reverse-direction discovery: (a) Confirm that because cq's default prefix stays empty, cq's own frontends (ledger-tui / ledger-web) and command prompts that address `mcp__ledger__<tool>` are UNAFFECTED. (b) Is exposing the resolved (possibly-prefixed) tool-name list to a 3rd-party's OWN client in scope, or out of scope because a standard MCP client simply lists tools at runtime (tools/list) and needs no compile-time name table?"
+- context: cq's frontends are pure MCP clients; they call tools by the SERVER-namespaced name `mcp__ledger__<tool>`. A standard MCP client discovers tool names dynamically via the protocol's tools/list, so it does not hardcode names. Only the drift-guard TEST and cq's own prompts hardcode bare names — and those use cq's empty prefix. A 3rd party choosing a prefix would see their prefixed names in tools/list automatically.
+- suggestions: ["Confirm frontends unaffected (empty cq prefix); reverse-direction name export OUT of scope — consumers rely on MCP tools/list","Confirm frontends unaffected; ALSO export a small helper (e.g. `prefixedToolNames(prefix)`) for consumers who want a compile-time table or to assert non-collision in tests","Frontends unaffected; provide a typed name map AND document the tools/list discovery path"]
+- recommendation: "Confirm cq frontends + command prompts are unaffected (cq prefix stays empty). Reverse-direction client name export is OUT of scope for runtime (consumers use MCP tools/list), but export a tiny pure helper `prefixedToolNames(prefix): string[]` (reused by the drift-guard) so a consumer CAN assert non-collision in their own tests if desired."
+- ledgerRefs: ["goals:G45"]
+
+### Q210 — open
+
+- createdAt: 2026-06-10T18:18:16.136Z
+- updatedAt: 2026-06-10T18:18:16.136Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "Storage-customization confirmation: the goal states storage (directory/branch) is already solved and out of scope. Confirm NO storage work is in scope — i.e. the existing createLedgerStore(cwd) + `[ledger]` backend/branch params are deemed sufficient for a 3rd party to point a reusable ledger MCP at their own storage, and this goal touches ONLY tool-name namespacing + the minimal public-builder surface?"
+- context: "@cq/ledger exports createLedgerStore / FsLedgerStore / GitObjectLedgerBackend / InMemoryLedgerStore (index.ts), and ledger-mcp's createEmbeddedStore wraps createLedgerStore(cwd) with `[ledger]` backend selection. The goal description explicitly lists storage as 'already solved (out of scope)'. This question just pins that no incidental storage-API work creeps into the plan."
+- suggestions: ["Confirm: zero storage work; reuse existing createLedgerStore/backend params as-is","Confirm storage out of scope, but the public-builder example should DEMONSTRATE wiring a custom store (doc-only, no new storage code)","Storage needs a small touch-up (specify what) — not purely out of scope"]
+- recommendation: "Confirm storage is fully out of scope: no new storage code. The 3rd-party builder example may merely DEMONSTRATE passing a store the consumer constructed (FsLedgerStore / their own LedgerStore impl), but that is documentation, not new storage work."
+- ledgerRefs: ["goals:G45"]
+
+### Q211 — open
+
+- createdAt: 2026-06-10T18:18:25.403Z
+- updatedAt: 2026-06-10T18:18:25.403Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "Acceptance bar: what concretely must hold for this goal to be 'done'? Proposed: (1) a test constructs TWO ledger MCP servers with DIFFERENT prefixes in ONE process and asserts ZERO tool-name collision and that both servers' tools work; (2) cq's own server is unchanged — default unprefixed, and the existing LEDGER_TOOL_NAMES drift-guard stays green; (3) if a public builder is in scope, a doc/example shows a 3rd party building their own prefixed ledger MCP; (4) `bun run check` (test + typecheck + lint) passes. Confirm / amend."
+- context: Acceptance must be operational. The existing drift-guard test asserts the registered tool set equals LEDGER_TOOL_NAMES; the new prefix behaviour needs its own collision/both-work test. The non-collision-in-one-process scenario is the exact motivating use case in the goal description (host runs cq ledger MCP + a 3rd-party ledger MCP together).
+- suggestions: ["All four criteria as stated (two-prefixed-servers collision test + cq-unchanged drift-guard + builder doc/example + bun run check green)","Criteria 1+2+4 only (defer the doc/example if the public builder is descoped per Q207)","Add a 5th: an explicit test asserting the prefixed `instructions` text names the prefixed tools when a prefix is set"]
+- recommendation: Adopt criteria 1–4 as written; the two-prefixed-servers-in-one-process test (zero collision + both functional) is the core acceptance gate, the unchanged cq drift-guard proves no regression, and `bun run check` is the standing repo gate. Include the doc/example only if Q207 keeps the public builder in scope; add the instructions-naming assertion (suggestion 3) since the prefix touches the instructions text per Q208.
+- ledgerRefs: ["goals:G45"]

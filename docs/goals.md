@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 44
+  item: 45
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -327,3 +327,29 @@ archives:
 - sessionLogs: ["docs/logs/20260610-150737-a47043f0c34303e03.md","docs/logs/20260610-153429-a2540a8630b7ab96a.md","docs/logs/20260610-153429-pi-grok-planner.md","docs/logs/20260610-153429-pi-minimax-planner.md"]
 - milestones: ["M151","M152","M153","M154","M155"]
 - grounding: "Synthesized multi-planner plan (opus base + grok concurrence; minimax abstained — empty/timeout). 5 work milestones M151-M155, 12 tasks T361-T372, honoring all 7 answered clarifying decisions (Q198 nix/hm/claude.nix Stop-hook registration in-scope; Q199 neutral-verdict CLI + thin Claude-Code wrapper; Q200 session-keyed /tmp marker; Q201 external-signal escape; Q202 SHARED dual-tested derivePredicates in @cq/ledger + NEW derive_predicates MCP tool + advance.md detection rewire; Q203 advance.md-only scope; Q204 dual-adapter+verdict+wrapper-integration tests + grep-invariant + manual repro + live-session evidence). W1 (derivePredicates engine + tests) → W2 (cq advance-gate CLI + tests) + W3 (derive_predicates MCP tool + advance.md detection rewire), both dep W1 → W4 (Stop-hook wrapper + claude.nix registration + advance.md marker/escape wiring + integration test) dep W2 → W5 (grep-invariant + manual repro + live evidence) dep W3,W4. Key grounding (opus read): Claude Code settings.hooks live in nix/hm/claude.nix beside the existing SessionStart hook; createLedgerStore(cwd) is the in-process fs-store seam the CLI reuses; registerLedgerStdioTools is the MCP-tool registration site; assertHandoffInvariants (store/core.ts) is the D39 shared-pure-function precedent derivePredicates mirrors."
+
+## M156
+
+### G45 — clarifying
+
+- createdAt: 2026-06-10T18:15:50.401Z
+- updatedAt: 2026-06-10T18:19:16.267Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- title: Reusable ledger-MCP library + tool-name namespacing (prefix)
+- description: |
+    Turn the ledger MCP into a REUSABLE COMPONENT so other projects can use the @cq/ledger library to build their OWN ledger MCP servers (the ledger MCPs are useful on their own in different agentic workflows, not just for cq). The library should be packaged/exposed so a 3rd-party consumer can construct a ledger MCP over their own storage.
+    
+    ## The one identified problem to solve: tool-name namespacing
+    When a host runs BOTH the cq ledger MCP AND a 3rd-party ledger MCP (or otherwise composes multiple ledger MCPs), the tool names would COLLIDE — e.g. both expose `create_item`, `fetch_ledger`, `snapshot`, `derive_predicates`, etc. We need to support some sort of NAMESPACING (a prefix, perhaps) for tool names so there is NO name conflict between cq ledgers and 3rd-party ledgers. A consumer should be able to give their ledger MCP a distinct tool-name prefix (e.g. `myproj_create_item` vs `create_item`).
+    
+    ## Already solved (out of scope for this goal)
+    - STORAGE customization is already supported by passing the directory name / branch name (the fs root + the git-object [ledger] branch). No new storage work needed.
+    
+    ## Likely surface to consider (for the planner/clarifying phase)
+    - The tool-registration path is centralized: registerLedgerStdioTools / the two tool factories (packages/ledger/src/mcp/ledgerTools.ts Claude tool() factory + stdioLedgerTools.ts raw registerTool) + LEDGER_TOOL_NAMES (the drift-guard) + the server `instructions`. Namespacing must thread a prefix through these consistently so the tool NAMES change but the cq products keep their current (unprefixed, or default-prefixed) names.
+    - The frontends (ledger-tui/-web) + the cq commands call tools by name (mcp__ledger__<tool>); a prefix change must not break the cq products' own clients (so cq's default prefix likely stays empty/unchanged, and the namespacing is an opt-in for 3rd-party consumers).
+    - 'Reusable component' may mean: a documented public construction API (build-your-own-ledger-MCP), and possibly a packaging/export decision (what @cq/ledger exposes vs an internal detail) — the clarifying phase should pin scope (just the prefix knob, or also a documented public builder + examples).
+    
+    This is a MINOR feature per the user. Keep scope tight: the core deliverable is the tool-name namespacing/prefix mechanism + whatever minimal public-API/packaging surface makes the ledger MCP genuinely reusable by a 3rd party. Grounding: packages/ledger/src/mcp/{ledgerTools.ts, stdioLedgerTools.ts}, packages/ledger-mcp/src/main.ts (registerLedgerStdioTools + buildServer + the tool-count drift-guard), the LEDGER_TOOL_NAMES registry, and the existing mcp tool tests.
+- sessionLogs: ["docs/logs/20260610-181859-a32e582a6958bd074.md"]

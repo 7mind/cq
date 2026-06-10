@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 47
+  item: 48
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -365,3 +365,17 @@ archives:
 - ledgerRefs: ["goals:G44","defects:D50"]
 - blockingQuestions: ["Q198","Q199","Q200","Q201","Q202","Q203","Q204"]
 - sessionLogs: ["docs/logs/20260610-150737-a47043f0c34303e03.md"]
+
+## M156
+
+### HO48 — answers-required
+
+- createdAt: 2026-06-10T18:19:23.343Z
+- updatedAt: 2026-06-10T18:19:23.343Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "/cq:plan bootstrapped G45 — 'Reusable ledger-MCP library + tool-name namespacing (prefix)' (make @cq/ledger's MCP reusable by 3rd parties, with a tool-name prefix to avoid collisions between cq + 3rd-party ledgers; storage customization already done via dir/branch). Created coordination milestone M156 + goal G45 (clarifying). The plan-advance planner grounded in the tool-registration surface (ledgerTools.ts/stdioLedgerTools.ts/LEDGER_TOOL_NAMES/SERVER_INSTRUCTIONS) and filed 7 clarifying questions Q205-Q211 covering: the prefix mechanism + cq-default-unprefixed decision (Q205), where it's configured (Q206), scope of 'reusable component' incl. a public builder API (Q207), prefix-propagation completeness across both factories + drift-guard + instructions (Q208), frontend/client impact (Q209), storage-out-of-scope confirmation (Q210), and the acceptance bar (Q211). G45 is in clarifying/awaiting-answers; the planner found LEDGER_TOOL_NAMES is duplicated across both factories + the drift-guard + the instructions prose (4 sites a prefix must touch), and the cohesive buildServer wrapper is NOT yet a public @cq/ledger export — the main scope question."
+- flow: plan
+- ledgerRefs: ["goals:G45"]
+- blockingQuestions: ["Q205","Q206","Q207","Q208","Q209","Q210","Q211"]
+- sessionLogs: ["docs/logs/20260610-181859-a32e582a6958bd074.md"]
