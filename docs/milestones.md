@@ -689,6 +689,11 @@ archives:
     summary: "G41 item 5 COMPLETE (Ideas ledger + idea-id command args): T335 ideas ledger schema in CANONICAL_LEDGERS (idPrefix I; title+description; open|planned|discarded|postponed, postponed→open); T339 'Ideas' sidebar group above Goals (flat list, generic updateItem); T340 /cq:plan accepts idea-ids (one goal per idea + named consume-an-idea sub-procedure); T342 /cq:plan:follow-up appends idea scope (DRY-references the sub-procedure). Defect D47 (filed by the T335 review) investigated→root-caused (H34)→fixed via G42/T346 and RESOLVED. Reviews R402/R406/R407/R409 go-ahead. bun run check green. Merged 9feb683/a39fd94/6aedb28/02ceded."
     title: G41-5 Ideas ledger + idea-id command args
     status: done
+  - id: M144
+    path: ./archive/milestones/M144.md
+    summary: "G43-W1 complete: extracted the LedgerPersistence byte-I/O seam (T347), the AbstractLedgerStore base holding all persistence-agnostic logic over that seam (T350), and FsLedgerStore reimplemented as base + FsPersistence (T351, co-delivered in b7c64ce). Behaviour-preserving — full ledger suite green unchanged (1488/0/1skip); both merges adversarially reviewed (R420, R421). Seam is ready for the GitPersistence impl in M145."
+    title: "G43-W1: extract LedgerStore persistence seam + AbstractLedgerStore base (Q190)"
+    status: done
 ---
 
 # milestones
@@ -726,13 +731,6 @@ archives:
 - createdAt: 2026-06-09T23:29:39.687Z
 - updatedAt: 2026-06-09T23:29:39.687Z
 - title: "Plan: ledger-on-orphan-git-branch storage backend (GitObjectLedgerBackend)"
-
-### M144 — open
-
-- createdAt: 2026-06-10T09:01:05.573Z
-- updatedAt: 2026-06-10T09:01:05.573Z
-- title: "G43-W1: extract LedgerStore persistence seam + AbstractLedgerStore base (Q190)"
-- description: "Foundation refactor: extract a NARROW persistence seam + an AbstractLedgerStore base holding the shared map/parse/FTS/AsyncMutex/lockfile/schema-divergence logic; re-express FsLedgerStore as base+FsPersistence, proven behaviour-preserving against the existing suite."
 
 ### M145 — open
 

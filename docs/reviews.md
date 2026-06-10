@@ -629,6 +629,11 @@ archives:
     summary: "G41 item 5 COMPLETE (Ideas ledger + idea-id command args): T335 ideas ledger schema in CANONICAL_LEDGERS (idPrefix I; title+description; open|planned|discarded|postponed, postponed→open); T339 'Ideas' sidebar group above Goals (flat list, generic updateItem); T340 /cq:plan accepts idea-ids (one goal per idea + named consume-an-idea sub-procedure); T342 /cq:plan:follow-up appends idea scope (DRY-references the sub-procedure). Defect D47 (filed by the T335 review) investigated→root-caused (H34)→fixed via G42/T346 and RESOLVED. Reviews R402/R406/R407/R409 go-ahead. bun run check green. Merged 9feb683/a39fd94/6aedb28/02ceded."
     title: G41-5 Ideas ledger + idea-id command args
     status: done
+  - id: M144
+    path: ./archive/reviews/M144.md
+    summary: "G43-W1 complete: extracted the LedgerPersistence byte-I/O seam (T347), the AbstractLedgerStore base holding all persistence-agnostic logic over that seam (T350), and FsLedgerStore reimplemented as base + FsPersistence (T351, co-delivered in b7c64ce). Behaviour-preserving — full ledger suite green unchanged (1488/0/1skip); both merges adversarially reviewed (R420, R421). Seam is ready for the GitPersistence impl in M145."
+    title: "G43-W1: extract LedgerStore persistence seam + AbstractLedgerStore base (Q190)"
+    status: done
 ---
 
 # reviews
@@ -736,24 +741,3 @@ archives:
 - criticism: []
 - ledgerRefs: ["goals:G43"]
 - sessionLogs: ["docs/logs/20260610-092800-a320db9dedf477d3f.md","docs/logs/20260610-092800-pi-codex.md","docs/logs/20260610-092800-pi-minimax.md"]
-
-## M144
-
-### R420 — go-ahead
-
-- createdAt: 2026-06-10T09:39:04.489Z
-- updatedAt: 2026-06-10T09:39:04.489Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: approve (T347) — LedgerPersistence seam interface complete (every distinct fs.*/atomicWrite byte-I/O op in FsLedgerStore.ts maps to one method; excluded fs calls documented out-of-scope), narrow (string/Promise signatures, no fs-type/path leakage), accurately call-site-referenced; readArchiveDir/currentSourceToken documented honestly as git-backend parity (not fabricated); scope respected (FsLedgerStore + LedgerStore.ts unchanged); tsc+eslint reproduced green, bun run check 1489/0. Native opus implement-reviewer.
-- ledgerRefs: ["tasks:T347","goals:G43"]
-- sessionLogs: ["docs/logs/20260610-093502-aa3adc9ec2a34495f.md"]
-
-### R421 — go-ahead
-
-- createdAt: 2026-06-10T09:59:03.319Z
-- updatedAt: 2026-06-10T09:59:03.319Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T350 implement-review — approve. Opus reviewer round 1, 0 criticism / 0 questions / 0 defects. Behaviour-preserving AbstractLedgerStore base extraction confirmed: check green 1489/0 (acceptance target), NO *.test.ts touched, base has zero direct fs/atomicWrite (all byte-I/O via the LedgerPersistence seam), divergence-backup + archive lock-ordering + FTS lifecycle + docs-root escape check byte-identical to the original FsLedgerStore. Merged as b7c64ce."
-- ledgerRefs: ["tasks:T350","goals:G43"]

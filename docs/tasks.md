@@ -484,55 +484,14 @@ archives:
     summary: "G41 item 5 COMPLETE (Ideas ledger + idea-id command args): T335 ideas ledger schema in CANONICAL_LEDGERS (idPrefix I; title+description; open|planned|discarded|postponed, postponed→open); T339 'Ideas' sidebar group above Goals (flat list, generic updateItem); T340 /cq:plan accepts idea-ids (one goal per idea + named consume-an-idea sub-procedure); T342 /cq:plan:follow-up appends idea scope (DRY-references the sub-procedure). Defect D47 (filed by the T335 review) investigated→root-caused (H34)→fixed via G42/T346 and RESOLVED. Reviews R402/R406/R407/R409 go-ahead. bun run check green. Merged 9feb683/a39fd94/6aedb28/02ceded."
     title: G41-5 Ideas ledger + idea-id command args
     status: done
+  - id: M144
+    path: ./archive/tasks/M144.md
+    summary: "G43-W1 complete: extracted the LedgerPersistence byte-I/O seam (T347), the AbstractLedgerStore base holding all persistence-agnostic logic over that seam (T350), and FsLedgerStore reimplemented as base + FsPersistence (T351, co-delivered in b7c64ce). Behaviour-preserving — full ledger suite green unchanged (1488/0/1skip); both merges adversarially reviewed (R420, R421). Seam is ready for the GitPersistence impl in M145."
+    title: "G43-W1: extract LedgerStore persistence seam + AbstractLedgerStore base (Q190)"
+    status: done
 ---
 
 # tasks
-
-## M144
-
-### T347 — done
-
-- createdAt: 2026-06-10T09:02:22.982Z
-- updatedAt: 2026-06-10T09:39:14.450Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Define the abstract LedgerPersistence seam interface
-- description: "In packages/ledger/src/store/, introduce a NARROW persistence-seam interface (e.g. LedgerPersistence) capturing ONLY the byte-level I/O FsLedgerStore performs today: (a) readLedgerSource(name)→string|null + readRegistrySource()→string|null (init); (b) writeLedgerSource(name,text) + writeRegistrySource(text); (c) archive I/O: readArchive(path)→string, writeArchive(path,text), removeArchive(path), readArchiveDir(name)→string[]; (d) the schema-divergence BACKUP action (backup current canonical state before reinit) as a seam method returning an operator-facing locator (path or tag); (e) currentSourceToken() (mtime/ref-sha) for coherence-change detection. Per Q190 the seam is the ONLY thing differing between backends; the in-memory map, parse/serialize, FTS, AsyncMutex, lockfile, schema-divergence DETECTION (schemasEqual) stay in the shared base. Derive the exact method set by auditing every fs.*/atomicWrite call in FsLedgerStore.ts (init, writeLedgerFile, writeRegistry, fetchArchive, unarchiveItem, backfillLegacyArchivePointers, performArchive, backupAndReinit, reset). Do NOT change the public LedgerStore.ts read/write surface — this is an internal collaborator."
-- acceptance: tsc -b passes; the interface enumerates every distinct byte-I/O operation FsLedgerStore performs, each with a doc comment naming its FsLedgerStore call-site; `bun run lint` clean. No behaviour change yet (no implementation moved).
-- suggestedModel: frontier
-- ledgerRefs: ["goals:G43"]
-- resultCommit: 4ca818914486796d0823a2f656981a0acba2c7af
-- completion: LedgerPersistence byte-I/O seam interface (packages/ledger/src/store/LedgerPersistence.ts, exported) capturing every FsLedgerStore fs.*/atomicWrite op + 2 git-parity methods; interface-only (no impl moved); bun run check green.
-- sessionLogs: ["docs/logs/20260610-093502-a86a4af4aa7334adf.md","docs/logs/20260610-093502-aa3adc9ec2a34495f.md"]
-
-### T350 — done
-
-- createdAt: 2026-06-10T09:03:04.100Z
-- updatedAt: 2026-06-10T09:58:52.451Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Extract AbstractLedgerStore base holding shared map/parse/FTS/lock/divergence logic over the seam
-- description: "Refactor FsLedgerStore so the shared, persistence-agnostic logic moves into an AbstractLedgerStore base class parameterised over the LedgerPersistence seam: the in-memory `ledgers` Map, init() load loop + bootstrap + ambient-milestone seeding + legacy-pointer backfill, all read methods (fetch/fetchItem/fetchMilestone/listMilestoneItems/snapshot/search/ftsSearch), all mutation methods (updateItem/createItem/createMilestone/createLedger/updateMilestone/reopenItem/unarchiveItem/archiveMilestone), the AsyncMutex + lockfile critical sections (withLock/withMilestonesLock/withRegistryLock), fireMutation/onMutation, the FTS index lifecycle, invalidate(), schema-divergence DETECTION + the reinit ORCHESTRATION (delegating the actual backup+rewrite bytes to the seam), and dispose(). Each byte-I/O call site that currently calls fs.*/atomicWrite is replaced by a seam call. lockfile.ts is NOT moved (stays shared); cacheMirror.ts is NOT moved (FS-only; stays an FsLedgerStore concern — per Q195(2) the mirror is NOT carried to the git backend). Persist a CHANGE INVENTORY decision item if any shared method's signature must change."
-- acceptance: All existing packages/ledger tests pass UNCHANGED (`bun test` green for the ledger package) proving the refactor is behaviour-preserving; tsc -b + lint clean; the shared logic now lives in AbstractLedgerStore (FsLedgerStore no longer contains it inline).
-- suggestedModel: frontier
-- dependsOn: ["T347"]
-- ledgerRefs: ["goals:G43"]
-- resultCommit: b7c64ce5aac02acb10be98cad187d8f180fb5007
-- completion: "Extracted AbstractLedgerStore<P extends LedgerPersistence> (shared map/init/read/mutation/lock/FTS/divergence/dispose logic, all byte-I/O via the seam) + FsPersistence seam impl; FsLedgerStore extends base (1576→339 lines), keeps only FS-only concerns (locks/cacheMirror/read_log/reset). Behaviour-preserving: all ledger tests pass UNCHANGED; check green 1488/0/1skip on main. No shared signature changed."
-- sessionLogs: ["docs/logs/20260610-095829-aa213efc31f0f323e.md","docs/logs/20260610-095829-af6621d3397105715.md"]
-
-### T351 — planned
-
-- createdAt: 2026-06-10T09:03:14.085Z
-- updatedAt: 2026-06-10T09:19:47.570Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Reimplement FsLedgerStore as AbstractLedgerStore + an FsPersistence seam impl
-- description: "Make FsLedgerStore extend AbstractLedgerStore, supplying an FsPersistence implementation of the seam that contains exactly today's FS behaviour: atomicWrite(docs/<name>.md) / atomicWrite(ledgers.yaml), fs.readFile for init/archive reads, fs.rm/fs.copyFile for archive removal + the docs/.backup/<ts>/ file-copy backup, fs.readdir for archive enumeration, and a docs/*.md-mtime currentSourceToken. The FsLedgerStore-specific surface NOT part of the LedgerStore interface (rootDir getter, readLog, reset()/ResetSummary, the ~/.cache mirror via scheduleMirror/mirrorMutation) STAYS on FsLedgerStore (Q195(2): the mirror is FS-only, NOT carried to the git backend). Keep onSchemaDivergence backup-reinit vs abort semantics identical."
-- acceptance: "`bun test` for the ledger package green (FsLedgerStore behaviour byte-identical: same docs/.backup layout, same atomic writes, ~/.cache mirror still fires); the committed canonical-ledgers.test.ts committed-vs-canon guard (which boots a store against the repo docs/ledgers.yaml) still passes; tsc -b + lint clean."
-- suggestedModel: frontier
-- dependsOn: ["T350"]
-- ledgerRefs: ["goals:G43"]
 
 ## M145
 
