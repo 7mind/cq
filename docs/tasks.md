@@ -544,10 +544,10 @@ archives:
 
 ## M146
 
-### T349 — planned
+### T349 — done
 
 - createdAt: 2026-06-10T09:02:36.432Z
-- updatedAt: 2026-06-10T09:02:36.432Z
+- updatedAt: 2026-06-10T12:00:09.060Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: "Add the [ledger] backend config key to @cq/config (git-object | fs, default fs)"
@@ -555,6 +555,9 @@ archives:
 - acceptance: "parseConfig tests: cq.toml with [ledger] backend='git-object' resolves to git-object; omitting [ledger] resolves to fs; unknown backend throws; re-parsing CQ_TOML_TEMPLATE still resolves cleanly + yields backend fs (commented block inert); cq.toml.example consistent. tsc -b + lint clean."
 - suggestedModel: standard
 - ledgerRefs: ["goals:G43"]
+- resultCommit: 054a64c
+- completion: "@cq/config [ledger] table: LedgerBackend='fs'(default)|'git-object' union + guard + LedgerConfig type; RawLedger structural validation; parseLedger() applies branch 'cq-ledger'/remote 'origin' defaults + fail-fast unknown-backend (CqConfigError); CqConfig.ledger null when absent (fs default, git-object opt-in per Q189). Documented COMMENTED-OUT [ledger] block in CQ_TOML_TEMPLATE + cq.toml.example. Round 1 DISAPPROVED: acceptance only tested template-inertness against a synthetic copy. Round-2 orchestrator fix: assert parseConfig(CQ_TOML_TEMPLATE).ledger===null + equivalent for cq.toml.example against the REAL constants. check green 1552/0 worktree, 1557/0 combined on main."
+- sessionLogs: ["docs/logs/20260610-115916-a95a3a31d367091f3.md","docs/logs/20260610-115916-aeeafe355067c65a5.md"]
 
 ### T357 — planned
 
@@ -627,10 +630,10 @@ archives:
 
 ## M149
 
-### T356 — planned
+### T356 — done
 
 - createdAt: 2026-06-10T09:04:14.875Z
-- updatedAt: 2026-06-10T09:04:14.875Z
+- updatedAt: 2026-06-10T12:00:14.160Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Run the shared LedgerStore conformance suite against GitObjectLedgerBackend (dual-tests)
@@ -639,6 +642,9 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T352"]
 - ledgerRefs: ["goals:G43"]
+- resultCommit: c369b20
+- completion: "Conformance parity across all three backends (Fs/InMemory/Git). T352 already ran the FULL runStoreAbstractSuite against Git; T356 lifted the FS-only N-parallel-mutation facet into the shared store-abstract.ts as portable concurrency-parity assertions (no-lost-write, monotonic updatedAt, last-write-wins, unique monotonic ids) through the LedgerStore surface. No parity gap (Git CAS-conflict is a deliberately-different cross-process surface, fronted by the in-process mutex/lockfile in single-process operation — correctly excluded, not papered over). N=12 + git-aware timeout; no tmp residue. Round 1 DISAPPROVED: the monotonic-updatedAt assertion sorted-then-asserted-ascending (tautology). Round-2 orchestrator fix: assert in submission order (==lock order), no sort — real teeth. check green 1547/0 worktree, 1557/0 combined on main."
+- sessionLogs: ["docs/logs/20260610-115916-a8643d3d3758b5e0b.md","docs/logs/20260610-115916-a202dc00fead52aa3.md"]
 
 ### T359 — planned
 

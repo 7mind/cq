@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 425
+  item: 429
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -779,3 +779,43 @@ archives:
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - summary: "T353 implement-review ROUND 2 — approve. Opus reviewer: round-1 flake resolved by the orchestrator's round-2 fix (establish baseline sha immediately via poll() at startup instead of at the first tick — a real production defect where a ref advance in the start→first-tick window was silently swallowed). Verified determinism 8/8 isolated + 3/3 full-suite (1541/0); immediate-poll change correct (undefined-sentinel guards spurious fire, single timer schedule, safe close race, test-4 timing preserved); R418 indirection + re-export-only scope intact. Merged as ed1837e."
 - ledgerRefs: ["tasks:T353","goals:G43"]
+
+## M146
+
+### R426 — revise
+
+- createdAt: 2026-06-10T12:00:23.316Z
+- updatedAt: 2026-06-10T12:00:23.316Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T349 implement-review ROUND 1 — disapprove. Opus reviewer: code correct + check green 1550/0, but the 'CQ_TOML_TEMPLATE inert' acceptance was only tested against a SYNTHETIC TOML copy, not the real exported constant — a regression uncommenting the template's [ledger] block would pass every test. Round 2 (R427) approves after the orchestrator added the assertion against the real CQ_TOML_TEMPLATE + cq.toml.example constants."
+- ledgerRefs: ["tasks:T349","goals:G43"]
+
+### R427 — go-ahead
+
+- createdAt: 2026-06-10T12:00:27.152Z
+- updatedAt: 2026-06-10T12:00:27.152Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T349 implement-review ROUND 2 — approve. Round-1 acceptance gap closed: orchestrator added `expect(parseConfig(CQ_TOML_TEMPLATE).ledger).toBeNull()` + the cq.toml.example equivalent to the existing T331 describe blocks (the assertions pass, confirming the .ledger-null shape). Test-only delta; full check green 1552/0 in-worktree, 1557/0 combined on main. Merged as 054a64c."
+- ledgerRefs: ["tasks:T349","goals:G43"]
+
+## M149
+
+### R428 — revise
+
+- createdAt: 2026-06-10T12:00:29.908Z
+- updatedAt: 2026-06-10T12:00:29.908Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T356 implement-review ROUND 1 — disapprove. Opus reviewer: triple-backend coverage REAL + check green 1547/0, but the 'monotonic non-decreasing updatedAt' assertion sorted results ascending THEN asserted cur>=prev — a tautology with no teeth. Round 2 (R429) approves after the orchestrator reworked it to assert in submission order."
+- ledgerRefs: ["tasks:T356","goals:G43"]
+
+### R429 — go-ahead
+
+- createdAt: 2026-06-10T12:00:33.191Z
+- updatedAt: 2026-06-10T12:00:33.191Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T356 implement-review ROUND 2 — approve. Round-1 tautology fixed: orchestrator asserts updatedAt monotonicity over `results` in SUBMISSION order (==lock order), dropping the sort — real teeth against a non-monotonic clock / out-of-order serialisation. Verified concurrency-parity 6 pass (2×3 backends); full check green 1547/0 in-worktree, 1557/0 combined on main. Merged as c369b20."
+- ledgerRefs: ["tasks:T356","goals:G43"]
