@@ -526,10 +526,10 @@ archives:
 - completion: GitObjectLedgerBackend extends AbstractLedgerStore<GitPersistence>; GitPersistence implements LedgerPersistence over an orphan ref (refs/heads/cq-ledger) via GitPlumbing. Docs-relative tree paths; each mutation = one atomic read-old→rebuild-tree→commit-tree→CAS-updateRef advance (StaleRefError propagates); init seeds ref from empty tree; reads SYNC from in-memory map; locksRoot on real FS (no lockfiles in tree); backupCanonicalState tags cq-ledger-backup-<ts> before reinit; no ~/.cache mirror. Added GitPlumbing.lsTreeEntries. check green 1537/0 on main (git-backend+plumbing 48/0); shared abstract suite runs against the git backend (FS-parity); host-checkout byte-invariance + one-commit-per-mutation + no-lockfiles-in-tree + divergence-backup-tag all proven.
 - sessionLogs: ["docs/logs/20260610-103508-aa171958d829a3bfe.md","docs/logs/20260610-103508-a411862b5a47dd1c0.md"]
 
-### T353 — planned
+### T353 — done
 
 - createdAt: 2026-06-10T09:03:53.111Z
-- updatedAt: 2026-06-10T09:20:13.446Z
+- updatedAt: 2026-06-10T11:17:11.609Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Add a ref-sha coherence watcher that drives invalidate() for the git backend
@@ -538,6 +538,9 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T352"]
 - ledgerRefs: ["goals:G43"]
+- resultCommit: ed1837ece4d400a139b27407b400d54ce811bb7f
+- completion: "startLedgerRefWatcher (packages/ledger-mcp/src/refWatcher.ts): polls refs/heads/<branch> via `git rev-parse --verify` (no `.git/refs` literal — robust under git-dir indirection/linked worktrees); on ref advance calls store.invalidate(id) per enumerated ledger then onChange(id). Injected GitRunner; close() handle; re-exported from main.ts (export only — per-backend wiring is T357). Round 1 (0910d96) DISAPPROVED — delivered test flaky 2/4 under load. Orchestrator round-2 fix (e4233c0): found a deeper PRODUCTION defect — the watcher captured its baseline lastSha only at the first poll TICK, so a ref advance in the start→first-tick window was silently missed (under load onChange never fired → timeout). Fixed by establishing the baseline immediately via poll() at startup (caller already awaited init). Round-2 re-review (opus) APPROVED: flake resolved (8/8 isolated + 3/3 full-suite, 1541/0), immediate-poll change correct (undefined-sentinel guards spurious fire, single timer schedule, safe close race). check green 1541/0 on main; verified 3x on main post-merge."
+- sessionLogs: ["docs/logs/20260610-111626-a73fe9f4e95d631a4.md","docs/logs/20260610-111626-a15622a16712fca3d.md","docs/logs/20260610-111626-orchestrator-fix.md","docs/logs/20260610-111626-a22ee1e06785c711c.md"]
 
 ## M146
 

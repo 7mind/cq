@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 423
+  item: 425
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -761,3 +761,21 @@ archives:
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - summary: "T352 implement-review — approve. Opus reviewer round 1, 0 criticism / 0 questions / 0 defects. All acceptance clauses verified with `bun run check` green 1537/0: host checkout HEAD/working-tree/index byte-identical + status clean after create/update/archive; orphan ref +1 per single-write mutation; no .locks in `git ls-tree -r cq-ledger`; cq-ledger-backup-<ts> tag before reinit; writeTree uses isolated scratch GIT_INDEX_FILE (never repo index); CAS expectedOld inside the lock with StaleRefError; full shared abstract suite passes against the git backend (FS-parity). Merged as 3167649."
 - ledgerRefs: ["tasks:T352","goals:G43"]
+
+### R424 — revise
+
+- createdAt: 2026-06-10T11:17:15.199Z
+- updatedAt: 2026-06-10T11:17:15.199Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T353 implement-review ROUND 1 — disapprove. Opus reviewer: production watcher logic correct (R418 rev-parse indirection, scope, sentinel) but `bun run check` RED — the new refWatcher.test.ts failed 2/4 deterministically under full-suite timing (reproduced 1539/2). Routed back for fix. Round 2 (R425) approves after the orchestrator fixed a deeper baseline race in the watcher itself."
+- ledgerRefs: ["tasks:T353","goals:G43"]
+
+### R425 — go-ahead
+
+- createdAt: 2026-06-10T11:17:18.965Z
+- updatedAt: 2026-06-10T11:17:18.965Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T353 implement-review ROUND 2 — approve. Opus reviewer: round-1 flake resolved by the orchestrator's round-2 fix (establish baseline sha immediately via poll() at startup instead of at the first tick — a real production defect where a ref advance in the start→first-tick window was silently swallowed). Verified determinism 8/8 isolated + 3/3 full-suite (1541/0); immediate-poll change correct (undefined-sentinel guards spurious fire, single timer schedule, safe close race, test-4 timing preserved); R418 indirection + re-export-only scope intact. Merged as ed1837e."
+- ledgerRefs: ["tasks:T353","goals:G43"]
