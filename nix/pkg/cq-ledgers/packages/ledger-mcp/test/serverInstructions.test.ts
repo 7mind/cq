@@ -84,6 +84,10 @@ describe("buildServerInstructions", () => {
     const emitted = text.match(/myproj_[a-z_]+/g) ?? [];
     expect(emitted.length).toBeGreaterThan(0);
     const allowed = new Set(prefixedToolNames("myproj"));
+    // prefixedToolNames produces exactly one entry per LEDGER_TOOL_NAMES member.
+    expect(allowed.size).toBe(LEDGER_TOOL_NAMES.length);
+    // Pin the total registered tool count so any accidental addition/removal fails here.
+    expect(LEDGER_TOOL_NAMES.length).toBe(26);
     for (const tok of emitted) {
       expect(allowed.has(tok)).toBe(true);
     }
