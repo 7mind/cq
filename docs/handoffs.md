@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 46
+  item: 47
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -302,6 +302,17 @@ archives:
 - blockingQuestions: ["Q197"]
 - handoffReasons: ["drained","answers-required"]
 - sessionLogs: ["docs/logs/20260610-095829-aa213efc31f0f323e.md","docs/logs/20260610-101400-aaabcbef451ca7e95.md","docs/logs/20260610-103508-aa171958d829a3bfe.md","docs/logs/20260610-111626-orchestrator-fix.md","docs/logs/20260610-124136-ad77a03bd66226ac7.md","docs/logs/20260610-131612-ab4f9efb3dc5ce719.md","docs/logs/20260610-132400-a4fa33e752f0686e9.md","docs/logs/20260610-135814-D49-fix.md","docs/logs/20260610-135814-D51-fix.md","docs/logs/20260610-135814-D52-D53-fix.md"]
+
+### HO47 — drained
+
+- createdAt: 2026-06-10T17:56:43.751Z
+- updatedAt: 2026-06-10T17:56:43.751Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "/cq:advance DRAINED. This run took D50 (the cq:advance turn-pause Stop-hook gate) from your answered Q197 (“start now”) through bootstrap → multi-planner plan (opus+grok; minimax abstained) → unanimous 4-reviewer go-ahead (R438, plan locked K70) → FULL IMPLEMENTATION of all 12 tasks T361-T372 across 5 work milestones M151-M155 (each adversarially reviewed — T353-style round-2 catches on T368; the rest first-pass), all merged to main; D50 RESOLVED. The gate: shared dual-tested derivePredicates(store) in @cq/ledger (single source of truth) → a `cq advance-gate` CLI (neutral verdict + exit code) + a derive_predicates MCP tool that advance.md now reads → a thin Claude-Code Stop-hook wrapper (claudeStopGateHook) registered in nix/hm/claude.nix settings.hooks, translating the verdict to {decision:block} (integration-tested) → the session-keyed run-active marker + external-signal escape lifecycle wired into advance.md (marker path byte-identical to the CLI), grep-invariant-guarded → a live-evidence doc with byte-for-byte-reproduced gate output. check green 1629/0/1skip on main; M143-M155 archived. PREDICATE GATE: P-investigate=FALSE (D50 resolved) / P-plan=FALSE / P-implement=FALSE (all G44 tasks done) — nothing actionable remains; external-signal=NONE. TWO user follow-ups (REPORTS, non-blocking): (1) run `home-manager switch` to ACTIVATE the registered Stop hook (the gate's code+config is merged; activation is your deployment step per Q198/the D37 precedent); (2) close G44 (planned→done) in the TUI when satisfied — goals never auto-close (G3-B), and G44's coordination milestone M150 stays open until you do."
+- flow: advance
+- ledgerRefs: ["goals:G44","defects:D50"]
+- sessionLogs: ["docs/logs/20260610-150737-a47043f0c34303e03.md","docs/logs/20260610-153429-a2540a8630b7ab96a.md","docs/logs/20260610-154315-a71ad469deb41bf5f.md","docs/logs/20260610-160922-ab2a5b5513cf25dc4.md","docs/logs/20260610-163734-T362-T363.md","docs/logs/20260610-170206-a582052be0f2e15a5.md","docs/logs/20260610-172615-a50877fbfd91116a7.md","docs/logs/20260610-175239-a52a4403193d32ac0.md"]
 
 ## M126
 
