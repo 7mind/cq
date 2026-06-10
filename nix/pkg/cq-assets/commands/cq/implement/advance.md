@@ -81,6 +81,30 @@ task's `sessionLogs` (§Record, §7.3).
 
 ---
 
+## Auto-fetch the ledger ref at run START (git-object backend only — T355/Q194)
+
+**When the ledger `[ledger]` backend is `git-object`** (NOT the default `fs`
+backend), auto-fetch the orphan ledger branch from the configured remote ONCE at
+the very start of the run, BEFORE the first pass below — so the run reads the
+latest shared ledger state. When the backend is `fs` (the default, or no
+`cq.toml`), SKIP this step entirely; it does NOTHING on the filesystem backend.
+**Suppress this fetch when chained** under a wrapping flow command (`/cq:advance`
+/ `/cq:implement:start`) — the wrapper owns the single run-START fetch (mirroring
+the at-stop handoff/commit suppression); run it only on a STANDALONE
+`/cq:implement:advance` invocation.
+
+The remote name comes from `[ledger] remote` (default `origin`); the ledger
+branch is `cq-ledger` (`[ledger] branch`, default `cq-ledger`). Run from the
+ledger root (the MCP `--cwd`):
+```
+git fetch <remote> refs/heads/cq-ledger:refs/heads/cq-ledger
+```
+**Single-branch / shallow clones must fetch this ref EXPLICITLY** — it is an
+orphan branch outside the normal fetch refspec (see the runbook,
+`docs/drafts/20260610-1300-orphan-ledger-runbook.md`). A non-fast-forward fetch
+failure means the local ref diverged from the remote — STOP and follow the
+runbook's divergence recovery rather than forcing the ref.
+
 ## The pass (repeat until no task is ready)
 
 ### 1. Derive the READY-SET (purely from the ledger)
@@ -515,6 +539,31 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 The `git diff --cached --quiet` guard makes the commit a NO-OP when nothing
 changed (idempotent). Scope `git add` to the ledger artifacts only — never
 `git add -A`.
+
+### Auto-push the ledger ref at run END (git-object backend only — T355/Q194)
+
+**When the ledger `[ledger]` backend is `git-object`**, auto-push the orphan
+ledger branch to the configured remote ONCE at the STANDALONE pass STOP,
+immediately after the standalone at-stop ledger commit above. When the backend
+is `fs` (the default), SKIP this step. This is a once-per-run push (NOT
+per-write, NOT per-merge-back) — the symmetric partner of the run-START fetch.
+**SUPPRESS this push when chained** (`/cq:advance` / `/cq:implement:start`)
+exactly as the at-stop commit is suppressed — the outermost wrapper owns the
+single run-END push.
+
+The remote name comes from `[ledger] remote` (default `origin`). Run from the
+ledger root:
+```
+git push <remote> cq-ledger
+```
+This is a **PLAIN, NON-FORCED push** — deliberately **NO `--force`**. If the
+remote `cq-ledger` has diverged since this run's START fetch, the push is
+REJECTED and **FAILS LOUDLY** (non-fast-forward) rather than silently
+overwriting. The local CAS `update-ref` already guards against lost updates
+within this checkout; the non-forced push guards against clobbering another
+checkout's pushed updates. On a rejected push, DO NOT add `--force` — follow the
+runbook (`docs/drafts/20260610-1300-orphan-ledger-runbook.md`): fetch, inspect
+`git log cq-ledger`, reconcile, then retry the plain push.
 
 ## Report to the user
 Summarize the pass concisely:

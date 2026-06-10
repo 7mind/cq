@@ -142,6 +142,28 @@ own §Session logs rule — follow each sub-command's logging rule while running
 
 ---
 
+## Auto-fetch the ledger ref at run START (git-object backend only — T355/Q194)
+
+**When the ledger `[ledger]` backend is `git-object`** (NOT the default `fs`
+backend), auto-fetch the orphan ledger branch from the configured remote ONCE at
+the very start of the run, BEFORE the Bootstrap recipe below — so the run reads
+the latest shared ledger state. When the backend is `fs` (the default, or no
+`cq.toml`), SKIP this step entirely — it does NOTHING on the filesystem backend.
+
+The remote name comes from `[ledger] remote` (default `origin`); the ledger
+branch is `cq-ledger` (`[ledger] branch`, default `cq-ledger`). Run from the
+ledger root (the MCP `--cwd`, the repo root here):
+```
+git fetch <remote> refs/heads/cq-ledger:refs/heads/cq-ledger
+```
+This is a once-per-run fetch (NOT per-read): it updates the local `cq-ledger` ref
+to the remote's tip so detection and every chained sub-flow operate on current
+state. **Single-branch / shallow clones must fetch this ref EXPLICITLY** — it is
+an orphan branch outside the normal fetch refspec (see the runbook,
+`docs/drafts/20260610-1300-orphan-ledger-runbook.md`). A non-fast-forward fetch
+failure here means the local ref diverged from the remote — STOP and follow the
+runbook's rejected-push / divergence recovery rather than forcing the ref.
+
 ## Bootstrap recipe (T156 / Q79 — snapshot-first start)
 
 At the very start of each `/cq:advance` run (and at the start of each cycle),
@@ -540,6 +562,32 @@ suppression), and ONLY their at-stop commit is suppressed: a milestone archived
 inside a chained sub-flow's pass is still committed at the point of archive, and
 a task merged inside the chained implement pass is still committed at the point
 of merge-back (both are always-fire checkpoints, not at-stop commits).
+
+## Auto-push the ledger ref at run END (git-object backend only — T355/Q194)
+
+**When the ledger `[ledger]` backend is `git-object`**, auto-push the orphan
+ledger branch to the configured remote ONCE at the run STOP, immediately after
+the run-stop ledger commit above (§Commit the ledger). When the backend is `fs`
+(the default), SKIP this step entirely. This is a once-per-run push (NOT
+per-write) — the symmetric partner of the run-START fetch above. As the SOLE
+at-stop committer, `/cq:advance` is also the SOLE at-end pusher for a full run:
+the chained sub-flows SUPPRESS their own at-end push exactly as they suppress
+their at-stop commit.
+
+The remote name comes from `[ledger] remote` (default `origin`). Run from the
+ledger root:
+```
+git push <remote> cq-ledger
+```
+This is a **PLAIN, NON-FORCED push** — there is deliberately **NO `--force`**.
+If the remote `cq-ledger` has diverged (someone else pushed since this run's
+START fetch), the push is REJECTED and **FAILS LOUDLY** (non-fast-forward) rather
+than silently overwriting their work. The local CAS `update-ref` already guards
+against lost updates *within* this checkout; the non-forced push guards against
+clobbering *another* checkout's pushed updates. On a rejected push, DO NOT add
+`--force` — follow the runbook
+(`docs/drafts/20260610-1300-orphan-ledger-runbook.md`): fetch, inspect
+`git log cq-ledger`, reconcile, then retry the plain push.
 
 ---
 
