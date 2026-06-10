@@ -539,75 +539,19 @@ archives:
     summary: "G44-W5 complete: grep-invariant guard pinning the 5 G44 advance.md enforcement strings (T365, mirror D39/T264, teeth-proven) + the live-evidence capstone doc (T371) with REAL byte-for-byte-reproduced cq advance-gate output (BLOCK on TRUE predicate exit 1; ALLOW on external-signal/marker-absent; wrapper→{decision:block}), the full post-home-manager-switch live-harness repro, and the accepted irreducible limit. opus-reviewed; check 1630/0. G44 implement complete (12/12 tasks); D50 resolved."
     title: "G44-W5: acceptance hardening — grep-invariant, manual repro, live-session evidence"
     status: done
+  - id: M157
+    path: ./archive/tasks/M157.md
+    summary: "G45 W1 (prefix core) COMPLETE: T373 prefixedToolNames/prefixToolName/assertToolPrefix helpers in @cq/ledger (validated ^[a-zA-Z0-9]+$, '' = unprefixed default); T374 trailing toolPrefix threaded through createLedgerMcpTools (post-map name transform, handlers/schemas intact); T375 trailing toolPrefix through registerLedgerStdioTools (reg() wrapper over all 26 registrations, real-server round-trip test); T376 LEDGER_TOOL_NAMES drift-guard parameterized over prefixedToolNames (original 26-name assertion unchanged, single source of truth). All 4 tasks done + reviewed (R452/R453/R454/R456 go-ahead). Merged 110b0e5/04a1f2c/e944cf3/7b4a09c. check green."
+    title: "W1: prefix core — pure name transform threaded through both tool factories + drift-guard helper"
+    status: done
+  - id: M159
+    path: ./archive/tasks/M159.md
+    summary: "G45 W3 (acceptance) COMPLETE: T380 two-prefixed-servers-in-one-process collision test (Q211-1 core: disjoint name sets + both functional end-to-end via real tool calls, deterministic 3 reruns); T381 prefixed-SERVER_INSTRUCTIONS test strengthened (Q211-5, bijection + count pins); T382 @cq/ledger-mcp README build-your-own-prefixed-ledger-MCP example (every API verified against source); T383 final gate — bun run check 1668/0 on integrated main, all five Q211 criteria confirmed by passing tests/artifacts. All 4 tasks done + reviewed (R460/R458/R461/R462 go-ahead). Merged d4634aa/01a2ecc/e5a5a17 + orchestrator-verified gate. check green."
+    title: "W3: acceptance — two-prefixed-servers collision test, instructions-naming test, README example, bun run check"
+    status: done
 ---
 
 # tasks
-
-## M157
-
-### T373 — done
-
-- createdAt: 2026-06-10T18:38:44.789Z
-- updatedAt: 2026-06-10T19:16:43.753Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Add prefix validation + prefixedToolNames(prefix) pure helper in @cq/ledger, exported from index.ts
-- description: "In packages/ledger/src/mcp/ledgerTools.ts (or a small new sibling module imported by both factories), add: (1) a TOOL_PREFIX_RE = /^[a-zA-Z0-9]+$/ constant and an assertToolPrefix(prefix: string): void that ACCEPTS the empty string '' (the cq default = unprefixed) and THROWS a descriptive Error for any non-empty value NOT matching TOOL_PREFIX_RE (fail-fast at the boundary, per Q205 — letters/digits only so `<prefix>_<name>` stays within the safeId charset ^[a-zA-Z0-9_-]+$); (2) a pure helper `export function prefixedToolNames(prefix: string): string[]` returning LEDGER_TOOL_NAMES unchanged when prefix==='' and `${prefix}_${name}` for each name otherwise (it calls assertToolPrefix first); optionally a single-name `prefixToolName(prefix, name)` to keep the factories DRY. Export prefixedToolNames + the validator from packages/ledger/src/index.ts alongside LEDGER_TOOL_NAMES. NO factory wiring in this task. PURE name transform — no handler/schema changes."
-- acceptance: "New unit test (e.g. packages/ledger/test/tool-prefix.test.ts): prefixedToolNames('') deep-equals [...LEDGER_TOOL_NAMES]; prefixedToolNames('myproj') equals LEDGER_TOOL_NAMES.map(n=>`myproj_${n}`) and every element matches /^[a-zA-Z0-9_-]+$/; assertToolPrefix throws for 'a_b','a-b','a b','a.b' and does NOT throw for '' and 'myproj2'; `import { prefixedToolNames } from '@cq/ledger'` resolves. bun run check green."
-- suggestedModel: standard
-- dependsOn: []
-- ledgerRefs: ["goals:G45"]
-- resultCommit: 110b0e5
-- completion: Added TOOL_PREFIX_RE + assertToolPrefix + prefixToolName + prefixedToolNames pure helpers in ledgerTools.ts, exported from @cq/ledger index.ts; tool-prefix.test.ts covers all cases. check 1645/0.
-- sessionLogs: ["docs/logs/20260610-190808-ad1b74ef59ce21727.md","docs/logs/20260610-190808-aa699936bf1be9c25.md","docs/logs/20260610-190808-pi-codex-T373.md","docs/logs/20260610-190808-pi-grok-T373.md","docs/logs/20260610-190808-pi-minimax-T373.md"]
-
-### T374 — done
-
-- createdAt: 2026-06-10T18:38:58.507Z
-- updatedAt: 2026-06-10T19:53:41.347Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Thread an optional trailing toolPrefix through createLedgerMcpTools (Claude tool() factory)
-- description: "In packages/ledger/src/mcp/ledgerTools.ts, add a TRAILING optional `toolPrefix: string = ''` parameter to createLedgerMcpTools (after the existing params — store, readLog?, configCapability?, promptCatalog?; toolPrefix is LAST so existing call sites are unchanged — do NOT make it positional-first). Call assertToolPrefix(toolPrefix) once at the top (fail-fast). Apply the prefix as a PURE name transform: each `tool(name, ...)` registration registers under prefixToolName(toolPrefix, name) — derive the name ONCE via a small local wrapper rather than hand-editing all 26 literals (e.g. a `mk(name, ...)` helper that prepends the prefix, or post-map the returned array's `.name`). Handler bodies + Zod input schemas UNTOUCHED (Q208). Default '' keeps every registered name byte-identical. ALSO verify every OTHER call site of createLedgerMcpTools (tests, embedded TUI/web factories, any other consumer) inherits the new optional `toolPrefix=''` transparently — confirm no caller breaks (mirroring the same call-site-verification clause T375 has for registerLedgerStdioTools; R450 consistency criticism)."
-- acceptance: "Extend the prefix test: createLedgerMcpTools(store).map(t=>t.name).sort() still equals [...LEDGER_TOOL_NAMES].sort() (empty default unchanged); createLedgerMcpTools(store, undefined, undefined, undefined, 'myproj').map(t=>t.name).sort() equals prefixedToolNames('myproj').sort(); a create_item handler on the prefixed factory still round-trips. Existing test/mcp-tools.test.ts passes unchanged; no other createLedgerMcpTools call site broke. bun run check green."
-- suggestedModel: frontier
-- dependsOn: ["T373"]
-- ledgerRefs: ["goals:G45"]
-- resultCommit: 04a1f2c
-- completion: Trailing optional toolPrefix='' threaded through createLedgerMcpTools via post-map name transform (handlers/schemas intact, default byte-identical). check 1648/0.
-- sessionLogs: ["docs/logs/20260610-195218-a0e9ae2ec3c50a4b1.md","docs/logs/20260610-195218-a6f2904aa74c2f47b.md","docs/logs/20260610-195218-pi-codex-T374.md","docs/logs/20260610-195218-pi-grok-T374.md","docs/logs/20260610-195218-pi-minimax-T374.md"]
-
-### T375 — done
-
-- createdAt: 2026-06-10T18:39:05.559Z
-- updatedAt: 2026-06-10T19:53:45.114Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Thread an optional trailing toolPrefix through registerLedgerStdioTools (raw registerTool factory)
-- description: "In packages/ledger/src/mcp/stdioLedgerTools.ts, add a TRAILING optional `toolPrefix: string = ''` to registerLedgerStdioTools (after server, store, readLog?, configCapability?, promptCatalog?; LAST param so existing call sites are unchanged). Call assertToolPrefix(toolPrefix) once. Apply the prefix as a pure name transform on every server.registerTool(name, ...) call: introduce a local `reg(name, config, handler)` wrapper registering under prefixToolName(toolPrefix, name), used for all 26 registrations so the prefix is derived ONCE per name and the call sites do not drift from the Claude factory. Config (description/inputSchema) + handlers UNTOUCHED. Default '' = byte-identical registration. ALSO: verify every other call site of registerLedgerStdioTools (the opus candidate flagged a possible second consumer @cq/cq-mcp) inherits the new optional `toolPrefix=''` transparently — confirm no other call site needs touching."
-- acceptance: New stdio-prefix test constructs a real @modelcontextprotocol McpServer, calls registerLedgerStdioTools(server, store, undefined, undefined, undefined, 'myproj'), and asserts (via the registered-tool registry / a tools/list round-trip) the registered names equal prefixedToolNames('myproj'); a second server with prefix '' registers exactly LEDGER_TOOL_NAMES. No other call site broke. bun run check green.
-- suggestedModel: frontier
-- dependsOn: ["T373"]
-- ledgerRefs: ["goals:G45"]
-- resultCommit: e944cf3
-- completion: Trailing optional toolPrefix='' threaded through registerLedgerStdioTools via a reg() wrapper over all 26 registrations (config/handlers intact, default byte-identical); round-trip test proves it. check 1649/0.
-- sessionLogs: ["docs/logs/20260610-195218-a62003829a8ea4acf.md","docs/logs/20260610-195218-a82ce11cdb7b5499d.md","docs/logs/20260610-195218-pi-codex-T375.md","docs/logs/20260610-195218-pi-grok-T375.md","docs/logs/20260610-195218-pi-minimax-T375.md"]
-
-### T376 — done
-
-- createdAt: 2026-06-10T18:39:14.181Z
-- updatedAt: 2026-06-10T20:25:33.048Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Parameterize the LEDGER_TOOL_NAMES drift-guard test over prefixedToolNames
-- description: "In packages/ledger/test/mcp-tools.test.ts (the drift-guard), KEEP the existing empty-prefix assertion exactly as-is (createLedgerMcpTools(store).map(t=>t.name).sort() === [...LEDGER_TOOL_NAMES].sort(), length 26) to prove cq is unaffected, and ADD a parameterized assertion proving the prefixed factory's names equal prefixedToolNames(prefix).sort() for a sample non-empty prefix — reusing the SAME prefixedToolNames helper the factory uses so the drift-guard stays the single source of truth across both surfaces. Do NOT introduce a second hardcoded name list; do NOT alter the 26 unprefixed expectations."
-- acceptance: "test/mcp-tools.test.ts: the original 'exports the expected tool names (26 tools)' assertion passes unchanged; the new prefixed-drift assertion passes; the same helper drives both factory and test (no second hardcoded list). bun test green."
-- suggestedModel: standard
-- dependsOn: ["T374","T375"]
-- ledgerRefs: ["goals:G45"]
-- resultCommit: 7b4a09c
-- completion: Drift-guard test parameterized over prefixedToolNames ('myproj' assertion added, reusing the same helper; original 26-name assertion unchanged). check 1657/0.
-- sessionLogs: ["docs/logs/20260610-202419-aa736733b55db07d2.md","docs/logs/20260610-202419-aa4e3907e106a115d.md","docs/logs/20260610-202419-pi-codex-T376.md","docs/logs/20260610-202419-pi-grok-T376.md","docs/logs/20260610-202419-pi-minimax-T376.md"]
 
 ## M158
 
@@ -658,66 +602,3 @@ archives:
 - resultCommit: "24e2647"
 - completion: --tool-prefix CLI flag (parseArgs + fail-fast assertToolPrefix) threaded through BOTH launch paths incl. the full HTTP chain main()→serveHttp→attachMcpHttp→createLedgerMcpServer (R450 fix); e2e HTTP registration test. check 1668/0.
 - sessionLogs: ["docs/logs/20260610-205105-ae77ec60bdea6d2a6.md","docs/logs/20260610-205105-a16acdb5a260854ef.md","docs/logs/20260610-205105-pi-codex-T379.md","docs/logs/20260610-205105-pi-grok-T379.md","docs/logs/20260610-205105-pi-minimax-T379.md"]
-
-## M159
-
-### T380 — done
-
-- createdAt: 2026-06-10T18:39:54.875Z
-- updatedAt: 2026-06-10T20:52:16.237Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: "Acceptance test: two prefixed ledger-MCP servers in one process — zero tool-name collision, both functional"
-- description: "Add a test (packages/ledger-mcp/test/ or packages/ledger/test/) that constructs TWO McpServers in ONE process via createLedgerMcpServer — e.g. { displayName:'cqlike', toolPrefix:'' } (cq's unprefixed server) and { displayName:'thirdparty', toolPrefix:'myproj' } — each over its OWN InMemoryLedgerStore (Q210: a 3rd party picks a non-conflicting store). Connect each over an in-memory/linked transport pair and list tools. Assert: (1) the two name sets are DISJOINT (intersection empty) — zero collision; (2) the first set === LEDGER_TOOL_NAMES (26), the second === prefixedToolNames('myproj'); (3) BOTH are functional — invoke a representative tool on each (e.g. create_milestone then create_item, or a fetch) and assert a correct result, proving the prefixed server's handlers still work. This is the core Q211(1) motivating use case (host runs cq ledger MCP + a 3rd-party ledger MCP together)."
-- acceptance: "Test passes: the two servers' tool-name sets have empty intersection; both answer a tools/list and a real tool call correctly; no registration throws. bun test green; bun run check green. No flakes across reruns."
-- suggestedModel: frontier
-- dependsOn: ["T378"]
-- ledgerRefs: ["goals:G45"]
-- resultCommit: d4634aa
-- completion: "Two-prefixed-servers-in-one-process acceptance test (Q211-1): disjoint name sets + both functional end-to-end via real tool calls; deterministic across 3 reruns. check 1660/0."
-- sessionLogs: ["docs/logs/20260610-205105-af450839414625050.md","docs/logs/20260610-205105-afe55dfdee9480c17.md","docs/logs/20260610-205105-pi-codex-T380.md","docs/logs/20260610-205105-pi-grok-T380.md","docs/logs/20260610-205105-pi-minimax-T380.md"]
-
-### T381 — done
-
-- createdAt: 2026-06-10T18:39:59.440Z
-- updatedAt: 2026-06-10T20:25:41.670Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: "Acceptance test: prefixed SERVER_INSTRUCTIONS names the prefixed tools (Q211-5)"
-- description: "Add a focused test asserting the Q211(5) criterion: build a server via createLedgerMcpServer({ store, displayName:'demo', toolPrefix:'myproj' }) and read its instructions (via getInstructions()/the connected client, or test buildServerInstructions('myproj') directly), asserting the instructions text names 'myproj_'-prefixed tools and contains no bare whole-word LEDGER_TOOL_NAME tokens; and that the empty-prefix builder's instructions are byte-identical to the current SERVER_INSTRUCTIONS text."
-- acceptance: "Test passes: prefixed instructions contain 'myproj_create_item'/'myproj_snapshot' and no bare 'create_item'; empty-prefix instructions equal the original SERVER_INSTRUCTIONS string. bun test green."
-- suggestedModel: standard
-- dependsOn: ["T377"]
-- ledgerRefs: ["goals:G45"]
-- resultCommit: 01a2ecc
-- completion: Q211-5 prefixed-instructions acceptance strengthened (T377 test already covered the 4 clauses; added bijection + count pins). check 1656/0.
-- sessionLogs: ["docs/logs/20260610-202419-a3b324b7db4fff5e0.md","docs/logs/20260610-202419-a54fbffbbf0f0c60d.md","docs/logs/20260610-202419-pi-codex-T381.md","docs/logs/20260610-202419-pi-grok-T381.md","docs/logs/20260610-202419-pi-minimax-T381.md"]
-
-### T382 — done
-
-- createdAt: 2026-06-10T18:40:10.841Z
-- updatedAt: 2026-06-10T21:04:04.115Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: Document the public builder in @cq/ledger-mcp README with a build-your-own-prefixed-ledger-MCP example
-- description: "Add/extend packages/ledger-mcp/README.md with a short 'Building your own prefixed ledger MCP' section showing a 3rd-party consumer: (1) importing createLedgerMcpServer from @cq/ledger-mcp; (2) constructing their OWN store — DEMONSTRATE passing a consumer-built store, e.g. createLedgerStore(cwd) or FsLedgerStore from @cq/ledger pointed at their own dir/branch (doc-only, no new storage code per Q210, and note storage customization is already solved via createLedgerStore + [ledger] backend/branch); (3) choosing a distinct toolPrefix; (4) wiring a transport. Note the cq default prefix is empty (names unchanged), a non-empty prefix must match ^[a-zA-Z0-9]+$, the `ledger-mcp --tool-prefix <p>` CLI for a no-code standalone server, and that consumers discover prefixed names at runtime via MCP tools/list (with prefixedToolNames(prefix) available for compile-time assertions). The snippet must match the actual exported createLedgerMcpServer signature."
-- acceptance: packages/ledger-mcp/README.md contains a self-contained example referencing createLedgerMcpServer + toolPrefix + a consumer-supplied createLedgerStore + the --tool-prefix flag; the code snippet matches the exported signature. bun run check green (lint/typecheck unaffected by docs).
-- suggestedModel: standard
-- dependsOn: ["T378","T379"]
-- ledgerRefs: ["goals:G45"]
-- resultCommit: e5a5a17
-- completion: packages/ledger-mcp/README.md created with a build-your-own-prefixed-ledger-MCP example (createLedgerMcpServer + toolPrefix + consumer createLedgerStore/FsLedgerStore + --tool-prefix CLI); every API verified against source. check 1669/0.
-- sessionLogs: ["docs/logs/20260610-210335-a98145dbbc6d5a03d.md","docs/logs/20260610-210335-aba4e160965c69540.md","docs/logs/20260610-210335-pi-codex-T382.md","docs/logs/20260610-210335-pi-grok-T382.md","docs/logs/20260610-210335-pi-minimax-T382.md"]
-
-### T383 — planned
-
-- createdAt: 2026-06-10T18:40:19.527Z
-- updatedAt: 2026-06-10T18:40:19.527Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- headline: "Final gate: run bun run check and confirm the full G45 acceptance bar (Q211 1-5) is green"
-- description: "From nix/pkg/cq-ledgers/, run `bun run check` (bun test + tsc -b typecheck + eslint). Confirm all five Q211 criteria hold: (1) two-prefixed-servers collision test green (T380); (2) the cq drift-guard (26 unprefixed names) unchanged/green (T376); (3) builder README example present (T382); (4) bun run check green; (5) prefixed-instructions-naming test green (T381). Fix any lint/type fallout from the new exports (index.ts barrel, builder option interface). No behavioral change in this task beyond making the suite green."
-- acceptance: "`bun run check` exits 0 from nix/pkg/cq-ledgers/ with no test failures, no tsc errors, no eslint errors; all five Q211 criteria demonstrably covered by passing tests/artifacts."
-- suggestedModel: standard
-- dependsOn: ["T380","T381","T382"]
-- ledgerRefs: ["goals:G45"]

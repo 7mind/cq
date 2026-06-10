@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 461
+  item: 462
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -689,6 +689,16 @@ archives:
     summary: "G44-W5 complete: grep-invariant guard pinning the 5 G44 advance.md enforcement strings (T365, mirror D39/T264, teeth-proven) + the live-evidence capstone doc (T371) with REAL byte-for-byte-reproduced cq advance-gate output (BLOCK on TRUE predicate exit 1; ALLOW on external-signal/marker-absent; wrapper→{decision:block}), the full post-home-manager-switch live-harness repro, and the accepted irreducible limit. opus-reviewed; check 1630/0. G44 implement complete (12/12 tasks); D50 resolved."
     title: "G44-W5: acceptance hardening — grep-invariant, manual repro, live-session evidence"
     status: done
+  - id: M157
+    path: ./archive/reviews/M157.md
+    summary: "G45 W1 (prefix core) COMPLETE: T373 prefixedToolNames/prefixToolName/assertToolPrefix helpers in @cq/ledger (validated ^[a-zA-Z0-9]+$, '' = unprefixed default); T374 trailing toolPrefix threaded through createLedgerMcpTools (post-map name transform, handlers/schemas intact); T375 trailing toolPrefix through registerLedgerStdioTools (reg() wrapper over all 26 registrations, real-server round-trip test); T376 LEDGER_TOOL_NAMES drift-guard parameterized over prefixedToolNames (original 26-name assertion unchanged, single source of truth). All 4 tasks done + reviewed (R452/R453/R454/R456 go-ahead). Merged 110b0e5/04a1f2c/e944cf3/7b4a09c. check green."
+    title: "W1: prefix core — pure name transform threaded through both tool factories + drift-guard helper"
+    status: done
+  - id: M159
+    path: ./archive/reviews/M159.md
+    summary: "G45 W3 (acceptance) COMPLETE: T380 two-prefixed-servers-in-one-process collision test (Q211-1 core: disjoint name sets + both functional end-to-end via real tool calls, deterministic 3 reruns); T381 prefixed-SERVER_INSTRUCTIONS test strengthened (Q211-5, bijection + count pins); T382 @cq/ledger-mcp README build-your-own-prefixed-ledger-MCP example (every API verified against source); T383 final gate — bun run check 1668/0 on integrated main, all five Q211 criteria confirmed by passing tests/artifacts. All 4 tasks done + reviewed (R460/R458/R461/R462 go-ahead). Merged d4634aa/01a2ecc/e5a5a17 + orchestrator-verified gate. check green."
+    title: "W3: acceptance — two-prefixed-servers collision test, instructions-naming test, README example, bun run check"
+    status: done
 ---
 
 # reviews
@@ -809,56 +819,6 @@ archives:
 - ledgerRefs: ["goals:G45"]
 - sessionLogs: ["docs/logs/20260610-185929-a9150c4642dba4d0c.md","docs/logs/20260610-185929-pi-codex.md","docs/logs/20260610-185929-pi-grok.md","docs/logs/20260610-185929-pi-minimax.md"]
 
-## M157
-
-### R452 — go-ahead
-
-- createdAt: 2026-06-10T19:16:47.160Z
-- updatedAt: 2026-06-10T19:16:47.160Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T373 — UNANIMOUS approve (4-reviewer panel: opus + codex/grok/minimax). Pure prefix helpers + validation; all acceptance clauses covered; check green 1645/0; no scope creep; opus re-ran check in-worktree."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T373","goals:G45"]
-- sessionLogs: ["docs/logs/20260610-190808-aa699936bf1be9c25.md","docs/logs/20260610-190808-pi-codex-T373.md","docs/logs/20260610-190808-pi-grok-T373.md","docs/logs/20260610-190808-pi-minimax-T373.md"]
-
-### R453 — go-ahead
-
-- createdAt: 2026-06-10T19:53:52.660Z
-- updatedAt: 2026-06-10T19:53:52.660Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: T374 — UNANIMOUS approve (4-reviewer panel). Trailing toolPrefix via post-map name transform; handlers/schemas intact; default byte-identical; check 1648/0; opus re-verified in-worktree.
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T374","goals:G45"]
-- sessionLogs: ["docs/logs/20260610-195218-a6f2904aa74c2f47b.md","docs/logs/20260610-195218-pi-codex-T374.md","docs/logs/20260610-195218-pi-grok-T374.md","docs/logs/20260610-195218-pi-minimax-T374.md"]
-
-### R454 — go-ahead
-
-- createdAt: 2026-06-10T19:53:55.967Z
-- updatedAt: 2026-06-10T19:53:55.967Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: T375 — UNANIMOUS approve (4-reviewer panel). reg() wraps all 26 registrations; config/handlers intact; default byte-identical; real-server round-trip test; check 1649/0; opus re-verified in-worktree.
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T375","goals:G45"]
-- sessionLogs: ["docs/logs/20260610-195218-a82ce11cdb7b5499d.md","docs/logs/20260610-195218-pi-codex-T375.md","docs/logs/20260610-195218-pi-grok-T375.md","docs/logs/20260610-195218-pi-minimax-T375.md"]
-
-### R456 — go-ahead
-
-- createdAt: 2026-06-10T20:25:44.823Z
-- updatedAt: 2026-06-10T20:25:44.823Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: T376 — UNANIMOUS approve (4-reviewer panel). Drift-guard parameterized over prefixedToolNames; original 26-name assertion unchanged; single source of truth; check 1657/0.
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T376","goals:G45"]
-- sessionLogs: ["docs/logs/20260610-202419-aa4e3907e106a115d.md","docs/logs/20260610-202419-pi-codex-T376.md","docs/logs/20260610-202419-pi-grok-T376.md","docs/logs/20260610-202419-pi-minimax-T376.md"]
-
 ## M158
 
 ### R455 — go-ahead
@@ -896,41 +856,3 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T379","goals:G45","defects:D56"]
 - sessionLogs: ["docs/logs/20260610-205105-a16acdb5a260854ef.md","docs/logs/20260610-205105-pi-codex-T379.md","docs/logs/20260610-205105-pi-grok-T379.md","docs/logs/20260610-205105-pi-minimax-T379.md"]
-
-## M159
-
-### R458 — go-ahead
-
-- createdAt: 2026-06-10T20:25:53.617Z
-- updatedAt: 2026-06-10T20:25:53.617Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: T381 — reconciled approve (3 survivors approve; minimax ABSTAINED — garbled non-JSON stdout, dropped). +4-line strengthening of T377's serverInstructions test (bijection + count pins); Q211-5 fully covered, no duplication; check 1656/0.
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T381","goals:G45"]
-- sessionLogs: ["docs/logs/20260610-202419-a54fbffbbf0f0c60d.md","docs/logs/20260610-202419-pi-codex-T381.md","docs/logs/20260610-202419-pi-grok-T381.md","docs/logs/20260610-202419-pi-minimax-T381.md"]
-
-### R460 — go-ahead
-
-- createdAt: 2026-06-10T20:52:26.401Z
-- updatedAt: 2026-06-10T20:52:26.401Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T380 — UNANIMOUS approve (4-reviewer panel). The Q211-1 core acceptance test: two co-resident prefixed/unprefixed servers, disjoint tool-name sets (zero collision) + both functional end-to-end via real tool calls; opus reran 3× no flake; check 1660/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T380","goals:G45"]
-- sessionLogs: ["docs/logs/20260610-205105-afe55dfdee9480c17.md","docs/logs/20260610-205105-pi-codex-T380.md","docs/logs/20260610-205105-pi-grok-T380.md","docs/logs/20260610-205105-pi-minimax-T380.md"]
-
-### R461 — go-ahead
-
-- createdAt: 2026-06-10T21:04:07.767Z
-- updatedAt: 2026-06-10T21:04:07.767Z
-- author: "opus-4.8[1m]"
-- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
-- summary: "T382 — reconciled approve (3 survivors approve; minimax ABSTAINED — garbled tool-call output, dropped). README build-your-own example; opus verified every API reference (createLedgerMcpServer signature, createLedgerStore {store} destructure, FsLedgerStore({root}), prefixedToolNames, --tool-prefix) against source; docs-only; check 1669/0."
-- criticism: []
-- new_questions: []
-- ledgerRefs: ["tasks:T382","goals:G45"]
-- sessionLogs: ["docs/logs/20260610-210335-aba4e160965c69540.md","docs/logs/20260610-210335-pi-codex-T382.md","docs/logs/20260610-210335-pi-grok-T382.md","docs/logs/20260610-210335-pi-minimax-T382.md"]

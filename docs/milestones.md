@@ -749,6 +749,16 @@ archives:
     summary: "G44-W5 complete: grep-invariant guard pinning the 5 G44 advance.md enforcement strings (T365, mirror D39/T264, teeth-proven) + the live-evidence capstone doc (T371) with REAL byte-for-byte-reproduced cq advance-gate output (BLOCK on TRUE predicate exit 1; ALLOW on external-signal/marker-absent; wrapper→{decision:block}), the full post-home-manager-switch live-harness repro, and the accepted irreducible limit. opus-reviewed; check 1630/0. G44 implement complete (12/12 tasks); D50 resolved."
     title: "G44-W5: acceptance hardening — grep-invariant, manual repro, live-session evidence"
     status: done
+  - id: M157
+    path: ./archive/milestones/M157.md
+    summary: "G45 W1 (prefix core) COMPLETE: T373 prefixedToolNames/prefixToolName/assertToolPrefix helpers in @cq/ledger (validated ^[a-zA-Z0-9]+$, '' = unprefixed default); T374 trailing toolPrefix threaded through createLedgerMcpTools (post-map name transform, handlers/schemas intact); T375 trailing toolPrefix through registerLedgerStdioTools (reg() wrapper over all 26 registrations, real-server round-trip test); T376 LEDGER_TOOL_NAMES drift-guard parameterized over prefixedToolNames (original 26-name assertion unchanged, single source of truth). All 4 tasks done + reviewed (R452/R453/R454/R456 go-ahead). Merged 110b0e5/04a1f2c/e944cf3/7b4a09c. check green."
+    title: "W1: prefix core — pure name transform threaded through both tool factories + drift-guard helper"
+    status: done
+  - id: M159
+    path: ./archive/milestones/M159.md
+    summary: "G45 W3 (acceptance) COMPLETE: T380 two-prefixed-servers-in-one-process collision test (Q211-1 core: disjoint name sets + both functional end-to-end via real tool calls, deterministic 3 reruns); T381 prefixed-SERVER_INSTRUCTIONS test strengthened (Q211-5, bijection + count pins); T382 @cq/ledger-mcp README build-your-own-prefixed-ledger-MCP example (every API verified against source); T383 final gate — bun run check 1668/0 on integrated main, all five Q211 criteria confirmed by passing tests/artifacts. All 4 tasks done + reviewed (R460/R458/R461/R462 go-ahead). Merged d4634aa/01a2ecc/e5a5a17 + orchestrator-verified gate. check green."
+    title: "W3: acceptance — two-prefixed-servers collision test, instructions-naming test, README example, bun run check"
+    status: done
 ---
 
 # milestones
@@ -793,22 +803,9 @@ archives:
 - updatedAt: 2026-06-10T18:15:31.706Z
 - title: "Plan: reusable ledger-MCP library + tool-name namespacing"
 
-### M157 — open
-
-- createdAt: 2026-06-10T18:38:20.553Z
-- updatedAt: 2026-06-10T18:38:20.553Z
-- title: "W1: prefix core — pure name transform threaded through both tool factories + drift-guard helper"
-
 ### M158 — open
 
 - createdAt: 2026-06-10T18:38:23.636Z
 - updatedAt: 2026-06-10T18:38:23.636Z
 - title: "W2: public builder + CLI flag + prefixed SERVER_INSTRUCTIONS"
 - dependsOn: ["M157"]
-
-### M159 — open
-
-- createdAt: 2026-06-10T18:38:28.581Z
-- updatedAt: 2026-06-10T18:38:28.581Z
-- title: "W3: acceptance — two-prefixed-servers collision test, instructions-naming test, README example, bun run check"
-- dependsOn: ["M158"]
