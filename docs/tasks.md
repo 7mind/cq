@@ -593,10 +593,10 @@ archives:
 - completion: Trailing optional toolPrefix='' threaded through registerLedgerStdioTools via a reg() wrapper over all 26 registrations (config/handlers intact, default byte-identical); round-trip test proves it. check 1649/0.
 - sessionLogs: ["docs/logs/20260610-195218-a62003829a8ea4acf.md","docs/logs/20260610-195218-a82ce11cdb7b5499d.md","docs/logs/20260610-195218-pi-codex-T375.md","docs/logs/20260610-195218-pi-grok-T375.md","docs/logs/20260610-195218-pi-minimax-T375.md"]
 
-### T376 — planned
+### T376 — done
 
 - createdAt: 2026-06-10T18:39:14.181Z
-- updatedAt: 2026-06-10T18:39:14.181Z
+- updatedAt: 2026-06-10T20:25:33.048Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Parameterize the LEDGER_TOOL_NAMES drift-guard test over prefixedToolNames
@@ -605,6 +605,9 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T374","T375"]
 - ledgerRefs: ["goals:G45"]
+- resultCommit: 7b4a09c
+- completion: Drift-guard test parameterized over prefixedToolNames ('myproj' assertion added, reusing the same helper; original 26-name assertion unchanged). check 1657/0.
+- sessionLogs: ["docs/logs/20260610-202419-aa736733b55db07d2.md","docs/logs/20260610-202419-aa4e3907e106a115d.md","docs/logs/20260610-202419-pi-codex-T376.md","docs/logs/20260610-202419-pi-grok-T376.md","docs/logs/20260610-202419-pi-minimax-T376.md"]
 
 ## M158
 
@@ -624,10 +627,10 @@ archives:
 - completion: SERVER_INSTRUCTIONS converted to pure buildServerInstructions(toolPrefix) reusing prefixToolName over live LEDGER_TOOL_NAMES (longest-first whole-word); empty prefix byte-identical. check 1649/0.
 - sessionLogs: ["docs/logs/20260610-195218-a8d83bd70f422f1c2.md","docs/logs/20260610-195218-a3cabcbc349ef2645.md","docs/logs/20260610-195218-pi-codex-T377.md","docs/logs/20260610-195218-pi-grok-T377.md","docs/logs/20260610-195218-pi-minimax-T377.md"]
 
-### T378 — planned
+### T378 — done
 
 - createdAt: 2026-06-10T18:39:32.271Z
-- updatedAt: 2026-06-10T18:54:00.198Z
+- updatedAt: 2026-06-10T20:25:37.741Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: "Extract + export the public builder createLedgerMcpServer({ store, displayName, toolPrefix }) and refactor buildServer through it"
@@ -636,6 +639,9 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T377","T375"]
 - ledgerRefs: ["goals:G45"]
+- resultCommit: 2b63911
+- completion: "Public createLedgerMcpServer({store,displayName,toolPrefix?}) + CreateLedgerMcpServerOptions extracted from ledger-mcp/main.ts; buildServer now a byte-identical thin wrapper; in-memory round-trip test pins prefixed/default surfaces. check 1658/0."
+- sessionLogs: ["docs/logs/20260610-202419-a164cd7faaca6b3c9.md","docs/logs/20260610-202419-a50d50fa0e663b051.md","docs/logs/20260610-202419-pi-codex-T378.md","docs/logs/20260610-202419-pi-grok-T378.md","docs/logs/20260610-202419-pi-minimax-T378.md"]
 
 ### T379 — planned
 
@@ -665,10 +671,10 @@ archives:
 - dependsOn: ["T378"]
 - ledgerRefs: ["goals:G45"]
 
-### T381 — planned
+### T381 — done
 
 - createdAt: 2026-06-10T18:39:59.440Z
-- updatedAt: 2026-06-10T18:39:59.440Z
+- updatedAt: 2026-06-10T20:25:41.670Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: "Acceptance test: prefixed SERVER_INSTRUCTIONS names the prefixed tools (Q211-5)"
@@ -677,6 +683,9 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T377"]
 - ledgerRefs: ["goals:G45"]
+- resultCommit: 01a2ecc
+- completion: Q211-5 prefixed-instructions acceptance strengthened (T377 test already covered the 4 clauses; added bijection + count pins). check 1656/0.
+- sessionLogs: ["docs/logs/20260610-202419-a3b324b7db4fff5e0.md","docs/logs/20260610-202419-a54fbffbbf0f0c60d.md","docs/logs/20260610-202419-pi-codex-T381.md","docs/logs/20260610-202419-pi-grok-T381.md","docs/logs/20260610-202419-pi-minimax-T381.md"]
 
 ### T382 — planned
 

@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 455
+  item: 458
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -847,6 +847,18 @@ archives:
 - ledgerRefs: ["tasks:T375","goals:G45"]
 - sessionLogs: ["docs/logs/20260610-195218-a82ce11cdb7b5499d.md","docs/logs/20260610-195218-pi-codex-T375.md","docs/logs/20260610-195218-pi-grok-T375.md","docs/logs/20260610-195218-pi-minimax-T375.md"]
 
+### R456 — go-ahead
+
+- createdAt: 2026-06-10T20:25:44.823Z
+- updatedAt: 2026-06-10T20:25:44.823Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: T376 — UNANIMOUS approve (4-reviewer panel). Drift-guard parameterized over prefixedToolNames; original 26-name assertion unchanged; single source of truth; check 1657/0.
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T376","goals:G45"]
+- sessionLogs: ["docs/logs/20260610-202419-aa4e3907e106a115d.md","docs/logs/20260610-202419-pi-codex-T376.md","docs/logs/20260610-202419-pi-grok-T376.md","docs/logs/20260610-202419-pi-minimax-T376.md"]
+
 ## M158
 
 ### R455 — go-ahead
@@ -860,3 +872,29 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T377","goals:G45"]
 - sessionLogs: ["docs/logs/20260610-195218-a3cabcbc349ef2645.md","docs/logs/20260610-195218-pi-codex-T377.md","docs/logs/20260610-195218-pi-grok-T377.md","docs/logs/20260610-195218-pi-minimax-T377.md"]
+
+### R457 — go-ahead
+
+- createdAt: 2026-06-10T20:25:49.999Z
+- updatedAt: 2026-06-10T20:25:49.999Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T378 — reconciled approve (3 of 4 reviewers approve; minimax disapprove ADJUDICATED INVALID). createLedgerMcpServer extracted, buildServer byte-identical thin wrapper, round-trip test pins prefixed/default; check 1658/0. minimax's lone criticism (test should import from @cq/ledger-mcp not ../src/main.js) is INVALID for this repo: ALL ledger-mcp tests import from ../src (package exports resolve to un-built dist — the D55 fragility); buildServer itself is tested via ../src by identical convention; export is verified by tsc. The 3 repo-grounded reviewers (opus+codex+grok) approved."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T378","goals:G45"]
+- sessionLogs: ["docs/logs/20260610-202419-a50d50fa0e663b051.md","docs/logs/20260610-202419-pi-codex-T378.md","docs/logs/20260610-202419-pi-grok-T378.md","docs/logs/20260610-202419-pi-minimax-T378.md"]
+
+## M159
+
+### R458 — go-ahead
+
+- createdAt: 2026-06-10T20:25:53.617Z
+- updatedAt: 2026-06-10T20:25:53.617Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: T381 — reconciled approve (3 survivors approve; minimax ABSTAINED — garbled non-JSON stdout, dropped). +4-line strengthening of T377's serverInstructions test (bijection + count pins); Q211-5 fully covered, no duplication; check 1656/0.
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T381","goals:G45"]
+- sessionLogs: ["docs/logs/20260610-202419-a54fbffbbf0f0c60d.md","docs/logs/20260610-202419-pi-codex-T381.md","docs/logs/20260610-202419-pi-grok-T381.md","docs/logs/20260610-202419-pi-minimax-T381.md"]
