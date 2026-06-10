@@ -1173,14 +1173,17 @@ export function runStoreAbstractSuite(factory: AbstractStoreFactory): void {
             expect(isIsoTimestamp(r.updatedAt)).toBe(true);
           }
 
-          // updatedAt is monotonic NON-DECREASING across the serialised writes
-          // (wall-clock `now` may repeat within a millisecond, so not strict).
-          const inOrder = [...results].sort((a, b) =>
-            a.updatedAt < b.updatedAt ? -1 : a.updatedAt > b.updatedAt ? 1 : 0,
-          );
-          for (let i = 1; i < inOrder.length; i++) {
-            const prev = inOrder[i - 1];
-            const cur = inOrder[i];
+          // updatedAt is monotonic NON-DECREASING in SUBMISSION order — which
+          // equals lock order (the synchronous map() enqueues updateItem(i)
+          // before updateItem(i+1)). We assert over `results` IN PLACE (NO sort):
+          // sorting first would make `cur >= prev` a tautology with no teeth.
+          // Iterating submission order gives the check real teeth — a
+          // non-monotonic clock or out-of-order serialisation surfaces here.
+          // (wall-clock `now` may repeat within a millisecond, so non-decreasing,
+          // not strictly increasing.)
+          for (let i = 1; i < results.length; i++) {
+            const prev = results[i - 1];
+            const cur = results[i];
             if (prev === undefined || cur === undefined) throw new Error("missing result");
             expect(cur.updatedAt >= prev.updatedAt).toBe(true);
           }
