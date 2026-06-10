@@ -580,10 +580,10 @@ archives:
 - completion: "createLedgerStore(root) factory in @cq/ledger selects FsLedgerStore('fs'/default)|GitObjectLedgerBackend('git-object') from cq.toml [ledger] backend, init()s it; ALL construction sites routed through it (ledger-mcp createEmbeddedStore/main, cq-cli runInit/runReset, embedded TUI+web). git-env fail-fast (GitEnvironmentError); shared idempotent ensureGitBackendGitignore(root) (R418, T354 reuses); generalised capability gating (read_log FS-only via instanceof; config/promptCatalog backend-independent via duck-typed rootDirOf); per-backend watcher selection; runReset rejects git-object (EXIT_USAGE). New @cq/ledger→@cq/config dep (no cycle). fs/no-cq.toml byte-identical. 20 new tests; check green 1577/0 worktree, 1582/0 combined main. Nix FOD hash verified empirically still valid (internal edge, external closure unchanged — no flake.nix refresh needed)."
 - sessionLogs: ["docs/logs/20260610-124136-ad77a03bd66226ac7.md","docs/logs/20260610-124136-a3f6dd2b489c5b781.md"]
 
-### T360 — planned
+### T360 — done
 
 - createdAt: 2026-06-10T09:04:55.841Z
-- updatedAt: 2026-06-10T09:04:55.841Z
+- updatedAt: 2026-06-10T12:48:48.636Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: "Confirm zero frontend changes: frontends refresh solely via WS ledger.changed"
@@ -592,6 +592,8 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T357"]
 - ledgerRefs: ["goals:G43"]
+- completion: "Read-through verification (Q192): both ledger-tui + ledger-web key change-detection ONLY on the WS `changed` frame (→ MCP refetch); NEITHER reads docs/*.md mtimes (grep: zero fs.stat/mtime/watch on docs in either src/). Server emits the frame backend-agnostically (startLedgerCoherenceWatcher selects ref-watch vs file-watch). ZERO frontend source change needed for the git backend — confirmation recorded as decision K69. One out-of-scope gap surfaced + filed as D51 (low): embedded TUI main.tsx:128 hardcodes the FS startLedgerWatcher instead of the backend-selecting startLedgerCoherenceWatcher (web embedded does it right), so embedded-TUI+git-object loses EXTERNAL-change coherence (self-edits still refetch). Not a trivial repoint — deferred per T360. No frontend code changed."
+- sessionLogs: []
 
 ## M147
 

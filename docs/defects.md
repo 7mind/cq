@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 50
+  item: 51
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -233,3 +233,19 @@ archives:
 - severity: low
 - description: "In updateRef (GitPlumbing.ts) any non-zero exit of `git update-ref <ref> <new> <old>` is translated to StaleRefError, ignoring stderr. Verified in a /tmp repo: a malformed/nonexistent new-SHA exits 128 with stderr 'nonexistent object …' / 'not a valid SHA1', the SAME exit-code as a genuine CAS mismatch (exit 128, 'cannot lock ref … is at … but expected …'). The two are distinguishable only by stderr, which the mapping discards. Cannot arise within GitPlumbing's own contract (newSha always comes from a prior commitTree/hashObject), so it does NOT affect T348 acceptance and is documented in-code; but the seam is public/injectable and T352's GitObjectLedgerBackend would receive a mislabeled StaleRefError on a programming error rather than a distinct GitCommandError. Out of scope for T348 — robustness hardening for a later task. Suggested fix: inspect stderr (or pre-validate newSha) — map only the 'cannot lock ref … but expected …' lock-failure pattern to StaleRefError; route other non-zero exits through GitCommandError."
 - ledgerRefs: ["tasks:T348","goals:G43"]
+
+## M146
+
+### D51 — open
+
+- createdAt: 2026-06-10T12:48:09.896Z
+- updatedAt: 2026-06-10T12:48:09.896Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- headline: Embedded TUI hardcodes the FS file-watcher (startLedgerWatcher) — external-change coherence lost under the git-object backend
+- severity: low
+- description: |
+    Surfaced by T360's frontend read-through. The embedded ledger-tui wires its live-refresh watcher in main.tsx:124-131 as `startLedgerWatcher(ctx.store, ctx.cwd, ...)` — the FS docs/*.md file-watcher — directly, NOT the backend-selecting `startLedgerCoherenceWatcher` (ledger-mcp/src/main.ts:319-328) that the web embedded path uses (serve.ts:321). Since T357 made createEmbeddedStore backend-aware, the embedded TUI store CAN be a GitObjectLedgerBackend; under that backend docs/*.md do not change on the working branch, so the FS watcher never fires. EFFECT: in embedded-TUI + git-object mode, EXTERNAL edits (another process / the agent's stdio server / git advancing refs/heads/cq-ledger / a second UI) do NOT refresh the TUI view — defeating the stated purpose of that watcher (main.tsx:121-123 comment). Self-edits are unaffected (the TUI refetches post-mutation). Remote (--mcp-url) TUI mode is unaffected (uses /ws LiveManager). ledger-web embedded is unaffected (uses startLedgerCoherenceWatcher).
+    
+    NOT a trivial repoint (so deferred per T360): the fix must thread the RESOLVED backend descriptor (backend kind + branch) from createEmbeddedStore through EmbeddedContext (mcpClient.ts:46-50, currently {store, cwd}) to main.tsx so it can call startLedgerCoherenceWatcher (which needs a ResolvedLedgerStore). Suggested fix: have createEmbeddedStore return the ResolvedLedgerStore (it already computes it), expose it on EmbeddedContext, and replace main.tsx:128's startLedgerWatcher with startLedgerCoherenceWatcher(resolved, ctx.cwd, onChange). Then the embedded TUI gets ref-sha coherence under git-object, matching the web frontend.
+- ledgerRefs: ["tasks:T360","goals:G43"]
