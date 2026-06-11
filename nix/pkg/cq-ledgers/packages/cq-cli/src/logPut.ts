@@ -14,20 +14,33 @@
  *   - `<src>`            positional source path (required when `--stdin`
  *                        absent).
  *
- * This task (T406) wires dispatch + parsing + validation.  The actual fs/git
- * write body is deferred to a later task; the handler validates arguments and
- * throws a clear "not yet implemented" for the write path.
+ * T406 wires dispatch + parsing + validation.
+ * T410 implements the fs-backend write path (redaction + JSONL validation +
+ * atomic write to <root>/docs/logs/<rel>).
  */
 
+import { promises as nodeFs } from "node:fs";
 import * as path from "node:path";
+import {
+  resolveLedgerBackend,
+  redactSecrets,
+  validateJsonl,
+  atomicWrite,
+} from "@cq/ledger";
 
 /** Exit code for a usage / validation error. */
 export const EXIT_USAGE = 2;
 
-/** IO seam: stdout / stderr line sinks (threaded from the dispatcher). */
+/** IO seam: stdout / stderr line sinks + stdin reader (threaded from the dispatcher). */
 export interface LogPutIo {
   out(line: string): void;
   err(line: string): void;
+  /**
+   * Read all of stdin as a string.  Used when `args.stdin` is true.
+   * Injected so tests can provide a controlled string without needing a real
+   * tty/pipe.  The default (production) implementation reads `process.stdin`.
+   */
+  readStdin(): Promise<string>;
 }
 
 /** Parsed `log put` arguments (after validation). */
@@ -159,12 +172,67 @@ export function parseLogPutArgs(cwd: string, argv: readonly string[]): LogPutArg
  * Run `log put`.  Validates the parsed arguments (which have already been
  * checked by {@link parseLogPutArgs}) and performs the write.
  *
- * T406 implements dispatch + parsing + validation; the actual fs/git write
- * body is deferred to a later task.
+ * T406 implements dispatch + parsing + validation.
+ * T410 implements the fs-backend write path:
+ *   1. Resolve backend via resolveLedgerBackend(cwd).
+ *   2. Read source (file or stdin).
+ *   3. Apply redactSecrets.
+ *   4. If dest ends in .jsonl, validateJsonl — fail with line+reason on error.
+ *   5. Atomically write to <cwd>/docs/<dest>.
+ *   6. Print the written absolute path.
+ *
+ * For backend='git-object': throw a clear "not yet implemented" error.
  */
 export async function runLogPut(args: LogPutArgs, io: LogPutIo): Promise<LogPutOutcome> {
-  // Argument validation is performed by parseLogPutArgs before this function
-  // is called.  The write body is not yet implemented (T406 scope).
-  io.err("cq log put: not yet implemented (write body deferred to a later task)");
-  return { exitCode: 1 };
+  const { backend } = resolveLedgerBackend(args.cwd);
+
+  if (backend !== "fs") {
+    io.err(
+      `cq log put: backend '${backend}' is not yet implemented for log put (only 'fs' is supported)`,
+    );
+    return { exitCode: 1 };
+  }
+
+  // --- Read source ---
+  let raw: string;
+  if (args.stdin) {
+    raw = await io.readStdin();
+  } else {
+    // args.src is defined when stdin is false (enforced by parseLogPutArgs).
+    raw = await nodeFs.readFile(args.src!, "utf8");
+  }
+
+  // --- Redact secrets ---
+  const redacted = redactSecrets(raw);
+
+  // --- JSONL validation (only for .jsonl destinations) ---
+  if (args.dest.endsWith(".jsonl")) {
+    const validation = validateJsonl(redacted);
+    if (!validation.ok) {
+      io.err(
+        `cq log put: malformed JSONL at line ${validation.line}: ${validation.reason}`,
+      );
+      return { exitCode: 1 };
+    }
+  }
+
+  // --- Resolve the on-disk destination path ---
+  const destAbs = path.join(args.cwd, "docs", args.dest);
+
+  // Defense-in-depth: ensure the resolved path stays under docs/logs/ even
+  // if validateLogDest was somehow bypassed.
+  const docsLogsAbs = path.join(args.cwd, "docs", "logs");
+  const resolved = path.resolve(destAbs);
+  if (!resolved.startsWith(docsLogsAbs + path.sep) && resolved !== docsLogsAbs) {
+    io.err(
+      `cq log put: resolved destination "${resolved}" escapes docs/logs/ — rejected`,
+    );
+    return { exitCode: 1 };
+  }
+
+  // --- Atomic write ---
+  await atomicWrite(destAbs, redacted);
+
+  io.out(destAbs);
+  return { exitCode: 0 };
 }

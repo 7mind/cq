@@ -257,6 +257,12 @@ export interface DispatchIo {
   err(line: string): void;
   /** Confirmation IO threaded to the destructive subcommand handlers. */
   confirm: ConfirmIo;
+  /**
+   * Optional stdin reader for `cq log put --stdin`.  When absent, the default
+   * production implementation ({@link readProcessStdin}) is used.  Tests inject
+   * a controlled string here to avoid blocking on a real pipe.
+   */
+  readStdin?(): Promise<string>;
 }
 
 function defaultDispatchIo(): DispatchIo {
@@ -523,7 +529,11 @@ export async function runLogCmd(
     return { exitCode: LOG_PUT_EXIT_USAGE };
   }
 
-  return runLogPut(putArgs, { out: io.out, err: io.err });
+  return runLogPut(putArgs, {
+    out: io.out,
+    err: io.err,
+    readStdin: io.readStdin ?? readProcessStdin,
+  });
 }
 
 /** A store exposing the FS-specific backup→reinit `reset()` (FsLedgerStore). */
@@ -534,6 +544,18 @@ interface ResettableStore extends LedgerStore {
 /** Duck-typed guard: does `store` expose the FS-only `reset()` method? */
 function isResettable(store: LedgerStore): store is ResettableStore {
   return typeof (store as { reset?: unknown }).reset === "function";
+}
+
+/**
+ * Read all of process.stdin as a UTF-8 string.
+ * Used as the default `readStdin` implementation threaded into {@link runLogPut}.
+ */
+async function readProcessStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /** True iff `p` exists on disk (any node type). */

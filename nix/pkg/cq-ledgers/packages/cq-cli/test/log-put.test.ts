@@ -13,14 +13,27 @@
  * routing test pattern.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, afterAll } from "bun:test";
 import * as path from "node:path";
+import * as fsPromises from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dispatch, EXIT_USAGE, USAGE, type ConfirmIo, type DispatchIo } from "../src/main.js";
 import { parseLogPutArgs, validateLogDest } from "../src/logPut.js";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+const tmpDirs: string[] = [];
+afterAll(async () => {
+  for (const d of tmpDirs) await fsPromises.rm(d, { recursive: true, force: true }).catch(() => undefined);
+});
+
+async function makeTmpDir(): Promise<string> {
+  const dir = await fsPromises.mkdtemp(path.join(tmpdir(), "cq-log-put-test-"));
+  tmpDirs.push(dir);
+  return dir;
+}
 
 const silentConfirm: ConfirmIo = {
   isTty: false,
@@ -29,10 +42,17 @@ const silentConfirm: ConfirmIo = {
   prompt: async () => "",
 };
 
-function recordingIo(): DispatchIo & { outs: string[]; errs: string[] } {
+function recordingIo(stdinContent = ""): DispatchIo & { outs: string[]; errs: string[] } {
   const outs: string[] = [];
   const errs: string[] = [];
-  return { outs, errs, out: (l) => outs.push(l), err: (l) => errs.push(l), confirm: silentConfirm };
+  return {
+    outs,
+    errs,
+    out: (l) => outs.push(l),
+    err: (l) => errs.push(l),
+    confirm: silentConfirm,
+    readStdin: async () => stdinContent,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -58,16 +78,18 @@ describe("cq log put — USAGE", () => {
 // ---------------------------------------------------------------------------
 
 describe("cq log put — dispatch routing", () => {
-  it("routes --stdin + --dest to runLogPut (not-yet-implemented response)", async () => {
-    const io = recordingIo();
-    const outcome = await dispatch(["log", "put", "--stdin", "--dest", "logs/raw/x.jsonl"], io);
-    // runLogPut emits "not yet implemented" to stderr and returns exit 1.
-    // The important assertion is that the dispatch ROUTED to runLogPut (not a
-    // usage error from the dispatcher) and the parsed args were valid.
-    expect(outcome.exitCode).not.toBe(EXIT_USAGE);
+  it("routes --stdin + --dest to runLogPut and writes the file", async () => {
+    const root = await makeTmpDir();
+    const io = recordingIo('{"event":"test"}\n');
+    const outcome = await dispatch(
+      ["log", "put", "--stdin", "--dest", "logs/raw/x.jsonl", "--cwd", root],
+      io,
+    );
+    // runLogPut should succeed (exit 0) and print the written path.
+    expect(outcome.exitCode).toBe(0);
     expect(outcome.longRunning).toBe(false);
-    // The error message comes from runLogPut's stub, not a parsing error.
-    expect(io.errs.join("\n")).toContain("not yet implemented");
+    expect(io.errs.length).toBe(0);
+    expect(io.outs.join("\n")).toContain("logs/raw/x.jsonl");
   });
 
   it("missing both src and --stdin errors with EXIT_USAGE", async () => {
