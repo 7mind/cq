@@ -20,7 +20,7 @@
  * validate_input/output failing fast with the no-schema error.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, test, expect } from "bun:test";
 import * as path from "node:path";
 import {
   getRoleSidecar,
@@ -206,3 +206,65 @@ runPromptCatalogSuite("real asset-backed adapter", () =>
   createPromptCatalogCapability(REPO_ROOT),
 );
 runPromptCatalogSuite("in-memory dummy", inMemoryCapability);
+
+/**
+ * D60 regression: validate_input/validateOutput are called with a JSON STRING
+ * when the Claude Code MCP client serializes a nested object arg on the wire.
+ * The fix (T422) will add string-tolerance at the promptCatalogCapability
+ * entrypoint. Cases (ii)–(iv) are `test.failing` until that fix lands.
+ *
+ * Case (i) — genuine object — is a normal passing test that belongs here
+ * alongside the failing cases so the full regression set is co-located.
+ */
+describe("D60 regression — validate_input string-tolerance at MCP entrypoint", () => {
+  // (i) Genuine object input — already passes today; stays a normal test.
+  it("(i) genuine object {goalId:'G1'} → {ok:true}", () => {
+    const cap = createPromptCatalogCapability(REPO_ROOT);
+    const result = cap.validateInput(DISPATCHED_ROLE, { goalId: "G1" });
+    expect(result.ok).toBe(true);
+  });
+
+  // (ii) JSON-string encoding of a valid payload — FAILS today (returns
+  // {ok:false, errors:[{keyword:'type', message:'must be object'}]}).
+  // The MCP wire serialises the nested `input` arg as a JSON string;
+  // validateInput must parse it before validating.
+  test.failing(
+    "(ii) JSON-string JSON.stringify({goalId:'G1'}) → {ok:true} [D60]",
+    () => {
+      const cap = createPromptCatalogCapability(REPO_ROOT);
+      const result = cap.validateInput(DISPATCHED_ROLE, JSON.stringify({ goalId: "G1" }));
+      expect(result.ok).toBe(true);
+    },
+  );
+
+  // (iii) Unparseable JSON string — FAILS today (no 'parse' keyword exists
+  // yet; the code would either throw or return keyword:'type').
+  // After the fix, an unparseable string should return
+  // {ok:false, errors:[{keyword:'parse', ...}]}.
+  test.failing(
+    "(iii) unparseable string '{not json' → {ok:false, errors[0].keyword==='parse'} [D60]",
+    () => {
+      const cap = createPromptCatalogCapability(REPO_ROOT);
+      const result = cap.validateInput(DISPATCHED_ROLE, "{not json");
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected validation failure");
+      expect(result.errors[0]?.keyword).toBe("parse");
+    },
+  );
+
+  // (iv) Over-acceptance guard: a JSON-string of {} for a role requiring
+  // goalId — FAILS today (returns keyword:'type' from the must-be-object
+  // pre-check rather than keyword:'required' after parsing).
+  // After the fix, the string is parsed to {}, the schema's 'required'
+  // check fires, and errors[0].keyword === 'required'.
+  test.failing(
+    "(iv) JSON.stringify({}) for plan-advance → {ok:false, errors[0].keyword==='required'} [D60]",
+    () => {
+      const cap = createPromptCatalogCapability(REPO_ROOT);
+      const result = cap.validateInput(DISPATCHED_ROLE, JSON.stringify({}));
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected validation failure");
+      expect(result.errors[0]?.keyword).toBe("required");
+    },
+  );
+});
