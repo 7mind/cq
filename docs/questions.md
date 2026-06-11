@@ -2,7 +2,7 @@
 ledger: questions
 counters:
   milestone: 0
-  item: 218
+  item: 224
 archives:
   - id: M2
     path: ./archive/questions/M2.md
@@ -707,3 +707,77 @@ archives:
 - recommendation: "Treat it as a pure, behavior-invariant entrypoint/packaging refactor landing incrementally (stage A then B). Acceptance bar: `cq mcp` serves the .mcp.json registration (stdio + --http) identically to ledger-mcp, `cq tui`/`cq web` launch in BOTH embedded and remote modes with embedded MCP intact, old names still resolve (alias) or are migrated, and `bun run check` + the relevant `nix build` targets pass. Confirm the embedded-mode co-hosted MCP server (TUI in-memory transport, web `/mcp`+`/ws`) must remain byte-for-byte intact."
 - ledgerRefs: ["goals:G48"]
 - answer: as recommended
+
+## M170
+
+### Q219 — open
+
+- createdAt: 2026-06-11T16:14:49.096Z
+- updatedAt: 2026-06-11T16:14:49.096Z
+- author: "fable-5[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "Raw-log FORMAT: what file form should the committed raw subagent log take — verbatim JSONL, a rendered-markdown transcript, or both? And should capture truncate very large transcripts?"
+- context: "Verified: `read_log` serves ANY file under `docs/logs/` (no extension restriction; 4 MiB cap with a `truncated` flag, K42), so a `.jsonl` commits and serves fine — the choice is about viewing, fidelity, and committed bytes. Verbatim `.jsonl` preserves every event (turns, tool calls, tool results) but the web LogModal currently renders markdown, so JSONL needs a NEW structured viewer (it is JSONL, not JSON — the planned G47/T385 json-fence pretty-print will not apply). A rendered-markdown transcript reuses the existing LogModal/Markdown path unchanged but is a lossy transform and needs a deterministic JSONL→md renderer at capture (realistically a small `cq` CLI subcommand — the orchestrator prompt should not hand-transform). Observed sizes: ~50–360 KB per transcript, well under the 4 MiB cap."
+- suggestions: ["Verbatim .jsonl only; no capture-side truncation (read_log's 4 MiB cap stays the defensive view-time bound); web gains a JSONL conversation viewer","Rendered-markdown transcript only (turns + collapsible tool sections), produced at capture by a deterministic CLI renderer; raw JSONL is NOT committed","Both: verbatim .jsonl (source of truth) + rendered .md sibling (~2x committed bytes per subagent)"]
+- recommendation: Verbatim .jsonl only — debugging (your stated motive) wants full fidelity; one new web renderer is cheaper long-term than maintaining a lossy capture-time transform, and nothing is committed twice. No capture-side truncation.
+- ledgerRefs: ["goals:G49"]
+
+### Q220 — open
+
+- createdAt: 2026-06-11T16:14:56.225Z
+- updatedAt: 2026-06-11T16:14:56.225Z
+- author: "fable-5[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "Raw-log LINKING: how should ledger items reference their raw logs — append into the existing sessionLogs array, a new parallel rawLogs field, or a pure naming convention the viewer infers?"
+- context: "`sessionLogs` (string[] of docs/logs paths) exists on goals/tasks/reviews/handoffs and is rendered by the web SessionLogsPanel/LogModal (and shown as paths in the TUI). Assumed placement either way: `docs/logs/raw/<timestamp>-<agent-id>.jsonl` with the SAME stem as the paired summary log, so pairs are self-evident. Tradeoffs: (a) appending into sessionLogs = zero schema change, but summary and raw entries mix in one list and every consumer must special-case entries by path/extension to render them differently; (b) a parallel `rawLogs` field = explicit and clean display logic (show a Raw affordance only when present), but a schema change across those ledgers plus updates to every flow prompt's §Record step and both frontends; (c) naming convention only = no schema or item change at all, but the link is implicit and the viewer must probe read_log for existence (extra round-trip, silent-failure modes; violates explicit-over-implicit)."
+- suggestions: ["Append raw-log paths into the existing sessionLogs array (zero schema change; viewers distinguish by docs/logs/raw/ prefix or .jsonl extension)","Add a parallel rawLogs field next to sessionLogs on the same ledgers (explicit; schema regen + flow-prompt + frontend updates)","No schema/item change: viewer derives docs/logs/raw/<same-stem>.jsonl from each sessionLogs entry and probes for existence"]
+- recommendation: A parallel rawLogs field — explicit beats inferred for a debugging artifact; the schema change is one bootstrap regen and display logic stays clean (raw button only when the field is present).
+- ledgerRefs: ["goals:G49"]
+
+### Q221 — open
+
+- createdAt: 2026-06-11T16:15:02.619Z
+- updatedAt: 2026-06-11T16:15:02.619Z
+- author: "fable-5[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "DISPLAY scope: where should raw logs be viewable — web only (structured conversation view), or also in the TUI — and how should they be surfaced next to the existing summary entries?"
+- context: "Web: the LogModal popup exists (T152/G26) and renders markdown; a verbatim JSONL raw log wants a structured conversation view (turn-by-turn, role labels, collapsible tool calls/results) rather than a markdown blob. TUI: it currently renders NO log content at all (Q122 deliberately scoped log viewing to web-only), so any TUI rendering means a new scrollable ink viewer widget. Surfacing assumption: each summary-log entry gets a paired 'raw' affordance (button/toggle in the same panel) shown only when the raw log exists."
+- suggestions: ["Web only: JSONL conversation view in (or beside) LogModal, paired 'raw' toggle per sessionLogs entry; TUI unchanged (Q122 precedent)","Web conversation view + minimal TUI: raw log opens as plain scrollable text in the TUI (no structure)","Full parity: structured transcript view in BOTH web and TUI"]
+- recommendation: Web only — matches the Q122 precedent and the debugging workflow (a browser is where you inspect a 300 KB transcript); TUI parity can be a follow-up goal if you miss it.
+- ledgerRefs: ["goals:G49"]
+
+### Q222 — open
+
+- createdAt: 2026-06-11T16:15:09.871Z
+- updatedAt: 2026-06-11T16:15:09.871Z
+- author: "fable-5[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "CAPTURE edge cases: when the harness transcript is absent (non-Claude orchestrator, crashed subagent, older harness), what should capture do — and is one-shot backfill of past sessions' transcripts in scope?"
+- context: "Capture mechanics: after each Agent return the orchestrator copies `~/.claude/projects/<project-slug>/<session-id>/subagents/agent-<agent-id>.jsonl` (plus its `.meta.json` sidecar: agentType/worktreePath/description — default: carried along as a small header/sidecar, exact form is a plan detail) into `docs/logs/raw/`. That layout is Claude-Code-specific: a Codex-run orchestrator has no known per-subagent transcript file, and `pi:*` shellout subagents ALREADY capture verbatim stdout into their existing logs (no gap there). So the flows must degrade gracefully when no transcript exists. Separately: past sessions' transcripts are still on disk keyed by the same agent-ids used in existing summary-log filenames, so a one-shot backfill is technically feasible — but old transcripts are subject to the harness's retention cleanup and backfill widens scope."
+- suggestions: ["Copy when present; when absent, degrade silently to summary-only (today's behaviour); go-forward only (no backfill)","Copy when present; when absent, write an explicit 'raw transcript unavailable: <reason>' line into the summary-log header; go-forward only","As the explicit-marker option, plus a one-shot backfill script pairing past on-disk transcripts with existing summary logs"]
+- recommendation: Explicit marker, go-forward only — the marker costs one line and tells the debugger WHY raw is missing (harness vs crash); skip backfill (scope creep, and old transcripts age out of ~/.claude anyway).
+- ledgerRefs: ["goals:G49"]
+
+### Q223 — open
+
+- createdAt: 2026-06-11T16:15:15.977Z
+- updatedAt: 2026-06-11T16:15:15.977Z
+- author: "fable-5[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "HYGIENE: raw transcripts embed full tool outputs (command output can contain tokens, env values, absolute paths) and will live in git history permanently — what redaction posture do you want at capture?"
+- context: "You already chose COMMIT over gitignore; this question is ONLY about whether capture filters content. Append-only history means a committed secret requires rotation and, worst case, a disruptive history rewrite. Tradeoffs: pattern REDACTION protects by default but has false positives that corrupt legitimately-similar content (degrading exactly the debugging fidelity raw logs exist for); a capture-time SCAN-and-WARN keeps fidelity intact and gives a tripwire before the commit is pushed; doing nothing is simplest and matches a private dogfooding repo."
+- suggestions: ["No redaction, no scanning — accept the risk (private repo, fidelity paramount)","No redaction, but a capture-time secret SCAN (common token patterns: AWS/GitHub/OpenAI-style keys, Bearer headers) that surfaces a WARNING in the run report when a suspect line is found","Best-effort pattern REDACTION at capture, replacing matches with [REDACTED:<kind>] placeholders; lossy but safest"]
+- recommendation: Scan-and-warn — preserves full fidelity (the point of raw logs) while giving a pre-push tripwire; escalate to redaction only if the scan actually fires in practice.
+- ledgerRefs: ["goals:G49"]
+
+### Q224 — open
+
+- createdAt: 2026-06-11T16:15:22.336Z
+- updatedAt: 2026-06-11T16:15:22.336Z
+- author: "fable-5[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- question: "GROWTH/retention: committed raw logs grow repo history append-only (~50–360 KB per subagent; one observed heavy session left 169 transcripts ≈ 13 MB). What retention policy, if any?"
+- context: Deleting files later only shrinks the WORKTREE — git history (and every full clone) keeps every committed byte; shrinking history afterwards means a disruptive rewrite, so this choice is effectively irreversible per byte committed. Capture-side selectivity (raw only for non-clean outcomes) cuts volume the most but loses exactly the clean-run baselines you might want to diff a failure against. Compression (.jsonl.gz) conflicts with read_log/LogModal text serving unless read_log learns to decompress — not offered as an option for that reason.
+- suggestions: ["No policy — commit every raw log indefinitely; revisit only if repo size actually hurts","Worktree prune: periodic cleanup deletes raw logs older than N days from the tree (checkouts stay lean; history/clone size unaffected)","Selective capture: commit raw logs only for non-clean outcomes (revise verdicts, blocked tasks, failed/unparseable subagents); summary-only for clean approves"]
+- recommendation: No policy for now — observed sizes are modest for a dogfooding repo, and either reducer can be bolted on later without migration; the hygiene question's scan already covers the riskiest content.
+- ledgerRefs: ["goals:G49"]

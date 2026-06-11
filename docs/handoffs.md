@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 52
+  item: 53
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -420,3 +420,17 @@ archives:
 - ledgerRefs: ["goals:G48"]
 - blockingQuestions: ["Q214","Q215","Q216","Q217","Q218"]
 - sessionLogs: ["docs/logs/20260610-220434-ada8c90131e25f938.md"]
+
+## M170
+
+### HO53 — answers-required
+
+- createdAt: 2026-06-11T16:17:31.919Z
+- updatedAt: 2026-06-11T16:17:31.919Z
+- author: "fable-5[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "/cq:plan bootstrap of G49 (record + display FULL RAW subagent session logs, COMMITTED per the user's explicit constraint — not gitignored). Coordination milestone M170; goal created in `clarifying` with verified grounding embedded (harness transcript layout ~/.claude/projects/<slug>/<session>/subagents/agent-<id>.jsonl + .meta.json keyed by the SAME agent-id the flows use; ~50-360 KB each, 169/~13 MB on a heavy session; read_log confined to docs/logs with a 4 MiB cap; web LogModal is the existing viewer; pi:* logs already verbatim — the gap is native Agent subagents). The plan-advance planner filed the first clarifying batch Q219-Q224 (format+truncation / schema-linking / display scope web+TUI / capture edge cases+backfill / hygiene-secrets posture / growth-retention), each with suggestions + a recommendation. The user must answer them in the TUI/web, then run /cq:plan:advance G49. NOTE: discovered + filed D60 (medium, M-AMBIENT, deliberately NOT linked to G49): the prompt-catalog validate_input/validate_output tools receive a STRING instead of the object payload under the Claude Code MCP client — 'must be object' on every call — making the G41 contract check inert; picked up by a later investigate run via P-investigate."
+- flow: plan
+- ledgerRefs: ["goals:G49"]
+- blockingQuestions: ["Q219","Q220","Q221","Q222","Q223","Q224"]
+- sessionLogs: ["docs/logs/20260611-161616-aa5637dfe1fa54d60.md"]

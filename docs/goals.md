@@ -2,7 +2,7 @@
 ledger: goals
 counters:
   milestone: 0
-  item: 48
+  item: 49
 archives:
   - id: M15
     path: ./archive/goals/M15.md
@@ -429,3 +429,31 @@ archives:
 - sessionLogs: ["docs/logs/20260610-220434-ada8c90131e25f938.md","docs/logs/20260610-222114-a2057ccd00c7186b4.md","docs/logs/20260610-222114-pi-grok-g48.md","docs/logs/20260610-222114-pi-minimax-g48.md"]
 - milestones: ["M166","M167","M168","M169"]
 - grounding: "Synthesized from a 3-planner panel (opus base, grok + minimax folded). In-process delegation: cq-cli depends on @cq/ledger-{mcp,tui,web} + routes `cq <mode> argv` to their exported main(argv) verbatim (Q214); old standalone bins DELETED + .mcp.json/tools.nix/docs migrated atomically (Q215); modes cq mcp|tui|web + cq --help (Q216); ONE fat .#cq Nix product, per-product derivations dropped (Q217); behavior-invariant, embedded MCP byte-for-byte intact, bun run check + nix build .#cq green (Q218). 4 work milestones M166(A: dispatch+delegation T386-T389) → M167(B: delete bins + collapse flake T390-T392) → M168(C: migrate .mcp.json/tools.nix/docs T393-T395) → M169(D: FOD-hash refresh + acceptance gate T396-T397). Key grounding: the 3 product mains export main(argv)/serve + import.meta.main-guarded; the dispatcher must short-circuit BEFORE native parseSubcommandArgs and pass argv.slice(1) verbatim; dev-llm refs live in nix/hm/tools.nix (servers.ledger command + ledgerTools list); the merged .#cq closure = union of embedServerClosure + tui ink/react + web SPA inputs; FOD-hash refresh after the cq-cli dep additions."
+
+## M170
+
+### G49 — clarifying
+
+- createdAt: 2026-06-11T16:08:16.081Z
+- updatedAt: 2026-06-11T16:16:54.652Z
+- author: "fable-5[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- title: Record + display FULL RAW subagent session logs (committed, not gitignored)
+- description: |
+    Currently the cq flows persist only each subagent's self-reported `### Session summary` block into `docs/logs/<ts>-<agent-id>.md` (the orchestrator writes it; `sessionLogs` on goals/tasks/reviews/handoffs points at these). The user wants to ALSO record the FULL RAW logs of the subagent sessions and display them in the TUI/web — "that would help a lot with debugging". USER CONSTRAINT (explicit): the raw logs should NOT be gitignored — they are committed ledger artifacts like the summary logs (overriding the orchestrator's gitignore recommendation).
+    
+    ## Grounding (verified this session)
+    - **Raw transcripts already exist, keyed by the SAME agent-id the flows use.** The Claude Code harness writes `~/.claude/projects/<project-slug>/<session-id>/subagents/agent-<agent-id>.jsonl` (one JSONL event stream per dispatched subagent) plus `agent-<agent-id>.meta.json` ({agentType, worktreePath, description, toolUseId}). `<agent-id>` is exactly the id the Agent tool returns — the id already used in the summary-log filenames. `<session-id>` is `$CLAUDE_CODE_SESSION_ID`; the project slug is derivable from the ledger root path.
+    - **Sizes:** ~50–360 KB per subagent transcript; a heavy session observed 169 subagent transcripts totalling ~13 MB. Since the user wants them COMMITTED, the plan must account for repo growth (append-only history; possibly truncation/compaction policy — to clarify).
+    - **pi shellout subagents** (pi:* reviewers/planners) ALREADY capture verbatim stdout into their log files — for them the "raw log" is the existing log (possibly plus the composed prompt). The gap is native Agent subagents (workers/reviewers/explorers/probers/planners), where everything between dispatch and the final summary is currently lost.
+    - **Display path:** the frontends are pure MCP clients; the web sessionLogs popup (T152, LogModal in ledger-web App.tsx) fetches via the `read_log` MCP tool, which is CONFINED to `<root>/docs/logs/` (readLog.ts) with a 4 MiB cap + truncated flag (K42). So raw logs must land under `docs/logs/**` to be viewable; a 360 KB transcript fits the cap. JSONL is not markdown — the viewer needs either a JSONL transcript renderer (conversation view: turns, tool calls, tool results — collapsible) or a render-at-capture markdown form.
+    
+    ## Decisions for clarifying (planner to pin)
+    - Capture mechanics: orchestrator copies the agent-<id>.jsonl (+ meta.json?) after each Agent return into e.g. `docs/logs/raw/<ts>-<agent-id>.jsonl` — which flows' §Session logs steps change (implement/plan/investigate advance + start commands), and what happens when the transcript file is absent (non-Claude harness / older runs): graceful degradation to summary-only.
+    - Format: raw JSONL verbatim vs rendered-markdown transcript vs both; truncation policy for very large transcripts (read_log 4 MiB cap as the bound?).
+    - Schema/linking: a parallel `rawLogs` field next to `sessionLogs` on items (schema change across ledgers) vs a naming convention (`docs/logs/raw/<same-stem>.jsonl`) the viewer infers from sessionLogs paths vs appending raw paths into the existing sessionLogs array.
+    - Display: web LogModal renders JSONL as a structured conversation view (turn-by-turn, collapsible tool calls/results); TUI equivalent (Q122 precedent: TUI previously had no log-content rendering — decide TUI scope); how raw logs are surfaced next to the existing summary entries (paired toggle?).
+    - Harness portability: Claude Code transcript layout is harness-specific; Codex equivalent unknown; pi already verbatim — flows must degrade gracefully.
+    - Hygiene: raw transcripts embed full tool outputs (command output may contain tokens/paths) — committed-to-git implications; any redaction policy (user already chose COMMIT over gitignore).
+    - git policy details: the ledger commit policy already stages all of docs/logs; confirm raw logs ride the existing per-merge/at-stop ledger commits unchanged. (Related prior art: G38-1b built the OUT-OF-REPO ~/.cache write-mirror — different purpose, restore vs debugging.)
+- sessionLogs: ["docs/logs/20260611-161616-aa5637dfe1fa54d60.md"]

@@ -2,7 +2,7 @@
 ledger: milestones
 counters:
   milestone: 0
-  item: 169
+  item: 170
 archives:
   - id: M5
     path: ./archive/milestones/M5.md
@@ -860,3 +860,9 @@ archives:
 - createdAt: 2026-06-10T22:02:13.252Z
 - updatedAt: 2026-06-10T22:02:13.252Z
 - title: "Plan: unify CLI tools into a single cq binary"
+
+### M170 — open
+
+- createdAt: 2026-06-11T16:07:23.604Z
+- updatedAt: 2026-06-11T16:07:23.604Z
+- title: "Plan: raw subagent session logs (capture + display)"
