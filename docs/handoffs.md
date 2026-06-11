@@ -2,7 +2,7 @@
 ledger: handoffs
 counters:
   milestone: 0
-  item: 51
+  item: 52
 archives:
   - id: M79
     path: ./archive/handoffs/M79.md
@@ -318,6 +318,17 @@ archives:
 - flow: advance
 - ledgerRefs: ["goals:G44","defects:D50"]
 - sessionLogs: ["docs/logs/20260610-150737-a47043f0c34303e03.md","docs/logs/20260610-153429-a2540a8630b7ab96a.md","docs/logs/20260610-154315-a71ad469deb41bf5f.md","docs/logs/20260610-160922-ab2a5b5513cf25dc4.md","docs/logs/20260610-163734-T362-T363.md","docs/logs/20260610-170206-a582052be0f2e15a5.md","docs/logs/20260610-172615-a50877fbfd91116a7.md","docs/logs/20260610-175239-a52a4403193d32ac0.md"]
+
+### HO52 — drained
+
+- createdAt: 2026-06-11T02:53:35.019Z
+- updatedAt: 2026-06-11T02:53:35.019Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "/cq:advance DRAINED. The ledger reached quiescence: P-investigate=FALSE (no actionable defects — D56/D57 + D58/D59 all resolved), P-plan=FALSE (all 8 goals planned/locked; none clarifying/planning), P-implement=FALSE (zero active non-terminal tasks), open-Q gate clear (all 41 questions answered). This run completed G47 (D57 web JSON pretty-print) and G48 (unify the 4 CLI tools into one `cq` with `cq mcp|tui|web` subcommands). G48 implement DAG: T386-T399 across milestones M166/M167/M168/M169 (all archived). The merged `.#cq` flake closure now stages embedServerClosure + extracted tuiClosure/webClosure + @cq symlinks + LEDGER_WEB_OUTDIR; the 3 standalone products (ledger-mcp/ledger-tui/ledger-web) and their bins/derivations/apps are deleted; .mcp.json, nix/hm/tools.nix, and the docs all repoint to `.#cq`/`cq mcp`. The T397 acceptance gate PASSED operationally (bun run check 0 fail; nix build .#cq green; full launch parity — cq mcp stdio 26 tools + http /mcp, web embedded SPA+/mcp + --mcp-url proxy, tui routes, restore routes, old products gone) and surfaced+fixed two build/runtime defects invisible to the eval-only T391 acceptance: D58 (cq-cli staged one level too deep) and D59 (dispatcher process.exit tore down long-running modes). STANDING (non-blocking, user-discretion) follow-ups, NOT ledger blockers: (1) the planned goals G45/G46/G47/G48 stay `planned` until the user closes them to `done` in the TUI/web (goals never auto-close); (2) `home-manager switch` to deploy the new nix/hm/tools.nix wiring (ledger MCP server now `${cq}/bin/cq mcp`, PATH carries `cq`) plus the earlier G44 Stop hook. None of these block any ledger item — the implemented code is merged on main."
+- flow: advance
+- ledgerRefs: ["goals:G48","goals:G47","defects:D58","defects:D59","defects:D57"]
+- sessionLogs: ["docs/logs/20260611-012254-T391.md","docs/logs/20260611-014618-T392.md","docs/logs/20260611-014618-T393.md","docs/logs/20260611-014618-T394.md","docs/logs/20260611-014618-T395.md","docs/logs/20260611-014618-T396.md","docs/logs/20260611-014618-T397.md","docs/logs/20260611-014618-T398.md","docs/logs/20260611-014618-T399.md"]
 
 ## M126
 
