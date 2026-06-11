@@ -114,7 +114,7 @@
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
           # Refresh after dependency changes (see README § Nix).
-          outputHash = "sha256-kG79B/z1rHAXOhb2dYvBvUkzjJVoyv8xLwu6RrCyk5U=";
+          outputHash = "sha256-zyZvSkVSclhtQKc5K09MW2b8XZD89P1/YKAvjZS/+i0=";
         };
 
         # Shell fragment: wire @cq/config as a RUNTIME dep of @cq/ledger. Since
