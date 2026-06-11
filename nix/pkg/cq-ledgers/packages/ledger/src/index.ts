@@ -160,3 +160,5 @@ export type {
   SnapshotItemStub,
   SnapshotStatusBucket,
 } from "./snapshot.js";
+export { validateJsonl } from "./store/jsonlLog.js";
+export type { JsonlValidationResult, JsonlValidationOk, JsonlValidationError } from "./store/jsonlLog.js";
