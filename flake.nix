@@ -291,7 +291,7 @@
             runHook preInstall
 
             WORKSPACE=$out/share/cq
-            mkdir -p "$WORKSPACE/packages/cq-cli" $out/bin
+            mkdir -p "$WORKSPACE/packages" $out/bin
 
             # ── 1. Source: this binary + top-level workspace manifests ───── #
             # (@cq/ledger, @cq/ledger-mcp, @cq/cq-config, @cq/ledger-live and
