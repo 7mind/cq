@@ -49,6 +49,19 @@ describe("dispatch", () => {
     expect(io.errs.join("\n")).toBe(USAGE);
   });
 
+  it("USAGE text includes all three modes and all five native subcommands", () => {
+    // modes
+    expect(USAGE).toContain("mcp");
+    expect(USAGE).toContain("tui");
+    expect(USAGE).toContain("web");
+    // native subcommands
+    expect(USAGE).toContain("init");
+    expect(USAGE).toContain("reset");
+    expect(USAGE).toContain("erase");
+    expect(USAGE).toContain("move-ledger");
+    expect(USAGE).toContain("advance-gate");
+  });
+
   it("routes erase to its handler (nonexistent root => refuse exit 2, nothing to erase)", async () => {
     const io = recordingDispatchIo();
     const root = path.join("/tmp", `cq-dispatch-erase-absent-${process.pid}-${Date.now()}`);

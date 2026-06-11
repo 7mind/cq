@@ -123,7 +123,15 @@ export interface SubcommandArgs {
 }
 
 export const USAGE = [
-  "usage: cq <command> [options]",
+  "usage: cq <mode|command> [options]",
+  "",
+  "modes (delegate verbatim to the product binary):",
+  "  mcp         [--cwd <path>] [--http [host:]port] [--tool-prefix <p>]",
+  "                                                  run the MCP server (stdio or HTTP)",
+  "  mcp restore --from-cache [--cwd <path>]         restore docs/ from the per-root XDG cache mirror",
+  "  tui         [--cwd <path>] [--mcp-url <url>]    run the terminal UI",
+  "  web         [--port <n>] [--host <h>] [--cwd <path>] [--mcp-url <url>]",
+  "                                                  run the web UI (default port 5180)",
   "",
   "commands:",
   "  init        [--cwd <path>] [--force]            initialise the canonical ledger set",
