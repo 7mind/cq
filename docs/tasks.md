@@ -605,10 +605,10 @@ archives:
 - ledgerRefs: ["goals:G48"]
 - sessionLogs: ["docs/logs/20260611-012254-T391.md"]
 
-### T392 — planned
+### T392 — done
 
 - createdAt: 2026-06-10T22:23:55.180Z
-- updatedAt: 2026-06-10T22:40:29.476Z
+- updatedAt: 2026-06-11T01:46:56.680Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Drop the per-product ledgerMcp/ledgerTui/ledgerWeb derivations and their packages/apps
@@ -617,13 +617,14 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T391"]
 - ledgerRefs: ["goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T392.md"]
 
 ## M168
 
-### T393 — planned
+### T393 — done
 
 - createdAt: 2026-06-10T22:24:06.172Z
-- updatedAt: 2026-06-10T22:38:24.870Z
+- updatedAt: 2026-06-11T01:46:58.559Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Migrate .mcp.json to launch the ledger MCP server via cq mcp
@@ -632,11 +633,12 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T391"]
 - ledgerRefs: ["goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T393.md"]
 
-### T394 — planned
+### T394 — done
 
 - createdAt: 2026-06-10T22:24:13.184Z
-- updatedAt: 2026-06-10T22:38:26.274Z
+- updatedAt: 2026-06-11T01:46:59.988Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Migrate nix/hm/tools.nix MCP-server command + PATH tools to the cq product
@@ -645,11 +647,12 @@ archives:
 - suggestedModel: frontier
 - dependsOn: ["T391"]
 - ledgerRefs: ["goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T394.md"]
 
-### T395 — planned
+### T395 — done
 
 - createdAt: 2026-06-10T22:24:19.995Z
-- updatedAt: 2026-06-10T22:38:27.700Z
+- updatedAt: 2026-06-11T01:47:01.516Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: Migrate docs (CLAUDE.md, package READMEs) from ledger-mcp/tui/web to cq mode
@@ -658,6 +661,7 @@ archives:
 - suggestedModel: standard
 - dependsOn: ["T391"]
 - ledgerRefs: ["goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T395.md"]
 
 ## M169
 

@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 474
+  item: 478
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -917,3 +917,53 @@ archives:
 - criticism: []
 - new_questions: []
 - ledgerRefs: ["tasks:T391","goals:G48"]
+
+### R475 — go-ahead
+
+- createdAt: 2026-06-11T01:47:10.867Z
+- updatedAt: 2026-06-11T01:47:10.867Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T392 — UNANIMOUS approve (4-reviewer panel: opus native + codex/grok/minimax pi). Dropped the ledgerMcp/ledgerTui/ledgerWeb derivation bindings (185-line excision); KEPT the 5 named fragments (embedServerClosure/cqConfigForLedger/tuiClosure/webClosure/ledgerLiveSource consumed by cqCli) + bunNodeModules + node-modules FOD. packages={default=cq,cq,node-modules,+untouched LLM assets}; apps={default,cq}->cqCli/bin/cq; no ledger-* products/apps. opus operationally verified in the worktree: nix flake show lists only cq/default, nix eval cq.name=cq-0.0.1, no dangling nix-level ref to a deleted binding. check 1688/0. (nix build .#cq gated to T397.) Cosmetic non-blocking note: cqCli header comment still says 'modelled on ledgerMcp' (a comment, not code)."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T392","goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T392.md"]
+
+## M168
+
+### R476 — go-ahead
+
+- createdAt: 2026-06-11T01:47:15.061Z
+- updatedAt: 2026-06-11T01:47:15.061Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T393 — UNANIMOUS approve (4-reviewer panel: opus native + codex/grok/minimax pi). .mcp.json ledger server args ['run','.#ledger-mcp','--'] -> ['run','.#cq','--','mcp']; no trailing args dropped; JSON valid. Delegation target verified: dispatcher main.ts:72 routes mode mcp -> @cq/ledger-mcp.main(argv.slice(1)) verbatim (T387), so stdio behaviour is identical. Full initialize->26-tool parity gated to T397. check 1688/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T393","goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T393.md"]
+
+### R477 — go-ahead
+
+- createdAt: 2026-06-11T01:47:19.763Z
+- updatedAt: 2026-06-11T01:47:19.763Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T394 — UNANIMOUS approve (4-reviewer panel: opus native + codex/grok/minimax pi). nix/hm/tools.nix: ledgerPkg=ledgerPkgs.cq; programs.mcp.servers.ledger command=${cq}/bin/cq args=['mcp'] (was bin/ledger-mcp,[]); ledgerTools PATH collapsed to [ ledgerPkgs.cq ]; comments updated. No HTTP variant existed. opus commit-tree grep across nix/hm/ for ledger-mcp/tui/web -> NO MATCHES; targets verified real (flake.nix:511 installs bin/cq; main.ts:96 maps mcp->@cq/ledger-mcp). nix-instantiate --parse OK; check 1688/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T394","goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T394.md"]
+
+### R478 — go-ahead
+
+- createdAt: 2026-06-11T01:47:24.002Z
+- updatedAt: 2026-06-11T01:47:24.002Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T395 — UNANIMOUS approve (4-reviewer panel: opus native + codex/grok/minimax pi). Migrated user-facing product-command refs ledger-mcp/tui/web -> cq mcp|tui|web across 4 markdowns (CLAUDE.md nix-products->.#cq; README.md table+examples+flake-outputs; sample-ledger README; ledger-mcp README bin invocations). Left @cq/... package ids, the @cq/ledger-mcp table-row identifier, and bun-from-source dev paths intact; embedded-mode narrative preserved. opus commit-tree audit: acceptance grep empty; zero over/under-conversion; every converted command matches the real cq MODES=[mcp,tui,web] dispatcher. check 1688/0."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T395","goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T395.md"]
