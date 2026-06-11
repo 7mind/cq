@@ -273,172 +273,6 @@
             "$WORKSPACE/packages/ledger-web/node_modules/@cq/config"
         '';
 
-        # ledger-mcp — the standalone ledger MCP server. Serves the 18-tool
-        # ledger surface over stdio or Streamable HTTP (`--http [host:]port`),
-        # backed by a file-backed FsLedgerStore. Closure: the @cq/ledger library
-        # + @cq/ledger-mcp binary plus their runtime npm deps from the shared FOD.
-        ledgerMcp = pkgs.stdenv.mkDerivation {
-          pname = "ledger-mcp";
-          version = "0.0.1";
-
-          src = ./nix/pkg/cq-ledgers;
-
-          nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper ];
-
-          dontConfigure = true;
-          # Bun transpiles TypeScript at runtime; no compile step here.
-          buildPhase = "true";
-
-          installPhase = ''
-            runHook preInstall
-
-            WORKSPACE=$out/share/ledger-mcp
-            mkdir -p "$WORKSPACE/packages" $out/bin
-
-            # ── 1. Source: the library + this binary ────────────────────── #
-            cp -r packages/ledger    "$WORKSPACE/packages/ledger"
-            cp -r packages/ledger-mcp "$WORKSPACE/packages/ledger-mcp"
-            cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
-            rm -rf \
-              "$WORKSPACE/packages/ledger/node_modules" \
-              "$WORKSPACE/packages/ledger-mcp/node_modules"
-
-            # ── 2. ledger node_modules ──────────────────────────────────── #
-            # Runtime deps: minisearch (FTS), remark-*/unified/yaml (parser),
-            # zod, @modelcontextprotocol/sdk (stdio tool registration), and
-            # @anthropic-ai/claude-agent-sdk (the JS `tool()` helper the
-            # @cq/ledger barrel re-exports — NOT the native binary).
-            mkdir -p "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai" \
-                     "$WORKSPACE/packages/ledger/node_modules/@modelcontextprotocol"
-            for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify minisearch bun-types; do
-              if [ -e "${bunNodeModules}/packages/ledger/node_modules/$dep" ]; then
-                ln -s "${bunNodeModules}/packages/ledger/node_modules/$dep" \
-                  "$WORKSPACE/packages/ledger/node_modules/$dep"
-              fi
-            done
-            ln -s ${bunNodeModules}/packages/ledger/node_modules/@anthropic-ai/claude-agent-sdk \
-              "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai/claude-agent-sdk"
-            ln -s ${bunNodeModules}/packages/ledger/node_modules/@modelcontextprotocol/sdk \
-              "$WORKSPACE/packages/ledger/node_modules/@modelcontextprotocol/sdk"
-
-            # ── 3. ledger-mcp node_modules ──────────────────────────────── #
-            mkdir -p "$WORKSPACE/packages/ledger-mcp/node_modules/@modelcontextprotocol" \
-                     "$WORKSPACE/packages/ledger-mcp/node_modules/@cq"
-            ln -s ${bunNodeModules}/packages/ledger-mcp/node_modules/@modelcontextprotocol/sdk \
-              "$WORKSPACE/packages/ledger-mcp/node_modules/@modelcontextprotocol/sdk"
-            if [ -e "${bunNodeModules}/packages/ledger-mcp/node_modules/bun-types" ]; then
-              ln -s "${bunNodeModules}/packages/ledger-mcp/node_modules/bun-types" \
-                "$WORKSPACE/packages/ledger-mcp/node_modules/bun-types"
-            fi
-            ln -s "$WORKSPACE/packages/ledger" \
-              "$WORKSPACE/packages/ledger-mcp/node_modules/@cq/ledger"
-
-            # @cq/config — config-capability parser dep of @cq/ledger-mcp AND
-            # (since T357) a startup dep of @cq/ledger via createLedgerStore.
-            cp -r packages/cq-config "$WORKSPACE/packages/cq-config"
-            rm -rf "$WORKSPACE/packages/cq-config/node_modules"
-            ln -s "$WORKSPACE/packages/cq-config" \
-              "$WORKSPACE/packages/ledger-mcp/node_modules/@cq/config"
-            ${cqConfigForLedger}
-
-            # ── 4. Wrapper ──────────────────────────────────────────────── #
-            makeWrapper ${pkgs.bun}/bin/bun $out/bin/ledger-mcp \
-              --add-flags "run $WORKSPACE/packages/ledger-mcp/src/main.ts --" \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
-
-            runHook postInstall
-          '';
-
-          dontStrip = true;
-          dontFixup = true;
-        };
-
-        # ledger-tui — Ink terminal UI, a pure MCP client. Two modes: REMOTE
-        # (`--mcp-url <url>`, Streamable HTTP) or EMBEDDED (default; MCP server
-        # in-process over an in-memory transport, root from `--cwd`/$LEDGER_ROOT/
-        # CWD). Runtime closure: ink + react + @modelcontextprotocol/sdk, plus
-        # the embedded @cq/ledger + @cq/ledger-mcp server closure.
-        ledgerTui = pkgs.stdenv.mkDerivation {
-          pname = "ledger-tui";
-          version = "0.0.1";
-
-          src = ./nix/pkg/cq-ledgers;
-
-          nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper ];
-
-          dontConfigure = true;
-          buildPhase = "true";
-
-          installPhase = ''
-            runHook preInstall
-
-            WORKSPACE=$out/share/ledger-tui
-            mkdir -p "$WORKSPACE/packages/ledger-tui" $out/bin
-
-            cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
-
-            # Embedded MCP server closure (@cq/ledger + @cq/ledger-mcp).
-            ${embedServerClosure}
-
-            # TUI source + ink/react + embedded-mode workspace links.
-            ${tuiClosure}
-
-            makeWrapper ${pkgs.bun}/bin/bun $out/bin/ledger-tui \
-              --add-flags "run $WORKSPACE/packages/ledger-tui/src/main.tsx --" \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
-
-            runHook postInstall
-          '';
-
-          dontStrip = true;
-          dontFixup = true;
-        };
-
-        # ledger-web — static server for the browser explorer/editor + DAG.
-        # Serves the React bundle (Bun.build at startup). Two modes: PROXY
-        # (`--mcp-url`, reverse-proxies same-origin /mcp+/ws to a separate
-        # `ledger-mcp --http`) or EMBEDDED (default; hosts the MCP server
-        # in-process on /mcp+/ws, root from `--cwd`/$LEDGER_ROOT/CWD). Bun.build
-        # resolves the browser bundle's react / react-dom / sdk from the closure;
-        # the embedded server adds the @cq/ledger + @cq/ledger-mcp closure.
-        # LEDGER_WEB_OUTDIR redirects bundler output to a writable path.
-        ledgerWeb = pkgs.stdenv.mkDerivation {
-          pname = "ledger-web";
-          version = "0.0.1";
-
-          src = ./nix/pkg/cq-ledgers;
-
-          nativeBuildInputs = [ pkgs.bun pkgs.makeWrapper ];
-
-          dontConfigure = true;
-          buildPhase = "true";
-
-          installPhase = ''
-            runHook preInstall
-
-            WORKSPACE=$out/share/ledger-web
-            mkdir -p "$WORKSPACE/packages/ledger-web" $out/bin
-
-            cp package.json bun.lock bunfig.toml tsconfig.base.json "$WORKSPACE/"
-
-            # Embedded MCP server closure (@cq/ledger + @cq/ledger-mcp).
-            ${embedServerClosure}
-
-            # Web SPA source + react/elkjs/markdown links + embedded-mode links.
-            ${webClosure}
-
-            makeWrapper ${pkgs.bun}/bin/bun $out/bin/ledger-web \
-              --add-flags "run $WORKSPACE/packages/ledger-web/src/serve.ts --" \
-              --run 'export LEDGER_WEB_OUTDIR="''${LEDGER_WEB_OUTDIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/ledger-web/dist}"' \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
-
-            runHook postInstall
-          '';
-
-          dontStrip = true;
-          dontFixup = true;
-        };
-
         # cq — the ledger-suite CLI (`cq init|reset|erase`). A standalone Bun
         # bin (NOT embedded — it constructs an FsLedgerStore directly), modelled
         # on ledgerMcp; see the numbered installPhase below for the staging steps.
@@ -521,10 +355,7 @@
         };
       in {
         packages = {
-          default = ledgerMcp;
-          ledger-mcp = ledgerMcp;
-          ledger-tui = ledgerTui;
-          ledger-web = ledgerWeb;
+          default = cqCli;
           cq = cqCli;
           # Expose for debugging / hash refresh.
           node-modules = bunNodeModules;
@@ -561,19 +392,7 @@
 
         apps.default = {
           type = "app";
-          program = "${ledgerMcp}/bin/ledger-mcp";
-        };
-        apps.ledger-mcp = {
-          type = "app";
-          program = "${ledgerMcp}/bin/ledger-mcp";
-        };
-        apps.ledger-tui = {
-          type = "app";
-          program = "${ledgerTui}/bin/ledger-tui";
-        };
-        apps.ledger-web = {
-          type = "app";
-          program = "${ledgerWeb}/bin/ledger-web";
+          program = "${cqCli}/bin/cq";
         };
         apps.cq = {
           type = "app";
