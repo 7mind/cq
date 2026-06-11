@@ -72,6 +72,7 @@ describe("dispatch", () => {
     const io = recordingDispatchIo();
     const outcome = await dispatch([], io);
     expect(outcome.exitCode).toBe(EXIT_USAGE);
+    expect(outcome.longRunning).toBe(false);
     expect(io.errs.join("\n")).toBe(USAGE);
   });
 
@@ -79,6 +80,7 @@ describe("dispatch", () => {
     const io = recordingDispatchIo();
     const outcome = await dispatch(["badcmd"], io);
     expect(outcome.exitCode).toBe(EXIT_USAGE);
+    expect(outcome.longRunning).toBe(false);
     expect(io.errs.join("\n")).toBe(USAGE);
   });
 
@@ -100,6 +102,7 @@ describe("dispatch", () => {
     const root = path.join("/tmp", `cq-dispatch-erase-absent-${process.pid}-${Date.now()}`);
     const outcome = await dispatch(["erase", "--cwd", root, "--yes"], io);
     expect(outcome.exitCode).toBe(EXIT_USAGE);
+    expect(outcome.longRunning).toBe(false);
     expect(io.errs.join("\n")).toContain("nothing to erase");
   });
 });
@@ -111,12 +114,13 @@ describe("dispatch", () => {
  * mocked delegates so no real server / Ink render launches.
  */
 describe("dispatch MODE routing (mcp|tui|web)", () => {
-  it("delegates each mode with argv.slice(1) verbatim, exit 0, no usage printed", async () => {
+  it("delegates each mode with argv.slice(1) verbatim, exit 0, longRunning true, no usage printed", async () => {
     for (const mode of ["mcp", "tui", "web"] as const) {
       const io = recordingDispatchIo();
       const modes = recordingModes();
       const outcome = await dispatch([mode, "--cwd", "X", "extra"], io, modes);
       expect(outcome.exitCode).toBe(0);
+      expect(outcome.longRunning).toBe(true);
       expect(modes.calls[mode]).toEqual([["--cwd", "X", "extra"]]);
       // mode path performs no native parsing and prints nothing of its own.
       expect(io.errs).toEqual([]);
@@ -126,14 +130,16 @@ describe("dispatch MODE routing (mcp|tui|web)", () => {
   it("passes a nested subcommand (cq mcp restore --from-cache) verbatim", async () => {
     const io = recordingDispatchIo();
     const modes = recordingModes();
-    await dispatch(["mcp", "restore", "--from-cache"], io, modes);
+    const outcome = await dispatch(["mcp", "restore", "--from-cache"], io, modes);
+    expect(outcome.longRunning).toBe(true);
     expect(modes.calls["mcp"]).toEqual([["restore", "--from-cache"]]);
   });
 
   it("forwards a bare mode (cq tui) as an empty argv", async () => {
     const io = recordingDispatchIo();
     const modes = recordingModes();
-    await dispatch(["tui"], io, modes);
+    const outcome = await dispatch(["tui"], io, modes);
+    expect(outcome.longRunning).toBe(true);
     expect(modes.calls["tui"]).toEqual([[]]);
   });
 });
@@ -221,6 +227,7 @@ describe("dispatch MODE routing — relative --cwd reaches delegate verbatim (T3
     const outcome = await dispatch(["mcp", "--cwd", RELATIVE_CWD_SPACE, "extra"], io, modes);
 
     expect(outcome.exitCode).toBe(0);
+    expect(outcome.longRunning).toBe(true);
     expect(modes.calls["mcp"]).toEqual([["--cwd", RELATIVE_CWD_SPACE, "extra"]]);
     // resolveRoot(RELATIVE_CWD_SPACE) === path.resolve(RELATIVE_CWD_SPACE), which is
     // absolute (starts with '/').  The delegate received the relative string, so
@@ -238,6 +245,7 @@ describe("dispatch MODE routing — relative --cwd reaches delegate verbatim (T3
     const outcome = await dispatch(["tui", `--cwd=${RELATIVE_CWD_EQ}`], io, modes);
 
     expect(outcome.exitCode).toBe(0);
+    expect(outcome.longRunning).toBe(true);
     expect(modes.calls["tui"]).toEqual([[`--cwd=${RELATIVE_CWD_EQ}`]]);
     const resolvedEquivalent = path.resolve(RELATIVE_CWD_EQ);
     expect(resolvedEquivalent).not.toBe(RELATIVE_CWD_EQ);
@@ -267,6 +275,7 @@ describe("dispatch native subcommands — mode delegate never fires (T389 case e
 
       // handler fired: init succeeds (exit 0) and emits an "initialised" message
       expect(outcome.exitCode).toBe(0);
+      expect(outcome.longRunning).toBe(false);
       expect(io.errs).toEqual([]);
 
       // mode delegates not touched
@@ -291,6 +300,7 @@ describe("dispatch native subcommands — mode delegate never fires (T389 case e
 
     // handler fired: erase refuses on an absent root
     expect(outcome.exitCode).toBe(EXIT_USAGE);
+    expect(outcome.longRunning).toBe(false);
     expect(io.errs.join("\n")).toContain("nothing to erase");
 
     // mode delegates not touched
@@ -318,6 +328,7 @@ describe("dispatch native subcommands — mode delegate never fires (T389 case e
 
       // handler fired: advance-gate exits (no marker → allow, not EXIT_USAGE)
       expect(outcome.exitCode).not.toBe(EXIT_USAGE);
+      expect(outcome.longRunning).toBe(false);
 
       // mode delegates not touched
       expect(modes.calls["mcp"]).toEqual([]);

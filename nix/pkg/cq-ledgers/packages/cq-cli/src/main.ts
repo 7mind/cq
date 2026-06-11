@@ -224,9 +224,25 @@ function parseMoveDirection(v: string): MoveDirection {
   throw new Error(`cq: --to must be "git" or "local", got "${v}"`);
 }
 
-/** Outcome of a dispatch: the process exit code main() should propagate. */
+/**
+ * Outcome of a native subcommand handler: just an exit code. The dispatcher
+ * wraps this with `longRunning: false` before returning {@link DispatchOutcome}.
+ */
+export interface SubcommandOutcome {
+  exitCode: number;
+}
+
+/**
+ * Outcome of a dispatch: the process exit code and whether the mode owns its
+ * own process lifetime (long-running). When `longRunning` is true, `main()`
+ * must NOT call `process.exit()` — the delegate's stdio transport / Ink render
+ * / web server keeps the event loop alive and exits naturally when the channel
+ * closes. When false, `main()` calls `process.exit(exitCode)` to propagate
+ * non-zero codes from native subcommands.
+ */
 export interface DispatchOutcome {
   exitCode: number;
+  longRunning: boolean;
 }
 
 /** IO seam for the dispatcher so tests can capture usage output. */
@@ -247,7 +263,7 @@ function defaultDispatchIo(): DispatchIo {
 
 // --- Subcommand handlers -----------------------------------------------------
 
-export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<DispatchOutcome> {
+export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   // Route through the backend-selecting factory (T357): for backend='git-object'
   // this validates the git env (fail-fast) and installs the idempotent
   // git-backend .gitignore block BEFORE seeding the orphan ref, so a fresh
@@ -289,7 +305,7 @@ export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<Dis
  *   - TTY, no `--yes`    → prompt; proceed only on a `y`/`Y` answer.
  *   - non-TTY, no `--yes`→ REFUSE (exit 2) — never wipe a tree silently.
  */
-export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<DispatchOutcome> {
+export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const decision = await confirmDestructive(
     args.yes,
     `Reset ledgers at ${args.cwd}? Backup -> docs/.backup/ [y/N] `,
@@ -354,7 +370,7 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Di
  * SAFETY: if neither `<root>/docs` nor `<root>/cq.toml` exists there is nothing
  * to erase; refuse with exit {@link EXIT_USAGE} rather than silently succeed.
  */
-export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<DispatchOutcome> {
+export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const docsDir = path.join(args.cwd, "docs");
   const configFile = path.join(args.cwd, CQ_CONFIG_FILENAME);
 
@@ -409,7 +425,7 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Di
 export async function runMoveLedgerCmd(
   args: SubcommandArgs,
   io: DispatchIo,
-): Promise<DispatchOutcome> {
+): Promise<SubcommandOutcome> {
   return runMoveLedger(
     { root: args.cwd, to: args.to, force: args.force },
     { out: io.out, err: io.err },
@@ -426,7 +442,7 @@ export async function runMoveLedgerCmd(
 export async function runAdvanceGateCmd(
   args: SubcommandArgs,
   io: DispatchIo,
-): Promise<DispatchOutcome> {
+): Promise<SubcommandOutcome> {
   return runAdvanceGate(
     { cwd: args.cwd, session: args.session },
     { out: io.out, err: io.err },
@@ -453,7 +469,7 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
-const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Promise<DispatchOutcome>> = {
+const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Promise<SubcommandOutcome>> = {
   init: runInit,
   reset: runReset,
   erase: runErase,
@@ -482,18 +498,25 @@ export async function dispatch(
   const first = argv[0];
   if (first !== undefined && isMode(first)) {
     await modes[first](argv.slice(1));
-    return { exitCode: 0 };
+    return { exitCode: 0, longRunning: true };
   }
   if (first === undefined || !isSubcommand(first)) {
     io.err(USAGE);
-    return { exitCode: EXIT_USAGE };
+    return { exitCode: EXIT_USAGE, longRunning: false };
   }
   const args = parseSubcommandArgs(argv.slice(1));
-  return HANDLERS[first](args, io);
+  const outcome = await HANDLERS[first](args, io);
+  return { ...outcome, longRunning: false };
 }
 
 export async function main(argv: readonly string[]): Promise<void> {
-  const { exitCode } = await dispatch(argv);
+  const { exitCode, longRunning } = await dispatch(argv);
+  // Long-running modes (mcp/tui/web) govern their own process lifetime via the
+  // delegate's stdio transport / Ink render / web server keeping the event loop
+  // alive. Calling process.exit() here would tear the channel down immediately
+  // (see ledger-mcp main.ts lifecycle comment). Native subcommands do not block
+  // the event loop, so we must exit explicitly to propagate non-zero codes.
+  if (longRunning) return;
   process.exit(exitCode);
 }
 
