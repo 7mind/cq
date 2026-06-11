@@ -38,9 +38,10 @@ export type RedactionKind = (typeof REDACTION_KINDS)[number];
  * Per-kind replacement pattern.
  *
  * Each entry holds the `RegExp` to match and the replacement string. The regex
- * MUST use the `g` flag so all occurrences per line are replaced. The `m` flag
- * is also set: `^`/`$` anchor to line boundaries, and `.` does NOT cross
- * newlines by default (no `s` flag), ensuring per-line scope.
+ * MUST use the `g` flag so all occurrences per line are replaced. Per-line
+ * scope is enforced by the absence of the `s` (dotAll) flag: `.` and character
+ * classes do not cross newline boundaries. The `m` flag is present but not
+ * load-bearing here — none of the patterns use `^`/`$` anchors.
  */
 const PATTERNS: ReadonlyArray<{ kind: RedactionKind; re: RegExp }> = [
   // AWS access key IDs: AKIA followed by exactly 16 uppercase letters/digits.
