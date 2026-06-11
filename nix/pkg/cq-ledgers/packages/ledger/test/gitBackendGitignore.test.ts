@@ -14,6 +14,7 @@ import {
   ensureGitBackendGitignore,
   removeGitBackendGitignore,
   GIT_BACKEND_GITIGNORE_MARKER,
+  GIT_BACKEND_GITIGNORE_BLOCK,
 } from "../src/store/gitBackendGitignore.js";
 
 const dirs: string[] = [];
@@ -75,5 +76,15 @@ describe("git-backend .gitignore add/remove round-trip", () => {
   it("remove returns false when no .gitignore exists", async () => {
     const root = await tmp();
     expect(await removeGitBackendGitignore(root)).toBe(false);
+  });
+
+  it("ensureGitBackendGitignore writes a block containing 'docs/logs/'", async () => {
+    const root = await tmp();
+    const gi = path.join(root, ".gitignore");
+
+    expect(await ensureGitBackendGitignore(root)).toBe(true);
+    const content = await readFile(gi, "utf8");
+    expect(content.includes("docs/logs/")).toBe(true);
+    expect(GIT_BACKEND_GITIGNORE_BLOCK.includes("docs/logs/")).toBe(true);
   });
 });

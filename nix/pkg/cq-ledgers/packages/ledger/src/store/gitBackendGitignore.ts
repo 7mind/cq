@@ -30,6 +30,7 @@ export const GIT_BACKEND_GITIGNORE_BLOCK = [
   "docs/*.md",
   "docs/ledgers.yaml",
   "docs/.locks/",
+  "docs/logs/",
 ].join("\n");
 
 /**
