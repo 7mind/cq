@@ -211,8 +211,8 @@ describe("validateLogDest", () => {
   });
 
   it("normalises logs/./x to logs/x", () => {
-    // path.normalize("logs/./x") === "logs/x"
-    expect(validateLogDest("logs/./x")).toBe(path.normalize("logs/./x"));
+    // path.posix.normalize("logs/./x") === "logs/x" (forward-slash on all platforms)
+    expect(validateLogDest("logs/./x")).toBe(path.posix.normalize("logs/./x"));
     expect(validateLogDest("logs/./x")).toBe("logs/x");
   });
 });

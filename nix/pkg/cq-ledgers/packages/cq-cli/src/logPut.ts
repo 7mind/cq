@@ -72,34 +72,24 @@ export function validateLogDest(dest: string): string {
     throw new Error("cq log put: --dest must not be empty");
   }
 
-  // Reject an absolute path (leading /).
-  if (path.isAbsolute(dest)) {
+  // Reject an absolute path (leading /).  Use posix so behaviour is
+  // forward-slash on all platforms (--dest is always a docs-relative path).
+  if (path.posix.isAbsolute(dest)) {
     throw new Error(`cq log put: --dest must be a relative path, got "${dest}"`);
   }
 
-  // Normalise to catch `./`, redundant separators, etc.
-  // path.normalize converts `logs/../secrets` → `secrets`, `logs/./x` → `logs/x`.
-  const normalised = path.normalize(dest);
+  // Normalise with posix rules to catch `./`, redundant separators, and
+  // escape attempts: `logs/../secrets` → `secrets`, `logs/./x` → `logs/x`.
+  const normalised = path.posix.normalize(dest);
 
-  // After normalisation the path must start with "logs/" (or be exactly "logs").
+  // After normalisation the path must start with "logs/".
   // We require at least one sub-path component, so "logs" alone is rejected.
+  // Any `..` escape (e.g. `logs/../secrets` → `secrets`) is caught here.
   if (!normalised.startsWith("logs/")) {
     throw new Error(
       `cq log put: --dest must be under logs/ (docs-relative), got "${dest}"` +
         (normalised !== dest ? ` (normalises to "${normalised}")` : ""),
     );
-  }
-
-  // Split and reject any remaining `.` or `..` segments (post-normalisation
-  // path.normalize removes most of these, but we guard explicitly).
-  const segments = normalised.split(path.sep);
-  for (const seg of segments) {
-    if (seg === "." || seg === "..") {
-      throw new Error(
-        `cq log put: --dest must not contain "." or ".." segments, got "${dest}"` +
-          (normalised !== dest ? ` (normalises to "${normalised}")` : ""),
-      );
-    }
   }
 
   return normalised;
