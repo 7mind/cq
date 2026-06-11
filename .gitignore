@@ -50,3 +50,8 @@ docs/ledgers.yaml
 # CodeGraph local index (per-machine)
 .codegraph/
 docs/.backup/
+
+# cq git-object ledger backend (managed) — do not edit
+docs/*.md
+docs/ledgers.yaml
+docs/.locks/
