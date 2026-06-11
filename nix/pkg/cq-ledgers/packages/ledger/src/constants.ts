@@ -142,6 +142,8 @@ export const DEFECTS_SCHEMA: LedgerSchema = {
     severity: { type: "string", required: true },
     /** Repo-relative paths to session log files (docs/logs/<ts>-<agent-id>.md). */
     sessionLogs: { type: "string[]", required: false },
+    /** Repo-relative paths to raw transcript files (docs/logs/raw/<ts>-<agent-id>.jsonl). */
+    rawLogs: { type: "string[]", required: false },
     ...COMMON_REF_FIELDS,
   },
 };
@@ -172,6 +174,8 @@ export const TASKS_SCHEMA: LedgerSchema = {
     severity: { type: "string", required: false },
     /** Repo-relative paths to session log files (docs/logs/<ts>-<agent-id>.md). */
     sessionLogs: { type: "string[]", required: false },
+    /** Repo-relative paths to raw transcript files (docs/logs/raw/<ts>-<agent-id>.jsonl). */
+    rawLogs: { type: "string[]", required: false },
     ...COMMON_REF_FIELDS,
   },
 };
@@ -197,6 +201,8 @@ export const HYPOTHESIS_SCHEMA: LedgerSchema = {
     evidence: { type: "string[]", required: false },
     /** Repo-relative paths to session log files (docs/logs/<ts>-<agent-id>.md). */
     sessionLogs: { type: "string[]", required: false },
+    /** Repo-relative paths to raw transcript files (docs/logs/raw/<ts>-<agent-id>.jsonl). */
+    rawLogs: { type: "string[]", required: false },
     ...COMMON_REF_FIELDS,
   },
 };
@@ -280,6 +286,8 @@ export const GOALS_SCHEMA: LedgerSchema = {
     sourceRefs: { type: "string[]", required: false },
     /** Repo-relative paths to session log files (docs/logs/<ts>-<agent-id>.md). */
     sessionLogs: { type: "string[]", required: false },
+    /** Repo-relative paths to raw transcript files (docs/logs/raw/<ts>-<agent-id>.jsonl). */
+    rawLogs: { type: "string[]", required: false },
   },
 };
 
@@ -310,6 +318,8 @@ export const REVIEWS_SCHEMA: LedgerSchema = {
     sourceRefs: { type: "string[]", required: false },
     /** Repo-relative paths to session log files (docs/logs/<ts>-<agent-id>.md). */
     sessionLogs: { type: "string[]", required: false },
+    /** Repo-relative paths to raw transcript files (docs/logs/raw/<ts>-<agent-id>.jsonl). */
+    rawLogs: { type: "string[]", required: false },
   },
 };
 
@@ -359,6 +369,8 @@ export const HANDOFFS_SCHEMA: LedgerSchema = {
     blockingQuestions: { type: "id[]", required: false },
     handoffReasons: { type: "string[]", required: false },
     sessionLogs: { type: "string[]", required: false },
+    /** Repo-relative paths to raw transcript files (docs/logs/raw/<ts>-<agent-id>.jsonl). */
+    rawLogs: { type: "string[]", required: false },
     tags: { type: "string[]", required: false },
     sourceRefs: { type: "string[]", required: false },
   },

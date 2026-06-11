@@ -678,10 +678,10 @@ describe("HANDOFFS_SCHEMA shape", () => {
     }
   });
 
-  it("has exactly 8 fields: summary, flow, ledgerRefs, blockingQuestions, handoffReasons, sessionLogs, tags, sourceRefs", () => {
+  it("has exactly 9 fields: summary, flow, ledgerRefs, blockingQuestions, handoffReasons, sessionLogs, rawLogs, tags, sourceRefs", () => {
     const fieldNames = Object.keys(HANDOFFS_SCHEMA.fields).sort();
     expect(fieldNames).toEqual(
-      ["blockingQuestions", "flow", "handoffReasons", "ledgerRefs", "sessionLogs", "sourceRefs", "summary", "tags"],
+      ["blockingQuestions", "flow", "handoffReasons", "ledgerRefs", "rawLogs", "sessionLogs", "sourceRefs", "summary", "tags"],
     );
   });
 
