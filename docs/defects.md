@@ -2,7 +2,7 @@
 ledger: defects
 counters:
   milestone: 0
-  item: 57
+  item: 59
 archives:
   - id: M2
     path: ./archive/defects/M2.md
@@ -269,3 +269,29 @@ archives:
 - rootCause: "User-reported (G41 item-4 follow-up). DiagramSvg edge labels rendered with `fill={LABEL_FILL}` where LABEL_FILL='#171a21' — EXACTLY equal to the help-panel background var(--panel)='#171a21' (styles.css :root). Node labels share LABEL_FILL but sit on a filled <rect> (DEFAULT_FILL grey / roleKind colour) so they contrast; EDGE labels render directly on the panel background, so the dark fill is identical to the background and the labels are invisible in the (default dark) theme."
 - fix: "DiagramSvg.tsx: edge labels now use a new EDGE_LABEL_FILL='var(--fg)' (themed foreground #e6e9ef) instead of LABEL_FILL; node labels keep LABEL_FILL='#171a21' (still contrasts on their filled rects). Theme-aware (tracks the palette if a light theme is added). Regression test in diagramSvgActivate.test.tsx asserts the edge-label fill is var(--fg) (not #171a21) while node-label fill stays #171a21. bun run check green (1488/0)."
 - ledgerRefs: ["goals:G41"]
+
+## M169
+
+### D58 — resolved
+
+- createdAt: 2026-06-11T02:01:39.597Z
+- updatedAt: 2026-06-11T02:28:22.138Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- headline: Built `cq` binary is non-functional — cq-cli staged one level too deep (cp-into-existing-dir nesting)
+- description: "Surfaced by the T397 launch-parity gate: `result/bin/cq mcp` exits 1 with `error: Module not found \".../share/cq/packages/cq-cli/src/main.ts\"`. ROOT CAUSE (reproduced): the cqCli derivation installPhase has `mkdir -p \"$WORKSPACE/packages/cq-cli\" $out/bin` (flake.nix:294) followed by `cp -r packages/cq-cli \"$WORKSPACE/packages/cq-cli\"` (flake.nix:300). Because the mkdir pre-creates the dest dir, `cp -r SRC DEST` copies SRC *into* DEST -> the package lands at `$WORKSPACE/packages/cq-cli/cq-cli/src/main.ts` (verified in the store output), but the makeWrapper `--add-flags \"run $WORKSPACE/packages/cq-cli/src/main.ts\"` expects it at `$WORKSPACE/packages/cq-cli/src/main.ts`. INTRODUCED by T391, which changed the mkdir from `$WORKSPACE/packages` to `$WORKSPACE/packages/cq-cli`. `nix build .#cq` SUCCEEDS (cp doesn't error on the nest) and the eval-only T391 acceptance + the byte-level reviewers all missed it — only an actual launch catches it. FIX: revert flake.nix:294 to `mkdir -p \"$WORKSPACE/packages\" $out/bin` (the parent dir is all embedServerClosure/the cp need; the cp then copies-as-dest correctly)."
+- severity: high
+- rootCause: "cqCli installPhase pre-created the cp destination dir: `mkdir -p \"$WORKSPACE/packages/cq-cli\"` (T391) made `cp -r packages/cq-cli \"$WORKSPACE/packages/cq-cli\"` copy the source INTO the dest (cq-cli/cq-cli/...), so the makeWrapper target `.../cq-cli/src/main.ts` was missing."
+- suggestedFix: "Revert the mkdir to `mkdir -p \"$WORKSPACE/packages\"` (parent only) so the cp copies-as-dest. Fixed in T398 (flake.nix:294), merged e79d6d1; nix build .#cq green, file at correct path, Module-not-found gone."
+
+### D59 — resolved
+
+- createdAt: 2026-06-11T02:27:44.673Z
+- updatedAt: 2026-06-11T02:43:55.007Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- headline: cq dispatcher tears down long-running modes — main() process.exit(0) kills `cq mcp` stdio right after connect
+- description: "REPRODUCED (after the D58 fix, on rebuilt .#cq): `cq mcp --cwd <root>` over stdio prints `ledger-mcp: serving stdio MCP on cwd=...` then exits with ZERO stdout — no initialize/tools-list response (0 tools), whereas the direct ledger-mcp bin serves 26. ROOT CAUSE: ledger-mcp `main()` (packages/ledger-mcp/src/main.ts:715-718) does `await server.connect(transport)` then RETURNS, with the explicit comment 'exiting here would close stdin and tear the channel down immediately' — the standalone bin's import.meta.main block deliberately does NOT process.exit, so the event loop stays alive (pending stdin read) and the server serves. But the cq dispatcher's `main()` (packages/cq-cli/src/main.ts:495-497) does `const {exitCode} = await dispatch(argv); process.exit(exitCode);` — for a MODE, dispatch (`:483-486`) awaits the delegate (which resolves right after connect) and returns {exitCode:0}, so main() immediately process.exit(0)s, tearing the stdio channel down before any request is served. Affects every long-running mode (mcp stdio/http, tui, web), masked for tui/web only if their delegated main happens to block. FIX (testable): dispatch() returns a `longRunning` flag (true for the mode branch, false otherwise); main() does `if (longRunning) return; process.exit(exitCode);` so a mode governs its own process lifetime exactly like the standalone bins, while native subcommands still process.exit to propagate non-zero codes. Update the dispatch unit test to assert longRunning per branch."
+- severity: high
+- rootCause: cq dispatcher main() called process.exit(exitCode) right after a MODE delegate (ledger-mcp.main) resolved post-server.connect(), tearing the stdio channel down before any request was served. Standalone bins deliberately do not exit after connect (event loop stays alive via pending stdin).
+- suggestedFix: dispatch() returns longRunning (true for modes); main() does `if (longRunning) return; process.exit(exitCode)`. Fixed in T399 (packages/cq-cli/src/main.ts + dispatch.test.ts), merged 3f8c7f5; cq mcp stdio now serves 26 tools; check 1688/0; nix build .#cq green.

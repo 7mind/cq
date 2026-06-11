@@ -2,7 +2,7 @@
 ledger: tasks
 counters:
   milestone: 0
-  item: 397
+  item: 400
 archives:
   - id: M5
     path: ./archive/tasks/M5.md
@@ -679,15 +679,45 @@ archives:
 - ledgerRefs: ["goals:G48"]
 - sessionLogs: ["docs/logs/20260611-014618-T396.md"]
 
-### T397 — planned
+### T397 — blocked
 
 - createdAt: 2026-06-10T22:24:37.389Z
-- updatedAt: 2026-06-10T22:40:30.704Z
+- updatedAt: 2026-06-11T02:28:33.693Z
 - author: "opus-4.8[1m]"
 - session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
 - headline: "Acceptance gate: bun run check + nix build .#cq + all-mode launch parity + existing suites unchanged"
 - description: "Final behavior-invariance verification (Q218). (1) `bun run check` (test+typecheck+lint) from nix/pkg/cq-ledgers/ green — AND confirm the existing ledger-mcp/ledger-tui/ledger-web product test suites (mcp tool tests, ink-testing-library, happy-dom) stay UNCHANGED and still pass (they exercise the embedded-MCP path — the byte-for-byte invariant; fold-in from minimax). (2) `nix build .#cq` from repo root green. (3) Mode parity vs pre-refactor: (a) `nix run .#cq -- mcp` serves the .mcp.json stdio registration (initialize → 26 tools) AND `nix run .#cq -- mcp --http 7777` serves Streamable HTTP on /mcp; (b) `nix run .#cq -- tui` launches embedded (in-memory transport) + `--mcp-url` remote; (c) `nix run .#cq -- web` launches embedded (/mcp+/ws + SPA Bun.build) + `--mcp-url` proxy; (d) `cq mcp restore --from-cache` works; (e) the old `.#ledger-mcp|tui|web` products are gone (`nix flake show`). Capture observed output as operational evidence."
 - acceptance: "`bun run check` exits 0 (incl. the unchanged product suites); `nix build .#cq` succeeds; each of the launch checks (mcp stdio+http, tui embedded+remote, web embedded+proxy, restore, products-removed) produces the documented output; embedded MCP modes byte-for-byte intact."
 - suggestedModel: frontier
-- dependsOn: ["T396","T392","T393","T394","T395","T388","T389"]
+- dependsOn: ["T396","T392","T393","T394","T395","T388","T389","T398","T399"]
 - ledgerRefs: ["goals:G48"]
+
+### T398 — done
+
+- createdAt: 2026-06-11T02:02:04.767Z
+- updatedAt: 2026-06-11T02:28:17.417Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- headline: Fix D58 — cqCli installPhase nests cq-cli one level too deep (mkdir pre-creates cp dest)
+- description: "Fix the D58 root cause in flake.nix's cqCli derivation: line 294 `mkdir -p \"$WORKSPACE/packages/cq-cli\" $out/bin` pre-creates the dest dir, so line 300 `cp -r packages/cq-cli \"$WORKSPACE/packages/cq-cli\"` copies the source INTO it (nesting -> cq-cli/cq-cli/src/main.ts), breaking the wrapper's `run .../cq-cli/src/main.ts` path. Revert the mkdir to `mkdir -p \"$WORKSPACE/packages\" $out/bin` (only the parent is needed; embedServerClosure + the cq-cli cp both copy-as-dest into the existing $WORKSPACE/packages). Minimal 1-line change; do NOT touch the closure fragments."
+- acceptance: "After the fix: `nix build .#cq` green AND `result/share/cq/packages/cq-cli/src/main.ts` EXISTS (not nested under cq-cli/cq-cli/); launching `result/bin/cq mcp --cwd <ledger-root>` over stdio responds to MCP initialize + tools/list with the 26-tool surface (no 'Module not found'). Paste the build tail, the `ls .../cq-cli/src/main.ts`, and the tool count."
+- severity: high
+- suggestedModel: standard
+- dependsOn: []
+- ledgerRefs: ["defects:D58","goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T398.md"]
+
+### T399 — done
+
+- createdAt: 2026-06-11T02:28:32.017Z
+- updatedAt: 2026-06-11T02:43:51.276Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- headline: Fix D59 — cq dispatcher must not process.exit a long-running mode (mcp/tui/web)
+- description: "Fix D59 in packages/cq-cli/src/main.ts. The dispatcher's `main()` does `const {exitCode}=await dispatch(argv); process.exit(exitCode);` — for a MODE, dispatch awaits the delegate (ledger-mcp.main resolves right after server.connect()) and returns {exitCode:0}, so process.exit(0) tears the stdio channel down before serving (0 tools via `cq mcp`). The standalone bins deliberately do NOT exit (ledger-mcp main.ts:717 'exiting here would close stdin'). FIX (testable, SOLID): give DispatchOutcome a `longRunning: boolean`; the mode branch (`:483-486`) returns `{exitCode:0, longRunning:true}`, every other branch returns `longRunning:false`; `main()` becomes `const {exitCode,longRunning}=await dispatch(argv); if (longRunning) return; process.exit(exitCode);` so a mode governs its own process lifetime (event loop stays alive via the delegate's transport/UI) exactly like the standalone bins, while native subcommands still process.exit to propagate non-zero codes. Update packages/cq-cli/test/dispatch.test.ts to assert longRunning=true for each mode and false for native subcommands + the usage path."
+- acceptance: "bun run check green (incl. the updated dispatch test asserting longRunning per branch). After `nix build .#cq`: `cq mcp --cwd <ledger-root>` over stdio responds to initialize + tools/list with the 26-tool surface (NOT 0); `cq mcp --http <port>` serves Streamable HTTP on /mcp (curl initialize returns serverInfo); `cq web --cwd <root> --port <p>` serves the SPA + embedded /mcp. Paste the stdio 26-tool count + the http initialize evidence."
+- severity: high
+- suggestedModel: standard
+- dependsOn: []
+- ledgerRefs: ["defects:D59","goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T399.md"]

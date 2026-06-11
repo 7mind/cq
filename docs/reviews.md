@@ -2,7 +2,7 @@
 ledger: reviews
 counters:
   milestone: 0
-  item: 479
+  item: 480
 archives:
   - id: M5
     path: ./archive/reviews/M5.md
@@ -981,3 +981,15 @@ archives:
 - new_questions: []
 - ledgerRefs: ["tasks:T396","goals:G48"]
 - sessionLogs: ["docs/logs/20260611-014618-T396.md"]
+
+### R480 — go-ahead
+
+- createdAt: 2026-06-11T02:44:00.547Z
+- updatedAt: 2026-06-11T02:44:00.547Z
+- author: "opus-4.8[1m]"
+- session: 7e451a99-b692-4ea6-b078-7776ebb17ca0
+- summary: "T399 (fixes D59) — UNANIMOUS approve (4-reviewer panel: opus native + codex/grok/minimax pi). Dispatcher lifetime fix: SubcommandOutcome{exitCode} for the 5 native handlers; DispatchOutcome gains longRunning; dispatch() mode-branch->{0,true}, usage/native->false; main() `if (longRunning) return; process.exit(exitCode)`. opus independently checked out c34fe39 + reproduced: check 1688/0, nix build .#cq exit 0, cq mcp stdio -> 26 tools + serverInfo (D59 fixed). All 5 adversarial checks pass: longRunning on every return path; non-zero propagation intact for natives; MODES/SUBCOMMANDS disjoint (no native mis-flag); type-correct outcome split; dispatch test asserts longRunning per branch + T387/T389 delegation intact."
+- criticism: []
+- new_questions: []
+- ledgerRefs: ["tasks:T399","defects:D59","goals:G48"]
+- sessionLogs: ["docs/logs/20260611-014618-T399.md"]
