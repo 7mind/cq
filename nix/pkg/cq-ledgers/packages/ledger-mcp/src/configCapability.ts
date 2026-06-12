@@ -150,20 +150,24 @@ function projectConfig(config: CqConfig): GetConfigResult {
 }
 
 /**
- * The candidate token UNION: the config's `planners` ∪ `reviewers` alias lists,
- * resolved through `[aliases]` (Q156). De-duplicated by alias NAME (so the same
- * alias listed under both planners and reviewers contributes once), preserving
- * first-seen order. Mirrors the candidate derivation in
- * `gen-agents-catalogue.ts`'s `deriveModelMappings`.
+ * The candidate token pool for per-role agent-model resolution: EVERY entry in
+ * the config's `[aliases]` table, in `[aliases]` (TOML/insertion) ORDER (Q156).
+ *
+ * This pool is DECOUPLED from the planners/reviewers panels: a role's tier may
+ * route it to a model class (e.g. `standard`) that no panel alias belongs to,
+ * yet the role must still resolve a concrete model. Sourcing from all
+ * `[aliases]` (rather than `planners ∪ reviewers`) ensures any aliased model of
+ * the role's tier-class is eligible, even when it appears on no panel.
+ *
+ * DETERMINISTIC TIE-BREAK: `selectTokensForTier` preserves this candidate order
+ * and the singular agent dispatch takes the first selected token, so when
+ * multiple aliases share a tier-class the FIRST-LISTED `[aliases]` entry of that
+ * class wins.
  */
 function candidateTokens(config: CqConfig): ReviewerToken[] {
-  const aliasNames = [...new Set([...config.planners, ...config.reviewers])];
   const candidates: ReviewerToken[] = [];
-  for (const name of aliasNames) {
-    const token = config.aliases[name];
-    if (token !== undefined) {
-      candidates.push(token);
-    }
+  for (const [, token] of Object.entries(config.aliases)) {
+    candidates.push(token);
   }
   return candidates;
 }

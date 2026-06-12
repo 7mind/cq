@@ -44,10 +44,11 @@ function entry(result: { agents: readonly AgentModelEntry[] }, id: string): Agen
 
 /**
  * Fixture: opus = frontier, minimax = standard, haiku = fast (in [tiers]).
- * planners ∪ reviewers union resolves to {opus, minimax} only — NO fast token
- * is live. [agent_tiers] places:
- *  - implement-worker -> frontier (a live opus token in the union)
- *  - investigate-explorer -> fast (no live token of that class -> no-live-token)
+ * The per-role candidate pool draws from ALL [aliases] = {opus, minimax, haiku}
+ * (decoupled from planners∪reviewers per T438), so every tier class with an
+ * aliased token is live. [agent_tiers] places:
+ *  - implement-worker -> frontier (a live opus token)
+ *  - investigate-explorer -> fast (the live haiku token -> resolved)
  *  - everything else falls back to DEFAULT_TIER = standard (minimax is live).
  */
 const FIXTURE = [
@@ -94,15 +95,16 @@ describe("T285: computeAgentModels — configured fixture", () => {
     expect(planAdvance.modelMappings).toEqual({ pi: ["ollama-cloud/minimax-m3"] });
   });
 
-  it("yields no-live-token for a tier class with no live candidate token", () => {
+  it("resolves a fast-tier role to the live aliased token absent from any panel", () => {
     writeCqToml(FIXTURE);
     const result = computeAgentModels(dir);
 
-    // investigate-explorer -> fast; no fast token is in the planners∪reviewers union.
+    // investigate-explorer -> fast; haiku (fast) is in [aliases] but on NO panel.
+    // Decoupled pool (T438) sources from all [aliases], so it now resolves.
     const explorer = entry(result, "investigate-explorer");
-    expect(explorer.status).toBe("no-live-token");
+    expect(explorer.status).toBe("resolved");
     expect(explorer.modelClass).toBe("fast");
-    expect(explorer.modelMappings).toEqual({});
+    expect(explorer.modelMappings).toEqual({ claude: ["haiku-4.8"] });
   });
 
   it("yields not-model-configurable for orchestrator-command roles", () => {

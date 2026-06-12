@@ -306,7 +306,7 @@ describe("T292: effort threading — computeConfig tiers", () => {
 //
 // T438 flips this to test() once candidateTokens is decoupled to source from
 // all [aliases].
-test.failing(
+test(
   "T437: implement-worker resolves sonnet even when sonnet is off every panel",
   async () => {
     writeCqToml(
