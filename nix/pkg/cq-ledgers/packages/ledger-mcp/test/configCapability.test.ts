@@ -306,6 +306,83 @@ describe("T292: effort threading — computeConfig tiers", () => {
 //
 // T438 flips this to test() once candidateTokens is decoupled to source from
 // all [aliases].
+// ---- T439/G56: backward-compat — canonical repo cq.toml still resolves -------
+//
+// The EXACT canonical cq.toml (as of G56/T438 decouple).  codex and grok alias
+// the same pi:grok-build/grok-build token which is NOT listed in [tiers], so it
+// is unclassified and contributes no resolved slot — that must NOT throw.
+// opus (frontier) resolves plan-advance / plan-reviewer / implement-reviewer.
+// minimax (standard) resolves implement-worker.
+
+test(
+  "T439/G56: canonical cq.toml — implement-worker→minimax, plan-advance→opus, no throw for grok-build",
+  async () => {
+    writeCqToml(
+      [
+        'reviewers = ["codex", "grok", "minimax", "opus"]',
+        'planners  = ["opus", "grok", "minimax"]',
+        "",
+        "[aliases]",
+        '  codex   = "pi:grok-build/grok-build"',
+        '  grok    = "pi:grok-build/grok-build"',
+        '  minimax = "pi:ollama-cloud/minimax-m3"',
+        '  opus    = "claude:opus-4.8[1m]"',
+        "",
+        "[agent_tiers]",
+        '  investigate-explorer        = "frontier"',
+        '  investigate-prober          = "standard"',
+        '  plan-advance                = "frontier"',
+        '  plan-reviewer               = "frontier"',
+        '  implement-worker            = "standard"',
+        '  implement-reviewer          = "frontier"',
+        '  implement-conflict-resolver = "standard"',
+        "",
+        "[tiers]",
+        '  opus    = "frontier"',
+        '  minimax = "standard"',
+        "",
+      ].join("\n"),
+    );
+
+    // Must not throw even though codex/grok are unclassified in [tiers].
+    const result = computeAgentModels(dir);
+
+    expect(result.configured).toBe(true);
+
+    // implement-worker: standard tier → minimax (pi:ollama-cloud/minimax-m3)
+    const implWorker = result.agents.find((a) => a.id === "implement-worker");
+    expect(implWorker).toBeDefined();
+    expect(implWorker!.status).toBe("resolved");
+    expect(implWorker!.modelClass).toBe("standard");
+    expect(implWorker!.modelMappings.pi).toEqual(["ollama-cloud/minimax-m3"]);
+    expect(implWorker!.modelMappings.claude).toBeUndefined();
+
+    // plan-advance: frontier tier → opus (claude:opus-4.8[1m])
+    const planAdvance = result.agents.find((a) => a.id === "plan-advance");
+    expect(planAdvance).toBeDefined();
+    expect(planAdvance!.status).toBe("resolved");
+    expect(planAdvance!.modelClass).toBe("frontier");
+    expect(planAdvance!.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
+    expect(planAdvance!.modelMappings.pi).toBeUndefined();
+
+    // plan-reviewer: frontier tier → opus
+    const planReviewer = result.agents.find((a) => a.id === "plan-reviewer");
+    expect(planReviewer).toBeDefined();
+    expect(planReviewer!.status).toBe("resolved");
+    expect(planReviewer!.modelClass).toBe("frontier");
+    expect(planReviewer!.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
+
+    // implement-reviewer: frontier tier → opus
+    const implReviewer = result.agents.find(
+      (a) => a.id === "implement-reviewer",
+    );
+    expect(implReviewer).toBeDefined();
+    expect(implReviewer!.status).toBe("resolved");
+    expect(implReviewer!.modelClass).toBe("frontier");
+    expect(implReviewer!.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
+  },
+);
+
 test(
   "T437: implement-worker resolves sonnet even when sonnet is off every panel",
   async () => {
