@@ -144,15 +144,39 @@ read the `questions` ledger items linked `tasks:<id>` and the milestones' own
 **Start-of-pass worktree prune sweep (G38-1a-start-sweep).** <!-- G38-1a-start-sweep -->
 Before deriving the ready-set, prune orphaned and locked worktrees left by prior
 interrupted runs. Run `git worktree prune` (clears stale administrative entries).
-Then, for each worktree under the implement worktree root whose branch matches
-`implement/<taskId>` and whose task is already **terminal** (`done` or
-`abandoned`) in the ledger, run:
+Then enumerate **ALL** worktrees under the implement worktree root with
+`git worktree list --porcelain` — this sweep covers BOTH `implement/*` worktrees
+AND Claude's native `worktree-agent-<8hex>` worktrees (the harness names a
+worktree-isolated subagent's tree `worktree-agent-*`; a stale one outlives its
+agent after an interrupted run). For each enumerated worktree, derive its branch
+from the porcelain `branch refs/heads/<name>` line (or
+`git -C <wt> rev-parse --abbrev-ref HEAD`).
+
+REMOVE a worktree ONLY when the conservative **merged-OR-terminal safety key**
+holds — i.e. its branch is EITHER:
+- **(a) fully merged** into base/main — the branch appears in
+  `git branch --merged <base>` (its work already landed); OR
+- **(b) bound to a TERMINAL ledger task** — an `implement/<taskId>` whose
+  `<taskId>` is `done` or `abandoned` in the ledger.
+
+When the key holds, remove it (unlock first — a native worktree may be locked):
 ```
-git worktree remove --force <wt> && git branch -D implement/<taskId>
+git worktree unlock <wt> 2>/dev/null; git worktree remove --force <wt>; git branch -D <branch>
 ```
-**Scope: terminal tasks ONLY.** Worktrees for tasks still `blocked` or `wip`
-MUST survive intact — do NOT remove them. Those worktrees hold in-progress or
-paused work that §2 (dispatch) and §5 (questions/blocked) rely on for resumption.
+Finish the whole sweep with a closing `git worktree prune`.
+
+**HARD SAFETY GUARDS (obey these literally):**
+- **NEVER** touch `main` or the `cq-ledger` orphan branch, nor any worktree
+  bound to either — they are off-limits regardless of merge/terminal state.
+- **NEVER** remove a worktree whose bound task is still `wip` or `blocked` —
+  those hold in-progress / paused work that §2 (dispatch) and §5
+  (questions/blocked) rely on for resumption. Terminal (`done`/`abandoned`)
+  tasks ONLY for the (b) path.
+- A `worktree-agent-*` worktree whose agentId has **NO stable ledger link**
+  (cannot be tied to any task) is removed **ONLY if its branch is fully merged
+  into base/main** (the (a) path — its work already landed). NEVER remove such a
+  worktree when it carries unmerged commits and cannot be tied to a terminal
+  task — preserve it intact.
 
 First, **resume bookkeeping (Q7)**: for any task currently `blocked` whose
 linked blocking `questions` are now all `answered` (non-empty `answer`), flip it
