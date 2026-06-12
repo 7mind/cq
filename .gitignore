@@ -22,6 +22,11 @@ build/
 .parcel-cache/
 *.tsbuildinfo
 
+# D68: prevent misplaced compiled output from being re-committed under package src/
+nix/pkg/cq-ledgers/packages/*/src/**/*.js
+nix/pkg/cq-ledgers/packages/*/src/**/*.d.ts
+nix/pkg/cq-ledgers/packages/*/src/**/*.d.ts.map
+
 # editor
 .vscode/
 .idea/
