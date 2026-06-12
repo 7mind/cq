@@ -16,7 +16,7 @@ outputs:
   - "validated evidence stored on hypothesis items"
   - "defect status transitions: open->wip->root-caused | inconclusive"
   - "on root-caused: defects.rootCause + suggestedFix written; defect-seeded plan-flow goal seeded/extended"
-  - "session log files docs/logs/<timestamp>-<agent-id>.md per explorer/prober subagent"
+  - "per explorer/prober: a summary log docs/logs/<timestamp>-<agent-id>.md AND a raw transcript docs/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
 ioSchema:
   - "ONE research round per invocation; idempotent and resumable from ledger state"
   - "explorer concurrency: parallel for disjoint root seeds; serial while drilling a single branch"
@@ -103,14 +103,52 @@ On every `create_item` / `update_item`, pass `author` = your OWN model class
 
 ## Session logs (after EVERY subagent returns)
 Each `investigate-explorer` **and** each `investigate-prober` ends its reply with a
-`### Session summary` block. After each `Agent` call returns — explorer OR prober —
-take `<agent-id>` from the tool result, stamp `<timestamp>` (`Bash`: `date -u
-+%Y%m%d-%H%M%S`), `mkdir -p docs/logs`, and `Write`
-`docs/logs/<timestamp>-<agent-id>.md` — a short header (defect id, hypothesis id,
-`role: explorer` or `role: prober`, returned `lean`) plus the verbatim summary
-block. **One log file per dispatched subagent**, so a hypothesis whose explorer
-raised a `probeRequest` produces TWO logs this round (the explorer's, then the
-prober's). Subagents write no file; you do.
+`### Session summary` block. **ALL log writes go through `cq log put` under BOTH
+backends — never a direct `Write` to `docs/logs/`, and never `git add` a log
+file** (`cq log put` does redaction + strict-JSONL validation IN the CLI, and
+under `git-object` commits the log to the orphan ref itself; under `fs` it writes
+the file under `docs/logs/`, which the per-round ledger checkpoint already
+carries). Stamp `<timestamp>` (`Bash`: `date -u +%Y%m%d-%H%M%S`) once per
+returned subagent. **One log pair per dispatched subagent**, so a hypothesis
+whose explorer raised a `probeRequest` produces TWO log pairs this round (the
+explorer's, then the prober's). Subagents write no file; you do.
+
+**Native `Agent` subagent (explorer / prober).** Take `<agent-id>` from the tool
+result, then:
+1. **Locate its native transcript** at
+   `~/.claude/projects/<slug>/<session>/subagents/agent-<agent-id>.jsonl` — the
+   `<slug>` is derived from the ledger root path (Claude's project-dir slug; the
+   absolute ledger-root path with `/` → `-`), and `<session>` =
+   `$CLAUDE_CODE_SESSION_ID`.
+2. **Pipe the transcript through `cq log put`** for redaction + strict-JSONL
+   validation in the CLI:
+   `cat <transcript> | cq log put --stdin --dest logs/raw/<timestamp>-<agent-id>.jsonl`.
+3. **Write the summary** (a short header — defect id, hypothesis id, `role:
+   explorer` or `role: prober`, returned `lean` — plus the verbatim `### Session
+   summary` block) via `cq log put` to `logs/<timestamp>-<agent-id>.md` (e.g.
+   compose the header+summary to a temp file or pipe via
+   `--stdin --dest logs/<timestamp>-<agent-id>.md`).
+4. **Record BOTH paths on the hypothesis item**: `sessionLogs +=` the
+   `docs/logs/<timestamp>-<agent-id>.md` summary path; `rawLogs +=` the
+   `docs/logs/raw/<timestamp>-<agent-id>.jsonl` raw path (step 4 attaches them in
+   the SAME `update_item` that stores the validated evidence — see below).
+
+**Absent transcript (older run / crash / non-Claude harness).** When the
+`agent-<agent-id>.jsonl` file does not exist, do NOT fabricate a raw log: write an
+explicit `raw transcript unavailable: <reason>` line in the summary-log HEADER
+(via `cq log put` to `logs/<timestamp>-<agent-id>.md`) and proceed summary-only —
+add ONLY the `.md` to `sessionLogs`, leave `rawLogs` un-extended for that subagent.
+
+**`pi:*` shellout (if any).** Should a round delegate to a `pi:*` shellout (no
+native `Agent` id and no `.jsonl` transcript), the verbatim shellout **stdout IS
+the raw log**. Route it through `cq log put` to a PLAIN/markdown dest (NOT
+`.jsonl`): `… | cq log put --stdin --dest logs/raw/<timestamp>-pi-<alias>.md` —
+the verbatim stdout (including the raw, pre-fence-strip text). Capture this even
+when its stdout was unparseable (so a failed external call leaves a trace). Also
+write a summary `.md` (header: defect id, hypothesis id, the alias + `pi`
+provider/model) via `cq log put` to `logs/<timestamp>-pi-<alias>.md`. Add the
+summary `.md` to the hypothesis item's `sessionLogs` and the raw
+`logs/raw/<timestamp>-pi-<alias>.md` to its `rawLogs`.
 
 ---
 
@@ -272,10 +310,15 @@ citation yourself:
   into `hypothesis.evidence[]` prefixed **`[correct]`**; otherwise store it
   prefixed **`[incorrect]`** (wrong line, paraphrase that misrepresents source,
   or irrelevant). `update_item("hypothesis", H, fields: { evidence: [...],
-  sessionLogs: ["docs/logs/<ts>-<explorer-agent-id>.md"] })` — include the
-  explorer's session-log path in the SAME `update_item` that stores the evidence
-  (the log file for this explorer was written in §Session logs above; use that
-  path here). Do NOT defer `sessionLogs` to a separate update.
+  sessionLogs: ["docs/logs/<ts>-<explorer-agent-id>.md", ...], rawLogs:
+  ["docs/logs/raw/<ts>-<explorer-agent-id>.jsonl", ...] })` — include the
+  explorer's (and, when a `probeRequest` was run this round, the prober's)
+  summary-log path(s) in `sessionLogs` AND raw-transcript path(s) in `rawLogs` in
+  the SAME `update_item` that stores the evidence (the log pair(s) for this
+  subagent were written in §Session logs above; use those paths here). Do NOT
+  defer `sessionLogs`/`rawLogs` to a separate update. (Omit a `rawLogs` entry for
+  any subagent whose transcript was absent — that subagent is summary-only per
+  §Session logs.)
 - **Adjudicate H's `status` from the `[correct]` items ONLY** (ignore
   `[incorrect]` evidence entirely): set `confirmed` when `[correct]` evidence
   establishes the root cause; `wrong` when `[correct]` evidence rules it out;
@@ -283,7 +326,8 @@ citation yourself:
   only if no usable evidence came back. `update_item("hypothesis", H, status:
   <verdict>)` — if you adjudicate in the same call, combine with the evidence
   update above: `update_item("hypothesis", H, status: <verdict>, fields: {
-  evidence: [...], sessionLogs: ["docs/logs/<ts>-<explorer-agent-id>.md"] })`. (This is the HYPOTHESIS-tree vocabulary
+  evidence: [...], sessionLogs: ["docs/logs/<ts>-<explorer-agent-id>.md", ...],
+  rawLogs: ["docs/logs/raw/<ts>-<explorer-agent-id>.jsonl", ...] })`. (This is the HYPOTHESIS-tree vocabulary
   `open|uncertain|confirmed|wrong` — distinct from the defect STATUS below.)
 - **Reflect the verdict onto the DEFECT's STATUS** (the lifecycle carrier — never
   free-text markers). The defect is already `wip` (set in step 1):
@@ -314,11 +358,14 @@ ledgerRef `defects:<D>` (Q25/Q26). Do this and STOP:
 confirmed root cause NARRATIVE — free text, with the [correct] citations that
 establish it; NO UNKNOWN/CONFIRMED/GROUNDED status tokens>", suggestedFix: "<the
 concrete fix the evidence points to>", sessionLogs: ["docs/logs/<ts>-<agent-id>.md",
-...] })` — include ALL session-log paths written for this investigation round
-(all explorer log files) in the SAME `update_item` call that sets `root-caused`.
-Do NOT defer `sessionLogs` to a separate update. The `root-caused` status (legal
-only from `wip`, set in step 1) is the lifecycle marker; the `rootCause` field
-stays pure narrative.
+...], rawLogs: ["docs/logs/raw/<ts>-<agent-id>.jsonl", ...] })` — include ALL
+summary-log paths (`sessionLogs`) AND all raw-transcript paths (`rawLogs`)
+written for this investigation round (all explorer + prober log pairs) in the
+SAME `update_item` call that sets `root-caused`. Do NOT defer
+`sessionLogs`/`rawLogs` to a separate update. (Omit a `rawLogs` entry for any
+subagent whose transcript was absent — that subagent is summary-only per
+§Session logs.) The `root-caused` status (legal only from `wip`, set in step 1)
+is the lifecycle marker; the `rootCause` field stays pure narrative.
 
 (b) **Seed OR extend a plan-flow goal — defect-seeded.** Search the `goals`
 ledger for a live goal already `ledgerRefs`-linked to `defects:<D>`.
@@ -470,8 +517,11 @@ command in the SAME inline session, so you already KNOW which context you are in
   an `answers-required`/`mixed` stop; `handoffReasons` = the component reasons
   for a `mixed` stop (e.g. `[drained, answers-required]` or
   `[drained, answers-required, user-action-required]`); `sessionLogs` = the
-  `docs/logs/<ts>-<agent-id>.md` path(s) written this round — populate them in
-  the SAME `create_item` call. Stamp `author`/`session`. Append-only: written
+  `docs/logs/<ts>-<agent-id>.md` summary path(s) AND `rawLogs` = the
+  `docs/logs/raw/<ts>-<agent-id>.jsonl` (and `docs/logs/raw/<ts>-pi-<alias>.md`)
+  raw path(s) written this round — populate them in the SAME `create_item` call
+  (omit a `rawLogs` entry for any subagent whose transcript was absent). Stamp
+  `author`/`session`. Append-only: written
   once at the stop, never updated. **Then commit the ledger** (§Commit the
   ledger): stage the ledger artifacts only and commit, so a standalone
   investigate round never leaves the ledger uncommitted.
