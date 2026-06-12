@@ -479,7 +479,7 @@ describe("§11 worked-example parser round-trips", () => {
 // ---------------------------------------------------------------------------
 
 describe("fresh-cwd bootstrap shape", () => {
-  it("writes `## active` in docs/milestones.md and provisions all canonical ledgers", async () => {
+  it("writes `## active` in .cq/milestones.md and provisions all canonical ledgers", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-fresh-"));
     dirs.push(dir);
     const store = new FsLedgerStore({ root: dir });
@@ -890,10 +890,10 @@ for (const factory of [inMem, fs_]) {
           status: "planned",
           fields: {
             headline: "Task with session log",
-            sessionLogs: ["docs/logs/20260603-120000-agent-abc.md"],
+            sessionLogs: [".cq/logs/20260603-120000-agent-abc.md"],
           },
         });
-        expect(created.fields["sessionLogs"]).toEqual(["docs/logs/20260603-120000-agent-abc.md"]);
+        expect(created.fields["sessionLogs"]).toEqual([".cq/logs/20260603-120000-agent-abc.md"]);
       } finally {
         await store.dispose();
       }
@@ -908,7 +908,7 @@ for (const factory of [inMem, fs_]) {
             status: "open",
             fields: {
               question: "Should we add sessionLogs to questions?",
-              sessionLogs: ["docs/logs/20260603-120000-agent-abc.md"],
+              sessionLogs: [".cq/logs/20260603-120000-agent-abc.md"],
             },
           }),
         ).rejects.toThrow(SchemaValidationError);

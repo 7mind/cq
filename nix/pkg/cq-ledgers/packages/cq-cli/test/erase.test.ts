@@ -1,22 +1,22 @@
 /**
  * `cq erase` — the MOST destructive subcommand (T191 / Q110). Reproduce-first:
- * each test populates a tmp root with a full docs/ tree (active ledgers +
+ * each test populates a tmp root with a full .cq/ tree (active ledgers +
  * archive/ + .backup/ + logs/ + .locks/) AND a cq.toml AND a sentinel sibling,
  * then drives runErase through dispatch(["erase", …]) with an injected ConfirmIo.
  *
  * Per the user's answer ("erase should erase everything including archives and
  * config"), erase DESTROYS with NO backup and NO reinit:
  *
- *   - --yes: removes <root>/docs ENTIRELY (incl. archive/.backup/logs/.locks)
+ *   - --yes: removes <root>/.cq/ ENTIRELY (incl. archive/.backup/logs/.locks)
  *     AND deletes <root>/cq.toml, exit 0 + a removed-paths summary on io.out;
  *     the sentinel sibling under root SURVIVES (bounded delete, no path escape);
- *     NO ledger is recreated (docs/ is gone, not reinitialised).
+ *     NO ledger is recreated (.cq/ is gone, not reinitialised).
  *   - non-TTY without --yes: REFUSES (exit 2) and deletes NOTHING.
- *   - safety: an empty root (no docs/, no cq.toml) REFUSES (exit 2) rather than
+ *   - safety: an empty root (no .cq/, no cq.toml) REFUSES (exit 2) rather than
  *     silently succeeding.
  *
  * The tree is seeded with FsLedgerStore (the same reader/writer the production
- * path uses) so docs/.locks/, ledgers.yaml and the active *.md exist for real;
+ * path uses) so .cq/.locks/, ledgers.yaml and the active *.md exist for real;
  * the store is disposed before erase so no lock collides.
  */
 
@@ -42,9 +42,9 @@ const opsSchema: LedgerSchema = {
 const SENTINEL = "SOURCE_KEEP_ME";
 
 /**
- * Seed a tmp root with: a populated docs/ tree (canonical + a custom `ops`
- * ledger with one item, an archived milestone, a docs/.backup/ snapshot dir,
- * docs/logs/), a cq.toml, and a sentinel sibling file + dir under the root.
+ * Seed a tmp root with: a populated .cq/ tree (canonical + a custom `ops`
+ * ledger with one item, an archived milestone, a .cq/.backup/ snapshot dir,
+ * .cq/logs/), a cq.toml, and a sentinel sibling file + dir under the root.
  */
 async function seedTree(): Promise<{ root: string; storageDir: string; configFile: string }> {
   const root = await fs.mkdtemp(path.join(tmpdir(), "cq-erase-"));

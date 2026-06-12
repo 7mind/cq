@@ -9,7 +9,7 @@
  * absent), exactly the production condition that triggered D61.
  *
  * The interleave is driven as SEQUENTIAL awaited calls. The bug is NOT a lock
- * race: the shared real-fs advisory lockfile under `docs/.locks` already
+ * race: the shared real-fs advisory lockfile under `.cq/.locks` already
  * serialises the two writers. The defect is the POST-LOCK STALE CACHE — under
  * git-object the write path never reloads the in-memory ledger from the
  * orphan-ref tip after taking the cross-process write lock. So:

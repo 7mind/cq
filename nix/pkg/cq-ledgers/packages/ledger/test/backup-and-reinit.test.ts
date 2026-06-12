@@ -49,7 +49,7 @@ async function callBackupAndReinit(store: FsLedgerStore): Promise<string> {
 }
 
 describe("FsLedgerStore.backupAndReinit", () => {
-  it("creates docs/.backup/<sanitized-ts>/ directory", async () => {
+  it("creates .cq/.backup/<sanitized-ts>/ directory", async () => {
     const fixedTs = "2026-06-01T12:34:56.000Z";
     const { store, root } = await makeStore({ now: () => fixedTs });
     const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
@@ -77,7 +77,7 @@ describe("FsLedgerStore.backupAndReinit", () => {
 
   it("tolerates ENOENT for ledger files that do not yet exist", async () => {
     const fixedTs = "2026-06-01T01:00:00.000Z";
-    // No seedRegistry=true — docs/ has no files at all; all ENOENT.
+    // No seedRegistry=true — .cq/ has no files at all; all ENOENT.
     const { store, root } = await makeStore({ now: () => fixedTs });
     const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
@@ -91,7 +91,7 @@ describe("FsLedgerStore.backupAndReinit", () => {
     expect(s.isDirectory()).toBe(true);
   });
 
-  it("writes fresh canonical registry to docs/ledgers.yaml after backup", async () => {
+  it("writes fresh canonical registry to .cq/ledgers.yaml after backup", async () => {
     const fixedTs = "2026-06-01T02:00:00.000Z";
     const { store, root } = await makeStore({ now: () => fixedTs, seedRegistry: true });
 

@@ -23,11 +23,11 @@ import { FakeClient } from "./fakeClient";
 
 const TS = "2026-01-01T00:00:00.000Z";
 
-const SUMMARY_PATH = "docs/logs/20260101-1200-session.md";
-const RAW_JSONL_PATH = "docs/logs/raw/20260101-1200-session.jsonl";
+const SUMMARY_PATH = ".cq/logs/20260101-1200-session.md";
+const RAW_JSONL_PATH = ".cq/logs/raw/20260101-1200-session.jsonl";
 // Second summary whose paired raw transcript is a pi `.md` shellout (non-jsonl).
-const PI_SUMMARY_PATH = "docs/logs/20260102-1300-pi.md";
-const PI_RAW_MD_PATH = "docs/logs/raw/20260102-1300-pi.md";
+const PI_SUMMARY_PATH = ".cq/logs/20260102-1300-pi.md";
+const PI_RAW_MD_PATH = ".cq/logs/raw/20260102-1300-pi.md";
 
 // A minimal Claude-Code JSONL transcript: a user prompt, an assistant turn with
 // a tool_use block, and a tool_result.

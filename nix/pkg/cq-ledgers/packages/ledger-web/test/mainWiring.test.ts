@@ -115,7 +115,7 @@ async function spawnAndReadUrl(
   return { stdout: url, stderr: stderrBuf.join("") };
 }
 
-/** Create a minimal ledger root (just the docs/ dir). */
+/** Create a minimal ledger root (just the .cq/ dir). */
 async function makeLedgerRoot(): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-main-wiring-"));
   const store = new FsLedgerStore({ root });

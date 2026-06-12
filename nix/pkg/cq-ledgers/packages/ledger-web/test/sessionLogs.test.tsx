@@ -51,7 +51,7 @@ async function mount(): Promise<void> {
     status: "open",
     fields: {
       headline: "session-log item",
-      sessionLogs: ["docs/logs/20260101-1200-session.md", "docs/logs/20260102-1300-other.md"],
+      sessionLogs: [".cq/logs/20260101-1200-session.md", ".cq/logs/20260102-1300-other.md"],
     },
     createdAt: TS,
     updatedAt: TS,
@@ -86,14 +86,14 @@ describe("sessionLogs panel (T152)", () => {
 
     const section = testid("session-logs-section");
     expect(section).not.toBeNull();
-    expect(testid("log-link-docs/logs/20260101-1200-session.md")).not.toBeNull();
-    expect(testid("log-link-docs/logs/20260102-1300-other.md")).not.toBeNull();
+    expect(testid("log-link-.cq/logs/20260101-1200-session.md")).not.toBeNull();
+    expect(testid("log-link-.cq/logs/20260102-1300-other.md")).not.toBeNull();
   });
 
   it("opens a modal and fetches log content when a link is clicked", async () => {
     await mount();
-    fake.readLogResults.set("docs/logs/20260101-1200-session.md", {
-      path: "docs/logs/20260101-1200-session.md",
+    fake.readLogResults.set(".cq/logs/20260101-1200-session.md", {
+      path: ".cq/logs/20260101-1200-session.md",
       content: "line1\nline2\nline3",
     });
 
@@ -102,19 +102,19 @@ describe("sessionLogs panel (T152)", () => {
     click(testid("item-D10"));
     await flush();
 
-    click(testid("log-link-docs/logs/20260101-1200-session.md"));
+    click(testid("log-link-.cq/logs/20260101-1200-session.md"));
     await flush();
 
     expect(testid("log-modal")).not.toBeNull();
-    expect(testid("log-modal-path")?.textContent).toBe("docs/logs/20260101-1200-session.md");
+    expect(testid("log-modal-path")?.textContent).toBe(".cq/logs/20260101-1200-session.md");
     expect(testid("log-modal-content")?.textContent).toContain("line1");
     expect(testid("log-modal-truncated")).toBeNull();
   });
 
   it("shows a truncation notice when the log result has truncated:true", async () => {
     await mount();
-    fake.readLogResults.set("docs/logs/20260101-1200-session.md", {
-      path: "docs/logs/20260101-1200-session.md",
+    fake.readLogResults.set(".cq/logs/20260101-1200-session.md", {
+      path: ".cq/logs/20260101-1200-session.md",
       content: "partial content…",
       truncated: true,
     });
@@ -123,7 +123,7 @@ describe("sessionLogs panel (T152)", () => {
     await flush();
     click(testid("item-D10"));
     await flush();
-    click(testid("log-link-docs/logs/20260101-1200-session.md"));
+    click(testid("log-link-.cq/logs/20260101-1200-session.md"));
     await flush();
 
     expect(testid("log-modal-truncated")).not.toBeNull();
@@ -133,7 +133,7 @@ describe("sessionLogs panel (T152)", () => {
   it("renders an error message (not a crash) when read_log rejects", async () => {
     await mount();
     fake.readLogResults.set(
-      "docs/logs/20260101-1200-session.md",
+      ".cq/logs/20260101-1200-session.md",
       new Error("log not found"),
     );
 
@@ -141,7 +141,7 @@ describe("sessionLogs panel (T152)", () => {
     await flush();
     click(testid("item-D10"));
     await flush();
-    click(testid("log-link-docs/logs/20260101-1200-session.md"));
+    click(testid("log-link-.cq/logs/20260101-1200-session.md"));
     await flush();
 
     expect(testid("log-modal")).not.toBeNull();
@@ -155,7 +155,7 @@ describe("sessionLogs panel (T152)", () => {
     await flush();
     click(testid("item-D10"));
     await flush();
-    click(testid("log-link-docs/logs/20260101-1200-session.md"));
+    click(testid("log-link-.cq/logs/20260101-1200-session.md"));
     await flush();
 
     expect(testid("log-modal")).not.toBeNull();

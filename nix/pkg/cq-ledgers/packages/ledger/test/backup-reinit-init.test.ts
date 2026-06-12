@@ -42,7 +42,7 @@ afterAll(async () => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Create a fresh tmpdir with an (optionally seeded) docs/ subdirectory. */
+/** Create a fresh tmpdir with an (optionally seeded) .cq/ subdirectory. */
 async function makeTmpDir(): Promise<{ root: string; docsDir: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-bri-"));
   dirs.push(root);
@@ -131,7 +131,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (default)", () => {
     await store.dispose();
   });
 
-  it("creates docs/.backup/<sanitized-ts>/ directory", async () => {
+  it("creates .cq/.backup/<sanitized-ts>/ directory", async () => {
     const { root, docsDir } = await makeTmpDir();
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");

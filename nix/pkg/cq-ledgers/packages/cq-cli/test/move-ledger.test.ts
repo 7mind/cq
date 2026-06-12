@@ -1,14 +1,14 @@
 /**
  * T354: `cq move-ledger --to git|local` — lossless bidirectional migration of
- * the live ledger between the docs/ working tree and the orphan ref.
+ * the live ledger between the .cq/ working tree and the orphan ref.
  *
- * Acceptance (R418): in a throwaway git repo, seed docs/ ledgers, then
+ * Acceptance (R418): in a throwaway git repo, seed .cq/ ledgers, then
  *   - `cq move-ledger --to git`  → the orphan ref carries identical ledger bytes,
- *     docs ledger files UNTRACKED (`git ls-files docs/` empty) but STILL PRESENT
+ *     .cq/ ledger files UNTRACKED (`git ls-files .cq/` empty) but STILL PRESENT
  *     on disk (left-in-place), cq.toml backend=git-object;
- *   - `cq move-ledger --to local` → restores TRACKED docs/*.md byte-identical to
+ *   - `cq move-ledger --to local` → restores TRACKED .cq/*.md byte-identical to
  *     the orphan-ref content + backend=fs;
- *   - the round trip is provably LOSSLESS including on-disk file state (docs/*.md
+ *   - the round trip is provably LOSSLESS including on-disk file state (.cq/*.md
  *     bytes before --to git EQUAL the bytes after --to local) AND tracked-state
  *     (tracked → untracked → tracked);
  *   - refuses a non-empty target without --force; refuses without --to.

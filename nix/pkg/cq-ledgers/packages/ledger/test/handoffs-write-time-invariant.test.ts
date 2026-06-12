@@ -10,7 +10,7 @@
  * every assertion against BOTH adapters per the package's DUAL-TESTS pattern:
  *
  *   - InMemoryLedgerStore (the in-memory dummy), and
- *   - FsLedgerStore over a TEMP dir (mkdtemp) — never the repo's live docs/.
+ *   - FsLedgerStore over a TEMP dir (mkdtemp) — never the repo's live .cq/.
  *
  * The handoffs ledger is bootstrapped canonically on init() for both adapters;
  * each fixture seeds one active milestone and then writes handoffs items under

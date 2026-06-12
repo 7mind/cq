@@ -8,7 +8,7 @@
  *   3. A full create → read → update → search round-trip works through the
  *      transport and persists to disk (verified with a fresh store).
  *
- * The test seeds the docs/ tree with the FsLedgerStore directly (so the
+ * The test seeds the .cq/ tree with the FsLedgerStore directly (so the
  * seeding format stays in lockstep with the production reader), then closes
  * the store before spawning the binary so file locks don't collide.
  */

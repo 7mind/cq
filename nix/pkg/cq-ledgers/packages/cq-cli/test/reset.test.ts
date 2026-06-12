@@ -6,7 +6,7 @@
  * ConfirmIo so the operator confirmation + exit-code policy can be asserted
  * without a real TTY:
  *
- *   - --yes (unattended): backs the prior tree up to docs/.backup/<ts>/ and
+ *   - --yes (unattended): backs the prior tree up to .cq/.backup/<ts>/ and
  *     reinitialises the canonical empty set; exit 0 + summary on io.out.
  *   - non-TTY without --yes: REFUSES (exit 2) and does NOT touch the tree —
  *     never wipe silently.
@@ -73,7 +73,7 @@ async function hasOpsLedger(root: string): Promise<boolean> {
 }
 
 describe("cq reset", () => {
-  it("(a) --yes backs up to docs/.backup/<ts>/ + reinitialises empty, exit 0 + summary", async () => {
+  it("(a) --yes backs up to .cq/.backup/<ts>/ + reinitialises empty, exit 0 + summary", async () => {
     const root = await seedTree();
     const io = recordingIo(false); // non-TTY, but --yes overrides
     const outcome = await dispatch(["reset", "--cwd", root, "--yes"], io);

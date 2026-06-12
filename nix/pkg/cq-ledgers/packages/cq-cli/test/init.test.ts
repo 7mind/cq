@@ -2,7 +2,7 @@
  * T189 + T338: `cq init` — idempotent create-empty-ledgers-if-none + cq.toml write.
  *
  * T189 asserts:
- *   (a) On an empty dir, creates docs/ledgers.yaml + canonical docs/*.md files.
+ *   (a) On an empty dir, creates .cq/ledgers.yaml + canonical .cq/*.md files.
  *   (b) Running again is a no-op that preserves items written between runs.
  *
  * T338 asserts:
@@ -53,14 +53,14 @@ async function makeTmpDir(): Promise<string> {
 }
 
 describe("cq init", () => {
-  it("(a) creates docs/ledgers.yaml + canonical docs/*.md on an empty dir", async () => {
+  it("(a) creates .cq/ledgers.yaml + canonical .cq/*.md on an empty dir", async () => {
     const root = await makeTmpDir();
     const io = recordingIo();
 
     const outcome = await dispatch(["init", "--cwd", root], io);
     expect(outcome.exitCode).toBe(0);
 
-    // docs/ledgers.yaml must exist
+    // .cq/ledgers.yaml must exist
     expect((await stat(path.join(root, LEDGER_STORAGE_DIRNAME, "ledgers.yaml"))).isFile()).toBe(true);
 
     // Every canonical ledger file must exist

@@ -11,7 +11,7 @@
  * These tests redirect the mirror into a tmp dir via XDG_CACHE_HOME (the
  * sanctioned test seam — no FsLedgerStoreOpts flag) and `dispose()` to await
  * the in-flight mirror before asserting. They check:
- *   - the mirrored docs/<ledger>.md matches the in-repo file byte-for-byte;
+ *   - the mirrored .cq/<ledger>.md matches the in-repo file byte-for-byte;
  *   - the computed cache dir NAME is `<basename>-<12 lowercase hex>`;
  *   - on archive the archive file + ledgers.yaml also appear under the mirror;
  *   - a deliberately-induced mirror error is swallowed (the write still lands);
@@ -75,7 +75,7 @@ describe("cacheMirrorDir — shared path scheme (reused by restore CLI T313)", (
 });
 
 describe("FsLedgerStore — cache mirror on mutation", () => {
-  it("mirrors docs/<ledger>.md byte-for-byte after create then update", async () => {
+  it("mirrors .cq/<ledger>.md byte-for-byte after create then update", async () => {
     const root = await tmpDir("ledger-mirror-root-");
     const xdg = await tmpDir("ledger-mirror-xdg-");
     process.env.XDG_CACHE_HOME = xdg;

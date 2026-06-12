@@ -80,7 +80,7 @@ async function seedRegistry(
 
 /**
  * Seed a `logs/<rel>` blob onto the orphan ref tip (the git analogue of writing
- * a file under <root>/docs/logs). Advances the ref by one commit carrying the
+ * a file under <root>/.cq/logs). Advances the ref by one commit carrying the
  * single log blob; idempotent w.r.t. the current tip via a CAS parent.
  */
 async function seedLog(dir: string, rel: string, content: string): Promise<void> {

@@ -9,7 +9,7 @@
  * FsLedgerStore.init():
  *
  *   - because the on-disk schema EQUALS the canonical HANDOFFS_SCHEMA, init()
- *     detects NO divergence → no docs/.backup/<ts>/ snapshot, no reinit; and
+ *     detects NO divergence → no .cq/.backup/<ts>/ snapshot, no reinit; and
  *   - any pre-existing HO record (here an `HO1` with status `drained`) is
  *     still readable after init().
  *
@@ -17,7 +17,7 @@
  * therefore back up + empty the handoffs ledger), these assertions FAIL.
  *
  * The fixture depends ONLY on the committed schema (HANDOFFS_SCHEMA via the
- * library API) and a TEMP store — never on the live, gitignored docs/. The
+ * library API) and a TEMP store — never on the live, gitignored .cq/. The
  * on-disk handoffs registry entry + the HO1 record are materialised by an
  * initial store whose canonical bootstrap schema is the widened shape, so the
  * seeded on-disk schema matches canon exactly and does NOT diverge. This
@@ -49,7 +49,7 @@ afterAll(async () => {
 /** The additive status that T245 appended to the canonical handoffs schema. */
 const WIDENED_STATUS = "user-action-required";
 
-/** Create a fresh tmpdir; docs/ is created by the store on init(). */
+/** Create a fresh tmpdir; .cq/ is created by the store on init(). */
 async function makeTmpRoot(): Promise<{ root: string; docsDir: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-ho-additive-"));
   dirs.push(root);
@@ -115,7 +115,7 @@ describe("handoffs additive widening — fixture carries the widened on-disk sch
 // ---------------------------------------------------------------------------
 
 describe("handoffs additive widening — init() preserves live handoff history", () => {
-  it("init() does NOT create a docs/.backup/ dir for the additive shape", async () => {
+  it("init() does NOT create a .cq/.backup/ dir for the additive shape", async () => {
     const { root, docsDir } = await makeTmpRoot();
     await seedWidenedHandoffsStore(root);
 

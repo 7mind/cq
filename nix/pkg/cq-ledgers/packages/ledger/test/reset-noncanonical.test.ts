@@ -3,7 +3,7 @@
  *
  * A ledger created via createLedger() is non-canonical. Prior to T131 fix,
  * reset() would leave:
- *   (a) an orphan docs/<name>.md file on disk,
+ *   (a) an orphan .cq/<name>.md file on disk,
  *   (b) a stale registry entry (name still returned by enumerate()),
  *   (c) stale FTS docs (ftsSearch returned hits from the wiped ledger).
  *
@@ -43,7 +43,7 @@ const OPS_SCHEMA: LedgerSchema = {
 };
 
 describe("FsLedgerStore.reset with non-canonical ledger", () => {
-  it("(a) no orphan docs/ops.md, (b) no ops registry entry, (c) no FTS hits after reset", async () => {
+  it("(a) no orphan .cq/ops.md, (b) no ops registry entry, (c) no FTS hits after reset", async () => {
     const { store, root } = await makeStore();
 
     await store.createLedger("ops", OPS_SCHEMA);
@@ -64,7 +64,7 @@ describe("FsLedgerStore.reset with non-canonical ledger", () => {
 
     await store.reset();
 
-    // (a) No orphan docs/ops.md file on disk.
+    // (a) No orphan .cq/ops.md file on disk.
     let fileExists = false;
     try {
       await stat(opsFilePath);

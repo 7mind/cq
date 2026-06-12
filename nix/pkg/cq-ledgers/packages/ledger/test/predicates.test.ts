@@ -3,7 +3,7 @@
  * fixes D50).
  *
  * ONE abstract fixture suite runs against BOTH adapters — the production
- * `FsLedgerStore` (against a freshly-created tmp `docs/` dir per test) AND the
+ * `FsLedgerStore` (against a freshly-created tmp `.cq/` dir per test) AND the
  * `InMemoryLedgerStore` dummy — per the repo's dual-tests pattern. Each fixture
  * seeds its store IDENTICALLY through the public `createMilestone` /
  * `createItem` / `updateItem` surface (so the two adapters are exercised

@@ -2,16 +2,16 @@
  * Regression test for D16 / T110: FsLedgerStore.init() must backfill
  * title+status onto legacy ArchivePointers for NON-milestones ledgers (e.g.
  * tasks) by reading from the milestones-ledger's single-item archive
- * (docs/archive/milestones/<id>.md), NOT from the per-ledger group archive
+ * (.cq/archive/milestones/<id>.md), NOT from the per-ledger group archive
  * at ptr.path.
  *
  * Test strategy:
- * 1. Build a fixture dir whose docs/tasks.md carries an `archives:` entry with
+ * 1. Build a fixture dir whose .cq/tasks.md carries an `archives:` entry with
  *    ONLY id/path/summary (no title/status — the legacy shape). The ptr.path
- *    resolves to a tasks GROUP archive (docs/archive/tasks/<id>.md) that begins
+ *    resolves to a tasks GROUP archive (.cq/archive/tasks/<id>.md) that begins
  *    with `## M<id>` and carries items, but NO milestone title — so naively
  *    parsing ptr.path via parseMilestoneItemArchive would fail/return title:''.
- * 2. Place docs/archive/milestones/<id>.md with the real milestone title+status
+ * 2. Place .cq/archive/milestones/<id>.md with the real milestone title+status
  *    (the single-ITEM shape `### M<n> — <status>` + `- title: <title>`).
  * 3. After FsLedgerStore.init(), fetch('tasks').archivePointers[0] MUST have
  *    non-empty title and status.

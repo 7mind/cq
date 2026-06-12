@@ -2,10 +2,10 @@
  * Embedded-TUI external-change coherence wiring (D51 / G43).
  *
  * Regression for D51: the embedded ledger-tui used to hard-wire the FS
- * docs/*.md file-watcher (`startLedgerWatcher(ctx.store, ctx.cwd, …)`)
+ * .cq/*.md file-watcher (`startLedgerWatcher(ctx.store, ctx.cwd, …)`)
  * directly in main.tsx, rather than the backend-selecting
  * `startLedgerCoherenceWatcher(ctx.resolved, …)` that the web embedded path
- * uses. Under the git-object backend docs/*.md never change on the working
+ * uses. Under the git-object backend .cq/*.md never change on the working
  * branch, so the FS watcher never fired and EXTERNAL changes did not refresh
  * the embedded TUI.
  *
@@ -15,7 +15,7 @@
  *     `[ledger] backend = "git-object"`.
  *  2. Driving the SAME watcher wiring main.tsx uses — `startLedgerCoherenceWatcher(
  *     ctx.resolved, ctx.cwd, onChange)` — under the git-object backend fires
- *     onChange on an external write (orphan-ref advance) that leaves docs/*.md
+ *     onChange on an external write (orphan-ref advance) that leaves .cq/*.md
  *     untouched, which the old FS-only wiring would have MISSED.
  *  3. The fs path still selects the file-watcher (behaviour unchanged): an
  *     external write through a second FsLedgerStore fires onChange.
@@ -134,7 +134,7 @@ function wireOnSubscribe(
 }
 
 describe("embedded TUI wiring selects the ref-watcher under git-object (D51)", () => {
-  it("fires onChange on an external orphan-ref advance (docs/*.md untouched)", async () => {
+  it("fires onChange on an external orphan-ref advance (.cq/*.md untouched)", async () => {
     const dir = await gitRepo();
     await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
 
@@ -156,7 +156,7 @@ describe("embedded TUI wiring selects the ref-watcher under git-object (D51)", (
     });
 
     // An EXTERNAL writer (a separate GitObjectLedgerBackend on the same repo)
-    // advances the orphan ref WITHOUT changing docs/*.md on the working branch —
+    // advances the orphan ref WITHOUT changing .cq/*.md on the working branch —
     // the precise scenario the old FS-only wiring missed.
     const external = new GitObjectLedgerBackend({ repoRoot: dir });
     await external.init();
@@ -173,7 +173,7 @@ describe("embedded TUI wiring selects the ref-watcher under git-object (D51)", (
 });
 
 describe("embedded TUI wiring keeps the file-watcher under fs (D51 — no regression)", () => {
-  it("fires onChange on an external docs/*.md write", async () => {
+  it("fires onChange on an external .cq/*.md write", async () => {
     const dir = await plainDir();
 
     const client = await McpLedgerClient.embedded(dir);
@@ -190,7 +190,7 @@ describe("embedded TUI wiring keeps the file-watcher under fs (D51 — no regres
     });
 
     // External writer through a second FsLedgerStore on the same root mutates
-    // docs/*.md → the file-watcher fires.
+    // .cq/*.md → the file-watcher fires.
     const external = new FsLedgerStore({ root: dir });
     await external.init();
     await external.createItem("widgets", ms.id, { status: "open", fields: { note: "external" } });

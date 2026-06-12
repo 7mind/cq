@@ -34,7 +34,7 @@ const dirs: string[] = [];
 
 /**
  * Seed a `logs/<rel>` blob onto the orphan ref tip (mirrors how the FS read-log
- * test writes a file under <root>/docs/logs). Advances the ref by one commit
+ * test writes a file under <root>/.cq/logs). Advances the ref by one commit
  * carrying the single log blob, so read_log finds it via lsTree + catFile.
  */
 async function seedLog(dir: string, rel: string, content: string): Promise<void> {

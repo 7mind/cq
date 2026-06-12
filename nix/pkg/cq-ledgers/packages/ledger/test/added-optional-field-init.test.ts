@@ -195,7 +195,7 @@ describe("schemaCompatible — added-optional-field tolerance", () => {
 // ---------------------------------------------------------------------------
 
 describe("added-optional-field init — init() preserves pre-rawLogs ledger", () => {
-  it("init() does NOT create a docs/.backup/ dir", async () => {
+  it("init() does NOT create a .cq/.backup/ dir", async () => {
     const { root, docsDir } = await seedPreRawLogsStore();
     const store = new FsLedgerStore({ root });
     await store.init();

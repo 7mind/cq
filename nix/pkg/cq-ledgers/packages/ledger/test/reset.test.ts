@@ -2,7 +2,7 @@
  * Unit tests for FsLedgerStore.reset() (T123).
  *
  * reset() is the public, operator-facing wipe-and-reinit: it snapshots the
- * current on-disk ledgers to docs/.backup/<ts>/ and rewrites the canonical
+ * current on-disk ledgers to .cq/.backup/<ts>/ and rewrites the canonical
  * empty set, returning a summary of what was backed up. It reuses the private
  * backupAndReinit verbatim for the snapshot/reinit and adds only the pre-wipe
  * per-ledger item count + the returned summary.
@@ -65,7 +65,7 @@ describe("FsLedgerStore.reset", () => {
 
     const summary = await store.reset();
 
-    // (a) docs/.backup/<ts>/ exists and contains the prior registry + ledger files.
+    // (a) .cq/.backup/<ts>/ exists and contains the prior registry + ledger files.
     const expectedDirName = fixedTs.replace(/:/g, "-");
     const expectedBackupDir = path.join(root, LEDGER_STORAGE_DIRNAME, ".backup", expectedDirName);
     expect(summary.backupDir).toBe(expectedBackupDir);

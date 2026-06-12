@@ -4,7 +4,7 @@
  *   - a real MCP client connected to the web origin lists the tools and
  *     round-trips a create/fetch (no separate ledger-mcp process);
  *   - the /ws socket receives a `changed` frame after an out-of-band write to
- *     the ledger files under docs/.
+ *     the ledger files under .cq/.
  *
  * The web server is run as a SUBPROCESS (the real `ledger-web` binary) so its
  * one-time Bun.build runs in its own process — running a second in-process

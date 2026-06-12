@@ -24,7 +24,7 @@ import { App } from "../src/App";
 import { FakeClient } from "./fakeClient";
 
 const TS = "2026-01-01T00:00:00.000Z";
-const LOG_PATH = "docs/logs/20260101-1200-session.md";
+const LOG_PATH = ".cq/logs/20260101-1200-session.md";
 
 const sleep = (ms = 15): Promise<void> => new Promise((r) => setTimeout(r, ms));
 async function flush(): Promise<void> {

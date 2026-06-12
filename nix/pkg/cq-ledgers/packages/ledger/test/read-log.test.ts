@@ -2,11 +2,11 @@
  * read_log tests (T147 / Q87 / D26).
  *
  * Exercises the FS-store-backed `read_log` capability via the SDK tool factory:
- *  - happy path: reads a file under <root>/docs/logs/
- *  - rejects `..` traversal escaping docs/logs/
- *  - rejects absolute paths resolving outside docs/logs/
+ *  - happy path: reads a file under <root>/.cq/logs/
+ *  - rejects `..` traversal escaping .cq/logs/
+ *  - rejects absolute paths resolving outside .cq/logs/
  *  - truncates an oversized file and sets `truncated: true`
- *  - rejects a symlink inside docs/logs/ whose target escapes the root (D26)
+ *  - rejects a symlink inside .cq/logs/ whose target escapes the root (D26)
  *  - surfaces ENOENT for a genuinely missing file (not masked as escape) (D26)
  *
  * The confinement root is the EXPLICIT FsLedgerStore root, not the generic
@@ -63,7 +63,7 @@ function decode<T>(result: { content: Array<{ type: string; text: string }> }): 
 }
 
 describe("read_log (FS-backed)", () => {
-  it("returns the content of a file under <root>/docs/logs/", async () => {
+  it("returns the content of a file under <root>/.cq/logs/", async () => {
     const { store, root } = await buildFsStore();
     const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
     await mkdir(logsDir, { recursive: true });
@@ -94,9 +94,9 @@ describe("read_log (FS-backed)", () => {
     expect(res.content).toBe("hello log\n");
   });
 
-  it("rejects `..` traversal escaping docs/logs/", async () => {
+  it("rejects `..` traversal escaping .cq/logs/", async () => {
     const { store, root } = await buildFsStore();
-    // A secret file directly under docs/ (one level above docs/logs/).
+    // A secret file directly under .cq/ (one level above .cq/logs/).
     await writeFile(path.join(root, LEDGER_STORAGE_DIRNAME, "secret.md"), "TOP SECRET", "utf8");
     await mkdir(path.join(root, LEDGER_STORAGE_DIRNAME, "logs"), { recursive: true });
 
@@ -106,7 +106,7 @@ describe("read_log (FS-backed)", () => {
     ).rejects.toThrow(/escapes \.cq\/logs/);
   });
 
-  it("rejects an absolute path resolving outside docs/logs/", async () => {
+  it("rejects an absolute path resolving outside .cq/logs/", async () => {
     const { store } = await buildFsStore();
     const tools = createLedgerMcpTools(store, (p) => store.readLog(p));
     await expect(
@@ -130,14 +130,14 @@ describe("read_log (FS-backed)", () => {
   });
 
   // D26 regression: symlink escape via realpath
-  it("rejects a symlink inside docs/logs/ whose target escapes the root (D26)", async () => {
+  it("rejects a symlink inside .cq/logs/ whose target escapes the root (D26)", async () => {
     const { store, root } = await buildFsStore();
     const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
     await mkdir(logsDir, { recursive: true });
     // Write a "secret" file outside the confinement root (one level above root).
     const outsideFile = path.join(root, "..", "outside-secret.txt");
     await writeFile(outsideFile, "SECRET CONTENT", "utf8");
-    // Place a symlink inside docs/logs/ pointing to the outside file.
+    // Place a symlink inside .cq/logs/ pointing to the outside file.
     await symlink(outsideFile, path.join(logsDir, "escape-link.log"));
 
     await expect(
@@ -245,7 +245,7 @@ describe("read_log (FS-backed)", () => {
     const store = new FsLedgerStore({ root: symlinkRoot });
     await store.init();
 
-    // Write a legitimate log file under docs/logs/ (inside the real root).
+    // Write a legitimate log file under .cq/logs/ (inside the real root).
     const logsDir = path.join(realRoot, LEDGER_STORAGE_DIRNAME, "logs");
     await mkdir(logsDir, { recursive: true });
     await writeFile(path.join(logsDir, "legit.log"), "legitimate content", "utf8");

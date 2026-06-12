@@ -4,9 +4,9 @@
  * without those fields.
  *
  * Test strategy:
- * 1. Build a fixture dir whose docs/milestones.md carries an `archives:` entry
+ * 1. Build a fixture dir whose .cq/milestones.md carries an `archives:` entry
  *    with ONLY id/path/summary (no title/status — the legacy shape).
- * 2. Place a corresponding docs/archive/milestones/<id>.md that carries:
+ * 2. Place a corresponding .cq/archive/milestones/<id>.md that carries:
  *      ### <id> — <status>   ← status
  *      - title: <title>       ← title
  *      - createdAt: ...
