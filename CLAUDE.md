@@ -27,7 +27,7 @@ under `nix/` (see `nix/hm/dev-llm.nix`, `nix/pkg/{yolo,codex,claude-code,…}`).
   This holds in *embedded* mode too (TUI/web with no `--mcp-url`): the frontend
   co-locates the MCP server in its own process (in-memory transport for the TUI,
   co-hosted `/mcp` + `/ws` for the web) and still talks to it over MCP — it does
-  not read `docs/` directly.
+  not read `.cq/` directly.
 - `--cwd` for `cq mcp` must be absolute (or relative, resolved vs CWD);
   it defaults to the process CWD.
 - Tests: `ink-testing-library` for the TUI, happy-dom for the web; controlled
@@ -55,7 +55,7 @@ work, instead of inline TODOs or scratch files.
 - **On completion**: set items terminal, then `archive_milestone` once every
   item under the milestone is terminal.
 - **Detail goes in fields** (markdown is supported), not the headline. Don't
-  hand-edit `docs/*.md` — go through the tools so counters/schema stay valid.
+  hand-edit `.cq/*.md` — go through the tools so counters/schema stay valid.
 - **Provenance**: on every `create_item` / `update_item`, pass `author` (your
   model class, e.g. `opus-4.8[1m]`) and `session` (`$CLAUDE_CODE_SESSION_ID`)
   so the ledger records who wrote each item.
@@ -67,14 +67,14 @@ Ledger workflows (plan, investigate, implement) capture and commit raw subagent
 transcripts as ledger artifacts:
 
 - **Artifact formats**: Claude native Agent subagents (plan/investigate/implement)
-  write strict JSONL (`docs/logs/raw/<timestamp>-<id>.jsonl`); pi shellout
-  subagents (`pi:*`) write verbatim stdout as markdown (`docs/logs/raw/<timestamp>-pi-<alias>.md`).
+  write strict JSONL (`.cq/logs/raw/<timestamp>-<id>.jsonl`); pi shellout
+  subagents (`pi:*`) write verbatim stdout as markdown (`.cq/logs/raw/<timestamp>-pi-<alias>.md`).
 - **Write path**: ALL logs route through `cq log put` (never direct `Write` to
-  `docs/logs/`). The CLI handles redaction (best-effort / lossy per Q223),
+  `.cq/logs/`). The CLI handles redaction (best-effort / lossy per Q223),
   strict JSONL validation, and backend routing:
-  - **Git-object backend**: commits raw JSONL to an orphan ref (`docs/logs` is
+  - **Git-object backend**: commits raw JSONL to an orphan ref (`.cq/logs` is
     gitignored on the working branch); `cq log put` manages the CAS.
-  - **Filesystem backend**: writes to `docs/logs/` (tracked and committed in the
+  - **Filesystem backend**: writes to `.cq/logs/` (tracked and committed in the
     main ledger git commit).
 - **Immutability & no retention**: committed bytes are effectively **irreversible
   per-byte** — removing them requires a full git history rewrite. There is **no

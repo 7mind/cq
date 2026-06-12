@@ -317,7 +317,7 @@ summary text to build its worklist (it re-derives that from the ledger query).
 
 ## Session summary (handover)
 Before the status token, emit a clearly-delimited handover block — the
-orchestrator persists it to `./docs/logs/<timestamp>-<agent-id>.md`. You do NOT
+orchestrator persists it to `./.cq/logs/<timestamp>-<agent-id>.md`. You do NOT
 write any file yourself; you only emit the section:
 
 ```

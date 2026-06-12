@@ -174,7 +174,7 @@ stamp — the orchestrator stamps provenance on the aggregated item it writes.
 
 ## Session summary (handover)
 Before your final pointer line, emit a clearly-delimited handover block — the
-orchestrator persists it to `./docs/logs/<timestamp>-<agent-id>.md`. You write
+orchestrator persists it to `./.cq/logs/<timestamp>-<agent-id>.md`. You write
 no file yourself; you only emit the section:
 
 ```

@@ -15,7 +15,7 @@ outputs:
   - "planner ledger writes (questions / plan / revision / decision + planned) via plan-advance subagent or orchestrator persist"
   - "one aggregated reviews item per round (written by reviewer subagent or orchestrator)"
   - "auto-investigate: /cq:investigate:advance inline for each goal-linked actionable defect"
-  - "per planner/reviewer: a summary log docs/logs/<timestamp>-<agent-id>.md AND a raw transcript docs/logs/raw/<timestamp>-<agent-id>.jsonl (pi:* → logs/raw/<ts>-pi-<alias>.md plain), BOTH written via `cq log put`"
+  - "per planner/reviewer: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl (pi:* → .cq/logs/raw/<ts>-pi-<alias>.md plain), BOTH written via `cq log put`"
   - "handoffs item (standalone only) and ledger git commit (standalone only)"
 ioSchema:
   - "planner loop token: awaiting-answers | review-requested | completed | noop"
@@ -559,10 +559,10 @@ relevant), and report it** — these predicates REPLACE the numeric cap:
 
 Each subagent (planner and reviewer) ends its reply with a `### Session summary`
 section. **ALL log writes go through `cq log put` under BOTH backends — never a
-direct `Write` to `docs/logs/`, and never `git add` a log file** (`cq log put`
+direct `Write` to `.cq/logs/`, and never `git add` a log file** (`cq log put`
 does redaction + strict-JSONL validation IN the CLI, and under `git-object`
 commits the log to the orphan ref itself; under `fs` it writes the file under
-`docs/logs/`, which the per-round ledger checkpoint already carries). Stamp
+`.cq/logs/`, which the per-round ledger checkpoint already carries). Stamp
 `<timestamp>` (`Bash`: `date -u +%Y%m%d-%H%M%S`) once per returned subagent.
 
 **Native `Agent` subagent (planner / reviewer / `plan-synthesizer`).** Take
@@ -581,8 +581,8 @@ commits the log to the orphan ref itself; under `fs` it writes the file under
    header+summary to a temp file or pipe via
    `--stdin --dest logs/<timestamp>-<agent-id>.md`).
 4. **Record BOTH paths on the outcome item**: `sessionLogs +=` the
-   `docs/logs/<timestamp>-<agent-id>.md` summary path; `rawLogs +=` the
-   `docs/logs/raw/<timestamp>-<agent-id>.jsonl` raw path (on the goal for a
+   `.cq/logs/<timestamp>-<agent-id>.md` summary path; `rawLogs +=` the
+   `.cq/logs/raw/<timestamp>-<agent-id>.jsonl` raw path (on the goal for a
    planner / synthesis log, on the `reviews` item for a reviewer log — see the
    per-step routing below).
 
@@ -609,7 +609,7 @@ the goal's and the `reviews` item's log writes (the planner subagent updates the
 goal's phase, but after its logs are written you, the orchestrator, must attach
 the paths):
 - **After the planner step returns** and you have written its log(s), call
-  `update_item("goals", G, fields: { sessionLogs: ["docs/logs/<ts>-<agent-id>.md", ...], rawLogs: ["docs/logs/raw/<ts>-<agent-id>.jsonl", ...] })`
+  `update_item("goals", G, fields: { sessionLogs: [".cq/logs/<ts>-<agent-id>.md", ...], rawLogs: [".cq/logs/raw/<ts>-<agent-id>.jsonl", ...] })`
   to record the log path(s) on the goal item — both buckets in the SAME call.
   (Omit a `rawLogs` entry for any subagent whose transcript was absent.) This
   keeps the goal's session provenance without a separate pass.
@@ -737,8 +737,8 @@ context you are in.
   a `mixed` stop (e.g. `[drained, answers-required]`), and for
   `user-action-required` carries the EXACT user action + item unblocked (the
   action is recorded here — NO new schema field is added; Q140); `sessionLogs` =
-  the `docs/logs/<ts>-<agent-id>.md` summary path(s) AND `rawLogs` = the
-  `docs/logs/raw/<ts>-<agent-id>.jsonl` (and `docs/logs/raw/<ts>-pi-<alias>.md`)
+  the `.cq/logs/<ts>-<agent-id>.md` summary path(s) AND `rawLogs` = the
+  `.cq/logs/raw/<ts>-<agent-id>.jsonl` (and `.cq/logs/raw/<ts>-pi-<alias>.md`)
   raw path(s) written this round — populate them in the SAME `create_item` call
   (omit a `rawLogs` entry for any subagent whose transcript was absent). Stamp
   `author`/`session`. Append-only: written
@@ -828,7 +828,7 @@ context you are in.
 
 ## Commit the ledger (after the planning-lock + at the standalone stop)
 The ledger files are tracked git artifacts. Commit the ledger — and ONLY the
-ledger (`docs/*.md` + `docs/archive` + `docs/logs`; NEVER `docs/ledgers.yaml`,
+ledger (`.cq/*.md` + `.cq/archive` + `.cq/logs`; NEVER `docs/ledgers.yaml`,
 gitignored; NEVER code) — at TWO points:
 
 - **After the planning-lock** — immediately after a goal reaches `planned` (its
@@ -848,8 +848,8 @@ Mechanism — **when `[ledger] backend` is `fs` (the default); SKIP under
 `git-object`, whose orphan ref already carries each write** (run from the ledger
 root):
 ```
-git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /cq:plan:advance — <planned: <G> | stop: <status>>
+git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:plan:advance — <planned: <G> | stop: <status>>
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```

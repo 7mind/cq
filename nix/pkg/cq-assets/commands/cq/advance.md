@@ -102,10 +102,10 @@ T137, now in `CANONICAL_LEDGERS`) carries this item shape:
   `[drained, answers-required]`, or `[drained, answers-required,
   user-action-required]` when a run lands work AND is blocked partly on an open
   question AND partly on a user action) explaining what is mixed (Q83/Q139);
-- `sessionLogs` — the `docs/logs/<ts>-<agent-id>.md` summary path(s) produced
+- `sessionLogs` — the `.cq/logs/<ts>-<agent-id>.md` summary path(s) produced
   during this run; populate them in the SAME `create_item` call that writes the
   handoff (do not write them in a separate update);
-- `rawLogs` — the `docs/logs/raw/<ts>-<agent-id>.jsonl` raw-transcript path(s)
+- `rawLogs` — the `.cq/logs/raw/<ts>-<agent-id>.jsonl` raw-transcript path(s)
   produced during this run; populate in the SAME `create_item` call (omit a
   `rawLogs` entry for any subagent whose transcript was absent);
 - `tags`, `sourceRefs` — optional cross-references.
@@ -150,7 +150,7 @@ act of the run.
 
 ## Session logs
 This command spawns no subagents, so it writes no session-log file of its own.
-Each chained sub-command logs ITS subagents to `docs/logs/` per that command's
+Each chained sub-command logs ITS subagents to `.cq/logs/` per that command's
 own §Session logs rule — follow each sub-command's logging rule while running it.
 
 ---
@@ -630,7 +630,7 @@ Finish the whole sweep with a closing `git worktree prune`.
 
 The ledger files are tracked git artifacts; persist them so a run never leaves
 the ledger uncommitted. Commit the ledger — and ONLY the ledger (its markdown +
-`docs/archive` + `docs/logs` session logs; NEVER `docs/ledgers.yaml`, the
+`.cq/archive` + `.cq/logs` session logs; NEVER `docs/ledgers.yaml`, the
 per-cwd runtime registry, which is gitignored; and NEVER code) — at these
 always-fire checkpoints:
 
@@ -650,8 +650,8 @@ Mechanism — **when `[ledger] backend` is `fs` (the default); SKIP under
 `git-object`, whose orphan ref already carries each write** (run from the ledger
 root — the MCP `--cwd`, the repo root here):
 ```
-git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /cq:advance — <Mxx archived | run stop: <status>>
+git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:advance — <Mxx archived | run stop: <status>>
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```

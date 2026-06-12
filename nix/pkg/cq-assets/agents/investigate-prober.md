@@ -147,7 +147,7 @@ your model class derives from your runtime identity: Opus 4.8 (1M) →
 
 ## Session summary (handover)
 Immediately before the JSON block, emit a clearly-delimited handover block — the
-orchestrator persists it to `./docs/logs/<timestamp>-<agent-id>.md`. You write no
+orchestrator persists it to `./.cq/logs/<timestamp>-<agent-id>.md`. You write no
 file yourself; you only emit the section:
 
 ```

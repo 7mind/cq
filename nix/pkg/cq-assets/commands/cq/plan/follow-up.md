@@ -14,7 +14,7 @@ outputs:
   - "for each idea-seeded follow-up: bidirectional ledgerRefs link (goal↔idea) + idea status→planned"
   - "goal re-opened to clarifying status"
   - "new clarifying questions filed by plan-advance subagent"
-  - "planner summary log docs/logs/<timestamp>-<agent-id>.md AND raw transcript docs/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
+  - "planner summary log .cq/logs/<timestamp>-<agent-id>.md AND raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
   - "handoffs item (answers-required) and ledger git commit"
 ioSchema:
   - "bootstrap only — appends scope and re-opens; plan-advance subagent owns question generation"
@@ -148,10 +148,10 @@ the Codex equivalent; omit if unavailable).
 6. **Write the session logs and attach them to the goal.** The `plan-advance`
    subagent ends its reply with a `### Session summary` section. Persist BOTH a
    raw transcript and a summary — **ALL log writes go through `cq log put` under
-   BOTH backends; never a direct `Write` to `docs/logs/`, and never `git add` a
+   BOTH backends; never a direct `Write` to `.cq/logs/`, and never `git add` a
    log file** (`cq log put` does redaction + strict-JSONL validation IN the CLI,
    and under `git-object` commits to the orphan ref; under `fs` it writes under
-   `docs/logs/`, which the step-10 ledger commit already carries). Take
+   `.cq/logs/`, which the step-10 ledger commit already carries). Take
    `<agent-id>` from the `Agent` tool result and stamp `<timestamp>` via `Bash`
    (`date -u +%Y%m%d-%H%M%S`), then:
    - **Raw transcript.** Locate the native transcript at
@@ -167,8 +167,8 @@ the Codex equivalent; omit if unavailable).
      token) followed by the verbatim summary block via `cq log put` to
      `logs/<timestamp>-<agent-id>.md`.
    **Immediately after writing the logs**, call `update_item("goals", G, fields: {
-   sessionLogs: ["docs/logs/<timestamp>-<agent-id>.md"], rawLogs:
-   ["docs/logs/raw/<timestamp>-<agent-id>.jsonl"] })` to attach BOTH paths to the
+   sessionLogs: [".cq/logs/<timestamp>-<agent-id>.md"], rawLogs:
+   [".cq/logs/raw/<timestamp>-<agent-id>.jsonl"] })` to attach BOTH paths to the
    goal item in the SAME call (omit `rawLogs` when the transcript was absent) —
    do NOT defer this to a separate pass.
 
@@ -223,11 +223,11 @@ the Codex equivalent; omit if unavailable).
     single run-stop ledger commit. Immediately after the handoff write, persist
     the ledger to git — **when `[ledger] backend` is `fs` (the default); SKIP
     under `git-object`, whose orphan ref already carries each write** — ONLY
-    the ledger (`docs/*.md` + `docs/archive` + `docs/logs`; NEVER
+    the ledger (`.cq/*.md` + `.cq/archive` + `.cq/logs`; NEVER
     `docs/ledgers.yaml`, gitignored; NEVER code):
     ```
-    git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-    git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /cq:plan:follow-up — goal G<n> re-opened (awaiting-answers)
+    git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+    git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:plan:follow-up — goal G<n> re-opened (awaiting-answers)
 
     Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
     ```

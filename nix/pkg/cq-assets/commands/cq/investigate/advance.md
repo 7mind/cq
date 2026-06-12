@@ -16,7 +16,7 @@ outputs:
   - "validated evidence stored on hypothesis items"
   - "defect status transitions: open->wip->root-caused | inconclusive"
   - "on root-caused: defects.rootCause + suggestedFix written; defect-seeded plan-flow goal seeded/extended"
-  - "per explorer/prober: a summary log docs/logs/<timestamp>-<agent-id>.md AND a raw transcript docs/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
+  - "per explorer/prober: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
 ioSchema:
   - "ONE research round per invocation; idempotent and resumable from ledger state"
   - "explorer concurrency: parallel for disjoint root seeds; serial while drilling a single branch"
@@ -104,10 +104,10 @@ On every `create_item` / `update_item`, pass `author` = your OWN model class
 ## Session logs (after EVERY subagent returns)
 Each `investigate-explorer` **and** each `investigate-prober` ends its reply with a
 `### Session summary` block. **ALL log writes go through `cq log put` under BOTH
-backends — never a direct `Write` to `docs/logs/`, and never `git add` a log
+backends — never a direct `Write` to `.cq/logs/`, and never `git add` a log
 file** (`cq log put` does redaction + strict-JSONL validation IN the CLI, and
 under `git-object` commits the log to the orphan ref itself; under `fs` it writes
-the file under `docs/logs/`, which the per-round ledger checkpoint already
+the file under `.cq/logs/`, which the per-round ledger checkpoint already
 carries). Stamp `<timestamp>` (`Bash`: `date -u +%Y%m%d-%H%M%S`) once per
 returned subagent. **One log pair per dispatched subagent**, so a hypothesis
 whose explorer raised a `probeRequest` produces TWO log pairs this round (the
@@ -129,8 +129,8 @@ result, then:
    compose the header+summary to a temp file or pipe via
    `--stdin --dest logs/<timestamp>-<agent-id>.md`).
 4. **Record BOTH paths on the hypothesis item**: `sessionLogs +=` the
-   `docs/logs/<timestamp>-<agent-id>.md` summary path; `rawLogs +=` the
-   `docs/logs/raw/<timestamp>-<agent-id>.jsonl` raw path (step 4 attaches them in
+   `.cq/logs/<timestamp>-<agent-id>.md` summary path; `rawLogs +=` the
+   `.cq/logs/raw/<timestamp>-<agent-id>.jsonl` raw path (step 4 attaches them in
    the SAME `update_item` that stores the validated evidence — see below).
 
 **Absent transcript (older run / crash / non-Claude harness).** When the
@@ -310,8 +310,8 @@ citation yourself:
   into `hypothesis.evidence[]` prefixed **`[correct]`**; otherwise store it
   prefixed **`[incorrect]`** (wrong line, paraphrase that misrepresents source,
   or irrelevant). `update_item("hypothesis", H, fields: { evidence: [...],
-  sessionLogs: ["docs/logs/<ts>-<explorer-agent-id>.md", ...], rawLogs:
-  ["docs/logs/raw/<ts>-<explorer-agent-id>.jsonl", ...] })` — include the
+  sessionLogs: [".cq/logs/<ts>-<explorer-agent-id>.md", ...], rawLogs:
+  [".cq/logs/raw/<ts>-<explorer-agent-id>.jsonl", ...] })` — include the
   explorer's (and, when a `probeRequest` was run this round, the prober's)
   summary-log path(s) in `sessionLogs` AND raw-transcript path(s) in `rawLogs` in
   the SAME `update_item` that stores the evidence (the log pair(s) for this
@@ -326,8 +326,8 @@ citation yourself:
   only if no usable evidence came back. `update_item("hypothesis", H, status:
   <verdict>)` — if you adjudicate in the same call, combine with the evidence
   update above: `update_item("hypothesis", H, status: <verdict>, fields: {
-  evidence: [...], sessionLogs: ["docs/logs/<ts>-<explorer-agent-id>.md", ...],
-  rawLogs: ["docs/logs/raw/<ts>-<explorer-agent-id>.jsonl", ...] })`. (This is the HYPOTHESIS-tree vocabulary
+  evidence: [...], sessionLogs: [".cq/logs/<ts>-<explorer-agent-id>.md", ...],
+  rawLogs: [".cq/logs/raw/<ts>-<explorer-agent-id>.jsonl", ...] })`. (This is the HYPOTHESIS-tree vocabulary
   `open|uncertain|confirmed|wrong` — distinct from the defect STATUS below.)
 - **Reflect the verdict onto the DEFECT's STATUS** (the lifecycle carrier — never
   free-text markers). The defect is already `wip` (set in step 1):
@@ -357,8 +357,8 @@ ledgerRef `defects:<D>` (Q25/Q26). Do this and STOP:
 `update_item("defects", D, status: "root-caused", fields: { rootCause: "<the
 confirmed root cause NARRATIVE — free text, with the [correct] citations that
 establish it; NO UNKNOWN/CONFIRMED/GROUNDED status tokens>", suggestedFix: "<the
-concrete fix the evidence points to>", sessionLogs: ["docs/logs/<ts>-<agent-id>.md",
-...], rawLogs: ["docs/logs/raw/<ts>-<agent-id>.jsonl", ...] })` — include ALL
+concrete fix the evidence points to>", sessionLogs: [".cq/logs/<ts>-<agent-id>.md",
+...], rawLogs: [".cq/logs/raw/<ts>-<agent-id>.jsonl", ...] })` — include ALL
 summary-log paths (`sessionLogs`) AND all raw-transcript paths (`rawLogs`)
 written for this investigation round (all explorer + prober log pairs) in the
 SAME `update_item` call that sets `root-caused`. Do NOT defer
@@ -517,8 +517,8 @@ command in the SAME inline session, so you already KNOW which context you are in
   an `answers-required`/`mixed` stop; `handoffReasons` = the component reasons
   for a `mixed` stop (e.g. `[drained, answers-required]` or
   `[drained, answers-required, user-action-required]`); `sessionLogs` = the
-  `docs/logs/<ts>-<agent-id>.md` summary path(s) AND `rawLogs` = the
-  `docs/logs/raw/<ts>-<agent-id>.jsonl` (and `docs/logs/raw/<ts>-pi-<alias>.md`)
+  `.cq/logs/<ts>-<agent-id>.md` summary path(s) AND `rawLogs` = the
+  `.cq/logs/raw/<ts>-<agent-id>.jsonl` (and `.cq/logs/raw/<ts>-pi-<alias>.md`)
   raw path(s) written this round — populate them in the SAME `create_item` call
   (omit a `rawLogs` entry for any subagent whose transcript was absent). Stamp
   `author`/`session`. Append-only: written
@@ -610,12 +610,12 @@ command in the SAME inline session, so you already KNOW which context you are in
 ## Commit the ledger (standalone stop)
 After the standalone handoff write, persist the ledger to git — **when
 `[ledger] backend` is `fs` (the default); SKIP under `git-object`, whose orphan
-ref already carries each write** — and ONLY the ledger (`docs/*.md` +
-`docs/archive` + `docs/logs`; NEVER `docs/ledgers.yaml`, gitignored; NEVER
+ref already carries each write** — and ONLY the ledger (`.cq/*.md` +
+`.cq/archive` + `.cq/logs`; NEVER `docs/ledgers.yaml`, gitignored; NEVER
 code):
 ```
-git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /cq:investigate:advance — <stop: <status>>
+git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:investigate:advance — <stop: <status>>
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```

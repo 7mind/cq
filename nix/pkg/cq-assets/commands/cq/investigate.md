@@ -131,11 +131,11 @@ mapping here). **Then commit the ledger** — this command is the outermost
 wrapper, so it owns the single run-stop ledger commit; immediately after the
 handoff write, persist the ledger to git — **when `[ledger] backend` is `fs`
 (the default); SKIP under `git-object`, whose orphan ref already carries each
-write** — ONLY the ledger (`docs/*.md` + `docs/archive` + `docs/logs`; NEVER
+write** — ONLY the ledger (`.cq/*.md` + `.cq/archive` + `.cq/logs`; NEVER
 `docs/ledgers.yaml`, gitignored; NEVER code):
 ```
-git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /cq:investigate — defect D<n> <intake|resume> + first round
+git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:investigate — defect D<n> <intake|resume> + first round
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```

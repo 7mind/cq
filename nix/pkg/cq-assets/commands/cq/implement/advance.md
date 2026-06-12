@@ -14,7 +14,7 @@ outputs:
   - "task status transitions: planned->wip->done (or blocked/open-question registered)"
   - "one reviews item per task (written by reviewer subagent or orchestrator)"
   - "merged commits on base branch via rebase-merge (conflict-resolver dispatched on conflict)"
-  - "per worker/reviewer/conflict-resolver: a summary log docs/logs/<timestamp>-<agent-id>.md AND a raw transcript docs/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
+  - "per worker/reviewer/conflict-resolver: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
   - "handoffs item (standalone only) and ledger git commit (standalone only)"
 ioSchema:
   - "ready-set: tasks status non-terminal and not blocked, all dependsOn done, milestone dependsOn satisfied, no open question"
@@ -66,9 +66,9 @@ On every `create_item` / `update_item`, pass `author` = your OWN model class
 ## Session logs (after EVERY subagent returns)
 Each subagent ends its reply with a `### Session summary` block. **ALL log writes
 go through `cq log put` under BOTH backends — never a direct `Write` to
-`docs/logs/`, and never `git add` a log file** (`cq log put` does redaction +
+`.cq/logs/`, and never `git add` a log file** (`cq log put` does redaction +
 strict-JSONL validation IN the CLI, and under `git-object` commits the log to the
-orphan ref itself; under `fs` it writes the file under `docs/logs/`, which the
+orphan ref itself; under `fs` it writes the file under `.cq/logs/`, which the
 per-merge ledger checkpoint already carries). Stamp `<timestamp>` (`Bash`: `date
 -u +%Y%m%d-%H%M%S`) once per returned subagent.
 
@@ -87,8 +87,8 @@ per-merge ledger checkpoint already carries). Stamp `<timestamp>` (`Bash`: `date
    `logs/<timestamp>-<agent-id>.md` (e.g. compose the header+summary to a temp
    file or pipe via `--stdin --dest logs/<timestamp>-<agent-id>.md`).
 4. **Record BOTH paths on the task item**: `sessionLogs +=` the
-   `docs/logs/<timestamp>-<agent-id>.md` summary path; `rawLogs +=` the
-   `docs/logs/raw/<timestamp>-<agent-id>.jsonl` raw path (§Record, §7.3).
+   `.cq/logs/<timestamp>-<agent-id>.md` summary path; `rawLogs +=` the
+   `.cq/logs/raw/<timestamp>-<agent-id>.jsonl` raw path (§Record, §7.3).
 
 **Absent transcript (older run / crash / non-Claude harness).** When the
 `agent-<agent-id>.jsonl` file does not exist, do NOT fabricate a raw log: write an
@@ -453,8 +453,8 @@ after every task in its `dependsOn` has merged). For each:
 3. On a clean rebase (or resolved conflict) → fast-forward merge into the base,
    set `update_item("tasks", <id>, status: "done", fields: { resultCommit:
    "<merged sha>", completion: "<1-line: what landed>", sessionLogs:
-   ["docs/logs/<ts>-<worker-agent-id>.md", ...], rawLogs:
-   ["docs/logs/raw/<ts>-<worker-agent-id>.jsonl", ...] })` — include ALL
+   [".cq/logs/<ts>-<worker-agent-id>.md", ...], rawLogs:
+   [".cq/logs/raw/<ts>-<worker-agent-id>.jsonl", ...] })` — include ALL
    summary-log paths (`sessionLogs`) AND all raw-transcript paths (`rawLogs`)
    written for this task (worker + reviewer rounds, §Session logs) in the SAME
    `update_item` call that marks the task `done`; do NOT defer `sessionLogs` /
@@ -494,8 +494,8 @@ after every task in its `dependsOn` has merged). For each:
    is `fs` (the default); SKIP under `git-object`, whose orphan ref already
    carries each write:**
    ```
-   git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-   git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /cq:implement:advance — merged <Txx>
+   git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+   git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:implement:advance — merged <Txx>
 
    Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
    ```
@@ -514,9 +514,9 @@ The reviewers write NOTHING to the ledger. YOU record exactly ONE terminal
 "go-ahead" | "revise", fields: { summary: "<reconciled summary, or
 '<reconciled-verdict>: <first line of rationale, truncated to ~80 chars>' if
 omitted>", criticism: [...], new_questions: [...], ledgerRefs: ["tasks:<id>",
-"goals:<G>"], sessionLogs: ["docs/logs/<ts>-<reviewer-agent-id>.md", ...],
-rawLogs: ["docs/logs/raw/<ts>-<reviewer-agent-id>.jsonl",
-"docs/logs/raw/<ts>-pi-<alias>.md", ...] })`.
+"goals:<G>"], sessionLogs: [".cq/logs/<ts>-<reviewer-agent-id>.md", ...],
+rawLogs: [".cq/logs/raw/<ts>-<reviewer-agent-id>.jsonl",
+".cq/logs/raw/<ts>-pi-<alias>.md", ...] })`.
 The `criticism`/`new_questions` are the source-tagged UNION across the panel
 (§3c); the `status` follows the reconciled verdict (`go-ahead` only when ALL
 reviewers approved + green check, else `revise`). Include EVERY reviewer's
@@ -578,7 +578,7 @@ coordination milestone automatically.
 
 ### Commit the ledger (after every task merge-back + after every milestone archive; at-stop only standalone)
 The ledger files are tracked git artifacts. Commit the ledger — and ONLY the
-ledger (`docs/*.md` + `docs/archive` + `docs/logs`; NEVER `docs/ledgers.yaml`,
+ledger (`.cq/*.md` + `.cq/archive` + `.cq/logs`; NEVER `docs/ledgers.yaml`,
 gitignored; NEVER code, which lands on task branches) — at THREE points, of
 which TWO ALWAYS fire (even chained) and ONE is suppressed when chained:
 - **(ALWAYS) After every task merge-back** (§7.5): commit immediately once per
@@ -600,8 +600,8 @@ Mechanism — **when `[ledger] backend` is `fs` (the default); SKIP under
 `git-object`, whose orphan ref already carries each write** (run from the ledger
 root — same idempotent form at every checkpoint, only the `-m` message differs):
 ```
-git add docs/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-git diff --cached --quiet -- docs/ || git commit -q -m "chore(ledger): /cq:implement:advance — <merged <Txx> | <Mxx> archived | stop: <status>>
+git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
+git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:implement:advance — <merged <Txx> | <Mxx> archived | stop: <status>>
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -686,8 +686,8 @@ context you are in.
   `answers-required`/`mixed` stop; `handoffReasons` = the
   component reasons for a `mixed` stop (e.g. `[drained, answers-required]` or
   `[drained, answers-required, user-action-required]`; Q140); `sessionLogs` = the
-  `docs/logs/<ts>-<agent-id>.md` summary path(s) AND `rawLogs` = the
-  `docs/logs/raw/<ts>-<agent-id>.jsonl` raw-transcript path(s) written this pass —
+  `.cq/logs/<ts>-<agent-id>.md` summary path(s) AND `rawLogs` = the
+  `.cq/logs/raw/<ts>-<agent-id>.jsonl` raw-transcript path(s) written this pass —
   populate them in the SAME `create_item` call (omit a `rawLogs` entry for any
   subagent whose transcript was absent). Stamp `author`/`session`. Append-only: written
   once at the stop, never updated. **Then commit the ledger** (§Commit the
