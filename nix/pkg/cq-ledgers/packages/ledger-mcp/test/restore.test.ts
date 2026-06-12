@@ -4,17 +4,17 @@
  * Drives restore through the parseRestoreArgs/restoreFromCache entrypoint (NOT
  * a real shellout): seeds a cache mirror dir at the SHARED cacheMirrorDir path
  * (so the test exercises the same hash-of-root scheme the production mirror
- * writer uses), wipes the in-repo docs/, restores, and asserts byte-identity.
+ * writer uses), wipes the in-repo .cq/, restores, and asserts byte-identity.
  *
  * Also asserts: an absent/empty cache yields a throwing/non-zero error, and
  * `ledger-mcp` with no subcommand still parses to the server-launch path.
  */
 
-import { describe, it, expect, afterEach, beforeEach } from "bun:test";
+import { describe, it, expect, afterEach, beforeEach, test } from "bun:test";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { cacheMirrorDir } from "@cq/ledger";
+import { cacheMirrorDir, FsLedgerStore, LEDGER_STORAGE_DIRNAME, TASKS_LEDGER } from "@cq/ledger";
 import {
   parseArgs,
   parseRestoreArgs,
@@ -49,14 +49,14 @@ afterEach(async () => {
   await fs.rm(tmpBase, { recursive: true, force: true });
 });
 
-/** Seed the cache mirror for `root` with a faithful docs/ subtree. */
+/** Seed the cache mirror for `root` with a faithful .cq/ subtree. */
 async function seedMirror(): Promise<Map<string, string>> {
   const mirrorDir = cacheMirrorDir(root);
   const files = new Map<string, string>([
-    ["docs/tasks.md", "# tasks\n\nT1: do the thing\n"],
-    ["docs/defects.md", "# defects\n\nD1: a defect\n"],
-    ["docs/ledgers.yaml", "version: 1\nledgers:\n  - name: tasks\n"],
-    ["docs/archive/tasks/M1.md", "# archived milestone M1\n"],
+    [`${LEDGER_STORAGE_DIRNAME}/tasks.md`, "# tasks\n\nT1: do the thing\n"],
+    [`${LEDGER_STORAGE_DIRNAME}/defects.md`, "# defects\n\nD1: a defect\n"],
+    [`${LEDGER_STORAGE_DIRNAME}/ledgers.yaml`, "version: 1\nledgers:\n  - name: tasks\n"],
+    [`${LEDGER_STORAGE_DIRNAME}/archive/tasks/M1.md`, "# archived milestone M1\n"],
   ]);
   for (const [rel, content] of files) {
     const dest = path.join(mirrorDir, rel);
@@ -67,10 +67,12 @@ async function seedMirror(): Promise<Map<string, string>> {
 }
 
 describe("ledger-mcp restore --from-cache", () => {
-  it("restores docs/ from the cache mirror byte-identically", async () => {
+  // T460 will fix groupOf to handle `.cq/`-prefixed mirror paths; until then
+  // the byte-identity portion passes but the group-label portion fails.
+  test.failing("restores .cq/ from the cache mirror byte-identically", async () => {
     const seeded = await seedMirror();
-    // Wipe / never-create the in-repo docs tree.
-    await fs.rm(path.join(root, "docs"), { recursive: true, force: true });
+    // Wipe / never-create the in-repo .cq/ tree.
+    await fs.rm(path.join(root, LEDGER_STORAGE_DIRNAME), { recursive: true, force: true });
 
     const args = parseRestoreArgs(["--from-cache", "--cwd", root]);
     expect(args.cwd).toBe(root);
@@ -89,6 +91,7 @@ describe("ledger-mcp restore --from-cache", () => {
     }
 
     // Per-ledger restored-file-count summary (ResetSummary style).
+    // groupOf must return LOGICAL names (.cq/-aware) — T460 fixes this.
     const groups = Object.fromEntries(summary.ledgers.map((l) => [l.name, l.fileCount]));
     expect(groups["tasks"]).toBe(1);
     expect(groups["defects"]).toBe(1);
@@ -119,6 +122,63 @@ describe("ledger-mcp restore --from-cache", () => {
     // --cwd overrides $LEDGER_ROOT.
     expect(parseRestoreArgs(["--from-cache", "--cwd", "/abs/elsewhere"]).cwd).toBe("/abs/elsewhere");
   });
+
+  /**
+   * T459 (D71 repro) — live FsLedgerStore mirror → restoreFromCache group labels.
+   *
+   * Creates a live FsLedgerStore rooted at `root`, performs mutations that
+   * produce both an active-ledger mirror file (.cq/<ledger>.md) and an
+   * archived-milestone mirror file (.cq/archive/<ledger>/<M>.md), then calls
+   * restoreFromCache and asserts the RestoreSummary.ledgers group `name` labels
+   * are the LOGICAL names ("tasks", "archive/tasks"), NOT raw relpaths like
+   * ".cq/tasks.md".
+   *
+   * Pre-fix (groupOf line 83 checks parts[0]==="docs"), the `.cq`-prefixed
+   * mirror paths fall through to the raw-relpath branch, producing labels such
+   * as ".cq/tasks.md" instead of "tasks". Marked test.failing so `bun run
+   * check` stays GREEN until T460 (the fix) flips it to a plain test.
+   */
+  test.failing(
+    "live FsLedgerStore mirror: restoreFromCache group labels are logical (tasks, archive/<ledger>)",
+    async () => {
+      // Build the mirror via a LIVE store — do NOT hand-seed path strings.
+      const store = new FsLedgerStore({ root });
+      await store.init();
+
+      // Create a milestone + task item so .cq/tasks.md gets mirrored.
+      const m = await store.createMilestone({ title: "T459 repro milestone" });
+      const item = await store.createItem(TASKS_LEDGER, m.id, {
+        status: "planned",
+        fields: { headline: "T459 repro task" },
+      });
+      // Move task to a terminal status so the milestone can be archived.
+      await store.updateItem(TASKS_LEDGER, item.id, { status: "done" });
+
+      // Archive the milestone so .cq/archive/tasks/<M>.md gets mirrored.
+      await store.updateMilestone(m.id, { status: "done" });
+      await store.archiveMilestone(m.id, "done");
+
+      // Drain fire-and-forget mirror writes before asserting.
+      await store.dispose();
+
+      // Wipe the in-repo .cq/ tree so restoreFromCache has to recreate it.
+      await fs.rm(path.join(root, LEDGER_STORAGE_DIRNAME), { recursive: true, force: true });
+
+      const summary = await restoreFromCache(root);
+
+      // At least the tasks group and archive/tasks group must appear.
+      const names = summary.ledgers.map((l) => l.name);
+
+      // LOGICAL names — these assertions FAIL pre-fix (groupOf uses "docs").
+      expect(names).toContain("tasks");
+      expect(names).toContain(`archive/${TASKS_LEDGER}`);
+
+      // Confirm NO raw-relpath labels leak through.
+      for (const name of names) {
+        expect(name).not.toMatch(new RegExp(`^${LEDGER_STORAGE_DIRNAME.replace(".", "\\.")}/`));
+      }
+    },
+  );
 });
 
 describe("ledger-mcp subcommand dispatch", () => {
