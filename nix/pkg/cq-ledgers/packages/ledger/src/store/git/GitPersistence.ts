@@ -293,7 +293,7 @@ export class GitPersistence implements LedgerPersistence {
   /**
    * Bounded, root-confined read of a session log at `logs/<rel>` on the orphan
    * ref — the git-object analogue of {@link FsLedgerStore.readLog}. The FS
-   * capability confines to `<root>/docs/logs`; the orphan tree is rooted at the
+   * capability confines to `<root>/.cq/logs`; the orphan tree is rooted at the
    * docs contents, so the confinement root here is the `logs/` SUBTREE. The
    * confinement + {@link MAX_READ_LOG_BYTES} cap + {@link ReadLogResult} shape
    * MIRROR the FS capability EXACTLY:
@@ -326,7 +326,7 @@ export class GitPersistence implements LedgerPersistence {
     const virtualRoot = path.posix.join("/", LOGS_TREE_PREFIX);
     const resolved = path.posix.resolve(virtualRoot, rel.split(path.sep).join("/"));
     if (resolved !== virtualRoot && !resolved.startsWith(virtualRoot + "/")) {
-      throw new LedgerError(`read_log: path escapes .cq/logs root: ${relPath}`);
+      throw new LedgerError(`read_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root: ${relPath}`);
     }
     // Tree path is docs-relative: drop the leading slash of the virtual root.
     const treePath = resolved.slice(1);
@@ -378,7 +378,7 @@ export class GitPersistence implements LedgerPersistence {
     // filesystem access.
     const resolved = path.resolve(logsRoot, strippedRel);
     if (resolved !== logsRoot && !resolved.startsWith(logsRoot + path.sep)) {
-      throw new LedgerError(`read_log: path escapes .cq/logs root: ${relPath}`);
+      throw new LedgerError(`read_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root: ${relPath}`);
     }
 
     // Re-assert containment after symlink resolution (D26/D28): a symlink whose
@@ -397,7 +397,7 @@ export class GitPersistence implements LedgerPersistence {
       }
       if (real !== realLogsRoot && !real.startsWith(realLogsRoot + path.sep)) {
         throw new LedgerError(
-          `read_log: path escapes .cq/logs root: ${relPath}`,
+          `read_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root: ${relPath}`,
         );
       }
     } catch (err: unknown) {

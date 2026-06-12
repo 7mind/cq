@@ -493,3 +493,35 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     await store.dispose();
   });
 });
+
+// T444/G58: the logs prefix moved from `docs/logs` to `.cq/logs`
+// (LEDGER_LOGS_RELATIVE_PREFIX). The git-backend strip mirrors the FS backend:
+// a leading `.cq/logs/` is stripped to the logs subtree; a legacy
+// `docs/logs/<file>` request is NO LONGER silently stripped/accepted.
+describe("GitObjectLedgerBackend — .cq/logs prefix (T444/G58)", () => {
+  it("resolves a sessionLogs-style .cq/logs/<file> path to the orphan-ref log blob", async () => {
+    const dir = await seedRepo();
+    const store = new GitObjectLedgerBackend({ repoRoot: dir });
+    await store.init();
+    await seedLog(dir, "20260101-1200-session.md", "session body\n");
+
+    const res = await store.readLog(".cq/logs/20260101-1200-session.md");
+    expect(res.content).toBe("session body\n");
+    expect(res.path).toBe(".cq/logs/20260101-1200-session.md");
+    await store.dispose();
+  });
+
+  it("does NOT silently strip/accept a legacy docs/logs/<file> path", async () => {
+    const dir = await seedRepo();
+    const store = new GitObjectLedgerBackend({ repoRoot: dir });
+    await store.init();
+    // Log lives at logs/session.md on the orphan ref. A `docs/logs/<file>`
+    // request must NOT resolve it: `docs/logs/` is no longer a strippable
+    // prefix, so the tree path becomes logs/docs/logs/session.md (absent), the
+    // working-tree fallback also misses, and the read fails (clean not-found).
+    await seedLog(dir, "session.md", "body\n");
+
+    await expect(store.readLog("docs/logs/session.md")).rejects.toThrow();
+    await store.dispose();
+  });
+});

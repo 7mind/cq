@@ -606,9 +606,9 @@ ${QUERY_LANGUAGE_HELP}`,
     "read_log",
     {
       description:
-        "Read a log file under the ledger's <root>/docs/logs/ directory and return its text content. `path` is repo-relative to docs/logs (e.g. \"20260101-1200-session.md\"); absolute paths and any path escaping docs/logs (e.g. `..` traversal) are rejected. Oversized files are truncated (truncated:true). Returns { path, content, truncated? }. Only available when the server is filesystem-backed; against an in-memory store it returns a not-implemented error.",
+        "Read a log file under the ledger's <root>/.cq/logs/ directory and return its text content. `path` is repo-relative to .cq/logs (e.g. \"20260101-1200-session.md\"); absolute paths and any path escaping .cq/logs (e.g. `..` traversal) are rejected. Oversized files are truncated (truncated:true). Returns { path, content, truncated? }. Only available when the server is filesystem-backed; against an in-memory store it returns a not-implemented error.",
       inputSchema: {
-        path: z.string().describe("repo-relative path under docs/logs/"),
+        path: z.string().describe("repo-relative path under .cq/logs/"),
       },
     },
     async (args) => {

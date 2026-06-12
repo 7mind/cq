@@ -257,3 +257,33 @@ describe("read_log (FS-backed)", () => {
     expect(result.truncated).toBeUndefined();
   });
 });
+
+// T444/G58: the logs prefix moved from `docs/logs` to `.cq/logs`
+// (LEDGER_LOGS_RELATIVE_PREFIX). The strip regex now strips ONLY a leading
+// `.cq/logs/`; a legacy `docs/logs/<file>` request must NO LONGER be silently
+// stripped/accepted — its `docs/logs/` segment is now a literal path component
+// under the logs root, so the file does not exist there.
+describe("read_log (FS-backed) — .cq/logs prefix (T444/G58)", () => {
+  it("resolves a sessionLogs-style .cq/logs/<file> path to the file under <root>/.cq/logs/", async () => {
+    const { store, root } = await buildFsStore();
+    const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
+    await mkdir(logsDir, { recursive: true });
+    await writeFile(path.join(logsDir, "20260101-1200-session.md"), "session body\n", "utf8");
+
+    const res = await store.readLog(".cq/logs/20260101-1200-session.md");
+    expect(res.content).toBe("session body\n");
+    expect(res.path).toBe(".cq/logs/20260101-1200-session.md");
+  });
+
+  it("does NOT silently strip/accept a legacy docs/logs/<file> path", async () => {
+    const { store, root } = await buildFsStore();
+    const logsDir = path.join(root, LEDGER_STORAGE_DIRNAME, "logs");
+    await mkdir(logsDir, { recursive: true });
+    // File lives under .cq/logs/. A `docs/logs/<file>` request must NOT resolve
+    // it: `docs/logs/` is no longer a strippable prefix, so the path resolves to
+    // <root>/.cq/logs/docs/logs/session.md, which does not exist (ENOENT).
+    await writeFile(path.join(logsDir, "session.md"), "body\n", "utf8");
+
+    await expect(store.readLog("docs/logs/session.md")).rejects.toThrow();
+  });
+});

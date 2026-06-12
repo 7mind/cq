@@ -35,7 +35,12 @@ import { promises as fs } from "node:fs";
 import { LedgerError } from "../types.js";
 import { Lockfile, type LockfileOpts } from "./lockfile.js";
 import { mirrorMutation } from "./cacheMirror.js";
-import { CANONICAL_LEDGERS, LEDGER_STORAGE_DIRNAME, LEDGER_LOGS_STRIP_RE } from "../constants.js";
+import {
+  CANONICAL_LEDGERS,
+  LEDGER_STORAGE_DIRNAME,
+  LEDGER_LOGS_STRIP_RE,
+  LEDGER_LOGS_RELATIVE_PREFIX,
+} from "../constants.js";
 import { AbstractLedgerStore, activeItemsOf } from "./AbstractLedgerStore.js";
 import { FsPersistence } from "./FsPersistence.js";
 
@@ -253,7 +258,7 @@ export class FsLedgerStore
   }
 
   /**
-   * Bounded, root-confined read of a log file under `<root>/docs/logs/`
+   * Bounded, root-confined read of a log file under `<root>/.cq/logs/`
    * (T147 / Q87). This is the FS-store's `read_log` capability: the
    * confinement root is the EXPLICIT FS-store root (`this.logsDir`), NOT the
    * generic `LedgerStore` interface — the in-memory store has no filesystem and
@@ -261,7 +266,7 @@ export class FsLedgerStore
    *
    * Security/bounds:
    *  - `relPath` MUST be repo-relative; an absolute path is rejected.
-   *  - The path is resolved against `<root>/docs/logs` and REJECTED if it
+   *  - The path is resolved against `<root>/.cq/logs` and REJECTED if it
    *    escapes that directory (e.g. `..` traversal).
    *  - The returned content is capped at {@link MAX_READ_LOG_BYTES}; an
    *    oversized file is truncated and flagged `truncated: true`.
@@ -284,7 +289,7 @@ export class FsLedgerStore
       !resolved.startsWith(this.logsDir + path.sep)
     ) {
       throw new LedgerError(
-        `read_log: path escapes .cq/logs root: ${relPath}`,
+        `read_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root: ${relPath}`,
       );
     }
 
@@ -315,7 +320,7 @@ export class FsLedgerStore
       }
       if (real !== realLogsDir && !real.startsWith(realLogsDir + path.sep)) {
         throw new LedgerError(
-          `read_log: path escapes .cq/logs root: ${relPath}`,
+          `read_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root: ${relPath}`,
         );
       }
     } catch (err: unknown) {
