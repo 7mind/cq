@@ -8,7 +8,7 @@
  *   - claude token "claude:opus-4.8[1m]"   → provider: null
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -16,6 +16,7 @@ import {
   computeReviewers,
   computePlanners,
   computeConfig,
+  computeAgentModels,
 } from "../src/configCapability.js";
 import { FsLedgerStore } from "@cq/ledger";
 
@@ -290,3 +291,57 @@ describe("T292: effort threading — computeConfig tiers", () => {
     });
   });
 });
+
+// ---- T437/T438: opus-only panels must not block sonnet for implement-worker -
+
+// Fixture: planners and reviewers both list only "opus" (frontier), but
+// [agent_tiers] routes implement-worker to "standard" (sonnet).  The desired
+// post-fix behaviour is that implement-worker resolves sonnet DESPITE sonnet
+// being absent from every panel — because candidateTokens should draw from
+// ALL [aliases], not just planners∪reviewers.
+//
+// Today (pre-fix) candidateTokens (configCapability.ts ~L159) sources the
+// per-role pool only from planners∪reviewers = {opus}, so the standard-tier
+// pool is EMPTY and implement-worker resolves status="no-live-token".
+//
+// T438 flips this to test() once candidateTokens is decoupled to source from
+// all [aliases].
+test.failing(
+  "T437: implement-worker resolves sonnet even when sonnet is off every panel",
+  async () => {
+    writeCqToml(
+      [
+        'reviewers = ["opus"]',
+        'planners  = ["opus"]',
+        "",
+        "[aliases]",
+        '  opus   = "claude:opus-4.8[1m]"',
+        '  sonnet = "claude:sonnet-4.6"',
+        "",
+        "[tiers]",
+        '  opus   = "frontier"',
+        '  sonnet = "standard"',
+        "",
+        "[agent_tiers]",
+        '  implement-worker = "standard"',
+        '  plan-advance     = "frontier"',
+        "",
+      ].join("\n"),
+    );
+
+    const result = computeAgentModels(dir);
+
+    expect(result.configured).toBe(true);
+
+    const implWorker = result.agents.find((a) => a.id === "implement-worker");
+    expect(implWorker).toBeDefined();
+    expect(implWorker!.status).toBe("resolved");
+    expect(implWorker!.modelClass).toBe("standard");
+    expect(implWorker!.modelMappings.claude).toEqual(["sonnet-4.6"]);
+
+    const planAdvance = result.agents.find((a) => a.id === "plan-advance");
+    expect(planAdvance).toBeDefined();
+    expect(planAdvance!.modelClass).toBe("frontier");
+    expect(planAdvance!.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
+  },
+);
