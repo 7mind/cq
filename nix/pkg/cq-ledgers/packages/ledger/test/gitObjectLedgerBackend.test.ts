@@ -16,7 +16,7 @@
  * git adapter must be observationally indistinguishable from the FS adapter).
  */
 
-import { describe, it, expect, afterAll } from "bun:test";
+import { describe, it, test, expect, afterAll } from "bun:test";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
@@ -390,4 +390,48 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     expect(threw).toBe(true);
     await store.dispose();
   });
+
+  // D69 reproduction: readLog must fall back to the working-tree logs dir when a
+  // log file is present there but ABSENT from the orphan ref. Today it throws the
+  // ref-absent ENOENT ("read_log: no such file … (ENOENT, ref …)") even though
+  // the file exists in <repoRoot>/docs/logs/. Marked test.failing so the suite
+  // stays green and flips to passing when the fallback fix lands.
+  test.failing(
+    "D69 repro: readLog throws ref-absent ENOENT for a working-tree-only log (file on disk, absent from orphan ref)",
+    async () => {
+      const dir = await seedRepo();
+      const store = new GitObjectLedgerBackend({ repoRoot: dir });
+      await store.init();
+
+      // Write the log file DIRECTLY into the working-tree logs dir — NOT via
+      // seedLog, so it never lands in the orphan ref (the defect precondition).
+      const logsDir = path.join(dir, "docs", "logs");
+      await fs.mkdir(logsDir, { recursive: true });
+      const filename = "wt-only.jsonl";
+      await fs.writeFile(path.join(logsDir, filename), '{"wt":true}\n', "utf8");
+
+      // Verify the file is present on disk …
+      const onDisk = await fs.readFile(path.join(logsDir, filename), "utf8");
+      expect(onDisk).toBe('{"wt":true}\n');
+
+      // … but absent from the orphan ref tree (the defect precondition).
+      const treePaths = await git(dir, "ls-tree", "-r", "--name-only", REF);
+      const logTreePath = `logs/${filename}`;
+      expect(treePaths.split("\n").includes(logTreePath)).toBe(false);
+
+      // readLog should return the working-tree content (post-fix). Today (D69) it
+      // throws the ref-absent LedgerError; this test.failing captures that exact
+      // failure. The assertion below is what the fixed behaviour must satisfy:
+      const res = await store.readLog(filename);
+      expect(res.path).toBe(filename);
+      expect(res.content).toBe('{"wt":true}\n');
+      expect(res.truncated).toBeUndefined();
+
+      // Also confirm the repo-relative path form works after the fix.
+      const res2 = await store.readLog(`docs/logs/${filename}`);
+      expect(res2.content).toBe('{"wt":true}\n');
+
+      await store.dispose();
+    },
+  );
 });
