@@ -24,7 +24,7 @@ import { describe, it, expect, afterAll } from "bun:test";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { FsLedgerStore, type LedgerSchema } from "@cq/ledger";
+import { FsLedgerStore, LEDGER_STORAGE_DIRNAME, type LedgerSchema } from "@cq/ledger";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
 
 const dirs: string[] = [];
@@ -46,7 +46,7 @@ const SENTINEL = "SOURCE_KEEP_ME";
  * ledger with one item, an archived milestone, a docs/.backup/ snapshot dir,
  * docs/logs/), a cq.toml, and a sentinel sibling file + dir under the root.
  */
-async function seedTree(): Promise<{ root: string; docsDir: string; configFile: string }> {
+async function seedTree(): Promise<{ root: string; storageDir: string; configFile: string }> {
   const root = await fs.mkdtemp(path.join(tmpdir(), "cq-erase-"));
   dirs.push(root);
 
@@ -57,15 +57,15 @@ async function seedTree(): Promise<{ root: string; docsDir: string; configFile: 
   await store.createItem("ops", "M1", { status: "done", fields: { headline: "seeded" } });
   await store.dispose();
 
-  const docsDir = path.join(root, "docs");
+  const storageDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   // Populate archive/ + logs/ + .backup/ so the test asserts erase removes ALL
-  // of them (the store already wrote docs/ledgers.yaml, ops.md, .locks/).
-  await fs.mkdir(path.join(docsDir, "archive", "ops"), { recursive: true });
-  await fs.writeFile(path.join(docsDir, "archive", "ops", "M1.md"), "# archived\n");
-  await fs.mkdir(path.join(docsDir, "logs"), { recursive: true });
-  await fs.mkdir(path.join(docsDir, ".backup", "20260101-000000"), { recursive: true });
-  await fs.writeFile(path.join(docsDir, ".backup", "20260101-000000", "ops.md"), "# backed up\n");
-  await fs.writeFile(path.join(docsDir, "logs", "session.log"), "log line\n");
+  // of them (the store already wrote .cq/ledgers.yaml, ops.md, .locks/).
+  await fs.mkdir(path.join(storageDir, "archive", "ops"), { recursive: true });
+  await fs.writeFile(path.join(storageDir, "archive", "ops", "M1.md"), "# archived\n");
+  await fs.mkdir(path.join(storageDir, "logs"), { recursive: true });
+  await fs.mkdir(path.join(storageDir, ".backup", "20260101-000000"), { recursive: true });
+  await fs.writeFile(path.join(storageDir, ".backup", "20260101-000000", "ops.md"), "# backed up\n");
+  await fs.writeFile(path.join(storageDir, "logs", "session.log"), "log line\n");
 
   // The config file at <root>/cq.toml.
   const configFile = path.join(root, "cq.toml");
@@ -76,7 +76,7 @@ async function seedTree(): Promise<{ root: string; docsDir: string; configFile: 
   await fs.mkdir(path.join(root, "src"), { recursive: true });
   await fs.writeFile(path.join(root, "src", "index.ts"), "export const x = 1;\n");
 
-  return { root, docsDir, configFile };
+  return { root, storageDir, configFile };
 }
 
 /** A DispatchIo whose ConfirmIo records output and answers the prompt fixed. */
@@ -102,14 +102,14 @@ async function exists(p: string): Promise<boolean> {
 }
 
 describe("cq erase", () => {
-  it("(a) --yes removes docs/ ENTIRELY (incl. archive/.backup/logs) + deletes cq.toml; sentinel survives; no reinit", async () => {
-    const { root, docsDir, configFile } = await seedTree();
+  it(`(a) --yes removes ${LEDGER_STORAGE_DIRNAME}/ ENTIRELY (incl. archive/.backup/logs) + deletes cq.toml; sentinel survives; no reinit`, async () => {
+    const { root, storageDir, configFile } = await seedTree();
 
     // Precondition: the full set exists before erase.
-    expect(await exists(docsDir)).toBe(true);
-    expect(await exists(path.join(docsDir, "archive"))).toBe(true);
-    expect(await exists(path.join(docsDir, ".backup"))).toBe(true);
-    expect(await exists(path.join(docsDir, "logs"))).toBe(true);
+    expect(await exists(storageDir)).toBe(true);
+    expect(await exists(path.join(storageDir, "archive"))).toBe(true);
+    expect(await exists(path.join(storageDir, ".backup"))).toBe(true);
+    expect(await exists(path.join(storageDir, "logs"))).toBe(true);
     expect(await exists(configFile)).toBe(true);
 
     const io = recordingIo(false); // non-TTY, but --yes overrides
@@ -117,12 +117,12 @@ describe("cq erase", () => {
 
     expect(outcome.exitCode).toBe(0);
 
-    // docs/ gone in its ENTIRETY (not just emptied, not reinitialised).
-    expect(await exists(docsDir)).toBe(false);
-    expect(await exists(path.join(docsDir, "archive"))).toBe(false);
-    expect(await exists(path.join(docsDir, ".backup"))).toBe(false);
-    expect(await exists(path.join(docsDir, "logs"))).toBe(false);
-    expect(await exists(path.join(docsDir, "ledgers.yaml"))).toBe(false);
+    // .cq/ gone in its ENTIRETY (not just emptied, not reinitialised).
+    expect(await exists(storageDir)).toBe(false);
+    expect(await exists(path.join(storageDir, "archive"))).toBe(false);
+    expect(await exists(path.join(storageDir, ".backup"))).toBe(false);
+    expect(await exists(path.join(storageDir, "logs"))).toBe(false);
+    expect(await exists(path.join(storageDir, "ledgers.yaml"))).toBe(false);
     // cq.toml deleted.
     expect(await exists(configFile)).toBe(false);
 
@@ -133,53 +133,53 @@ describe("cq erase", () => {
 
     // Summary reports what was removed.
     const joined = io.outs.join("\n");
-    expect(joined).toContain(`removed: ${docsDir}`);
+    expect(joined).toContain(`removed: ${storageDir}`);
     expect(joined).toContain(`removed: ${configFile}`);
   });
 
-  it("(a') erase does NOT recreate any ledger — docs/ is absent, not a fresh canonical set", async () => {
-    const { root, docsDir } = await seedTree();
+  it(`(a') erase does NOT recreate any ledger — ${LEDGER_STORAGE_DIRNAME}/ is absent, not a fresh canonical set`, async () => {
+    const { root, storageDir } = await seedTree();
     const io = recordingIo(false);
     const outcome = await dispatch(["erase", "--cwd", root, "--yes"], io);
     expect(outcome.exitCode).toBe(0);
-    // No init() ran: docs/ledgers.yaml is not regenerated.
-    expect(await exists(docsDir)).toBe(false);
+    // No init() ran: .cq/ledgers.yaml is not regenerated.
+    expect(await exists(storageDir)).toBe(false);
   });
 
   it("(b) non-TTY without --yes REFUSES (exit 2) and deletes NOTHING", async () => {
-    const { root, docsDir, configFile } = await seedTree();
+    const { root, storageDir, configFile } = await seedTree();
     const io = recordingIo(false);
     const outcome = await dispatch(["erase", "--cwd", root], io);
 
     expect(outcome.exitCode).toBe(2);
     expect(io.errs.join("\n")).toContain("--yes");
 
-    // Nothing deleted: docs/ + cq.toml + sentinel all intact.
-    expect(await exists(docsDir)).toBe(true);
-    expect(await exists(path.join(docsDir, "archive"))).toBe(true);
+    // Nothing deleted: .cq/ + cq.toml + sentinel all intact.
+    expect(await exists(storageDir)).toBe(true);
+    expect(await exists(path.join(storageDir, "archive"))).toBe(true);
     expect(await exists(configFile)).toBe(true);
     expect(await exists(path.join(root, SENTINEL))).toBe(true);
   });
 
-  it("(c) bounded to <root>/docs + <root>/cq.toml — no sibling under root is touched", async () => {
-    const { root, docsDir, configFile } = await seedTree();
+  it(`(c) bounded to <root>/${LEDGER_STORAGE_DIRNAME} + <root>/cq.toml — no sibling under root is touched`, async () => {
+    const { root, storageDir, configFile } = await seedTree();
     // Snapshot the sibling set before erase.
-    const before = (await fs.readdir(root)).filter((e) => e !== "docs" && e !== "cq.toml").sort();
+    const before = (await fs.readdir(root)).filter((e) => e !== LEDGER_STORAGE_DIRNAME && e !== "cq.toml").sort();
 
     const io = recordingIo(false);
     const outcome = await dispatch(["erase", "--cwd", root, "--yes"], io);
     expect(outcome.exitCode).toBe(0);
 
-    // docs/ + cq.toml gone; the remaining root entries are EXACTLY the siblings.
+    // .cq/ + cq.toml gone; the remaining root entries are EXACTLY the siblings.
     const after = (await fs.readdir(root)).sort();
     expect(after).toEqual(before);
-    expect(after).not.toContain("docs");
+    expect(after).not.toContain(LEDGER_STORAGE_DIRNAME);
     expect(after).not.toContain("cq.toml");
-    expect(await exists(docsDir)).toBe(false);
+    expect(await exists(storageDir)).toBe(false);
     expect(await exists(configFile)).toBe(false);
   });
 
-  it("(d) safety: empty root (no docs/, no cq.toml) REFUSES (exit 2) rather than silently succeed", async () => {
+  it(`(d) safety: empty root (no ${LEDGER_STORAGE_DIRNAME}/, no cq.toml) REFUSES (exit 2) rather than silently succeed`, async () => {
     const root = await fs.mkdtemp(path.join(tmpdir(), "cq-erase-empty-"));
     dirs.push(root);
     const io = recordingIo(false);
@@ -192,57 +192,89 @@ describe("cq erase", () => {
     const yesRoot = await seedTree();
     const ioYes = recordingIo(true, "y");
     expect((await dispatch(["erase", "--cwd", yesRoot.root], ioYes)).exitCode).toBe(0);
-    expect(await exists(yesRoot.docsDir)).toBe(false);
+    expect(await exists(yesRoot.storageDir)).toBe(false);
 
     const noRoot = await seedTree();
     const ioNo = recordingIo(true, "n");
     expect((await dispatch(["erase", "--cwd", noRoot.root], ioNo)).exitCode).toBe(1);
-    expect(await exists(noRoot.docsDir)).toBe(true);
+    expect(await exists(noRoot.storageDir)).toBe(true);
   });
 
-  it("(f) preserves NON-ledger content under docs/ (drafts/, README.md) and keeps docs/", async () => {
-    const { root, docsDir, configFile } = await seedTree();
-    // A user keeps unrelated files under docs/ (CLAUDE.md designates docs/drafts/
-    // for new docs); these are NOT ledger artifacts and must survive erase.
-    await fs.mkdir(path.join(docsDir, "drafts"), { recursive: true });
-    await fs.writeFile(path.join(docsDir, "drafts", "20260101-note.md"), "user note\n");
-    await fs.writeFile(path.join(docsDir, "README.md"), "user readme\n");
+  it(`(f) preserves NON-ledger content under ${LEDGER_STORAGE_DIRNAME}/ and keeps ${LEDGER_STORAGE_DIRNAME}/; project docs/ UNTOUCHED`, async () => {
+    const { root, storageDir, configFile } = await seedTree();
+    // A sibling docs/ with user files must SURVIVE erase entirely (bounded delete
+    // only touches .cq/ and cq.toml — never a project docs/ directory).
+    const projectDocs = path.join(root, "docs");
+    await fs.mkdir(path.join(projectDocs, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(projectDocs, "drafts", "20260101-note.md"), "user note\n");
+    await fs.writeFile(path.join(projectDocs, "README.md"), "user readme\n");
+
+    // Also seed a non-ledger file inside the storage dir itself to verify
+    // the "preserved" path when .cq/ retains non-ledger content.
+    await fs.writeFile(path.join(storageDir, "extra.txt"), "non-ledger\n");
 
     const io = recordingIo(false);
     const outcome = await dispatch(["erase", "--cwd", root, "--yes"], io);
     expect(outcome.exitCode).toBe(0);
 
-    // Ledger artifacts gone.
-    expect(await exists(path.join(docsDir, "ledgers.yaml"))).toBe(false);
-    expect(await exists(path.join(docsDir, "tasks.md"))).toBe(false);
-    expect(await exists(path.join(docsDir, "archive"))).toBe(false);
-    expect(await exists(path.join(docsDir, "logs"))).toBe(false);
-    expect(await exists(path.join(docsDir, ".backup"))).toBe(false);
+    // Ledger artifacts gone from .cq/.
+    expect(await exists(path.join(storageDir, "ledgers.yaml"))).toBe(false);
+    expect(await exists(path.join(storageDir, "tasks.md"))).toBe(false);
+    expect(await exists(path.join(storageDir, "archive"))).toBe(false);
+    expect(await exists(path.join(storageDir, "logs"))).toBe(false);
+    expect(await exists(path.join(storageDir, ".backup"))).toBe(false);
     expect(await exists(configFile)).toBe(false);
 
-    // NON-ledger content + the docs/ dir itself PRESERVED.
-    expect(await exists(docsDir)).toBe(true);
-    expect(await exists(path.join(docsDir, "drafts", "20260101-note.md"))).toBe(true);
-    expect(await exists(path.join(docsDir, "README.md"))).toBe(true);
+    // Non-ledger content inside .cq/ PRESERVED + .cq/ dir itself retained.
+    expect(await exists(storageDir)).toBe(true);
+    expect(await exists(path.join(storageDir, "extra.txt"))).toBe(true);
 
-    // Report mentions the preservation rather than claiming docs/ removed.
+    // Project docs/ directory completely untouched.
+    expect(await exists(projectDocs)).toBe(true);
+    expect(await exists(path.join(projectDocs, "drafts", "20260101-note.md"))).toBe(true);
+    expect(await exists(path.join(projectDocs, "README.md"))).toBe(true);
+
+    // Report mentions the preservation rather than claiming .cq/ removed.
     const joined = io.outs.join("\n");
-    expect(joined).toContain(`preserved: ${docsDir}`);
-    // docs/ itself was NOT reported removed (only its ledger artifacts were);
-    // exact-line membership avoids matching `removed: <docsDir>/ledgers.yaml`.
-    expect(io.outs).not.toContain(`  removed: ${docsDir}`);
+    expect(joined).toContain(`preserved: ${storageDir}`);
+    // .cq/ itself was NOT reported removed (only its ledger artifacts were);
+    // exact-line membership avoids matching `removed: <storageDir>/ledgers.yaml`.
+    expect(io.outs).not.toContain(`  removed: ${storageDir}`);
   });
 
-  it("(g) a non-ledger top-level docs/*.md (not a registered ledger) survives", async () => {
-    const { root, docsDir } = await seedTree();
+  it(`(g) a non-ledger top-level ${LEDGER_STORAGE_DIRNAME}/*.md (not a registered ledger) survives`, async () => {
+    const { root, storageDir } = await seedTree();
     // NOT one of the registered ledger names → must NOT be treated as a ledger file.
-    await fs.writeFile(path.join(docsDir, "NOTES.md"), "design notes\n");
+    await fs.writeFile(path.join(storageDir, "NOTES.md"), "design notes\n");
 
     const io = recordingIo(false);
     expect((await dispatch(["erase", "--cwd", root, "--yes"], io)).exitCode).toBe(0);
 
-    expect(await exists(path.join(docsDir, "NOTES.md"))).toBe(true);
-    expect(await exists(path.join(docsDir, "milestones.md"))).toBe(false); // a real ledger, removed
-    expect(await exists(docsDir)).toBe(true);
+    expect(await exists(path.join(storageDir, "NOTES.md"))).toBe(true);
+    expect(await exists(path.join(storageDir, "milestones.md"))).toBe(false); // a real ledger, removed
+    expect(await exists(storageDir)).toBe(true);
+  });
+
+  it("(h) erase leaves a sibling project docs/ directory and its contents untouched", async () => {
+    // Explicit test for the acceptance criterion: erase removes .cq/ storage and
+    // leaves a sibling docs/drafts/ file UNTOUCHED.
+    const { root, storageDir } = await seedTree();
+
+    // Create the sibling project docs/ with a drafts file.
+    const projectDocs = path.join(root, "docs");
+    await fs.mkdir(path.join(projectDocs, "drafts"), { recursive: true });
+    const draftFile = path.join(projectDocs, "drafts", "20260101-design.md");
+    await fs.writeFile(draftFile, "# design notes\n");
+
+    const io = recordingIo(false);
+    const outcome = await dispatch(["erase", "--cwd", root, "--yes"], io);
+    expect(outcome.exitCode).toBe(0);
+
+    // Storage dir removed (no non-ledger content, so it is rmdir'd).
+    expect(await exists(storageDir)).toBe(false);
+
+    // Sibling project docs/drafts/ file UNTOUCHED.
+    expect(await exists(projectDocs)).toBe(true);
+    expect(await exists(draftFile)).toBe(true);
   });
 });

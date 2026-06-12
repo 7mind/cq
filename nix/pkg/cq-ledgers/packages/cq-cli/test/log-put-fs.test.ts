@@ -16,6 +16,7 @@ import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
 import { runLogPut, parseLogPutArgs, type LogPutIo } from "../src/logPut.js";
+import { LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -107,7 +108,7 @@ describe("cq log put fs — .jsonl with redaction", () => {
     expect(outcome.exitCode).toBe(0);
     expect(io.errs).toEqual([]);
 
-    const destAbs = path.join(root, "docs", "logs", "raw", "20260101-abc.jsonl");
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "20260101-abc.jsonl");
     const written = await fsPromises.readFile(destAbs, "utf8");
     expect(written).toBe(expectedRedacted);
 
@@ -131,7 +132,7 @@ describe("cq log put fs — .jsonl with redaction", () => {
     const outcome2 = await runLogPut(args, io2);
     expect(outcome2.exitCode).toBe(0);
 
-    const destAbs = path.join(root, "docs", "logs", "raw", "idem.jsonl");
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "idem.jsonl");
     const written = await fsPromises.readFile(destAbs, "utf8");
     expect(written).toBe(rawInput);
   });
@@ -162,7 +163,7 @@ describe("cq log put fs — malformed .jsonl input", () => {
     expect(io.errs.join("\n")).toContain("malformed JSONL");
 
     // The file must NOT have been created.
-    const destAbs = path.join(root, "docs", "logs", "raw", "bad.jsonl");
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "bad.jsonl");
     await expect(fsPromises.stat(destAbs)).rejects.toThrow();
 
     // No .tmp orphans.
@@ -180,7 +181,7 @@ describe("cq log put fs — malformed .jsonl input", () => {
 
     expect(outcome.exitCode).not.toBe(0);
 
-    const destAbs = path.join(root, "docs", "logs", "raw", "partial.jsonl");
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "partial.jsonl");
     await expect(fsPromises.stat(destAbs)).rejects.toThrow();
   });
 });
@@ -209,7 +210,7 @@ describe("cq log put fs — .md summary destination", () => {
     expect(outcome.exitCode).toBe(0);
     expect(io.errs).toEqual([]);
 
-    const destAbs = path.join(root, "docs", "logs", "summary", "20260101.md");
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "summary", "20260101.md");
     const written = await fsPromises.readFile(destAbs, "utf8");
     expect(written).toBe(expectedRedacted);
 
@@ -242,7 +243,7 @@ describe("cq log put fs — positional src file path", () => {
 
     expect(outcome.exitCode).toBe(0);
 
-    const destAbs = path.join(root, "docs", "logs", "raw", "from-file.jsonl");
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "from-file.jsonl");
     const written = await fsPromises.readFile(destAbs, "utf8");
     expect(written).toContain("[REDACTED:aws-key]");
     expect(written).not.toContain("AKIAIOSFODNN7EXAMPLE");

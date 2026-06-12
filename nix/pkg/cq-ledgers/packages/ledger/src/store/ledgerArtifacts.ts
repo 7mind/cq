@@ -1,43 +1,44 @@
 /**
- * Single source of truth for "which files under `docs/` belong to the ledger".
+ * Single source of truth for "which files under the ledger storage dir belong to
+ * the ledger". The storage dir is `<root>/.cq/` (LEDGER_STORAGE_DIRNAME).
  *
  * `cq erase`, `cq move-ledger`, and any other cleanup/transplant site must agree
- * on this set so they NEVER touch unrelated content a user keeps under `docs/`
- * (e.g. `docs/README.md`, `docs/drafts/**`). The set is REGISTRY-DRIVEN — derived
- * from `docs/ledgers.yaml` (unioned with the canonical names as a fallback) — not
- * a blind `*.md` glob or a whole-`docs/` wipe.
+ * on this set so they NEVER touch unrelated content (e.g. a sibling project
+ * `docs/drafts/`). The set is REGISTRY-DRIVEN — derived from
+ * `.cq/ledgers.yaml` (unioned with the canonical names as a fallback) — not
+ * a blind `*.md` glob or a whole-`.cq/` wipe.
  *
- * The ledger's own artifacts under `docs/`:
+ * The ledger's own artifacts under `.cq/`:
  *   - `ledgers.yaml`                 — the registry
  *   - `<name>.md`                    — one per REGISTERED ledger (and the canonical set)
  *   - `archive/**`                   — archived milestone groups
  *   - `logs/**`                      — portable session logs (travel with the ledger tree)
  *   - `.locks/`, `.backup/`          — ephemeral runtime dirs (NEVER travel)
  *
- * Anything else under `docs/` is treated as user content and left untouched.
+ * Anything else under `.cq/` is treated as user content and left untouched.
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import YAML from "yaml";
 import { CANONICAL_LEDGERS } from "../constants.js";
 
-/** Filename of the registry under `docs/`. */
+/** Filename of the registry under `.cq/`. */
 export const LEDGER_REGISTRY_FILENAME = "ledgers.yaml";
-/** Directory (under `docs/`) holding archived milestone groups. */
+/** Directory (under `.cq/`) holding archived milestone groups. */
 export const LEDGER_ARCHIVE_DIRNAME = "archive";
 /**
- * Portable runtime directory under `docs/` — session logs that travel with the
+ * Portable runtime directory under `.cq/` — session logs that travel with the
  * ledger tree (included in `ledgerTreePaths`, snapshotted by `move-ledger`).
  */
 export const LEDGER_PORTABLE_RUNTIME_DIRNAMES: readonly string[] = ["logs"];
 /**
- * Ephemeral runtime directories under `docs/` — the FS lock dir and
+ * Ephemeral runtime directories under `.cq/` — the FS lock dir and
  * reset/divergence backups. They belong to the ledger (so `erase` removes them)
  * but are NOT part of the portable ledger tree (so `move-ledger` excludes them).
  */
 export const LEDGER_EPHEMERAL_RUNTIME_DIRNAMES: readonly string[] = [".locks", ".backup"];
 /**
- * All runtime directories under `docs/` (portable + ephemeral). They all belong
+ * All runtime directories under `.cq/` (portable + ephemeral). They all belong
  * to the ledger so `erase` removes them. Re-exported under the original name for
  * backward compatibility with existing callers.
  */
@@ -46,13 +47,13 @@ export const LEDGER_RUNTIME_DIRNAMES: readonly string[] = [
   ...LEDGER_EPHEMERAL_RUNTIME_DIRNAMES,
 ];
 
-/** The ledger's own paths under a `docs/` dir, as ABSOLUTE paths. */
+/** The ledger's own paths under the storage dir (`.cq/`), as ABSOLUTE paths. */
 export interface LedgerArtifacts {
-  /** Absolute `docs/ledgers.yaml`, or `null` if it does not exist. */
+  /** Absolute `.cq/ledgers.yaml`, or `null` if it does not exist. */
   registryFile: string | null;
-  /** Absolute `docs/<name>.md` for each registered ledger that exists on disk. */
+  /** Absolute `.cq/<name>.md` for each registered ledger that exists on disk. */
   ledgerFiles: string[];
-  /** Absolute `docs/archive`, or `null` if it does not exist. */
+  /** Absolute `.cq/archive`, or `null` if it does not exist. */
   archiveDir: string | null;
   /** Absolute runtime dirs (`logs`/`.locks`/`.backup`) that exist on disk. */
   runtimeDirs: string[];
@@ -70,7 +71,7 @@ async function exists(p: string): Promise<boolean> {
 
 /**
  * The set of ledger names whose `<name>.md` files belong to the ledger: the
- * canonical set unioned with whatever `docs/ledgers.yaml` registers. Tolerant of
+ * canonical set unioned with whatever `.cq/ledgers.yaml` registers. Tolerant of
  * both the canonical `- name: x` entry form and a bare `- x` string entry, and
  * of a missing/unparseable registry (falls back to the canonical names) — a
  * cleanup primitive must never throw on a slightly-off registry.
@@ -94,8 +95,8 @@ async function registeredLedgerNames(docsDir: string): Promise<Set<string>> {
 }
 
 /**
- * Enumerate the ledger's OWN artifacts under `docsDir` (absolute paths). Only
- * paths that EXIST are returned; non-ledger content is never included.
+ * Enumerate the ledger's OWN artifacts under `docsDir` (the storage dir, absolute
+ * path). Only paths that EXIST are returned; non-ledger content is never included.
  */
 export async function enumerateLedgerArtifacts(docsDir: string): Promise<LedgerArtifacts> {
   const names = await registeredLedgerNames(docsDir);
@@ -124,7 +125,7 @@ export async function enumerateLedgerArtifacts(docsDir: string): Promise<LedgerA
 }
 
 /**
- * The PORTABLE ledger tree as DOCS-RELATIVE paths: `ledgers.yaml`, every
+ * The PORTABLE ledger tree as STORAGE-RELATIVE paths: `ledgers.yaml`, every
  * registered `<name>.md`, every `archive/**` file (recursive), and every
  * `logs/**` file (recursive). Ephemeral dirs (`.locks`/`.backup`) are EXCLUDED
  * — they never travel with the ledger. Used by `cq move-ledger` to
@@ -157,15 +158,15 @@ async function collectFilesRel(dir: string, relPrefix: string, out: string[]): P
 export interface RemoveLedgerArtifactsResult {
   /** Absolute paths actually removed (existing artifacts only). */
   removed: string[];
-  /** True iff `docsDir` itself was removed (it had no non-ledger content left). */
+  /** True iff `docsDir` (the storage dir) itself was removed (it had no non-ledger content left). */
   docsDirRemoved: boolean;
 }
 
 /**
- * Remove the ledger's OWN artifacts under `docsDir` — the registry, every
- * registered `<name>.md`, `archive/`, and the runtime dirs — and NOTHING else.
- * Unrelated content (e.g. `docs/README.md`, `docs/drafts/**`) is PRESERVED. If
- * `docsDir` is empty once the artifacts are gone, `docsDir` itself is removed.
+ * Remove the ledger's OWN artifacts under `docsDir` (the storage dir) — the
+ * registry, every registered `<name>.md`, `archive/`, and the runtime dirs — and
+ * NOTHING else. Unrelated content in `docsDir` is PRESERVED. If `docsDir` is
+ * empty once the artifacts are gone, `docsDir` itself is removed.
  * Idempotent and ENOENT-tolerant. Returns the removed paths.
  */
 export async function removeLedgerArtifacts(docsDir: string): Promise<RemoveLedgerArtifactsResult> {

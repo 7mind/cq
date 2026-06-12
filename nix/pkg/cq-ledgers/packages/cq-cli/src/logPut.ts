@@ -16,7 +16,7 @@
  *
  * T406 wires dispatch + parsing + validation.
  * T410 implements the fs-backend write path (redaction + JSONL validation +
- * atomic write to <root>/docs/logs/<rel>).
+ * atomic write to <root>/.cq/logs/<rel>).
  */
 
 import { promises as nodeFs } from "node:fs";
@@ -28,6 +28,8 @@ import {
   atomicWrite,
   GitPlumbing,
   StaleRefError,
+  LEDGER_STORAGE_DIRNAME,
+  LEDGER_LOGS_DIRNAME,
   type TreeEntry,
 } from "@cq/ledger";
 
@@ -193,7 +195,7 @@ export function parseLogPutArgs(cwd: string, argv: readonly string[]): LogPutArg
  *   2. Read source (file or stdin).
  *   3. Apply redactSecrets.
  *   4. If dest ends in .jsonl, validateJsonl — fail with line+reason on error.
- *   5. Atomically write to <cwd>/docs/<dest>.
+ *   5. Atomically write to <cwd>/.cq/<dest>.
  *   6. Print the written absolute path.
  *
  * T413 implements the git-object backend write path: same redaction + strict-
@@ -242,18 +244,18 @@ export async function runLogPut(
     return runLogPutGitObject(args, io, redacted, branch, gitFactory);
   }
 
-  // backend === 'fs' (the historical default) — write under <cwd>/docs/<dest>.
+  // backend === 'fs' (the historical default) — write under <cwd>/.cq/<dest>.
 
   // --- Resolve the on-disk destination path ---
-  const destAbs = path.join(args.cwd, "docs", args.dest);
+  const destAbs = path.join(args.cwd, LEDGER_STORAGE_DIRNAME, args.dest);
 
-  // Defense-in-depth: ensure the resolved path stays under docs/logs/ even
+  // Defense-in-depth: ensure the resolved path stays under .cq/logs/ even
   // if validateLogDest was somehow bypassed.
-  const docsLogsAbs = path.join(args.cwd, "docs", "logs");
+  const storageLogsAbs = path.join(args.cwd, LEDGER_STORAGE_DIRNAME, LEDGER_LOGS_DIRNAME);
   const resolved = path.resolve(destAbs);
-  if (!resolved.startsWith(docsLogsAbs + path.sep) && resolved !== docsLogsAbs) {
+  if (!resolved.startsWith(storageLogsAbs + path.sep) && resolved !== storageLogsAbs) {
     io.err(
-      `cq log put: resolved destination "${resolved}" escapes docs/logs/ — rejected`,
+      `cq log put: resolved destination "${resolved}" escapes ${LEDGER_STORAGE_DIRNAME}/${LEDGER_LOGS_DIRNAME}/ — rejected`,
     );
     return { exitCode: 1 };
   }
@@ -267,9 +269,9 @@ export async function runLogPut(
 
 /**
  * The git-object backend write path (T413). Commits `content` as a blob at the
- * docs-relative tree path `args.dest` (the orphan tree is rooted at the docs
- * CONTENTS, so the tree path is `args.dest` verbatim — NO `docs/` prefix, just
- * as {@link GitPersistence} stores `logs/<rel>`) on `refs/heads/<branch>`.
+ * storage-relative tree path `args.dest` (the orphan tree is rooted at the
+ * storage CONTENTS, so the tree path is `args.dest` verbatim — NO `.cq/` prefix,
+ * just as {@link GitPersistence} stores `logs/<rel>`) on `refs/heads/<branch>`.
  *
  * Mirrors {@link GitPersistence.advance}'s read-modify-write EXACTLY so foreign
  * tree paths survive: expectedOld = readRef(ref); current = lsTreeEntries(ref);

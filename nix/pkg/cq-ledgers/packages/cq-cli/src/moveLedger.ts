@@ -1,6 +1,6 @@
 /**
  * `cq move-ledger` (T354 / G43 / Q193 / R418) — a LOSSLESS BIDIRECTIONAL
- * transplant of the live ledger between the `docs/` working tree (the `fs`
+ * transplant of the live ledger between the `.cq/` working tree (the `fs`
  * backend) and the orphan ref `refs/heads/<branch>` (the `git-object` backend),
  * via an EXPLICIT `--to git | local` direction.
  *
@@ -10,26 +10,26 @@
  * switch).
  *
  * ## --to git
- * Snapshot the on-disk docs ledger (`docs/<ledger>.md` + `docs/ledgers.yaml` +
- * `docs/archive/**`) into the orphan ref's commit (hash-object each file → build
- * the tree DOCS-RELATIVE → commit-tree on top of the current ref → update-ref),
- * then `git rm --cached` those docs files on the working branch and add the
+ * Snapshot the on-disk storage ledger (`.cq/<ledger>.md` + `.cq/ledgers.yaml` +
+ * `.cq/archive/**`) into the orphan ref's commit (hash-object each file → build
+ * the tree STORAGE-RELATIVE → commit-tree on top of the current ref → update-ref),
+ * then `git rm --cached` those storage files on the working branch and add the
  * marker-guarded git-backend `.gitignore` block (via
  * {@link ensureGitBackendGitignore}) so they stop being TRACKED. Set
  * `[ledger] backend = 'git-object'` in cq.toml. Per R418 the now-untracked
- * `docs/*.md` files are LEFT IN PLACE on disk.
+ * `.cq/*.md` files are LEFT IN PLACE on disk.
  *
  * ## --to local
- * The REVERSE: materialise the orphan ref's tree back to `docs/<ledger>.md` +
- * `docs/ledgers.yaml` + `docs/archive/**` on disk (cat-file each path from the
+ * The REVERSE: materialise the orphan ref's tree back to `.cq/<ledger>.md` +
+ * `.cq/ledgers.yaml` + `.cq/archive/**` on disk (cat-file each path from the
  * ref), remove the git-backend `.gitignore` block (via
  * {@link removeGitBackendGitignore}), `git add` the restored files so they are
  * TRACKED again, and set `[ledger] backend = 'fs'` in cq.toml.
  *
- * ## Tree layout (docs-relative — mirrors {@link GitPersistence})
- * The orphan ref's tree is rooted at the DOCS CONTENTS, so a tree path
- * `tasks.md` maps to the on-disk `docs/tasks.md`, and `archive/<ledger>/<id>.md`
- * to `docs/archive/<ledger>/<id>.md`.
+ * ## Tree layout (storage-relative — mirrors {@link GitPersistence})
+ * The orphan ref's tree is rooted at the STORAGE CONTENTS, so a tree path
+ * `tasks.md` maps to the on-disk `.cq/tasks.md`, and `archive/<ledger>/<id>.md`
+ * to `.cq/archive/<ledger>/<id>.md`.
  *
  * ## Safety
  * - Refuses without `--to`, with a clear usage error (exit {@link EXIT_USAGE}).
@@ -46,6 +46,7 @@ import {
   ensureGitBackendGitignore,
   removeGitBackendGitignore,
   ledgerTreePaths,
+  LEDGER_STORAGE_DIRNAME,
   type TreeEntry,
 } from "@cq/ledger";
 
@@ -93,7 +94,7 @@ async function pathExists(p: string): Promise<boolean> {
 }
 
 /**
- * Enumerate the on-disk docs ledger files as DOCS-RELATIVE tree paths:
+ * Enumerate the on-disk ledger storage files as STORAGE-RELATIVE tree paths:
  * `ledgers.yaml`, every REGISTERED `<ledger>.md`, every `archive/**` file
  * (recursively), and every `logs/**` file (recursive portable runtime state).
  * Ephemeral runtime directories `.locks/` and `.backup/` are EXCLUDED — they
@@ -101,28 +102,27 @@ async function pathExists(p: string): Promise<boolean> {
  *
  * Delegates to @cq/ledger's `ledgerTreePaths` — the SINGLE source of truth for
  * "which files belong to the ledger" (shared with `cq erase`). Registry-driven,
- * so a user's NON-ledger `docs/*.md` (e.g. `docs/README.md`) is never claimed,
- * snapshotted, or untracked.
+ * so a user's NON-ledger `.cq/*.md` is never claimed, snapshotted, or untracked.
  */
-async function enumerateDocsFiles(docsDir: string): Promise<string[]> {
-  return ledgerTreePaths(docsDir);
+async function enumerateDocsFiles(storageDir: string): Promise<string[]> {
+  return ledgerTreePaths(storageDir);
 }
 
 /**
- * True iff the on-disk docs ledger is NON-EMPTY: at least one `<ledger>.md`
+ * True iff the on-disk storage ledger is NON-EMPTY: at least one `<ledger>.md`
  * file carries an item (a markdown body beyond the registry). A bare
  * `ledgers.yaml` with empty ledger files counts as EMPTY (an init seed). We
- * treat the docs side as non-empty when any `*.md` file's content is non-blank.
+ * treat the storage side as non-empty when any `*.md` file's content is non-blank.
  */
-async function docsLedgerNonEmpty(docsDir: string): Promise<boolean> {
-  if (!(await pathExists(docsDir))) return false;
-  const files = await enumerateDocsFiles(docsDir);
+async function docsLedgerNonEmpty(storageDir: string): Promise<boolean> {
+  if (!(await pathExists(storageDir))) return false;
+  const files = await enumerateDocsFiles(storageDir);
   for (const rel of files) {
     // logs/** are portable runtime state, not ledger content — skip them so a
     // tree carrying ONLY logs is not mistaken for a non-empty ledger.
     if (rel === "logs" || rel.startsWith("logs/")) continue;
     if (!rel.endsWith(".md")) continue;
-    const text = await fs.readFile(path.join(docsDir, rel), "utf8");
+    const text = await fs.readFile(path.join(storageDir, rel), "utf8");
     if (text.trim().length > 0) return true;
   }
   return false;
@@ -213,8 +213,8 @@ async function setLedgerBackend(root: string, backend: "git-object" | "fs"): Pro
 }
 
 /**
- * `--to git`: snapshot docs/ into the orphan ref, untrack the docs files, add
- * the git-backend `.gitignore` block, and flip cq.toml to `git-object`.
+ * `--to git`: snapshot `.cq/` into the orphan ref, untrack the storage files,
+ * add the git-backend `.gitignore` block, and flip cq.toml to `git-object`.
  */
 async function moveToGit(
   args: MoveLedgerArgs,
@@ -222,9 +222,9 @@ async function moveToGit(
   ref: string,
   io: MoveIo,
 ): Promise<MoveOutcome> {
-  const docsDir = path.join(args.root, "docs");
-  if (!(await pathExists(docsDir))) {
-    io.err(`cq move-ledger: no docs/ ledger tree at ${docsDir} to move to git.`);
+  const storageDir = path.join(args.root, LEDGER_STORAGE_DIRNAME);
+  if (!(await pathExists(storageDir))) {
+    io.err(`cq move-ledger: no ${LEDGER_STORAGE_DIRNAME}/ ledger tree at ${storageDir} to move to git.`);
     return { exitCode: EXIT_USAGE };
   }
 
@@ -237,16 +237,16 @@ async function moveToGit(
     return { exitCode: EXIT_USAGE };
   }
 
-  const docsFiles = await enumerateDocsFiles(docsDir);
-  if (docsFiles.length === 0) {
-    io.err(`cq move-ledger: docs/ at ${docsDir} holds no ledger files to move.`);
+  const storageFiles = await enumerateDocsFiles(storageDir);
+  if (storageFiles.length === 0) {
+    io.err(`cq move-ledger: ${LEDGER_STORAGE_DIRNAME}/ at ${storageDir} holds no ledger files to move.`);
     return { exitCode: EXIT_USAGE };
   }
 
-  // Hash-object each file into a tree entry (docs-relative tree path).
+  // Hash-object each file into a tree entry (storage-relative tree path).
   const entries: TreeEntry[] = [];
-  for (const rel of docsFiles) {
-    const content = await fs.readFile(path.join(docsDir, rel), "utf8");
+  for (const rel of storageFiles) {
+    const content = await fs.readFile(path.join(storageDir, rel), "utf8");
     const sha = await git.hashObject(content);
     entries.push({ mode: BLOB_MODE, sha, path: rel });
   }
@@ -258,12 +258,12 @@ async function moveToGit(
   const commit = await git.commitTree(tree, expectedOld, "ledger: move-ledger --to git");
   await git.updateRef(ref, commit, expectedOld);
 
-  // Untrack the docs ledger files on the working branch (git rm --cached). Only
+  // Untrack the storage ledger files on the working branch (git rm --cached). Only
   // files that are CURRENTLY tracked are passed, so an already-untracked tree
   // (e.g. a re-run) is not an error. Leaves the files ON DISK (R418).
-  const tracked = await listTrackedDocsFiles(git, docsFiles);
+  const tracked = await listTrackedStorageFiles(git, storageFiles);
   if (tracked.length > 0) {
-    await git.rmCached(tracked.map((rel) => `docs/${rel}`));
+    await git.rmCached(tracked.map((rel) => `${LEDGER_STORAGE_DIRNAME}/${rel}`));
   }
 
   // Add the marker-guarded git-backend .gitignore block (idempotent).
@@ -272,14 +272,14 @@ async function moveToGit(
   // Flip cq.toml backend.
   await setLedgerBackend(args.root, "git-object");
 
-  io.out(`cq move-ledger: moved ledger docs/ → orphan ref ${ref} at ${args.root}`);
+  io.out(`cq move-ledger: moved ledger ${LEDGER_STORAGE_DIRNAME}/ → orphan ref ${ref} at ${args.root}`);
   io.out(`  commit: ${commit}`);
-  for (const rel of docsFiles) {
+  for (const rel of storageFiles) {
     const wasTracked = tracked.includes(rel);
     io.out(`  ${rel}: snapshotted${wasTracked ? ", untracked (left on disk)" : " (was untracked)"}`);
   }
   io.out(`  cq.toml: [ledger] backend = "git-object"`);
-  io.out(`  note: the now-untracked docs/*.md remain on disk — remove them manually once confident.`);
+  io.out(`  note: the now-untracked ${LEDGER_STORAGE_DIRNAME}/*.md remain on disk — remove them manually once confident.`);
   io.out(
     `  linked-worktree fallback: \`git worktree add <dir> ${ref.replace("refs/heads/", "")}\` ` +
       `to inspect the orphan ref's tree as a checkout.`,
@@ -288,7 +288,7 @@ async function moveToGit(
 }
 
 /**
- * `--to local`: materialise the orphan ref's tree to docs/ on disk, remove the
+ * `--to local`: materialise the orphan ref's tree to `.cq/` on disk, remove the
  * git-backend `.gitignore` block, re-track the files, and flip cq.toml to `fs`.
  */
 async function moveToLocal(
@@ -303,44 +303,44 @@ async function moveToLocal(
     return { exitCode: EXIT_USAGE };
   }
 
-  const docsDir = path.join(args.root, "docs");
+  const storageDir = path.join(args.root, LEDGER_STORAGE_DIRNAME);
 
-  // Refuse if the TARGET (docs/) already holds a non-empty ledger.
-  if (!args.force && (await docsLedgerNonEmpty(docsDir))) {
+  // Refuse if the TARGET (.cq/) already holds a non-empty ledger.
+  if (!args.force && (await docsLedgerNonEmpty(storageDir))) {
     io.err(
-      `cq move-ledger: docs/ at ${docsDir} already holds a non-empty ledger; ` +
+      `cq move-ledger: ${LEDGER_STORAGE_DIRNAME}/ at ${storageDir} already holds a non-empty ledger; ` +
         `re-run with --force to overwrite it.`,
     );
     return { exitCode: EXIT_USAGE };
   }
 
-  // Enumerate the ref's tree (docs-relative paths) and cat-file each to disk.
+  // Enumerate the ref's tree (storage-relative paths) and cat-file each to disk.
   const treePaths = await git.lsTree(ref);
   if (treePaths.length === 0) {
     io.err(`cq move-ledger: the orphan ref ${ref} carries no ledger files.`);
     return { exitCode: EXIT_USAGE };
   }
 
-  await fs.mkdir(docsDir, { recursive: true });
+  await fs.mkdir(storageDir, { recursive: true });
   const written: string[] = [];
   for (const rel of treePaths) {
     const content = await git.catFile(ref, rel);
-    const dest = path.join(docsDir, rel);
+    const dest = path.join(storageDir, rel);
     await fs.mkdir(path.dirname(dest), { recursive: true });
     await fs.writeFile(dest, content, "utf8");
     written.push(rel);
   }
 
-  // Remove the git-backend .gitignore block so the docs files become trackable.
+  // Remove the git-backend .gitignore block so the storage files become trackable.
   await removeGitBackendGitignore(args.root);
 
-  // Re-track the restored docs files (git add).
-  await git.add(written.map((rel) => `docs/${rel}`));
+  // Re-track the restored storage files (git add).
+  await git.add(written.map((rel) => `${LEDGER_STORAGE_DIRNAME}/${rel}`));
 
   // Flip cq.toml backend.
   await setLedgerBackend(args.root, "fs");
 
-  io.out(`cq move-ledger: moved ledger orphan ref ${ref} → docs/ at ${args.root}`);
+  io.out(`cq move-ledger: moved ledger orphan ref ${ref} → ${LEDGER_STORAGE_DIRNAME}/ at ${args.root}`);
   io.out(`  source commit: ${sha}`);
   for (const rel of written) {
     io.out(`  ${rel}: materialised + tracked`);
@@ -350,13 +350,13 @@ async function moveToLocal(
 }
 
 /**
- * Of the candidate docs-relative paths, return those CURRENTLY tracked by git
+ * Of the candidate storage-relative paths, return those CURRENTLY tracked by git
  * (so `git rm --cached` is only passed tracked paths — an untracked path would
  * make `git rm --cached` fail). Uses `git ls-files`.
  */
-async function listTrackedDocsFiles(git: GitPlumbing, docsRelFiles: string[]): Promise<string[]> {
-  const tracked = new Set(await git.lsFiles("docs/"));
-  return docsRelFiles.filter((rel) => tracked.has(`docs/${rel}`));
+async function listTrackedStorageFiles(git: GitPlumbing, storageRelFiles: string[]): Promise<string[]> {
+  const tracked = new Set(await git.lsFiles(`${LEDGER_STORAGE_DIRNAME}/`));
+  return storageRelFiles.filter((rel) => tracked.has(`${LEDGER_STORAGE_DIRNAME}/${rel}`));
 }
 
 /**
@@ -368,9 +368,9 @@ async function listTrackedDocsFiles(git: GitPlumbing, docsRelFiles: string[]): P
 export async function runMoveLedger(args: MoveLedgerArgs, io: MoveIo): Promise<MoveOutcome> {
   if (args.to === null) {
     io.err(
-      "cq move-ledger: --to <git|local> is required (the migration direction is explicit).\n" +
-        "  --to git    snapshot docs/ ledger into the orphan ref, untrack docs files, backend=git-object\n" +
-        "  --to local  materialise the orphan ref back to docs/, re-track, backend=fs",
+      `cq move-ledger: --to <git|local> is required (the migration direction is explicit).\n` +
+        `  --to git    snapshot ${LEDGER_STORAGE_DIRNAME}/ ledger into the orphan ref, untrack storage files, backend=git-object\n` +
+        `  --to local  materialise the orphan ref back to ${LEDGER_STORAGE_DIRNAME}/, re-track, backend=fs`,
     );
     return { exitCode: EXIT_USAGE };
   }

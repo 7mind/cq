@@ -26,6 +26,7 @@ import {
   createLedgerStore,
   CANONICAL_LEDGERS,
   removeLedgerArtifacts,
+  LEDGER_STORAGE_DIRNAME,
   type LedgerStore,
   type ResetSummary,
 } from "@cq/ledger";
@@ -130,7 +131,7 @@ export const USAGE = [
   "modes (delegate verbatim to the product binary):",
   "  mcp         [--cwd <path>] [--http [host:]port] [--tool-prefix <p>]",
   "                                                  run the MCP server (stdio or HTTP)",
-  "  mcp restore --from-cache [--cwd <path>]         restore docs/ from the per-root XDG cache mirror",
+  "  mcp restore --from-cache [--cwd <path>]         restore .cq/ from the per-root XDG cache mirror",
   "  tui         [--cwd <path>] [--mcp-url <url>]    run the terminal UI",
   "  web         [--port <n>] [--host <h>] [--cwd <path>] [--mcp-url <url>]",
   "                                                  run the web UI (default port 5180)",
@@ -140,11 +141,11 @@ export const USAGE = [
   "  reset       [--cwd <path>] [--yes|-y]           backup + reinitialise the ledgers (destructive)",
   "  erase       [--cwd <path>] [--yes|-y]           remove the ledger tree (destructive)",
   "  move-ledger --to <git|local> [--cwd <path>] [--force]",
-  "                                                  migrate the ledger between docs/ and the orphan",
+  "                                                  migrate the ledger between .cq/ and the orphan",
   "                                                  ref refs/heads/<branch> (default cq-ledger):",
-  "                                                    --to git    snapshot docs/ → orphan ref, untrack",
-  "                                                                docs files (left on disk), backend=git-object",
-  "                                                    --to local  materialise orphan ref → docs/, re-track,",
+  "                                                    --to git    snapshot .cq/ → orphan ref, untrack",
+  "                                                                .cq/ files (left on disk), backend=git-object",
+  "                                                    --to local  materialise orphan ref → .cq/, re-track,",
   "                                                                backend=fs",
   "                                                  refuses a non-empty target without --force.",
   "                                                  inspect the orphan ref as a checkout via:",
@@ -153,7 +154,7 @@ export const USAGE = [
   "                                                  JSON (block + reason + predicates) to stdout;",
   "                                                  exit 0 = allow, non-zero = block.",
   "  log put <src>|--stdin --dest logs/<rel> [--cwd <path>]",
-  "                                                  write a log file into docs/logs/<rel>;",
+  "                                                  write a log file into .cq/logs/<rel>;",
   "                                                  source is a local file path OR --stdin;",
   "                                                  --dest must be under logs/ (no escapes).",
   "",
@@ -320,7 +321,7 @@ export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<Sub
 export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const decision = await confirmDestructive(
     args.yes,
-    `Reset ledgers at ${args.cwd}? Backup -> docs/.backup/ [y/N] `,
+    `Reset ledgers at ${args.cwd}? Backup -> ${LEDGER_STORAGE_DIRNAME}/.backup/ [y/N] `,
     `cq reset: refusing to reset ledgers at ${args.cwd} without confirmation; ` +
       `re-run with --yes to reset non-interactively.`,
     io.confirm,
@@ -361,21 +362,21 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
  * the destructive set is an EXPLICIT, BOUNDED set of known paths under the
  * resolved root:
  *
- *   1. The ledger's OWN artifacts under `<root>/docs/` — `ledgers.yaml`, every
+ *   1. The ledger's OWN artifacts under `<root>/.cq/` — `ledgers.yaml`, every
  *      REGISTERED `<name>.md`, `archive/`, and the runtime dirs `logs/`,
  *      `.locks/`, `.backup/` — enumerated by @cq/ledger's `removeLedgerArtifacts`
  *      (the single source of truth shared with `cq move-ledger`). NON-ledger
- *      content a user keeps under `docs/` (e.g. `docs/README.md`, `docs/drafts/`)
- *      is PRESERVED; `docs/` itself is removed only if it is empty afterward.
+ *      content a user keeps under `.cq/` is PRESERVED; `.cq/` itself is removed
+ *      only if it is empty afterward.
  *   2. `<root>/cq.toml`   — the config file, if present (unlink).
  *
- * It is NOT a blind wipe of `<root>/docs/`, and NOT of `<root>`: any sibling
- * under the root (source, etc.)
+ * It is NOT a blind wipe of `<root>/.cq/`, and NOT of `<root>`: any sibling
+ * under the root (source, project docs/, etc.)
  * survives. Unlike `reset`, erase does NOT call init() afterward — the suite is
  * left fully un-initialised.
  *
  * No FsLedgerStore is constructed (which would acquire the FS lock and recreate
- * `docs/`): erase removes `.locks/` itself, so holding a lock while deleting it
+ * `.cq/`): erase removes `.locks/` itself, so holding a lock while deleting it
  * would be self-defeating. The deletes go straight through `node:fs`.
  *
  * Confirmation policy (shared with `reset`, see ./confirm.ts):
@@ -383,21 +384,21 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
  *   - TTY, no `--yes`     → prompt; proceed only on a `y`/`Y` answer.
  *   - non-TTY, no `--yes` → REFUSE (exit 2) — never wipe a tree silently.
  *
- * SAFETY: if neither `<root>/docs` nor `<root>/cq.toml` exists there is nothing
+ * SAFETY: if neither `<root>/.cq` nor `<root>/cq.toml` exists there is nothing
  * to erase; refuse with exit {@link EXIT_USAGE} rather than silently succeed.
  */
 export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
-  const docsDir = path.join(args.cwd, "docs");
+  const storageDir = path.join(args.cwd, LEDGER_STORAGE_DIRNAME);
   const configFile = path.join(args.cwd, CQ_CONFIG_FILENAME);
 
-  const docsExists = await pathExists(docsDir);
+  const storageExists = await pathExists(storageDir);
   const configExists = await pathExists(configFile);
 
   // SAFETY: nothing to erase → refuse (don't silently succeed on an empty root).
-  if (!docsExists && !configExists) {
+  if (!storageExists && !configExists) {
     io.err(
       `cq erase: nothing to erase at ${args.cwd} ` +
-        `(no docs/ tree and no ${CQ_CONFIG_FILENAME}).`,
+        `(no ${LEDGER_STORAGE_DIRNAME}/ tree and no ${CQ_CONFIG_FILENAME}).`,
     );
     return { exitCode: EXIT_USAGE };
   }
@@ -413,18 +414,18 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     return { exitCode: decision.exitCode };
   }
 
-  // Bounded delete: the ledger's OWN artifacts under docs/ (shared enumerator)
-  // + cq.toml. Non-ledger content under docs/ is preserved; the whole root is
+  // Bounded delete: the ledger's OWN artifacts under .cq/ (shared enumerator)
+  // + cq.toml. Non-ledger content under .cq/ is preserved; the whole root is
   // never touched beyond these.
   const removed: string[] = [];
-  let docsPreserved = false;
-  if (docsExists) {
-    const result = await removeLedgerArtifacts(docsDir);
+  let storageDirPreserved = false;
+  if (storageExists) {
+    const result = await removeLedgerArtifacts(storageDir);
     if (result.docsDirRemoved) {
-      removed.push(docsDir);
+      removed.push(storageDir);
     } else {
       removed.push(...result.removed);
-      docsPreserved = true;
+      storageDirPreserved = true;
     }
   }
   if (configExists) {
@@ -436,15 +437,15 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
   for (const p of removed) {
     io.out(`  removed: ${p}`);
   }
-  if (docsPreserved) {
-    io.out(`  preserved: ${docsDir} (non-ledger content remains)`);
+  if (storageDirPreserved) {
+    io.out(`  preserved: ${storageDir} (non-ledger content remains)`);
   }
   return { exitCode: 0 };
 }
 
 /**
  * `cq move-ledger` (T354): a NATIVE subcommand performing a lossless
- * bidirectional transplant of the live ledger between the `docs/` working tree
+ * bidirectional transplant of the live ledger between the `.cq/` working tree
  * and the orphan ref via an explicit `--to git|local`. The migration logic lives
  * in ./moveLedger.ts; this thin wrapper bridges {@link SubcommandArgs} to its
  * {@link MoveLedgerArgs} and threads the dispatcher IO.
@@ -511,9 +512,9 @@ export async function runLogCmd(
     io.err(
       sub === undefined
         ? "cq log: a sub-subcommand is required (e.g. `cq log put --stdin --dest logs/<rel>`).\n" +
-            "  put <src>|--stdin --dest logs/<rel>   write a log file into docs/logs/<rel>"
+            "  put <src>|--stdin --dest logs/<rel>   write a log file into .cq/logs/<rel>"
         : `cq log: unknown sub-subcommand "${sub}"; expected "put".\n` +
-            "  put <src>|--stdin --dest logs/<rel>   write a log file into docs/logs/<rel>",
+            "  put <src>|--stdin --dest logs/<rel>   write a log file into .cq/logs/<rel>",
     );
     return { exitCode: EXIT_USAGE };
   }
