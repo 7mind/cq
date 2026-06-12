@@ -1,14 +1,17 @@
 /**
- * T331: Unit tests for CQ_TOML_TEMPLATE (cq-cli/src/cqTomlTemplate.ts).
+ * T331 / T440: Unit tests for CQ_TOML_TEMPLATE (cq-cli/src/cqTomlTemplate.ts).
  *
  * Acceptance:
  *  1. CQ_TOML_TEMPLATE parses without throwing via parseConfig (@cq/config).
  *  2. resolveReviewers / resolvePlanners succeed on the parsed config.
- *  3. The active reviewers+planners each resolve to EXACTLY the three claude
- *     tokens: claude:opus-4.8[1m] / claude:sonnet-4.6 / claude:haiku-4.5
- *     (string-equality on the resolved tokens via formatReviewerToken).
- *  4. Every commented pi model line is NOT present in the active set.
- *  5. cq.toml.example's resolved active model set EQUALS the template's
+ *  3. The active reviewers+planners each resolve to EXACTLY opus (opus-only
+ *     panels — T440): claude:opus-4.8[1m] only.
+ *  4. sonnet and haiku aliases are DEFINED in [aliases] and resolvable, even
+ *     though they are off the reviewers/planners panels (T438 decoupling).
+ *  5. implement-worker resolves sonnet (standard tier) off-panel via the
+ *     [aliases]-wide candidate pool (T438/T440 acceptance criterion).
+ *  6. Every commented pi model line is NOT present in the active panel set.
+ *  7. cq.toml.example's resolved active model set EQUALS the template's
  *     (consistent with CQ_TOML_TEMPLATE).
  */
 
@@ -19,6 +22,7 @@ import {
   parseConfig,
   resolveReviewers,
   resolvePlanners,
+  resolveAgentModel,
   formatReviewerToken,
 } from "@cq/config";
 import { CQ_TOML_TEMPLATE } from "../src/cqTomlTemplate.js";
@@ -28,19 +32,21 @@ import { CQ_TOML_TEMPLATE } from "../src/cqTomlTemplate.js";
 const REPO_ROOT = path.resolve(import.meta.dir, "../../../../../../");
 const EXAMPLE_PATH = path.join(REPO_ROOT, "cq.toml.example");
 
-// The three expected active token strings.
+// Expected token strings.
 const EXPECTED_OPUS   = "claude:opus-4.8[1m]";
 const EXPECTED_SONNET = "claude:sonnet-4.6";
 const EXPECTED_HAIKU  = "claude:haiku-4.5";
-const EXPECTED_ACTIVE = [EXPECTED_OPUS, EXPECTED_SONNET, EXPECTED_HAIKU];
 
-// Known pi model token strings that must NOT appear in the active set.
+// T440: opus-only panels — the panel list contains exactly one entry.
+const EXPECTED_PANEL = [EXPECTED_OPUS];
+
+// Known pi model token strings that must NOT appear in the active panel set.
 const PI_INACTIVE_TOKENS = [
   "pi:grok-build/grok-build",
   "pi:ollama-cloud/minimax-m3",
 ];
 
-describe("CQ_TOML_TEMPLATE (T331)", () => {
+describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
   it("parses without throwing (schema-valid)", () => {
     expect(() => parseConfig(CQ_TOML_TEMPLATE)).not.toThrow();
   });
@@ -55,18 +61,18 @@ describe("CQ_TOML_TEMPLATE (T331)", () => {
     expect(() => resolvePlanners(config)).not.toThrow();
   });
 
-  it("active reviewers resolve to EXACTLY opus / sonnet / haiku (in order)", () => {
+  it("active reviewers resolve to EXACTLY opus (opus-only panel, T440)", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
     const reviewerTokens = resolveReviewers(config);
     const formatted = reviewerTokens.map(formatReviewerToken);
-    expect(formatted).toEqual(EXPECTED_ACTIVE);
+    expect(formatted).toEqual(EXPECTED_PANEL);
   });
 
-  it("active planners resolve to EXACTLY opus / sonnet / haiku (in order)", () => {
+  it("active planners resolve to EXACTLY opus (opus-only panel, T440)", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
     const plannerTokens = resolvePlanners(config);
     const formatted = plannerTokens.map(formatReviewerToken);
-    expect(formatted).toEqual(EXPECTED_ACTIVE);
+    expect(formatted).toEqual(EXPECTED_PANEL);
   });
 
   it("opus alias resolves to the expected claude token (string-equality)", () => {
@@ -76,21 +82,33 @@ describe("CQ_TOML_TEMPLATE (T331)", () => {
     expect(formatReviewerToken(opusToken!)).toBe(EXPECTED_OPUS);
   });
 
-  it("sonnet alias resolves to claude:sonnet-4.6 (string-equality)", () => {
+  it("sonnet alias is DEFINED in [aliases] even though it is off the panels", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
     const sonnetToken = config.aliases["sonnet"];
     expect(sonnetToken).toBeDefined();
     expect(formatReviewerToken(sonnetToken!)).toBe(EXPECTED_SONNET);
   });
 
-  it("haiku alias resolves to claude:haiku-4.5 (string-equality)", () => {
+  it("haiku alias is DEFINED in [aliases] even though it is off the panels", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
     const haikuToken = config.aliases["haiku"];
     expect(haikuToken).toBeDefined();
     expect(formatReviewerToken(haikuToken!)).toBe(EXPECTED_HAIKU);
   });
 
-  it("no pi model token appears in the active reviewer set", () => {
+  it("implement-worker resolves sonnet (standard tier) off-panel via [aliases] pool (T438/T440)", () => {
+    // Guards the T438 decoupling: per-role resolution draws from ALL [aliases],
+    // not from the reviewers/planners panels.  implement-worker is standard tier;
+    // sonnet is the standard-tier alias; it must resolve even though it is not
+    // listed in reviewers or planners.
+    const config = parseConfig(CQ_TOML_TEMPLATE);
+    // Build the all-aliases candidate pool (mirrors candidateTokens in configCapability).
+    const allCandidates = Object.values(config.aliases);
+    const workerToken = resolveAgentModel(config, "implement-worker", allCandidates);
+    expect(formatReviewerToken(workerToken)).toBe(EXPECTED_SONNET);
+  });
+
+  it("no pi model token appears in the active reviewer panel", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
     const reviewerTokens = resolveReviewers(config);
     const formatted = new Set(reviewerTokens.map(formatReviewerToken));
@@ -99,7 +117,7 @@ describe("CQ_TOML_TEMPLATE (T331)", () => {
     }
   });
 
-  it("no pi model token appears in the active planner set", () => {
+  it("no pi model token appears in the active planner panel", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
     const plannerTokens = resolvePlanners(config);
     const formatted = new Set(plannerTokens.map(formatReviewerToken));
@@ -128,7 +146,7 @@ describe("CQ_TOML_TEMPLATE (T331)", () => {
   });
 });
 
-describe("cq.toml.example active model set equals CQ_TOML_TEMPLATE (T331)", () => {
+describe("cq.toml.example active model set equals CQ_TOML_TEMPLATE (T331/T440)", () => {
   it("cq.toml.example parses without throwing", () => {
     const contents = readFileSync(EXAMPLE_PATH, "utf8");
     expect(() => parseConfig(contents)).not.toThrow();
@@ -154,16 +172,16 @@ describe("cq.toml.example active model set equals CQ_TOML_TEMPLATE (T331)", () =
     expect(examplePlanners).toEqual(templatePlanners);
   });
 
-  it("cq.toml.example active reviewers resolve to EXACTLY opus / sonnet / haiku", () => {
+  it("cq.toml.example active reviewers resolve to EXACTLY opus (opus-only panel, T440)", () => {
     const config = parseConfig(readFileSync(EXAMPLE_PATH, "utf8"));
     const formatted = resolveReviewers(config).map(formatReviewerToken);
-    expect(formatted).toEqual(EXPECTED_ACTIVE);
+    expect(formatted).toEqual(EXPECTED_PANEL);
   });
 
-  it("cq.toml.example active planners resolve to EXACTLY opus / sonnet / haiku", () => {
+  it("cq.toml.example active planners resolve to EXACTLY opus (opus-only panel, T440)", () => {
     const config = parseConfig(readFileSync(EXAMPLE_PATH, "utf8"));
     const formatted = resolvePlanners(config).map(formatReviewerToken);
-    expect(formatted).toEqual(EXPECTED_ACTIVE);
+    expect(formatted).toEqual(EXPECTED_PANEL);
   });
 
   it("cq.toml.example [ledger] block is COMMENTED-OUT/inert — backend resolves to fs", () => {

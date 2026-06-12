@@ -1,15 +1,22 @@
 /**
- * CQ_TOML_TEMPLATE — a fully-commented cq.toml starter template (T331, T349).
+ * CQ_TOML_TEMPLATE — a fully-commented cq.toml starter template (T331, T349, T440).
  *
  * This is a hand-authored TOML literal (cq-config has only a parser, no
  * serialiser) that, once re-parsed by @cq/config `parseConfig`, is
  * schema-valid and resolves cleanly through `resolveReviewers` /
  * `resolvePlanners`.
  *
- * Active set: three canonical Claude aliases — opus (frontier),
- * sonnet (standard), haiku (fast).  Every other pi-available model
- * (grok-build, minimax, ollama-cloud tokens) is present but COMMENTED OUT
- * so users can opt in by uncommenting.
+ * Panel design (T440 / T438 decoupling):
+ *   reviewers = ["opus"] / planners = ["opus"] — opus is the ONLY panel
+ *   member because opus handles planning and reviewing.  sonnet and haiku
+ *   are defined in [aliases] and classified in [tiers] but are NOT on the
+ *   panels.  This is intentional: per-role agent-model resolution draws from
+ *   ALL [aliases] (the full pool), not from the reviewers/planners panels, so
+ *   implement-worker (standard tier) resolves sonnet and investigate-prober
+ *   (standard tier) also resolves sonnet — even though sonnet does not appear
+ *   in reviewers or planners.  Removing sonnet/haiku from the panels eliminates
+ *   redundant multi-reviewer churn on plan/implement review steps while keeping
+ *   them available for per-role tier dispatch.
  *
  * Token grammar (T237 + T286 effort suffix):
  *   claude:<model>[:<effort>]         — e.g. claude:opus-4.8[1m]
@@ -22,7 +29,8 @@
  * git-object backend (Q189).
  *
  * Reference: Q184 (active set), D36 (pi provider routing), T286 (effort suffix),
- *            T349 (ledger backend config), Q189 (git-object opt-in).
+ *            T349 (ledger backend config), Q189 (git-object opt-in),
+ *            T438 (candidateTokens decoupling), T440 (opus-only panels).
  */
 
 export const CQ_TOML_TEMPLATE: string = `\
@@ -49,30 +57,44 @@ export const CQ_TOML_TEMPLATE: string = `\
 #   A bare pi token (missing the provider/ qualifier) is a CONFIG ERROR.
 #
 # Tier classes: fast | standard | frontier
+#
+# Panel vs per-role decoupling (T438/T440):
+#   reviewers/planners are the PANEL lists — used for multi-reviewer review
+#   steps (plan-flow, implement-flow).  Per-role agent-model resolution (e.g.
+#   implement-worker, investigate-prober) draws from ALL [aliases] classified
+#   in [tiers], NOT from the reviewers/planners panels.  This means sonnet and
+#   haiku can serve their tier roles even though they are not on the panels.
+#   Only opus belongs on the panels because only opus plans and reviews.
 
 # reviewers — List of ALIAS NAMES (keys from [aliases] below) to activate as
 # reviewers.  Each alias is resolved through [aliases] to its token at runtime.
 # The reviewers will be invoked in plan-flow and implement-flow review steps.
-reviewers = ["opus", "sonnet", "haiku"]
+# Only opus is on the panel — sonnet/haiku are off-panel but still resolve for
+# their tiers via per-role [agent_tiers] dispatch (see decoupling note above).
+reviewers = ["opus"]
 
 # planners — List of ALIAS NAMES to activate as planners.  Planners MIRROR
 # reviewers: same alias-name list shape, resolved through the SAME shared
-# [aliases] table below.
-planners = ["opus", "sonnet", "haiku"]
+# [aliases] table below.  Only opus is on the planner panel.
+planners = ["opus"]
 
 # [aliases] — Define reviewer/planner instances as tokens.
 #
-# Active Claude aliases (uncomment pi aliases below to add additional models):
+# All three canonical Claude aliases are DEFINED here and classified in [tiers].
+# Only opus is listed on the reviewers/planners panels above.  sonnet and haiku
+# remain resolvable for per-role dispatch (implement-worker -> standard -> sonnet,
+# investigate-prober -> standard -> sonnet, etc.) via [agent_tiers] + [tiers],
+# independently of the panel lists.
 [aliases]
-  # ── Active: canonical Claude trio ────────────────────────────────────────
-  opus   = "claude:opus-4.8[1m]"   # most capable / frontier tier
-  sonnet = "claude:sonnet-4.6"     # balanced / standard tier
-  haiku  = "claude:haiku-4.5"      # fastest / cheapest (fast tier)
+  # ── Active: canonical Claude trio (all classified in [tiers] below) ───────
+  opus   = "claude:opus-4.8[1m]"   # frontier tier — on reviewers+planners panels
+  sonnet = "claude:sonnet-4.6"     # standard tier — off-panel, available per-role
+  haiku  = "claude:haiku-4.5"      # fast tier    — off-panel, available per-role
 
   # ── Inactive pi aliases (uncomment to activate) ──────────────────────────
   # These require the relevant pi provider to be configured and accessible.
   # After uncommenting an alias here, also add its name to reviewers/planners
-  # above and add a [tiers] entry for it below.
+  # above if it should appear on a panel, and add a [tiers] entry for it below.
   #
   # codex      = "pi:grok-build/grok-build"
   # grok       = "pi:grok-build/grok-build"
@@ -84,9 +106,9 @@ planners = ["opus", "sonnet", "haiku"]
 
 # [tiers] — CLASSIFIER: maps each concrete token (or alias) to its dispatch
 # tier class.  THIS IS NOT A DISPATCH TABLE — it tells cq what tier a given
-# token belongs to; the active planner/reviewer candidate list is built from
-# [aliases] + reviewers/planners, and a suggestedModel tier selects among
-# those listed tokens whose class matches (tie-break: candidate order).
+# token belongs to; per-role agent-model resolution draws from ALL [aliases]
+# (not just the panels), so a token classified here is eligible for its tier
+# even when it is not listed on the reviewers/planners panels.
 #
 # Each KEY must be a valid ReviewerToken (alias name from [aliases], or a full
 # token in the grammar: claude:<model> | pi:<provider>/<model>).
@@ -95,10 +117,12 @@ planners = ["opus", "sonnet", "haiku"]
 # A token not listed here is unclassified; resolving an unclassified token
 # throws CqConfigError.  Both alias keys and full token keys are accepted.
 [tiers]
-  # Active Claude trio — classified by capability:
+  # Canonical Claude trio — classified by capability (all three must be here
+  # even though only opus is on the panels, so per-role dispatch can resolve
+  # sonnet for standard-tier roles and haiku for fast-tier roles):
   opus   = "frontier"   # alias key — resolves to claude:opus-4.8[1m]
-  sonnet = "standard"   # alias key — resolves to claude:sonnet-4.6
-  haiku  = "fast"       # alias key — resolves to claude:haiku-4.5
+  sonnet = "standard"   # alias key — resolves to claude:sonnet-4.6 (off-panel)
+  haiku  = "fast"       # alias key — resolves to claude:haiku-4.5  (off-panel)
 
   # Inactive pi entries (uncomment the matching alias above first):
   # "pi:grok-build/grok-build"      = "standard"
@@ -110,9 +134,9 @@ planners = ["opus", "sonnet", "haiku"]
 
 # [agent_tiers] — Map each named cq agent to its dispatch tier.
 # An agent with NO entry here falls back to the "standard" tier.
-# The tier name here selects, from the active reviewers/planners candidate
-# list, the first token whose class (as classified in [tiers] above) matches
-# the tier.  Valid tier values: "fast", "standard", "frontier".
+# The tier here selects, from ALL [aliases] classified in [tiers], the first
+# token of the matching class — independent of the reviewers/planners panels.
+# Valid tier values: "fast", "standard", "frontier".
 [agent_tiers]
   investigate-explorer    = "frontier"
   investigate-prober      = "standard"
