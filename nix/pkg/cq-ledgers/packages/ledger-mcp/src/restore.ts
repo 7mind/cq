@@ -2,9 +2,9 @@
  * restore — the `ledger-mcp restore --from-cache` subcommand (T313, Q169).
  *
  * Copies the per-root cache mirror that {@link mirrorMutation} maintains under
- * the XDG cache base back into `<root>/docs/`. The mirror is a faithful subtree
- * of `<root>/` (it stores `docs/<ledger>.md`, `docs/ledgers.yaml`, and
- * `docs/archive/<ledger>/*.md`), so restore is the symmetric inverse of the
+ * the XDG cache base back into `<root>/.cq/`. The mirror is a faithful subtree
+ * of `<root>/` (it stores `.cq/<ledger>.md`, `.cq/ledgers.yaml`, and
+ * `.cq/archive/<ledger>/*.md`), so restore is the symmetric inverse of the
  * mirror writer: read every file the mirror holds and atomically (tmp+rename)
  * write it onto the corresponding in-repo path.
  *
@@ -19,7 +19,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { cacheMirrorDir, atomicWrite } from "@cq/ledger";
+import { cacheMirrorDir, atomicWrite, LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
 
 /**
  * Per-ledger restored-file count, mirroring the {@link ResetSummary} shape the
@@ -74,13 +74,13 @@ async function collectFiles(dir: string, rel = ""): Promise<string[]> {
 }
 
 /**
- * Map a mirror-relative path (e.g. `docs/tasks.md`, `docs/ledgers.yaml`,
- * `docs/archive/tasks/M1.md`) to the logical group name used in the summary.
+ * Map a mirror-relative path (e.g. `.cq/tasks.md`, `.cq/ledgers.yaml`,
+ * `.cq/archive/tasks/M1.md`) to the logical group name used in the summary.
  */
 function groupOf(relPath: string): string {
   const parts = relPath.split(path.sep);
-  // All mirrored files live under `docs/`.
-  if (parts[0] === "docs") {
+  // All mirrored files live under `.cq/`.
+  if (parts[0] === LEDGER_STORAGE_DIRNAME) {
     if (parts[1] === "archive" && parts[2] !== undefined) return `archive/${parts[2]}`;
     if (parts[1] !== undefined && parts[1].endsWith(".md")) {
       return parts[1].slice(0, -".md".length);
@@ -91,7 +91,7 @@ function groupOf(relPath: string): string {
 }
 
 /**
- * Restore the cache mirror for `root` back into `<root>/docs/`. Resolves the
+ * Restore the cache mirror for `root` back into `<root>/.cq/`. Resolves the
  * mirror dir via {@link cacheMirrorDir}, refuses (throws
  * {@link CacheMirrorMissingError}) if it is absent/empty, otherwise atomically
  * copies every mirrored file onto its in-repo path and returns a per-group

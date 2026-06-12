@@ -67,9 +67,7 @@ async function seedMirror(): Promise<Map<string, string>> {
 }
 
 describe("ledger-mcp restore --from-cache", () => {
-  // T460 will fix groupOf to handle `.cq/`-prefixed mirror paths; until then
-  // the byte-identity portion passes but the group-label portion fails.
-  test.failing("restores .cq/ from the cache mirror byte-identically", async () => {
+  test("restores .cq/ from the cache mirror byte-identically", async () => {
     const seeded = await seedMirror();
     // Wipe / never-create the in-repo .cq/ tree.
     await fs.rm(path.join(root, LEDGER_STORAGE_DIRNAME), { recursive: true, force: true });
@@ -91,7 +89,7 @@ describe("ledger-mcp restore --from-cache", () => {
     }
 
     // Per-ledger restored-file-count summary (ResetSummary style).
-    // groupOf must return LOGICAL names (.cq/-aware) — T460 fixes this.
+    // groupOf returns LOGICAL names (.cq/-aware, fixed by T460).
     const groups = Object.fromEntries(summary.ledgers.map((l) => [l.name, l.fileCount]));
     expect(groups["tasks"]).toBe(1);
     expect(groups["defects"]).toBe(1);
@@ -133,12 +131,11 @@ describe("ledger-mcp restore --from-cache", () => {
    * are the LOGICAL names ("tasks", "archive/tasks"), NOT raw relpaths like
    * ".cq/tasks.md".
    *
-   * Pre-fix (groupOf line 83 checks parts[0]==="docs"), the `.cq`-prefixed
-   * mirror paths fall through to the raw-relpath branch, producing labels such
-   * as ".cq/tasks.md" instead of "tasks". Marked test.failing so `bun run
-   * check` stays GREEN until T460 (the fix) flips it to a plain test.
+   * T460 fixed groupOf to branch on LEDGER_STORAGE_DIRNAME instead of the
+   * stale "docs" literal, so `.cq`-prefixed mirror paths now map to logical
+   * group names ("tasks", "archive/tasks") rather than raw relpaths.
    */
-  test.failing(
+  test(
     "live FsLedgerStore mirror: restoreFromCache group labels are logical (tasks, archive/<ledger>)",
     async () => {
       // Build the mirror via a LIVE store — do NOT hand-seed path strings.
@@ -169,7 +166,7 @@ describe("ledger-mcp restore --from-cache", () => {
       // At least the tasks group and archive/tasks group must appear.
       const names = summary.ledgers.map((l) => l.name);
 
-      // LOGICAL names — these assertions FAIL pre-fix (groupOf uses "docs").
+      // LOGICAL names — T460 fixed groupOf (was checking "docs", now LEDGER_STORAGE_DIRNAME).
       expect(names).toContain("tasks");
       expect(names).toContain(`archive/${TASKS_LEDGER}`);
 

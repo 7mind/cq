@@ -21,12 +21,12 @@
  *   ledger-mcp --http 0.0.0.0:7777                  # HTTP, root = CWD
  *   ledger-mcp --tool-prefix myproj                 # prefix all tool names with "myproj_"
  *   ledger-mcp --tool-prefix myproj --http 7777     # prefix + HTTP
- *   ledger-mcp restore --from-cache [--cwd <path>]  # restore docs/ from the cache mirror
+ *   ledger-mcp restore --from-cache [--cwd <path>]  # restore .cq/ from the cache mirror
  *
  * Subcommands: the DEFAULT (no positional subcommand) launches the server as
  * above. The single recognised subcommand is `restore --from-cache`, which
  * copies the per-root `~/.cache` mirror (maintained by the store on every
- * mutation) back into `<root>/docs/` — the one ledger lifecycle op hosted by
+ * mutation) back into `<root>/.cq/` — the one ledger lifecycle op hosted by
  * ledger-mcp (Q169). The OTHER lifecycle ops (backup+reinit, erase) remain in
  * the `cq` CLI — run `cq reset` / `cq erase`.
  *
@@ -193,7 +193,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 /** Top-level CLI usage text (mirrors the file-header JSDoc; printed by --help/-h). */
 export const TOP_LEVEL_USAGE = [
   "usage: ledger-mcp [options]                            # stdio MCP server",
-  "       ledger-mcp restore --from-cache [--cwd <path>] # restore docs/ from cache",
+  "       ledger-mcp restore --from-cache [--cwd <path>] # restore .cq/ from cache",
   "",
   "options:",
   "  --cwd <path>          Ledger root (default: $LEDGER_ROOT or current working directory)",
@@ -202,7 +202,7 @@ export const TOP_LEVEL_USAGE = [
   "  -h, --help            Print this usage and exit",
   "",
   "subcommands:",
-  "  restore --from-cache  Restore <root>/docs/ from the per-root XDG cache mirror",
+  "  restore --from-cache  Restore <root>/.cq/ from the per-root XDG cache mirror",
 ].join("\n");
 
 /** The single recognised positional subcommand. */
@@ -218,7 +218,7 @@ export interface RestoreArgs {
 export const RESTORE_USAGE = [
   "usage: ledger-mcp restore --from-cache [--cwd <path>]",
   "",
-  "  Restore <root>/docs/ from the per-root cache mirror under the XDG cache base.",
+  "  Restore <root>/.cq/ from the per-root cache mirror under the XDG cache base.",
   "  ledger root: --cwd > $LEDGER_ROOT > current working directory",
 ].join("\n");
 
@@ -383,7 +383,7 @@ export function rootDirOf(store: LedgerStore): string | undefined {
 
 /**
  * Duck-typed read-log capability check (T408). Both FsLedgerStore (tails the
- * on-disk `<root>/docs/logs`) and GitObjectLedgerBackend (resolves `logs/<rel>`
+ * on-disk `<root>/.cq/logs`) and GitObjectLedgerBackend (resolves `logs/<rel>`
  * from the orphan ref tip) expose a bounded, root-confined `readLog(relPath)`
  * returning a `ReadLogResult`; the in-memory test store does not. Returns the
  * bound capability when the store advertises one, else `undefined` — so
@@ -461,7 +461,7 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
     instructions,
   });
   // read_log (Q87 / R137 #6 / T408) is BACKEND-AWARE: the FS store tails the
-  // on-disk per-ledger log under <root>/docs/logs, and the git-object backend
+  // on-disk per-ledger log under <root>/.cq/logs, and the git-object backend
   // resolves the SAME `logs/<rel>` from the orphan ref tip (same confinement +
   // 4 MiB cap). So gate it on the duck-typed `readLog` capability (T357
   // precedent, mirroring `rootDirOf`) rather than `instanceof FsLedgerStore` —
@@ -654,7 +654,7 @@ export function changedFrame(ledgerId: string | null): string {
 
 /**
  * `ledger-mcp restore --from-cache [--cwd <path>]` handler: restore
- * `<root>/docs/` from the cache mirror via {@link restoreFromCache}, print a
+ * `<root>/.cq/` from the cache mirror via {@link restoreFromCache}, print a
  * per-ledger restored-file-count summary (ResetSummary style) to stdout, and
  * return an exit code. An absent/empty cache mirror throws
  * `CacheMirrorMissingError`, surfaced as a non-zero exit by the caller.
