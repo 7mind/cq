@@ -176,8 +176,7 @@ function candidateTokens(config: CqConfig): ReviewerToken[] {
  * Group `tokens` by harness into the per-harness `modelMappings` shape: each
  * concrete model id is de-duplicated per harness (by its provider-qualified
  * rendering) and sorted for deterministic output. A pi token is rendered
- * `<provider>/<model>`; a claude token (provider null) is rendered bare —
- * EXACTLY as `gen-agents-catalogue.ts`'s `deriveModelMappings` does.
+ * `<provider>/<model>`; a claude token (provider null) is rendered bare.
  *
  * Returns `{}` when no token maps to any harness (the `no-live-token` case).
  */

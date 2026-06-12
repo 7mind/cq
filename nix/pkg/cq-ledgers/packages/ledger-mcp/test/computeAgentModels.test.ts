@@ -4,7 +4,8 @@
  * Asserts the per-role model overlay the `get_agent_models` tool returns:
  *  - a fixture cq.toml with [agent_tiers]+[tiers]+[aliases] yields `resolved`
  *    entries with the expected per-harness tokens for at least one subagent;
- *  - a role whose tier class has no live candidate token yields `no-live-token`;
+ *  - a role routed to a tier class that NO aliased token is classified into
+ *    (empty grouping) yields `no-live-token` with empty modelMappings;
  *  - orchestrator-command roles (agentTierKey null) yield `not-model-configurable`;
  *  - an absent cq.toml yields every model-configurable role as `not-configured`.
  *
@@ -121,9 +122,9 @@ describe("T285: computeAgentModels — configured fixture", () => {
 /**
  * Multi-harness fixture: the SAME tier class (`frontier`) is assigned to BOTH a
  * claude token (opus) AND a pi token (minimax), and both aliases are live in the
- * candidate union (planners ∪ reviewers). An agent placed at `frontier` must
+ * candidate pool (all [aliases], per T438). An agent placed at `frontier` must
  * therefore resolve to per-harness mappings containing BOTH `claude` and `pi`
- * arrays — exercising groupByHarness parity with deriveModelMappings for the
+ * arrays — exercising groupByHarness's per-harness grouping for the
  * multi-harness case (Q157).
  *
  * The `frontier` class also has TWO claude tokens (opus, sonnet) listed in
@@ -173,15 +174,56 @@ describe("T285: computeAgentModels — multi-harness resolved", () => {
     writeCqToml(MULTI_HARNESS_FIXTURE);
     const result = computeAgentModels(dir);
 
-    // Candidate union preserves config order [opus, minimax, sonnet], so the two
+    // Candidate pool preserves config order [opus, minimax, sonnet], so the two
     // claude frontier tokens enter as [opus-4.8[1m], claude-4.8-sonnet]. The
-    // emitted claude array must be SORTED ([claude-4.8-sonnet, opus-4.8[1m]]),
-    // matching deriveModelMappings — assert the exact ordered array, not a set.
+    // emitted claude array must be SORTED ([claude-4.8-sonnet, opus-4.8[1m]]) by
+    // groupByHarness — assert the exact ordered array, not a set.
     const worker = entry(result, "implement-worker");
     expect(worker.modelMappings.claude).toEqual([
       "claude-4.8-sonnet",
       "opus-4.8[1m]",
     ]);
+  });
+});
+
+/**
+ * No-live-token fixture: [aliases] holds ONLY frontier- and standard-classified
+ * tokens — NO alias is classified into the `fast` tier class anywhere in
+ * [tiers]. [agent_tiers] routes investigate-explorer to `fast`, so its
+ * candidate pool (all [aliases], per T438) contains no `fast` token -> empty
+ * grouping -> status `no-live-token` with modelClass `fast` and empty mappings.
+ *
+ * This exercises the still-reachable `no-live-token` branch under the decoupled
+ * semantics: a role routed to a tier class that no aliased token inhabits.
+ */
+const NO_LIVE_TOKEN_FIXTURE = [
+  'reviewers = ["opus"]',
+  'planners  = ["opus", "minimax"]',
+  "",
+  "[aliases]",
+  '  opus    = "claude:opus-4.8[1m]"',
+  '  minimax = "pi:ollama-cloud/minimax-m3"',
+  "",
+  "[tiers]",
+  '  "claude:opus-4.8[1m]"          = "frontier"',
+  '  "pi:ollama-cloud/minimax-m3"   = "standard"',
+  "",
+  "[agent_tiers]",
+  '  investigate-explorer = "fast"',
+  "",
+].join("\n");
+
+describe("T285: computeAgentModels — no-live-token branch", () => {
+  it("yields no-live-token + empty mappings for a role routed to a tier class with no aliased token", () => {
+    writeCqToml(NO_LIVE_TOKEN_FIXTURE);
+    const result = computeAgentModels(dir);
+    expect(result.configured).toBe(true);
+
+    // investigate-explorer -> fast, but NO [aliases] token is classified `fast`.
+    const explorer = entry(result, "investigate-explorer");
+    expect(explorer.status).toBe("no-live-token");
+    expect(explorer.modelClass).toBe("fast");
+    expect(explorer.modelMappings).toEqual({});
   });
 });
 
