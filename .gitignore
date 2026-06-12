@@ -60,3 +60,5 @@ docs/.backup/
 docs/*.md
 docs/ledgers.yaml
 docs/.locks/
+docs/logs/
+# cq git-object ledger backend (managed) — end
