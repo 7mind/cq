@@ -30,6 +30,17 @@
  * are built from immutable archive files; active docs are rebuilt on every
  * change. See `FsLedgerStore` for the I/O wiring and the archive-immutability
  * rationale.
+ *
+ * Memory reclaim (D67)
+ * --------------------
+ * The underlying MiniSearch is constructed with `autoVacuum: false` (see
+ * {@link makeMini}) to eliminate minisearch's async background-vacuum race that
+ * crashed `cq web`. With auto-vacuum off, every rebuild's discard()+add() leaves
+ * tombstones that minisearch never reclaims on its own; over a long-running
+ * `cq web` (which reindexes on every file change) they accumulate. We reclaim
+ * them with a SYNCHRONOUS rebuild-and-swap ({@link LedgerSearchIndex.maybeReclaim})
+ * gated on a dirt threshold — never minisearch's async `vacuum()` — so reclaim
+ * can never interleave an add()/search the way the background vacuum did.
  */
 
 import MiniSearch from "minisearch";
@@ -57,6 +68,14 @@ const FIELD_BOOSTS: Readonly<Record<string, number>> = {
 };
 
 const DEFAULT_LIMIT = 20;
+
+/**
+ * Dirt threshold (number of discarded-document tombstones accumulated since the
+ * last reclaim) at which {@link LedgerSearchIndex} performs an atomic
+ * rebuild-and-swap to reclaim memory. See the D67 note on the class for why we
+ * reclaim by synchronous rebuild rather than minisearch's async vacuum.
+ */
+const REBUILD_DIRT_THRESHOLD = 1000;
 
 /** One indexed document (the canonical, ledger-agnostic shape). */
 interface IndexDoc {
@@ -110,6 +129,32 @@ function fieldValueToText(value: FieldValue | undefined): string {
   return value;
 }
 
+/**
+ * Construct a MiniSearch configured exactly as this index requires.
+ *
+ * D67: `autoVacuum: false` is the core of the fix. minisearch's DEFAULT
+ * auto-vacuum reclaims discarded-document space ASYNCHRONOUSLY, traversing the
+ * inverted-index radix tree in batches that yield via `setTimeout` between
+ * batches. Every public op on `LedgerSearchIndex` (replaceBucket/discardSet via
+ * add()/discard(), and search()) is SYNCHRONOUS, but a background vacuum's
+ * batch-yield opens a window in which a subsequent `add()` can RESTRUCTURE the
+ * prefix tree (a node split deletes a compressed edge key) out from under the
+ * vacuum's suspended TreeIterator — on resume it dives onto a now-undefined
+ * child and throws `TypeError: undefined is not an object (child.keys)`,
+ * crashing `cq web`. Disabling auto-vacuum means minisearch NEVER schedules a
+ * background vacuum, so no `add()` can ever interleave one. We reclaim tombstone
+ * memory ourselves via {@link LedgerSearchIndex.maybeReclaim} — a synchronous
+ * rebuild-and-swap that has no async batch-yield window at all.
+ */
+function makeMini(): MiniSearch<IndexDoc> {
+  return new MiniSearch<IndexDoc>({
+    idField: "docId",
+    fields: ["headline", "body", "status"],
+    storeFields: ["ledgerId", "itemId", "status", "archived"],
+    autoVacuum: false,
+  });
+}
+
 /** Build the canonical IndexDoc for a single item under `ledgerId`. */
 function toDoc(ledgerId: string, item: Item, archived: boolean): IndexDoc {
   const headlineParts: string[] = [];
@@ -133,20 +178,23 @@ function toDoc(ledgerId: string, item: Item, archived: boolean): IndexDoc {
 }
 
 export class LedgerSearchIndex {
-  private readonly mini: MiniSearch<IndexDoc>;
+  private mini: MiniSearch<IndexDoc>;
   /** docId → full typed Item + metadata, for mapping hits back to Items. */
   private readonly backing = new Map<string, DocBacking>();
   /** ledgerId → set of active docIds currently in the index. */
   private readonly activeDocIds = new Map<string, Set<string>>();
   /** ledgerId → set of archived docIds currently in the index. */
   private readonly archivedDocIds = new Map<string, Set<string>>();
+  /**
+   * Count of discarded-document tombstones accumulated in `this.mini` since the
+   * last reclaim. With auto-vacuum disabled (D67) minisearch never reclaims
+   * these itself; we rebuild-and-swap once this crosses
+   * {@link REBUILD_DIRT_THRESHOLD}.
+   */
+  private dirtCount = 0;
 
   constructor() {
-    this.mini = new MiniSearch<IndexDoc>({
-      idField: "docId",
-      fields: ["headline", "body", "status"],
-      storeFields: ["ledgerId", "itemId", "status", "archived"],
-    });
+    this.mini = makeMini();
   }
 
   /**
@@ -173,6 +221,7 @@ export class LedgerSearchIndex {
     this.discardSet(this.archivedDocIds.get(ledgerId));
     this.activeDocIds.delete(ledgerId);
     this.archivedDocIds.delete(ledgerId);
+    this.maybeReclaim();
   }
 
   /**
@@ -313,6 +362,7 @@ export class LedgerSearchIndex {
       // guarantee this), but guard so a stray duplicate cannot throw.
       if (this.backing.has(doc.docId)) {
         this.mini.discard(doc.docId);
+        this.dirtCount++;
         this.backing.delete(doc.docId);
       }
       this.mini.add(doc);
@@ -320,6 +370,7 @@ export class LedgerSearchIndex {
       next.add(doc.docId);
     }
     tracker.set(ledgerId, next);
+    this.maybeReclaim();
   }
 
   private discardSet(ids: Set<string> | undefined): void {
@@ -327,9 +378,37 @@ export class LedgerSearchIndex {
     for (const id of ids) {
       if (this.backing.has(id)) {
         this.mini.discard(id);
+        this.dirtCount++;
         this.backing.delete(id);
       }
     }
+  }
+
+  /**
+   * Reclaim accumulated tombstone memory when the dirt count crosses
+   * {@link REBUILD_DIRT_THRESHOLD}, by SYNCHRONOUSLY rebuilding a fresh
+   * MiniSearch from the live backing docs and swapping it in.
+   *
+   * D67: we deliberately do NOT call minisearch's `vacuum()`. That reclaim is
+   * async/batched (it yields via `setTimeout` between 1000-term batches), which
+   * is precisely the window in which a concurrent `add()` corrupts its
+   * suspended radix-tree iterator and throws `child.keys` TypeError. The
+   * rebuild below is a single synchronous pass with NO yield, so no `add()` or
+   * `search()` can ever interleave it — the swap (`this.mini = next`) is one
+   * atomic assignment after the fresh index is fully built. The old instance,
+   * with all its tombstones, is discarded wholesale (GC'd) — no vacuum needed.
+   *
+   * Gated on the threshold so this O(all-live-docs) rebuild amortizes across
+   * many mutations rather than running on every rebuild.
+   */
+  private maybeReclaim(): void {
+    if (this.dirtCount < REBUILD_DIRT_THRESHOLD) return;
+    const next = makeMini();
+    for (const back of this.backing.values()) {
+      next.add(toDoc(back.ledgerId, back.item, back.archived));
+    }
+    this.mini = next;
+    this.dirtCount = 0;
   }
 }
 
