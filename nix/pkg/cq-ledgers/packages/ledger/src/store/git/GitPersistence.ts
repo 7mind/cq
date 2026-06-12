@@ -54,17 +54,19 @@ import type { LedgerPersistence } from "../LedgerPersistence.js";
 import type { GitPlumbing, TreeEntry } from "./GitPlumbing.js";
 import { LedgerError } from "../../types.js";
 import { MAX_READ_LOG_BYTES, type ReadLogResult } from "../../mcp/readLog.js";
+import { LEDGER_LOGS_DIRNAME, LEDGER_LOGS_STRIP_RE } from "../../constants.js";
 
 /** Regular-file git mode for a ledger blob. */
 const BLOB_MODE = "100644";
 
 /**
  * The docs-relative tree prefix the git-object backend stores session logs under
- * (the orphan tree is rooted at the DOCS CONTENTS, so the FS `<root>/docs/logs`
- * confinement root is the `logs/` subtree here — NO `docs/` prefix; see the
- * tree-layout note above).
+ * (the orphan tree is rooted at the DOCS CONTENTS, so the FS `<root>/.cq/logs`
+ * confinement root is the `logs/` subtree here — NO `.cq/` prefix; see the
+ * tree-layout note above). Points at {@link LEDGER_LOGS_DIRNAME} so the two stay
+ * in sync via a single constant.
  */
-const LOGS_TREE_PREFIX = "logs";
+const LOGS_TREE_PREFIX = LEDGER_LOGS_DIRNAME;
 
 /** Registry tree path (docs-relative). */
 const REGISTRY_PATH = "ledgers.yaml";
@@ -292,10 +294,10 @@ export class GitPersistence implements LedgerPersistence {
     if (path.isAbsolute(relPath)) {
       throw new LedgerError(`read_log: absolute paths are not allowed: ${relPath}`);
     }
-    // sessionLogs stores REPO-relative paths ("docs/logs/<file>"); strip a
-    // leading docs/logs/ so it is not doubled into logs/docs/logs/<file>. A path
+    // sessionLogs stores REPO-relative paths (".cq/logs/<file>"); strip a
+    // leading .cq/logs/ so it is not doubled into logs/.cq/logs/<file>. A path
     // already relative to logs ("<file>") is unaffected (mirrors FsLedgerStore).
-    const rel = relPath.replace(/^docs[/\\]logs[/\\]/, "");
+    const rel = relPath.replace(LEDGER_LOGS_STRIP_RE, "");
     // Resolve under a virtual `/<LOGS_TREE_PREFIX>` root and verify lexical
     // containment (defence-in-depth against `..` traversal), then derive the
     // tree path relative to the logs subtree. Using POSIX path semantics so the
@@ -303,7 +305,7 @@ export class GitPersistence implements LedgerPersistence {
     const virtualRoot = path.posix.join("/", LOGS_TREE_PREFIX);
     const resolved = path.posix.resolve(virtualRoot, rel.split(path.sep).join("/"));
     if (resolved !== virtualRoot && !resolved.startsWith(virtualRoot + "/")) {
-      throw new LedgerError(`read_log: path escapes docs/logs root: ${relPath}`);
+      throw new LedgerError(`read_log: path escapes .cq/logs root: ${relPath}`);
     }
     // Tree path is docs-relative: drop the leading slash of the virtual root.
     const treePath = resolved.slice(1);

@@ -33,6 +33,7 @@ import {
   REVIEWS_SCHEMA,
   type LedgerSchema,
   type LedgerStore,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 interface StoreFactory {
@@ -48,7 +49,7 @@ const fsFactory: StoreFactory = {
   async build(seed) {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-transitions-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, "docs");
+    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
     await writeFile(
       path.join(docsDir, "ledgers.yaml"),
@@ -279,7 +280,7 @@ describe("transitions survive a ledgers.yaml round-trip (FsLedgerStore restart)"
   it("restart neither diverges nor drops the guard", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-transitions-rt-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, "docs");
+    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
     await writeFile(
       path.join(docsDir, "ledgers.yaml"),

@@ -21,6 +21,7 @@ import {
   MILESTONES_LEDGER,
   MILESTONES_SCHEMA,
   MILESTONES_ACTIVE_GROUP_ID,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -36,7 +37,7 @@ afterAll(async () => {
 async function seedDir(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(tmpdir(), "fs-lost-update-"));
   dirs.push(dir);
-  const docsDir = path.join(dir, "docs");
+  const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
   await fs.mkdir(docsDir, { recursive: true });
   await fs.writeFile(
     path.join(docsDir, "ledgers.yaml"),

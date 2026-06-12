@@ -31,6 +31,7 @@ import {
   GoalPreconditionError,
   InvalidTransitionError,
   type LedgerStore,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 interface StoreFactory {
@@ -46,7 +47,7 @@ const fsFactory: StoreFactory = {
   async build() {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-goal-precond-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, "docs");
+    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
     await writeFile(
       path.join(docsDir, "ledgers.yaml"),

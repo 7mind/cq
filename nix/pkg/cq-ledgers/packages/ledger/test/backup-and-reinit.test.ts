@@ -14,6 +14,7 @@ import {
   CANONICAL_LEDGERS,
   MILESTONES_LEDGER,
   serializeRegistry,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -26,7 +27,7 @@ async function makeStore(
 ): Promise<{ store: FsLedgerStore; root: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-backup-"));
   dirs.push(root);
-  const docsDir = path.join(root, "docs");
+  const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   await mkdir(docsDir, { recursive: true });
   if (opts.seedRegistry) {
     // Write a minimal registry so the store can init().
@@ -51,7 +52,7 @@ describe("FsLedgerStore.backupAndReinit", () => {
   it("creates docs/.backup/<sanitized-ts>/ directory", async () => {
     const fixedTs = "2026-06-01T12:34:56.000Z";
     const { store, root } = await makeStore({ now: () => fixedTs });
-    const docsDir = path.join(root, "docs");
+    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
 
     await callBackupAndReinit(store);
@@ -69,7 +70,7 @@ describe("FsLedgerStore.backupAndReinit", () => {
     await callBackupAndReinit(store);
 
     const expectedDirName = fixedTs.replace(/:/g, "-");
-    const backupDir = path.join(root, "docs", ".backup", expectedDirName);
+    const backupDir = path.join(root, LEDGER_STORAGE_DIRNAME, ".backup", expectedDirName);
     const files = await readdir(backupDir);
     expect(files).toContain("ledgers.yaml");
   });
@@ -78,7 +79,7 @@ describe("FsLedgerStore.backupAndReinit", () => {
     const fixedTs = "2026-06-01T01:00:00.000Z";
     // No seedRegistry=true — docs/ has no files at all; all ENOENT.
     const { store, root } = await makeStore({ now: () => fixedTs });
-    const docsDir = path.join(root, "docs");
+    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
 
     // Must not throw despite no files to copy; returns the backup dir path.
@@ -96,7 +97,7 @@ describe("FsLedgerStore.backupAndReinit", () => {
 
     await callBackupAndReinit(store);
 
-    const registryText = await readFile(path.join(root, "docs", "ledgers.yaml"), "utf8");
+    const registryText = await readFile(path.join(root, LEDGER_STORAGE_DIRNAME, "ledgers.yaml"), "utf8");
     for (const c of CANONICAL_LEDGERS) {
       expect(registryText).toContain(c.name);
     }
@@ -105,7 +106,7 @@ describe("FsLedgerStore.backupAndReinit", () => {
   it("writes fresh milestones.md with bootstrap group and M-AMBIENT", async () => {
     const fixedTs = "2026-06-01T03:00:00.000Z";
     const { store, root } = await makeStore({ now: () => fixedTs });
-    const docsDir = path.join(root, "docs");
+    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
 
     await callBackupAndReinit(store);
@@ -119,7 +120,7 @@ describe("FsLedgerStore.backupAndReinit", () => {
   it("writes fresh canonical ledger files for all CANONICAL_LEDGERS entries", async () => {
     const fixedTs = "2026-06-01T04:00:00.000Z";
     const { store, root } = await makeStore({ now: () => fixedTs });
-    const docsDir = path.join(root, "docs");
+    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
 
     await callBackupAndReinit(store);
@@ -134,7 +135,7 @@ describe("FsLedgerStore.backupAndReinit", () => {
   it("emits a WARNING to stderr naming the backup path", async () => {
     const fixedTs = "2026-06-01T05:00:00.000Z";
     const { store, root } = await makeStore({ now: () => fixedTs });
-    const docsDir = path.join(root, "docs");
+    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
 
     const stderrChunks: string[] = [];

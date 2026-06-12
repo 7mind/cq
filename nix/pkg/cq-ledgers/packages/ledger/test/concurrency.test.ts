@@ -29,6 +29,7 @@ import {
   type LedgerSchema,
   MILESTONES_LEDGER,
   MILESTONES_SCHEMA,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -56,7 +57,7 @@ function isoTick(tick: number): string {
 async function setup(opts: { now?: () => string } = {}): Promise<FsLedgerStore> {
   const dir = await mkdtemp(path.join(tmpdir(), "ledger-conc-"));
   dirs.push(dir);
-  const docsDir = path.join(dir, "docs");
+  const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
   await mkdir(docsDir, { recursive: true });
   await writeFile(
     path.join(docsDir, "ledgers.yaml"),
@@ -90,7 +91,7 @@ describe("FsLedgerStore concurrency", () => {
     const text = await (async () => {
       for (const d of dirs) {
         try {
-          return await readFile(path.join(d, "docs", "xenos.md"), "utf8");
+          return await readFile(path.join(d, LEDGER_STORAGE_DIRNAME, "xenos.md"), "utf8");
         } catch {
           /* try next */
         }
@@ -148,7 +149,7 @@ describe("FsLedgerStore concurrency", () => {
 
     // The final on-disk state corresponds to the last serialised write.
     const text = await readFile(
-      path.join(dirs[dirs.length - 1] ?? "", "docs", "xenos.md"),
+      path.join(dirs[dirs.length - 1] ?? "", LEDGER_STORAGE_DIRNAME, "xenos.md"),
       "utf8",
     );
     const parsed = parseLedger(text, { schema });
@@ -233,7 +234,7 @@ describe("FsLedgerStore concurrency", () => {
   it("two FsLedgerStore instances on one cwd both complete concurrent writes with no lost write (LOCK-D01)", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-conc-xproc-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, "docs");
+    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
     await writeFile(
       path.join(docsDir, "ledgers.yaml"),
@@ -329,7 +330,7 @@ describe("FsLedgerStore concurrency", () => {
   it("two FsLedgerStore instances writing different ledgers on one cwd never throw LedgerBusyError (LOCK-D01)", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-conc-xproc2-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, "docs");
+    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
     await writeFile(
       path.join(docsDir, "ledgers.yaml"),
@@ -386,7 +387,7 @@ describe("FsLedgerStore concurrency", () => {
     // Build a store with two ledgers (plus the bootstrapped milestones).
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-conc-multi-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, "docs");
+    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
     await writeFile(
       path.join(docsDir, "ledgers.yaml"),

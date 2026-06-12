@@ -48,6 +48,7 @@ import {
   type LedgerSchema,
   type LedgerStore,
   type FieldValue,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -359,7 +360,7 @@ describe("bootstrap idempotence + divergence guard", () => {
     it(`divergence guard fires for a hand-edited ${name} schema`, async () => {
       const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-div-"));
       dirs.push(dir);
-      const docsDir = path.join(dir, "docs");
+      const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
       await mkdir(docsDir, { recursive: true });
       // Write a registry whose `name` entry has a DIVERGENT-but-VALID
       // schema (an extra status value — still a superset that passes
@@ -487,7 +488,7 @@ describe("fresh-cwd bootstrap shape", () => {
       CANONICAL_LEDGERS.map((c) => c.name).sort(),
     );
     await store.dispose();
-    const milestonesMd = await readFile(path.join(dir, "docs", "milestones.md"), "utf8");
+    const milestonesMd = await readFile(path.join(dir, LEDGER_STORAGE_DIRNAME, "milestones.md"), "utf8");
     expect(milestonesMd).toContain("\n## active\n");
     expect(milestonesMd).not.toContain("M0 —");
     expect(milestonesMd).toContain("### M-AMBIENT — open");
@@ -514,7 +515,7 @@ describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () =>
     const repoRegistry = path.resolve(import.meta.dir, "../../../docs/ledgers.yaml");
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-disk-"));
     dirs.push(dir);
-    const docsDir = path.join(dir, "docs");
+    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
     await copyFile(repoRegistry, path.join(docsDir, "ledgers.yaml"));
 
@@ -568,7 +569,7 @@ describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () =>
     {
       const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-stale-abort-"));
       dirs.push(dir);
-      const docsDir = path.join(dir, "docs");
+      const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
       await mkdir(docsDir, { recursive: true });
       await writeFile(path.join(docsDir, "ledgers.yaml"), staleText, "utf8");
       const store = new FsLedgerStore({ root: dir, onSchemaDivergence: "abort" });
@@ -580,7 +581,7 @@ describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () =>
     {
       const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-stale-reinit-"));
       dirs.push(dir);
-      const docsDir = path.join(dir, "docs");
+      const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
       await mkdir(docsDir, { recursive: true });
       await writeFile(path.join(docsDir, "ledgers.yaml"), staleText, "utf8");
       const store = new FsLedgerStore({ root: dir }); // default: 'backup-reinit'

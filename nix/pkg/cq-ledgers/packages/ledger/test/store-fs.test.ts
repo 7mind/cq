@@ -13,6 +13,7 @@ import {
   serializeRegistry,
   type LedgerSchema,
   type LedgerStore,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 import { runStoreAbstractSuite } from "./store-abstract.js";
 
@@ -21,7 +22,7 @@ const dirs: string[] = [];
 async function seedDir(seed: Array<{ name: string; schema: LedgerSchema }>): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "ledger-fs-"));
   dirs.push(dir);
-  const docsDir = path.join(dir, "docs");
+  const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
   await mkdir(docsDir, { recursive: true });
   await writeFile(
     path.join(docsDir, "ledgers.yaml"),

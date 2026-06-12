@@ -22,7 +22,7 @@ import {
   type DispatchIo,
 } from "../src/main.js";
 import { CQ_TOML_TEMPLATE } from "../src/cqTomlTemplate.js";
-import { FsLedgerStore, CANONICAL_LEDGERS, MILESTONES_AMBIENT_ID } from "@cq/ledger";
+import { FsLedgerStore, CANONICAL_LEDGERS, MILESTONES_AMBIENT_ID, LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
 
 const dirs: string[] = [];
 afterAll(async () => {
@@ -61,11 +61,11 @@ describe("cq init", () => {
     expect(outcome.exitCode).toBe(0);
 
     // docs/ledgers.yaml must exist
-    expect((await stat(path.join(root, "docs", "ledgers.yaml"))).isFile()).toBe(true);
+    expect((await stat(path.join(root, LEDGER_STORAGE_DIRNAME, "ledgers.yaml"))).isFile()).toBe(true);
 
     // Every canonical ledger file must exist
     for (const { name } of CANONICAL_LEDGERS) {
-      expect((await stat(path.join(root, "docs", `${name}.md`))).isFile()).toBe(true);
+      expect((await stat(path.join(root, LEDGER_STORAGE_DIRNAME, `${name}.md`))).isFile()).toBe(true);
     }
 
     // Some output was printed

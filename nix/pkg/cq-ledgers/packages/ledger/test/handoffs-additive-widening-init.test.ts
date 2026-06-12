@@ -33,6 +33,7 @@ import {
   FsLedgerStore,
   HANDOFFS_LEDGER,
   HANDOFFS_SCHEMA,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -52,7 +53,7 @@ const WIDENED_STATUS = "user-action-required";
 async function makeTmpRoot(): Promise<{ root: string; docsDir: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-ho-additive-"));
   dirs.push(root);
-  return { root, docsDir: path.join(root, "docs") };
+  return { root, docsDir: path.join(root, LEDGER_STORAGE_DIRNAME) };
 }
 
 /**

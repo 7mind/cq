@@ -121,7 +121,7 @@ describe("buildServer capability gating — git-object backend", () => {
         arguments: { path: "../tasks.md" },
       })) as { isError?: boolean; content?: Array<{ type: string; text?: string }> };
       expect(result.isError).toBe(true);
-      expect(textOf(result)).toContain("escapes docs/logs");
+      expect(textOf(result)).toContain("escapes .cq/logs");
     });
   });
 
@@ -133,7 +133,7 @@ describe("buildServer capability gating — git-object backend", () => {
       })) as { isError?: boolean; content?: Array<{ type: string; text?: string }> };
       expect(result.isError).toBe(true);
       const text = textOf(result);
-      expect(text).not.toContain("escapes docs/logs");
+      expect(text).not.toContain("escapes .cq/logs");
       expect(text).toContain("no such file");
     });
   });

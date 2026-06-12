@@ -17,6 +17,7 @@ import * as path from "node:path";
 import {
   FsLedgerStore,
   CANONICAL_LEDGERS,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 import type { LedgerSchema } from "../src/index.js";
 
@@ -56,7 +57,7 @@ describe("FsLedgerStore.reset with non-canonical ledger", () => {
     const beforeHits = await store.ftsSearch("ops-item-one");
     expect(beforeHits.length).toBeGreaterThan(0);
 
-    const opsFilePath = path.join(root, "docs", "ops.md");
+    const opsFilePath = path.join(root, LEDGER_STORAGE_DIRNAME, "ops.md");
     expect((await stat(opsFilePath)).isFile()).toBe(true);
 
     expect(store.enumerate()).toContain("ops");

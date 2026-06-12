@@ -36,6 +36,7 @@ import {
   MILESTONES_LEDGER,
   TASKS_LEDGER,
   serializeRegistry,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -112,7 +113,7 @@ async function makeFixture(opts: {
 }): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-backfill-nm-"));
   dirs.push(root);
-  const docsDir = path.join(root, "docs");
+  const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   const tasksArchiveDir = path.join(docsDir, "archive", TASKS_LEDGER);
   const msArchiveDir = path.join(docsDir, "archive", MILESTONES_LEDGER);
   await mkdir(docsDir, { recursive: true });
@@ -237,7 +238,7 @@ describe("FsLedgerStore.init — legacy ArchivePointer backfill for NON-mileston
     // Write a tasks.md that already has title+status on the pointer.
     const root = await mkdtemp(path.join(tmpdir(), "ledger-backfill-nm-populated-"));
     dirs.push(root);
-    const docsDir = path.join(root, "docs");
+    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     const tasksArchiveDir = path.join(docsDir, "archive", TASKS_LEDGER);
     const msArchiveDir = path.join(docsDir, "archive", MILESTONES_LEDGER);
     await mkdir(docsDir, { recursive: true });

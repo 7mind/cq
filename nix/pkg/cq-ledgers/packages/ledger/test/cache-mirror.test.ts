@@ -27,6 +27,7 @@ import {
   FsLedgerStore,
   cacheMirrorDir,
   DEFECTS_LEDGER,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -98,8 +99,8 @@ describe("FsLedgerStore — cache mirror on mutation", () => {
     expect(path.basename(mirrorDir)).toBe(expectedName);
     expect(/^.+-[0-9a-f]{12}$/.test(path.basename(mirrorDir))).toBe(true);
 
-    const repoFile = path.join(root, "docs", `${DEFECTS_LEDGER}.md`);
-    const mirrorFile = path.join(mirrorDir, "docs", `${DEFECTS_LEDGER}.md`);
+    const repoFile = path.join(root, LEDGER_STORAGE_DIRNAME, `${DEFECTS_LEDGER}.md`);
+    const mirrorFile = path.join(mirrorDir, LEDGER_STORAGE_DIRNAME, `${DEFECTS_LEDGER}.md`);
     expect(await readFile(mirrorFile)).toEqual(await readFile(repoFile));
   });
 
@@ -122,12 +123,12 @@ describe("FsLedgerStore — cache mirror on mutation", () => {
 
     const mirrorDir = expectedMirrorDir(xdg, root);
     // The defects-group archive file appears under the mirror.
-    const repoArchive = path.join(root, "docs", "archive", DEFECTS_LEDGER, `${m.id}.md`);
-    const mirrorArchive = path.join(mirrorDir, "docs", "archive", DEFECTS_LEDGER, `${m.id}.md`);
+    const repoArchive = path.join(root, LEDGER_STORAGE_DIRNAME, "archive", DEFECTS_LEDGER, `${m.id}.md`);
+    const mirrorArchive = path.join(mirrorDir, LEDGER_STORAGE_DIRNAME, "archive", DEFECTS_LEDGER, `${m.id}.md`);
     expect(await readFile(mirrorArchive)).toEqual(await readFile(repoArchive));
     // The registry (rewritten on archive) is re-mirrored.
-    const repoRegistry = path.join(root, "docs", "ledgers.yaml");
-    const mirrorRegistry = path.join(mirrorDir, "docs", "ledgers.yaml");
+    const repoRegistry = path.join(root, LEDGER_STORAGE_DIRNAME, "ledgers.yaml");
+    const mirrorRegistry = path.join(mirrorDir, LEDGER_STORAGE_DIRNAME, "ledgers.yaml");
     expect(await readFile(mirrorRegistry)).toEqual(await readFile(repoRegistry));
   });
 
@@ -146,8 +147,8 @@ describe("FsLedgerStore — cache mirror on mutation", () => {
     await store.dispose();
 
     const mirrorDir = expectedMirrorDir(xdg, root);
-    const repoRegistry = path.join(root, "docs", "ledgers.yaml");
-    const mirrorRegistry = path.join(mirrorDir, "docs", "ledgers.yaml");
+    const repoRegistry = path.join(root, LEDGER_STORAGE_DIRNAME, "ledgers.yaml");
+    const mirrorRegistry = path.join(mirrorDir, LEDGER_STORAGE_DIRNAME, "ledgers.yaml");
     expect(await readFile(mirrorRegistry)).toEqual(await readFile(repoRegistry));
   });
 
@@ -174,7 +175,7 @@ describe("FsLedgerStore — cache mirror on mutation", () => {
     expect(it.fields["headline"]).toBe("survives");
     const onDisk = store.fetchItem(DEFECTS_LEDGER, it.id);
     expect(onDisk.fields["headline"]).toBe("survives");
-    const repoFile = path.join(root, "docs", `${DEFECTS_LEDGER}.md`);
+    const repoFile = path.join(root, LEDGER_STORAGE_DIRNAME, `${DEFECTS_LEDGER}.md`);
     expect((await readFile(repoFile, "utf8")).includes("survives")).toBe(true);
 
     // dispose() drains the failed mirror without throwing (error swallowed).
@@ -196,7 +197,7 @@ describe("FsLedgerStore — cache mirror on mutation", () => {
     await store.dispose();
 
     const mirrorDir = expectedMirrorDir(xdg, root);
-    const docsMirror = path.join(mirrorDir, "docs");
+    const docsMirror = path.join(mirrorDir, LEDGER_STORAGE_DIRNAME);
     const names = await readdir(docsMirror);
     // The final file landed via rename; no temp artifacts remain.
     expect(names.some((n) => n.includes(".tmp-"))).toBe(false);

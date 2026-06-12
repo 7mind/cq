@@ -14,7 +14,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { LedgerStore } from "@cq/ledger";
+import { LEDGER_STORAGE_DIRNAME, type LedgerStore } from "@cq/ledger";
 
 const DEBOUNCE_MS = 150;
 
@@ -33,7 +33,7 @@ export function startLedgerWatcher(
   root: string,
   onChange?: (ledgerId: string | null) => void,
 ): LedgerWatcher {
-  const docsDir = path.join(root, "docs");
+  const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   const pending = new Map<string, ReturnType<typeof setTimeout>>();
   let watcher: fs.FSWatcher | null = null;
 

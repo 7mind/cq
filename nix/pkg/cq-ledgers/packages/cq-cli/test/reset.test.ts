@@ -21,7 +21,7 @@ import { describe, it, expect, afterAll } from "bun:test";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { FsLedgerStore, type LedgerSchema } from "@cq/ledger";
+import { FsLedgerStore, LEDGER_STORAGE_DIRNAME, type LedgerSchema } from "@cq/ledger";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
 
 const dirs: string[] = [];
@@ -80,8 +80,8 @@ describe("cq reset", () => {
 
     expect(outcome.exitCode).toBe(0);
 
-    // Backup dir created under docs/.backup/<ts>/.
-    const backupParent = path.join(root, "docs", ".backup");
+    // Backup dir created under .cq/.backup/<ts>/.
+    const backupParent = path.join(root, LEDGER_STORAGE_DIRNAME, ".backup");
     const summaryLine = io.outs.find((l) => l.startsWith("  backup: "));
     expect(summaryLine).toBeDefined();
     const backupDir = summaryLine!.slice("  backup: ".length);
@@ -104,7 +104,7 @@ describe("cq reset", () => {
     expect(io.errs.join("\n")).toContain("--yes");
 
     // No backup written, no wipe: the seeded ops ledger survives.
-    await expect(fs.stat(path.join(root, "docs", ".backup"))).rejects.toThrow();
+    await expect(fs.stat(path.join(root, LEDGER_STORAGE_DIRNAME, ".backup"))).rejects.toThrow();
     expect(await hasOpsLedger(root)).toBe(true);
   });
 

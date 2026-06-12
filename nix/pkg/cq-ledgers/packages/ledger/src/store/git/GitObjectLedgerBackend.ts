@@ -33,6 +33,7 @@ import { AbstractLedgerStore } from "../AbstractLedgerStore.js";
 import { GitPlumbing } from "./GitPlumbing.js";
 import { GitPersistence } from "./GitPersistence.js";
 import type { ReadLogResult } from "../../mcp/readLog.js";
+import { LEDGER_STORAGE_DIRNAME } from "../../constants.js";
 
 /** Default orphan branch the ledger tree lives on (short name, no `refs/`). */
 const DEFAULT_BRANCH = "cq-ledger";
@@ -102,7 +103,7 @@ export class GitObjectLedgerBackend
       onSchemaDivergence: opts.onSchemaDivergence ?? "backup-reinit",
     });
     this.repoRoot = repoRoot;
-    this.locksDir = path.join(repoRoot, "docs", ".locks");
+    this.locksDir = path.join(repoRoot, LEDGER_STORAGE_DIRNAME, ".locks");
     this.gitPersistence = persistence;
   }
 

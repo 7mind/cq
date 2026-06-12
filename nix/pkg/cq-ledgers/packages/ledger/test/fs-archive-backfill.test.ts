@@ -31,6 +31,7 @@ import {
   CANONICAL_LEDGERS,
   MILESTONES_LEDGER,
   serializeRegistry,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -85,7 +86,7 @@ async function makeFixtureRoot(opts: {
 }): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-backfill-"));
   dirs.push(root);
-  const docsDir = path.join(root, "docs");
+  const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   const msArchiveDir = path.join(docsDir, "archive", MILESTONES_LEDGER);
   await mkdir(docsDir, { recursive: true });
   await mkdir(msArchiveDir, { recursive: true });
@@ -169,7 +170,7 @@ describe("FsLedgerStore.init — legacy ArchivePointer backfill (D12 / T109)", (
     // must not re-read the archive file for those pointers (idempotency).
     const root = await mkdtemp(path.join(tmpdir(), "ledger-backfill-existing-"));
     dirs.push(root);
-    const docsDir = path.join(root, "docs");
+    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     const msArchiveDir = path.join(docsDir, "archive", MILESTONES_LEDGER);
     await mkdir(docsDir, { recursive: true });
     await mkdir(msArchiveDir, { recursive: true });

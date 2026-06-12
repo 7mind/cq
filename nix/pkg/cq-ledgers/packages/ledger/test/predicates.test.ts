@@ -37,6 +37,7 @@ import {
   derivePredicates,
   CANONICAL_LEDGERS,
   type LedgerStore,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 // The canonical ledgers (defects/tasks/questions/goals/milestones) are
@@ -58,7 +59,7 @@ const fsFactory: PredicatesStoreFactory = {
   async build(): Promise<LedgerStore> {
     const dir = await mkdtemp(path.join(tmpdir(), "ledger-predicates-"));
     fsDirs.push(dir);
-    const docsDir = path.join(dir, "docs");
+    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
     await mkdir(docsDir, { recursive: true });
     await writeFile(
       path.join(docsDir, "ledgers.yaml"),

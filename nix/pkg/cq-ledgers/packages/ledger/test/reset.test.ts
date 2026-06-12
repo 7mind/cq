@@ -17,6 +17,7 @@ import {
   CANONICAL_LEDGERS,
   DEFECTS_LEDGER,
   TASKS_LEDGER,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -66,7 +67,7 @@ describe("FsLedgerStore.reset", () => {
 
     // (a) docs/.backup/<ts>/ exists and contains the prior registry + ledger files.
     const expectedDirName = fixedTs.replace(/:/g, "-");
-    const expectedBackupDir = path.join(root, "docs", ".backup", expectedDirName);
+    const expectedBackupDir = path.join(root, LEDGER_STORAGE_DIRNAME, ".backup", expectedDirName);
     expect(summary.backupDir).toBe(expectedBackupDir);
     expect((await stat(expectedBackupDir)).isDirectory()).toBe(true);
     const backedUp = await readdir(expectedBackupDir);

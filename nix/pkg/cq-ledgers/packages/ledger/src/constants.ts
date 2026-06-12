@@ -443,6 +443,51 @@ export const CANONICAL_LEDGERS: ReadonlyArray<{ name: string; schema: LedgerSche
   { name: IDEAS_LEDGER, schema: IDEAS_SCHEMA },
 ];
 
+// ---------------------------------------------------------------------------
+// Storage-path constants. A SINGLE source of truth for every path the store
+// derives under the server --cwd (or repo root). Consumers MUST import these;
+// they MUST NOT re-hardcode the base dir name or any derived segment.
+// ---------------------------------------------------------------------------
+
+/**
+ * The storage base directory name under the server `--cwd` (or repo root).
+ * Every store artefact lives under `<root>/<LEDGER_STORAGE_DIRNAME>/`.
+ */
+export const LEDGER_STORAGE_DIRNAME = ".cq" as const;
+
+/**
+ * The logs sub-directory name within the storage base. This is the same
+ * logical segment as the git-object backend's `LOGS_TREE_PREFIX` (the orphan
+ * tree is rooted at the docs contents, so its `logs/` subtree mirrors
+ * `<root>/.cq/logs/` on the filesystem — keep them in sync via this constant).
+ */
+export const LEDGER_LOGS_DIRNAME = "logs" as const;
+
+/**
+ * Repo-relative prefix for session-log and raw-log paths stored in ledger
+ * fields (`sessionLogs`, `rawLogs`). Derived from the two constants above so
+ * any rename propagates automatically.
+ *
+ * Examples:
+ *   `sessionLogs: [".cq/logs/20260601-abc.md"]`
+ *   `rawLogs:     [".cq/logs/raw/20260601-abc.jsonl"]`
+ */
+export const LEDGER_LOGS_RELATIVE_PREFIX =
+  `${LEDGER_STORAGE_DIRNAME}/${LEDGER_LOGS_DIRNAME}` as const;
+
+/**
+ * RegExp that strips the leading `LEDGER_LOGS_RELATIVE_PREFIX` (and optional
+ * trailing separator) from a repo-relative path, yielding the path relative
+ * to the logs directory. Matches both forward-slash and backslash separators
+ * so it works on Windows as well. Derived from the two constants above — do
+ * NOT duplicate this pattern elsewhere.
+ *
+ * Usage: `relPath.replace(LEDGER_LOGS_STRIP_RE, "")`
+ */
+export const LEDGER_LOGS_STRIP_RE = new RegExp(
+  `^${LEDGER_STORAGE_DIRNAME.replace(".", "\\.")}[/\\\\]${LEDGER_LOGS_DIRNAME}[/\\\\]`,
+);
+
 /**
  * Regex matching the ISO-8601 form that `Date.prototype.toISOString()`
  * emits — always UTC ("Z"), always millisecond precision. The store's

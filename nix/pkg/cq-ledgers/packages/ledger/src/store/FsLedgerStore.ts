@@ -35,7 +35,7 @@ import { promises as fs } from "node:fs";
 import { LedgerError } from "../types.js";
 import { Lockfile, type LockfileOpts } from "./lockfile.js";
 import { mirrorMutation } from "./cacheMirror.js";
-import { CANONICAL_LEDGERS } from "../constants.js";
+import { CANONICAL_LEDGERS, LEDGER_STORAGE_DIRNAME, LEDGER_LOGS_STRIP_RE } from "../constants.js";
 import { AbstractLedgerStore, activeItemsOf } from "./AbstractLedgerStore.js";
 import { FsPersistence } from "./FsPersistence.js";
 
@@ -105,7 +105,7 @@ export class FsLedgerStore
 
   constructor(opts: FsLedgerStoreOpts) {
     const root = opts.root;
-    const docsDir = path.join(root, "docs");
+    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     const archiveDir = path.join(docsDir, "archive");
     const registryPath = path.join(docsDir, "ledgers.yaml");
     const now = opts.now ?? (() => new Date().toISOString());
@@ -270,12 +270,12 @@ export class FsLedgerStore
     if (path.isAbsolute(relPath)) {
       throw new LedgerError(`read_log: absolute paths are not allowed: ${relPath}`);
     }
-    // sessionLogs stores REPO-relative paths ("docs/logs/<file>"), but this
-    // method resolves against logsDir (= <root>/docs/logs). Strip a leading
-    // docs/logs/ so a repo-relative path is not doubled into
-    // <root>/docs/logs/docs/logs/<file>. A path already relative to docs/logs
+    // sessionLogs stores REPO-relative paths (".cq/logs/<file>"), but this
+    // method resolves against logsDir (= <root>/.cq/logs). Strip a leading
+    // .cq/logs/ so a repo-relative path is not doubled into
+    // <root>/.cq/logs/.cq/logs/<file>. A path already relative to .cq/logs
     // ("<file>") is unaffected. Containment is still enforced below.
-    const rel = relPath.replace(/^docs[/\\]logs[/\\]/, "");
+    const rel = relPath.replace(LEDGER_LOGS_STRIP_RE, "");
     // Normalise the requested relative path, then resolve under logsDir and
     // verify containment (defence-in-depth against `..` traversal).
     const resolved = path.resolve(this.logsDir, rel);
@@ -284,7 +284,7 @@ export class FsLedgerStore
       !resolved.startsWith(this.logsDir + path.sep)
     ) {
       throw new LedgerError(
-        `read_log: path escapes docs/logs root: ${relPath}`,
+        `read_log: path escapes .cq/logs root: ${relPath}`,
       );
     }
 
@@ -315,7 +315,7 @@ export class FsLedgerStore
       }
       if (real !== realLogsDir && !real.startsWith(realLogsDir + path.sep)) {
         throw new LedgerError(
-          `read_log: path escapes docs/logs root: ${relPath}`,
+          `read_log: path escapes .cq/logs root: ${relPath}`,
         );
       }
     } catch (err: unknown) {

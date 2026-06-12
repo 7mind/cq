@@ -331,13 +331,13 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     await store.dispose();
   });
 
-  it("accepts a repo-relative docs/logs/ path without doubling the prefix", async () => {
+  it("accepts a repo-relative .cq/logs/ path without doubling the prefix", async () => {
     const dir = await seedRepo();
     const store = new GitObjectLedgerBackend({ repoRoot: dir });
     await store.init();
     await seedLog(dir, "session.md", "hello log\n");
 
-    const res = await store.readLog("docs/logs/session.md");
+    const res = await store.readLog(".cq/logs/session.md");
     expect(res.content).toBe("hello log\n");
     await store.dispose();
   });
@@ -346,7 +346,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     const dir = await seedRepo();
     const store = new GitObjectLedgerBackend({ repoRoot: dir });
     await store.init();
-    await expect(store.readLog("../tasks.md")).rejects.toThrow(/escapes docs\/logs/);
+    await expect(store.readLog("../tasks.md")).rejects.toThrow(/escapes \.cq\/logs/);
     await store.dispose();
   });
 
@@ -384,7 +384,7 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
       threw = true;
       const msg = e instanceof Error ? e.message : String(e);
       // Must NOT be a false "escape" error — a clean not-found.
-      expect(msg.includes("escapes docs/logs")).toBe(false);
+      expect(msg.includes("escapes .cq/logs")).toBe(false);
       expect(msg.includes("no such file") || msg.includes("ENOENT")).toBe(true);
     }
     expect(threw).toBe(true);

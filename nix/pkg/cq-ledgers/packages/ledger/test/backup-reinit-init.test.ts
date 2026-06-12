@@ -25,6 +25,7 @@ import {
   MILESTONES_AMBIENT_ID,
   BootstrapViolationError,
   serializeRegistry,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -45,7 +46,7 @@ afterAll(async () => {
 async function makeTmpDir(): Promise<{ root: string; docsDir: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-bri-"));
   dirs.push(root);
-  const docsDir = path.join(root, "docs");
+  const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   await mkdir(docsDir, { recursive: true });
   return { root, docsDir };
 }
@@ -200,7 +201,7 @@ describe("FsLedgerStore.init() divergence → backup+reinit (default)", () => {
 
   it("in-memory goals ledger has canonical schema statusValues", async () => {
     const { root } = await makeTmpDir();
-    const docsDir = path.join(root, "docs");
+    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
     await writeFile(path.join(docsDir, "ledgers.yaml"), divergentRegistryYaml(GOALS_LEDGER), "utf8");
     await writeFile(path.join(docsDir, `${GOALS_LEDGER}.md`), PRIOR_GOALS_MD, "utf8");
     const store = new FsLedgerStore({ root, now: () => FIXED_TS });

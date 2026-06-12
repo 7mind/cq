@@ -35,6 +35,7 @@ import {
   schemasEqual,
   GOALS_SCHEMA,
   type LedgerSchema,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -80,7 +81,7 @@ async function seedPreRawLogsStore(): Promise<{
 }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-added-opt-"));
   dirs.push(root);
-  const docsDir = path.join(root, "docs");
+  const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   await mkdir(docsDir, { recursive: true });
 
   const seedStore = new FsLedgerStore({ root });

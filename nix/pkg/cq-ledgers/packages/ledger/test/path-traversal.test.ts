@@ -25,6 +25,7 @@ import {
   type LedgerSchema,
   MILESTONES_LEDGER,
   MILESTONES_SCHEMA,
+  LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
 
 const dirs: string[] = [];
@@ -43,7 +44,7 @@ const schema: LedgerSchema = {
 async function setupFs(): Promise<{ store: FsLedgerStore; root: string }> {
   const root = await mkdtemp(path.join(tmpdir(), "ledger-trav-"));
   dirs.push(root);
-  const docsDir = path.join(root, "docs");
+  const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
   await mkdir(docsDir, { recursive: true });
   await writeFile(
     path.join(docsDir, "ledgers.yaml"),
@@ -147,10 +148,10 @@ describe("D-LED-01 — FsLedgerStore defense-in-depth", () => {
     ).rejects.toThrow(LedgerError);
 
     const escaped = path.resolve(
-      path.join(root, "docs", "archive", "xenos"),
+      path.join(root, LEDGER_STORAGE_DIRNAME, "archive", "xenos"),
       `${forgedId}.md`,
     );
-    expect(escaped.startsWith(path.join(root, "docs") + path.sep)).toBe(false);
+    expect(escaped.startsWith(path.join(root, LEDGER_STORAGE_DIRNAME) + path.sep)).toBe(false);
     await expect(stat(escaped)).rejects.toBeDefined();
   });
 
