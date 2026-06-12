@@ -94,7 +94,7 @@ export class GitObjectLedgerBackend
     const now = opts.now ?? (() => new Date().toISOString());
     const git =
       opts.git ?? GitPlumbing.withCwd(repoRoot, path.join(repoRoot, ".git"));
-    const persistence = new GitPersistence({ git, ref, now });
+    const persistence = new GitPersistence({ git, ref, now, repoRoot });
     super({
       persistence,
       lockfile: new Lockfile(opts.lockfile ?? {}),

@@ -50,11 +50,16 @@
  */
 
 import * as path from "node:path";
+import { promises as fs } from "node:fs";
 import type { LedgerPersistence } from "../LedgerPersistence.js";
 import type { GitPlumbing, TreeEntry } from "./GitPlumbing.js";
 import { LedgerError } from "../../types.js";
 import { MAX_READ_LOG_BYTES, type ReadLogResult } from "../../mcp/readLog.js";
-import { LEDGER_LOGS_DIRNAME, LEDGER_LOGS_STRIP_RE } from "../../constants.js";
+import {
+  LEDGER_LOGS_DIRNAME,
+  LEDGER_LOGS_RELATIVE_PREFIX,
+  LEDGER_LOGS_STRIP_RE,
+} from "../../constants.js";
 
 /** Regular-file git mode for a ledger blob. */
 const BLOB_MODE = "100644";
@@ -97,11 +102,24 @@ export class GitPersistence implements LedgerPersistence {
   private readonly git: GitPlumbing;
   private readonly ref: string;
   private readonly now: () => string;
+  /**
+   * The repo root on the REAL filesystem (the backend's checkout), injected so
+   * {@link readLog} can fall back to the working-tree logs dir
+   * (`<repoRoot>/<LEDGER_LOGS_RELATIVE_PREFIX>`) when a log is present on disk
+   * but absent from the orphan ref (D69).
+   */
+  private readonly repoRoot: string;
 
-  constructor(opts: { git: GitPlumbing; ref: string; now: () => string }) {
+  constructor(opts: {
+    git: GitPlumbing;
+    ref: string;
+    now: () => string;
+    repoRoot: string;
+  }) {
     this.git = opts.git;
     this.ref = opts.ref;
     this.now = opts.now;
+    this.repoRoot = opts.repoRoot;
   }
 
   /** Tree path for ledger `name`. */
@@ -287,8 +305,11 @@ export class GitPersistence implements LedgerPersistence {
    *  - oversized content is truncated to the byte cap and flagged
    *    `truncated: true`.
    *
-   * There is no filesystem here, so the FS-only realpath/symlink TOCTOU defences
-   * (D26/D28) do not apply — confinement is purely lexical against the tree path.
+   * Confinement against the orphan TREE is purely lexical. When the ref does not
+   * carry the path, a WORKING-TREE fallback (D69) reads from
+   * `<repoRoot>/<LEDGER_LOGS_RELATIVE_PREFIX>`; that path traverses the real
+   * filesystem, so it re-applies the FS realpath/symlink TOCTOU defences
+   * (D26/D28) before reading — see {@link readWorkingTreeLog}.
    */
   async readLog(relPath: string): Promise<ReadLogResult> {
     if (path.isAbsolute(relPath)) {
@@ -314,11 +335,13 @@ export class GitPersistence implements LedgerPersistence {
     const sha = await this.refSha();
     const names = sha === null ? [] : await this.git.lsTree(this.ref);
     if (!names.includes(treePath)) {
-      // Clean not-found mirroring the FS capability's ENOENT surface: a missing
-      // log is an error, not an empty result.
-      throw new LedgerError(
-        `read_log: no such file: ${relPath} (ENOENT, ref ${this.ref})`,
-      );
+      // FALLBACK (D69): the orphan ref does NOT carry this log, but it may exist
+      // in the working-tree logs dir (`cq log put` to the FS backend, or a log
+      // not yet committed to the orphan ref). Serve it from disk with the SAME
+      // realpath/symlink containment defence FsLedgerStore.readLog applies
+      // (D26/D28 TOCTOU). `rel` is already stripped of the LEDGER_LOGS prefix;
+      // the FS logs root is `<repoRoot>/<LEDGER_LOGS_RELATIVE_PREFIX>`.
+      return this.readWorkingTreeLog(relPath, rel);
     }
     const content = await this.git.catFile(this.ref, treePath);
     // Cap on BYTE length (mirrors FsLedgerStore: it reads bytes and slices the
@@ -333,6 +356,81 @@ export class GitPersistence implements LedgerPersistence {
       };
     }
     return { path: relPath, content };
+  }
+
+  /**
+   * Working-tree fallback for {@link readLog} (D69): read a log that is present
+   * on the real filesystem under `<repoRoot>/<LEDGER_LOGS_RELATIVE_PREFIX>` but
+   * ABSENT from the orphan ref. Mirrors {@link FsLedgerStore.readLog}'s
+   * containment + realpath/symlink (D26/D28 TOCTOU) defences and the
+   * {@link MAX_READ_LOG_BYTES} byte cap. `strippedRel` is the path already
+   * stripped of the LEDGER_LOGS prefix (the suffix under the logs root);
+   * `relPath` is the ORIGINAL request, returned unchanged as the result `path`.
+   * A genuinely missing file surfaces the standard ref-absent ENOENT error so
+   * the not-found contract is unchanged when BOTH ref and disk lack the log.
+   */
+  private async readWorkingTreeLog(
+    relPath: string,
+    strippedRel: string,
+  ): Promise<ReadLogResult> {
+    const logsRoot = path.resolve(this.repoRoot, LEDGER_LOGS_RELATIVE_PREFIX);
+    // Lexical containment (defence-in-depth against `..` traversal) BEFORE any
+    // filesystem access.
+    const resolved = path.resolve(logsRoot, strippedRel);
+    if (resolved !== logsRoot && !resolved.startsWith(logsRoot + path.sep)) {
+      throw new LedgerError(`read_log: path escapes .cq/logs root: ${relPath}`);
+    }
+
+    // Re-assert containment after symlink resolution (D26/D28): a symlink whose
+    // lexical path is inside logsRoot may point outside it. Resolve BOTH sides
+    // so a symlinked parent of the root does not cause a false escape. Hoist
+    // `real` so the subsequent readFile uses the validated canonical path,
+    // closing the check-then-use TOCTOU (D28).
+    let real: string | undefined;
+    try {
+      real = await fs.realpath(resolved);
+      let realLogsRoot: string;
+      try {
+        realLogsRoot = await fs.realpath(logsRoot);
+      } catch {
+        realLogsRoot = logsRoot;
+      }
+      if (real !== realLogsRoot && !real.startsWith(realLogsRoot + path.sep)) {
+        throw new LedgerError(
+          `read_log: path escapes .cq/logs root: ${relPath}`,
+        );
+      }
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") throw err;
+      // ENOENT during realpath — the file is absent on disk too. Surface the
+      // standard ref-absent not-found so the contract is unchanged when BOTH
+      // the orphan ref and the working tree lack the log.
+      throw new LedgerError(
+        `read_log: no such file: ${relPath} (ENOENT, ref ${this.ref})`,
+      );
+    }
+
+    let buf: Buffer;
+    try {
+      buf = await fs.readFile(real ?? resolved);
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        throw new LedgerError(
+          `read_log: no such file: ${relPath} (ENOENT, ref ${this.ref})`,
+        );
+      }
+      throw err;
+    }
+    if (buf.byteLength > MAX_READ_LOG_BYTES) {
+      return {
+        path: relPath,
+        content: buf.subarray(0, MAX_READ_LOG_BYTES).toString("utf8"),
+        truncated: true,
+      };
+    }
+    return { path: relPath, content: buf.toString("utf8") };
   }
 }
 

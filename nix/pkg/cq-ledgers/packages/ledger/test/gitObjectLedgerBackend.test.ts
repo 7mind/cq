@@ -28,6 +28,7 @@ import {
   GitPlumbing,
   serializeRegistry,
   MAX_READ_LOG_BYTES,
+  LEDGER_LOGS_RELATIVE_PREFIX,
   type LedgerSchema,
   type LedgerStore,
 } from "../src/index.js";
@@ -391,13 +392,13 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     await store.dispose();
   });
 
-  // D69 reproduction: readLog must fall back to the working-tree logs dir when a
-  // log file is present there but ABSENT from the orphan ref. Today it throws the
+  // D69 fix: readLog falls back to the working-tree logs dir when a log file is
+  // present there but ABSENT from the orphan ref. Before the fix this threw the
   // ref-absent ENOENT ("read_log: no such file … (ENOENT, ref …)") even though
-  // the file exists in <repoRoot>/docs/logs/. Marked test.failing so the suite
-  // stays green and flips to passing when the fallback fix lands.
-  test.failing(
-    "D69 repro: readLog throws ref-absent ENOENT for a working-tree-only log (file on disk, absent from orphan ref)",
+  // the file exists in <repoRoot>/<LEDGER_LOGS_RELATIVE_PREFIX>/. Now PASSES via
+  // the working-tree fallback.
+  test(
+    "D69 fix: readLog serves a working-tree-only log (file on disk under LEDGER_LOGS_RELATIVE_PREFIX, absent from orphan ref)",
     async () => {
       const dir = await seedRepo();
       const store = new GitObjectLedgerBackend({ repoRoot: dir });
@@ -405,7 +406,9 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
 
       // Write the log file DIRECTLY into the working-tree logs dir — NOT via
       // seedLog, so it never lands in the orphan ref (the defect precondition).
-      const logsDir = path.join(dir, "docs", "logs");
+      // The dir is built from LEDGER_LOGS_RELATIVE_PREFIX (NOT a hardcoded
+      // literal) so it stays in sync with the production constant.
+      const logsDir = path.join(dir, LEDGER_LOGS_RELATIVE_PREFIX);
       await fs.mkdir(logsDir, { recursive: true });
       const filename = "wt-only.jsonl";
       await fs.writeFile(path.join(logsDir, filename), '{"wt":true}\n', "utf8");
@@ -419,19 +422,74 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
       const logTreePath = `logs/${filename}`;
       expect(treePaths.split("\n").includes(logTreePath)).toBe(false);
 
-      // readLog should return the working-tree content (post-fix). Today (D69) it
-      // throws the ref-absent LedgerError; this test.failing captures that exact
-      // failure. The assertion below is what the fixed behaviour must satisfy:
+      // readLog returns the working-tree content via the fallback.
       const res = await store.readLog(filename);
       expect(res.path).toBe(filename);
       expect(res.content).toBe('{"wt":true}\n');
       expect(res.truncated).toBeUndefined();
 
-      // Also confirm the repo-relative path form works after the fix.
-      const res2 = await store.readLog(`docs/logs/${filename}`);
+      // The repo-relative path form (LEDGER_LOGS_RELATIVE_PREFIX/<file>) also
+      // resolves to the same working-tree file; result `path` is the ORIGINAL
+      // request, unchanged.
+      const relForm = `${LEDGER_LOGS_RELATIVE_PREFIX}/${filename}`;
+      const res2 = await store.readLog(relForm);
+      expect(res2.path).toBe(relForm);
       expect(res2.content).toBe('{"wt":true}\n');
 
       await store.dispose();
     },
   );
+
+  it("rejects a working-tree-fallback path escaping the logs root (../../escape)", async () => {
+    const dir = await seedRepo();
+    const store = new GitObjectLedgerBackend({ repoRoot: dir });
+    await store.init();
+
+    // A secret file OUTSIDE the logs root, in the repo root.
+    await fs.writeFile(path.join(dir, "secret.txt"), "TOP SECRET\n", "utf8");
+
+    // The traversal target is absent from the orphan ref, so readLog enters the
+    // working-tree fallback; lexical containment must reject the escape rather
+    // than read `<repoRoot>/secret.txt`.
+    await expect(store.readLog("../../secret.txt")).rejects.toThrow(
+      /escapes \.cq\/logs/,
+    );
+    await store.dispose();
+  });
+
+  it("rejects a working-tree-fallback symlink that escapes the logs root (D26/D28)", async () => {
+    const dir = await seedRepo();
+    const store = new GitObjectLedgerBackend({ repoRoot: dir });
+    await store.init();
+
+    // A secret file outside the logs root.
+    await fs.writeFile(path.join(dir, "outside.txt"), "OUTSIDE\n", "utf8");
+
+    // A symlink INSIDE the logs root whose lexical path is contained but whose
+    // realpath points outside it. The realpath/symlink defence must reject it.
+    const logsDir = path.join(dir, LEDGER_LOGS_RELATIVE_PREFIX);
+    await fs.mkdir(logsDir, { recursive: true });
+    await fs.symlink(path.join(dir, "outside.txt"), path.join(logsDir, "link.log"));
+
+    await expect(store.readLog("link.log")).rejects.toThrow(/escapes \.cq\/logs/);
+    await store.dispose();
+  });
+
+  it("truncates an oversize working-tree-fallback log and sets truncated:true", async () => {
+    const dir = await seedRepo();
+    const store = new GitObjectLedgerBackend({ repoRoot: dir });
+    await store.init();
+
+    const logsDir = path.join(dir, LEDGER_LOGS_RELATIVE_PREFIX);
+    await fs.mkdir(logsDir, { recursive: true });
+    const big = "x".repeat(MAX_READ_LOG_BYTES + 1024);
+    await fs.writeFile(path.join(logsDir, "wt-big.log"), big, "utf8");
+
+    // Absent from the orphan ref → served via the working-tree fallback,
+    // truncated to the byte cap.
+    const res = await store.readLog("wt-big.log");
+    expect(res.truncated).toBe(true);
+    expect(res.content.length).toBe(MAX_READ_LOG_BYTES);
+    await store.dispose();
+  });
 });
