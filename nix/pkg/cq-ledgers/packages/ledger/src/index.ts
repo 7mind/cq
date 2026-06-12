@@ -69,6 +69,7 @@ export {
   ensureGitBackendGitignore,
   removeGitBackendGitignore,
   GIT_BACKEND_GITIGNORE_MARKER,
+  GIT_BACKEND_GITIGNORE_END_MARKER,
   GIT_BACKEND_GITIGNORE_BLOCK,
 } from "./store/gitBackendGitignore.js";
 export { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
