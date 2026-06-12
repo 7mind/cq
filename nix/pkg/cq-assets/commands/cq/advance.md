@@ -18,7 +18,7 @@ ioSchema:
   - "cycle order: investigate -> plan -> implement -> re-check investigate"
   - "stop only when all P-predicates FALSE or every TRUE predicate gated by open questions/user action"
   - "handoffs item statuses: drained | answers-required | user-action-required | mixed | illness-detected"
-  - "handoffs item fields: summary, flow=advance, ledgerRefs, blockingQuestions, handoffReasons, sessionLogs"
+  - "handoffs item fields: summary, flow=advance, ledgerRefs, blockingQuestions, handoffReasons, sessionLogs, rawLogs"
 ```
 
 You are the **top-level flow sequencer**. You drive an end-to-end run by chaining
@@ -102,9 +102,12 @@ T137, now in `CANONICAL_LEDGERS`) carries this item shape:
   `[drained, answers-required]`, or `[drained, answers-required,
   user-action-required]` when a run lands work AND is blocked partly on an open
   question AND partly on a user action) explaining what is mixed (Q83/Q139);
-- `sessionLogs` — the `docs/logs/<ts>-<agent-id>.md` path(s) produced during
-  this run; populate them in the SAME `create_item` call that writes the handoff
-  (do not write them in a separate update);
+- `sessionLogs` — the `docs/logs/<ts>-<agent-id>.md` summary path(s) produced
+  during this run; populate them in the SAME `create_item` call that writes the
+  handoff (do not write them in a separate update);
+- `rawLogs` — the `docs/logs/raw/<ts>-<agent-id>.jsonl` raw-transcript path(s)
+  produced during this run; populate in the SAME `create_item` call (omit a
+  `rawLogs` entry for any subagent whose transcript was absent);
 - `tags`, `sourceRefs` — optional cross-references.
 
 **Enforced-invariant (D39 — write-time enforcement).** The `@cq/ledger`

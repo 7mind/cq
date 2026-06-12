@@ -656,8 +656,10 @@ context you are in.
   `answers-required`/`mixed` stop; `handoffReasons` = the
   component reasons for a `mixed` stop (e.g. `[drained, answers-required]` or
   `[drained, answers-required, user-action-required]`; Q140); `sessionLogs` = the
-  `docs/logs/<ts>-<agent-id>.md` path(s) written this pass — populate them in
-  the SAME `create_item` call. Stamp `author`/`session`. Append-only: written
+  `docs/logs/<ts>-<agent-id>.md` summary path(s) AND `rawLogs` = the
+  `docs/logs/raw/<ts>-<agent-id>.jsonl` raw-transcript path(s) written this pass —
+  populate them in the SAME `create_item` call (omit a `rawLogs` entry for any
+  subagent whose transcript was absent). Stamp `author`/`session`. Append-only: written
   once at the stop, never updated. **Then commit the ledger** (§Commit the
   ledger, at-stop commit) — this is the final act of the standalone pass.
 
