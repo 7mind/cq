@@ -94,9 +94,10 @@ async function pathExists(p: string): Promise<boolean> {
 
 /**
  * Enumerate the on-disk docs ledger files as DOCS-RELATIVE tree paths:
- * `ledgers.yaml`, every REGISTERED `<ledger>.md`, and every `archive/**` file
- * (recursively). Runtime-only `.locks/`, `.backup/`, and `logs/` are EXCLUDED —
- * they are never part of the ledger tree (matching {@link GitPersistence}).
+ * `ledgers.yaml`, every REGISTERED `<ledger>.md`, every `archive/**` file
+ * (recursively), and every `logs/**` file (recursive portable runtime state).
+ * Ephemeral runtime directories `.locks/` and `.backup/` are EXCLUDED — they
+ * belong to the ledger but are not part of the portable tree.
  *
  * Delegates to @cq/ledger's `ledgerTreePaths` — the SINGLE source of truth for
  * "which files belong to the ledger" (shared with `cq erase`). Registry-driven,
