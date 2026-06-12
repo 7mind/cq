@@ -492,6 +492,86 @@ describe("GitObjectLedgerBackend — read_log capability (T408)", () => {
     expect(res.content.length).toBe(MAX_READ_LOG_BYTES);
     await store.dispose();
   });
+
+  // T453 REGRESSION TEST: a log committed to the orphan ref is still served via
+  // the ref path. Guards against the working-tree fallback silently shadowing or
+  // bypassing the ref lookup even when the ref carries the log.
+  it(
+    "T453 regression: readLog serves a ref-committed log from the ref (ref path not bypassed)",
+    async () => {
+      const dir = await seedRepo();
+      const store = new GitObjectLedgerBackend({ repoRoot: dir });
+      await store.init();
+
+      const refContent = '{"source":"ref"}\n';
+      await seedLog(dir, "regression-ref.jsonl", refContent);
+
+      // A second instance forces a fresh init() so it reads the ref tip, not
+      // any in-memory state from the write-side instance.
+      const reader = new GitObjectLedgerBackend({ repoRoot: dir });
+      await reader.init();
+
+      const res = await reader.readLog("regression-ref.jsonl");
+      expect(res.path).toBe("regression-ref.jsonl");
+      expect(res.content).toBe(refContent);
+      expect(res.truncated).toBeUndefined();
+
+      // Confirm the log IS actually present in the orphan ref tree — ensuring
+      // the ref path, not any fallback, was exercised.
+      const treePaths = await git(dir, "ls-tree", "-r", "--name-only", REF);
+      expect(treePaths.split("\n").includes("logs/regression-ref.jsonl")).toBe(true);
+
+      await reader.dispose();
+      await store.dispose();
+    },
+  );
+
+  // T453 REF-PRIORITY TEST: when a log exists in BOTH the orphan ref AND the
+  // working-tree logs dir, readLog must return the REF copy. DISTINGUISHABLE
+  // content in the two locations proves which path served the bytes.
+  it(
+    "T453 ref-priority: readLog returns the orphan-ref copy when both ref and working-tree carry the same path",
+    async () => {
+      const dir = await seedRepo();
+      const store = new GitObjectLedgerBackend({ repoRoot: dir });
+      await store.init();
+
+      // Commit DISTINCT content to the orphan ref.
+      const refContent = '{"source":"ref","priority":"high"}\n';
+      await seedLog(dir, "priority-check.jsonl", refContent);
+
+      // Write DIFFERENT content for the same logical path into the working-tree
+      // logs dir (built from LEDGER_LOGS_RELATIVE_PREFIX, not a hardcoded
+      // literal) so a fallback would return different bytes.
+      const wtContent = '{"source":"working-tree","priority":"low"}\n';
+      const logsDir = path.join(dir, LEDGER_LOGS_RELATIVE_PREFIX);
+      await fs.mkdir(logsDir, { recursive: true });
+      await fs.writeFile(path.join(logsDir, "priority-check.jsonl"), wtContent, "utf8");
+
+      // Verify both locations carry their respective (distinct) content.
+      const onDisk = await fs.readFile(
+        path.join(logsDir, "priority-check.jsonl"),
+        "utf8",
+      );
+      expect(onDisk).toBe(wtContent);
+
+      // Confirm the ref carries the log (precondition).
+      const treePaths = await git(dir, "ls-tree", "-r", "--name-only", REF);
+      expect(treePaths.split("\n").includes("logs/priority-check.jsonl")).toBe(true);
+
+      // A fresh reader instance forces a real ref lookup.
+      const reader = new GitObjectLedgerBackend({ repoRoot: dir });
+      await reader.init();
+
+      const res = await reader.readLog("priority-check.jsonl");
+      // The REF content must be returned, not the working-tree content.
+      expect(res.content).toBe(refContent);
+      expect(res.content).not.toBe(wtContent);
+
+      await reader.dispose();
+      await store.dispose();
+    },
+  );
 });
 
 // T444/G58: the logs prefix moved from `docs/logs` to `.cq/logs`
