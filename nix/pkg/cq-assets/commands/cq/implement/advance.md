@@ -460,14 +460,17 @@ after every task in its `dependsOn` has merged). For each:
    (both Claude and Codex paths — run explicitly immediately after the `done`
    ledger write above):
    ```
-   git worktree remove --force <wt> && git branch -D implement/<taskId> && git worktree prune
+   branch=$(git -C <wt> rev-parse --abbrev-ref HEAD); git worktree unlock <wt> 2>/dev/null; git worktree remove --force <wt>; git branch -D "$branch"; git worktree prune
    ```
    **Why explicit?** Native `isolation: worktree` only auto-removes worktrees
    that have NO new commits since creation. A worker that committed its task IS
    changed, so the native teardown silently skips it — leaving the worktree and
    branch locked on disk. This was the source of ~140 stale locked worktrees
-   accumulating under `.claude/worktrees/`. The explicit three-command sequence
-   above covers both the Claude and the Codex paths symmetrically.
+   accumulating under `.claude/worktrees/`. The explicit sequence above derives
+   the actual branch name from the worktree itself (covering both the Codex
+   `implement/<taskId>` and the native `worktree-agent-<8hex>` naming paths
+   symmetrically), unlocks the worktree, removes it, deletes the derived branch,
+   and prunes the worktree list.
 4. **Resolve the defect this task fixed (Q20 — orchestrator-owned closure).** If
    the just-merged task `ledgerRefs` one or more `defects:<D>` (it is a fix task
    for D), check whether D is now fully fixed: collect D's fix-task set =
