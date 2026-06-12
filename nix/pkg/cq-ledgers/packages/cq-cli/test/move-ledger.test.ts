@@ -220,6 +220,149 @@ describe("cq move-ledger", () => {
     }
   });
 
+  it("logs-only docs/ counts as EMPTY (docsLedgerNonEmpty skips logs/**)", async () => {
+    // Exercises docsLedgerNonEmpty: a docs/ tree with ONLY logs/** (plus blank
+    // ledger .md) must return false so --to local does NOT refuse without --force.
+    // Without the fix, logs/summary.md has non-blank content and triggers a
+    // false-positive "non-empty" refusal.
+    const root = await gitRepo();
+
+    // Seed docs/ with a blank ledger + a non-blank logs summary .md.
+    const docs = path.join(root, "docs");
+    await mkdir(path.join(docs, "logs"), { recursive: true });
+    await writeFile(path.join(docs, "ledgers.yaml"), "version: 1\nledgers:\n  - tasks\n", "utf8");
+    await writeFile(path.join(docs, "tasks.md"), "", "utf8"); // blank — empty ledger
+    const logSummary = "2026-01-01T00:00:00.000Z.md";
+    await writeFile(path.join(docs, "logs", logSummary), "# session log\n\nsummary content\n", "utf8");
+    await git(root, "add", "docs");
+    await git(root, "commit", "-q", "-m", "seed logs-only docs");
+
+    // Also seed the orphan ref so --to local has a source (otherwise it fails
+    // with "ref does not exist").  Use a minimal seeded full ledger in a sibling
+    // path, then --to git it to the same ref.  Simpler: do --to git first (which
+    // works because the ref is empty), giving us an orphan ref with logs content.
+    const io1 = recordingIo();
+    const out1 = await dispatch(["move-ledger", "--cwd", root, "--to", "git"], io1);
+    expect(out1.exitCode).toBe(0);
+
+    // The orphan ref carries the logs summary .md.
+    const refTree = (await git(root, "ls-tree", "-r", "--name-only", "cq-ledger")).trim();
+    expect(refTree).toContain(`logs/${logSummary}`);
+
+    // Remove docs/ so the target is truly absent — then restore it with
+    // ONLY logs content to represent the docsLedgerNonEmpty scenario:
+    // docs/ exists, has non-blank logs .md, but blank ledger .md.
+    await rm(docs, { recursive: true, force: true });
+    await mkdir(path.join(docs, "logs"), { recursive: true });
+    await writeFile(path.join(docs, "ledgers.yaml"), "version: 1\nledgers:\n  - tasks\n", "utf8");
+    await writeFile(path.join(docs, "tasks.md"), "", "utf8");
+    await writeFile(path.join(docs, "logs", logSummary), "# session log\n\nsummary content\n", "utf8");
+
+    // --to local WITHOUT --force must succeed: docs/ has only logs/** + blank
+    // ledger .md → docsLedgerNonEmpty must return false (logs excluded).
+    const io2 = recordingIo();
+    const out2 = await dispatch(["move-ledger", "--cwd", root, "--to", "local"], io2);
+    expect(out2.exitCode).toBe(0);
+
+    // The logs file is materialised (byte-identical from the ref).
+    const summaryContent = await readFile(path.join(docs, "logs", logSummary), "utf8");
+    expect(summaryContent).toBe("# session log\n\nsummary content\n");
+  });
+
+  it("logs-only orphan ref counts as EMPTY (refLedgerNonEmpty skips logs/**)", async () => {
+    // Exercises refLedgerNonEmpty: an orphan ref carrying ONLY logs/** (no real
+    // ledger .md content) must return false so a second --to git does NOT refuse
+    // without --force.
+    // Without the fix, the ref's logs/summary.md has non-blank content and
+    // triggers a false-positive "non-empty" refusal.
+    const root = await gitRepo();
+    const docs = path.join(root, "docs");
+
+    // Seed docs/ with a blank ledger + a non-blank logs summary .md.
+    await mkdir(path.join(docs, "logs"), { recursive: true });
+    await writeFile(path.join(docs, "ledgers.yaml"), "version: 1\nledgers:\n  - tasks\n", "utf8");
+    await writeFile(path.join(docs, "tasks.md"), "", "utf8"); // blank ledger
+    const logSummary = "2026-01-01T12:00:00.000Z.md";
+    await writeFile(path.join(docs, "logs", logSummary), "# session log\n\nlog body here\n", "utf8");
+    await git(root, "add", "docs");
+    await git(root, "commit", "-q", "-m", "seed blank-ledger + logs docs");
+
+    // First --to git: populates the orphan ref with blank ledger + logs/** .md.
+    const io1 = recordingIo();
+    expect((await dispatch(["move-ledger", "--cwd", root, "--to", "git"], io1)).exitCode).toBe(0);
+
+    // Verify the ref carries the logs .md (non-blank content that would fool the
+    // old non-empty check).
+    const refContent = await git(root, "cat-file", "-p", `cq-ledger:logs/${logSummary}`);
+    expect(refContent).toBe("# session log\n\nlog body here\n");
+
+    // Now attempt a second --to git WITHOUT --force. The ref carries only
+    // logs/** — refLedgerNonEmpty must return false → no refusal.
+    const io2 = recordingIo();
+    const out2 = await dispatch(["move-ledger", "--cwd", root, "--to", "git"], io2);
+    expect(out2.exitCode).toBe(0);
+  });
+
+  it("full git→local→git round-trip with logs preserves bytes and git ls-files docs/logs/ is EMPTY on working branch after --to git", async () => {
+    const root = await gitRepo();
+    const seeded = await seedDocs(root);
+
+    // Add logs to the seeded docs.
+    const docs = path.join(root, "docs");
+    await mkdir(path.join(docs, "logs", "raw"), { recursive: true });
+    const logRaw = '{"event":"session_start","ts":1234567890}\n';
+    const logSummaryName = "2026-01-01T00-00-00.md";
+    await writeFile(path.join(docs, "logs", "raw", "x.jsonl"), logRaw, "utf8");
+    await writeFile(path.join(docs, "logs", logSummaryName), "# log summary\n\ncontent here\n", "utf8");
+    await git(root, "add", "docs/logs");
+    await git(root, "commit", "-q", "-m", "add logs");
+
+    // --to git: logs land in the orphan ref tree AND git ls-files docs/logs/ is EMPTY.
+    const io1 = recordingIo();
+    expect((await dispatch(["move-ledger", "--cwd", root, "--to", "git"], io1)).exitCode).toBe(0);
+
+    // Verify logs are in the ref tree.
+    const refJsonl = await git(root, "cat-file", "-p", `cq-ledger:logs/raw/x.jsonl`);
+    expect(refJsonl).toBe(logRaw);
+    const refSummary = await git(root, "cat-file", "-p", `cq-ledger:logs/${logSummaryName}`);
+    expect(refSummary).toBe("# log summary\n\ncontent here\n");
+
+    // git ls-files docs/logs/ MUST be empty on the working branch.
+    const trackedLogs = (await git(root, "ls-files", "docs/logs/")).trim();
+    expect(trackedLogs).toBe("");
+
+    // --to local restores everything including logs, byte-identical.
+    const io2 = recordingIo();
+    expect(
+      (await dispatch(["move-ledger", "--cwd", root, "--to", "local", "--force"], io2)).exitCode,
+    ).toBe(0);
+
+    // Ledger files restored.
+    for (const [rel, content] of Object.entries(seeded)) {
+      expect(await readFile(path.join(root, rel), "utf8")).toBe(content);
+    }
+    // Log files restored byte-identical.
+    expect(await readFile(path.join(docs, "logs", "raw", "x.jsonl"), "utf8")).toBe(logRaw);
+    expect(await readFile(path.join(docs, "logs", logSummaryName), "utf8")).toBe(
+      "# log summary\n\ncontent here\n",
+    );
+
+    // Log files are git-tracked after --to local.
+    const trackedLogsAfter = (await git(root, "ls-files", "docs/logs/")).trim().split("\n").filter(Boolean).sort();
+    expect(trackedLogsAfter).toContain("docs/logs/raw/x.jsonl");
+    expect(trackedLogsAfter).toContain(`docs/logs/${logSummaryName}`);
+
+    // --to git again: same invariant — logs in ref, docs/logs/ untracked.
+    const io3 = recordingIo();
+    expect(
+      (await dispatch(["move-ledger", "--cwd", root, "--to", "git", "--force"], io3)).exitCode,
+    ).toBe(0);
+    const trackedLogsAgain = (await git(root, "ls-files", "docs/logs/")).trim();
+    expect(trackedLogsAgain).toBe("");
+    // Bytes preserved in ref.
+    expect(await git(root, "cat-file", "-p", `cq-ledger:logs/raw/x.jsonl`)).toBe(logRaw);
+  });
+
   it("--to git leaves a NON-ledger docs/*.md (not a registered ledger) tracked + out of the ref", async () => {
     const root = await gitRepo();
     await seedDocs(root);

@@ -117,6 +117,9 @@ async function docsLedgerNonEmpty(docsDir: string): Promise<boolean> {
   if (!(await pathExists(docsDir))) return false;
   const files = await enumerateDocsFiles(docsDir);
   for (const rel of files) {
+    // logs/** are portable runtime state, not ledger content — skip them so a
+    // tree carrying ONLY logs is not mistaken for a non-empty ledger.
+    if (rel === "logs" || rel.startsWith("logs/")) continue;
     if (!rel.endsWith(".md")) continue;
     const text = await fs.readFile(path.join(docsDir, rel), "utf8");
     if (text.trim().length > 0) return true;
@@ -134,6 +137,9 @@ async function refLedgerNonEmpty(git: GitPlumbing, ref: string): Promise<boolean
   if (sha === null) return false;
   const names = await git.lsTree(ref);
   for (const name of names) {
+    // logs/** are portable runtime state, not ledger content — skip them so a
+    // ref carrying ONLY logs is not mistaken for a non-empty ledger.
+    if (name === "logs" || name.startsWith("logs/")) continue;
     if (!name.endsWith(".md")) continue;
     const text = await git.catFile(ref, name);
     if (text.trim().length > 0) return true;
