@@ -142,6 +142,9 @@ read the `questions` ledger items linked `tasks:<id>` and the milestones' own
 `dependsOn`/`blockedBy`.
 
 **Start-of-pass worktree prune sweep (G38-1a-start-sweep).** <!-- G38-1a-start-sweep -->
+This is the SAME generalized cleanup recipe `/cq:advance` runs at run-stop
+(`commands/cq/advance.md` §End-of-run worktree/branch cleanup sweep, marker
+`G38-1a-end-sweep`) — keep the two in sync, do not let them diverge.
 Before deriving the ready-set, prune orphaned and locked worktrees left by prior
 interrupted runs. Run `git worktree prune` (clears stale administrative entries).
 Then enumerate **ALL** worktrees under the implement worktree root with

@@ -579,6 +579,53 @@ now-eligible coordination milestone automatically.
 
 ---
 
+## End-of-run worktree/branch cleanup sweep (end-of-run) <!-- G38-1a-end-sweep -->
+
+After the loop reaches quiescence — adjacent to the milestone archive sweep
+above, and before/with the run-stop ledger commit (§Commit the ledger) — run the
+**generalized worktree/branch cleanup sweep**. This is the SAME recipe as the
+implement-flow **start-of-pass** sweep (`commands/cq/implement/advance.md`
+§1, marker `G38-1a-start-sweep`) — keep the two in sync, do not let them
+diverge; whatever one removes, the other would remove for the same key.
+`/cq:advance` runs it once more at run-stop so a whole chained run leaves no
+orphaned worktree behind, even if a sub-flow's own sweep was bypassed.
+
+First run `git worktree prune` (clears stale administrative entries). Then
+enumerate **ALL** worktrees with `git worktree list --porcelain` — this sweep
+covers BOTH `implement/*` worktrees AND Claude's native
+`worktree-agent-<8hex>` worktrees (the harness names a worktree-isolated
+subagent's tree `worktree-agent-*`; a stale one outlives its agent after an
+interrupted run). For each enumerated worktree, derive its branch from the
+porcelain `branch refs/heads/<name>` line (or
+`git -C <wt> rev-parse --abbrev-ref HEAD`).
+
+REMOVE a worktree ONLY when the conservative **merged-OR-terminal safety key**
+holds — i.e. its branch is EITHER:
+- **(a) fully merged** into base/main — the branch appears in
+  `git branch --merged <base>` (its work already landed); OR
+- **(b) bound to a TERMINAL ledger task** — an `implement/<taskId>` whose
+  `<taskId>` is `done` or `abandoned` in the ledger.
+
+When the key holds, remove it (unlock first — a native worktree may be locked):
+```
+git worktree unlock <wt> 2>/dev/null; git worktree remove --force <wt>; git branch -D <branch>
+```
+Finish the whole sweep with a closing `git worktree prune`.
+
+**HARD SAFETY GUARDS (obey these literally — identical to the start-of-pass sweep):**
+- **NEVER** touch `main` or the `cq-ledger` orphan branch, nor any worktree
+  bound to either — they are off-limits regardless of merge/terminal state.
+- **NEVER** remove a worktree whose bound task is still `wip` or `blocked` —
+  those hold in-progress / paused work. Terminal (`done`/`abandoned`) tasks
+  ONLY for the (b) path.
+- A `worktree-agent-*` worktree whose agentId has **NO stable ledger link**
+  (cannot be tied to any task) is removed **ONLY if its branch is fully merged
+  into base/main** (the (a) path — its work already landed). NEVER remove such a
+  worktree when it carries unmerged commits and cannot be tied to a terminal
+  task — preserve it intact.
+
+---
+
 ## Commit the ledger (after every milestone archive + every task merge-back + at the run stop)
 
 The ledger files are tracked git artifacts; persist them so a run never leaves
