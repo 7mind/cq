@@ -115,9 +115,9 @@ describe("createLedgerStore — backend selection", () => {
       encoding: "utf8",
     });
     expect(stdout.trim().length).toBeGreaterThan(0);
-    // The working tree stays clean — no docs/ tracked on the working branch.
+    // The working tree stays clean — no .cq/ tracked on the working branch.
     const status = await exec("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" });
-    expect(status.stdout.includes("docs/")).toBe(false);
+    expect(status.stdout.includes(".cq/")).toBe(false);
     await store.dispose();
   });
 
@@ -160,8 +160,8 @@ describe("ensureGitBackendGitignore — idempotent gitignore helper", () => {
     expect(wrote).toBe(true);
     const content = await fs.readFile(path.join(dir, ".gitignore"), "utf8");
     expect(content).toContain(GIT_BACKEND_GITIGNORE_MARKER);
-    expect(content).toContain("docs/*.md");
-    expect(content).toContain("docs/ledgers.yaml");
+    expect(content).toContain(".cq/*.md");
+    expect(content).toContain(".cq/ledgers.yaml");
   });
 
   it("appends the block preserving existing content", async () => {
@@ -184,21 +184,21 @@ describe("ensureGitBackendGitignore — idempotent gitignore helper", () => {
     expect(occurrences).toBe(1);
   });
 
-  it("git-object startup leaves docs/*.md + docs/ledgers.yaml gitignored", async () => {
+  it("git-object startup leaves .cq/*.md + .cq/ledgers.yaml gitignored", async () => {
     const dir = await gitRepo();
     await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
     const { store } = await createLedgerStore(dir);
     await store.dispose();
-    // git check-ignore confirms the docs projection is ignored on the work branch.
-    const md = await exec("git", ["check-ignore", "docs/tasks.md"], {
+    // git check-ignore confirms the .cq projection is ignored on the work branch.
+    const md = await exec("git", ["check-ignore", ".cq/tasks.md"], {
       cwd: dir,
       encoding: "utf8",
     }).then((r) => r.stdout.trim());
-    expect(md).toBe("docs/tasks.md");
-    const yaml = await exec("git", ["check-ignore", "docs/ledgers.yaml"], {
+    expect(md).toBe(".cq/tasks.md");
+    const yaml = await exec("git", ["check-ignore", ".cq/ledgers.yaml"], {
       cwd: dir,
       encoding: "utf8",
     }).then((r) => r.stdout.trim());
-    expect(yaml).toBe("docs/ledgers.yaml");
+    expect(yaml).toBe(".cq/ledgers.yaml");
   });
 });

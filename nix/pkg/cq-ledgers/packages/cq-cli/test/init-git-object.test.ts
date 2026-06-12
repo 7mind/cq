@@ -1,7 +1,7 @@
 /**
  * T357: `cq init` with backend='git-object' on a fresh git repo.
  *
- * Acceptance (R418): a fresh git-object init leaves docs/*.md + docs/ledgers.yaml
+ * Acceptance (R418 / T445): a fresh git-object init leaves .cq/*.md + .cq/ledgers.yaml
  * GITIGNORED on the working branch (never accidentally tracked), and the ledger
  * lands on the orphan ref rather than the working tree. backend='fs' (the
  * default, covered by init.test.ts) is unaffected.
@@ -51,7 +51,7 @@ async function gitRepo(): Promise<string> {
 }
 
 describe("cq init — backend='git-object'", () => {
-  it("leaves docs/*.md + docs/ledgers.yaml gitignored (not tracked) on the work branch", async () => {
+  it("leaves .cq/*.md + .cq/ledgers.yaml gitignored (not tracked) on the work branch", async () => {
     const root = await gitRepo();
     // A pre-existing cq.toml selecting the git-object backend (cq init reads it).
     await writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "git-object"\n', "utf8");
@@ -60,24 +60,24 @@ describe("cq init — backend='git-object'", () => {
     const outcome = await dispatch(["init", "--cwd", root], io);
     expect(outcome.exitCode).toBe(0);
 
-    // docs projection is gitignored.
-    const md = await exec("git", ["check-ignore", "docs/tasks.md"], {
+    // .cq projection is gitignored.
+    const md = await exec("git", ["check-ignore", ".cq/tasks.md"], {
       cwd: root,
       encoding: "utf8",
     }).then((r) => r.stdout.trim());
-    expect(md).toBe("docs/tasks.md");
-    const yaml = await exec("git", ["check-ignore", "docs/ledgers.yaml"], {
+    expect(md).toBe(".cq/tasks.md");
+    const yaml = await exec("git", ["check-ignore", ".cq/ledgers.yaml"], {
       cwd: root,
       encoding: "utf8",
     }).then((r) => r.stdout.trim());
-    expect(yaml).toBe("docs/ledgers.yaml");
+    expect(yaml).toBe(".cq/ledgers.yaml");
 
-    // Nothing under docs/ is staged/tracked on the working branch.
+    // Nothing under .cq/ is staged/tracked on the working branch.
     const status = await exec("git", ["status", "--porcelain"], {
       cwd: root,
       encoding: "utf8",
     }).then((r) => r.stdout);
-    expect(status.includes("docs/")).toBe(false);
+    expect(status.includes(".cq/")).toBe(false);
 
     // The ledger landed on the orphan ref.
     const log = await exec("git", ["log", "--oneline", "cq-ledger"], {

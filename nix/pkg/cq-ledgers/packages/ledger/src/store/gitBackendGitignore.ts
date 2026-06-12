@@ -4,7 +4,7 @@
  * startup / `cq init`) and T354's `cq move-ledger`.
  *
  * The git-object backend stores the ledger on an ORPHAN ref and NEVER touches
- * the working tree, so the on-disk `docs/*.md` + `docs/ledgers.yaml` (written by
+ * the working tree, so the on-disk `.cq/*.md` + `.cq/ledgers.yaml` (written by
  * the FS mirror / a prior fs-backed ledger / init) must be gitignored on the
  * working branch — otherwise a fresh git-object ledger would be accidentally
  * tracked. This helper appends a MARKER-DELIMITED block to `<root>/.gitignore`
@@ -16,6 +16,7 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import { LEDGER_STORAGE_DIRNAME } from "../constants.js";
 
 /** Start marker comment guarding the git-backend block (idempotency anchor). */
 export const GIT_BACKEND_GITIGNORE_MARKER = "# cq git-object ledger backend (managed) — do not edit";
@@ -25,8 +26,8 @@ export const GIT_BACKEND_GITIGNORE_END_MARKER = "# cq git-object ledger backend 
 
 /**
  * The full block appended to `.gitignore` for the git-object backend. The ledger
- * lives on the orphan ref, so its on-disk projection under `docs/` stays
- * untracked on the working branch. The lockfiles under `docs/.locks` are already
+ * lives on the orphan ref, so its on-disk projection under `.cq/` stays
+ * untracked on the working branch. The lockfiles under `.cq/.locks` are already
  * runtime-only and must never be committed either.
  *
  * The block runs from {@link GIT_BACKEND_GITIGNORE_MARKER} (inclusive) to
@@ -34,10 +35,10 @@ export const GIT_BACKEND_GITIGNORE_END_MARKER = "# cq git-object ledger backend 
  */
 export const GIT_BACKEND_GITIGNORE_BLOCK = [
   GIT_BACKEND_GITIGNORE_MARKER,
-  "docs/*.md",
-  "docs/ledgers.yaml",
-  "docs/.locks/",
-  "docs/logs/",
+  `${LEDGER_STORAGE_DIRNAME}/*.md`,
+  `${LEDGER_STORAGE_DIRNAME}/ledgers.yaml`,
+  `${LEDGER_STORAGE_DIRNAME}/.locks/`,
+  `${LEDGER_STORAGE_DIRNAME}/logs/`,
   GIT_BACKEND_GITIGNORE_END_MARKER,
 ].join("\n");
 
@@ -87,7 +88,8 @@ function locateSpan(content: string): { start: number; end: number } | null {
  *   content), separated by a blank line.
  * - Present WITH the marker (current format) → the existing span is compared
  *   byte-for-byte with the current block; if equal, returns `false` (no-op);
- *   if stale, the span is replaced with the current block in-place.
+ *   if stale (e.g. old `docs/…` entries), the span is replaced with the current
+ *   block in-place (self-migration to `.cq/…` paths).
  * - Present WITH the marker (legacy format, no END marker) → the legacy span
  *   (from start marker to next blank line / EOF) is replaced with the current
  *   START…END block, migrating to the new format.
