@@ -6,18 +6,18 @@
  * mutex, the lockfile critical sections, schema-divergence DETECTION + reinit
  * orchestration, and every read/mutation method) wired to an {@link FsPersistence}
  * byte-I/O seam plus the filesystem-only concerns the base does not own:
- *   - the advisory lockfile root (`docs/.locks`);
+ *   - the advisory lockfile root (`.cq/.locks`);
  *   - the `~/.cache` mirror (cacheMirror.ts) fired after every mutation;
  *   - the FS-only `read_log` capability (T147 / Q87);
  *   - the operator-facing `reset()` wipe-and-reinit (+ `ResetSummary`);
  *   - the `rootDir` accessor a host binds root-scoped config to.
  *
  * Layout under `root` (typically the server's --cwd):
- *   ./docs/ledgers.yaml                              # central registry
- *   ./docs/<ledger>.md                               # active ledger
- *   ./docs/archive/<ledger>/<milestone-id>.md        # archived group (or item, for milestones ledger)
- *   ./docs/.locks/<ledger>.lock                      # advisory lockfile
- *   ./docs/.locks/__milestones__.lock                # global milestones lock
+ *   ./.cq/ledgers.yaml                              # central registry
+ *   ./.cq/<ledger>.md                               # active ledger
+ *   ./.cq/archive/<ledger>/<milestone-id>.md        # archived group (or item, for milestones ledger)
+ *   ./.cq/.locks/<ledger>.lock                      # advisory lockfile
+ *   ./.cq/.locks/__milestones__.lock                # global milestones lock
  *
  * Lock discipline (msunify cycle):
  *   - Per-ledger AsyncMutex + lockfile for within-ledger ops.
@@ -50,14 +50,14 @@ import { FsPersistence } from "./FsPersistence.js";
  * BEFORE the wipe — what a CLI prints to confirm what it just backed up.
  */
 export interface ResetSummary {
-  /** Absolute path of the `docs/.backup/<ts>/` snapshot dir. */
+  /** Absolute path of the `.cq/.backup/<ts>/` snapshot dir. */
   backupDir: string;
   /** Active item count per active ledger, captured BEFORE the reinit. */
   ledgers: Array<{ name: string; itemCount: number }>;
 }
 
 export interface FsLedgerStoreOpts {
-  /** Filesystem root (server --cwd). Ledgers live under `<root>/docs/`. */
+  /** Filesystem root (server --cwd). Ledgers live under `<root>/.cq/`. */
   root: string;
   /**
    * Returns an ISO 8601 UTC timestamp. Defaults to
@@ -216,13 +216,13 @@ export class FsLedgerStore
    * Public, operator-facing wipe-and-reinit. Intended for a CLI to call on a
    * freshly-constructed, already-init()'d store (not one actively serving
    * clients): it snapshots the current on-disk ledgers to a timestamped
-   * `docs/.backup/<ts>/` dir and rewrites the canonical empty set, exactly as
+   * `.cq/.backup/<ts>/` dir and rewrites the canonical empty set, exactly as
    * the init()-divergence path does (reuses backupAndReinit verbatim).
    *
    * reset() handles non-canonical ledgers (created via createLedger()) fully:
    * their files are backed up and deleted from disk by backupAndReinit(), and
    * their FTS docs are removed here before the ledger map is cleared, so no
-   * orphan docs/<name>.md files and no stale FTS hits survive the reset.
+   * orphan .cq/<name>.md files and no stale FTS hits survive the reset.
    *
    * reset() adds only the pre-wipe per-ledger item count and the returned
    * summary; it then reloads the fresh canonical state into memory + the FTS

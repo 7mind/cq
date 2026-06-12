@@ -108,7 +108,7 @@ export function assertGitWorkTree(root: string): void {
  *
  * For `git-object`: validates the git environment (fail-fast) and installs the
  * idempotent git-backend `.gitignore` block BEFORE constructing the store, so a
- * fresh git-object ledger's `docs/` is gitignored from the first write.
+ * fresh git-object ledger's `.cq/` is gitignored from the first write.
  *
  * The store is `init()`-ed before return (mirrors every historical call site).
  */

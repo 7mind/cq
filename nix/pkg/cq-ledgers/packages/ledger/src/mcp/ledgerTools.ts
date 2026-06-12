@@ -552,7 +552,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const unarchiveItem = tool(
     "unarchive_item",
-    "Restore a single item that was swept into its milestone-group archive (./docs/archive/<ledger>/<milestoneId>.md) back to the active ledger; pass the archived item's milestone id.",
+    "Restore a single item that was swept into its milestone-group archive (./.cq/archive/<ledger>/<milestoneId>.md) back to the active ledger; pass the archived item's milestone id.",
     {
       ledger_id: z.string(),
       milestone_id: safeIdSchema,

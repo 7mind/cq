@@ -4,7 +4,7 @@
  *
  * Lifecycle:
  *  1. Construct.
- *  2. `init()` — load all known ledgers (from ./docs/ledgers.yaml + their .md
+ *  2. `init()` — load all known ledgers (from ./.cq/ledgers.yaml + their .md
  *     files) into memory. After init the store serves reads from memory. The
  *     bootstrapped `milestones` ledger is created on first init if absent.
  *  3. Read methods are synchronous (in-memory) unless they touch disk
@@ -286,7 +286,7 @@ export interface LedgerStore {
    * Drop the in-memory cache for `ledgerId` and re-read it from the
    * underlying source under the per-ledger lock. Used by the cross-
    * process coherence channel (D-COHERENCE) when the OTHER process
-   * writes the same `docs/` tree.
+   * writes the same `.cq/` tree.
    *
    * Contract:
    *  - No-op when the ledger is not registered (graceful — the

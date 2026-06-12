@@ -10,10 +10,10 @@
  * {@link AbstractLedgerStore}, which talks to this seam.
  *
  * Layout under `root` (typically the server's --cwd):
- *   ./docs/ledgers.yaml                              # central registry
- *   ./docs/<ledger>.md                               # active ledger
- *   ./docs/archive/<ledger>/<milestone-id>.md        # archived group (or item, for milestones ledger)
- *   ./docs/.backup/<ts>/                             # divergence snapshot
+ *   ./.cq/ledgers.yaml                              # central registry
+ *   ./.cq/<ledger>.md                               # active ledger
+ *   ./.cq/archive/<ledger>/<milestone-id>.md        # archived group (or item, for milestones ledger)
+ *   ./.cq/.backup/<ts>/                             # divergence snapshot
  *
  * ## Archive locator convention
  *
@@ -21,8 +21,8 @@
  * archive-locator passed by the base are paths RELATIVE to `docsDir` (e.g.
  * `./archive/<ledger>/<id>.md`) — exactly the `ArchivePointer.path` the store
  * already stores. The seam resolves them against `docsDir` and enforces the
- * docs-root containment check (`assertWithinDocsRoot`, D-LED-01) so a crafted
- * pointer cannot escape the docs root.
+ * storage-root containment check (`assertWithinDocsRoot`, D-LED-01) so a crafted
+ * pointer cannot escape the storage root.
  */
 
 import { promises as fs } from "node:fs";
@@ -41,11 +41,11 @@ import { atomicWrite } from "./fsAtomic.js";
 export interface FsPersistenceLayout {
   /** Absolute store root (the server --cwd). */
   readonly root: string;
-  /** Absolute `<root>/docs` directory. */
+  /** Absolute `<root>/.cq` directory. */
   readonly docsDir: string;
-  /** Absolute `<root>/docs/archive` directory. */
+  /** Absolute `<root>/.cq/archive` directory. */
   readonly archiveDir: string;
-  /** Absolute `<root>/docs/ledgers.yaml` registry path. */
+  /** Absolute `<root>/.cq/ledgers.yaml` registry path. */
   readonly registryPath: string;
 }
 
@@ -145,11 +145,11 @@ export class FsPersistence implements LedgerPersistence {
   }
 
   /**
-   * Back up the divergent on-disk state to `docs/.backup/<sanitized-ISO>/` and
+   * Back up the divergent on-disk state to `.cq/.backup/<sanitized-ISO>/` and
    * return the absolute backup dir. Mirrors the byte-I/O prologue of the old
    * `FsLedgerStore.backupAndReinit()`: copy `ledgers.yaml` + each canonical and
    * non-canonical ledger file (ENOENT tolerated), then unlink the non-canonical
-   * files so no orphan `docs/<name>.md` survives the reinit. The DETECTION and
+   * files so no orphan `.cq/<name>.md` survives the reinit. The DETECTION and
    * the subsequent fresh writes stay in the base.
    */
   async backupCanonicalState(): Promise<string> {

@@ -18,7 +18,7 @@
  * coherence-reload path (`invalidate`), never per read-call.
  *
  * ## Out of scope for this backend (per K66 caveats / Q195)
- *  - the command-step `git add docs/` drops (T358);
+ *  - the command-step `git add .cq/` drops (T358);
  *  - push/fetch wiring of `refs/heads/cq-ledger` (T355);
  *  - NO `~/.cache` mirror (Q195(2)) — no `afterMutation`/`drainBackend` override.
  * Divergence backup tags the ref head before reinit (caveat 6), delegated to
@@ -41,7 +41,7 @@ const DEFAULT_BRANCH = "cq-ledger";
 export interface GitObjectLedgerBackendOpts {
   /**
    * Absolute repo root the orphan ref + plumbing operate against (the host git
-   * checkout). Advisory lockfiles live under `<repoRoot>/docs/.locks` on the
+   * checkout). Advisory lockfiles live under `<repoRoot>/.cq/.locks` on the
    * real filesystem — NEVER committed to the orphan tree.
    */
   repoRoot: string;
@@ -135,7 +135,7 @@ export class GitObjectLedgerBackend
 
   /**
    * The advisory lockfiles live on the REAL filesystem under
-   * `<repoRoot>/docs/.locks` (gitignored, NEVER in the orphan tree) — caveat 2.
+   * `<repoRoot>/.cq/.locks` (gitignored, NEVER in the orphan tree) — caveat 2.
    */
   protected locksRoot(): string {
     return this.locksDir;

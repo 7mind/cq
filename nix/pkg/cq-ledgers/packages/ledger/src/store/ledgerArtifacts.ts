@@ -3,8 +3,8 @@
  * the ledger". The storage dir is `<root>/.cq/` (LEDGER_STORAGE_DIRNAME).
  *
  * `cq erase`, `cq move-ledger`, and any other cleanup/transplant site must agree
- * on this set so they NEVER touch unrelated content (e.g. a sibling project
- * `docs/drafts/`). The set is REGISTRY-DRIVEN — derived from
+ * on this set so they NEVER touch unrelated content (e.g. a separate project-docs
+ * `docs/drafts/` directory). The set is REGISTRY-DRIVEN — derived from
  * `.cq/ledgers.yaml` (unioned with the canonical names as a fallback) — not
  * a blind `*.md` glob or a whole-`.cq/` wipe.
  *

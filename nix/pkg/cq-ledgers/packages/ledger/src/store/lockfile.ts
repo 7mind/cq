@@ -1,7 +1,7 @@
 /**
  * Advisory lockfile with stale-PID reclaim.
  *
- * Layout: one lockfile per ledger at `<root>/docs/.locks/<ledger>.lock`.
+ * Layout: one lockfile per ledger at `<root>/.cq/.locks/<ledger>.lock`.
  * Content: JSON `{ pid, hostname, startedAt }`.
  *
  * Acquire algorithm:

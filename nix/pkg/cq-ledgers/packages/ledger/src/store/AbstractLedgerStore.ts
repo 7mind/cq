@@ -155,7 +155,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
 
   /**
    * The directory under which the advisory lockfiles live (the FS backend's
-   * `docs/.locks`). The lockfile critical sections (withLock/withMilestonesLock/
+   * `.cq/.locks`). The lockfile critical sections (withLock/withMilestonesLock/
    * withRegistryLock) acquire `<locksRoot>/<key>.lock`. The lockfile itself is
    * SHARED (it stays in `lockfile.ts`); only its root is backend-specific.
    */

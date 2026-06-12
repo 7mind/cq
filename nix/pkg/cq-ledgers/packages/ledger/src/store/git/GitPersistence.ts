@@ -1,16 +1,16 @@
 /**
  * GitPersistence — the git-object implementation of the {@link LedgerPersistence}
  * byte-I/O seam (G43 / Q190 / K66). The git-blob analogue of {@link FsPersistence}:
- * instead of `fs.*` calls under `docs/`, it reads/writes blobs addressed by a
+ * instead of `fs.*` calls under `.cq/`, it reads/writes blobs addressed by a
  * tree on an ORPHAN ref (`refs/heads/<branch>`, default `cq-ledger`) via the
  * {@link GitPlumbing} seam — NO checkout, the working tree + index + HEAD stay
  * byte-identical across every write (proven by the K66 PoC).
  *
- * ## Tree layout (docs-relative — NO `docs/` prefix)
+ * ## Tree layout (storage-relative — NO `.cq/` prefix)
  *
- * The orphan ref's tree is rooted at the DOCS CONTENTS, so tree paths mirror the
+ * The orphan ref's tree is rooted at the LEDGER STORAGE CONTENTS, so tree paths mirror the
  * `ArchivePointer.path` convention the shared base already speaks (paths relative
- * to the docs root):
+ * to the storage root):
  *   ledgers.yaml                     # central registry
  *   <ledger>.md                      # active ledger
  *   archive/<ledger>/<id>.md         # archived group (or item, for milestones)
@@ -44,7 +44,7 @@
  * git analogue of the FS `.backup/<ts>/` dir.
  *
  * ## NOT a concern here (per caveats / Q195)
- *  - the advisory `docs/.locks/*.lock` stay on the REAL FS, gitignored, NEVER in
+ *  - the advisory `.cq/.locks/*.lock` stay on the REAL FS, gitignored, NEVER in
  *    the orphan tree — that is the base's lockfile + the backend's `locksRoot()`.
  *  - NO `~/.cache` mirror (Q195(2)).
  */

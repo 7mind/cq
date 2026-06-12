@@ -13,13 +13,13 @@
  *   2. BYTE-LEVEL I/O — the `fs.*` / `atomicWrite` calls that read and write the
  *      raw `string` source of the registry, each ledger `.md`, and each archive
  *      file, plus the schema-divergence BACKUP action.
- *   3. Locator/layout — `docs/ledgers.yaml`, `docs/<name>.md`,
- *      `docs/archive/<name>/<id>.md`, `docs/.backup/<ts>/`.
+ *   3. Locator/layout — `.cq/ledgers.yaml`, `.cq/<name>.md`,
+ *      `.cq/archive/<name>/<id>.md`, `.cq/.backup/<ts>/`.
  *
  * Per the answered Q190 the byte-level I/O (concern 2) is the ONLY thing that
  * differs between the filesystem backend (`FsLedgerStore`) and the planned
  * git-object backend (`GitObjectLedgerBackend`): one reads/writes files under
- * `docs/`, the other reads/writes blobs addressed by a git tree/ref. Everything
+ * `.cq/`, the other reads/writes blobs addressed by a git tree/ref. Everything
  * in concern 1 — the map, the parse/serialize, the FTS index, the mutex, the
  * lockfile, and `schemasEqual` — stays in a SHARED base class that both backends
  * extend (the base is extracted in the NEXT task **T350**; the git backend is
@@ -42,9 +42,9 @@
  *     `LedgerPersistence` impl performs any directory bootstrap it needs lazily
  *     inside its own `write*` methods, as `atomicWrite` already does via its
  *     leading `fs.mkdir(dirname, { recursive: true })`.)
- *   - the advisory lockfile (`Lockfile.acquire`, `docs/.locks/*`) — stays in the
+ *   - the advisory lockfile (`Lockfile.acquire`, `.cq/.locks/*`) — stays in the
  *     shared base (concern 1).
- *   - `readLog()` (`fs.realpath` / `fs.readFile` under `docs/logs/`) — a separate
+ *   - `readLog()` (`fs.realpath` / `fs.readFile` under `.cq/logs/`) — a separate
  *     FS-store-only capability (T147 / Q87), explicitly NOT part of the generic
  *     `LedgerStore` surface and NOT a ledger-source byte-I/O operation.
  *   - the `~/.cache` mirror (`cacheMirror.ts`) — a derived, fire-and-forget
@@ -67,7 +67,7 @@ export interface LedgerPersistence {
   // ---------------------------------------------------------------------------
 
   /**
-   * Read the raw source text of ledger `name` (the `docs/<name>.md` body), or
+   * Read the raw source text of ledger `name` (the `.cq/<name>.md` body), or
    * `null` if it does not exist yet (so the caller bootstraps a fresh ledger).
    *
    * FsLedgerStore call-sites (all `fs.readFile(this.ledgerPath(name), "utf8")`
@@ -79,7 +79,7 @@ export interface LedgerPersistence {
   readLedgerSource(name: string): Promise<string | null>;
 
   /**
-   * Read the raw source text of the central registry (`docs/ledgers.yaml`), or
+   * Read the raw source text of the central registry (`.cq/ledgers.yaml`), or
    * `null` if it does not exist yet (so the caller writes `EMPTY_REGISTRY`).
    *
    * FsLedgerStore call-sites (all `fs.readFile(this.registryPath, "utf8")` with
@@ -108,7 +108,7 @@ export interface LedgerPersistence {
 
   /**
    * Atomically persist the serialized source `text` of the central registry
-   * (`docs/ledgers.yaml`).
+   * (`.cq/ledgers.yaml`).
    *
    * FsLedgerStore call-sites:
    *   - `writeRegistry()` — `atomicWrite(this.registryPath,
@@ -168,18 +168,18 @@ export interface LedgerPersistence {
 
   /**
    * Enumerate the archive locators currently held for ledger `name`
-   * (the entries under the fs backend's `docs/archive/<name>/` directory).
+   * (the entries under the fs backend's `.cq/archive/<name>/` directory).
    *
    * NOTE — no direct call-site in today's `FsLedgerStore`: the fs store
    * enumerates archives from the IN-MEMORY `Ledger.archivePointers` list
-   * (populated at parse time), not by listing `docs/archive/<name>/`, so it
+   * (populated at parse time), not by listing `.cq/archive/<name>/`, so it
    * performs no `fs.readdir` here. This method is part of the seam for backend
    * PARITY (Q190): the git-object backend (T351) cannot rely on parsed-in
    * pointers alone and must enumerate the archive blobs under its tree to
    * reconcile pointer state. The shared base (T350) will route any
    * archive-directory enumeration it needs through this method rather than a
    * direct `fs.readdir`; the fs impl backs it with `fs.readdir` over
-   * `docs/archive/<name>/` (cf. the existing `fs.readdir(ledgerArchiveDir)` in
+   * `.cq/archive/<name>/` (cf. the existing `fs.readdir(ledgerArchiveDir)` in
    * `cacheMirror.ts`).
    */
   readArchiveDir(name: string): Promise<string[]>;
@@ -202,7 +202,7 @@ export interface LedgerPersistence {
    * FsLedgerStore call-site — the byte-I/O prologue of `backupAndReinit()`:
    *   - `fs.mkdir(path.join(docsDir, ".backup", <sanitized-ISO>), …)` — create
    *     the timestamped backup dir.
-   *   - `fs.copyFile(src, dest)` — copy `docs/ledgers.yaml` + each canonical and
+   *   - `fs.copyFile(src, dest)` — copy `.cq/ledgers.yaml` + each canonical and
    *     non-canonical ledger file into it (ENOENT tolerated).
    *   - `fs.unlink(this.ledgerPath(name))` — remove now-orphaned non-canonical
    *     ledger files from disk.

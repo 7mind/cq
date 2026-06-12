@@ -1,5 +1,5 @@
 /**
- * Registry — read/write of `./docs/ledgers.yaml`.
+ * Registry — read/write of `./.cq/ledgers.yaml`.
  *
  * v1 schema:
  *   version: 1

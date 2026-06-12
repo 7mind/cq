@@ -45,11 +45,11 @@ export function cacheMirrorDir(absRootDir: string): string {
 export interface MirrorLayout {
   /** Absolute store root (the server --cwd); the basis for the mirror dir. */
   readonly rootDir: string;
-  /** Absolute `<root>/docs` directory. */
+  /** Absolute `<root>/.cq` directory. */
   readonly docsDir: string;
-  /** Absolute `<root>/docs/archive` directory. */
+  /** Absolute `<root>/.cq/archive` directory. */
   readonly archiveDir: string;
-  /** Absolute `<root>/docs/ledgers.yaml` registry path. */
+  /** Absolute `<root>/.cq/ledgers.yaml` registry path. */
   readonly registryPath: string;
 }
 
@@ -57,11 +57,11 @@ export interface MirrorLayout {
  * Mirror the file(s) a single mutation touched into the cache dir, preserving
  * the source's path RELATIVE to the store root (so the mirror is a faithful
  * subtree of `<root>/`). For:
- *   - any op: the changed `docs/<ledgerId>.md`;
- *   - a `create` op additionally: `docs/ledgers.yaml` (the registry is
+ *   - any op: the changed `.cq/<ledgerId>.md`;
+ *   - a `create` op additionally: `.cq/ledgers.yaml` (the registry is
  *     rewritten when a new non-canonical ledger is created);
  *   - an `archive` op additionally: the new archive file(s) for `ledgerId`
- *     under `docs/archive/<ledgerId>/` and `docs/ledgers.yaml` (the registry
+ *     under `.cq/archive/<ledgerId>/` and `.cq/ledgers.yaml` (the registry
  *     is rewritten on archive of a non-milestones ledger; mirror it always on
  *     archive to stay faithful).
  *   - an `update` op: only the ledger `.md` file (the registry is NOT

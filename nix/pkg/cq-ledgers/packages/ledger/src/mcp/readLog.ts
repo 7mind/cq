@@ -2,16 +2,16 @@
  * read_log capability (T147 / Q87).
  *
  * The `read_log` MCP tool performs a bounded, root-confined read of a file under
- * `<root>/docs/logs/`. Per R137 #6 the confinement root is the EXPLICIT
+ * `<root>/.cq/logs/`. Per R137 #6 the confinement root is the EXPLICIT
  * FsLedgerStore root, NOT the generic `LedgerStore` interface (no root accessor;
  * its in-memory impl has no filesystem). So the capability is a standalone
- * function type the FS-store layer supplies (closing over its `<root>/docs/logs`)
+ * function type the FS-store layer supplies (closing over its `<root>/.cq/logs`)
  * and threads explicitly into the tool factories. Wired over an in-memory store
  * (no filesystem), no capability is supplied and `read_log` throws
  * `ReadLogNotImplementedError`.
  */
 
-/** Result of a bounded read of a docs/logs file. */
+/** Result of a bounded read of a .cq/logs file. */
 export interface ReadLogResult {
   /** The repo-relative path requested (echoed back, normalised). */
   path: string;
@@ -22,7 +22,7 @@ export interface ReadLogResult {
 }
 
 /**
- * A bounded read-log capability: resolves `relPath` against `<root>/docs/logs`,
+ * A bounded read-log capability: resolves `relPath` against `<root>/.cq/logs`,
  * rejects any path escaping that directory, and caps the returned size.
  * Supplied by the FS-store layer; absent for in-memory-backed factories.
  */
@@ -47,7 +47,7 @@ export class ReadLogNotImplementedError extends Error {
   constructor() {
     super(
       "read_log is not implemented for this store: no filesystem-backed " +
-        "<root>/docs/logs is available (in-memory store)",
+        "<root>/.cq/logs is available (in-memory store)",
     );
     this.name = "ReadLogNotImplementedError";
   }

@@ -208,7 +208,7 @@ export interface Ledger {
 }
 
 /**
- * Registry entry stored in `./docs/ledgers.yaml`.
+ * Registry entry stored in `./.cq/ledgers.yaml`.
  */
 export interface LedgerRegistryEntry {
   name: string;

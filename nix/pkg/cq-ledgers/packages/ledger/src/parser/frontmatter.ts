@@ -2,7 +2,7 @@
  * Frontmatter helpers — YAML (de)serialization of the per-ledger header.
  *
  * Schema (v1):
- *   ledger: <string>          # ledger id (matches docs/ledgers.yaml entry)
+ *   ledger: <string>          # ledger id (matches .cq/ledgers.yaml entry)
  *   counters:
  *     milestone: <int>
  *     item: <int>
