@@ -87,4 +87,32 @@ describe("git-backend .gitignore add/remove round-trip", () => {
     expect(content.includes("docs/logs/")).toBe(true);
     expect(GIT_BACKEND_GITIGNORE_BLOCK.includes("docs/logs/")).toBe(true);
   });
+
+  // D66 repro — test.failing() today because ensureGitBackendGitignore no-ops when the
+  // marker is present (gitBackendGitignore.ts:56-58), leaving a stale pre-T402 block
+  // that is missing "docs/logs/".  T434 fixes the function; flip this to test() then.
+  it.failing(
+    "D66 repro: stale pre-T402 block (no docs/logs/) is refreshed by ensureGitBackendGitignore",
+    async () => {
+      const root = await tmp();
+      const gi = path.join(root, ".gitignore");
+
+      // Build the legacy pre-T402 block: marker + 3 original lines, NO docs/logs/.
+      // Intentionally NOT using GIT_BACKEND_GITIGNORE_BLOCK (which already has docs/logs/).
+      const legacyBlock = [
+        GIT_BACKEND_GITIGNORE_MARKER,
+        "docs/*.md",
+        "docs/ledgers.yaml",
+        "docs/.locks/",
+      ].join("\n");
+      await writeFile(gi, `${legacyBlock}\n`, "utf8");
+
+      await ensureGitBackendGitignore(root);
+
+      const content = await readFile(gi, "utf8");
+      // Today this assertion fails: the function no-ops on marker presence, so
+      // docs/logs/ stays absent.  T434 will make it pass.
+      expect(content).toContain("docs/logs/");
+    },
+  );
 });
