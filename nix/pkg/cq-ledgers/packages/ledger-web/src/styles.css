@@ -218,6 +218,53 @@ body {
   text-overflow: ellipsis;
   word-break: break-word;
 }
+/* Raw-log "raw" toggle next to a summary log link (T414). */
+.lw-log-raw-toggle {
+  margin-left: 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--dim);
+  padding: 0 5px;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.4;
+}
+.lw-log-raw-toggle:hover {
+  background: var(--hover);
+}
+/* Structured collapsible conversation view for a .jsonl transcript (T414). */
+.lw-raw-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lw-raw-turn {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.lw-raw-role {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  cursor: pointer;
+}
+.lw-raw-text {
+  margin-top: 4px;
+}
+.lw-raw-pre {
+  margin: 6px 0 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
 .lw-help-list {
   display: grid;
   grid-template-columns: max-content 1fr;

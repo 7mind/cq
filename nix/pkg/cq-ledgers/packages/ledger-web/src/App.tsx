@@ -31,6 +31,10 @@ import { LiveManager, type LiveStats } from "@cq/ledger-live";
 import { defectFixTaskIds, hypothesisRelationships } from "@cq/ledger/relationships";
 import { HoldButton, type HoldClock } from "./HoldButton.js";
 import { useBackdropDismiss } from "./useBackdropDismiss.js";
+// Browser-safe JSONL transcript parser (T412): turns the raw `.jsonl` content
+// returned by `onReadLog` into the structured conversation model the
+// RawLogViewer renders (T414). Node-free leaf module.
+import { parseRawLog, type ConversationModel, type ConversationTurn } from "./rawLog.js";
 // Leaf subpath: the @cq/ledger index pulls Node builtins (node:fs/os/path),
 // which must not enter the browser bundle. `./columns` is side-effect-free and
 // Node-free, mirroring the `./relationships` leaf import above.
@@ -3518,12 +3522,22 @@ function HypothesisTreePanel({
 // Session-log popup (T152 / Q87)
 // ---------------------------------------------------------------------------
 
+/**
+ * How the modal renders a successfully-read log:
+ * - "markdown": the existing summary/plain path (a `<Markdown>` blob);
+ * - "rawlog": a `.jsonl` transcript parsed by `parseRawLog` and rendered as a
+ *   structured, collapsible conversation (T414).
+ * The format is decided at open time (by file extension), so it is threaded
+ * through every non-closed state.
+ */
+type LogFormat = "markdown" | "rawlog";
+
 /** State for the log-content modal. */
 type LogModalState =
   | { kind: "closed" }
-  | { kind: "loading"; path: string }
-  | { kind: "ok"; path: string; content: string; truncated: boolean }
-  | { kind: "error"; path: string; message: string };
+  | { kind: "loading"; path: string; format: LogFormat }
+  | { kind: "ok"; path: string; content: string; truncated: boolean; format: LogFormat }
+  | { kind: "error"; path: string; message: string; format: LogFormat };
 
 /**
  * Modal overlay that renders a single log file's content (preformatted).
@@ -3571,7 +3585,7 @@ function LogModal({ state, onClose }: { state: LogModalState; onClose: () => voi
           {state.kind === "error" && (
             <span className="lw-error" data-testid="log-modal-error">{state.message}</span>
           )}
-          {state.kind === "ok" && (
+          {state.kind === "ok" && state.format === "markdown" && (
             <>
               {state.truncated && (
                 <p className="lw-dim lw-log-truncated" data-testid="log-modal-truncated">
@@ -3581,10 +3595,95 @@ function LogModal({ state, onClose }: { state: LogModalState; onClose: () => voi
               <div className="lw-log-content" data-testid="log-modal-content"><Markdown text={state.content} /></div>
             </>
           )}
+          {state.kind === "ok" && state.format === "rawlog" && (
+            <RawLogViewer content={state.content} truncated={state.truncated} />
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+/** Human-facing role label for a conversation turn. */
+function turnRoleLabel(kind: ConversationTurn["kind"]): string {
+  switch (kind) {
+    case "assistant":
+      return "assistant";
+    case "user":
+      return "user";
+    case "tool_use":
+      return "tool call";
+    case "tool_result":
+      return "tool result";
+    case "raw":
+      return "raw";
+  }
+}
+
+/**
+ * Render one conversation turn (T414). Text turns (assistant/user) show a role
+ * label + the text. Tool turns (tool_use / tool_result) and raw lines are
+ * COLLAPSIBLE — rendered as `<details>` so a long transcript stays scannable;
+ * the summary carries the role + tool name, the body the pretty-printed args /
+ * result / raw line.
+ */
+function RawLogTurn({ turn }: { turn: ConversationTurn }): React.ReactElement {
+  const label = turnRoleLabel(turn.kind);
+  if (turn.kind === "assistant" || turn.kind === "user") {
+    return (
+      <div className={`lw-raw-turn lw-raw-turn-${turn.kind}`} data-testid={`raw-turn-${turn.kind}`}>
+        <span className="lw-raw-role" data-testid="raw-turn-role">{label}</span>
+        <div className="lw-raw-text"><Markdown text={turn.text} /></div>
+      </div>
+    );
+  }
+  // Collapsible turns: tool_use, tool_result, raw.
+  const summary =
+    turn.kind === "tool_use"
+      ? `${label}: ${turn.toolName}`
+      : turn.kind === "tool_result"
+        ? `${label}${turn.pairedToolName !== null ? `: ${turn.pairedToolName}` : ""}${turn.isError ? " (error)" : ""}`
+        : `${label} (${turn.reason})`;
+  const body =
+    turn.kind === "tool_use"
+      ? turn.inputPretty
+      : turn.kind === "tool_result"
+        ? turn.resultPretty
+        : turn.raw;
+  return (
+    <details className={`lw-raw-turn lw-raw-turn-${turn.kind}`} data-testid={`raw-turn-${turn.kind}`}>
+      <summary className="lw-raw-role" data-testid="raw-turn-role">{summary}</summary>
+      <pre className="lw-raw-pre" data-testid="raw-turn-body">{body}</pre>
+    </details>
+  );
+}
+
+/**
+ * Structured, collapsible conversation view for a `.jsonl` raw transcript
+ * (T414). Parses the raw content with the T412 `parseRawLog` and renders each
+ * turn; tool calls/results are collapsible. A truncated read shows a banner.
+ */
+function RawLogViewer({ content, truncated }: { content: string; truncated: boolean }): React.ReactElement {
+  const model: ConversationModel = useMemo(() => parseRawLog(content, truncated), [content, truncated]);
+  return (
+    <div className="lw-raw-log" data-testid="raw-log-viewer">
+      {model.truncatedNotice !== null && (
+        <p className="lw-dim lw-log-truncated" data-testid="raw-log-truncated">
+          (log {model.truncatedNotice})
+        </p>
+      )}
+      {model.turns.map((turn, i) => (
+        <RawLogTurn key={`${turn.lineIndex}-${i}`} turn={turn} />
+      ))}
+    </div>
+  );
+}
+
+/** Filename stem (basename without its final extension) for raw/summary pairing. */
+function logStem(path: string): string {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(0, dot) : base;
 }
 
 /**
@@ -3601,12 +3700,19 @@ function SessionLogsPanel({
 }): React.ReactElement | null {
   const raw = item.fields["sessionLogs"];
   const paths: string[] = Array.isArray(raw) ? raw.filter((v) => typeof v === "string") : [];
+  // Paired raw transcripts (Q220): an explicit `rawLogs` string[] field, NOT
+  // probed/inferred. A summary entry exposes a "raw" toggle only when a
+  // rawLogs entry shares its filename stem.
+  const rawRaw = item.fields["rawLogs"];
+  const rawPaths: string[] = Array.isArray(rawRaw) ? rawRaw.filter((v) => typeof v === "string") : [];
+  const rawByStem = new Map<string, string>();
+  for (const rp of rawPaths) rawByStem.set(logStem(rp), rp);
   const [modal, setModal] = useState<LogModalState>({ kind: "closed" });
 
   if (paths.length === 0) return null;
 
-  const open = (path: string): void => {
-    setModal({ kind: "loading", path });
+  const open = (path: string, format: LogFormat): void => {
+    setModal({ kind: "loading", path, format });
     void onReadLog(path)
       .then((r) =>
         setModal({
@@ -3614,6 +3720,7 @@ function SessionLogsPanel({
           path: r.path,
           content: r.content,
           truncated: r.truncated === true,
+          format,
         }),
       )
       .catch((err: unknown) =>
@@ -3621,6 +3728,7 @@ function SessionLogsPanel({
           kind: "error",
           path,
           message: err instanceof Error ? err.message : String(err),
+          format,
         }),
       );
   };
@@ -3630,18 +3738,36 @@ function SessionLogsPanel({
       <section className="lw-rel-section" data-testid="session-logs-section">
         <h4 className="lw-rel-heading">logs</h4>
         <ul className="lw-rel-list">
-          {paths.map((p) => (
-            <li key={p}>
-              <button
-                type="button"
-                className="lw-log-link"
-                data-testid={`log-link-${p}`}
-                onClick={() => open(p)}
-              >
-                {p}
-              </button>
-            </li>
-          ))}
+          {paths.map((p) => {
+            const rawPath = rawByStem.get(logStem(p));
+            // A .jsonl raw transcript renders via the T412 parser (structured,
+            // collapsible conversation); any other extension (pi .md) opens via
+            // the existing markdown modal path.
+            const rawFormat: LogFormat = rawPath !== undefined && rawPath.endsWith(".jsonl") ? "rawlog" : "markdown";
+            return (
+              <li key={p}>
+                <button
+                  type="button"
+                  className="lw-log-link"
+                  data-testid={`log-link-${p}`}
+                  onClick={() => open(p, "markdown")}
+                >
+                  {p}
+                </button>
+                {rawPath !== undefined && (
+                  <button
+                    type="button"
+                    className="lw-log-raw-toggle"
+                    data-testid={`log-raw-toggle-${p}`}
+                    title={rawPath}
+                    onClick={() => open(rawPath, rawFormat)}
+                  >
+                    raw
+                  </button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </section>
       <LogModal state={modal} onClose={() => setModal({ kind: "closed" })} />
