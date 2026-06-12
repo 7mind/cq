@@ -13,6 +13,7 @@
 import { describe, it, expect } from "bun:test";
 import {
   parseRawLog,
+  type UserTurn,
   type ToolUseTurn,
   type ToolResultTurn,
   type AssistantTurn,
@@ -59,7 +60,7 @@ describe("parseRawLog", () => {
     const kinds = model.turns.map((t) => t.kind);
     expect(kinds).toEqual(["user", "assistant", "tool_use", "tool_result", "assistant"]);
 
-    const userTurn = model.turns[0] as AssistantTurn;
+    const userTurn = model.turns[0] as UserTurn;
     expect(userTurn.text).toBe("do the thing");
 
     const assistantTurn = model.turns[1] as AssistantTurn;
