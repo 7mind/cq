@@ -78,6 +78,16 @@ export enum AutoAction {
  * A preset descriptor for one `<command>:auto` wrapper: the command the driver
  * redrives, plus the postcondition oracle that decides when the run is DRAINED.
  *
+ * `wrappedCommand` is the name of the slash command to invoke (without the
+ * leading `/`), e.g. `"cq:advance"` or `"cq:plan:advance"`. The driver sends
+ * `/${wrappedCommand}` into the live Pi session to start each redrive.
+ *
+ * `commandName` is the name the `:auto` command is registered under (without
+ * the leading `/`), e.g. `"cq:advance:auto"`. When absent, it defaults to
+ * `${wrappedCommand}:auto`. Provide it explicitly when the registration name
+ * must differ from the `${wrappedCommand}:auto` form (e.g. `cq:plan:auto`
+ * wraps `cq:plan:advance`, so `commandName` is `"cq:plan:auto"`).
+ *
  * `terminalPredicate` returns TRUE when the wrapped command has reached its
  * terminal state for the given derived predicates (no movable work remains for
  * that command's stage), i.e. the driver should STOP_DRAINED rather than
@@ -85,41 +95,49 @@ export enum AutoAction {
  */
 export interface AutoPreset {
   wrappedCommand: string;
+  commandName?: string;
   terminalPredicate: (p: DerivedPredicates) => boolean;
 }
 
 /**
- * `advance:auto` — drains the whole flow. Terminal when ALL THREE P-predicates
+ * `cq:advance:auto` — drains the whole flow. Terminal when ALL THREE P-predicates
  * are FALSE (no investigate, plan, or implement work remains).
+ * Wraps `/cq:advance`; registered as `cq:advance:auto`.
  */
 export const advanceAutoPreset: AutoPreset = {
-  wrappedCommand: "advance",
+  wrappedCommand: "cq:advance",
   terminalPredicate: (p) => !p.pInvestigate.value && !p.pPlan.value && !p.pImplement.value,
 };
 
 /**
- * `plan:auto` — drains plan-flow. Terminal when `pPlan.value` is FALSE: no
+ * `cq:plan:auto` — drains plan-flow. Terminal when `pPlan.value` is FALSE: no
  * movable goal remains (the target goal has reached `planned`).
+ * Wraps `/cq:plan:advance`; registered as `cq:plan:auto`.
  */
 export const planAutoPreset: AutoPreset = {
-  wrappedCommand: "plan",
+  wrappedCommand: "cq:plan:advance",
+  commandName: "cq:plan:auto",
   terminalPredicate: (p) => !p.pPlan.value,
 };
 
 /**
- * `investigate:auto` — drains investigate-flow. Terminal when
+ * `cq:investigate:auto` — drains investigate-flow. Terminal when
  * `pInvestigate.value` is FALSE.
+ * Wraps `/cq:investigate:advance`; registered as `cq:investigate:auto`.
  */
 export const investigateAutoPreset: AutoPreset = {
-  wrappedCommand: "investigate",
+  wrappedCommand: "cq:investigate:advance",
+  commandName: "cq:investigate:auto",
   terminalPredicate: (p) => !p.pInvestigate.value,
 };
 
 /**
- * `implement:auto` — drains implement-flow. Terminal when `pImplement.value`
+ * `cq:implement:auto` — drains implement-flow. Terminal when `pImplement.value`
  * is FALSE.
+ * Wraps `/cq:implement:advance`; registered as `cq:implement:auto`.
  */
 export const implementAutoPreset: AutoPreset = {
-  wrappedCommand: "implement",
+  wrappedCommand: "cq:implement:advance",
+  commandName: "cq:implement:auto",
   terminalPredicate: (p) => !p.pImplement.value,
 };

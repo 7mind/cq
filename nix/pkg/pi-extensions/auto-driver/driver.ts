@@ -581,7 +581,7 @@ export function registerAutoDriver(
     }
   });
 
-  const commandName = `${preset.wrappedCommand}:auto`;
+  const commandName = preset.commandName ?? `${preset.wrappedCommand}:auto`;
   api.registerCommand(commandName, {
     description: `Auto-drive \`${preset.wrappedCommand}\` until its terminal predicate is satisfied.`,
     handler: async (args: string, ctx: DriverContext): Promise<void> => {

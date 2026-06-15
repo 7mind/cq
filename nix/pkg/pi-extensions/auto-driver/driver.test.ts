@@ -15,6 +15,7 @@ import { describe, test, expect } from "bun:test";
 import {
   launchAndAwait,
   runAutoDriver,
+  registerAutoDriver,
   sampleSignals,
   statusTextForPhase,
   STATUS_KEY,
@@ -22,10 +23,20 @@ import {
   type DriverApi,
   type DriverContext,
   type DriverPhase,
+  type DriverRegistrationApi,
   type DriverUIContext,
   type QuotaHitRef,
 } from "./driver";
-import { AutoAction, type AutoPreset, type DerivedPredicates } from "./decision";
+import {
+  AutoAction,
+  advanceAutoPreset,
+  planAutoPreset,
+  investigateAutoPreset,
+  implementAutoPreset,
+  type AutoPreset,
+  type DerivedPredicates,
+} from "./decision";
+import { registerAllAutoCommands } from "./index";
 
 // ---------------------------------------------------------------------------
 // Fakes.
@@ -784,5 +795,328 @@ describe("T467: setStatus NOT called when hasUI=false", () => {
     expect(result.action).toBe(AutoAction.STOP_DRAINED);
     expect(result.iterations).toBe(2);
     // No UI calls emitted — would throw if ui.setStatus were not gated on hasUI.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T468: registration — fake registration API.
+// ---------------------------------------------------------------------------
+
+/**
+ * Captured entry from a fake registration call. Records the command name and
+ * the preset the handler was bound to (extracted by running the handler with
+ * a controlled ctx that aborts after the first launch).
+ */
+interface CapturedRegistration {
+  commandName: string;
+  /** The first prompt the handler injects (the wrapped slash command). */
+  firstPrompt: string;
+}
+
+/**
+ * A fake `DriverRegistrationApi` that captures every `registerCommand` call
+ * together with the first prompt the handler injects, so tests can assert both
+ * the registered name AND the bound wrapped command without running a full loop.
+ *
+ * The handler is invoked with a fake ctx that stops after `waitForIdle` (by
+ * returning terminal predicates), so only the first launch prompt is captured.
+ */
+function makeFakeRegistrationApi(): {
+  api: DriverRegistrationApi;
+  registrations: CapturedRegistration[];
+  runHandlers(): Promise<void>;
+} {
+  const registrations: CapturedRegistration[] = [];
+  type HandlerEntry = {
+    commandName: string;
+    handler: (args: string, ctx: DriverContext) => Promise<void>;
+  };
+  const handlers: HandlerEntry[] = [];
+
+  const api: DriverRegistrationApi = {
+    prompts: [],
+    providerResponseHandler: null,
+    sendUserMessage(content: string): void {
+      // prompts is not used directly in registration tests, but satisfies DriverApi.
+    },
+    on(
+      _event: "after_provider_response",
+      handler: (event: DriverAfterProviderResponseEvent) => void,
+    ): void {
+      // Record but don't fire — not needed for registration tests.
+      this.providerResponseHandler = handler;
+    },
+    simulateProviderResponse(_event: DriverAfterProviderResponseEvent): void {},
+    registerCommand(
+      name: string,
+      options: { description?: string; handler: (args: string, ctx: DriverContext) => Promise<void> },
+    ): void {
+      handlers.push({ commandName: name, handler: options.handler });
+    },
+  } as unknown as DriverRegistrationApi & {
+    prompts: string[];
+    providerResponseHandler: ((event: DriverAfterProviderResponseEvent) => void) | null;
+    simulateProviderResponse: (event: DriverAfterProviderResponseEvent) => void;
+  };
+
+  async function runHandlers(): Promise<void> {
+    for (const { commandName, handler } of handlers) {
+      const captured: { firstPrompt: string | null } = { firstPrompt: null };
+      // Fake ctx: captures the first sendUserMessage, then returns terminal predicates.
+      const fakeApi: DriverApi = {
+        sendUserMessage(content: string): void {
+          if (captured.firstPrompt === null) {
+            captured.firstPrompt = content;
+          }
+        },
+        on(_event: "after_provider_response", _h: (e: DriverAfterProviderResponseEvent) => void): void {},
+      };
+      const events: string[] = [];
+      const fakeCtx = makeFakeCtx({ events });
+
+      // Override ctx to use fakeApi's sendUserMessage for the prompt capture.
+      // We run the handler with a terminal oracle so the loop exits immediately.
+      await handler("", {
+        ...fakeCtx,
+      } as DriverContext);
+
+      registrations.push({
+        commandName,
+        firstPrompt: captured.firstPrompt ?? "",
+      });
+    }
+  }
+
+  return { api, registrations, runHandlers };
+}
+
+// ---------------------------------------------------------------------------
+// Simpler approach: test registration directly without running handlers.
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal fake DriverRegistrationApi that only captures registered command names
+ * and the preset's wrappedCommand (extracted from the description) without
+ * running the full handler.
+ */
+interface SimpleRegistration {
+  commandName: string;
+  description: string | undefined;
+}
+
+function makeSimpleRegistrationApi(): {
+  api: DriverRegistrationApi;
+  registrations: SimpleRegistration[];
+} {
+  const registrations: SimpleRegistration[] = [];
+
+  const api: DriverRegistrationApi = {
+    sendUserMessage(_content: string): void {},
+    on(_event: "after_provider_response", _handler: (event: DriverAfterProviderResponseEvent) => void): void {},
+    registerCommand(
+      name: string,
+      options: { description?: string; handler: (args: string, ctx: DriverContext) => Promise<void> },
+    ): void {
+      registrations.push({ commandName: name, description: options.description });
+    },
+  };
+
+  return { api, registrations };
+}
+
+describe("T468: registerAutoDriver — command name derived from preset", () => {
+  test("advanceAutoPreset registers as 'cq:advance:auto' (commandName = wrappedCommand + :auto)", () => {
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAutoDriver(api, advanceAutoPreset);
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0]!.commandName).toBe("cq:advance:auto");
+  });
+
+  test("planAutoPreset registers as 'cq:plan:auto' (explicit commandName overrides wrappedCommand)", () => {
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAutoDriver(api, planAutoPreset);
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0]!.commandName).toBe("cq:plan:auto");
+  });
+
+  test("investigateAutoPreset registers as 'cq:investigate:auto'", () => {
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAutoDriver(api, investigateAutoPreset);
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0]!.commandName).toBe("cq:investigate:auto");
+  });
+
+  test("implementAutoPreset registers as 'cq:implement:auto'", () => {
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAutoDriver(api, implementAutoPreset);
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0]!.commandName).toBe("cq:implement:auto");
+  });
+
+  test("description mentions the wrappedCommand so the command is self-documenting", () => {
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAutoDriver(api, advanceAutoPreset);
+    expect(registrations[0]!.description).toContain("cq:advance");
+  });
+});
+
+describe("T468: preset wrappedCommand strings (launch slash commands)", () => {
+  test("advanceAutoPreset.wrappedCommand is 'cq:advance' (sends /cq:advance on launch)", () => {
+    expect(advanceAutoPreset.wrappedCommand).toBe("cq:advance");
+  });
+
+  test("planAutoPreset.wrappedCommand is 'cq:plan:advance' (sends /cq:plan:advance on launch)", () => {
+    expect(planAutoPreset.wrappedCommand).toBe("cq:plan:advance");
+  });
+
+  test("investigateAutoPreset.wrappedCommand is 'cq:investigate:advance'", () => {
+    expect(investigateAutoPreset.wrappedCommand).toBe("cq:investigate:advance");
+  });
+
+  test("implementAutoPreset.wrappedCommand is 'cq:implement:advance'", () => {
+    expect(implementAutoPreset.wrappedCommand).toBe("cq:implement:advance");
+  });
+});
+
+describe("T468: preset terminalPredicates (bound correctly to each flow)", () => {
+  const ALL_FALSE_P: DerivedPredicates = {
+    pInvestigate: { value: false, items: [] },
+    pPlan: { value: false, items: [] },
+    pImplement: { value: false, items: [] },
+    openQuestionGate: { value: false, items: [] },
+  };
+
+  test("advanceAutoPreset terminal when ALL THREE p-predicates are false", () => {
+    expect(advanceAutoPreset.terminalPredicate(ALL_FALSE_P)).toBe(true);
+  });
+
+  test("advanceAutoPreset not terminal when any p-predicate is true", () => {
+    expect(advanceAutoPreset.terminalPredicate({ ...ALL_FALSE_P, pPlan: { value: true, items: ["G1"] } })).toBe(false);
+  });
+
+  test("planAutoPreset terminal when pPlan is false", () => {
+    expect(planAutoPreset.terminalPredicate(ALL_FALSE_P)).toBe(true);
+  });
+
+  test("planAutoPreset not terminal when pPlan is true", () => {
+    expect(planAutoPreset.terminalPredicate({ ...ALL_FALSE_P, pPlan: { value: true, items: ["G1"] } })).toBe(false);
+  });
+
+  test("investigateAutoPreset terminal when pInvestigate is false", () => {
+    expect(investigateAutoPreset.terminalPredicate(ALL_FALSE_P)).toBe(true);
+  });
+
+  test("investigateAutoPreset not terminal when pInvestigate is true", () => {
+    expect(investigateAutoPreset.terminalPredicate({ ...ALL_FALSE_P, pInvestigate: { value: true, items: ["D1"] } })).toBe(false);
+  });
+
+  test("implementAutoPreset terminal when pImplement is false", () => {
+    expect(implementAutoPreset.terminalPredicate(ALL_FALSE_P)).toBe(true);
+  });
+
+  test("implementAutoPreset not terminal when pImplement is true", () => {
+    expect(implementAutoPreset.terminalPredicate({ ...ALL_FALSE_P, pImplement: { value: true, items: ["T1"] } })).toBe(false);
+  });
+});
+
+describe("T468: registerAllAutoCommands — all four commands registered", () => {
+  test("registers exactly 4 commands", () => {
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAllAutoCommands(api);
+    expect(registrations).toHaveLength(4);
+  });
+
+  test("all four command names are present", () => {
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAllAutoCommands(api);
+    const names = registrations.map((r) => r.commandName);
+    expect(names).toContain("cq:advance:auto");
+    expect(names).toContain("cq:plan:auto");
+    expect(names).toContain("cq:investigate:auto");
+    expect(names).toContain("cq:implement:auto");
+  });
+
+  test("no command name collisions (all four are distinct)", () => {
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAllAutoCommands(api);
+    const names = registrations.map((r) => r.commandName);
+    const unique = new Set(names);
+    expect(unique.size).toBe(4);
+  });
+
+  test("no collision with existing /cq:advance slash command (advance:auto ≠ advance)", () => {
+    // The wrapped command 'cq:advance' must not shadow the advance command itself.
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAllAutoCommands(api);
+    const names = registrations.map((r) => r.commandName);
+    // None of the registered names should equal the unwrapped command names.
+    expect(names).not.toContain("cq:advance");
+    expect(names).not.toContain("cq:plan:advance");
+    expect(names).not.toContain("cq:investigate:advance");
+    expect(names).not.toContain("cq:implement:advance");
+  });
+
+  test("wrappedCommand for advance preset sends /cq:advance (verified via runAutoDriver first prompt)", async () => {
+    // End-to-end: advance:auto's first injected prompt must be '/cq:advance'.
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events });
+
+    // Advance preset: terminal when all three predicates are false — so the
+    // oracle returning ALL_FALSE immediately drains it after one launch.
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: advanceAutoPreset,
+      getPredicates: scriptedOracle([ALL_FALSE]),
+    });
+
+    // The first (and only) injected prompt must be the wrapped slash command.
+    expect(api.prompts[0]).toBe("/cq:advance");
+  });
+
+  test("wrappedCommand for plan preset sends /cq:plan:advance (verified via runAutoDriver first prompt)", async () => {
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events });
+
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: planAutoPreset,
+      getPredicates: scriptedOracle([ALL_FALSE]),
+    });
+
+    expect(api.prompts[0]).toBe("/cq:plan:advance");
+  });
+
+  test("wrappedCommand for investigate preset sends /cq:investigate:advance", async () => {
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events });
+
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: investigateAutoPreset,
+      getPredicates: scriptedOracle([ALL_FALSE]),
+    });
+
+    expect(api.prompts[0]).toBe("/cq:investigate:advance");
+  });
+
+  test("wrappedCommand for implement preset sends /cq:implement:advance", async () => {
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events });
+
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: implementAutoPreset,
+      getPredicates: scriptedOracle([ALL_FALSE]),
+    });
+
+    expect(api.prompts[0]).toBe("/cq:implement:advance");
   });
 });
