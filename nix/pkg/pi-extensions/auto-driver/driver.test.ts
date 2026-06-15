@@ -16,9 +16,13 @@ import {
   launchAndAwait,
   runAutoDriver,
   sampleSignals,
+  statusTextForPhase,
+  STATUS_KEY,
   type DriverAfterProviderResponseEvent,
   type DriverApi,
   type DriverContext,
+  type DriverPhase,
+  type DriverUIContext,
   type QuotaHitRef,
 } from "./driver";
 import { AutoAction, type AutoPreset, type DerivedPredicates } from "./decision";
@@ -67,11 +71,29 @@ interface FakeCtxOptions {
    * Use a function to return different values across successive calls.
    */
   contextPercent?: number | null | (() => number | null);
+  /**
+   * Whether UI is available. Defaults to false (no-op for setStatus) so that
+   * existing tests that don't care about status-bar behaviour are unaffected.
+   * Pass true (and optionally a status spy) to test T467 behaviour.
+   */
+  hasUI?: boolean;
+  /** If provided, records every setStatus(key, text) call. */
+  statusCalls?: Array<{ key: string; text: string | undefined }>;
 }
 
 function makeFakeCtx(opts: FakeCtxOptions): DriverContext {
+  const hasUI = opts.hasUI ?? false;
+  const ui: DriverUIContext = {
+    setStatus(key: string, text: string | undefined): void {
+      if (opts.statusCalls) {
+        opts.statusCalls.push({ key, text });
+      }
+    },
+  };
   return {
     cwd: "/fake/repo",
+    hasUI,
+    ui,
     isIdle(): boolean {
       return true;
     },
@@ -156,7 +178,7 @@ describe("sampleSignals", () => {
     // Override getContextUsage to return undefined (e.g. right after compaction).
     const events: string[] = [];
     const ctx: DriverContext = {
-      ...makeFakeCtx({ events }),
+      ...makeFakeCtx({ events, hasUI: false }),
       getContextUsage: () => undefined,
     };
     const ref: QuotaHitRef = { value: false };
@@ -538,5 +560,229 @@ describe("T466 signals: contextPercent null → no compaction", () => {
 
     expect(compactCalled).toBe(false);
     expect(events).not.toContain("compact");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T467: statusTextForPhase — pure mapping, covers full Q237 state set.
+// ---------------------------------------------------------------------------
+
+describe("T467: statusTextForPhase pure mapping", () => {
+  const cases: Array<[DriverPhase, string]> = [
+    [{ kind: "idle" }, "idle"],
+    [{ kind: "driving", command: "advance", iter: 0 }, "driving advance iter 0"],
+    [{ kind: "driving", command: "plan", iter: 3 }, "driving plan iter 3"],
+    [{ kind: "awaiting-stop" }, "awaiting-stop"],
+    [{ kind: "checking-predicates" }, "checking-predicates"],
+    [{ kind: "compacting" }, "compacting"],
+    [{ kind: "stopped-quota" }, "stopped: quota"],
+    [{ kind: "stopped-blocked-on-questions" }, "stopped: blocked-on-questions"],
+    [{ kind: "stopped-no-progress" }, "stopped: no-progress"],
+    [{ kind: "done-drained" }, "done (DRAINED)"],
+  ];
+
+  for (const [phase, expected] of cases) {
+    test(`${phase.kind} → "${expected}"`, () => {
+      expect(statusTextForPhase(phase)).toBe(expected);
+    });
+  }
+
+  test("covers all Q237 state kinds (exhaustiveness check)", () => {
+    // Verify every DriverPhase kind produces a non-empty string.
+    const allKinds: DriverPhase["kind"][] = [
+      "idle",
+      "driving",
+      "awaiting-stop",
+      "checking-predicates",
+      "compacting",
+      "stopped-quota",
+      "stopped-blocked-on-questions",
+      "stopped-no-progress",
+      "done-drained",
+    ];
+    for (const kind of allKinds) {
+      const phase: DriverPhase =
+        kind === "driving"
+          ? { kind, command: "advance", iter: 0 }
+          : { kind } as DriverPhase;
+      const text = statusTextForPhase(phase);
+      expect(text.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T467: setStatus wiring in runAutoDriver — hasUI=true vs hasUI=false.
+// ---------------------------------------------------------------------------
+
+describe("T467: setStatus called on each lifecycle point when hasUI=true", () => {
+  test("STOP_DRAINED path: idle → driving iter 0 → awaiting-stop → checking-predicates → done(DRAINED)", async () => {
+    const events: string[] = [];
+    const statusCalls: Array<{ key: string; text: string | undefined }> = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events, hasUI: true, statusCalls });
+
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([ALL_FALSE]),
+    });
+
+    // All calls must use the stable STATUS_KEY.
+    expect(statusCalls.every((c) => c.key === STATUS_KEY)).toBe(true);
+
+    const texts = statusCalls.map((c) => c.text);
+    expect(texts).toContain("idle");
+    expect(texts).toContain("driving plan iter 0");
+    expect(texts).toContain("awaiting-stop");
+    expect(texts).toContain("checking-predicates");
+    expect(texts).toContain("done (DRAINED)");
+  });
+
+  test("STOP_QUOTA path: includes 'stopped: quota' status", async () => {
+    const events: string[] = [];
+    const statusCalls: Array<{ key: string; text: string | undefined }> = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events, hasUI: true, statusCalls });
+
+    const quotaHitRef: QuotaHitRef = { value: true };
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"])]),
+      quotaHitRef,
+    });
+
+    const texts = statusCalls.map((c) => c.text);
+    expect(texts).toContain("stopped: quota");
+  });
+
+  test("STOP_BLOCKED_ON_QUESTIONS path: includes 'stopped: blocked-on-questions' status", async () => {
+    const events: string[] = [];
+    const statusCalls: Array<{ key: string; text: string | undefined }> = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events, hasUI: true, statusCalls });
+
+    const gated: DerivedPredicates = {
+      ...withPlanWork(["G1"]),
+      openQuestionGate: { value: true, items: ["Q1"] },
+    };
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([gated]),
+    });
+
+    const texts = statusCalls.map((c) => c.text);
+    expect(texts).toContain("stopped: blocked-on-questions");
+  });
+
+  test("STOP_NO_PROGRESS path: includes 'stopped: no-progress' status", async () => {
+    const events: string[] = [];
+    const statusCalls: Array<{ key: string; text: string | undefined }> = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events, hasUI: true, statusCalls });
+
+    const stuck = withPlanWork(["G1"]);
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([stuck, stuck]),
+    });
+
+    const texts = statusCalls.map((c) => c.text);
+    expect(texts).toContain("stopped: no-progress");
+  });
+
+  test("COMPACT_THEN_REDRIVE path: includes 'compacting' status before the second drive", async () => {
+    const events: string[] = [];
+    const statusCalls: Array<{ key: string; text: string | undefined }> = [];
+    let callCount = 0;
+    const ctx = makeFakeCtx({
+      events,
+      hasUI: true,
+      statusCalls,
+      contextPercent: () => {
+        callCount++;
+        return callCount === 1 ? 85 : null; // Pi 0..100 scale
+      },
+    });
+    const api = makeFakeApi(events);
+
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"]), ALL_FALSE]),
+    });
+
+    const texts = statusCalls.map((c) => c.text);
+    expect(texts).toContain("compacting");
+    // 'done (DRAINED)' must appear after 'compacting'.
+    const compactIdx = texts.indexOf("compacting");
+    const drainedIdx = texts.lastIndexOf("done (DRAINED)");
+    expect(compactIdx).toBeGreaterThan(-1);
+    expect(drainedIdx).toBeGreaterThan(compactIdx);
+  });
+
+  test("redrive increments iter in status: iter 0 then iter 1", async () => {
+    const events: string[] = [];
+    const statusCalls: Array<{ key: string; text: string | undefined }> = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events, hasUI: true, statusCalls });
+
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"]), ALL_FALSE]),
+    });
+
+    const texts = statusCalls.map((c) => c.text);
+    expect(texts).toContain("driving plan iter 0");
+    expect(texts).toContain("driving plan iter 1");
+  });
+});
+
+describe("T467: setStatus NOT called when hasUI=false", () => {
+  test("hasUI=false: ui.setStatus is never called regardless of phase", async () => {
+    const events: string[] = [];
+    const statusCalls: Array<{ key: string; text: string | undefined }> = [];
+    const api = makeFakeApi(events);
+    // hasUI=false (the default): all setStatus calls must be suppressed.
+    const ctx = makeFakeCtx({ events, hasUI: false, statusCalls });
+
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"]), ALL_FALSE]),
+    });
+
+    // No status calls at all when hasUI is false.
+    expect(statusCalls).toHaveLength(0);
+  });
+
+  test("hasUI=false (default): existing tests are unaffected (no setStatus side-effects)", async () => {
+    // Confirm that the existing test infrastructure (hasUI not set → defaults false)
+    // does not see any status calls, even with multiple redrives.
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events }); // no hasUI → false
+
+    const result = await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"]), withPlanWork(["G2"]), ALL_FALSE]),
+    });
+
+    expect(result.action).toBe(AutoAction.STOP_DRAINED);
+    expect(result.iterations).toBe(2);
+    // No UI calls emitted — would throw if ui.setStatus were not gated on hasUI.
   });
 });

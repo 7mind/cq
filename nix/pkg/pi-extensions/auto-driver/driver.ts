@@ -1,4 +1,4 @@
-// cq auto-driver drive-and-await loop (T465/T466, G-auto-driver).
+// cq auto-driver drive-and-await loop (T465/T466/T467, G-auto-driver).
 //
 // Behaviour-1: the GENERIC driver. It launches a wrapped cq command into the
 // LIVE pi session, awaits the agent's idle/turn completion, derives the flow
@@ -7,6 +7,11 @@
 // stopping. The decision core (./decide), the pure vocabulary (./decision), and
 // the predicate oracle (./oracle) are all consumed here; this module adds ONLY
 // the imperative loop + Pi wiring on top.
+//
+// Behaviour-2 (T467): status-bar display via ctx.ui.setStatus('cq-auto', text).
+// Each lifecycle point sets a distinct human-readable status string (see
+// `statusTextForPhase`). All setStatus calls are gated on ctx.hasUI (the Pi
+// flag that is false in print/RPC mode). The status key is 'cq-auto'.
 //
 // Pi-typing discipline (mirrors decision.ts / oracle.ts / cq-subagent-dispatch):
 // this is a STANDALONE store-path file OUTSIDE the cq-ledgers bun workspace, and
@@ -31,6 +36,9 @@
 //     - ExtensionAPI.on("after_provider_response", handler)          L797 (T466 quota detection)
 //       AfterProviderResponseEvent = { type, status: number, headers: Record<string,string> }
 //     - ExtensionAPI.on("agent_end", handler)                        L800 (await reconciliation)
+//     - ExtensionContext.ui: ExtensionUIContext                       L209 (T467 status bar)
+//       ExtensionUIContext.setStatus(key, text|undefined): void      L79
+//     - ExtensionContext.hasUI: boolean                              L211 (T467 guard)
 // KEEP IN SYNC with those typings. NO `@cq/*` imports.
 
 import {
@@ -93,10 +101,29 @@ export interface QuotaHitRef {
 }
 
 /**
+ * Structural subset of Pi's `ExtensionUIContext` the driver needs (types.d.ts
+ * L67–L191). Only the status-bar method is required by the auto-driver;
+ * declared locally to avoid importing `@earendil-works/pi-coding-agent`.
+ *
+ * T467: `setStatus(key, text)` — set a status-bar slot (L79). Pass `undefined`
+ * as `text` to clear the slot. The key `'cq-auto'` is the stable identifier
+ * the driver uses for all its status updates.
+ */
+export interface DriverUIContext {
+  /** Set status text in the footer/status bar. Pass undefined to clear. */
+  setStatus(key: string, text: string | undefined): void;
+}
+
+/**
  * The structural subset of Pi's `ExtensionCommandContext` the driver loop uses.
  * Carries `cwd` (so the oracle resolves the right ledger root), the idle
  * guard/await pair, and the T466 compaction/usage seams. Declared locally to
  * keep this module Pi-typing-free and unit-testable with a fake ctx.
+ *
+ * T467 additions:
+ *   - `ui: DriverUIContext` — the status-bar API (ExtensionContext.ui, L209).
+ *   - `hasUI: boolean` — whether UI is available; false in print/RPC mode
+ *     (ExtensionContext.hasUI, L211). All setStatus calls MUST be gated on this.
  */
 export interface DriverContext extends OracleContext {
   /** Synchronous idle guard (ExtensionContext.isIdle, L221). */
@@ -115,6 +142,16 @@ export interface DriverContext extends OracleContext {
     onComplete?: (result: unknown) => void;
     onError?: (error: Error) => void;
   }): void;
+  /**
+   * UI context for status-bar access (ExtensionContext.ui, L209).
+   * Use ctx.ui.setStatus('cq-auto', text) gated on ctx.hasUI.
+   */
+  ui: DriverUIContext;
+  /**
+   * Whether UI is available (ExtensionContext.hasUI, L211).
+   * False in print/RPC mode — gate ALL setStatus calls on this.
+   */
+  hasUI: boolean;
 }
 
 /**
@@ -284,6 +321,84 @@ function isStopAction(action: AutoAction): boolean {
   );
 }
 
+// ---------------------------------------------------------------------------
+// T467: status-bar display — pure phase→string mapping.
+// ---------------------------------------------------------------------------
+
+/** The stable status-bar key the auto-driver owns in Pi's footer. */
+export const STATUS_KEY = "cq-auto";
+
+/**
+ * The enumerated driver phases, covering all Q237 states. Used as input to
+ * `statusTextForPhase` so the mapping is pure and unit-testable independently
+ * of the driver loop.
+ *
+ * Lifecycle order (roughly):
+ *   idle → driving(command, iter) → awaiting-stop → checking-predicates
+ *   → (compact →) driving again  |  stopped:*  |  done(DRAINED)
+ */
+export type DriverPhase =
+  | { kind: "idle" }
+  | { kind: "driving"; command: string; iter: number }
+  | { kind: "awaiting-stop" }
+  | { kind: "checking-predicates" }
+  | { kind: "compacting" }
+  | { kind: "stopped-quota" }
+  | { kind: "stopped-blocked-on-questions" }
+  | { kind: "stopped-no-progress" }
+  | { kind: "done-drained" };
+
+/**
+ * Pure function: map a `DriverPhase` to the human-readable status string
+ * displayed in Pi's footer status bar. Covers the full Q237 state set:
+ *
+ *   idle                       → "idle"
+ *   driving <cmd> iter N       → "driving <cmd> iter N"
+ *   awaiting-stop              → "awaiting-stop"
+ *   checking-predicates        → "checking-predicates"
+ *   compacting                 → "compacting"
+ *   stopped: quota             → "stopped: quota"
+ *   stopped: blocked-on-questions → "stopped: blocked-on-questions"
+ *   stopped: no-progress       → "stopped: no-progress"
+ *   done (DRAINED)             → "done (DRAINED)"
+ *
+ * This is a standalone pure function: no ctx, no side effects — testable
+ * without any Pi wiring.
+ */
+export function statusTextForPhase(phase: DriverPhase): string {
+  switch (phase.kind) {
+    case "idle":
+      return "idle";
+    case "driving":
+      return `driving ${phase.command} iter ${phase.iter}`;
+    case "awaiting-stop":
+      return "awaiting-stop";
+    case "checking-predicates":
+      return "checking-predicates";
+    case "compacting":
+      return "compacting";
+    case "stopped-quota":
+      return "stopped: quota";
+    case "stopped-blocked-on-questions":
+      return "stopped: blocked-on-questions";
+    case "stopped-no-progress":
+      return "stopped: no-progress";
+    case "done-drained":
+      return "done (DRAINED)";
+  }
+}
+
+/**
+ * Set the Pi status-bar slot for the auto-driver, gated on `ctx.hasUI`.
+ * Pass `undefined` as `text` to clear the slot (e.g. after a terminal state).
+ * When `ctx.hasUI` is false (print/RPC mode), this is a no-op.
+ */
+function setAutoStatus(ctx: DriverContext, text: string | undefined): void {
+  if (ctx.hasUI) {
+    ctx.ui.setStatus(STATUS_KEY, text);
+  }
+}
+
 /**
  * The cq slash command to inject to START / re-drive the wrapped command. The
  * preset's `wrappedCommand` is a bare name (e.g. "advance"); the live session
@@ -329,11 +444,25 @@ export async function runAutoDriver(deps: DriverDeps): Promise<DriverResult> {
     prevAction: null,
   };
 
+  // T467: status-bar — mark idle before the first launch.
+  setAutoStatus(ctx, statusTextForPhase({ kind: "idle" }));
+
   // The FIRST launch starts the underlying cq command via its slash command.
   let nextPrompt = wrappedSlashCommand(preset);
 
   for (;;) {
+    // T467: show "driving <cmd> iter N" before launching into the session.
+    setAutoStatus(ctx, statusTextForPhase({ kind: "driving", command: preset.wrappedCommand, iter: runState.iteration }));
+
     await launchAndAwait(ctx, api, nextPrompt);
+
+    // T467: show "awaiting-stop" while we wait for the agent to reach idle
+    // (launchAndAwait already awaited, but this marks the post-launch check
+    // phase where we are about to query predicates).
+    setAutoStatus(ctx, statusTextForPhase({ kind: "awaiting-stop" }));
+
+    // T467: show "checking-predicates" while the oracle runs.
+    setAutoStatus(ctx, statusTextForPhase({ kind: "checking-predicates" }));
 
     const predicates = await getPredicates(ctx);
     const signals = sampleSignals(ctx, quotaHitRef);
@@ -349,11 +478,28 @@ export async function runAutoDriver(deps: DriverDeps): Promise<DriverResult> {
     });
 
     if (isStopAction(action)) {
+      // T467: set terminal status label before returning.
+      switch (action) {
+        case AutoAction.STOP_QUOTA:
+          setAutoStatus(ctx, statusTextForPhase({ kind: "stopped-quota" }));
+          break;
+        case AutoAction.STOP_BLOCKED_ON_QUESTIONS:
+          setAutoStatus(ctx, statusTextForPhase({ kind: "stopped-blocked-on-questions" }));
+          break;
+        case AutoAction.STOP_NO_PROGRESS:
+          setAutoStatus(ctx, statusTextForPhase({ kind: "stopped-no-progress" }));
+          break;
+        case AutoAction.STOP_DRAINED:
+          setAutoStatus(ctx, statusTextForPhase({ kind: "done-drained" }));
+          break;
+      }
       return { action, iterations: runState.iteration, finalPredicates: predicates };
     }
 
     // REDRIVE or COMPACT_THEN_REDRIVE: both re-drive the wrapped command.
     if (action === AutoAction.COMPACT_THEN_REDRIVE) {
+      // T467: show "compacting" while context compaction is in progress.
+      setAutoStatus(ctx, statusTextForPhase({ kind: "compacting" }));
       // Await compaction via the `onComplete` callback (Pi v0.78.0 CompactOptions
       // types.d.ts L199). The context window usage will be null right after
       // compaction and until the next LLM response; the decision core's null-guard
@@ -415,10 +561,9 @@ export interface DriverRegistrationApi extends DriverApi {
  * `after_provider_response` with `status === 429` is the only available
  * surface. See `DriverAfterProviderResponseEvent` for the full caveat.
  *
- * T467 SEAM: a status-bar update on each cycle / at the terminus would hook in
- * here (e.g. via a `setStatus`-style API). It is deliberately NOT implemented
- * now; the structure (a single registered command whose handler owns the loop)
- * leaves the obvious insertion point.
+ * T467: status-bar display is wired inside `runAutoDriver` via `setAutoStatus`
+ * (ctx.ui.setStatus('cq-auto', text) gated on ctx.hasUI). Each lifecycle
+ * point sets a distinct human-readable status string (see `statusTextForPhase`).
  */
 export function registerAutoDriver(
   api: DriverRegistrationApi,
