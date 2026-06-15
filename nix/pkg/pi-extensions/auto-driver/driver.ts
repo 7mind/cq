@@ -1,4 +1,4 @@
-// cq auto-driver drive-and-await loop (T465, G-auto-driver).
+// cq auto-driver drive-and-await loop (T465/T466, G-auto-driver).
 //
 // Behaviour-1: the GENERIC driver. It launches a wrapped cq command into the
 // LIVE pi session, awaits the agent's idle/turn completion, derives the flow
@@ -24,8 +24,12 @@
 //       (the prompt-injection API: "Send a user message to the agent. Always
 //        triggers a turn." — this is how the wrapped command / corrective
 //        re-prompt is launched into the live session.)
-//     - ExtensionContext.getContextUsage(): { percent: number|null } L231 (T466 seam)
-//     - ExtensionContext.compact(options?): void                     L233 (T466 seam)
+//     - ExtensionContext.getContextUsage(): ContextUsage | undefined L231
+//       ContextUsage = { tokens: number|null, contextWindow: number, percent: number|null }
+//     - ExtensionContext.compact(options?: CompactOptions): void      L233
+//       CompactOptions = { customInstructions?, onComplete?, onError? }
+//     - ExtensionAPI.on("after_provider_response", handler)          L797 (T466 quota detection)
+//       AfterProviderResponseEvent = { type, status: number, headers: Record<string,string> }
 //     - ExtensionAPI.on("agent_end", handler)                        L800 (await reconciliation)
 // KEEP IN SYNC with those typings. NO `@cq/*` imports.
 
@@ -48,12 +52,44 @@ import { getPredicates as defaultGetPredicates, type OracleContext } from "./ora
 // ---------------------------------------------------------------------------
 
 /**
- * Context-window usage as Pi reports it (subset of Pi `ContextUsage`,
- * types.d.ts L192). `percent` is null when token counts are unknown (e.g. right
- * after a compaction, before the next LLM response).
+ * Context-window usage as Pi reports it (Pi `ContextUsage`, types.d.ts L192).
+ * `percent` is null when token counts are unknown (e.g. right after a
+ * compaction, before the next LLM response). `tokens` is null for the same
+ * reason. The driver only reads `percent`.
  */
 export interface DriverContextUsage {
+  tokens: number | null;
+  contextWindow: number;
   percent: number | null;
+}
+
+/**
+ * Subset of Pi's `AfterProviderResponseEvent` (types.d.ts L462) used for
+ * quota/rate-limit detection. `status` is the HTTP response status code;
+ * `headers` carries the raw response headers (e.g. `retry-after`).
+ *
+ * IMPORTANT — quota detection is BEST-EFFORT and APPROXIMATE: Pi v0.78.0
+ * exposes NO typed quota event. The `after_provider_response` event is the
+ * only available surface to observe HTTP-level errors. A 429 status is the
+ * conventional signal for "rate-limited / quota exhausted", but:
+ *   - Not all providers use 429 for quota exhaustion (some use 402, 503, …).
+ *   - Pi may not always surface every provider response through this event.
+ *   - The event fires for ALL provider responses, not only quota responses.
+ * Treat `quotaHit` as a heuristic, not a hard guarantee.
+ */
+export interface DriverAfterProviderResponseEvent {
+  type: "after_provider_response";
+  status: number;
+  headers: Record<string, string>;
+}
+
+/**
+ * A mutable flag cell shared between the `after_provider_response` subscriber
+ * and the driver loop. The subscriber writes it; `sampleSignals` reads it;
+ * the loop resets it before each new cycle (see `runAutoDriver`).
+ */
+export interface QuotaHitRef {
+  value: boolean;
 }
 
 /**
@@ -69,14 +105,23 @@ export interface DriverContext extends OracleContext {
   waitForIdle(): Promise<void>;
   /** Current context usage; T466 reads `.percent` for the compaction signal (L231). */
   getContextUsage(): DriverContextUsage | undefined;
-  /** Trigger compaction without awaiting (L233). T466 wires the await + signals. */
-  compact(options?: { customInstructions?: string }): void;
+  /**
+   * Trigger compaction (L233). T466 awaits completion via `options.onComplete`
+   * (Pi `CompactOptions`, types.d.ts L199: `{ customInstructions?, onComplete?,
+   * onError? }`).
+   */
+  compact(options?: {
+    customInstructions?: string;
+    onComplete?: (result: unknown) => void;
+    onError?: (error: Error) => void;
+  }): void;
 }
 
 /**
  * The structural subset of Pi's `ExtensionAPI` the driver needs: the
  * prompt-injection API used to launch the wrapped command and emit corrective
- * re-prompts into the live session.
+ * re-prompts into the live session, plus the event subscription for quota
+ * detection.
  */
 export interface DriverApi {
   /**
@@ -86,6 +131,17 @@ export interface DriverApi {
    * `composeRedrivePrompt` text to re-drive it.
    */
   sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" }): void;
+
+  /**
+   * Subscribe to the `after_provider_response` lifecycle event (ExtensionAPI
+   * on, L797). Used by T466 quota detection to observe HTTP 429 responses.
+   * The overload is narrowed to this specific event name to avoid importing Pi
+   * types while still being structurally compatible with ExtensionAPI.
+   */
+  on(
+    event: "after_provider_response",
+    handler: (event: DriverAfterProviderResponseEvent) => void,
+  ): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +159,7 @@ export type GetPredicatesFn = (ctx: OracleContext) => Promise<DerivedPredicates>
 export interface DriverDeps {
   /** The Pi command-handler context (live session). */
   ctx: DriverContext;
-  /** The Pi extension API (prompt injection). */
+  /** The Pi extension API (prompt injection + event subscription). */
   api: DriverApi;
   /** The preset being driven: the wrapped command + its terminal oracle. */
   preset: AutoPreset;
@@ -113,6 +169,14 @@ export interface DriverDeps {
   maxIterations?: number;
   /** The free-form args string passed to the `<command>:auto` command (reserved). */
   args?: string;
+  /**
+   * Shared mutable cell written by the `after_provider_response` subscriber and
+   * read each cycle by `sampleSignals`. Production code supplies the cell
+   * created in `registerAutoDriver`; tests can supply a fake cell to simulate a
+   * 429 without wiring a real event subscription. Defaults to `{ value: false }`
+   * when absent (backward-compat for tests that don't care about quota).
+   */
+  quotaHitRef?: QuotaHitRef;
 }
 
 /**
@@ -175,22 +239,27 @@ export async function launchAndAwait(
 // ---------------------------------------------------------------------------
 
 /**
- * Sample the runtime signals the decision core reads.
+ * Sample the runtime signals the decision core reads each cycle.
  *
- * T465 SEAM (per spec): the real contextPercent + quotaHit wiring — and the
- * `ctx.compact()` invocation for COMPACT_THEN_REDRIVE — land in T466. For THIS
- * task the signals are a typed PLACEHOLDER so the loop typechecks and the
- * decision core never spuriously compacts or quota-stops:
- *   - contextPercent: null   (unknown -> rule (5) compaction never fires)
- *   - quotaHit: false        (no budget tracking yet)
+ * T466 wiring (per Q235 spec):
+ *   - contextPercent: `ctx.getContextUsage()?.percent ?? null`. Pi returns null
+ *     when token counts are unknown (e.g. right after a compaction, before the
+ *     next LLM response). Null NEVER triggers compaction (rule (5) in
+ *     decideNextAction guards on `!== null`).
+ *   - quotaHit: read from `quotaHitRef.value`, which the `after_provider_response`
+ *     subscriber writes when `event.status === 429`. The caller (`runAutoDriver`)
+ *     resets the cell after reading it so a single transient 429 does not
+ *     permanently block subsequent cycles.
  *
- * `ctx` is accepted now so T466 can read `ctx.getContextUsage().percent`
- * WITHOUT changing this signature or its call site.
+ * QUOTA DETECTION IS BEST-EFFORT: Pi v0.78.0 exposes NO typed quota event.
+ * `after_provider_response` is the only available surface. See
+ * `DriverAfterProviderResponseEvent` for the full caveat.
  */
-export function sampleSignals(_ctx: DriverContext): AutoSignals {
-  // T466: replace with { contextPercent: ctx.getContextUsage()?.percent ?? null,
-  //                      quotaHit: <budget check> }.
-  return { contextPercent: null, quotaHit: false };
+export function sampleSignals(ctx: DriverContext, quotaHitRef: QuotaHitRef): AutoSignals {
+  return {
+    contextPercent: ctx.getContextUsage()?.percent ?? null,
+    quotaHit: quotaHitRef.value,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -219,20 +288,17 @@ function wrappedSlashCommand(preset: AutoPreset): string {
 /**
  * Drive `preset.wrappedCommand` to its terminal state.
  *
- * The loop (per the T465 spec's LOOP):
+ * The loop (per the T465/T466 spec):
  *   launch wrapped command  -> await idle (launchAndAwait)
  *   getPredicates(ctx)
+ *   sampleSignals(ctx, quotaHitRef) — read contextPercent + quotaHit
+ *   reset quotaHitRef.value = false (so a transient 429 does not persist)
  *   decideNextAction({ predicates, terminalPredicate, runState, signals })
  *   act on the AutoAction:
  *     REDRIVE                 -> emit composeRedrivePrompt(...), ++iteration,
  *                                set prevPredicates/prevAction, loop
- *     COMPACT_THEN_REDRIVE    -> T466 seam: would `ctx.compact()` then redrive;
- *                                for THIS task it is treated like REDRIVE (the
- *                                placeholder signals never select it — see
- *                                sampleSignals — so this branch is a
- *                                clearly-marked seam, not live behaviour) and
- *                                still advances runState so the no-progress
- *                                guard stays correct.
+ *     COMPACT_THEN_REDRIVE    -> ctx.compact() (awaited via onComplete), then
+ *                                redrive with composeRedrivePrompt
  *     STOP_*                  -> record the terminal result and break.
  *
  * The iteration counter, prevPredicates, and prevAction live in `runState` here
@@ -244,6 +310,9 @@ export async function runAutoDriver(deps: DriverDeps): Promise<DriverResult> {
   const { ctx, api, preset } = deps;
   const getPredicates = deps.getPredicates ?? defaultGetPredicates;
   const maxIterations = deps.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  // Use the caller-supplied ref (for tests and for registerAutoDriver) or a
+  // fresh one (backward-compat for callers that don't pass quotaHitRef).
+  const quotaHitRef: QuotaHitRef = deps.quotaHitRef ?? { value: false };
 
   const runState: AutoRunState = {
     iteration: 0,
@@ -255,13 +324,15 @@ export async function runAutoDriver(deps: DriverDeps): Promise<DriverResult> {
   // The FIRST launch starts the underlying cq command via its slash command.
   let nextPrompt = wrappedSlashCommand(preset);
 
-  // Bounded by maxIterations + the decision core's own stop rules; the `+ 1`
-  // covers the initial launch (iteration 0) plus up to maxIterations redrives.
   for (;;) {
     await launchAndAwait(ctx, api, nextPrompt);
 
     const predicates = await getPredicates(ctx);
-    const signals = sampleSignals(ctx);
+    const signals = sampleSignals(ctx, quotaHitRef);
+    // Reset after reading so a transient 429 from this cycle's provider call
+    // does not also stop the NEXT cycle.
+    quotaHitRef.value = false;
+
     const action = decideNextAction({
       predicates,
       terminalPredicate: preset.terminalPredicate,
@@ -275,12 +346,13 @@ export async function runAutoDriver(deps: DriverDeps): Promise<DriverResult> {
 
     // REDRIVE or COMPACT_THEN_REDRIVE: both re-drive the wrapped command.
     if (action === AutoAction.COMPACT_THEN_REDRIVE) {
-      // T466 SEAM: compact the context before redriving. The placeholder
-      // signals (sampleSignals) never select this action in T465, so this is a
-      // structural seam T466 fills (await the compaction, then redrive). We
-      // call the non-awaiting `ctx.compact()` to keep the seam wired to the real
-      // API surface; T466 adds the await/onComplete reconciliation.
-      ctx.compact();
+      // Await compaction via the `onComplete` callback (Pi v0.78.0 CompactOptions
+      // types.d.ts L199). The context window usage will be null right after
+      // compaction and until the next LLM response; the decision core's null-guard
+      // on contextPercent prevents a spurious second compaction.
+      await new Promise<void>((resolve) => {
+        ctx.compact({ onComplete: () => resolve() });
+      });
     }
 
     // Corrective re-prompt naming the still-violated predicates.
@@ -299,8 +371,8 @@ export async function runAutoDriver(deps: DriverDeps): Promise<DriverResult> {
 
 /**
  * The structural subset of Pi's `ExtensionAPI` needed to REGISTER the driver
- * command: `registerCommand` plus the prompt-injection `sendUserMessage`
- * (DriverApi). Declared locally (copy-not-import).
+ * command: `registerCommand` plus the prompt-injection `sendUserMessage` and
+ * event subscription (DriverApi). Declared locally (copy-not-import).
  */
 export interface DriverRegistrationApi extends DriverApi {
   /**
@@ -325,6 +397,16 @@ export interface DriverRegistrationApi extends DriverApi {
  * DriverResult is discarded here (status-bar reporting is the T467 seam — see
  * below) but propagated by `runAutoDriver`'s return for tests.
  *
+ * T466 quota wiring: a single `QuotaHitRef` cell is created here and shared
+ * between the `after_provider_response` subscriber (which sets it to true on
+ * HTTP 429) and `runAutoDriver` (which reads it via `sampleSignals` each
+ * cycle and resets it afterward). One cell is enough per registration because
+ * only one `:auto` run is active at a time.
+ *
+ * QUOTA DETECTION IS BEST-EFFORT: Pi 0.78.0 exposes no typed quota event.
+ * `after_provider_response` with `status === 429` is the only available
+ * surface. See `DriverAfterProviderResponseEvent` for the full caveat.
+ *
  * T467 SEAM: a status-bar update on each cycle / at the terminus would hook in
  * here (e.g. via a `setStatus`-style API). It is deliberately NOT implemented
  * now; the structure (a single registered command whose handler owns the loop)
@@ -335,16 +417,31 @@ export function registerAutoDriver(
   preset: AutoPreset,
   options?: { maxIterations?: number },
 ): void {
+  // Shared quota-hit cell: written by the event subscriber, read+reset by the loop.
+  const quotaHitRef: QuotaHitRef = { value: false };
+
+  // Subscribe once at registration time (not per-run) so we never miss a 429
+  // that arrives between cycles.
+  api.on("after_provider_response", (event: DriverAfterProviderResponseEvent) => {
+    if (event.status === 429) {
+      quotaHitRef.value = true;
+    }
+  });
+
   const commandName = `${preset.wrappedCommand}:auto`;
   api.registerCommand(commandName, {
     description: `Auto-drive \`${preset.wrappedCommand}\` until its terminal predicate is satisfied.`,
     handler: async (args: string, ctx: DriverContext): Promise<void> => {
+      // Reset the quota flag at the START of each run so a 429 from a
+      // previous run does not poison a fresh one.
+      quotaHitRef.value = false;
       await runAutoDriver({
         ctx,
         api,
         preset,
         args,
         maxIterations: options?.maxIterations,
+        quotaHitRef,
       });
     },
   });

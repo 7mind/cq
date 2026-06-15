@@ -16,8 +16,10 @@ import {
   launchAndAwait,
   runAutoDriver,
   sampleSignals,
+  type DriverAfterProviderResponseEvent,
   type DriverApi,
   type DriverContext,
+  type QuotaHitRef,
 } from "./driver";
 import { AutoAction, type AutoPreset, type DerivedPredicates } from "./decision";
 
@@ -28,16 +30,31 @@ import { AutoAction, type AutoPreset, type DerivedPredicates } from "./decision"
 /** Records every injected prompt and the order of waitForIdle vs injection. */
 interface FakeApi extends DriverApi {
   prompts: string[];
+  /** The subscriber registered via on("after_provider_response", ...). */
+  providerResponseHandler: ((event: DriverAfterProviderResponseEvent) => void) | null;
+  /** Simulate a provider response event (e.g. a 429). */
+  simulateProviderResponse(event: DriverAfterProviderResponseEvent): void;
 }
 
 function makeFakeApi(events: string[]): FakeApi {
-  return {
+  const api: FakeApi = {
     prompts: [],
+    providerResponseHandler: null,
     sendUserMessage(content: string): void {
-      this.prompts.push(content);
+      api.prompts.push(content);
       events.push(`send:${content}`);
     },
+    on(
+      _event: "after_provider_response",
+      handler: (event: DriverAfterProviderResponseEvent) => void,
+    ): void {
+      api.providerResponseHandler = handler;
+    },
+    simulateProviderResponse(event: DriverAfterProviderResponseEvent): void {
+      api.providerResponseHandler?.(event);
+    },
   };
+  return api;
 }
 
 interface FakeCtxOptions {
@@ -45,6 +62,11 @@ interface FakeCtxOptions {
   events: string[];
   /** Whether compact() was called. */
   onCompact?: () => void;
+  /**
+   * Percent to return from getContextUsage(). Defaults to null.
+   * Use a function to return different values across successive calls.
+   */
+  contextPercent?: number | null | (() => number | null);
 }
 
 function makeFakeCtx(opts: FakeCtxOptions): DriverContext {
@@ -56,12 +78,18 @@ function makeFakeCtx(opts: FakeCtxOptions): DriverContext {
     async waitForIdle(): Promise<void> {
       opts.events.push("await");
     },
-    getContextUsage(): { percent: number | null } | undefined {
-      return { percent: null };
+    getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined {
+      const pct =
+        typeof opts.contextPercent === "function"
+          ? opts.contextPercent()
+          : (opts.contextPercent ?? null);
+      return { tokens: null, contextWindow: 200000, percent: pct };
     },
-    compact(): void {
+    compact(options?: { onComplete?: (result: unknown) => void }): void {
       opts.events.push("compact");
       opts.onCompact?.();
+      // Immediately invoke onComplete so tests don't hang waiting.
+      options?.onComplete?.(undefined);
     },
   };
 }
@@ -111,14 +139,33 @@ describe("launchAndAwait", () => {
 });
 
 // ---------------------------------------------------------------------------
-// sampleSignals (T465 placeholder seam).
+// sampleSignals (T466 real wiring).
 // ---------------------------------------------------------------------------
 
 describe("sampleSignals", () => {
-  test("returns the T465 placeholder: contextPercent null, quotaHit false", () => {
+  test("returns contextPercent from ctx.getContextUsage().percent and quotaHit from ref", () => {
     const events: string[] = [];
-    const ctx = makeFakeCtx({ events });
-    expect(sampleSignals(ctx)).toEqual({ contextPercent: null, quotaHit: false });
+    const ctx = makeFakeCtx({ events, contextPercent: 0.42 });
+    const ref: QuotaHitRef = { value: true };
+    expect(sampleSignals(ctx, ref)).toEqual({ contextPercent: 0.42, quotaHit: true });
+  });
+
+  test("returns contextPercent null when getContextUsage returns undefined", () => {
+    // Override getContextUsage to return undefined (e.g. right after compaction).
+    const events: string[] = [];
+    const ctx: DriverContext = {
+      ...makeFakeCtx({ events }),
+      getContextUsage: () => undefined,
+    };
+    const ref: QuotaHitRef = { value: false };
+    expect(sampleSignals(ctx, ref)).toEqual({ contextPercent: null, quotaHit: false });
+  });
+
+  test("returns contextPercent null when percent field is null", () => {
+    const events: string[] = [];
+    const ctx = makeFakeCtx({ events, contextPercent: null });
+    const ref: QuotaHitRef = { value: false };
+    expect(sampleSignals(ctx, ref)).toEqual({ contextPercent: null, quotaHit: false });
   });
 });
 
@@ -259,5 +306,166 @@ describe("runAutoDriver", () => {
     // Two redrives (G1->G2, G2->drained) before the drained verdict.
     expect(result.iterations).toBe(2);
     expect(api.prompts.length).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T466: runtime signals — quota detection and compaction.
+// ---------------------------------------------------------------------------
+
+describe("T466 signals: simulated 429 → STOP_QUOTA", () => {
+  test("quotaHitRef set to true before the cycle → STOP_QUOTA on that cycle", async () => {
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events });
+
+    // Simulate a 429 arriving (as if from the after_provider_response event)
+    // before the driver reads signals.
+    const quotaHitRef: QuotaHitRef = { value: true };
+
+    const result = await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"])]),
+      quotaHitRef,
+    });
+
+    expect(result.action).toBe(AutoAction.STOP_QUOTA);
+    expect(result.iterations).toBe(0);
+    // Only one launch; no redrive.
+    expect(api.prompts).toEqual(["/plan"]);
+  });
+
+  test("quotaHitRef resets to false after being read, so a second run can proceed", async () => {
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events });
+
+    // First run: quotaHit is true → STOP_QUOTA.
+    const quotaHitRef: QuotaHitRef = { value: true };
+    const first = await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"])]),
+      quotaHitRef,
+    });
+    expect(first.action).toBe(AutoAction.STOP_QUOTA);
+
+    // The loop reset quotaHitRef.value to false after reading it.
+    expect(quotaHitRef.value).toBe(false);
+
+    // Second run (new ref reset by the caller, as registerAutoDriver does):
+    const events2: string[] = [];
+    const api2 = makeFakeApi(events2);
+    const ctx2 = makeFakeCtx({ events: events2 });
+    const second = await runAutoDriver({
+      ctx: ctx2,
+      api: api2,
+      preset: planPreset,
+      getPredicates: scriptedOracle([ALL_FALSE]),
+      quotaHitRef, // ref is now false → should not stop_quota
+    });
+    expect(second.action).toBe(AutoAction.STOP_DRAINED);
+  });
+});
+
+describe("T466 signals: contextPercent > 0.80 → compact then redrive", () => {
+  test("contextPercent above threshold triggers compact(), then redrives to STOP_DRAINED", async () => {
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+
+    let compactCalled = false;
+    // Cycle 0: context over threshold → COMPACT_THEN_REDRIVE.
+    // Cycle 1: after compaction, context usage is unknown (null) → REDRIVE.
+    // Cycle 2: drained.
+    let callCount = 0;
+    const ctx = makeFakeCtx({
+      events,
+      onCompact: () => { compactCalled = true; },
+      // Returns 0.85 on first sample, null afterwards (simulating post-compact state).
+      contextPercent: () => {
+        callCount++;
+        return callCount === 1 ? 0.85 : null;
+      },
+    });
+
+    const result = await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      // Cycle 0: pPlan work (will trigger COMPACT_THEN_REDRIVE due to context%).
+      // Cycle 1: still pPlan work (context is now null, so no compact; redrive).
+      // Cycle 2: drained.
+      getPredicates: scriptedOracle([withPlanWork(["G1"]), withPlanWork(["G2"]), ALL_FALSE]),
+    });
+
+    expect(compactCalled).toBe(true);
+    // compact is in the events log.
+    expect(events).toContain("compact");
+    expect(result.action).toBe(AutoAction.STOP_DRAINED);
+    // 2 redrives after initial launch: compact+redrive cycle + normal redrive.
+    expect(result.iterations).toBe(2);
+  });
+
+  test("compact() is awaited before redriving: compact precedes the next send in event order", async () => {
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({
+      events,
+      // Only first cycle reports high context usage.
+      contextPercent: () => {
+        // High on first sample, null afterward.
+        const high = events.filter((e) => e.startsWith("send:")).length === 1;
+        return high ? 0.9 : null;
+      },
+    });
+
+    await runAutoDriver({
+      ctx,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"]), ALL_FALSE]),
+    });
+
+    // Verify ordering: launch → await → compact → send (redrive) → await.
+    const compactIdx = events.indexOf("compact");
+    const sends = events
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => e.startsWith("send:"))
+      .map(({ i }) => i);
+    // The compact must appear BEFORE the second send (the redrive prompt).
+    expect(compactIdx).toBeGreaterThan(-1);
+    expect(sends.length).toBeGreaterThanOrEqual(2);
+    expect(compactIdx).toBeLessThan(sends[1]!);
+  });
+});
+
+describe("T466 signals: contextPercent null → no compaction", () => {
+  test("null contextPercent does not trigger compaction even when predicates are not terminal", async () => {
+    const events: string[] = [];
+    const api = makeFakeApi(events);
+    const ctx = makeFakeCtx({ events, contextPercent: null });
+
+    let compactCalled = false;
+    const ctxWithCompactSpy: DriverContext = {
+      ...ctx,
+      compact(options?: { onComplete?: (result: unknown) => void }): void {
+        compactCalled = true;
+        options?.onComplete?.(undefined);
+      },
+    };
+
+    await runAutoDriver({
+      ctx: ctxWithCompactSpy,
+      api,
+      preset: planPreset,
+      // One redrive then drained — contextPercent is null throughout.
+      getPredicates: scriptedOracle([withPlanWork(["G1"]), ALL_FALSE]),
+    });
+
+    expect(compactCalled).toBe(false);
+    expect(events).not.toContain("compact");
   });
 });
