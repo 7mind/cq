@@ -19,9 +19,14 @@
 
   outputs = inputs@{ self, nixpkgs, flake-utils, ... }:
     let
-      # All products are pure Bun/TypeScript; pin to x86_64-linux for the
-      # hermetic outputs (the dev shell is available on other systems too).
-      buildSystems = [ "x86_64-linux" ];
+      # The ledger products are pure Bun/TypeScript and build on Linux and
+      # macOS alike. aarch64-darwin (Apple Silicon) is supported alongside
+      # x86_64-linux. NOTE: the bun FOD hash is PER-SYSTEM — deps such as
+      # @anthropic-ai/claude-agent-sdk ship per-os/cpu optional binaries, so
+      # `bun install` yields platform-specific node_modules (see node-modules
+      # outputHash below). The Linux-only harness packages (yolo, reattach-llm)
+      # are gated to Linux in the packages set.
+      buildSystems = [ "x86_64-linux" "aarch64-darwin" ];
 
       # System-agnostic: the LLM prompt/skill assets this repo contributes to a
       # home-manager LLM toolbelt. Pure/eval-time (IFD-free) — consumed as
@@ -113,8 +118,16 @@
 
           outputHashMode = "recursive";
           outputHashAlgo = "sha256";
-          # Refresh after dependency changes (see README § Nix).
-          outputHash = "sha256-zyZvSkVSclhtQKc5K09MW2b8XZD89P1/YKAvjZS/+i0=";
+          # Refresh after dependency changes (see README § Nix). PER-SYSTEM:
+          # `bun install` filters os/cpu-specific optional deps (e.g.
+          # @anthropic-ai/claude-agent-sdk-{darwin-arm64,linux-x64,…}) to the
+          # build platform, so the FOD content — and thus the hash — differs per
+          # system. To add a system: set its entry to nixpkgs lib.fakeHash
+          # (sha256-AAAA…), `nix build .#node-modules`, paste the reported `got:`.
+          outputHash = {
+            "x86_64-linux" = "sha256-zyZvSkVSclhtQKc5K09MW2b8XZD89P1/YKAvjZS/+i0=";
+            "aarch64-darwin" = "sha256-I5SAJnHLOR1mh43XqRwNcJaBptSm6IX4xeT8pPXHrJE=";
+          }.${system} or (throw "ledger-node-modules: no FOD hash pinned for ${system}");
         };
 
         # Shell fragment: wire @cq/config as a RUNTIME dep of @cq/ledger. Since
@@ -383,6 +396,11 @@
           claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
           codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          # ── Linux-only harness packages ────────────────────────────── #
+          # yolo execs bubblewrap + nix-ld (Linux-only); the standalone
+          # reattach-llm declares meta.platforms = linux. Excluded on macOS,
+          # where the Darwin claude-code sandbox rides via claude-code-sandbox.
           reattach-llm = pkgs.callPackage ./nix/pkg/reattach-llm/default.nix { };
           # yolo builds its internal llm-sandbox helper itself. codegraph is no
           # longer a package input — it rides in via sandboxPackages (wired by
