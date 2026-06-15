@@ -256,8 +256,16 @@ export async function launchAndAwait(
  * `DriverAfterProviderResponseEvent` for the full caveat.
  */
 export function sampleSignals(ctx: DriverContext, quotaHitRef: QuotaHitRef): AutoSignals {
+  const rawPercent = ctx.getContextUsage()?.percent ?? null;
+  // Pi v0.78.0 reports `ContextUsage.percent` on a 0..100 scale (types.d.ts L196
+  // JSDoc: "Context usage as percentage of context window"; agent-session.js:2412
+  // computes `(tokens / contextWindow) * 100`). The decision core (decide.ts
+  // COMPACT_THRESHOLD = 0.8) and all AutoSignals consumers expect a 0..1 fraction,
+  // so divide by 100 here at the sampling boundary. Null means "unknown" (e.g.
+  // right after compaction) and must pass through as null — never triggers compaction.
+  const contextPercent = rawPercent !== null ? rawPercent / 100 : null;
   return {
-    contextPercent: ctx.getContextUsage()?.percent ?? null,
+    contextPercent,
     quotaHit: quotaHitRef.value,
   };
 }

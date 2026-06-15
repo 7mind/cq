@@ -143,9 +143,11 @@ describe("launchAndAwait", () => {
 // ---------------------------------------------------------------------------
 
 describe("sampleSignals", () => {
-  test("returns contextPercent from ctx.getContextUsage().percent and quotaHit from ref", () => {
+  test("converts Pi 0..100 percent to 0..1 fraction and reads quotaHit from ref", () => {
+    // Pi v0.78.0 getContextUsage().percent is on a 0..100 scale; sampleSignals
+    // must divide by 100 before feeding contextPercent to the decision core.
     const events: string[] = [];
-    const ctx = makeFakeCtx({ events, contextPercent: 0.42 });
+    const ctx = makeFakeCtx({ events, contextPercent: 42 }); // Pi 0..100 scale
     const ref: QuotaHitRef = { value: true };
     expect(sampleSignals(ctx, ref)).toEqual({ contextPercent: 0.42, quotaHit: true });
   });
@@ -166,6 +168,73 @@ describe("sampleSignals", () => {
     const ctx = makeFakeCtx({ events, contextPercent: null });
     const ref: QuotaHitRef = { value: false };
     expect(sampleSignals(ctx, ref)).toEqual({ contextPercent: null, quotaHit: false });
+  });
+
+  // Pi-realistic unit-pinning tests: these fixtures use Pi's REAL 0..100 output
+  // scale and verify the 0..1 fraction conversion at the sampleSignals boundary.
+  // They pin the unit contract so a future change to driver.ts or decide.ts that
+  // breaks the conversion is caught immediately.
+  test("[unit-pinning] Pi percent=85 (0..100 scale) → contextPercent 0.85 → above COMPACT_THRESHOLD", async () => {
+    // getContextUsage returns { percent: 85 } — Pi's 0..100 scale for "85% full".
+    // sampleSignals must convert to 0.85 (0..1 fraction) before the decision core.
+    const events: string[] = [];
+    const ctx = makeFakeCtx({ events, contextPercent: 85 }); // Pi 0..100 scale
+    const ref: QuotaHitRef = { value: false };
+    const signals = sampleSignals(ctx, ref);
+    // The conversion must yield 0.85 — strictly above COMPACT_THRESHOLD (0.8).
+    expect(signals.contextPercent).toBe(0.85);
+
+    // Also verify end-to-end: the driver must choose COMPACT_THEN_REDRIVE (not REDRIVE)
+    // when getContextUsage returns percent=85 (Pi scale) and predicates are non-terminal.
+    let compactCalled = false;
+    let callCount = 0;
+    const ctx2 = makeFakeCtx({
+      events,
+      onCompact: () => { compactCalled = true; },
+      contextPercent: () => {
+        callCount++;
+        return callCount === 1 ? 85 : null; // Pi 0..100 scale; null post-compact
+      },
+    });
+    const api = makeFakeApi(events);
+    const result = await runAutoDriver({
+      ctx: ctx2,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"]), ALL_FALSE]),
+    });
+    expect(compactCalled).toBe(true);
+    expect(result.action).toBe(AutoAction.STOP_DRAINED);
+  });
+
+  test("[unit-pinning] Pi percent=50 (0..100 scale) → contextPercent 0.5 → below COMPACT_THRESHOLD → no compaction", async () => {
+    // getContextUsage returns { percent: 50 } — Pi's 0..100 scale for "50% full".
+    // sampleSignals must convert to 0.5 (0..1 fraction) — below COMPACT_THRESHOLD (0.8).
+    const events: string[] = [];
+    const ctx = makeFakeCtx({ events, contextPercent: 50 }); // Pi 0..100 scale
+    const ref: QuotaHitRef = { value: false };
+    const signals = sampleSignals(ctx, ref);
+    // Converted fraction must be 0.5 — strictly below COMPACT_THRESHOLD.
+    expect(signals.contextPercent).toBe(0.5);
+
+    // End-to-end: driver must NOT compact when percent=50 (Pi scale) → 0.5 fraction.
+    let compactCalled = false;
+    const ctxWithSpy: DriverContext = {
+      ...ctx,
+      compact(options?: { onComplete?: (result: unknown) => void }): void {
+        compactCalled = true;
+        options?.onComplete?.(undefined);
+      },
+    };
+    const api = makeFakeApi(events);
+    const result = await runAutoDriver({
+      ctx: ctxWithSpy,
+      api,
+      preset: planPreset,
+      getPredicates: scriptedOracle([withPlanWork(["G1"]), ALL_FALSE]),
+    });
+    expect(compactCalled).toBe(false);
+    expect(result.action).toBe(AutoAction.STOP_DRAINED);
   });
 });
 
@@ -384,10 +453,11 @@ describe("T466 signals: contextPercent > 0.80 → compact then redrive", () => {
     const ctx = makeFakeCtx({
       events,
       onCompact: () => { compactCalled = true; },
-      // Returns 0.85 on first sample, null afterwards (simulating post-compact state).
+      // Pi reports 85 (0..100 scale) on first sample → 0.85 fraction → above COMPACT_THRESHOLD.
+      // Null afterwards (simulating post-compact state where token count is unknown).
       contextPercent: () => {
         callCount++;
-        return callCount === 1 ? 0.85 : null;
+        return callCount === 1 ? 85 : null; // Pi 0..100 scale
       },
     });
 
@@ -416,9 +486,10 @@ describe("T466 signals: contextPercent > 0.80 → compact then redrive", () => {
       events,
       // Only first cycle reports high context usage.
       contextPercent: () => {
-        // High on first sample, null afterward.
+        // Pi reports 90 (0..100 scale) → 0.9 fraction → above COMPACT_THRESHOLD on first sample.
+        // Null afterward (post-compact unknown state).
         const high = events.filter((e) => e.startsWith("send:")).length === 1;
-        return high ? 0.9 : null;
+        return high ? 90 : null; // Pi 0..100 scale
       },
     });
 
