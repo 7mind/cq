@@ -42,11 +42,11 @@ var/
 *.sqlite-shm
 
 # @cq/ledger per-cwd lockfiles + backups (the ledger files themselves are tracked)
-docs/.locks/
+.cq/.locks/
 # `cq reset` moves the bootstrap files here (timestamped) before regenerating.
-docs/.ledger-backup/
+.cq/.ledger-backup/
 # per-cwd runtime ledger registry — regenerated on connect, never tracked (fix D1).
-docs/ledgers.yaml
+.cq/ledgers.yaml
 
 # scratch
 /debug/
@@ -54,11 +54,11 @@ docs/ledgers.yaml
 
 # CodeGraph local index (per-machine)
 .codegraph/
-docs/.backup/
+.cq/.backup/
 
 # cq git-object ledger backend (managed) — do not edit
-docs/*.md
-docs/ledgers.yaml
-docs/.locks/
-docs/logs/
+.cq/*.md
+.cq/ledgers.yaml
+.cq/.locks/
+.cq/logs/
 # cq git-object ledger backend (managed) — end
