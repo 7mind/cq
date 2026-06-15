@@ -151,6 +151,12 @@ let
   # discovers both). Content lives in pkg/llm-contexts/pi-context.md.
   piAppendSystemPrompt = llmContexts.pi;
 
+  # Auto-driver extension: the whole subdirectory is copied to the store so
+  # index.ts can resolve its sibling imports (./decision, ./driver, etc.) at
+  # runtime. Pi's settings.extensions receives the index.ts store path inside
+  # that directory derivation.
+  autoDriverDir = ../pkg/pi-extensions/auto-driver;
+
   # Wiring common to every skill-aware harness (see claude.nix); spread with
   # `//` into the programs.pi block (no key overlap).
   sharedAgentWiring = {
@@ -344,6 +350,14 @@ in
             # We re-register both tools (at load, pre-empting the package's
             # session_start registration) with corrected resolution. See header.
             "${../pkg/pi-extensions/fix-ollama-cloud-web-tools-auth.ts}"
+            # cq auto-driver: registers /cq:advance:auto, /cq:plan:auto,
+            # /cq:investigate:auto, and /cq:implement:auto — drive-and-await
+            # loops that re-run the underlying cq:* command until its terminal
+            # predicate is satisfied (T465–T468). The entrypoint (index.ts)
+            # imports sibling modules (./decision, ./driver, ./decide, ./oracle)
+            # so the whole auto-driver/ directory is copied to the store via
+            # `autoDriverDir`; Pi receives the index.ts path within that tree.
+            "${autoDriverDir}/index.ts"
           ];
         };
       };

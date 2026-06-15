@@ -55,3 +55,9 @@ export function registerAllAutoCommands(
   registerAutoDriver(api, investigateAutoPreset, options);
   registerAutoDriver(api, implementAutoPreset, options);
 }
+
+// Pi extension default export (T469): the loader calls this with the live Pi
+// ExtensionAPI, which satisfies DriverRegistrationApi structurally.
+export default function cqAutoDriver(pi: DriverRegistrationApi): void {
+  registerAllAutoCommands(pi);
+}
