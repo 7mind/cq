@@ -1,0 +1,13 @@
+{
+  "name": "@cq/auto-driver",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Pure auto-driver decision logic (standalone, NOT part of the cq-ledgers bun workspace)",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
