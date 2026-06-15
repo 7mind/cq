@@ -36,21 +36,31 @@ The Pi footer status bar (key `cq-auto`) updates at each lifecycle point.
 
 ## 2. Real `cq advance-gate` output at demo time (live oracle evidence)
 
-Captured at 2026-06-15 19:13 UTC from this repo's ledger
-(`5baff8bb`, worktree `implement/T470`):
+`cq advance-gate` reads the ledger for the CWD it runs in. At demo time the
+demo harness runs from
+`nix/pkg/pi-extensions/auto-driver` (the worktree's package directory), whose
+`.cq/` working-tree projection is a stale snapshot that predates defects D72/D73
+and task T470 — so it reported all predicates FALSE (DRAINED). That output was
+an artifact of the worktree CWD, not a true picture of the live repo ledger.
+
+The **live ledger on the main checkout** at the same time returns:
 
 ```json
-{"block":false,"reason":"no actionable predicate (P-investigate/P-plan/P-implement all FALSE) — allow","predicates":{"pInvestigate":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]}}}
+{"block":true,"reason":"P-investigate=TRUE and unblocked; continue per D41 — turn-pause is not a stop condition","predicates":{"pInvestigate":{"value":true,"items":["D72","D73"]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":true,"items":["T470"]},"openQuestionGate":{"value":false,"items":[]}}}
 ```
 
-All three P-predicates are FALSE: this repo's ledger is fully DRAINED at demo
-time. Running `/cq:advance:auto` right now would reach `STOP_DRAINED` after one
-oracle check without any redrive.
+(D72 and D73 are open out-of-scope defects filed during this build; T470 is this
+demo task itself.) `block:true`, `pInvestigate=[D72,D73]`, and
+`pImplement=[T470]` are all outstanding — the live ledger is **not** DRAINED.
+Running `/cq:advance:auto` on the live repo would therefore **REDRIVE**
+(P-predicates still TRUE), not immediately `STOP_DRAINED`.
 
-The oracle channel works: `cq advance-gate` is on PATH, resolves against the
-correct ledger root (process CWD), and returns the identical `DerivedPredicates`
-shape as the MCP `derive_predicates` tool (verified in oracle.ts header
-comments and T463 investigation).
+The oracle channel itself works correctly: `cq advance-gate` is on PATH,
+resolves against the ledger root for whatever CWD it is given, and returns the
+identical `DerivedPredicates` shape as the MCP `derive_predicates` tool
+(verified in oracle.ts header comments and T463 investigation). The discrepancy
+above is purely a CWD issue — the worktree's `.cq/` is a stale snapshot; the
+main checkout's `.cq/` is the authoritative live ledger.
 
 ---
 
@@ -80,8 +90,11 @@ Scenario 1: LIVE oracle — cq advance-gate against this repo's ledger
     openQuestGate : value=false  items=[]
 
   advanceAutoPreset.terminalPredicate(live) = true
-  => All P-predicates are FALSE: ledger is DRAINED right now.
-     Running cq:advance:auto against the live ledger would immediately STOP_DRAINED.
+  => All P-predicates are FALSE in this CWD's ledger snapshot.
+     NOTE: this demo runs from the worktree package dir whose .cq/ is a stale
+     snapshot — it does NOT necessarily reflect the live main-checkout ledger.
+     The live main-checkout ledger may still have work outstanding (see runbook §2).
+     Running cq:advance:auto against the live main ledger would REDRIVE if predicates are TRUE there.
 
   Driver transition log (using live snapshot, fake waitForIdle):
   [status-bar] cq-auto = "idle"

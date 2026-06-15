@@ -149,8 +149,11 @@ async function scenario1LiveOracle(): Promise<void> {
   const terminal = advanceAutoPreset.terminalPredicate(livePredicates);
   console.log(`\n  advanceAutoPreset.terminalPredicate(live) = ${terminal}`);
   if (terminal) {
-    console.log("  => All P-predicates are FALSE: ledger is DRAINED right now.");
-    console.log("     Running cq:advance:auto against the live ledger would immediately STOP_DRAINED.");
+    console.log("  => All P-predicates are FALSE in this CWD's ledger snapshot.");
+    console.log("     NOTE: this demo runs from the worktree package dir whose .cq/ is a stale");
+    console.log("     snapshot — it does NOT necessarily reflect the live main-checkout ledger.");
+    console.log("     The live main-checkout ledger may still have work outstanding (see runbook §2).");
+    console.log("     Running cq:advance:auto against the live main ledger would REDRIVE if predicates are TRUE there.");
   } else {
     console.log("  => Some P-predicates are TRUE: ledger has work remaining.");
     console.log("     Running cq:advance:auto against the live ledger would REDRIVE before stopping.");
