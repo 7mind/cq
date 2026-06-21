@@ -1,6 +1,6 @@
-// cq auto-driver predicate oracle adapter (T463, G-auto-driver).
+// cq auto-driver predicate oracle adapter (T463, T478, G-auto-driver).
 //
-// PINNED CHANNEL: shell out the `cq advance-gate` CLI and parse its
+// PINNED CHANNEL: shell out the `cq predicates` CLI and parse its
 // `predicates` object. EXACTLY ONE channel is implemented — no prefer/fallback
 // branching remains.
 //
@@ -18,19 +18,18 @@
 //   extension code. The only programmatic escape hatch is the shell (`exec`).
 //   => the in-process MCP channel is CONFIRMED ABSENT.
 //
-// CHOSEN FALLBACK (STEP 2): the `cq advance-gate` CLI subcommand. It prints a
-//   JSON object `{ block, reason, predicates: { pInvestigate, pPlan,
-//   pImplement, openQuestionGate } }` to stdout, where `predicates` shares the
-//   SAME `derivePredicates` single source of truth as the ledger MCP
-//   `derive_predicates` tool. Verified manually on THIS repo's ledger: both
-//   `cq advance-gate` and `mcp__ledger__derive_predicates` returned the
-//   byte-identical verdict `{"pInvestigate":{"value":true,"items":["D72","D73"]},
-//   "pPlan":{"value":false,"items":[]},"pImplement":{"value":true,
-//   "items":["T463"]},"openQuestionGate":{"value":false,"items":[]}}`.
-//   Chosen over a child `pi -p` turn (the cq-subagent-dispatch.ts spawn pattern)
-//   because it is the lower-dependency, DETERMINISTIC option already wired in
-//   this repo: one `cq advance-gate` shell-out vs. a non-deterministic child LLM
-//   turn that would itself need the MCP adapter to reach the tool.
+// CHOSEN CHANNEL (STEP 2): the `cq predicates` CLI subcommand. It prints a
+//   JSON object `{ predicates: { pInvestigate, pPlan, pImplement,
+//   openQuestionGate } }` to stdout, where `predicates` shares the SAME
+//   `derivePredicates` single source of truth as the ledger MCP
+//   `derive_predicates` tool. `cq predicates` is harness-agnostic — it ALWAYS
+//   derives from the fs store, uses NO session, requires NO marker, and ALWAYS
+//   exits 0. Chosen over the prior Claude-Stop-hook-specific, session-dependent
+//   subcommand and over a child `pi -p` turn (the
+//   cq-subagent-dispatch.ts spawn pattern) because it is the lower-dependency,
+//   DETERMINISTIC, harness-agnostic option: one `cq predicates` shell-out vs. a
+//   non-deterministic child LLM turn that would itself need the MCP adapter to
+//   reach the tool.
 //
 // Like the rest of pi-extensions/auto-driver, this module imports NOTHING from
 // `@cq/*` (standalone store-path file outside the cq-ledgers bun workspace); the
@@ -42,7 +41,7 @@ import type { DerivedPredicates, PredicateVerdict } from "./decision";
 
 /**
  * The minimal context this oracle needs: the working directory the `cq`
- * invocation runs in (so `cq advance-gate` resolves the right ledger root). A
+ * invocation runs in (so `cq predicates` resolves the right ledger root). A
  * structural subset of the Pi `ExtensionContext` (which carries `cwd: string`),
  * declared locally to keep this module Pi-typing-free and unit-testable.
  */
@@ -52,7 +51,7 @@ export interface OracleContext {
 
 /** The `cq` CLI command and the subcommand that prints the predicates JSON. */
 const CQ_COMMAND = "cq";
-const ADVANCE_GATE_ARGS = ["advance-gate"];
+const PREDICATES_ARGS = ["predicates"];
 
 /** The four predicate keys, in the canonical order of `DerivedPredicates`. */
 const PREDICATE_KEYS = ["pInvestigate", "pPlan", "pImplement", "openQuestionGate"] as const;
@@ -62,29 +61,27 @@ type PredicateKey = (typeof PREDICATE_KEYS)[number];
 const MAX_BUFFER_BYTES = 1024 * 1024;
 
 /**
- * Run `cq advance-gate` in `cwd` and return its stdout. `cq advance-gate` exits
- * NON-ZERO when it blocks (exit 0 = allow, non-zero = block — see `cq --help`),
- * yet still prints the verdict JSON to stdout in BOTH cases, so a non-zero exit
- * is NOT an error here: we resolve on stdout regardless of exit code and only
- * reject when the process fails to spawn (ENOENT etc.) or produced no stdout.
+ * Run `cq predicates` in `cwd` and return its stdout. `cq predicates` ALWAYS
+ * exits 0 (harness-agnostic, no session required), so we resolve on stdout
+ * unconditionally and only reject when the process fails to spawn (ENOENT etc.)
+ * or produced no stdout.
  */
-function runAdvanceGate(cwd: string): Promise<string> {
+function runPredicates(cwd: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     execFile(
       CQ_COMMAND,
-      ADVANCE_GATE_ARGS,
+      PREDICATES_ARGS,
       { cwd, maxBuffer: MAX_BUFFER_BYTES, encoding: "utf-8" },
       (error, stdout, stderr) => {
         const out = stdout.trim();
         if (out.length > 0) {
-          // Non-zero exit (block verdict) still carries valid stdout JSON.
           resolve(out);
           return;
         }
         // No stdout: a genuine failure (spawn error, or empty output).
         const reason = error
-          ? `cq advance-gate failed: ${error.message}`
-          : "cq advance-gate produced no stdout";
+          ? `cq predicates failed: ${error.message}`
+          : "cq predicates produced no stdout";
         reject(new Error(stderr.trim().length > 0 ? `${reason}\n${stderr.trim()}` : reason));
       },
     );
@@ -116,24 +113,24 @@ function parseVerdict(raw: unknown, keyName: string): PredicateVerdict {
 }
 
 /**
- * Parse a full `DerivedPredicates` out of the `cq advance-gate` stdout JSON.
+ * Parse a full `DerivedPredicates` out of the `cq predicates` stdout JSON.
  * Exported for unit-testing the parser against a sample verdict literal without
  * shelling out. Handles the documented `{ value, items[] }` shape for all four
  * keys; throws on malformed JSON or any missing/mistyped key.
  */
-export function parseAdvanceGateOutput(stdout: string): DerivedPredicates {
+export function parsePredicatesOutput(stdout: string): DerivedPredicates {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
   } catch (err) {
-    throw new Error(`cq advance-gate stdout is not valid JSON: ${(err as Error).message}`);
+    throw new Error(`cq predicates stdout is not valid JSON: ${(err as Error).message}`);
   }
   if (!isRecord(parsed)) {
-    throw new Error(`cq advance-gate stdout is not a JSON object: ${stdout}`);
+    throw new Error(`cq predicates stdout is not a JSON object: ${stdout}`);
   }
   const predicates = parsed.predicates;
   if (!isRecord(predicates)) {
-    throw new Error(`cq advance-gate stdout has no "predicates" object: ${stdout}`);
+    throw new Error(`cq predicates stdout has no "predicates" object: ${stdout}`);
   }
   const result = {} as Record<PredicateKey, PredicateVerdict>;
   for (const key of PREDICATE_KEYS) {
@@ -144,10 +141,10 @@ export function parseAdvanceGateOutput(stdout: string): DerivedPredicates {
 
 /**
  * Obtain the four derived flow-detection predicates at runtime via the pinned
- * `cq advance-gate` channel. Runs the CLI in `ctx.cwd` and parses its
+ * `cq predicates` channel. Runs the CLI in `ctx.cwd` and parses its
  * `predicates` object into the copied `DerivedPredicates` type.
  */
 export async function getPredicates(ctx: OracleContext): Promise<DerivedPredicates> {
-  const stdout = await runAdvanceGate(ctx.cwd);
-  return parseAdvanceGateOutput(stdout);
+  const stdout = await runPredicates(ctx.cwd);
+  return parsePredicatesOutput(stdout);
 }
