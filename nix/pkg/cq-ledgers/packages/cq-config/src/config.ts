@@ -22,6 +22,10 @@ import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { parseToml, type RawWebui } from "./toml.js";
 import {
+  DEFAULT_HARNESS,
+  resolveActiveHarnessFromProcess,
+} from "./activeHarness.js";
+import {
   isHarness,
   isEffort,
   isTier,
@@ -31,6 +35,7 @@ import {
   CLAUDE_EFFORTS,
   type CqConfig,
   type Effort,
+  type Harness,
   type LedgerConfig,
   type ReviewerToken,
   type Tier,
@@ -228,12 +233,37 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
 }
 
 /**
- * Parse a cq.toml document string into a typed CqConfig.
+ * Parse a cq.toml document string into a typed CqConfig for one ACTIVE harness.
+ *
+ * LAYERED MERGE (Q239/Q240). The document has two layers:
+ *  - SHARED DEFAULTS — the top-level keys (`reviewers`, `planners`, `[tiers]`,
+ *    plus `[aliases]`/`[webui]`/`[ledger]`/`[agent_tiers]`).
+ *  - PER-HARNESS OVERRIDES — each `[harness.<name>]` block (parsed into
+ *    `RawToml.harnessOverrides`) may carry `reviewers` / `planners` /
+ *    `[harness.<name>.tiers]` for ONE harness.
+ *
+ * PRECEDENCE (override-vs-shared): the SHARED top-level value is the default;
+ * if the ACTIVE harness has an override block, its present sections REPLACE the
+ * shared value wholesale (override semantics, NOT a deep append/merge): a
+ * section PRESENT in the override (even an empty array/table) wins; a section
+ * ABSENT from the override (`null`) falls through to the shared top-level value.
+ * Only `reviewers` / `planners` / `tiers` are overridable; `[aliases]`,
+ * `[webui]`, `[ledger]`, and `[agent_tiers]` are SHARED-only and NEVER
+ * overridden. `[harness.<name>.tiers]` is parsed into the same `TiersConfig`
+ * shape as the shared `[tiers]` (via {@link parseTiers}, resolving keys through
+ * the SHARED `[aliases]`).
+ *
+ * `activeHarness` defaults to {@link DEFAULT_HARNESS}, so an omitted argument
+ * reproduces the pre-override behaviour exactly. A flat cq.toml with no
+ * `[harness.*]` table parses identically under any harness.
  *
  * Throws on malformed TOML (via the parser), an unknown harness in an alias
  * token, or a non-array `reviewers`.
  */
-export function parseConfig(source: string): CqConfig {
+export function parseConfig(
+  source: string,
+  activeHarness: Harness = DEFAULT_HARNESS,
+): CqConfig {
   const raw = parseToml(source);
 
   const aliases: Record<string, ReviewerToken> = {};
@@ -241,10 +271,29 @@ export function parseConfig(source: string): CqConfig {
     aliases[name] = parseReviewerToken(token);
   }
 
-  const reviewers = raw.reviewers ?? [];
-  const planners = raw.planners ?? [];
+  // SHARED top-level defaults.
+  let reviewers = raw.reviewers ?? [];
+  let planners = raw.planners ?? [];
+  let tiers = raw.tiers === null ? null : parseTiers(raw.tiers, aliases);
+
+  // PER-HARNESS override layer (Q240): the active harness's block REPLACES the
+  // shared reviewers/planners/tiers for any section it carries; an absent
+  // section (null) falls through to the shared value above. `[aliases]` is
+  // shared-only, so per-harness tiers still resolve keys via the shared aliases.
+  const override = raw.harnessOverrides?.[activeHarness];
+  if (override !== undefined) {
+    if (override.reviewers !== null) {
+      reviewers = override.reviewers;
+    }
+    if (override.planners !== null) {
+      planners = override.planners;
+    }
+    if (override.tiers !== null) {
+      tiers = parseTiers(override.tiers, aliases);
+    }
+  }
+
   const webui = raw.webui === null ? null : parseWebui(raw.webui);
-  const tiers = raw.tiers === null ? null : parseTiers(raw.tiers, aliases);
   const agentTiers =
     raw.agentTiers === null ? null : parseAgentTiers(raw.agentTiers);
   const ledger = raw.ledger === null ? null : parseLedger(raw.ledger);
@@ -540,19 +589,27 @@ export function formatReviewerToken(token: ReviewerToken): string {
 }
 
 /**
- * Load cq.toml from `repoRoot`.
+ * Load cq.toml from `repoRoot` for the ACTIVE harness.
  *
  * Returns `null` when no cq.toml exists (feature OFF => caller falls back to
- * a single native Claude reviewer). Otherwise parses, validates, and eagerly
- * resolves the reviewers list (so a dangling alias throws at load time).
+ * a single native Claude reviewer). Otherwise parses with the active harness's
+ * layered override (see {@link parseConfig}), validates, and eagerly resolves
+ * the reviewers/planners lists — so a dangling alias in the ALREADY-MERGED
+ * active-harness panels throws at load time, not later.
+ *
+ * `harness` defaults to {@link resolveActiveHarnessFromProcess}, so the active
+ * harness is read from `process.env` (Q238) unless the caller injects one.
  */
-export function loadConfig(repoRoot: string): CqConfig | null {
+export function loadConfig(
+  repoRoot: string,
+  harness: Harness = resolveActiveHarnessFromProcess(),
+): CqConfig | null {
   const file = path.join(repoRoot, CQ_CONFIG_FILENAME);
   if (!existsSync(file)) {
     return null;
   }
   const source = readFileSync(file, "utf8");
-  const config = parseConfig(source);
+  const config = parseConfig(source, harness);
   // Eagerly resolve so a dangling alias is reported at load time, not later.
   resolveReviewers(config);
   resolvePlanners(config);
