@@ -50,6 +50,7 @@ let
     postBuild = ''
       wrapProgram $out/bin/pi \
         --prefix PATH : ${ddgsPython}/bin \
+        --set CQ_HARNESS pi \
         --run 'export CQ_AGENTS_DIR="$HOME/.pi/agent/cq-agents"'
     '';
   };
@@ -257,9 +258,9 @@ in
   config = lib.mkIf cfg.enable (lib.mkMerge [
     {
       programs.pi = sharedAgentWiring // {
-        # Vendored Pi 0.78.0 wrapped to set CQ_AGENTS_DIR + the ddgs python on
-        # PATH (see piWrapped). Provider/search API keys are supplied by the
-        # yolo sandbox (smind.hm.dev.llm.yolo.secretSessionVariables), not here.
+        # Vendored Pi 0.78.0 wrapped to set CQ_HARNESS=pi, CQ_AGENTS_DIR, and the
+        # ddgs python on PATH (see piWrapped). Provider/search API keys are supplied
+        # by the yolo sandbox (smind.hm.dev.llm.yolo.secretSessionVariables), not here.
         package = piWrapped;
         # Repo-agnostic operating manual appended inside Pi's (minimal) system
         # prompt; per-repo facts stay in AGENTS.md/CLAUDE.md (see definition).
