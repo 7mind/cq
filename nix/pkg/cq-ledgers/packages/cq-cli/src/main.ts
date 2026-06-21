@@ -38,6 +38,7 @@ import {
 import { CQ_TOML_TEMPLATE } from "./cqTomlTemplate.js";
 import { runMoveLedger, type MoveDirection } from "./moveLedger.js";
 import { runAdvanceGate } from "./advanceGate.js";
+import { runPredicates } from "./predicates.js";
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
 
 /**
@@ -53,7 +54,7 @@ export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructi
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "log"] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "log"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -153,6 +154,10 @@ export const USAGE = [
   "  advance-gate [--cwd <path>] [--session <id>]    emit the neutral /cq:advance stop-gate verdict",
   "                                                  JSON (block + reason + predicates) to stdout;",
   "                                                  exit 0 = allow, non-zero = block.",
+  "  predicates  [--cwd <path>]                      emit the derived flow predicates JSON",
+  "                                                  ({ predicates: { pInvestigate, pPlan, pImplement,",
+  "                                                  openQuestionGate } }) to stdout UNCONDITIONALLY;",
+  "                                                  no session/marker, always exit 0.",
   "  log put <src>|--stdin --dest logs/<rel> [--cwd <path>]",
   "                                                  write a log file into .cq/logs/<rel>;",
   "                                                  source is a local file path OR --stdin;",
@@ -478,6 +483,20 @@ export async function runAdvanceGateCmd(
 }
 
 /**
+ * `cq predicates` (T476 / Q241): a NATIVE subcommand emitting the derived flow
+ * predicates JSON to stdout UNCONDITIONALLY — no session resolution, no marker
+ * check, always exit 0. The derivation lives in ./predicates.ts; this thin
+ * wrapper bridges {@link SubcommandArgs} to its {@link PredicatesArgs} and
+ * threads the dispatcher IO (out/err).
+ */
+export async function runPredicatesCmd(
+  args: SubcommandArgs,
+  io: DispatchIo,
+): Promise<SubcommandOutcome> {
+  return runPredicates({ cwd: args.cwd }, { out: io.out, err: io.err });
+}
+
+/**
  * `cq log` (T406 / G49): a NATIVE namespace subcommand whose first positional
  * token is a sub-subcommand (`put`). The only recognised sub-subcommand is
  * `put`; anything else prints a usage error and exits {@link EXIT_USAGE}.
@@ -575,6 +594,7 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
   erase: runErase,
   "move-ledger": runMoveLedgerCmd,
   "advance-gate": runAdvanceGateCmd,
+  predicates: runPredicatesCmd,
   // `log` is a namespace subcommand: the handler placeholder is never invoked
   // directly — the dispatch() function intercepts it and delegates to runLogCmd
   // with the raw post-"log" argv.  This entry must exist so isSubcommand() and
