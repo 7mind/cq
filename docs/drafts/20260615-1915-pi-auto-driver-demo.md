@@ -34,14 +34,27 @@ The Pi footer status bar (key `cq-auto`) updates at each lifecycle point.
 
 ---
 
-## 2. Real `cq advance-gate` output at demo time (live oracle evidence)
+## 2. Real oracle output at demo time (live oracle evidence)
+
+> **Correction (T478/T480).** At the time of this demo the auto-driver oracle
+> shelled `cq advance-gate`, which is **marker-gated**: with no per-session
+> advance marker present (the "pi situation") it returns ALL predicates FALSE
+> WITHOUT reading the ledger — a **false-DRAINED** verdict. The Scenario-1
+> `STOP_DRAINED, iterations=0` recorded in §3 was a consequence of that defect,
+> NOT a true read of the ledger (see the §3 correction note and the regression
+> `nix/pkg/pi-extensions/auto-driver/false-drained-regression.test.ts`). The
+> oracle has since been **re-pointed to `cq predicates`** (T478), which ALWAYS
+> reads the ledger (no session, no marker) and reports the REAL predicates. The
+> §2 paragraphs below are retained as the original demo-time evidence; read them
+> with this correction in mind.
 
 `cq advance-gate` reads the ledger for the CWD it runs in. At demo time the
 demo harness runs from
 `nix/pkg/pi-extensions/auto-driver` (the worktree's package directory), whose
 `.cq/` working-tree projection is a stale snapshot that predates defects D72/D73
 and task T470 — so it reported all predicates FALSE (DRAINED). That output was
-an artifact of the worktree CWD, not a true picture of the live repo ledger.
+an artifact of the worktree CWD AND of the marker-gated false-DRAINED defect
+above, not a true picture of the live repo ledger.
 
 The **live ledger on the main checkout** at the same time returns:
 
@@ -169,6 +182,26 @@ Scenario 4: registerAllAutoCommands — all four presets registered
 All demo scenarios completed.
 ========================================================================
 ```
+
+> **Scenario-1 correction (T478/T480) — the `STOP_DRAINED, iterations=0` above
+> was a FALSE-PASS, now fixed.** The captured Scenario-1 result
+> (`action=STOP_DRAINED, iterations=0`) was originally reported as a normal
+> outcome, but it is the **false-DRAINED defect**: the demo-time oracle shelled
+> the marker-gated `cq advance-gate`, which — with no per-session advance marker
+> present (the "pi situation") — returns ALL predicates FALSE WITHOUT reading the
+> ledger. An actionable ledger (e.g. an open high-severity defect ⇒ pInvestigate
+> TRUE) was therefore mis-reported as DRAINED, draining the run on cycle 0 when
+> work remained. The fix (T478) re-points the oracle at **`cq predicates`**,
+> which ALWAYS reads the ledger (no session, no marker) and reports the REAL
+> predicates, so the driver REDRIVEs instead of false-draining. The divergence
+> and the fix are locked by the regression
+> `nix/pkg/pi-extensions/auto-driver/false-drained-regression.test.ts` (T480):
+> against one seeded actionable ledger it asserts source `cq advance-gate`
+> (marker absent) ⇒ all-false ⇒ `STOP_DRAINED` on cycle 0, while source
+> `cq predicates` ⇒ pInvestigate TRUE ⇒ NOT `STOP_DRAINED`; the test goes red if
+> the oracle is reverted to advance-gate. (The demo script `demo/e2e-demo.ts`
+> still references `cq advance-gate` in its Scenario-1 prose — a known follow-up;
+> the production oracle in `oracle.ts` already shells `cq predicates`.)
 
 ---
 
