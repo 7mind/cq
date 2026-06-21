@@ -7,7 +7,7 @@
 // transition log.
 //
 // Three scenarios are demonstrated:
-//   Scenario 1 — LIVE oracle: calls the REAL `cq advance-gate` CLI against this
+//   Scenario 1 — LIVE oracle: calls the REAL `cq predicates` CLI against this
 //     repo's live ledger so a real predicate read is shown. The current ledger
 //     state is printed as evidence.
 //   Scenario 2 — DRAINED stop: fake oracle whose predicates progress to all-FALSE
@@ -122,12 +122,12 @@ const ALL_FALSE: DerivedPredicates = {
 };
 
 // ---------------------------------------------------------------------------
-// Scenario 1: LIVE oracle — real `cq advance-gate` against this repo's ledger.
+// Scenario 1: LIVE oracle — real `cq predicates` against this repo's ledger.
 // ---------------------------------------------------------------------------
 
 async function scenario1LiveOracle(): Promise<void> {
   console.log("=".repeat(72));
-  console.log("Scenario 1: LIVE oracle — cq advance-gate against this repo's ledger");
+  console.log("Scenario 1: LIVE oracle — cq predicates against this repo's ledger");
   console.log("=".repeat(72));
 
   // Call the REAL oracle to show what the live ledger currently reports.
@@ -135,12 +135,12 @@ async function scenario1LiveOracle(): Promise<void> {
   try {
     livePredicates = await liveGetPredicates({ cwd: process.cwd() });
   } catch (err) {
-    console.log(`  [ERROR] cq advance-gate failed: ${(err as Error).message}`);
+    console.log(`  [ERROR] cq predicates failed: ${(err as Error).message}`);
     console.log("  => Skipping live oracle scenario.");
     return;
   }
 
-  console.log("\n  Live predicate snapshot (from cq advance-gate):");
+  console.log("\n  Live predicate snapshot (from cq predicates):");
   console.log(`    pInvestigate  : value=${livePredicates.pInvestigate.value}  items=[${livePredicates.pInvestigate.items.join(", ")}]`);
   console.log(`    pPlan         : value=${livePredicates.pPlan.value}  items=[${livePredicates.pPlan.items.join(", ")}]`);
   console.log(`    pImplement    : value=${livePredicates.pImplement.value}  items=[${livePredicates.pImplement.items.join(", ")}]`);
