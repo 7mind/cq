@@ -148,3 +148,52 @@ planners = ["opus"]
 #   backend = "git-object"   # "fs" (default) | "git-object" (experimental)
 #   branch  = "cq-ledger"    # git branch to store ledger objects on
 #   remote  = "origin"       # git remote to push/fetch ledger objects from
+
+# ---------------------------------------------------------------------------
+# PER-HARNESS LAYERED OVERRIDES (Q239 / Q240)
+# ---------------------------------------------------------------------------
+#
+# cq supports two harnesses: "claude" (Claude Code) and "pi" (pi shell).
+# A `[harness.<name>]` block (where <name> is "claude" or "pi") overrides
+# the shared top-level config for that harness only.  Absent blocks fall
+# through to the shared values above — backward compatible with flat cq.toml.
+#
+# LAYERING SEMANTICS:
+#   - When a per-harness block is present, each section it carries WHOLLY
+#     REPLACES the corresponding shared top-level value.  There is NO union or
+#     supplement: the shared [tiers]/reviewers/planners entries are DISCARDED
+#     for that harness and replaced entirely by the per-harness entries.
+#   - An absent per-harness section (null/omitted) falls through to the shared
+#     value unchanged — backward compatible with today's flat config.
+#   - [aliases] is SHARED-ONLY: per-harness tiers still resolve alias keys
+#     through the shared [aliases] table.
+#
+# SHARED (cannot be overridden per-harness — shared across all harnesses):
+#   [aliases]      — alias name -> reviewer token map
+#   [webui]        — web-UI port / bind config
+#   [ledger]       — storage backend (fs / git-object)
+#   [agent_tiers]  — agent-name -> tier class map
+#
+# PER-HARNESS OVERRIDABLE (present in [harness.<name>]):
+#   reviewers = [...]         — REPLACES shared top-level reviewers
+#   planners  = [...]         — REPLACES shared top-level planners
+#   [harness.<name>.tiers]    — WHOLLY REPLACES the shared [tiers] classifier
+#
+# Q238 HARNESS SELECTION RULE (priority order):
+#   1. Explicit CQ_HARNESS env var wins (e.g. CQ_HARNESS=pi).
+#      nix/hm/pi.nix is intended to set CQ_HARNESS=pi (wired in a later task).
+#      Any non-empty unknown value is a CqConfigError (fail fast, no silent
+#      fallback).
+#   2. CLAUDE_CODE_SESSION_ID non-empty => "claude".
+#   3. Default => "claude" (preserves today's bare `cq` invocation behaviour).
+#
+# EXAMPLE — activate grok + minimax for the pi harness (COMMENTED OUT; see
+# note about T479: no uncommented [harness.*] lines may appear in this file):
+#
+# [harness.pi]
+# reviewers = ["grok", "minimax"]
+# planners  = ["grok"]
+#
+# [harness.pi.tiers]
+# grok    = "frontier"   # alias key — resolves to pi:grok-build/grok-build
+# minimax = "fast"       # alias key — resolves to pi:ollama-cloud/minimax-m3
