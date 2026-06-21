@@ -82,6 +82,54 @@ describe("resolveLedgerBackend", () => {
     await writeCqToml(dir, '[ledger]\nbackend = "git-object"\nbranch = "my-ledger"\n');
     expect(resolveLedgerBackend(dir)).toEqual({ backend: "git-object", branch: "my-ledger" });
   });
+
+  it("T483: [ledger] backend is harness-invariant — CQ_HARNESS=pi yields same backend as unset", async () => {
+    // A cq.toml with a [harness.pi] override block and a shared [ledger] section.
+    // resolveLedgerBackend must return the SAME backend/branch regardless of the
+    // active harness signalled via CQ_HARNESS (save-and-restore idiom).
+    const dir = await plainDir();
+    await writeCqToml(
+      dir,
+      [
+        'reviewers = ["opus"]',
+        'planners  = ["opus"]',
+        "",
+        "[aliases]",
+        'opus = "claude:opus-4.8[1m]"',
+        'grok = "pi:grok-build/grok-build"',
+        "",
+        "[ledger]",
+        'backend = "fs"',
+        'branch  = "cq-ledger"',
+        "",
+        "[harness.pi]",
+        'reviewers = ["grok"]',
+        'planners  = ["grok"]',
+      ].join("\n") + "\n",
+    );
+
+    const prev = process.env["CQ_HARNESS"];
+    try {
+      process.env["CQ_HARNESS"] = "pi";
+      const underPi = resolveLedgerBackend(dir);
+
+      process.env["CQ_HARNESS"] = "claude";
+      const underClaude = resolveLedgerBackend(dir);
+
+      delete process.env["CQ_HARNESS"];
+      const underUnset = resolveLedgerBackend(dir);
+
+      expect(underPi).toEqual({ backend: "fs", branch: "cq-ledger" });
+      expect(underClaude).toEqual(underPi);
+      expect(underUnset).toEqual(underPi);
+    } finally {
+      if (prev === undefined) {
+        delete process.env["CQ_HARNESS"];
+      } else {
+        process.env["CQ_HARNESS"] = prev;
+      }
+    }
+  });
 });
 
 describe("createLedgerStore — backend selection", () => {
