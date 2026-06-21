@@ -422,3 +422,105 @@ test(
     expect(planAdvance!.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
   },
 );
+
+// ---- T481: configCapability resolves the ACTIVE harness (CQ_HARNESS) ---------
+//
+// loadConfig's harness param defaults to resolveActiveHarnessFromProcess(), so
+// each compute* method (which re-reads cq.toml per call) resolves the ACTIVE
+// harness from process.env at that boundary. With a fixture carrying a
+// [harness.pi] override (grok panels) + [harness.pi.tiers] (grok=frontier) and
+// shared [aliases] (incl grok/opus), the merged view must be harness-scoped:
+//   - under CQ_HARNESS=pi: planners → grok; plan-advance (frontier) → pi token.
+//   - under CQ_HARNESS=claude: planners → opus (shared default panel).
+// [aliases] is SHARED, so candidateTokens is unchanged; only [tiers]
+// classification + panels become harness-scoped via the merged config.
+
+const T481_HARNESS_FIXTURE = [
+  // SHARED defaults: claude panels + claude-classified frontier tier.
+  'reviewers = ["opus"]',
+  'planners  = ["opus"]',
+  "",
+  "[aliases]",
+  '  opus = "claude:opus-4.8[1m]"',
+  '  grok = "pi:grok-build/grok-build"',
+  "",
+  "[tiers]",
+  '  opus = "frontier"',
+  "",
+  "[agent_tiers]",
+  '  plan-advance = "frontier"',
+  "",
+  // PER-HARNESS pi override: grok panels + grok-classified frontier tier.
+  "[harness.pi]",
+  '  reviewers = ["grok"]',
+  '  planners  = ["grok"]',
+  "",
+  "[harness.pi.tiers]",
+  '  grok = "frontier"',
+  "",
+].join("\n");
+
+describe("T481: configCapability resolves the ACTIVE harness", () => {
+  const savedHarness = process.env["CQ_HARNESS"];
+
+  afterEach(() => {
+    if (savedHarness === undefined) {
+      delete process.env["CQ_HARNESS"];
+    } else {
+      process.env["CQ_HARNESS"] = savedHarness;
+    }
+  });
+
+  it("computePlanners() under CQ_HARNESS=pi returns the grok planner", () => {
+    writeCqToml(T481_HARNESS_FIXTURE);
+    process.env["CQ_HARNESS"] = "pi";
+    const result = computePlanners(dir);
+    expect(result.configured).toBe(true);
+    expect(result.planners).toHaveLength(1);
+    const grok = result.planners[0]!;
+    expect(grok.harness).toBe("pi");
+    expect(grok.model).toBe("grok-build");
+    expect(grok.provider).toBe("grok-build");
+    expect(grok.alias).toBe("grok");
+  });
+
+  it("computePlanners() under CQ_HARNESS=claude returns the opus planner", () => {
+    writeCqToml(T481_HARNESS_FIXTURE);
+    process.env["CQ_HARNESS"] = "claude";
+    const result = computePlanners(dir);
+    expect(result.configured).toBe(true);
+    expect(result.planners).toHaveLength(1);
+    const opus = result.planners[0]!;
+    expect(opus.harness).toBe("claude");
+    expect(opus.model).toBe("opus-4.8[1m]");
+    expect(opus.provider).toBeNull();
+    expect(opus.alias).toBe("opus");
+  });
+
+  it("computeAgentModels() under CQ_HARNESS=pi resolves plan-advance (frontier) to a pi token", () => {
+    writeCqToml(T481_HARNESS_FIXTURE);
+    process.env["CQ_HARNESS"] = "pi";
+    const result = computeAgentModels(dir);
+    expect(result.configured).toBe(true);
+    const planAdvance = result.agents.find((a) => a.id === "plan-advance");
+    expect(planAdvance).toBeDefined();
+    expect(planAdvance!.status).toBe("resolved");
+    expect(planAdvance!.modelClass).toBe("frontier");
+    // Under pi, [harness.pi.tiers] classifies grok=frontier, so plan-advance
+    // resolves the pi grok token (and NOT the shared opus claude token).
+    expect(planAdvance!.modelMappings.pi).toEqual(["grok-build/grok-build"]);
+    expect(planAdvance!.modelMappings.claude).toBeUndefined();
+  });
+
+  it("computeAgentModels() under CQ_HARNESS=claude resolves plan-advance (frontier) to the opus claude token", () => {
+    writeCqToml(T481_HARNESS_FIXTURE);
+    process.env["CQ_HARNESS"] = "claude";
+    const result = computeAgentModels(dir);
+    const planAdvance = result.agents.find((a) => a.id === "plan-advance");
+    expect(planAdvance).toBeDefined();
+    expect(planAdvance!.status).toBe("resolved");
+    expect(planAdvance!.modelClass).toBe("frontier");
+    expect(planAdvance!.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
+    expect(planAdvance!.modelMappings.pi).toBeUndefined();
+  });
+});
