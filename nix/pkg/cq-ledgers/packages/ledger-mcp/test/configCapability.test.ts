@@ -18,6 +18,7 @@ import {
   computeConfig,
   computeAgentModels,
 } from "../src/configCapability.js";
+import type { AgentModelEntry } from "@cq/ledger";
 import { FsLedgerStore } from "@cq/ledger";
 
 let dir: string;
@@ -522,5 +523,168 @@ describe("T481: configCapability resolves the ACTIVE harness", () => {
     expect(planAdvance!.modelClass).toBe("frontier");
     expect(planAdvance!.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
     expect(planAdvance!.modelMappings.pi).toBeUndefined();
+  });
+});
+
+// ---- T487: consolidated end-to-end — ONE cq.toml, BOTH harnesses, ------------
+//             panels (planners+reviewers) AND per-role agent models.
+//
+// This is the acceptance check: a SINGLE fixture file carries shared [aliases]
+// AND a [harness.pi] override (pi panels + [harness.pi.tiers]). Driving the
+// config-capability layer (computePlanners/computeReviewers/computeAgentModels)
+// — each of which re-reads cq.toml and resolves the ACTIVE harness from
+// process.env at its boundary — the resolved panels AND per-role agent models
+// must be the PI tokens under CQ_HARNESS=pi and the claude (opus) tokens under
+// the claude/default signal, all from that one file.
+//
+// Shared defaults: opus panels + opus-classified frontier tier, minimax-
+// classified standard tier (claude tokens). The [harness.pi] override flips
+// panels to grok/minimax and classifies grok=frontier in [harness.pi.tiers].
+// agent_tiers routes plan-advance->frontier and implement-worker->standard so
+// BOTH a frontier role and a standard role are exercised per harness.
+
+const T487_END_TO_END_FIXTURE = [
+  // SHARED defaults: opus panels (claude) + frontier=opus, standard=minimax.
+  'reviewers = ["opus"]',
+  'planners  = ["opus"]',
+  "",
+  "[aliases]",
+  '  opus    = "claude:opus-4.8[1m]"',
+  '  minimax = "pi:ollama-cloud/minimax-m3"',
+  '  grok    = "pi:grok-build/grok-build"',
+  "",
+  "[tiers]",
+  '  opus    = "frontier"',
+  '  minimax = "standard"',
+  "",
+  "[agent_tiers]",
+  '  plan-advance     = "frontier"',
+  '  implement-worker = "standard"',
+  "",
+  // PER-HARNESS pi override: grok+minimax panels + grok-classified frontier.
+  "[harness.pi]",
+  '  reviewers = ["grok"]',
+  '  planners  = ["grok"]',
+  "",
+  "[harness.pi.tiers]",
+  '  grok    = "frontier"',
+  '  minimax = "standard"',
+  "",
+].join("\n");
+
+function agentEntry(
+  result: { agents: readonly AgentModelEntry[] },
+  id: string,
+): AgentModelEntry {
+  const found = result.agents.find((a) => a.id === id);
+  if (found === undefined) {
+    throw new Error(`no agent entry for id "${id}"`);
+  }
+  return found;
+}
+
+describe("T487: one cq.toml, both harnesses — panels + per-role agent models", () => {
+  const savedHarness = process.env["CQ_HARNESS"];
+
+  afterEach(() => {
+    if (savedHarness === undefined) {
+      delete process.env["CQ_HARNESS"];
+    } else {
+      process.env["CQ_HARNESS"] = savedHarness;
+    }
+  });
+
+  it("under CQ_HARNESS=pi: planners+reviewers+agent-models are the PI tokens", () => {
+    writeCqToml(T487_END_TO_END_FIXTURE);
+    process.env["CQ_HARNESS"] = "pi";
+
+    // Panels: the [harness.pi] override flips planners + reviewers to grok (pi).
+    const planners = computePlanners(dir);
+    expect(planners.configured).toBe(true);
+    expect(planners.planners).toEqual([
+      {
+        harness: "pi",
+        model: "grok-build",
+        provider: "grok-build",
+        alias: "grok",
+        effort: null,
+      },
+    ]);
+
+    const reviewers = computeReviewers(dir);
+    expect(reviewers.configured).toBe(true);
+    expect(reviewers.reviewers).toEqual([
+      {
+        harness: "pi",
+        model: "grok-build",
+        provider: "grok-build",
+        alias: "grok",
+        effort: null,
+      },
+    ]);
+
+    // Per-role agent models: frontier role -> pi grok, standard role -> pi minimax.
+    const agents = computeAgentModels(dir);
+    expect(agents.configured).toBe(true);
+
+    const planAdvance = agentEntry(agents, "plan-advance");
+    expect(planAdvance.status).toBe("resolved");
+    expect(planAdvance.modelClass).toBe("frontier");
+    expect(planAdvance.modelMappings.pi).toEqual(["grok-build/grok-build"]);
+    expect(planAdvance.modelMappings.claude).toBeUndefined();
+
+    const implWorker = agentEntry(agents, "implement-worker");
+    expect(implWorker.status).toBe("resolved");
+    expect(implWorker.modelClass).toBe("standard");
+    expect(implWorker.modelMappings.pi).toEqual(["ollama-cloud/minimax-m3"]);
+    expect(implWorker.modelMappings.claude).toBeUndefined();
+  });
+
+  it("under CQ_HARNESS=claude: planners+reviewers+agent-models are the OPUS tokens", () => {
+    writeCqToml(T487_END_TO_END_FIXTURE);
+    process.env["CQ_HARNESS"] = "claude";
+
+    // Panels: shared defaults -> opus (claude).
+    const planners = computePlanners(dir);
+    expect(planners.configured).toBe(true);
+    expect(planners.planners).toEqual([
+      {
+        harness: "claude",
+        model: "opus-4.8[1m]",
+        provider: null,
+        alias: "opus",
+        effort: null,
+      },
+    ]);
+
+    const reviewers = computeReviewers(dir);
+    expect(reviewers.configured).toBe(true);
+    expect(reviewers.reviewers).toEqual([
+      {
+        harness: "claude",
+        model: "opus-4.8[1m]",
+        provider: null,
+        alias: "opus",
+        effort: null,
+      },
+    ]);
+
+    // Per-role agent models: frontier role -> claude opus; standard -> pi minimax
+    // (minimax is the only standard-classified token under the shared default,
+    // so the standard role still resolves the pi minimax token — the frontier
+    // role is the dimension that flips to the claude opus token under claude).
+    const agents = computeAgentModels(dir);
+    expect(agents.configured).toBe(true);
+
+    const planAdvance = agentEntry(agents, "plan-advance");
+    expect(planAdvance.status).toBe("resolved");
+    expect(planAdvance.modelClass).toBe("frontier");
+    expect(planAdvance.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
+    expect(planAdvance.modelMappings.pi).toBeUndefined();
+
+    const implWorker = agentEntry(agents, "implement-worker");
+    expect(implWorker.status).toBe("resolved");
+    expect(implWorker.modelClass).toBe("standard");
+    expect(implWorker.modelMappings.pi).toEqual(["ollama-cloud/minimax-m3"]);
   });
 });

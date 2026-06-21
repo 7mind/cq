@@ -221,6 +221,204 @@ async function withClientAtRoot(
   }
 }
 
+/**
+ * T487 (R574 criticism-1): the ENV-INHERITANCE CHAIN, end-to-end.
+ *
+ * The pi wrapper sets CQ_HARNESS=pi in the environment it launches cq under;
+ * mcp.json carries NO explicit `env` block, so the ledger MCP server (a stdio
+ * child) INHERITS CQ_HARNESS from that environment. This test proves the chain
+ * operationally — at the process boundary, not via a hand-set process.env in a
+ * unit — by SPAWNING the real server binary (same entrypoint mcp.json launches,
+ * `cq mcp`/src/main.ts) with an env that includes CQ_HARNESS, pointed at a temp
+ * fixture ledger-root carrying a [harness.pi] cq.toml, then driving get_planners
+ * / get_agent_models over its MCP stdio transport.
+ *
+ * Note: StdioClientTransport's getDefaultEnvironment() inherits only a safe
+ * allowlist (HOME/PATH/…), which does NOT include CQ_HARNESS — so passing
+ * `env: { ...process.env, CQ_HARNESS: <h> }` is precisely what models the pi
+ * wrapper exporting CQ_HARNESS into the child's environment. The child resolves
+ * its active harness from ITS OWN process.env at the config-capability boundary.
+ */
+async function withClientAtRootHarness(
+  root: string,
+  harness: string | undefined,
+  fn: (client: Client) => Promise<void>,
+): Promise<void> {
+  const { command, args } = resolveBinPath();
+  // Start from a clean copy of the parent env, then assert the harness signal
+  // exactly as the pi wrapper would (or strip it for the unset/default case).
+  const childEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined) childEnv[k] = v;
+  }
+  delete childEnv["CQ_HARNESS"];
+  // CLAUDE_CODE_SESSION_ID would resolve to "claude" when CQ_HARNESS is unset;
+  // strip it so the unset case exercises the true DEFAULT_HARNESS path.
+  delete childEnv["CLAUDE_CODE_SESSION_ID"];
+  if (harness !== undefined) childEnv["CQ_HARNESS"] = harness;
+
+  const transport = new StdioClientTransport({
+    command,
+    args: [...args, "--cwd", root],
+    env: childEnv,
+    stderr: "inherit",
+  });
+  const client = new Client(
+    { name: "ledger-mcp-test", version: "0.0.1" },
+    { capabilities: {} },
+  );
+  await client.connect(transport);
+  try {
+    await fn(client);
+  } finally {
+    await client.close();
+  }
+}
+
+describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
+  // ONE fixture cq.toml: shared opus panels (claude) + a [harness.pi] override
+  // (grok panels) + [harness.pi.tiers] (grok=frontier). Same single-file shape
+  // as the consolidated configCapability acceptance, exercised here through the
+  // REAL spawned server so the env-inheritance chain is proven end-to-end.
+  const FIXTURE = [
+    'reviewers = ["opus"]',
+    'planners  = ["opus"]',
+    "",
+    "[aliases]",
+    '  opus = "claude:opus-4.8[1m]"',
+    '  grok = "pi:grok-build/grok-build"',
+    "",
+    "[tiers]",
+    '  opus = "frontier"',
+    "",
+    "[agent_tiers]",
+    '  plan-advance = "frontier"',
+    "",
+    "[harness.pi]",
+    '  reviewers = ["grok"]',
+    '  planners  = ["grok"]',
+    "",
+    "[harness.pi.tiers]",
+    '  grok = "frontier"',
+    "",
+  ].join("\n");
+
+  async function fixtureRoot(): Promise<string> {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-harness-"));
+    const store = new FsLedgerStore({ root });
+    await store.init();
+    await store.dispose();
+    await fs.writeFile(path.join(root, "cq.toml"), FIXTURE, "utf8");
+    return root;
+  }
+
+  it("server LAUNCHED with CQ_HARNESS=pi observes it and resolves the PI view (grok)", async () => {
+    const root = await fixtureRoot();
+    try {
+      await withClientAtRootHarness(root, "pi", async (client) => {
+        const planners = decode<{
+          configured: boolean;
+          planners: Array<{
+            harness: string;
+            model: string;
+            provider: string | null;
+            alias: string;
+            effort: string | null;
+          }>;
+        }>(await client.callTool({ name: "get_planners", arguments: {} }));
+        expect(planners.configured).toBe(true);
+        expect(planners.planners).toEqual([
+          {
+            harness: "pi",
+            model: "grok-build",
+            provider: "grok-build",
+            alias: "grok",
+            effort: null,
+          },
+        ]);
+
+        const agents = decode<{
+          agents: Array<{
+            id: string;
+            status: string;
+            modelClass: string | null;
+            modelMappings: Record<string, string[] | undefined>;
+          }>;
+        }>(await client.callTool({ name: "get_agent_models", arguments: {} }));
+        const planAdvance = agents.agents.find((a) => a.id === "plan-advance");
+        expect(planAdvance).toBeDefined();
+        expect(planAdvance!.status).toBe("resolved");
+        expect(planAdvance!.modelClass).toBe("frontier");
+        expect(planAdvance!.modelMappings.pi).toEqual(["grok-build/grok-build"]);
+        expect(planAdvance!.modelMappings.claude).toBeUndefined();
+      });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("server LAUNCHED with CQ_HARNESS=claude observes it and resolves the OPUS view", async () => {
+    const root = await fixtureRoot();
+    try {
+      await withClientAtRootHarness(root, "claude", async (client) => {
+        const planners = decode<{
+          configured: boolean;
+          planners: Array<{
+            harness: string;
+            model: string;
+            provider: string | null;
+            alias: string;
+            effort: string | null;
+          }>;
+        }>(await client.callTool({ name: "get_planners", arguments: {} }));
+        expect(planners.configured).toBe(true);
+        expect(planners.planners).toEqual([
+          {
+            harness: "claude",
+            model: "opus-4.8[1m]",
+            provider: null,
+            alias: "opus",
+            effort: null,
+          },
+        ]);
+
+        const agents = decode<{
+          agents: Array<{
+            id: string;
+            status: string;
+            modelClass: string | null;
+            modelMappings: Record<string, string[] | undefined>;
+          }>;
+        }>(await client.callTool({ name: "get_agent_models", arguments: {} }));
+        const planAdvance = agents.agents.find((a) => a.id === "plan-advance");
+        expect(planAdvance).toBeDefined();
+        expect(planAdvance!.status).toBe("resolved");
+        expect(planAdvance!.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
+        expect(planAdvance!.modelMappings.pi).toBeUndefined();
+      });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("server LAUNCHED with CQ_HARNESS UNSET defaults to the claude (opus) view", async () => {
+    const root = await fixtureRoot();
+    try {
+      await withClientAtRootHarness(root, undefined, async (client) => {
+        const planners = decode<{
+          configured: boolean;
+          planners: Array<{ harness: string; alias: string }>;
+        }>(await client.callTool({ name: "get_planners", arguments: {} }));
+        expect(planners.configured).toBe(true);
+        expect(planners.planners[0]!.harness).toBe("claude");
+        expect((planners.planners[0]! as { alias: string }).alias).toBe("opus");
+      });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("ledger-mcp stdio config capability (cq.toml)", () => {
   it("surfaces get_reviewers + get_planners + get_config + get_agent_models on the stdio binary", async () => {
     // The default tmpRoot has no cq.toml, so the tools are still listed.
