@@ -248,7 +248,47 @@ footer status bar.
 
 ---
 
-## 6. Unit test coverage
+## 6. Nix build + `cq predicates` smoke verification (T482)
+
+The auto-driver oracle shells the BARE `cq` binary (not `bun run`), so the
+`cq predicates` subcommand must be present in the built Nix product, not only
+in the Bun workspace. The following smoke step verifies this end-to-end.
+
+### Steps
+
+```sh
+# From the repo root (takes several minutes on first run):
+nix build .#cq
+
+# Seed a minimal fs-backed ledger fixture:
+FIXTURE=$(mktemp -d)
+./result/bin/cq init --cwd "$FIXTURE"
+
+# Run the subcommand against the fixture; must exit 0:
+./result/bin/cq predicates --cwd "$FIXTURE"
+```
+
+### Expected output
+
+```json
+{"predicates":{"pInvestigate":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]}}}
+```
+
+Exit code: `0`.
+
+### Verified (T482, 2026-06-21)
+
+`nix build .#cq` succeeded on commit `0ed3a3c9` (base for T482, x86_64-linux).
+`./result/bin/cq predicates --cwd <fixture>` printed the predicates JSON above
+and exited 0. The `result` symlink is gitignored (`result` / `result-*` in
+`.gitignore`) and is not committed.
+
+Note: `$(nix path-info .#cq)/bin/cq predicates --cwd <fixture>` is an
+equivalent invocation that resolves the store path without the `result` symlink.
+
+---
+
+## 7. Unit test coverage
 
 ```
 cd nix/pkg/pi-extensions/auto-driver && bun test
