@@ -1,5 +1,5 @@
 /**
- * CQ_TOML_TEMPLATE — a fully-commented cq.toml starter template (T331, T349, T440).
+ * CQ_TOML_TEMPLATE — a fully-commented cq.toml starter template (T331, T349, T440, T485).
  *
  * This is a hand-authored TOML literal (cq-config has only a parser, no
  * serialiser) that, once re-parsed by @cq/config `parseConfig`, is
@@ -28,9 +28,18 @@
  * Uncomment and set backend='git-object' to opt in to the experimental
  * git-object backend (Q189).
  *
+ * Per-harness layered overrides (T485 / Q239 / Q240):
+ *   The [harness.<name>] section documents the per-harness override mechanism.
+ *   All [harness.*] lines in the shipped template are COMMENTED OUT so that the
+ *   template remains a flat, backward-compatible config that parses and resolves
+ *   cleanly under any harness (T479 backward-compat guard).  Uncomment the
+ *   [harness.pi] sample to activate per-harness overrides for the pi harness.
+ *
  * Reference: Q184 (active set), D36 (pi provider routing), T286 (effort suffix),
  *            T349 (ledger backend config), Q189 (git-object opt-in),
- *            T438 (candidateTokens decoupling), T440 (opus-only panels).
+ *            T438 (candidateTokens decoupling), T440 (opus-only panels),
+ *            T485 (template per-harness docs), Q238 (harness resolution),
+ *            Q239/Q240 (layered override semantics).
  */
 
 export const CQ_TOML_TEMPLATE: string = `\
@@ -165,4 +174,53 @@ planners = ["opus"]
 #   backend = "git-object"   # "fs" (default) | "git-object" (experimental)
 #   branch  = "cq-ledger"    # git branch to store ledger objects on
 #   remote  = "origin"       # git remote to push/fetch ledger objects from
+
+# ---------------------------------------------------------------------------
+# PER-HARNESS LAYERED OVERRIDES (Q239 / Q240)
+# ---------------------------------------------------------------------------
+#
+# cq supports two harnesses: "claude" (Claude Code) and "pi" (pi shell).
+# A \`[harness.<name>]\` block (where <name> is "claude" or "pi") overrides
+# the shared top-level config for that harness only.  Absent blocks fall
+# through to the shared values above — backward compatible with flat cq.toml.
+#
+# LAYERING SEMANTICS:
+#   - When a per-harness block is present, each section it carries WHOLLY
+#     REPLACES the corresponding shared top-level value.  There is NO union or
+#     supplement: the shared [tiers]/reviewers/planners entries are DISCARDED
+#     for that harness and replaced entirely by the per-harness entries.
+#   - An absent per-harness section (null/omitted) falls through to the shared
+#     value unchanged — backward compatible with today's flat config.
+#   - [aliases] is SHARED-ONLY: per-harness tiers still resolve alias keys
+#     through the shared [aliases] table.
+#
+# SHARED (cannot be overridden per-harness — shared across all harnesses):
+#   [aliases]      — alias name -> reviewer token map
+#   [webui]        — web-UI port / bind config
+#   [ledger]       — storage backend (fs / git-object)
+#   [agent_tiers]  — agent-name -> tier class map
+#
+# PER-HARNESS OVERRIDABLE (present in [harness.<name>]):
+#   reviewers = [...]         — REPLACES shared top-level reviewers
+#   planners  = [...]         — REPLACES shared top-level planners
+#   [harness.<name>.tiers]    — WHOLLY REPLACES the shared [tiers] classifier
+#
+# Q238 HARNESS SELECTION RULE (priority order):
+#   1. Explicit CQ_HARNESS env var wins (e.g. CQ_HARNESS=pi).
+#      nix/hm/pi.nix is intended to set CQ_HARNESS=pi (wired in a later task).
+#      Any non-empty unknown value is a CqConfigError (fail fast, no silent
+#      fallback).
+#   2. CLAUDE_CODE_SESSION_ID non-empty => "claude".
+#   3. Default => "claude" (preserves today's bare \`cq\` invocation behaviour).
+#
+# EXAMPLE — activate grok + minimax for the pi harness (COMMENTED OUT; see
+# note about T479: no uncommented [harness.*] lines may appear in this file):
+#
+# [harness.pi]
+# reviewers = ["grok", "minimax"]
+# planners  = ["grok"]
+#
+# [harness.pi.tiers]
+# grok    = "frontier"   # alias key — resolves to pi:grok-build/grok-build
+# minimax = "fast"       # alias key — resolves to pi:ollama-cloud/minimax-m3
 `;
