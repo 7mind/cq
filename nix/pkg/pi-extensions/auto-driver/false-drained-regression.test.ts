@@ -181,6 +181,11 @@ function cycle0Decision(predicates: DerivedPredicates): AutoAction {
   });
 }
 
+// --- Timeout constants ---------------------------------------------------------
+
+/** Per-test timeout for cold subprocess shell-outs (seedActionableLedger, predicatesChannel, advanceGateChannel). */
+const COLD_SHELLOUT_TIMEOUT_MS = 30_000;
+
 // --- Env discipline: guard the ambient XDG_RUNTIME_DIR (T474 criticism fix) ------
 
 // advanceGateChannel sets XDG_RUNTIME_DIR ONLY in the child spawn env, never on
@@ -204,7 +209,7 @@ describe("auto-driver false-DRAINED regression (T480)", () => {
     expect(predicates.openQuestionGate.value).toBe(false);
 
     expect(cycle0Decision(predicates)).toBe(AutoAction.STOP_DRAINED);
-  });
+  }, COLD_SHELLOUT_TIMEOUT_MS);
 
   test("NEW channel (cq predicates) => real pInvestigate TRUE => NOT STOP_DRAINED on cycle 0", () => {
     const root = seedActionableLedger();
@@ -219,7 +224,7 @@ describe("auto-driver false-DRAINED regression (T480)", () => {
     // A revert to advance-gate (marker absent) would make pInvestigate FALSE
     // here and flip this decision to STOP_DRAINED — turning this test red.
     expect(cycle0Decision(predicates)).not.toBe(AutoAction.STOP_DRAINED);
-  });
+  }, COLD_SHELLOUT_TIMEOUT_MS);
 
   test("the two channels DIVERGE on the same seeded ledger (the false-DRAINED gap)", () => {
     const root = seedActionableLedger();
@@ -233,5 +238,5 @@ describe("auto-driver false-DRAINED regression (T480)", () => {
 
     expect(cycle0Decision(gatePredicates)).toBe(AutoAction.STOP_DRAINED);
     expect(cycle0Decision(realPredicates)).not.toBe(AutoAction.STOP_DRAINED);
-  });
+  }, COLD_SHELLOUT_TIMEOUT_MS);
 });
