@@ -47,6 +47,13 @@ export {
   resolveAgentModel,
   loadConfig,
 } from "./config.js";
+export {
+  resolveActiveHarness,
+  resolveActiveHarnessFromProcess,
+  DEFAULT_HARNESS,
+  CQ_HARNESS_ENV,
+  CLAUDE_CODE_SESSION_ID_ENV,
+} from "./activeHarness.js";
 export type { RawToml, RawWebui, RawLedger } from "./toml.js";
 export { parseToml } from "./toml.js";
 export type { AgentRoleTier } from "./agentRoster.js";
