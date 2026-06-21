@@ -28,6 +28,7 @@
  */
 
 import { parse as parseSmolToml, TomlError } from "smol-toml";
+import { isHarness } from "./types.js";
 
 /**
  * The raw `[webui]` table as produced by the parser: the `host` / `port`
@@ -52,6 +53,27 @@ export interface RawLedger {
   readonly remote: unknown;
 }
 
+/**
+ * A single `[harness.<name>]` override block (Q240): the raw per-harness
+ * subset of the SHARED config that may be overridden for one harness. Each
+ * cell is left as the parser produced it (validated structurally here, but
+ * the merge into `CqConfig` is a downstream task T477):
+ *  - `reviewers` / `planners`: the per-harness reviewer/planner arrays, or
+ *    null if that sub-key is absent;
+ *  - `tiers`: the per-harness `[harness.<name>.tiers]` CLASSIFIER table
+ *    (raw token-or-alias KEY -> tier-class VALUE), or null if absent.
+ * `[harness.<name>]` may carry ONLY these three keys; `aliases`, `webui`,
+ * `ledger`, and `agent_tiers` are SHARED-only and rejected here.
+ */
+export interface RawHarnessOverride {
+  /** The per-harness `reviewers` array of strings, or null if absent. */
+  readonly reviewers: readonly string[] | null;
+  /** The per-harness `planners` array of strings, or null if absent. */
+  readonly planners: readonly string[] | null;
+  /** The per-harness `[tiers]` CLASSIFIER table, or null if absent. */
+  readonly tiers: Record<string, string> | null;
+}
+
 /** The shape a cq.toml document parses into before schema validation. */
 export interface RawToml {
   /** The `[aliases]` table: alias name -> raw token string. */
@@ -72,6 +94,12 @@ export interface RawToml {
   readonly agentTiers: Record<string, string> | null;
   /** The `[ledger]` table, or null if absent. */
   readonly ledger: RawLedger | null;
+  /**
+   * The `[harness.<name>]` per-harness override tables (Q240): harness name
+   * (`claude`/`pi`) -> its raw overridable subset. Null if the document
+   * carries no `[harness.*]` table at all.
+   */
+  readonly harnessOverrides: Record<string, RawHarnessOverride> | null;
 }
 
 /** Thrown when cq.toml is not valid TOML, or violates the cq.toml schema. */
@@ -91,7 +119,11 @@ const ALLOWED_TOP_LEVEL = new Set([
   "tiers",
   "agent_tiers",
   "ledger",
+  "harness",
 ]);
+
+/** The per-harness keys an `[harness.<name>]` block may override (Q240). */
+const ALLOWED_HARNESS_OVERRIDE_KEYS = new Set(["reviewers", "planners", "tiers"]);
 
 /** Narrow an unknown value to a record (TOML table). */
 function isTable(value: unknown): value is Record<string, unknown> {
@@ -181,6 +213,56 @@ function parseLedgerRaw(value: unknown): RawLedger {
 }
 
 /**
+ * Structurally validate the `[harness]` table of per-harness override blocks
+ * (Q240): each sub-table key must be a known harness name (`claude`/`pi` via
+ * `isHarness`), and within each block only `reviewers` / `planners` / `tiers`
+ * are permitted (the per-harness-overridable subset). `aliases`, `webui`,
+ * `ledger`, and `agent_tiers` are SHARED-only and rejected with a precise
+ * error naming the offending key. The reviewers/planners arrays and tiers
+ * table are validated with the same helpers as their top-level counterparts;
+ * the merge into `CqConfig` is deferred to T477.
+ */
+function parseHarnessOverrides(
+  value: unknown,
+): Record<string, RawHarnessOverride> {
+  if (!isTable(value)) {
+    throw new TomlSyntaxError("[harness] must be a table");
+  }
+  const overrides: Record<string, RawHarnessOverride> = {};
+  for (const [name, block] of Object.entries(value)) {
+    if (!isHarness(name)) {
+      throw new TomlSyntaxError(
+        `unknown harness "${name}" in [harness.${name}] (expected "claude" or "pi")`,
+      );
+    }
+    if (!isTable(block)) {
+      throw new TomlSyntaxError(`[harness.${name}] must be a table`);
+    }
+    for (const key of Object.keys(block)) {
+      if (!ALLOWED_HARNESS_OVERRIDE_KEYS.has(key)) {
+        throw new TomlSyntaxError(
+          `unexpected key "${key}" in [harness.${name}] (only reviewers, planners, tiers may be overridden per-harness)`,
+        );
+      }
+    }
+    const reviewers =
+      "reviewers" in block
+        ? parseStringArray(`harness.${name}.reviewers`, block.reviewers)
+        : null;
+    const planners =
+      "planners" in block
+        ? parseStringArray(`harness.${name}.planners`, block.planners)
+        : null;
+    const tiers =
+      "tiers" in block
+        ? parseStringTable(`harness.${name}.tiers`, block.tiers)
+        : null;
+    overrides[name] = { reviewers, planners, tiers };
+  }
+  return overrides;
+}
+
+/**
  * Parse a cq.toml document into its raw shape, or throw a precise
  * `TomlSyntaxError` on malformed input or a schema violation.
  */
@@ -214,6 +296,17 @@ export function parseToml(source: string): RawToml {
       ? parseStringTable("agent_tiers", doc.agent_tiers)
       : null;
   const ledger = "ledger" in doc ? parseLedgerRaw(doc.ledger) : null;
+  const harnessOverrides =
+    "harness" in doc ? parseHarnessOverrides(doc.harness) : null;
 
-  return { aliases, reviewers, planners, webui, tiers, agentTiers, ledger };
+  return {
+    aliases,
+    reviewers,
+    planners,
+    webui,
+    tiers,
+    agentTiers,
+    ledger,
+    harnessOverrides,
+  };
 }

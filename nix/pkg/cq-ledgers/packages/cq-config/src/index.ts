@@ -54,7 +54,12 @@ export {
   CQ_HARNESS_ENV,
   CLAUDE_CODE_SESSION_ID_ENV,
 } from "./activeHarness.js";
-export type { RawToml, RawWebui, RawLedger } from "./toml.js";
+export type {
+  RawToml,
+  RawWebui,
+  RawLedger,
+  RawHarnessOverride,
+} from "./toml.js";
 export { parseToml } from "./toml.js";
 export type { AgentRoleTier } from "./agentRoster.js";
 export { AGENT_ROLE_TIERS } from "./agentRoster.js";
