@@ -25,11 +25,20 @@ let
   # dynamic loader. Claude exports that as CLAUDE_CODE_EXECPATH, and the
   # grep/find shims it writes into its shell snapshot then invoke `ld.so -G …`
   # / `ld.so -S …` → "error while loading shared libraries: -G". Fix: make the
-  # inner binary self-contained (real glibc interp + rpath, taken from the
-  # wrapper's own --library-path so the glibc always matches) and exec it
-  # DIRECTLY, so execPath is the real binary and the bundled ugrep/bfs
-  # multiplex (keyed on argv0) works. Verified: `exec -a ugrep <inner> -G …`
-  # greps correctly once run directly.
+  # inner binary self-contained (real glibc interp, taken from the wrapper's
+  # own --library-path so the glibc always matches) and exec it DIRECTLY, so
+  # execPath is the real binary and the bundled ugrep/bfs multiplex (keyed on
+  # argv0) works. Verified: `exec -a ugrep <inner> -G …` greps correctly once
+  # run directly.
+  #
+  # ONLY --set-interpreter — NOT --set-rpath. The `claude` binary is a Bun
+  # single-file executable (bun runtime + appended payload); `patchelf
+  # --set-rpath` corrupts that payload and the 2.1.195+ binary then SIGSEGVs
+  # on every invocation (2.1.177 tolerated it; the newer Bun build does not).
+  # --set-interpreter alone is harmless AND sufficient: the nix glibc loader
+  # resolves the sibling libc/librt/… from its own store dir via its built-in
+  # default search path, so no rpath is needed (ldd confirms every lib
+  # resolves to the matching glibc). See also dontPatchELF in ../pkg/claude-code.
   claudeBase = pkgs.callPackage ../pkg/claude-code/package.nix { };
   claudeExecpathFixed = claudeBase.overrideAttrs (old: {
     nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.patchelf ];
@@ -51,7 +60,7 @@ let
       if [ -z "$glibclib" ]; then
         echo "claudeExecpathFixed: could not determine glibc lib path" >&2; exit 1
       fi
-      patchelf --set-interpreter "$glibclib/ld-linux-x86-64.so.2" --set-rpath "$glibclib" "$inner"
+      patchelf --set-interpreter "$glibclib/ld-linux-x86-64.so.2" "$inner"
       for w in "$out"/bin/*; do
         [ -f "$w" ] && grep -qE 'ld-linux.*libexec/claude-code/claude' "$w" || continue
         grep -v -E '^exec .*ld-linux.*libexec/claude-code/claude' "$w" > "$w.tmp"
