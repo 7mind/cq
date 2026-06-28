@@ -70,6 +70,14 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   dontConfigure = true;
   dontBuild = true;
 
+  # Keep the Bun single-file executable byte-for-byte. Any fixup that rewrites
+  # the ELF (patchelf --shrink-rpath, strip) shifts the file and breaks Bun's
+  # embedded-payload offset detection — the 2.1.195 build segfaults (SIGSEGV)
+  # under such rewriting where 2.1.177 tolerated it. We invoke the binary via
+  # an explicit dynamic loader in postFixup, so its own PT_INTERP/RPATH is moot.
+  dontPatchELF = true;
+  dontStrip = true;
+
   # The `claude` binary is a Bun single-file executable: bun runtime + appended embedded
   # script payload. patchelf would shift the file size and break Bun's payload-offset
   # detection (it falls back to acting as plain `bun` instead of running the bundled app).
