@@ -10,6 +10,11 @@
 
 set -euo pipefail
 
+no_build=false
+if [[ "${1:-}" == "--no-build" ]]; then
+  no_build=true
+fi
+
 cd "$(dirname "$0")"
 pkg_nix="package.nix"
 
@@ -53,4 +58,10 @@ done
 
 echo
 echo "updated $pkg_nix to $latest"
-echo "next: ./verify-configs --verbose <hostname>"
+
+if [[ "$no_build" == true ]]; then
+  echo "skipping build (--no-build)"
+  exit 0
+fi
+
+nix build .#claude-code
