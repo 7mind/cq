@@ -96,9 +96,11 @@ planners = ["opus"]
 # independently of the panel lists.
 [aliases]
   # ── Active: canonical Claude trio (all classified in [tiers] below) ───────
-  opus   = "claude:opus-4.8[1m]"   # frontier tier — on reviewers+planners panels
-  sonnet = "claude:sonnet-4.6"     # standard tier — off-panel, available per-role
-  haiku  = "claude:haiku-4.5"      # fast tier    — off-panel, available per-role
+  opus     = "claude:opus-4.8[1m]" # frontier tier — on reviewers+planners panels
+  fable    = "claude:fable-5"      # frontier tier — off-panel, available per-role
+  sonnet   = "claude:sonnet-4.6"   # standard tier — off-panel, available per-role
+  sonnet-5 = "claude:sonnet-5"     # standard tier — off-panel, available per-role
+  haiku    = "claude:haiku-4.5"    # fast tier    — off-panel, available per-role
 
   # ── Inactive pi aliases (uncomment to activate) ──────────────────────────
   # These require the relevant pi provider to be configured and accessible.
@@ -129,9 +131,11 @@ planners = ["opus"]
   # Canonical Claude trio — classified by capability (all three must be here
   # even though only opus is on the panels, so per-role dispatch can resolve
   # sonnet for standard-tier roles and haiku for fast-tier roles):
-  opus   = "frontier"   # alias key — resolves to claude:opus-4.8[1m]
-  sonnet = "standard"   # alias key — resolves to claude:sonnet-4.6 (off-panel)
-  haiku  = "fast"       # alias key — resolves to claude:haiku-4.5  (off-panel)
+  opus     = "frontier"   # alias key — resolves to claude:opus-4.8[1m]
+  fable    = "frontier"   # alias key — resolves to claude:fable-5    (off-panel)
+  sonnet   = "standard"   # alias key — resolves to claude:sonnet-4.6 (off-panel)
+  sonnet-5 = "standard"   # alias key — resolves to claude:sonnet-5   (off-panel)
+  haiku    = "fast"       # alias key — resolves to claude:haiku-4.5  (off-panel)
 
   # Inactive pi entries (uncomment the matching alias above first):
   # "pi:grok-build/grok-build"      = "standard"
