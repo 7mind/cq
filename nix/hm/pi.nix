@@ -320,12 +320,23 @@ in
           #   https://api.minimax.io (apiKey `$MINIMAX_API_KEY`). Self-contained:
           #   `@sinclair/typebox` is a regular dep (installed) and also aliased by
           #   Pi's loader, so the managed --legacy-peer-deps install resolves it.
+          # - @estebanforge/pi-glm-tweaks: GLM-5.2 tweaks for Pi's BUILT-IN `zai`
+          #   provider — z.ai INTERNATIONAL (api.z.ai coding endpoint), NOT the
+          #   China bigmodel.cn platform. pi-ai already ships the `zai` provider
+          #   and `zai/glm-5.2`; this restricts the thinking-level UI to the modes
+          #   GLM-5.2 supports (off/high/max), wires the native
+          #   thinkingFormat:"zai" wire translation, auto-clamps stale levels, and
+          #   re-registers glm-5.2 on the OpenAI-compat endpoint (other zai models
+          #   — glm-4.7/5-turbo/5.1 — are preserved). Auth is `/login zai` (z.ai
+          #   API key); no provider package needed, `zai` is built into pi-ai.
+          #   Self-contained (no runtime deps; host API via peer/alias).
           # (pi-mcp-adapter is added separately by enableMcpIntegration.)
           packages = [
             "npm:pi-search-hub"
             "npm:pi-ollama-cloud"
             "npm:@sinamtz/pi-minimax-provider"
             "npm:pi-xai"
+            "npm:@estebanforge/pi-glm-tweaks"
           ];
           extensions = [
             # pi-search-hub advertises a static all-12-backend list in the
