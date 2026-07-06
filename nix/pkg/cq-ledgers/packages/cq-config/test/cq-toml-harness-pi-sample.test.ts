@@ -23,7 +23,8 @@ import {
   parseReviewerToken,
   resolveReviewers,
   resolvePlanners,
-  classifyToken,
+  tierModel,
+  TIERS,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -43,17 +44,17 @@ grok    = "pi:grok-build/grok-build"
 minimax = "pi:ollama-cloud/minimax-m3"
 
 [tiers]
-opus    = "frontier"
-sonnet  = "standard"
-haiku   = "fast"
+frontier = "opus"
+standard = "sonnet"
+fast     = "haiku"
 
 [harness.pi]
 reviewers = ["grok", "minimax"]
 planners  = ["grok"]
 
 [harness.pi.tiers]
-grok    = "frontier"
-minimax = "fast"
+frontier = "grok"
+fast     = "minimax"
 `;
 
 describe("cq-toml-harness-pi-sample — T484 documented example guard", () => {
@@ -82,23 +83,25 @@ describe("cq-toml-harness-pi-sample — T484 documented example guard", () => {
     expect(tokens).toEqual([parseReviewerToken("pi:grok-build/grok-build")]);
   });
 
-  it("[harness.pi.tiers] wholly replaces shared [tiers]: grok=frontier, minimax=fast", () => {
+  it("[harness.pi.tiers] wholly replaces shared [tiers]: frontier=grok, fast=minimax", () => {
     const config = parseConfig(HARNESS_PI_SAMPLE, "pi");
     expect(config.tiers).not.toBeNull();
     const grokToken = parseReviewerToken("pi:grok-build/grok-build");
     const minimaxToken = parseReviewerToken("pi:ollama-cloud/minimax-m3");
-    expect(classifyToken(config, grokToken)).toBe("frontier");
-    expect(classifyToken(config, minimaxToken)).toBe("fast");
+    expect(tierModel(config, "frontier")).toEqual(grokToken);
+    expect(tierModel(config, "fast")).toEqual(minimaxToken);
   });
 
-  it("[harness.pi.tiers] REPLACES shared [tiers] — opus is not classified under pi", () => {
-    // The shared [tiers] has opus=frontier, sonnet=standard, haiku=fast.
+  it("[harness.pi.tiers] REPLACES shared [tiers] — opus is not the model for any tier under pi", () => {
+    // The shared [tiers] maps frontier=opus, standard=sonnet, fast=haiku.
     // Under harness='pi' the per-harness [harness.pi.tiers] wholly replaces
-    // those: the per-harness table only classifies grok and minimax, so
-    // classifyToken returns undefined for the opus token (not in the pi table).
+    // those: the per-harness table only names grok (frontier) and minimax
+    // (fast), so no tier resolves to the opus token (and standard is unset).
     const config = parseConfig(HARNESS_PI_SAMPLE, "pi");
     const opusToken = parseReviewerToken("claude:opus-4.8[1m]");
-    expect(classifyToken(config, opusToken)).toBeUndefined();
+    for (const tier of TIERS) {
+      expect(tierModel(config, tier)).not.toEqual(opusToken);
+    }
   });
 
   it("parseConfig(sample, 'claude') keeps shared reviewers=[opus] unchanged", () => {
@@ -111,7 +114,7 @@ describe("cq-toml-harness-pi-sample — T484 documented example guard", () => {
     const config = parseConfig(HARNESS_PI_SAMPLE, "claude");
     expect(config.tiers).not.toBeNull();
     const opusToken = parseReviewerToken("claude:opus-4.8[1m]");
-    expect(classifyToken(config, opusToken)).toBe("frontier");
+    expect(tierModel(config, "frontier")).toEqual(opusToken);
   });
 
   it("resolveReviewers under 'claude' resolves to opus token only", () => {

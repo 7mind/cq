@@ -22,7 +22,7 @@ import {
   parseConfig,
   parseReviewerToken,
   resolveReviewers,
-  classifyToken,
+  tierModel,
   CqConfigError,
 } from "../src/index.js";
 
@@ -53,7 +53,7 @@ reviewers = ["grok"]
 planners = ["grok"]
 
 [harness.pi.tiers]
-grok = "standard"
+standard = "grok"
 `;
 
 describe("parseConfig — layered [harness.<name>] override (T477)", () => {
@@ -66,10 +66,10 @@ describe("parseConfig — layered [harness.<name>] override (T477)", () => {
       parseReviewerToken("pi:grok-build/grok-build"),
     ]);
     // The [harness.pi.tiers] override produced a real TiersConfig that
-    // classifies the grok token.
+    // assigns the grok token to the "standard" tier.
     expect(pi.tiers).not.toBeNull();
     const grokToken = parseReviewerToken("pi:grok-build/grok-build");
-    expect(classifyToken(pi, grokToken)).toBe("standard");
+    expect(tierModel(pi, "standard")).toEqual(grokToken);
   });
 
   it("a non-active harness (claude / default) keeps the SHARED reviewers unchanged", () => {
@@ -97,8 +97,8 @@ opus = "claude:opus-4.8[1m]"
 grok = "pi:grok-build/grok-build"
 
 [tiers]
-opus = "frontier"
-grok = "standard"
+frontier = "opus"
+standard = "grok"
 `;
     const underPi = parseConfig(flat, "pi");
     const underClaude = parseConfig(flat, "claude");

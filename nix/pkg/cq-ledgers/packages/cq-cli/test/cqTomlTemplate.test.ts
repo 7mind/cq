@@ -24,7 +24,7 @@ import {
   resolvePlanners,
   resolveAgentModel,
   formatReviewerToken,
-  classifyToken,
+  tierModel,
 } from "@cq/config";
 import { CQ_TOML_TEMPLATE } from "../src/cqTomlTemplate.js";
 
@@ -97,13 +97,15 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     expect(formatReviewerToken(haikuToken!)).toBe(EXPECTED_HAIKU);
   });
 
-  it("fable is a LIVE but INERT alias — defined, unclassified in [tiers], off panels", () => {
+  it("fable is a LIVE but INERT alias — defined, named by no [tiers] entry, off panels", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE); // default harness = claude
     const fable = config.aliases["fable"];
     expect(fable).toBeDefined();
     expect(formatReviewerToken(fable!)).toBe("claude:fable-5");
-    // Not classified in the shared (claude) [tiers] => never dispatched.
-    expect(classifyToken(config, fable!)).toBeUndefined();
+    // No claude tier maps to fable => it is never dispatched.
+    for (const tier of ["frontier", "standard", "fast"] as const) {
+      expect(formatReviewerToken(tierModel(config, tier)!)).not.toBe("claude:fable-5");
+    }
     // Not on the active claude panels.
     const panel = new Set([
       ...resolveReviewers(config).map(formatReviewerToken),
@@ -121,27 +123,19 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     expect(resolvePlanners(pi).map(formatReviewerToken)).toEqual([
       "pi:openai-codex/gpt-5.5:xhigh",
     ]);
-    // Per-role dispatch under pi draws from ALL aliases, classified by
-    // [harness.pi.tiers] (which replaces the shared [tiers]): frontier -> codex,
-    // standard -> grok. Claude tokens are unclassified under pi.
-    const all = Object.values(pi.aliases);
-    expect(formatReviewerToken(resolveAgentModel(pi, "implement-reviewer", all))).toBe(
+    // Per-role dispatch under pi is a direct [harness.pi.tiers] lookup (which
+    // replaces the shared claude tiers): frontier -> codex, standard -> grok.
+    expect(formatReviewerToken(resolveAgentModel(pi, "implement-reviewer"))).toBe(
       "pi:openai-codex/gpt-5.5:xhigh",
     );
-    expect(formatReviewerToken(resolveAgentModel(pi, "implement-worker", all))).toBe(
+    expect(formatReviewerToken(resolveAgentModel(pi, "implement-worker"))).toBe(
       "pi:grok-build/grok-build:high",
     );
   });
 
-  it("implement-worker resolves sonnet (standard tier) off-panel via [aliases] pool (T438/T440)", () => {
-    // Guards the T438 decoupling: per-role resolution draws from ALL [aliases],
-    // not from the reviewers/planners panels.  implement-worker is standard tier;
-    // sonnet is the standard-tier alias; it must resolve even though it is not
-    // listed in reviewers or planners.
+  it("implement-worker resolves sonnet (standard tier) via [tiers] tier->model lookup", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
-    // Build the all-aliases candidate pool (mirrors candidateTokens in configCapability).
-    const allCandidates = Object.values(config.aliases);
-    const workerToken = resolveAgentModel(config, "implement-worker", allCandidates);
+    const workerToken = resolveAgentModel(config, "implement-worker");
     expect(formatReviewerToken(workerToken)).toBe(EXPECTED_SONNET);
   });
 

@@ -46,8 +46,8 @@ minimax = "pi:ollama-cloud/minimax-m3"
 opus    = "claude:opus-4.8[1m]"
 
 [tiers]
-minimax = "standard"
-opus     = "frontier"
+standard = "minimax"
+frontier = "opus"
 
 [agent_tiers]
 implement-worker     = "standard"
@@ -89,9 +89,7 @@ describe("end-to-end resolve — minimax alias through reviewers/planners (T238)
 
   it("resolveAgentModel resolves implement-worker -> standard -> minimax -> provider+model", () => {
     const config = parseConfig(E2E_TOML);
-    // active candidate set = the resolved reviewers (minimax, opus).
-    const candidates = resolveReviewers(config);
-    expect(resolveAgentModel(config, "implement-worker", candidates)).toEqual({
+    expect(resolveAgentModel(config, "implement-worker")).toEqual({
       harness: "pi",
       model: "minimax-m3",
       provider: "ollama-cloud",
@@ -101,10 +99,7 @@ describe("end-to-end resolve — minimax alias through reviewers/planners (T238)
 
   it("resolveAgentModel resolves investigate-explorer -> frontier -> opus -> claude", () => {
     const config = parseConfig(E2E_TOML);
-    const candidates = resolveReviewers(config);
-    expect(
-      resolveAgentModel(config, "investigate-explorer", candidates),
-    ).toEqual({
+    expect(resolveAgentModel(config, "investigate-explorer")).toEqual({
       harness: "claude",
       model: "opus-4.8[1m]",
       provider: null,
@@ -145,11 +140,11 @@ minimax = "pi:minimax-m3"
     ).toThrow(CqConfigError);
   });
 
-  it("throws CqConfigError when [tiers] KEY is a bare pi token", () => {
+  it("throws CqConfigError when a [tiers] VALUE is a bare pi token", () => {
     expect(() =>
       parseConfig(`
 [tiers]
-"pi:minimax-m3" = "standard"
+standard = "pi:minimax-m3"
 `),
     ).toThrow(CqConfigError);
   });

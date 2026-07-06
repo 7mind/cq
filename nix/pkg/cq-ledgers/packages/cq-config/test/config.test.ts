@@ -25,8 +25,7 @@ import {
   resolveReviewers,
   resolvePlanners,
   resolveAgentTier,
-  classifyToken,
-  selectTokensForTier,
+  tierModel,
   resolveAgentModel,
   parseConfig,
   parseReviewerToken,
@@ -496,9 +495,9 @@ minimax = "pi:ollama-cloud/minimax-m3"
 grok = "pi:grok-build/grok-build"
 
 [tiers]
-"pi:ollama-cloud/minimax-m3" = "fast"
-grok = "standard"
-opus = "frontier"
+fast = "pi:ollama-cloud/minimax-m3"
+standard = "grok"
+frontier = "opus"
 
 [agent_tiers]
 investigate-explorer = "frontier"
@@ -552,24 +551,24 @@ describe("parseConfig with [tiers] (T223 acceptance a)", () => {
     expect(config.tiers).toBeNull();
   });
 
-  it("throws on a non-tier VALUE in [tiers]", () => {
-    // T270 inverted keying: KEY is a token/alias, VALUE is the tier class.
-    // "ultra" is not a valid tier class.
+  it("throws on a non-tier KEY in [tiers]", () => {
+    // KEY is a tier class; VALUE is a model. A KEY that is not a tier class
+    // (here a token string) is rejected naming the tier set.
     expect(() =>
       parseConfig(`
 [tiers]
-"claude:opus-4.8[1m]" = "ultra"
+"claude:opus-4.8[1m]" = "fast"
 `),
-    ).toThrow(/is not a valid tier class/i);
+    ).toThrow(/is not a valid tier/i);
   });
 
-  it("throws on a token KEY with an unknown harness", () => {
-    // T270 inverted keying: the KEY is the token; an unknown harness in the
-    // key surfaces parseReviewerToken's precise error.
+  it("throws on a token VALUE with an unknown harness", () => {
+    // VALUE is a bare token; an unknown harness in it surfaces
+    // parseReviewerToken's precise error.
     expect(() =>
       parseConfig(`
 [tiers]
-"gemini:flash" = "fast"
+fast = "gemini:flash"
 `),
     ).toThrow(/unknown harness/i);
   });
@@ -616,97 +615,39 @@ my-agent = "ultra"
   });
 });
 
-describe("resolveAgentModel end-to-end (T223 acceptance c; T271 classifier)", () => {
-  // The active candidate set for these fixtures: all three aliased tokens.
-  // resolveAgentModel filters them by the agent's classified tier.
-  const ALL_TOKENS: ReviewerToken[] = [
-    { harness: "claude", model: "opus-4.8[1m]", provider: null }, // frontier
-    { harness: "pi", model: "minimax-m3", provider: "ollama-cloud" }, // fast
-    { harness: "pi", model: "grok-build", provider: "grok-build" }, // standard
-  ];
-
-  it("resolves agent-name -> tier -> first classified candidate", () => {
+describe("resolveAgentModel end-to-end (T223 acceptance c)", () => {
+  it("resolves agent-name -> tier -> the tier's model", () => {
     const config = parseConfig(VALID_TOML_WITH_TIERS);
-    // investigate-explorer -> frontier -> only opus classifies as frontier
-    expect(resolveAgentModel(config, "investigate-explorer", ALL_TOKENS)).toEqual({
+    // investigate-explorer -> frontier -> opus (the frontier model)
+    expect(resolveAgentModel(config, "investigate-explorer")).toEqual({
       harness: "claude",
       model: "opus-4.8[1m]",
       provider: null,
+      effort: null,
     });
-    // implement-worker -> standard. After T282 the [tiers] fixture is
-    // contradiction-free: `grok` (alias -> pi:grok-build/grok-build) is the
-    // standard token, so the standard candidate resolves unambiguously.
-    expect(resolveAgentModel(config, "implement-worker", ALL_TOKENS)).toEqual({
+    // implement-worker -> standard -> grok (alias -> pi:grok-build/grok-build)
+    expect(resolveAgentModel(config, "implement-worker")).toEqual({
       harness: "pi",
       model: "grok-build",
       provider: "grok-build",
+      effort: null,
     });
   });
 
-  it("resolves an unlisted agent to the DEFAULT_TIER (standard) candidate", () => {
+  it("resolves an unlisted agent to the DEFAULT_TIER (standard) model", () => {
     const config = parseConfig(VALID_TOML_WITH_TIERS);
-    // unlisted agent -> standard (DEFAULT_TIER); grok-build is the standard
-    // token, so resolveAgentModel returns it.
-    expect(resolveAgentModel(config, "unlisted-agent", ALL_TOKENS)).toEqual({
+    // unlisted agent -> standard (DEFAULT_TIER); grok is the standard model.
+    expect(resolveAgentModel(config, "unlisted-agent")).toEqual({
       harness: "pi",
       model: "grok-build",
       provider: "grok-build",
+      effort: null,
     });
   });
 
-  it("throws when [tiers] is absent (nothing classifies)", () => {
+  it("throws when [tiers] is absent (no model for the tier)", () => {
     const config = parseConfig(VALID_TOML);
-    expect(() =>
-      resolveAgentModel(config, "any-agent", ALL_TOKENS),
-    ).toThrow(CqConfigError);
-  });
-
-  it("classifyToken returns the configured class or undefined", () => {
-    const config = parseConfig(VALID_TOML_WITH_TIERS);
-    expect(
-      classifyToken(config, {
-        harness: "claude",
-        model: "opus-4.8[1m]",
-        provider: null,
-      }),
-    ).toBe("frontier");
-    expect(
-      classifyToken(config, {
-        harness: "pi",
-        model: "grok-build",
-        provider: "grok-build",
-      }),
-    ).toBe("standard");
-  });
-
-  it("classifyToken returns undefined when [tiers] is absent", () => {
-    const config = parseConfig(VALID_TOML);
-    expect(
-      classifyToken(config, {
-        harness: "claude",
-        model: "opus-4.8",
-        provider: null,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("selectTokensForTier preserves candidate order and drops non-matches", () => {
-    const config = parseConfig(`
-[tiers]
-"claude:a" = "frontier"
-"claude:b" = "frontier"
-"claude:c" = "fast"
-`);
-    const candidates: ReviewerToken[] = [
-      { harness: "claude", model: "b", provider: null },
-      { harness: "claude", model: "c", provider: null },
-      { harness: "claude", model: "a", provider: null },
-    ];
-    // Order follows CANDIDATES (b before a), not [tiers] declaration order.
-    expect(selectTokensForTier(config, "frontier", candidates)).toEqual([
-      { harness: "claude", model: "b", provider: null },
-      { harness: "claude", model: "a", provider: null },
-    ]);
+    expect(() => resolveAgentModel(config, "any-agent")).toThrow(CqConfigError);
   });
 });
 
@@ -757,9 +698,9 @@ fast-pi    = "pi:grok-build/grok-build"
 fast-claude = "claude:sonnet-4.5"
 
 [tiers]
-"claude:haiku-4.5"           = "frontier"
-"pi:grok-build/grok-build"   = "standard"
-"claude:sonnet-4.5"          = "fast"
+frontier = "claude:haiku-4.5"
+standard = "pi:grok-build/grok-build"
+fast     = "claude:sonnet-4.5"
 `;
 
 describe("T273 — inverted [tiers] classifier grammar: token-keyed parse", () => {
@@ -798,10 +739,10 @@ describe("T273 — inverted [tiers] classifier grammar: token-keyed parse", () =
     expect(entry!.class).toBe("standard");
   });
 
-  it("parses \"claude:haiku-4.5\" = \"fast\" in isolation", () => {
+  it("parses fast = \"claude:haiku-4.5\" in isolation", () => {
     const config = parseConfig(`
 [tiers]
-"claude:haiku-4.5" = "fast"
+fast = "claude:haiku-4.5"
 `);
     expect(config.tiers).not.toBeNull();
     expect(config.tiers!.entries).toHaveLength(1);
@@ -816,13 +757,13 @@ describe("T273 — inverted [tiers] classifier grammar: token-keyed parse", () =
     expect(entry.class).toBe("fast");
   });
 
-  it("parses an alias key (resolves through [aliases])", () => {
+  it("parses an alias VALUE (resolves through [aliases])", () => {
     const config = parseConfig(`
 [aliases]
 opus = "claude:opus-4.8[1m]"
 
 [tiers]
-opus = "frontier"
+frontier = "opus"
 `);
     expect(config.tiers).not.toBeNull();
     const entry = config.tiers!.entries[0]!;
@@ -846,151 +787,40 @@ opus = "frontier"
   });
 });
 
-describe("T273 — classifyToken: correct class + undefined for unclassified", () => {
-  it("classifyToken returns 'frontier' for claude:haiku-4.5 (direct claude key)", () => {
+describe("T273 — tierModel: the model configured for each tier", () => {
+  it("tierModel returns claude:haiku-4.5 for frontier (direct claude value)", () => {
     const config = parseConfig(TIERS_TOML);
-    expect(
-      classifyToken(config, {
-        harness: "claude",
-        model: "haiku-4.5",
-        provider: null,
-      }),
-    ).toBe("frontier");
+    expect(tierModel(config, "frontier")).toEqual({
+      harness: "claude",
+      model: "haiku-4.5",
+      provider: null,
+      effort: null,
+    });
   });
 
-  it("classifyToken returns 'standard' for pi:grok-build/grok-build (direct pi key)", () => {
+  it("tierModel returns pi:grok-build/grok-build for standard (direct pi value)", () => {
     const config = parseConfig(TIERS_TOML);
-    expect(
-      classifyToken(config, {
-        harness: "pi",
-        model: "grok-build",
-        provider: "grok-build",
-      }),
-    ).toBe("standard");
+    expect(tierModel(config, "standard")).toEqual({
+      harness: "pi",
+      model: "grok-build",
+      provider: "grok-build",
+      effort: null,
+    });
   });
 
-  it("classifyToken returns 'fast' for claude:sonnet-4.5 (alias-key entry)", () => {
+  it("tierModel returns claude:sonnet-4.5 for fast (direct claude value)", () => {
     const config = parseConfig(TIERS_TOML);
-    expect(
-      classifyToken(config, {
-        harness: "claude",
-        model: "sonnet-4.5",
-        provider: null,
-      }),
-    ).toBe("fast");
+    expect(tierModel(config, "fast")).toEqual({
+      harness: "claude",
+      model: "sonnet-4.5",
+      provider: null,
+      effort: null,
+    });
   });
 
-  it("classifyToken returns undefined for a token not in [tiers]", () => {
-    const config = parseConfig(TIERS_TOML);
-    // pi:ollama-cloud/minimax-m3 is not listed in TIERS_TOML
-    expect(
-      classifyToken(config, {
-        harness: "pi",
-        model: "minimax-m3",
-        provider: "ollama-cloud",
-      }),
-    ).toBeUndefined();
-  });
-
-  it("classifyToken returns undefined when [tiers] is absent", () => {
+  it("tierModel returns undefined when [tiers] is absent", () => {
     const config = parseConfig(VALID_TOML);
-    expect(
-      classifyToken(config, {
-        harness: "claude",
-        model: "opus-4.8",
-        provider: null,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("classifyToken uses structural equality — model mismatch yields undefined", () => {
-    const config = parseConfig(TIERS_TOML);
-    // "claude:haiku-4.5" is in [tiers]; "claude:haiku-4.6" is not
-    expect(
-      classifyToken(config, {
-        harness: "claude",
-        model: "haiku-4.6",
-        provider: null,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("classifyToken uses structural equality — provider mismatch yields undefined", () => {
-    const config = parseConfig(TIERS_TOML);
-    // pi:grok-build/grok-build is classified; pi:other/grok-build is not
-    expect(
-      classifyToken(config, {
-        harness: "pi",
-        model: "grok-build",
-        provider: "other",
-      }),
-    ).toBeUndefined();
-  });
-});
-
-describe("T273 — selectTokensForTier: tie-break order (candidate order)", () => {
-  it("returns class-matching candidates in candidate order, not [tiers] declaration order", () => {
-    const config = parseConfig(`
-[tiers]
-"claude:a" = "frontier"
-"claude:b" = "frontier"
-"claude:c" = "fast"
-`);
-    const candidates: ReviewerToken[] = [
-      { harness: "claude", model: "b", provider: null },
-      { harness: "claude", model: "c", provider: null },
-      { harness: "claude", model: "a", provider: null },
-    ];
-    // b appears before a in candidates → b first in result even though a is
-    // declared first in [tiers]
-    expect(selectTokensForTier(config, "frontier", candidates)).toEqual([
-      { harness: "claude", model: "b", provider: null },
-      { harness: "claude", model: "a", provider: null },
-    ]);
-  });
-
-  it("returns only candidates matching the requested tier", () => {
-    const config = parseConfig(TIERS_TOML);
-    const candidates: ReviewerToken[] = [
-      { harness: "claude", model: "haiku-4.5", provider: null },   // frontier
-      { harness: "pi", model: "grok-build", provider: "grok-build" }, // standard
-      { harness: "claude", model: "sonnet-4.5", provider: null },  // fast
-    ];
-    expect(selectTokensForTier(config, "standard", candidates)).toEqual([
-      { harness: "pi", model: "grok-build", provider: "grok-build" },
-    ]);
-    expect(selectTokensForTier(config, "fast", candidates)).toEqual([
-      { harness: "claude", model: "sonnet-4.5", provider: null },
-    ]);
-    expect(selectTokensForTier(config, "frontier", candidates)).toEqual([
-      { harness: "claude", model: "haiku-4.5", provider: null },
-    ]);
-  });
-
-  it("returns empty array when no candidate matches the tier", () => {
-    const config = parseConfig(TIERS_TOML);
-    const candidates: ReviewerToken[] = [
-      { harness: "pi", model: "minimax-m3", provider: "ollama-cloud" }, // unclassified
-    ];
-    expect(selectTokensForTier(config, "fast", candidates)).toEqual([]);
-  });
-
-  it("returns empty array when [tiers] is absent", () => {
-    const config = parseConfig(VALID_TOML);
-    const candidates: ReviewerToken[] = [
-      { harness: "claude", model: "opus-4.8", provider: null },
-    ];
-    expect(selectTokensForTier(config, "frontier", candidates)).toEqual([]);
-  });
-
-  it("preserves duplicates in candidate list (no deduplication)", () => {
-    const config = parseConfig(`[tiers]\n"claude:a" = "fast"\n`);
-    const token: ReviewerToken = { harness: "claude", model: "a", provider: null };
-    // Duplicate in candidates is preserved as-is
-    expect(selectTokensForTier(config, "fast", [token, token])).toEqual([
-      token,
-      token,
-    ]);
+    expect(tierModel(config, "frontier")).toBeUndefined();
   });
 });
 
@@ -1006,9 +836,9 @@ sonnet = "claude:sonnet-4.5"
 mini   = "pi:ollama-cloud/minimax-m3"
 
 [tiers]
-"claude:haiku-4.5"         = "fast"
-"claude:sonnet-4.5"        = "standard"
-"pi:ollama-cloud/minimax-m3" = "frontier"
+fast     = "claude:haiku-4.5"
+standard = "claude:sonnet-4.5"
+frontier = "pi:ollama-cloud/minimax-m3"
 
 [agent_tiers]
 fast-agent     = "fast"
@@ -1016,113 +846,96 @@ standard-agent = "standard"
 frontier-agent = "frontier"
 `;
 
-  const CANDIDATES: ReviewerToken[] = [
-    { harness: "claude", model: "haiku-4.5", provider: null },
-    { harness: "claude", model: "sonnet-4.5", provider: null },
-    { harness: "pi", model: "minimax-m3", provider: "ollama-cloud" },
-  ];
-
   it("resolves fast-agent -> fast -> claude:haiku-4.5", () => {
     const config = parseConfig(CLEAN_TOML);
-    expect(resolveAgentModel(config, "fast-agent", CANDIDATES)).toEqual({
+    expect(resolveAgentModel(config, "fast-agent")).toEqual({
       harness: "claude",
       model: "haiku-4.5",
       provider: null,
+      effort: null,
     });
   });
 
   it("resolves standard-agent -> standard -> claude:sonnet-4.5", () => {
     const config = parseConfig(CLEAN_TOML);
-    expect(resolveAgentModel(config, "standard-agent", CANDIDATES)).toEqual({
+    expect(resolveAgentModel(config, "standard-agent")).toEqual({
       harness: "claude",
       model: "sonnet-4.5",
       provider: null,
+      effort: null,
     });
   });
 
   it("resolves frontier-agent -> frontier -> pi:ollama-cloud/minimax-m3", () => {
     const config = parseConfig(CLEAN_TOML);
-    expect(resolveAgentModel(config, "frontier-agent", CANDIDATES)).toEqual({
+    expect(resolveAgentModel(config, "frontier-agent")).toEqual({
       harness: "pi",
       model: "minimax-m3",
       provider: "ollama-cloud",
+      effort: null,
     });
   });
 
   it("unlisted agent falls back to DEFAULT_TIER ('standard') and resolves", () => {
     const config = parseConfig(CLEAN_TOML);
-    expect(resolveAgentModel(config, "unknown-agent", CANDIDATES)).toEqual({
+    expect(resolveAgentModel(config, "unknown-agent")).toEqual({
       harness: "claude",
       model: "sonnet-4.5",
       provider: null,
+      effort: null,
     });
   });
 
-  it("throws CqConfigError with the exact message when no candidate classifies to the tier", () => {
-    const config = parseConfig(CLEAN_TOML);
-    const noFastCandidates: ReviewerToken[] = [
-      { harness: "claude", model: "sonnet-4.5", provider: null },
-      { harness: "pi", model: "minimax-m3", provider: "ollama-cloud" },
-    ];
+  it("throws CqConfigError with the exact message when the agent's tier has no model", () => {
+    // [tiers] configures only standard; fast-agent's tier (fast) has no model.
+    const config = parseConfig(`
+[tiers]
+standard = "claude:sonnet-4.5"
+
+[agent_tiers]
+fast-agent = "fast"
+`);
     let caught: unknown;
     try {
-      resolveAgentModel(config, "fast-agent", noFastCandidates);
+      resolveAgentModel(config, "fast-agent");
     } catch (e) {
       caught = e;
     }
     expect(caught).toBeInstanceOf(CqConfigError);
     expect((caught as CqConfigError).message).toBe(
-      'cq.toml: cannot resolve a model for agent "fast-agent": no active token classifies as tier "fast" in [tiers] (candidates: claude:sonnet-4.5, pi:ollama-cloud/minimax-m3)',
+      'cq.toml: cannot resolve a model for agent "fast-agent": [tiers] configures no model for tier "fast"',
     );
   });
 
-  it("throws CqConfigError with the exact message when candidates list is empty", () => {
-    const config = parseConfig(CLEAN_TOML);
-    let caught: unknown;
-    try {
-      resolveAgentModel(config, "fast-agent", []);
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(CqConfigError);
-    expect((caught as CqConfigError).message).toBe(
-      'cq.toml: cannot resolve a model for agent "fast-agent": no active token classifies as tier "fast" in [tiers] (candidates: <none>)',
-    );
-  });
-
-  it("throws CqConfigError when [tiers] is absent (nothing classifies)", () => {
+  it("throws CqConfigError when [tiers] is absent (no model for the tier)", () => {
     const config = parseConfig(VALID_TOML);
-    expect(() =>
-      resolveAgentModel(config, "any-agent", [
-        { harness: "claude", model: "opus-4.8", provider: null },
-      ]),
-    ).toThrow(CqConfigError);
+    expect(() => resolveAgentModel(config, "any-agent")).toThrow(CqConfigError);
   });
 });
 
 describe("T273 — [tiers] error cases: exact CqConfigError messages", () => {
-  it("unknown class VALUE throws CqConfigError with exact message", () => {
+  it("non-tier KEY throws CqConfigError with exact message", () => {
     let caught: unknown;
     try {
       parseConfig(`
 [tiers]
-"claude:opus-4.8" = "ultra"
+"claude:opus-4.8" = "fast"
 `);
     } catch (e) {
       caught = e;
     }
     expect(caught).toBeInstanceOf(CqConfigError);
     expect((caught as CqConfigError).message).toBe(
-      'cq.toml: tiers["claude:opus-4.8"] = "ultra" is not a valid tier class (expected fast, standard, or frontier)',
+      'cq.toml: tiers key "claude:opus-4.8" is not a valid tier (expected fast, standard, or frontier)',
     );
   });
 
-  it("malformed token KEY (unknown harness) throws CqConfigError with exact message", () => {
+  it("malformed token VALUE (unknown harness) throws CqConfigError with exact message", () => {
     let caught: unknown;
     try {
       parseConfig(`
 [tiers]
-"gemini:flash" = "fast"
+fast = "gemini:flash"
 `);
     } catch (e) {
       caught = e;
@@ -1133,12 +946,12 @@ describe("T273 — [tiers] error cases: exact CqConfigError messages", () => {
     );
   });
 
-  it("malformed token KEY (missing ':') throws CqConfigError", () => {
+  it("malformed token VALUE (missing ':') throws CqConfigError", () => {
     let caught: unknown;
     try {
       parseConfig(`
 [tiers]
-"opus-4.8" = "fast"
+fast = "opus-4.8"
 `);
     } catch (e) {
       caught = e;
@@ -1149,12 +962,12 @@ describe("T273 — [tiers] error cases: exact CqConfigError messages", () => {
     );
   });
 
-  it("malformed token KEY (bare pi) throws CqConfigError with exact message", () => {
+  it("malformed token VALUE (bare pi) throws CqConfigError with exact message", () => {
     let caught: unknown;
     try {
       parseConfig(`
 [tiers]
-"pi:minimax-m3" = "fast"
+fast = "pi:minimax-m3"
 `);
     } catch (e) {
       caught = e;
@@ -1166,158 +979,30 @@ describe("T273 — [tiers] error cases: exact CqConfigError messages", () => {
   });
 });
 
-describe("T282 — parseTiers: fail-loud on a duplicate-token [tiers] classification (D42)", () => {
-  it("direct token key + alias key resolving to the SAME token throws CqConfigError naming BOTH keys", () => {
-    let caught: unknown;
-    try {
-      parseConfig(`
+describe("parseTiers — a model may serve several tiers (tier -> model map)", () => {
+  it("accepts the SAME model under multiple tiers", () => {
+    // tier -> model: TOML keys are unique per tier, but nothing forbids one
+    // model from appearing as the VALUE of several tiers.
+    const config = parseConfig(`
 [aliases]
 opus = "claude:opus-4.8[1m]"
 
 [tiers]
-"claude:opus-4.8[1m]" = "frontier"
-opus                  = "fast"
+frontier = "opus"
+standard = "opus"
 `);
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(CqConfigError);
-    const message = (caught as CqConfigError).message;
-    expect(message).toContain('tiers["opus"]');
-    expect(message).toContain('tiers["claude:opus-4.8[1m]"]');
-    expect(message).toContain("classify the same token");
-  });
-
-  // NOTE: two *literal* identical direct keys cannot reach parseTiers — the
-  // TOML parser rejects a redefined key first. The reachable "same token under
-  // two keys" cases all route through [aliases] (an alias key + a direct key,
-  // or two aliases). The class-agnostic guard fires for SAME class too.
-  it("alias key + direct key resolving to the SAME token with the SAME class still throws (class-agnostic)", () => {
-    let caught: unknown;
-    try {
-      parseConfig(`
-[aliases]
-grok = "pi:grok-build/grok-build"
-
-[tiers]
-"pi:grok-build/grok-build" = "standard"
-grok                       = "standard"
-`);
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(CqConfigError);
-    const message = (caught as CqConfigError).message;
-    expect(message).toContain('tiers["grok"]');
-    expect(message).toContain('tiers["pi:grok-build/grok-build"]');
-    expect(message).toContain("classify the same token");
-  });
-
-  it("two distinct aliases resolving to the SAME token throw, naming BOTH alias keys", () => {
-    let caught: unknown;
-    try {
-      parseConfig(`
-[aliases]
-codex = "pi:grok-build/grok-build"
-grok  = "pi:grok-build/grok-build"
-
-[tiers]
-codex = "standard"
-grok  = "fast"
-`);
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(CqConfigError);
-    const message = (caught as CqConfigError).message;
-    expect(message).toContain('tiers["codex"]');
-    expect(message).toContain('tiers["grok"]');
-    expect(message).toContain("classify the same token");
-  });
-
-  it("a single-token-one-class [tiers] does NOT throw", () => {
-    expect(() =>
-      parseConfig(`
-[tiers]
-"claude:opus-4.8[1m]" = "frontier"
-`),
-    ).not.toThrow();
-  });
-
-  it("distinct tokens classified under [tiers] do NOT false-positive", () => {
-    expect(() =>
-      parseConfig(`
-[aliases]
-minimax = "pi:ollama-cloud/minimax-m3"
-
-[tiers]
-"claude:opus-4.8[1m]"      = "frontier"
-minimax                    = "fast"
-"pi:grok-build/grok-build" = "standard"
-`),
-    ).not.toThrow();
-  });
-
-  // T290 (Q162): effort participates in the dup-guard's token identity.
-  it("two [tiers] keys differing ONLY in effort are ACCEPTED (not duplicates)", () => {
-    // claude:opus-4.8[1m]:high and :low are distinct tokens — no D42 throw.
-    expect(() =>
-      parseConfig(`
-[tiers]
-"claude:opus-4.8[1m]:high" = "frontier"
-"claude:opus-4.8[1m]:low"  = "standard"
-`),
-    ).not.toThrow();
-  });
-
-  it("an alias key + a direct key resolving to the SAME effortful token still throws D42", () => {
-    let caught: unknown;
-    try {
-      parseConfig(`
-[aliases]
-opushi = "claude:opus-4.8[1m]:high"
-
-[tiers]
-"claude:opus-4.8[1m]:high" = "frontier"
-opushi                     = "standard"
-`);
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(CqConfigError);
-    const message = (caught as CqConfigError).message;
-    expect(message).toContain('tiers["opushi"]');
-    expect(message).toContain('tiers["claude:opus-4.8[1m]:high"]');
-    expect(message).toContain("classify the same token");
-  });
-});
-
-// T290 (Q162): classifyToken delegates to reviewerTokensEqual, so the same
-// model at different efforts classifies to DISTINCT tier classes when both are
-// configured. No classifyToken code change is needed — this confirms it.
-describe("classifyToken — distinct classes per effort (T290)", () => {
-  it("returns distinct classes for the same model at different efforts", () => {
-    const config = parseConfig(`
-[tiers]
-"claude:opus-4.8[1m]:high" = "frontier"
-"claude:opus-4.8[1m]:low"  = "standard"
-`);
-    expect(classifyToken(config, parseReviewerToken("claude:opus-4.8[1m]:high"))).toBe(
-      "frontier",
-    );
-    expect(classifyToken(config, parseReviewerToken("claude:opus-4.8[1m]:low"))).toBe(
-      "standard",
-    );
-  });
-
-  it("does not match an effortless token against an effortful [tiers] entry", () => {
-    const config = parseConfig(`
-[tiers]
-"claude:opus-4.8[1m]:high" = "frontier"
-`);
-    expect(
-      classifyToken(config, parseReviewerToken("claude:opus-4.8[1m]")),
-    ).toBeUndefined();
+    expect(tierModel(config, "frontier")).toEqual({
+      harness: "claude",
+      model: "opus-4.8[1m]",
+      provider: null,
+      effort: null,
+    });
+    expect(tierModel(config, "standard")).toEqual({
+      harness: "claude",
+      model: "opus-4.8[1m]",
+      provider: null,
+      effort: null,
+    });
   });
 });
 
@@ -1464,53 +1149,5 @@ opus = "claude:opus-4.8[1m]"
 `;
     const config = parseConfig(tomlWithCommentedLedger);
     expect(config.ledger).toBeNull();
-  });
-});
-
-describe("resolveAgentModel tie-break: [tiers] order, NOT [aliases] order", () => {
-  // Regression guard: [aliases] is an unordered name->token MAP — its ordering
-  // must NOT influence which model a tier resolves to. When two aliases share a
-  // tier, the winner is the one declared FIRST in [tiers] (the classifier the
-  // user writes ordered), regardless of [aliases] order or candidate order.
-  //
-  // Here [aliases] lists s1 (sonnet-4.6) before s2 (sonnet-5), but [tiers] lists
-  // s2 before s1. Candidates are passed in [aliases] order (the "wrong" order).
-  // The result must follow [tiers] order -> sonnet-5.
-  const SRC = `
-reviewers = ["opus"]
-planners  = ["opus"]
-
-[aliases]
-  opus = "claude:opus-4.8[1m]"
-  s1   = "claude:sonnet-4.6"
-  s2   = "claude:sonnet-5"
-
-[tiers]
-  opus = "frontier"
-  s2   = "standard"
-  s1   = "standard"
-
-[agent_tiers]
-  implement-worker = "standard"
-`;
-
-  it("standard-tier agent resolves the FIRST [tiers]-declared token, ignoring [aliases]/candidate order", () => {
-    const config = parseConfig(SRC);
-    // Candidates in [aliases] order: opus, s1 (sonnet-4.6), s2 (sonnet-5).
-    const candidates = Object.values(config.aliases);
-    const resolved = resolveAgentModel(config, "implement-worker", candidates);
-    expect(resolved).toEqual(parseReviewerToken("claude:sonnet-5"));
-  });
-
-  it("reordering [aliases] does not change the result ([aliases] order is inert)", () => {
-    // Same [tiers], but [aliases] now lists s2 before s1. Result is identical.
-    const reordered = SRC.replace(
-      '  s1   = "claude:sonnet-4.6"\n  s2   = "claude:sonnet-5"',
-      '  s2   = "claude:sonnet-5"\n  s1   = "claude:sonnet-4.6"',
-    );
-    const config = parseConfig(reordered);
-    const candidates = Object.values(config.aliases);
-    const resolved = resolveAgentModel(config, "implement-worker", candidates);
-    expect(resolved).toEqual(parseReviewerToken("claude:sonnet-5"));
   });
 });

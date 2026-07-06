@@ -4,18 +4,18 @@
  *
  * T274: Added regression guard — parseConfig on cq.toml.example must
  * succeed with no CqConfigError (ensures the shipped example always stays
- * valid under the current grammar), plus semantic classifier assertions
- * (classifyToken / resolveAgentModel) that catch a regression in the
- * token-keyed [tiers] classifier, not just a parse failure.
+ * valid under the current grammar), plus semantic assertions
+ * (tierModel / resolveAgentModel) that catch a regression in the
+ * tier->model [tiers] map, not just a parse failure.
  *
  * Acceptance:
  *  - The file contains no bare slash-free `pi:<word>` tokens.
  *  - parseConfig resolves the minimax alias to {harness:'pi', model:'minimax-m3', provider:'ollama-cloud'}.
  *  - parseConfig resolves codex and grok aliases to {harness:'pi', model:'grok-build', provider:'grok-build'}.
  *  - parseConfig does NOT throw (T274 regression guard).
- *  - classifyToken for the opus token returns 'frontier' (semantic guard).
- *  - resolveAgentModel for 'plan-reviewer' over the resolved reviewers list
- *    returns the opus token (semantic end-to-end guard).
+ *  - tierModel(config, "frontier") returns the opus token (semantic guard).
+ *  - resolveAgentModel for 'plan-reviewer' returns the opus token
+ *    (semantic end-to-end guard).
  *
  * Uses parseConfig (not loadConfig) so the test reads cq.toml.example
  * directly and does not depend on the gitignored live cq.toml being present.
@@ -26,8 +26,7 @@ import * as path from "node:path";
 import { readFileSync } from "node:fs";
 import {
   parseConfig,
-  classifyToken,
-  resolveReviewers,
+  tierModel,
   resolveAgentModel,
   type CqConfig,
 } from "../src/index.js";
@@ -57,12 +56,12 @@ describe("cq.toml.example — T274 regression guard: no CqConfigError", () => {
     expect(config.agentTiers).not.toBeNull();
   });
 
-  it("parseConfig on cq.toml.example — [tiers] uses token-keyed classifier form", () => {
+  it("parseConfig on cq.toml.example — [tiers] entries carry resolved tokens", () => {
     const contents = readFileSync(EXAMPLE_PATH, "utf8");
     const config: CqConfig = parseConfig(contents);
-    // All entries in the parsed tiers.entries must have a resolved token
-    // (not an alias stub) — confirms the inverted token-keyed classifier
-    // form is used and parsed correctly.
+    // Each entry in the parsed tiers.entries must have a resolved token
+    // (not an alias stub) — confirms the tier->model map values are resolved
+    // through [aliases] and parsed correctly.
     expect(config.tiers!.entries.length).toBeGreaterThan(0);
     for (const entry of config.tiers!.entries) {
       expect(entry.token.harness === "claude" || entry.token.harness === "pi").toBe(true);
@@ -70,39 +69,32 @@ describe("cq.toml.example — T274 regression guard: no CqConfigError", () => {
     }
   });
 
-  it("classifyToken — opus token classifies to 'frontier' (semantic classifier guard)", () => {
-    // This test exercises the CLASSIFIER itself, not just the parser.  A
-    // regression in classifyToken (wrong equality, wrong return, wrong lookup)
+  it("tierModel — 'frontier' resolves to the opus token (semantic map guard)", () => {
+    // This test exercises the tier->model lookup itself, not just the parser.
+    // A regression in tierModel (wrong equality, wrong return, wrong lookup)
     // would be caught here even if parseConfig still passes.
     const contents = readFileSync(EXAMPLE_PATH, "utf8");
     const config: CqConfig = parseConfig(contents);
-    const opusToken = config.aliases["opus"]!;
-    expect(opusToken).toBeDefined();
-    const tier = classifyToken(config, opusToken);
-    expect(tier).toBe("frontier");
+    expect(tierModel(config, "frontier")).toEqual(config.aliases["opus"]!);
   });
 
-  it("classifyToken — minimax alias-keyed entry classifies to 'fast' (alias-key form guard)", () => {
-    // The example [tiers] block contains 'minimax = "fast"' (alias key form).
-    // Verify that the entry was resolved through [aliases] and the classifier
-    // returns the correct class — so both alias-keyed and full-token-keyed
-    // entries are semantically covered.
+  it("tierModel — 'standard' resolves to sonnet and 'fast' resolves to haiku", () => {
+    // The example [tiers] block maps standard = "sonnet" and fast = "haiku"
+    // (alias-value form). Verify both are resolved through [aliases] to the
+    // correct token, covering the remaining tiers of the map.
     const contents = readFileSync(EXAMPLE_PATH, "utf8");
     const config: CqConfig = parseConfig(contents);
-    const minimaxToken = config.aliases["minimax"]!;
-    expect(minimaxToken).toBeDefined();
-    const tier = classifyToken(config, minimaxToken);
-    expect(tier).toBe("fast");
+    expect(tierModel(config, "standard")).toEqual(config.aliases["sonnet"]!);
+    expect(tierModel(config, "fast")).toEqual(config.aliases["haiku"]!);
   });
 
   it("resolveAgentModel — 'plan-reviewer' resolves to the opus token (end-to-end semantic guard)", () => {
-    // plan-reviewer has agent_tiers entry 'frontier'; opus is the only
-    // frontier-classed reviewer in the example.  This guard catches a
-    // regression in the full resolveAgentModel pipeline.
+    // plan-reviewer has agent_tiers entry 'frontier'; [tiers] maps frontier to
+    // opus in the example.  This guard catches a regression in the full
+    // resolveAgentModel pipeline (agent -> tier -> model).
     const contents = readFileSync(EXAMPLE_PATH, "utf8");
     const config: CqConfig = parseConfig(contents);
-    const reviewerTokens = resolveReviewers(config);
-    const resolved = resolveAgentModel(config, "plan-reviewer", reviewerTokens);
+    const resolved = resolveAgentModel(config, "plan-reviewer");
     expect(resolved).toEqual(config.aliases["opus"]!);
   });
 });

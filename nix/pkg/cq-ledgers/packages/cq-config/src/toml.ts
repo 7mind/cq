@@ -11,9 +11,9 @@
  *  - `reviewers` / `planners` are arrays of strings;
  *  - `webui` is a table with an optional string `host` and an optional
  *    integer `port` in 1..65535;
- *  - `tiers` is an inverted CLASSIFIER table: each KEY is a reviewer token
- *    (`"<harness>:<model>"`) or an `[aliases]` name, and each VALUE is the tier
- *    CLASS it is assigned to (`fast`/`standard`/`frontier`);
+ *  - `tiers` is a `tier -> model` MAP: each KEY is a tier class
+ *    (`fast`/`standard`/`frontier`) and each VALUE is a reviewer token
+ *    (`"<harness>:<model>"`) or an `[aliases]` name;
  *  - `agent_tiers` is a table of `agent-name = "<tier>"` strings.
  *
  * Token grammar (BREAKING in T237):
@@ -60,8 +60,8 @@ export interface RawLedger {
  * the merge into `CqConfig` is a downstream task T477):
  *  - `reviewers` / `planners`: the per-harness reviewer/planner arrays, or
  *    null if that sub-key is absent;
- *  - `tiers`: the per-harness `[harness.<name>.tiers]` CLASSIFIER table
- *    (raw token-or-alias KEY -> tier-class VALUE), or null if absent.
+ *  - `tiers`: the per-harness `[harness.<name>.tiers]` map
+ *    (raw tier-class KEY -> token-or-alias VALUE), or null if absent.
  * `[harness.<name>]` may carry ONLY these three keys; `aliases`, `webui`,
  * `ledger`, and `agent_tiers` are SHARED-only and rejected here.
  */
@@ -70,7 +70,7 @@ export interface RawHarnessOverride {
   readonly reviewers: readonly string[] | null;
   /** The per-harness `planners` array of strings, or null if absent. */
   readonly planners: readonly string[] | null;
-  /** The per-harness `[tiers]` CLASSIFIER table, or null if absent. */
+  /** The per-harness `[tiers]` map (tier -> model), or null if absent. */
   readonly tiers: Record<string, string> | null;
 }
 
@@ -85,9 +85,9 @@ export interface RawToml {
   /** The `[webui]` table, or null if absent. */
   readonly webui: RawWebui | null;
   /**
-   * The `[tiers]` CLASSIFIER table: raw token-or-alias KEY -> tier-class VALUE
-   * (both raw strings; the config layer resolves the key and validates the
-   * class). Null if absent.
+   * The `[tiers]` map: raw tier-class KEY -> token-or-alias VALUE (both raw
+   * strings; the config layer validates the tier key and resolves the model
+   * value). Null if absent.
    */
   readonly tiers: Record<string, string> | null;
   /** The `[agent_tiers]` table: agent name -> tier name, or null if absent. */

@@ -289,7 +289,7 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
     '  grok = "pi:grok-build/grok-build"',
     "",
     "[tiers]",
-    '  opus = "frontier"',
+    '  frontier = "opus"',
     "",
     "[agent_tiers]",
     '  plan-advance = "frontier"',
@@ -299,7 +299,7 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
     '  planners  = ["grok"]',
     "",
     "[harness.pi.tiers]",
-    '  grok = "frontier"',
+    '  frontier = "grok"',
     "",
   ].join("\n");
 
@@ -550,7 +550,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
           '  opus = "claude:opus-4.8[1m]"',
           "",
           "[tiers]",
-          '  "claude:opus-4.8[1m]" = "frontier"',
+          '  frontier = "claude:opus-4.8[1m]"',
           "",
         ].join("\n"),
         "utf8",

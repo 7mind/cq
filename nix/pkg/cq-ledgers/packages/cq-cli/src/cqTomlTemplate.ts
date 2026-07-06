@@ -16,9 +16,9 @@
  *    `[tiers]` entry references an alias. So the trio plus a few extra aliases
  *    ship live.
  *  - `[tiers]` is harness-specific too: there is no shared top-level `[tiers]`;
- *    each harness carries its own `[harness.<name>.tiers]` classifier (claude
- *    tokens under claude, pi tokens under pi). A model is dispatchable only if
- *    its harness's tiers block classifies it.
+ *    each harness carries its own `[harness.<name>.tiers]` map (claude models
+ *    under claude, pi models under pi). A model is dispatchable only if its
+ *    harness's tiers block names it for some tier.
  *  - `[ledger]` is commented out, so the backend defaults to `fs`.
  */
 
@@ -50,26 +50,25 @@ export const CQ_TOML_TEMPLATE: string = `\
   implement-reviewer          = "frontier"
   implement-conflict-resolver = "standard"
 
-# Panels + tier classifier for the default (claude) harness. Tiers are
-# harness-specific — there is no shared [tiers]. The classifier is what makes a
-# model dispatchable; an alias absent here is inert.
+# Panels + tier->model map for the default (claude) harness. Tiers are
+# harness-specific — there is no shared [tiers]. This map is what makes a model
+# dispatchable; an alias named by no tier here is inert.
 [harness.claude]
   reviewers = ["opus"]
   planners  = ["opus"]
-[harness.claude.tiers]
-  opus   = "frontier"
-  sonnet = "standard"
-  haiku  = "fast"
-  # fable = "frontier"     # uncomment to use fable for frontier-tier roles
+[harness.claude.tiers]           # tier -> one model (a model may serve several tiers)
+  frontier = "opus"              # swap to "fable" or "opus-max" to change frontier
+  standard = "sonnet"
+  fast     = "haiku"
 
-# The pi harness: its own panels + tier classifier. Ignored under claude; active
+# The pi harness: its own panels + tier->model map. Ignored under claude; active
 # when CQ_HARNESS=pi. [harness.pi.tiers] wholly replaces the shared [tiers].
 [harness.pi]
   reviewers = ["grok", "codex"]
   planners  = ["codex"]
 [harness.pi.tiers]
-  grok  = "standard"
-  codex = "frontier"
+  frontier = "codex"
+  standard = "grok"
 
 # Ledger storage backend (default: "fs"). Uncomment for the experimental
 # git-object backend.

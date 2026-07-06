@@ -17,7 +17,7 @@ import {
   resolveReviewers,
   resolvePlanners,
   resolveAgentTier,
-  selectTokensForTier,
+  tierModel,
   HARNESSES,
   AGENT_ROLE_TIERS,
   type CqConfig,
@@ -150,30 +150,6 @@ function projectConfig(config: CqConfig): GetConfigResult {
 }
 
 /**
- * The candidate token pool for per-role agent-model resolution: EVERY entry in
- * the config's `[aliases]` table (Q156).
- *
- * This pool is DECOUPLED from the planners/reviewers panels: a role's tier may
- * route it to a model class (e.g. `standard`) that no panel alias belongs to,
- * yet the role must still resolve a concrete model. Sourcing from all
- * `[aliases]` (rather than `planners ∪ reviewers`) ensures any aliased model of
- * the role's tier-class is eligible, even when it appears on no panel.
- *
- * ORDER IS NOT SIGNIFICANT. This pool is passed to `resolveAgentModel` (which
- * breaks tier ties by `[tiers]` declaration order, not this order) and to
- * `groupByHarness` (which de-duplicates into a Set and sorts). `[aliases]` is an
- * unordered name->token MAP, so its iteration order must never affect any
- * output — reordering `[aliases]` leaves every resolved model unchanged.
- */
-function candidateTokens(config: CqConfig): ReviewerToken[] {
-  const candidates: ReviewerToken[] = [];
-  for (const [, token] of Object.entries(config.aliases)) {
-    candidates.push(token);
-  }
-  return candidates;
-}
-
-/**
  * Group `tokens` by harness into the per-harness `modelMappings` shape: each
  * concrete model id is de-duplicated per harness (by its provider-qualified
  * rendering) and sorted for deterministic output. A pi token is rendered
@@ -214,17 +190,16 @@ function groupByHarness(
  *    `not-model-configurable`, `modelClass` null, empty mappings.
  *  - otherwise, when no `cq.toml` is present (`config === null`) -> status
  *    `not-configured` for every model-configurable role.
- *  - otherwise resolve the role's tier via {@link resolveAgentTier}, select the
- *    candidate-union tokens classified to that tier via
- *    {@link selectTokensForTier}, and group them by harness. Empty grouping ->
- *    status `no-live-token` with `modelClass = tier`; non-empty -> status
- *    `resolved` with `modelClass = tier` and per-harness mappings (Q157).
+ *  - otherwise resolve the role's tier via {@link resolveAgentTier}, look up the
+ *    one model the `[tiers]` map assigns to that tier via {@link tierModel},
+ *    and group it by harness. No model for the tier -> status `no-live-token`
+ *    with `modelClass = tier`; a model -> status `resolved` with
+ *    `modelClass = tier` and per-harness mappings (Q157).
  *
  * `configured` is `config !== null`.
  */
 export function computeAgentModels(repoRoot: string): AgentModelsResult {
   const config = loadConfig(repoRoot);
-  const candidates = config === null ? [] : candidateTokens(config);
 
   const agents: AgentModelEntry[] = AGENT_ROLE_TIERS.map((role) => {
     if (role.agentTierKey === null) {
@@ -244,8 +219,8 @@ export function computeAgentModels(repoRoot: string): AgentModelsResult {
       };
     }
     const tier = resolveAgentTier(config, role.agentTierKey);
-    const selected = selectTokensForTier(config, tier, candidates);
-    const modelMappings = groupByHarness(selected);
+    const token = tierModel(config, tier);
+    const modelMappings = groupByHarness(token === undefined ? [] : [token]);
     const hasLiveToken =
       modelMappings.claude !== undefined || modelMappings.pi !== undefined;
     return {

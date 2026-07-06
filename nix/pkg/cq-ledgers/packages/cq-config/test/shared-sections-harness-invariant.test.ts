@@ -43,7 +43,7 @@ reviewers = ["grok"]
 planners  = ["grok"]
 
 [harness.pi.tiers]
-grok = "standard"
+standard = "grok"
 `;
 
 describe("[ledger] and [webui] are harness-invariant (T483)", () => {

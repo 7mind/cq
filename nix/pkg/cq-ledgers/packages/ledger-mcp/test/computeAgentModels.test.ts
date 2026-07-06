@@ -62,9 +62,9 @@ const FIXTURE = [
   '  haiku   = "claude:haiku-4.8"',
   "",
   "[tiers]",
-  '  "claude:opus-4.8[1m]"          = "frontier"',
-  '  "pi:ollama-cloud/minimax-m3"   = "standard"',
-  '  "claude:haiku-4.8"             = "fast"',
+  '  frontier = "claude:opus-4.8[1m]"',
+  '  standard = "pi:ollama-cloud/minimax-m3"',
+  '  fast     = "claude:haiku-4.8"',
   "",
   "[agent_tiers]",
   '  implement-worker     = "frontier"',
@@ -120,22 +120,19 @@ describe("T285: computeAgentModels — configured fixture", () => {
 });
 
 /**
- * Multi-harness fixture: the SAME tier class (`frontier`) is assigned to BOTH a
- * claude token (opus) AND a pi token (minimax), and both aliases are live in the
- * candidate pool (all [aliases], per T438). An agent placed at `frontier` must
- * therefore resolve to per-harness mappings containing BOTH `claude` and `pi`
- * arrays — exercising groupByHarness's per-harness grouping for the
- * multi-harness case (Q157).
+ * Single-model tier fixture: under the rewritten `[tiers]` schema each tier maps
+ * to exactly ONE model (`<tier> = "<token>"`), so a role placed at `frontier`
+ * resolves to that one token grouped under its single harness.
  *
- * The `frontier` class also has TWO claude tokens (opus, sonnet) listed in
- * NON-sorted insertion order ("...opus..." before "...sonnet..." reverses under
- * lexical sort — "opus-4.8[1m]" > "claude-sonnet…" no; pick ids that reorder),
- * so the claude array exercises the deterministic sort assertion: candidates
- * preserve config order, but groupByHarness sorts within each harness.
+ * The old fixture assigned THREE tokens across two harnesses to `frontier`
+ * (opus+sonnet on claude, minimax on pi) to exercise single-role multi-harness
+ * grouping and same-harness lexical sort. That multi-model-per-tier shape is no
+ * longer expressible — duplicate tier keys are illegal — so the assertion
+ * collapses to the one configured model. Cross-harness coverage across DIFFERENT
+ * tiers (frontier->claude, standard->pi) is retained by the configured fixture
+ * above. `sonnet`/`minimax` stay declared in `[aliases]` but back no tier here.
  */
-const MULTI_HARNESS_FIXTURE = [
-  // sonnet listed AFTER opus in planners, but sorts BEFORE it lexically
-  // ("opus-4.8[1m]" > "claude-4.8-sonnet" -> "claude-4.8-sonnet" < "opus-4.8[1m]").
+const FRONTIER_FIXTURE = [
   'planners  = ["opus", "minimax", "sonnet"]',
   'reviewers = ["opus"]',
   "",
@@ -145,44 +142,24 @@ const MULTI_HARNESS_FIXTURE = [
   '  minimax = "pi:ollama-cloud/minimax-m3"',
   "",
   "[tiers]",
-  '  "claude:opus-4.8[1m]"          = "frontier"',
-  '  "claude:claude-4.8-sonnet"     = "frontier"',
-  '  "pi:ollama-cloud/minimax-m3"   = "frontier"',
+  '  frontier = "claude:opus-4.8[1m]"',
   "",
   "[agent_tiers]",
   '  implement-worker = "frontier"',
   "",
 ].join("\n");
 
-describe("T285: computeAgentModels — multi-harness resolved", () => {
-  it("resolves a single agent's tier to BOTH claude and pi mappings, each deduped+sorted", () => {
-    writeCqToml(MULTI_HARNESS_FIXTURE);
+describe("T285: computeAgentModels — single-model tier", () => {
+  it("resolves a frontier role to the one model [tiers] assigns that tier", () => {
+    writeCqToml(FRONTIER_FIXTURE);
     const result = computeAgentModels(dir);
     expect(result.configured).toBe(true);
 
     const worker = entry(result, "implement-worker");
     expect(worker.status).toBe("resolved");
     expect(worker.modelClass).toBe("frontier");
-    // Both harnesses present: claude (opus+sonnet) and pi (minimax, qualified).
-    expect(worker.modelMappings).toEqual({
-      claude: ["claude-4.8-sonnet", "opus-4.8[1m]"],
-      pi: ["ollama-cloud/minimax-m3"],
-    });
-  });
-
-  it("orders a same-harness multi-token mapping lexically, not by insertion order", () => {
-    writeCqToml(MULTI_HARNESS_FIXTURE);
-    const result = computeAgentModels(dir);
-
-    // Candidate pool preserves config order [opus, minimax, sonnet], so the two
-    // claude frontier tokens enter as [opus-4.8[1m], claude-4.8-sonnet]. The
-    // emitted claude array must be SORTED ([claude-4.8-sonnet, opus-4.8[1m]]) by
-    // groupByHarness — assert the exact ordered array, not a set.
-    const worker = entry(result, "implement-worker");
-    expect(worker.modelMappings.claude).toEqual([
-      "claude-4.8-sonnet",
-      "opus-4.8[1m]",
-    ]);
+    // [tiers] maps a tier to exactly one model -> exactly one harness key.
+    expect(worker.modelMappings).toEqual({ claude: ["opus-4.8[1m]"] });
   });
 });
 
@@ -205,8 +182,8 @@ const NO_LIVE_TOKEN_FIXTURE = [
   '  minimax = "pi:ollama-cloud/minimax-m3"',
   "",
   "[tiers]",
-  '  "claude:opus-4.8[1m]"          = "frontier"',
-  '  "pi:ollama-cloud/minimax-m3"   = "standard"',
+  '  frontier = "claude:opus-4.8[1m]"',
+  '  standard = "pi:ollama-cloud/minimax-m3"',
   "",
   "[agent_tiers]",
   '  investigate-explorer = "fast"',

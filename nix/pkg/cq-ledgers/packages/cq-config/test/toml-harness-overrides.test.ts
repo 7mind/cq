@@ -25,7 +25,7 @@ reviewers = ["pi:ollama-cloud/minimax-m3"]
 planners = ["pi:grok-build/grok-build"]
 
 [harness.pi.tiers]
-"pi:ollama-cloud/minimax-m3" = "fast"
+fast = "pi:ollama-cloud/minimax-m3"
 `;
     const raw = parseToml(doc);
     expect(raw.harnessOverrides).not.toBeNull();
@@ -33,7 +33,7 @@ planners = ["pi:grok-build/grok-build"]
     expect(pi).toBeDefined();
     expect(pi.reviewers).toEqual(["pi:ollama-cloud/minimax-m3"]);
     expect(pi.planners).toEqual(["pi:grok-build/grok-build"]);
-    expect(pi.tiers).toEqual({ "pi:ollama-cloud/minimax-m3": "fast" });
+    expect(pi.tiers).toEqual({ fast: "pi:ollama-cloud/minimax-m3" });
     // Only pi was overridden.
     expect(Object.keys(raw.harnessOverrides!)).toEqual(["pi"]);
   });

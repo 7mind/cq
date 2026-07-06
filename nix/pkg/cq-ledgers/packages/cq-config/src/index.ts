@@ -42,8 +42,7 @@ export {
   resolveReviewers,
   resolvePlanners,
   resolveAgentTier,
-  classifyToken,
-  selectTokensForTier,
+  tierModel,
   resolveAgentModel,
   loadConfig,
 } from "./config.js";

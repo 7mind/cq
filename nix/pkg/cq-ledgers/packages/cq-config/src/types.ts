@@ -145,35 +145,33 @@ export function isTier(value: string): value is Tier {
 export const DEFAULT_TIER: Tier = "standard";
 
 /**
- * One entry of the `[tiers]` classifier: a parsed reviewer token, the raw
- * token-grammar key it was parsed from, and the {@link Tier} class it is
- * assigned to.
+ * One entry of the `[tiers]` map: a {@link Tier} class and the ONE model it
+ * dispatches, as both the parsed token and the raw grammar string it came from.
  */
 export interface TierEntry {
-  /** The parsed token (harness + model + provider). */
+  /** The parsed model token (harness + model + provider). */
   readonly token: ReviewerToken;
   /**
-   * The raw `parseReviewerToken` grammar STRING this entry was keyed by,
-   * e.g. `"claude:opus-4.8[1m]"` or `"pi:ollama-cloud/minimax-m3"`.
+   * The raw VALUE string this tier was assigned — an alias name or a
+   * `parseReviewerToken` grammar string, e.g. `"opus"` or `"claude:opus-4.8[1m]"`.
    */
   readonly raw: string;
-  /** The tier class assigned to this token. */
+  /** The tier class this entry configures. */
   readonly class: Tier;
 }
 
 /**
- * The `[tiers]` table: an INVERTED, token-keyed CLASSIFIER (Q149/Q150).
+ * The `[tiers]` table: a `tier -> one model` DISPATCH MAP.
  *
- * Each `[tiers]` entry keys a `parseReviewerToken` token-grammar STRING
- * (e.g. `"claude:opus-4.8[1m]"`, `"pi:ollama-cloud/minimax-m3"`) to a
- * {@link Tier} class (`fast` | `standard` | `frontier`). The configuration
- * therefore maps a (harness + provider + model) token to its tier class —
- * the inverse of the old per-tier-slot shape.
+ * Each `[tiers]` entry keys a {@link Tier} class (`fast` | `standard` |
+ * `frontier`) to a model, given as an alias name or a `parseReviewerToken`
+ * grammar string. TOML keys are unique, so a tier names exactly ONE model; a
+ * single model MAY serve several tiers (e.g. `frontier` and `standard` both
+ * `"opus"`).
  *
- * `entries` preserves, for each configured token, the PARSED
- * {@link ReviewerToken}, the raw key string, and the assigned class, so a
- * token can be CLASSIFIED (token -> class) AND the tokens of a class can be
- * ENUMERATED (class -> tokens).
+ * `entries` holds one {@link TierEntry} per configured tier — the parsed model
+ * {@link ReviewerToken}, the raw VALUE string, and the tier class — so an
+ * agent's tier resolves directly to its model (tier -> model).
  */
 export interface TiersConfig {
   readonly entries: ReadonlyArray<TierEntry>;
@@ -217,10 +215,9 @@ export interface LedgerConfig {
  * - `planners`: the top-level `planners = [...]` list of ALIAS names
  *   (not yet resolved — see `resolvePlanners`).
  * - `webui`: the `[webui]` table (host + port), or null if absent.
- * - `tiers`: the `[tiers]` CLASSIFIER table — an inverted, token-keyed map
- *   from a `parseReviewerToken` token-grammar string to a tier class
- *   (fast/standard/frontier); or null if `[tiers]` is absent. See
- *   {@link TiersConfig}.
+ * - `tiers`: the `[tiers]` DISPATCH MAP — each tier (fast/standard/frontier) ->
+ *   the one model it runs (an alias name or token); or null if `[tiers]` is
+ *   absent. See {@link TiersConfig}.
  * - `agentTiers`: the `[agent_tiers]` table mapping agent-name -> tier name,
  *   or null if `[agent_tiers]` is absent. An unlisted agent falls back to
  *   `DEFAULT_TIER`.
