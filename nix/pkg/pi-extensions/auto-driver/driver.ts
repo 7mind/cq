@@ -167,12 +167,21 @@ export interface DriverApi {
    * command to start the underlying cq command, and the `composeRedrivePrompt`
    * text to re-drive it.
    *
-   * `streamingBehavior` (Pi 0.80.x; renamed from the 0.78 `deliverAs`) is
-   * REQUIRED when the agent is already processing — Pi otherwise throws "Agent
-   * is already processing." `"followUp"` queues the message to run as the next
-   * turn (what the driver wants); `"steer"` merges it into the in-flight turn.
+   * The queue-behavior option is REQUIRED when the agent is already processing
+   * (the :auto command handler is itself an active turn) — Pi otherwise throws
+   * "Agent is already processing." `"followUp"` queues the message to run as the
+   * next turn (what the driver wants); `"steer"` merges it into the in-flight
+   * turn.
+   *
+   * NAME MISMATCH (Pi 0.80.3): the .d.ts typings call this option `deliverAs`,
+   * but the runtime error string names it `streamingBehavior`. To be robust
+   * against whichever the runtime actually reads, we send BOTH (extra keys are
+   * ignored by Pi's option destructuring).
    */
-  sendUserMessage(content: string, options?: { streamingBehavior?: "steer" | "followUp" }): void;
+  sendUserMessage(
+    content: string,
+    options?: { deliverAs?: "steer" | "followUp"; streamingBehavior?: "steer" | "followUp" },
+  ): void;
 
   /**
    * Subscribe to the `after_provider_response` lifecycle event (ExtensionAPI
@@ -273,10 +282,12 @@ export async function launchAndAwait(
   prompt: string,
 ): Promise<void> {
   // "followUp": queue the wrapped command as the next turn. REQUIRED on Pi
-  // 0.80.x when the agent is already processing (e.g. the :auto command handler
-  // is itself an active turn when it injects the wrapped command) — without it
-  // Pi throws "Agent is already processing." When idle it just starts the turn.
-  api.sendUserMessage(prompt, { streamingBehavior: "followUp" });
+  // 0.80.x when the agent is already processing (the :auto command handler is
+  // itself an active turn when it injects the wrapped command) — without it Pi
+  // throws "Agent is already processing." When idle it just starts the turn.
+  // Send BOTH deliverAs (the .d.ts name) and streamingBehavior (the runtime
+  // error's name) — the typings and the runtime disagree; extra keys are ignored.
+  api.sendUserMessage(prompt, { deliverAs: "followUp", streamingBehavior: "followUp" });
   await ctx.waitForIdle();
 }
 
