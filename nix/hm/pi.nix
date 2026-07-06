@@ -62,8 +62,8 @@ let
   # backend's `apiKey` names the env var supplied to the sandbox via
   # `smind.hm.dev.llm.yolo.secretSessionVariables`, resolved by pi-search-hub's
   # "ALL_CAPS string => env var" rule. Tool names are unchanged (`web_search`,
-  # `web_read`), so the grok
-  # drop-client-web-search extension still applies.
+  # `web_read`); for grok-*, pi-xai 0.9.1's `mergeXaiTools` drops the client
+  # `web_search` in favour of xAI's native server-side one under agentic mode.
   #
   # Fallback ORDER (selectionStrategy = "sequential"): pi-search-hub tries
   # backends in config object-key order, with `defaultBackend` hoisted first.
@@ -295,10 +295,16 @@ in
           # - pi-anthropic-auth: Claude Pro/Max OAuth compat; activates only on
           #   Anthropic OAuth, passes everything else through (`/login anthropic`).
           # - pi-xai: xAI OAuth provider (`grok-build`) with Grok models/tools
-          #   (`/login grok-build`). Installed straight from npm; the stale 128k
-          #   contextWindow it hardcodes is corrected at runtime by the
-          #   patch-grok-build-context-window.ts extension below (a models-only
-          #   registerProvider override) rather than by vendoring its source.
+          #   (`/login grok-build`). Pinned to 0.9.1: that release upstreamed two
+          #   fixes we previously carried as vendored extensions —
+          #     * #2 grok-build-0.1 now reports contextWindow 256k (was the stale
+          #       128k that made Pi auto-compact at half budget); and
+          #     * #3 `mergeXaiTools` dedupes xAI built-ins by name/type and drops
+          #       shadowing client function tools (e.g. pi-search-hub's client
+          #       `web_search`) for grok-* under agentic mode — exactly what our
+          #       drop-client-web-search-for-grok.ts did.
+          #   Both extensions were removed; the pin guarantees the fix is present
+          #   (an unpinned install could fall back to a cached pre-0.9.1 copy).
           # - pi-ollama-cloud: Ollama Cloud provider (first-party, badlogic).
           #   Registers the `ollama-cloud` provider against https://ollama.com/v1
           #   (apiKey `$OLLAMA_API_KEY`; or ~/.pi/agent/ollama-cloud.json) — no
@@ -319,12 +325,9 @@ in
             "npm:pi-search-hub"
             "npm:pi-ollama-cloud"
             "npm:@sinamtz/pi-minimax-provider"
-            "npm:pi-xai"
+            "npm:pi-xai@0.9.1"
           ];
           extensions = [
-            # For grok-* requests, keep xAI's native server-side web_search and
-            # remove only the pi-search-hub client tool of the same name.
-            "${../pkg/pi-extensions/drop-client-web-search-for-grok.ts}"
             # pi-search-hub advertises a static all-12-backend list in the
             # web_search description + `backend` enum regardless of what's
             # configured, so the model picks unconfigured backends (which fail).
@@ -332,12 +335,6 @@ in
             # only the backends actually active per the live search.json. See
             # the extension header and the upstream bug-report draft.
             "${../pkg/pi-extensions/patch-search-hub-backends.ts}"
-            # Correct pi-xai's stale 128k grok-build contextWindow to 256k via a
-            # registerProvider override that replaces the model list (restating
-            # baseUrl/api to satisfy pi-coding-agent ≥0.78.0 validation, omitting
-            # oauth to preserve pi-xai's login). Replaces vendoring the patched
-            # pi-xai source. See the extension header for the mechanism.
-            "${../pkg/pi-extensions/patch-grok-build-context-window.ts}"
             # cq subagent-dispatch: registers the `dispatch_agent` tool the cq
             # shared prompts speak to. Reads the named agent markdown from
             # $CQ_AGENTS_DIR (T222) and runs it as an isolated, tool-filtered

@@ -22,9 +22,10 @@ import { Type } from "typebox";
 // `apiKey: "$OLLAMA_API_KEY"`). So chat works while web search reports
 // "No Ollama Cloud API key configured."
 //
-// Fix here rather than vendor the package (same approach as
-// patch-grok-build-context-window.ts): re-register both tools with corrected key
-// resolution that `await`s the lookup and then falls back to the env var.
+// Fix here rather than vendor the package (the runtime-override approach this
+// repo prefers for third-party pi packages): re-register both tools with
+// corrected key resolution that `await`s the lookup and then falls back to the
+// env var.
 //
 // Ordering: every extension default export runs at LOAD; pi-ollama-cloud@0.6.0
 // registers its web tools only in its `session_start` handler, guarded by
