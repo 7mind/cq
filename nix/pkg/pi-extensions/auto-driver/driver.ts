@@ -162,12 +162,17 @@ export interface DriverContext extends OracleContext {
  */
 export interface DriverApi {
   /**
-   * Inject a user message that ALWAYS triggers a turn (ExtensionAPI
-   * sendUserMessage, L843). This is the prompt-injection mechanism: the driver
-   * emits the wrapped slash command to start the underlying cq command, and the
-   * `composeRedrivePrompt` text to re-drive it.
+   * Inject a user message that triggers a turn (ExtensionAPI sendUserMessage).
+   * This is the prompt-injection mechanism: the driver emits the wrapped slash
+   * command to start the underlying cq command, and the `composeRedrivePrompt`
+   * text to re-drive it.
+   *
+   * `streamingBehavior` (Pi 0.80.x; renamed from the 0.78 `deliverAs`) is
+   * REQUIRED when the agent is already processing — Pi otherwise throws "Agent
+   * is already processing." `"followUp"` queues the message to run as the next
+   * turn (what the driver wants); `"steer"` merges it into the in-flight turn.
    */
-  sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" }): void;
+  sendUserMessage(content: string, options?: { streamingBehavior?: "steer" | "followUp" }): void;
 
   /**
    * Subscribe to the `after_provider_response` lifecycle event (ExtensionAPI
@@ -267,7 +272,11 @@ export async function launchAndAwait(
   api: DriverApi,
   prompt: string,
 ): Promise<void> {
-  api.sendUserMessage(prompt);
+  // "followUp": queue the wrapped command as the next turn. REQUIRED on Pi
+  // 0.80.x when the agent is already processing (e.g. the :auto command handler
+  // is itself an active turn when it injects the wrapped command) — without it
+  // Pi throws "Agent is already processing." When idle it just starts the turn.
+  api.sendUserMessage(prompt, { streamingBehavior: "followUp" });
   await ctx.waitForIdle();
 }
 
