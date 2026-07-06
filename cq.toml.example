@@ -69,19 +69,19 @@ planners = ["opus"]
 # Reference: D36 (pi provider routing), T286 (effort suffix), T438 (decoupling), T440 (opus-only panels)
 [aliases]
   # Active Claude trio (all classified in [tiers] below; only opus is on the panels):
-  opus     = "claude:opus-4.8[1m]" # frontier tier — on reviewers+planners panels
-  fable    = "claude:fable-5"      # frontier tier — off-panel, available per-role
-  sonnet   = "claude:sonnet-4.6"   # standard tier — off-panel, available per-role
-  sonnet-5 = "claude:sonnet-5"     # standard tier — off-panel, available per-role
-  haiku    = "claude:haiku-4.5"    # fast tier    — off-panel, available per-role
+  opus   = "claude:opus-4.8[1m]"   # frontier tier — on reviewers+planners panels
+  sonnet = "claude:sonnet-5"       # standard tier — off-panel, available per-role
+  haiku  = "claude:haiku-4.5"      # fast tier    — off-panel, available per-role
 
-  # Inactive pi aliases (defined here for reference; add to reviewers/planners
-  # above to activate — also uncomment the matching [tiers] entries below):
+  # Inactive aliases (defined here for reference; add to reviewers/planners
+  # above to activate — also add the matching [tiers] entry below to make a
+  # token eligible for per-role dispatch):
   codex      = "pi:grok-build/grok-build"
   grok       = "pi:grok-build/grok-build"
   grok-xhigh = "pi:grok-build/grok-build:xhigh"
   opus-high  = "claude:opus-4.8[1m]:high"
   minimax    = "pi:ollama-cloud/minimax-m3"
+  fable      = "claude:fable-5"       # opt-in frontier alias — add a [tiers] entry to activate
 
 # [tiers] — CLASSIFIER: maps each concrete (harness, provider, model) token to
 # its dispatch tier class.  THIS IS NOT A DISPATCH TABLE — it tells cq what
@@ -107,11 +107,9 @@ planners = ["opus"]
   # Canonical Claude trio — classified by capability (all three must be here even
   # though only opus is on the panels, so per-role dispatch resolves sonnet for
   # standard-tier roles and haiku for fast-tier roles):
-  opus     = "frontier"   # alias key — resolves to claude:opus-4.8[1m]
-  fable    = "frontier"   # alias key — resolves to claude:fable-5    (off-panel)
-  sonnet   = "standard"   # alias key — resolves to claude:sonnet-4.6 (off-panel)
-  sonnet-5 = "standard"   # alias key — resolves to claude:sonnet-5   (off-panel)
-  haiku    = "fast"       # alias key — resolves to claude:haiku-4.5  (off-panel)
+  opus   = "frontier"   # alias key — resolves to claude:opus-4.8[1m]
+  sonnet = "standard"   # alias key — resolves to claude:sonnet-5   (off-panel)
+  haiku  = "fast"       # alias key — resolves to claude:haiku-4.5  (off-panel)
 
   # Inactive pi entries (add alias names to reviewers/planners above to activate):
   "claude:opus-4.8[1m]:high"      = "frontier"    # full token key with effort suffix

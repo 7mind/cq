@@ -151,7 +151,7 @@ function projectConfig(config: CqConfig): GetConfigResult {
 
 /**
  * The candidate token pool for per-role agent-model resolution: EVERY entry in
- * the config's `[aliases]` table, in `[aliases]` (TOML/insertion) ORDER (Q156).
+ * the config's `[aliases]` table (Q156).
  *
  * This pool is DECOUPLED from the planners/reviewers panels: a role's tier may
  * route it to a model class (e.g. `standard`) that no panel alias belongs to,
@@ -159,10 +159,11 @@ function projectConfig(config: CqConfig): GetConfigResult {
  * `[aliases]` (rather than `planners ∪ reviewers`) ensures any aliased model of
  * the role's tier-class is eligible, even when it appears on no panel.
  *
- * DETERMINISTIC TIE-BREAK: `selectTokensForTier` preserves this candidate order
- * and the singular agent dispatch takes the first selected token, so when
- * multiple aliases share a tier-class the FIRST-LISTED `[aliases]` entry of that
- * class wins.
+ * ORDER IS NOT SIGNIFICANT. This pool is passed to `resolveAgentModel` (which
+ * breaks tier ties by `[tiers]` declaration order, not this order) and to
+ * `groupByHarness` (which de-duplicates into a Set and sorts). `[aliases]` is an
+ * unordered name->token MAP, so its iteration order must never affect any
+ * output — reordering `[aliases]` leaves every resolved model unchanged.
  */
 function candidateTokens(config: CqConfig): ReviewerToken[] {
   const candidates: ReviewerToken[] = [];

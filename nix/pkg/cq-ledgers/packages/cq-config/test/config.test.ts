@@ -1466,3 +1466,51 @@ opus = "claude:opus-4.8[1m]"
     expect(config.ledger).toBeNull();
   });
 });
+
+describe("resolveAgentModel tie-break: [tiers] order, NOT [aliases] order", () => {
+  // Regression guard: [aliases] is an unordered name->token MAP — its ordering
+  // must NOT influence which model a tier resolves to. When two aliases share a
+  // tier, the winner is the one declared FIRST in [tiers] (the classifier the
+  // user writes ordered), regardless of [aliases] order or candidate order.
+  //
+  // Here [aliases] lists s1 (sonnet-4.6) before s2 (sonnet-5), but [tiers] lists
+  // s2 before s1. Candidates are passed in [aliases] order (the "wrong" order).
+  // The result must follow [tiers] order -> sonnet-5.
+  const SRC = `
+reviewers = ["opus"]
+planners  = ["opus"]
+
+[aliases]
+  opus = "claude:opus-4.8[1m]"
+  s1   = "claude:sonnet-4.6"
+  s2   = "claude:sonnet-5"
+
+[tiers]
+  opus = "frontier"
+  s2   = "standard"
+  s1   = "standard"
+
+[agent_tiers]
+  implement-worker = "standard"
+`;
+
+  it("standard-tier agent resolves the FIRST [tiers]-declared token, ignoring [aliases]/candidate order", () => {
+    const config = parseConfig(SRC);
+    // Candidates in [aliases] order: opus, s1 (sonnet-4.6), s2 (sonnet-5).
+    const candidates = Object.values(config.aliases);
+    const resolved = resolveAgentModel(config, "implement-worker", candidates);
+    expect(resolved).toEqual(parseReviewerToken("claude:sonnet-5"));
+  });
+
+  it("reordering [aliases] does not change the result ([aliases] order is inert)", () => {
+    // Same [tiers], but [aliases] now lists s2 before s1. Result is identical.
+    const reordered = SRC.replace(
+      '  s1   = "claude:sonnet-4.6"\n  s2   = "claude:sonnet-5"',
+      '  s2   = "claude:sonnet-5"\n  s1   = "claude:sonnet-4.6"',
+    );
+    const config = parseConfig(reordered);
+    const candidates = Object.values(config.aliases);
+    const resolved = resolveAgentModel(config, "implement-worker", candidates);
+    expect(resolved).toEqual(parseReviewerToken("claude:sonnet-5"));
+  });
+});

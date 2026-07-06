@@ -33,11 +33,9 @@ const REPO_ROOT = path.resolve(import.meta.dir, "../../../../../../");
 const EXAMPLE_PATH = path.join(REPO_ROOT, "cq.toml.example");
 
 // Expected token strings.
-const EXPECTED_OPUS     = "claude:opus-4.8[1m]";
-const EXPECTED_FABLE    = "claude:fable-5";
-const EXPECTED_SONNET   = "claude:sonnet-4.6";
-const EXPECTED_SONNET_5 = "claude:sonnet-5";
-const EXPECTED_HAIKU    = "claude:haiku-4.5";
+const EXPECTED_OPUS   = "claude:opus-4.8[1m]";
+const EXPECTED_SONNET = "claude:sonnet-5";
+const EXPECTED_HAIKU  = "claude:haiku-4.5";
 
 // T440: opus-only panels — the panel list contains exactly one entry.
 const EXPECTED_PANEL = [EXPECTED_OPUS];
@@ -98,18 +96,9 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     expect(formatReviewerToken(haikuToken!)).toBe(EXPECTED_HAIKU);
   });
 
-  it("fable alias is DEFINED in [aliases] (frontier tier, off the panels)", () => {
+  it("fable is an OPT-IN alias — commented out, NOT active in [aliases]", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
-    const fableToken = config.aliases["fable"];
-    expect(fableToken).toBeDefined();
-    expect(formatReviewerToken(fableToken!)).toBe(EXPECTED_FABLE);
-  });
-
-  it("sonnet-5 alias is DEFINED in [aliases] (standard tier, off the panels)", () => {
-    const config = parseConfig(CQ_TOML_TEMPLATE);
-    const sonnet5Token = config.aliases["sonnet-5"];
-    expect(sonnet5Token).toBeDefined();
-    expect(formatReviewerToken(sonnet5Token!)).toBe(EXPECTED_SONNET_5);
+    expect(config.aliases["fable"]).toBeUndefined();
   });
 
   it("implement-worker resolves sonnet (standard tier) off-panel via [aliases] pool (T438/T440)", () => {
