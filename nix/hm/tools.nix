@@ -21,7 +21,9 @@ let
   isLinux = pkgs.stdenv.hostPlatform.isLinux;
   isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 
-  codegraphPkg = inputs.codegraph.packages.${system}.default;
+  codegraphPkg = pkgs.callPackage ../pkg/codegraph/package.nix {
+    src = inputs.codegraph;
+  };
 
   # Prompt content lives in two sibling packages: pkg/llm-skills (SKILL.md set
   # + build-time validation) and pkg/llm-contexts (general context + Pi's

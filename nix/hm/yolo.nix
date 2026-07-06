@@ -23,7 +23,9 @@
 let
   system = pkgs.stdenv.hostPlatform.system;
   isLinux = pkgs.stdenv.hostPlatform.isLinux;
-  codegraphPkg = inputs.codegraph.packages.${system}.default;
+  codegraphPkg = pkgs.callPackage ../pkg/codegraph/package.nix {
+    src = inputs.codegraph;
+  };
 
   cfg = config.smind.hm.dev.llm;
 
@@ -318,7 +320,7 @@ in
     smind.hm.dev.llm.yolo.codegraph = lib.mkOption {
       type = lib.types.nullOr lib.types.package;
       default = codegraphPkg;
-      defaultText = lib.literalExpression "inputs.codegraph.packages.\${system}.default";
+      defaultText = lib.literalExpression "pkgs.callPackage ../pkg/codegraph/package.nix { src = inputs.codegraph; }";
       description = ''
         The codegraph package, or null to disable codegraph integration. When
         set, codegraph is added to the sandbox package set (its CLI / `init -i`

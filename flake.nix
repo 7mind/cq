@@ -7,11 +7,14 @@
 
     # LLM coding-agent harness dependencies, consumed by
     # homeManagerModules.dev-llm (the extracted Claude/Codex/Pi + yolo setup).
-    # CodeGraph — semantic code-intelligence MCP server. Pinned to the open
-    # PR that adds the flake; bump to upstream once merged.
+    # CodeGraph — semantic code-intelligence MCP server (colbymchenry/codegraph).
+    # Upstream ships NO nix support, so `flake = false` (source only) tracking
+    # `main` (the lock pins the rev); we vendor the build
+    # (nix/pkg/codegraph/package.nix) with THIS flake's nixpkgs.
+    # `nix flake update codegraph` to advance main.
     codegraph = {
-      url = "github:uxtechie/codegraph/implement-nix-flake-support";
-      inputs.nixpkgs.follows = "nixpkgs";
+      url = "github:colbymchenry/codegraph";
+      flake = false;
     };
     # Darwin sandbox wrapper for claude-code (Linux uses the bubblewrap yolo).
     claude-code-sandbox.url = "github:neko-kai/claude-code-sandbox";
@@ -396,6 +399,11 @@
           claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
           codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
+          # CodeGraph — vendored from its `main` source (flake = false input),
+          # built with our nixpkgs. platforms.unix -> builds on linux + darwin.
+          codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix {
+            src = inputs.codegraph;
+          };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           # ── Linux-only harness packages ────────────────────────────── #
           # yolo execs bubblewrap + nix-ld (Linux-only); the standalone
