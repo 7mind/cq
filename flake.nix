@@ -361,6 +361,7 @@
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/cq \
               --add-flags "run $WORKSPACE/packages/cq-cli/src/main.ts --" \
               --run 'export LEDGER_WEB_OUTDIR="''${LEDGER_WEB_OUTDIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/ledger-web/dist}"' \
+              --set-default CQ_ASSETS_DIR "${./nix/pkg/cq-assets}" \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
 
             runHook postInstall

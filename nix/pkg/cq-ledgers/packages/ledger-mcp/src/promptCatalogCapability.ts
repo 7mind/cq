@@ -21,7 +21,7 @@
  * consistent with the compute* methods in configCapability.ts.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import * as path from "node:path";
 import {
   AGENT_ROLE_TIERS,
@@ -187,14 +187,30 @@ function validatePayload(schema: JSONSchema, payload: unknown): PromptValidation
 }
 
 /**
- * Build a {@link PromptCatalogCapability} bound to a ledger/config `root`. The
- * asset markdown is resolved under `<root>/nix/pkg/cq-assets/` and RE-READ on
- * every `fetchPrompt` call (no caching), like the config capability re-reads
- * cq.toml. The schema source is the `@cq/config` typed catalog (imported, not
- * duplicated).
+ * Build a {@link PromptCatalogCapability} bound to a ledger/config `root`, and
+ * RE-READ the asset markdown on every `fetchPrompt` call (no caching), like the
+ * config capability re-reads cq.toml. The schema source is the `@cq/config`
+ * typed catalog (imported, not duplicated).
+ *
+ * ASSETS ROOT resolution (the ledger MCP runs against ANY project, not just this
+ * repo):
+ *  1. `<root>/nix/pkg/cq-assets/` when it EXISTS — the cq dev-repo layout, so a
+ *     developer editing the assets in-tree sees changes live; else
+ *  2. `$CQ_ASSETS_DIR` when set — the INSTALLED cq-assets tree (a store path the
+ *     nix MCP-server wiring points here for real projects); else
+ *  3. `<root>/nix/pkg/cq-assets/` as the last resort (a clear ENOENT naming the
+ *     path, rather than silently pointing elsewhere).
+ * Without (2), a fresh `cq init` project (no `nix/pkg/cq-assets/`) made
+ * `fetch_prompt` fail with ENOENT on `<project>/nix/pkg/cq-assets/...`.
  */
 export function createPromptCatalogCapability(root: string): PromptCatalogCapability {
-  const assetsRoot = path.join(root, ...ASSETS_SUBPATH);
+  const repoLocal = path.join(root, ...ASSETS_SUBPATH);
+  const fromEnv = process.env["CQ_ASSETS_DIR"];
+  const assetsRoot = existsSync(repoLocal)
+    ? repoLocal
+    : fromEnv !== undefined && fromEnv !== ""
+      ? fromEnv
+      : repoLocal;
   return {
     fetchPrompt: (roleId: string) => fetchPromptFor(assetsRoot, roleId),
     validateInput: (roleId: string, input: unknown) =>
