@@ -295,16 +295,16 @@ in
           # - pi-anthropic-auth: Claude Pro/Max OAuth compat; activates only on
           #   Anthropic OAuth, passes everything else through (`/login anthropic`).
           # - pi-xai: xAI OAuth provider (`grok-build`) with Grok models/tools
-          #   (`/login grok-build`). Pinned to 0.9.1: that release upstreamed two
-          #   fixes we previously carried as vendored extensions —
+          #   (`/login grok-build`). Floating (latest; ≥ 0.9.1). 0.9.1 upstreamed
+          #   two fixes we previously carried as vendored extensions —
           #     * #2 grok-build-0.1 now reports contextWindow 256k (was the stale
           #       128k that made Pi auto-compact at half budget); and
           #     * #3 `mergeXaiTools` dedupes xAI built-ins by name/type and drops
           #       shadowing client function tools (e.g. pi-search-hub's client
           #       `web_search`) for grok-* under agentic mode — exactly what our
           #       drop-client-web-search-for-grok.ts did.
-          #   Both extensions were removed; the pin guarantees the fix is present
-          #   (an unpinned install could fall back to a cached pre-0.9.1 copy).
+          #   Both fixes are present in every release since 0.9.1, so we no longer
+          #   pin — matching the other floating npm: packages here.
           # - pi-ollama-cloud: Ollama Cloud provider (first-party, badlogic).
           #   Registers the `ollama-cloud` provider against https://ollama.com/v1
           #   (apiKey `$OLLAMA_API_KEY`; or ~/.pi/agent/ollama-cloud.json) — no
@@ -325,7 +325,7 @@ in
             "npm:pi-search-hub"
             "npm:pi-ollama-cloud"
             "npm:@sinamtz/pi-minimax-provider"
-            "npm:pi-xai@0.9.1"
+            "npm:pi-xai"
           ];
           extensions = [
             # pi-search-hub advertises a static all-12-backend list in the
