@@ -29,6 +29,23 @@ driving worker/reviewer/conflict-resolver subagents. Subagents CANNOT spawn
 subagents, so the whole loop — concurrent dispatch, the criticism loop, and
 merge-back — lives HERE in the main session.
 
+> **DISPATCHING A SUBAGENT IS HARNESS-NEUTRAL.** Wherever this command says
+> "dispatch the worker/reviewer/conflict-resolver" or "use the `Agent` tool with
+> `subagent_type: <name>`", use the tool your harness (`CQ_HARNESS`) provides:
+> **claude** → `Agent(subagent_type: "<name>", …, isolation: "worktree")`;
+> **pi** → `dispatch_agent(agent: "<name>", task: "<the full prompt>")` (the
+> cq-subagent-dispatch extension runs the same cq agent as an isolated child
+> turn). **Do NOT hand-implement a task inline** in place of dispatching a
+> worker — if a step calls for a dispatch, DISPATCH.
+
+> **FORWARD-PROGRESS INVARIANT — each pass must dispatch or WRITE, else STOP.**
+> Re-reading the ledger or the worktrees is not progress. A pass must dispatch a
+> worker/reviewer/conflict-resolver or make a state-changing WRITE (task status,
+> a review, a merge, a filed question). If no DAG-ready task remains and nothing
+> is mid-review — every task terminal or blocked on an open question — **STOP**
+> and write the handoff; do NOT re-read "to check". Two consecutive read-only
+> passes with no write and no dispatch mean you are ill-looping: STOP.
+
 Target milestones (optional): `$ARGUMENTS`. If empty, operate on the run already
 in progress: every non-archived, non-terminal milestone that has non-terminal
 `tasks` linked to it. **This command is idempotent and fully resumable** — it

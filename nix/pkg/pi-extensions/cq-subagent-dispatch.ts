@@ -34,17 +34,20 @@ import { Type } from "typebox";
 // still load for the child's model to resolve.)
 //
 // CHILD MODEL (T225): the child's provider+model is resolved from the
-// DISPATCHED AGENT'S NAME via cq.toml's flat `[agent_tiers]` + `[tiers]` maps.
+// DISPATCHED AGENT'S NAME via cq.toml's `[agent_tiers]` + tier maps.
 // Resolution precedence (highest first):
 //   1. an explicit `model` arg the caller passes at dispatch (a
 //      "<harness>:<model>" token, or a bare pi model pattern) — wins outright;
 //   2. the agent's tier: agent name -> `[agent_tiers]` -> tier (default
-//      "standard") -> `[tiers]` -> token (resolved via `[aliases]` first, else
-//      a direct "<harness>:<model>" token);
+//      "standard") -> the tier map -> token (resolved via `[aliases]` first,
+//      else a direct "<harness>:<model>" token). The tier map is the ACTIVE
+//      harness's `[harness.<CQ_HARNESS>.tiers]` when present, else the shared
+//      top-level `[tiers]` — mirroring @cq/config's per-harness layering, and
+//      matching the `tier = "model"` keying cq init now writes;
 //   3. fallback: the PARENT session's currently-active model (ctx.model) — used
-//      when cq.toml is absent, has no `[tiers]`/`[agent_tiers]`, the agent's
-//      tier slot is unconfigured, or the token resolves to a `claude:` harness
-//      (a Claude provider cannot be driven by a child `pi -p` process).
+//      when cq.toml is absent, has no applicable tier map / `[agent_tiers]`, the
+//      agent's tier slot is unconfigured, or the token resolves to a `claude:`
+//      harness (a Claude provider cannot be driven by a child `pi -p` process).
 //
 // The cq.toml read strategy is PINNED in K46
 // (docs/drafts/20260607-2049-pi-runtime-config-access.md): $CQ_CONFIG (default
@@ -201,11 +204,21 @@ interface CqToken {
   effort: string | null;
 }
 
-/** The subset of cq.toml this extension reads: three flat string tables. */
+/** The subset of cq.toml this extension reads. */
 interface CqConfigSubset {
   aliases: Record<string, string>;
-  /** tier name ("fast"/"standard"/"frontier") -> raw token/alias string. */
+  /**
+   * The SHARED top-level `[tiers]` (tier name -> raw token/alias), or null if
+   * absent. Used as the fallback when the active harness has no
+   * `[harness.<name>.tiers]` override.
+   */
   tiers: Record<string, string> | null;
+  /**
+   * Per-harness `[harness.<name>.tiers]` overrides: harness name -> (tier name
+   * -> raw token/alias). The active harness's block WHOLLY REPLACES the shared
+   * `[tiers]` (mirrors @cq/config's per-harness layering).
+   */
+  harnessTiers: Record<string, Record<string, string>>;
   /** agent name -> tier name. */
   agentTiers: Record<string, string> | null;
 }
@@ -253,29 +266,37 @@ function unquoteTomlValue(raw: string): string {
  */
 function parseFlatToml(source: string): CqConfigSubset {
   const tables: Record<string, Record<string, string>> = {};
-  let current: string | null = null;
-  let inFlatTable = false;
+  const harnessTiers: Record<string, Record<string, string>> = {};
+  // The table body lines are written into, or null inside an ignored section.
+  let target: Record<string, string> | null = null;
   const normalized = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   for (const rawLine of normalized.split("\n")) {
     const line = stripTomlComment(rawLine).trim();
     if (!line) continue;
     const header = line.match(/^\[([^\]]+)\]$/);
     if (header) {
-      current = header[1]!.trim();
-      inFlatTable = FLAT_TABLES.has(current);
-      if (inFlatTable && !tables[current]) tables[current] = {};
+      const name = header[1]!.trim();
+      if (FLAT_TABLES.has(name)) {
+        target = tables[name] ??= {};
+      } else {
+        // Per-harness tier override: `[harness.<name>.tiers]`. Any other
+        // nested/unknown section (e.g. `[harness.pi]`, `[webui]`) is ignored.
+        const hm = name.match(/^harness\.([^.]+)\.tiers$/);
+        target = hm ? (harnessTiers[hm[1]!] ??= {}) : null;
+      }
       continue;
     }
-    if (!inFlatTable || current === null) continue;
+    if (target === null) continue;
     const eq = line.indexOf("=");
     if (eq === -1) continue;
     const key = line.slice(0, eq).trim().replace(/^["']|["']$/g, "");
     if (!key) continue;
-    tables[current]![key] = unquoteTomlValue(line.slice(eq + 1));
+    target[key] = unquoteTomlValue(line.slice(eq + 1));
   }
   return {
     aliases: tables.aliases ?? {},
     tiers: tables.tiers ?? null,
+    harnessTiers,
     agentTiers: tables.agent_tiers ?? null,
   };
 }
@@ -360,26 +381,42 @@ function resolveAgentTier(config: CqConfigSubset, agentName: string): string {
 }
 
 /**
- * Resolve a tier name to a `<harness>:<model>` token via `[tiers]`. A `[tiers]`
- * value is either an `[aliases]` NAME (checked first) or a direct token.
- * Returns null if `[tiers]` is absent, the slot is unconfigured, or the value
- * is unparseable. MIRRORS @cq/config resolveTierToken (lenient: null, not throw).
+ * The active cq harness for THIS process. MIRRORS @cq/config
+ * resolveActiveHarnessFromProcess: `CQ_HARNESS` wins when it names a known
+ * harness, else default "claude". In a pi process (this extension's only host)
+ * nix/hm/pi.nix sets `CQ_HARNESS=pi`, so per-harness tiers resolve against
+ * `[harness.pi.tiers]`.
  */
-function resolveTierToken(config: CqConfigSubset, tier: string): CqToken | null {
-  if (config.tiers === null) return null;
-  const value = config.tiers[tier];
+function resolveActiveHarness(): string {
+  const env = process.env.CQ_HARNESS;
+  return env === "pi" || env === "claude" ? env : "claude";
+}
+
+/**
+ * Resolve a tier name to a `<harness>:<model>` token via the `[tiers]` map for
+ * `activeHarness`: the active harness's `[harness.<harness>.tiers]` override if
+ * present, else the shared top-level `[tiers]` (mirrors @cq/config's per-harness
+ * layering). A tier VALUE is either an `[aliases]` NAME (checked first) or a
+ * direct token. Returns null if no tiers map applies, the slot is unconfigured,
+ * or the value is unparseable (lenient: null, not throw).
+ */
+function resolveTierToken(config: CqConfigSubset, tier: string, activeHarness: string): CqToken | null {
+  const tiers = config.harnessTiers[activeHarness] ?? config.tiers;
+  if (!tiers) return null;
+  const value = tiers[tier];
   if (value === undefined) return null;
   const aliased = config.aliases[value];
   return parseCqToken(aliased !== undefined ? aliased : value);
 }
 
 /**
- * Resolve an agent end-to-end: agent name -> tier -> token. MIRRORS @cq/config
- * resolveAgentModel. Returns null when no tiered model applies (caller then
- * falls back to the parent session's active model).
+ * Resolve an agent end-to-end: agent name -> tier -> token (for the active
+ * harness's tier map). MIRRORS @cq/config resolveAgentModel. Returns null when
+ * no tiered model applies (caller then falls back to the parent session's
+ * active model).
  */
-function resolveAgentToken(config: CqConfigSubset, agentName: string): CqToken | null {
-  return resolveTierToken(config, resolveAgentTier(config, agentName));
+function resolveAgentToken(config: CqConfigSubset, agentName: string, activeHarness: string): CqToken | null {
+  return resolveTierToken(config, resolveAgentTier(config, agentName), activeHarness);
 }
 
 /**
@@ -687,11 +724,13 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
           childEffort = token.effort;
         }
       } else {
-        // Tier resolution from the agent NAME via cq.toml.
+        // Tier resolution from the agent NAME via cq.toml, using the active
+        // harness's [harness.<harness>.tiers] map (else the shared [tiers]).
         const config = loadCqConfig(cqConfigPath);
         if (config !== null) {
+          const activeHarness = resolveActiveHarness();
           resolvedTier = resolveAgentTier(config, agent.name);
-          const token = resolveAgentToken(config, agent.name);
+          const token = resolveAgentToken(config, agent.name, activeHarness);
           const child = token ? tokenToChildModel(token) : null;
           if (child !== null) {
             model = child.model;

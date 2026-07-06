@@ -31,6 +31,24 @@ own hypothesis formation, explorer dispatch, citation validation, and node
 adjudication; subagents CANNOT spawn subagents, so the whole loop lives HERE in
 the main session.
 
+> **DISPATCHING A SUBAGENT IS HARNESS-NEUTRAL.** Wherever this command says
+> "dispatch an explorer/prober" or "use the `Agent` tool with
+> `subagent_type: <name>`", use the tool your harness (`CQ_HARNESS`) provides:
+> **claude** → `Agent(subagent_type: "<name>", …)`; **pi** →
+> `dispatch_agent(agent: "<name>", task: "<the full prompt>")` (the
+> cq-subagent-dispatch extension runs the same cq agent as an isolated child
+> turn). **Do NOT hand-simulate a subagent's job inline** by reading/mutating the
+> ledger yourself in its place — if a step calls for a dispatch, DISPATCH.
+
+> **FORWARD-PROGRESS INVARIANT — each round must dispatch or WRITE, else STOP.**
+> Re-reading ledger/repo state is not progress. A research round must dispatch
+> explorers/probers or make a state-changing ledger WRITE (extend the hypothesis
+> tree, adjudicate a node, file a question or defect-seeded goal). If there is
+> nothing to advance — no open hypothesis to probe, the defect is resolved/parked,
+> or a stop predicate holds — **STOP** and write the handoff; do NOT re-read "to
+> check". Two consecutive read-only passes with no write and no dispatch mean you
+> are ill-looping: STOP and report where you are.
+
 **This command is idempotent and fully resumable** — it re-derives ALL state
 from the ledger on each invocation (the defect, its `hypothesis` tree, its linked
 `questions`). Run it repeatedly; each invocation picks up exactly where the

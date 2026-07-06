@@ -94,6 +94,15 @@ runbook's divergence recovery rather than forcing the ref.
   `abandoned` — those are locked/terminal for planning). If none qualify, report
   "no unlocked goals" and stop.
 
+> **NEVER FABRICATE A GOAL.** `plan:advance` only *advances goals that already
+> exist* — goals are created solely by `/cq:plan` at the user's request. An empty
+> goals ledger, or one whose goals are all `planned`/terminal, means there is
+> **nothing to advance**: write a `drained` handoff and STOP. Do **not**
+> `create_item("goals", …)`, `create_milestone`, or invent a
+> "bootstrap"/"sample"/"exercise-the-flow" goal to have something to do — that is
+> the classic empty-repo ill-state, a DEFECT, not progress. When there are no
+> unlocked goals: STOP.
+
 Run **the per-goal round below independently for EACH** target goal **G**. Treat
 goals independently: one that stops at `awaiting-answers` is recorded and the
 next goal still runs. After the per-goal planning round, run the
@@ -101,6 +110,31 @@ next goal still runs. After the per-goal planning round, run the
 per-goal report.
 
 ## The per-goal round (for one goal G)
+
+> **DISPATCHING A SUBAGENT IS HARNESS-NEUTRAL.** Wherever a step below says
+> "spawn the planner", "use the `Agent` tool with `subagent_type: <name>`", or
+> "dispatch the `<name>` subagent", that is one action with a per-harness tool:
+> - **claude** → the `Agent` tool: `Agent(subagent_type: "<name>", …)`.
+> - **pi** → the `dispatch_agent` tool: `dispatch_agent(agent: "<name>",
+>   task: "<the full prompt/goal-id + mode instruction>")` (registered by the
+>   cq-subagent-dispatch extension; it runs the same cq agent as an isolated
+>   child turn and returns its final text).
+>
+> Use whichever your harness (`CQ_HARNESS`) provides. **Do NOT hand-simulate the
+> subagent's job inline** by reading and mutating the ledger yourself in place of
+> a dispatch — that both skips the agent's state machine and is a primary cause
+> of the read-only ill-loop below. If a step calls for a subagent, DISPATCH it.
+
+> **FORWARD-PROGRESS INVARIANT — every loop iteration must change state or
+> dispatch, else STOP.** Each pass of the loop below MUST do exactly one of:
+> dispatch a subagent, or make a state-changing ledger WRITE (file a question,
+> persist/revise a plan, lock a decision, record a review). Re-reading the ledger
+> (`fetch_*` / `list_*` / `search_*` / `derive_predicates` / `snapshot`) is NOT
+> progress. If you have reached a **terminal token** — `awaiting-answers` (an
+> `open` question now exists), `completed`, or `noop` — **STOP the loop
+> immediately** and write the handoff; do not re-read the ledger "to check", do
+> not look for more to do. Two consecutive read-only iterations with no write and
+> no dispatch means you are ill-looping: STOP and report where you are.
 
 Loop the planner↔reviewer steps below until the planner returns a terminal token
 (`awaiting-answers` / `completed` / `noop`). There is **NO hard iteration cap** —
