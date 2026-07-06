@@ -24,7 +24,7 @@ let
 
   llmContexts = pkgs.callPackage ../pkg/llm-contexts/default.nix { };
 
-  # Pi: vendored 0.78.0 formula (nixpkgs lags at 0.75.x, whose Codex/ChatGPT
+  # Pi: vendored 0.80.3 formula (nixpkgs lags at 0.75.x, whose Codex/ChatGPT
   # subscription token exchange is broken). Bump procedure: edit version +
   # rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
@@ -258,7 +258,7 @@ in
   config = lib.mkIf cfg.enable (lib.mkMerge [
     {
       programs.pi = sharedAgentWiring // {
-        # Vendored Pi 0.78.0 wrapped to set CQ_HARNESS=pi, CQ_AGENTS_DIR, and the
+        # Vendored Pi 0.80.3 wrapped to set CQ_HARNESS=pi, CQ_AGENTS_DIR, and the
         # ddgs python on PATH (see piWrapped). Provider/search API keys are supplied
         # by the yolo sandbox (smind.hm.dev.llm.yolo.secretSessionVariables), not here.
         package = piWrapped;
