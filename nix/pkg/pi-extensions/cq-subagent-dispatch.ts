@@ -789,10 +789,23 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
       try {
         const exitCode = await new Promise<number>((resolve) => {
           const invocation = getPiInvocation(childArgs);
+          // Strip the codex-inline companion env before spawning the child pi.
+          // When this extension runs under a codex orchestrator (openai-codex
+          // provider), the process carries CODEX_COMPANION_SESSION_ID /
+          // CLAUDE_PLUGIN_DATA; a child pi that inherits them BLOCKS INDEFINITELY
+          // on the companion handshake whenever the companion is down or busy —
+          // an output-less hang that makes the auto-driver's waitForIdle stall
+          // for the whole dispatch. This is the SAME hazard the pi:* shellout
+          // mitigates with `env -u … pi -p … </dev/null`; detaching stdin
+          // (stdio[0]="ignore", below) is the other half of that mitigation.
+          const childEnv = { ...process.env };
+          delete childEnv.CODEX_COMPANION_SESSION_ID;
+          delete childEnv.CLAUDE_PLUGIN_DATA;
           const proc = spawn(invocation.command, invocation.args, {
             cwd: ctx.cwd,
             shell: false,
             stdio: ["ignore", "pipe", "pipe"],
+            env: childEnv,
           });
           let buffer = "";
 
