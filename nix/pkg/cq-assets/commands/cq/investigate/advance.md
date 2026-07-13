@@ -83,6 +83,29 @@ durable ledger state left off. **ONE invocation = ONE research round.**
   orchestrator does `git worktree add ../wt-probe-<H> <branch>` before dispatch and
   `git worktree remove` after harvest. The worktree is ALWAYS removed after the
   evidence is harvested — harvest-then-discard.
+- **Explorer & prober always run at the FRONTIER tier resolved from CONFIG,
+  never a hardcoded model.** ONCE per round, call the `mcp__ledger__get_config`
+  MCP tool (an MCP-tool call, NOT a `Bash` shellout — same server as
+  `get_reviewers`) and read `tiers.frontier` — a resolved token `{ harness,
+  model, provider, effort }` from the ACTIVE harness's `[harness.<h>.tiers]`
+  map in `cq.toml` (most-capable == frontier, Q253). Dispatch every
+  `investigate-explorer`/`investigate-prober` `Agent` with `model:
+  <token.model VERBATIM>` — the resolved token's `model` is a BARE alias
+  (`opus`/`sonnet`/`haiku`/`fable` — T509: the Agent tool's `model` param is a
+  CLOSED enum that rejects full `claude-*` ids, and config tokens are already
+  bare aliases), so pass it with NO mangling. The token's `effort` is **N/A at
+  `Agent` dispatch** — the Agent tool exposes no per-dispatch effort/reasoning
+  param (T510; `effort` exists only as subagent-definition frontmatter) —
+  record it for provenance/display only, never as an Agent argument. **Degrade
+  gracefully** when the `get_config` tool is ABSENT, or `tiers: null`, or the
+  `frontier` slot is missing: fall back to your OWN class (Claude: `inherit`)
+  — never invent a model literal. Do NOT key this degrade on `configured`:
+  get_config's `configured` is computed from the reviewers list
+  (`reviewers.length > 0`), NOT from cq.toml presence — a valid
+  `[harness.<h>.tiers]` map with an empty reviewers list yields `configured:
+  false` while `tiers` is populated, and degrading there would DISCARD the
+  user's valid tiers (anti-D78). Decide the tiers-degrade purely on
+  tool-absence / `tiers: null` / missing slot.
 - **The defect LIFECYCLE lives on the defect's STATUS, not on free-text
   markers.** The `defects` ledger status is `open → wip → {root-caused |
   inconclusive} → resolved | wontfix` (T116; terminal: `resolved`/`wontfix`;
@@ -240,7 +263,9 @@ parallel).
 ### 3. DISPATCH read-only explorers
 For each frontier hypothesis H to advance this round, dispatch an
 `investigate-explorer` via `Agent` (`subagent_type: "investigate-explorer"`,
-most-capable model — `opus`; NO worktree, it changes nothing). The prompt MUST
+`model` = the §K8 FRONTIER token's bare-alias `model` (resolved from
+`get_config`), verbatim — the token's `effort` is N/A at `Agent` dispatch per
+T510, provenance/display only; NO worktree, it changes nothing). The prompt MUST
 carry: H's id + statement (verbatim), the branch context (the defect, parent
 hypothesis, sibling findings already validated, what to confirm or rule out), and
 any specific leads (files/symbols/error strings/URLs).
@@ -261,7 +286,9 @@ sub-step 1a established for `plan-advance`: **(a)**
 the input against that `inputSchema` (`{ hypothesisId, statement, branchContext,
 leads? }`); **(d)** `validate_input("investigate-explorer", input)`, fix and
 re-validate on `{ ok: false, errors }`; **(e)** dispatch the `Agent`
-(`subagent_type: "investigate-explorer"`, most-capable `opus`, NO worktree);
+(`subagent_type: "investigate-explorer"`, `model` = the §K8 FRONTIER token's
+`model`, verbatim — its `effort` is N/A at `Agent` dispatch per T510,
+provenance/display only, NO worktree);
 **(f–g)** await its evidence-json and `validate_output("investigate-explorer",
 output)` against the role's `outputSchema` — the shared `investigate-evidence`
 shape (`{ hypothesisId, evidence[], lean, notes?, probeRequest? }`); a validation
@@ -285,8 +312,10 @@ citation yourself:
   H by reading alone — it needs the repro / `bun test` / a build / `git
   show`/`git blame` RUN) **and you judge running it warranted for adjudicating H**,
   dispatch an `investigate-prober` via `Agent` (`subagent_type:
-  "investigate-prober"`, `isolation: "worktree"`, most-capable model — `opus`).
-  Under Claude the `isolation: "worktree"` gives a native throwaway worktree; under
+  "investigate-prober"`, `isolation: "worktree"`, `model` = the §K8 FRONTIER
+  token's bare-alias `model` (resolved from `get_config`), verbatim — the
+  token's `effort` is N/A at `Agent` dispatch per T510, provenance/display
+  only). Under Claude the `isolation: "worktree"` gives a native throwaway worktree; under
   Codex the orchestrator `git worktree add ../wt-probe-<H> <branch>` before dispatch
   and `git worktree remove` after harvest. The prompt MUST carry: the `probeRequest
   {what, why}` verbatim, H's id + statement (verbatim), and the branch context (the
@@ -303,7 +332,9 @@ citation yourself:
   { what, why }, branchContext, leads? }`); **(d)**
   `validate_input("investigate-prober", input)`, fix and re-validate on
   `{ ok: false, errors }`; **(e)** dispatch the `Agent` (`subagent_type:
-  "investigate-prober"`, `isolation: "worktree"`, most-capable `opus`); **(f–g)**
+  "investigate-prober"`, `isolation: "worktree"`, `model` = the §K8 FRONTIER
+  token's `model`, verbatim — its `effort` is N/A at `Agent` dispatch per
+  T510, provenance/display only); **(f–g)**
   await its evidence-json and `validate_output("investigate-prober", output)`
   against the role's `outputSchema` — the shared `investigate-evidence` shape
   (`{ hypothesisId, evidence[], lean, notes? }`, no `probeRequest`); a validation
