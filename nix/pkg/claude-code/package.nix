@@ -21,6 +21,7 @@
   stdenvNoCC,
   fetchzip,
   makeWrapper,
+  patchelf,
   versionCheckHook,
   writableTmpDirAsHomeHook,
   bubblewrap,
@@ -65,16 +66,18 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     hash = source.hash;
   };
 
-  nativeBuildInputs = [ makeWrapper ];
+  nativeBuildInputs = [ makeWrapper ] ++ lib.optionals isLinux [ patchelf ];
 
   dontConfigure = true;
   dontBuild = true;
 
   # Keep the Bun single-file executable byte-for-byte. Any fixup that rewrites
-  # the ELF (patchelf --shrink-rpath, strip) shifts the file and breaks Bun's
-  # embedded-payload offset detection — the 2.1.195 build segfaults (SIGSEGV)
-  # under such rewriting where 2.1.177 tolerated it. We invoke the binary via
-  # an explicit dynamic loader in postFixup, so its own PT_INTERP/RPATH is moot.
+  # the ELF by *shifting file offsets* (patchelf --shrink-rpath/--set-rpath,
+  # strip) breaks Bun's embedded-payload offset detection — the 2.1.195+ build
+  # segfaults (SIGSEGV) under such rewriting where 2.1.177 tolerated it. So we
+  # disable the automatic patchelf/strip hooks. The lone deliberate exception is
+  # `patchelf --set-interpreter` in postFixup below: it edits PT_INTERP in place
+  # without moving the payload, so it is safe (verified). NOT --set-rpath.
   dontPatchELF = true;
   dontStrip = true;
 
@@ -88,35 +91,40 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     runHook postInstall
   '';
 
-  # `claude` tries to auto-update by default, this disables that functionality.
-  # https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#environment-variables
+  # Wrap `claude` and disable its auto-updater (which would otherwise fetch past
+  # the nix pin). https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview#environment-variables
+  #
+  # execPath correctness (Linux): the inner `claude` is a native Bun binary that
+  # needs the nix glibc loader. The obvious wrapper — `exec ld.so --library-path
+  # … inner` — makes Node's process.execPath the *dynamic loader*, which claude
+  # exports as CLAUDE_CODE_EXECPATH and bakes into the grep/find shims of its
+  # shell snapshot; those then run `ld.so -G …` → "error while loading shared
+  # libraries: -G", breaking claude's bundled ugrep/bfs multiplex (keyed on
+  # argv0/execPath). Fix: patch PT_INTERP on the inner binary (safe in-place
+  # edit — see dontPatchELF above) and exec it DIRECTLY, so execPath is the real
+  # binary. The nix glibc loader finds sibling libc/librt/… via its own default
+  # search path, so no --library-path/--set-rpath is needed. Darwin needs none
+  # of this (Mach-O, no loader indirection), so both platforms share one direct
+  # wrapper; Linux just patches the interpreter first.
   postFixup =
     let
       runtimePath = lib.makeBinPath (
         [ procps ] ++ lib.optionals isLinux [ bubblewrap socat ]
       );
     in
-    if isLinux then
-      ''
-        mkdir -p $out/bin
-        makeWrapper ${stdenv.cc.bintools.dynamicLinker} $out/bin/claude \
-          --add-flags "--library-path ${lib.makeLibraryPath [ stdenv.cc.libc ]} $out/libexec/claude-code/claude" \
-          --set DISABLE_AUTOUPDATER 1 \
-          --set-default FORCE_AUTOUPDATE_PLUGINS 1 \
-          --set DISABLE_INSTALLATION_CHECKS 1 \
-          --unset DEV \
-          --prefix PATH : ${runtimePath}
-      ''
-    else
-      ''
-        mkdir -p $out/bin
-        makeWrapper $out/libexec/claude-code/claude $out/bin/claude \
-          --set DISABLE_AUTOUPDATER 1 \
-          --set-default FORCE_AUTOUPDATE_PLUGINS 1 \
-          --set DISABLE_INSTALLATION_CHECKS 1 \
-          --unset DEV \
-          --prefix PATH : ${runtimePath}
-      '';
+    ''
+      ${lib.optionalString isLinux ''
+        patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} \
+          $out/libexec/claude-code/claude
+      ''}
+      mkdir -p $out/bin
+      makeWrapper $out/libexec/claude-code/claude $out/bin/claude \
+        --set DISABLE_AUTOUPDATER 1 \
+        --set-default FORCE_AUTOUPDATE_PLUGINS 1 \
+        --set DISABLE_INSTALLATION_CHECKS 1 \
+        --unset DEV \
+        --prefix PATH : ${runtimePath}
+    '';
 
   doInstallCheck = true;
   nativeInstallCheckInputs = [

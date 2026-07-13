@@ -18,61 +18,12 @@ let
   };
 
   # claude-code pinned to the local native-tarball build (../pkg/claude-code),
-  # built directly so the module does not depend on a consumer overlay.
-  #
-  # claudeExecpathFixed: nixpkgs' claude-code runs its inner binary via
-  # `exec ld.so --library-path … inner`, so Node's process.execPath is the
-  # dynamic loader. Claude exports that as CLAUDE_CODE_EXECPATH, and the
-  # grep/find shims it writes into its shell snapshot then invoke `ld.so -G …`
-  # / `ld.so -S …` → "error while loading shared libraries: -G". Fix: make the
-  # inner binary self-contained (real glibc interp, taken from the wrapper's
-  # own --library-path so the glibc always matches) and exec it DIRECTLY, so
-  # execPath is the real binary and the bundled ugrep/bfs multiplex (keyed on
-  # argv0) works. Verified: `exec -a ugrep <inner> -G …` greps correctly once
-  # run directly.
-  #
-  # ONLY --set-interpreter — NOT --set-rpath. The `claude` binary is a Bun
-  # single-file executable (bun runtime + appended payload); `patchelf
-  # --set-rpath` corrupts that payload and the 2.1.195+ binary then SIGSEGVs
-  # on every invocation (2.1.177 tolerated it; the newer Bun build does not).
-  # --set-interpreter alone is harmless AND sufficient: the nix glibc loader
-  # resolves the sibling libc/librt/… from its own store dir via its built-in
-  # default search path, so no rpath is needed (ldd confirms every lib
-  # resolves to the matching glibc). See also dontPatchELF in ../pkg/claude-code.
-  claudeBase = pkgs.callPackage ../pkg/claude-code/package.nix { };
-  claudeExecpathFixed = claudeBase.overrideAttrs (old: {
-    nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.patchelf ];
-    postFixup = (old.postFixup or "") + ''
-      inner="$out/libexec/claude-code/claude"
-      if [ ! -e "$inner" ]; then
-        echo "claudeExecpathFixed: inner binary missing at $inner" >&2; exit 1
-      fi
-      wrapper=""
-      for w in "$out"/bin/*; do
-        if [ -f "$w" ] && grep -qE 'ld-linux.*libexec/claude-code/claude' "$w"; then
-          wrapper="$w"; break
-        fi
-      done
-      if [ -z "$wrapper" ]; then
-        echo "claudeExecpathFixed: no loader-indirection wrapper found" >&2; exit 1
-      fi
-      glibclib="$(grep -oE '/nix/store/[^ "]*-glibc-[^ "]*/lib' "$wrapper" | head -1)"
-      if [ -z "$glibclib" ]; then
-        echo "claudeExecpathFixed: could not determine glibc lib path" >&2; exit 1
-      fi
-      patchelf --set-interpreter "$glibclib/ld-linux-x86-64.so.2" "$inner"
-      for w in "$out"/bin/*; do
-        [ -f "$w" ] && grep -qE 'ld-linux.*libexec/claude-code/claude' "$w" || continue
-        grep -v -E '^exec .*ld-linux.*libexec/claude-code/claude' "$w" > "$w.tmp"
-        printf 'exec -a "$0" %s "$@"\n' "$inner" >> "$w.tmp"
-        chmod --reference="$w" "$w.tmp" 2>/dev/null || chmod +x "$w.tmp"
-        mv "$w.tmp" "$w"
-        if grep -qE 'ld-linux.*libexec/claude-code/claude' "$w"; then
-          echo "claudeExecpathFixed: failed to rewrite $w" >&2; exit 1
-        fi
-      done
-    '';
-  });
+  # built directly so the module does not depend on a consumer overlay. The
+  # package is self-contained per platform (on Linux it patches PT_INTERP and
+  # execs the inner binary directly so process.execPath stays the real binary;
+  # Darwin needs nothing extra) — the execpath rationale lives in package.nix's
+  # postFixup.
+  claudePkg = pkgs.callPackage ../pkg/claude-code/package.nix { };
 
   # SessionStart hook: surfaces the hostname on every session boot. Claude
   # Code's injected environment block lists OS/shell/cwd but not hostname, so
@@ -144,7 +95,7 @@ in
       # self-update past the nix pin.
       package = pkgs.symlinkJoin {
         name = "claude-code-no-autoupdate";
-        paths = [ claudeExecpathFixed ];
+        paths = [ claudePkg ];
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postBuild = ''
           wrapProgram $out/bin/claude --set-default DISABLE_AUTOUPDATER 1
