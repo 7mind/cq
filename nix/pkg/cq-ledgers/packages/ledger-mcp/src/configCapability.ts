@@ -140,7 +140,11 @@ function projectConfig(config: CqConfig): GetConfigResult {
   }
 
   return {
-    configured: config.reviewers.length > 0,
+    // D81: `configured` means 'a parseable cq.toml is present', independent
+    // of whether reviewers/planners/tiers are populated. `projectConfig` is
+    // only ever called from the `config !== null` branch of `computeConfig`,
+    // so it is unconditionally true here.
+    configured: true,
     aliases,
     reviewers: config.reviewers,
     planners: config.planners,

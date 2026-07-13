@@ -68,11 +68,12 @@ exactly where it left off.
   task's tier slot is missing: same inherit-your-own-class default + the
   WARNING line (mirroring the `get_reviewers`-absence pattern in §3a) — never
   invent a model literal. Do NOT key this degrade on `configured`: get_config's
-  `configured` is computed from the reviewers list (`reviewers.length > 0`),
-  NOT from cq.toml presence — a valid `[harness.<h>.tiers]` map with an empty
-  reviewers list yields `configured: false` while `tiers` is populated, and
-  degrading there would DISCARD the user's valid tiers (anti-D78). Decide the
-  tiers-degrade purely on tool-absence / `tiers: null` / missing slot.
+  `configured` means only 'a parseable cq.toml is present' (D81) — it is
+  INDEPENDENT of whether `tiers` itself is populated, so a valid
+  `[harness.<h>.tiers]` map coexists with `configured: true` regardless of the
+  reviewers list, and degrading on `configured` would DISCARD the user's valid
+  tiers (anti-D78). Decide the tiers-degrade purely on tool-absence /
+  `tiers: null` / missing slot.
 - **Reviewer & conflict-resolver** always run at the FRONTIER tier resolved
   from `get_config` (`tiers.frontier` — most-capable == frontier, Q253),
   regardless of the task's tier.

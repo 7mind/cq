@@ -100,12 +100,12 @@ durable ledger state left off. **ONE invocation = ONE research round.**
   gracefully** when the `get_config` tool is ABSENT, or `tiers: null`, or the
   `frontier` slot is missing: fall back to your OWN class (Claude: `inherit`)
   — never invent a model literal. Do NOT key this degrade on `configured`:
-  get_config's `configured` is computed from the reviewers list
-  (`reviewers.length > 0`), NOT from cq.toml presence — a valid
-  `[harness.<h>.tiers]` map with an empty reviewers list yields `configured:
-  false` while `tiers` is populated, and degrading there would DISCARD the
-  user's valid tiers (anti-D78). Decide the tiers-degrade purely on
-  tool-absence / `tiers: null` / missing slot.
+  get_config's `configured` means only 'a parseable cq.toml is present' (D81)
+  — it is INDEPENDENT of whether `tiers` itself is populated, so a valid
+  `[harness.<h>.tiers]` map coexists with `configured: true` regardless of the
+  reviewers list, and degrading on `configured` would DISCARD the user's
+  valid tiers (anti-D78). Decide the tiers-degrade purely on tool-absence /
+  `tiers: null` / missing slot.
 - **The defect LIFECYCLE lives on the defect's STATUS, not on free-text
   markers.** The `defects` ledger status is `open → wip → {root-caused |
   inconclusive} → resolved | wontfix` (T116; terminal: `resolved`/`wontfix`;

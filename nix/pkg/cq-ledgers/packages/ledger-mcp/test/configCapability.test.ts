@@ -756,3 +756,47 @@ describe("T487: one cq.toml, both harnesses — panels + per-role agent models",
     expect(implWorker.modelMappings.pi).toEqual(["ollama-cloud/minimax-m3"]);
   });
 });
+
+// ---- D81/T520: get_config `configured` means 'cq.toml present', NOT ---------
+//              'reviewers configured' ------------------------------------------
+//
+// Before the fix, computeConfig's `configured` was `config.reviewers.length >
+// 0` — so a cq.toml with valid [tiers]/[aliases] but an EMPTY reviewers list
+// reported `configured: false` even though `tiers` was populated (anti-D78).
+// After the fix, `configured` reflects only `config !== null` (a parseable
+// cq.toml is present), independent of whether reviewers/planners/tiers are
+// populated.
+
+describe("D81: computeConfig `configured` reflects cq.toml presence, not reviewers-keyed", () => {
+  it("a cq.toml with valid [tiers]/[aliases] but an EMPTY reviewers list yields configured:true and tiers non-null", () => {
+    writeCqToml(
+      [
+        "reviewers = []",
+        "planners  = []",
+        "",
+        "[aliases]",
+        '  claude = "claude:opus-4.8[1m]"',
+        "",
+        "[tiers]",
+        '  standard = "claude"',
+        "",
+      ].join("\n"),
+    );
+    const result = computeConfig(dir);
+    expect(result.configured).toBe(true);
+    expect(result.tiers).not.toBeNull();
+    expect(result.tiers!.standard).toEqual({
+      harness: "claude",
+      model: "opus-4.8[1m]",
+      provider: null,
+      effort: null,
+    });
+    expect(result.reviewers).toEqual([]);
+  });
+
+  it("no cq.toml at all still yields configured:false", () => {
+    const result = computeConfig(dir);
+    expect(result.configured).toBe(false);
+    expect(result.tiers).toBeNull();
+  });
+});

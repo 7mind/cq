@@ -69,7 +69,16 @@ export interface GetPlannersResult {
   readonly planners: readonly ResolvedPlanner[];
 }
 
-/** The `get_config` payload: the full parsed config (or `configured:false`). */
+/**
+ * The `get_config` payload: the full parsed config (or `configured:false`).
+ *
+ * `configured` means 'a parseable cq.toml is present' (`config !== null`) —
+ * D81. It is INDEPENDENT of whether `reviewers`/`planners`/`tiers` are
+ * populated: a cq.toml with a valid `[tiers]`/`[aliases]` table but an empty
+ * `reviewers`/`planners` list still yields `configured: true`. This differs
+ * from {@link GetReviewersResult.configured} / {@link GetPlannersResult.configured},
+ * which stay list-keyed (true only when their own resolved list is non-empty).
+ */
 export interface GetConfigResult {
   readonly configured: boolean;
   readonly aliases: Record<
