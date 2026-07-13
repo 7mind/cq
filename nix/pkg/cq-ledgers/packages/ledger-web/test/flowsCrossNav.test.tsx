@@ -78,7 +78,9 @@ async function openFlowsTab(): Promise<void> {
   await mount();
   press("?");
   await flush();
-  testid("help-tab-flows")!.click();
+  act(() => {
+    testid("help-tab-flows")!.click();
+  });
   await settle();
 }
 
