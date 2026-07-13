@@ -54,13 +54,23 @@ so a user can run it repeatedly (e.g. after answering questions) and it picks up
 exactly where it left off.
 
 ## Conventions this command obeys (decision K4)
-- **Model tiers** (`tasks.suggestedModel`): `frontier`→opus / `standard`→sonnet /
-  `fast`→haiku under Claude; the host's top/mid/fast tier under Codex. Resolve a
-  task's tier to a concrete model just before dispatch. If `suggestedModel` is
-  unset → default to your OWN class (Claude: `inherit`) AND print a `WARNING:
-  task <id> has no suggestedModel` line.
-- **Reviewer & conflict-resolver** always run at the host's MOST-CAPABLE model
-  (Claude `opus`), regardless of the task's tier.
+- **Model tiers** (`tasks.suggestedModel`): tier→model comes from CONFIG, never
+  a hardcoded table. ONCE per pass, call the `mcp__ledger__get_config` MCP tool
+  (an MCP-tool call, NOT a `Bash` shellout — same server as `get_reviewers`)
+  and read its `tiers` slots: `tiers.{fast,standard,frontier}`, each a resolved
+  token `{ harness, model, provider, effort }` from the ACTIVE harness's
+  `[harness.<h>.tiers]` map in `cq.toml` — the tool serves BOTH harnesses
+  (under claude it returns the claude map, under pi the pi map). Resolve a
+  task's `suggestedModel` tier to that slot's token just before dispatch. If
+  `suggestedModel` is unset → default to your OWN class (Claude: `inherit`) AND
+  print a `WARNING: task <id> has no suggestedModel` line. **Degrade
+  gracefully** when `get_config` is absent or unconfigured (`configured: false`
+  or `tiers: null`, or the task's tier slot is missing): same
+  inherit-your-own-class default + the WARNING line (mirroring the
+  `get_reviewers`-absence pattern in §3a) — never invent a model literal.
+- **Reviewer & conflict-resolver** always run at the FRONTIER tier resolved
+  from `get_config` (`tiers.frontier` — most-capable == frontier, Q253),
+  regardless of the task's tier.
 - **Worktrees**: Claude → dispatch the worker via `Agent` with
   `isolation: "worktree"` (native; auto-removed if unchanged, never
   auto-merged). Codex → `git worktree add ../wt-<taskId> -b implement/<taskId>
@@ -213,11 +223,20 @@ A task is **READY** iff ALL hold:
 If the ready-set is empty: skip to **Report** (nothing left to do this pass).
 
 ### 2. Dispatch workers (up to N concurrently)
-Take up to N ready tasks. For each, resolve its model (§K4), set
+Take up to N ready tasks. For each, resolve its model via `get_config` (§K4), set
 `update_item("tasks", <id>, status: "wip")`, prepare its worktree (Claude:
 `isolation: "worktree"`; Codex: manual `git worktree add`), and dispatch an
 `implement-worker` via `Agent` (`subagent_type: "implement-worker"`,
-`model: <resolved>`, `isolation: "worktree"` under Claude). The prompt MUST carry:
+`model: <token.model VERBATIM>`, `isolation: "worktree"` under Claude). The
+resolved token's `model` is a BARE alias (`opus`/`sonnet`/`haiku`/`fable` —
+T509: the Agent tool's `model` param is a CLOSED enum that rejects full
+`claude-*` ids, and the config tokens are already bare aliases), so pass it
+verbatim with NO mangling. The token's `effort` is **N/A at `Agent` dispatch**
+— the Agent tool exposes no per-dispatch effort/reasoning param (T510; `effort`
+exists only as subagent-definition frontmatter) — record it for
+provenance/display only. (For a `pi:*` tier token dispatched via
+`dispatch_agent`, the cq-subagent-dispatch extension already emits the effort —
+R342.) The prompt MUST carry:
 the task id + verbatim `headline`/`description`/`acceptance`, the branch
 `implement/<taskId>` and base commit, and (on a re-dispatch) the prior round's
 `criticism[]`. Issue the batch's `Agent` calls in ONE message so they run
@@ -233,7 +252,8 @@ dispatched subagent); **(b–c)** compose the input against that `inputSchema`
 (`{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit,
 priorCriticism? }`); **(d)** `validate_input("implement-worker", input)`, fix and
 re-validate on `{ ok: false, errors }`; **(e)** dispatch the `Agent`
-(`subagent_type: "implement-worker"`, resolved `model`, `isolation: "worktree"`)
+(`subagent_type: "implement-worker"`, `model` = the §K4 `get_config`-resolved
+token's bare-alias `model` verbatim, `isolation: "worktree"`)
 with the validated input rendered into the prompt; **(f–g)** await its result and
 `validate_output("implement-worker", output)` against the role's `outputSchema`
 (a validation failure is a contract breach to surface, §Session logs). **Degrade
@@ -258,7 +278,9 @@ shellout). It returns `{ configured, reviewers: [{ harness, model, alias }] }`.
 Apply any session-only override already in effect. Then:
 - **`configured` is false (absent / unconfigured)** → the panel is the SINGLE
   native `implement-reviewer` Agent, exactly as before (`subagent_type:
-  "implement-reviewer"`, most-capable model — `opus`). It already returns the
+  "implement-reviewer"`, `model` = the §K4 FRONTIER token's bare-alias `model`,
+  verbatim; §K4's graceful degradation applies when `get_config` too is
+  absent). It already returns the
   terminal json the orchestrator records; nothing else changes. Skip 3b/3c.
 - **`configured` is true** → the panel is the listed active reviewers; run them
   in PARALLEL per task (3b) and RECONCILE their verdicts (3c).
@@ -267,14 +289,19 @@ Apply any session-only override already in effect. Then:
 reviewer in the resolved list, dispatch in a SINGLE message so they run
 concurrently, keyed by `harness`:
 - **`claude:*`** → native `implement-reviewer` Agent (`subagent_type:
-  "implement-reviewer"`, model from the reviewer's `model`, else most-capable
-  `opus`). It returns its structured json (the contract below) and writes
+  "implement-reviewer"`, model from the reviewer's `model` — a bare alias,
+  verbatim — else the §K4 FRONTIER token's `model`). The reviewer token's
+  `effort` is N/A at `Agent` dispatch (T510, §2) — provenance/display only.
+  It returns its structured json (the contract below) and writes
   nothing to the ledger.
 - **`pi:*`** → `Bash` shellout to the `pi` CLI (T169 invocation, decision K30):
   `env -u CODEX_COMPANION_SESSION_ID -u CLAUDE_PLUGIN_DATA pi -p --no-tools --no-session --provider <P> --model <M> '<prompt>' </dev/null`
   (grok-build → `--provider grok-build --model grok-build`; gpt-5.5 →
   `--provider openai-codex --model gpt-5.5`; map from the reviewer's
-  `harness`/`model`/`alias`). **The `env -u CODEX_COMPANION_SESSION_ID -u
+  `harness`/`model`/`alias`). When the resolved reviewer token carries an
+  `effort`, emit it as the R342 shorthand — `--model <provider>/<model>:<effort>`
+  (e.g. `--model openai-codex/gpt-5.5:xhigh`); with no effort, the bare
+  `--model <provider>/<model>` form. **The `env -u CODEX_COMPANION_SESSION_ID -u
   CLAUDE_PLUGIN_DATA … </dev/null` wrapper is REQUIRED, not cosmetic:** launched
   from inside this session pi inherits the codex-inline companion env and BLOCKS
   INDEFINITELY on the companion handshake when that companion is down (a real,
@@ -297,7 +324,8 @@ subagent); **(b–c)** compose the input against that `inputSchema` (`{ taskId,
 acceptance, worktreePath, branch, baseCommit, workerResult, round,
 priorCriticism? }`); **(d)** `validate_input("implement-reviewer", input)`, fix
 and re-validate on `{ ok: false, errors }`; **(e)** dispatch the `Agent`
-(`subagent_type: "implement-reviewer"`, most-capable `opus`); **(f–g)** await its
+(`subagent_type: "implement-reviewer"`, `model` = the reviewer's resolved
+`model`, else the §K4 FRONTIER token's `model`, verbatim); **(f–g)** await its
 verdict and `validate_output("implement-reviewer", output)` against the role's
 `outputSchema` (a validation failure is a contract breach to surface, §Session
 logs). **Degrade gracefully when the catalog tools are absent** — skip (a)–(d)
@@ -336,7 +364,8 @@ per-reviewer json into ONE reconciled verdict that drives the criticism loop
   the union — it is not a vote.
 - **Quorum floor (all-abstain fallback).** If EVERY configured reviewer
   abstained (zero usable verdicts), fall back to the SINGLE native
-  `implement-reviewer` Agent (`subagent_type: "implement-reviewer"`, `opus`) —
+  `implement-reviewer` Agent (`subagent_type: "implement-reviewer"`, `model` =
+  the §K4 FRONTIER token's `model`, verbatim) —
   the always-available default — and use its verdict as the reconciled result;
   REPORT that the configured panel was unavailable this pass (which aliases
   abstained + why). The flow NEVER blocks on an unavailable panel and NEVER
@@ -446,7 +475,8 @@ after every task in its `dependsOn` has merged). For each:
 1. Rebase its branch onto the CURRENT base (which now includes earlier
    merge-backs from this pass): `git rebase <base> implement/<taskId>` (run from
    its worktree, or fetch the branch into the main checkout).
-2. **On conflict** → dispatch `implement-conflict-resolver` (most-capable model)
+2. **On conflict** → dispatch `implement-conflict-resolver` (the §K4 FRONTIER
+   tier resolved from `get_config` — most-capable == frontier, Q253)
    with the worktree, branch, base, and conflicting files. On its `pass`,
    continue; on its `fail`, treat like a question bailout (§5: register a
    `questions` item, set the task `blocked`, leave the worktree) and SKIP merging
@@ -460,7 +490,8 @@ after every task in its `dependsOn` has merged). For each:
    description?, worktreePath, branch, baseCommit, conflictingFiles, baseSideNote?
    }`); **(d)** `validate_input("implement-conflict-resolver", input)`, fix and
    re-validate on `{ ok: false, errors }`; **(e)** dispatch the `Agent`
-   (`subagent_type: "implement-conflict-resolver"`, most-capable `opus`,
+   (`subagent_type: "implement-conflict-resolver"`, `model` = the §K4 FRONTIER
+   token's `model`, verbatim,
    `isolation: "worktree"`); **(f–g)** await its result and
    `validate_output("implement-conflict-resolver", output)` against the role's
    `outputSchema` (a validation failure is a contract breach to surface, §Session
