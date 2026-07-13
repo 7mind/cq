@@ -53,8 +53,7 @@ Call `get_config` (from the ledger MCP server) to retrieve the repo's
 }
 ```
 
-If `configured: false` (no `cq.toml` in the repo, or its `[reviewers]` list is
-empty), the alias table is empty; use ONLY the built-in fallback map below.
+If `configured: false` (no parseable `cq.toml` is present in the repo — D81: `configured` reflects only cq.toml presence, NOT whether the `[reviewers]` list is populated), the alias table is empty; use ONLY the built-in fallback map below. When `configured: true`, the `aliases` table is the parsed cq.toml `[aliases]`, and the built-in fallback map applies only to alias names NOT declared there.
 
 If the ledger MCP server is not available (tool call fails), treat the result
 as `configured: false` and continue with the fallback map — do not abort.
