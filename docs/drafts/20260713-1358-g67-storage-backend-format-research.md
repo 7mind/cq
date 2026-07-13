@@ -17,7 +17,8 @@ document collects:
 - **T490** (this task): a re-runnable benchmark harness + baseline numbers for
   the two backends that exist TODAY (`FsLedgerStore`, `GitObjectLedgerBackend`),
   giving the Q248 reference metrics every candidate format is compared against.
-- **T491** (follow-up): a survey of candidate storage formats/engines.
+- **T491** (follow-up): a survey of candidate storage formats/engines — see
+  [`20260713-1532-ledger-storage-formats.md`](./20260713-1532-ledger-storage-formats.md).
 - **T492** (follow-up): milestone-A prototypes measured with this SAME harness.
 
 ## 2. Q248 reference metrics and targets
