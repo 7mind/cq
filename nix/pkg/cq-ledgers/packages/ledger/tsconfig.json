@@ -11,5 +11,5 @@
     }
   },
   "references": [{ "path": "../cq-config" }],
-  "include": ["src", "test"]
+  "include": ["src", "test", "bench"]
 }
