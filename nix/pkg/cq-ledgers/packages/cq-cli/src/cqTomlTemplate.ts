@@ -35,11 +35,11 @@ export const CQ_TOML_TEMPLATE: string = `\
 # The openai-codex provider serves the GPT-5.6 family, a capability tier ladder:
 # sol (flagship, most capable) > terra (balanced everyday) > luna (fast, cheap).
 [aliases]
-  opus      = "claude:opus-4.8[1m]"
-  sonnet    = "claude:sonnet-5"
-  haiku     = "claude:haiku-4.5"
-  opus-max  = "claude:opus-4.8[1m]:max"              # opus, max reasoning effort
-  fable     = "claude:fable-5"                        # Anthropic's most capable
+  opus      = "claude:claude-opus-4-8[1m]"
+  sonnet    = "claude:claude-sonnet-5"
+  haiku     = "claude:claude-haiku-4-5-20251001"
+  opus-max  = "claude:claude-opus-4-8[1m]:max"        # opus, max reasoning effort
+  fable     = "claude:claude-fable-5"                  # Anthropic's most capable
   grok      = "pi:grok-build/grok-build:high"         # pi: <provider>/<model>
   codex     = "pi:openai-codex/gpt-5.6-sol:xhigh"     # frontier — GPT-5.6 sol (flagship)
   terra     = "pi:openai-codex/gpt-5.6-terra:high"    # standard — balanced everyday

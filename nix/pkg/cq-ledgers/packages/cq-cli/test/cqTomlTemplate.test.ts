@@ -5,7 +5,7 @@
  *  1. CQ_TOML_TEMPLATE parses without throwing via parseConfig (@cq/config).
  *  2. resolveReviewers / resolvePlanners succeed on the parsed config.
  *  3. The active reviewers+planners each resolve to EXACTLY opus (opus-only
- *     panels — T440): claude:opus-4.8[1m] only.
+ *     panels — T440): claude:claude-opus-4-8[1m] only.
  *  4. sonnet and haiku aliases are DEFINED in [aliases] and resolvable, even
  *     though they are off the reviewers/planners panels (T438 decoupling).
  *  5. implement-worker resolves sonnet (standard tier) off-panel via the
@@ -34,9 +34,9 @@ const REPO_ROOT = path.resolve(import.meta.dir, "../../../../../../");
 const EXAMPLE_PATH = path.join(REPO_ROOT, "cq.toml.example");
 
 // Expected token strings.
-const EXPECTED_OPUS   = "claude:opus-4.8[1m]";
-const EXPECTED_SONNET = "claude:sonnet-5";
-const EXPECTED_HAIKU  = "claude:haiku-4.5";
+const EXPECTED_OPUS   = "claude:claude-opus-4-8[1m]";
+const EXPECTED_SONNET = "claude:claude-sonnet-5";
+const EXPECTED_HAIKU  = "claude:claude-haiku-4-5-20251001";
 
 // T440: opus-only panels — the panel list contains exactly one entry.
 const EXPECTED_PANEL = [EXPECTED_OPUS];
@@ -101,17 +101,17 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE); // default harness = claude
     const fable = config.aliases["fable"];
     expect(fable).toBeDefined();
-    expect(formatReviewerToken(fable!)).toBe("claude:fable-5");
+    expect(formatReviewerToken(fable!)).toBe("claude:claude-fable-5");
     // No claude tier maps to fable => it is never dispatched.
     for (const tier of ["frontier", "standard", "fast"] as const) {
-      expect(formatReviewerToken(tierModel(config, tier)!)).not.toBe("claude:fable-5");
+      expect(formatReviewerToken(tierModel(config, tier)!)).not.toBe("claude:claude-fable-5");
     }
     // Not on the active claude panels.
     const panel = new Set([
       ...resolveReviewers(config).map(formatReviewerToken),
       ...resolvePlanners(config).map(formatReviewerToken),
     ]);
-    expect(panel.has("claude:fable-5")).toBe(false);
+    expect(panel.has("claude:claude-fable-5")).toBe(false);
   });
 
   it("pi harness: [harness.pi] panels + [harness.pi.tiers] resolve grok/codex", () => {
