@@ -10,6 +10,7 @@
     "format": "prettier --write .",
     "test": "bun test --pass-with-no-tests",
     "bench:store": "bun run packages/ledger/bench/storeBackendBench.ts",
+    "bench:concurrent": "bun run packages/ledger/bench/proto/concurrentWriterSmoke.ts",
     "regen-bootstrap": "bun run scripts/regen-bootstrap.ts",
     "link-prompts": "bun run scripts/link-prompts.ts",
     "gen-agents": "bun run packages/ledger-web/scripts/gen-agents-catalogue.ts"

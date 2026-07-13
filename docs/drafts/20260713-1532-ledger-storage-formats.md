@@ -12,6 +12,13 @@ the **top two candidates to prototype** in T492 (milestone-A prototypes,
 measured with the SAME T490 harness so their numbers are directly comparable to
 the baseline).
 
+> **T492 RESULT (2026-07-13):** both named candidates were prototyped and
+> measured — **`bun:sqlite` 0.04 ms p95 mutation / 0.35 ms cold init @10k** and
+> **JSONL + index 0.61 ms / 16.39 ms @10k**, both **PASS** the Q248 targets
+> (< 10ms / < 500ms) with wide margins, and both **PASS** the two-writer
+> multi-process smoke (Q246). See the companion doc's
+> [§6 T492 prototype numbers](./20260713-1358-g67-storage-backend-format-research.md#6-t492-milestone-a-prototype-numbers-2026-07-13).
+
 > All measured numbers are dated and cited. Where a number is a *target* it is
 > labelled as such; where it is an *external* benchmark the URL is inline;
 > where it is *this repo's* measurement it points at the T490 companion doc.
@@ -85,9 +92,11 @@ Three classes, five concrete candidates:
 ## 3. Criteria matrix
 
 Each cell cites a measured number, an external source, or a T490 baseline.
-"Mutation" and "cold init" columns are **projected** against the Q248 targets
-from the cited external throughput/latency figures; the actual numbers come
-from the T492 prototype run.
+"Mutation" and "cold init" columns below were **projected** against the Q248
+targets from the cited external throughput/latency figures; the actual measured
+numbers now come from the T492 prototype run (see the callout above / the
+companion doc §6) and CONFIRM the projections — bun:sqlite 0.04 ms/0.35 ms and
+JSONL+index 0.61 ms/16.39 ms @10k, both well inside target.
 
 | # | Candidate | Incremental mutation latency (evidence) | Cold init @10k (evidence) | Multi-**process** writers (Q246) | Crash-safety / atomic write | Human-readable EXPORT (Q245d) | Nix/Bun packaging (Q249) |
 |---|-----------|-----------------------------------------|---------------------------|----------------------------------|-----------------------------|-------------------------------|--------------------------|

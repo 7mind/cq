@@ -57,10 +57,26 @@ import {
   serializeLedger,
   type Item,
   type Ledger,
-  type LedgerStore,
 } from "../src/index.js";
+import { SqliteProtoStore, seedSqliteItems } from "./proto/sqliteProtoStore.js";
+import { JsonlProtoStore, seedJsonlItems } from "./proto/jsonlProtoStore.js";
 
 const exec = promisify(execFile);
+
+/**
+ * The narrow store surface this bench exercises. The real fs/git-object
+ * `LedgerStore` satisfies it structurally; the T492 milestone-A prototypes
+ * (`SqliteProtoStore`, `JsonlProtoStore`) are wrapped to present it (their
+ * native signatures are narrower — see proto/protoStore.ts). Every driver's
+ * `openStore` returns this, so the workload/measurement code below is identical
+ * across backends (comparable numbers, per the research doc).
+ */
+interface BenchStore {
+  init(): Promise<void>;
+  createMilestone(init: { title: string }): Promise<{ id: string }>;
+  updateItem(ledgerId: string, itemId: string, patch: { status: string }): Promise<unknown>;
+  dispose(): Promise<void>;
+}
 
 /** Synthetic workload sizes (items in the `tasks` ledger). Q248 reference points. */
 const SIZES = [1_000, 10_000] as const;
@@ -120,7 +136,7 @@ interface BackendDriver {
   /** Construct + init a store bound to `root`, populating it as a side effect
    *  is NOT done here — callers populate via a first store instance, then
    *  call this again for a FRESH cold-init measurement. */
-  openStore(root: string): Promise<LedgerStore>;
+  openStore(root: string): Promise<BenchStore>;
   /**
    * Directly write the synthetic `tasks` ledger source into `root`'s
    * persistence, bypassing the per-item `createItem` write funnel (see the
@@ -200,7 +216,61 @@ const gitObjectDriver: BackendDriver = {
   },
 };
 
-const DRIVERS: BackendDriver[] = [fsDriver, gitObjectDriver];
+/**
+ * Candidate A (T492): bun:sqlite. Store wraps `SqliteProtoStore` to the
+ * `BenchStore` shape; seed is a single bulk-insert transaction.
+ */
+const sqliteDriver: BackendDriver = {
+  name: "sqlite",
+  async setupRoot() {
+    return fs.mkdtemp(path.join(tmpdir(), "bench-sqlite-"));
+  },
+  async openStore(root) {
+    const store = new SqliteProtoStore({ root });
+    await store.init();
+    return {
+      init: () => store.init(),
+      createMilestone: (init) => store.createMilestone(init.title),
+      updateItem: (_ledgerId, itemId, patch) => store.updateItem(itemId, patch.status),
+      dispose: () => store.dispose(),
+    };
+  },
+  async seedTasksLedger(root, milestoneId, size) {
+    return seedSqliteItems(root, milestoneId, size);
+  },
+  async teardownRoot(root) {
+    await fs.rm(root, { recursive: true, force: true });
+  },
+};
+
+/**
+ * Candidate C1/C2 (T492): JSONL canonical + derived index. Store wraps
+ * `JsonlProtoStore`; seed writes the whole canonical JSONL once.
+ */
+const jsonlDriver: BackendDriver = {
+  name: "jsonl+index",
+  async setupRoot() {
+    return fs.mkdtemp(path.join(tmpdir(), "bench-jsonl-"));
+  },
+  async openStore(root) {
+    const store = new JsonlProtoStore({ root });
+    await store.init();
+    return {
+      init: () => store.init(),
+      createMilestone: (init) => store.createMilestone(init.title),
+      updateItem: (_ledgerId, itemId, patch) => store.updateItem(itemId, patch.status),
+      dispose: () => store.dispose(),
+    };
+  },
+  async seedTasksLedger(root, milestoneId, size) {
+    return seedJsonlItems(root, milestoneId, size);
+  },
+  async teardownRoot(root) {
+    await fs.rm(root, { recursive: true, force: true });
+  },
+};
+
+const DRIVERS: BackendDriver[] = [fsDriver, gitObjectDriver, sqliteDriver, jsonlDriver];
 
 interface SizeResult {
   size: number;
