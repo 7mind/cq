@@ -246,6 +246,74 @@ describe("T292: effort threading — computeConfig aliases", () => {
   });
 });
 
+// ---- D79: groupByHarness must not drop token.effort in modelMappings -------
+
+describe("D79: groupByHarness renders effort in modelMappings", () => {
+  it("a token carrying effort renders ':<effort>' for both pi and claude harnesses", () => {
+    writeCqToml(
+      [
+        'reviewers = ["pi", "claude"]',
+        "",
+        "[aliases]",
+        '  pi     = "pi:ollama-cloud/minimax-m3:high"',
+        '  claude = "claude:opus-4.8[1m]:xhigh"',
+        "",
+        "[agent_tiers]",
+        '  implement-worker = "standard"',
+        '  plan-advance     = "frontier"',
+        "",
+        "[tiers]",
+        '  standard = "pi"',
+        '  frontier = "claude"',
+        "",
+      ].join("\n"),
+    );
+
+    const result = computeAgentModels(dir);
+    expect(result.configured).toBe(true);
+
+    const implWorker = agentEntry(result, "implement-worker");
+    expect(implWorker.status).toBe("resolved");
+    expect(implWorker.modelMappings.pi).toEqual([
+      "ollama-cloud/minimax-m3:high",
+    ]);
+
+    const planAdvance = agentEntry(result, "plan-advance");
+    expect(planAdvance.status).toBe("resolved");
+    expect(planAdvance.modelMappings.claude).toEqual(["opus-4.8[1m]:xhigh"]);
+  });
+
+  it("a token without effort renders unchanged (no trailing colon)", () => {
+    writeCqToml(
+      [
+        'reviewers = ["pi", "claude"]',
+        "",
+        "[aliases]",
+        '  pi     = "pi:ollama-cloud/minimax-m3"',
+        '  claude = "claude:opus-4.8[1m]"',
+        "",
+        "[agent_tiers]",
+        '  implement-worker = "standard"',
+        '  plan-advance     = "frontier"',
+        "",
+        "[tiers]",
+        '  standard = "pi"',
+        '  frontier = "claude"',
+        "",
+      ].join("\n"),
+    );
+
+    const result = computeAgentModels(dir);
+    expect(result.configured).toBe(true);
+
+    const implWorker = agentEntry(result, "implement-worker");
+    expect(implWorker.modelMappings.pi).toEqual(["ollama-cloud/minimax-m3"]);
+
+    const planAdvance = agentEntry(result, "plan-advance");
+    expect(planAdvance.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
+  });
+});
+
 describe("T292: effort threading — computeConfig tiers", () => {
   it("tiers slot with effort token emits effort:'xhigh'", () => {
     writeCqToml(

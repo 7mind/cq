@@ -153,7 +153,10 @@ function projectConfig(config: CqConfig): GetConfigResult {
  * Group `tokens` by harness into the per-harness `modelMappings` shape: each
  * concrete model id is de-duplicated per harness (by its provider-qualified
  * rendering) and sorted for deterministic output. A pi token is rendered
- * `<provider>/<model>`; a claude token (provider null) is rendered bare.
+ * `<provider>/<model>`; a claude token (provider null) is rendered bare. When
+ * `token.effort` is present (non-null), a `:<effort>` suffix is appended so
+ * `get_agent_models` can show which effort a mapping runs at (D79); an
+ * effortless token renders unchanged, with no trailing colon.
  *
  * Returns `{}` when no token maps to any harness (the `no-live-token` case).
  */
@@ -165,8 +168,11 @@ function groupByHarness(
     pi: new Set(),
   };
   for (const t of tokens) {
+    const base = t.provider === null ? t.model : `${t.provider}/${t.model}`;
     byHarness[t.harness].add(
-      t.provider === null ? t.model : `${t.provider}/${t.model}`,
+      t.effort === null || t.effort === undefined
+        ? base
+        : `${base}:${t.effort}`,
     );
   }
   const mappings: { claude?: readonly string[]; pi?: readonly string[] } = {};
