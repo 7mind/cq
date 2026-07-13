@@ -64,10 +64,15 @@ exactly where it left off.
   task's `suggestedModel` tier to that slot's token just before dispatch. If
   `suggestedModel` is unset → default to your OWN class (Claude: `inherit`) AND
   print a `WARNING: task <id> has no suggestedModel` line. **Degrade
-  gracefully** when `get_config` is absent or unconfigured (`configured: false`
-  or `tiers: null`, or the task's tier slot is missing): same
-  inherit-your-own-class default + the WARNING line (mirroring the
-  `get_reviewers`-absence pattern in §3a) — never invent a model literal.
+  gracefully** when the `get_config` tool is ABSENT, or `tiers: null`, or the
+  task's tier slot is missing: same inherit-your-own-class default + the
+  WARNING line (mirroring the `get_reviewers`-absence pattern in §3a) — never
+  invent a model literal. Do NOT key this degrade on `configured`: get_config's
+  `configured` is computed from the reviewers list (`reviewers.length > 0`),
+  NOT from cq.toml presence — a valid `[harness.<h>.tiers]` map with an empty
+  reviewers list yields `configured: false` while `tiers` is populated, and
+  degrading there would DISCARD the user's valid tiers (anti-D78). Decide the
+  tiers-degrade purely on tool-absence / `tiers: null` / missing slot.
 - **Reviewer & conflict-resolver** always run at the FRONTIER tier resolved
   from `get_config` (`tiers.frontier` — most-capable == frontier, Q253),
   regardless of the task's tier.
@@ -365,7 +370,8 @@ per-reviewer json into ONE reconciled verdict that drives the criticism loop
 - **Quorum floor (all-abstain fallback).** If EVERY configured reviewer
   abstained (zero usable verdicts), fall back to the SINGLE native
   `implement-reviewer` Agent (`subagent_type: "implement-reviewer"`, `model` =
-  the §K4 FRONTIER token's `model`, verbatim) —
+  the §K4 FRONTIER token's `model`, verbatim; its `effort` is N/A at `Agent`
+  dispatch per T510 — provenance/display only, never an Agent argument) —
   the always-available default — and use its verdict as the reconciled result;
   REPORT that the configured panel was unavailable this pass (which aliases
   abstained + why). The flow NEVER blocks on an unavailable panel and NEVER
@@ -476,7 +482,9 @@ after every task in its `dependsOn` has merged). For each:
    merge-backs from this pass): `git rebase <base> implement/<taskId>` (run from
    its worktree, or fetch the branch into the main checkout).
 2. **On conflict** → dispatch `implement-conflict-resolver` (the §K4 FRONTIER
-   tier resolved from `get_config` — most-capable == frontier, Q253)
+   tier resolved from `get_config` — most-capable == frontier, Q253; the token's
+   `effort` is N/A at `Agent` dispatch per T510 — provenance/display only, never
+   an Agent argument)
    with the worktree, branch, base, and conflicting files. On its `pass`,
    continue; on its `fail`, treat like a question bailout (§5: register a
    `questions` item, set the task `blocked`, leave the worktree) and SKIP merging
@@ -491,7 +499,8 @@ after every task in its `dependsOn` has merged). For each:
    }`); **(d)** `validate_input("implement-conflict-resolver", input)`, fix and
    re-validate on `{ ok: false, errors }`; **(e)** dispatch the `Agent`
    (`subagent_type: "implement-conflict-resolver"`, `model` = the §K4 FRONTIER
-   token's `model`, verbatim,
+   token's `model`, verbatim — the token's `effort` is N/A at `Agent` dispatch
+   per T510, provenance/display only,
    `isolation: "worktree"`); **(f–g)** await its result and
    `validate_output("implement-conflict-resolver", output)` against the role's
    `outputSchema` (a validation failure is a contract breach to surface, §Session
