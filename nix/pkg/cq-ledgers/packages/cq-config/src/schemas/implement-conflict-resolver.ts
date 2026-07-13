@@ -36,7 +36,12 @@ const inputSchema = {
     headline: { type: "string", minLength: 1 },
     description: { type: "string" },
     worktreePath: { type: "string", minLength: 1 },
-    branch: { type: "string", pattern: "^implement/T[0-9]+$" },
+    branch: {
+      type: "string",
+      description:
+        "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+      pattern: "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$",
+    },
     baseCommit: { type: "string", minLength: 1 },
     conflictingFiles: {
       type: "array",

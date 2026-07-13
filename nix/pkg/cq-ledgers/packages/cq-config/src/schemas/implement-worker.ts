@@ -8,9 +8,10 @@
  *
  * - **Input** — the task spec the orchestrator passes verbatim (task id +
  *   headline + description + acceptance), the worktree path + branch
- *   (`implement/<taskId>`), the base commit, and an optional prior-round
- *   `criticism[]` on a re-dispatch after review. The resolved model class is
- *   informational; it is not load-bearing for the dispatch contract.
+ *   (`implement/<taskId>`, OR a Claude native-isolation `worktree-agent-<hex>`
+ *   name — D77), the base commit, and an optional prior-round `criticism[]` on
+ *   a re-dispatch after review. The resolved model class is informational; it
+ *   is not load-bearing for the dispatch contract.
  *
  * - **Output** — the worker result block
  *   `{ taskId, status, resultCommit, branch, filesTouched, checkSummary,
@@ -44,8 +45,9 @@ const inputSchema = {
     worktreePath: { type: "string", minLength: 1 },
     branch: {
       type: "string",
-      description: "The task branch name (implement/<taskId>).",
-      pattern: "^implement/T[0-9]+$",
+      description:
+        "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+      pattern: "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$",
     },
     baseCommit: {
       type: "string",
@@ -79,7 +81,12 @@ const outputSchema = {
     taskId: { type: "string", pattern: "^T[0-9]+$" },
     status: { type: "string", enum: [...IMPLEMENT_WORKER_STATUSES] },
     resultCommit: { type: ["string", "null"] },
-    branch: { type: "string", pattern: "^implement/T[0-9]+$" },
+    branch: {
+      type: "string",
+      description:
+        "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+      pattern: "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$",
+    },
     filesTouched: { type: "array", items: { type: "string" } },
     checkSummary: { type: "string" },
     summary: { type: "string" },

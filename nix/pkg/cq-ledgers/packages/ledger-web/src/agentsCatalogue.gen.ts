@@ -356,8 +356,8 @@ export const AGENT_ROLES: AgentRole[] = [
         },
         "branch": {
           "type": "string",
-          "description": "The task branch name (implement/<taskId>).",
-          "pattern": "^implement/T[0-9]+$"
+          "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+          "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
         },
         "baseCommit": {
           "type": "string",
@@ -410,7 +410,8 @@ export const AGENT_ROLES: AgentRole[] = [
         },
         "branch": {
           "type": "string",
-          "pattern": "^implement/T[0-9]+$"
+          "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+          "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
         },
         "filesTouched": {
           "type": "array",
@@ -491,7 +492,8 @@ export const AGENT_ROLES: AgentRole[] = [
         },
         "branch": {
           "type": "string",
-          "pattern": "^implement/T[0-9]+$"
+          "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+          "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
         },
         "baseCommit": {
           "type": "string",
@@ -674,7 +676,8 @@ export const AGENT_ROLES: AgentRole[] = [
         },
         "branch": {
           "type": "string",
-          "pattern": "^implement/T[0-9]+$"
+          "description": "The task branch name: implement/<taskId>, or a Claude native-isolation worktree-agent-<hex> name (D77).",
+          "pattern": "^(implement/T[0-9]+|worktree-agent-[0-9a-f]+)$"
         },
         "baseCommit": {
           "type": "string",
