@@ -67,7 +67,7 @@ declared in the `[aliases]` table, resolve it through this hardcoded map:
 |--------------|------------------------|
 | `grok`       | `pi:grok-build`         |
 | `opus`       | `claude:opus-4.8[1m]`  |
-| `codex`      | `pi:gpt-5.5`            |
+| `codex`      | `pi:gpt-5.6-sol`            |
 
 These names are case-insensitive. The list is intentionally minimal; extend it
 ONLY via `cq.toml [aliases]`, not by patching this fallback map.

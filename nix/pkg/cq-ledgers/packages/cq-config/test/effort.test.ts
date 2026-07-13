@@ -4,7 +4,8 @@
  * Acceptance cases:
  *  - isEffort('pi','xhigh') === true
  *  - isEffort('claude','xhigh') === true
- *  - isEffort('pi','max') === false  (max is claude-only)
+ *  - isEffort('pi','max') === true   (GPT-5.6 supports max)
+ *  - isEffort('pi','none') === true  (GPT-5.6 supports none)
  *  - isEffort('claude','off') === false  (off is pi-only)
  *  - isEffort('pi','bogus') === false
  *  - PI_EFFORTS and CLAUDE_EFFORTS are re-exported from @cq/config
@@ -31,8 +32,12 @@ describe("isEffort", () => {
     expect(isEffort("claude", "xhigh")).toBe(true);
   });
 
-  it("rejects max for pi (max is claude-only)", () => {
-    expect(isEffort("pi", "max")).toBe(false);
+  it("accepts max for pi (GPT-5.6 supports max)", () => {
+    expect(isEffort("pi", "max")).toBe(true);
+  });
+
+  it("accepts none for pi (GPT-5.6 supports none)", () => {
+    expect(isEffort("pi", "none")).toBe(true);
   });
 
   it("rejects off for claude (off is pi-only)", () => {
@@ -64,12 +69,11 @@ describe("isEffort", () => {
     }
   });
 
-  it("rejects claude-only efforts for pi", () => {
-    const claudeOnly = CLAUDE_EFFORTS.filter(
-      (e) => !(PI_EFFORTS as readonly string[]).includes(e),
-    );
-    for (const e of claudeOnly) {
-      expect(isEffort("pi", e)).toBe(false);
+  it("pi accepts every claude effort (pi vocabulary is a superset)", () => {
+    // GPT-5.6 brought `none` and `max` into the pi vocabulary, so every
+    // CLAUDE_EFFORT is now also a valid pi effort.
+    for (const e of CLAUDE_EFFORTS) {
+      expect(isEffort("pi", e)).toBe(true);
     }
   });
 });

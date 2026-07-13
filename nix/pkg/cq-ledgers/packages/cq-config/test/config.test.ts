@@ -168,11 +168,26 @@ describe("parseReviewerToken — effort suffix (T286)", () => {
     expect(() => parseReviewerToken("claude:opus:off")).toThrow(/max/);
   });
 
-  it("rejects a pi effort not in the pi enum (pi:p/m:max)", () => {
-    // `max` is a claude effort, not a pi effort.
-    expect(() => parseReviewerToken("pi:p/m:max")).toThrow(CqConfigError);
-    expect(() => parseReviewerToken("pi:p/m:max")).toThrow(/max/);
-    expect(() => parseReviewerToken("pi:p/m:max")).toThrow(/xhigh/);
+  it("accepts GPT-5.6 pi efforts max and none (pi:p/m:max, pi:p/m:none)", () => {
+    // GPT-5.6 brought `max` and `none` into the pi vocabulary.
+    expect(parseReviewerToken("pi:p/m:max")).toEqual({
+      harness: "pi",
+      model: "m",
+      provider: "p",
+      effort: "max",
+    });
+    expect(parseReviewerToken("pi:p/m:none")).toEqual({
+      harness: "pi",
+      model: "m",
+      provider: "p",
+      effort: "none",
+    });
+  });
+
+  it("rejects a bogus pi effort (pi:p/m:bogus)", () => {
+    expect(() => parseReviewerToken("pi:p/m:bogus")).toThrow(CqConfigError);
+    expect(() => parseReviewerToken("pi:p/m:bogus")).toThrow(/bogus/);
+    expect(() => parseReviewerToken("pi:p/m:bogus")).toThrow(/xhigh/);
   });
 
   it("rejects a bogus claude effort (claude:opus:bogus)", () => {

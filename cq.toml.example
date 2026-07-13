@@ -46,7 +46,8 @@ planners = ["opus"]
 #     CONFIG ERROR and will be rejected at parse time.
 #     MIGRATION: if you were using pi:minimax, update to pi:ollama-cloud/minimax-m3
 #     EFFORT SUFFIX (optional): append `:<effort>` to override the default thinking level.
-#       Legal pi efforts: off | minimal | low | medium | high | xhigh
+#       Legal pi efforts: off | none | minimal | low | medium | high | xhigh | max
+#       (GPT-5.6 accepts none | low | medium | high | xhigh | max.)
 #       Omitted effort uses the provider/model default (current behavior unchanged).
 #       The pi `--model provider/model:effort` shorthand uses this suffix.
 #       `:` is RESERVED in the model name; a model cannot contain `:` (T286, R342).

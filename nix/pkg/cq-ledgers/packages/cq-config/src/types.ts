@@ -14,7 +14,7 @@
  *
  * Token grammar with effort (T284):
  *  - Trailing `:<effort>` suffix, e.g. `claude:opus-4.8[1m]:high`
- *  - pi efforts: off | minimal | low | medium | high | xhigh
+ *  - pi efforts: off | none | minimal | low | medium | high | xhigh | max
  *  - claude efforts: low | medium | high | xhigh | max
  *  Parsing of the effort suffix is deferred to T286.
  */
@@ -27,15 +27,21 @@ export type Harness = (typeof HARNESSES)[number];
 
 /**
  * Effort levels for the `pi` harness (thinking budget).
- * These are the closed vocabulary of pi effort strings (T284).
+ * These are the closed vocabulary of pi effort strings (T284), spanning the
+ * union of what pi's providers accept. `none` and `max` cover the GPT-5.6
+ * reasoning-effort range (`none | low | medium | high | xhigh | max`); `off`
+ * and `minimal` remain for providers that use those spellings. Ordered by
+ * increasing thinking budget.
  */
 export const PI_EFFORTS = [
   "off",
+  "none",
   "minimal",
   "low",
   "medium",
   "high",
   "xhigh",
+  "max",
 ] as const;
 
 /** A pi effort level (the trailing `:<effort>` suffix for pi tokens). */
@@ -63,7 +69,7 @@ export type Effort = PiEffort | ClaudeEffort;
 /**
  * Type guard: is `value` a valid effort string for the given `harness`?
  *
- * - pi accepts: off | minimal | low | medium | high | xhigh
+ * - pi accepts: off | none | minimal | low | medium | high | xhigh | max
  * - claude accepts: low | medium | high | xhigh | max
  */
 export function isEffort(harness: Harness, value: string): value is Effort {
@@ -91,7 +97,7 @@ export function isEffort(harness: Harness, value: string): value is Effort {
  *    default, e.g. `claude:opus-4.8[1m]:high` or
  *    `pi:ollama-cloud/minimax-m3:xhigh`.
  *  - `null` means absent (omitted) — the harness/model default applies.
- *  - pi efforts: off | minimal | low | medium | high | xhigh
+ *  - pi efforts: off | none | minimal | low | medium | high | xhigh | max
  *  - claude efforts: low | medium | high | xhigh | max
  *  Parsing of the effort suffix is deferred to T286; this field is populated
  *  as `null` at existing construction sites until T286 is implemented.

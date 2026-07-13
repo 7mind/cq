@@ -192,11 +192,13 @@ minimax = "pi:minimax-m3"
 
 const PI_EFFORTS_REPLICA = new Set([
   "off",
+  "none",
   "minimal",
   "low",
   "medium",
   "high",
   "xhigh",
+  "max",
 ]);
 const CLAUDE_EFFORTS_REPLICA = new Set(["low", "medium", "high", "xhigh", "max"]);
 
@@ -477,21 +479,23 @@ describe("Q165 pi-extension effort mirror (T294, R342)", () => {
     );
   });
 
-  it("(e) cross-harness wrong-effort — 'max' (CLAUDE_EFFORTS, not PI_EFFORTS) on a pi token → null (parent fallback)", () => {
-    // 'max' is a member of CLAUDE_EFFORTS but NOT PI_EFFORTS. On a pi token the
-    // per-harness guard isEffort('pi','max') is false, so the trailing ':max'
-    // is NOT stripped as an effort; it stays in the model half as a reserved
-    // residual ':' → replicaParseCqToken returns null (lenient parent fallback).
-    // This pins the per-harness effort-set partitioning: an effort legal for
-    // one harness must not leak into another.
-    expect(replicaIsEffort("pi", "max")).toBe(false);
-    expect(replicaIsEffort("claude", "max")).toBe(true);
-    expect(replicaParseCqToken("pi:grok-build/grok-build:max")).toBeNull();
-    expect(replicaParseAndConvert("pi:grok-build/grok-build:max")).toBeNull();
-    // Same input: @cq/config throws (fail-fast at the harness boundary).
-    expect(() =>
-      parseReviewerToken("pi:grok-build/grok-build:max"),
-    ).toThrow(CqConfigError);
+  it("(e) GPT-5.6 efforts 'max'/'none' now parse on a pi token; pi-only efforts still don't leak into claude", () => {
+    // GPT-5.6 brought 'max' and 'none' into PI_EFFORTS, so they now parse as
+    // valid pi efforts (the effort suffix is stripped, model half is clean).
+    expect(replicaIsEffort("pi", "max")).toBe(true);
+    expect(replicaIsEffort("pi", "none")).toBe(true);
+    expect(replicaParseCqToken("pi:grok-build/grok-build:max")).not.toBeNull();
+    expect(parseReviewerToken("pi:grok-build/grok-build:max").effort).toBe("max");
+    expect(parseReviewerToken("pi:grok-build/grok-build:none").effort).toBe(
+      "none",
+    );
+    // The partition still holds in the surviving direction: a pi-only effort
+    // ('none' is not a CLAUDE_EFFORT) must not leak into a claude token.
+    expect(replicaIsEffort("claude", "none")).toBe(false);
+    expect(replicaParseCqToken("claude:opus-4.8[1m]:none")).toBeNull();
+    expect(() => parseReviewerToken("claude:opus-4.8[1m]:none")).toThrow(
+      CqConfigError,
+    );
   });
 
   it("(f) empty trailing-colon suffix — 'pi:grok-build/grok-build:' → null (parent fallback)", () => {

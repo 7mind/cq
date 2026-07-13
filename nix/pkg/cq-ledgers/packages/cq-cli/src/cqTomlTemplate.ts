@@ -29,16 +29,22 @@ export const CQ_TOML_TEMPLATE: string = `\
 # alias -> "<harness>:<model>" token. Definitions only — an alias does nothing
 # until a panel (reviewers/planners) or a [harness.<h>.tiers] entry references it.
 # Optional trailing reasoning-effort suffix ":<effort>" (higher = more thinking):
-#   pi     — off | minimal | low | medium | high | xhigh   (used at dispatch)
-#   claude — low | medium | high | xhigh | max             (parsed; not yet used)
+#   pi     — off | none | minimal | low | medium | high | xhigh | max  (used at dispatch)
+#   claude — low | medium | high | xhigh | max                         (parsed; not yet used)
+# GPT-5.6 accepts none | low | medium | high | xhigh | max.
+# The openai-codex provider serves the GPT-5.6 family, a capability tier ladder:
+# sol (flagship, most capable) > terra (balanced everyday) > luna (fast, cheap).
 [aliases]
-  opus     = "claude:opus-4.8[1m]"
-  sonnet   = "claude:sonnet-5"
-  haiku    = "claude:haiku-4.5"
-  opus-max = "claude:opus-4.8[1m]:max"          # opus, max reasoning effort
-  fable    = "claude:fable-5"                    # Anthropic's most capable
-  grok     = "pi:grok-build/grok-build:high"     # pi: <provider>/<model>
-  codex    = "pi:openai-codex/gpt-5.5:xhigh"     # Codex (GPT-5.5) via pi
+  opus      = "claude:opus-4.8[1m]"
+  sonnet    = "claude:sonnet-5"
+  haiku     = "claude:haiku-4.5"
+  opus-max  = "claude:opus-4.8[1m]:max"              # opus, max reasoning effort
+  fable     = "claude:fable-5"                        # Anthropic's most capable
+  grok      = "pi:grok-build/grok-build:high"         # pi: <provider>/<model>
+  codex     = "pi:openai-codex/gpt-5.6-sol:xhigh"     # frontier — GPT-5.6 sol (flagship)
+  terra     = "pi:openai-codex/gpt-5.6-terra:high"    # standard — balanced everyday
+  luna      = "pi:openai-codex/gpt-5.6-luna:low"      # fast — high-volume lightweight
+  codex-max = "pi:openai-codex/gpt-5.6-sol:max"       # sol at max thinking
 
 # Per-agent tier. An agent not listed here defaults to "standard".
 [agent_tiers]
@@ -66,9 +72,10 @@ export const CQ_TOML_TEMPLATE: string = `\
 [harness.pi]
   reviewers = ["grok", "codex"]
   planners  = ["codex"]
-[harness.pi.tiers]
-  frontier = "codex"
-  standard = "grok"
+[harness.pi.tiers]                 # GPT-5.6 family mapped by capability
+  frontier = "codex"               # sol (flagship) at xhigh
+  standard = "terra"               # balanced everyday
+  fast     = "luna"                # fast, high-volume
 
 # Ledger storage backend (default: "fs"). Uncomment for the experimental
 # git-object backend.

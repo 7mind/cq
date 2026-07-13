@@ -118,18 +118,19 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     const pi = parseConfig(CQ_TOML_TEMPLATE, "pi");
     expect(resolveReviewers(pi).map(formatReviewerToken)).toEqual([
       "pi:grok-build/grok-build:high",
-      "pi:openai-codex/gpt-5.5:xhigh",
+      "pi:openai-codex/gpt-5.6-sol:xhigh",
     ]);
     expect(resolvePlanners(pi).map(formatReviewerToken)).toEqual([
-      "pi:openai-codex/gpt-5.5:xhigh",
+      "pi:openai-codex/gpt-5.6-sol:xhigh",
     ]);
     // Per-role dispatch under pi is a direct [harness.pi.tiers] lookup (which
-    // replaces the shared claude tiers): frontier -> codex, standard -> grok.
+    // replaces the shared claude tiers): frontier -> codex (sol), standard ->
+    // terra, fast -> luna (the GPT-5.6 capability ladder).
     expect(formatReviewerToken(resolveAgentModel(pi, "implement-reviewer"))).toBe(
-      "pi:openai-codex/gpt-5.5:xhigh",
+      "pi:openai-codex/gpt-5.6-sol:xhigh",
     );
     expect(formatReviewerToken(resolveAgentModel(pi, "implement-worker"))).toBe(
-      "pi:grok-build/grok-build:high",
+      "pi:openai-codex/gpt-5.6-terra:high",
     );
   });
 

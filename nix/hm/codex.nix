@@ -36,7 +36,7 @@ in
       programs.codex = sharedAgentWiring // {
         package = codexPkg;
         settings = {
-          model = "gpt-5.5";
+          model = "gpt-5.6-sol";
           model_reasoning_effort = "xhigh";
           project_doc_fallback_filenames = [ "CLAUDE.md" ];
           features.multi_agent = true;
