@@ -125,6 +125,14 @@ export interface GetConfigResult {
    * `[agent_tiers]` is absent from cq.toml.
    */
   readonly agentTiers: Record<string, string> | null;
+  /**
+   * The `[agent_efforts]` table (Q254): maps agent-name -> per-agent
+   * reasoning-effort override. ORTHOGONAL to `agentTiers` (the tier picks the
+   * model; this overrides the resolved token's effort — override wins over
+   * the tier token's `:<effort>` suffix). `{}` when `[agent_efforts]` is
+   * absent from cq.toml (or no cq.toml exists).
+   */
+  readonly agentEfforts: Record<string, string>;
 }
 
 /**

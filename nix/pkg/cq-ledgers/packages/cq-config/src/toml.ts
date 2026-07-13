@@ -63,7 +63,8 @@ export interface RawLedger {
  *  - `tiers`: the per-harness `[harness.<name>.tiers]` map
  *    (raw tier-class KEY -> token-or-alias VALUE), or null if absent.
  * `[harness.<name>]` may carry ONLY these three keys; `aliases`, `webui`,
- * `ledger`, and `agent_tiers` are SHARED-only and rejected here.
+ * `ledger`, `agent_tiers`, and `agent_efforts` are SHARED-only and rejected
+ * here.
  */
 export interface RawHarnessOverride {
   /** The per-harness `reviewers` array of strings, or null if absent. */
@@ -92,6 +93,8 @@ export interface RawToml {
   readonly tiers: Record<string, string> | null;
   /** The `[agent_tiers]` table: agent name -> tier name, or null if absent. */
   readonly agentTiers: Record<string, string> | null;
+  /** The `[agent_efforts]` table: agent name -> effort name, or null if absent. */
+  readonly agentEfforts: Record<string, string> | null;
   /** The `[ledger]` table, or null if absent. */
   readonly ledger: RawLedger | null;
   /**
@@ -118,6 +121,7 @@ const ALLOWED_TOP_LEVEL = new Set([
   "webui",
   "tiers",
   "agent_tiers",
+  "agent_efforts",
   "ledger",
   "harness",
 ]);
@@ -217,8 +221,8 @@ function parseLedgerRaw(value: unknown): RawLedger {
  * (Q240): each sub-table key must be a known harness name (`claude`/`pi` via
  * `isHarness`), and within each block only `reviewers` / `planners` / `tiers`
  * are permitted (the per-harness-overridable subset). `aliases`, `webui`,
- * `ledger`, and `agent_tiers` are SHARED-only and rejected with a precise
- * error naming the offending key. The reviewers/planners arrays and tiers
+ * `ledger`, `agent_tiers`, and `agent_efforts` are SHARED-only and rejected
+ * with a precise error naming the offending key. The reviewers/planners arrays and tiers
  * table are validated with the same helpers as their top-level counterparts;
  * the merge into `CqConfig` is deferred to T477.
  */
@@ -295,6 +299,10 @@ export function parseToml(source: string): RawToml {
     "agent_tiers" in doc
       ? parseStringTable("agent_tiers", doc.agent_tiers)
       : null;
+  const agentEfforts =
+    "agent_efforts" in doc
+      ? parseStringTable("agent_efforts", doc.agent_efforts)
+      : null;
   const ledger = "ledger" in doc ? parseLedgerRaw(doc.ledger) : null;
   const harnessOverrides =
     "harness" in doc ? parseHarnessOverrides(doc.harness) : null;
@@ -306,6 +314,7 @@ export function parseToml(source: string): RawToml {
     webui,
     tiers,
     agentTiers,
+    agentEfforts,
     ledger,
     harnessOverrides,
   };

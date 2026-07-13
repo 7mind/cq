@@ -800,3 +800,86 @@ describe("D81: computeConfig `configured` reflects cq.toml presence, not reviewe
     expect(result.tiers).toBeNull();
   });
 });
+
+// ---- T518 (Q254): [agent_efforts] per-agent effort override ----------------
+//
+// The [agent_efforts] table overrides the resolved tier token's effort per
+// agent (override wins; an unlisted agent keeps the tier token's effort). It
+// must surface in BOTH get_config (agentEfforts projection) and
+// get_agent_models (the effort-aware modelMappings from T512/D79).
+
+const Q254_FIXTURE = [
+  'reviewers = ["opus"]',
+  "",
+  "[aliases]",
+  '  opus  = "claude:opus-4.8[1m]:xhigh"',
+  '  haiku = "claude:haiku"',
+  "",
+  "[agent_tiers]",
+  '  plan-reviewer    = "frontier"',
+  '  implement-worker = "fast"',
+  "",
+  "[tiers]",
+  '  frontier = "opus"',
+  '  fast     = "haiku"',
+  "",
+].join("\n");
+
+describe("T518 (Q254): computeConfig surfaces agentEfforts", () => {
+  it("projects [agent_efforts] into the get_config payload", () => {
+    writeCqToml(`${Q254_FIXTURE}[agent_efforts]\n  plan-reviewer = "max"\n`);
+    const result = computeConfig(dir);
+    expect(result.configured).toBe(true);
+    expect(result.agentEfforts).toEqual({ "plan-reviewer": "max" });
+  });
+
+  it("agentEfforts is {} when [agent_efforts] is absent", () => {
+    writeCqToml(Q254_FIXTURE);
+    const result = computeConfig(dir);
+    expect(result.agentEfforts).toEqual({});
+  });
+
+  it("agentEfforts is {} when no cq.toml exists", () => {
+    const result = computeConfig(dir);
+    expect(result.configured).toBe(false);
+    expect(result.agentEfforts).toEqual({});
+  });
+});
+
+describe("T518 (Q254): computeAgentModels applies the [agent_efforts] override", () => {
+  it("override wins: plan-reviewer's frontier token :xhigh renders :max", () => {
+    writeCqToml(`${Q254_FIXTURE}[agent_efforts]\n  plan-reviewer = "max"\n`);
+    const result = computeAgentModels(dir);
+    expect(result.configured).toBe(true);
+
+    const planReviewer = agentEntry(result, "plan-reviewer");
+    expect(planReviewer.status).toBe("resolved");
+    expect(planReviewer.modelMappings.claude).toEqual(["opus-4.8[1m]:max"]);
+  });
+
+  it("an unlisted agent keeps the tier token's effort (and effortless stays bare)", () => {
+    writeCqToml(`${Q254_FIXTURE}[agent_efforts]\n  plan-reviewer = "max"\n`);
+    const result = computeAgentModels(dir);
+
+    // implement-worker is NOT in [agent_efforts]: haiku renders with no suffix.
+    const implWorker = agentEntry(result, "implement-worker");
+    expect(implWorker.modelMappings.claude).toEqual(["haiku"]);
+  });
+
+  it("absent [agent_efforts]: tier token effort is unchanged", () => {
+    writeCqToml(Q254_FIXTURE);
+    const result = computeAgentModels(dir);
+
+    const planReviewer = agentEntry(result, "plan-reviewer");
+    expect(planReviewer.modelMappings.claude).toEqual(["opus-4.8[1m]:xhigh"]);
+  });
+
+  it("an effort invalid for the resolved harness throws a precise CqConfigError", () => {
+    // "off" parses (legal pi effort) but plan-reviewer resolves to a claude
+    // token, where "off" is illegal -> fail fast at resolution.
+    writeCqToml(`${Q254_FIXTURE}[agent_efforts]\n  plan-reviewer = "off"\n`);
+    expect(() => computeAgentModels(dir)).toThrow(
+      /agent_efforts\["plan-reviewer"\] = "off" is not a valid effort for harness "claude"/,
+    );
+  });
+});

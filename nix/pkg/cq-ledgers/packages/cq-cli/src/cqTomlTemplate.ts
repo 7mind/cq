@@ -56,6 +56,15 @@ export const CQ_TOML_TEMPLATE: string = `\
   implement-reviewer          = "frontier"
   implement-conflict-resolver = "standard"
 
+# Optional per-agent reasoning-effort override (Q254), ORTHOGONAL to
+# [agent_tiers]: the tier picks the MODEL; this overrides the resolved token's
+# EFFORT (":<effort>" suffix). Override wins; an unlisted agent keeps the tier
+# token's effort. Values must be legal for the agent's RESOLVED harness:
+#   pi     — off | none | minimal | low | medium | high | xhigh | max
+#   claude — low | medium | high | xhigh | max
+# [agent_efforts]
+#   plan-reviewer = "max"
+
 # Panels + tier->model map for the default (claude) harness. Tiers are
 # harness-specific — there is no shared [tiers]. This map is what makes a model
 # dispatchable; an alias named by no tier here is inert.

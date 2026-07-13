@@ -10,6 +10,7 @@
 #   planners  = [...] — top-level array of alias names to activate as planners
 #   [tiers]          — MAP: each tier (fast|standard|frontier) -> ONE model
 #   [agent_tiers]    — maps agent-name -> tier name (default: "standard")
+#   [agent_efforts]  — maps agent-name -> reasoning-effort override (optional)
 #   [ledger]         — ledger storage backend (backend, branch, remote; default: backend="fs")
 #
 # Panel vs per-role decoupling (T438/T440):
@@ -127,6 +128,27 @@ planners = ["opus"]
   implement-reviewer      = "frontier"
   implement-conflict-resolver = "standard"
 
+# [agent_efforts] — OPTIONAL per-agent reasoning-effort override (Q254).
+# ORTHOGONAL to [agent_tiers]: the tier axis picks the MODEL an agent runs;
+# this axis overrides the resolved token's EFFORT (its ":<effort>" suffix).
+#
+# Semantics:
+#   - An agent listed here has its resolved token's effort REPLACED by the
+#     override (override wins — even over an explicit ":<effort>" suffix on
+#     the tier's token, and it also applies when the token has no suffix).
+#   - An agent NOT listed here keeps the tier token's effort unchanged.
+#   - The value must be a legal effort for the agent's RESOLVED harness
+#     (fail fast with a CqConfigError at resolve time otherwise):
+#       pi     — off | none | minimal | low | medium | high | xhigh | max
+#       claude — low | medium | high | xhigh | max
+#   - SHARED-ONLY: like [agent_tiers], this table cannot be overridden in a
+#     [harness.<name>] block.
+#
+# Example (COMMENTED OUT — uncomment to run plan-reviewer at max effort):
+#
+# [agent_efforts]
+#   plan-reviewer = "max"
+
 # [ledger] — Ledger storage backend configuration (T349).
 # Absence of this block (or of cq.toml entirely) defaults to backend="fs"
 # (the standard filesystem-backed FsLedgerStore).  The "git-object" backend
@@ -167,10 +189,11 @@ planners = ["opus"]
 #     through the shared [aliases] table.
 #
 # SHARED (cannot be overridden per-harness — shared across all harnesses):
-#   [aliases]      — alias name -> reviewer token map
-#   [webui]        — web-UI port / bind config
-#   [ledger]       — storage backend (fs / git-object)
-#   [agent_tiers]  — agent-name -> tier class map
+#   [aliases]        — alias name -> reviewer token map
+#   [webui]          — web-UI port / bind config
+#   [ledger]         — storage backend (fs / git-object)
+#   [agent_tiers]    — agent-name -> tier class map
+#   [agent_efforts]  — agent-name -> reasoning-effort override map
 #
 # PER-HARNESS OVERRIDABLE (present in [harness.<name>]):
 #   reviewers = [...]         — REPLACES shared top-level reviewers

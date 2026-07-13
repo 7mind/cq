@@ -56,6 +56,12 @@ describe("cq.toml.example — T274 regression guard: no CqConfigError", () => {
     expect(config.agentTiers).not.toBeNull();
   });
 
+  it("parseConfig on cq.toml.example — [agent_efforts] is documented commented-out, so agentEfforts is {} (T518/Q254)", () => {
+    const contents = readFileSync(EXAMPLE_PATH, "utf8");
+    const config: CqConfig = parseConfig(contents);
+    expect(config.agentEfforts).toEqual({});
+  });
+
   it("parseConfig on cq.toml.example — [tiers] entries carry resolved tokens", () => {
     const contents = readFileSync(EXAMPLE_PATH, "utf8");
     const config: CqConfig = parseConfig(contents);

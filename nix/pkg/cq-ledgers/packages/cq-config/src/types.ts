@@ -227,6 +227,13 @@ export interface LedgerConfig {
  * - `agentTiers`: the `[agent_tiers]` table mapping agent-name -> tier name,
  *   or null if `[agent_tiers]` is absent. An unlisted agent falls back to
  *   `DEFAULT_TIER`.
+ * - `agentEfforts`: the `[agent_efforts]` table mapping agent-name -> effort
+ *   override (Q254); `{}` when `[agent_efforts]` is absent. ORTHOGONAL to
+ *   `agentTiers`: the tier picks the MODEL, this overrides the resolved
+ *   token's EFFORT (override wins; an unlisted agent keeps the tier token's
+ *   effort). Values are validated at parse time against the union of all
+ *   harness effort vocabularies; harness-specific validity (`isEffort`) is
+ *   checked at resolution time, once the agent's harness is known.
  * - `ledger`: the `[ledger]` table (backend + branch + remote), or null if
  *   absent. When null, `backend` defaults to 'fs'.
  */
@@ -239,6 +246,8 @@ export interface CqConfig {
   readonly tiers: TiersConfig | null;
   /** The `[agent_tiers]` table (agent-name -> tier name), or null if absent. */
   readonly agentTiers: Record<string, Tier> | null;
+  /** The `[agent_efforts]` table (agent-name -> effort override); `{}` when absent. */
+  readonly agentEfforts: Record<string, Effort>;
   /** The `[ledger]` table (backend + branch + remote), or null if absent. */
   readonly ledger: LedgerConfig | null;
 }

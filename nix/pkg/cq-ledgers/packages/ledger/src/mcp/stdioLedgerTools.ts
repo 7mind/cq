@@ -658,13 +658,14 @@ ${QUERY_LANGUAGE_HELP}`,
     {
       description:
         "Return the full parsed cq.toml: { configured, aliases, reviewers, " +
-        "planners, tiers, agentTiers }. reviewers/planners are the raw " +
-        "alias-name lists; tiers is the per-harness resolved fast/standard/" +
-        "frontier slots (each { harness, model, provider, effort } or null); " +
-        "agentTiers maps agent-name to tier (or null). configured=false when " +
-        "no cq.toml is present. Only available when the server has a " +
-        "cq.toml-capable config root; otherwise returns a not-implemented " +
-        "error.",
+        "planners, tiers, agentTiers, agentEfforts }. reviewers/planners are " +
+        "the raw alias-name lists; tiers is the per-harness resolved fast/" +
+        "standard/frontier slots (each { harness, model, provider, effort } " +
+        "or null); agentTiers maps agent-name to tier (or null); agentEfforts " +
+        "maps agent-name to its per-agent effort override ({} when absent). " +
+        "configured=false when no cq.toml is present. Only available when the " +
+        "server has a cq.toml-capable config root; otherwise returns a " +
+        "not-implemented error.",
       inputSchema: {},
     },
     () => {

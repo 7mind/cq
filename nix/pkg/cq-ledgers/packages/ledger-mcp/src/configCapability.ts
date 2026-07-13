@@ -18,6 +18,7 @@ import {
   resolvePlanners,
   resolveAgentTier,
   tierModel,
+  applyAgentEffort,
   HARNESSES,
   AGENT_ROLE_TIERS,
   type CqConfig,
@@ -96,6 +97,7 @@ export function computeConfig(repoRoot: string): GetConfigResult {
       planners: [],
       tiers: null,
       agentTiers: null,
+      agentEfforts: {},
     };
   }
   return projectConfig(config);
@@ -150,6 +152,7 @@ function projectConfig(config: CqConfig): GetConfigResult {
     planners: config.planners,
     tiers,
     agentTiers: config.agentTiers,
+    agentEfforts: config.agentEfforts,
   };
 }
 
@@ -202,9 +205,10 @@ function groupByHarness(
  *    `not-configured` for every model-configurable role.
  *  - otherwise resolve the role's tier via {@link resolveAgentTier}, look up the
  *    one model the `[tiers]` map assigns to that tier via {@link tierModel},
- *    and group it by harness. No model for the tier -> status `no-live-token`
- *    with `modelClass = tier`; a model -> status `resolved` with
- *    `modelClass = tier` and per-harness mappings (Q157).
+ *    apply the `[agent_efforts]` per-agent effort override via
+ *    {@link applyAgentEffort} (Q254), and group it by harness. No model for the
+ *    tier -> status `no-live-token` with `modelClass = tier`; a model -> status
+ *    `resolved` with `modelClass = tier` and per-harness mappings (Q157).
  *
  * `configured` is `config !== null`.
  */
@@ -230,7 +234,15 @@ export function computeAgentModels(repoRoot: string): AgentModelsResult {
     }
     const tier = resolveAgentTier(config, role.agentTierKey);
     const token = tierModel(config, tier);
-    const modelMappings = groupByHarness(token === undefined ? [] : [token]);
+    // Q254: apply the [agent_efforts] per-agent effort override on top of the
+    // tier token, so the effort-aware modelMappings (D79) reflect it.
+    const effective =
+      token === undefined
+        ? undefined
+        : applyAgentEffort(config, role.agentTierKey, token);
+    const modelMappings = groupByHarness(
+      effective === undefined ? [] : [effective],
+    );
     const hasLiveToken =
       modelMappings.claude !== undefined || modelMappings.pi !== undefined;
     return {

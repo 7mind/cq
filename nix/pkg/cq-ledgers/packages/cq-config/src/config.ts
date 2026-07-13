@@ -248,8 +248,8 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
  * section PRESENT in the override (even an empty array/table) wins; a section
  * ABSENT from the override (`null`) falls through to the shared top-level value.
  * Only `reviewers` / `planners` / `tiers` are overridable; `[aliases]`,
- * `[webui]`, `[ledger]`, and `[agent_tiers]` are SHARED-only and NEVER
- * overridden. `[harness.<name>.tiers]` is parsed into the same `TiersConfig`
+ * `[webui]`, `[ledger]`, `[agent_tiers]`, and `[agent_efforts]` are
+ * SHARED-only and NEVER overridden. `[harness.<name>.tiers]` is parsed into the same `TiersConfig`
  * shape as the shared `[tiers]` (via {@link parseTiers}, resolving keys through
  * the SHARED `[aliases]`).
  *
@@ -296,8 +296,19 @@ export function parseConfig(
   const webui = raw.webui === null ? null : parseWebui(raw.webui);
   const agentTiers =
     raw.agentTiers === null ? null : parseAgentTiers(raw.agentTiers);
+  const agentEfforts =
+    raw.agentEfforts === null ? {} : parseAgentEfforts(raw.agentEfforts);
   const ledger = raw.ledger === null ? null : parseLedger(raw.ledger);
-  return { aliases, reviewers, planners, webui, tiers, agentTiers, ledger };
+  return {
+    aliases,
+    reviewers,
+    planners,
+    webui,
+    tiers,
+    agentTiers,
+    agentEfforts,
+    ledger,
+  };
 }
 
 /**
@@ -358,6 +369,31 @@ function parseAgentTiers(raw: Record<string, string>): Record<string, Tier> {
       );
     }
     result[agentName] = tierName;
+  }
+  return result;
+}
+
+/**
+ * Parse the `[agent_efforts]` raw string table into a `Record<string, Effort>`
+ * (Q254).
+ *
+ * Every value must be a member of the OVERALL effort vocabulary (the union of
+ * the pi and claude effort sets) — the agent's harness is unknown at parse
+ * time, so harness-specific validity is deferred to resolution time
+ * ({@link applyAgentEffort} via `isEffort`). A value outside the union fails
+ * fast here with a precise CqConfigError.
+ */
+function parseAgentEfforts(raw: Record<string, string>): Record<string, Effort> {
+  const result: Record<string, Effort> = {};
+  for (const [agentName, effortName] of Object.entries(raw)) {
+    // PI_EFFORTS is a superset of CLAUDE_EFFORTS, but check the union
+    // explicitly so the vocabularies may diverge without silent breakage.
+    if (!isEffort("pi", effortName) && !isEffort("claude", effortName)) {
+      throw new CqConfigError(
+        `agent_efforts["${agentName}"] = "${effortName}" is not a valid effort (expected ${PI_EFFORTS.join(" | ")})`,
+      );
+    }
+    result[agentName] = effortName;
   }
   return result;
 }
@@ -485,15 +521,51 @@ export function tierModel(
 }
 
 /**
+ * Apply the `[agent_efforts]` per-agent effort override to a resolved token
+ * (Q254).
+ *
+ * ORTHOGONAL to `[agent_tiers]`: the tier axis picks the MODEL; this axis
+ * overrides the resolved token's EFFORT. Semantics:
+ *  - `[agent_efforts]` has an entry for `agentName` -> the returned token's
+ *    `effort` IS that override (override wins over the tier token's
+ *    `:<effort>` suffix, including when the suffix is absent);
+ *  - no entry -> `token` is returned unchanged (tier token effort applies).
+ *
+ * FAIL FAST: the override is validated against the RESOLVED token's harness
+ * via {@link isEffort} — an effort outside that harness's vocabulary (e.g.
+ * `"off"` for a claude-resolved agent) throws a precise CqConfigError naming
+ * the agent, the bad effort, and the harness's legal set.
+ */
+export function applyAgentEffort(
+  config: CqConfig,
+  agentName: string,
+  token: ReviewerToken,
+): ReviewerToken {
+  const override = config.agentEfforts[agentName];
+  if (override === undefined) {
+    return token;
+  }
+  if (!isEffort(token.harness, override)) {
+    throw new CqConfigError(
+      `agent_efforts["${agentName}"] = "${override}" is not a valid effort for harness "${token.harness}" (legal: ${legalEfforts(token.harness)})`,
+    );
+  }
+  return { ...token, effort: override };
+}
+
+/**
  * Resolve a named agent end-to-end to the token it should run at.
  *
  * Pipeline: agent-name -> {@link resolveAgentTier} (via `[agent_tiers]`,
  * falling back to `DEFAULT_TIER`) -> {@link tierModel} (the one model the
- * `[tiers]` map assigns to that tier). No candidate pool, no tie-break —
- * `[tiers]` names the model directly, so `[aliases]` order is irrelevant.
+ * `[tiers]` map assigns to that tier) -> {@link applyAgentEffort} (the
+ * `[agent_efforts]` per-agent effort override, Q254). No candidate pool, no
+ * tie-break — `[tiers]` names the model directly, so `[aliases]` order is
+ * irrelevant.
  *
  * Throws a precise `CqConfigError` when `[tiers]` does not configure the
- * agent's tier (including the case where `[tiers]` is absent).
+ * agent's tier (including the case where `[tiers]` is absent), or when the
+ * agent's `[agent_efforts]` override is invalid for the resolved harness.
  */
 export function resolveAgentModel(
   config: CqConfig,
@@ -506,7 +578,7 @@ export function resolveAgentModel(
       `cannot resolve a model for agent "${agentName}": [tiers] configures no model for tier "${tier}"`,
     );
   }
-  return token;
+  return applyAgentEffort(config, agentName, token);
 }
 
 /**

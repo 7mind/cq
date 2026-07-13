@@ -170,6 +170,14 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     expect(config.agentTiers).not.toBeNull();
   });
 
+  it("[agent_efforts] block is COMMENTED-OUT/inert — agentEfforts resolves to {} (T518/Q254)", () => {
+    // The template documents [agent_efforts] as a commented-out example; if a
+    // future edit uncomments it (silently overriding an agent's effort), this
+    // fails against the REAL exported constant.
+    const config = parseConfig(CQ_TOML_TEMPLATE);
+    expect(config.agentEfforts).toEqual({});
+  });
+
   it("[ledger] block is COMMENTED-OUT/inert — backend resolves to fs (ledger null)", () => {
     // Guards the T349 acceptance against the REAL exported constant: if a future
     // edit uncomments the template's [ledger] block (silently activating
@@ -216,6 +224,11 @@ describe("cq.toml.example active model set equals CQ_TOML_TEMPLATE (T331/T440)",
     const config = parseConfig(readFileSync(EXAMPLE_PATH, "utf8"));
     const formatted = resolvePlanners(config).map(formatReviewerToken);
     expect(formatted).toEqual(EXPECTED_PANEL);
+  });
+
+  it("cq.toml.example [agent_efforts] block is COMMENTED-OUT/inert — agentEfforts is {} (T518/Q254)", () => {
+    const config = parseConfig(readFileSync(EXAMPLE_PATH, "utf8"));
+    expect(config.agentEfforts).toEqual({});
   });
 
   it("cq.toml.example [ledger] block is COMMENTED-OUT/inert — backend resolves to fs", () => {

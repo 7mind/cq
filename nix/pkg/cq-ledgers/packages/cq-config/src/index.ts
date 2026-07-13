@@ -43,6 +43,7 @@ export {
   resolvePlanners,
   resolveAgentTier,
   tierModel,
+  applyAgentEffort,
   resolveAgentModel,
   loadConfig,
 } from "./config.js";
