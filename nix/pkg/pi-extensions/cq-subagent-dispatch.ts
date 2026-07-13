@@ -172,11 +172,12 @@ function resolveCqConfigPath(cwd: string): string {
 // MIRROR of @cq/config (packages/cq-config/src/types.ts PI_EFFORTS /
 // CLAUDE_EFFORTS) — keep in sync. Copied, NOT imported (standalone store-path
 // extension outside the cq-ledgers workspace). These are the closed
-// per-harness vocabularies of the trailing `:<effort>` suffix; pi's set
-// matches the pi CLI's `--thinking` levels (off/minimal/low/medium/high/xhigh),
-// which is the same vocabulary the `--model provider/model:<effort>` shorthand
-// accepts.
-const PI_EFFORTS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+// per-harness vocabularies of the trailing `:<effort>` suffix, spanning the
+// union of what pi's providers accept: off/minimal remain for providers using
+// those spellings, and none/max cover the GPT-5.6 reasoning-effort range
+// (none/low/medium/high/xhigh/max) — all accepted by the
+// `--model provider/model:<effort>` shorthand.
+const PI_EFFORTS = new Set(["off", "none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const CLAUDE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
 /**

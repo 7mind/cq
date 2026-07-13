@@ -23,9 +23,21 @@
  *     effort as the `<provider>/<model>:<effort>` shorthand (NO '--thinking'),
  *     claude records effort inertly with a parent fallback, and the lenient
  *     unsupported-effort policy (null, not throw) diverges from @cq/config.
+ *
+ * (5) D79 (5c) extension/config PARITY test (T511): reads the ACTUAL source of
+ *     nix/pkg/pi-extensions/cq-subagent-dispatch.ts (not a hand-typed replica)
+ *     and extracts its live PI_EFFORTS / CLAUDE_EFFORTS Set literals, asserting
+ *     set-EQUALITY against @cq/config's exported PI_EFFORTS / CLAUDE_EFFORTS —
+ *     so drift on EITHER side (the extension forgetting a new effort, or
+ *     @cq/config gaining one the extension doesn't mirror) fails a test. Also
+ *     asserts the working dispatch path (replicaBuildModelArgs) emits
+ *     ':none'/':max' onto the child --model, without regressing the existing
+ *     R342 emission for off/minimal/low/medium/high/xhigh.
  */
 
 import { describe, it, expect } from "bun:test";
+import * as path from "node:path";
+import { readFileSync } from "node:fs";
 import {
   parseConfig,
   parseReviewerToken,
@@ -33,6 +45,8 @@ import {
   resolvePlanners,
   resolveAgentModel,
   CqConfigError,
+  PI_EFFORTS,
+  CLAUDE_EFFORTS,
 } from "../src/index.js";
 
 // ── (1) End-to-end resolve test ──────────────────────────────────────────────
@@ -510,4 +524,107 @@ describe("Q165 pi-extension effort mirror (T294, R342)", () => {
       CqConfigError,
     );
   });
+});
+
+// ── (5) D79 (5c) extension/config effort-vocabulary PARITY test (T511) ──────
+//
+// Unlike the hand-typed PI_EFFORTS_REPLICA/CLAUDE_EFFORTS_REPLICA above (which
+// are literals maintained BY HAND and can themselves drift from the real
+// extension file), this test reads the ACTUAL SOURCE TEXT of
+// nix/pkg/pi-extensions/cq-subagent-dispatch.ts and extracts its live
+// `const PI_EFFORTS = new Set([...])` / `const CLAUDE_EFFORTS = new Set([...])`
+// literals via a source-text regex, then asserts set-EQUALITY against
+// @cq/config's exported PI_EFFORTS / CLAUDE_EFFORTS. Any future drift — the
+// extension forgetting a new effort @cq/config gains, or vice versa — fails
+// this test, closing the D79 gap (a pi :none/:max token validated in
+// @cq/config but diverged at extension dispatch).
+
+const REPO_ROOT = path.resolve(import.meta.dir, "../../../../../../");
+const EXTENSION_PATH = path.join(
+  REPO_ROOT,
+  "nix/pkg/pi-extensions/cq-subagent-dispatch.ts",
+);
+
+/**
+ * Extract the string literals of a `const <name> = new Set([...]);` (or
+ * `new Set<string>([...])`) declaration from raw TypeScript source text.
+ * Deliberately simple (no TS parser): the extension is read as plain text
+ * because it lives outside the cq-ledgers workspace and cannot be imported.
+ */
+function extractSetLiteral(source: string, constName: string): string[] {
+  const declRe = new RegExp(
+    `const\\s+${constName}\\s*=\\s*new Set(?:<[^>]*>)?\\(\\[([\\s\\S]*?)\\]\\)`,
+  );
+  const match = declRe.exec(source);
+  if (match === null) {
+    throw new Error(
+      `could not find "const ${constName} = new Set([...])" in ${EXTENSION_PATH}`,
+    );
+  }
+  const body = match[1] ?? "";
+  const stringRe = /"([^"]*)"|'([^']*)'/g;
+  const values: string[] = [];
+  let stringMatch: RegExpExecArray | null;
+  while ((stringMatch = stringRe.exec(body)) !== null) {
+    values.push(stringMatch[1] ?? stringMatch[2] ?? "");
+  }
+  return values;
+}
+
+describe("D79 (5c) extension/@cq-config effort-vocabulary parity (T511)", () => {
+  const extensionSource = readFileSync(EXTENSION_PATH, "utf8");
+  const extensionPiEfforts = new Set(
+    extractSetLiteral(extensionSource, "PI_EFFORTS"),
+  );
+  const extensionClaudeEfforts = new Set(
+    extractSetLiteral(extensionSource, "CLAUDE_EFFORTS"),
+  );
+
+  it("extension PI_EFFORTS Set equals @cq/config PI_EFFORTS (no drift either way)", () => {
+    const configPiEfforts = new Set<string>(PI_EFFORTS);
+    expect(extensionPiEfforts).toEqual(configPiEfforts);
+  });
+
+  it("extension CLAUDE_EFFORTS Set equals @cq/config CLAUDE_EFFORTS (no drift either way)", () => {
+    const configClaudeEfforts = new Set<string>(CLAUDE_EFFORTS);
+    expect(extensionClaudeEfforts).toEqual(configClaudeEfforts);
+  });
+
+  it("extension PI_EFFORTS includes 'none' and 'max' (the D79 gap)", () => {
+    expect(extensionPiEfforts.has("none")).toBe(true);
+    expect(extensionPiEfforts.has("max")).toBe(true);
+  });
+
+  // (b) working dispatch path: pi tokens with :none / :max resolve to child
+  // --model '<model>:none' / '<model>:max' — mirrors R342 emission
+  // (cq-subagent-dispatch.ts L756-768) via the same replica helpers used in
+  // section (4), which already carry 'none'/'max' in their literal sets.
+  // DO NOT regress the existing off/minimal/low/medium/high/xhigh emission.
+  const PI_MODEL_EFFORT_CASES = [
+    "off",
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+  ];
+  for (const effort of PI_MODEL_EFFORT_CASES) {
+    it(`pi:ollama-cloud/minimax-m3:${effort} resolves child --model to 'minimax-m3:${effort}'`, () => {
+      const token = replicaParseCqToken(`pi:ollama-cloud/minimax-m3:${effort}`);
+      expect(token).not.toBeNull();
+      expect(token!.effort).toBe(effort);
+
+      const child = replicaTokenToChildModel(token!);
+      expect(child).not.toBeNull();
+      expect(child!.effort).toBe(effort);
+
+      const modelArgs = replicaBuildModelArgs(child);
+      const modelIdx = modelArgs.indexOf("--model");
+      expect(modelIdx).toBeGreaterThanOrEqual(0);
+      expect(modelArgs[modelIdx + 1]).toBe(`minimax-m3:${effort}`);
+      expect(modelArgs).not.toContain("--thinking");
+    });
+  }
 });
