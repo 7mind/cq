@@ -52,7 +52,13 @@ planners = ["opus"]
 #       The pi `--model provider/model:effort` shorthand uses this suffix.
 #       `:` is RESERVED in the model name; a model cannot contain `:` (T286, R342).
 #   - claude tokens MUST be: claude:<model>[:<effort>]
-#     The model is the Claude model identifier (e.g. claude-opus-4-8[1m], claude-haiku-4-5-20251001).
+#     The model is the Claude model identifier. For claude, this MUST be one
+#     of the bare family aliases sonnet | opus | haiku | fable (Q252/T509):
+#     the Claude Code Agent tool's per-dispatch `model` override is a closed
+#     4-value enum and rejects full claude-* IDs and [1m]-suffixed variants.
+#     On the Anthropic API opus/sonnet/fable already resolve to the current
+#     family at native 1M context, so no [1m] suffix is needed; haiku is the
+#     200K fast tier.
 #     Provider qualifiers (/) are NOT permitted on claude tokens and will
 #     be rejected as a CONFIG ERROR.
 #     EFFORT SUFFIX (optional): append `:<effort>` to encode dispatch effort.
@@ -69,9 +75,9 @@ planners = ["opus"]
 # Reference: D36 (pi provider routing), T286 (effort suffix), T438 (decoupling), T440 (opus-only panels)
 [aliases]
   # Active Claude trio (all named by [tiers] below; only opus is on the panels):
-  opus   = "claude:claude-opus-4-8[1m]"          # frontier tier — on reviewers+planners panels
-  sonnet = "claude:claude-sonnet-5"               # standard tier — off-panel, available per-role
-  haiku  = "claude:claude-haiku-4-5-20251001"     # fast tier    — off-panel, available per-role
+  opus   = "claude:opus"          # frontier tier — on reviewers+planners panels
+  sonnet = "claude:sonnet"        # standard tier — off-panel, available per-role
+  haiku  = "claude:haiku"         # fast tier    — off-panel, available per-role
 
   # Inactive aliases (defined here for reference; add to reviewers/planners
   # above to activate — also add the matching [tiers] entry below to make a
@@ -79,9 +85,9 @@ planners = ["opus"]
   codex      = "pi:grok-build/grok-build"
   grok       = "pi:grok-build/grok-build"
   grok-xhigh = "pi:grok-build/grok-build:xhigh"
-  opus-high  = "claude:claude-opus-4-8[1m]:high"
+  opus-high  = "claude:opus:high"
   minimax    = "pi:ollama-cloud/minimax-m3"
-  fable      = "claude:claude-fable-5"       # opt-in frontier alias — add a [tiers] entry to activate
+  fable      = "claude:fable"       # opt-in frontier alias — add a [tiers] entry to activate
 
 # [tiers] — DISPATCH MAP: each tier (fast|standard|frontier) names the ONE model
 # an agent of that tier runs.  Per-role resolution ([agent_tiers] -> tier ->
@@ -101,11 +107,11 @@ planners = ["opus"]
   # tier -> ONE model. The VALUE is an [aliases] name or a bare
   # <harness>:<model> token. TOML keys are unique, so a tier names one model;
   # a single model MAY serve several tiers (e.g. frontier and standard = "opus").
-  frontier = "opus"                          # alias value -> claude:claude-opus-4-8[1m]
-  standard = "sonnet"                        # alias value -> claude:claude-sonnet-5
-  fast     = "haiku"                         # alias value -> claude:claude-haiku-4-5-20251001
+  frontier = "opus"                          # alias value -> claude:opus
+  standard = "sonnet"                        # alias value -> claude:sonnet
+  fast     = "haiku"                         # alias value -> claude:haiku
   # To dispatch a full token directly (no alias), use the token as the VALUE:
-  #   frontier = "claude:claude-opus-4-8[1m]:high"
+  #   frontier = "claude:opus:high"
 
 # [agent_tiers] — Map each named cq agent to its dispatch tier.
 # An agent with NO entry here falls back to the "standard" tier.
