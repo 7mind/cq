@@ -8,7 +8,6 @@
   ripgrep,
   fd,
   makeBinaryWrapper,
-  stdenvNoCC,
 }:
 buildNpmPackage (finalAttrs: {
   pname = "pi-coding-agent";
@@ -67,15 +66,6 @@ buildNpmPackage (finalAttrs: {
 
     # Clean up now-dangling .bin symlinks
     find "$nm/.bin" -xtype l -delete
-  ''
-  + lib.optionalString stdenvNoCC.hostPlatform.isDarwin ''
-    # Remove foreign Linux binaries that make audit-tmpdir try to inspect ELF
-    # RPATHs with patchelf
-    find "$nm/koffi/build/koffi" -mindepth 1 -maxdepth 1 -type d \
-      ! -name 'darwin_*' -exec rm -r {} +
-    rm -rf \
-      "$nm/@anthropic-ai/sandbox-runtime/dist/vendor/seccomp" \
-      "$nm/@anthropic-ai/sandbox-runtime/vendor/seccomp"
   '';
 
   postFixup = "wrapProgram $out/bin/pi --prefix PATH : ${
