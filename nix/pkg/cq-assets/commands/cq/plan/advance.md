@@ -230,12 +230,21 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         attaches under). Every planner emits this SAME shape, so candidates are
         directly comparable.
         - `claude:<model>` → an `Agent` tool call with
-          `subagent_type: "plan-advance"`, passing the goal id AND **explicitly
+          `subagent_type: "plan-advance"`, `model: <the resolved planner token's
+          bare-alias model, VERBATIM>`, passing the goal id AND **explicitly
           requesting CANDIDATE mode** per T14 (state it is "one of N parallel
           candidate planners" / "candidate mode" / "generate-N-then-judge"). In
           that mode the native planner grounds itself read-only and RETURNS its
           candidate-plan JSON as a fenced `json` block, writing **NOTHING** to any
-          ledger and emitting no status token. Capture the parsed candidate.
+          ledger and emitting no status token. Capture the parsed candidate. The
+          token's `effort` is **N/A at `Agent` dispatch** — the Agent tool
+          exposes no per-dispatch effort/reasoning param (T510; `effort` exists
+          only as subagent-definition frontmatter) — record it for
+          provenance/display only. **Model-scope precedence (Q253/R602):** in
+          this CONFIGURED multi-planner path, the `[harness.claude].planners`
+          PANEL config is what governs the `plan-advance` model dispatched here
+          — `[agent_tiers]` governs ONLY the single-planner fallback (sub-step
+          1a) and the agentsCatalogue display, never this panel path.
         - `pi:<model>` → shell out via `Bash` to the `pi` CLI using the confirmed
           **non-interactive** invocation from the **T169 spike (K30)**:
           `env -u CODEX_COMPANION_SESSION_ID -u CLAUDE_PLUGIN_DATA pi -p --no-tools --no-session --provider <P> --model <M> '<prompt>' </dev/null`
@@ -243,7 +252,11 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
           emits the bare reply on stdout). Concrete provider/model pairs from K30:
           grok-build → `--provider grok-build --model grok-build`; gpt-5.5 →
           `--provider openai-codex --model gpt-5.5`. Both providers are
-          OAuth-pre-authenticated. **The `env -u CODEX_COMPANION_SESSION_ID -u
+          OAuth-pre-authenticated. When the resolved planner token carries an
+          `effort`, emit it as the R342 shorthand — `--model
+          <provider>/<model>:<effort>` (e.g. `--model
+          openai-codex/gpt-5.5:xhigh`); with no effort, the bare `--model
+          <provider>/<model>` form. **The `env -u CODEX_COMPANION_SESSION_ID -u
           CLAUDE_PLUGIN_DATA … </dev/null` wrapper is REQUIRED, not cosmetic:**
           launched from inside this session pi inherits the codex-inline
           companion env and BLOCKS INDEFINITELY on the companion handshake when
@@ -392,12 +405,22 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       (sub-step 2b-iii).
       - **i. Per-reviewer launch.** For each active reviewer token:
         - `claude:<model>` → an `Agent` tool call with
-          `subagent_type: "plan-reviewer"`, passing the goal id AND instructing
-          it to run in **configured mode** per T173: it RETURNS its verdict JSON
-          and writes **NOTHING** to the `reviews` ledger (in configured mode the
-          native reviewer is one of several, so it never writes — the only
-          ledger writer is the orchestrator, sub-step 2b-iii). Capture the
-          returned `{ summary, verdict, new_questions, criticism, defects }`.
+          `subagent_type: "plan-reviewer"`, `model: <the resolved reviewer
+          token's bare-alias model, VERBATIM>`, passing the goal id AND
+          instructing it to run in **configured mode** per T173: it RETURNS its
+          verdict JSON and writes **NOTHING** to the `reviews` ledger (in
+          configured mode the native reviewer is one of several, so it never
+          writes — the only ledger writer is the orchestrator, sub-step
+          2b-iii). Capture the returned `{ summary, verdict, new_questions,
+          criticism, defects }`. The token's `effort` is **N/A at `Agent`
+          dispatch** — the Agent tool exposes no per-dispatch effort/reasoning
+          param (T510; `effort` exists only as subagent-definition frontmatter)
+          — record it for provenance/display only. **Model-scope precedence
+          (Q253/R602):** in this CONFIGURED multi-reviewer path, the
+          `[harness.claude].reviewers` PANEL config is what governs the
+          `plan-reviewer` model dispatched here — `[agent_tiers]` governs ONLY
+          the single-reviewer fallback (sub-step 2a) and the agentsCatalogue
+          display, never this panel path.
         - `pi:<model>` → shell out via `Bash` to the `pi` CLI using the
           confirmed **non-interactive** invocation from the **T169 spike (K30)**:
           `env -u CODEX_COMPANION_SESSION_ID -u CLAUDE_PLUGIN_DATA pi -p --no-tools --no-session --provider <P> --model <M> '<prompt>' </dev/null`
@@ -405,7 +428,11 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
           `--mode text` emits the bare reply on stdout). Concrete provider/model
           pairs from K30: grok-build → `--provider grok-build --model grok-build`;
           gpt-5.5 → `--provider openai-codex --model gpt-5.5`. Both providers are
-          OAuth-pre-authenticated. **The `env -u CODEX_COMPANION_SESSION_ID -u
+          OAuth-pre-authenticated. When the resolved reviewer token carries an
+          `effort`, emit it as the R342 shorthand — `--model
+          <provider>/<model>:<effort>` (e.g. `--model
+          openai-codex/gpt-5.5:xhigh`); with no effort, the bare `--model
+          <provider>/<model>` form. **The `env -u CODEX_COMPANION_SESSION_ID -u
           CLAUDE_PLUGIN_DATA … </dev/null` wrapper is REQUIRED** (same reason as
           the planner shellout in sub-step 1b-i: pi otherwise blocks indefinitely
           on the codex-inline companion handshake; stripping the env makes it
