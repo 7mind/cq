@@ -28,25 +28,25 @@
   socat,
 }:
 let
-  version = "2.1.197";
+  version = "2.1.207";
 
   # Skip the umbrella stub; fetch the per-platform native pkg directly (see header).
   sources = {
     "x86_64-linux" = {
       pkg = "claude-code-linux-x64";
-      hash = "sha256-60/O1PmVureyV2IhRXMRFbRurvnozDTqGeZp0zHeiZ0=";
+      hash = "sha256-FCaeJgmmEW5HpnkOQCE5Ei9junpMhWEb7rJQczoe4/U=";
     };
     "aarch64-linux" = {
       pkg = "claude-code-linux-arm64";
-      hash = "sha256-l9URB6GIE9NGAoIK/U/zOjhYP8vVTv2sFufnaFPJSD0=";
+      hash = "sha256-B4abmwPnBq8KJ6yZwhnWrVMOYEgUSdpI36G+Sf+9wss=";
     };
     "x86_64-darwin" = {
       pkg = "claude-code-darwin-x64";
-      hash = "sha256-g7lFFo2TdvwQrVOCgJC5K4xTtrZqTYegtFo+Xi21RLM=";
+      hash = "sha256-BqxPqUUHx/SzRfgouikQBgWDVQ3+xDYS0HNJnoZG9K0=";
     };
     "aarch64-darwin" = {
       pkg = "claude-code-darwin-arm64";
-      hash = "sha256-pzrMTwr6OiNb7NpCd5Hcx4Ly3z6ymJF5MJeAI0+kjag=";
+      hash = "sha256-tq7MckPNWJDProH0WCjmEXpR0UNHXud8W27LIweEkVQ=";
     };
   };
 

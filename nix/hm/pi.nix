@@ -288,10 +288,14 @@ in
           hideThinkingBlock = true;
           enableInstallTelemetry = false;
           # Pi packages (installed from npm on first run):
-          # - pi-search-hub: unified web_search/web_read over 12 backends with
+          # - pi-search-hub: unified web_search/web_read over 19 backends with
           #   auto-fallback (https://pi.dev/packages/pi-search-hub). Keys via
           #   the sandbox secretSessionVariables; declaratively configured at
           #   ~/.pi/agent/extensions/search.json (see searchHubConfig).
+          #   PINNED to 2.8.0: patch-search-hub-backends.ts mirrors upstream's
+          #   credentials.ts FALLBACK_ENV_MAP; a floating install could drift
+          #   ahead of the mirror and silently trim env-enabled backends from
+          #   the rewritten enum. Bump the pin and the mirror together.
           # - pi-anthropic-auth: Claude Pro/Max OAuth compat; activates only on
           #   Anthropic OAuth, passes everything else through (`/login anthropic`).
           # - pi-xai: xAI OAuth provider (`grok-build`) with Grok models/tools
@@ -332,16 +336,17 @@ in
           #   Self-contained (no runtime deps; host API via peer/alias).
           # (pi-mcp-adapter is added separately by enableMcpIntegration.)
           packages = [
-            "npm:pi-search-hub"
+            "npm:pi-search-hub@2.8.0"
             "npm:pi-ollama-cloud"
             "npm:@sinamtz/pi-minimax-provider"
             "npm:pi-xai"
             "npm:@estebanforge/pi-glm-tweaks"
           ];
           extensions = [
-            # pi-search-hub advertises a static all-12-backend list in the
-            # web_search description + `backend` enum regardless of what's
-            # configured, so the model picks unconfigured backends (which fail).
+            # pi-search-hub advertises a static all-backends list (19 in
+            # 2.8.0) in the web_search description + `backend` enum regardless
+            # of what's configured, so the model picks unconfigured backends
+            # (which fail). Upstream issue #13 was closed without fixing this.
             # This rewrites the web_search tool definition per request to list
             # only the backends actually active per the live search.json. See
             # the extension header and the upstream bug-report draft.

@@ -4,10 +4,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // patch-search-hub-backends.ts
 //
-// Defect (pi-search-hub): the `web_search` tool advertises a STATIC list of all
-// 12 backends in both its `description` and its `backend` parameter enum
-// (search-hub.ts registers them hardcoded), regardless of which backends are
-// actually enabled in search.json. So the model believes it may request, e.g.,
+// Defect (pi-search-hub): the `web_search` tool advertises a STATIC list of
+// all backends (19 as of v2.8.0) in both its `description` and its `backend`
+// parameter enum (search-hub.ts registers them hardcoded), regardless of which
+// backends are actually enabled in search.json. So the model believes it may request, e.g.,
 // `backend: "tavily"` when tavily is unconfigured — those calls then fail, and
 // it cannot tell the configured set from the tool definition alone. Bug report:
 // docs/drafts/20260608-1016-pi-search-hub-static-backend-list-bug-report.md.
@@ -35,17 +35,24 @@ const CONFIG_TTL_MS = 10_000;
 const DEFAULT_BACKEND = "duckduckgo";
 
 // Mirror of pi-search-hub credentials.ts FALLBACK_ENV_MAP (backend -> env var
-// whose presence auto-enables that backend). Keep in lockstep with upstream.
+// whose presence auto-enables that backend). Keep in lockstep with upstream —
+// the npm: package in nix/hm/pi.nix is pinned to the mirrored version (2.8.0);
+// bump both together.
 const FALLBACK_ENV_MAP: Record<string, string> = {
   jina: "SEARCH_JINA_API_KEY",
   serper: "SEARCH_SERPER_API_KEY",
   tavily: "SEARCH_TAVILY_API_KEY",
   exa: "SEARCH_EXA_API_KEY",
   brave: "SEARCH_BRAVE_API_KEY",
+  "brave-llm": "SEARCH_BRAVE_API_KEY",
   langsearch: "SEARCH_LANGSEARCH_API_KEY",
   firecrawl: "SEARCH_FIRECRAWL_API_KEY",
   websearchapi: "SEARCH_WEBSEARCHAPI_API_KEY",
   perplexity: "SEARCH_PERPLEXITY_API_KEY",
+  sofya: "SEARCH_SOFYA_API_KEY",
+  youcom: "SEARCH_YOUCOM_API_KEY",
+  linkup: "SEARCH_LINKUP_API_KEY",
+  fastcrw: "SEARCH_FASTCRW_API_KEY",
 };
 
 interface BackendCfg {
