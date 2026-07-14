@@ -163,9 +163,9 @@ describe("immediateWriteTransaction", () => {
       "utf8",
     );
     // One call site per mutation: updateMilestone, updateItem, createItem,
-    // createMilestone, createLedger, reopenItem.
+    // createMilestone, createLedger, reopenItem, unarchiveItem, archiveMilestone.
     const calls = storeSrc.match(/immediateWriteTransaction\(this\.db\(\)/g) ?? [];
-    expect(calls.length).toBe(6);
+    expect(calls.length).toBe(8);
     // No ad-hoc write transactions bypassing the helper in the store: the
     // only BEGIN the store may issue itself is none at all (comments aside).
     expect(storeSrc).not.toMatch(/exec\("BEGIN/);

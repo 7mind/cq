@@ -17,14 +17,14 @@
  * Task split (scope discipline):
  *  - T526: constructor, init() (open + DDL + canonical-ledger
  *    bootstrap + milestones bootstrap group + M-AMBIENT + schema-divergence
- *    detection with the BACKUP action stubbed), the synchronous read surface
+ *    detection — the BACKUP action itself lands in T529), the synchronous read surface
  *    (enumerate/fetch/fetchItem/fetchMilestone/listMilestoneItems/snapshot/
  *    search), invalidate() (row reads need none — no-op), dispose().
  *  - T527: mutations (createItem/updateItem/createMilestone/
  *    createLedger/updateMilestone/reopenItem) — each ONE `BEGIN IMMEDIATE`
  *    transaction (bounded busy retry, connection.ts) touching only the
  *    affected rows, with the domain guards REUSED from core.ts.
- *  - T528 (this task): the derived search index (ftsSearch) + the
+ *  - T528: the derived search index (ftsSearch) + the
  *    index-refresh half of invalidate() + the post-commit index update in
  *    fireMutation. The index is the SAME in-memory `LedgerSearchIndex` the
  *    fs/in-memory stores use — a derived READ-side projection of the
@@ -32,11 +32,16 @@
  *    mutation) — so every query semantic (parseQuery qualifiers, fuzzy,
  *    prefix, field boost, matchedFields, limit) is shared verbatim, and no
  *    write ever re-serializes a ledger (K102).
- *  - T529: archives (archiveMilestone/unarchiveItem/fetchArchive) + the
- *    divergence backup-reinit action.
+ *  - T529 (this task): archives (archiveMilestone/unarchiveItem/fetchArchive),
+ *    row-natively reusing the core.ts detach/reattach guards against a FULL
+ *    `Ledger` materialised by `loadLedger` (terminal-item verification,
+ *    bootstrap/M-AMBIENT refusal, D-COHERENCE hook-firing order, the derived
+ *    index's archived-bucket transition), plus the real schema-divergence
+ *    BACKUP action (`VACUUM INTO` a timestamped sibling .db file).
  *  - T530: createLedgerStore xdg wiring.
  */
 
+import * as path from "node:path";
 import type { Database } from "bun:sqlite";
 import type {
   ArchivePointer,
@@ -71,6 +76,9 @@ import { buildSnapshot } from "../../snapshot.js";
 import {
   applyCreateItem,
   applyCreateMilestoneItem,
+  applyDetachMilestoneGroup,
+  applyDetachMilestoneItem,
+  applyReattachItem,
   applyReopenItem,
   applyUpdateItem,
   applyUpdateMilestoneItem,
@@ -240,70 +248,119 @@ export class SqliteLedgerStore implements LedgerStore {
       else divergent.push(canonical.name);
     }
 
-    if (divergent.length === 0) {
+    if (divergent.length > 0 && this.onSchemaDivergence === "abort") {
+      // Opt-out: refuse to start so the divergence is loud + operator-handled.
+      // No backup — parity with AbstractLedgerStore (backupAndReinit is only
+      // reached on the default policy).
+      db.close();
+      throw new BootstrapViolationError(
+        `existing ${divergent.join(", ")} ledger(s) have a different schema than their canonical bootstrap schema`,
+      );
+    }
+
+    if (divergent.length > 0) {
+      // Default policy — T529 divergence BACKUP action (parity with
+      // AbstractLedgerStore.backupAndReinit): VACUUM INTO a byte-complete
+      // snapshot of the WHOLE db (every table, not just the divergent
+      // ledger's) to a timestamped sibling file BEFORE any row is touched,
+      // emit the stderr WARNING naming that locator, then wipe every row and
+      // reseed fresh canonical state (same shape as Pass 2 below).
+      const backupPath = this.backupDivergentState(db);
+      process.stderr.write(
+        `WARNING: LedgerStore divergence detected — prior state backed up to ${backupPath}\n`,
+      );
+      db.transaction(() => {
+        db.exec("DELETE FROM archived_items");
+        db.exec("DELETE FROM archive_pointers");
+        db.exec("DELETE FROM items");
+        db.exec("DELETE FROM groups");
+        db.exec("DELETE FROM ledgers");
+      })();
+      this.bootstrapCanonicalRows(
+        db,
+        CANONICAL_LEDGERS.map((c) => c.name),
+        [],
+      );
+    } else {
       // Pass 2 — bootstrap writes, atomically: provision missing canonical
       // ledgers, apply widening upgrades, seed the milestones bootstrap
       // active group + the immortal M-AMBIENT milestone (parity with
       // seedBootstrapGroup + applyEnsureAmbientMilestone).
-      db.transaction(() => {
-        const insertLedger = db.query(
-          "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
-        );
-        const upgradeSchema = db.query("UPDATE ledgers SET schema_json = ? WHERE name = ?");
-        const canonSchema = new Map(CANONICAL_LEDGERS.map((c) => [c.name, c.schema]));
-        for (const name of missing) {
-          insertLedger.run(name, JSON.stringify(canonSchema.get(name)));
-        }
-        for (const name of widened) {
-          upgradeSchema.run(JSON.stringify(canonSchema.get(name)), name);
-        }
-        db.query(
-          "INSERT OR IGNORE INTO groups (ledger, id, title, description) VALUES (?, ?, ?, '')",
-        ).run(MILESTONES_LEDGER, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_ACTIVE_GROUP_TITLE);
-        const ambient = db
-          .query("SELECT id FROM items WHERE ledger = ? AND id = ?")
-          .get(MILESTONES_LEDGER, MILESTONES_AMBIENT_ID);
-        if (ambient === null) {
-          const now = this.now();
-          db.query(
-            `INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
-             VALUES (?, ?, ?, 'open', ?, ?, ?, NULL, NULL)`,
-          ).run(
-            MILESTONES_LEDGER,
-            MILESTONES_AMBIENT_ID,
-            MILESTONES_ACTIVE_GROUP_ID,
-            JSON.stringify({ title: "ambient" }),
-            now,
-            now,
-          );
-        }
-      })();
-    }
-
-    if (divergent.length > 0) {
-      db.close();
-      if (this.onSchemaDivergence === "abort") {
-        throw new BootstrapViolationError(
-          `existing ${divergent.join(", ")} ledger(s) have a different schema than their canonical bootstrap schema`,
-        );
-      }
-      // TODO(T529): the backup-reinit ACTION (back up divergent rows, rewrite
-      // fresh canonical state) for this backend lands in T529.
-      throw new Error(
-        `SqliteLedgerStore: schema-divergence backup-reinit is implemented in T529 (divergent: ${divergent.join(", ")})`,
-      );
+      this.bootstrapCanonicalRows(db, missing, widened);
     }
 
     this.handle = db;
     this.initialised = true;
 
-    // T528: cold-build the derived search index from the committed rows —
-    // one ACTIVE bucket per ledger (archived docs are T529). Guarded per
-    // ledger inside the helper; must stay within the T498 <500ms@10k target
-    // (T531 verifies).
+    // Cold-build the derived search index from the committed rows — one
+    // ACTIVE + one ARCHIVED bucket per ledger. Guarded per ledger inside the
+    // helpers; must stay within the T498 <500ms@10k target (T531 verifies).
     for (const name of this.enumerate()) {
       this.rebuildLedgerIndexActive(name);
+      this.refreshLedgerIndexArchived(name);
     }
+  }
+
+  /**
+   * Bootstrap-write transaction shared by the ordinary Pass-2 path (missing/
+   * widened canonical ledgers only) and the divergence-reinit path (the FULL
+   * canonical set, after every row was wiped): provision the given ledgers
+   * from canon, apply any widening upgrades, and seed the milestones
+   * bootstrap active group + the immortal M-AMBIENT milestone.
+   */
+  private bootstrapCanonicalRows(db: Database, missing: string[], widened: string[]): void {
+    db.transaction(() => {
+      const insertLedger = db.query(
+        "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
+      );
+      const upgradeSchema = db.query("UPDATE ledgers SET schema_json = ? WHERE name = ?");
+      const canonSchema = new Map(CANONICAL_LEDGERS.map((c) => [c.name, c.schema]));
+      for (const name of missing) {
+        insertLedger.run(name, JSON.stringify(canonSchema.get(name)));
+      }
+      for (const name of widened) {
+        upgradeSchema.run(JSON.stringify(canonSchema.get(name)), name);
+      }
+      db.query(
+        "INSERT OR IGNORE INTO groups (ledger, id, title, description) VALUES (?, ?, ?, '')",
+      ).run(MILESTONES_LEDGER, MILESTONES_ACTIVE_GROUP_ID, MILESTONES_ACTIVE_GROUP_TITLE);
+      const ambient = db
+        .query("SELECT id FROM items WHERE ledger = ? AND id = ?")
+        .get(MILESTONES_LEDGER, MILESTONES_AMBIENT_ID);
+      if (ambient === null) {
+        const now = this.now();
+        db.query(
+          `INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+           VALUES (?, ?, ?, 'open', ?, ?, ?, NULL, NULL)`,
+        ).run(
+          MILESTONES_LEDGER,
+          MILESTONES_AMBIENT_ID,
+          MILESTONES_ACTIVE_GROUP_ID,
+          JSON.stringify({ title: "ambient" }),
+          now,
+          now,
+        );
+      }
+    })();
+  }
+
+  /**
+   * Divergence BACKUP action (T529, parity with
+   * AbstractLedgerStore.backupAndReinit's byte-level copy): a `VACUUM INTO` a
+   * timestamped sibling of `dbPath` — a byte-complete point-in-time snapshot
+   * of the WHOLE database (every ledger's rows, not just the divergent one),
+   * taken BEFORE any row is touched. Must run OUTSIDE any transaction (VACUUM
+   * refuses to run inside one); `db` is not mid-transaction at this call site.
+   * Returns the backup file's absolute path (the locator named in the stderr
+   * WARNING).
+   */
+  private backupDivergentState(db: Database): string {
+    const ts = this.now().replace(/:/g, "-");
+    const ext = path.extname(this.dbPath);
+    const base = ext.length > 0 ? this.dbPath.slice(0, -ext.length) : this.dbPath;
+    const backupPath = `${base}.backup-${ts}${ext}`;
+    db.query("VACUUM INTO ?").run(backupPath);
+    return backupPath;
   }
 
   /**
@@ -404,18 +461,50 @@ export class SqliteLedgerStore implements LedgerStore {
       .map((h) => ({ ...h, item: cloneItem(h.item) }));
   }
 
-  async fetchArchive(_ledgerId: string, _archiveId: string): Promise<ArchiveContent> {
-    throw new Error("SqliteLedgerStore.fetchArchive: implemented in T529");
+  /**
+   * Materialise the `ArchiveContent` union from the archived rows (T529):
+   * a whole detached milestone-GROUP for a non-milestones ledger, or the
+   * single detached milestone-ITEM for the milestones ledger — mirroring
+   * AbstractLedgerStore.fetchArchive's `kind` discrimination, but reading
+   * `archived_items` rows instead of parsing an archive markdown file.
+   */
+  async fetchArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
+    return this.read(() => {
+      this.assertLedgerExists(ledgerId);
+      const ptr = this.db()
+        .query("SELECT id FROM archive_pointers WHERE ledger = ? AND id = ?")
+        .get(ledgerId, archiveId);
+      if (ptr === null) {
+        throw new LedgerError(`archive ${archiveId} not found in ledger ${ledgerId}`);
+      }
+      const rows = this.db()
+        .query(
+          "SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM archived_items WHERE ledger = ? AND pointer_id = ? ORDER BY rowid",
+        )
+        .all(ledgerId, archiveId) as ItemRow[];
+      if (ledgerId === MILESTONES_LEDGER) {
+        const row = rows[0];
+        if (row === undefined) {
+          throw new LedgerError(`archive ${archiveId} in ledger ${ledgerId} has no item`);
+        }
+        return { kind: "item", item: rowToItem(row) };
+      }
+      return {
+        kind: "group",
+        milestone: { id: archiveId, title: "", description: "", items: rows.map(rowToItem) },
+      };
+    });
   }
 
   /**
    * The ROW read surface needs no invalidation (every read re-queries the db,
    * so a peer process's committed write is observed on the next read). The
    * derived search index is this backend's ONLY cache: rebuild the affected
-   * ledger's active bucket from the current committed rows so a peer commit —
-   * surfaced by the T530 data_version coherence watcher — becomes visible to
-   * ftsSearch. Unknown ledger ids are a no-op (any stale docs are dropped),
-   * matching the abstract-suite contract.
+   * ledger's active AND archived buckets from the current committed rows so a
+   * peer commit — surfaced by the T530 data_version coherence watcher —
+   * becomes visible to ftsSearch (a peer's `archiveMilestone`/`unarchiveItem`
+   * moves docs between the two buckets). Unknown ledger ids are a no-op (any
+   * stale docs are dropped), matching the abstract-suite contract.
    */
   async invalidate(ledgerId: string): Promise<void> {
     this.assertInit();
@@ -425,6 +514,7 @@ export class SqliteLedgerStore implements LedgerStore {
       return;
     }
     this.rebuildLedgerIndexActive(ledgerId);
+    this.refreshLedgerIndexArchived(ledgerId);
   }
 
   // ---------------------------------------------------------------------------
@@ -554,16 +644,223 @@ export class SqliteLedgerStore implements LedgerStore {
     return item;
   }
 
+  /**
+   * Un-archive a single item out of an archived milestone-GROUP (Q78),
+   * row-natively: reuses `applyReattachItem` (core.ts) against the FULL
+   * `Ledger` materialised by {@link loadLedger} — the SAME domain guard
+   * (duplicate-id check across the whole ledger, lazy group re-creation) the
+   * fs store uses — then persists the reattached item row, drops the
+   * `archived_items` row, and drops the `archive_pointers` row too when the
+   * group archive becomes empty (parity with AbstractLedgerStore.unarchiveItem).
+   */
   async unarchiveItem(
-    _ledgerId: string,
-    _milestoneId: string,
-    _itemId: string,
+    ledgerId: string,
+    milestoneId: string,
+    itemId: string,
   ): Promise<Item> {
-    throw new Error("SqliteLedgerStore.unarchiveItem: implemented in T529");
+    const isMilestones = ledgerId === MILESTONES_LEDGER;
+    const item = immediateWriteTransaction(this.db(), () => {
+      const db = this.db();
+      const ledger = this.loadLedger(ledgerId);
+      const ptr = ledger.archivePointers.find((p) => p.id === milestoneId);
+      if (ptr === undefined) {
+        throw new LedgerError(
+          isMilestones
+            ? `no archived item ${milestoneId} in ledger ${ledgerId}`
+            : `no archived group for milestone ${milestoneId} in ledger ${ledgerId}`,
+        );
+      }
+      const archivedRow = db
+        .query(
+          "SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM archived_items WHERE ledger = ? AND pointer_id = ? AND id = ?",
+        )
+        .get(ledgerId, milestoneId, itemId) as ItemRow | null;
+      if (archivedRow === null) {
+        throw new LedgerError(
+          isMilestones
+            ? `archived item file ${milestoneId} in ledger ${ledgerId} does not contain item ${itemId}`
+            : `archived group ${milestoneId} in ledger ${ledgerId} has no item ${itemId}`,
+        );
+      }
+      const groupsBefore = new Set(ledger.milestones.map((m) => m.id));
+      const reattached = applyReattachItem(ledger, milestoneId, rowToItem(archivedRow), this.now());
+      if (!groupsBefore.has(milestoneId)) {
+        db.query("INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, '', '')").run(
+          ledgerId,
+          milestoneId,
+        );
+      }
+      db.query(
+        `INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        ledgerId,
+        reattached.id,
+        reattached.milestoneId,
+        reattached.status,
+        JSON.stringify(reattached.fields),
+        reattached.createdAt,
+        reattached.updatedAt,
+        reattached.author ?? null,
+        reattached.session ?? null,
+      );
+      db.query(
+        "DELETE FROM archived_items WHERE ledger = ? AND pointer_id = ? AND id = ?",
+      ).run(ledgerId, milestoneId, itemId);
+      const remaining = db
+        .query("SELECT COUNT(*) AS n FROM archived_items WHERE ledger = ? AND pointer_id = ?")
+        .get(ledgerId, milestoneId) as { n: number };
+      if (remaining.n === 0) {
+        db.query("DELETE FROM archive_pointers WHERE ledger = ? AND id = ?").run(
+          ledgerId,
+          milestoneId,
+        );
+      }
+      return reattached;
+    });
+    // The active docs gained an item and the archived docs shrank/vanished;
+    // refresh both. ORDER matters: the reattached item's docId
+    // ("<ledger>:<itemId>") is shared between the active and archived
+    // buckets, so the archived bucket's stale entry MUST be discarded
+    // BEFORE the active rebuild re-adds the same docId — reversing this
+    // order would have the active add land first, then the archived
+    // bucket's discard-of-the-previous-tracked-id erase that same docId
+    // right back out of the index.
+    this.refreshLedgerIndexArchived(ledgerId);
+    this.fireMutation(ledgerId, "update");
+    return item;
   }
 
-  async archiveMilestone(_milestoneId: string, _summary: string): Promise<ArchivePointer> {
-    throw new Error("SqliteLedgerStore.archiveMilestone: implemented in T529");
+  /**
+   * Archive a milestone across all ledgers (Q6 — two-level atomic), row-
+   * natively in ONE `BEGIN IMMEDIATE` transaction: reuses
+   * `applyDetachMilestoneGroup`/`applyDetachMilestoneItem` (core.ts) against
+   * the FULL `Ledger`s materialised by {@link loadLedger} — the SAME
+   * terminal-item verification + bootstrap/M-AMBIENT refusal semantics the fs
+   * store uses (NonTerminalItemsError, verification runs to completion BEFORE
+   * any row is touched — D10 no-partial-archive) — then persists the detached
+   * rows into `archived_items`/`archive_pointers` and deletes the active rows.
+   * `onMutation` fires per participating ledger + the milestones ledger, in
+   * alphabetic-then-milestones order (D-COHERENCE), AFTER commit.
+   */
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+    if (milestoneId === MILESTONES_ACTIVE_GROUP_ID) {
+      throw new BootstrapViolationError(
+        `the bootstrap group ${MILESTONES_ACTIVE_GROUP_ID} cannot be archived`,
+      );
+    }
+    if (milestoneId === MILESTONES_AMBIENT_ID) {
+      throw new BootstrapViolationError(
+        `${MILESTONES_AMBIENT_ID} is immortal and cannot be archived`,
+      );
+    }
+    let participating: string[] = [];
+    let pointer: ArchivePointer | undefined;
+    immediateWriteTransaction(this.db(), () => {
+      const db = this.db();
+      participating = [];
+      const otherNames = this.enumerate().filter((n) => n !== MILESTONES_LEDGER);
+
+      // Phase 1 — verify EVERY participating ledger's group is fully
+      // terminal, BEFORE any mutation (applyDetachMilestoneGroup throws
+      // NonTerminalItemsError strictly before its splice).
+      const detached = new Map<string, { items: Item[] }>();
+      for (const name of otherNames) {
+        const ledger = this.loadLedger(name);
+        const hasGroup = ledger.milestones.some((m) => m.id === milestoneId);
+        if (!hasGroup) continue;
+        participating.push(name);
+        const { milestone } = applyDetachMilestoneGroup(
+          ledger,
+          milestoneId,
+          summary,
+          `./archive/${name}/${milestoneId}.md`,
+          "",
+          "",
+        );
+        detached.set(name, { items: milestone.items });
+      }
+
+      // Phase 1b — verify + detach the milestone-item itself; also yields the
+      // title/status used to populate every ArchivePointer written below.
+      const msLedger = this.loadLedger(MILESTONES_LEDGER);
+      const { item: msItem } = applyDetachMilestoneItem(
+        msLedger,
+        milestoneId,
+        summary,
+        `./archive/${MILESTONES_LEDGER}/${milestoneId}.md`,
+        "",
+        "",
+      );
+      const msTitle = typeof msItem.fields["title"] === "string" ? msItem.fields["title"] : "";
+      const msStatus = msItem.status;
+      const nowTs = this.now();
+
+      // Phase 2 — persist: move each participating ledger's group rows into
+      // archived_items/archive_pointers, drop the active items/groups rows.
+      const insertPointer = db.query(
+        "INSERT INTO archive_pointers (ledger, id, summary, title, status, archived_at) VALUES (?, ?, ?, ?, ?, ?)",
+      );
+      const insertArchived = db.query(
+        `INSERT INTO archived_items (ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const name of participating) {
+        insertPointer.run(name, milestoneId, summary, msTitle, msStatus, nowTs);
+        for (const it of detached.get(name)?.items ?? []) {
+          insertArchived.run(
+            name,
+            milestoneId,
+            it.id,
+            it.milestoneId,
+            it.status,
+            JSON.stringify(it.fields),
+            it.createdAt,
+            it.updatedAt,
+            it.author ?? null,
+            it.session ?? null,
+          );
+        }
+        db.query("DELETE FROM items WHERE ledger = ? AND milestone_id = ?").run(name, milestoneId);
+        db.query("DELETE FROM groups WHERE ledger = ? AND id = ?").run(name, milestoneId);
+      }
+
+      // Phase 3 — persist the milestone-item's own archive; drop its active row.
+      insertPointer.run(MILESTONES_LEDGER, milestoneId, summary, msTitle, msStatus, nowTs);
+      insertArchived.run(
+        MILESTONES_LEDGER,
+        milestoneId,
+        msItem.id,
+        msItem.milestoneId,
+        msItem.status,
+        JSON.stringify(msItem.fields),
+        msItem.createdAt,
+        msItem.updatedAt,
+        msItem.author ?? null,
+        msItem.session ?? null,
+      );
+      db.query("DELETE FROM items WHERE ledger = ? AND id = ?").run(MILESTONES_LEDGER, milestoneId);
+
+      pointer = {
+        id: milestoneId,
+        path: `./archive/${MILESTONES_LEDGER}/${milestoneId}.md`,
+        summary,
+        title: msTitle,
+        status: msStatus,
+      };
+    });
+    // Fire per-participant hooks AFTER commit (D-COHERENCE order: alphabetic
+    // participants, then the milestones ledger).
+    for (const id of participating) this.fireMutation(id, "archive");
+    this.fireMutation(MILESTONES_LEDGER, "archive");
+    // Archived FTS docs change only on archive. Refresh them for every
+    // participating ledger (and the milestones ledger).
+    for (const id of participating) this.refreshLedgerIndexArchived(id);
+    this.refreshLedgerIndexArchived(MILESTONES_LEDGER);
+    if (pointer === undefined) {
+      throw new LedgerError(`SqliteLedgerStore: archiveMilestone(${milestoneId}) produced no pointer`);
+    }
+    return pointer;
   }
 
   // ---------------------------------------------------------------------------
@@ -613,6 +910,30 @@ export class SqliteLedgerStore implements LedgerStore {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(
         `LedgerStore: FTS active-rebuild threw for ${ledgerId}: ${msg}\n`,
+      );
+    }
+  }
+
+  /**
+   * Replace the ARCHIVED search-index docs for `ledgerId` from its committed
+   * `archived_items` rows (T529, parity with
+   * AbstractLedgerStore.refreshLedgerIndexArchived). Synchronous — no file
+   * I/O is needed for this backend — and GUARDED: an index error must never
+   * propagate into the write path. Called after `archiveMilestone` /
+   * `unarchiveItem` commit and by `invalidate` on the peer-coherence path.
+   */
+  private refreshLedgerIndexArchived(ledgerId: string): void {
+    try {
+      const rows = this.db()
+        .query(
+          "SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM archived_items WHERE ledger = ? ORDER BY rowid",
+        )
+        .all(ledgerId) as ItemRow[];
+      this.searchIndex.setLedgerArchived(ledgerId, rows.map(rowToItem));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `LedgerStore: FTS archived-refresh threw for ${ledgerId}: ${msg}\n`,
       );
     }
   }

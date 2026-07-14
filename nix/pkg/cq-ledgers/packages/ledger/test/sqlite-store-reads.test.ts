@@ -194,8 +194,12 @@ describe("SqliteLedgerStore init/bootstrap (acceptance a)", () => {
     });
     await expect(abortStore.init()).rejects.toThrow(BootstrapViolationError);
 
+    // Default policy (T529): backup-reinit resolves instead of throwing — the
+    // full backup+reinit contract is exercised in sqlite-store-archive.test.ts.
     const backupStore = new SqliteLedgerStore({ dbPath: await divergedDbPath(), now });
-    await expect(backupStore.init()).rejects.toThrow(/T529/);
+    await expect(backupStore.init()).resolves.toBeUndefined();
+    expect(backupStore.fetch("tasks").schema.idPrefix).not.toBe("ZZ");
+    await backupStore.dispose();
   });
 });
 
@@ -350,20 +354,6 @@ describe("dispose() (acceptance d)", () => {
       );
     } finally {
       await reopened.dispose();
-    }
-  });
-});
-
-describe("not-yet-owned surfaces name their owning task", () => {
-  test("archives → T529 (mutations landed in T527, ftsSearch in T528)", async () => {
-    const store = new SqliteLedgerStore({ dbPath: await freshDbPath(), now });
-    await store.init();
-    try {
-      await expect(store.fetchArchive("tasks", "M1")).rejects.toThrow(/T529/);
-      await expect(store.archiveMilestone("M1", "s")).rejects.toThrow(/T529/);
-      await expect(store.unarchiveItem("tasks", "M1", "T1")).rejects.toThrow(/T529/);
-    } finally {
-      await store.dispose();
     }
   });
 });
