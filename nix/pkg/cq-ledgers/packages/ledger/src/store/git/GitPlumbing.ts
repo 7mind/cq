@@ -395,4 +395,26 @@ export class GitPlumbing {
     if (paths.length === 0) return;
     await this.runOk(["rm", "--cached", "--quiet", "--", ...paths]);
   }
+
+  /**
+   * Enumerate the repo's root commit(s) — the commit(s) with zero parents
+   * reachable from `HEAD` — used by {@link resolveProjectKey} (G67 / Q246) to
+   * derive a stable, repo-identity project key that is identical across every
+   * worktree and clone of the same repo (they share the same commit graph, so
+   * the same root commit(s) in the same order).
+   *
+   * Runs: `git rev-list --max-parents=0 HEAD`. Returns the trimmed, non-empty
+   * output lines in the order git emits them (first line = the SHA
+   * {@link resolveProjectKey} treats as "the" first-commit SHA when a history
+   * has more than one root, e.g. an `--allow-unrelated-histories` merge).
+   * Returns `[]` (rather than throwing) when the command fails — an unborn
+   * `HEAD` (no commits yet) or `cwd` not being a git work tree at all — so the
+   * caller can distinguish "no root commit" from a hard git error and fail
+   * fast with an actionable message instead of a raw {@link GitCommandError}.
+   */
+  async firstCommitShas(): Promise<string[]> {
+    const res = await this.run(["rev-list", "--max-parents=0", "HEAD"]);
+    if (res.code !== 0) return [];
+    return res.stdout.split("\n").filter((line) => line.length > 0);
+  }
 }

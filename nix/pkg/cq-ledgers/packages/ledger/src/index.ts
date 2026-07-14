@@ -175,3 +175,5 @@ export {
   STORE_LAYOUT,
   ensureStateDir,
 } from "./stateDir.js";
+export { resolveProjectKey, ProjectKeyResolutionError } from "./projectKey.js";
+export type { ResolveProjectKeyOpts } from "./projectKey.js";
