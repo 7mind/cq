@@ -758,7 +758,9 @@ function cloneMilestone(m: Milestone): Milestone {
   return { id: m.id, title: m.title, description: m.description, items: m.items.map(cloneItem) };
 }
 
-function cloneItem(i: Item): Item {
+/** Deep-clone an Item (exported for SqliteLedgerStore, whose K102 module
+ * graph must not reach AbstractLedgerStore's parser imports). */
+export function cloneItem(i: Item): Item {
   const out: Item = {
     id: i.id,
     milestoneId: i.milestoneId,

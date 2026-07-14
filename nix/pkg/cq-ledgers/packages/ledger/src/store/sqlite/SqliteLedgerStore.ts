@@ -20,12 +20,18 @@
  *    detection with the BACKUP action stubbed), the synchronous read surface
  *    (enumerate/fetch/fetchItem/fetchMilestone/listMilestoneItems/snapshot/
  *    search), invalidate() (row reads need none — no-op), dispose().
- *  - T527 (this task): mutations (createItem/updateItem/createMilestone/
+ *  - T527: mutations (createItem/updateItem/createMilestone/
  *    createLedger/updateMilestone/reopenItem) — each ONE `BEGIN IMMEDIATE`
  *    transaction (bounded busy retry, connection.ts) touching only the
  *    affected rows, with the domain guards REUSED from core.ts.
- *  - T528: the derived search index (ftsSearch) + the index-refresh half of
- *    invalidate() + the post-commit index update in fireMutation.
+ *  - T528 (this task): the derived search index (ftsSearch) + the
+ *    index-refresh half of invalidate() + the post-commit index update in
+ *    fireMutation. The index is the SAME in-memory `LedgerSearchIndex` the
+ *    fs/in-memory stores use — a derived READ-side projection of the
+ *    committed rows (cold-built on init(), one ledger bucket refreshed per
+ *    mutation) — so every query semantic (parseQuery qualifiers, fuzzy,
+ *    prefix, field boost, matchedFields, limit) is shared verbatim, and no
+ *    write ever re-serializes a ledger (K102).
  *  - T529: archives (archiveMilestone/unarchiveItem/fetchArchive) + the
  *    divergence backup-reinit action.
  *  - T530: createLedgerStore xdg wiring.
@@ -79,7 +85,8 @@ import {
   validateSchema,
 } from "../core.js";
 import type { StatusChangePrecondition } from "../core.js";
-import { materialiseFetchedLedger } from "../InMemoryLedgerStore.js";
+import { cloneItem, materialiseFetchedLedger } from "../InMemoryLedgerStore.js";
+import { LedgerSearchIndex } from "../../search/LedgerSearchIndex.js";
 import { schemaCompatible, schemasEqual } from "../schemaCompat.js";
 import {
   CANONICAL_LEDGERS,
@@ -183,6 +190,15 @@ export class SqliteLedgerStore implements LedgerStore {
   private readonly onSchemaDivergence: "backup-reinit" | "abort";
   private handle: Database | null = null;
   private initialised = false;
+  /**
+   * Derived full-text index over the committed item rows (T528) — the SAME
+   * `LedgerSearchIndex` the fs/in-memory stores use, so ftsSearch semantics
+   * are shared verbatim. Cold-built on init(); the mutated ledger's active
+   * bucket is refreshed post-commit by {@link fireMutation}; a peer process's
+   * commit is folded in by {@link invalidate} (the T530 coherence watcher's
+   * refresh path). Archived docs land with the T529 archive surface.
+   */
+  private readonly searchIndex = new LedgerSearchIndex();
 
   constructor(opts: SqliteLedgerStoreOpts) {
     this.dbPath = opts.dbPath;
@@ -280,6 +296,14 @@ export class SqliteLedgerStore implements LedgerStore {
 
     this.handle = db;
     this.initialised = true;
+
+    // T528: cold-build the derived search index from the committed rows —
+    // one ACTIVE bucket per ledger (archived docs are T529). Guarded per
+    // ledger inside the helper; must stay within the T498 <500ms@10k target
+    // (T531 verifies).
+    for (const name of this.enumerate()) {
+      this.rebuildLedgerIndexActive(name);
+    }
   }
 
   /**
@@ -367,9 +391,17 @@ export class SqliteLedgerStore implements LedgerStore {
     return this.read(() => searchItems(this.loadLedger(ledgerId), query));
   }
 
-  async ftsSearch(_query: string, _opts?: FtsSearchOpts): Promise<FtsSearchHit[]> {
-    // TODO(T528): derived in-memory search index over the rows.
-    throw new Error("SqliteLedgerStore.ftsSearch: not implemented until T528");
+  /**
+   * Delegates to the derived {@link LedgerSearchIndex} (parity with
+   * AbstractLedgerStore.ftsSearch / InMemoryLedgerStore.ftsSearch — same
+   * qualifier/fuzzy/prefix/boost/matchedFields/limit semantics). Hits are
+   * cloned so a caller cannot mutate the index's backing items.
+   */
+  async ftsSearch(query: string, opts: FtsSearchOpts = {}): Promise<FtsSearchHit[]> {
+    this.assertInit();
+    return this.searchIndex
+      .searchQuery(query, opts)
+      .map((h) => ({ ...h, item: cloneItem(h.item) }));
   }
 
   async fetchArchive(_ledgerId: string, _archiveId: string): Promise<ArchiveContent> {
@@ -377,13 +409,22 @@ export class SqliteLedgerStore implements LedgerStore {
   }
 
   /**
-   * No-op for the ROW read surface: every read re-queries the db, so a peer
-   * process's committed write is observed on the next read with no
-   * invalidation. TODO(T528): refresh the derived search index here once it
-   * exists — that is the only cache this backend will ever hold.
+   * The ROW read surface needs no invalidation (every read re-queries the db,
+   * so a peer process's committed write is observed on the next read). The
+   * derived search index is this backend's ONLY cache: rebuild the affected
+   * ledger's active bucket from the current committed rows so a peer commit —
+   * surfaced by the T530 data_version coherence watcher — becomes visible to
+   * ftsSearch. Unknown ledger ids are a no-op (any stale docs are dropped),
+   * matching the abstract-suite contract.
    */
-  async invalidate(_ledgerId: string): Promise<void> {
+  async invalidate(ledgerId: string): Promise<void> {
     this.assertInit();
+    const row = this.db().query("SELECT name FROM ledgers WHERE name = ?").get(ledgerId);
+    if (row === null) {
+      this.searchIndex.removeLedger(ledgerId);
+      return;
+    }
+    this.rebuildLedgerIndexActive(ledgerId);
   }
 
   // ---------------------------------------------------------------------------
@@ -534,10 +575,12 @@ export class SqliteLedgerStore implements LedgerStore {
    * the user hook is GUARDED — a throw is logged to stderr and cannot unwind
    * the already-committed write. Fired strictly AFTER the transaction COMMITs.
    *
-   * TODO(T528): update the derived LedgerSearchIndex here (the post-commit
-   * index refresh) once it exists — this is the designated hook point.
+   * T528: refreshes the mutated ledger's active search-index bucket from the
+   * just-committed rows FIRST, so by the time the hook observes the mutation
+   * ftsSearch already reflects it (same ordering as the fs store).
    */
   private fireMutation(ledgerId: string, op: LedgerMutationOp): void {
+    this.rebuildLedgerIndexActive(ledgerId);
     if (this.onMutation !== null) {
       try {
         this.onMutation(ledgerId, op);
@@ -547,6 +590,30 @@ export class SqliteLedgerStore implements LedgerStore {
           `LedgerStore: onMutation hook threw for ${ledgerId} (${op}): ${msg}\n`,
         );
       }
+    }
+  }
+
+  /**
+   * Rebuild the ACTIVE search-index docs for `ledgerId` from its committed
+   * item rows. Synchronous and GUARDED: an index error must never propagate
+   * into the write path (parity with
+   * AbstractLedgerStore.rebuildLedgerIndexActive). Replaces ONLY the one
+   * ledger's bucket — O(items-in-ledger), never a full-store rebuild and
+   * never a re-serialize (K102: the index is a derived read-side projection).
+   */
+  private rebuildLedgerIndexActive(ledgerId: string): void {
+    try {
+      const rows = this.db()
+        .query(
+          "SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM items WHERE ledger = ? ORDER BY rowid",
+        )
+        .all(ledgerId) as ItemRow[];
+      this.searchIndex.rebuildLedgerActive(ledgerId, rows.map(rowToItem));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `LedgerStore: FTS active-rebuild threw for ${ledgerId}: ${msg}\n`,
+      );
     }
   }
 
