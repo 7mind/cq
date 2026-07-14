@@ -65,6 +65,13 @@ export {
   DEFAULT_BACKUP_DEBOUNCE_MS,
 } from "./store/backupExporter.js";
 export type { BackupDumpFile, BackupExportOpts, BackupTarget } from "./store/backupExporter.js";
+export {
+  readDumpInTree,
+  readDumpOrphanBranch,
+  restoreDumpToXdg,
+  isXdgPrimaryEmpty,
+} from "./store/restoreImporter.js";
+export type { RestoreSummary } from "./store/restoreImporter.js";
 export { atomicWrite } from "./store/fsAtomic.js";
 export { GitPlumbing, StaleRefError, GitCommandError, nodeGitRunner } from "./store/git/GitPlumbing.js";
 export type { TreeEntry, GitResult, GitRunOpts, GitRunner } from "./store/git/GitPlumbing.js";

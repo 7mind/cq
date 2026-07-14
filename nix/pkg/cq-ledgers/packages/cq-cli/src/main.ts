@@ -31,6 +31,10 @@ import {
   resolveStateDirBase,
   resolveProjectKey,
   runBackupExport,
+  readDumpInTree,
+  readDumpOrphanBranch,
+  restoreDumpToXdg,
+  isXdgPrimaryEmpty,
   type LedgerStore,
   type ResetSummary,
 } from "@cq/ledger";
@@ -59,7 +63,7 @@ export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructi
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "log", "backup"] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "log", "backup", "restore"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -172,6 +176,10 @@ export const USAGE = [
   "                                                  configured by [ledger].backup",
   "                                                  (in-tree | orphan-branch); write-only,",
   "                                                  never read back as a primary.",
+  "  restore     [--cwd <path>] [--yes|-y]           import a .cq dump (in-tree | orphan-branch,",
+  "                                                  per [ledger].backup) INTO the xdg primary",
+  "                                                  (incl. logs); disaster recovery, no merge;",
+  "                                                  refuses a non-empty primary without --yes.",
   "",
   "ledger root: --cwd > $LEDGER_ROOT > current working directory",
 ].join("\n");
@@ -706,6 +714,92 @@ export async function runBackup(args: SubcommandArgs, io: DispatchIo): Promise<S
   return { exitCode: 0 };
 }
 
+/**
+ * `cq restore` (T503 / Q244): the explicit one-way IMPORT counterpart of
+ * `cq backup` — reads the dump at the CONFIGURED `[ledger].backup` target
+ * (in-tree `.cq/` or the orphan ref, same source `cq backup` writes to) and
+ * writes its content into the out-of-tree xdg primary (SQLite rows + the
+ * primary logs area), so `fetch_ledger`/`fetch_item`/`read_log` serve the
+ * restored state. Disaster recovery, NOT sync — no merge semantics: the
+ * primary is wiped and replaced wholesale.
+ *
+ * Refuses the SAME two ways `cq backup` does (no configured target; a
+ * non-xdg backend), plus the destructive-op confirmation policy (shared with
+ * `reset`/`erase`) when the primary is non-empty:
+ *   - `--yes`             → proceed unattended (no prompt).
+ *   - TTY, no `--yes`     → prompt; proceed only on a `y`/`Y` answer.
+ *   - non-TTY, no `--yes` → REFUSE (exit 2) — never overwrite silently.
+ * An EMPTY primary (nothing beyond the canonical bootstrap state) restores
+ * unconditionally — there is nothing destructive to confirm.
+ *
+ * The dump is read and parsed BEFORE any confirmation/wipe, so a malformed or
+ * incomplete dump fails loud without touching the primary.
+ */
+export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
+  const { backend, branch } = resolveLedgerBackend(args.cwd);
+  const config = loadConfig(args.cwd);
+  const target = config?.ledger?.backup ?? "none";
+
+  if (target === "none") {
+    io.err(
+      `cq restore: [ledger].backup is "none" (the default) at ${args.cwd} — no dump target is ` +
+        `configured. Set backup = "in-tree" or "orphan-branch" in ${CQ_CONFIG_FILENAME} to enable restore.`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
+  if (backend !== "xdg") {
+    io.err(
+      `cq restore: [ledger] backend='${backend}' does not support restore (it imports INTO the ` +
+        `out-of-tree xdg primary; the '${backend}' backend already keeps its state human-readable ` +
+        `in place). Use backend='xdg'.`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
+
+  let dump;
+  try {
+    dump =
+      target === "in-tree"
+        ? await readDumpInTree(args.cwd)
+        : await readDumpOrphanBranch(args.cwd, branch);
+  } catch (e) {
+    io.err(`cq restore: failed to read the ${target} dump: ${e instanceof Error ? e.message : String(e)}`);
+    return { exitCode: EXIT_USAGE };
+  }
+
+  const resolved = await createLedgerStore(args.cwd);
+  const { dbPath, logsDir } = resolved;
+  if (dbPath === undefined || logsDir === undefined) {
+    await resolved.store.dispose();
+    io.err("cq restore: internal error — the xdg backend did not resolve a dbPath/logsDir");
+    return { exitCode: EXIT_USAGE };
+  }
+
+  if (!isXdgPrimaryEmpty(resolved.store)) {
+    const decision = await confirmDestructive(
+      args.yes,
+      `Restore will OVERWRITE the non-empty ledger primary at ${args.cwd}? [y/N] `,
+      `cq restore: refusing to overwrite the non-empty ledger primary at ${args.cwd} without ` +
+        `confirmation; re-run with --yes to restore non-interactively.`,
+      io.confirm,
+    );
+    if (!decision.proceed) {
+      resolved.backup?.close();
+      await resolved.store.dispose();
+      return { exitCode: decision.exitCode };
+    }
+  }
+  resolved.backup?.close();
+  await resolved.store.dispose();
+
+  const summary = await restoreDumpToXdg({ dbPath, logsDir, dump });
+  io.out(
+    `cq restore: restored ${summary.ledgerCount} ledger(s) + ${summary.logCount} log artifact(s) ` +
+      `from the ${target} dump at ${args.cwd}`,
+  );
+  return { exitCode: 0 };
+}
+
 /** A store exposing the FS-specific backup→reinit `reset()` (FsLedgerStore). */
 interface ResettableStore extends LedgerStore {
   reset(): Promise<ResetSummary>;
@@ -754,6 +848,7 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
     return { exitCode: EXIT_USAGE };
   },
   backup: runBackup,
+  restore: runRestore,
 };
 
 /**
