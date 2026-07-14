@@ -411,13 +411,11 @@ export function readLogOf(store: LedgerStore): ReadLogCapability | undefined {
  * the repo root so the watcher polls `refs/heads/<branch>` for ledger advances
  * by another process.
  *
- * The xdg watcher has no `onChange` parameter of its own (T530 bulk-invalidates
- * every known ledger off a single `data_version` bump with no per-ledger
- * granularity to report) — `onChange` is accepted here for signature parity
- * with the other two backends but is not invoked for xdg. WS "changed" pushes
- * for the xdg backend are therefore not yet wired; the STORE-level coherence
- * (invalidate → fresh reads) IS in effect regardless, which is what the
- * acceptance criterion for T500 requires.
+ * The xdg watcher bulk-invalidates every known ledger off a single
+ * `data_version` bump with no per-ledger granularity to report, so its
+ * `onChange` (D89) fires once per invalidate pass with `null` rather than once
+ * per ledger id — `onChange` is forwarded here exactly as for the other two
+ * backends, driving the same WS "changed" push for a peer process's write.
  */
 export function startLedgerCoherenceWatcher(
   resolved: ResolvedLedgerStore,
@@ -434,7 +432,7 @@ export function startLedgerCoherenceWatcher(
           "createLedgerStore must always set dbPath for the xdg backend.",
       );
     }
-    return startXdgCoherenceWatcher(resolved.store, resolved.dbPath);
+    return startXdgCoherenceWatcher(resolved.store, resolved.dbPath, undefined, onChange);
   }
   return startLedgerWatcher(resolved.store, root, onChange);
 }

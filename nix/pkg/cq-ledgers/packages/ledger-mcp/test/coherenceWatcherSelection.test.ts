@@ -147,7 +147,13 @@ describe("startLedgerCoherenceWatcher — backend selection", () => {
     };
     // `root` is irrelevant to the xdg leg (it keys off dbPath, not the repo
     // root); pass a throwaway value to exercise the same call shape as fs/git.
-    const watcher = startLedgerCoherenceWatcher(resolved, dbDir);
+    // D89: also assert onChange is FORWARDED to the xdg watcher (it used to be
+    // accepted here but silently dropped), so a peer's write drives the WS
+    // "changed" push for xdg the same way it already does for fs/git-object.
+    const changes: Array<string | null> = [];
+    const watcher = startLedgerCoherenceWatcher(resolved, dbDir, (ledgerId) => {
+      changes.push(ledgerId);
+    });
     try {
       const m = await peer.createMilestone({ title: "xdg select" });
       await peer.createItem("defects", m.id, {
@@ -164,6 +170,10 @@ describe("startLedgerCoherenceWatcher — backend selection", () => {
       }
       expect(hits.length).toBe(1);
       expect(hits[0]?.item.fields["headline"]).toBe("selection sees this");
+
+      const changed = await waitUntil(() => changes.length > 0);
+      expect(changed).toBe(true);
+      expect(changes[0]).toBe(null);
     } finally {
       watcher.close();
       await peer.dispose();

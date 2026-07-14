@@ -194,6 +194,13 @@ export interface XdgCoherenceWatcher {
  * the one that changed; the abstract-suite contract makes `invalidate` cheap
  * and idempotent for an unchanged ledger.
  *
+ * `onChange`, when given, fires ONCE per invalidate pass with `null` (never a
+ * ledger id) — `data_version` carries no per-ledger scope to report, matching
+ * the bulk-invalidate granularity above. Same callback shape as
+ * startLedgerWatcher / startLedgerRefWatcher's `onChange`, so the construction
+ * site (startLedgerCoherenceWatcher, ledger-mcp/main.ts) can forward it
+ * uniformly across all three backends (D89).
+ *
  * A `close()`d watcher stops polling and releases its probe connection; the
  * store itself is untouched (the caller still owns its lifecycle).
  */
@@ -201,6 +208,7 @@ export function startXdgCoherenceWatcher(
   store: LedgerStore,
   dbPath: string,
   pollMs: number = XDG_WATCHER_DEFAULT_POLL_MS,
+  onChange?: (ledgerId: string | null) => void,
 ): XdgCoherenceWatcher {
   const probe = openLedgerDb(dbPath);
   let lastVersion = dataVersion(probe);
@@ -217,6 +225,7 @@ export function startXdgCoherenceWatcher(
         for (const ledgerId of store.enumerate()) {
           await store.invalidate(ledgerId);
         }
+        onChange?.(null);
       } finally {
         invalidating = false;
       }

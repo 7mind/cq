@@ -128,4 +128,39 @@ describe("SqliteLedgerStore — xdg coherence watcher (data_version polling)", (
       await watched.dispose();
     }
   }, 10_000);
+
+  // D89: the watcher bulk-invalidates off a single data_version bump with no
+  // per-ledger scope, so `onChange` fires once per invalidate pass with `null`
+  // (matching the bulk-invalidate granularity) rather than once per ledger —
+  // this is the signal startLedgerCoherenceWatcher's xdg branch (ledger-mcp)
+  // forwards to drive the WS "changed" push.
+  it("invokes onChange(null) after each data_version-triggered invalidate pass", async () => {
+    const dbPath = path.join(await freshDbDir(), "ledger.db");
+    const peer = new SqliteLedgerStore({ dbPath });
+    const watched = new SqliteLedgerStore({ dbPath });
+    await peer.init();
+    await watched.init();
+
+    const changes: Array<string | null> = [];
+    const watcher = startXdgCoherenceWatcher(watched, dbPath, 20, (ledgerId) => {
+      changes.push(ledgerId);
+    });
+    try {
+      const m = await peer.createMilestone({ title: "onchange" });
+      await peer.createItem("defects", m.id, {
+        status: "open",
+        fields: { headline: "onchange sees this", severity: "minor", description: "d" },
+      });
+
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline && changes.length === 0) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(changes).toEqual([null]);
+    } finally {
+      watcher.close();
+      await peer.dispose();
+      await watched.dispose();
+    }
+  }, 10_000);
 });
