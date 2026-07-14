@@ -25,7 +25,7 @@ import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { FsLedgerStore, LEDGER_STORAGE_DIRNAME, type LedgerSchema } from "@cq/ledger";
-import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
+import { dispatch, assertXdgProjectDirScoped, type ConfirmIo, type DispatchIo } from "../src/main.js";
 
 const dirs: string[] = [];
 afterAll(async () => {
@@ -240,6 +240,31 @@ describe("cq erase", () => {
     // .cq/ itself was NOT reported removed (only its ledger artifacts were);
     // exact-line membership avoids matching `removed: <storageDir>/ledgers.yaml`.
     expect(io.outs).not.toContain(`  removed: ${storageDir}`);
+  });
+
+  // D91 (defense-in-depth): runErase's xdg branch refuses to `fs.rm` the
+  // project dir unless it is STRICTLY nested under the shared XDG projects
+  // base — never the base itself. resolveProjectKey's own empty-projectId
+  // guard (D91) makes an empty key unreachable from a black-box `runErase`
+  // test, so this exercises the pure guard function directly (unit-testable
+  // per its own doc comment).
+  it("D91: assertXdgProjectDirScoped REFUSES when the project dir equals the projects base", () => {
+    const base = "/home/user/.local/state/cq/projects";
+    expect(() => assertXdgProjectDirScoped(base, base)).toThrow(/refusing to erase/);
+  });
+
+  it("D91: assertXdgProjectDirScoped REFUSES a project dir that is a sibling, not a child, of the base", () => {
+    const base = "/home/user/.local/state/cq/projects";
+    // Same string prefix as `base` but NOT separated by path.sep — must not be
+    // accepted as "nested" by a naive startsWith(base) check.
+    const sibling = "/home/user/.local/state/cq/projects-evil";
+    expect(() => assertXdgProjectDirScoped(sibling, base)).toThrow(/refusing to erase/);
+  });
+
+  it("D91: assertXdgProjectDirScoped ACCEPTS a project dir strictly nested under the base", () => {
+    const base = "/home/user/.local/state/cq/projects";
+    const nested = `${base}/deadbeef1234`;
+    expect(() => assertXdgProjectDirScoped(nested, base)).not.toThrow();
   });
 
   it(`(g) a non-ledger top-level ${LEDGER_STORAGE_DIRNAME}/*.md (not a registered ledger) survives`, async () => {

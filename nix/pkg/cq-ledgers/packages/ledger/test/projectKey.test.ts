@@ -202,6 +202,37 @@ describe("resolveProjectKey", () => {
     expect(key).toBe(expectedSha);
   });
 
+  // D91: an empty/blank projectId must FAIL FAST rather than be returned
+  // verbatim — resolveStateDirBase("") collapses to the shared XDG *projects
+  // base* itself (path.join drops the trailing empty segment), so a caller
+  // (e.g. `cq erase`'s xdg branch) keying off an empty string would point a
+  // recursive delete at the base directory shared by EVERY project instead of
+  // one project's subdirectory — an irreversible, catastrophic data-loss bug.
+  it("D91: THROWS ProjectKeyResolutionError for an empty-string projectId (was: returned \"\" verbatim)", async () => {
+    const dir = await freshDir("project-key-empty-id-");
+    await expect(resolveProjectKey({ repoRoot: dir, projectId: "" })).rejects.toThrow(
+      ProjectKeyResolutionError,
+    );
+  });
+
+  it("D91: THROWS ProjectKeyResolutionError for a whitespace-only projectId", async () => {
+    const dir = await freshDir("project-key-blank-id-");
+    await expect(resolveProjectKey({ repoRoot: dir, projectId: "   " })).rejects.toThrow(
+      ProjectKeyResolutionError,
+    );
+  });
+
+  it("D91: the empty-projectId error message is actionable (mentions projectId)", async () => {
+    const dir = await freshDir("project-key-empty-id-message-");
+    try {
+      await resolveProjectKey({ repoRoot: dir, projectId: "" });
+      throw new Error("expected resolveProjectKey to reject");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ProjectKeyResolutionError);
+      expect((err as Error).message).toContain("projectId");
+    }
+  });
+
   it("projectId OVERRIDES even in a shallow clone (no throw)", async () => {
     const srcDir = await seedRepo();
     await fs.writeFile(path.join(srcDir, "second.txt"), "second\n");

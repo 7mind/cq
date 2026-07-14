@@ -417,6 +417,31 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
  * project dir exists there is nothing to erase; refuse with exit
  * {@link EXIT_USAGE} rather than silently succeed.
  */
+/**
+ * D91 belt-and-suspenders: `xdgProjectDir` MUST be a directory STRICTLY nested
+ * under the shared XDG projects base (`resolveStateDirBase("")` — path.join
+ * drops the trailing empty segment, so this collapses to exactly
+ * `<XDG>/cq/projects`) — never the base itself. This guards against an
+ * empty/blank project key reaching the recursive `fs.rm` in {@link runErase}
+ * below and deleting EVERY project's out-of-tree ledger, backstopping
+ * resolveProjectKey's own empty-projectId guard (D91) in case some other path
+ * ever produces an empty/blank key. Exported so this invariant is unit
+ * testable directly — resolveProjectKey's own guard makes it otherwise
+ * unreachable from a black-box `runErase` test.
+ */
+export function assertXdgProjectDirScoped(xdgProjectDir: string, xdgProjectsBase: string): void {
+  const isStrictlyNested =
+    xdgProjectDir !== xdgProjectsBase && xdgProjectDir.startsWith(xdgProjectsBase + path.sep);
+  if (!isStrictlyNested) {
+    throw new Error(
+      `cq erase: refusing to erase the xdg project directory — it resolved to ` +
+        `"${xdgProjectDir}", which is NOT strictly inside the shared XDG projects base ` +
+        `("${xdgProjectsBase}"). Erasing it would delete EVERY project's out-of-tree ledger. ` +
+        `Aborting rather than deleting (D91).`,
+    );
+  }
+}
+
 export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const storageDir = path.join(args.cwd, LEDGER_STORAGE_DIRNAME);
   const configFile = path.join(args.cwd, CQ_CONFIG_FILENAME);
@@ -441,6 +466,11 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     } catch {
       xdgProjectDir = undefined;
     }
+  }
+  // D91: deliberately OUTSIDE the try/catch above — an invariant violation
+  // here must abort loudly, never be swallowed into the best-effort fallback.
+  if (xdgProjectDir !== undefined) {
+    assertXdgProjectDirScoped(xdgProjectDir, resolveStateDirBase(""));
   }
   const xdgProjectDirExists = xdgProjectDir !== undefined && (await pathExists(xdgProjectDir));
 

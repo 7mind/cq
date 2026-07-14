@@ -85,6 +85,20 @@ export interface ResolveProjectKeyOpts {
  */
 export async function resolveProjectKey(opts: ResolveProjectKeyOpts): Promise<string> {
   if (opts.projectId !== null) {
+    // D91: an empty/blank projectId is not a valid key — resolveStateDirBase("")
+    // collapses to the XDG *projects base* itself (path.join drops the trailing
+    // empty segment), so a caller keying off this value would point erase/init
+    // at every project's directory instead of one. FAIL FAST rather than let
+    // that empty string flow downstream.
+    if (opts.projectId.trim() === "") {
+      throw new ProjectKeyResolutionError(
+        `Cannot resolve a project key for ${opts.repoRoot}: [ledger].projectId is set but ` +
+          `empty/blank. projectId must be a non-empty stable identifier — an empty value would ` +
+          `resolve to the shared XDG projects BASE directory instead of a per-project one. Fix: ` +
+          `set [ledger].projectId to a non-empty string in cq.toml, or remove the key so the ` +
+          `repo's first commit SHA is used instead.`,
+      );
+    }
     return opts.projectId;
   }
 
