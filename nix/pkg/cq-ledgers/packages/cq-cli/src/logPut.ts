@@ -125,6 +125,15 @@ export function validateLogDest(dest: string): string {
     );
   }
 
+  // After "logs/" there must be at least one non-empty sub-path component.
+  // Reject "logs/" alone (which would point to the logs directory itself).
+  if (normalised === "logs/" || normalised === "logs") {
+    throw new Error(
+      `cq log put: --dest must be under logs/ (docs-relative), got "${dest}"` +
+        (normalised !== dest ? ` (normalises to "${normalised}")` : ""),
+    );
+  }
+
   return normalised;
 }
 

@@ -224,6 +224,13 @@ describe("validateLogDest", () => {
     expect(() => validateLogDest("logs")).toThrow(/must be under logs\//);
   });
 
+  it("rejects 'logs/' alone (no component after logs/)", () => {
+    // path.posix.normalize("logs/") returns "logs/"; must reject as it has no
+    // sub-path component, preventing atomicWrite from treating the logs dir
+    // itself as a file destination.
+    expect(() => validateLogDest("logs/")).toThrow(/must be under logs\//);
+  });
+
   it("rejects logs/../secrets (normalises out of logs/)", () => {
     expect(() => validateLogDest("logs/../secrets")).toThrow(/must be under logs\//);
   });
