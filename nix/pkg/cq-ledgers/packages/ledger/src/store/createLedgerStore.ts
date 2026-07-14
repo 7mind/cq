@@ -12,6 +12,13 @@
  *     fail-fast validation of the git environment (git on PATH + the root is
  *     inside a git work tree) and an idempotent install of the git-backend
  *     `.gitignore` block (so a fresh ledger is never accidentally tracked).
+ *   - `backend = 'xdg'` (T530) → {@link SqliteLedgerStore} on
+ *     `<stateDir>/ledger.db`, where `stateDir` is resolved from the repo's
+ *     stable {@link resolveProjectKey} (a `[ledger].projectId` override, else
+ *     the repo's first commit SHA — see projectKey.ts). A repo whose identity
+ *     cannot be resolved (a shallow clone, or no git at all) FAILS FAST with
+ *     {@link ProjectKeyResolutionError} rather than silently mislocating the
+ *     store.
  *
  * The factory `init()`s the returned store before handing it back, mirroring the
  * historical `new FsLedgerStore(); await store.init()` pattern at each site.
@@ -22,11 +29,22 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 import { loadConfig, type LedgerBackend } from "@cq/config";
 import type { LedgerStore } from "./LedgerStore.js";
 import { FsLedgerStore } from "./FsLedgerStore.js";
 import { GitObjectLedgerBackend } from "./git/GitObjectLedgerBackend.js";
 import { ensureGitBackendGitignore } from "./gitBackendGitignore.js";
+import { SqliteLedgerStore } from "./sqlite/SqliteLedgerStore.js";
+import { dataVersion, openLedgerDb } from "./sqlite/connection.js";
+import { resolveProjectKey } from "../projectKey.js";
+import { resolveStateDir, ensureStateDir } from "../stateDir.js";
+
+/** The xdg backend's database filename within `<stateDir>` (T530). */
+const XDG_DB_FILENAME = "ledger.db";
+
+/** Default poll interval for {@link startXdgCoherenceWatcher}. */
+const XDG_WATCHER_DEFAULT_POLL_MS = 500;
 
 /** Default branch/remote when no cq.toml `[ledger]` table is present. */
 const DEFAULT_BRANCH = "cq-ledger";
@@ -44,6 +62,13 @@ export interface ResolvedLedgerStore {
   readonly backend: LedgerBackend;
   /** The orphan-ref branch (git-object only; the default otherwise). */
   readonly branch: string;
+  /**
+   * The concrete `ledger.db` path (xdg backend only) — the input
+   * {@link startXdgCoherenceWatcher} polls via `PRAGMA data_version` to
+   * detect a peer process's commit. `undefined` for fs / git-object, whose
+   * coherence watchers key off a different signal (file mtime / ref sha).
+   */
+  readonly dbPath?: string;
 }
 
 /**
@@ -55,20 +80,6 @@ export class GitEnvironmentError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "GitEnvironmentError";
-  }
-}
-
-/**
- * Thrown when `backend = 'xdg'` is configured. The identifier PARSES in
- * @cq/config (T494) so `cq migrate` and config tooling can read it, but the
- * out-of-tree bun:sqlite store (decision K102) is not yet implemented — it is
- * wired in T498/T501. Until then, resolving it to a runtime store FAILS FAST
- * rather than silently falling through to the in-tree {@link FsLedgerStore}.
- */
-export class LedgerBackendNotImplementedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "LedgerBackendNotImplementedError";
   }
 }
 
@@ -137,17 +148,84 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
     return { store, backend, branch };
   }
 
-  // backend === 'xdg' PARSES (T494) but its store is not yet implemented; fail
-  // fast rather than silently falling through to the in-tree FsLedgerStore.
+  // backend === 'xdg' (T530): the out-of-tree bun:sqlite primary (K102).
+  // resolveProjectKey lets ProjectKeyResolutionError propagate as the
+  // fail-fast (a shallow clone or a non-git/no-commit root has no stable
+  // identity to key the store off — see projectKey.ts's no-fallback
+  // rationale, Q246).
   if (backend === "xdg") {
-    throw new LedgerBackendNotImplementedError(
-      `[ledger] backend = "xdg" (out-of-tree bun:sqlite primary, decision K102) ` +
-        `is configured but its store is not yet implemented — wired in T498/T501.`,
-    );
+    const config = loadConfig(root);
+    const projectId = config?.ledger?.projectId ?? null;
+    const projectKey = await resolveProjectKey({ repoRoot: root, projectId });
+    const stateDir = resolveStateDir(projectKey);
+    await ensureStateDir(stateDir);
+    const dbPath = join(stateDir, XDG_DB_FILENAME);
+    const store = new SqliteLedgerStore({ dbPath });
+    await store.init();
+    return { store, backend, branch, dbPath };
   }
 
   // backend === 'fs' — byte-identical to the historical default.
   const store = new FsLedgerStore({ root });
   await store.init();
   return { store, backend, branch };
+}
+
+/** Handle returned by {@link startXdgCoherenceWatcher}. */
+export interface XdgCoherenceWatcher {
+  /** Stop polling and release the probe connection. */
+  close(): void;
+}
+
+/**
+ * The xdg backend's coherence watcher (T530) — parity with the fs file-watch
+ * / git-object ref-watch selection the construction site (ledger-mcp) makes
+ * for the other backends, keyed here off `PRAGMA data_version` instead of a
+ * filesystem event or a ref sha.
+ *
+ * Opens its OWN probe connection to `dbPath` (never touches `store`'s
+ * internals) and polls {@link dataVersion} every `pollMs`. `data_version` is
+ * bumped by ANY commit on the file, including this process's own writes AND a
+ * peer process's — but it carries no per-ledger scope, so a bump invalidates
+ * every ledger `store` currently knows (`store.enumerate()`) rather than just
+ * the one that changed; the abstract-suite contract makes `invalidate` cheap
+ * and idempotent for an unchanged ledger.
+ *
+ * A `close()`d watcher stops polling and releases its probe connection; the
+ * store itself is untouched (the caller still owns its lifecycle).
+ */
+export function startXdgCoherenceWatcher(
+  store: LedgerStore,
+  dbPath: string,
+  pollMs: number = XDG_WATCHER_DEFAULT_POLL_MS,
+): XdgCoherenceWatcher {
+  const probe = openLedgerDb(dbPath);
+  let lastVersion = dataVersion(probe);
+  let invalidating = false;
+
+  const timer = setInterval(() => {
+    if (invalidating) return;
+    const current = dataVersion(probe);
+    if (current === lastVersion) return;
+    lastVersion = current;
+    invalidating = true;
+    void (async () => {
+      try {
+        for (const ledgerId of store.enumerate()) {
+          await store.invalidate(ledgerId);
+        }
+      } finally {
+        invalidating = false;
+      }
+    })();
+  }, pollMs);
+  // Never keep an otherwise-idle process alive on its own.
+  timer.unref?.();
+
+  return {
+    close(): void {
+      clearInterval(timer);
+      probe.close();
+    },
+  };
 }

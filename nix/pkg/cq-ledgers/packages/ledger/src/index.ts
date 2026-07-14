@@ -62,14 +62,16 @@ export type { TreeEntry, GitResult, GitRunOpts, GitRunner } from "./store/git/Gi
 export { GitPersistence } from "./store/git/GitPersistence.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";
+export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
+export type { SqliteLedgerStoreOpts } from "./store/sqlite/SqliteLedgerStore.js";
 export {
   createLedgerStore,
   resolveLedgerBackend,
   assertGitWorkTree,
   GitEnvironmentError,
-  LedgerBackendNotImplementedError,
+  startXdgCoherenceWatcher,
 } from "./store/createLedgerStore.js";
-export type { ResolvedLedgerStore } from "./store/createLedgerStore.js";
+export type { ResolvedLedgerStore, XdgCoherenceWatcher } from "./store/createLedgerStore.js";
 export {
   ensureGitBackendGitignore,
   removeGitBackendGitignore,
