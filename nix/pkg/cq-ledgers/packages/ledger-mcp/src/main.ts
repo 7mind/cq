@@ -51,7 +51,9 @@ import {
   type ConfigCapability,
   type PromptCatalogCapability,
   type ResolvedLedgerStore,
+  type XdgCoherenceWatcher,
   createLedgerStore,
+  startXdgCoherenceWatcher,
   nodeGitRunner,
   registerLedgerStdioTools,
   LEDGER_TOOL_NAMES,
@@ -400,20 +402,39 @@ export function readLogOf(store: LedgerStore): ReadLogCapability | undefined {
 }
 
 /**
- * Start the per-backend coherence watcher for a resolved store (T357 item 5):
- * file-watch ({@link startLedgerWatcher}) for the fs backend, ref-sha-watch
- * ({@link startLedgerRefWatcher}, T353) for git-object. Both return a handle
- * with `.close()`, so the host wires shutdown identically regardless of backend.
- * The git-object path binds a {@link nodeGitRunner} at the repo root so the
- * watcher polls `refs/heads/<branch>` for ledger advances by another process.
+ * Start the per-backend coherence watcher for a resolved store (T357 item 5;
+ * xdg case wired in T500): file-watch ({@link startLedgerWatcher}) for the fs
+ * backend, ref-sha-watch ({@link startLedgerRefWatcher}, T353) for git-object,
+ * data_version-poll ({@link startXdgCoherenceWatcher}, T530) for xdg. All three
+ * return a handle with `.close()`, so the host wires shutdown identically
+ * regardless of backend. The git-object path binds a {@link nodeGitRunner} at
+ * the repo root so the watcher polls `refs/heads/<branch>` for ledger advances
+ * by another process.
+ *
+ * The xdg watcher has no `onChange` parameter of its own (T530 bulk-invalidates
+ * every known ledger off a single `data_version` bump with no per-ledger
+ * granularity to report) — `onChange` is accepted here for signature parity
+ * with the other two backends but is not invoked for xdg. WS "changed" pushes
+ * for the xdg backend are therefore not yet wired; the STORE-level coherence
+ * (invalidate → fresh reads) IS in effect regardless, which is what the
+ * acceptance criterion for T500 requires.
  */
 export function startLedgerCoherenceWatcher(
   resolved: ResolvedLedgerStore,
   root: string,
   onChange?: (ledgerId: string | null) => void,
-): LedgerWatcher {
+): LedgerWatcher | XdgCoherenceWatcher {
   if (resolved.backend === "git-object") {
     return startLedgerRefWatcher(resolved.store, resolved.branch, nodeGitRunner(root), onChange);
+  }
+  if (resolved.backend === "xdg") {
+    if (resolved.dbPath === undefined) {
+      throw new Error(
+        "startLedgerCoherenceWatcher: backend 'xdg' resolved without a dbPath — " +
+          "createLedgerStore must always set dbPath for the xdg backend.",
+      );
+    }
+    return startXdgCoherenceWatcher(resolved.store, resolved.dbPath);
   }
   return startLedgerWatcher(resolved.store, root, onChange);
 }
