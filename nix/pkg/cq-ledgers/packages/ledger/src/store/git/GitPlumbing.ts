@@ -417,4 +417,23 @@ export class GitPlumbing {
     if (res.code !== 0) return [];
     return res.stdout.split("\n").filter((line) => line.length > 0);
   }
+
+  /**
+   * Whether `cwd` is a SHALLOW clone (`git clone --depth N`) — used by
+   * {@link resolveProjectKey} (D85 / H66) to refuse deriving a project key from
+   * `firstCommitShas` there: a shallow clone grafts its shallow-boundary
+   * commit to appear parentless, so `rev-list --max-parents=0` returns that
+   * unstable boundary SHA instead of the true root, silently diverging from a
+   * full clone's key (Q246).
+   *
+   * Runs: `git rev-parse --is-shallow-repository`, returning `true`/`false` as
+   * a boolean. Returns `false` (rather than throwing) when the command fails
+   * (e.g. `cwd` is not a git work tree at all) — `firstCommitShas` already
+   * turns that case into the no-root-commit fail-fast path.
+   */
+  async isShallowRepository(): Promise<boolean> {
+    const res = await this.run(["rev-parse", "--is-shallow-repository"]);
+    if (res.code !== 0) return false;
+    return res.stdout.trim() === "true";
+  }
 }

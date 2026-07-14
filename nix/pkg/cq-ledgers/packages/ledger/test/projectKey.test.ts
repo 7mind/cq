@@ -161,4 +161,58 @@ describe("resolveProjectKey", () => {
     const key = await resolveProjectKey({ repoRoot: dir, projectId: null, git: git_ });
     expect(key).toBe(expectedSha);
   });
+
+  // D85 / H66: a shallow clone grafts the shallow-boundary commit to appear
+  // parentless, so `git rev-list --max-parents=0 HEAD` returns that boundary
+  // SHA rather than the true root — a shallow clone would silently resolve a
+  // DIFFERENT projectKey than a full clone of the same repo (splitting the
+  // out-of-tree ledger, Q246) unless we fail fast instead.
+  it("FAILS FAST (no unstable boundary-SHA key) for a SHALLOW clone", async () => {
+    const srcDir = await seedRepo();
+    // A second commit so the shallow boundary commit is provably NOT the true
+    // root (the shallow clone's HEAD~0 differs from the source's root commit).
+    await fs.writeFile(path.join(srcDir, "second.txt"), "second\n");
+    await git(srcDir, "add", "second.txt");
+    await git(srcDir, "commit", "-q", "-m", "second commit");
+
+    const shallowDir = await freshDir("project-key-shallow-");
+    await fs.rm(shallowDir, { recursive: true, force: true });
+    // file:// is REQUIRED: git ignores --depth for plain-path local clones.
+    await git(srcDir, "clone", "-q", "--depth", "1", `file://${srcDir}`, shallowDir);
+    const isShallow = await git(shallowDir, "rev-parse", "--is-shallow-repository");
+    expect(isShallow).toBe("true");
+
+    await expect(resolveProjectKey({ repoRoot: shallowDir, projectId: null })).rejects.toThrow(
+      ProjectKeyResolutionError,
+    );
+  });
+
+  it("a FULL clone still resolves the true-root-based key (unaffected by the shallow guard)", async () => {
+    const srcDir = await seedRepo();
+    await fs.writeFile(path.join(srcDir, "second.txt"), "second\n");
+    await git(srcDir, "add", "second.txt");
+    await git(srcDir, "commit", "-q", "-m", "second commit");
+
+    const fullCloneDir = await freshDir("project-key-full-clone-");
+    await fs.rm(fullCloneDir, { recursive: true, force: true });
+    await git(srcDir, "clone", "-q", `file://${srcDir}`, fullCloneDir);
+
+    const expectedSha = await git(srcDir, "rev-list", "--max-parents=0", "HEAD");
+    const key = await resolveProjectKey({ repoRoot: fullCloneDir, projectId: null });
+    expect(key).toBe(expectedSha);
+  });
+
+  it("projectId OVERRIDES even in a shallow clone (no throw)", async () => {
+    const srcDir = await seedRepo();
+    await fs.writeFile(path.join(srcDir, "second.txt"), "second\n");
+    await git(srcDir, "add", "second.txt");
+    await git(srcDir, "commit", "-q", "-m", "second commit");
+
+    const shallowDir = await freshDir("project-key-shallow-pinned-");
+    await fs.rm(shallowDir, { recursive: true, force: true });
+    await git(srcDir, "clone", "-q", "--depth", "1", `file://${srcDir}`, shallowDir);
+
+    const key = await resolveProjectKey({ repoRoot: shallowDir, projectId: "pinned-id" });
+    expect(key).toBe("pinned-id");
+  });
 });

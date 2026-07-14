@@ -25,6 +25,15 @@
  *      choice for the same commit graph everywhere, per
  *      {@link GitPlumbing.firstCommitShas}'s ordering guarantee.
  *
+ * Shallow-clone behaviour (D85 / H66): a shallow clone (`git clone --depth
+ * N`) grafts its shallow-boundary commit to appear parentless, so
+ * `firstCommitShas` would return that unstable boundary SHA instead of the
+ * true root — silently resolving a DIFFERENT key than a full clone of the
+ * same repo. We check {@link GitPlumbing.isShallowRepository} BEFORE deriving
+ * and FAIL FAST rather than key off the boundary SHA. This check only
+ * applies to the SHA-derivation path — `projectId`, when set, still wins
+ * even in a shallow clone (checked first, above).
+ *
  * No-git / empty-repo behaviour (decision, recorded here since the worker
  * cannot write to the ledger — see the Session summary of the task that
  * introduced this module for the orchestrator to file as a `decisions` item):
@@ -80,6 +89,25 @@ export async function resolveProjectKey(opts: ResolveProjectKeyOpts): Promise<st
   }
 
   const git = opts.git ?? GitPlumbing.withCwd(opts.repoRoot);
+
+  // D85 / H66: a shallow clone grafts its shallow-boundary commit to appear
+  // parentless, so `firstCommitShas` below WOULD return that unstable
+  // boundary SHA (it does not come back empty — a shallow repo has a normal,
+  // non-unborn HEAD) instead of the true root, silently resolving a DIFFERENT
+  // key than a full clone of the same repo (Q246). Check explicitly before
+  // deriving, rather than relying on the empty-roots no-root-commit path.
+  if (await git.isShallowRepository()) {
+    throw new ProjectKeyResolutionError(
+      `Cannot resolve a project key for ${opts.repoRoot}: it is a SHALLOW git clone ` +
+        `(e.g. \`git clone --depth N\`). \`git rev-list --max-parents=0 HEAD\` would return ` +
+        `the shallow-boundary commit, not the repo's true root commit — that boundary SHA is ` +
+        `unstable (it depends on the clone's depth, not the repo's history) and would silently ` +
+        `resolve a DIFFERENT project key than a full clone of the same repo, splitting the ` +
+        `out-of-tree ledger (Q246). Fix: set [ledger].projectId = "<a stable identifier>" in ` +
+        `cq.toml, or use a full (non-shallow) clone.`,
+    );
+  }
+
   const roots = await git.firstCommitShas();
   const firstRoot = roots[0];
   if (firstRoot === undefined) {
