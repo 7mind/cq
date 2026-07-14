@@ -15,7 +15,7 @@
  * first write via the bootstrap helper (not at module load).
  */
 
-import { join } from "path";
+import { join, isAbsolute } from "path";
 import { homedir } from "os";
 import { mkdir } from "fs/promises";
 
@@ -33,7 +33,7 @@ import { mkdir } from "fs/promises";
 export function resolveStateDirBase(projectKey: string): string {
   const xdgStateHome = process.env.XDG_STATE_HOME;
   const baseStateDir =
-    xdgStateHome && xdgStateHome.trim() !== ""
+    xdgStateHome && xdgStateHome.trim() !== "" && isAbsolute(xdgStateHome)
       ? xdgStateHome
       : join(homedir(), ".local", "state");
 

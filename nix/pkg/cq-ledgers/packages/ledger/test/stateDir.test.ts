@@ -75,6 +75,15 @@ describe("resolveStateDirBase", () => {
     expect(result).toBe(expected);
   });
 
+  it("treats relative XDG_STATE_HOME as unset and falls back to ~/.local/state", () => {
+    process.env.XDG_STATE_HOME = "foo/bar";
+
+    const result = resolveStateDirBase(TEST_PROJECT_KEY);
+    const expected = join(homedir(), ".local", "state", "cq", "projects", TEST_PROJECT_KEY);
+
+    expect(result).toBe(expected);
+  });
+
   it("uses consistent layout across different project keys", () => {
     const key1 = "project-one";
     const key2 = "project-two";
