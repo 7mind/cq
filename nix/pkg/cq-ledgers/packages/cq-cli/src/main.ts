@@ -46,6 +46,7 @@ import {
 } from "./confirm.js";
 import { CQ_TOML_TEMPLATE } from "./cqTomlTemplate.js";
 import { runMoveLedger, type MoveDirection } from "./moveLedger.js";
+import { runMigrate } from "./migrate.js";
 import { runAdvanceGate } from "./advanceGate.js";
 import { runPredicates } from "./predicates.js";
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
@@ -63,7 +64,7 @@ export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructi
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "log", "backup", "restore"] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "log", "backup", "restore", "migrate"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -180,6 +181,12 @@ export const USAGE = [
   "                                                  per [ledger].backup) INTO the xdg primary",
   "                                                  (incl. logs); disaster recovery, no merge;",
   "                                                  refuses a non-empty primary without --yes.",
+  "  migrate     [--cwd <path>] [--yes|-y]           one-shot migration of the LEGACY backend",
+  "                                                  cq.toml names (fs .cq/ | git-object orphan",
+  "                                                  ref), state AND logs, INTO the out-of-tree",
+  "                                                  xdg primary; flips [ledger] backend to xdg;",
+  "                                                  legacy data is left in place untouched;",
+  "                                                  refuses a non-empty target without --yes.",
   "",
   "ledger root: --cwd > $LEDGER_ROOT > current working directory",
 ].join("\n");
@@ -800,6 +807,22 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
   return { exitCode: 0 };
 }
 
+/**
+ * `cq migrate` (T504 / Q243): the explicit one-shot LEGACY (fs | git-object)
+ * → xdg migration. The full logic lives in ./migrate.ts; this thin wrapper
+ * bridges {@link SubcommandArgs} to its {@link MigrateArgs} and threads the
+ * dispatcher IO (out/err + the shared confirmation IO).
+ */
+export async function runMigrateCmd(
+  args: SubcommandArgs,
+  io: DispatchIo,
+): Promise<SubcommandOutcome> {
+  return runMigrate(
+    { cwd: args.cwd, yes: args.yes },
+    { out: io.out, err: io.err, confirm: io.confirm },
+  );
+}
+
 /** A store exposing the FS-specific backup→reinit `reset()` (FsLedgerStore). */
 interface ResettableStore extends LedgerStore {
   reset(): Promise<ResetSummary>;
@@ -849,6 +872,7 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
   },
   backup: runBackup,
   restore: runRestore,
+  migrate: runMigrateCmd,
 };
 
 /**

@@ -41,8 +41,13 @@ import { resolveProjectKey } from "../projectKey.js";
 import { resolveStateDir, resolveLogsDir, ensureStateDir } from "../stateDir.js";
 import { BackupScheduler, runBackupExport } from "./backupExporter.js";
 
-/** The xdg backend's database filename within `<stateDir>` (T530). */
-const XDG_DB_FILENAME = "ledger.db";
+/**
+ * The xdg backend's database filename within `<stateDir>` (T530). Exported so
+ * `cq migrate` (T504) can resolve the xdg primary's dbPath BEFORE cq.toml is
+ * flipped to `backend = 'xdg'` (at which point this factory is unusable for
+ * the target — it would still construct the LEGACY store).
+ */
+export const XDG_DB_FILENAME = "ledger.db";
 
 /** Default poll interval for {@link startXdgCoherenceWatcher}. */
 const XDG_WATCHER_DEFAULT_POLL_MS = 500;

@@ -157,8 +157,14 @@ async function refLedgerNonEmpty(git: GitPlumbing, ref: string): Promise<boolean
  *  - cq.toml WITHOUT an active `[ledger]` table → append a fresh block.
  *
  * Only the `backend` key is touched; any `branch`/`remote` lines are preserved.
+ *
+ * Exported for reuse by `cq migrate` (T504), which flips the backend to `xdg`
+ * after importing the legacy state into the out-of-tree primary.
  */
-async function setLedgerBackend(root: string, backend: "git-object" | "fs"): Promise<void> {
+export async function setLedgerBackend(
+  root: string,
+  backend: "git-object" | "fs" | "xdg",
+): Promise<void> {
   const configPath = path.join(root, CQ_CONFIG_FILENAME);
   let source: string | null;
   try {

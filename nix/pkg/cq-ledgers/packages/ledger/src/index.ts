@@ -86,6 +86,7 @@ export {
   assertGitWorkTree,
   GitEnvironmentError,
   startXdgCoherenceWatcher,
+  XDG_DB_FILENAME,
 } from "./store/createLedgerStore.js";
 export type { ResolvedLedgerStore, XdgCoherenceWatcher } from "./store/createLedgerStore.js";
 export {
