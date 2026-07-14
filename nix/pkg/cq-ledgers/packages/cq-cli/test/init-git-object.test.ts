@@ -3,8 +3,10 @@
  *
  * Acceptance (R418 / T445): a fresh git-object init leaves .cq/*.md + .cq/ledgers.yaml
  * GITIGNORED on the working branch (never accidentally tracked), and the ledger
- * lands on the orphan ref rather than the working tree. backend='fs' (the
- * default, covered by init.test.ts) is unaffected.
+ * lands on the orphan ref rather than the working tree. Both tests here
+ * pre-write cq.toml selecting backend='git-object' explicitly, so the fresh-init
+ * default (backend='xdg' as of T501 — see init.test.ts / init-xdg.test.ts) never
+ * comes into play.
  *
  * Throwaway repos via mkdtemp; cleaned up in afterAll.
  */

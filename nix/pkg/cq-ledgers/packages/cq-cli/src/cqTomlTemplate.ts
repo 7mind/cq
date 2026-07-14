@@ -19,8 +19,11 @@
  *    each harness carries its own `[harness.<name>.tiers]` map (claude models
  *    under claude, pi models under pi). A model is dispatchable only if its
  *    harness's tiers block names it for some tier.
- *  - `[ledger]` is commented out, so the backend defaults to `fs` and the
- *    backup mode defaults to `none` (T494).
+ *  - `[ledger]` sets `backend = "xdg"` (T501): the out-of-tree bun:sqlite
+ *    primary is the default for a FRESH `cq init`. This ONLY affects fresh
+ *    inits — an existing repo's cq.toml (untouched by `cq init` without
+ *    `--force`) keeps whatever backend it already has. The backup mode
+ *    defaults to `none` (T494; unaffected).
  */
 
 export const CQ_TOML_TEMPLATE: string = `\
@@ -87,12 +90,15 @@ export const CQ_TOML_TEMPLATE: string = `\
   standard = "terra"               # balanced everyday
   fast     = "luna"                # fast, high-volume
 
-# Ledger storage backend (default: "fs"). "xdg" is the new out-of-tree
-# bun:sqlite primary (K102); "git-object" remains opt-in experimental.
+# Ledger storage backend — "xdg" (T501) is the default for a fresh \`cq init\`:
+# the out-of-tree bun:sqlite primary (K102), keyed off this repo's git
+# identity (or [ledger].projectId below). "fs" (in-tree .cq/) and
+# "git-object" remain available — set backend explicitly to opt back in.
 # backup (default: "none") is OFF by default (Q244); projectId is an
-# optional committed project-identity key (Q246).
-# [ledger]
-#   backend   = "xdg"
-#   backup    = "none"
-#   projectId = "my-project"
+# optional committed project-identity key (Q246), needed only for a repo
+# with no stable git root commit (e.g. a shallow clone).
+[ledger]
+  backend   = "xdg"
+# backup    = "none"
+# projectId = "my-project"
 `;

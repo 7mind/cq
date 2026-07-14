@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -22,6 +22,7 @@ import {
   resolveRoot,
   EXIT_USAGE,
   USAGE,
+  CQ_CONFIG_FILENAME,
   type ConfirmIo,
   type DispatchIo,
   type ModeDelegates,
@@ -269,6 +270,10 @@ describe("dispatch native subcommands — mode delegate never fires (T389 case e
   it("init: routes to runInit; no mode delegate fired", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cq-t389-init-"));
     tempDirs.push(root);
+    // Pin backend='fs' (T501 flipped the fresh-init default to 'xdg', which
+    // requires a git identity this plain tmp dir doesn't have — irrelevant to
+    // what THIS test asserts, dispatch routing, not backend selection).
+    await writeFile(path.join(root, CQ_CONFIG_FILENAME), '[ledger]\nbackend = "fs"\n', "utf8");
     try {
       const io = recordingDispatchIo();
       const modes = recordingModes();

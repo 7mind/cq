@@ -178,13 +178,17 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     expect(config.agentEfforts).toEqual({});
   });
 
-  it("[ledger] block is COMMENTED-OUT/inert — backend resolves to fs (ledger null)", () => {
-    // Guards the T349 acceptance against the REAL exported constant: if a future
-    // edit uncomments the template's [ledger] block (silently activating
-    // git-object), this fails. A synthetic copy in config.test.ts cannot catch
-    // that drift — only parsing CQ_TOML_TEMPLATE itself can.
+  it("[ledger] backend defaults to 'xdg' for a fresh cq init (T501)", () => {
+    // Guards the T501 acceptance against the REAL exported constant: a future
+    // edit that silently changes the fresh-init default backend (or reverts to
+    // the pre-T501 fs default) fails here. A synthetic copy in config.test.ts
+    // cannot catch that drift — only parsing CQ_TOML_TEMPLATE itself can.
     const config = parseConfig(CQ_TOML_TEMPLATE);
-    expect(config.ledger).toBeNull();
+    expect(config.ledger).not.toBeNull();
+    expect(config.ledger?.backend).toBe("xdg");
+    // backup / projectId stay at their documented (commented-out) defaults.
+    expect(config.ledger?.backup).toBe("none");
+    expect(config.ledger?.projectId).toBeNull();
   });
 });
 

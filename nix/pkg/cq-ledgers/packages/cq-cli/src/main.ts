@@ -27,9 +27,13 @@ import {
   CANONICAL_LEDGERS,
   removeLedgerArtifacts,
   LEDGER_STORAGE_DIRNAME,
+  resolveLedgerBackend,
+  resolveStateDirBase,
+  resolveProjectKey,
   type LedgerStore,
   type ResetSummary,
 } from "@cq/ledger";
+import { loadConfig } from "@cq/config";
 import {
   type ConfirmIo,
   defaultConfirmIo,
@@ -282,29 +286,41 @@ function defaultDispatchIo(): DispatchIo {
 // --- Subcommand handlers -----------------------------------------------------
 
 export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
+  // Write cq.toml BEFORE constructing the store (T501): a FRESH init (no
+  // pre-existing cq.toml, or --force) writes CQ_TOML_TEMPLATE here so the
+  // backend-selecting factory below reads the template's default backend
+  // ('xdg') rather than the pre-write no-cq.toml fallback ('fs'). An existing,
+  // untouched cq.toml (no --force) is left exactly as before — its
+  // already-configured backend is unaffected by this task.
+  const configPath = path.join(args.cwd, CQ_CONFIG_FILENAME);
+  const configExists = await pathExists(configPath);
+  if (!configExists || args.force) {
+    await fs.writeFile(configPath, CQ_TOML_TEMPLATE, "utf8");
+  }
+
   // Route through the backend-selecting factory (T357): for backend='git-object'
   // this validates the git env (fail-fast) and installs the idempotent
   // git-backend .gitignore block BEFORE seeding the orphan ref, so a fresh
-  // git-object ledger's docs/ is gitignored from the first write. backend='fs'
-  // (default / no cq.toml) is byte-identical to the historical FsLedgerStore.init().
+  // git-object ledger's docs/ is gitignored from the first write. backend='xdg'
+  // (T501, the new fresh-init default) resolves a git-identity-keyed store under
+  // the XDG state dir — a repo with no git identity (no commits, no git at all,
+  // or a shallow clone) FAILS FAST here with an actionable ProjectKeyResolutionError
+  // pointing at [ledger].projectId (propagated to the caller; see main()'s
+  // top-level `cq: fatal: <message>` handler). backend='fs' (still selectable via
+  // an existing/explicit cq.toml) is byte-identical to the historical FsLedgerStore.init().
   const { store } = await createLedgerStore(args.cwd);
   await store.dispose();
   const ledgerNames = CANONICAL_LEDGERS.map((c) => c.name).join(", ");
   io.out(`initialised ledgers at ${args.cwd} (${ledgerNames})`);
 
-  const configPath = path.join(args.cwd, CQ_CONFIG_FILENAME);
-  const configExists = await pathExists(configPath);
   if (configExists && !args.force) {
     io.out(
       `cq init: ${CQ_CONFIG_FILENAME} already exists at ${configPath}; re-run with --force to overwrite`,
     );
+  } else if (configExists) {
+    io.out(`cq init: overwrote ${CQ_CONFIG_FILENAME} at ${configPath}`);
   } else {
-    await fs.writeFile(configPath, CQ_TOML_TEMPLATE, "utf8");
-    if (configExists) {
-      io.out(`cq init: overwrote ${CQ_CONFIG_FILENAME} at ${configPath}`);
-    } else {
-      io.out(`cq init: wrote ${CQ_CONFIG_FILENAME} at ${configPath}`);
-    }
+    io.out(`cq init: wrote ${CQ_CONFIG_FILENAME} at ${configPath}`);
   }
 
   return { exitCode: 0 };
@@ -384,13 +400,22 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
  * `.cq/`): erase removes `.locks/` itself, so holding a lock while deleting it
  * would be self-defeating. The deletes go straight through `node:fs`.
  *
+ * backend='xdg' (T501): the ledger's data lives OUT OF TREE under the XDG state
+ * dir (`resolveStateDirBase(projectKey)`), not under `<root>/.cq/`. Erase
+ * additionally removes EXACTLY that project's directory — never the whole XDG
+ * base, never another project's directory. The backend + projectKey are
+ * resolved BEST-EFFORT (a malformed cq.toml, no git identity, etc. all degrade
+ * to "unknown" rather than aborting the erase) so the fs+config bounded delete
+ * below is unaffected by an unresolvable xdg identity.
+ *
  * Confirmation policy (shared with `reset`, see ./confirm.ts):
  *   - `--yes`             → proceed unattended (no prompt).
  *   - TTY, no `--yes`     → prompt; proceed only on a `y`/`Y` answer.
  *   - non-TTY, no `--yes` → REFUSE (exit 2) — never wipe a tree silently.
  *
- * SAFETY: if neither `<root>/.cq` nor `<root>/cq.toml` exists there is nothing
- * to erase; refuse with exit {@link EXIT_USAGE} rather than silently succeed.
+ * SAFETY: if neither `<root>/.cq`, `<root>/cq.toml`, nor a resolvable xdg
+ * project dir exists there is nothing to erase; refuse with exit
+ * {@link EXIT_USAGE} rather than silently succeed.
  */
 export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const storageDir = path.join(args.cwd, LEDGER_STORAGE_DIRNAME);
@@ -399,8 +424,28 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
   const storageExists = await pathExists(storageDir);
   const configExists = await pathExists(configFile);
 
+  // Best-effort resolve the xdg out-of-tree project dir (T501). Only attempted
+  // when a cq.toml exists to read; any failure (malformed toml, no git
+  // identity/shallow clone, backend isn't 'xdg', …) leaves this undefined and
+  // erase falls back to the bounded fs+config delete only, exactly as before.
+  let xdgProjectDir: string | undefined;
+  if (configExists) {
+    try {
+      const { backend } = resolveLedgerBackend(args.cwd);
+      if (backend === "xdg") {
+        const config = loadConfig(args.cwd);
+        const projectId = config?.ledger?.projectId ?? null;
+        const projectKey = await resolveProjectKey({ repoRoot: args.cwd, projectId });
+        xdgProjectDir = resolveStateDirBase(projectKey);
+      }
+    } catch {
+      xdgProjectDir = undefined;
+    }
+  }
+  const xdgProjectDirExists = xdgProjectDir !== undefined && (await pathExists(xdgProjectDir));
+
   // SAFETY: nothing to erase → refuse (don't silently succeed on an empty root).
-  if (!storageExists && !configExists) {
+  if (!storageExists && !configExists && !xdgProjectDirExists) {
     io.err(
       `cq erase: nothing to erase at ${args.cwd} ` +
         `(no ${LEDGER_STORAGE_DIRNAME}/ tree and no ${CQ_CONFIG_FILENAME}).`,
@@ -436,6 +481,12 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
   if (configExists) {
     await fs.rm(configFile, { force: true });
     removed.push(configFile);
+  }
+  // xdg (T501): remove EXACTLY this project's out-of-tree dir (state/ + logs/)
+  // — never the whole XDG base, never a sibling project's dir.
+  if (xdgProjectDirExists && xdgProjectDir !== undefined) {
+    await fs.rm(xdgProjectDir, { recursive: true, force: true });
+    removed.push(xdgProjectDir);
   }
 
   io.out(`cq erase: erased ledgers + config at ${args.cwd} (IRREVERSIBLE, no backup)`);
