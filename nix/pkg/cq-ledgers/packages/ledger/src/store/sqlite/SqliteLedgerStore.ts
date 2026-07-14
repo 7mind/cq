@@ -730,8 +730,8 @@ export class SqliteLedgerStore implements LedgerStore {
       return reattached;
     });
     // T538 (D87): move the ONE reattached doc archived → active incrementally
-    // (indexMoveToActive preserves the D88 archived-first-then-active
-    // ordering) instead of rebuilding both buckets.
+    // (indexMoveToActive; see its doc comment re: D88 docId scoping) instead
+    // of rebuilding both buckets.
     this.indexMoveToActive(ledgerId, item);
     this.fireMutation(ledgerId, "update");
     return item;
@@ -929,9 +929,11 @@ export class SqliteLedgerStore implements LedgerStore {
 
   /**
    * Move ONE doc active → archived (T538/D87 incremental form of the archive
-   * transition). Active removal runs FIRST: the docId is shared between the
-   * two scopes (D88), so the stale active entry must be gone before the
-   * archived upsert claims the id. GUARDED like every index update.
+   * transition). Active removal runs FIRST so the item is never transiently
+   * indexed under both scopes at once; LedgerSearchIndex's docId is
+   * scope-prefixed (D88 fix), so the two scopes' ids no longer collide and
+   * this ordering is no longer load-bearing for correctness, only for
+   * tidiness. GUARDED like every index update.
    */
   private indexMoveToArchived(ledgerId: string, item: Item): void {
     try {
@@ -947,10 +949,11 @@ export class SqliteLedgerStore implements LedgerStore {
 
   /**
    * Move ONE doc archived → active (T538/D87 incremental form of the T529
-   * unarchive transition). Preserves the D88 ordering: the archived scope's
-   * stale entry is discarded BEFORE the active upsert re-adds the same docId
-   * — reversed, a later archived-scope operation could erase the live active
-   * doc right back out of the index. GUARDED like every index update.
+   * unarchive transition). Archived removal runs FIRST so the item is never
+   * transiently indexed under both scopes at once; LedgerSearchIndex's docId
+   * is scope-prefixed (D88 fix), so the two scopes' ids no longer collide and
+   * this ordering is no longer load-bearing for correctness, only for
+   * tidiness. GUARDED like every index update.
    */
   private indexMoveToActive(ledgerId: string, item: Item): void {
     try {

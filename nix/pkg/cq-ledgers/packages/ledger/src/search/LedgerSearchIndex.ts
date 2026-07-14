@@ -7,9 +7,10 @@
  *
  * Document model
  * --------------
- * One MiniSearch document per item, keyed by a stable `docId =
- * "<ledgerId>:<itemId>"`. Ledger items have HETEROGENEOUS per-ledger schemas,
- * so we cannot index their raw field names uniformly. Instead each item's
+ * One MiniSearch document per item, keyed by a stable, SCOPE-AWARE `docId =
+ * "<scope>:<ledgerId>:<itemId>"` (`scope` is `active` or `archived`; see D88
+ * below). Ledger items have HETEROGENEOUS per-ledger schemas, so we cannot
+ * index their raw field names uniformly. Instead each item's
  * field values are bucketed into a small CANONICAL field set that MiniSearch
  * can boost consistently across ledgers:
  *
@@ -30,6 +31,21 @@
  * are built from immutable archive files; active docs are rebuilt on every
  * change. See `FsLedgerStore` for the I/O wiring and the archive-immutability
  * rationale.
+ *
+ * Scope-aware docId (D88)
+ * -----------------------
+ * Before this fix, `docId` was `"<ledgerId>:<itemId>"` with no scope tag, so
+ * the active and archived buckets COLLIDED on the same MiniSearch document id
+ * whenever an item had ever been both (e.g. across an archive/unarchive
+ * round-trip). `AbstractLedgerStore.unarchiveItem` refreshes the active
+ * bucket first (re-adding the item under the shared id) and the archived
+ * bucket second (discarding its now-stale tracked id under the SAME shared
+ * id) — the archived-bucket discard erased the just-re-added active doc, so
+ * `ftsSearch(includeArchived:false)` returned nothing for a just-unarchived
+ * item even though `fetchItem`/row-search still saw it. Prefixing `docId`
+ * with its scope makes the two buckets' ids disjoint by construction, so no
+ * bucket's discard can ever touch the other bucket's doc, regardless of
+ * refresh order.
  *
  * Memory reclaim (D67)
  * --------------------
@@ -155,6 +171,19 @@ function makeMini(): MiniSearch<IndexDoc> {
   });
 }
 
+/**
+ * The scope tag prefixed onto every docId (D88) so the active and archived
+ * buckets can never collide on the same MiniSearch document id.
+ */
+function scopeTag(archived: boolean): "active" | "archived" {
+  return archived ? "archived" : "active";
+}
+
+/** Build the scope-aware docId (D88) for `itemId` under `ledgerId`. */
+function docIdFor(ledgerId: string, itemId: string, archived: boolean): string {
+  return `${scopeTag(archived)}:${ledgerId}:${itemId}`;
+}
+
 /** Build the canonical IndexDoc for a single item under `ledgerId`. */
 function toDoc(ledgerId: string, item: Item, archived: boolean): IndexDoc {
   const headlineParts: string[] = [];
@@ -166,7 +195,7 @@ function toDoc(ledgerId: string, item: Item, archived: boolean): IndexDoc {
     else bodyParts.push(text);
   }
   return {
-    docId: `${ledgerId}:${item.id}`,
+    docId: docIdFor(ledgerId, item.id, archived),
     ledgerId,
     itemId: item.id,
     milestoneId: item.milestoneId,
@@ -220,30 +249,29 @@ export class LedgerSearchIndex {
    * for a whole-bucket rebuild (O(docs-in-ledger)); these upsert/remove
    * exactly ONE doc — O(1) in ledger size. Add-vs-replace is decided by the
    * `backing` side table (authoritative for what is live in `this.mini`).
-   * The docId (`"<ledgerId>:<itemId>"`) is shared between the active and
-   * archived scopes, so an upsert also evicts the id from the OPPOSITE
-   * tracker — a later whole-bucket replacement of that scope must not
-   * discard a doc it no longer owns (the D88 collision, incremental form).
+   * The docId is scope-prefixed (D88), so the active and archived scopes'
+   * ids are always disjoint — an upsert/remove in one scope can never
+   * observe or evict the other scope's doc for the same item.
    */
 
   /** Insert or replace the ONE ACTIVE doc for `item` under `ledgerId`. */
   upsertActiveDoc(ledgerId: string, item: Item): void {
-    this.upsertDoc(this.activeDocIds, this.archivedDocIds, ledgerId, item, /*archived*/ false);
+    this.upsertDoc(this.activeDocIds, ledgerId, item, /*archived*/ false);
   }
 
   /** Insert or replace the ONE ARCHIVED doc for `item` under `ledgerId`. */
   upsertArchivedDoc(ledgerId: string, item: Item): void {
-    this.upsertDoc(this.archivedDocIds, this.activeDocIds, ledgerId, item, /*archived*/ true);
+    this.upsertDoc(this.archivedDocIds, ledgerId, item, /*archived*/ true);
   }
 
   /** Remove the ONE active doc for `itemId` (no-op when absent). */
   removeActiveDoc(ledgerId: string, itemId: string): void {
-    this.removeDoc(this.activeDocIds, ledgerId, itemId);
+    this.removeDoc(this.activeDocIds, ledgerId, itemId, /*archived*/ false);
   }
 
   /** Remove the ONE archived doc for `itemId` (no-op when absent). */
   removeArchivedDoc(ledgerId: string, itemId: string): void {
-    this.removeDoc(this.archivedDocIds, ledgerId, itemId);
+    this.removeDoc(this.archivedDocIds, ledgerId, itemId, /*archived*/ true);
   }
 
   /** Drop every active and archived doc for `ledgerId`. */
@@ -407,11 +435,12 @@ export class LedgerSearchIndex {
   /**
    * Upsert ONE doc into the given scope (D87). `mini.replace` discards the
    * previous doc internally, leaving a tombstone — counted toward the same
-   * reclaim threshold a bucket rebuild's discards feed.
+   * reclaim threshold a bucket rebuild's discards feed. The docId is
+   * scope-prefixed (D88), so this can never collide with — or need to evict
+   * from — the opposite scope's tracker for the same item.
    */
   private upsertDoc(
     tracker: Map<string, Set<string>>,
-    opposite: Map<string, Set<string>>,
     ledgerId: string,
     item: Item,
     archived: boolean,
@@ -424,7 +453,6 @@ export class LedgerSearchIndex {
       this.mini.add(doc);
     }
     this.backing.set(doc.docId, { ledgerId, item, archived });
-    opposite.get(ledgerId)?.delete(doc.docId);
     let ids = tracker.get(ledgerId);
     if (ids === undefined) {
       ids = new Set();
@@ -436,11 +464,17 @@ export class LedgerSearchIndex {
 
   /**
    * Remove ONE doc from the given scope (D87). Guarded on the tracker OWNING
-   * the docId — removing an id from a scope that does not track it must not
-   * touch the doc the other scope holds under the shared docId.
+   * the docId — a no-op when this scope does not currently track `itemId`.
+   * The docId is scope-prefixed (D88), so this can never touch the opposite
+   * scope's doc for the same item.
    */
-  private removeDoc(tracker: Map<string, Set<string>>, ledgerId: string, itemId: string): void {
-    const docId = `${ledgerId}:${itemId}`;
+  private removeDoc(
+    tracker: Map<string, Set<string>>,
+    ledgerId: string,
+    itemId: string,
+    archived: boolean,
+  ): void {
+    const docId = docIdFor(ledgerId, itemId, archived);
     const ids = tracker.get(ledgerId);
     if (ids === undefined || !ids.has(docId)) return;
     ids.delete(docId);

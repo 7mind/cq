@@ -355,17 +355,18 @@ describe("T529: includeArchived — derived-index scope transition on archive/un
         (await stores.sq.ftsSearch("zebracrossing", { includeArchived: true })).map((h) => h.item.id),
       ).toEqual([it.id]);
 
-      // Unarchive restores default (active-scope) searchability. Sqlite-only
-      // assertion here: FsLedgerStore/AbstractLedgerStore.unarchiveItem has a
-      // PRE-EXISTING, out-of-scope defect where the reattached item's docId
-      // ("<ledger>:<itemId>", shared between the active and archived index
-      // buckets) is dropped again by refreshLedgerIndexArchived's stale-id
-      // discard, which runs AFTER fireMutation's active re-add — repro:
-      // `bun -e` against a bare FsLedgerStore reproduces `ftsSearch` returning
-      // [] post-unarchive even though `fetchItem`/`search` see the item fine.
-      // SqliteLedgerStore.unarchiveItem (T529) orders the two refreshes the
-      // other way round specifically to avoid this docId collision.
+      // Unarchive restores default (active-scope) searchability in BOTH
+      // stores. D88 (fixed): LedgerSearchIndex's docId used to be
+      // "<ledger>:<itemId>", shared between the active and archived index
+      // buckets, so AbstractLedgerStore.unarchiveItem's active-then-archived
+      // refresh order let the archived-bucket refresh's stale-id discard
+      // erase the just-re-added active doc — `ftsSearch` returned [] post-
+      // unarchive even though `fetchItem`/`search` saw the item fine. The
+      // docId is now scope-prefixed ("active:"/"archived:"), so the two
+      // buckets can never collide regardless of refresh order; see
+      // store-fs.test.ts's dedicated D88 regression test.
       await p((s) => s.unarchiveItem(WIDGETS, m.id, it.id));
+      expect((await stores.fs.ftsSearch("zebracrossing")).map((h) => h.item.id)).toEqual([it.id]);
       expect((await stores.sq.ftsSearch("zebracrossing")).map((h) => h.item.id)).toEqual([it.id]);
 
       expectStoreParity(stores);

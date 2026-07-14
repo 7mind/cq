@@ -205,3 +205,58 @@ describe("FsLedgerStore — cross-instance invalidate", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// D88 — unarchiveItem must restore active-scope FTS searchability
+// ---------------------------------------------------------------------------
+
+describe("FsLedgerStore — D88 unarchive/ftsSearch scope collision", () => {
+  it("ftsSearch (includeArchived:false) finds an item right after it is unarchived", async () => {
+    const dir = await seedDir([
+      {
+        name: "widgets",
+        schema: {
+          statusValues: ["open", "resolved"],
+          terminalStatuses: ["resolved"],
+          fields: {
+            severity: { type: "string", required: true },
+            location: { type: "string", required: true },
+            description: { type: "string", required: true },
+          },
+        },
+      },
+    ]);
+    const store = new FsLedgerStore({ root: dir });
+    await store.init();
+    try {
+      const m = await store.createMilestone({ title: "x" });
+      const it = await store.createItem("widgets", m.id, {
+        status: "resolved",
+        fields: { severity: "minor", location: "z.ts", description: "zebracrossing" },
+      });
+
+      // Active: found by default.
+      expect((await store.ftsSearch("zebracrossing")).map((h) => h.item.id)).toEqual([it.id]);
+
+      await store.updateMilestone(m.id, { status: "done" });
+      await store.archiveMilestone(m.id, "summary");
+
+      // Archived: hidden by default, visible with includeArchived:true.
+      expect((await store.ftsSearch("zebracrossing")).length).toBe(0);
+      expect(
+        (await store.ftsSearch("zebracrossing", { includeArchived: true })).map((h) => h.item.id),
+      ).toEqual([it.id]);
+
+      await store.unarchiveItem("widgets", m.id, it.id);
+
+      // D88: unarchiveItem's index refresh order (active rebuild THEN archived
+      // refresh) let the archived-bucket refresh discard the just-re-added
+      // active doc, because the two buckets shared the docId `<ledger>:<id>`.
+      // fetchItem/search still see the item; only ftsSearch went blind.
+      expect(store.fetchItem("widgets", it.id).status).toBe("resolved");
+      expect((await store.ftsSearch("zebracrossing")).map((h) => h.item.id)).toEqual([it.id]);
+    } finally {
+      await store.dispose();
+    }
+  });
+});
