@@ -114,15 +114,21 @@ describe("cq restore (T503)", () => {
     expect(outcome.exitCode).toBe(EXIT_USAGE);
   });
 
-  it("round-trips items + a milestone + logs through backup -> wipe -> restore --yes", async () => {
-    const root = await gitRepo("cq-restore-roundtrip-");
+  /**
+   * The full backup -> wipe -> restore --yes round-trip, parameterised by the
+   * dump SOURCE (`[ledger].backup` target). Both sources MUST satisfy the same
+   * acceptance: (a) fetch_ledger/fetch_item parity with the pre-wipe snapshot
+   * AND (b) read_log parity for every pre-wipe log artifact. The only
+   * difference between the two is where `cq backup` writes the dump (in-tree
+   * `.cq/` vs the orphan ref) and thus where `cq restore` reads it from — the
+   * store/log wipe + parity assertions are identical.
+   */
+  async function roundTrip(opts: { prefix: string; cqToml: string }): Promise<void> {
+    const root = await gitRepo(opts.prefix);
     const xdgHome = await fs.mkdtemp(path.join(tmpdir(), "cq-restore-xdg-home-"));
     dirs.push(xdgHome);
     process.env["XDG_STATE_HOME"] = xdgHome;
-    await fs.writeFile(
-      path.join(root, "cq.toml"),
-      '[ledger]\nbackend = "xdg"\nbackup = "in-tree"\n',
-    );
+    await fs.writeFile(path.join(root, "cq.toml"), opts.cqToml);
 
     // --- Seed: a milestone + a task item directly against the xdg primary.
     const seeded = await createLedgerStore(root);
@@ -191,6 +197,53 @@ describe("cq restore (T503)", () => {
       expect(raw.truncated).toBeUndefined();
 
       await restored.store.dispose();
+    }
+  }
+
+  it("in-tree source: round-trips items + a milestone + logs through backup -> wipe -> restore --yes", async () => {
+    await roundTrip({
+      prefix: "cq-restore-roundtrip-intree-",
+      cqToml: '[ledger]\nbackend = "xdg"\nbackup = "in-tree"\n',
+    });
+  });
+
+  it("orphan-branch source: round-trips items + a milestone + logs through backup -> wipe -> restore --yes", async () => {
+    await roundTrip({
+      prefix: "cq-restore-roundtrip-orphan-",
+      cqToml: '[ledger]\nbackend = "xdg"\nbackup = "orphan-branch"\nbranch = "cq-restore-dump"\n',
+    });
+  });
+
+  it("orphan-branch source: fails loud without touching the primary when the ref does not exist", async () => {
+    const root = await gitRepo("cq-restore-orphan-missing-");
+    const xdgHome = await fs.mkdtemp(path.join(tmpdir(), "cq-restore-xdg-home-missing-"));
+    dirs.push(xdgHome);
+    process.env["XDG_STATE_HOME"] = xdgHome;
+    await fs.writeFile(
+      path.join(root, "cq.toml"),
+      '[ledger]\nbackend = "xdg"\nbackup = "orphan-branch"\nbranch = "cq-never-written"\n',
+    );
+
+    // Seed a primary but NEVER `cq backup` — the orphan ref does not exist.
+    const seeded = await createLedgerStore(root);
+    const milestone = await seeded.store.createMilestone({ title: "untouched" });
+    const item = await seeded.store.createItem(TASKS_LEDGER, milestone.id, {
+      status: "planned",
+      fields: { headline: "must survive" },
+    });
+    await seeded.store.dispose();
+
+    const restoreIo = recordingIo();
+    const restoreOutcome = await dispatch(["restore", "--cwd", root, "--yes"], restoreIo);
+    expect(restoreOutcome.exitCode).toBe(EXIT_USAGE);
+    expect(restoreIo.errs.join("\n")).toContain("does not exist");
+
+    // The primary is untouched — the pre-existing item survives.
+    const survivor = await createLedgerStore(root);
+    try {
+      expect(survivor.store.fetchItem(TASKS_LEDGER, item.id)).toEqual(item);
+    } finally {
+      await survivor.store.dispose();
     }
   });
 
