@@ -60,6 +60,8 @@ import {
 } from "../src/index.js";
 import { SqliteProtoStore, seedSqliteItems } from "./proto/sqliteProtoStore.js";
 import { JsonlProtoStore, seedJsonlItems } from "./proto/jsonlProtoStore.js";
+import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
+import { openLedgerDb } from "../src/store/sqlite/connection.js";
 
 const exec = promisify(execFile);
 
@@ -217,13 +219,16 @@ const gitObjectDriver: BackendDriver = {
 };
 
 /**
- * Candidate A (T492): bun:sqlite. Store wraps `SqliteProtoStore` to the
- * `BenchStore` shape; seed is a single bulk-insert transaction.
+ * Candidate A (T492): bun:sqlite PROTOTYPE. Store wraps `SqliteProtoStore` to
+ * the `BenchStore` shape; seed is a single bulk-insert transaction. Superseded
+ * by the real `SqliteLedgerStore` ({@link sqliteDriver} below, T531) — kept
+ * here as the K102-prototype reference point the real store is compared
+ * against.
  */
-const sqliteDriver: BackendDriver = {
-  name: "sqlite",
+const sqliteProtoDriver: BackendDriver = {
+  name: "sqlite-proto",
   async setupRoot() {
-    return fs.mkdtemp(path.join(tmpdir(), "bench-sqlite-"));
+    return fs.mkdtemp(path.join(tmpdir(), "bench-sqlite-proto-"));
   },
   async openStore(root) {
     const store = new SqliteProtoStore({ root });
@@ -237,6 +242,66 @@ const sqliteDriver: BackendDriver = {
   },
   async seedTasksLedger(root, milestoneId, size) {
     return seedSqliteItems(root, milestoneId, size);
+  },
+  async teardownRoot(root) {
+    await fs.rm(root, { recursive: true, force: true });
+  },
+};
+
+/**
+ * The real `SqliteLedgerStore` (K102 primary, T525-T528, G67-C1). Fixed
+ * `ledger.db` filename inside the per-run root (parity with
+ * `test/sqliteWriterStore.ts`). `openStore` returns the store directly — it
+ * already satisfies `BenchStore` structurally (same as `fsDriver` /
+ * `gitObjectDriver`). Seeding writes the synthetic item rows directly via a
+ * raw `bun:sqlite` connection over the same normalized schema (schema.ts),
+ * bypassing the per-item `createItem` write funnel for the same O(n^2) reason
+ * documented in the module doc comment.
+ */
+const sqliteDriver: BackendDriver = {
+  name: "sqlite",
+  async setupRoot() {
+    return fs.mkdtemp(path.join(tmpdir(), "bench-sqlite-"));
+  },
+  async openStore(root) {
+    const store = new SqliteLedgerStore({ dbPath: path.join(root, "ledger.db") });
+    await store.init();
+    return store;
+  },
+  async seedTasksLedger(root, milestoneId, size) {
+    const now = new Date().toISOString();
+    const items = buildSyntheticItems(milestoneId, size, now);
+    const db = openLedgerDb(path.join(root, "ledger.db"));
+    try {
+      db.transaction(() => {
+        const insertItem = db.query(
+          `INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+        );
+        for (const item of items) {
+          insertItem.run(
+            TASKS_LEDGER,
+            item.id,
+            item.milestoneId,
+            item.status,
+            JSON.stringify(item.fields),
+            item.createdAt,
+            item.updatedAt,
+          );
+        }
+        db.query("INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, '', '')").run(
+          TASKS_LEDGER,
+          milestoneId,
+        );
+        db.query("UPDATE ledgers SET item_counter = ? WHERE name = ?").run(
+          size,
+          TASKS_LEDGER,
+        );
+      })();
+    } finally {
+      db.close();
+    }
+    return items.map((it) => it.id);
   },
   async teardownRoot(root) {
     await fs.rm(root, { recursive: true, force: true });
@@ -270,7 +335,7 @@ const jsonlDriver: BackendDriver = {
   },
 };
 
-const DRIVERS: BackendDriver[] = [fsDriver, gitObjectDriver, sqliteDriver, jsonlDriver];
+const DRIVERS: BackendDriver[] = [fsDriver, gitObjectDriver, sqliteDriver, sqliteProtoDriver, jsonlDriver];
 
 interface SizeResult {
   size: number;
