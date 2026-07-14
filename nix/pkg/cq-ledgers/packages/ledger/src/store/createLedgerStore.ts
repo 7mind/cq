@@ -67,6 +67,16 @@ const DEFAULT_BRANCH = "cq-ledger";
 export interface ResolvedLedgerStore {
   /** The initialised store. */
   readonly store: LedgerStore;
+  /**
+   * The cq.toml CONFIG ROOT — the `root` this factory was called with, where
+   * cq.toml + .git live (D93). Independent of the store's own data location:
+   * for the xdg backend that location is out-of-tree (`<stateDir>/ledger.db`),
+   * but cq.toml never moves there, so config/prompt-catalog capability wiring
+   * (ledger-mcp's `createLedgerMcpServer`) MUST key off `configRoot`, not off a
+   * duck-typed `store.rootDir` (which the xdg `SqliteLedgerStore` has no
+   * reason to expose).
+   */
+  readonly configRoot: string;
   /** The resolved backend identifier. */
   readonly backend: LedgerBackend;
   /** The orphan-ref branch (git-object only; the default otherwise). */
@@ -223,9 +233,9 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
     backup = new BackupScheduler(async () => {
       await runBackupExport({ store, root, target: backupTarget, branch, logsDir });
     });
-    return { store, backend, branch, dbPath, logsDir, backup };
+    return { store, configRoot: root, backend, branch, dbPath, logsDir, backup };
   }
-  return { store, backend, branch, dbPath, logsDir };
+  return { store, configRoot: root, backend, branch, dbPath, logsDir };
 }
 
 /**
@@ -248,12 +258,12 @@ export async function openLegacyLedgerStore(root: string): Promise<ResolvedLedge
     assertGitWorkTree(root);
     const store = new GitObjectLedgerBackend({ repoRoot: root, ref: branch });
     await store.init();
-    return { store, backend, branch };
+    return { store, configRoot: root, backend, branch };
   }
   if (backend === "fs") {
     const store = new FsLedgerStore({ root });
     await store.init();
-    return { store, backend, branch };
+    return { store, configRoot: root, backend, branch };
   }
   throw new Error(
     `openLegacyLedgerStore: [ledger] backend = '${backend}' at ${root} is not a legacy ` +

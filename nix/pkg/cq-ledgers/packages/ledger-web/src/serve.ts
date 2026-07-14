@@ -289,7 +289,12 @@ async function serveEmbedded(
 ): Promise<ReturnType<typeof Bun.serve>> {
   const resolved = await createEmbeddedStore(opts.cwd);
   const store = resolved.store;
-  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store, path.basename(opts.cwd));
+  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
+    store,
+    path.basename(opts.cwd),
+    "",
+    resolved.configRoot,
+  );
 
   const server = scanForPort(opts.port, (p) =>
     Bun.serve({

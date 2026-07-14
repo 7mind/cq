@@ -310,16 +310,10 @@ async function withClientAtRootHarness(
 }
 
 describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
-  // SKIPPED (T505 fallout — PRE-EXISTING defect surfaced, needs its own fix):
-  // the xdg SqliteLedgerStore exposes no `rootDir`, so rootDirOf() gating
-  // leaves the cq.toml config capability ABSENT on an xdg-backed server —
-  // get_reviewers/get_planners/get_config/get_agent_models return the
-  // not-implemented error (reproduced on the live dogfooded repo). With the
-  // legacy fs runtime primary removed there is no spawnable backend that
-  // carries the capability, so these spawned-binary assertions cannot run
-  // until the capability is re-bound (e.g. config root = resolved --cwd,
-  // independent of the store's duck-typed rootDir). The capability logic
-  // itself stays covered in-process by configCapability.test.ts.
+  // D93 (fixed): the xdg SqliteLedgerStore exposes no `rootDir`, so config
+  // capability wiring now keys off `ResolvedLedgerStore.configRoot` (the
+  // cq.toml root the server was spawned with via `--cwd`) instead of the
+  // duck-typed `rootDirOf(store)`, which is xdg-blind by design.
 
   // ONE fixture cq.toml: shared opus panels (claude) + a [harness.pi] override
   // (grok panels) + [harness.pi.tiers] (grok=frontier). Same single-file shape
@@ -360,7 +354,7 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
     return root;
   }
 
-  it.skip("server LAUNCHED with CQ_HARNESS=pi observes it and resolves the PI view (grok)", async () => {
+  it("server LAUNCHED with CQ_HARNESS=pi observes it and resolves the PI view (grok)", async () => {
     const root = await fixtureRoot();
     try {
       await withClientAtRootHarness(root, "pi", async (client) => {
@@ -405,7 +399,7 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
     }
   });
 
-  it.skip("server LAUNCHED with CQ_HARNESS=claude observes it and resolves the OPUS view", async () => {
+  it("server LAUNCHED with CQ_HARNESS=claude observes it and resolves the OPUS view", async () => {
     const root = await fixtureRoot();
     try {
       await withClientAtRootHarness(root, "claude", async (client) => {
@@ -449,7 +443,7 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
     }
   });
 
-  it.skip("server LAUNCHED with CQ_HARNESS UNSET defaults to the claude (opus) view", async () => {
+  it("server LAUNCHED with CQ_HARNESS UNSET defaults to the claude (opus) view", async () => {
     const root = await fixtureRoot();
     try {
       await withClientAtRootHarness(root, undefined, async (client) => {
@@ -468,16 +462,9 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
 });
 
 describe("ledger-mcp stdio config capability (cq.toml)", () => {
-  // SKIPPED (T505 fallout — PRE-EXISTING defect surfaced, needs its own fix):
-  // the xdg SqliteLedgerStore exposes no `rootDir`, so rootDirOf() gating
-  // leaves the cq.toml config capability ABSENT on an xdg-backed server —
-  // get_reviewers/get_planners/get_config/get_agent_models return the
-  // not-implemented error (reproduced on the live dogfooded repo). With the
-  // legacy fs runtime primary removed there is no spawnable backend that
-  // carries the capability, so these spawned-binary assertions cannot run
-  // until the capability is re-bound (e.g. config root = resolved --cwd,
-  // independent of the store's duck-typed rootDir). The capability logic
-  // itself stays covered in-process by configCapability.test.ts.
+  // D93 (fixed): see the CQ_HARNESS describe block above — config capability
+  // now keys off `ResolvedLedgerStore.configRoot` rather than the xdg-blind
+  // `rootDirOf(store)` duck-type.
 
   it("surfaces get_reviewers + get_planners + get_config + get_agent_models on the stdio binary", async () => {
     // The default tmpRoot has no cq.toml, so the tools are still listed.
@@ -491,7 +478,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
     });
   });
 
-  it.skip("returns configured:false reviewers/planners when cq.toml carries no panels ([ledger]-only)", async () => {
+  it("returns configured:false reviewers/planners when cq.toml carries no panels ([ledger]-only)", async () => {
     // T505: a runnable root always carries a cq.toml (the [ledger] backend
     // selection lives there), so the leanest spawnable root is [ledger]-only.
     // get_reviewers/get_planners still report configured:false (no panels);
@@ -534,7 +521,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
     }
   });
 
-  it.skip("returns the resolved reviewer set when a fixture cq.toml is present", async () => {
+  it("returns the resolved reviewer set when a fixture cq.toml is present", async () => {
     const cfgRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-cfg-"));
     try {
       // Config root IS the ledger root: write cq.toml at <root>/cq.toml.
@@ -599,7 +586,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
    *  - without a cq.toml: returns configured:false with 19 entries (not-configured
    *    for model-configurable roles, not-model-configurable for command roles).
    */
-  it.skip("get_agent_models returns 19 agent entries with a fixture cq.toml (T287)", async () => {
+  it("get_agent_models returns 19 agent entries with a fixture cq.toml (T287)", async () => {
     const agentRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-agents-"));
     try {
       await fs.writeFile(
@@ -645,12 +632,18 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
     }
   });
 
-  it.skip("get_agent_models returns 19 unresolved entries when cq.toml carries no aliases ([ledger]-only) (T287)", async () => {
+  it("get_agent_models returns 19 unresolved entries when cq.toml carries no aliases ([ledger]-only) (T287)", async () => {
     // T505: a runnable root always carries a cq.toml, so the leanest spawnable
-    // root is [ledger]-only. `configured` (= a parseable cq.toml is present)
-    // is true, but with no aliases every model-configurable role stays
-    // not-configured. The true no-cq.toml capability path stays covered
-    // in-process by configCapability.test.ts.
+    // root is [ledger]-only. `configured` (= a parseable cq.toml is present) is
+    // true; computeAgentModels only emits `not-configured` when NO cq.toml is
+    // present at all (config === null, now unreachable via any runtime root).
+    // With a cq.toml present but no [tiers]/[aliases], every model-configurable
+    // role resolves its DEFAULT_TIER to no model in [tiers] -> `no-live-token`
+    // (mirrors configCapability.test.ts's "implement-worker resolves
+    // status='no-live-token'" precedent). Orchestrator commands remain
+    // not-model-configurable regardless of cq.toml presence. The true
+    // no-cq.toml `not-configured` path stays covered in-process by
+    // configCapability.test.ts.
     const noCfgRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-agents-nocfg-"));
     try {
       await fs.writeFile(
@@ -665,10 +658,8 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
         }>(await client.callTool({ name: "get_agent_models", arguments: {} }));
         expect(result.configured).toBe(true);
         expect(result.agents).toHaveLength(19);
-        // Every model-configurable role is not-configured; orchestrator commands
-        // remain not-model-configurable regardless of cq.toml presence.
         for (const agent of result.agents) {
-          expect(["not-configured", "not-model-configurable"]).toContain(agent.status);
+          expect(["no-live-token", "not-model-configurable"]).toContain(agent.status);
         }
       });
     } finally {

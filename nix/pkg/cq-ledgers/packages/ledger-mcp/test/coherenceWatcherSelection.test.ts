@@ -79,7 +79,12 @@ describe("startLedgerCoherenceWatcher — backend selection", () => {
     await a.createLedger("widgets", widgetsSchema);
     const ms = await a.createMilestone({ id: "M1", title: "m1" });
 
-    const resolved: ResolvedLedgerStore = { store: a, backend: "fs", branch: "cq-ledger" };
+    const resolved: ResolvedLedgerStore = {
+      store: a,
+      configRoot: root,
+      backend: "fs",
+      branch: "cq-ledger",
+    };
     const watcher = startLedgerCoherenceWatcher(resolved, root);
     try {
       expect(a.fetch("widgets").milestones.flatMap((g) => g.items)).toHaveLength(0);
@@ -109,7 +114,12 @@ describe("startLedgerCoherenceWatcher — backend selection", () => {
     await a.createLedger("widgets", widgetsSchema);
     const ms = await a.createMilestone({ id: "M1", title: "m1" });
 
-    const resolved: ResolvedLedgerStore = { store: a, backend: "git-object", branch: "cq-ledger" };
+    const resolved: ResolvedLedgerStore = {
+      store: a,
+      configRoot: dir,
+      backend: "git-object",
+      branch: "cq-ledger",
+    };
     const watcher = startLedgerCoherenceWatcher(resolved, dir);
     try {
       expect(a.fetch("widgets").milestones.flatMap((g) => g.items)).toHaveLength(0);
@@ -141,6 +151,7 @@ describe("startLedgerCoherenceWatcher — backend selection", () => {
 
     const resolved: ResolvedLedgerStore = {
       store: watched,
+      configRoot: dbDir,
       backend: "xdg",
       branch: "cq-ledger",
       dbPath,
@@ -187,7 +198,12 @@ describe("startLedgerCoherenceWatcher — backend selection", () => {
     const store = new SqliteLedgerStore({ dbPath });
     await store.init();
     try {
-      const resolved = { store, backend: "xdg", branch: "cq-ledger" } as ResolvedLedgerStore;
+      const resolved = {
+        store,
+        configRoot: root,
+        backend: "xdg",
+        branch: "cq-ledger",
+      } as ResolvedLedgerStore;
       expect(() => startLedgerCoherenceWatcher(resolved, root)).toThrow(/without a dbPath/);
     } finally {
       await store.dispose();

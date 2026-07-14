@@ -314,6 +314,14 @@ export function projectInstructionLine(displayName: string): string {
  * store does not. Returns the root string when the store advertises one, else
  * `undefined`. Backend-independent on purpose — config/promptCatalog are not
  * FS-specific, so they must NOT be gated on `instanceof FsLedgerStore`.
+ *
+ * D93: the xdg `SqliteLedgerStore` exposes NO `rootDir` — its data lives
+ * out-of-tree, entirely independent of the cq.toml config root — so this
+ * duck-type alone under-detects the capability for xdg. Callers that hold the
+ * {@link ResolvedLedgerStore} from `createLedgerStore` should prefer its
+ * `configRoot` (the actual cq.toml root) over this function; `rootDirOf`
+ * remains the fallback for call sites (tests, mainly) that construct a store
+ * directly and have no `ResolvedLedgerStore` to hand.
  */
 export function rootDirOf(store: LedgerStore): string | undefined {
   const candidate = (store as { rootDir?: unknown }).rootDir;
@@ -392,6 +400,14 @@ export interface CreateLedgerMcpServerOptions {
   displayName: string;
   /** Optional ledger-tool name prefix (default `''` = unprefixed). */
   toolPrefix?: string;
+  /**
+   * The cq.toml CONFIG ROOT (D93) — `ResolvedLedgerStore.configRoot` from
+   * `createLedgerStore`. Takes precedence over the duck-typed `rootDirOf(store)`
+   * so config/prompt-catalog capability is wired for the xdg backend too, whose
+   * store carries no `rootDir` of its own. Omit only when no
+   * `ResolvedLedgerStore` is available (falls back to `rootDirOf(store)`).
+   */
+  configRoot?: string;
 }
 
 /**
@@ -408,6 +424,7 @@ export interface CreateLedgerMcpServerOptions {
  */
 export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpServer {
   const { store, displayName } = opts;
+  const configRoot = opts.configRoot;
   const toolPrefix = opts.toolPrefix ?? "";
   assertToolPrefix(toolPrefix);
   const serverInfo = { ...SERVER_INFO, title: displayName };
@@ -427,13 +444,15 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
   const readLog: ReadLogCapability | undefined = readLogOf(store);
   // cq.toml config + prompt-catalog capabilities (R193 / G18 / T2 / T343) are
   // ROOT-BOUND and BACKEND-INDEPENDENT: they read cq.toml / the role asset
-  // markdown under the store's resolved root, which both FsLedgerStore and the
-  // git-object backend expose via `rootDir`. So gate them on a duck-typed
-  // root-dir capability (T357) rather than `instanceof FsLedgerStore`, making
-  // config/promptCatalog available for BOTH backends. An in-memory store (tests)
-  // exposes no `rootDir` and supplies neither; get_config / fetch_prompt then
-  // throw the documented not-implemented error.
-  const rootDir = rootDirOf(store);
+  // markdown under the resolved config root. FsLedgerStore and the git-object
+  // backend expose that root via `rootDir`; the xdg `SqliteLedgerStore` does
+  // NOT (its data lives out-of-tree, D93), so callers with a
+  // `ResolvedLedgerStore` pass its `configRoot` explicitly via `opts.configRoot`
+  // — preferred over the duck-typed `rootDirOf(store)` fallback used by call
+  // sites (tests, mainly) that construct a store directly. An in-memory store
+  // with neither exposes no root; get_config / fetch_prompt then throw the
+  // documented not-implemented error.
+  const rootDir = configRoot ?? rootDirOf(store);
   const configCapability: ConfigCapability | undefined =
     rootDir !== undefined ? createConfigCapability(rootDir) : undefined;
   const promptCatalog: PromptCatalogCapability | undefined =
@@ -448,8 +467,16 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
  * stdio `main()` path and `attachMcpHttp` — so cq frontends/commands that rely
  * on the unprefixed 26-tool surface are unaffected.
  */
-export function buildServer(store: LedgerStore, displayName: string): McpServer {
-  return createLedgerMcpServer({ store, displayName });
+export function buildServer(
+  store: LedgerStore,
+  displayName: string,
+  configRoot?: string,
+): McpServer {
+  return createLedgerMcpServer({
+    store,
+    displayName,
+    ...(configRoot !== undefined ? { configRoot } : {}),
+  });
 }
 
 /**
@@ -489,6 +516,7 @@ export function attachMcpHttp(
   store: LedgerStore,
   displayName: string,
   toolPrefix = "",
+  configRoot?: string,
 ): McpHttpHandlers {
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
@@ -525,7 +553,12 @@ export function attachMcpHttp(
         transports.delete(sid);
       },
     });
-    const server = createLedgerMcpServer({ store, displayName, toolPrefix });
+    const server = createLedgerMcpServer({
+      store,
+      displayName,
+      toolPrefix,
+      ...(configRoot !== undefined ? { configRoot } : {}),
+    });
     await server.connect(transport);
     // Body already consumed above; hand it back so the transport doesn't
     // re-read the (now-empty) request stream.
@@ -571,8 +604,9 @@ export function serveHttp(
   opts: HttpOpts,
   displayName: string,
   toolPrefix = "",
+  configRoot?: string,
 ): ReturnType<typeof Bun.serve> {
-  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store, displayName, toolPrefix);
+  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store, displayName, toolPrefix, configRoot);
 
   return Bun.serve({
     hostname: opts.host,
@@ -625,7 +659,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   const store = resolved.store;
 
   if (http !== null) {
-    const server = serveHttp(store, http, displayName, toolPrefix);
+    const server = serveHttp(store, http, displayName, toolPrefix, resolved.configRoot);
     // Watch the ledger for out-of-process advances; push a `changed` frame to
     // subscribed UIs on any change. The watcher is selected by backend (file
     // watch for fs, orphan-ref-sha poll for git-object).
@@ -645,7 +679,12 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const server = createLedgerMcpServer({ store, displayName, toolPrefix });
+  const server = createLedgerMcpServer({
+    store,
+    displayName,
+    toolPrefix,
+    configRoot: resolved.configRoot,
+  });
   // Even on stdio, watch the ledger so this server's cache stays fresh when
   // another process writes the same ledgers (file watch for fs, ref-sha poll
   // for git-object).
