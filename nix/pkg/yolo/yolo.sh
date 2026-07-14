@@ -51,6 +51,46 @@ UNSAFE_SHARE_HOME=0
 # tagged "codegraph" (`--disable=codegraph` skips it).
 DISABLE_TAGS=()
 ENV_ARGS=()
+# Ad-hoc bind paths given on the CLI (`--ro PATH` / `--rw PATH`, repeatable).
+# Unlike the Nix-configured YOLO_EXTRA_{RO,RW}_PATHS these are per-invocation;
+# both funnel through the same llm-sandbox `--ro`/`--rw` handling, which binds
+# each path at its own location (src == dst) and silently skips it if missing.
+ADHOC_BIND_ARGS=()
+
+print_help() {
+  cat <<'EOF'
+yolo — LLM tool launcher inside the llm-sandbox (bubblewrap) sandbox.
+
+Usage:
+  yolo [FLAGS...] <claude|codex|pi|shell|cmd> [args...]
+
+Flags (must precede the subcommand):
+  -p, --profile NAME     Use isolated config namespace ~/.config/yolo/NAME
+                         (default: agents read their real ~/.claude, ~/.codex, …)
+  -w, --work             Alias for `--profile work`
+      --disable=TAG      Drop every device bind, prompt fragment and pre-start
+                         hook carrying TAG (repeatable, comma-separated).
+                         Known tags: audio, gpu, codegraph.
+      --ro PATH          Ad-hoc read-only bind of a host PATH into the sandbox
+                         at the same location (repeatable; skipped if missing).
+      --rw PATH          Ad-hoc read-write bind of a host PATH (repeatable;
+                         skipped if missing).
+      --env KEY=VAL      Set an env var inside the sandbox (repeatable).
+      --unsafe-share-home  Allow running with $PWD == $HOME (binds all of $HOME
+                         read-write; refused by default).
+  -h, --help             Show this help and exit.
+
+Subcommands:
+  claude | codex | pi    Launch the named coding agent (bypass-approvals).
+  shell                  Interactive shell inside the sandbox.
+  cmd <program> [args…]  Run an arbitrary command inside the sandbox.
+
+The current working directory ($PWD) is always bound read-write. Extra binds
+and devices are also configured declaratively via the home-manager module
+(smind.hm.dev.llm.yolo.*).
+EOF
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile|-p)
@@ -63,9 +103,20 @@ while [[ $# -gt 0 ]]; do
       IFS=',' read -ra _dtags <<< "${1#*=}"
       DISABLE_TAGS+=("${_dtags[@]}")
       shift ;;
+    --ro)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: $1 requires a path" >&2; exit 1
+      fi
+      ADHOC_BIND_ARGS+=(--ro "$2"); shift 2 ;;
+    --rw)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: $1 requires a path" >&2; exit 1
+      fi
+      ADHOC_BIND_ARGS+=(--rw "$2"); shift 2 ;;
     --unsafe-share-home) UNSAFE_SHARE_HOME=1; shift ;;
     --env) ENV_ARGS+=(--env "$2"); shift 2 ;;
-    -*) echo "Unknown flag: $1" >&2; exit 1 ;;
+    -h|--help) print_help; exit 0 ;;
+    -*) echo "Unknown flag: $1" >&2; echo "Try 'yolo --help'." >&2; exit 1 ;;
     *) break ;;
   esac
 done
@@ -135,7 +186,7 @@ clear_reshare_leftovers() {
 }
 
 if [[ $# -eq 0 ]]; then
-  echo "Usage: yolo [--profile NAME|-p NAME] [--work] [--disable=TAG]... [--unsafe-share-home] [--env KEY=VAL]... <claude|codex|pi|shell|cmd> [args...]" >&2
+  print_help >&2
   exit 1
 fi
 
@@ -306,10 +357,24 @@ if ! is_disabled audio; then
   AUDIO_ARGS+=(--env "PULSE_SERVER=unix:$_xrd/pulse/native")
 fi
 
+# cq's XDG state store (ledger `xdg` backend primary lives under <base>/cq).
+# Resolve <base> exactly as cq does (packages/ledger/src/stateDir.ts):
+# $XDG_STATE_HOME when set to an absolute path, else ~/.local/state. bwrap
+# inherits the env (no --clearenv), so XDG_STATE_HOME reaches the sandbox and
+# in-sandbox cq resolves to this same path — bind it read-write so sandboxed
+# agents share the host ledger. Skipped by llm-sandbox if the dir is absent.
+if [[ -n "${XDG_STATE_HOME:-}" && "${XDG_STATE_HOME}" == /* ]]; then
+  _cq_state_dir="${XDG_STATE_HOME}/cq"
+else
+  _cq_state_dir="${HOME}/.local/state/cq"
+fi
+
 BASE_ARGS=(
   --rw "${PWD}"
   --rw "${HOME}/.cache"
   --rw "${HOME}/.ivy2"
+  --rw "${_cq_state_dir}"
+  "${ADHOC_BIND_ARGS[@]}"
   "${SOCKET_ARGS[@]}"
   "${TMUX_BIND_ARGS[@]}"
   "${DEV_ARGS[@]}"
