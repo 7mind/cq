@@ -30,6 +30,7 @@ import {
   isEffort,
   isTier,
   isLedgerBackend,
+  isLedgerBackupMode,
   DEFAULT_TIER,
   PI_EFFORTS,
   CLAUDE_EFFORTS,
@@ -191,13 +192,20 @@ const DEFAULT_LEDGER_BRANCH = "cq-ledger";
 /** The default git remote for the git-object ledger backend. */
 const DEFAULT_LEDGER_REMOTE = "origin";
 
+/** The default ledger backup mode (Q244 — OFF by default). */
+const DEFAULT_LEDGER_BACKUP: LedgerConfig["backup"] = "none";
+
 /**
  * Type-check the raw `[ledger]` table at the boundary.
  *
- * `backend` (if present) must be a string equal to 'fs' or 'git-object';
- * any other value is rejected as a `CqConfigError`. `branch` and `remote`
- * (if present) must be non-empty strings. Absent `backend` defaults to 'fs';
- * absent `branch` defaults to 'cq-ledger'; absent `remote` defaults to 'origin'.
+ * `backend` (if present) must be a string equal to a known {@link LedgerBackend}
+ * ('fs', 'git-object', or 'xdg'); any other value is rejected as a
+ * `CqConfigError`. `branch` and `remote` (if present) must be non-empty
+ * strings. `backup` (if present) must be a known backup mode
+ * ('none' | 'in-tree' | 'orphan-branch'); `projectId` (if present) must be a
+ * string. Absent `backend` defaults to 'fs'; absent `branch` defaults to
+ * 'cq-ledger'; absent `remote` defaults to 'origin'; absent `backup` defaults
+ * to 'none' (Q244); absent `projectId` is `null`.
  */
 function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
   let backend: LedgerConfig["backend"] = "fs";
@@ -207,7 +215,7 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
     }
     if (!isLedgerBackend(raw.backend)) {
       throw new CqConfigError(
-        `[ledger] backend "${raw.backend}" is not a valid backend (expected fs or git-object)`,
+        `[ledger] backend "${raw.backend}" is not a valid backend (expected fs, git-object, or xdg)`,
       );
     }
     backend = raw.backend;
@@ -229,7 +237,28 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
     remote = raw.remote;
   }
 
-  return { backend, branch, remote };
+  let backup = DEFAULT_LEDGER_BACKUP;
+  if (raw.backup !== undefined) {
+    if (typeof raw.backup !== "string") {
+      throw new CqConfigError("[ledger] backup must be a string");
+    }
+    if (!isLedgerBackupMode(raw.backup)) {
+      throw new CqConfigError(
+        `[ledger] backup "${raw.backup}" is not a valid backup mode (expected none, in-tree, or orphan-branch)`,
+      );
+    }
+    backup = raw.backup;
+  }
+
+  let projectId: string | null = null;
+  if (raw.projectId !== undefined) {
+    if (typeof raw.projectId !== "string") {
+      throw new CqConfigError("[ledger] projectId must be a string");
+    }
+    projectId = raw.projectId;
+  }
+
+  return { backend, branch, remote, backup, projectId };
 }
 
 /**

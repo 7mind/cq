@@ -51,6 +51,8 @@ export interface RawLedger {
   readonly backend: unknown;
   readonly branch: unknown;
   readonly remote: unknown;
+  readonly backup: unknown;
+  readonly projectId: unknown;
 }
 
 /**
@@ -198,22 +200,37 @@ function parseWebui(value: unknown): RawWebui {
   return { host: value.host, port: value.port };
 }
 
+/** The exact set of keys the `[ledger]` table permits (T349, T494). */
+const ALLOWED_LEDGER_KEYS = new Set([
+  "backend",
+  "branch",
+  "remote",
+  "backup",
+  "projectId",
+]);
+
 /**
  * Structurally validate the `[ledger]` table: it must be a table whose only
- * keys are `backend`, `branch`, and `remote`. The values are passed through
- * untouched — `parseConfig` type-checks and validates them and raises a
- * `CqConfigError` at the boundary.
+ * keys are `backend`, `branch`, `remote`, `backup`, and `projectId`. The
+ * values are passed through untouched — `parseConfig` type-checks and
+ * validates them and raises a `CqConfigError` at the boundary.
  */
 function parseLedgerRaw(value: unknown): RawLedger {
   if (!isTable(value)) {
     throw new TomlSyntaxError("[ledger] must be a table");
   }
   for (const key of Object.keys(value)) {
-    if (key !== "backend" && key !== "branch" && key !== "remote") {
+    if (!ALLOWED_LEDGER_KEYS.has(key)) {
       throw new TomlSyntaxError(`unexpected key "${key}" in [ledger]`);
     }
   }
-  return { backend: value.backend, branch: value.branch, remote: value.remote };
+  return {
+    backend: value.backend,
+    branch: value.branch,
+    remote: value.remote,
+    backup: value.backup,
+    projectId: value.projectId,
+  };
 }
 
 /**

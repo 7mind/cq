@@ -19,7 +19,8 @@
  *    each harness carries its own `[harness.<name>.tiers]` map (claude models
  *    under claude, pi models under pi). A model is dispatchable only if its
  *    harness's tiers block names it for some tier.
- *  - `[ledger]` is commented out, so the backend defaults to `fs`.
+ *  - `[ledger]` is commented out, so the backend defaults to `fs` and the
+ *    backup mode defaults to `none` (T494).
  */
 
 export const CQ_TOML_TEMPLATE: string = `\
@@ -86,8 +87,12 @@ export const CQ_TOML_TEMPLATE: string = `\
   standard = "terra"               # balanced everyday
   fast     = "luna"                # fast, high-volume
 
-# Ledger storage backend (default: "fs"). Uncomment for the experimental
-# git-object backend.
+# Ledger storage backend (default: "fs"). "xdg" is the new out-of-tree
+# bun:sqlite primary (K102); "git-object" remains opt-in experimental.
+# backup (default: "none") is OFF by default (Q244); projectId is an
+# optional committed project-identity key (Q246).
 # [ledger]
-#   backend = "git-object"
+#   backend   = "xdg"
+#   backup    = "none"
+#   projectId = "my-project"
 `;

@@ -18,6 +18,7 @@ export type {
   ClaudeEffort,
   Effort,
   LedgerBackend,
+  LedgerBackupMode,
   LedgerConfig,
 } from "./types.js";
 export {
@@ -31,6 +32,8 @@ export {
   isEffort,
   LEDGER_BACKENDS,
   isLedgerBackend,
+  LEDGER_BACKUP_MODES,
+  isLedgerBackupMode,
 } from "./types.js";
 export {
   CQ_CONFIG_FILENAME,

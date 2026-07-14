@@ -53,7 +53,13 @@ describe("[ledger] and [webui] are harness-invariant (T483)", () => {
     // Default harness (omitted arg) must equal claude.
     const underDefault = parseConfig(TOML_WITH_HARNESS_PI);
 
-    expect(underPi.ledger).toEqual({ backend: "git-object", branch: "cq-ledger", remote: "origin" });
+    expect(underPi.ledger).toEqual({
+      backend: "git-object",
+      branch: "cq-ledger",
+      remote: "origin",
+      backup: "none",
+      projectId: null,
+    });
     expect(underClaude.ledger).toEqual(underPi.ledger);
     expect(underDefault.ledger).toEqual(underPi.ledger);
   });

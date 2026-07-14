@@ -11,7 +11,8 @@
 #   [tiers]          — MAP: each tier (fast|standard|frontier) -> ONE model
 #   [agent_tiers]    — maps agent-name -> tier name (default: "standard")
 #   [agent_efforts]  — maps agent-name -> reasoning-effort override (optional)
-#   [ledger]         — ledger storage backend (backend, branch, remote; default: backend="fs")
+#   [ledger]         — ledger storage backend (backend, branch, remote, backup,
+#                      projectId; default: backend="fs", backup="none")
 #
 # Panel vs per-role decoupling (T438/T440):
 #   reviewers/planners are the PANEL lists — used for multi-reviewer review
@@ -149,25 +150,34 @@ planners = ["opus"]
 # [agent_efforts]
 #   plan-reviewer = "max"
 
-# [ledger] — Ledger storage backend configuration (T349).
+# [ledger] — Ledger storage backend configuration (T349, T494).
 # Absence of this block (or of cq.toml entirely) defaults to backend="fs"
-# (the standard filesystem-backed FsLedgerStore).  The "git-object" backend
-# is opt-in experimental (Q189): it stores ledger data in git object storage
-# instead of plain files.
+# (the standard filesystem-backed FsLedgerStore) and backup="none".
+# The "git-object" backend is opt-in experimental (Q189): it stores ledger
+# data in git object storage instead of plain files. "xdg" is the new
+# out-of-tree bun:sqlite primary at the XDG location (K102) — the on-disk
+# format is an implementation detail of that backend. "fs"/"git-object"
+# remain PARSEABLE indefinitely so `cq migrate` can locate legacy source data.
 #
 # Keys:
-#   backend — storage backend: "fs" (default) | "git-object"
-#   branch  — git branch for the git-object backend (default: "cq-ledger")
-#   remote  — git remote for the git-object backend (default: "origin")
+#   backend   — storage backend: "fs" (default) | "git-object" | "xdg"
+#   branch    — git branch for the git-object backend (default: "cq-ledger")
+#   remote    — git remote for the git-object backend (default: "origin")
+#   backup    — human-readable markdown export/backup mode:
+#               "none" (default) | "in-tree" | "orphan-branch" (Q244 — OFF by default)
+#   projectId — optional committed project-identity string, used for
+#               repo-identity keying (Q246); no default (absent => null)
 #
 # To activate the git-object backend, uncomment the block below and set
 # backend = "git-object".  The branch/remote keys are optional; the shown
 # values are the defaults.
 #
 # [ledger]
-#   backend = "git-object"   # "fs" (default) | "git-object" (experimental)
-#   branch  = "cq-ledger"    # git branch to store ledger objects on
-#   remote  = "origin"       # git remote to push/fetch ledger objects from
+#   backend   = "git-object"   # "fs" (default) | "git-object" (experimental) | "xdg"
+#   branch    = "cq-ledger"    # git branch to store ledger objects on
+#   remote    = "origin"       # git remote to push/fetch ledger objects from
+#   backup    = "none"         # "none" (default) | "in-tree" | "orphan-branch"
+#   projectId = "my-project"   # optional repo-identity key (Q246)
 
 # ---------------------------------------------------------------------------
 # PER-HARNESS LAYERED OVERRIDES (Q239 / Q240)

@@ -183,8 +183,18 @@ export interface TiersConfig {
   readonly entries: ReadonlyArray<TierEntry>;
 }
 
-/** The two supported ledger storage backends (T349). */
-export const LEDGER_BACKENDS = ["fs", "git-object"] as const;
+/**
+ * The supported ledger storage backends (T349, T494).
+ *
+ * - `fs` / `git-object`: the LEGACY in-tree backends. They remain PARSEABLE
+ *   (never removed from this union) so `cq migrate` can read a `cq.toml`
+ *   that still names one to locate the source data — but after the T505
+ *   cutover neither selects a runtime primary store.
+ * - `xdg`: the new out-of-tree bun:sqlite primary at the XDG location (K102).
+ *   The on-disk format (SQLite, WAL + busy_timeout) is an implementation
+ *   detail of that backend, not part of this config schema.
+ */
+export const LEDGER_BACKENDS = ["fs", "git-object", "xdg"] as const;
 
 /** A ledger backend identifier. */
 export type LedgerBackend = (typeof LEDGER_BACKENDS)[number];
@@ -194,13 +204,30 @@ export function isLedgerBackend(value: string): value is LedgerBackend {
   return (LEDGER_BACKENDS as readonly string[]).includes(value);
 }
 
+/** The supported ledger backup modes (Q244, T494). */
+export const LEDGER_BACKUP_MODES = ["none", "in-tree", "orphan-branch"] as const;
+
+/** A ledger backup mode identifier. */
+export type LedgerBackupMode = (typeof LEDGER_BACKUP_MODES)[number];
+
+/** Type guard: is `value` a known ledger backup mode? */
+export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
+  return (LEDGER_BACKUP_MODES as readonly string[]).includes(value);
+}
+
 /**
- * The `[ledger]` table: storage backend configuration (T349).
+ * The `[ledger]` table: storage backend configuration (T349, T494).
  *
  * - `backend`: the storage backend to use; 'fs' is the default (FsLedgerStore),
- *   'git-object' is opt-in experimental (Q189).
+ *   'git-object' is opt-in experimental (Q189), 'xdg' is the new out-of-tree
+ *   bun:sqlite primary (K102).
  * - `branch`: the git branch for the git-object backend (default 'cq-ledger').
  * - `remote`: the git remote for the git-object backend (default 'origin').
+ * - `backup`: the mandatory human-readable markdown export/backup mode;
+ *   defaults to 'none' (OFF by default, Q244).
+ * - `projectId`: an optional committed project-identity string, used for
+ *   repo-identity keying (Q246) — e.g. to locate the right out-of-tree store
+ *   when the repo is cloned to multiple paths. `null` when absent.
  *
  * `branch` and `remote` are consumed by the git-object backend (W5/T355);
  * they are parsed and stored for any backend, but only meaningful for
@@ -210,6 +237,8 @@ export interface LedgerConfig {
   readonly backend: LedgerBackend;
   readonly branch: string;
   readonly remote: string;
+  readonly backup: LedgerBackupMode;
+  readonly projectId: string | null;
 }
 
 /**
@@ -234,8 +263,9 @@ export interface LedgerConfig {
  *   effort). Values are validated at parse time against the union of all
  *   harness effort vocabularies; harness-specific validity (`isEffort`) is
  *   checked at resolution time, once the agent's harness is known.
- * - `ledger`: the `[ledger]` table (backend + branch + remote), or null if
- *   absent. When null, `backend` defaults to 'fs'.
+ * - `ledger`: the `[ledger]` table (backend + branch + remote + backup +
+ *   projectId), or null if absent. When null, `backend` defaults to 'fs' and
+ *   `backup` defaults to 'none'.
  */
 export interface CqConfig {
   readonly aliases: Record<string, ReviewerToken>;

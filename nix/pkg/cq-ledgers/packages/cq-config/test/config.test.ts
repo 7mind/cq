@@ -1166,3 +1166,129 @@ opus = "claude:opus-4.8[1m]"
     expect(config.ledger).toBeNull();
   });
 });
+
+// ── T494: [ledger] "xdg" backend, `backup` mode, `projectId` (K102/Q244/Q246) ──
+
+describe("parseConfig with [ledger] backend='xdg', backup, projectId (T494)", () => {
+  it("[ledger] backend='xdg' parses (the new out-of-tree bun:sqlite primary, K102)", () => {
+    const config = parseConfig(`
+[ledger]
+backend = "xdg"
+`);
+    expect(config.ledger).not.toBeNull();
+    expect(config.ledger!.backend).toBe("xdg");
+  });
+
+  it("backup defaults to 'none' when [ledger] is present but backup is absent (Q244 — OFF by default)", () => {
+    const config = parseConfig(`
+[ledger]
+backend = "fs"
+`);
+    expect(config.ledger!.backup).toBe("none");
+  });
+
+  it("backup defaults to 'none' when [ledger] is absent entirely", () => {
+    // [ledger] itself is null when absent, but this documents that the DEFAULT
+    // a caller should assume for backup (mirroring the backend='fs' default)
+    // is 'none', consistent with the Q244 OFF-by-default requirement.
+    const config = parseConfig(VALID_TOML);
+    expect(config.ledger).toBeNull();
+  });
+
+  it("backup='in-tree' parses", () => {
+    const config = parseConfig(`
+[ledger]
+backup = "in-tree"
+`);
+    expect(config.ledger!.backup).toBe("in-tree");
+  });
+
+  it("backup='orphan-branch' parses", () => {
+    const config = parseConfig(`
+[ledger]
+backup = "orphan-branch"
+`);
+    expect(config.ledger!.backup).toBe("orphan-branch");
+  });
+
+  it("throws CqConfigError on an unknown backup value", () => {
+    expect(() =>
+      parseConfig(`
+[ledger]
+backup = "s3"
+`),
+    ).toThrow(CqConfigError);
+    expect(() =>
+      parseConfig(`
+[ledger]
+backup = "s3"
+`),
+    ).toThrow(/backup "s3" is not a valid backup mode/);
+  });
+
+  it("throws CqConfigError on a non-string backup", () => {
+    expect(() =>
+      parseConfig(`
+[ledger]
+backup = 42
+`),
+    ).toThrow(/\[ledger\] backup must be a string/);
+  });
+
+  it("projectId is optional — null when absent", () => {
+    const config = parseConfig(`
+[ledger]
+backend = "xdg"
+`);
+    expect(config.ledger!.projectId).toBeNull();
+  });
+
+  it("projectId parses as a string when present", () => {
+    const config = parseConfig(`
+[ledger]
+projectId = "my-repo-identity"
+`);
+    expect(config.ledger!.projectId).toBe("my-repo-identity");
+  });
+
+  it("throws CqConfigError on a non-string projectId", () => {
+    expect(() =>
+      parseConfig(`
+[ledger]
+projectId = 42
+`),
+    ).toThrow(/\[ledger\] projectId must be a string/);
+  });
+
+  it("legacy backend 'fs' still parses (PARSEABLE for cq migrate)", () => {
+    const config = parseConfig(`
+[ledger]
+backend = "fs"
+`);
+    expect(config.ledger!.backend).toBe("fs");
+  });
+
+  it("legacy backend 'git-object' still parses (PARSEABLE for cq migrate)", () => {
+    const config = parseConfig(`
+[ledger]
+backend = "git-object"
+`);
+    expect(config.ledger!.backend).toBe("git-object");
+  });
+
+  it("all new keys together: backend='xdg', backup='in-tree', projectId set", () => {
+    const config = parseConfig(`
+[ledger]
+backend   = "xdg"
+backup    = "in-tree"
+projectId = "acme-widgets"
+`);
+    expect(config.ledger).toEqual({
+      backend: "xdg",
+      branch: "cq-ledger",
+      remote: "origin",
+      backup: "in-tree",
+      projectId: "acme-widgets",
+    });
+  });
+});
