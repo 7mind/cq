@@ -215,6 +215,37 @@ export class LedgerSearchIndex {
     this.replaceBucket(this.archivedDocIds, ledgerId, archivedItems, /*archived*/ true);
   }
 
+  /**
+   * Incremental per-doc updates (D87). A single-item mutation must not pay
+   * for a whole-bucket rebuild (O(docs-in-ledger)); these upsert/remove
+   * exactly ONE doc — O(1) in ledger size. Add-vs-replace is decided by the
+   * `backing` side table (authoritative for what is live in `this.mini`).
+   * The docId (`"<ledgerId>:<itemId>"`) is shared between the active and
+   * archived scopes, so an upsert also evicts the id from the OPPOSITE
+   * tracker — a later whole-bucket replacement of that scope must not
+   * discard a doc it no longer owns (the D88 collision, incremental form).
+   */
+
+  /** Insert or replace the ONE ACTIVE doc for `item` under `ledgerId`. */
+  upsertActiveDoc(ledgerId: string, item: Item): void {
+    this.upsertDoc(this.activeDocIds, this.archivedDocIds, ledgerId, item, /*archived*/ false);
+  }
+
+  /** Insert or replace the ONE ARCHIVED doc for `item` under `ledgerId`. */
+  upsertArchivedDoc(ledgerId: string, item: Item): void {
+    this.upsertDoc(this.archivedDocIds, this.activeDocIds, ledgerId, item, /*archived*/ true);
+  }
+
+  /** Remove the ONE active doc for `itemId` (no-op when absent). */
+  removeActiveDoc(ledgerId: string, itemId: string): void {
+    this.removeDoc(this.activeDocIds, ledgerId, itemId);
+  }
+
+  /** Remove the ONE archived doc for `itemId` (no-op when absent). */
+  removeArchivedDoc(ledgerId: string, itemId: string): void {
+    this.removeDoc(this.archivedDocIds, ledgerId, itemId);
+  }
+
   /** Drop every active and archived doc for `ledgerId`. */
   removeLedger(ledgerId: string): void {
     this.discardSet(this.activeDocIds.get(ledgerId));
@@ -370,6 +401,54 @@ export class LedgerSearchIndex {
       next.add(doc.docId);
     }
     tracker.set(ledgerId, next);
+    this.maybeReclaim();
+  }
+
+  /**
+   * Upsert ONE doc into the given scope (D87). `mini.replace` discards the
+   * previous doc internally, leaving a tombstone — counted toward the same
+   * reclaim threshold a bucket rebuild's discards feed.
+   */
+  private upsertDoc(
+    tracker: Map<string, Set<string>>,
+    opposite: Map<string, Set<string>>,
+    ledgerId: string,
+    item: Item,
+    archived: boolean,
+  ): void {
+    const doc = toDoc(ledgerId, item, archived);
+    if (this.backing.has(doc.docId)) {
+      this.mini.replace(doc);
+      this.dirtCount++;
+    } else {
+      this.mini.add(doc);
+    }
+    this.backing.set(doc.docId, { ledgerId, item, archived });
+    opposite.get(ledgerId)?.delete(doc.docId);
+    let ids = tracker.get(ledgerId);
+    if (ids === undefined) {
+      ids = new Set();
+      tracker.set(ledgerId, ids);
+    }
+    ids.add(doc.docId);
+    this.maybeReclaim();
+  }
+
+  /**
+   * Remove ONE doc from the given scope (D87). Guarded on the tracker OWNING
+   * the docId — removing an id from a scope that does not track it must not
+   * touch the doc the other scope holds under the shared docId.
+   */
+  private removeDoc(tracker: Map<string, Set<string>>, ledgerId: string, itemId: string): void {
+    const docId = `${ledgerId}:${itemId}`;
+    const ids = tracker.get(ledgerId);
+    if (ids === undefined || !ids.has(docId)) return;
+    ids.delete(docId);
+    if (this.backing.has(docId)) {
+      this.mini.discard(docId);
+      this.dirtCount++;
+      this.backing.delete(docId);
+    }
     this.maybeReclaim();
   }
 

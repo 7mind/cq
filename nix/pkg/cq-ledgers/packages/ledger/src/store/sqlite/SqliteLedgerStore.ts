@@ -39,6 +39,10 @@
  *    index's archived-bucket transition), plus the real schema-divergence
  *    BACKUP action (`VACUUM INTO` a timestamped sibling .db file).
  *  - T530: createLedgerStore xdg wiring.
+ *  - T538 (D87): O(1)-in-ledger-size mutations — per-mutation INCREMENTAL
+ *    single-doc search-index updates (whole-bucket rebuilds remain only in
+ *    init()'s cold build and invalidate()'s cross-process refresh) and a
+ *    createItem shim that no longer materialises the whole target ledger.
  */
 
 import * as path from "node:path";
@@ -201,10 +205,10 @@ export class SqliteLedgerStore implements LedgerStore {
   /**
    * Derived full-text index over the committed item rows (T528) — the SAME
    * `LedgerSearchIndex` the fs/in-memory stores use, so ftsSearch semantics
-   * are shared verbatim. Cold-built on init(); the mutated ledger's active
-   * bucket is refreshed post-commit by {@link fireMutation}; a peer process's
-   * commit is folded in by {@link invalidate} (the T530 coherence watcher's
-   * refresh path). Archived docs land with the T529 archive surface.
+   * are shared verbatim. Cold-built on init(); each mutation upserts/moves
+   * ONLY its own doc post-commit (T538/D87 — O(1), no bucket rebuild); a
+   * peer process's commit is folded in by {@link invalidate} (the T530
+   * coherence watcher's refresh path), the only post-init full rebuild.
    */
   private readonly searchIndex = new LedgerSearchIndex();
 
@@ -540,6 +544,7 @@ export class SqliteLedgerStore implements LedgerStore {
       return x;
     });
     // Hook fires AFTER commit per the D-COHERENCE contract.
+    this.indexUpsertActive(MILESTONES_LEDGER, item);
     this.fireMutation(MILESTONES_LEDGER, "update");
     return item;
   }
@@ -556,6 +561,7 @@ export class SqliteLedgerStore implements LedgerStore {
       this.persistItemRow(ledgerId, x);
       return x;
     });
+    this.indexUpsertActive(ledgerId, item);
     this.fireMutation(ledgerId, "update");
     return item;
   }
@@ -573,13 +579,16 @@ export class SqliteLedgerStore implements LedgerStore {
     const item = immediateWriteTransaction(this.db(), () => {
       // Strict Q5 existence check against the milestones ledger. Ordering
       // parity with AbstractLedgerStore.createItem: this check runs BEFORE
-      // the target-ledger existence check (loadLedger below).
+      // the target-ledger existence check (createItemShim below).
       assertMilestoneActive(this.loadLedger(MILESTONES_LEDGER), milestoneId);
-      const ledger = this.loadLedger(ledgerId);
-      return this.insertItemViaCore(ledger, init.id, (l) =>
+      // T538 (D87): a MINIMAL shim of the target ledger (targeted row
+      // queries) instead of materialising all N rows via loadLedger.
+      const shim = this.createItemShim(ledgerId, milestoneId, init.id);
+      return this.insertItemViaCore(shim, init.id, (l) =>
         applyCreateItem(l, milestoneId, init, this.now()),
       );
     });
+    this.indexUpsertActive(ledgerId, item);
     this.fireMutation(ledgerId, "create");
     return item;
   }
@@ -591,6 +600,7 @@ export class SqliteLedgerStore implements LedgerStore {
         applyCreateMilestoneItem(l, init, this.now()),
       );
     });
+    this.indexUpsertActive(MILESTONES_LEDGER, item);
     this.fireMutation(MILESTONES_LEDGER, "create");
     return item;
   }
@@ -640,6 +650,7 @@ export class SqliteLedgerStore implements LedgerStore {
       this.persistItemRow(ledgerId, x);
       return x;
     });
+    this.indexUpsertActive(ledgerId, item);
     this.fireMutation(ledgerId, "update");
     return item;
   }
@@ -718,15 +729,10 @@ export class SqliteLedgerStore implements LedgerStore {
       }
       return reattached;
     });
-    // The active docs gained an item and the archived docs shrank/vanished;
-    // refresh both. ORDER matters: the reattached item's docId
-    // ("<ledger>:<itemId>") is shared between the active and archived
-    // buckets, so the archived bucket's stale entry MUST be discarded
-    // BEFORE the active rebuild re-adds the same docId — reversing this
-    // order would have the active add land first, then the archived
-    // bucket's discard-of-the-previous-tracked-id erase that same docId
-    // right back out of the index.
-    this.refreshLedgerIndexArchived(ledgerId);
+    // T538 (D87): move the ONE reattached doc archived → active incrementally
+    // (indexMoveToActive preserves the D88 archived-first-then-active
+    // ordering) instead of rebuilding both buckets.
+    this.indexMoveToActive(ledgerId, item);
     this.fireMutation(ledgerId, "update");
     return item;
   }
@@ -756,6 +762,10 @@ export class SqliteLedgerStore implements LedgerStore {
     }
     let participating: string[] = [];
     let pointer: ArchivePointer | undefined;
+    // Hoisted for the post-commit incremental index moves (T538/D87); reset
+    // inside the transaction body, which the busy-retry may re-run.
+    let detached = new Map<string, { items: Item[] }>();
+    let detachedMsItem: Item | undefined;
     immediateWriteTransaction(this.db(), () => {
       const db = this.db();
       participating = [];
@@ -764,7 +774,7 @@ export class SqliteLedgerStore implements LedgerStore {
       // Phase 1 — verify EVERY participating ledger's group is fully
       // terminal, BEFORE any mutation (applyDetachMilestoneGroup throws
       // NonTerminalItemsError strictly before its splice).
-      const detached = new Map<string, { items: Item[] }>();
+      detached = new Map<string, { items: Item[] }>();
       for (const name of otherNames) {
         const ledger = this.loadLedger(name);
         const hasGroup = ledger.milestones.some((m) => m.id === milestoneId);
@@ -792,6 +802,7 @@ export class SqliteLedgerStore implements LedgerStore {
         "",
         "",
       );
+      detachedMsItem = msItem;
       const msTitle = typeof msItem.fields["title"] === "string" ? msItem.fields["title"] : "";
       const msStatus = msItem.status;
       const nowTs = this.now();
@@ -849,14 +860,21 @@ export class SqliteLedgerStore implements LedgerStore {
         status: msStatus,
       };
     });
+    // T538 (D87): move each detached doc active → archived incrementally —
+    // O(group-size), never O(ledger-size) — BEFORE the hooks fire, so a hook
+    // observes ftsSearch already reflecting the archive.
+    for (const name of participating) {
+      for (const it of detached.get(name)?.items ?? []) {
+        this.indexMoveToArchived(name, it);
+      }
+    }
+    if (detachedMsItem !== undefined) {
+      this.indexMoveToArchived(MILESTONES_LEDGER, detachedMsItem);
+    }
     // Fire per-participant hooks AFTER commit (D-COHERENCE order: alphabetic
     // participants, then the milestones ledger).
     for (const id of participating) this.fireMutation(id, "archive");
     this.fireMutation(MILESTONES_LEDGER, "archive");
-    // Archived FTS docs change only on archive. Refresh them for every
-    // participating ledger (and the milestones ledger).
-    for (const id of participating) this.refreshLedgerIndexArchived(id);
-    this.refreshLedgerIndexArchived(MILESTONES_LEDGER);
     if (pointer === undefined) {
       throw new LedgerError(`SqliteLedgerStore: archiveMilestone(${milestoneId}) produced no pointer`);
     }
@@ -872,12 +890,13 @@ export class SqliteLedgerStore implements LedgerStore {
    * the user hook is GUARDED — a throw is logged to stderr and cannot unwind
    * the already-committed write. Fired strictly AFTER the transaction COMMITs.
    *
-   * T528: refreshes the mutated ledger's active search-index bucket from the
-   * just-committed rows FIRST, so by the time the hook observes the mutation
-   * ftsSearch already reflects it (same ordering as the fs store).
+   * T538 (D87): the index refresh no longer lives here — each mutation site
+   * applies its INCREMENTAL per-doc index update (indexUpsertActive /
+   * indexMoveToArchived / indexMoveToActive) BEFORE calling this, so by the
+   * time the hook observes the mutation ftsSearch already reflects it (same
+   * ordering as the fs store) without an O(ledger-size) bucket rebuild.
    */
   private fireMutation(ledgerId: string, op: LedgerMutationOp): void {
-    this.rebuildLedgerIndexActive(ledgerId);
     if (this.onMutation !== null) {
       try {
         this.onMutation(ledgerId, op);
@@ -891,12 +910,70 @@ export class SqliteLedgerStore implements LedgerStore {
   }
 
   /**
+   * Incremental derived-index update (T538/D87): upsert the ONE mutated
+   * item's ACTIVE doc — O(1) in ledger size, replacing the per-mutation
+   * whole-bucket rebuild. GUARDED: an index error must never propagate into
+   * the write path. The item is CLONED so the Item returned to the caller
+   * cannot mutate the index's backing.
+   */
+  private indexUpsertActive(ledgerId: string, item: Item): void {
+    try {
+      this.searchIndex.upsertActiveDoc(ledgerId, cloneItem(item));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `LedgerStore: FTS active-upsert threw for ${ledgerId}: ${msg}\n`,
+      );
+    }
+  }
+
+  /**
+   * Move ONE doc active → archived (T538/D87 incremental form of the archive
+   * transition). Active removal runs FIRST: the docId is shared between the
+   * two scopes (D88), so the stale active entry must be gone before the
+   * archived upsert claims the id. GUARDED like every index update.
+   */
+  private indexMoveToArchived(ledgerId: string, item: Item): void {
+    try {
+      this.searchIndex.removeActiveDoc(ledgerId, item.id);
+      this.searchIndex.upsertArchivedDoc(ledgerId, cloneItem(item));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `LedgerStore: FTS archive-move threw for ${ledgerId}: ${msg}\n`,
+      );
+    }
+  }
+
+  /**
+   * Move ONE doc archived → active (T538/D87 incremental form of the T529
+   * unarchive transition). Preserves the D88 ordering: the archived scope's
+   * stale entry is discarded BEFORE the active upsert re-adds the same docId
+   * — reversed, a later archived-scope operation could erase the live active
+   * doc right back out of the index. GUARDED like every index update.
+   */
+  private indexMoveToActive(ledgerId: string, item: Item): void {
+    try {
+      this.searchIndex.removeArchivedDoc(ledgerId, item.id);
+      this.searchIndex.upsertActiveDoc(ledgerId, cloneItem(item));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `LedgerStore: FTS unarchive-move threw for ${ledgerId}: ${msg}\n`,
+      );
+    }
+  }
+
+  /**
    * Rebuild the ACTIVE search-index docs for `ledgerId` from its committed
    * item rows. Synchronous and GUARDED: an index error must never propagate
    * into the write path (parity with
    * AbstractLedgerStore.rebuildLedgerIndexActive). Replaces ONLY the one
    * ledger's bucket — O(items-in-ledger), never a full-store rebuild and
    * never a re-serialize (K102: the index is a derived read-side projection).
+   * T538 (D87): called ONLY from init() (cold build) and invalidate()
+   * (cross-process refresh) — never from the per-mutation path, which
+   * updates the single mutated doc incrementally instead.
    */
   private rebuildLedgerIndexActive(ledgerId: string): void {
     try {
@@ -969,6 +1046,68 @@ export class SqliteLedgerStore implements LedgerStore {
         row === null
           ? []
           : [{ id: row.milestone_id, title: "", description: "", items: [rowToItem(row)] }],
+      archivePointers: [],
+    };
+  }
+
+  /**
+   * Materialise a MINIMAL `Ledger` for `applyCreateItem` (T538/D87) — the
+   * O(1) creation counterpart of {@link singleItemShim}, replacing the
+   * O(N-rows) loadLedger the createItem path used to pay per call. Targeted
+   * row queries only:
+   *
+   *  - the ledger row (schema + counters) — absent throws
+   *    `LedgerNotFoundError`, same ordering as the loadLedger it replaces;
+   *  - the target milestone-GROUP row when it exists, so applyCreateItem's
+   *    existing-vs-lazy-group branch (and insertItemViaCore's groups-row
+   *    provisioning) behaves exactly as with the full ledger;
+   *  - on the caller-supplied-id path, the item row with that id when it
+   *    exists — injected so applyCreateItem's own duplicate check throws
+   *    `DuplicateIdError` at the SAME point in its guard sequence (after
+   *    status/fields/prefix validation) as the fs store.
+   *
+   * The auto-id path needs no item rows at all: {@link allocateItemId}
+   * guarantees DB-wide uniqueness via its RETURNING dup-avoid loop, and
+   * {@link insertItemViaCore}'s SQL-vs-core divergence guard verifies the
+   * shim-derived id matches. Must run inside a write transaction.
+   */
+  private createItemShim(
+    ledgerId: string,
+    milestoneId: string,
+    suppliedId: string | undefined,
+  ): Ledger {
+    const db = this.db();
+    const lrow = db
+      .query(
+        "SELECT name, schema_json, milestone_counter, item_counter FROM ledgers WHERE name = ?",
+      )
+      .get(ledgerId) as LedgerRow | null;
+    if (lrow === null) throw new LedgerNotFoundError(ledgerId);
+    const milestones: Milestone[] = [];
+    const grow = db
+      .query("SELECT id, title, description FROM groups WHERE ledger = ? AND id = ?")
+      .get(ledgerId, milestoneId) as GroupRow | null;
+    if (grow !== null) {
+      milestones.push({ id: grow.id, title: grow.title, description: grow.description, items: [] });
+    }
+    if (suppliedId !== undefined) {
+      const irow = db
+        .query(
+          "SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM items WHERE ledger = ? AND id = ?",
+        )
+        .get(ledgerId, suppliedId) as ItemRow | null;
+      if (irow !== null) {
+        const existing = milestones.find((m) => m.id === irow.milestone_id);
+        const dupe = rowToItem(irow);
+        if (existing !== undefined) existing.items.push(dupe);
+        else milestones.push({ id: irow.milestone_id, title: "", description: "", items: [dupe] });
+      }
+    }
+    return {
+      id: ledgerId,
+      schema: JSON.parse(lrow.schema_json) as LedgerSchema,
+      counters: { milestone: lrow.milestone_counter, item: lrow.item_counter },
+      milestones,
       archivePointers: [],
     };
   }
