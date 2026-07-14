@@ -31,13 +31,12 @@
  * deleted temp dir instead of the original ambient value.
  */
 
-import { describe, it, expect, afterAll, afterEach, beforeEach } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { describe, it, expect, afterAll, afterEach, beforeAll, beforeEach } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { computeVerdict } from "../src/advanceGate.js";
 import {
-  FsLedgerStore,
   MILESTONES_AMBIENT_ID,
   createLedgerStore,
   derivePredicates,
@@ -45,6 +44,18 @@ import {
 
 /** The fixed fake session id; its marker is the file we deliberately omit. */
 const SESSION_ID = "advance-gate-false-drained-session";
+
+let prevXdgStateHome: string | undefined;
+beforeAll(async () => {
+  // The runtime store is the out-of-tree xdg primary (T505): point
+  // XDG_STATE_HOME at a temp dir so seeded state never touches the host.
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  process.env["XDG_STATE_HOME"] = await makeTmpDir("cq-false-drained-xdg-");
+});
+afterAll(() => {
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+});
 
 /**
  * The AMBIENT `$XDG_RUNTIME_DIR`, captured ONCE at module load — BEFORE any
@@ -79,16 +90,28 @@ afterAll(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => undefined);
 });
 
-/** Seed a fresh fs-backed ledger root making P-investigate TRUE (one open high-severity defect). */
+/**
+ * Seed a fresh xdg-backed ledger root making P-investigate TRUE (one open
+ * high-severity defect). cq.toml pins backend='xdg' with an explicit projectId
+ * (a plain temp dir has no git identity) so the seed and the gate's own read
+ * resolve the same out-of-tree store.
+ */
 async function seedActionableLedger(): Promise<string> {
   const root = await makeTmpDir("cq-false-drained-ledger-");
-  const store = new FsLedgerStore({ root });
-  await store.init();
-  await store.createItem("defects", MILESTONES_AMBIENT_ID, {
-    status: "open",
-    fields: { headline: "a real, actionable defect", severity: "high" },
-  });
-  await store.dispose();
+  await writeFile(
+    path.join(root, "cq.toml"),
+    `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,
+    "utf8",
+  );
+  const { store } = await createLedgerStore(root);
+  try {
+    await store.createItem("defects", MILESTONES_AMBIENT_ID, {
+      status: "open",
+      fields: { headline: "a real, actionable defect", severity: "high" },
+    });
+  } finally {
+    await store.dispose();
+  }
   return root;
 }
 

@@ -1,13 +1,10 @@
 /**
  * T189 + T338: `cq init` — idempotent create-empty-ledgers-if-none + cq.toml write.
  *
- * T189 asserts (backend PINNED to 'fs' via a pre-existing cq.toml, T501: a
- * fresh `cq init` now defaults to backend='xdg' — see init-xdg.test.ts for
- * that path — so these two FS-legacy-path tests pre-write cq.toml exactly
- * like init-git-object.test.ts pins 'git-object', keeping their original,
- * still-supported-legacy-path intent unaffected by the new default):
- *   (a) On an empty dir, creates .cq/ledgers.yaml + canonical .cq/*.md files.
- *   (b) Running again is a no-op that preserves items written between runs.
+ * (a)/(b) — T505: a cq.toml pinning the LEGACY backend='fs' no longer selects
+ * a runtime primary; `cq init` on such a root fails fast with the documented
+ * LegacyBackendError naming `cq migrate` and creates no .cq/ tree. (The
+ * historical fs init-path assertions live in git history / T189.)
  *
  * T338 asserts, on a truly FRESH init (git repo + XDG_STATE_HOME override, so
  * the new xdg default resolves and nothing touches the real machine state):
@@ -29,7 +26,7 @@ import {
   type DispatchIo,
 } from "../src/main.js";
 import { CQ_TOML_TEMPLATE } from "../src/cqTomlTemplate.js";
-import { FsLedgerStore, CANONICAL_LEDGERS, MILESTONES_AMBIENT_ID, LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
+import { LegacyBackendError, LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
 
 const exec = promisify(execFile);
 const dirs: string[] = [];
@@ -75,54 +72,19 @@ async function gitRepo(): Promise<string> {
 }
 
 describe("cq init", () => {
-  it("(a) creates .cq/ledgers.yaml + canonical .cq/*.md on an empty dir (backend='fs' pinned)", async () => {
-    const root = await makeTmpDir();
-    await writeFile(path.join(root, CQ_CONFIG_FILENAME), '[ledger]\nbackend = "fs"\n', "utf8");
-    const io = recordingIo();
-
-    const outcome = await dispatch(["init", "--cwd", root], io);
-    expect(outcome.exitCode).toBe(0);
-
-    // .cq/ledgers.yaml must exist
-    expect((await stat(path.join(root, LEDGER_STORAGE_DIRNAME, "ledgers.yaml"))).isFile()).toBe(true);
-
-    // Every canonical ledger file must exist
-    for (const { name } of CANONICAL_LEDGERS) {
-      expect((await stat(path.join(root, LEDGER_STORAGE_DIRNAME, `${name}.md`))).isFile()).toBe(true);
-    }
-
-    // Some output was printed
-    expect(io.outs.length).toBeGreaterThan(0);
-  });
-
-  it("(b) idempotent: second run preserves items written between runs (backend='fs' pinned)", async () => {
+  it("(a/b — T505) backend='fs' pinned: rejects with LegacyBackendError naming cq migrate, creates no .cq/", async () => {
     const root = await makeTmpDir();
     await writeFile(path.join(root, CQ_CONFIG_FILENAME), '[ledger]\nbackend = "fs"\n', "utf8");
 
-    // First init
-    await dispatch(["init", "--cwd", root], recordingIo());
+    const err = await dispatch(["init", "--cwd", root], recordingIo()).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(LegacyBackendError);
+    expect((err as Error).message).toContain("cq migrate");
 
-    // Write an item between runs via the store directly
-    const store = new FsLedgerStore({ root });
-    await store.init();
-    const created = await store.createItem("tasks", MILESTONES_AMBIENT_ID, {
-      status: "planned",
-      fields: { headline: "sentinel task" },
-    });
-    await store.dispose();
-
-    // Second init (should be a no-op)
-    const io2 = recordingIo();
-    const outcome2 = await dispatch(["init", "--cwd", root], io2);
-    expect(outcome2.exitCode).toBe(0);
-
-    // The sentinel item must still be present
-    const store2 = new FsLedgerStore({ root });
-    await store2.init();
-    const fetched = store2.fetchItem("tasks", created.id);
-    await store2.dispose();
-
-    expect(fetched.fields["headline"]).toBe("sentinel task");
+    // No .cq/ tree was created.
+    await expect(stat(path.join(root, LEDGER_STORAGE_DIRNAME))).rejects.toThrow();
   });
 
   describe("on a fresh root (xdg default, T501)", () => {

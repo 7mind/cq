@@ -19,7 +19,7 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { FsLedgerStore, LEDGER_TOOL_NAMES } from "@cq/ledger";
+import { createLedgerStore, LEDGER_TOOL_NAMES } from "@cq/ledger";
 import { serve, proxyToMcp } from "../src/serve.js";
 
 const here = new URL(".", import.meta.url).pathname;
@@ -54,15 +54,29 @@ async function waitForPort(p: number, attempts = 100): Promise<void> {
 }
 
 let tmpRoot: string;
+let xdgHome: string;
+let prevXdgStateHome: string | undefined;
 let outdir: string;
 let mcp: Subprocess;
 let mcpPort: number;
 let web: ReturnType<typeof Bun.serve>;
 
 beforeAll(async () => {
+  // The runtime store is the out-of-tree xdg primary (T505): pin the backend
+  // with a projectId and point XDG_STATE_HOME at a temp dir; the override is
+  // passed EXPLICITLY to the spawned upstream (Bun's default child env is a
+  // process-start snapshot that misses runtime mutations).
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  xdgHome = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-mcp-xdg-"));
+  process.env["XDG_STATE_HOME"] = xdgHome;
+
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-mcp-"));
-  const seed = new FsLedgerStore({ root: tmpRoot });
-  await seed.init();
+  await fs.writeFile(
+    path.join(tmpRoot, "cq.toml"),
+    `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(tmpRoot)}"\n`,
+    "utf8",
+  );
+  const { store: seed } = await createLedgerStore(tmpRoot);
   await seed.createLedger("bugs", {
     statusValues: ["open", "closed"],
     terminalStatuses: ["closed"],
@@ -75,6 +89,7 @@ beforeAll(async () => {
     cmd: [process.execPath, "run", mcpMain, "--cwd", tmpRoot, "--http", String(mcpPort)],
     stdout: "ignore",
     stderr: "ignore",
+    env: { ...process.env },
   });
   await waitForPort(mcpPort);
 
@@ -94,6 +109,9 @@ afterAll(async () => {
   web.stop(true);
   mcp.kill();
   await mcp.exited;
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+  await fs.rm(xdgHome, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
   await fs.rm(outdir, { recursive: true, force: true });
 });

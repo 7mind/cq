@@ -357,46 +357,6 @@ export class GitPlumbing {
   }
 
   /**
-   * Enumerate the working-branch TRACKED files under `pathspec` (e.g. `docs/`),
-   * WITHOUT modifying anything. Used by `cq move-ledger` (T354) to decide which
-   * docs paths are currently tracked before `git rm --cached`.
-   *
-   * Runs: `git ls-files -- <pathspec>`. Returns the non-empty lines.
-   */
-  async lsFiles(pathspec: string): Promise<string[]> {
-    const res = await this.runOk(["ls-files", "--", pathspec]);
-    return res.stdout.split("\n").filter((line) => line.length > 0);
-  }
-
-  /**
-   * Stage the given working-tree paths into the REAL index (the working-branch
-   * counterpart, used by `cq move-ledger --to local` to re-track the restored
-   * docs files). This DOES touch the repo's real index — unlike the orphan-ref
-   * plumbing — because re-tracking on the working branch is the explicit intent.
-   * It does NOT touch the working tree (the files already exist on disk).
-   *
-   * Runs: `git add -- <paths...>`. A no-op when `paths` is empty.
-   */
-  async add(paths: readonly string[]): Promise<void> {
-    if (paths.length === 0) return;
-    await this.runOk(["add", "--", ...paths]);
-  }
-
-  /**
-   * Untrack the given paths in the REAL index WITHOUT deleting them on disk
-   * (`git rm --cached`), used by `cq move-ledger --to git` so the docs ledger
-   * files stop being tracked on the working branch while remaining on disk
-   * (R418). This DOES touch the repo's real index (the explicit intent); the
-   * working tree is left untouched by `--cached`.
-   *
-   * Runs: `git rm --cached --quiet -- <paths...>`. A no-op when `paths` is empty.
-   */
-  async rmCached(paths: readonly string[]): Promise<void> {
-    if (paths.length === 0) return;
-    await this.runOk(["rm", "--cached", "--quiet", "--", ...paths]);
-  }
-
-  /**
    * Enumerate the repo's root commit(s) — the commit(s) with zero parents
    * reachable from `HEAD` — used by {@link resolveProjectKey} (G67 / Q246) to
    * derive a stable, repo-identity project key that is identical across every

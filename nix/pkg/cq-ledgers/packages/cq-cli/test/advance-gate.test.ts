@@ -26,18 +26,62 @@
  * (or omits) the per-session marker, and cleans up its temp dirs in `afterAll`.
  */
 
-import { describe, it, expect, afterAll, beforeEach } from "bun:test";
+import { describe, it, expect, afterAll, beforeAll, beforeEach } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
 import { EXIT_ALLOW, EXIT_BLOCK, type AdvanceGateVerdict } from "../src/advanceGate.js";
-import { FsLedgerStore, MILESTONES_AMBIENT_ID, GOALS_LEDGER, TASKS_LEDGER } from "@cq/ledger";
+import {
+  createLedgerStore,
+  MILESTONES_AMBIENT_ID,
+  GOALS_LEDGER,
+  TASKS_LEDGER,
+  type LedgerStore,
+} from "@cq/ledger";
 
 const dirs: string[] = [];
 afterAll(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => undefined);
 });
+
+let prevXdgStateHome: string | undefined;
+beforeAll(async () => {
+  // The runtime store is the out-of-tree xdg primary (T505): point
+  // XDG_STATE_HOME at a temp dir so seeded state never touches the host.
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  process.env["XDG_STATE_HOME"] = await makeTmpDir("cq-gate-xdg-");
+});
+afterAll(() => {
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+});
+
+/**
+ * A fresh xdg-backed ledger root: cq.toml pins backend='xdg' with an explicit
+ * projectId (a plain temp dir has no git identity), so both the seed writes
+ * and the gate's own read (runAdvanceGate → createLedgerStore) resolve the
+ * same out-of-tree store.
+ */
+async function xdgRoot(): Promise<string> {
+  const root = await makeTmpDir("cq-gate-ledger-");
+  await writeFile(
+    path.join(root, "cq.toml"),
+    `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,
+    "utf8",
+  );
+  return root;
+}
+
+/** Seed `root`'s xdg store via `seed`, disposing the store afterwards. */
+async function seedStore(root: string, seed: (store: LedgerStore) => Promise<void>): Promise<void> {
+  const { store } = await createLedgerStore(root);
+  try {
+    await seed(store);
+  } finally {
+    await store.dispose();
+  }
+}
 
 const silentConfirm: ConfirmIo = {
   isTty: false,
@@ -93,14 +137,13 @@ async function runGate(root: string): Promise<{ exitCode: number; verdict: Advan
 
 /** Seed a fresh ledger root making P-investigate TRUE (one actionable open defect). */
 async function seedInvestigateLedger(): Promise<string> {
-  const root = await makeTmpDir("cq-gate-ledger-");
-  const store = new FsLedgerStore({ root });
-  await store.init();
-  await store.createItem("defects", MILESTONES_AMBIENT_ID, {
-    status: "open",
-    fields: { headline: "a real defect", severity: "high" },
+  const root = await xdgRoot();
+  await seedStore(root, async (store) => {
+    await store.createItem("defects", MILESTONES_AMBIENT_ID, {
+      status: "open",
+      fields: { headline: "a real defect", severity: "high" },
+    });
   });
-  await store.dispose();
   return root;
 }
 
@@ -109,27 +152,24 @@ async function seedInvestigateLedger(): Promise<string> {
  * DAG-ready (non-terminal, no deps, no gating question) task linked to it.
  */
 async function seedImplementLedger(): Promise<string> {
-  const root = await makeTmpDir("cq-gate-ledger-");
-  const store = new FsLedgerStore({ root });
-  await store.init();
-  const goal = await store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
-    status: "planned",
-    fields: { title: "g", description: "d" },
+  const root = await xdgRoot();
+  await seedStore(root, async (store) => {
+    const goal = await store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "planned",
+      fields: { title: "g", description: "d" },
+    });
+    await store.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "planned",
+      fields: { headline: "ready", ledgerRefs: [`${GOALS_LEDGER}:${goal.id}`] },
+    });
   });
-  await store.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
-    status: "planned",
-    fields: { headline: "ready", ledgerRefs: [`${GOALS_LEDGER}:${goal.id}`] },
-  });
-  await store.dispose();
   return root;
 }
 
 /** Seed a fresh, EMPTY (all-FALSE) ledger root — init only, no items. */
 async function seedEmptyLedger(): Promise<string> {
-  const root = await makeTmpDir("cq-gate-ledger-");
-  const store = new FsLedgerStore({ root });
-  await store.init();
-  await store.dispose();
+  const root = await xdgRoot();
+  await seedStore(root, async () => {});
   return root;
 }
 

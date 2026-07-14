@@ -13,7 +13,7 @@ import { type Subprocess } from "bun";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { FsLedgerStore } from "@cq/ledger";
+import { createLedgerStore } from "@cq/ledger";
 import { McpLedgerClient } from "../src/mcpClient.js";
 import { FakeClient } from "./fakeClient.js";
 import { spawnWithFreePort } from "./portHelpers.js";
@@ -42,20 +42,38 @@ const here = new URL(".", import.meta.url).pathname;
 const serverMain = path.resolve(here, "..", "..", "ledger-mcp", "src", "main.ts");
 
 let tmpRoot: string;
+let xdgHome: string;
+let prevXdgStateHome: string | undefined;
 let proc: Subprocess;
 let client: McpLedgerClient;
 let port: number;
 
+/** Pin a temp root to the xdg backend (T505) with an explicit projectId. */
+async function writeXdgToml(root: string): Promise<void> {
+  await fs.writeFile(
+    path.join(root, "cq.toml"),
+    `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,
+    "utf8",
+  );
+}
+
 beforeAll(async () => {
+  // The runtime store is the out-of-tree xdg primary (T505); the override is
+  // passed EXPLICITLY at spawn time (Bun's default child env is a
+  // process-start snapshot that misses runtime mutations).
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  xdgHome = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-displayname-xdg-"));
+  process.env["XDG_STATE_HOME"] = xdgHome;
+
   // Use a directory whose basename is a known token we can assert on.
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-displayname-"));
-  const seed = new FsLedgerStore({ root: tmpRoot });
-  await seed.init();
+  await writeXdgToml(tmpRoot);
+  const { store: seed } = await createLedgerStore(tmpRoot);
   await seed.dispose();
 
   ({ port, proc } = await spawnWithFreePort(
     (p) => [process.execPath, "run", serverMain, "--cwd", tmpRoot, "--http", String(p)],
-    { stdout: "inherit", stderr: "inherit" },
+    { stdout: "inherit", stderr: "inherit", env: { ...process.env } },
   ));
   client = await McpLedgerClient.connect(`http://127.0.0.1:${port}/mcp`);
 });
@@ -64,6 +82,9 @@ afterAll(async () => {
   await client.close();
   proc.kill();
   await proc.exited;
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+  await fs.rm(xdgHome, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
 
@@ -85,9 +106,7 @@ describe("McpLedgerClient.embedded displayName()", () => {
   it("returns the basename of cwd via the in-process server's serverInfo.title", async () => {
     const embeddedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-embedded-dn-"));
     try {
-      const seed = new FsLedgerStore({ root: embeddedRoot });
-      await seed.init();
-      await seed.dispose();
+      await writeXdgToml(embeddedRoot);
 
       const embeddedClient = await McpLedgerClient.embedded(embeddedRoot);
       try {

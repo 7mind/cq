@@ -26,7 +26,7 @@ import { spawn as bunSpawn, type Subprocess } from "bun";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { FsLedgerStore } from "@cq/ledger";
+import { createLedgerStore } from "@cq/ledger";
 import { spawnWithFreePort } from "./portHelpers.js";
 
 // ---- availability guard ---------------------------------------------------
@@ -48,13 +48,26 @@ const harness = path.resolve(here, "ptyHarness.mjs");
 
 
 let tmpRoot: string;
+let xdgHome: string;
+let prevXdgStateHome: string | undefined;
 let server: Subprocess;
 let port: number;
 
 beforeAll(async () => {
+  // The runtime store is the out-of-tree xdg primary (T505); the override is
+  // passed EXPLICITLY at spawn time (Bun's default child env is a
+  // process-start snapshot that misses runtime mutations).
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  xdgHome = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-tui-pty-xdg-"));
+  process.env["XDG_STATE_HOME"] = xdgHome;
+
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-tui-pty-"));
-  const seed = new FsLedgerStore({ root: tmpRoot });
-  await seed.init();
+  await fs.writeFile(
+    path.join(tmpRoot, "cq.toml"),
+    `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(tmpRoot)}"\n`,
+    "utf8",
+  );
+  const { store: seed } = await createLedgerStore(tmpRoot);
   await seed.createLedger("ops", {
     statusValues: ["open", "done"],
     terminalStatuses: ["done"],
@@ -70,13 +83,16 @@ beforeAll(async () => {
 
   ({ port, proc: server } = await spawnWithFreePort(
     (p) => [process.execPath, "run", serverMain, "--cwd", tmpRoot, "--http", String(p)],
-    { stdout: "ignore", stderr: "ignore" },
+    { stdout: "ignore", stderr: "ignore", env: { ...process.env } },
   ));
 });
 
 afterAll(async () => {
   server.kill();
   await server.exited;
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+  await fs.rm(xdgHome, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
 
@@ -107,8 +123,7 @@ ptySuite("ledger-tui over a real PTY", () => {
     }
 
     // on-disk persistence: a fresh store sees the edit the TUI made over HTTP.
-    const verify = new FsLedgerStore({ root: tmpRoot });
-    await verify.init();
+    const { store: verify } = await createLedgerStore(tmpRoot);
     expect(verify.fetchItem("ops", "O1").status).toBe("done");
     await verify.dispose();
   }, 40000);

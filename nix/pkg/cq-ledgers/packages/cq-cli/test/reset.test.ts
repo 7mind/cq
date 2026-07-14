@@ -6,22 +6,23 @@
  * ConfirmIo so the operator confirmation + exit-code policy can be asserted
  * without a real TTY:
  *
- *   - --yes (unattended): backs the prior tree up to .cq/.backup/<ts>/ and
- *     reinitialises the canonical empty set; exit 0 + summary on io.out.
  *   - non-TTY without --yes: REFUSES (exit 2) and does NOT touch the tree —
- *     never wipe silently.
- *   - TTY answering 'y' proceeds; any other answer aborts (exit 1).
+ *     never wipe silently. The refusal happens BEFORE any store construction.
+ *   - TTY answering a non-'y' aborts (exit 1), tree untouched.
+ *   - T505: once confirmed, a root whose cq.toml (or the no-cq.toml default)
+ *     names a LEGACY backend rejects with LegacyBackendError naming
+ *     `cq migrate` — reset's FS backup→reinit path is no longer reachable at
+ *     runtime. (The historical fs reset assertions live in git history.)
  *
- * Seeds the tmp tree with the FsLedgerStore directly (same reader/writer the
- * production path uses), then closes the store before invoking reset so file
- * locks don't collide.
+ * Seeds the tmp tree with the FsLedgerStore directly (a legacy .cq/ tree on
+ * disk, exactly what a pre-migration repo looks like).
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
 import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { FsLedgerStore, LEDGER_STORAGE_DIRNAME, type LedgerSchema } from "@cq/ledger";
+import { FsLedgerStore, LegacyBackendError, LEDGER_STORAGE_DIRNAME, type LedgerSchema } from "@cq/ledger";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
 
 const dirs: string[] = [];
@@ -73,26 +74,20 @@ async function hasOpsLedger(root: string): Promise<boolean> {
 }
 
 describe("cq reset", () => {
-  it("(a) --yes backs up to .cq/.backup/<ts>/ + reinitialises empty, exit 0 + summary", async () => {
+  it("(a — T505) --yes on a legacy (default-fs) root rejects with LegacyBackendError naming cq migrate; tree untouched", async () => {
     const root = await seedTree();
-    const io = recordingIo(false); // non-TTY, but --yes overrides
-    const outcome = await dispatch(["reset", "--cwd", root, "--yes"], io);
+    const io = recordingIo(false); // non-TTY, but --yes overrides the prompt
 
-    expect(outcome.exitCode).toBe(0);
+    const err = await dispatch(["reset", "--cwd", root, "--yes"], io).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(LegacyBackendError);
+    expect((err as Error).message).toContain("cq migrate");
 
-    // Backup dir created under .cq/.backup/<ts>/.
-    const backupParent = path.join(root, LEDGER_STORAGE_DIRNAME, ".backup");
-    const summaryLine = io.outs.find((l) => l.startsWith("  backup: "));
-    expect(summaryLine).toBeDefined();
-    const backupDir = summaryLine!.slice("  backup: ".length);
-    expect(backupDir.startsWith(backupParent + path.sep)).toBe(true);
-    expect((await fs.stat(backupDir)).isDirectory()).toBe(true);
-
-    // Summary mentions the seeded ops ledger's backed-up item.
-    expect(io.outs.join("\n")).toContain("ops: 1 item(s) backed up");
-
-    // Live tree reset: the custom `ops` ledger is gone (canonical set only).
-    expect(await hasOpsLedger(root)).toBe(false);
+    // No backup written, no wipe: the seeded ops ledger survives untouched.
+    await expect(fs.stat(path.join(root, LEDGER_STORAGE_DIRNAME, ".backup"))).rejects.toThrow();
+    expect(await hasOpsLedger(root)).toBe(true);
   });
 
   it("(b) non-TTY without --yes refuses (exit 2) and leaves the tree untouched", async () => {
@@ -108,12 +103,17 @@ describe("cq reset", () => {
     expect(await hasOpsLedger(root)).toBe(true);
   });
 
-  it("(c) TTY prompt proceeds on a 'y' answer", async () => {
+  it("(c — T505) TTY 'y' answer proceeds past confirmation, then rejects on the legacy backend", async () => {
     const root = await seedTree();
     const io = recordingIo(true, "y");
-    const outcome = await dispatch(["reset", "--cwd", root], io);
-    expect(outcome.exitCode).toBe(0);
-    expect(await hasOpsLedger(root)).toBe(false);
+    const err = await dispatch(["reset", "--cwd", root], io).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    // Confirmation was accepted (no refusal exit) — construction then fails
+    // fast on the legacy backend; the tree is untouched.
+    expect(err).toBeInstanceOf(LegacyBackendError);
+    expect(await hasOpsLedger(root)).toBe(true);
   });
 
   it("(d) TTY prompt aborts on a non-'y' answer and leaves the tree untouched", async () => {

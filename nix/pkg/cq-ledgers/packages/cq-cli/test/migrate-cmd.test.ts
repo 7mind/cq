@@ -25,6 +25,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import {
   createLedgerStore,
+  openLegacyLedgerStore,
   ledgerTreePaths,
   resolveLedgerBackend,
   resolveLogsDir,
@@ -96,13 +97,15 @@ interface SeededState {
 }
 
 /**
- * Seed the LEGACY backend at `root` via its public store surface: an active
+ * Seed the LEGACY backend at `root` via its public store surface (through
+ * openLegacyLedgerStore — the same internal legacy path `cq migrate` reads
+ * with; the runtime factory rejects legacy backends per T505): an active
  * milestone + task, PLUS a fully archived milestone (a done task, milestone
  * done, archiveMilestone) so the migrate parity covers archives too. Logs are
  * seeded separately via `cq log put` (the same path a real session uses).
  */
 async function seedLegacy(root: string): Promise<SeededState> {
-  const seeded = await createLedgerStore(root);
+  const seeded = await openLegacyLedgerStore(root);
   try {
     const milestone = await seeded.store.createMilestone({ title: "active work" });
     const item = await seeded.store.createItem(TASKS_LEDGER, milestone.id, {

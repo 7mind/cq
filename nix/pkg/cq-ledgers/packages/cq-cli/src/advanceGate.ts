@@ -16,8 +16,8 @@
  *     ledger.
  *  3. Marker PRESENT and its contents carry a non-empty `external-signal: "..."`
  *     line → ALLOW (block=false).
- *  4. Else construct the fs-backed store IN-PROCESS via `createLedgerStore(cwd)`
- *     (exactly like `runInit`/`move-ledger` — NO MCP server), call
+ *  4. Else construct the store IN-PROCESS via `createLedgerStore(cwd)`
+ *     (exactly like `runInit` — NO MCP server), call
  *     `derivePredicates(store)`, dispose, and: if ANY of
  *     pInvestigate/pPlan/pImplement is TRUE-and-unblocked → BLOCK (block=true),
  *     naming the FIRST such predicate; else ALLOW.

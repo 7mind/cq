@@ -7,7 +7,6 @@
  * orchestration, and every read/mutation method) wired to an {@link FsPersistence}
  * byte-I/O seam plus the filesystem-only concerns the base does not own:
  *   - the advisory lockfile root (`.cq/.locks`);
- *   - the `~/.cache` mirror (cacheMirror.ts) fired after every mutation;
  *   - the FS-only `read_log` capability (T147 / Q87);
  *   - the operator-facing `reset()` wipe-and-reinit (+ `ResetSummary`);
  *   - the `rootDir` accessor a host binds root-scoped config to.
@@ -34,7 +33,6 @@ import { MAX_READ_LOG_BYTES, type ReadLogResult } from "../mcp/readLog.js";
 import { promises as fs } from "node:fs";
 import { LedgerError } from "../types.js";
 import { Lockfile, type LockfileOpts } from "./lockfile.js";
-import { mirrorMutation } from "./cacheMirror.js";
 import {
   CANONICAL_LEDGERS,
   LEDGER_STORAGE_DIRNAME,
@@ -95,18 +93,8 @@ export class FsLedgerStore
   implements LedgerStore
 {
   private readonly root: string;
-  private readonly docsDir: string;
   private readonly logsDir: string;
   private readonly locksDir: string;
-  private readonly archiveDir: string;
-  private readonly registryPath: string;
-  /**
-   * In-flight cache-mirror writes. The mirror runs AFTER lockfile release (so
-   * it does not serialise other writers), but it is still part of the mutation
-   * the caller awaited; `dispose()` drains this set so an in-flight mirror is
-   * not abandoned (D-LED-06 drain contract).
-   */
-  private readonly pendingMirrors = new Set<Promise<void>>();
 
   constructor(opts: FsLedgerStoreOpts) {
     const root = opts.root;
@@ -130,11 +118,8 @@ export class FsLedgerStore
     // the accessor now that `super()` has run and `this` is available.
     persistence.bindRegistrySnapshot(() => this.currentRegistry);
     this.root = root;
-    this.docsDir = docsDir;
     this.logsDir = path.join(docsDir, "logs");
     this.locksDir = path.join(docsDir, ".locks");
-    this.archiveDir = archiveDir;
-    this.registryPath = registryPath;
   }
 
   /**
@@ -162,50 +147,6 @@ export class FsLedgerStore
 
   protected locksRoot(): string {
     return this.locksDir;
-  }
-
-  /**
-   * Schedule the cache mirror for the file(s) `op` touched (see cacheMirror.ts)
-   * as a fire-and-forget async task tracked in `pendingMirrors`. GUARDED: a
-   * mirror failure is swallowed and logged to stderr exactly like the
-   * onMutation hook — it MUST NOT unwind the write path.
-   */
-  protected override afterMutation(
-    ledgerId: string,
-    op: "create" | "update" | "archive",
-  ): void {
-    const work = (async (): Promise<void> => {
-      try {
-        await mirrorMutation(
-          {
-            rootDir: this.root,
-            docsDir: this.docsDir,
-            archiveDir: this.archiveDir,
-            registryPath: this.registryPath,
-          },
-          ledgerId,
-          op,
-        );
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(
-          `FsLedgerStore: cache mirror threw for ${ledgerId} (${op}): ${msg}\n`,
-        );
-      }
-    })();
-    this.pendingMirrors.add(work);
-    void work.finally(() => this.pendingMirrors.delete(work));
-  }
-
-  /**
-   * Drain in-flight cache mirrors. The mirror is a fire-and-forget tail of
-   * fireMutation, scheduled SYNCHRONOUSLY (registered in pendingMirrors) after
-   * lockfile release — before the mutation method resolves and before this
-   * drain runs. Awaiting it prevents an in-flight mirror from outliving
-   * dispose() (extends the D-LED-06 drain contract to the mirror).
-   */
-  protected override async drainBackend(): Promise<void> {
-    await Promise.all(Array.from(this.pendingMirrors));
   }
 
   // ---------------------------------------------------------------------------

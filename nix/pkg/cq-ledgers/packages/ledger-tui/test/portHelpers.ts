@@ -36,11 +36,18 @@ export function freePort(): Promise<number> {
   });
 }
 
-/** Subset of spawn() options relevant to the test harness (stdio routing). */
+/** Subset of spawn() options relevant to the test harness (stdio + env). */
 type SpawnIoOpts = {
   stdout?: "inherit" | "ignore" | "pipe";
   stderr?: "inherit" | "ignore" | "pipe";
   stdin?: "inherit" | "ignore" | "pipe";
+  /**
+   * Explicit child env. Bun's spawn() default env is a SNAPSHOT of the parent
+   * env from process start — runtime `process.env` mutations (e.g. a test's
+   * XDG_STATE_HOME override) do NOT propagate unless passed here explicitly
+   * (`{ ...process.env }` at spawn time).
+   */
+  env?: Record<string, string | undefined>;
 };
 
 /**

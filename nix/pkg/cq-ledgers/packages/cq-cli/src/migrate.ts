@@ -6,8 +6,8 @@
  *
  * Source — whichever legacy backend cq.toml names:
  *   - `fs`         — the tracked `.cq/` tree, read via {@link FsLedgerStore}'s
- *                    public surface (through {@link createLedgerStore}) plus
- *                    the in-tree `.cq/logs/` files;
+ *                    public surface (through {@link openLegacyLedgerStore})
+ *                    plus the in-tree `.cq/logs/` files;
  *   - `git-object` — the orphan `refs/heads/<branch>` ref, read via
  *                    {@link GitObjectLedgerBackend}'s public surface plus the
  *                    ref's `logs/**` tree entries (the log CAS, Q247) via
@@ -35,15 +35,16 @@
  *     or write, so a broken source fails loud without touching the target.
  */
 
+import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import {
   buildBackupDump,
-  createLedgerStore,
   ensureStateDir,
   GitPlumbing,
   isXdgPrimaryEmpty,
   LEDGER_LOGS_DIRNAME,
   LEDGER_STORAGE_DIRNAME,
+  openLegacyLedgerStore,
   resolveLedgerBackend,
   resolveLogsDir,
   resolveProjectKey,
@@ -55,7 +56,6 @@ import {
 } from "@cq/ledger";
 import { loadConfig } from "@cq/config";
 import { confirmDestructive, type ConfirmIo } from "./confirm.js";
-import { setLedgerBackend } from "./moveLedger.js";
 
 /** Exit code for a usage / refusal error (mirrors main.ts EXIT_USAGE). */
 const EXIT_USAGE = 2;
@@ -105,6 +105,75 @@ async function readGitObjectLogs(root: string, branch: string): Promise<BackupDu
 }
 
 /**
+ * Set `[ledger] backend = '<backend>'` in `<root>/cq.toml` via a targeted text
+ * edit (cq-config has no serialiser). Three cases:
+ *  - no cq.toml → create one with a `[ledger]` block;
+ *  - cq.toml with an ACTIVE (uncommented) `[ledger]` table → replace its
+ *    `backend = ...` line (or insert one right after the header if absent);
+ *  - cq.toml WITHOUT an active `[ledger]` table → append a fresh block.
+ *
+ * Only the `backend` key is touched; any `branch`/`remote` lines are preserved.
+ * (Relocated from the retired `cq move-ledger`, T505; migrate is now its only
+ * caller.)
+ */
+export async function setLedgerBackend(
+  root: string,
+  backend: "git-object" | "fs" | "xdg",
+): Promise<void> {
+  const configPath = path.join(root, CQ_CONFIG_FILENAME);
+  let source: string | null;
+  try {
+    source = await fsPromises.readFile(configPath, "utf8");
+  } catch {
+    source = null;
+  }
+
+  const block = `[ledger]\n  backend = "${backend}"\n`;
+
+  if (source === null) {
+    await fsPromises.writeFile(configPath, block, "utf8");
+    return;
+  }
+
+  const lines = source.split("\n");
+  // Locate an ACTIVE (non-comment) [ledger] table header.
+  const headerIdx = lines.findIndex((l) => /^\s*\[ledger\]\s*$/.test(l));
+  if (headerIdx < 0) {
+    // No active [ledger] table — append a fresh block (one blank-line separated).
+    const sep = source.endsWith("\n") ? "\n" : "\n\n";
+    await fsPromises.writeFile(configPath, `${source}${sep}${block}`, "utf8");
+    return;
+  }
+
+  // Find the extent of the [ledger] table: from headerIdx+1 until the next
+  // active table header (a line starting with `[`).
+  let end = lines.length;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (/^\s*\[[^\]]+\]\s*$/.test(lines[i] ?? "")) {
+      end = i;
+      break;
+    }
+  }
+  // Within the table, find an ACTIVE backend assignment.
+  let backendIdx = -1;
+  for (let i = headerIdx + 1; i < end; i++) {
+    if (/^\s*backend\s*=/.test(lines[i] ?? "")) {
+      backendIdx = i;
+      break;
+    }
+  }
+  if (backendIdx >= 0) {
+    // Preserve the original indentation of the line.
+    const indent = (lines[backendIdx] ?? "").match(/^\s*/)?.[0] ?? "  ";
+    lines[backendIdx] = `${indent}backend = "${backend}"`;
+  } else {
+    // Insert a backend line right after the header.
+    lines.splice(headerIdx + 1, 0, `  backend = "${backend}"`);
+  }
+  await fsPromises.writeFile(configPath, lines.join("\n"), "utf8");
+}
+
+/**
  * Run `cq migrate`: legacy (fs | git-object) state + logs → the xdg primary,
  * then flip cq.toml's `[ledger].backend` to `xdg`. See the module doc for the
  * full contract.
@@ -121,11 +190,13 @@ export async function runMigrate(args: MigrateArgs, io: MigrateIo): Promise<Migr
   }
 
   // --- Read the ENTIRE legacy source (state + logs) before any target write.
-  // createLedgerStore constructs + init()s the legacy store (fs reads the
-  // tracked .cq/ tree; git-object reads the orphan ref) — init() is the same
-  // idempotent load every server start performs; it never rewrites existing
-  // content. buildBackupDump reads via the PUBLIC store surface only.
-  const legacy = await createLedgerStore(args.cwd);
+  // openLegacyLedgerStore (the INTERNAL legacy read path, T505 — the runtime
+  // factory createLedgerStore now rejects fs/git-object) constructs + init()s
+  // the legacy store (fs reads the tracked .cq/ tree; git-object reads the
+  // orphan ref) — init() is the same idempotent load every server start
+  // performed; it never rewrites existing content. buildBackupDump reads via
+  // the PUBLIC store surface only.
+  const legacy = await openLegacyLedgerStore(args.cwd);
   let dump: BackupDumpFile[];
   try {
     const fsLogsDir =

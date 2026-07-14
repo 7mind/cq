@@ -9,7 +9,7 @@
  * predicates false) because the marker is absent, whereas `cq predicates`
  * reports the TRUE predicates.
  *
- * This suite seeds an ACTIONABLE fs fixture (one open high-severity defect ⇒
+ * This suite seeds an ACTIONABLE xdg fixture (one open high-severity defect ⇒
  * P-investigate TRUE) where advance-gate WITHOUT a marker would return
  * false-DRAINED, and asserts:
  *   1. `cq predicates` (via runPredicates) returns the REAL non-empty predicates
@@ -26,13 +26,12 @@
  * over the actual `cq predicates` stdout to prove the shapes agree.
  */
 
-import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { describe, it, expect, afterAll, beforeAll } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { runPredicates, type PredicatesIo } from "../src/predicates.js";
 import {
-  FsLedgerStore,
   MILESTONES_AMBIENT_ID,
   createLedgerStore,
   derivePredicates,
@@ -42,7 +41,16 @@ import {
 const PREDICATE_KEYS = ["pInvestigate", "pPlan", "pImplement", "openQuestionGate"] as const;
 
 const dirs: string[] = [];
+let prevXdgStateHome: string | undefined;
+beforeAll(async () => {
+  // The runtime store is the out-of-tree xdg primary (T505): point
+  // XDG_STATE_HOME at a temp dir so seeded state never touches the host.
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  process.env["XDG_STATE_HOME"] = await makeTmpDir("cq-predicates-xdg-");
+});
 afterAll(async () => {
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
   for (const d of dirs) await rm(d, { recursive: true, force: true }).catch(() => undefined);
 });
 
@@ -52,11 +60,20 @@ async function makeTmpDir(prefix: string): Promise<string> {
   return dir;
 }
 
-/** Seed a fresh fs-backed ledger root making P-investigate TRUE (one open high-severity defect). */
+/**
+ * Seed a fresh xdg-backed ledger root making P-investigate TRUE (one open
+ * high-severity defect). The cq.toml pins backend='xdg' with an explicit
+ * projectId (the temp root has no git identity) so both the seed and the
+ * production path (runPredicates → createLedgerStore) resolve the same store.
+ */
 async function seedActionableLedger(): Promise<string> {
   const root = await makeTmpDir("cq-predicates-ledger-");
-  const store = new FsLedgerStore({ root });
-  await store.init();
+  await writeFile(
+    path.join(root, "cq.toml"),
+    `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,
+    "utf8",
+  );
+  const { store } = await createLedgerStore(root);
   await store.createItem("defects", MILESTONES_AMBIENT_ID, {
     status: "open",
     fields: { headline: "a real, actionable defect", severity: "high" },
@@ -77,7 +94,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 describe("cq predicates — unconditional real-predicate emitter (T476)", () => {
-  it("returns the REAL non-empty predicates on an actionable fs ledger, exit 0, no session/marker", async () => {
+  it("returns the REAL non-empty predicates on an actionable xdg ledger, exit 0, no session/marker", async () => {
     const root = await seedActionableLedger();
 
     const io = recordingIo();

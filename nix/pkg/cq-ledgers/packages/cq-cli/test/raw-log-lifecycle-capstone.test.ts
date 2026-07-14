@@ -16,23 +16,20 @@
  *   3. WEB PARSE — the web viewer parser (parseRawLog, T412) turns those bytes
  *      into a structured conversation model (ordered turns, tool_use↔tool_result
  *      pairing).
- *   4. MOVE-LEDGER ROUND-TRIP — `cq move-ledger --to local` materialises the ref
- *      tree to .cq/logs/ (tracked), then `--to git` puts it back on the ref and
- *      untracks it; the log bytes survive the round trip (cat-file byte-identical)
- *      and the no-track-on-working-branch invariant holds under git-object
- *      (git ls-files .cq/logs/ empty after --to git).
- *   5. ERASE — after a final `--to local` (logs on disk), `cq erase --yes` wipes
- *      .cq/logs/ (the LEDGER_*_RUNTIME_DIRNAMES erase) and cq.toml; the repo
- *      root + sibling tracked files survive (bounded delete).
+ *   4. MOVE-LEDGER RETIRED (T505) — the historical `cq move-ledger` round-trip
+ *      stage is gone with the subcommand: an invocation now errors (exit 2)
+ *      pointing at `cq migrate`, and the ref/working tree stay untouched.
+ *   5. ERASE — `cq erase --yes` deletes cq.toml (the orphan ref itself is git
+ *      data, deliberately untouched); the repo root + sibling tracked files
+ *      survive (bounded delete).
  *
  * Throughout, the working branch HEAD + working tree stay clean: the orphan-ref
- * lifecycle never leaks onto the working branch except where move-ledger
- * EXPLICITLY tracks (then untracks) .cq/logs/.
+ * lifecycle never leaks onto the working branch.
  *
  * Reuses the harness patterns from log-put-git-object.test.ts (gitObjectRepo,
- * makeIo, plumbing/REF), gitObjectLedgerBackend.test.ts (readLog), and
- * move-ledger.test.ts (dispatch + recordingIo) — Blackbox-Atomic against real
- * git objects. Throwaway repos via mkdtemp; cleaned up in afterAll.
+ * makeIo, plumbing/REF) and gitObjectLedgerBackend.test.ts (readLog) —
+ * Blackbox-Atomic against real git objects. Throwaway repos via mkdtemp;
+ * cleaned up in afterAll.
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
@@ -155,7 +152,7 @@ async function exists(p: string): Promise<boolean> {
 }
 
 describe("T420 capstone — raw-log lifecycle under the git-object backend", () => {
-  it("captures → read_log → web-parse → move-ledger round-trip → erase with NO working-branch leak", async () => {
+  it("captures → read_log → web-parse → move-ledger retired error → erase with NO working-branch leak", async () => {
     const root = await gitObjectRepo();
 
     // ---- baseline: working tree / index / HEAD before any log activity -------
@@ -226,59 +223,42 @@ describe("T420 capstone — raw-log lifecycle under the git-object backend", () 
     }
 
     // =========================================================================
-    // 4. MOVE-LEDGER ROUND-TRIP — ref → .cq/ (--to local) → ref (--to git).
+    // 4. MOVE-LEDGER RETIRED (T505) — the old round-trip invocation now errors
+    //    pointing at `cq migrate`; ref, working tree and HEAD stay untouched.
     // =========================================================================
     {
-      // --to local: materialise the ref tree to .cq/logs/ and TRACK it.
       const io1 = recordingIo();
       const out1 = await dispatch(["move-ledger", "--cwd", root, "--to", "local"], io1);
-      expect(out1.exitCode).toBe(0);
+      expect(out1.exitCode).toBe(2);
+      expect(io1.errs.join("\n")).toContain("cq migrate");
 
-      // The log bytes are on disk byte-identical, and TRACKED on the working
-      // branch (move-ledger --to local deliberately re-tracks).
-      expect(await Bun.file(path.join(root, STORAGE_PATH)).text()).toBe(SAMPLE_JSONL);
-      const trackedLocal = (await git(root, "ls-files", `${LEDGER_STORAGE_DIRNAME}/logs/`)).trim();
-      expect(trackedLocal.split("\n").filter(Boolean)).toContain(`${LEDGER_STORAGE_DIRNAME}/${DEST}`);
-
-      // --to git (--force, .cq/ non-empty after --to local): put it back on the
-      // ref and UNTRACK — the no-track-on-working-branch invariant under git-object.
-      const io2 = recordingIo();
-      const out2 = await dispatch(["move-ledger", "--cwd", root, "--to", "git", "--force"], io2);
-      expect(out2.exitCode).toBe(0);
-
-      // Bytes preserved on the ref through the round trip (cat-file identical).
+      // Nothing moved: the log stays ONLY on the ref, nothing lands on disk or
+      // in the index, and HEAD never moved.
       expect(await plumbing(root).catFile(REF, TREE_PATH)).toBe(SAMPLE_JSONL);
-      // No-track-on-working-branch invariant: .cq/logs/ untracked again.
-      expect((await git(root, "ls-files", `${LEDGER_STORAGE_DIRNAME}/logs/`)).trim()).toBe("");
-      // HEAD never moved on the working branch through capture + round trip.
+      expect(await exists(path.join(root, STORAGE_PATH))).toBe(false);
+      expect((await git(root, "ls-files", `${LEDGER_STORAGE_DIRNAME}/`)).trim()).toBe("");
       expect((await git(root, "rev-parse", "HEAD")).trim()).toBe(headBefore);
     }
 
     // =========================================================================
-    // 5. ERASE — materialise once more so logs are on disk, then erase wipes
-    //    .cq/logs/ (LEDGER_*_RUNTIME_DIRNAMES) + cq.toml; siblings survive.
+    // 5. ERASE — `cq erase --yes` deletes cq.toml; the orphan ref is git data
+    //    (deliberately untouched) and the tracked sibling survives.
     // =========================================================================
     {
-      // Bring the logs back onto disk so erase has a .cq/logs/ to wipe.
-      const ioLocal = recordingIo();
-      expect(
-        (await dispatch(["move-ledger", "--cwd", root, "--to", "local", "--force"], ioLocal)).exitCode,
-      ).toBe(0);
-      expect(await exists(path.join(root, LEDGER_STORAGE_DIRNAME, "logs"))).toBe(true);
-
       const ioErase = recordingIo();
       const outErase = await dispatch(["erase", "--cwd", root, "--yes"], ioErase);
       expect(outErase.exitCode).toBe(0);
 
-      // .cq/logs/ wiped (the runtime-dir erase) AND cq.toml deleted.
-      expect(await exists(path.join(root, LEDGER_STORAGE_DIRNAME, "logs"))).toBe(false);
-      expect(await exists(path.join(root, STORAGE_PATH))).toBe(false);
+      // cq.toml deleted; no .cq/ ever existed on disk under git-object.
       expect(await exists(path.join(root, "cq.toml"))).toBe(false);
+      expect(await exists(path.join(root, LEDGER_STORAGE_DIRNAME))).toBe(false);
 
-      // Bounded: the repo root + the tracked sibling survive.
+      // Bounded: the repo root + the tracked sibling survive, and the orphan
+      // ref still carries the log (erase never rewrites git history).
       expect(await exists(root)).toBe(true);
       expect(await exists(path.join(root, "README.md"))).toBe(true);
       expect(await Bun.file(path.join(root, "README.md")).text()).toBe("# repo\n");
+      expect(await plumbing(root).catFile(REF, TREE_PATH)).toBe(SAMPLE_JSONL);
     }
   }, 30_000);
 });

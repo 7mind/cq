@@ -1,17 +1,12 @@
 /**
- * createLedgerStore — the SINGLE backend-selecting store factory (T357 / G43).
+ * createLedgerStore — the SINGLE backend-selecting store factory (T357 / G43;
+ * legacy cutover T505 / G67).
  *
  * Every store construction site in the running products (ledger-mcp's
  * `createEmbeddedStore()` + `main()`, cq-cli's `runInit()` / `runReset()`)
  * routes through this factory so the `[ledger]` backend choice in cq.toml is
  * honoured in EXACTLY one place:
  *
- *   - `backend = 'fs'` (the default, and the case when no cq.toml exists) →
- *     {@link FsLedgerStore}. Byte-identical to the historical behaviour.
- *   - `backend = 'git-object'` → {@link GitObjectLedgerBackend}, after a
- *     fail-fast validation of the git environment (git on PATH + the root is
- *     inside a git work tree) and an idempotent install of the git-backend
- *     `.gitignore` block (so a fresh ledger is never accidentally tracked).
  *   - `backend = 'xdg'` (T530) → {@link SqliteLedgerStore} on
  *     `<stateDir>/ledger.db`, where `stateDir` is resolved from the repo's
  *     stable {@link resolveProjectKey} (a `[ledger].projectId` override, else
@@ -19,6 +14,16 @@
  *     cannot be resolved (a shallow clone, or no git at all) FAILS FAST with
  *     {@link ProjectKeyResolutionError} rather than silently mislocating the
  *     store.
+ *   - `backend = 'fs' | 'git-object'` (including the no-cq.toml default,
+ *     which still resolves to 'fs') → {@link LegacyBackendError} (T505 /
+ *     Q244): the legacy in-tree backends are no longer selectable runtime
+ *     primaries. The error names `cq migrate` (the one-shot legacy → xdg
+ *     import) so an existing ledger is never silently shadowed by an empty
+ *     xdg store.
+ *
+ * `cq migrate` still needs to READ a live legacy backend; that internal
+ * read path is {@link openLegacyLedgerStore} below — deliberately NOT wired
+ * to this factory's runtime selection.
  *
  * The factory `init()`s the returned store before handing it back, mirroring the
  * historical `new FsLedgerStore(); await store.init()` pattern at each site.
@@ -34,7 +39,6 @@ import { loadConfig, type LedgerBackend } from "@cq/config";
 import type { LedgerStore } from "./LedgerStore.js";
 import { FsLedgerStore } from "./FsLedgerStore.js";
 import { GitObjectLedgerBackend } from "./git/GitObjectLedgerBackend.js";
-import { ensureGitBackendGitignore } from "./gitBackendGitignore.js";
 import { SqliteLedgerStore } from "./sqlite/SqliteLedgerStore.js";
 import { dataVersion, openLedgerDb } from "./sqlite/connection.js";
 import { resolveProjectKey } from "../projectKey.js";
@@ -44,8 +48,7 @@ import { BackupScheduler, runBackupExport } from "./backupExporter.js";
 /**
  * The xdg backend's database filename within `<stateDir>` (T530). Exported so
  * `cq migrate` (T504) can resolve the xdg primary's dbPath BEFORE cq.toml is
- * flipped to `backend = 'xdg'` (at which point this factory is unusable for
- * the target — it would still construct the LEGACY store).
+ * flipped to `backend = 'xdg'`.
  */
 export const XDG_DB_FILENAME = "ledger.db";
 
@@ -59,10 +62,10 @@ const DEFAULT_BRANCH = "cq-ledger";
  * The resolved storage backend for a root, plus the branch the git-object
  * backend operates on (the `[ledger].branch`, default `cq-ledger`). Returned
  * alongside the store so the construction site can select the matching
- * coherence watcher (file-watch for fs, ref-sha-watch for git-object).
+ * coherence watcher.
  */
 export interface ResolvedLedgerStore {
-  /** The initialised store (FsLedgerStore or GitObjectLedgerBackend). */
+  /** The initialised store. */
   readonly store: LedgerStore;
   /** The resolved backend identifier. */
   readonly backend: LedgerBackend;
@@ -71,8 +74,9 @@ export interface ResolvedLedgerStore {
   /**
    * The concrete `ledger.db` path (xdg backend only) — the input
    * {@link startXdgCoherenceWatcher} polls via `PRAGMA data_version` to
-   * detect a peer process's commit. `undefined` for fs / git-object, whose
-   * coherence watchers key off a different signal (file mtime / ref sha).
+   * detect a peer process's commit. `undefined` for the legacy backends
+   * {@link openLegacyLedgerStore} returns, whose coherence watchers key off a
+   * different signal (file mtime / ref sha).
    */
   readonly dbPath?: string;
   /**
@@ -105,9 +109,30 @@ export class GitEnvironmentError extends Error {
 }
 
 /**
+ * Thrown when cq.toml (or the no-cq.toml default) names a LEGACY in-tree
+ * backend (`fs` | `git-object`) as the runtime primary (T505 / Q244). The
+ * legacy backends remain readable ONLY through `cq migrate`'s internal
+ * {@link openLegacyLedgerStore} path; every runtime construction site fails
+ * fast here so an existing legacy ledger is never silently shadowed.
+ */
+export class LegacyBackendError extends Error {
+  constructor(backend: LedgerBackend, root: string) {
+    super(
+      `[ledger] backend = '${backend}' at ${root} is no longer a runtime primary — the ledger ` +
+        `now lives out-of-tree under the XDG state dir (backend = 'xdg'). Run \`cq migrate\` to ` +
+        `import the existing legacy ledger into the xdg primary (it flips cq.toml for you), or ` +
+        `set backend = "xdg" in cq.toml (\`cq init\` writes it) for a fresh project.`,
+    );
+    this.name = "LegacyBackendError";
+  }
+}
+
+/**
  * Resolve the `[ledger]` backend for `root` from cq.toml. No cq.toml (or no
  * `[ledger]` table) → `'fs'`, matching {@link loadConfig}'s contract and the
- * historical default.
+ * historical default (which {@link createLedgerStore} now rejects with
+ * {@link LegacyBackendError} — the resolver stays truthful so `cq migrate`
+ * can locate the legacy source).
  */
 export function resolveLedgerBackend(root: string): { backend: LedgerBackend; branch: string } {
   const config = loadConfig(root);
@@ -152,21 +177,17 @@ export function assertGitWorkTree(root: string): void {
  * Construct and initialise the ledger store selected by cq.toml's `[ledger]`
  * backend at `root`. The ONE backend-selection site for the running products.
  *
- * For `git-object`: validates the git environment (fail-fast) and installs the
- * idempotent git-backend `.gitignore` block BEFORE constructing the store, so a
- * fresh git-object ledger's `.cq/` is gitignored from the first write.
+ * Only `backend = 'xdg'` constructs a store; the legacy `fs` / `git-object`
+ * values (and the no-cq.toml default, 'fs') fail fast with
+ * {@link LegacyBackendError} naming `cq migrate` (T505).
  *
  * The store is `init()`-ed before return (mirrors every historical call site).
  */
 export async function createLedgerStore(root: string): Promise<ResolvedLedgerStore> {
   const { backend, branch } = resolveLedgerBackend(root);
 
-  if (backend === "git-object") {
-    assertGitWorkTree(root);
-    await ensureGitBackendGitignore(root);
-    const store = new GitObjectLedgerBackend({ repoRoot: root, ref: branch });
-    await store.init();
-    return { store, backend, branch };
+  if (backend !== "xdg") {
+    throw new LegacyBackendError(backend, root);
   }
 
   // backend === 'xdg' (T530): the out-of-tree bun:sqlite primary (K102).
@@ -174,44 +195,70 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
   // fail-fast (a shallow clone or a non-git/no-commit root has no stable
   // identity to key the store off — see projectKey.ts's no-fallback
   // rationale, Q246).
-  if (backend === "xdg") {
-    const config = loadConfig(root);
-    const projectId = config?.ledger?.projectId ?? null;
-    const projectKey = await resolveProjectKey({ repoRoot: root, projectId });
-    const stateDir = resolveStateDir(projectKey);
-    await ensureStateDir(stateDir);
-    const dbPath = join(stateDir, XDG_DB_FILENAME);
-    // Sibling out-of-tree logs area (T499), same projectKey — so `read_log`
-    // resolves the SAME location `cq log put`'s xdg branch writes to.
-    const logsDir = resolveLogsDir(projectKey);
-    // T502: the debounced human-readable backup trigger (Q244), wired at the
-    // ONE place the store's onMutation hook is bound. `[ledger].backup`
-    // defaults to 'none' (OFF): no scheduler, the hook is a no-op, and
-    // NOTHING is ever written in-tree or to any ref. The scheduler is bound
-    // AFTER init() (via the closure) so bootstrap writes never trigger an
-    // export; schedule() is synchronous and the export itself is
-    // fire-and-forget + guarded, so a backup failure never unwinds a write.
-    const backupTarget = config?.ledger?.backup ?? "none";
-    let backup: BackupScheduler | undefined;
-    const store = new SqliteLedgerStore({
-      dbPath,
-      logsDir,
-      onMutation: () => backup?.schedule(),
-    });
-    await store.init();
-    if (backupTarget !== "none") {
-      backup = new BackupScheduler(async () => {
-        await runBackupExport({ store, root, target: backupTarget, branch, logsDir });
-      });
-      return { store, backend, branch, dbPath, logsDir, backup };
-    }
-    return { store, backend, branch, dbPath, logsDir };
-  }
-
-  // backend === 'fs' — byte-identical to the historical default.
-  const store = new FsLedgerStore({ root });
+  const config = loadConfig(root);
+  const projectId = config?.ledger?.projectId ?? null;
+  const projectKey = await resolveProjectKey({ repoRoot: root, projectId });
+  const stateDir = resolveStateDir(projectKey);
+  await ensureStateDir(stateDir);
+  const dbPath = join(stateDir, XDG_DB_FILENAME);
+  // Sibling out-of-tree logs area (T499), same projectKey — so `read_log`
+  // resolves the SAME location `cq log put`'s xdg branch writes to.
+  const logsDir = resolveLogsDir(projectKey);
+  // T502: the debounced human-readable backup trigger (Q244), wired at the
+  // ONE place the store's onMutation hook is bound. `[ledger].backup`
+  // defaults to 'none' (OFF): no scheduler, the hook is a no-op, and
+  // NOTHING is ever written in-tree or to any ref. The scheduler is bound
+  // AFTER init() (via the closure) so bootstrap writes never trigger an
+  // export; schedule() is synchronous and the export itself is
+  // fire-and-forget + guarded, so a backup failure never unwinds a write.
+  const backupTarget = config?.ledger?.backup ?? "none";
+  let backup: BackupScheduler | undefined;
+  const store = new SqliteLedgerStore({
+    dbPath,
+    logsDir,
+    onMutation: () => backup?.schedule(),
+  });
   await store.init();
-  return { store, backend, branch };
+  if (backupTarget !== "none") {
+    backup = new BackupScheduler(async () => {
+      await runBackupExport({ store, root, target: backupTarget, branch, logsDir });
+    });
+    return { store, backend, branch, dbPath, logsDir, backup };
+  }
+  return { store, backend, branch, dbPath, logsDir };
+}
+
+/**
+ * Open the LIVE LEGACY backend cq.toml names at `root` — the INTERNAL read
+ * path `cq migrate` (T504) uses to export a legacy ledger's state, and the
+ * ONLY remaining construction site for {@link FsLedgerStore} /
+ * {@link GitObjectLedgerBackend} in the products (T505). Deliberately NOT a
+ * cq.toml-selectable runtime primary: {@link createLedgerStore} rejects these
+ * backends with {@link LegacyBackendError}.
+ *
+ * `init()` is the same idempotent load every historical server start
+ * performed — it never rewrites existing content, so a migrate source stays
+ * byte-identical. Throws when cq.toml already names `xdg` (there is no legacy
+ * source to open).
+ */
+export async function openLegacyLedgerStore(root: string): Promise<ResolvedLedgerStore> {
+  const { backend, branch } = resolveLedgerBackend(root);
+
+  if (backend === "git-object") {
+    assertGitWorkTree(root);
+    const store = new GitObjectLedgerBackend({ repoRoot: root, ref: branch });
+    await store.init();
+    return { store, backend, branch };
+  }
+  if (backend === "fs") {
+    const store = new FsLedgerStore({ root });
+    await store.init();
+    return { store, backend, branch };
+  }
+  throw new Error(
+    `openLegacyLedgerStore: [ledger] backend = '${backend}' at ${root} is not a legacy ` +
+      `backend — nothing to open (expected 'fs' or 'git-object').`,
+  );
 }
 
 /** Handle returned by {@link startXdgCoherenceWatcher}. */

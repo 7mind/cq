@@ -3,8 +3,9 @@
  * ledger-mcp — standalone MCP server exposing the 26 ledger tools.
  *
  * This is the cq-free ledger MCP server: it serves the tool surface backed
- * by a file-backed `FsLedgerStore` rooted at the supplied `--cwd` directory,
- * with NO dependency on the cq server. It speaks two transports:
+ * by the store `createLedgerStore` resolves for the supplied `--cwd` directory
+ * (the out-of-tree xdg `SqliteLedgerStore`, T530/T505), with NO dependency on
+ * the cq server. It speaks two transports:
  *
  *   - stdio (default): JSON-RPC frames over stdin/stdout, for clients that
  *     spawn the server as a child process (Claude Code, Codex, etc.).
@@ -12,7 +13,7 @@
  *     transport over `Bun.serve`, for clients that connect to an
  *     already-running server (e.g. ledger-tui). Session-managed: each
  *     client initialize allocates a session bound to its own `McpServer`,
- *     all sharing the one `FsLedgerStore`.
+ *     all sharing the one store.
  *
  * CLI:
  *   ledger-mcp                                      # stdio; ledger root = $LEDGER_ROOT or CWD
@@ -21,14 +22,9 @@
  *   ledger-mcp --http 0.0.0.0:7777                  # HTTP, root = CWD
  *   ledger-mcp --tool-prefix myproj                 # prefix all tool names with "myproj_"
  *   ledger-mcp --tool-prefix myproj --http 7777     # prefix + HTTP
- *   ledger-mcp restore --from-cache [--cwd <path>]  # restore .cq/ from the cache mirror
  *
- * Subcommands: the DEFAULT (no positional subcommand) launches the server as
- * above. The single recognised subcommand is `restore --from-cache`, which
- * copies the per-root `~/.cache` mirror (maintained by the store on every
- * mutation) back into `<root>/.cq/` — the one ledger lifecycle op hosted by
- * ledger-mcp (Q169). The OTHER lifecycle ops (backup+reinit, erase) remain in
- * the `cq` CLI — run `cq reset` / `cq erase`.
+ * The ledger lifecycle ops (init, backup+reinit, erase, backup/restore,
+ * migrate) live in the `cq` CLI.
  *
  * Ledger root precedence: --cwd > $LEDGER_ROOT > process CWD. Defaulting to the
  * CWD lets a single global install serve per-repo ledgers (the MCP client
@@ -64,10 +60,6 @@ import { createConfigCapability } from "./configCapability.js";
 import { createPromptCatalogCapability } from "./promptCatalogCapability.js";
 import { startLedgerWatcher, type LedgerWatcher } from "./watcher.js";
 import { startLedgerRefWatcher } from "./refWatcher.js";
-import { restoreFromCache } from "./restore.js";
-
-export { restoreFromCache, CacheMirrorMissingError } from "./restore.js";
-export type { RestoreSummary } from "./restore.js";
 
 // Re-export so in-process hosts (ledger-tui embedded, ledger-web embedded) can
 // wire live refresh against the same watcher the standalone binary uses.
@@ -138,9 +130,7 @@ function parseHttp(value: string): HttpOpts {
 
 /**
  * Resolve the ledger root with the suite-wide precedence: `--cwd > $LEDGER_ROOT
- * > process CWD`. A non-empty relative value resolves against the CWD. Shared
- * by the server-launch path (parseArgs) and the `restore` subcommand
- * (parseRestoreArgs) so root resolution stays identical.
+ * > process CWD`. A non-empty relative value resolves against the CWD.
  */
 function resolveRoot(cwdArg: string | undefined): string {
   const fromArg = cwdArg !== undefined && cwdArg !== "" ? cwdArg : undefined;
@@ -195,66 +185,13 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 /** Top-level CLI usage text (mirrors the file-header JSDoc; printed by --help/-h). */
 export const TOP_LEVEL_USAGE = [
   "usage: ledger-mcp [options]                            # stdio MCP server",
-  "       ledger-mcp restore --from-cache [--cwd <path>] # restore .cq/ from cache",
   "",
   "options:",
   "  --cwd <path>          Ledger root (default: $LEDGER_ROOT or current working directory)",
   "  --http [host:]port    Serve Streamable HTTP instead of stdio (default host: 127.0.0.1)",
   "  --tool-prefix <p>     Prefix all tool names with \"<p>_\"",
   "  -h, --help            Print this usage and exit",
-  "",
-  "subcommands:",
-  "  restore --from-cache  Restore <root>/.cq/ from the per-root XDG cache mirror",
 ].join("\n");
-
-/** The single recognised positional subcommand. */
-export const RESTORE_SUBCOMMAND = "restore";
-
-/** Parsed `restore --from-cache [--cwd <path>]` invocation. */
-export interface RestoreArgs {
-  /** Resolved ledger root (--cwd > $LEDGER_ROOT > CWD, absolute). */
-  cwd: string;
-}
-
-/** Usage text for the `restore` subcommand (printed on a malformed invocation). */
-export const RESTORE_USAGE = [
-  "usage: ledger-mcp restore --from-cache [--cwd <path>]",
-  "",
-  "  Restore <root>/.cq/ from the per-root cache mirror under the XDG cache base.",
-  "  ledger root: --cwd > $LEDGER_ROOT > current working directory",
-].join("\n");
-
-/**
- * Parse the args AFTER the `restore` subcommand token. Requires the
- * `--from-cache` flag (the only restore mode) and recognises `--cwd <path>` /
- * `--cwd=<path>`. Throws on a missing `--from-cache` or a `--cwd` without a
- * value.
- */
-export function parseRestoreArgs(argv: readonly string[]): RestoreArgs {
-  let cwd: string | undefined;
-  let fromCache = false;
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--from-cache") {
-      fromCache = true;
-    } else if (a === "--cwd") {
-      i += 1;
-      const v = argv[i];
-      if (v === undefined) {
-        throw new Error("ledger-mcp restore: --cwd requires a value");
-      }
-      cwd = v;
-    } else if (a !== undefined && a.startsWith("--cwd=")) {
-      cwd = a.slice("--cwd=".length);
-    } else {
-      throw new Error(`ledger-mcp restore: unknown argument: ${String(a)}\n${RESTORE_USAGE}`);
-    }
-  }
-  if (!fromCache) {
-    throw new Error(`ledger-mcp restore: --from-cache is required\n${RESTORE_USAGE}`);
-  }
-  return { cwd: resolveRoot(cwd) };
-}
 
 /**
  * Server-level usage guidance, surfaced to the client on `initialize` (the MCP
@@ -524,9 +461,7 @@ export function buildServer(store: LedgerStore, displayName: string): McpServer 
  *
  * Returns the full {@link ResolvedLedgerStore} (store + backend + branch) so the
  * host can select the matching coherence watcher via
- * {@link startLedgerCoherenceWatcher}. For `backend = 'fs'` (the default, and the
- * no-cq.toml case) the returned store is an `FsLedgerStore`, byte-identical to
- * the historical behaviour.
+ * {@link startLedgerCoherenceWatcher}.
  */
 export async function createEmbeddedStore(cwd: string): Promise<ResolvedLedgerStore> {
   return createLedgerStore(cwd);
@@ -671,33 +606,9 @@ export function changedFrame(ledgerId: string | null): string {
   return JSON.stringify(ledgerId !== null ? { type: "changed", ledger: ledgerId } : { type: "changed" });
 }
 
-/**
- * `ledger-mcp restore --from-cache [--cwd <path>]` handler: restore
- * `<root>/.cq/` from the cache mirror via {@link restoreFromCache}, print a
- * per-ledger restored-file-count summary (ResetSummary style) to stdout, and
- * return an exit code. An absent/empty cache mirror throws
- * `CacheMirrorMissingError`, surfaced as a non-zero exit by the caller.
- */
-export async function runRestore(args: RestoreArgs): Promise<void> {
-  const summary = await restoreFromCache(args.cwd);
-  process.stdout.write(`ledger-mcp restore: restored ledgers at ${summary.root}\n`);
-  process.stdout.write(`  from cache: ${summary.cacheDir}\n`);
-  for (const { name, fileCount } of summary.ledgers) {
-    process.stdout.write(`  ${name}: ${fileCount} file(s) restored\n`);
-  }
-  process.stdout.write(`  total: ${summary.totalFiles} file(s) restored\n`);
-}
-
 export async function main(argv: readonly string[]): Promise<void> {
   if (argv.includes("--help") || argv.includes("-h")) {
     process.stdout.write(TOP_LEVEL_USAGE + "\n");
-    return;
-  }
-
-  // Positional-subcommand dispatch: the DEFAULT (no subcommand) launches the
-  // server unchanged; the only recognised subcommand is `restore`.
-  if (argv[0] === RESTORE_SUBCOMMAND) {
-    await runRestore(parseRestoreArgs(argv.slice(1)));
     return;
   }
 
@@ -705,11 +616,11 @@ export async function main(argv: readonly string[]): Promise<void> {
   const displayName = path.basename(cwd);
 
   // Construct the store via the backend-selecting factory (T357), init it, then
-  // register tools. The factory honours cq.toml's `[ledger]` backend: fs (the
-  // default / no-cq.toml case) or git-object (after git-env fail-fast). If
-  // construction/init fails we surface the error to stderr and exit non-zero —
-  // the parent MCP client sees the channel close and treats the server as
-  // unhealthy.
+  // register tools. The factory honours cq.toml's `[ledger]` backend ('xdg';
+  // a legacy fs/git-object value fails fast with LegacyBackendError naming
+  // `cq migrate`, T505). If construction/init fails we surface the error to
+  // stderr and exit non-zero — the parent MCP client sees the channel close
+  // and treats the server as unhealthy.
   const resolved = await createLedgerStore(cwd);
   const store = resolved.store;
 

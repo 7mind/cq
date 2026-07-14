@@ -1,54 +1,34 @@
 /**
- * Embedded-TUI external-change coherence wiring (D51 / G43).
+ * Embedded-TUI external-change coherence wiring (D51 / G43; xdg cutover T505).
  *
- * Regression for D51: the embedded ledger-tui used to hard-wire the FS
- * .cq/*.md file-watcher (`startLedgerWatcher(ctx.store, ctx.cwd, …)`)
- * directly in main.tsx, rather than the backend-selecting
- * `startLedgerCoherenceWatcher(ctx.resolved, …)` that the web embedded path
- * uses. Under the git-object backend .cq/*.md never change on the working
- * branch, so the FS watcher never fired and EXTERNAL changes did not refresh
- * the embedded TUI.
+ * Regression lineage (D51): the embedded ledger-tui used to hard-wire the FS
+ * .cq/*.md file-watcher directly in main.tsx rather than the backend-selecting
+ * `startLedgerCoherenceWatcher(ctx.resolved, …)`. With the legacy fs /
+ * git-object runtime primaries removed (T505) the embedded backend is the
+ * out-of-tree xdg SqliteLedgerStore, and the same D51 contract now reads:
  *
- * These tests prove:
- *  1. `McpLedgerClient.embedded` now exposes the resolved backend descriptor
- *     (`embedded.resolved`) — fs under no/explicit-fs cq.toml, git-object under
- *     `[ledger] backend = "git-object"`.
- *  2. Driving the SAME watcher wiring main.tsx uses — `startLedgerCoherenceWatcher(
- *     ctx.resolved, ctx.cwd, onChange)` — under the git-object backend fires
- *     onChange on an external write (orphan-ref advance) that leaves .cq/*.md
- *     untouched, which the old FS-only wiring would have MISSED.
- *  3. The fs path still selects the file-watcher (behaviour unchanged): an
- *     external write through a second FsLedgerStore fires onChange.
+ *  1. `McpLedgerClient.embedded` exposes the resolved backend descriptor
+ *     (`embedded.resolved`) — backend 'xdg' with a concrete dbPath;
+ *  2. a root whose cq.toml names a LEGACY backend (or carries no cq.toml at
+ *     all — the historical fs default) REJECTS with LegacyBackendError naming
+ *     `cq migrate` instead of silently constructing a legacy store;
+ *  3. driving the SAME watcher wiring main.tsx uses —
+ *     `startLedgerCoherenceWatcher(ctx.resolved, ctx.cwd, onChange)` — fires
+ *     onChange on an EXTERNAL write (a second SqliteLedgerStore process-peer
+ *     committing to the same ledger.db), via the data_version poll watcher.
  *
  * Throwaway dirs/repos via mkdtemp; cleaned up in afterAll.
  */
 
-import { describe, it, expect, afterAll } from "bun:test";
-import { execFile } from "node:child_process";
+import { describe, it, expect, afterAll, beforeAll } from "bun:test";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { promisify } from "node:util";
-import { GitObjectLedgerBackend, FsLedgerStore, type LedgerSchema } from "@cq/ledger";
+import { LegacyBackendError, SqliteLedgerStore, type LedgerSchema } from "@cq/ledger";
 import { startLedgerCoherenceWatcher } from "@cq/ledger-mcp";
 import { McpLedgerClient } from "../src/mcpClient.js";
 
-const exec = promisify(execFile);
 const dirs: string[] = [];
-
-async function git(cwd: string, ...args: string[]): Promise<void> {
-  await exec("git", args, {
-    cwd,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      GIT_AUTHOR_NAME: "test",
-      GIT_AUTHOR_EMAIL: "test@example.com",
-      GIT_COMMITTER_NAME: "test",
-      GIT_COMMITTER_EMAIL: "test@example.com",
-    },
-  });
-}
 
 /** A throwaway non-git directory. */
 async function plainDir(): Promise<string> {
@@ -57,17 +37,13 @@ async function plainDir(): Promise<string> {
   return dir;
 }
 
-/** A throwaway initialised git repo with one commit. */
-async function gitRepo(): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(tmpdir(), "tui-coherence-git-"));
-  dirs.push(dir);
-  await git(dir, "init", "-q");
-  await git(dir, "config", "user.email", "test@example.com");
-  await git(dir, "config", "user.name", "test");
-  await git(dir, "config", "commit.gpgsign", "false");
-  await fs.writeFile(path.join(dir, "README.md"), "test\n");
-  await git(dir, "add", "README.md");
-  await git(dir, "commit", "-q", "-m", "initial");
+/** A throwaway root pinned to the xdg backend (explicit projectId — no git). */
+async function xdgDir(): Promise<string> {
+  const dir = await plainDir();
+  await writeCqToml(
+    dir,
+    `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(dir)}"\n`,
+  );
   return dir;
 }
 
@@ -90,33 +66,48 @@ async function waitUntil(pred: () => boolean, timeoutMs = 4000): Promise<boolean
   return pred();
 }
 
+let prevXdgStateHome: string | undefined;
+beforeAll(async () => {
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  const xdgHome = await fs.mkdtemp(path.join(tmpdir(), "tui-coherence-xdg-home-"));
+  dirs.push(xdgHome);
+  process.env["XDG_STATE_HOME"] = xdgHome;
+});
+
 afterAll(async () => {
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })));
 });
 
-describe("embedded TUI exposes the resolved backend descriptor (D51)", () => {
-  it("reports backend='fs' for the default (no cq.toml)", async () => {
-    const dir = await plainDir();
+describe("embedded TUI exposes the resolved backend descriptor (D51 / T505)", () => {
+  it("reports backend='xdg' with a concrete dbPath for an xdg cq.toml", async () => {
+    const dir = await xdgDir();
     const client = await McpLedgerClient.embedded(dir);
     try {
       expect(client.embedded).not.toBeNull();
-      expect(client.embedded?.resolved.backend).toBe("fs");
+      expect(client.embedded?.resolved.backend).toBe("xdg");
+      expect(typeof client.embedded?.resolved.dbPath).toBe("string");
       expect(client.embedded?.resolved.store).toBe(client.embedded?.store);
     } finally {
       await client.close();
     }
   });
 
-  it("reports backend='git-object' for [ledger] backend='git-object'", async () => {
-    const dir = await gitRepo();
+  it("rejects the no-cq.toml default (legacy fs) with LegacyBackendError naming cq migrate", async () => {
+    const dir = await plainDir();
+    await expect(McpLedgerClient.embedded(dir)).rejects.toBeInstanceOf(LegacyBackendError);
+  });
+
+  it("rejects [ledger] backend='git-object' with LegacyBackendError", async () => {
+    const dir = await plainDir();
     await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
-    const client = await McpLedgerClient.embedded(dir);
-    try {
-      expect(client.embedded?.resolved.backend).toBe("git-object");
-      expect(client.embedded?.resolved.branch).toBe("cq-ledger");
-    } finally {
-      await client.close();
-    }
+    const err = await McpLedgerClient.embedded(dir).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(LegacyBackendError);
+    expect((err as Error).message).toContain("cq migrate");
   });
 });
 
@@ -133,16 +124,17 @@ function wireOnSubscribe(
   return () => watcher.close();
 }
 
-describe("embedded TUI wiring selects the ref-watcher under git-object (D51)", () => {
-  it("fires onChange on an external orphan-ref advance (.cq/*.md untouched)", async () => {
-    const dir = await gitRepo();
-    await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
+describe("embedded TUI wiring selects the data_version watcher under xdg (D51 / T505)", () => {
+  it("fires onChange on an external peer commit to the same ledger.db", async () => {
+    const dir = await xdgDir();
 
-    // The embedded TUI client builds the git-object store + exposes `resolved`.
+    // The embedded TUI client builds the xdg store + exposes `resolved`.
     const client = await McpLedgerClient.embedded(dir);
     const ctx = client.embedded;
     expect(ctx).not.toBeNull();
     if (ctx === null) throw new Error("expected embedded context");
+    const dbPath = ctx.resolved.dbPath;
+    if (dbPath === undefined) throw new Error("expected an xdg dbPath");
 
     // Seed a ledger + milestone through the client's store so an external write
     // has context to attach to.
@@ -155,47 +147,14 @@ describe("embedded TUI wiring selects the ref-watcher under git-object (D51)", (
       fired += 1;
     });
 
-    // An EXTERNAL writer (a separate GitObjectLedgerBackend on the same repo)
-    // advances the orphan ref WITHOUT changing .cq/*.md on the working branch —
-    // the precise scenario the old FS-only wiring missed.
-    const external = new GitObjectLedgerBackend({ repoRoot: dir });
-    await external.init();
-    await external.createItem("widgets", ms.id, { status: "open", fields: { note: "external" } });
-
-    // The ref-watcher (selected by startLedgerCoherenceWatcher for git-object)
-    // detects the advance and fires onChange.
-    expect(await waitUntil(() => fired > 0)).toBe(true);
-
-    unsubscribe();
-    await external.dispose();
-    await client.close();
-  });
-});
-
-describe("embedded TUI wiring keeps the file-watcher under fs (D51 — no regression)", () => {
-  it("fires onChange on an external .cq/*.md write", async () => {
-    const dir = await plainDir();
-
-    const client = await McpLedgerClient.embedded(dir);
-    const ctx = client.embedded;
-    expect(ctx?.resolved.backend).toBe("fs");
-    if (ctx === null || ctx === undefined) throw new Error("expected embedded context");
-
-    await ctx.store.createLedger("widgets", widgetsSchema);
-    const ms = await ctx.store.createMilestone({ id: "M1", title: "m1" });
-
-    let fired = 0;
-    const unsubscribe = wireOnSubscribe(ctx, () => {
-      fired += 1;
-    });
-
-    // External writer through a second FsLedgerStore on the same root mutates
-    // .cq/*.md → the file-watcher fires.
-    const external = new FsLedgerStore({ root: dir });
+    // An EXTERNAL writer (a peer SqliteLedgerStore on the same ledger.db)
+    // commits — bumping data_version — without going through ctx.store.
+    const external = new SqliteLedgerStore({ dbPath });
     await external.init();
     await external.createItem("widgets", ms.id, { status: "open", fields: { note: "external" } });
     await external.dispose();
 
+    // The data_version poll watcher (selected for xdg) detects the commit.
     expect(await waitUntil(() => fired > 0)).toBe(true);
 
     unsubscribe();

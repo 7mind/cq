@@ -129,12 +129,12 @@ describe("dispatch MODE routing (mcp|tui|web)", () => {
     }
   });
 
-  it("passes a nested subcommand (cq mcp restore --from-cache) verbatim", async () => {
+  it("passes nested post-mode tokens (cq mcp --tool-prefix myproj) verbatim", async () => {
     const io = recordingDispatchIo();
     const modes = recordingModes();
-    const outcome = await dispatch(["mcp", "restore", "--from-cache"], io, modes);
+    const outcome = await dispatch(["mcp", "--tool-prefix", "myproj"], io, modes);
     expect(outcome.longRunning).toBe(true);
-    expect(modes.calls["mcp"]).toEqual([["restore", "--from-cache"]]);
+    expect(modes.calls["mcp"]).toEqual([["--tool-prefix", "myproj"]]);
   });
 
   it("forwards a bare mode (cq tui) as an empty argv", async () => {
@@ -190,14 +190,12 @@ describe("parseSubcommandArgs", () => {
     const prev = process.env["LEDGER_ROOT"];
     delete process.env["LEDGER_ROOT"];
     try {
-      expect(parseSubcommandArgs(["--cwd=/a", "--yes"])).toEqual({ cwd: "/a", yes: true, force: false, to: null, session: null });
-      expect(parseSubcommandArgs(["-y", "--cwd", "/b"])).toEqual({ cwd: "/b", yes: true, force: false, to: null, session: null });
-      expect(parseSubcommandArgs(["--force"])).toEqual({ cwd: process.cwd(), yes: false, force: true, to: null, session: null });
-      expect(parseSubcommandArgs([])).toEqual({ cwd: process.cwd(), yes: false, force: false, to: null, session: null });
-      expect(parseSubcommandArgs(["--to", "git"])).toEqual({ cwd: process.cwd(), yes: false, force: false, to: "git", session: null });
-      expect(parseSubcommandArgs(["--to=local"])).toEqual({ cwd: process.cwd(), yes: false, force: false, to: "local", session: null });
-      expect(parseSubcommandArgs(["--session", "s1"])).toEqual({ cwd: process.cwd(), yes: false, force: false, to: null, session: "s1" });
-      expect(parseSubcommandArgs(["--session=s2"])).toEqual({ cwd: process.cwd(), yes: false, force: false, to: null, session: "s2" });
+      expect(parseSubcommandArgs(["--cwd=/a", "--yes"])).toEqual({ cwd: "/a", yes: true, force: false, session: null });
+      expect(parseSubcommandArgs(["-y", "--cwd", "/b"])).toEqual({ cwd: "/b", yes: true, force: false, session: null });
+      expect(parseSubcommandArgs(["--force"])).toEqual({ cwd: process.cwd(), yes: false, force: true, session: null });
+      expect(parseSubcommandArgs([])).toEqual({ cwd: process.cwd(), yes: false, force: false, session: null });
+      expect(parseSubcommandArgs(["--session", "s1"])).toEqual({ cwd: process.cwd(), yes: false, force: false, session: "s1" });
+      expect(parseSubcommandArgs(["--session=s2"])).toEqual({ cwd: process.cwd(), yes: false, force: false, session: "s2" });
     } finally {
       if (prev !== undefined) process.env["LEDGER_ROOT"] = prev;
     }
@@ -270,10 +268,20 @@ describe("dispatch native subcommands — mode delegate never fires (T389 case e
   it("init: routes to runInit; no mode delegate fired", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cq-t389-init-"));
     tempDirs.push(root);
-    // Pin backend='fs' (T501 flipped the fresh-init default to 'xdg', which
-    // requires a git identity this plain tmp dir doesn't have — irrelevant to
-    // what THIS test asserts, dispatch routing, not backend selection).
-    await writeFile(path.join(root, CQ_CONFIG_FILENAME), '[ledger]\nbackend = "fs"\n', "utf8");
+    // Pin backend='xdg' with an explicit projectId (this plain tmp dir has no
+    // git identity) and point XDG_STATE_HOME at a temp dir — irrelevant to
+    // what THIS test asserts (dispatch routing, not backend selection), but
+    // required for runInit's store construction to succeed (T505: the legacy
+    // fs backend no longer constructs).
+    await writeFile(
+      path.join(root, CQ_CONFIG_FILENAME),
+      '[ledger]\nbackend = "xdg"\nprojectId = "cq-t389-init"\n',
+      "utf8",
+    );
+    const xdgHome = await mkdtemp(path.join(tmpdir(), "cq-t389-xdg-"));
+    tempDirs.push(xdgHome);
+    const prevStateHome = process.env["XDG_STATE_HOME"];
+    process.env["XDG_STATE_HOME"] = xdgHome;
     try {
       const io = recordingDispatchIo();
       const modes = recordingModes();
@@ -288,11 +296,9 @@ describe("dispatch native subcommands — mode delegate never fires (T389 case e
       expect(modes.calls["mcp"]).toEqual([]);
       expect(modes.calls["tui"]).toEqual([]);
       expect(modes.calls["web"]).toEqual([]);
-    } catch (err) {
-      try {
-        await rm(root, { recursive: true, force: true });
-      } catch { /* best-effort */ }
-      throw err;
+    } finally {
+      if (prevStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+      else process.env["XDG_STATE_HOME"] = prevStateHome;
     }
   });
 

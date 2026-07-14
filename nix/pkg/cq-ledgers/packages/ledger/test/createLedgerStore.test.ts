@@ -1,13 +1,18 @@
 /**
- * createLedgerStore / git-env / gitignore tests (T357 / G43).
+ * createLedgerStore / openLegacyLedgerStore / git-env tests (T357 / G43;
+ * legacy cutover T505 / G67).
  *
- * Covers the four acceptance-mandated focuses for the integration factory:
- *  1. the factory returns the backend selected by cq.toml's `[ledger]` table
- *     (fs default / explicit fs / git-object);
- *  2. the git-env fail-fast (`assertGitWorkTree`) on a non-git cwd and a
- *     git-object factory call from outside a work tree;
- *  3. the idempotent `ensureGitBackendGitignore` helper (create / append /
- *     no-duplicate).
+ * Covers the factory contract after the legacy cutover:
+ *  1. cq.toml naming a LEGACY backend (`fs` explicit, `fs` via the no-cq.toml
+ *     default, `git-object`) FAILS FAST with the documented
+ *     {@link LegacyBackendError} naming `cq migrate` — the legacy backends are
+ *     no longer selectable runtime primaries;
+ *  2. `backend = 'xdg'` resolves to a working SqliteLedgerStore under the XDG
+ *     state dir (and a shallow clone fails fast with
+ *     ProjectKeyResolutionError);
+ *  3. `openLegacyLedgerStore` — the INTERNAL read path `cq migrate` uses —
+ *     still constructs the legacy stores, and refuses an xdg config;
+ *  4. the git-env fail-fast (`assertGitWorkTree`) on a non-git cwd.
  *
  * Throwaway dirs/repos via `mkdtemp`; cleaned up in `afterAll`.
  */
@@ -20,14 +25,14 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 import {
   createLedgerStore,
+  openLegacyLedgerStore,
   resolveLedgerBackend,
   assertGitWorkTree,
   GitEnvironmentError,
+  LegacyBackendError,
   FsLedgerStore,
   GitObjectLedgerBackend,
   SqliteLedgerStore,
-  ensureGitBackendGitignore,
-  GIT_BACKEND_GITIGNORE_MARKER,
   resolveStateDir,
   ProjectKeyResolutionError,
 } from "../src/index.js";
@@ -135,54 +140,83 @@ describe("resolveLedgerBackend", () => {
   });
 });
 
-describe("createLedgerStore — backend selection", () => {
-  it("returns an FsLedgerStore for the default (no cq.toml)", async () => {
+describe("createLedgerStore — legacy backends are no longer runtime primaries (T505)", () => {
+  it("rejects the no-cq.toml default (fs) with LegacyBackendError naming cq migrate", async () => {
     const dir = await plainDir();
-    const { store, backend } = await createLedgerStore(dir);
-    expect(backend).toBe("fs");
-    expect(store).toBeInstanceOf(FsLedgerStore);
-    await store.dispose();
+    const err = await createLedgerStore(dir).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(LegacyBackendError);
+    expect((err as Error).message).toContain("cq migrate");
+    expect((err as Error).message).toContain("'fs'");
+    // Nothing was constructed: no .cq/ tree appeared.
+    await expect(fs.stat(path.join(dir, ".cq"))).rejects.toThrow();
   });
 
-  it("returns an FsLedgerStore for explicit backend='fs'", async () => {
+  it("rejects explicit backend='fs' with LegacyBackendError naming cq migrate", async () => {
     const dir = await plainDir();
     await writeCqToml(dir, '[ledger]\nbackend = "fs"\n');
-    const { store, backend } = await createLedgerStore(dir);
+    const err = await createLedgerStore(dir).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(LegacyBackendError);
+    expect((err as Error).message).toContain("cq migrate");
+  });
+
+  it("rejects backend='git-object' with LegacyBackendError naming cq migrate (even in a git repo)", async () => {
+    const dir = await gitRepo();
+    await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
+    const err = await createLedgerStore(dir).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(LegacyBackendError);
+    expect((err as Error).message).toContain("cq migrate");
+    expect((err as Error).message).toContain("'git-object'");
+    // The orphan ref was never seeded.
+    const refCheck = await exec("git", ["rev-parse", "--verify", "-q", "refs/heads/cq-ledger"], {
+      cwd: dir,
+      encoding: "utf8",
+    }).then(
+      () => true,
+      () => false,
+    );
+    expect(refCheck).toBe(false);
+  });
+});
+
+describe("openLegacyLedgerStore — the internal cq-migrate read path (T505)", () => {
+  it("opens an FsLedgerStore for the fs backend", async () => {
+    const dir = await plainDir();
+    await writeCqToml(dir, '[ledger]\nbackend = "fs"\n');
+    const { store, backend } = await openLegacyLedgerStore(dir);
     expect(backend).toBe("fs");
     expect(store).toBeInstanceOf(FsLedgerStore);
     await store.dispose();
   });
 
-  it("returns a GitObjectLedgerBackend for backend='git-object' in a git repo", async () => {
+  it("opens a GitObjectLedgerBackend honouring [ledger].branch for git-object", async () => {
     const dir = await gitRepo();
-    await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
-    const { store, backend, branch } = await createLedgerStore(dir);
+    await writeCqToml(dir, '[ledger]\nbackend = "git-object"\nbranch = "custom-ref"\n');
+    const { store, backend, branch } = await openLegacyLedgerStore(dir);
     expect(backend).toBe("git-object");
-    expect(branch).toBe("cq-ledger");
+    expect(branch).toBe("custom-ref");
     expect(store).toBeInstanceOf(GitObjectLedgerBackend);
-    // The ledger landed on the orphan ref (not the working tree).
-    const { stdout } = await exec("git", ["log", "--oneline", "cq-ledger"], {
-      cwd: dir,
-      encoding: "utf8",
-    });
-    expect(stdout.trim().length).toBeGreaterThan(0);
-    // The working tree stays clean — no .cq/ tracked on the working branch.
-    const status = await exec("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" });
-    expect(status.stdout.includes(".cq/")).toBe(false);
     await store.dispose();
   });
 
-  it("git-object honours a custom [ledger].branch", async () => {
-    const dir = await gitRepo();
-    await writeCqToml(dir, '[ledger]\nbackend = "git-object"\nbranch = "custom-ref"\n');
-    const { branch, store } = await createLedgerStore(dir);
-    expect(branch).toBe("custom-ref");
-    const { stdout } = await exec("git", ["log", "--oneline", "custom-ref"], {
-      cwd: dir,
-      encoding: "utf8",
-    });
-    expect(stdout.trim().length).toBeGreaterThan(0);
-    await store.dispose();
+  it("fails fast (GitEnvironmentError) for git-object outside a git work tree", async () => {
+    const dir = await plainDir();
+    await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
+    await expect(openLegacyLedgerStore(dir)).rejects.toBeInstanceOf(GitEnvironmentError);
+  });
+
+  it("refuses an xdg config (nothing legacy to open)", async () => {
+    const dir = await plainDir();
+    await writeCqToml(dir, '[ledger]\nbackend = "xdg"\n');
+    await expect(openLegacyLedgerStore(dir)).rejects.toThrow(/not a legacy/);
   });
 });
 
@@ -270,61 +304,5 @@ describe("assertGitWorkTree — git-env fail-fast", () => {
   it("passes for a git work tree", async () => {
     const dir = await gitRepo();
     expect(() => assertGitWorkTree(dir)).not.toThrow();
-  });
-
-  it("createLedgerStore fails fast for git-object outside a git work tree", async () => {
-    const dir = await plainDir();
-    await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
-    await expect(createLedgerStore(dir)).rejects.toBeInstanceOf(GitEnvironmentError);
-  });
-});
-
-describe("ensureGitBackendGitignore — idempotent gitignore helper", () => {
-  it("creates .gitignore with the marker block when absent", async () => {
-    const dir = await plainDir();
-    const wrote = await ensureGitBackendGitignore(dir);
-    expect(wrote).toBe(true);
-    const content = await fs.readFile(path.join(dir, ".gitignore"), "utf8");
-    expect(content).toContain(GIT_BACKEND_GITIGNORE_MARKER);
-    expect(content).toContain(".cq/*.md");
-    expect(content).toContain(".cq/ledgers.yaml");
-  });
-
-  it("appends the block preserving existing content", async () => {
-    const dir = await plainDir();
-    await fs.writeFile(path.join(dir, ".gitignore"), "node_modules/\n", "utf8");
-    const wrote = await ensureGitBackendGitignore(dir);
-    expect(wrote).toBe(true);
-    const content = await fs.readFile(path.join(dir, ".gitignore"), "utf8");
-    expect(content).toContain("node_modules/");
-    expect(content).toContain(GIT_BACKEND_GITIGNORE_MARKER);
-  });
-
-  it("is idempotent — a second call does not duplicate the block", async () => {
-    const dir = await plainDir();
-    await ensureGitBackendGitignore(dir);
-    const wrote2 = await ensureGitBackendGitignore(dir);
-    expect(wrote2).toBe(false);
-    const content = await fs.readFile(path.join(dir, ".gitignore"), "utf8");
-    const occurrences = content.split(GIT_BACKEND_GITIGNORE_MARKER).length - 1;
-    expect(occurrences).toBe(1);
-  });
-
-  it("git-object startup leaves .cq/*.md + .cq/ledgers.yaml gitignored", async () => {
-    const dir = await gitRepo();
-    await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
-    const { store } = await createLedgerStore(dir);
-    await store.dispose();
-    // git check-ignore confirms the .cq projection is ignored on the work branch.
-    const md = await exec("git", ["check-ignore", ".cq/tasks.md"], {
-      cwd: dir,
-      encoding: "utf8",
-    }).then((r) => r.stdout.trim());
-    expect(md).toBe(".cq/tasks.md");
-    const yaml = await exec("git", ["check-ignore", ".cq/ledgers.yaml"], {
-      cwd: dir,
-      encoding: "utf8",
-    }).then((r) => r.stdout.trim());
-    expect(yaml).toBe(".cq/ledgers.yaml");
   });
 });

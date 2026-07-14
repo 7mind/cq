@@ -45,7 +45,6 @@ import {
   confirmDestructive,
 } from "./confirm.js";
 import { CQ_TOML_TEMPLATE } from "./cqTomlTemplate.js";
-import { runMoveLedger, type MoveDirection } from "./moveLedger.js";
 import { runMigrate } from "./migrate.js";
 import { runAdvanceGate } from "./advanceGate.js";
 import { runPredicates } from "./predicates.js";
@@ -122,13 +121,6 @@ export interface SubcommandArgs {
   /** `--force`: overwrite an existing cq.toml when running `cq init`. */
   force: boolean;
   /**
-   * `--to <git|local>`: the `move-ledger` migration direction. `null` when the
-   * flag is absent (other subcommands ignore it; `move-ledger` refuses without
-   * it). An UNRECOGNISED value is captured verbatim here and rejected by the
-   * `move-ledger` handler with a usage error.
-   */
-  to: MoveDirection | null;
-  /**
    * `--session <id>`: the `advance-gate` session id whose advance marker is
    * consulted. `null` when the flag is absent (the handler then falls back to
    * `$CLAUDE_CODE_SESSION_ID`); other subcommands ignore it.
@@ -142,7 +134,6 @@ export const USAGE = [
   "modes (delegate verbatim to the product binary):",
   "  mcp         [--cwd <path>] [--http [host:]port] [--tool-prefix <p>]",
   "                                                  run the MCP server (stdio or HTTP)",
-  "  mcp restore --from-cache [--cwd <path>]         restore .cq/ from the per-root XDG cache mirror",
   "  tui         [--cwd <path>] [--mcp-url <url>]    run the terminal UI",
   "  web         [--port <n>] [--host <h>] [--cwd <path>] [--mcp-url <url>]",
   "                                                  run the web UI (default port 5180)",
@@ -151,16 +142,8 @@ export const USAGE = [
   "  init        [--cwd <path>] [--force]            initialise the canonical ledger set",
   "  reset       [--cwd <path>] [--yes|-y]           backup + reinitialise the ledgers (destructive)",
   "  erase       [--cwd <path>] [--yes|-y]           remove the ledger tree (destructive)",
-  "  move-ledger --to <git|local> [--cwd <path>] [--force]",
-  "                                                  migrate the ledger between .cq/ and the orphan",
-  "                                                  ref refs/heads/<branch> (default cq-ledger):",
-  "                                                    --to git    snapshot .cq/ → orphan ref, untrack",
-  "                                                                .cq/ files (left on disk), backend=git-object",
-  "                                                    --to local  materialise orphan ref → .cq/, re-track,",
-  "                                                                backend=fs",
-  "                                                  refuses a non-empty target without --force.",
-  "                                                  inspect the orphan ref as a checkout via:",
-  "                                                    git worktree add <dir> cq-ledger",
+  "  move-ledger                                     RETIRED (T505): the fs<->git-object transplant",
+  "                                                  is superseded by `cq migrate` (legacy -> xdg)",
   "  advance-gate [--cwd <path>] [--session <id>]    emit the neutral /cq:advance stop-gate verdict",
   "                                                  JSON (block + reason + predicates) to stdout;",
   "                                                  exit 0 = allow, non-zero = block.",
@@ -213,7 +196,6 @@ export function parseSubcommandArgs(argv: readonly string[]): SubcommandArgs {
   let cwd: string | undefined;
   let yes = false;
   let force = false;
-  let to: MoveDirection | null = null;
   let session: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -230,15 +212,6 @@ export function parseSubcommandArgs(argv: readonly string[]): SubcommandArgs {
       cwd = v;
     } else if (a !== undefined && a.startsWith("--cwd=")) {
       cwd = a.slice("--cwd=".length);
-    } else if (a === "--to") {
-      i += 1;
-      const v = argv[i];
-      if (v === undefined) {
-        throw new Error("cq: --to requires a value (git|local)");
-      }
-      to = parseMoveDirection(v);
-    } else if (a !== undefined && a.startsWith("--to=")) {
-      to = parseMoveDirection(a.slice("--to=".length));
     } else if (a === "--session") {
       i += 1;
       const v = argv[i];
@@ -250,15 +223,7 @@ export function parseSubcommandArgs(argv: readonly string[]): SubcommandArgs {
       session = a.slice("--session=".length);
     }
   }
-  return { cwd: resolveRoot(cwd), yes, force, to, session };
-}
-
-/** Parse a `--to` value into a {@link MoveDirection}; fail fast on anything else. */
-function parseMoveDirection(v: string): MoveDirection {
-  if (v === "git" || v === "local") {
-    return v;
-  }
-  throw new Error(`cq: --to must be "git" or "local", got "${v}"`);
+  return { cwd: resolveRoot(cwd), yes, force, session };
 }
 
 /**
@@ -373,15 +338,14 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
   }
 
   // Construct via the backend-selecting factory (T357). reset()'s backup→reinit
-  // semantics (docs/.backup/) are FS-specific; the git-object backend does not
-  // implement reset (out of scope per the backend caveats), so a git-object
-  // config here is rejected with a clear error rather than a silent no-op.
+  // semantics (docs/.backup/) are FS-specific; a store that does not implement
+  // reset is rejected with a clear error rather than a silent no-op.
   const { store, backend } = await createLedgerStore(args.cwd);
   try {
     if (!isResettable(store)) {
       io.err(
         `cq reset: [ledger] backend='${backend}' does not support reset ` +
-          `(backup→reinit is filesystem-specific). Use backend='fs'.`,
+          `(backup→reinit is filesystem-specific).`,
       );
       return { exitCode: EXIT_USAGE };
     }
@@ -407,7 +371,7 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
  *   1. The ledger's OWN artifacts under `<root>/.cq/` — `ledgers.yaml`, every
  *      REGISTERED `<name>.md`, `archive/`, and the runtime dirs `logs/`,
  *      `.locks/`, `.backup/` — enumerated by @cq/ledger's `removeLedgerArtifacts`
- *      (the single source of truth shared with `cq move-ledger`). NON-ledger
+ *      (the single source of truth for the ledger's own file set). NON-ledger
  *      content a user keeps under `.cq/` is PRESERVED; `.cq/` itself is removed
  *      only if it is empty afterward.
  *   2. `<root>/cq.toml`   — the config file, if present (unlink).
@@ -551,20 +515,22 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
 }
 
 /**
- * `cq move-ledger` (T354): a NATIVE subcommand performing a lossless
- * bidirectional transplant of the live ledger between the `.cq/` working tree
- * and the orphan ref via an explicit `--to git|local`. The migration logic lives
- * in ./moveLedger.ts; this thin wrapper bridges {@link SubcommandArgs} to its
- * {@link MoveLedgerArgs} and threads the dispatcher IO.
+ * `cq move-ledger` — RETIRED (T505). The fs<->git-object transplant it
+ * performed (T354) migrated between two LEGACY primaries that are no longer
+ * selectable at runtime; `cq migrate` (legacy → xdg) supersedes it. The
+ * subcommand token is kept recognised so an old invocation gets a pointed,
+ * actionable error instead of the generic usage dump.
  */
 export async function runMoveLedgerCmd(
-  args: SubcommandArgs,
+  _args: SubcommandArgs,
   io: DispatchIo,
 ): Promise<SubcommandOutcome> {
-  return runMoveLedger(
-    { root: args.cwd, to: args.to, force: args.force },
-    { out: io.out, err: io.err },
+  io.err(
+    "cq move-ledger: RETIRED (T505) — the fs<->git-object transplant is superseded by " +
+      "`cq migrate`, the one-shot migration of the legacy backend cq.toml names into the " +
+      "out-of-tree xdg primary. Run `cq migrate [--cwd <path>] [--yes]` instead.",
   );
+  return { exitCode: EXIT_USAGE };
 }
 
 /**

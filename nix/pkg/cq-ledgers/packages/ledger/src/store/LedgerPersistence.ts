@@ -47,8 +47,6 @@
  *   - `readLog()` (`fs.realpath` / `fs.readFile` under `.cq/logs/`) — a separate
  *     FS-store-only capability (T147 / Q87), explicitly NOT part of the generic
  *     `LedgerStore` surface and NOT a ledger-source byte-I/O operation.
- *   - the `~/.cache` mirror (`cacheMirror.ts`) — a derived, fire-and-forget
- *     side-channel, not the authoritative source.
  *
  * ## Path/locator convention
  *
@@ -223,8 +221,7 @@ export interface LedgerPersistence {
    * reconcile pointer state. The shared base (T350) will route any
    * archive-directory enumeration it needs through this method rather than a
    * direct `fs.readdir`; the fs impl backs it with `fs.readdir` over
-   * `.cq/archive/<name>/` (cf. the existing `fs.readdir(ledgerArchiveDir)` in
-   * `cacheMirror.ts`).
+   * `.cq/archive/<name>/`.
    */
   readArchiveDir(name: string): Promise<string[]>;
 

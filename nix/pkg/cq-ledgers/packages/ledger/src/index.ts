@@ -54,8 +54,6 @@ export { FsPersistence } from "./store/FsPersistence.js";
 export type { FsPersistenceLayout } from "./store/FsPersistence.js";
 export { FsLedgerStore } from "./store/FsLedgerStore.js";
 export type { FsLedgerStoreOpts, ResetSummary } from "./store/FsLedgerStore.js";
-export { cacheMirrorDir, mirrorMutation } from "./store/cacheMirror.js";
-export type { MirrorLayout } from "./store/cacheMirror.js";
 export {
   buildBackupDump,
   exportBackupInTree,
@@ -82,20 +80,15 @@ export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 export type { SqliteLedgerStoreOpts } from "./store/sqlite/SqliteLedgerStore.js";
 export {
   createLedgerStore,
+  openLegacyLedgerStore,
   resolveLedgerBackend,
   assertGitWorkTree,
   GitEnvironmentError,
+  LegacyBackendError,
   startXdgCoherenceWatcher,
   XDG_DB_FILENAME,
 } from "./store/createLedgerStore.js";
 export type { ResolvedLedgerStore, XdgCoherenceWatcher } from "./store/createLedgerStore.js";
-export {
-  ensureGitBackendGitignore,
-  removeGitBackendGitignore,
-  GIT_BACKEND_GITIGNORE_MARKER,
-  GIT_BACKEND_GITIGNORE_END_MARKER,
-  GIT_BACKEND_GITIGNORE_BLOCK,
-} from "./store/gitBackendGitignore.js";
 export { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 export type { InMemoryLedgerStoreOpts } from "./store/InMemoryLedgerStore.js";
 export { validateSchema } from "./store/core.js";

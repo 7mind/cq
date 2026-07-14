@@ -87,8 +87,8 @@ describe("ledgerTreePaths", () => {
     // Unit assertion: when the caller constructs storageDir as
     // path.join(root, LEDGER_STORAGE_DIRNAME), the returned paths are relative
     // to .cq/ (e.g. "ledgers.yaml", "tasks.md") — NOT prefixed with "docs/".
-    // Verifies callers (cq erase via removeLedgerArtifacts, cq move-ledger via
-    // ledgerTreePaths) get .cq/-rooted absolute paths.
+    // Verifies callers (cq erase via removeLedgerArtifacts, the backup
+    // exporter via ledgerTreePaths) get .cq/-rooted absolute paths.
     const { root, storageDir } = await makeDocsDir();
 
     // The storageDir must be <root>/.cq/.

@@ -13,13 +13,12 @@
  * readable URL), and immediately kills the server — no HTTP round-trips needed.
  */
 
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { spawn as bunSpawn } from "bun";
 import * as net from "node:net";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { FsLedgerStore } from "@cq/ledger";
 
 const here = new URL(".", import.meta.url).pathname;
 const webMain = path.resolve(here, "..", "src", "serve.ts");
@@ -115,17 +114,38 @@ async function spawnAndReadUrl(
   return { stdout: url, stderr: stderrBuf.join("") };
 }
 
-/** Create a minimal ledger root (just the .cq/ dir). */
-async function makeLedgerRoot(): Promise<string> {
+// The runtime store is the out-of-tree xdg primary (T505): every root pins
+// backend='xdg' + projectId in cq.toml, and XDG_STATE_HOME points at a temp
+// dir (forwarded to the spawned server via the explicit env spread above).
+let xdgHome: string;
+let prevXdgStateHome: string | undefined;
+beforeAll(async () => {
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  xdgHome = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-main-wiring-xdg-"));
+  process.env["XDG_STATE_HOME"] = xdgHome;
+});
+afterAll(async () => {
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+  await fs.rm(xdgHome, { recursive: true, force: true });
+});
+
+/**
+ * Create a minimal ledger root: a cq.toml pinning the xdg backend, plus any
+ * extra config tables (e.g. `[webui]`) the test wants resolved.
+ */
+async function makeLedgerRoot(extraToml = ""): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-main-wiring-"));
-  const store = new FsLedgerStore({ root });
-  await store.init();
-  await store.dispose();
+  await fs.writeFile(
+    path.join(root, "cq.toml"),
+    `${extraToml}[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,
+    "utf8",
+  );
   return root;
 }
 
 describe("main() wiring: loadConfig + resolveWebOpts + scanForPort (T187)", () => {
-  it("(a) no cq.toml + no flags → default 127.0.0.1:5180; URL on stdout, human line on stderr", async () => {
+  it("(a) no [webui] config + no flags → default host; URL on stdout, human line on stderr", async () => {
     const root = await makeLedgerRoot();
     const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-out-"));
     try {
@@ -142,16 +162,11 @@ describe("main() wiring: loadConfig + resolveWebOpts + scanForPort (T187)", () =
   });
 
   it("(b) cq.toml [webui] port=5300 → resolved port from config", async () => {
-    const root = await makeLedgerRoot();
-    const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-out-"));
     // Use a free port for the config to avoid collision.
     const configPort = await freePort();
+    const root = await makeLedgerRoot(`[webui]\nport = ${configPort}\n\n`);
+    const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-out-"));
     try {
-      await fs.writeFile(
-        path.join(root, "cq.toml"),
-        `[webui]\nport = ${configPort}\n`,
-        "utf8",
-      );
       const { stdout, stderr } = await spawnAndReadUrl(root, [], outdir);
       expect(stdout).toBe(`http://127.0.0.1:${configPort}/`);
       expect(stderr).toContain(`http://127.0.0.1:${configPort}/`);
@@ -162,16 +177,11 @@ describe("main() wiring: loadConfig + resolveWebOpts + scanForPort (T187)", () =
   });
 
   it("(c) --port N + cq.toml port=M → N wins (CLI beats config)", async () => {
-    const root = await makeLedgerRoot();
-    const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-out-"));
     const cliPort = await freePort();
     const configPort = await freePort();
+    const root = await makeLedgerRoot(`[webui]\nport = ${configPort}\n\n`);
+    const outdir = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-out-"));
     try {
-      await fs.writeFile(
-        path.join(root, "cq.toml"),
-        `[webui]\nport = ${configPort}\n`,
-        "utf8",
-      );
       const { stdout } = await spawnAndReadUrl(root, ["--port", String(cliPort)], outdir);
       expect(stdout).toBe(`http://127.0.0.1:${cliPort}/`);
     } finally {

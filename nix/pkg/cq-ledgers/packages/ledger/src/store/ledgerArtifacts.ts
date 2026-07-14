@@ -2,7 +2,8 @@
  * Single source of truth for "which files under the ledger storage dir belong to
  * the ledger". The storage dir is `<root>/.cq/` (LEDGER_STORAGE_DIRNAME).
  *
- * `cq erase`, `cq move-ledger`, and any other cleanup/transplant site must agree
+ * `cq erase` and any other cleanup/transplant site (T505: `cq move-ledger` is
+ * retired; `cq migrate` reads via the store surface) must agree
  * on this set so they NEVER touch unrelated content (e.g. a separate project-docs
  * `docs/drafts/` directory). The set is REGISTRY-DRIVEN — derived from
  * `.cq/ledgers.yaml` (unioned with the canonical names as a fallback) — not
@@ -28,13 +29,13 @@ export const LEDGER_REGISTRY_FILENAME = "ledgers.yaml";
 export const LEDGER_ARCHIVE_DIRNAME = "archive";
 /**
  * Portable runtime directory under `.cq/` — session logs that travel with the
- * ledger tree (included in `ledgerTreePaths`, snapshotted by `move-ledger`).
+ * ledger tree (included in `ledgerTreePaths`).
  */
 export const LEDGER_PORTABLE_RUNTIME_DIRNAMES: readonly string[] = ["logs"];
 /**
  * Ephemeral runtime directories under `.cq/` — the FS lock dir and
  * reset/divergence backups. They belong to the ledger (so `erase` removes them)
- * but are NOT part of the portable ledger tree (so `move-ledger` excludes them).
+ * but are NOT part of the portable ledger tree (`ledgerTreePaths` excludes them).
  */
 export const LEDGER_EPHEMERAL_RUNTIME_DIRNAMES: readonly string[] = [".locks", ".backup"];
 /**
@@ -128,8 +129,7 @@ export async function enumerateLedgerArtifacts(docsDir: string): Promise<LedgerA
  * The PORTABLE ledger tree as STORAGE-RELATIVE paths: `ledgers.yaml`, every
  * registered `<name>.md`, every `archive/**` file (recursive), and every
  * `logs/**` file (recursive). Ephemeral dirs (`.locks`/`.backup`) are EXCLUDED
- * — they never travel with the ledger. Used by `cq move-ledger` to
- * snapshot/materialise the orphan-ref tree. Sorted.
+ * — they never travel with the ledger. Sorted.
  */
 export async function ledgerTreePaths(docsDir: string): Promise<string[]> {
   const art = await enumerateLedgerArtifacts(docsDir);

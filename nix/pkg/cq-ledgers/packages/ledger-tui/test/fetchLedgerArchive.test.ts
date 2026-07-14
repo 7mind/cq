@@ -1,28 +1,40 @@
 /**
  * Integration test for McpLedgerClient.fetchLedgerArchive (T29).
  *
- * Seeds an archive via the in-process FsLedgerStore (write path), then
- * exercises the read path through the MCP client's fetchLedgerArchive method.
- * Uses the TUI's McpLedgerClient.embedded so no subprocess or socket is
- * needed.
+ * Seeds an archive via a standalone xdg store instance (write path, T505),
+ * then exercises the read path through the MCP client's fetchLedgerArchive
+ * method. Uses the TUI's McpLedgerClient.embedded so no subprocess or socket
+ * is needed.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { FsLedgerStore } from "@cq/ledger";
+import { createLedgerStore } from "@cq/ledger";
 import { McpLedgerClient } from "../src/mcpClient.js";
 
 let tmpRoot: string;
+let xdgHome: string;
+let prevXdgStateHome: string | undefined;
 let client: McpLedgerClient;
 
 beforeAll(async () => {
-  tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-archive-test-"));
+  // The runtime store is the out-of-tree xdg primary (T505): point
+  // XDG_STATE_HOME at a temp dir and pin the backend with a projectId.
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  xdgHome = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-archive-test-xdg-"));
+  process.env["XDG_STATE_HOME"] = xdgHome;
 
-  // Seed via a standalone FsLedgerStore (write path outside the client).
-  const seed = new FsLedgerStore({ root: tmpRoot });
-  await seed.init();
+  tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-archive-test-"));
+  await fs.writeFile(
+    path.join(tmpRoot, "cq.toml"),
+    `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(tmpRoot)}"\n`,
+    "utf8",
+  );
+
+  // Seed via a standalone store instance (write path outside the client).
+  const { store: seed } = await createLedgerStore(tmpRoot);
   await seed.createLedger("jobs", {
     statusValues: ["planned", "done"],
     terminalStatuses: ["done"],
@@ -45,6 +57,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await client.close();
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+  await fs.rm(xdgHome, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
 

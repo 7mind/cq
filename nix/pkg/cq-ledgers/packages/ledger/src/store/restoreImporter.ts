@@ -56,8 +56,8 @@ export interface RestoreSummary {
  * Read a dump from an in-tree `.cq/` directory at `root`, as a
  * {@link BackupDumpFile}[] relative to `.cq/` — the exact inverse of {@link
  * exportBackupInTree}. Reuses `ledgerTreePaths` (the single source of truth
- * for "which files under `.cq/` belong to the ledger", shared with `cq erase`
- * / `cq move-ledger`) so restore agrees with every other consumer on the set
+ * for "which files under `.cq/` belong to the ledger", shared with `cq erase`)
+ * so restore agrees with every other consumer on the set
  * of files a dump carries.
  */
 export async function readDumpInTree(root: string): Promise<BackupDumpFile[]> {

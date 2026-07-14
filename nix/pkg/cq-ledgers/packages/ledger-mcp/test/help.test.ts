@@ -2,8 +2,8 @@
  * ledger-mcp --help / -h flag (D56 / T384).
  *
  * Asserts that:
- *   - main(['--help']) and main(['-h']) each resolve and write the four required
- *     tokens (--tool-prefix, --cwd, --http, "restore") to stdout
+ *   - main(['--help']) and main(['-h']) each resolve and write the three required
+ *     tokens (--tool-prefix, --cwd, --http) to stdout
  *     (verified via captured process.stdout.write).
  *   - Neither flag produces the "serving stdio MCP" line on stderr, confirming
  *     no server is started (verified via captured process.stderr.write).
@@ -19,11 +19,10 @@ describe("TOP_LEVEL_USAGE export", () => {
     expect(TOP_LEVEL_USAGE.length).toBeGreaterThan(0);
   });
 
-  it("contains --cwd, --http, --tool-prefix, and restore", () => {
+  it("contains --cwd, --http, and --tool-prefix", () => {
     expect(TOP_LEVEL_USAGE).toContain("--cwd");
     expect(TOP_LEVEL_USAGE).toContain("--http");
     expect(TOP_LEVEL_USAGE).toContain("--tool-prefix");
-    expect(TOP_LEVEL_USAGE).toContain("restore");
   });
 });
 
@@ -51,7 +50,6 @@ describe("main --help / -h (D56)", () => {
     expect(out).toContain("--cwd");
     expect(out).toContain("--http");
     expect(out).toContain("--tool-prefix");
-    expect(out).toContain("restore");
   });
 
   it("main(['-h']) resolves promptly and writes usage to stdout; no 'serving' on stderr", async () => {
@@ -70,7 +68,6 @@ describe("main --help / -h (D56)", () => {
     expect(out).toContain("--cwd");
     expect(out).toContain("--http");
     expect(out).toContain("--tool-prefix");
-    expect(out).toContain("restore");
     const err = stderrChunks.join("");
     expect(err).not.toContain("serving");
   });
@@ -91,8 +88,8 @@ describe("main --help / -h (D56)", () => {
     expect(err).not.toContain("serving");
   });
 
-  it("main(['restore', '--help']) also prints usage (--help wins regardless of position)", async () => {
-    await main(["restore", "--help"]);
+  it("main(['whatever', '--help']) also prints usage (--help wins regardless of position)", async () => {
+    await main(["whatever", "--help"]);
     const out = written.join("");
     expect(out).toContain("--tool-prefix");
   });

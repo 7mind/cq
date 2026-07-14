@@ -1,22 +1,22 @@
 /**
- * T357: `cq init` with backend='git-object' on a fresh git repo.
+ * T505: `cq init` with a cq.toml naming a LEGACY backend.
  *
- * Acceptance (R418 / T445): a fresh git-object init leaves .cq/*.md + .cq/ledgers.yaml
- * GITIGNORED on the working branch (never accidentally tracked), and the ledger
- * lands on the orphan ref rather than the working tree. Both tests here
- * pre-write cq.toml selecting backend='git-object' explicitly, so the fresh-init
- * default (backend='xdg' as of T501 — see init.test.ts / init-xdg.test.ts) never
- * comes into play.
+ * The legacy in-tree backends (fs / git-object) are no longer selectable
+ * runtime primaries: `cq init` on a root whose cq.toml names one fails fast
+ * with the documented LegacyBackendError pointing at `cq migrate`, and writes
+ * NOTHING (no .cq/ tree, no orphan ref). (Historically these tests asserted
+ * the git-object init path — see git history / T357.)
  *
  * Throwaway repos via mkdtemp; cleaned up in afterAll.
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
+import { LegacyBackendError } from "@cq/ledger";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
 
 const exec = promisify(execFile);
@@ -52,50 +52,43 @@ async function gitRepo(): Promise<string> {
   return dir;
 }
 
-describe("cq init — backend='git-object'", () => {
-  it("leaves .cq/*.md + .cq/ledgers.yaml gitignored (not tracked) on the work branch", async () => {
+describe("cq init — legacy backends rejected (T505)", () => {
+  it("backend='git-object' rejects with LegacyBackendError naming cq migrate; nothing is written", async () => {
     const root = await gitRepo();
-    // A pre-existing cq.toml selecting the git-object backend (cq init reads it).
+    // A pre-existing cq.toml selecting the legacy git-object backend.
     await writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "git-object"\n', "utf8");
 
-    const io = recordingIo();
-    const outcome = await dispatch(["init", "--cwd", root], io);
-    expect(outcome.exitCode).toBe(0);
+    const err = await dispatch(["init", "--cwd", root], recordingIo()).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(LegacyBackendError);
+    expect((err as Error).message).toContain("cq migrate");
 
-    // .cq projection is gitignored.
-    const md = await exec("git", ["check-ignore", ".cq/tasks.md"], {
-      cwd: root,
-      encoding: "utf8",
-    }).then((r) => r.stdout.trim());
-    expect(md).toBe(".cq/tasks.md");
-    const yaml = await exec("git", ["check-ignore", ".cq/ledgers.yaml"], {
-      cwd: root,
-      encoding: "utf8",
-    }).then((r) => r.stdout.trim());
-    expect(yaml).toBe(".cq/ledgers.yaml");
-
-    // Nothing under .cq/ is staged/tracked on the working branch.
-    const status = await exec("git", ["status", "--porcelain"], {
-      cwd: root,
-      encoding: "utf8",
-    }).then((r) => r.stdout);
-    expect(status.includes(".cq/")).toBe(false);
-
-    // The ledger landed on the orphan ref.
-    const log = await exec("git", ["log", "--oneline", "cq-ledger"], {
-      cwd: root,
-      encoding: "utf8",
-    }).then((r) => r.stdout.trim());
-    expect(log.length).toBeGreaterThan(0);
+    // Nothing was written: no .cq/ tree, no orphan ref.
+    await expect(stat(path.join(root, ".cq"))).rejects.toThrow();
+    const refExists = await exec(
+      "git",
+      ["rev-parse", "--verify", "-q", "refs/heads/cq-ledger"],
+      { cwd: root, encoding: "utf8" },
+    ).then(
+      () => true,
+      () => false,
+    );
+    expect(refExists).toBe(false);
   });
 
-  it("fails fast for backend='git-object' outside a git work tree", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "cq-init-nogit-"));
+  it("backend='fs' rejects with LegacyBackendError naming cq migrate; no .cq/ is created", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "cq-init-fs-legacy-"));
     dirs.push(root);
-    await writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "git-object"\n', "utf8");
-    // dispatch surfaces the thrown GitEnvironmentError; assert it rejects.
-    await expect(dispatch(["init", "--cwd", root], recordingIo())).rejects.toThrow(
-      /git work tree/i,
+    await writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n', "utf8");
+
+    const err = await dispatch(["init", "--cwd", root], recordingIo()).then(
+      () => null,
+      (e: unknown) => e,
     );
+    expect(err).toBeInstanceOf(LegacyBackendError);
+    expect((err as Error).message).toContain("cq migrate");
+    await expect(stat(path.join(root, ".cq"))).rejects.toThrow();
   });
 });

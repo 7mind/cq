@@ -9,8 +9,7 @@
  *   - `--dest logs/../secrets` exits non-zero with a usage error.
  *
  * Tests the dispatch seam (via dispatch()) and the low-level parser/validator
- * directly (parseLogPutArgs / validateLogDest), mirroring the move-ledger
- * routing test pattern.
+ * directly (parseLogPutArgs / validateLogDest).
  */
 
 import { describe, it, expect, afterAll } from "bun:test";

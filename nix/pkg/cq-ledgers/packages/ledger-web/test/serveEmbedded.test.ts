@@ -3,8 +3,8 @@
  * server in-process and exposes it on the same-origin /mcp + /ws. Asserts:
  *   - a real MCP client connected to the web origin lists the tools and
  *     round-trips a create/fetch (no separate ledger-mcp process);
- *   - the /ws socket receives a `changed` frame after an out-of-band write to
- *     the ledger files under .cq/.
+ *   - the /ws socket receives a `changed` frame after an out-of-band write by
+ *     a peer store on the same xdg primary.
  *
  * The web server is run as a SUBPROCESS (the real `ledger-web` binary) so its
  * one-time Bun.build runs in its own process — running a second in-process
@@ -20,7 +20,7 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { FsLedgerStore, LEDGER_TOOL_NAMES } from "@cq/ledger";
+import { createLedgerStore, LEDGER_TOOL_NAMES } from "@cq/ledger";
 
 const here = new URL(".", import.meta.url).pathname;
 const webMain = path.resolve(here, "..", "src", "serve.ts");
@@ -54,14 +54,27 @@ async function waitForPort(p: number, attempts = 200): Promise<void> {
 }
 
 let tmpRoot: string;
+let xdgHome: string;
+let prevXdgStateHome: string | undefined;
 let outdir: string;
 let web: Subprocess;
 let webPort: number;
 
 beforeAll(async () => {
+  // The runtime store is the out-of-tree xdg primary (T505): pin the backend
+  // with a projectId and point XDG_STATE_HOME at a temp dir; the spawned web
+  // server receives the override via the explicit env spread below.
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  xdgHome = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-xdg-"));
+  process.env["XDG_STATE_HOME"] = xdgHome;
+
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-"));
-  const seed = new FsLedgerStore({ root: tmpRoot });
-  await seed.init();
+  await fs.writeFile(
+    path.join(tmpRoot, "cq.toml"),
+    `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(tmpRoot)}"\n`,
+    "utf8",
+  );
+  const { store: seed } = await createLedgerStore(tmpRoot);
   await seed.createLedger("bugs", {
     statusValues: ["open", "closed"],
     terminalStatuses: ["closed"],
@@ -84,6 +97,9 @@ beforeAll(async () => {
 afterAll(async () => {
   web.kill();
   await web.exited;
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+  await fs.rm(xdgHome, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
   await fs.rm(outdir, { recursive: true, force: true });
 });
@@ -142,8 +158,7 @@ describe("ledger-web embedded MCP (same-origin /mcp, no upstream process)", () =
     });
 
     // Out-of-band write by a SEPARATE store (mimics the agent / git / a 2nd UI).
-    const other = new FsLedgerStore({ root: tmpRoot });
-    await other.init();
+    const { store: other } = await createLedgerStore(tmpRoot);
     await other.createMilestone({ title: "out-of-band" });
     await other.dispose();
 
