@@ -56,6 +56,15 @@ export { FsLedgerStore } from "./store/FsLedgerStore.js";
 export type { FsLedgerStoreOpts, ResetSummary } from "./store/FsLedgerStore.js";
 export { cacheMirrorDir, mirrorMutation } from "./store/cacheMirror.js";
 export type { MirrorLayout } from "./store/cacheMirror.js";
+export {
+  buildBackupDump,
+  exportBackupInTree,
+  exportBackupOrphanBranch,
+  runBackupExport,
+  BackupScheduler,
+  DEFAULT_BACKUP_DEBOUNCE_MS,
+} from "./store/backupExporter.js";
+export type { BackupDumpFile, BackupExportOpts, BackupTarget } from "./store/backupExporter.js";
 export { atomicWrite } from "./store/fsAtomic.js";
 export { GitPlumbing, StaleRefError, GitCommandError, nodeGitRunner } from "./store/git/GitPlumbing.js";
 export type { TreeEntry, GitResult, GitRunOpts, GitRunner } from "./store/git/GitPlumbing.js";

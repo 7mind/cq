@@ -39,6 +39,7 @@ import { SqliteLedgerStore } from "./sqlite/SqliteLedgerStore.js";
 import { dataVersion, openLedgerDb } from "./sqlite/connection.js";
 import { resolveProjectKey } from "../projectKey.js";
 import { resolveStateDir, resolveLogsDir, ensureStateDir } from "../stateDir.js";
+import { BackupScheduler, runBackupExport } from "./backupExporter.js";
 
 /** The xdg backend's database filename within `<stateDir>` (T530). */
 const XDG_DB_FILENAME = "ledger.db";
@@ -69,6 +70,21 @@ export interface ResolvedLedgerStore {
    * coherence watchers key off a different signal (file mtime / ref sha).
    */
   readonly dbPath?: string;
+  /**
+   * The out-of-tree primary logs dir (xdg backend only) —
+   * `resolveLogsDir(projectKey)`, the sibling of the `state/` area `dbPath`
+   * lives under. Exposed so `cq backup` reads log artifacts from the SAME
+   * location the debounced trigger exports (T502 / Q247).
+   */
+  readonly logsDir?: string;
+  /**
+   * The debounced post-mutation backup trigger (T502) — present ONLY when the
+   * xdg backend is configured with a non-`none` `[ledger].backup`. The store's
+   * `onMutation` hook `schedule()`s it; hosts/tests may `flush()` for a
+   * deterministic export or `close()` on shutdown. Best-effort by design: its
+   * timers are unref'd and a backup failure never unwinds a store write.
+   */
+  readonly backup?: BackupScheduler;
 }
 
 /**
@@ -163,9 +179,28 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
     // Sibling out-of-tree logs area (T499), same projectKey — so `read_log`
     // resolves the SAME location `cq log put`'s xdg branch writes to.
     const logsDir = resolveLogsDir(projectKey);
-    const store = new SqliteLedgerStore({ dbPath, logsDir });
+    // T502: the debounced human-readable backup trigger (Q244), wired at the
+    // ONE place the store's onMutation hook is bound. `[ledger].backup`
+    // defaults to 'none' (OFF): no scheduler, the hook is a no-op, and
+    // NOTHING is ever written in-tree or to any ref. The scheduler is bound
+    // AFTER init() (via the closure) so bootstrap writes never trigger an
+    // export; schedule() is synchronous and the export itself is
+    // fire-and-forget + guarded, so a backup failure never unwinds a write.
+    const backupTarget = config?.ledger?.backup ?? "none";
+    let backup: BackupScheduler | undefined;
+    const store = new SqliteLedgerStore({
+      dbPath,
+      logsDir,
+      onMutation: () => backup?.schedule(),
+    });
     await store.init();
-    return { store, backend, branch, dbPath };
+    if (backupTarget !== "none") {
+      backup = new BackupScheduler(async () => {
+        await runBackupExport({ store, root, target: backupTarget, branch, logsDir });
+      });
+      return { store, backend, branch, dbPath, logsDir, backup };
+    }
+    return { store, backend, branch, dbPath, logsDir };
   }
 
   // backend === 'fs' — byte-identical to the historical default.

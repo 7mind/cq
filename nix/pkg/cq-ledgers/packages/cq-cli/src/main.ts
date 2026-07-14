@@ -30,6 +30,7 @@ import {
   resolveLedgerBackend,
   resolveStateDirBase,
   resolveProjectKey,
+  runBackupExport,
   type LedgerStore,
   type ResetSummary,
 } from "@cq/ledger";
@@ -58,7 +59,7 @@ export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructi
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "log"] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "log", "backup"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -166,6 +167,11 @@ export const USAGE = [
   "                                                  write a log file into .cq/logs/<rel>;",
   "                                                  source is a local file path OR --stdin;",
   "                                                  --dest must be under logs/ (no escapes).",
+  "  backup      [--cwd <path>]                      export a human-readable .cq dump of the",
+  "                                                  xdg primary (incl. logs) to the target",
+  "                                                  configured by [ledger].backup",
+  "                                                  (in-tree | orphan-branch); write-only,",
+  "                                                  never read back as a primary.",
   "",
   "ledger root: --cwd > $LEDGER_ROOT > current working directory",
 ].join("\n");
@@ -637,6 +643,69 @@ export async function runLogCmd(
   });
 }
 
+/**
+ * `cq backup` (T502 / Q244): an EXPLICIT, on-demand run of the one-way
+ * human-readable backup exporter — the same export the debounced post-mutation
+ * trigger performs, but awaited and surfaced (errors are fatal here, not
+ * best-effort-swallowed). The target comes from `[ledger].backup`:
+ *
+ *   - `none` (the default)  → refuse with a usage error: backups are OFF and
+ *     nothing must ever be written in-tree or to any ref.
+ *   - `in-tree`             → write the dump under `<root>/.cq/`.
+ *   - `orphan-branch`       → commit the dump tree to `refs/heads/<branch>`.
+ *
+ * Only the `xdg` backend is supported: the exporter dumps the OUT-OF-TREE
+ * primary (SQLite + xdg logs area, Q247) into today's `.cq/` layout. The fs /
+ * git-object backends already keep their state in that human-readable form.
+ */
+export async function runBackup(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
+  const { backend, branch } = resolveLedgerBackend(args.cwd);
+  const config = loadConfig(args.cwd);
+  const target = config?.ledger?.backup ?? "none";
+
+  if (target === "none") {
+    io.err(
+      `cq backup: [ledger].backup is "none" (the default) at ${args.cwd} — backups are OFF. ` +
+        `Set backup = "in-tree" or "orphan-branch" in ${CQ_CONFIG_FILENAME} to enable exports.`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
+  if (backend !== "xdg") {
+    io.err(
+      `cq backup: [ledger] backend='${backend}' does not support the backup exporter ` +
+        `(it dumps the out-of-tree xdg primary into the .cq/ layout, which the '${backend}' ` +
+        `backend already keeps human-readable). Use backend='xdg'.`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
+
+  const resolved = await createLedgerStore(args.cwd);
+  try {
+    const fileCount = await runBackupExport({
+      store: resolved.store,
+      root: args.cwd,
+      target,
+      branch,
+      logsDir: resolved.logsDir ?? null,
+    });
+    if (target === "in-tree") {
+      io.out(
+        `cq backup: exported ${fileCount} file(s) to ${path.join(args.cwd, LEDGER_STORAGE_DIRNAME)}`,
+      );
+    } else {
+      io.out(
+        `cq backup: committed a ${fileCount}-file dump to refs/heads/${branch} at ${args.cwd}`,
+      );
+    }
+  } finally {
+    // The explicit export above already ran; drop the debounced trigger (no
+    // mutations happened here) and release the store.
+    resolved.backup?.close();
+    await resolved.store.dispose();
+  }
+  return { exitCode: 0 };
+}
+
 /** A store exposing the FS-specific backup→reinit `reset()` (FsLedgerStore). */
 interface ResettableStore extends LedgerStore {
   reset(): Promise<ResetSummary>;
@@ -684,6 +753,7 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
     io.err("cq log: internal error — log handler called without sub-argv");
     return { exitCode: EXIT_USAGE };
   },
+  backup: runBackup,
 };
 
 /**
