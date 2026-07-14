@@ -33,6 +33,21 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+/**
+ * Run a raw git command in `cwd` with extra env vars merged over the
+ * inherited environment (D92: used to pin `GIT_AUTHOR_DATE` /
+ * `GIT_COMMITTER_DATE` on a commit so multi-root ordering tests are
+ * deterministic — see the "picks the deterministic FIRST root" test below).
+ */
+async function gitEnv(
+  cwd: string,
+  env: Record<string, string>,
+  ...args: string[]
+): Promise<string> {
+  const { stdout } = await exec("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env } });
+  return stdout.trim();
+}
+
 /** A fresh, empty tmp directory (tracked for cleanup). */
 async function freshDir(prefix: string): Promise<string> {
   const dir = await fs.mkdtemp(path.join(tmpdir(), prefix));
@@ -40,8 +55,15 @@ async function freshDir(prefix: string): Promise<string> {
   return dir;
 }
 
-/** Create a fresh git repo with one commit, returning its root dir. */
-async function seedRepo(prefix = "project-key-"): Promise<string> {
+/**
+ * Create a fresh git repo with one commit, returning its root dir. When
+ * `committerDate` is given (D92), the root commit's author/committer date is
+ * pinned to it instead of the real wall-clock time `git commit` runs at —
+ * needed by the multi-root ordering test below, where `rev-list`'s default
+ * newest-committer-date-first order must be a deterministic function of the
+ * fixture, not of how much real time elapses between two `git commit` calls.
+ */
+async function seedRepo(prefix = "project-key-", committerDate?: string): Promise<string> {
   const dir = await freshDir(prefix);
   await git(dir, "init", "-q", "-b", "main");
   await git(dir, "config", "user.email", "test@example.com");
@@ -49,7 +71,18 @@ async function seedRepo(prefix = "project-key-"): Promise<string> {
   await git(dir, "config", "commit.gpgsign", "false");
   await fs.writeFile(path.join(dir, "seed.txt"), "seed\n");
   await git(dir, "add", "seed.txt");
-  await git(dir, "commit", "-q", "-m", "root commit");
+  if (committerDate === undefined) {
+    await git(dir, "commit", "-q", "-m", "root commit");
+  } else {
+    await gitEnv(
+      dir,
+      { GIT_AUTHOR_DATE: committerDate, GIT_COMMITTER_DATE: committerDate },
+      "commit",
+      "-q",
+      "-m",
+      "root commit",
+    );
+  }
   return dir;
 }
 
@@ -105,15 +138,33 @@ describe("resolveProjectKey", () => {
     expect(keyClone).toBe(keyOriginal);
   });
 
+  // D92: `git rev-list --max-parents=0 HEAD`'s default order is newest-
+  // COMMITTER-date-first (verified empirically — NOT author date, NOT SHA
+  // lexical order, NOT git-command-issue order). The original fixture let
+  // both root commits take the real wall-clock time `git commit` happened to
+  // run at, so whichever of the two landed with the later real timestamp won
+  // the "first root" position — on a loaded machine the SECOND `git commit`
+  // (the "other root") could non-deterministically end up newer than rootA,
+  // flipping `roots[0]` and failing the fixed `rootA` expectation. Pin
+  // explicit, well-separated committer dates (rootA strictly newer) so the
+  // ordering is a deterministic function of the fixture, independent of real
+  // time elapsed between the two `git commit` invocations.
   it("picks the deterministic FIRST root for a history with multiple root commits", async () => {
-    const dir = await seedRepo();
+    const dir = await seedRepo("project-key-multiroot-", "2020-06-01T00:00:00");
     const rootA = await git(dir, "rev-list", "--max-parents=0", "HEAD");
 
     await git(dir, "checkout", "-q", "--orphan", "other");
     await git(dir, "rm", "-rf", "-q", ".");
     await fs.writeFile(path.join(dir, "other.txt"), "other root\n");
     await git(dir, "add", "other.txt");
-    await git(dir, "commit", "-q", "-m", "other root commit");
+    await gitEnv(
+      dir,
+      { GIT_AUTHOR_DATE: "2020-01-01T00:00:00", GIT_COMMITTER_DATE: "2020-01-01T00:00:00" },
+      "commit",
+      "-q",
+      "-m",
+      "other root commit",
+    );
     await git(dir, "checkout", "-q", "main");
     await git(dir, "merge", "--allow-unrelated-histories", "-q", "-m", "merge", "other");
 
@@ -122,8 +173,9 @@ describe("resolveProjectKey", () => {
     const expectedFirst = roots[0];
     if (expectedFirst === undefined) throw new Error("expected a first root SHA");
     const key = await resolveProjectKey({ repoRoot: dir, projectId: null });
-    // Deterministic: the first line git emits, which is rootA here (documented
-    // choice — see GitPlumbing.firstCommitShas and the projectKey.ts module doc).
+    // Deterministic: rootA's pinned committer date (2020-06) is strictly
+    // newer than "other root"'s (2020-01), so it always sorts first — see
+    // GitPlumbing.firstCommitShas and the projectKey.ts module doc.
     expect(key).toBe(expectedFirst);
     expect(key).toBe(rootA);
   });
