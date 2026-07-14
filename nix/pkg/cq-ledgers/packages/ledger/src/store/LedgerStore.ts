@@ -19,6 +19,20 @@
  *    references the milestones ledger.
  *  - Multi-lock acquisition order: `__milestones__` first; then per-ledger
  *    locks in alphabetical order. Documented in FsLedgerStore.
+ *
+ * Cross-process concurrency (T497 / Q246):
+ *  - Multiple processes may hold independent stores over ONE shared location
+ *    (worktrees/clones of a repo share a store — Q246). A store serving a
+ *    shared location must satisfy the multi-writer contract documented on
+ *    `LedgerPersistence`: mutations are serialized or transactionally
+ *    isolated across processes (zero lost updates), readers never observe
+ *    torn state, and out-of-band writes are detectable via the coherence
+ *    token (`LedgerPersistence.currentSourceToken`). The in-process locking
+ *    discipline above is necessary but NOT sufficient for this — the
+ *    cross-process guarantee comes from the persistence backend (decision
+ *    K102: SQLite WAL + busy_timeout for the shared primary store; first
+ *    conforming implementation in T498). Conformance harness:
+ *    `test/multiWriterStressHarness.ts`.
  */
 
 import type {

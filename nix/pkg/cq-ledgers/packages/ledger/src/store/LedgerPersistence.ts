@@ -60,6 +60,50 @@
  * handed it on an `ArchivePointer.path`; a git backend is free to encode a blob
  * locator in the same `string` slot. Containment/escape checks
  * (`assertWithinDocsRoot`) remain a backend responsibility.
+ *
+ * ## Multi-writer concurrency contract (T497 / Q246 / K102)
+ *
+ * Worktrees/clones of one repository share ONE store location (Q246: the XDG
+ * state dir of T495, keyed by the repo-identity project key of T496), so
+ * MULTIPLE MCP server processes write to the same store CONCURRENTLY. A
+ * persistence backend that serves a shared location MUST provide the three
+ * guarantees below ACROSS PROCESSES — the in-process `AsyncMutex` and the
+ * advisory `Lockfile` in the shared base cover only cq's cooperating same-host
+ * writers and are NOT sufficient on their own:
+ *
+ *  1. **Mutations are serialized or transactionally isolated — zero lost
+ *     updates.** When two processes mutate concurrently, BOTH committed writes
+ *     take effect: each read-modify-write cycle behind
+ *     {@link writeLedgerSource} / {@link writeRegistrySource} /
+ *     {@link writeArchive} is atomic with respect to every other process's
+ *     cycle. A writer that cannot proceed immediately waits (bounded) or fails
+ *     loudly — it never silently overwrites a peer's committed write with
+ *     state derived from a stale read.
+ *  2. **Readers never observe torn state.** A read ({@link readLedgerSource} /
+ *     {@link readRegistrySource} / {@link readArchive}, whether at `init()` or
+ *     during a coherence reload) observes either the pre-state or the
+ *     post-state of any concurrent mutation — never a partial or interleaved
+ *     byte sequence. A parse/read failure caused by a concurrent writer is a
+ *     contract violation.
+ *  3. **Out-of-band writes are detectable.** {@link currentSourceToken} is the
+ *     coherence token that lets a process cheaply detect a peer's committed
+ *     write without re-reading the source — see its doc for the token
+ *     contract.
+ *
+ * The MECHANISM is whatever the backend's storage provides — decision K102
+ * pins the out-of-tree primary store on bun:sqlite with WAL journal mode +
+ * `busy_timeout` (WAL snapshot isolation gives 2; `busy_timeout`-bounded
+ * writer serialization gives 1; the database's data version supplies 3). The
+ * in-tree `FsLedgerStore` does NOT guarantee 1 across processes in general
+ * (its advisory lockfile + reload-under-write-lock serialize cooperating
+ * same-host cq writers only; nothing enforces it store-wide), so it is NOT a
+ * conforming shared-location backend — the first conforming implementation
+ * lands in T498.
+ *
+ * Conformance is verified by the store-factory-parameterized multi-process
+ * stress harness in `test/multiWriterStressHarness.ts` (registered as pending
+ * in `test/multi-writer-stress.test.ts` until T498 wires the conforming
+ * store).
  */
 export interface LedgerPersistence {
   // ---------------------------------------------------------------------------
@@ -229,6 +273,16 @@ export interface LedgerPersistence {
    * peer write by observing its ref move, and the shared base (T350) will use
    * the token to gate a reload. The fs impl backs it with the source file's
    * mtime (e.g. `fs.stat(this.ledgerPath(name)).mtimeMs`).
+   *
+   * Coherence-token contract (T497 — point 3 of the multi-writer concurrency
+   * contract above): after another process COMMITS a write to `name`, a
+   * subsequent `currentSourceToken(name)` MUST (eventually, but before that
+   * write could otherwise be lost to a stale-read overwrite) return a token
+   * unequal to every token observed before that write; while no write occurs
+   * the token MUST be stable, so a poller gets no spurious reloads. Tokens are
+   * OPAQUE: callers compare them for equality only — no ordering, format, or
+   * monotonicity is implied, and tokens from different backends/locations are
+   * never comparable.
    */
   currentSourceToken(name: string): Promise<string>;
 }
