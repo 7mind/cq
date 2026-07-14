@@ -167,3 +167,10 @@ export type {
 } from "./snapshot.js";
 export { validateJsonl } from "./store/jsonlLog.js";
 export type { JsonlValidationResult, JsonlValidationOk, JsonlValidationError } from "./store/jsonlLog.js";
+export {
+  resolveStateDirBase,
+  resolveStateDir,
+  resolveLogsDir,
+  STORE_LAYOUT,
+  ensureStateDir,
+} from "./stateDir.js";
