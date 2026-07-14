@@ -67,6 +67,7 @@ export {
   resolveLedgerBackend,
   assertGitWorkTree,
   GitEnvironmentError,
+  LedgerBackendNotImplementedError,
 } from "./store/createLedgerStore.js";
 export type { ResolvedLedgerStore } from "./store/createLedgerStore.js";
 export {

@@ -59,6 +59,20 @@ export class GitEnvironmentError extends Error {
 }
 
 /**
+ * Thrown when `backend = 'xdg'` is configured. The identifier PARSES in
+ * @cq/config (T494) so `cq migrate` and config tooling can read it, but the
+ * out-of-tree bun:sqlite store (decision K102) is not yet implemented — it is
+ * wired in T498/T501. Until then, resolving it to a runtime store FAILS FAST
+ * rather than silently falling through to the in-tree {@link FsLedgerStore}.
+ */
+export class LedgerBackendNotImplementedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LedgerBackendNotImplementedError";
+  }
+}
+
+/**
  * Resolve the `[ledger]` backend for `root` from cq.toml. No cq.toml (or no
  * `[ledger]` table) → `'fs'`, matching {@link loadConfig}'s contract and the
  * historical default.
@@ -121,6 +135,15 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
     const store = new GitObjectLedgerBackend({ repoRoot: root, ref: branch });
     await store.init();
     return { store, backend, branch };
+  }
+
+  // backend === 'xdg' PARSES (T494) but its store is not yet implemented; fail
+  // fast rather than silently falling through to the in-tree FsLedgerStore.
+  if (backend === "xdg") {
+    throw new LedgerBackendNotImplementedError(
+      `[ledger] backend = "xdg" (out-of-tree bun:sqlite primary, decision K102) ` +
+        `is configured but its store is not yet implemented — wired in T498/T501.`,
+    );
   }
 
   // backend === 'fs' — byte-identical to the historical default.

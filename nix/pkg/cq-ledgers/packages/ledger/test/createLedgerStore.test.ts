@@ -23,6 +23,7 @@ import {
   resolveLedgerBackend,
   assertGitWorkTree,
   GitEnvironmentError,
+  LedgerBackendNotImplementedError,
   FsLedgerStore,
   GitObjectLedgerBackend,
   ensureGitBackendGitignore,
@@ -167,6 +168,18 @@ describe("createLedgerStore — backend selection", () => {
     const status = await exec("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" });
     expect(status.stdout.includes(".cq/")).toBe(false);
     await store.dispose();
+  });
+
+  it("T494: backend='xdg' FAILS FAST — does not silently fall through to FsLedgerStore", async () => {
+    // "xdg" parses in @cq/config (the out-of-tree bun:sqlite primary, K102) but
+    // its store is not yet implemented (T498/T501). createLedgerStore must throw
+    // rather than return an in-tree FsLedgerStore, which would silently mislocate
+    // the ledger while reporting backend: "xdg".
+    const dir = await plainDir();
+    await writeCqToml(dir, '[ledger]\nbackend = "xdg"\n');
+    await expect(createLedgerStore(dir)).rejects.toBeInstanceOf(
+      LedgerBackendNotImplementedError,
+    );
   });
 
   it("git-object honours a custom [ledger].branch", async () => {
