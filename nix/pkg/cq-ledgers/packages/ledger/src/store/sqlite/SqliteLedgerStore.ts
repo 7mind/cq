@@ -15,15 +15,17 @@
  * commit cannot tear one view.
  *
  * Task split (scope discipline):
- *  - THIS task (T526): constructor, init() (open + DDL + canonical-ledger
+ *  - T526: constructor, init() (open + DDL + canonical-ledger
  *    bootstrap + milestones bootstrap group + M-AMBIENT + schema-divergence
  *    detection with the BACKUP action stubbed), the synchronous read surface
  *    (enumerate/fetch/fetchItem/fetchMilestone/listMilestoneItems/snapshot/
  *    search), invalidate() (row reads need none — no-op), dispose().
- *  - T527: mutations (createItem/updateItem/createMilestone/createLedger/
- *    updateMilestone/reopenItem).
+ *  - T527 (this task): mutations (createItem/updateItem/createMilestone/
+ *    createLedger/updateMilestone/reopenItem) — each ONE `BEGIN IMMEDIATE`
+ *    transaction (bounded busy retry, connection.ts) touching only the
+ *    affected rows, with the domain guards REUSED from core.ts.
  *  - T528: the derived search index (ftsSearch) + the index-refresh half of
- *    invalidate().
+ *    invalidate() + the post-commit index update in fireMutation.
  *  - T529: archives (archiveMilestone/unarchiveItem/fetchArchive) + the
  *    divergence backup-reinit action.
  *  - T530: createLedgerStore xdg wiring.
@@ -38,7 +40,13 @@ import type {
   LedgerSchema,
   Milestone,
 } from "../../types.js";
-import { BootstrapViolationError, LedgerError, LedgerNotFoundError, ItemNotFoundError } from "../../types.js";
+import {
+  BootstrapViolationError,
+  DuplicateIdError,
+  LedgerError,
+  LedgerNotFoundError,
+  ItemNotFoundError,
+} from "../../types.js";
 import type {
   ArchiveContent,
   CreateItemInit,
@@ -46,6 +54,7 @@ import type {
   FetchedMilestoneItem,
   FtsSearchHit,
   FtsSearchOpts,
+  LedgerMutationOp,
   LedgerStore,
   OnMutation,
   UpdateItemPatch,
@@ -53,17 +62,37 @@ import type {
 } from "../LedgerStore.js";
 import type { LedgerSnapshot } from "../../snapshot.js";
 import { buildSnapshot } from "../../snapshot.js";
-import { findItem, resolveMilestoneView, searchItems } from "../core.js";
+import {
+  applyCreateItem,
+  applyCreateMilestoneItem,
+  applyReopenItem,
+  applyUpdateItem,
+  applyUpdateMilestoneItem,
+  assertGoalPhasePreconditions,
+  assertMilestoneActive,
+  assertPrefixUnique,
+  assertQuestionAnswerPrecondition,
+  effectiveIdPrefix,
+  findItem,
+  resolveMilestoneView,
+  searchItems,
+  validateSchema,
+} from "../core.js";
+import type { StatusChangePrecondition } from "../core.js";
 import { materialiseFetchedLedger } from "../InMemoryLedgerStore.js";
-import { schemaCompatible, schemasEqual } from "../AbstractLedgerStore.js";
+import { schemaCompatible, schemasEqual } from "../schemaCompat.js";
 import {
   CANONICAL_LEDGERS,
+  DECISIONS_LEDGER,
+  GOALS_LEDGER,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_ACTIVE_GROUP_TITLE,
   MILESTONES_AMBIENT_ID,
   MILESTONES_LEDGER,
+  QUESTIONS_ANSWER_FIELD,
+  QUESTIONS_LEDGER,
 } from "../../constants.js";
-import { openLedgerDb } from "./connection.js";
+import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
 import { ensureSchema } from "./schema.js";
 
 export interface SqliteLedgerStoreOpts {
@@ -75,9 +104,8 @@ export interface SqliteLedgerStoreOpts {
    */
   now?: () => string;
   /**
-   * Fired AFTER every successful write (see {@link OnMutation}). Stored now
-   * for constructor parity with FsLedgerStore; wired to the mutation methods
-   * in T527.
+   * Fired AFTER every successful write (see {@link OnMutation}) — i.e. after
+   * the write transaction COMMITs. Guarded: a throw is logged, never unwinds.
    */
   onMutation?: OnMutation;
   /**
@@ -141,10 +169,16 @@ function rowToItem(row: ItemRow): Item {
   return item;
 }
 
+/**
+ * Allowed shape for a created ledger's name (same rule as
+ * AbstractLedgerStore.createLedger): path-safe, no separators.
+ */
+const LEDGER_NAME_RE = /^[A-Za-z0-9_-]+$/;
+
 export class SqliteLedgerStore implements LedgerStore {
   private readonly dbPath: string;
   private readonly now: () => string;
-  /** Wired to the mutation methods in T527; stored for constructor parity. */
+  /** Fired post-COMMIT by {@link fireMutation}; guarded. */
   protected readonly onMutation: OnMutation | null;
   private readonly onSchemaDivergence: "backup-reinit" | "abort";
   private handle: Database | null = null;
@@ -353,42 +387,130 @@ export class SqliteLedgerStore implements LedgerStore {
   }
 
   // ---------------------------------------------------------------------------
-  // Mutations — T527 (see the task-split note in the file header).
+  // Mutations (T527) — every mutation is ONE write transaction
+  // (`BEGIN IMMEDIATE` + bounded SQLITE_BUSY(-SNAPSHOT) retry — see
+  // `immediateWriteTransaction` in connection.ts) whose WRITE set is only the
+  // affected rows: the item row, the ledger counter, and the lazily-provisioned
+  // group row. There is NO serialize/rewrite funnel (K102): the domain guards
+  // are REUSED from core.ts by materialising just enough Ledger state for the
+  // pure apply* helpers, so results and error types match FsLedgerStore.
+  // The write lock held from BEGIN also subsumes the fs store's H41/D61
+  // reload-under-lock pattern: every read inside the transaction is fresh.
   // ---------------------------------------------------------------------------
 
   async updateMilestone(
-    _milestoneId: string,
-    _patch: UpdateMilestoneItemPatch,
+    milestoneId: string,
+    patch: UpdateMilestoneItemPatch,
   ): Promise<Item> {
-    throw new Error("SqliteLedgerStore.updateMilestone: implemented in T527");
+    const item = immediateWriteTransaction(this.db(), () => {
+      const shim = this.singleItemShim(MILESTONES_LEDGER, milestoneId);
+      const x = applyUpdateMilestoneItem(shim, milestoneId, patch, this.now());
+      this.persistItemRow(MILESTONES_LEDGER, x);
+      return x;
+    });
+    // Hook fires AFTER commit per the D-COHERENCE contract.
+    this.fireMutation(MILESTONES_LEDGER, "update");
+    return item;
   }
 
   async updateItem(
-    _ledgerId: string,
-    _itemId: string,
-    _patch: UpdateItemPatch,
+    ledgerId: string,
+    itemId: string,
+    patch: UpdateItemPatch,
   ): Promise<Item> {
-    throw new Error("SqliteLedgerStore.updateItem: implemented in T527");
+    const item = immediateWriteTransaction(this.db(), () => {
+      const shim = this.singleItemShim(ledgerId, itemId);
+      const precondition = this.statusChangePrecondition(ledgerId, shim, itemId, patch);
+      const x = applyUpdateItem(shim, itemId, patch, this.now(), precondition);
+      this.persistItemRow(ledgerId, x);
+      return x;
+    });
+    this.fireMutation(ledgerId, "update");
+    return item;
   }
 
   async createItem(
-    _ledgerId: string,
-    _milestoneId: string,
-    _init: CreateItemInit,
+    ledgerId: string,
+    milestoneId: string,
+    init: CreateItemInit,
   ): Promise<Item> {
-    throw new Error("SqliteLedgerStore.createItem: implemented in T527");
+    if (ledgerId === MILESTONES_LEDGER) {
+      throw new BootstrapViolationError(
+        `use createMilestone to add an item to the ${MILESTONES_LEDGER} ledger`,
+      );
+    }
+    const item = immediateWriteTransaction(this.db(), () => {
+      // Strict Q5 existence check against the milestones ledger. Ordering
+      // parity with AbstractLedgerStore.createItem: this check runs BEFORE
+      // the target-ledger existence check (loadLedger below).
+      assertMilestoneActive(this.loadLedger(MILESTONES_LEDGER), milestoneId);
+      const ledger = this.loadLedger(ledgerId);
+      return this.insertItemViaCore(ledger, init.id, (l) =>
+        applyCreateItem(l, milestoneId, init, this.now()),
+      );
+    });
+    this.fireMutation(ledgerId, "create");
+    return item;
   }
 
-  async createMilestone(_init: CreateMilestoneItemInit): Promise<Item> {
-    throw new Error("SqliteLedgerStore.createMilestone: implemented in T527");
+  async createMilestone(init: CreateMilestoneItemInit): Promise<Item> {
+    const item = immediateWriteTransaction(this.db(), () => {
+      const ledger = this.loadLedger(MILESTONES_LEDGER);
+      return this.insertItemViaCore(ledger, init.id, (l) =>
+        applyCreateMilestoneItem(l, init, this.now()),
+      );
+    });
+    this.fireMutation(MILESTONES_LEDGER, "create");
+    return item;
   }
 
-  async createLedger(_name: string, _schema: LedgerSchema): Promise<FetchedLedger> {
-    throw new Error("SqliteLedgerStore.createLedger: implemented in T527");
+  async createLedger(name: string, schema: LedgerSchema): Promise<FetchedLedger> {
+    this.assertInit();
+    if (name === MILESTONES_LEDGER) {
+      throw new BootstrapViolationError(
+        `ledger name "${MILESTONES_LEDGER}" is reserved`,
+      );
+    }
+    if (!LEDGER_NAME_RE.test(name)) {
+      throw new LedgerError(
+        `invalid ledger name "${name}": only A-Za-z0-9_- are allowed`,
+      );
+    }
+    validateSchema(schema);
+    const view = immediateWriteTransaction(this.db(), () => {
+      const rows = this.db()
+        .query("SELECT name, schema_json FROM ledgers")
+        .all() as Array<{ name: string; schema_json: string }>;
+      if (rows.some((r) => r.name === name)) {
+        throw new DuplicateIdError("ledger", name);
+      }
+      // Prefix uniqueness gives global item-id uniqueness (Q-CANL-8). The
+      // `ledgers` table IS this backend's registry, read under the write lock.
+      assertPrefixUnique(
+        name,
+        schema,
+        rows.map((r) => ({ name: r.name, schema: JSON.parse(r.schema_json) as LedgerSchema })),
+      );
+      this.db()
+        .query(
+          "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
+        )
+        .run(name, JSON.stringify(schema));
+      return this.fetchView(name);
+    });
+    this.fireMutation(name, "create");
+    return view;
   }
 
-  async reopenItem(_ledgerId: string, _itemId: string, _toStatus: string): Promise<Item> {
-    throw new Error("SqliteLedgerStore.reopenItem: implemented in T527");
+  async reopenItem(ledgerId: string, itemId: string, toStatus: string): Promise<Item> {
+    const item = immediateWriteTransaction(this.db(), () => {
+      const shim = this.singleItemShim(ledgerId, itemId);
+      const x = applyReopenItem(shim, itemId, toStatus, this.now());
+      this.persistItemRow(ledgerId, x);
+      return x;
+    });
+    this.fireMutation(ledgerId, "update");
+    return item;
   }
 
   async unarchiveItem(
@@ -401,6 +523,219 @@ export class SqliteLedgerStore implements LedgerStore {
 
   async archiveMilestone(_milestoneId: string, _summary: string): Promise<ArchivePointer> {
     throw new Error("SqliteLedgerStore.archiveMilestone: implemented in T529");
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internals — write path (T527)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Post-commit mutation hook (parity with AbstractLedgerStore.fireMutation):
+   * the user hook is GUARDED — a throw is logged to stderr and cannot unwind
+   * the already-committed write. Fired strictly AFTER the transaction COMMITs.
+   *
+   * TODO(T528): update the derived LedgerSearchIndex here (the post-commit
+   * index refresh) once it exists — this is the designated hook point.
+   */
+  private fireMutation(ledgerId: string, op: LedgerMutationOp): void {
+    if (this.onMutation !== null) {
+      try {
+        this.onMutation(ledgerId, op);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `LedgerStore: onMutation hook threw for ${ledgerId} (${op}): ${msg}\n`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Materialise a MINIMAL `Ledger` for the single-item core.ts helpers
+   * (applyUpdateItem / applyUpdateMilestoneItem / applyReopenItem): the real
+   * schema + counters plus AT MOST the one target item in a bare group. When
+   * the item row is absent the shim carries no items, so `findItem` inside
+   * the helper throws the same `ItemNotFoundError` the fs store surfaces.
+   * Throws `LedgerNotFoundError` first when the ledger row is absent (parity
+   * with AbstractLedgerStore's withLock guard). Must run inside a write
+   * transaction — the caller persists the mutated item via
+   * {@link persistItemRow}.
+   */
+  private singleItemShim(ledgerId: string, itemId: string): Ledger {
+    const lrow = this.db()
+      .query(
+        "SELECT name, schema_json, milestone_counter, item_counter FROM ledgers WHERE name = ?",
+      )
+      .get(ledgerId) as LedgerRow | null;
+    if (lrow === null) throw new LedgerNotFoundError(ledgerId);
+    const row = this.db()
+      .query(
+        "SELECT id, milestone_id, status, fields_json, created_at, updated_at, author, session FROM items WHERE ledger = ? AND id = ?",
+      )
+      .get(ledgerId, itemId) as ItemRow | null;
+    return {
+      id: ledgerId,
+      schema: JSON.parse(lrow.schema_json) as LedgerSchema,
+      counters: { milestone: lrow.milestone_counter, item: lrow.item_counter },
+      milestones:
+        row === null
+          ? []
+          : [{ id: row.milestone_id, title: "", description: "", items: [rowToItem(row)] }],
+      archivePointers: [],
+    };
+  }
+
+  /** Write an updated item's mutable columns back to its row. */
+  private persistItemRow(ledgerId: string, item: Item): void {
+    this.db()
+      .query(
+        "UPDATE items SET status = ?, fields_json = ?, updated_at = ?, author = ?, session = ? WHERE ledger = ? AND id = ?",
+      )
+      .run(
+        item.status,
+        JSON.stringify(item.fields),
+        item.updatedAt,
+        item.author ?? null,
+        item.session ?? null,
+        ledgerId,
+        item.id,
+      );
+  }
+
+  /**
+   * Build the optional `StatusChangePrecondition` for an `updateItem` against
+   * `ledgerId` (parity with AbstractLedgerStore.statusChangePrecondition; the
+   * rule logic lives in core.ts). The cross-ledger inputs are read INSIDE the
+   * write transaction, so the F2 goal-phase check sees the same committed
+   * state the write will serialize against.
+   */
+  private statusChangePrecondition(
+    ledgerId: string,
+    ledger: Ledger,
+    itemId: string,
+    patch: UpdateItemPatch,
+  ): StatusChangePrecondition | undefined {
+    if (ledgerId === GOALS_LEDGER) {
+      return (from: string, to: string): void =>
+        assertGoalPhasePreconditions(
+          itemId,
+          from,
+          to,
+          this.loadLedgerIfExists(QUESTIONS_LEDGER),
+          this.loadLedgerIfExists(DECISIONS_LEDGER),
+        );
+    }
+    if (ledgerId === QUESTIONS_LEDGER) {
+      return (from: string, to: string): void => {
+        const { item } = findItem(ledger, itemId);
+        const effectiveAnswer =
+          patch.fields?.[QUESTIONS_ANSWER_FIELD] ?? item.fields[QUESTIONS_ANSWER_FIELD];
+        assertQuestionAnswerPrecondition(itemId, from, to, effectiveAnswer);
+      };
+    }
+    return undefined;
+  }
+
+  /** {@link loadLedger}, but absent ledgers yield `undefined` (F2 inputs). */
+  private loadLedgerIfExists(name: string): Ledger | undefined {
+    try {
+      return this.loadLedger(name);
+    } catch (err: unknown) {
+      if (err instanceof LedgerNotFoundError) return undefined;
+      throw err;
+    }
+  }
+
+  /**
+   * Shared createItem/createMilestone write path. Must run inside a write
+   * transaction, with `ledger` freshly materialised in that transaction.
+   *
+   * Auto-id path: the id is allocated FIRST via
+   * `UPDATE ledgers SET item_counter = item_counter + 1 … RETURNING`
+   * ({@link allocateItemId}) — the K102 replacement for the fs store's
+   * H41/D61 reload-under-lock counter refresh — then the pure core.ts helper
+   * re-derives the SAME id from `counter - 1` while running the FULL guard
+   * set (status/fields/prefix/duplicate checks, lazy group materialisation,
+   * ledger-specific invariants). Any divergence is an invariant violation and
+   * throws (rolling the transaction back).
+   *
+   * Write set: the (possibly new) group row, the item row, and — on the
+   * caller-supplied-id path, where core.ts may bump the counter past the
+   * supplied numeric id — the counter.
+   */
+  private insertItemViaCore(
+    ledger: Ledger,
+    suppliedId: string | undefined,
+    apply: (ledger: Ledger) => Item,
+  ): Item {
+    const db = this.db();
+    const groupsBefore = new Set(ledger.milestones.map((m) => m.id));
+    const counterBefore = ledger.counters.item;
+    let expected: { id: string; counter: number } | null = null;
+    if (suppliedId === undefined) {
+      expected = this.allocateItemId(ledger.id, effectiveIdPrefix(ledger.id, ledger.schema));
+      // applyCreateItem pre-increments, so hand it the predecessor value.
+      ledger.counters.item = expected.counter - 1;
+    }
+    const item = apply(ledger);
+    if (
+      expected !== null &&
+      (item.id !== expected.id || ledger.counters.item !== expected.counter)
+    ) {
+      throw new LedgerError(
+        `SqliteLedgerStore: id allocation diverged (sql ${expected.id}/${expected.counter}, core ${item.id}/${ledger.counters.item})`,
+      );
+    }
+    // Persist the lazily-materialised depth-2 group BEFORE the item row, so
+    // loadLedger's orphan-item fail-fast invariant always holds.
+    if (!groupsBefore.has(item.milestoneId)) {
+      db.query("INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, '', '')").run(
+        ledger.id,
+        item.milestoneId,
+      );
+    }
+    db.query(
+      `INSERT INTO items (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      ledger.id,
+      item.id,
+      item.milestoneId,
+      item.status,
+      JSON.stringify(item.fields),
+      item.createdAt,
+      item.updatedAt,
+      item.author ?? null,
+      item.session ?? null,
+    );
+    if (expected === null && ledger.counters.item !== counterBefore) {
+      db.query("UPDATE ledgers SET item_counter = ? WHERE name = ?").run(
+        ledger.counters.item,
+        ledger.id,
+      );
+    }
+    return item;
+  }
+
+  /**
+   * Allocate the next auto item id for `ledgerId`: an atomic
+   * `UPDATE … RETURNING` counter bump inside the surrounding write
+   * transaction. Mirrors applyCreateItem's dup-avoid loop: keeps bumping past
+   * numbers parked on by caller-supplied ids (each skipped bump persists,
+   * exactly like the fs counter semantics).
+   */
+  private allocateItemId(ledgerId: string, prefix: string): { id: string; counter: number } {
+    const db = this.db();
+    const bump = db.query(
+      "UPDATE ledgers SET item_counter = item_counter + 1 WHERE name = ? RETURNING item_counter",
+    );
+    const exists = db.query("SELECT 1 FROM items WHERE ledger = ? AND id = ?");
+    for (;;) {
+      const row = bump.get(ledgerId) as { item_counter: number } | null;
+      if (row === null) throw new LedgerNotFoundError(ledgerId);
+      const id = prefix + String(row.item_counter);
+      if (exists.get(ledgerId, id) === null) return { id, counter: row.item_counter };
+    }
   }
 
   // ---------------------------------------------------------------------------

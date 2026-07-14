@@ -355,18 +355,10 @@ describe("dispose() (acceptance d)", () => {
 });
 
 describe("not-yet-owned surfaces name their owning task", () => {
-  test("mutations → T527, ftsSearch → T528, archives → T529", async () => {
+  test("ftsSearch → T528, archives → T529 (mutations landed in T527)", async () => {
     const store = new SqliteLedgerStore({ dbPath: await freshDbPath(), now });
     await store.init();
     try {
-      await expect(store.createItem("tasks", "M1", { status: "planned", fields: {} })).rejects.toThrow(
-        /T527/,
-      );
-      await expect(store.updateItem("tasks", "T1", {})).rejects.toThrow(/T527/);
-      await expect(store.createMilestone({ title: "x" })).rejects.toThrow(/T527/);
-      await expect(store.updateMilestone("M1", {})).rejects.toThrow(/T527/);
-      await expect(store.createLedger("x", TASKS_SCHEMA)).rejects.toThrow(/T527/);
-      await expect(store.reopenItem("tasks", "T1", "planned")).rejects.toThrow(/T527/);
       await expect(store.ftsSearch("anything")).rejects.toThrow(/T528/);
       await expect(store.fetchArchive("tasks", "M1")).rejects.toThrow(/T529/);
       await expect(store.archiveMilestone("M1", "s")).rejects.toThrow(/T529/);
