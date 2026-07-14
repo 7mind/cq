@@ -95,6 +95,7 @@ in
       # self-update past the nix pin.
       package = pkgs.symlinkJoin {
         name = "claude-code-no-autoupdate";
+        inherit (claudePkg) version;
         paths = [ claudePkg ];
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postBuild = ''
