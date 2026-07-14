@@ -21,6 +21,7 @@
 
 import { promises as nodeFs } from "node:fs";
 import * as path from "node:path";
+import { loadConfig } from "@cq/config";
 import {
   resolveLedgerBackend,
   redactSecrets,
@@ -30,6 +31,8 @@ import {
   StaleRefError,
   LEDGER_STORAGE_DIRNAME,
   LEDGER_LOGS_DIRNAME,
+  resolveProjectKey,
+  resolveLogsDir,
   type TreeEntry,
 } from "@cq/ledger";
 
@@ -203,6 +206,14 @@ export function parseLogPutArgs(cwd: string, argv: readonly string[]): LogPutArg
  * orphan ref `refs/heads/<branch>` under a BOUNDED StaleRefError-retry loop
  * (this runs OUTSIDE the server's per-ledger lock).
  *
+ * T499 implements the xdg backend write path: same redaction + strict-JSONL
+ * validation, then an atomic write under the project's out-of-tree logs area
+ * (`resolveLogsDir(projectKey)`, T495 layout) — the sibling of the xdg
+ * primary store's `state/` sub-directory, keyed by the SAME `projectKey` (a
+ * committed `[ledger].projectId` override, else the repo's first commit SHA;
+ * see projectKey.ts) so every worktree/clone of one repo lands on the same
+ * out-of-tree logs area.
+ *
  * `gitFactory` is an injection seam for the git-object branch: tests pass a
  * factory that wraps a {@link GitPlumbing} bound to a throwaway repo (and may
  * simulate a {@link StaleRefError} on the first CAS) without a cq.toml-resolved
@@ -242,6 +253,10 @@ export async function runLogPut(
 
   if (backend === "git-object") {
     return runLogPutGitObject(args, io, redacted, branch, gitFactory);
+  }
+
+  if (backend === "xdg") {
+    return runLogPutXdg(args, io, redacted);
   }
 
   // backend === 'fs' (the historical default) — write under <cwd>/.cq/<dest>.
@@ -335,4 +350,51 @@ async function runLogPutGitObject(
       `${MAX_CAS_ATTEMPTS} CAS attempts${lastErr ? ` (last: ${lastErr.message})` : ""}`,
   );
   return { exitCode: 1 };
+}
+
+/** `logs/` prefix stripped from `args.dest` before joining under the resolved logs dir. */
+const LOGS_PREFIX = `${LEDGER_LOGS_DIRNAME}/`;
+
+/**
+ * The xdg backend write path (T499). Resolves the SAME `projectKey` the xdg
+ * primary store keys off (`[ledger].projectId` override, else the repo's
+ * first commit SHA — see projectKey.ts) so `cq log put` lands in the same
+ * out-of-tree logs area regardless of which worktree/clone it runs from, then
+ * atomically writes the (already redacted + validated) `content` under
+ * `resolveLogsDir(projectKey)/<dest with the leading "logs/" stripped>` —
+ * mirroring the fs branch's `<root>/.cq/<dest>` layout, just rooted at the
+ * out-of-tree logs dir instead of `<root>/.cq`.
+ *
+ * `resolveProjectKey` lets {@link ProjectKeyResolutionError} propagate as the
+ * fail-fast (a shallow clone or a non-git/no-commit root has no stable
+ * identity to key the logs area off — same rationale as createLedgerStore's
+ * xdg branch, Q246).
+ */
+async function runLogPutXdg(
+  args: LogPutArgs,
+  io: LogPutIo,
+  content: string,
+): Promise<LogPutOutcome> {
+  const config = loadConfig(args.cwd);
+  const projectId = config?.ledger?.projectId ?? null;
+  const projectKey = await resolveProjectKey({ repoRoot: args.cwd, projectId });
+  const logsDir = resolveLogsDir(projectKey);
+
+  // args.dest is validated (validateLogDest) to start with "logs/".
+  const rel = args.dest.slice(LOGS_PREFIX.length);
+  const destAbs = path.join(logsDir, rel);
+
+  // Defense-in-depth: ensure the resolved path stays under the out-of-tree
+  // logs dir even if validateLogDest was somehow bypassed.
+  const resolved = path.resolve(destAbs);
+  if (!resolved.startsWith(logsDir + path.sep) && resolved !== logsDir) {
+    io.err(
+      `cq log put: resolved destination "${resolved}" escapes the out-of-tree logs dir ${logsDir} — rejected`,
+    );
+    return { exitCode: 1 };
+  }
+
+  await atomicWrite(destAbs, content);
+  io.out(destAbs);
+  return { exitCode: 0 };
 }

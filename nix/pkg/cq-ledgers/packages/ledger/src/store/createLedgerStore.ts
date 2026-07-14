@@ -38,7 +38,7 @@ import { ensureGitBackendGitignore } from "./gitBackendGitignore.js";
 import { SqliteLedgerStore } from "./sqlite/SqliteLedgerStore.js";
 import { dataVersion, openLedgerDb } from "./sqlite/connection.js";
 import { resolveProjectKey } from "../projectKey.js";
-import { resolveStateDir, ensureStateDir } from "../stateDir.js";
+import { resolveStateDir, resolveLogsDir, ensureStateDir } from "../stateDir.js";
 
 /** The xdg backend's database filename within `<stateDir>` (T530). */
 const XDG_DB_FILENAME = "ledger.db";
@@ -160,7 +160,10 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
     const stateDir = resolveStateDir(projectKey);
     await ensureStateDir(stateDir);
     const dbPath = join(stateDir, XDG_DB_FILENAME);
-    const store = new SqliteLedgerStore({ dbPath });
+    // Sibling out-of-tree logs area (T499), same projectKey — so `read_log`
+    // resolves the SAME location `cq log put`'s xdg branch writes to.
+    const logsDir = resolveLogsDir(projectKey);
+    const store = new SqliteLedgerStore({ dbPath, logsDir });
     await store.init();
     return { store, backend, branch, dbPath };
   }

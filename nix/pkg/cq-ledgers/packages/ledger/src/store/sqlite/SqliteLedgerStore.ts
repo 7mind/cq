@@ -46,6 +46,7 @@
  */
 
 import * as path from "node:path";
+import { promises as fs } from "node:fs";
 import type { Database } from "bun:sqlite";
 import type {
   ArchivePointer,
@@ -110,13 +111,29 @@ import {
   MILESTONES_LEDGER,
   QUESTIONS_ANSWER_FIELD,
   QUESTIONS_LEDGER,
+  LEDGER_LOGS_STRIP_RE,
+  LEDGER_LOGS_RELATIVE_PREFIX,
 } from "../../constants.js";
 import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
 import { ensureSchema } from "./schema.js";
+import {
+  MAX_READ_LOG_BYTES,
+  ReadLogNotImplementedError,
+  type ReadLogResult,
+} from "../../mcp/readLog.js";
 
 export interface SqliteLedgerStoreOpts {
   /** Concrete ledger database file path (created on init if absent). */
   dbPath: string;
+  /**
+   * The out-of-tree logs directory (T499) this store's `readLog` capability
+   * confines reads to — `resolveLogsDir(projectKey)`, the sibling of the
+   * `state/` sub-directory `dbPath` lives under (same `projectKey`, T495
+   * layout). Optional: when absent, `readLog` throws {@link
+   * ReadLogNotImplementedError}, mirroring the in-memory store's documented
+   * behaviour (e.g. a test constructing a bare store with no logs area).
+   */
+  logsDir?: string;
   /**
    * Returns an ISO 8601 UTC timestamp. Defaults to
    * `() => new Date().toISOString()`.
@@ -196,6 +213,7 @@ const LEDGER_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
 export class SqliteLedgerStore implements LedgerStore {
   private readonly dbPath: string;
+  private readonly logsDir: string | undefined;
   private readonly now: () => string;
   /** Fired post-COMMIT by {@link fireMutation}; guarded. */
   protected readonly onMutation: OnMutation | null;
@@ -214,6 +232,7 @@ export class SqliteLedgerStore implements LedgerStore {
 
   constructor(opts: SqliteLedgerStoreOpts) {
     this.dbPath = opts.dbPath;
+    this.logsDir = opts.logsDir;
     this.now = opts.now ?? (() => new Date().toISOString());
     this.onMutation = opts.onMutation ?? null;
     this.onSchemaDivergence = opts.onSchemaDivergence ?? "backup-reinit";
@@ -379,6 +398,75 @@ export class SqliteLedgerStore implements LedgerStore {
       this.handle = null;
     }
     this.initialised = false;
+  }
+
+  /**
+   * Bounded, root-confined read of a log file under the out-of-tree logs area
+   * (T499) — the xdg backend's `read_log` capability, the analogue of {@link
+   * FsLedgerStore.readLog} (T147/Q87) rooted at `this.logsDir`
+   * (`resolveLogsDir(projectKey)`, T495 layout) instead of `<root>/.cq/logs`.
+   * Mirrors the FS capability's confinement + TOCTOU defences EXACTLY (D26/
+   * D28): absolute paths rejected; a leading `.cq/logs/` prefix stripped
+   * (sessionLogs/rawLogs store that repo-relative form regardless of backend);
+   * lexical + realpath containment against `..`/symlink escape; oversized
+   * content truncated to {@link MAX_READ_LOG_BYTES} and flagged
+   * `truncated: true`.
+   *
+   * Throws {@link ReadLogNotImplementedError} when this store was constructed
+   * with no `logsDir` (mirrors the in-memory store's documented behaviour).
+   */
+  async readLog(relPath: string): Promise<ReadLogResult> {
+    if (this.logsDir === undefined) {
+      throw new ReadLogNotImplementedError();
+    }
+    const logsDir = this.logsDir;
+
+    if (path.isAbsolute(relPath)) {
+      throw new LedgerError(`read_log: absolute paths are not allowed: ${relPath}`);
+    }
+    // sessionLogs/rawLogs store REPO-relative paths (".cq/logs/<file>")
+    // regardless of backend; strip a leading .cq/logs/ so it is not doubled
+    // into <logsDir>/.cq/logs/<file>. A path already relative to logsDir
+    // ("<file>") is unaffected.
+    const rel = relPath.replace(LEDGER_LOGS_STRIP_RE, "");
+    const resolved = path.resolve(logsDir, rel);
+    if (resolved !== logsDir && !resolved.startsWith(logsDir + path.sep)) {
+      throw new LedgerError(
+        `read_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root: ${relPath}`,
+      );
+    }
+
+    // Re-assert containment after symlink resolution (D26): a symlink whose
+    // lexical path is inside logsDir may point outside the confinement root.
+    // D28: hoist `real` outside the try block so the subsequent readFile uses
+    // the validated canonical path, closing the check-then-use TOCTOU.
+    let real: string | undefined;
+    try {
+      real = await fs.realpath(resolved);
+      let realLogsDir: string;
+      try {
+        realLogsDir = await fs.realpath(logsDir);
+      } catch {
+        // logsDir doesn't exist yet — a missing file read will ENOENT below.
+        realLogsDir = logsDir;
+      }
+      if (real !== realLogsDir && !real.startsWith(realLogsDir + path.sep)) {
+        throw new LedgerError(
+          `read_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root: ${relPath}`,
+        );
+      }
+    } catch (err: unknown) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") throw err;
+      // ENOENT: file doesn't exist — fall through so readFile surfaces it.
+    }
+
+    const buf = await fs.readFile(real ?? resolved);
+    if (buf.byteLength > MAX_READ_LOG_BYTES) {
+      const content = buf.subarray(0, MAX_READ_LOG_BYTES).toString("utf8");
+      return { path: relPath, content, truncated: true };
+    }
+    return { path: relPath, content: buf.toString("utf8") };
   }
 
   // ---------------------------------------------------------------------------
