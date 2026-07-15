@@ -92,13 +92,7 @@ export type { ResolvedLedgerStore, XdgCoherenceWatcher } from "./store/createLed
 export { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 export type { InMemoryLedgerStoreOpts } from "./store/InMemoryLedgerStore.js";
 export { validateSchema } from "./store/core.js";
-export {
-  computeLedgerSummaries,
-  computeCompletedCount,
-  computeProgressTotal,
-  QUESTIONS_ANSWERED_STATUS,
-  QUESTIONS_WITHDRAWN_STATUS,
-} from "./summaries.js";
+export { computeLedgerSummaries } from "./summaries.js";
 export type { LedgerSummariesResult } from "./summaries.js";
 export { derivePredicates } from "./store/predicates.js";
 export type { DerivedPredicates, PredicateVerdict } from "./store/predicates.js";

@@ -16,13 +16,13 @@ import { QUESTIONS_LEDGER } from "./constants.js";
  * the completion logic is expressed once (mirror of ANSWERED_STATUS in the
  * web client's status.ts, but server-side where we have the schema).
  */
-export const QUESTIONS_ANSWERED_STATUS = "answered";
+const QUESTIONS_ANSWERED_STATUS = "answered";
 
 /**
  * The withdrawn status for the questions ledger. Items in this terminal status
  * do not count toward the progress denominator (mirror of QUESTIONS_ANSWERED_STATUS).
  */
-export const QUESTIONS_WITHDRAWN_STATUS = "withdrawn";
+const QUESTIONS_WITHDRAWN_STATUS = "withdrawn";
 
 /**
  * Compute the number of active items that count as COMPLETED for this
@@ -31,7 +31,7 @@ export const QUESTIONS_WITHDRAWN_STATUS = "withdrawn";
  *    "withdrawn" is also terminal but does not count as a positive completion).
  *  - every other ledger: items whose status is in schema.terminalStatuses.
  */
-export function computeCompletedCount(
+function computeCompletedCount(
   ledgerName: string,
   sc: Record<string, number>,
   schema: LedgerSchema,
@@ -52,7 +52,7 @@ export function computeCompletedCount(
  *  - questions ledger: open + answered (excludes the terminal `withdrawn`).
  *  - every other ledger: itemCount (all active items).
  */
-export function computeProgressTotal(
+function computeProgressTotal(
   ledgerName: string,
   sc: Record<string, number>,
   _schema: LedgerSchema,
