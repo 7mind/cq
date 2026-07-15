@@ -48,6 +48,7 @@ import { CQ_TOML_TEMPLATE } from "./cqTomlTemplate.js";
 import { runMigrate } from "./migrate.js";
 import { runAdvanceGate } from "./advanceGate.js";
 import { runPredicates } from "./predicates.js";
+import { runCounts } from "./counts.js";
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
 
 /**
@@ -63,7 +64,7 @@ export { type ConfirmIo, type ConfirmOutcome, defaultConfirmIo, confirmDestructi
 export const EXIT_USAGE = 2;
 
 /** The subcommands the dispatcher routes to. */
-export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "log", "backup", "restore", "migrate"] as const;
+export const SUBCOMMANDS = ["init", "reset", "erase", "move-ledger", "advance-gate", "predicates", "counts", "log", "backup", "restore", "migrate"] as const;
 export type Subcommand = (typeof SUBCOMMANDS)[number];
 
 function isSubcommand(s: string): s is Subcommand {
@@ -150,6 +151,10 @@ export const USAGE = [
   "  predicates  [--cwd <path>]                      emit the derived flow predicates JSON",
   "                                                  ({ predicates: { pInvestigate, pSeed, pPlan,",
   "                                                  pImplement, openQuestionGate, belowFloor } })",
+  "                                                  to stdout UNCONDITIONALLY;",
+  "                                                  no session/marker, always exit 0.",
+  "  counts      [--cwd <path>]                      emit the ledger-summaries JSON",
+  "                                                  ({ ledgers, counts, ledgerSummaries })",
   "                                                  to stdout UNCONDITIONALLY;",
   "                                                  no session/marker, always exit 0.",
   "  log put <src>|--stdin --dest logs/<rel> [--cwd <path>]",
@@ -566,6 +571,20 @@ export async function runPredicatesCmd(
 }
 
 /**
+ * `cq counts` (T533 / G76): a NATIVE subcommand emitting the ledger-summaries
+ * JSON to stdout UNCONDITIONALLY — no session resolution, no marker check,
+ * always exit 0. The derivation lives in ./counts.ts; this thin wrapper
+ * bridges {@link SubcommandArgs} to its {@link CountsArgs} and threads the
+ * dispatcher IO (out/err).
+ */
+export async function runCountsCmd(
+  args: SubcommandArgs,
+  io: DispatchIo,
+): Promise<SubcommandOutcome> {
+  return runCounts({ cwd: args.cwd }, { out: io.out, err: io.err });
+}
+
+/**
  * `cq log` (T406 / G49): a NATIVE namespace subcommand whose first positional
  * token is a sub-subcommand (`put`). The only recognised sub-subcommand is
  * `put`; anything else prints a usage error and exits {@link EXIT_USAGE}.
@@ -829,6 +848,7 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
   "move-ledger": runMoveLedgerCmd,
   "advance-gate": runAdvanceGateCmd,
   predicates: runPredicatesCmd,
+  counts: runCountsCmd,
   // `log` is a namespace subcommand: the handler placeholder is never invoked
   // directly — the dispatch() function intercepts it and delegates to runLogCmd
   // with the raw post-"log" argv.  This entry must exist so isSubcommand() and
