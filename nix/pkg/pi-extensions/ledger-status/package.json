@@ -1,0 +1,14 @@
+{
+  "name": "@cq/ledger-status",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Pure ledger-status counts/formatting logic (standalone, NOT part of the cq-ledgers bun workspace)",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}
