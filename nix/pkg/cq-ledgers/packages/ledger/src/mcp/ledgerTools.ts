@@ -25,9 +25,9 @@ import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import type { LedgerStore, CreateItemInit, UpdateItemPatch } from "../store/LedgerStore.js";
 import { QUERY_LANGUAGE_HELP } from "../search/query.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
-import { QUESTIONS_LEDGER } from "../constants.js";
 import { projectCompact, paginate } from "../projection.js";
 import { derivePredicates } from "../store/predicates.js";
+import { computeLedgerSummaries } from "../summaries.js";
 import {
   ReadLogNotImplementedError,
   type ReadLogCapability,
@@ -59,59 +59,6 @@ function jsonResult(value: unknown): {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value) }],
   };
-}
-
-/**
- * The answered status for the questions ledger. Kept as a local constant so
- * the completion logic is expressed once (mirror of ANSWERED_STATUS in the
- * web client's status.ts, but server-side where we have the schema).
- */
-const QUESTIONS_ANSWERED_STATUS = "answered";
-
-/**
- * Compute the number of active items that count as COMPLETED for this
- * ledger's progress bar, classified against its OWN schema:
- *  - questions ledger: only items in the "answered" status (NOT all terminals;
- *    "withdrawn" is also terminal but does not count as a positive completion).
- *  - every other ledger: items whose status is in schema.terminalStatuses.
- */
-function computeCompletedCount(
-  ledgerName: string,
-  sc: Record<string, number>,
-  schema: LedgerSchema,
-): number {
-  if (ledgerName === QUESTIONS_LEDGER) {
-    return sc[QUESTIONS_ANSWERED_STATUS] ?? 0;
-  }
-  let total = 0;
-  for (const status of schema.terminalStatuses) {
-    total += sc[status] ?? 0;
-  }
-  return total;
-}
-
-/**
- * The withdrawn status for the questions ledger. Items in this terminal status
- * do not count toward the progress denominator (mirror of QUESTIONS_ANSWERED_STATUS).
- */
-const QUESTIONS_WITHDRAWN_STATUS = "withdrawn";
-
-/**
- * Compute the denominator for this ledger's progress bar, classified against
- * its OWN schema:
- *  - questions ledger: open + answered (excludes the terminal `withdrawn`).
- *  - every other ledger: itemCount (all active items).
- */
-function computeProgressTotal(
-  ledgerName: string,
-  sc: Record<string, number>,
-  _schema: LedgerSchema,
-  itemCount: number,
-): number {
-  if (ledgerName === QUESTIONS_LEDGER) {
-    return itemCount - (sc[QUESTIONS_WITHDRAWN_STATUS] ?? 0);
-  }
-  return itemCount;
 }
 
 const FIELD_TYPE_VALUES = ["string", "string[]", "id", "id[]", "timestamp"] as const;
@@ -213,36 +160,7 @@ export function createLedgerMcpTools(
     "enumerate_ledgers",
     "List all known ledger names, plus a `counts` map of each ledger's active-item count.",
     {} as Record<string, never>,
-    async () => {
-      const ledgers = store.enumerate();
-      const counts: Record<string, number> = {};
-      const statusCounts: Record<string, Record<string, number>> = {};
-      const completedCounts: Record<string, number> = {};
-      const progressTotals: Record<string, number> = {};
-      for (const name of ledgers) {
-        const fetched = store.fetch(name);
-        const sc: Record<string, number> = {};
-        let total = 0;
-        for (const group of fetched.milestones) {
-          for (const item of group.items) {
-            sc[item.status] = (sc[item.status] ?? 0) + 1;
-            total++;
-          }
-        }
-        counts[name] = total;
-        statusCounts[name] = sc;
-        completedCounts[name] = computeCompletedCount(name, sc, fetched.schema);
-        progressTotals[name] = computeProgressTotal(name, sc, fetched.schema, total);
-      }
-      const ledgerSummaries = ledgers.map((name) => ({
-        name,
-        itemCount: counts[name] ?? 0,
-        statusCounts: statusCounts[name] ?? {},
-        completedCount: completedCounts[name] ?? 0,
-        progressTotal: progressTotals[name] ?? 0,
-      }));
-      return jsonResult({ ledgers, counts, ledgerSummaries });
-    },
+    async () => jsonResult(computeLedgerSummaries(store)),
   );
 
   const fetchLedger = tool(
