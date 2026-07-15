@@ -27,7 +27,7 @@ under `nix/` (see `nix/hm/dev-llm.nix`, `nix/pkg/{yolo,codex,claude-code,…}`).
   This holds in *embedded* mode too (TUI/web with no `--mcp-url`): the frontend
   co-locates the MCP server in its own process (in-memory transport for the TUI,
   co-hosted `/mcp` + `/ws` for the web) and still talks to it over MCP — it does
-  not read `.cq/` directly.
+  not read the ledger store directly.
 - `--cwd` for `cq mcp` must be absolute (or relative, resolved vs CWD);
   it defaults to the process CWD.
 - Tests: `ink-testing-library` for the TUI, happy-dom for the web; controlled
@@ -55,7 +55,8 @@ work, instead of inline TODOs or scratch files.
 - **On completion**: set items terminal, then `archive_milestone` once every
   item under the milestone is terminal.
 - **Detail goes in fields** (markdown is supported), not the headline. Don't
-  hand-edit `.cq/*.md` — go through the tools so counters/schema stay valid.
+  hand-edit the store (the out-of-tree bun:sqlite `ledger.db`) — go through the
+  tools so counters/schema stay valid.
 - **Provenance**: on every `create_item` / `update_item`, pass `author` (your
   model class, e.g. `opus-4.8[1m]`) and `session` (`$CLAUDE_CODE_SESSION_ID`)
   so the ledger records who wrote each item.
@@ -63,22 +64,25 @@ work, instead of inline TODOs or scratch files.
 
 ### Session and raw-log artifacts
 
-Ledger workflows (plan, investigate, implement) capture and commit raw subagent
-transcripts as ledger artifacts:
+Ledger workflows (plan, investigate, implement) capture raw subagent transcripts
+as log artifacts in the out-of-tree `xdg` primary store:
 
 - **Artifact formats**: Claude native Agent subagents (plan/investigate/implement)
-  write strict JSONL (`.cq/logs/raw/<timestamp>-<id>.jsonl`); pi shellout
-  subagents (`pi:*`) write verbatim stdout as markdown (`.cq/logs/raw/<timestamp>-pi-<alias>.md`).
-- **Write path**: ALL logs route through `cq log put` (never direct `Write` to
-  `.cq/logs/`). The CLI handles redaction (best-effort / lossy per Q223),
-  strict JSONL validation, and backend routing:
-  - **Git-object backend**: commits raw JSONL to an orphan ref (`.cq/logs` is
-    gitignored on the working branch); `cq log put` manages the CAS.
-  - **Filesystem backend**: writes to `.cq/logs/` (tracked and committed in the
-    main ledger git commit).
-- **Immutability & no retention**: committed bytes are effectively **irreversible
-  per-byte** — removing them requires a full git history rewrite. There is **no
-  retention policy**; logs live as committed artifacts indefinitely.
+  write strict JSONL (`logs/raw/<timestamp>-<id>.jsonl`); pi shellout subagents
+  (`pi:*`) write verbatim stdout as markdown (`logs/raw/<timestamp>-pi-<alias>.md`).
+- **Write path**: ALL logs route through `cq log put` (never a direct `Write`).
+  The CLI handles redaction (best-effort / lossy per Q223) + strict JSONL
+  validation, then writes into the primary's out-of-tree logs area —
+  `$XDG_STATE_HOME/cq/projects/<projectKey>/logs/` per the xdg layout (read back
+  via the `read_log` MCP capability).
+- **Not committed to git by default (G67)**: under the `xdg` backend the logs
+  live out of tree, NOT in the working tree — nothing is committed to git unless
+  the optional human-readable backup is enabled (`[ledger].backup = "in-tree"` or
+  `"orphan-branch"`; default `"none"`), which `cq backup` / the debounced
+  exporter mirror into a `.cq/`-layout dump (logs included) that `cq restore`
+  can re-import. THIS repo runs `backup = "none"` (decision K109): logs are
+  out-of-tree only. There is no retention policy — they live indefinitely as
+  out-of-tree files.
 - **Viewing**: raw JSONL logs are viewable in the web UI's conversation viewer
   (structured, collapsible turns) via the paired raw-log toggle. Markdown logs
   render as plain text in the summary view.
