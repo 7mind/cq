@@ -158,6 +158,11 @@ let
   # that directory derivation.
   autoDriverDir = ../pkg/pi-extensions/auto-driver;
 
+  # Ledger-status extension: same store-path-directory pattern as
+  # autoDriverDir above (index.ts resolves sibling imports ./counts etc. at
+  # runtime, so the whole directory is copied to the store).
+  ledgerStatusDir = ../pkg/pi-extensions/ledger-status;
+
   # Wiring common to every skill-aware harness (see claude.nix); spread with
   # `//` into the programs.pi block (no key overlap).
   sharedAgentWiring = {
@@ -372,6 +377,11 @@ in
             # so the whole auto-driver/ directory is copied to the store via
             # `autoDriverDir`; Pi receives the index.ts path within that tree.
             "${autoDriverDir}/index.ts"
+            # cq ledger-status: paints a compact `Q d/t  T d/t  D d/t` status-bar
+            # line from `cq counts` (T533-T536, G76). Bare PATH-resolved `cq`,
+            # same shell-out pattern as auto-driver/oracle.ts (cq is already on
+            # the pi wrapper's PATH via home.packages' ledgerTools, see tools.nix).
+            "${ledgerStatusDir}/index.ts"
           ];
         };
       };
