@@ -116,9 +116,11 @@ function scriptedOracle(
 
 const ALL_FALSE: DerivedPredicates = {
   pInvestigate: { value: false, items: [] },
+  pSeed: { value: false, items: [] },
   pPlan: { value: false, items: [] },
   pImplement: { value: false, items: [] },
   openQuestionGate: { value: false, items: [] },
+  belowFloor: { value: false, items: [] },
 };
 
 // ---------------------------------------------------------------------------
@@ -142,9 +144,11 @@ async function scenario1LiveOracle(): Promise<void> {
 
   console.log("\n  Live predicate snapshot (from cq predicates):");
   console.log(`    pInvestigate  : value=${livePredicates.pInvestigate.value}  items=[${livePredicates.pInvestigate.items.join(", ")}]`);
+  console.log(`    pSeed         : value=${livePredicates.pSeed.value}  items=[${livePredicates.pSeed.items.join(", ")}]`);
   console.log(`    pPlan         : value=${livePredicates.pPlan.value}  items=[${livePredicates.pPlan.items.join(", ")}]`);
   console.log(`    pImplement    : value=${livePredicates.pImplement.value}  items=[${livePredicates.pImplement.items.join(", ")}]`);
   console.log(`    openQuestGate : value=${livePredicates.openQuestionGate.value}  items=[${livePredicates.openQuestionGate.items.join(", ")}]`);
+  console.log(`    belowFloor    : value=${livePredicates.belowFloor.value}  items=[${livePredicates.belowFloor.items.join(", ")}]`);
 
   const terminal = advanceAutoPreset.terminalPredicate(livePredicates);
   console.log(`\n  advanceAutoPreset.terminalPredicate(live) = ${terminal}`);
@@ -196,15 +200,19 @@ async function scenario2DrainedStop(): Promise<void> {
 
   const cycle0: DerivedPredicates = {
     pInvestigate: { value: false, items: [] },
+    pSeed: { value: false, items: [] },
     pPlan: { value: false, items: [] },
     pImplement: { value: true, items: ["T470"] },
     openQuestionGate: { value: false, items: [] },
+    belowFloor: { value: false, items: [] },
   };
   const cycle1: DerivedPredicates = {
     pInvestigate: { value: false, items: [] },
+    pSeed: { value: false, items: [] },
     pPlan: { value: true, items: ["G99"] },
     pImplement: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
+    belowFloor: { value: false, items: [] },
   };
 
   const log: LogEntry[] = [];
@@ -240,9 +248,11 @@ async function scenario3BlockedOnQuestions(): Promise<void> {
 
   const gated: DerivedPredicates = {
     pInvestigate: { value: false, items: [] },
+    pSeed: { value: false, items: [] },
     pPlan: { value: true, items: ["G42"] },
     pImplement: { value: false, items: [] },
     openQuestionGate: { value: true, items: ["Q237"] },
+    belowFloor: { value: false, items: [] },
   };
 
   const log: LogEntry[] = [];

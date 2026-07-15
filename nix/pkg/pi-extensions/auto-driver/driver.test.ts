@@ -129,9 +129,11 @@ function makeFakeCtx(opts: FakeCtxOptions): DriverContext {
 
 const ALL_FALSE: DerivedPredicates = {
   pInvestigate: { value: false, items: [] },
+  pSeed: { value: false, items: [] },
   pPlan: { value: false, items: [] },
   pImplement: { value: false, items: [] },
   openQuestionGate: { value: false, items: [] },
+  belowFloor: { value: false, items: [] },
 };
 
 function withPlanWork(items: string[]): DerivedPredicates {
@@ -889,13 +891,21 @@ describe("T468: preset wrappedCommand strings (launch slash commands)", () => {
 describe("T468: preset terminalPredicates (bound correctly to each flow)", () => {
   const ALL_FALSE_P: DerivedPredicates = {
     pInvestigate: { value: false, items: [] },
+    pSeed: { value: false, items: [] },
     pPlan: { value: false, items: [] },
     pImplement: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
+    belowFloor: { value: false, items: [] },
   };
 
-  test("advanceAutoPreset terminal when ALL THREE p-predicates are false", () => {
+  test("advanceAutoPreset terminal when ALL FOUR p-predicates are false", () => {
     expect(advanceAutoPreset.terminalPredicate(ALL_FALSE_P)).toBe(true);
+  });
+
+  test("advanceAutoPreset not terminal when only pSeed is true (D94)", () => {
+    expect(
+      advanceAutoPreset.terminalPredicate({ ...ALL_FALSE_P, pSeed: { value: true, items: ["D94"] } }),
+    ).toBe(false);
   });
 
   test("advanceAutoPreset not terminal when any p-predicate is true", () => {

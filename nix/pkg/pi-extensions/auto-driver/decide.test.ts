@@ -36,22 +36,36 @@ import {
 function emptyPredicates(): DerivedPredicates {
   return {
     pInvestigate: { value: false, items: [] },
+    pSeed: { value: false, items: [] },
     pPlan: { value: false, items: [] },
     pImplement: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
+    belowFloor: { value: false, items: [] },
   };
 }
 
-/** Predicates with all three stage predicates TRUE and no gate. */
+/** Predicates with all four stage predicates TRUE and no gate. */
 function allActivePredicates(items?: string[]): DerivedPredicates {
   const it = items ?? ["T1", "T2"];
   return {
     pInvestigate: { value: true, items: it },
+    pSeed: { value: true, items: it },
     pPlan: { value: true, items: it },
     pImplement: { value: true, items: it },
     openQuestionGate: { value: false, items: [] },
+    belowFloor: { value: false, items: [] },
   };
 }
+
+/**
+ * Fill the two G77/M240 fields (pSeed + belowFloor) with all-false defaults for
+ * the many inline fixtures below that predate them and don't exercise them.
+ * A test that DOES exercise pSeed builds its snapshot explicitly instead.
+ */
+const SEED_DEFAULTS = {
+  pSeed: { value: false, items: [] as string[] },
+  belowFloor: { value: false, items: [] as string[] },
+};
 
 /** Default signals: not quota-hit, context unknown. */
 function noSignals(): AutoSignals {
@@ -133,6 +147,7 @@ describe("decideNextAction — rule 1: STOP_QUOTA", () => {
 describe("decideNextAction — rule 2: STOP_BLOCKED_ON_QUESTIONS", () => {
   test("openQuestionGate.value=true returns STOP_BLOCKED_ON_QUESTIONS", () => {
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["T10"] },
       pPlan: { value: true, items: ["G1"] },
       pImplement: { value: false, items: [] },
@@ -147,6 +162,7 @@ describe("decideNextAction — rule 2: STOP_BLOCKED_ON_QUESTIONS", () => {
     // pImplement is true (work remains), so without the gate we'd REDRIVE.
     // With the gate set, we MUST return STOP_BLOCKED_ON_QUESTIONS, not REDRIVE.
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: false, items: [] },
       pPlan: { value: false, items: [] },
       pImplement: { value: true, items: ["T42"] }, // still true -> advance not terminal
@@ -198,9 +214,28 @@ describe("decideNextAction — rule 3: STOP_DRAINED per preset", () => {
     expect(action).not.toBe(AutoAction.STOP_DRAINED);
   });
 
+  test("advanceAutoPreset: pSeed-ONLY TRUE (D94 regression) => NOT STOP_DRAINED", () => {
+    // The false-DRAINED gap the P-seed predicate closes: a root-caused defect
+    // owned by no goal makes ONLY pSeed TRUE; every other stage predicate is
+    // FALSE. The advance preset must NOT treat this as drained.
+    const predicates: DerivedPredicates = {
+      ...emptyPredicates(),
+      pSeed: { value: true, items: ["D94"] },
+    };
+    expect(advanceAutoPreset.terminalPredicate(predicates)).toBe(false);
+    const action = decideNextAction(
+      buildInput(predicates, {
+        terminalPredicate: advanceAutoPreset.terminalPredicate,
+      }),
+    );
+    expect(action).not.toBe(AutoAction.STOP_DRAINED);
+    expect(action).toBe(AutoAction.REDRIVE);
+  });
+
   test("planAutoPreset: pPlan.value=false => STOP_DRAINED", () => {
     // Only pPlan matters for plan preset; pInvestigate and pImplement can be true.
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D1"] },
       pPlan: { value: false, items: [] },
       pImplement: { value: true, items: ["T1"] },
@@ -229,6 +264,7 @@ describe("decideNextAction — rule 3: STOP_DRAINED per preset", () => {
 
   test("investigateAutoPreset: pInvestigate.value=false => STOP_DRAINED", () => {
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: false, items: [] },
       pPlan: { value: true, items: ["G1"] },
       pImplement: { value: true, items: ["T1"] },
@@ -257,6 +293,7 @@ describe("decideNextAction — rule 3: STOP_DRAINED per preset", () => {
 
   test("implementAutoPreset: pImplement.value=false => STOP_DRAINED", () => {
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D1"] },
       pPlan: { value: true, items: ["G1"] },
       pImplement: { value: false, items: [] },
@@ -382,6 +419,7 @@ describe("decideNextAction — rule 5: COMPACT_THEN_REDRIVE", () => {
 
 describe("decideNextAction — rule 6: STOP_NO_PROGRESS (predicate stall)", () => {
   const stablePredicates: DerivedPredicates = {
+    ...SEED_DEFAULTS,
     pInvestigate: { value: true, items: ["D1", "D2"] },
     pPlan: { value: false, items: [] },
     pImplement: { value: false, items: [] },
@@ -406,6 +444,7 @@ describe("decideNextAction — rule 6: STOP_NO_PROGRESS (predicate stall)", () =
   test("(b) IDENTICAL .value booleans but REORDERED items[] => treated as EQUAL => STOP_NO_PROGRESS", () => {
     // This fixture proves order-insensitivity: ["D2","D1"] vs ["D1","D2"].
     const prevPredicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D2", "D1"] }, // reversed order
       pPlan: { value: false, items: [] },
       pImplement: { value: false, items: [] },
@@ -477,6 +516,7 @@ describe("decideNextAction — rule 6: STOP_NO_PROGRESS (predicate stall)", () =
 
   test("changed items[] (different set) => NOT equal => no STOP_NO_PROGRESS", () => {
     const prevPredicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D1"] }, // only one item
       pPlan: { value: false, items: [] },
       pImplement: { value: false, items: [] },
@@ -510,6 +550,7 @@ describe("decideNextAction — rule 7: REDRIVE (default)", () => {
 
   test("iteration=1 with different predicates => REDRIVE (progress made)", () => {
     const prevPredicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D1", "D2"] },
       pPlan: { value: true, items: ["G1"] },
       pImplement: { value: false, items: [] },
@@ -517,6 +558,7 @@ describe("decideNextAction — rule 7: REDRIVE (default)", () => {
     };
     // Current: D2 cleared from pInvestigate -> predicates differ -> REDRIVE.
     const currentPredicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D1"] },
       pPlan: { value: true, items: ["G1"] },
       pImplement: { value: false, items: [] },
@@ -568,6 +610,7 @@ describe("AutoAction coverage: all values exercised", () => {
 
 describe("predicatesEqual", () => {
   const base: DerivedPredicates = {
+    ...SEED_DEFAULTS,
     pInvestigate: { value: true, items: ["D1", "D2"] },
     pPlan: { value: false, items: [] },
     pImplement: { value: true, items: ["T10"] },
@@ -584,6 +627,7 @@ describe("predicatesEqual", () => {
 
   test("deep-equal clones => true", () => {
     const clone: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D1", "D2"] },
       pPlan: { value: false, items: [] },
       pImplement: { value: true, items: ["T10"] },
@@ -594,6 +638,7 @@ describe("predicatesEqual", () => {
 
   test("reordered items[] => true (order-insensitive set equality)", () => {
     const reordered: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D2", "D1"] }, // reversed
       pPlan: { value: false, items: [] },
       pImplement: { value: true, items: ["T10"] },
@@ -655,6 +700,7 @@ describe("composeRedrivePrompt", () => {
 
   test("mentions the still-violated predicate id(s) — advance preset: pInvestigate violated", () => {
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D99"] },
       pPlan: { value: false, items: [] },
       pImplement: { value: false, items: [] },
@@ -670,6 +716,7 @@ describe("composeRedrivePrompt", () => {
 
   test("mentions exactly the still-violated predicate ids — plan preset: pPlan violated", () => {
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: false, items: [] },
       pPlan: { value: true, items: ["G42"] },
       pImplement: { value: false, items: [] },
@@ -685,6 +732,7 @@ describe("composeRedrivePrompt", () => {
 
   test("mentions exactly the still-violated predicate ids — investigate preset: pInvestigate violated", () => {
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D7"] },
       pPlan: { value: false, items: [] },
       pImplement: { value: false, items: [] },
@@ -697,6 +745,7 @@ describe("composeRedrivePrompt", () => {
 
   test("mentions exactly the still-violated predicate ids — implement preset: pImplement violated", () => {
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: false, items: [] },
       pPlan: { value: false, items: [] },
       pImplement: { value: true, items: ["T55"] },
@@ -709,6 +758,7 @@ describe("composeRedrivePrompt", () => {
 
   test("advance preset with multiple violated predicates: all mentioned", () => {
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D1"] },
       pPlan: { value: true, items: ["G2"] },
       pImplement: { value: false, items: [] },
@@ -723,6 +773,7 @@ describe("composeRedrivePrompt", () => {
 
   test("stage predicate TRUE with no items => '(no specific items reported)'", () => {
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: [] }, // true but no item ids
       pPlan: { value: false, items: [] },
       pImplement: { value: false, items: [] },
@@ -734,6 +785,7 @@ describe("composeRedrivePrompt", () => {
 
   test("prompt contains instruction to re-drive", () => {
     const predicates: DerivedPredicates = {
+      ...SEED_DEFAULTS,
       pInvestigate: { value: true, items: ["D5"] },
       pPlan: { value: false, items: [] },
       pImplement: { value: false, items: [] },

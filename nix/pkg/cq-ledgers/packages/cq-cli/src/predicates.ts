@@ -10,9 +10,10 @@
  * the REAL ledger actionability rather than the gate's false-DRAINED verdict.
  *
  * The emitted JSON mirrors advance-gate's `verdict.predicates` shape exactly —
- * `{ "predicates": { pInvestigate, pPlan, pImplement, openQuestionGate } }` —
- * so the auto-driver oracle's `parseAdvanceGateOutput` (which reads
- * `parsed.predicates`) parses `cq predicates` output UNCHANGED.
+ * `{ "predicates": { pInvestigate, pSeed, pPlan, pImplement, openQuestionGate,
+ * belowFloor } }` — so the auto-driver oracle's `parseAdvanceGateOutput` (which
+ * reads `parsed.predicates`) parses `cq predicates` output UNCHANGED. pSeed is
+ * a first-class stage predicate; belowFloor is informational (never gates).
  *
  * The store is built IN-PROCESS via `createLedgerStore(cwd)` (exactly like
  * `runAdvanceGate`'s step 4 and `runInit`) and disposed in a `finally`.
@@ -42,7 +43,8 @@ export interface PredicatesOutcome {
 
 /**
  * The object serialised to stdout — the SAME `predicates` shape advance-gate
- * emits, so the oracle's `parseAdvanceGateOutput` reads `parsed.predicates`
+ * emits (pInvestigate, pSeed, pPlan, pImplement, openQuestionGate, belowFloor),
+ * so the oracle's `parseAdvanceGateOutput` reads `parsed.predicates`
  * identically.
  */
 export interface PredicatesOutput {

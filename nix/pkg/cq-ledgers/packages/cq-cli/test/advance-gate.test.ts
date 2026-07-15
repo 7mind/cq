@@ -173,6 +173,36 @@ async function seedEmptyLedger(): Promise<string> {
   return root;
 }
 
+/**
+ * Seed a fresh ledger root making P-seed TRUE: one root-caused HIGH defect owned
+ * by no goal and gated by no question (the D94 fix-owning gap).
+ */
+async function seedSeedLedger(): Promise<string> {
+  const root = await xdgRoot();
+  await seedStore(root, async (store) => {
+    await store.createItem("defects", MILESTONES_AMBIENT_ID, {
+      status: "root-caused",
+      fields: { headline: "root-caused, unowned, high", severity: "high" },
+    });
+  });
+  return root;
+}
+
+/**
+ * Seed a fresh ledger root with ONLY a below-floor root-caused defect (medium):
+ * belowFloor names it, but NO stage predicate is TRUE, so the gate ALLOWS.
+ */
+async function seedBelowFloorLedger(): Promise<string> {
+  const root = await xdgRoot();
+  await seedStore(root, async (store) => {
+    await store.createItem("defects", MILESTONES_AMBIENT_ID, {
+      status: "root-caused",
+      fields: { headline: "root-caused, unowned, medium", severity: "medium" },
+    });
+  });
+  return root;
+}
+
 describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
   // --- Case 1: marker PRESENT + TRUE predicate ⇒ BLOCK (non-zero) -----------
 
@@ -209,6 +239,25 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
     expect(verdict.predicates.pImplement.items.length).toBeGreaterThan(0);
   });
 
+  // --- Case 1c: marker PRESENT + P-seed TRUE ⇒ BLOCK (non-zero) -------------
+
+  it("(1c) marker present + P-seed TRUE (root-caused unowned high defect) → block=true, non-zero exit, reason names P-seed", async () => {
+    const root = await seedSeedLedger();
+    await writeFile(markerFile(runtimeDir), "started\n", "utf8");
+
+    const { exitCode, verdict } = await runGate(root);
+
+    expect(exitCode).toBe(EXIT_BLOCK);
+    expect(exitCode).not.toBe(0);
+    expect(verdict.block).toBe(true);
+    expect(verdict.reason).toContain("P-seed=TRUE");
+    expect(verdict.reason).toContain("continue per D41");
+    // No earlier-in-order stage predicate is TRUE, so P-seed is the named one.
+    expect(verdict.predicates.pInvestigate.value).toBe(false);
+    expect(verdict.predicates.pSeed.value).toBe(true);
+    expect(verdict.predicates.pSeed.items.length).toBeGreaterThan(0);
+  });
+
   // --- Case 2: marker PRESENT + all-FALSE ledger ⇒ ALLOW (exit 0) -----------
 
   it("(2) marker present + all predicates FALSE → block=false, exit 0", async () => {
@@ -220,8 +269,29 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
     expect(exitCode).toBe(EXIT_ALLOW);
     expect(verdict.block).toBe(false);
     expect(verdict.predicates.pInvestigate.value).toBe(false);
+    expect(verdict.predicates.pSeed.value).toBe(false);
     expect(verdict.predicates.pPlan.value).toBe(false);
     expect(verdict.predicates.pImplement.value).toBe(false);
+    expect(verdict.predicates.belowFloor.value).toBe(false);
+  });
+
+  // --- Case 2b: marker PRESENT + ONLY a below-floor defect ⇒ ALLOW ----------
+
+  it("(2b) marker present + only a below-floor (medium) root-caused defect → block=false, exit 0, belowFloor names it but never gates", async () => {
+    const root = await seedBelowFloorLedger();
+    await writeFile(markerFile(runtimeDir), "started\n", "utf8");
+
+    const { exitCode, verdict } = await runGate(root);
+
+    expect(exitCode).toBe(EXIT_ALLOW);
+    expect(verdict.block).toBe(false);
+    // Every stage predicate is FALSE — belowFloor is informational only.
+    expect(verdict.predicates.pInvestigate.value).toBe(false);
+    expect(verdict.predicates.pSeed.value).toBe(false);
+    expect(verdict.predicates.pPlan.value).toBe(false);
+    expect(verdict.predicates.pImplement.value).toBe(false);
+    expect(verdict.predicates.belowFloor.value).toBe(true);
+    expect(verdict.predicates.belowFloor.items.length).toBeGreaterThan(0);
   });
 
   // --- Case 3: marker ABSENT ⇒ ALLOW (exit 0) EVEN with a TRUE ledger -------
@@ -236,9 +306,14 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
     expect(exitCode).toBe(EXIT_ALLOW);
     expect(verdict.block).toBe(false);
     // Marker-absent path does NOT read the ledger → predicates are the empty
-    // placeholder (all FALSE) despite the actionable defect on disk.
-    expect(verdict.predicates.pInvestigate.value).toBe(false);
-    expect(verdict.predicates.pInvestigate.items).toEqual([]);
+    // placeholder (all FALSE) despite the actionable defect on disk. The full
+    // six-key empty shape is emitted (pSeed + belowFloor included).
+    expect(verdict.predicates.pInvestigate).toEqual({ value: false, items: [] });
+    expect(verdict.predicates.pSeed).toEqual({ value: false, items: [] });
+    expect(verdict.predicates.pPlan).toEqual({ value: false, items: [] });
+    expect(verdict.predicates.pImplement).toEqual({ value: false, items: [] });
+    expect(verdict.predicates.openQuestionGate).toEqual({ value: false, items: [] });
+    expect(verdict.predicates.belowFloor).toEqual({ value: false, items: [] });
   });
 
   // --- Case 4: marker WITH external-signal ⇒ ALLOW (exit 0) even if TRUE ----

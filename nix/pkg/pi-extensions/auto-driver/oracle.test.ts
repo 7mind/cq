@@ -13,32 +13,47 @@
 
 import { describe, test, expect } from "bun:test";
 import { parsePredicatesOutput } from "./oracle";
-import type { DerivedPredicates } from "./decision";
+import { advanceAutoPreset, type DerivedPredicates } from "./decision";
 
-// Representative `cq predicates` stdout (predicates shape identical to T463 verification).
+// Representative `cq predicates` stdout (predicates shape identical to T463
+// verification, now carrying the G77/M240 pSeed + belowFloor keys).
 const REAL_PREDICATES_STDOUT =
-  '{"predicates":{"pInvestigate":{"value":true,"items":["D72","D73"]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":true,"items":["T463"]},"openQuestionGate":{"value":false,"items":[]}}}';
+  '{"predicates":{"pInvestigate":{"value":true,"items":["D72","D73"]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":true,"items":["T463"]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]}}}';
 
 describe("parsePredicatesOutput", () => {
-  test("parses the real cq predicates verdict into all four predicates", () => {
+  test("parses the real cq predicates verdict into all six predicates", () => {
     const expected: DerivedPredicates = {
       pInvestigate: { value: true, items: ["D72", "D73"] },
+      pSeed: { value: false, items: [] },
       pPlan: { value: false, items: [] },
       pImplement: { value: true, items: ["T463"] },
       openQuestionGate: { value: false, items: [] },
+      belowFloor: { value: false, items: [] },
     };
     expect(parsePredicatesOutput(REAL_PREDICATES_STDOUT)).toEqual(expected);
   });
 
   test("parses an all-false drained verdict", () => {
     const stdout =
-      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]}}}';
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]}}}';
     expect(parsePredicatesOutput(stdout)).toEqual({
       pInvestigate: { value: false, items: [] },
+      pSeed: { value: false, items: [] },
       pPlan: { value: false, items: [] },
       pImplement: { value: false, items: [] },
       openQuestionGate: { value: false, items: [] },
+      belowFloor: { value: false, items: [] },
     });
+  });
+
+  test("(D94 regression) a pSeed-ONLY verdict parses and is NOT terminal for the advance preset", () => {
+    // A root-caused defect owned by no goal → ONLY pSeed TRUE. The parser must
+    // surface it and the advance preset must NOT read it as DRAINED.
+    const stdout =
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":true,"items":["D94"]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]}}}';
+    const parsed = parsePredicatesOutput(stdout);
+    expect(parsed.pSeed).toEqual({ value: true, items: ["D94"] });
+    expect(advanceAutoPreset.terminalPredicate(parsed)).toBe(false);
   });
 
   test("throws on stdout that is not valid JSON", () => {
@@ -50,8 +65,10 @@ describe("parsePredicatesOutput", () => {
   });
 
   test("throws when a predicate key is missing", () => {
+    // pInvestigate/pSeed/pPlan/pImplement present; openQuestionGate (the first
+    // missing key in canonical order) is absent → the parser names it.
     const stdout =
-      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]}}}';
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]}}}';
     expect(() => parsePredicatesOutput(stdout)).toThrow(/openQuestionGate/);
   });
 

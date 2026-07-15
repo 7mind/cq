@@ -19,11 +19,13 @@
  *  4. Else construct the store IN-PROCESS via `createLedgerStore(cwd)`
  *     (exactly like `runInit` — NO MCP server), call
  *     `derivePredicates(store)`, dispose, and: if ANY of
- *     pInvestigate/pPlan/pImplement is TRUE-and-unblocked → BLOCK (block=true),
- *     naming the FIRST such predicate; else ALLOW.
+ *     pInvestigate/pSeed/pPlan/pImplement is TRUE-and-unblocked → BLOCK
+ *     (block=true), naming the FIRST such predicate in flow order; else ALLOW.
+ *     The informational `belowFloor` companion is NEVER part of the block
+ *     decision.
  *  5. Emit on stdout the NEUTRAL verdict JSON
- *     `{ block, reason, predicates: { pInvestigate, pPlan, pImplement,
- *     openQuestionGate } }`. EXIT CODE: 0 = allow, non-zero = block.
+ *     `{ block, reason, predicates: { pInvestigate, pSeed, pPlan, pImplement,
+ *     openQuestionGate, belowFloor } }`. EXIT CODE: 0 = allow, non-zero = block.
  *
  * The CLI emits NO Claude-Code `{decision}` JSON — translating the neutral
  * verdict to a harness-specific hook response is the wrapper's job (T364).
@@ -182,18 +184,23 @@ export async function computeVerdict(args: AdvanceGateArgs): Promise<AdvanceGate
 
   return {
     block: false,
-    reason: "no actionable predicate (P-investigate/P-plan/P-implement all FALSE) — allow",
+    reason:
+      "no actionable predicate (P-investigate/P-seed/P-plan/P-implement all FALSE) — allow",
     predicates,
   };
 }
 
 /**
  * The first TRUE-and-unblocked detection predicate, in flow order
- * (investigate → plan → implement), or `null` when none is TRUE. The returned
- * label names the predicate in the BLOCK reason.
+ * (investigate → seed → plan → implement), or `null` when none is TRUE. The
+ * returned label names the predicate in the BLOCK reason. The informational
+ * `belowFloor` companion is intentionally NOT consulted — it never blocks.
  */
-function firstBlockingPredicate(p: DerivedPredicates): "investigate" | "plan" | "implement" | null {
+function firstBlockingPredicate(
+  p: DerivedPredicates,
+): "investigate" | "seed" | "plan" | "implement" | null {
   if (p.pInvestigate.value) return "investigate";
+  if (p.pSeed.value) return "seed";
   if (p.pPlan.value) return "plan";
   if (p.pImplement.value) return "implement";
   return null;
@@ -211,9 +218,11 @@ function allowVerdict(reason: string): AdvanceGateVerdict {
     reason,
     predicates: {
       pInvestigate: empty,
+      pSeed: empty,
       pPlan: empty,
       pImplement: empty,
       openQuestionGate: empty,
+      belowFloor: empty,
     },
   };
 }

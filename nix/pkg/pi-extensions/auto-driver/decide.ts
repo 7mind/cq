@@ -149,9 +149,14 @@ export function decideNextAction(input: DecideInput): AutoAction {
 // predicatesEqual — canonical no-progress equality.
 // ---------------------------------------------------------------------------
 
-/** The four predicate keys compared for no-progress equality. */
+/**
+ * The predicate keys compared for no-progress equality. `belowFloor` is
+ * intentionally EXCLUDED: it is informational, so a change confined to it is
+ * not "forward progress" for the stall detector.
+ */
 const PREDICATE_KEYS: ReadonlyArray<keyof DerivedPredicates> = [
   "pInvestigate",
+  "pSeed",
   "pPlan",
   "pImplement",
   "openQuestionGate",
@@ -230,7 +235,7 @@ export function composeRedrivePrompt(
     return "The terminal predicate is already satisfied — no redrive is needed; STOP_DRAINED.";
   }
 
-  const stageKeys: ReadonlyArray<StageKey> = ["pInvestigate", "pPlan", "pImplement"];
+  const stageKeys: ReadonlyArray<StageKey> = ["pInvestigate", "pSeed", "pPlan", "pImplement"];
 
   // Baseline: every still-TRUE stage predicate cleared. If the oracle depends on
   // a given stage, re-asserting it from this baseline will flip the oracle.
@@ -281,12 +286,13 @@ export function composeRedrivePrompt(
   ].join("\n");
 }
 
-/** The three stage predicates the redrive prompt may name as blockers. */
-type StageKey = "pInvestigate" | "pPlan" | "pImplement";
+/** The four stage predicates the redrive prompt may name as blockers. */
+type StageKey = "pInvestigate" | "pSeed" | "pPlan" | "pImplement";
 
-/** Human-readable labels for the three stage predicates, for prompt text. */
+/** Human-readable labels for the four stage predicates, for prompt text. */
 const STAGE_LABELS: Record<StageKey, string> = {
   pInvestigate: "investigate-flow work remains",
+  pSeed: "seed-flow work remains (root-caused defect awaiting a fix goal)",
   pPlan: "plan-flow work remains",
   pImplement: "implement-flow work remains",
 };

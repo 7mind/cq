@@ -19,8 +19,8 @@
 //   => the in-process MCP channel is CONFIRMED ABSENT.
 //
 // CHOSEN CHANNEL (STEP 2): the `cq predicates` CLI subcommand. It prints a
-//   JSON object `{ predicates: { pInvestigate, pPlan, pImplement,
-//   openQuestionGate } }` to stdout, where `predicates` shares the SAME
+//   JSON object `{ predicates: { pInvestigate, pSeed, pPlan, pImplement,
+//   openQuestionGate, belowFloor } }` to stdout, where `predicates` shares the SAME
 //   `derivePredicates` single source of truth as the ledger MCP
 //   `derive_predicates` tool. `cq predicates` is harness-agnostic — it ALWAYS
 //   derives from the fs store, uses NO session, requires NO marker, and ALWAYS
@@ -53,8 +53,15 @@ export interface OracleContext {
 const CQ_COMMAND = "cq";
 const PREDICATES_ARGS = ["predicates"];
 
-/** The four predicate keys, in the canonical order of `DerivedPredicates`. */
-const PREDICATE_KEYS = ["pInvestigate", "pPlan", "pImplement", "openQuestionGate"] as const;
+/** The predicate keys, in the canonical order of `DerivedPredicates`. */
+const PREDICATE_KEYS = [
+  "pInvestigate",
+  "pSeed",
+  "pPlan",
+  "pImplement",
+  "openQuestionGate",
+  "belowFloor",
+] as const;
 type PredicateKey = (typeof PREDICATE_KEYS)[number];
 
 /** Cap on captured stdout/stderr — the verdict JSON is small (< 1 KiB). */
@@ -115,8 +122,8 @@ function parseVerdict(raw: unknown, keyName: string): PredicateVerdict {
 /**
  * Parse a full `DerivedPredicates` out of the `cq predicates` stdout JSON.
  * Exported for unit-testing the parser against a sample verdict literal without
- * shelling out. Handles the documented `{ value, items[] }` shape for all four
- * keys; throws on malformed JSON or any missing/mistyped key.
+ * shelling out. Handles the documented `{ value, items[] }` shape for every key
+ * in PREDICATE_KEYS; throws on malformed JSON or any missing/mistyped key.
  */
 export function parsePredicatesOutput(stdout: string): DerivedPredicates {
   let parsed: unknown;

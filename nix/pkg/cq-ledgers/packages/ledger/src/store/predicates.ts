@@ -1,11 +1,13 @@
 /**
- * Shared flow-detection predicates (T361 / G44, fixes D50).
+ * Shared flow-detection predicates (T361 / G44, fixes D50; P-seed T542 / G77 /
+ * M240, fixes D94).
  *
- * The SINGLE SOURCE OF TRUTH for the `/cq:advance` flow's three detection
- * predicates — P-investigate, P-plan, P-implement — plus the open-question
- * gate. Both `@cq/cli` and `@cq/ledger-mcp` import this so the flow's
- * actionability semantics are derived in exactly ONE place rather than
- * re-implemented per harness.
+ * The SINGLE SOURCE OF TRUTH for the `/cq:advance` flow's four detection
+ * predicates — P-investigate, P-seed, P-plan, P-implement — plus the
+ * open-question gate and the informational `belowFloor` companion. Both
+ * `@cq/cli` and `@cq/ledger-mcp` import this so the flow's actionability
+ * semantics are derived in exactly ONE place rather than re-implemented per
+ * harness.
  *
  * Pure over the store's SYNCHRONOUS reads — no I/O, no MCP dependency. It
  * reads only `store.fetch(<ledgerId>)` (the in-memory resolved view) and
@@ -17,6 +19,14 @@
  *  - P-investigate — an ACTIONABLE defect (open/wip/inconclusive) that is NOT
  *    solely blocked on an open linked question AND NOT owned by a goal in a
  *    movable planning phase (clarifying/planning).
+ *  - P-seed (Q259 option A, fixes D94) — a `root-caused` defect at/above the
+ *    severity floor (critical/high, matched case-insensitively after trim) that
+ *    is NOT owned by any LIVE goal (clarifying/planning/planned/building,
+ *    bidirectionally: the defect's `ledgerRefs` naming a live `goals:<G>`, OR a
+ *    live goal's `ledgerRefs`/`sourceRefs` naming this `defects:<D>`) AND NOT
+ *    gated by an open linked question. This is the fix-owning gap: a root-caused
+ *    defect owned by no clarifying/planning goal matched NONE of the other three
+ *    predicates, so the flow falsely reported DRAINED.
  *  - P-plan — a goal in `clarifying` with NO open linked question, OR a goal in
  *    `planning`.
  *  - P-implement — a goal in `planned`/`building` with a DAG-READY non-terminal
@@ -24,6 +34,10 @@
  *    is `done`; its milestone's `dependsOn` milestones are satisfied (all their
  *    tasks terminal); and no linked open question.
  *  - openQuestionGate — the open `questions` items gating the above.
+ *  - belowFloor — the SAME conditions as P-seed EXCEPT the severity is BELOW the
+ *    floor (medium/low/unrecognized/empty). INFORMATIONAL only: it reports the
+ *    root-caused defects that would seed a fix but for their sub-floor severity,
+ *    and MUST NOT gate any stop (it never contributes to the open-question gate).
  */
 
 import type { Item } from "../types.js";
@@ -47,21 +61,39 @@ export interface PredicateVerdict {
 }
 
 /**
- * The four flow-detection verdicts derived from one store snapshot. The first
- * three mirror the `/cq:advance` cycle stages; `openQuestionGate` enumerates the
- * open questions that gate any of them.
+ * The flow-detection verdicts derived from one store snapshot. `pInvestigate`,
+ * `pSeed`, `pPlan`, and `pImplement` mirror the `/cq:advance` cycle stages (in
+ * flow order); `openQuestionGate` enumerates the open questions that gate any of
+ * them; `belowFloor` is an INFORMATIONAL companion to `pSeed` (root-caused,
+ * unowned, un-gated defects whose severity is below the seed floor) that MUST
+ * NOT gate any stop.
  */
 export interface DerivedPredicates {
   pInvestigate: PredicateVerdict;
+  pSeed: PredicateVerdict;
   pPlan: PredicateVerdict;
   pImplement: PredicateVerdict;
   openQuestionGate: PredicateVerdict;
+  belowFloor: PredicateVerdict;
 }
 
 // --- lifecycle constants (mirror the schemas in constants.ts) --------------
 
 /** Defect statuses that are ACTIONABLE by investigate-flow. */
 const DEFECT_ACTIONABLE_STATUSES = new Set(["open", "wip", "inconclusive"]);
+/** The defect status that makes a defect a P-seed candidate (fix-owning gap). */
+const DEFECT_SEED_STATUS = "root-caused";
+/**
+ * Severity floor for P-seed. DEFECTS_SCHEMA.severity is FREE-TEXT (not an enum),
+ * so a defect qualifies iff `severity.trim().toLowerCase()` is in this set;
+ * everything else (medium/low/unrecognized/empty) falls BELOW the floor.
+ */
+const SEED_SEVERITY_FLOOR = new Set(["critical", "high"]);
+/**
+ * Goal phases that count as LIVE for P-seed ownership: a defect owned by a goal
+ * in any of these is that goal's to fix, so it is NOT an unowned seed.
+ */
+const GOAL_LIVE_STATUSES = new Set(["clarifying", "planning", "planned", "building"]);
 /** Goal phases that count as a MOVABLE planning phase. */
 const GOAL_CLARIFYING_STATUS = "clarifying";
 const GOAL_PLANNING_STATUS = "planning";
@@ -104,18 +136,26 @@ function refList(item: Item, name: string): string[] {
   return Array.isArray(value) ? value : [];
 }
 
+/** `item.fields[name]` as a string (empty when absent or non-string). */
+function stringField(item: Item, name: string): string {
+  const value = item.fields[name];
+  return typeof value === "string" ? value : "";
+}
+
 // ---------------------------------------------------------------------------
 // derivePredicates
 // ---------------------------------------------------------------------------
 
 /**
- * Derive the flow's three detection predicates + the open-question gate from
- * the store's synchronous reads. Pure: no I/O beyond the in-memory
- * `store.fetch` reads, no MCP dependency.
+ * Derive the flow's four detection predicates (P-investigate, P-seed, P-plan,
+ * P-implement) + the open-question gate + the informational belowFloor
+ * companion from the store's synchronous reads. Pure: no I/O beyond the
+ * in-memory `store.fetch` reads, no MCP dependency.
  *
  * `items[]` on each verdict lists exactly the ids that make the predicate
  * TRUE-and-unblocked (so a verdict can name them); `openQuestionGate.items`
- * lists the open questions whose owning items would otherwise be actionable.
+ * lists the open questions whose owning items would otherwise be actionable;
+ * `belowFloor.items` lists sub-floor root-caused defects and gates NOTHING.
  */
 export function derivePredicates(store: LedgerStore): DerivedPredicates {
   const defects = activeItems(store, DEFECTS_LEDGER);
@@ -165,6 +205,51 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
       continue;
     }
     investigateItems.push(d.id);
+  }
+
+  // --- P-seed + belowFloor -------------------------------------------------
+  // A P-seed is a root-caused defect at/above the severity floor that no LIVE
+  // goal owns and no open question gates — the fix-owning gap D94. Ownership is
+  // BIDIRECTIONAL: the defect's ledgerRefs naming a live goals:<G>, OR a live
+  // goal's ledgerRefs/sourceRefs naming this defects:<D> (real investigate-seeded
+  // goals carry only the goal-side link). belowFloor mirrors P-seed for
+  // sub-floor severities and is INFORMATIONAL — it never feeds the stop gate.
+  const liveGoalIds = new Set(
+    goals.filter((g) => GOAL_LIVE_STATUSES.has(g.status)).map((g) => g.id),
+  );
+  // defects:<D> ids named by a LIVE goal's ledgerRefs/sourceRefs (goal-side link).
+  const goalOwnedDefectIds = new Set<string>();
+  for (const g of goals) {
+    if (!GOAL_LIVE_STATUSES.has(g.status)) continue;
+    for (const ref of [...refList(g, "ledgerRefs"), ...refList(g, "sourceRefs")]) {
+      if (ref.startsWith(`${DEFECTS_LEDGER}:`)) {
+        goalOwnedDefectIds.add(ref.slice(DEFECTS_LEDGER.length + 1));
+      }
+    }
+  }
+
+  const seedItems: string[] = [];
+  const belowFloorItems: string[] = [];
+  for (const d of defects) {
+    if (d.status !== DEFECT_SEED_STATUS) continue;
+    // Owned by a live goal, either direction → that goal's fix, not a seed.
+    const ownedByLiveGoal =
+      refList(d, "ledgerRefs").some((ref) => {
+        if (!ref.startsWith(`${GOALS_LEDGER}:`)) return false;
+        return liveGoalIds.has(ref.slice(GOALS_LEDGER.length + 1));
+      }) || goalOwnedDefectIds.has(d.id);
+    if (ownedByLiveGoal) continue;
+    const atFloor = SEED_SEVERITY_FLOOR.has(stringField(d, "severity").trim().toLowerCase());
+    // Gated by an open linked question (mirror P-investigate). ONLY a seed-
+    // eligible (at-floor) candidate surfaces its question in the gate; a
+    // below-floor defect is informational and must never introduce a stop gate.
+    const blockingQs = questionsGating(DEFECTS_LEDGER, d.id);
+    if (blockingQs.length > 0) {
+      if (atFloor) for (const qid of blockingQs) gatingQuestionIds.add(qid);
+      continue;
+    }
+    if (atFloor) seedItems.push(d.id);
+    else belowFloorItems.push(d.id);
   }
 
   // --- P-plan --------------------------------------------------------------
@@ -241,11 +326,13 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
 
   return {
     pInvestigate: { value: investigateItems.length > 0, items: investigateItems },
+    pSeed: { value: seedItems.length > 0, items: seedItems },
     pPlan: { value: planItems.length > 0, items: planItems },
     pImplement: { value: implementItems.length > 0, items: implementItems },
     openQuestionGate: {
       value: gatingQuestionIds.size > 0,
       items: [...gatingQuestionIds],
     },
+    belowFloor: { value: belowFloorItems.length > 0, items: belowFloorItems },
   };
 }

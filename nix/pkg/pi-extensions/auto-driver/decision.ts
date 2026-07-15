@@ -13,7 +13,8 @@
 // imported, with a pointer back to the source to keep in sync.
 
 // ---------------------------------------------------------------------------
-// Base oracle — the ledger-MCP `derive_predicates` shape (Q233 + Q236).
+// Base oracle — the ledger-MCP `derive_predicates` shape (Q233 + Q236; P-seed
+// + belowFloor added T543 / G77 / M240, KEEP IN SYNC with predicates.ts).
 // ---------------------------------------------------------------------------
 //
 // COPIED VERBATIM from the @cq/ledger source of truth:
@@ -33,15 +34,19 @@ export interface PredicateVerdict {
 }
 
 /**
- * The four flow-detection verdicts derived from one store snapshot. The first
- * three mirror the `/cq:advance` cycle stages; `openQuestionGate` enumerates
- * the open questions that gate any of them.
+ * The flow-detection verdicts derived from one store snapshot. `pInvestigate`,
+ * `pSeed`, `pPlan`, and `pImplement` mirror the `/cq:advance` cycle stages (in
+ * flow order); `openQuestionGate` enumerates the open questions that gate any of
+ * them; `belowFloor` is an INFORMATIONAL companion to `pSeed` (root-caused,
+ * unowned, un-gated defects below the severity floor) that gates NOTHING.
  */
 export interface DerivedPredicates {
   pInvestigate: PredicateVerdict;
+  pSeed: PredicateVerdict;
   pPlan: PredicateVerdict;
   pImplement: PredicateVerdict;
   openQuestionGate: PredicateVerdict;
+  belowFloor: PredicateVerdict;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,13 +105,16 @@ export interface AutoPreset {
 }
 
 /**
- * `cq:advance:auto` — drains the whole flow. Terminal when ALL THREE P-predicates
- * are FALSE (no investigate, plan, or implement work remains).
+ * `cq:advance:auto` — drains the whole flow. Terminal when ALL FOUR stage
+ * P-predicates are FALSE (no investigate, seed, plan, or implement work
+ * remains). The informational `belowFloor` companion is intentionally NOT part
+ * of the terminal check — a sub-floor defect never keeps the run alive.
  * Wraps `/cq:advance`; registered as `cq:advance:auto`.
  */
 export const advanceAutoPreset: AutoPreset = {
   wrappedCommand: "cq:advance",
-  terminalPredicate: (p) => !p.pInvestigate.value && !p.pPlan.value && !p.pImplement.value,
+  terminalPredicate: (p) =>
+    !p.pInvestigate.value && !p.pSeed.value && !p.pPlan.value && !p.pImplement.value,
 };
 
 /**

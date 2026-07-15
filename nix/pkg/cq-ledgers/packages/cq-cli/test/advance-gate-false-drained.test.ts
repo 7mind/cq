@@ -125,9 +125,11 @@ describe("cq advance-gate — marker-gated false-DRAINED (T474 characterization)
 
     expect(verdict.block).toBe(false);
     expect(verdict.predicates.pInvestigate.value).toBe(false);
+    expect(verdict.predicates.pSeed.value).toBe(false);
     expect(verdict.predicates.pPlan.value).toBe(false);
     expect(verdict.predicates.pImplement.value).toBe(false);
     expect(verdict.predicates.openQuestionGate.value).toBe(false);
+    expect(verdict.predicates.belowFloor.value).toBe(false);
 
     // (2) The SAME root, read directly via the shared engine, IS actionable:
     // derivePredicates always reads the ledger, so P-investigate is TRUE. The

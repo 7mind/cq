@@ -37,8 +37,15 @@ import {
   derivePredicates,
 } from "@cq/ledger";
 
-/** The four predicate keys the oracle's parser requires, in canonical order. */
-const PREDICATE_KEYS = ["pInvestigate", "pPlan", "pImplement", "openQuestionGate"] as const;
+/** The predicate keys the oracle's parser requires, in canonical order. */
+const PREDICATE_KEYS = [
+  "pInvestigate",
+  "pSeed",
+  "pPlan",
+  "pImplement",
+  "openQuestionGate",
+  "belowFloor",
+] as const;
 
 const dirs: string[] = [];
 let prevXdgStateHome: string | undefined;
@@ -122,7 +129,45 @@ describe("cq predicates — unconditional real-predicate emitter (T476)", () => 
     expect(parsed.predicates).toEqual(expected);
   });
 
-  it("emits stdout that parses via the auto-driver oracle's parser SHAPE (parsed.predicates, 4 verdict keys)", async () => {
+  it("emits a P-seed store's real predicates: pSeed names the root-caused high defect, belowFloor names a medium one", async () => {
+    const root = await makeTmpDir("cq-predicates-seed-ledger-");
+    await writeFile(
+      path.join(root, "cq.toml"),
+      `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,
+      "utf8",
+    );
+    const { store } = await createLedgerStore(root);
+    const high = await store.createItem("defects", MILESTONES_AMBIENT_ID, {
+      status: "root-caused",
+      fields: { headline: "root-caused, unowned, high", severity: "high" },
+    });
+    const med = await store.createItem("defects", MILESTONES_AMBIENT_ID, {
+      status: "root-caused",
+      fields: { headline: "root-caused, unowned, medium", severity: "medium" },
+    });
+    await store.dispose();
+
+    const io = recordingIo();
+    const outcome = await runPredicates({ cwd: root }, io);
+    expect(outcome.exitCode).toBe(0);
+
+    const parsed = JSON.parse(io.outs[0]!) as {
+      predicates: {
+        pSeed: { value: boolean; items: string[] };
+        belowFloor: { value: boolean; items: string[] };
+        pInvestigate: { value: boolean };
+      };
+    };
+    // The root-caused HIGH defect is a P-seed; investigate does not see it.
+    expect(parsed.predicates.pSeed.value).toBe(true);
+    expect(parsed.predicates.pSeed.items).toEqual([high.id]);
+    expect(parsed.predicates.pInvestigate.value).toBe(false);
+    // The MEDIUM one is informational-only (below the floor).
+    expect(parsed.predicates.belowFloor.value).toBe(true);
+    expect(parsed.predicates.belowFloor.items).toEqual([med.id]);
+  });
+
+  it("emits stdout that parses via the auto-driver oracle's parser SHAPE (parsed.predicates, 6 verdict keys)", async () => {
     const root = await seedActionableLedger();
 
     const io = recordingIo();

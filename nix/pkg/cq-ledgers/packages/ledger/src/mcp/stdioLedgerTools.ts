@@ -594,7 +594,7 @@ ${QUERY_LANGUAGE_HELP}`,
     "derive_predicates",
     {
       description:
-        "Derive the /cq:advance flow-detection predicates from the current ledger state in one call (the SINGLE SOURCE OF TRUTH shared with @cq/cli — read these instead of hand-deriving them). Returns { pInvestigate, pPlan, pImplement, openQuestionGate }, each a verdict { value: boolean, items: string[] } where items names the ids that make the predicate TRUE-and-unblocked (openQuestionGate.items lists the open questions gating the others). Pure over active-ledger reads; no params.",
+        "Derive the /cq:advance flow-detection predicates from the current ledger state in one call (the SINGLE SOURCE OF TRUTH shared with @cq/cli — read these instead of hand-deriving them). Returns { pInvestigate, pSeed, pPlan, pImplement, openQuestionGate, belowFloor }, each a verdict { value: boolean, items: string[] } where items names the ids that make the predicate TRUE-and-unblocked (pSeed = a root-caused defect at/above the critical/high severity floor owned by no live goal and un-gated; openQuestionGate.items lists the open questions gating the others; belowFloor is the INFORMATIONAL sub-floor companion to pSeed and gates nothing). Pure over active-ledger reads; no params.",
       inputSchema: {},
     },
     async () => jsonResult(derivePredicates(store)),
