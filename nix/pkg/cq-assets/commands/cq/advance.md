@@ -10,13 +10,14 @@ inputs:
   - "no argument — operates on the entire ledger (snapshot-first)"
   - "ledger state: defects (open/wip/inconclusive), goals (clarifying/planning), tasks (non-terminal non-blocked)"
 outputs:
+  - "seed-stage ledger writes (SANCTIONED second writer class, Q259 option A): per seed-stage pass, one create_milestone + one create_item(goals, planning) cluster-grouping up to SEED_BATCH_CAP=5 root-caused defects into ONE fix goal, plus a goals:<G> back-link written into each seeded defect's ledgerRefs"
   - "one run-level handoffs ledger item (create_item to handoffs ledger)"
   - "end-of-run report: DRAINED | BLOCKED-ON-QUESTIONS | BLOCKED-ON-USER-ACTION | MIXED"
   - "ledger git commit after every archive_milestone and at run stop"
 ioSchema:
-  - "detection: P-investigate (actionable defects), P-plan (movable goals), P-implement (DAG-ready tasks)"
-  - "cycle order: investigate -> plan -> implement -> re-check investigate"
-  - "stop only when all P-predicates FALSE or every TRUE predicate gated by open questions/user action"
+  - "detection: P-investigate (actionable defects), P-seed (root-caused unowned at/above-floor defects), P-plan (movable goals), P-implement (DAG-ready tasks); informational belowFloor companion (sub-floor root-caused defects — never gates a stop)"
+  - "cycle order: investigate -> seed -> plan -> implement -> re-check investigate"
+  - "stop only when all four P-predicates FALSE or every TRUE predicate gated by open questions/user action"
   - "handoffs item statuses: drained | answers-required | user-action-required | mixed | illness-detected"
   - "handoffs item fields: summary, flow=advance, ledgerRefs, blockingQuestions, handoffReasons, sessionLogs, rawLogs"
 ```
@@ -28,9 +29,14 @@ the three existing per-flow advance commands — `/cq:investigate:advance`,
 a *subagent* still cannot). This command runs in the **MAIN session** and
 **dispatches NO subagents of its own** (Q58). Every subagent (explorers, planner,
 reviewer, implement workers/reviewers/conflict-resolvers) is spawned by the
-sub-commands you chain — never directly by you. Your only direct ledger calls are
-**read-only** detection queries (`fetch_ledger`/`search_items`/`fts_search`/
-`fetch_item`); the sub-commands own every ledger MUTATION.
+sub-commands you chain — never directly by you. Your DIRECT ledger MUTATIONS are
+limited to TWO sanctioned writer classes: **(1)** the **SEED stage's** fix-goal
+seeding (`create_milestone` + `create_item("goals", …, planning)` + the
+defect→goal back-link — §Provenance / §The cycle, Seed stage, per Q259 option A), and **(2)**
+the single **run-level `handoffs` record** at end-of-run. DETECTION itself stays
+strictly **read-only** (`derive_predicates`/`fetch_ledger`/`search_items`/
+`fts_search`/`fetch_item`); every OTHER ledger MUTATION — defect triage, goal/task
+status, milestone archive, reviews, questions — the chained sub-commands own.
 
 **This command is idempotent and fully resumable** — it re-derives ALL state from
 the ledger on each invocation and on each cycle. Run it repeatedly (e.g. after
@@ -59,17 +65,23 @@ answering questions); it picks up exactly where the durable ledger state left of
   from the ledger.
 
 ## Provenance
-This command performs **EXACTLY ONE** ledger write of its own: a single
-**run-level `handoffs` record** at end-of-run (Q85 — the user picked option (b):
-each per-flow command writes its own handoff only when run STANDALONE, and
-suppresses it when chained under `/cq:advance`, so `/cq:advance` is the sole writer of
-the one authoritative run-level handoff). EVERY OTHER mutation — defect triage,
+This command performs its OWN ledger writes in exactly **TWO sanctioned writer
+classes** (Q259 option A): **(1)** the **SEED stage's** fix-goal seeding — per
+seed-stage pass a `create_milestone` + `create_item("goals", …, planning)` that
+cluster-groups a capped batch of root-caused defects into ONE fix goal, plus the
+`goals:<G>` back-link written into each seeded defect's `ledgerRefs` (§The cycle,
+Seed stage) — and **(2)** the single **run-level
+`handoffs` record** at end-of-run (Q85 — the user picked option (b): each
+per-flow command writes its own handoff only when run STANDALONE, and suppresses
+it when chained under `/cq:advance`, so `/cq:advance` is the sole writer of the
+one authoritative run-level handoff). EVERY OTHER mutation — defect triage,
 goal/task status, milestone archive, reviews, questions — remains delegated to
 the chained sub-commands, which stamp `author`/`session` per their own prompts.
-Detection stays strictly read-only (the three predicates query item STATUS; they
-never write).
+Detection stays strictly read-only (the four predicates + the informational
+`belowFloor` companion query item STATUS; they never write — the SEED stage acts
+on P-seed's verdict, but the derivation that produced it is read-only).
 
-### The one write — the run-level handoff (Q83/Q84/Q85)
+### The end-of-run write — the run-level handoff (Q83/Q84/Q85)
 At end-of-run, after you classify the run (see §End-of-run report), write ONE
 `handoffs` item via `create_item("handoffs", <milestone>, <status>, <fields>)`,
 mapping the report classification to the handoff `status`:
@@ -122,10 +134,12 @@ reasons) — which the predicates will ONLY supply if the stop is legitimate —
 or to **not stop and CONTINUE** the cycle instead.
 
 Stamp `author`/`session` on this write like any other. The handoff is
-APPEND-ONLY (written once at end-of-run, never updated). This single write is the
-ONLY ledger mutation `/cq:advance` performs; all other ledger mutations remain
-delegated to the chained sub-commands. (The §Commit the ledger `git commit`s are
-git operations on the already-written ledger files, not ledger writes.)
+APPEND-ONLY (written once at end-of-run, never updated). This handoff is the
+SECOND of `/cq:advance`'s two sanctioned writer classes — the FIRST being the
+SEED stage's fix-goal writes (§Provenance opener / §The cycle, Seed stage). All
+OTHER ledger mutations remain delegated to the chained sub-commands. (The §Commit
+the ledger `git commit`s are git operations on the already-written ledger files,
+not ledger writes.)
 
 **This write is the STOP GATE** (see §Stop condition). You may not conclude an
 `/cq:advance` run without it, and you may only write it once the run genuinely maps
@@ -194,8 +208,9 @@ below). This is the switch that causes the `claudeStopGateHook` (§Stop-conditio
 gate) to block premature stops for the lifetime of this run.
 
 At the very start of each `/cq:advance` run (and at the start of each cycle),
-obtain **all four detection values** (P-investigate, P-plan, P-implement, and
-the open-question gate) from **ONE tool call**:
+obtain **all six detection values** (P-investigate, P-seed, P-plan, P-implement,
+the open-question gate, and the informational `belowFloor` companion) from **ONE
+tool call**:
 
 ```
 mcp__ledger__derive_predicates()
@@ -207,17 +222,21 @@ required params). It returns:
 ```json
 {
   "pInvestigate":      { "value": boolean, "items": ["<itemId>", ...] },
+  "pSeed":             { "value": boolean, "items": ["<itemId>", ...] },
   "pPlan":             { "value": boolean, "items": ["<itemId>", ...] },
   "pImplement":        { "value": boolean, "items": ["<itemId>", ...] },
-  "openQuestionGate":  { "value": boolean, "items": ["<itemId>", ...] }
+  "openQuestionGate":  { "value": boolean, "items": ["<itemId>", ...] },
+  "belowFloor":        { "value": boolean, "items": ["<itemId>", ...] }
 }
 ```
 
 Each `.value` is the authoritative boolean for that predicate; `.items[]` is a
 plain array of ledger-item **id strings** (e.g. `["D50", "T361"]`) naming the
-items that drove the result (the actionable items, or the open-question gate
-ids). **These values ARE the predicates** — do not re-derive them by hand from
-raw ledger state.
+items that drove the result (the actionable items, the seed candidates, or the
+open-question gate ids). `pSeed.items` is the root-caused, at/above-floor,
+unowned, un-gated defect backlog the SEED stage drains; `belowFloor.items` is the
+INFORMATIONAL sub-floor companion (reported, but it gates NOTHING). **These values
+ARE the predicates** — do not re-derive them by hand from raw ledger state.
 
 `derive_predicates` applies the SAME shared `derivePredicates()` logic that
 backs the `cq advance-gate` Stop-hook CLI — so the prose definitions below,
@@ -251,7 +270,7 @@ document what it computes).
 
 ---
 
-## Detection predicates (the three ledger queries — Q55)
+## Detection predicates (the four ledger queries — Q55; + belowFloor companion)
 
 **Operational source of truth: `mcp__ledger__derive_predicates`.** Before each
 stage, call `mcp__ledger__derive_predicates` (§Bootstrap recipe) and read the
@@ -261,15 +280,16 @@ procedure. The same shared `derivePredicates()` logic that backs this MCP tool
 also backs the `cq advance-gate` Stop-hook CLI, so the prose definitions, the
 MCP tool, and the stop-hook always agree.
 
-All three predicates read item STATUS using the queryable lifecycles (the NEW
-defect statuses from **T116/M33**); none parses prose.
+All four predicates (and the `belowFloor` companion) read item STATUS using the
+queryable lifecycles (the NEW defect statuses from **T116/M33**); none parses
+prose.
 
 ### P-investigate — is there a defect actionable by /cq:investigate:advance?
 TRUE iff there exists a **defect** D such that ALL hold:
 - D's `status` is **ACTIONABLE** — `open`, `wip`, or `inconclusive` (the new
-  T116/M33 lifecycle; `root-caused` is READY-TO-SEED and handled by plan's
-  auto-investigate, NOT re-triaged here — EXCLUDED; `resolved`/`wontfix` are
-  terminal — EXCLUDED);
+  T116/M33 lifecycle; `root-caused` is READY-TO-SEED and owned by the **SEED
+  stage** (P-seed below / §The cycle, Seed stage), NOT re-triaged here —
+  EXCLUDED; `resolved`/`wontfix` are terminal — EXCLUDED);
 - D is **NOT blocked solely on an open question** — i.e. NOT every path forward
   for D depends on an unanswered `open` `questions` item linked `defects:<D>`. If
   D is parked on an unanswered question with no other lead, it is BLOCKED, not
@@ -279,8 +299,44 @@ TRUE iff there exists a **defect** D such that ALL hold:
   (`clarifying`/`planning`). Those defects are `/cq:plan:advance`'s to
   auto-investigate; triaging them here would double-triage.
 
-(`root-caused` defects are NOT re-triaged here — plan's auto-investigate seeds the
-fix goal from them.)
+(`root-caused` defects are NOT re-triaged here — the **SEED stage** seeds the fix
+goal from them; see P-seed below. This corrects D94's confirmed falsehood that
+they were "handled by plan's auto-investigate".)
+
+### P-seed — is there a root-caused defect that owns no fix goal? (Q259 option A, fixes D94)
+TRUE iff there exists a **defect** D such that ALL hold:
+- D's `status` is **`root-caused`** — investigate confirmed its cause and wrote
+  its `rootCause`/`suggestedFix`, so a fix goal can be seeded mechanically (no
+  clarification needed);
+- D's `severity` is **at/above the floor** — `severity.trim().toLowerCase()` is
+  `critical` or `high` (severity is FREE-TEXT, matched case-insensitively after a
+  trim; `medium`/`low`/unrecognized/empty fall BELOW the floor → `belowFloor`,
+  below);
+- D is **NOT owned by any LIVE goal** — no goal in
+  `clarifying`/`planning`/`planned`/`building` owns D, checked
+  **BIDIRECTIONALLY**: NEITHER does D's own `ledgerRefs` name a live `goals:<G>`,
+  NOR does any live goal's `ledgerRefs`/`sourceRefs` name this `defects:<D>` (a
+  real seed-stage / investigate-seeded goal carries the goal-side link). A defect
+  already owned by a live fix goal is that goal's to build, not a fresh seed;
+- D is **NOT gated by an open linked question** — no `open` `questions` item
+  linked `defects:<D>` (mirrors P-investigate's question gate).
+
+This is the **fix-owning gap** D94 closed: a `root-caused` at/above-floor defect
+owned by no clarifying/planning goal matched NONE of the other three predicates
+(P-investigate EXCLUDES `root-caused`; P-plan/P-implement require an existing
+goal/task), so the flow falsely reported DRAINED while confirmed high-severity
+defects sat unfixed. The **SEED stage** (§The cycle) turns each such defect into
+an owned fix goal, which the plan and implement stages then drive to resolution.
+
+**`belowFloor` — INFORMATIONAL companion, NEVER a stop gate.**
+`derive_predicates` also returns `belowFloor`: the SAME conditions as P-seed
+(root-caused, unowned by any live goal — bidirectional — and not
+question-gated) EXCEPT the severity is BELOW the floor
+(`medium`/`low`/unrecognized/empty). It is **purely informational** — it reports
+the root-caused defects that WOULD seed a fix but for their sub-floor severity,
+and **MUST NOT gate any stop**: a below-floor defect never contributes to the
+open-question gate and never keeps the loop running. The DRAINED report lists it
+so the low-severity backlog is never silently hidden (§End-of-run report).
 
 ### P-plan — is there a goal in a movable planning phase?
 TRUE iff there exists a **goal** G whose phase is a MOVABLE planning phase:
@@ -310,20 +366,58 @@ bounded by PROGRESS, not by a counter. Each stage runs its sub-command's own
 internal loop (which is itself bounded by that command's stop predicates), then
 you re-derive the predicates and continue.
 
-### Cycle order: investigate → plan → implement, then RE-CHECK investigate
+### Cycle order: investigate → seed → plan → implement, then RE-CHECK investigate
 1. **Investigate stage.** Evaluate **P-investigate**. If TRUE, for each defect D in
    its worklist run **`/cq:investigate:advance D` INLINE** — exactly per
    `/cq:investigate:advance` (do NOT re-implement it; RUN it). This
    triages only the NOT-owned-by-a-planning-goal defects (Q57); a defect already
    linked to a `clarifying`/`planning` goal is left for the plan stage's
    auto-investigate. If P-investigate is FALSE, skip this stage.
-2. **Plan stage.** Evaluate **P-plan**. If TRUE, run **`/cq:plan:advance` INLINE**
+2. **Seed stage.** Evaluate **P-seed**. If FALSE, skip this stage. If TRUE, seed
+   the fix-owning gap D94 (this is the autonomous root-caused→fix edge that
+   enforces the fix-every-defect hard rule below; per Q259 option A the seed
+   stage IS a sanctioned writer class — §Provenance). Do this:
+   - **Take a capped batch.** Take up to **`SEED_BATCH_CAP` = 5** defects **PER
+     SEED-STAGE PASS** from `pSeed.items`, ordered **critical-before-high** (the
+     higher severity first). This cap is **PER CYCLE, NOT per run** — the loop
+     drains a large root-caused backlog in cap-sized batches, ONE goal each,
+     across successive cycles until P-seed reaches FALSE, at which point DRAINED
+     becomes legitimate. There is **NO "run ends with an un-seeded remainder"
+     state**: a non-empty `pSeed` keeps the loop cycling (§Stop condition).
+   - **CLUSTER-GROUP the whole batch into ONE defect-seeded hardening goal**
+     (LOCKED BOUND: a batch → ONE goal, **NEVER one goal per defect**):
+     `create_milestone(title: "Plan: fix <batch summary>")` as **M**, then
+     `create_item("goals", M, status: "planning", fields: { title: "Fix
+     D<…>: <short cluster summary>", description: "<goal text embedding, for EACH
+     batched defect, its CONFIRMED rootCause + suggestedFix VERBATIM>", sourceRefs:
+     ["defects:<D>", …one per batched defect] })` as **G**. Use the same
+     defect-seeded shape investigate step-5 emits
+     (`commands/cq/investigate/advance.md` step 5), EXCEPT the goal→defect link is
+     written as the goal's **`sourceRefs`** — the `goals` ledger has **NO
+     `ledgerRefs` field**, only `sourceRefs`.
+   - **SEED AT `planning`, NOT `clarifying`.** The fix has a CONFIRMED root cause +
+     `suggestedFix`, so there is nothing to clarify; a `clarifying` goal could emit
+     questions and re-introduce a user gate, defeating the autonomous edge. (Same
+     K8-pt4 rationale under which investigate step-5 seeds `planning`.)
+   - **THEN write the back-link into EACH seeded defect's `ledgerRefs`** (defects
+     DO carry `ledgerRefs`): `update_item("defects", D, fields: { ledgerRefs:
+     [<existing refs…>, "goals:<G>"] })` for every batched defect, **PRESERVING
+     existing refs**. This back-link, PLUS the bidirectional P-seed ownership
+     check, makes re-running the seed stage **IDEMPOTENT**: once seeded, each
+     defect is owned by a live goal and P-seed no longer selects it.
+   - **Re-seed audit trail.** When re-seeding a defect whose EARLIER fix goal
+     COMPLETED while the defect stayed `root-caused`, the new goal's `description`
+     MUST reference the prior goal id, so the audit trail links successive fix
+     attempts.
+   - Stamp `author`/`session` on every seed-stage write. These are `/cq:advance`'s
+     sanctioned SECOND writer class; detection itself stays read-only.
+3. **Plan stage.** Evaluate **P-plan**. If TRUE, run **`/cq:plan:advance` INLINE**
    (no argument — it advances every unlocked goal) exactly per
    `/cq:plan:advance`. Note: **plan:advance OWNS auto-investigate** of
    its goal-linked defects (its own auto-investigate phase) — so /cq:advance does NOT
    double-triage them (Q57); the plan stage handles them as part of its own round.
    If P-plan is FALSE, skip this stage.
-3. **Implement stage.** Evaluate **P-implement**. If TRUE, run
+4. **Implement stage.** Evaluate **P-implement**. If TRUE, run
    **`/cq:implement:advance` INLINE** (no argument) exactly per
    `/cq:implement:advance`. "Resume" INCLUDES a just-`planned` goal with
    no prior implement pass: `/cq:implement:advance` derives its ready-set from the
@@ -332,10 +426,13 @@ you re-derive the predicates and continue.
    reason to skip the stage or to ask — bootstrap and build. Its reviewers may
    FILE new `open` defects (file-and-defer, K13). If P-implement is FALSE, skip
    this stage.
-4. **RE-CHECK investigate after implement.** Because the implement reviewer may
-   have filed new defects this cycle, re-evaluate **P-investigate** at the END of
-   the cycle. If it is now TRUE again (new actionable defects appeared), the loop
-   has made progress — continue to the next cycle (which will investigate them).
+5. **RE-CHECK investigate (and seed) after implement.** Because the implement
+   reviewer may have filed new defects this cycle — and investigate may have
+   root-caused one into a fresh seed candidate — re-evaluate **P-investigate**
+   (and **P-seed**) at the END of the cycle. If either is now TRUE again (new
+   actionable defects, or a new root-caused unowned defect appeared), the loop has
+   made progress — continue to the next cycle (which will investigate / seed
+   them).
 
 ### Stop condition — quiescence (Q56)
 Stop the loop ONLY when **progress is genuinely impossible** — that is, after a
@@ -344,28 +441,36 @@ Operationally, STOP when, at the end of a cycle, ALL hold:
 - **P-investigate is FALSE** — every defect is terminal (`resolved`/`wontfix`),
   or owned by a planning goal (will be picked up by plan), or BLOCKED solely on an
   unanswered open question;
+- **P-seed is FALSE** — every `root-caused` at/above-floor defect is already
+  owned by a live fix goal (bidirectionally) or is BLOCKED solely on an unanswered
+  open question; the seed stage has drained the fix-owning backlog. (A sub-floor
+  `belowFloor` defect NEVER holds the loop open — it is informational only and
+  gates nothing.)
 - **P-plan is FALSE** — no goal is in a movable planning phase (every unlocked
   goal is parked on open questions, or all goals are locked/terminal);
 - **P-implement is FALSE** — no goal has a DAG-ready non-terminal task (every
   remaining task is terminal or blocked on an open question).
 
 In other words: stop when **every ledger is DRAINED** (nothing actionable
-anywhere) **OR every actionable item is BLOCKED on an unanswered user question**.
+anywhere — including no un-seeded root-caused defect) **OR every actionable item
+is BLOCKED on an unanswered user question**.
 
 ### The stop is PROGRESS-bounded, never EFFORT-bounded (hard gate)
 A stop is legitimate ONLY when the predicates say so — never because the run has
 cost effort. Before you may end a run you MUST do BOTH, in order:
 
 1. **Re-derive and STATE the gate.** Call `mcp__ledger__derive_predicates` and
-   emit the four values explicitly: `P-investigate=… / P-plan=… / P-implement=…
-   / open-Q-gate=…`. You may end ONLY if that line shows all three P-predicates
-   FALSE (DRAINED) or every still-TRUE predicate is gated solely by an unanswered
-   `open` question (BLOCKED / MIXED). If any predicate is TRUE and nothing blocks
-   it, you have NOT reached a legal stop — **CONTINUE**.
+   emit the FIVE values explicitly: `P-investigate=… / P-seed=… / P-plan=… /
+   P-implement=… / open-Q-gate=…`. You may end ONLY if that line shows all FOUR
+   P-predicates FALSE (DRAINED) or every still-TRUE predicate is gated solely by an
+   unanswered `open` question (BLOCKED / MIXED). If any predicate is TRUE and
+   nothing blocks it, you have NOT reached a legal stop — **CONTINUE**. (The
+   informational `belowFloor` companion is NOT part of this gate — it never keeps
+   the loop running.)
 2. **Write the run-level `handoffs` record** (§Provenance / §End-of-run). This is
    the GATE: its only legal statuses are `drained` / `answers-required` /
    `user-action-required` / `mixed` / `illness-detected`, and each REQUIRES a
-   specific predicate condition (`drained` needs all three predicates FALSE;
+   specific predicate condition (`drained` needs all four P-predicates FALSE;
    `answers-required` / `mixed` need a non-empty `blockingQuestions[]`;
    `user-action-required` needs a SPECIFIC NAMED item whose only remaining step is
    the user's manual/environment action — see the user-action gate below — with
@@ -503,7 +608,11 @@ harnesses; the Stop hook is its mechanical enforcement layer for Claude Code.
 **Default disposition for every defect is FIX (hard rule).** Every
 `open`/`wip`/`root-caused`/`inconclusive` defect is fixed, properly, now. The
 flow NEVER asks whether to fix a confirmed/known defect — it drives it
-investigate → plan → implement autonomously to resolution. `wontfix` is a
+investigate → seed → plan → implement autonomously to resolution. The **SEED
+stage** (§The cycle, step 2) is the AUTONOMOUS root-caused→fix edge that ENFORCES
+this rule: a confirmed (`root-caused`) at/above-floor defect owning no live goal
+is mechanically turned into an owned fix goal (P-seed / D94), so a root-caused
+defect can never silently sit unfixed. `wontfix` is a
 **user-INITIATED decision only**: the autonomous flow never transitions a defect
 to `wontfix` and never solicits that disposition. "Out of scope", "pre-existing",
 "changes a versioned/external/public API", "wide blast radius", and
@@ -540,7 +649,7 @@ that is the standing go-ahead to fix everything.
 
 If you find yourself reaching for any of the above, that is the signal to
 **CONTINUE**, not to classify. Keep cycling while ANY stage still moves the
-ledger forward. A cycle that made progress (any stage acted, or re-check (4)
+ledger forward. A cycle that made progress (any stage acted, or re-check (5)
 surfaced new work) means another cycle is warranted.
 
 ---
@@ -643,7 +752,7 @@ always-fire checkpoints:
   `/cq:advance`, so each merged task is a durable checkpoint. This is an
   always-fire checkpoint, on the same footing as the per-archive commit above.
 - **At the run STOP**, immediately after you write the run-level `handoffs`
-  record (§Provenance / §The one write): one final commit capturing the
+  record (§Provenance / §The end-of-run write): one final commit capturing the
   end-of-run ledger state.
 
 Mechanism — **when `[ledger] backend` is `fs` (the default); SKIP under
@@ -701,10 +810,16 @@ report it. Mirror `/cq:implement:advance`'s end-of-pass report style
 (concise, id-listing, next-action-bearing).
 
 - **DRAINED** — nothing actionable remains anywhere: every defect terminal or
-  plan-owned, every goal locked/terminal for planning, every task terminal, and
-  NO actionable item is blocked on an open question. Report: the work that landed
-  across the run (defects root-caused/resolved, goals planned, tasks merged,
-  milestones archived), and that the run is complete — no user action needed.
+  plan/seed-owned, every root-caused at/above-floor defect already owned by a live
+  fix goal, every goal locked/terminal for planning, every task terminal, and NO
+  actionable item is blocked on an open question. Report: the work that landed
+  across the run (defects root-caused/resolved/seeded, goals planned, tasks merged,
+  milestones archived), and that the run is complete — no user action needed. The
+  DRAINED report **MUST** (not SHOULD) list the `belowFloor` defects
+  informationally — every root-caused, unowned, un-gated defect whose severity is
+  BELOW the seed floor — by id with a one-line note, so the low-severity backlog
+  is never silently hidden. (These do NOT gate the stop; they are surfaced so the
+  user can raise a severity or otherwise act on them.)
 - **BLOCKED-ON-QUESTIONS** — progress stopped ONLY because actionable items are
   parked on unanswered `open` questions. **Enumerate every blocking question** by
   id, each with its OWNING item (the `defects:<D>` / `goals:<G>` / `tasks:<id>` it
@@ -731,8 +846,9 @@ report it. Mirror `/cq:implement:advance`'s end-of-pass report style
   perform the named action, then re-run `/cq:advance`.
 
 To build the report, call `mcp__ledger__derive_predicates` one final time: if all
-three P-predicates are FALSE and no `open` question gates any actionable item →
-**DRAINED**; if the only thing standing between an item and progress is an
+four P-predicates are FALSE and no `open` question gates any actionable item →
+**DRAINED** (and list `belowFloor.items` informationally); if the only thing
+standing between an item and progress is an
 unanswered question → **BLOCKED-ON-QUESTIONS**; if the only thing standing between
 a SPECIFIC NAMED item and progress is a user manual/environment action (no `open`
 question involved) with every autonomous step already done →
@@ -742,7 +858,8 @@ blocked categories) the exact list of question ids to answer and/or the exact
 user command/action with the item it unblocks.
 
 After emitting the report, persist it as the single run-level `handoffs` record
-— `/cq:advance`'s one and only ledger write — mapping this classification to the
+— the SECOND of `/cq:advance`'s two sanctioned writer classes (the first being
+the seed stage's fix-goal writes; §Provenance) — mapping this classification to the
 handoff `status` (DRAINED→`drained`, BLOCKED-ON-QUESTIONS→`answers-required`,
 BLOCKED-ON-USER-ACTION→`user-action-required`, MIXED→`mixed`,
 error/abort→`illness-detected`) and populating `summary`, `flow`, `ledgerRefs`,

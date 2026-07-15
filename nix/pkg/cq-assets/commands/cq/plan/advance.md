@@ -102,6 +102,18 @@ runbook's divergence recovery rather than forcing the ref.
 > "bootstrap"/"sample"/"exercise-the-flow" goal to have something to do — that is
 > the classic empty-repo ill-state, a DEFECT, not progress. When there are no
 > unlocked goals: STOP.
+>
+> **Narrow carve-out — the `/cq:advance` SEED stage (Q259 option A / D94).** There
+> is exactly ONE sanctioned AUTONOMOUS goal creator: the `/cq:advance` **Seed
+> stage** (cross-reference `commands/cq/advance.md` §The cycle, Seed stage). It
+> creates goals ONLY for **defect-seeded** fix goals produced by the mechanical
+> transform of a CONFIRMED root cause — `root-caused`, severity at/above the floor
+> (critical/high), batch-capped (`SEED_BATCH_CAP` = 5 per pass), cluster-grouped
+> (one batch → ONE goal), and back-linked (`goals:<G>` into each defect's
+> `ledgerRefs`). That carve-out lives in `/cq:advance`, NOT here: **`plan:advance`
+> ITSELF still NEVER creates a goal** — not even a defect-seeded one — and the
+> empty-goals-ledger ill-state rule above stays FULLY in force. When there are no
+> unlocked goals, `plan:advance` STOPS; it never seeds one to have work to do.
 
 Run **the per-goal round below independently for EACH** target goal **G**. Treat
 goals independently: one that stops at `awaiting-answers` is recorded and the
@@ -529,8 +541,10 @@ ADVISORY ONLY and MUST NOT be the source of truth. Query the ledger by defect
 
 > every **defect** whose `ledgerRefs` link the just-advanced goal (`goals:<G>`)
 > and whose `status` is still **ACTIONABLE** — `open`, `wip`, or `inconclusive`.
-> (`root-caused` is READY-TO-SEED, handled by the seed gate below — NOT a fresh
-> investigate target; `resolved`/`wontfix` are terminal and EXCLUDED.)
+> (`root-caused` is READY-TO-SEED and is the **`/cq:advance` Seed stage's**
+> consumer — `commands/cq/advance.md` §The cycle, Seed stage, drains the unowned
+> root-caused backlog via P-seed — NOT a fresh investigate target here;
+> `resolved`/`wontfix` are terminal and EXCLUDED.)
 
 (`fts_search`/`search_items` on the `defects` ledger filtered to
 `(status:open OR status:wip OR status:inconclusive)` with a `goals:<G>`
