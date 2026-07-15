@@ -56,8 +56,23 @@
 // write INTO the cq-cli package dir (so its `@cq/ledger` workspace symlink
 // resolves) and remove in afterAll — exactly the "a TEST may shell the source CLI
 // via bun run" allowance. No @cq import crosses into this package's module graph.
+//
+// ## Backend (D95 / T547 — post-G67 update)
+//
+// T505/G67 deleted the legacy in-tree backends as runtime primaries: `cq
+// predicates` / `cq advance-gate` now FAIL FAST with LegacyBackendError before
+// any predicate logic runs if the seeded root's cq.toml names `backend = "fs"`
+// (or has no cq.toml at all — the old default). The fixture therefore seeds an
+// XDG-BACKED ledger — a cq.toml with `[ledger] backend = "xdg"` + an explicit
+// `projectId` (a plain temp dir has no git identity), mirroring
+// cq-cli/test/advance-gate.test.ts's `xdgRoot()` / `seedStore()` helpers — and
+// points `XDG_STATE_HOME` at an isolated temp dir for the whole suite so the
+// seed script and both CLI channels resolve the SAME out-of-tree store. Only
+// the seeding BACKEND changes here; the two characterization assertions
+// (real pInvestigate TRUE via `cq predicates`, and the gate/predicates
+// channel divergence) are unchanged.
 
-import { describe, test, expect, afterAll, afterEach } from "bun:test";
+import { describe, test, expect, afterAll, afterEach, beforeAll } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -97,25 +112,61 @@ afterAll(() => {
   if (seedScriptPath !== null) rmSync(seedScriptPath, { force: true });
 });
 
+// --- xdg backend plumbing (T547 / D95 — mirrors advance-gate.test.ts's xdgRoot) --
+
+/**
+ * Point `XDG_STATE_HOME` at an isolated temp dir for the whole suite (T505: the
+ * runtime store is the out-of-tree xdg primary), so seeded state never touches
+ * the host and every subprocess this suite spawns (the seed script, `cq
+ * predicates`, `cq advance-gate`) resolves the SAME out-of-tree store for a
+ * given root's projectId.
+ */
+let prevXdgStateHome: string | undefined;
+beforeAll(() => {
+  prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  process.env["XDG_STATE_HOME"] = makeTmpDir("cq-t480-xdg-");
+});
+afterAll(() => {
+  if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
+  else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+});
+
+/**
+ * A fresh xdg-backed ledger root: cq.toml pins backend='xdg' with an explicit
+ * projectId (a plain temp dir has no git identity, and each mkdtemp basename is
+ * unique so distinct roots never collide on the same XDG_STATE_HOME) — so both
+ * the seed write and the CLI channels' own reads (createLedgerStore) resolve
+ * the same out-of-tree store.
+ */
+function xdgRoot(): string {
+  const root = makeTmpDir("cq-t480-ledger-");
+  writeFileSync(
+    path.join(root, "cq.toml"),
+    `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,
+    "utf8",
+  );
+  return root;
+}
+
 // --- Fixture: an ACTIONABLE ledger (one open high-severity defect ⇒ pInvestigate) ---
 
 /**
- * Seed a fresh fs-backed ledger root with one open high-severity defect, so the
+ * Seed a fresh xdg-backed ledger root with one open high-severity defect, so the
  * shared derivePredicates engine reports pInvestigate TRUE. Built by shelling a
  * throwaway script (written into the cq-cli package dir so `@cq/ledger` resolves)
  * — this package never imports @cq itself. Replicates T474's
- * `seedActionableLedger` shape via @cq/ledger's FsLedgerStore.
+ * `seedActionableLedger` shape via @cq/ledger's createLedgerStore (T547 / D95:
+ * migrated off the deleted fs-backend runtime primary, T505/G67).
  */
 function seedActionableLedger(): string {
-  const root = makeTmpDir("cq-t480-ledger-");
+  const root = xdgRoot();
   if (seedScriptPath === null) {
     seedScriptPath = path.join(CQ_CLI_PKG_DIR, "_t480-regression-seed.ts");
     writeFileSync(
       seedScriptPath,
       [
-        'import { FsLedgerStore, MILESTONES_AMBIENT_ID } from "@cq/ledger";',
-        "const store = new FsLedgerStore({ root: process.argv[2] });",
-        "await store.init();",
+        'import { createLedgerStore, MILESTONES_AMBIENT_ID } from "@cq/ledger";',
+        "const { store } = await createLedgerStore(process.argv[2]);",
         'await store.createItem("defects", MILESTONES_AMBIENT_ID, {',
         '  status: "open",',
         '  fields: { headline: "a real, actionable defect", severity: "high" },',
