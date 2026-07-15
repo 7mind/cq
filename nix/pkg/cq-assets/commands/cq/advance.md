@@ -803,9 +803,9 @@ clobbering *another* checkout's pushed updates. On a rejected push, DO NOT add
 
 ---
 
-## End-of-run report (Q59 — DRAINED / BLOCKED-ON-QUESTIONS / MIXED)
+## End-of-run report (Q59 — DRAINED / BLOCKED-ON-QUESTIONS / BLOCKED-ON-USER-ACTION / MIXED)
 
-When the loop stops, classify the run into exactly ONE of three categories and
+When the loop stops, classify the run into exactly ONE of four categories and
 report it. Mirror `/cq:implement:advance`'s end-of-pass report style
 (concise, id-listing, next-action-bearing).
 
