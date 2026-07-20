@@ -24,6 +24,34 @@ export interface LedgerSchema {
   statusValues: string[];
   /** Subset of statusValues that mark an item as terminal (archivable). */
   terminalStatuses: string[];
+  /**
+   * Optional declarative satisfies-dependency status list (G80). When a
+   * dependency (`dependsOn` / `blockedBy`) points at an item in THIS ledger,
+   * these are the statuses of that TARGET item that count as SATISFYING the
+   * dependency — distinct from `terminalStatuses`, which marks an item
+   * archivable regardless of whether it satisfied anything (e.g. a `wontfix`
+   * defect is terminal but must never silently satisfy a dependency on it).
+   *
+   * This field is purely declarative — it has no behavior of its own. A later
+   * predicates-resolver task consumes it under two rules:
+   *
+   *  (a) AUTHORITATIVE SOURCE — for a CANONICAL ledger name (tasks, defects,
+   *      questions, goals, decisions, hypothesis, ideas, …) the resolver reads
+   *      the canonical constant's declaration (`constants.ts`), NOT the
+   *      persisted/live schema. This matters because `schemasEqual` /
+   *      `schemaCompatible` (`schemaCompat.ts`) compare a FIXED property list
+   *      that does not include this field, so an existing store's persisted
+   *      schema that PREDATES this field is treated as unchanged (neither
+   *      widened nor divergent) and is never upgraded in place — reading the
+   *      canonical constant is what makes the answer correct regardless. For
+   *      a CUSTOM (non-canonical) ledger there is no canonical constant to
+   *      fall back to, so the resolver reads the persisted schema.
+   *  (b) FALLBACK — a target ledger whose (canonical-or-persisted) schema does
+   *      NOT declare this field satisfies a dependency on its
+   *      `terminalStatuses` instead: absence of the declaration means "every
+   *      terminal status satisfies", not "nothing satisfies".
+   */
+  satisfiesDependencyStatuses?: string[];
   /** Per-field schema. Field names are stable identifiers (no spaces). */
   fields: Record<string, FieldSpec>;
   /**

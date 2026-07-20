@@ -751,6 +751,9 @@ function cloneSchema(s: LedgerSchema): LedgerSchema {
       Object.entries(s.transitions).map(([from, tos]) => [from, [...tos]]),
     );
   }
+  if (s.satisfiesDependencyStatuses !== undefined) {
+    out.satisfiesDependencyStatuses = [...s.satisfiesDependencyStatuses];
+  }
   return out;
 }
 

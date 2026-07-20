@@ -112,6 +112,8 @@ ledgers:
           - wontfix
         resolved: []
         wontfix: []
+      satisfiesDependencyStatuses:
+        - resolved
   - name: tasks
     schema:
       statusValues:
@@ -187,6 +189,8 @@ ledgers:
           - abandoned
         done: []
         abandoned: []
+      satisfiesDependencyStatuses:
+        - done
   - name: hypothesis
     schema:
       statusValues:
@@ -248,6 +252,8 @@ ledgers:
           - wrong
         confirmed: []
         wrong: []
+      satisfiesDependencyStatuses:
+        - confirmed
   - name: questions
     schema:
       statusValues:
@@ -298,6 +304,8 @@ ledgers:
           - withdrawn
         answered: []
         withdrawn: []
+      satisfiesDependencyStatuses:
+        - answered
   - name: decisions
     schema:
       statusValues:
@@ -348,6 +356,8 @@ ledgers:
           - superseded
         locked: []
         superseded: []
+      satisfiesDependencyStatuses:
+        - locked
   - name: goals
     schema:
       statusValues:
@@ -404,6 +414,8 @@ ledgers:
           - planning
         done: []
         abandoned: []
+      satisfiesDependencyStatuses:
+        - done
   - name: reviews
     schema:
       statusValues:
@@ -519,3 +531,5 @@ ledgers:
           - discarded
         planned: []
         discarded: []
+      satisfiesDependencyStatuses:
+        - planned

@@ -47,6 +47,9 @@ export const MILESTONES_AMBIENT_ID = "M-AMBIENT" as const;
 export const MILESTONES_SCHEMA: LedgerSchema = {
   statusValues: ["open", "done", "postponed", "blocked"],
   terminalStatuses: ["done"],
+  // No satisfiesDependencyStatuses (G80): a `milestones:<M>` dependency is
+  // satisfied by the COMPUTED all-tasks-terminal rule, special-cased in the
+  // predicate layer — it is not a fixed set of milestone statuses.
   idPrefix: "M",
   // F1 transition guard. statuses: open, done(terminal), postponed, blocked.
   // open is the working state; postponed/blocked are reversible holds that
@@ -121,6 +124,9 @@ const COMMON_REF_FIELDS = {
 export const DEFECTS_SCHEMA: LedgerSchema = {
   statusValues: ["open", "wip", "root-caused", "inconclusive", "resolved", "wontfix"],
   terminalStatuses: ["resolved", "wontfix"],
+  // G80: only `resolved` satisfies a dependency on a defect — `wontfix` is
+  // terminal (archivable) but must NOT silently satisfy (design lock).
+  satisfiesDependencyStatuses: ["resolved"],
   idPrefix: "D",
   // F1 transition guard. Q67 VERBATIM: open reaches only wip + the two
   // terminals (NO open→root-caused, NO open→inconclusive). root-caused and
@@ -152,6 +158,9 @@ export const DEFECTS_SCHEMA: LedgerSchema = {
 export const TASKS_SCHEMA: LedgerSchema = {
   statusValues: ["planned", "wip", "done", "blocked", "abandoned"],
   terminalStatuses: ["done", "abandoned"],
+  // G80: only `done` satisfies a dependency on a task — `abandoned` is
+  // terminal (archivable) but must NOT silently satisfy (design lock).
+  satisfiesDependencyStatuses: ["done"],
   idPrefix: "T",
   // F1 transition guard. The proposed map omitted the `blocked` status the
   // schema declares; `blocked` is folded in as a reversible hold reachable
@@ -184,6 +193,9 @@ export const TASKS_SCHEMA: LedgerSchema = {
 export const HYPOTHESIS_SCHEMA: LedgerSchema = {
   statusValues: ["open", "uncertain", "confirmed", "wrong"],
   terminalStatuses: ["confirmed", "wrong"],
+  // G80: only `confirmed` satisfies a dependency on a hypothesis — `wrong`
+  // is terminal (archivable) but must NOT silently satisfy (design lock).
+  satisfiesDependencyStatuses: ["confirmed"],
   idPrefix: "H",
   // F1 transition guard. open → uncertain/confirmed/wrong; uncertain →
   // confirmed/wrong; confirmed/wrong are terminal.
@@ -211,6 +223,9 @@ export const HYPOTHESIS_SCHEMA: LedgerSchema = {
 export const QUESTIONS_SCHEMA: LedgerSchema = {
   statusValues: ["open", "answered", "withdrawn"],
   terminalStatuses: ["answered", "withdrawn"],
+  // G80: only `answered` satisfies a dependency on a question — `withdrawn`
+  // is terminal (archivable) but must NOT silently satisfy (design lock).
+  satisfiesDependencyStatuses: ["answered"],
   idPrefix: "Q",
   // F1 transition guard. open → answered/withdrawn; both are terminal.
   transitions: {
@@ -232,6 +247,9 @@ export const QUESTIONS_SCHEMA: LedgerSchema = {
 export const DECISIONS_SCHEMA: LedgerSchema = {
   statusValues: ["proposed", "locked", "superseded"],
   terminalStatuses: ["locked", "superseded"],
+  // G80: only `locked` satisfies a dependency on a decision — `superseded`
+  // is terminal (archivable) but must NOT silently satisfy (design lock).
+  satisfiesDependencyStatuses: ["locked"],
   idPrefix: "K",
   // F1 transition guard. proposed → locked/superseded. Both locked and
   // superseded are terminal, so locked carries no outgoing transitions.
@@ -257,6 +275,9 @@ export const DECISIONS_SCHEMA: LedgerSchema = {
 export const GOALS_SCHEMA: LedgerSchema = {
   statusValues: ["clarifying", "planning", "planned", "building", "done", "abandoned"],
   terminalStatuses: ["done", "abandoned"],
+  // G80: only `done` satisfies a dependency on a goal — `abandoned` is
+  // terminal (archivable) but must NOT silently satisfy (design lock).
+  satisfiesDependencyStatuses: ["done"],
   idPrefix: "G",
   // F1 transition guard. clarifying → planning → planned → building → done,
   // with abandoned reachable from each non-terminal state; planning may loop
@@ -304,6 +325,9 @@ export const GOALS_SCHEMA: LedgerSchema = {
 export const REVIEWS_SCHEMA: LedgerSchema = {
   statusValues: ["go-ahead", "revise"],
   terminalStatuses: ["go-ahead", "revise"],
+  // No satisfiesDependencyStatuses (G80): reviews are not a dependency target
+  // in practice, so this falls under the FALLBACK rule — the resolver would
+  // treat every terminalStatuses entry as satisfying.
   idPrefix: "R",
   transitions: {
     "go-ahead": [],
@@ -354,6 +378,9 @@ export const REVIEWS_SCHEMA: LedgerSchema = {
 export const HANDOFFS_SCHEMA: LedgerSchema = {
   statusValues: ["drained", "answers-required", "mixed", "illness-detected", "user-action-required"],
   terminalStatuses: ["drained", "answers-required", "mixed", "illness-detected", "user-action-required"],
+  // No satisfiesDependencyStatuses (G80): handoffs are not a dependency
+  // target in practice, so this falls under the FALLBACK rule — the
+  // resolver would treat every terminalStatuses entry as satisfying.
   idPrefix: "HO",
   transitions: {
     drained: [],
@@ -412,6 +439,9 @@ export const HANDOFFS_SCHEMA: LedgerSchema = {
 export const IDEAS_SCHEMA: LedgerSchema = {
   statusValues: ["open", "planned", "discarded", "postponed"],
   terminalStatuses: ["planned", "discarded"],
+  // G80: only `planned` satisfies a dependency on an idea — `discarded` is
+  // terminal (archivable) but must NOT silently satisfy (design lock).
+  satisfiesDependencyStatuses: ["planned"],
   idPrefix: "I",
   transitions: {
     open: ["planned", "discarded", "postponed"],

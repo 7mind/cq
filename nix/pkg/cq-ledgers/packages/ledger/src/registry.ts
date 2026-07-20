@@ -112,11 +112,25 @@ export function parseSchema(raw: unknown): LedgerSchema {
     idPrefix = idPrefixRaw;
   }
   const transitions = parseTransitions(s["transitions"]);
+  const satisfiesDependencyStatusesRaw = s["satisfiesDependencyStatuses"];
+  let satisfiesDependencyStatuses: string[] | undefined;
+  if (satisfiesDependencyStatusesRaw !== undefined && satisfiesDependencyStatusesRaw !== null) {
+    if (
+      !Array.isArray(satisfiesDependencyStatusesRaw) ||
+      satisfiesDependencyStatusesRaw.some((v) => typeof v !== "string")
+    ) {
+      throw new SchemaValidationError("schema.satisfiesDependencyStatuses must be string[]");
+    }
+    satisfiesDependencyStatuses = satisfiesDependencyStatusesRaw as string[];
+  }
   // D-LED-02: enforce cross-layer invariants (terminal subset, em-dash-free
   // status values, field name regex, reserved field names, idPrefix shape).
   const schema: LedgerSchema = { statusValues: sv, terminalStatuses: ts, fields };
   if (idPrefix !== undefined) schema.idPrefix = idPrefix;
   if (transitions !== undefined) schema.transitions = transitions;
+  if (satisfiesDependencyStatuses !== undefined) {
+    schema.satisfiesDependencyStatuses = satisfiesDependencyStatuses;
+  }
   validateSchema(schema);
   return schema;
 }
@@ -183,6 +197,9 @@ export function serializeRegistry(registry: LedgerRegistry): string {
         schema["transitions"] = Object.fromEntries(
           Object.entries(e.schema.transitions).map(([from, tos]) => [from, [...tos]]),
         );
+      }
+      if (e.schema.satisfiesDependencyStatuses !== undefined) {
+        schema["satisfiesDependencyStatuses"] = [...e.schema.satisfiesDependencyStatuses];
       }
       return { name: e.name, schema };
     }),
