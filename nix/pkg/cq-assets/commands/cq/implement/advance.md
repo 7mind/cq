@@ -17,7 +17,7 @@ outputs:
   - "per worker/reviewer/conflict-resolver: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
   - "handoffs item (standalone only) and ledger git commit (standalone only)"
 ioSchema:
-  - "ready-set: tasks status non-terminal and not blocked, all dependsOn done, milestone dependsOn satisfied, no open question"
+  - "ready-set: tasks status non-terminal and not blocked, all dependsOn satisfied per target ledger's satisfies-dependency statuses (abandoned/wontfix never satisfy), milestone dependsOn satisfied, no open question"
   - "worker dispatch: isolation=worktree, branch=implement/<taskId>, up to N=8 concurrent"
   - "worker result JSON: {taskId, status, resultCommit, branch, filesTouched, checkSummary, summary, blockedReason?}"
   - "reviewer result JSON: {taskId, verdict, criticism[], questions[], defects[], rationale, summary?}"
@@ -221,7 +221,14 @@ into the next dispatch as additional guidance.
 
 A task is **READY** iff ALL hold:
 - its status is non-terminal and NOT `blocked` (`planned`, or re-opened above);
-- every task in its `dependsOn` is `done`;
+- every entry in its `dependsOn` is SATISFIED — each entry is a `<ledger>:<id>`
+  ref (bare ids tolerated as a legacy shorthand), resolved against its TARGET
+  ledger's declared satisfies-dependency statuses (tasks: `done`; defects:
+  `resolved`; questions: `answered`; other ledgers per their own declaration);
+  a `milestones` target is satisfied when all its tasks are terminal;
+  free-text/unresolvable entries and refs to an archived or absent item are
+  satisfied by default; a terminal-but-non-satisfying status such as a task's
+  `abandoned` or a defect's `wontfix` NEVER satisfies;
 - its milestone's `dependsOn` milestones are satisfied (all their tasks
   terminal);
 - it has NO linked `open` question.

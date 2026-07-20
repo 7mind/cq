@@ -352,10 +352,16 @@ do NOT make P-plan true.)
 TRUE iff there exists a **goal** G in `planned` or `building` that has a
 **DAG-READY non-terminal task** — a task in the implement-flow READY-SET per
 `/cq:implement:advance` §1: status non-terminal and NOT `blocked`; every
-task in its `dependsOn` is `done`; its milestone's `dependsOn` milestones are
-satisfied; and it has NO linked `open` question. (A goal whose only remaining
-tasks are all `blocked` on open questions yields no ready task — P-implement is
-FALSE for it.)
+entry in its `dependsOn` is SATISFIED (each entry is a `<ledger>:<id>` ref,
+bare ids tolerated as a legacy shorthand, resolved against its TARGET
+ledger's declared satisfies-dependency statuses — e.g. tasks need `done`,
+defects `resolved`, questions `answered`; a milestone target is satisfied when
+all its tasks are terminal; free-text/unresolvable entries and refs to an
+archived or absent item are satisfied by default; a terminal-but-non-satisfying
+status such as `abandoned`/`wontfix` never satisfies); its milestone's
+`dependsOn` milestones are satisfied; and it has NO linked `open` question.
+(A goal whose only remaining tasks are all `blocked` on open questions yields
+no ready task — P-implement is FALSE for it.)
 
 ---
 
