@@ -1,0 +1,30 @@
+;; yolo-darwin rules appended after claude-code-sandbox noread.sb.
+;; Profile: foo
+;; Network remains open; filesystem grants are narrowed below.
+
+;; Grant PWD, shared cache, and native homes for the default profile.
+(allow file-read* file-write* file-write-create file-read-metadata file-ioctl
+    (subpath "/tmp/x")
+    (subpath (string-append (param "HOME_DIR") "/.cache"))
+)
+
+;; Deny every named profile before re-granting the active one.
+(deny file-read* file-write* file-write-create
+    (subpath (string-append (param "HOME_DIR") "/.config/yolo")))
+
+;; Override base grants to native agent homes for named profiles.
+;; Shared HM assets are copied into the active profile before launch.
+(deny file-read* file-write* file-write-create
+    (subpath (string-append (param "HOME_DIR") "/.claude"))
+    (literal (string-append (param "HOME_DIR") "/.claude.json"))
+    (literal (string-append (param "HOME_DIR") "/.claude.json.backup"))
+    (subpath (string-append (param "HOME_DIR") "/.codex"))
+    (subpath (string-append (param "HOME_DIR") "/.gemini"))
+    (subpath (string-append (param "HOME_DIR") "/.pi"))
+    (subpath (string-append (param "HOME_DIR") "/Library/Caches/claude-cli-nodejs")))
+
+;; Re-grant active profile "foo" last; siblings remain denied.
+(allow file-read* file-write* file-write-create file-read-metadata file-ioctl
+    (subpath (string-append (param "HOME_DIR") "/.config/yolo/foo/claude"))
+    (subpath (string-append (param "HOME_DIR") "/.config/yolo/foo/codex"))
+    (subpath (string-append (param "HOME_DIR") "/.config/yolo/foo/pi")))

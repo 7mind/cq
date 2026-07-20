@@ -55,6 +55,8 @@ var/
 # CodeGraph local index (per-machine)
 .codegraph/
 .cq/.backup/
+# Ledger archives are runtime artifacts, not source.
+.cq/archive/
 
 # cq git-object ledger backend (managed) — do not edit
 .cq/*.md
