@@ -30,24 +30,52 @@
  *  - P-plan — a goal in `clarifying` with NO open linked question, OR a goal in
  *    `planning`.
  *  - P-implement — a goal in `planned`/`building` with a DAG-READY non-terminal
- *    task: status non-terminal and not `blocked`; every task in its `dependsOn`
- *    is `done`; its milestone's `dependsOn` milestones are satisfied (all their
- *    tasks terminal); and no linked open question.
+ *    task: status non-terminal and not `blocked`; every entry in its `dependsOn`
+ *    is SATISFIED (see the dependency-resolution spec below); its milestone's
+ *    `dependsOn` milestones are satisfied (all their tasks terminal); and no
+ *    linked open question.
  *  - openQuestionGate — the open `questions` items gating the above.
+ *
+ * Dependency-resolution spec (G80/M245, read-side of the `<ledger>:<id>`
+ * migration). Every `dependsOn` entry — on a TASK or on a milestone item — is
+ * resolved through `refs.ts` and tolerates BOTH the legacy bare form ("T523")
+ * and the canonical prefixed form ("tasks:T523"). A bare id resolves by its
+ * exact alpha idPrefix against the store's prefix registry; a prefixed ref
+ * names its ledger explicitly. An entry is SATISFIED when:
+ *   - it does not parse as a ref at all (legacy free-text) — advisory, satisfied;
+ *   - it resolves to a ledger/id with NO ACTIVE item (unknown or archived id,
+ *     or an unregistered/unknown ledger) — the archived-never-strands leniency,
+ *     satisfied;
+ *   - it targets the `milestones` ledger (bare "M<n>" or "milestones:<M>") and
+ *     that milestone's tasks are all terminal (the computed all-tasks-terminal
+ *     rule, reusing `milestoneSatisfied` — milestones carry no fixed
+ *     satisfies-status set);
+ *   - otherwise, the resolved ACTIVE target item's status is in that ledger's
+ *     SATISFY-DEPENDENCY status set. That set comes from the CANONICAL CONSTANT
+ *     for a canonical ledger name (rule (a) in the `LedgerSchema` JSDoc —
+ *     persisted schemas predate the field), else the persisted schema for a
+ *     custom ledger; a ledger with NO `satisfiesDependencyStatuses` declaration
+ *     falls back to its `terminalStatuses` (rule (b)).
+ * An ACTIVE target in a non-satisfying status (including a terminal-but-
+ * non-satisfying status such as a task's `abandoned` or a defect's `wontfix`)
+ * does NOT satisfy — the dependent task stays out of the ready-set. The
+ * resolver never throws: an unresolvable entry is treated as satisfied.
  *  - belowFloor — the SAME conditions as P-seed EXCEPT the severity is BELOW the
  *    floor (medium/low/unrecognized/empty). INFORMATIONAL only: it reports the
  *    root-caused defects that would seed a fix but for their sub-floor severity,
  *    and MUST NOT gate any stop (it never contributes to the open-question gate).
  */
 
-import type { Item } from "../types.js";
+import type { Item, LedgerSchema } from "../types.js";
 import {
+  CANONICAL_LEDGERS,
   DEFECTS_LEDGER,
   GOALS_LEDGER,
   MILESTONES_LEDGER,
   QUESTIONS_LEDGER,
   TASKS_LEDGER,
 } from "../constants.js";
+import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
 import type { LedgerStore } from "./LedgerStore.js";
 
 /**
@@ -105,8 +133,6 @@ const QUESTION_OPEN_STATUS = "open";
 const TASK_TERMINAL_STATUSES = new Set(["done", "abandoned"]);
 /** Task status that holds it OUT of the implement ready-set. */
 const TASK_BLOCKED_STATUS = "blocked";
-/** Task status meaning a dependency is satisfied. */
-const TASK_DONE_STATUS = "done";
 
 // --- store-read helpers ----------------------------------------------------
 
@@ -163,6 +189,55 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
   const tasks = activeItems(store, TASKS_LEDGER);
   const questions = activeItems(store, QUESTIONS_LEDGER);
   const milestones = activeItems(store, MILESTONES_LEDGER);
+
+  // --- dependency-resolution indexes (G80/M245), built ONCE up front --------
+  // A single snapshot of every registered ledger: its active items keyed by id
+  // (for target resolution) plus its SATISFY-DEPENDENCY status set. Building
+  // these here keeps the resolver free of per-dep store round-trips.
+  const ledgerNames = store.enumerate();
+  const registry = buildPrefixRegistry(
+    ledgerNames.map((name) => ({ name, schema: store.fetch(name).schema })),
+  );
+  const canonicalSchemaByName = new Map<string, LedgerSchema>(
+    CANONICAL_LEDGERS.map((c) => [c.name, c.schema]),
+  );
+  const activeItemsByLedger = new Map<string, Map<string, Item>>();
+  const satisfyingByLedger = new Map<string, Set<string>>();
+  for (const name of ledgerNames) {
+    const idIndex = new Map<string, Item>();
+    for (const item of activeItems(store, name)) idIndex.set(item.id, item);
+    activeItemsByLedger.set(name, idIndex);
+    // Rule (a): a canonical ledger name reads the canonical CONSTANT's schema
+    // (persisted schemas predate `satisfiesDependencyStatuses`); a custom
+    // ledger reads its persisted schema. Rule (b): absent declaration falls
+    // back to `terminalStatuses`.
+    const schema = canonicalSchemaByName.get(name) ?? store.fetch(name).schema;
+    satisfyingByLedger.set(
+      name,
+      new Set(schema.satisfiesDependencyStatuses ?? schema.terminalStatuses),
+    );
+  }
+
+  /**
+   * Resolve one raw `dependsOn` entry to its target `{ledger, id}`, tolerating
+   * BOTH the bare ("T523") and prefixed ("tasks:T523") forms. Returns
+   * `undefined` for any entry that does not parse as a ref OR whose bare alpha
+   * prefix / prefixed ledger name is not registered — i.e. an advisory / legacy
+   * free-text entry the caller treats as SATISFIED. Never throws.
+   */
+  function resolveRef(raw: string): { ledger: string; id: string } | undefined {
+    let canonical: string;
+    try {
+      canonical = canonicalizeRef(raw, registry);
+    } catch {
+      return undefined;
+    }
+    const parsed = parseRef(canonical);
+    // canonicalizeRef always yields the prefixed form; the bare branch is
+    // unreachable but keeps the function total.
+    if (parsed.kind !== "prefixed") return undefined;
+    return { ledger: parsed.ledger, id: parsed.id };
+  }
 
   // The open questions, indexed by the cross-ledger refs they carry, so a
   // single pass answers "is item X gated by an open question?".
@@ -271,11 +346,9 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
 
   // --- P-implement ---------------------------------------------------------
   // Lookup tables P-implement needs:
-  //  - task by id (for dependsOn resolution);
   //  - tasks grouped by milestone (for milestone-dependsOn satisfaction);
-  //  - milestone dependsOn (from the milestones-ledger item fields).
-  const taskById = new Map<string, Item>();
-  for (const t of tasks) taskById.set(t.id, t);
+  //  - milestone dependsOn (raw entries from the milestones-ledger item fields,
+  //    resolved through refs.ts at check time to tolerate both ref forms).
   const tasksByMilestone = new Map<string, Item[]>();
   for (const t of tasks) {
     const list = tasksByMilestone.get(t.milestoneId) ?? [];
@@ -291,6 +364,23 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
     return ts.every((t) => TASK_TERMINAL_STATUSES.has(t.status));
   }
 
+  /**
+   * Is one raw `dependsOn` entry SATISFIED? Resolves the ref (both forms),
+   * then applies the dependency-resolution spec in the module docblock:
+   * unresolvable / free-text → satisfied; unknown-or-archived target (no active
+   * item) → satisfied (archived-never-strands); a `milestones:<M>` / bare "M<n>"
+   * target → the all-tasks-terminal rule; otherwise the ACTIVE target's status
+   * must be in its ledger's satisfy-dependency set.
+   */
+  function dependencySatisfied(raw: string): boolean {
+    const target = resolveRef(raw);
+    if (target === undefined) return true; // free-text / unresolvable → advisory
+    if (target.ledger === MILESTONES_LEDGER) return milestoneSatisfied(target.id);
+    const item = activeItemsByLedger.get(target.ledger)?.get(target.id);
+    if (item === undefined) return true; // unknown / archived → never strands
+    return satisfyingByLedger.get(target.ledger)?.has(item.status) ?? false;
+  }
+
   const buildableGoalIds = new Set(
     goals.filter((g) => GOAL_BUILDABLE_STATUSES.has(g.status)).map((g) => g.id),
   );
@@ -304,17 +394,19 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
     if (!ownedByBuildableGoal) continue;
     // Non-terminal and NOT blocked.
     if (TASK_TERMINAL_STATUSES.has(t.status) || t.status === TASK_BLOCKED_STATUS) continue;
-    // Every task in its dependsOn is done.
-    const depsReady = refList(t, "dependsOn").every((depId) => {
-      const dep = taskById.get(depId);
-      // A dependency on a task that is no longer active (e.g. archived) is
-      // treated as satisfied — an unknown id never holds a task back.
-      return dep === undefined || dep.status === TASK_DONE_STATUS;
-    });
-    if (!depsReady) continue;
-    // Its milestone's dependsOn milestones are satisfied.
+    // Every entry in its dependsOn is satisfied (both ref forms; cross-ledger).
+    if (!refList(t, "dependsOn").every((raw) => dependencySatisfied(raw))) continue;
+    // Its milestone's dependsOn milestones are satisfied. Milestone-item
+    // dependsOn entries are resolved through refs.ts and keyed by the parsed
+    // bare milestone id, so a prefixed "milestones:<M>" entry no longer misses
+    // the tasksByMilestone lookup and vacuously passes.
     const milestoneDeps = milestoneDependsOn.get(t.milestoneId) ?? [];
-    if (!milestoneDeps.every((depMid) => milestoneSatisfied(depMid))) continue;
+    const milestoneDepsReady = milestoneDeps.every((raw) => {
+      const target = resolveRef(raw);
+      // Unresolvable milestone-dep entry → advisory, satisfied.
+      return target === undefined || milestoneSatisfied(target.id);
+    });
+    if (!milestoneDepsReady) continue;
     // No linked open question.
     const blockingQs = questionsGating(TASKS_LEDGER, t.id);
     if (blockingQs.length > 0) {

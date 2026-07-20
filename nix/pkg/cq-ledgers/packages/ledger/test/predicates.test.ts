@@ -116,12 +116,23 @@ const DEFECTS = "defects";
 const GOALS = "goals";
 const TASKS = "tasks";
 const QUESTIONS = "questions";
+const REVIEWS = "reviews";
+const MILESTONES = "milestones";
 
 // Sanity guard: the fixtures below assume the canonical names are bootstrapped.
 const canonicalNames = new Set(CANONICAL_LEDGERS.map((c) => c.name));
-for (const name of [DEFECTS, GOALS, TASKS, QUESTIONS]) {
+for (const name of [DEFECTS, GOALS, TASKS, QUESTIONS, REVIEWS, MILESTONES]) {
   if (!canonicalNames.has(name)) throw new Error(`expected canonical ledger ${name}`);
 }
+
+/**
+ * G80/M245 read-side ref-grammar coverage runs every dependency case in BOTH
+ * the legacy bare form ("T523") and the canonical prefixed form ("tasks:T523").
+ */
+const REF_FORMS: ReadonlyArray<{ name: string; make: (ledger: string, id: string) => string }> = [
+  { name: "bare", make: (_ledger, id) => id },
+  { name: "prefixed", make: (ledger, id) => `${ledger}:${id}` },
+];
 
 function runPredicatesSuite(factory: PredicatesStoreFactory): void {
   describe(`derivePredicates (dual-adapter fixtures, ${factory.name})`, () => {
@@ -645,6 +656,221 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
         expectVerdict(ext.belowFloor, true, [med.id, low.id]);
         expect(ext.pSeed!.items).not.toContain(med.id);
         expect(ext.pSeed!.items).not.toContain(low.id);
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // (G80/M245) READ-SIDE ref-grammar dependency resolution — every case runs
+    // in BOTH the legacy bare form and the canonical prefixed form. The
+    // prefixed (and several bare cross-ledger) variants FAIL pre-fix because
+    // the old resolver was tasks-only, bare-keyed, with unknown-id leniency.
+    // -----------------------------------------------------------------------
+
+    /** Seed a planned goal + a candidate task, both under `m`. */
+    async function seedCandidate(
+      store: LedgerStore,
+      mId: string,
+      dependsOn: string[],
+    ): Promise<string> {
+      const g = await store.createItem(GOALS, mId, {
+        status: "planned",
+        fields: { title: "g", description: "d" },
+      });
+      const t = await store.createItem(TASKS, mId, {
+        status: "planned",
+        fields: { headline: "candidate", ledgerRefs: [`${GOALS}:${g.id}`], dependsOn },
+      });
+      return t.id;
+    }
+
+    for (const form of REF_FORMS) {
+      // A dependsOn on an ACTIVE ABANDONED task must NOT satisfy: abandoned is
+      // terminal but is NOT in the tasks satisfy-set. (Prefixed FAILS pre-fix:
+      // the old bare-keyed taskById missed "tasks:T<n>" and leniently satisfied.)
+      it(`(g80-dep) abandoned task dep → NOT ready (${form.name})`, async () => {
+        const store = await factory.build();
+        try {
+          const m = await store.createMilestone({ title: "m" });
+          const dep = await store.createItem(TASKS, m.id, {
+            status: "planned",
+            fields: { headline: "dep" },
+          });
+          await store.updateItem(TASKS, dep.id, { status: "abandoned" });
+          await seedCandidate(store, m.id, [form.make(TASKS, dep.id)]);
+
+          const p = derivePredicates(store);
+          expect(p.pImplement).toEqual({ value: false, items: [] });
+        } finally {
+          await factory.teardown(store);
+        }
+      });
+
+      // A dependsOn on a DONE task satisfies → the candidate is ready.
+      it(`(g80-dep) done task dep → ready (${form.name})`, async () => {
+        const store = await factory.build();
+        try {
+          const m = await store.createMilestone({ title: "m" });
+          const dep = await store.createItem(TASKS, m.id, {
+            status: "done",
+            fields: { headline: "dep" },
+          });
+          const tId = await seedCandidate(store, m.id, [form.make(TASKS, dep.id)]);
+
+          const p = derivePredicates(store);
+          expect(p.pImplement).toEqual({ value: true, items: [tId] });
+        } finally {
+          await factory.teardown(store);
+        }
+      });
+
+      // Cross-ledger dep on a RESOLVED defect satisfies (defects satisfy-set is
+      // {resolved}). (Both forms FAIL pre-fix: taskById never held defects, so
+      // any defect ref was leniently satisfied regardless of status.)
+      it(`(g80-dep) cross-ledger dep on a resolved defect → ready (${form.name})`, async () => {
+        const store = await factory.build();
+        try {
+          const m = await store.createMilestone({ title: "m" });
+          const d = await store.createItem(DEFECTS, m.id, {
+            status: "resolved",
+            fields: { headline: "fixed", severity: "high" },
+          });
+          const tId = await seedCandidate(store, m.id, [form.make(DEFECTS, d.id)]);
+
+          const p = derivePredicates(store);
+          expect(p.pImplement).toEqual({ value: true, items: [tId] });
+        } finally {
+          await factory.teardown(store);
+        }
+      });
+
+      // Cross-ledger dep on an OPEN defect must NOT satisfy (open ∉ {resolved}).
+      // (Both forms FAIL pre-fix via the same tasks-only leniency.)
+      it(`(g80-dep) cross-ledger dep on an open defect → NOT ready (${form.name})`, async () => {
+        const store = await factory.build();
+        try {
+          const m = await store.createMilestone({ title: "m" });
+          const d = await store.createItem(DEFECTS, m.id, {
+            status: "open",
+            fields: { headline: "still-open", severity: "high" },
+          });
+          await seedCandidate(store, m.id, [form.make(DEFECTS, d.id)]);
+
+          const p = derivePredicates(store);
+          expect(p.pImplement).toEqual({ value: false, items: [] });
+        } finally {
+          await factory.teardown(store);
+        }
+      });
+
+      // A dep resolving to NO active item (here: an ARCHIVED task) satisfies —
+      // the archived-never-strands leniency is preserved for both forms.
+      it(`(g80-dep) archived (no active item) dep → satisfies (${form.name})`, async () => {
+        const store = await factory.build();
+        try {
+          const mDep = await store.createMilestone({ title: "dep-milestone" });
+          const dep = await store.createItem(TASKS, mDep.id, {
+            status: "done",
+            fields: { headline: "dep" },
+          });
+          // archiveMilestone requires the milestone-item itself to be terminal.
+          await store.updateMilestone(mDep.id, { status: "done" });
+          await store.archiveMilestone(mDep.id, "archived");
+
+          const m = await store.createMilestone({ title: "m" });
+          const tId = await seedCandidate(store, m.id, [form.make(TASKS, dep.id)]);
+
+          const p = derivePredicates(store);
+          expect(p.pImplement).toEqual({ value: true, items: [tId] });
+        } finally {
+          await factory.teardown(store);
+        }
+      });
+
+      // A dep on an UNDECLARED ledger (reviews has no satisfiesDependencyStatuses)
+      // falls back to terminalStatuses: a terminal "go-ahead" review satisfies.
+      it(`(g80-dep) reviews:R<n> dep (undeclared ledger, terminal item) → satisfies (${form.name})`, async () => {
+        const store = await factory.build();
+        try {
+          const m = await store.createMilestone({ title: "m" });
+          const r = await store.createItem(REVIEWS, m.id, {
+            status: "go-ahead",
+            fields: { summary: "ok" },
+          });
+          const tId = await seedCandidate(store, m.id, [form.make(REVIEWS, r.id)]);
+
+          const p = derivePredicates(store);
+          expect(p.pImplement).toEqual({ value: true, items: [tId] });
+        } finally {
+          await factory.teardown(store);
+        }
+      });
+
+      // A MILESTONE whose own dependsOn names another milestone gates its tasks
+      // until that milestone's tasks are terminal. (Prefixed FAILS pre-fix: the
+      // bare-keyed tasksByMilestone lookup missed "milestones:M<n>" and the
+      // .every() was VACUOUSLY TRUE — silently deleting the ordering.)
+      it(`(g80-mdag) milestone dependsOn [milestone] gates its tasks until deps terminal (${form.name})`, async () => {
+        const store = await factory.build();
+        try {
+          const m1 = await store.createMilestone({ title: "dep-milestone" });
+          const m2 = await store.createMilestone({
+            title: "downstream",
+            dependsOn: [form.make(MILESTONES, m1.id)],
+          });
+          const blocker = await store.createItem(TASKS, m1.id, {
+            status: "planned",
+            fields: { headline: "unfinished-in-dep-milestone" },
+          });
+          const tId = await seedCandidate(store, m2.id, []);
+
+          // M1 has a non-terminal task → M2's candidate is gated.
+          expect(derivePredicates(store).pImplement).toEqual({ value: false, items: [] });
+
+          // Finish M1's task → the ordering releases M2's candidate.
+          await store.updateItem(TASKS, blocker.id, { status: "done" });
+          expect(derivePredicates(store).pImplement).toEqual({ value: true, items: [tId] });
+        } finally {
+          await factory.teardown(store);
+        }
+      });
+
+      // A TASK whose dependsOn names a MILESTONE gates the same way — satisfied
+      // by the all-tasks-terminal rule. (Both forms FAIL pre-fix: taskById never
+      // held milestones, so the milestone ref was leniently satisfied.)
+      it(`(g80-mdag) task dependsOn [milestone] gates until that milestone's tasks terminal (${form.name})`, async () => {
+        const store = await factory.build();
+        try {
+          const m1 = await store.createMilestone({ title: "dep-milestone" });
+          const blocker = await store.createItem(TASKS, m1.id, {
+            status: "planned",
+            fields: { headline: "unfinished-in-dep-milestone" },
+          });
+          const m2 = await store.createMilestone({ title: "downstream" });
+          const tId = await seedCandidate(store, m2.id, [form.make(MILESTONES, m1.id)]);
+
+          expect(derivePredicates(store).pImplement).toEqual({ value: false, items: [] });
+
+          await store.updateItem(TASKS, blocker.id, { status: "done" });
+          expect(derivePredicates(store).pImplement).toEqual({ value: true, items: [tId] });
+        } finally {
+          await factory.teardown(store);
+        }
+      });
+    }
+
+    // A dependsOn entry that does not parse as a ref at all (legacy free-text)
+    // is advisory → treated as SATISFIED; it never throws from the predicate
+    // layer and never holds a task back.
+    it("(g80-dep) free-text dependsOn entry → satisfied (advisory)", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const tId = await seedCandidate(store, m.id, ["see the design doc", "TBD"]);
+
+        const p = derivePredicates(store);
+        expect(p.pImplement).toEqual({ value: true, items: [tId] });
       } finally {
         await factory.teardown(store);
       }
