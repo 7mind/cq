@@ -68,6 +68,30 @@ import {
   evaluate,
   type EvalContext,
 } from "./query.js";
+import { CANONICAL_LEDGERS } from "../constants.js";
+import { buildPrefixRegistry, canonicalizeRef, RefParseError } from "../refs.js";
+
+// Static prefix→ledger registry (G80/M245) — built once, no store I/O — used
+// to normalize `dependsOn`/`blockedBy` qualifier operands and stored values to
+// the same canonical `<ledger>:<id>` form before comparing, so a bare query
+// ("dependsOn:T1") matches a canonical stored value ("tasks:T1") and vice
+// versa, in any combination.
+const REF_REGISTRY = buildPrefixRegistry(CANONICAL_LEDGERS);
+
+/** Qualifier keys whose values are cross-ledger refs, not plain strings. */
+const REF_QUALIFIER_KEYS: ReadonlySet<string> = new Set(["dependsOn", "blockedBy"]);
+
+/** Canonicalize a ref for comparison; falls back to the raw string when it
+ * doesn't parse as a ref at all (e.g. a malformed value) — preserving plain
+ * string-equality behavior for non-ref-shaped input. */
+function canonicalRefOrRaw(raw: string): string {
+  try {
+    return canonicalizeRef(raw, REF_REGISTRY);
+  } catch (err) {
+    if (err instanceof RefParseError) return raw;
+    throw err;
+  }
+}
 
 /** Field names whose values go into the high-boost `headline` bucket. */
 const HEADLINE_FIELD_NAMES: ReadonlySet<string> = new Set([
@@ -530,6 +554,12 @@ export class LedgerSearchIndex {
  * metadata keys (ledger/status/milestone/author/session) match item metadata;
  * any other key matches an item FIELD of that name — exact for scalars,
  * membership for `string[]` values. Unknown/absent → no match.
+ *
+ * `dependsOn`/`blockedBy` are special-cased (G80/M245): both the operand and
+ * the stored value are canonicalized via the `<ledger>:<id>` ref grammar
+ * before comparing, so a bare query ("dependsOn:T1") matches a canonically
+ * stored value ("tasks:T1") and a prefixed query ("dependsOn:tasks:T1")
+ * matches a still-bare stored value — in any combination of forms.
  */
 function matchItemQualifier(ledgerId: string, item: Item, key: string, value: string): boolean {
   const want = value.toLowerCase();
@@ -547,6 +577,13 @@ function matchItemQualifier(ledgerId: string, item: Item, key: string, value: st
     default: {
       const v = item.fields[key];
       if (v === undefined) return false;
+      if (REF_QUALIFIER_KEYS.has(key)) {
+        // Both the bare form ("T1") and the prefixed form ("tasks:T1") must
+        // match a stored value in EITHER form (G80/M245 read-side tolerance).
+        const wantRef = canonicalRefOrRaw(value).toLowerCase();
+        if (Array.isArray(v)) return v.some((e) => canonicalRefOrRaw(e).toLowerCase() === wantRef);
+        return canonicalRefOrRaw(v).toLowerCase() === wantRef;
+      }
       if (Array.isArray(v)) return v.some((e) => e.toLowerCase() === want);
       return v.toLowerCase() === want;
     }

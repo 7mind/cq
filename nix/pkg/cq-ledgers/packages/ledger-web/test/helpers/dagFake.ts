@@ -53,6 +53,14 @@ function bug(id: string, milestoneId: string): Item {
 export class DagFakeClient implements LedgerClient {
   updatedMilestones: Array<{ id: string; status: string | undefined }> = [];
 
+  /**
+   * @param prefixed  When true, every `dependsOn`/`blockedBy` entry is
+   *   written in the canonical `<ledger>:<id>` form (G80/M245) instead of the
+   *   legacy bare form — same graph, different ref spelling. Used to prove
+   *   `loadDagData` renders IDENTICAL edges for both spellings.
+   */
+  constructor(private readonly prefixed: boolean = false) {}
+
   displayName(): string {
     return "cq1";
   }
@@ -66,6 +74,7 @@ export class DagFakeClient implements LedgerClient {
 
   async fetchLedger(ledgerId: string): Promise<FetchedLedger> {
     if (ledgerId === "milestones") {
+      const ref = (id: string): string => (this.prefixed ? `milestones:${id}` : id);
       return {
         id: "milestones",
         schema: milestonesSchema,
@@ -76,8 +85,8 @@ export class DagFakeClient implements LedgerClient {
             milestone: { id: "active", status: "open", title: "", description: "" },
             items: [
               mItem("M1", "Foundations", "open", {}),
-              mItem("M2", "Build", "open", { dependsOn: ["M1"] }),
-              mItem("M3", "Ship", "blocked", { blockedBy: ["M2"] }),
+              mItem("M2", "Build", "open", { dependsOn: [ref("M1")] }),
+              mItem("M3", "Ship", "blocked", { blockedBy: [ref("M2")] }),
             ],
           },
         ],
@@ -85,6 +94,7 @@ export class DagFakeClient implements LedgerClient {
       };
     }
     if (ledgerId === "bugs") {
+      const ref = (id: string): string => (this.prefixed ? `bugs:${id}` : id);
       return {
         id: "bugs",
         schema: bugsSchema,
@@ -94,7 +104,10 @@ export class DagFakeClient implements LedgerClient {
             id: "M1",
             milestone: { id: "M1", status: "open", title: "Foundations", description: "" },
             // D2 depends on D1 → an intra-ledger edge D1→D2 in the bugs graph.
-            items: [bug("D1", "M1"), { ...bug("D2", "M1"), fields: { headline: "bug D2", dependsOn: ["D1"] } }],
+            items: [
+              bug("D1", "M1"),
+              { ...bug("D2", "M1"), fields: { headline: "bug D2", dependsOn: [ref("D1")] } },
+            ],
           },
           {
             id: "M2",

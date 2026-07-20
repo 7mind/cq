@@ -13,6 +13,34 @@
  */
 
 import type { Item } from "./types.js";
+import { CANONICAL_LEDGERS, TASKS_LEDGER } from "./constants.js";
+import { buildPrefixRegistry, canonicalizeRef, RefParseError } from "./refs.js";
+
+// Static prefix→ledger registry (G80/M245): built once from the canonical
+// ledger set, not from any store I/O — this keeps the module pure. Used to
+// resolve `dependsOn` entries in EITHER the legacy bare form ("T523") or the
+// canonical prefixed form ("tasks:T523") to the ledger they belong to.
+const REF_REGISTRY = buildPrefixRegistry(CANONICAL_LEDGERS);
+
+/**
+ * Resolves a raw `dependsOn` entry to a bare task id, or `undefined` if it
+ * does not name a task (resolves to another ledger, or fails to parse at
+ * all — e.g. malformed refs). Accepts both the legacy bare form ("T523") and
+ * the canonical prefixed form ("tasks:T523").
+ */
+function resolveTaskId(ref: string): string | undefined {
+  let canonical: string;
+  try {
+    canonical = canonicalizeRef(ref, REF_REGISTRY);
+  } catch (err) {
+    if (err instanceof RefParseError) return undefined;
+    throw err;
+  }
+  const colonIndex = canonical.indexOf(":");
+  const ledger = canonical.slice(0, colonIndex);
+  const id = canonical.slice(colonIndex + 1);
+  return ledger === TASKS_LEDGER ? id : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Defect → fix-task resolution
@@ -22,8 +50,12 @@ import type { Item } from "./types.js";
  * Returns the de-duplicated set of task ids that fix defect `defectId`.
  *
  * Two link directions are unioned:
- *  1. Forward links: the defect item's `dependsOn` field, filtered to entries
- *     that look like task ids (start with the tasks idPrefix `T`).
+ *  1. Forward links: the defect item's `dependsOn` field, resolved via the
+ *     `<ledger>:<id>` ref grammar (G80/M245) — entries that resolve to the
+ *     `tasks` ledger are kept (as their bare id), entries resolving to any
+ *     other ledger (e.g. a hypothesis or another defect) are excluded, and
+ *     entries that fail to parse at all are skipped. Accepts both the legacy
+ *     bare form ("T523") and the canonical prefixed form ("tasks:T523").
  *  2. Reverse links: any task item whose `ledgerRefs` field contains the
  *     cross-ledger reference string `"defects:<defectId>"`.
  *
@@ -50,16 +82,16 @@ export function defectFixTaskIds(
     }
   }
 
-  // 1. Forward: defect.dependsOn filtered to task ids (prefix "T").
+  // 1. Forward: defect.dependsOn resolved via the ref grammar, kept when the
+  //    resolved ledger is "tasks".
   const defect = defects.find((d) => d.id === defectId);
   if (defect !== undefined) {
     const dependsOn = defect.fields["dependsOn"];
     if (Array.isArray(dependsOn)) {
       for (const ref of dependsOn) {
-        // Task ids start with "T" (TASKS_SCHEMA.idPrefix).
-        if (typeof ref === "string" && ref.startsWith("T")) {
-          add(ref);
-        }
+        if (typeof ref !== "string") continue;
+        const taskId = resolveTaskId(ref);
+        if (taskId !== undefined) add(taskId);
       }
     }
   }

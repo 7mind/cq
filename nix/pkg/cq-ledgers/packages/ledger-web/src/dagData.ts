@@ -3,9 +3,10 @@
  *
  * Nodes are that ledger's items; edges come from each item's `dependsOn` /
  * `blockedBy` id[] fields — an edge `dep → item` means `dep` must precede it
- * (so it lands further right). Only intra-ledger references (bare ids that
- * name another item in the same ledger) become edges; cross-ledger refs
- * (`<ledger>:<id>`) are left out.
+ * (so it lands further right). Only intra-ledger references become edges —
+ * either the legacy bare form ("D1") or the canonical prefixed form naming
+ * THIS ledger ("bugs:D1", G80/M245); a prefixed ref naming any OTHER ledger
+ * (`<ledger>:<id>`) is a cross-ledger reference and is left out.
  *
  * For the milestones ledger each node's sublabel is the count of active items
  * referencing it across all ledgers (every non-milestones ledger groups its
@@ -14,10 +15,33 @@
  * milestone the item belongs to (`@<milestoneId>`).
  */
 
+// Import via the PURE `/refs` subpath (like `/relationships` / `/constants`):
+// the root `@cq/ledger` entry pulls server-only modules into the browser
+// bundle and crashes the served web app.
+import { parseRef, RefParseError } from "@cq/ledger/refs";
 import type { FieldValue, LedgerClient, LedgerSchema } from "./types.js";
 import type { DagEdge } from "./dagLayout.js";
 
 const MILESTONES = "milestones";
+
+/**
+ * Resolves a raw `dependsOn`/`blockedBy` entry to the bare id it names WITHIN
+ * `ledgerId`, or `undefined` if it names another ledger (cross-ledger — no
+ * edge) or fails to parse at all. Accepts both the legacy bare form ("D1")
+ * and the canonical prefixed form ("bugs:D1", G80/M245) — a prefixed entry
+ * is intra-ledger only when its named ledger equals `ledgerId` itself.
+ */
+function intraLedgerDepId(raw: string, ledgerId: string): string | undefined {
+  if (!raw.includes(":")) return raw; // legacy bare form — unchanged
+  let parsed;
+  try {
+    parsed = parseRef(raw);
+  } catch (err) {
+    if (err instanceof RefParseError) return undefined;
+    throw err;
+  }
+  return parsed.kind === "prefixed" && parsed.ledger === ledgerId ? parsed.id : undefined;
+}
 
 export interface DagNode {
   id: string;
@@ -55,7 +79,8 @@ export async function loadDagData(client: LedgerClient, ledgerId: string): Promi
   for (const { item } of rows) {
     const deps = [...asIdArray(item.fields["dependsOn"]), ...asIdArray(item.fields["blockedBy"])];
     for (const dep of deps) {
-      if (dep !== item.id && ids.has(dep)) edges.push({ from: dep, to: item.id });
+      const depId = intraLedgerDepId(dep, ledgerId);
+      if (depId !== undefined && depId !== item.id && ids.has(depId)) edges.push({ from: depId, to: item.id });
     }
   }
 

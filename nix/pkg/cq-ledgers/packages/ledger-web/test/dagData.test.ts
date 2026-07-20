@@ -42,4 +42,21 @@ describe("loadDagData", () => {
     expect(byId.get("D1")!.sublabel).toBe("@M1");
     expect(byId.get("D3")!.sublabel).toBe("@M2");
   });
+
+  it("renders the SAME edges when deps are spelled in the canonical prefixed form (G80/M245)", async () => {
+    // Regression: a bare-id Set lookup misses a prefixed dep entirely (zero
+    // edges), since the item ids in `ids` are bare but a prefixed ref like
+    // "milestones:M1" / "bugs:D1" never equals any of them.
+    const bareMilestones = await loadDagData(new DagFakeClient(false), "milestones");
+    const prefixedMilestones = await loadDagData(new DagFakeClient(true), "milestones");
+    const edgeStrings = (d: Awaited<ReturnType<typeof loadDagData>>) =>
+      d.edges.map((e) => `${e.from}->${e.to}`).sort();
+    expect(edgeStrings(prefixedMilestones)).toEqual(edgeStrings(bareMilestones));
+    expect(edgeStrings(prefixedMilestones)).toEqual(["M1->M2", "M2->M3"]);
+
+    const bareBugs = await loadDagData(new DagFakeClient(false), "bugs");
+    const prefixedBugs = await loadDagData(new DagFakeClient(true), "bugs");
+    expect(edgeStrings(prefixedBugs)).toEqual(edgeStrings(bareBugs));
+    expect(edgeStrings(prefixedBugs)).toEqual(["D1->D2"]);
+  });
 });

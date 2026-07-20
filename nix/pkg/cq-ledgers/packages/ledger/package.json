@@ -25,6 +25,10 @@
     "./constants": {
       "import": "./dist/src/constants.js",
       "types": "./dist/src/constants.d.ts"
+    },
+    "./refs": {
+      "import": "./dist/src/refs.js",
+      "types": "./dist/src/refs.d.ts"
     }
   },
   "dependencies": {

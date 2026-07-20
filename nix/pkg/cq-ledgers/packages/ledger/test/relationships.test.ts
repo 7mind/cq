@@ -93,6 +93,27 @@ describe("defectFixTaskIds", () => {
 
     expect(defectFixTaskIds("D99", defects, tasks)).toEqual([]);
   });
+
+  it("resolves PREFIXED dependsOn entries (G80/M245 ref grammar) to bare task ids", () => {
+    // D5's dependsOn mixes the canonical prefixed form ("tasks:T11") with a
+    // prefixed non-task ref ("defects:D9") that must be excluded, and a
+    // malformed ref ("bogus::x") that must be skipped without throwing.
+    const defects: Item[] = [
+      makeItem("D5", { dependsOn: ["tasks:T11", "defects:D9", "bogus::x"] }),
+    ];
+    const tasks: Item[] = [makeItem("T11", {})];
+
+    expect(defectFixTaskIds("D5", defects, tasks)).toEqual(["T11"]);
+  });
+
+  it("treats bare and prefixed forms of the SAME task as one de-duplicated entry", () => {
+    const defects: Item[] = [
+      makeItem("D6", { dependsOn: ["T12", "tasks:T12"] }),
+    ];
+    const tasks: Item[] = [makeItem("T12", {})];
+
+    expect(defectFixTaskIds("D6", defects, tasks)).toEqual(["T12"]);
+  });
 });
 
 // ---------------------------------------------------------------------------

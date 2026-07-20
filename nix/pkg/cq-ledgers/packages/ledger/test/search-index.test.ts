@@ -177,6 +177,21 @@ describe("LedgerSearchIndex.searchQuery (filter language)", () => {
     expect(ids(fixture().searchQuery("severity:minor"))).toEqual(["T1"]);
   });
 
+  it("matches dependsOn regardless of bare vs prefixed form on EITHER side (G80/M245)", () => {
+    const idx = new LedgerSearchIndex();
+    idx.rebuildLedgerActive("defects", [
+      item("D1", "open", { headline: "bug bare-stored", dependsOn: ["T1"] }),
+      item("D2", "open", { headline: "bug prefixed-stored", dependsOn: ["tasks:T2"] }),
+    ]);
+    // A bare query operand matches BOTH a bare-stored and a prefixed-stored value.
+    expect(ids(idx.searchQuery("dependsOn:T1"))).toEqual(["D1"]);
+    expect(ids(idx.searchQuery("dependsOn:T2"))).toEqual(["D2"]);
+    // A prefixed query operand (query.ts's first-colon tokenization keeps
+    // "tasks:T1" as one operand) ALSO matches both.
+    expect(ids(idx.searchQuery("dependsOn:tasks:T1"))).toEqual(["D1"]);
+    expect(ids(idx.searchQuery("dependsOn:tasks:T2"))).toEqual(["D2"]);
+  });
+
   /**
    * Reproduce-first for the Q77 anomaly (task T139): the report was that the
    * inline filter `(status:open OR status:wip)` returned an empty result.
