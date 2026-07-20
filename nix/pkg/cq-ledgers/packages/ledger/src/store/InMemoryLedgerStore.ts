@@ -40,7 +40,8 @@ import {
   searchItems,
   validateSchema,
 } from "./core.js";
-import type { StatusChangePrecondition } from "./core.js";
+import type { RefValidationContext, StatusChangePrecondition } from "./core.js";
+import { buildPrefixRegistry } from "../refs.js";
 import type {
   ArchiveContent,
   CreateItemInit,
@@ -288,13 +289,52 @@ export class InMemoryLedgerStore implements LedgerStore {
     return { kind: "group", milestone: cloneMilestone(m) };
   }
 
+  /**
+   * Build the cross-ledger {@link RefValidationContext} for a create/update
+   * write (G80/M245). Prefix registry + active lookup from the in-memory
+   * `this.ledgers`; archived existence from this store's own archive maps —
+   * `itemArchives` for the milestones ledger (per-item archives) and `archives`
+   * for every other ledger (archived milestone-GROUPs whose `.items` are the
+   * archived items).
+   */
+  private buildRefValidationContext(): RefValidationContext {
+    const registry = buildPrefixRegistry(
+      [...this.ledgers].map(([name, l]) => ({ name, schema: l.schema })),
+    );
+    return {
+      registry,
+      refExists: (ledger: string, id: string): boolean => {
+        const l = this.ledgers.get(ledger);
+        if (l !== undefined) {
+          for (const m of l.milestones) for (const it of m.items) if (it.id === id) return true;
+        }
+        if (ledger === MILESTONES_LEDGER) {
+          if (this.itemArchives.has(`${MILESTONES_LEDGER}/${id}`)) return true;
+        }
+        for (const [key, group] of this.archives) {
+          if (!key.startsWith(`${ledger}/`)) continue;
+          for (const it of group.items) if (it.id === id) return true;
+        }
+        return false;
+      },
+    };
+  }
+
   async updateMilestone(
     milestoneId: string,
     patch: UpdateMilestoneItemPatch,
   ): Promise<Item> {
     const item = await this.withMilestonesLock(async () => {
       const ledger = this.getLedger(MILESTONES_LEDGER);
-      return cloneItem(applyUpdateMilestoneItem(ledger, milestoneId, patch, this.now()));
+      return cloneItem(
+        applyUpdateMilestoneItem(
+          ledger,
+          milestoneId,
+          patch,
+          this.now(),
+          this.buildRefValidationContext(),
+        ),
+      );
     });
     this.fireMutation(MILESTONES_LEDGER, "update");
     return item;
@@ -337,7 +377,16 @@ export class InMemoryLedgerStore implements LedgerStore {
     const item = await this.withLock(ledgerId, async () => {
       const ledger = this.getLedger(ledgerId);
       const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
-      return cloneItem(applyUpdateItem(ledger, itemId, patch, this.now(), precondition));
+      return cloneItem(
+        applyUpdateItem(
+          ledger,
+          itemId,
+          patch,
+          this.now(),
+          precondition,
+          this.buildRefValidationContext(),
+        ),
+      );
     });
     this.fireMutation(ledgerId, "update");
     return item;
@@ -359,7 +408,13 @@ export class InMemoryLedgerStore implements LedgerStore {
       assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
       return this.withLock(ledgerId, async () => {
         return cloneItem(
-          applyCreateItem(this.getLedger(ledgerId), milestoneId, init, this.now()),
+          applyCreateItem(
+            this.getLedger(ledgerId),
+            milestoneId,
+            init,
+            this.now(),
+            this.buildRefValidationContext(),
+          ),
         );
       });
     });
@@ -370,7 +425,9 @@ export class InMemoryLedgerStore implements LedgerStore {
   async createMilestone(init: CreateMilestoneItemInit): Promise<Item> {
     const item = await this.withMilestonesLock(async () => {
       const ledger = this.getLedger(MILESTONES_LEDGER);
-      return cloneItem(applyCreateMilestoneItem(ledger, init, this.now()));
+      return cloneItem(
+        applyCreateMilestoneItem(ledger, init, this.now(), this.buildRefValidationContext()),
+      );
     });
     this.fireMutation(MILESTONES_LEDGER, "create");
     return item;

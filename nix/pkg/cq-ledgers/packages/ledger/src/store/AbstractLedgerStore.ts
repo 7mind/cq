@@ -80,7 +80,8 @@ import {
   searchItems,
   validateSchema,
 } from "./core.js";
-import type { StatusChangePrecondition } from "./core.js";
+import type { RefValidationContext, StatusChangePrecondition } from "./core.js";
+import { buildPrefixRegistry } from "../refs.js";
 import { materialiseFetchedLedger } from "./InMemoryLedgerStore.js";
 import type {
   ArchiveContent,
@@ -554,6 +555,31 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     return undefined;
   }
 
+  /**
+   * Build the cross-ledger {@link RefValidationContext} for a create/update
+   * write (G80/M245). The prefix registry + active lookup come from the
+   * in-memory `this.ledgers` (all registered ledgers, kept loaded); archived
+   * existence comes from the FTS index's archived bucket (the only synchronous
+   * in-memory item-level archive view — built from the immutable archive files
+   * at init/on-archive). Cross-process staleness is the same best-effort
+   * coherence documented for the F2 status-change preconditions.
+   */
+  private buildRefValidationContext(): RefValidationContext {
+    const registry = buildPrefixRegistry(
+      [...this.ledgers].map(([name, l]) => ({ name, schema: l.schema })),
+    );
+    return {
+      registry,
+      refExists: (ledger: string, id: string): boolean => {
+        const l = this.ledgers.get(ledger);
+        if (l !== undefined) {
+          for (const m of l.milestones) for (const it of m.items) if (it.id === id) return true;
+        }
+        return this.searchIndex.hasArchivedItem(ledger, id);
+      },
+    };
+  }
+
   async updateMilestone(
     milestoneId: string,
     patch: UpdateMilestoneItemPatch,
@@ -563,7 +589,13 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       // we mutate fresh in-memory state (counters + items), not a stale cache.
       await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
       const ledger = this.getLedger(MILESTONES_LEDGER);
-      const it = applyUpdateMilestoneItem(ledger, milestoneId, patch, this.now());
+      const it = applyUpdateMilestoneItem(
+        ledger,
+        milestoneId,
+        patch,
+        this.now(),
+        this.buildRefValidationContext(),
+      );
       await this.writeLedgerFile(ledger);
       return cloneItem(it);
     });
@@ -582,7 +614,14 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       await this.reloadLedgerFromDisk(ledgerId);
       const ledger = this.getLedger(ledgerId);
       const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
-      const x = applyUpdateItem(ledger, itemId, patch, this.now(), precondition);
+      const x = applyUpdateItem(
+        ledger,
+        itemId,
+        patch,
+        this.now(),
+        precondition,
+        this.buildRefValidationContext(),
+      );
       await this.writeLedgerFile(ledger);
       return cloneItem(x);
     });
@@ -610,7 +649,13 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         // allocation + mutation so fresh counters/items are used.
         await this.reloadLedgerFromDisk(ledgerId);
         const ledger = this.getLedger(ledgerId);
-        const x = applyCreateItem(ledger, milestoneId, init, this.now());
+        const x = applyCreateItem(
+          ledger,
+          milestoneId,
+          init,
+          this.now(),
+          this.buildRefValidationContext(),
+        );
         await this.writeLedgerFile(ledger);
         return cloneItem(x);
       });
@@ -625,7 +670,12 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       // id allocation uses fresh counters (no duplicate M<n> / clobbered write).
       await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
       const ledger = this.getLedger(MILESTONES_LEDGER);
-      const x = applyCreateMilestoneItem(ledger, init, this.now());
+      const x = applyCreateMilestoneItem(
+        ledger,
+        init,
+        this.now(),
+        this.buildRefValidationContext(),
+      );
       await this.writeLedgerFile(ledger);
       return cloneItem(x);
     });

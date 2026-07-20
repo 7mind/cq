@@ -298,6 +298,19 @@ export class LedgerSearchIndex {
     this.removeDoc(this.archivedDocIds, ledgerId, itemId, /*archived*/ true);
   }
 
+  /**
+   * True iff an ARCHIVED item with `itemId` is currently indexed under
+   * `ledgerId` (G80/M245 write-side dangling-ref check). The fs/git store has
+   * no other synchronous in-memory item-level archive view — its archive files
+   * are read only at init/on-archive into this bucket — so the dependency-ref
+   * validator consults it to distinguish a legal ref to an ARCHIVED item from a
+   * dangling ref to a never-existent one. (Active items are checked directly
+   * against the in-memory ledgers, not here.)
+   */
+  hasArchivedItem(ledgerId: string, itemId: string): boolean {
+    return this.archivedDocIds.get(ledgerId)?.has(docIdFor(ledgerId, itemId, true)) === true;
+  }
+
   /** Drop every active and archived doc for `ledgerId`. */
   removeLedger(ledgerId: string): void {
     this.discardSet(this.activeDocIds.get(ledgerId));

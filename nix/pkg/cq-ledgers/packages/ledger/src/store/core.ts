@@ -18,6 +18,7 @@ import type {
 import {
   BootstrapViolationError,
   CrossPrefixIdError,
+  DanglingRefError,
   DuplicateIdError,
   DuplicatePrefixError,
   GoalPreconditionError,
@@ -32,6 +33,7 @@ import {
   NonTerminalItemsError,
   SchemaValidationError,
 } from "../types.js";
+import { canonicalizeRef, parseRef } from "../refs.js";
 import {
   GOALS_LEDGER,
   HANDOFFS_LEDGER,
@@ -118,6 +120,7 @@ const RESERVED_FIELD_NAMES = new Set(["createdAt", "updatedAt", "author", "sessi
 export function validateSchema(schema: {
   statusValues: string[];
   terminalStatuses: string[];
+  satisfiesDependencyStatuses?: string[];
   fields: Record<string, { type: string; required: boolean }>;
   idPrefix?: string;
   transitions?: Record<string, string[]>;
@@ -143,6 +146,21 @@ export function validateSchema(schema: {
       throw new SchemaValidationError(
         `terminalStatuses entry "${t}" is not in statusValues`,
       );
+    }
+  }
+  // D98 (G80): a declared `satisfiesDependencyStatuses` must be a SUBSET of
+  // `terminalStatuses`. A dependency is satisfied by a TERMINAL target only —
+  // a non-terminal satisfying status is incoherent (mirrors the
+  // terminalStatuses ⊆ statusValues guard above). Absent declaration is fine
+  // (the resolver falls back to terminalStatuses).
+  if (schema.satisfiesDependencyStatuses !== undefined) {
+    const terminalSet = new Set(schema.terminalStatuses);
+    for (const s of schema.satisfiesDependencyStatuses) {
+      if (!terminalSet.has(s)) {
+        throw new SchemaValidationError(
+          `satisfiesDependencyStatuses entry "${s}" is not in terminalStatuses`,
+        );
+      }
     }
   }
   for (const name of Object.keys(schema.fields)) {
@@ -257,12 +275,122 @@ export function searchItems(ledger: Ledger, query: string): Item[] {
  */
 export type StatusChangePrecondition = (from: string, to: string) => void;
 
+// ---------------------------------------------------------------------------
+// Dependency-ref normalization + validation (G80/M245 write-side)
+// ---------------------------------------------------------------------------
+
+/**
+ * The two item/milestone fields that carry cross-ledger dependency refs and are
+ * subject to write-side canonicalization + dangling-rejection. `ledgerRefs` and
+ * `sourceRefs` are deliberately NOT here — they stay ADVISORY and UNVALIDATED.
+ */
+const REF_FIELDS = ["dependsOn", "blockedBy"] as const;
+
+/**
+ * Cross-ledger context the store supplies so the pure create/update helpers can
+ * canonicalize `<ledger>:<id>` refs and reject dangling ones (G80/M245). Kept as
+ * a narrow callback interface so `core.ts` needs NO store imports: each backend
+ * implements `refExists` against its own storage.
+ */
+export interface RefValidationContext {
+  /**
+   * idPrefix → ledger-name registry (see {@link buildPrefixRegistry}), spanning
+   * every registered ledger, so a bare "T1" resolves to `tasks:T1`.
+   */
+  registry: ReadonlyMap<string, string>;
+  /**
+   * True iff `<ledger>:<id>` names an item that EXISTS in that ledger — ACTIVE
+   * OR ARCHIVED (referencing an archived item is legal). Per-backend archive
+   * lookup: InMemoryLedgerStore scans its `archives`/`itemArchives` maps;
+   * AbstractLedgerStore (fs/git) uses the `LedgerSearchIndex` archived bucket
+   * built from immutable archive files; SqliteLedgerStore queries the
+   * `archived_items` table. Active lookup is the in-memory ledgers / `items`
+   * table respectively.
+   */
+  refExists(ledger: string, id: string): boolean;
+}
+
+/**
+ * Canonical identity of a raw ref for "already present?" comparison: its
+ * `<ledger>:<id>` form when it resolves, else the raw string. Collapses the
+ * bare/prefixed duality so a round-trip that rewrites "T1" as "tasks:T1" (or
+ * vice versa) is recognised as the SAME pre-existing entry — never a new one.
+ */
+function refIdentity(raw: string, registry: ReadonlyMap<string, string>): string {
+  try {
+    return canonicalizeRef(raw, registry);
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * Process ONE raw dependency-ref entry (G80/M245 write-side):
+ *  - does NOT parse as a ref, OR parses but names an unknown alpha-prefix /
+ *    unknown ledger (canonicalizeRef throws) → FREE-TEXT / advisory: pass
+ *    through VERBATIM (mirrors the T552 read-side resolver, which treats these
+ *    as satisfied). Applies to prose `blockedBy` annotations too.
+ *  - canonicalizes to a known `<ledger>:<id>` whose target EXISTS (active or
+ *    archived) → NORMALIZE to the canonical prefixed form.
+ *  - canonicalizes to a known ledger but the target does NOT exist:
+ *      · NEWLY-ADDED entry → throw {@link DanglingRefError} (fail-fast);
+ *      · pre-existing entry → survive VERBATIM (the store must never refuse to
+ *        re-write data it already holds).
+ */
+function processRefEntry(raw: string, isNew: boolean, ctx: RefValidationContext): string {
+  let canonical: string;
+  try {
+    canonical = canonicalizeRef(raw, ctx.registry);
+  } catch {
+    return raw; // free-text OR unknown prefix/ledger → advisory pass-through
+  }
+  const parsed = parseRef(canonical);
+  // canonicalizeRef always yields the prefixed form; the bare branch is
+  // unreachable but keeps this total.
+  if (parsed.kind !== "prefixed") return raw;
+  if (ctx.refExists(parsed.ledger, parsed.id)) return canonical; // normalize
+  if (isNew) throw new DanglingRefError(raw, parsed.ledger, parsed.id);
+  return raw; // pre-existing unresolvable → verbatim, never throw
+}
+
+/**
+ * Normalize + validate the dependency-ref fields (`dependsOn` / `blockedBy`) of
+ * a create/update payload IN PLACE (G80/M245 write-side). `previous` is the
+ * item's field values BEFORE this write (empty on create), so only entries NOT
+ * already present (by canonical identity) are treated as newly-added and thus
+ * subject to the dangling rejection; every pre-existing entry round-trips
+ * (normalized when it resolves, verbatim otherwise) and never throws.
+ *
+ * A no-op when `ctx` is undefined — direct core-helper callers that supply no
+ * context keep the legacy pass-through behavior; the stores always supply one.
+ */
+function normalizeRefFields(
+  fields: Record<string, FieldValue>,
+  previous: Record<string, FieldValue | undefined>,
+  ctx: RefValidationContext | undefined,
+): void {
+  if (ctx === undefined) return;
+  for (const field of REF_FIELDS) {
+    const value = fields[field];
+    // Only touch a present string[] value; assertFieldType already rejected a
+    // non-array, and an absent field means "not written by this payload".
+    if (!Array.isArray(value)) continue;
+    const prev = previous[field];
+    const prevArray = Array.isArray(prev) ? prev : [];
+    const previousIdentities = new Set(prevArray.map((r) => refIdentity(r, ctx.registry)));
+    fields[field] = value.map((raw) =>
+      processRefEntry(raw, !previousIdentities.has(refIdentity(raw, ctx.registry)), ctx),
+    );
+  }
+}
+
 export function applyUpdateItem(
   ledger: Ledger,
   itemId: string,
   patch: UpdateItemPatch,
   now: string,
   precondition?: StatusChangePrecondition,
+  refCtx?: RefValidationContext,
 ): Item {
   const { item } = findItem(ledger, itemId);
   if (patch.status !== undefined) {
@@ -291,6 +419,17 @@ export function applyUpdateItem(
     const effectiveFields =
       patch.fields !== undefined ? { ...item.fields, ...patch.fields } : item.fields;
     assertHandoffInvariants(item.id, effectiveStatus, effectiveFields);
+  }
+  // G80/M245 write-side: canonicalize dependsOn/blockedBy and reject any
+  // NEWLY-added dangling ref. Runs on `patch.fields` BEFORE the commit loop
+  // (previous = the item's current values) so a DanglingRefError leaves the
+  // in-memory item untouched; pre-existing entries never throw.
+  if (patch.fields !== undefined) {
+    normalizeRefFields(
+      patch.fields,
+      { dependsOn: item.fields["dependsOn"], blockedBy: item.fields["blockedBy"] },
+      refCtx,
+    );
   }
   // All guards passed — commit the patch into the live item.
   if (patch.status !== undefined) item.status = patch.status;
@@ -326,6 +465,7 @@ export function applyCreateItem(
   milestoneId: string,
   init: CreateItemInit,
   now: string,
+  refCtx?: RefValidationContext,
 ): Item {
   let milestone: Milestone;
   const existing = ledger.milestones.find((m) => m.id === milestoneId);
@@ -356,6 +496,11 @@ export function applyCreateItem(
   if (ledger.id === HANDOFFS_LEDGER) {
     assertHandoffInvariants(init.id ?? "<new>", init.status, init.fields);
   }
+  // G80/M245 write-side: canonicalize dependsOn/blockedBy and reject dangling
+  // refs. On create every entry is newly-added (no previous value), so any ref
+  // to a nonexistent target throws. Runs BEFORE id allocation / counter bump so
+  // a DanglingRefError leaves the ledger's counters + milestones untouched.
+  normalizeRefFields(init.fields, {}, refCtx);
   const prefix = effectiveIdPrefix(ledger.id, ledger.schema);
   let id: string;
   if (init.id !== undefined) {
@@ -408,6 +553,7 @@ export function applyCreateMilestoneItem(
   ledger: Ledger,
   init: CreateMilestoneItemInit,
   now: string,
+  refCtx?: RefValidationContext,
 ): Item {
   if (ledger.id !== MILESTONES_LEDGER) {
     throw new BootstrapViolationError(
@@ -420,7 +566,9 @@ export function applyCreateMilestoneItem(
   if (init.dependsOn !== undefined) fields["dependsOn"] = init.dependsOn;
   const innerInit: CreateItemInit = { status: "open", fields };
   if (init.id !== undefined) innerInit.id = init.id;
-  return applyCreateItem(ledger, MILESTONES_ACTIVE_GROUP_ID, innerInit, now);
+  // dependsOn/blockedBy normalization + dangling-rejection happens inside
+  // applyCreateItem via the forwarded refCtx.
+  return applyCreateItem(ledger, MILESTONES_ACTIVE_GROUP_ID, innerInit, now, refCtx);
 }
 
 /**
@@ -465,6 +613,7 @@ export function applyUpdateMilestoneItem(
   milestoneItemId: string,
   patch: UpdateMilestoneItemPatch,
   now: string,
+  refCtx?: RefValidationContext,
 ): Item {
   if (ledger.id !== MILESTONES_LEDGER) {
     throw new BootstrapViolationError(
@@ -488,7 +637,9 @@ export function applyUpdateMilestoneItem(
   if (patch.blockedBy !== undefined) fields["blockedBy"] = patch.blockedBy;
   if (patch.dependsOn !== undefined) fields["dependsOn"] = patch.dependsOn;
   if (Object.keys(fields).length > 0) itemPatch.fields = fields;
-  return applyUpdateItem(ledger, milestoneItemId, itemPatch, now);
+  // dependsOn/blockedBy normalization + dangling-rejection happens inside
+  // applyUpdateItem via the forwarded refCtx (no status precondition here).
+  return applyUpdateItem(ledger, milestoneItemId, itemPatch, now, undefined, refCtx);
 }
 
 /**

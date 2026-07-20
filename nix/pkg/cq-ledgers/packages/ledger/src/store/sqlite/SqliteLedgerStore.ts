@@ -97,7 +97,8 @@ import {
   searchItems,
   validateSchema,
 } from "../core.js";
-import type { StatusChangePrecondition } from "../core.js";
+import type { RefValidationContext, StatusChangePrecondition } from "../core.js";
+import { buildPrefixRegistry } from "../../refs.js";
 import { cloneItem, materialiseFetchedLedger } from "../InMemoryLedgerStore.js";
 import { LedgerSearchIndex } from "../../search/LedgerSearchIndex.js";
 import { schemaCompatible, schemasEqual } from "../schemaCompat.js";
@@ -627,7 +628,13 @@ export class SqliteLedgerStore implements LedgerStore {
   ): Promise<Item> {
     const item = immediateWriteTransaction(this.db(), () => {
       const shim = this.singleItemShim(MILESTONES_LEDGER, milestoneId);
-      const x = applyUpdateMilestoneItem(shim, milestoneId, patch, this.now());
+      const x = applyUpdateMilestoneItem(
+        shim,
+        milestoneId,
+        patch,
+        this.now(),
+        this.buildRefValidationContext(),
+      );
       this.persistItemRow(MILESTONES_LEDGER, x);
       return x;
     });
@@ -645,7 +652,14 @@ export class SqliteLedgerStore implements LedgerStore {
     const item = immediateWriteTransaction(this.db(), () => {
       const shim = this.singleItemShim(ledgerId, itemId);
       const precondition = this.statusChangePrecondition(ledgerId, shim, itemId, patch);
-      const x = applyUpdateItem(shim, itemId, patch, this.now(), precondition);
+      const x = applyUpdateItem(
+        shim,
+        itemId,
+        patch,
+        this.now(),
+        precondition,
+        this.buildRefValidationContext(),
+      );
       this.persistItemRow(ledgerId, x);
       return x;
     });
@@ -672,8 +686,9 @@ export class SqliteLedgerStore implements LedgerStore {
       // T538 (D87): a MINIMAL shim of the target ledger (targeted row
       // queries) instead of materialising all N rows via loadLedger.
       const shim = this.createItemShim(ledgerId, milestoneId, init.id);
+      const refCtx = this.buildRefValidationContext();
       return this.insertItemViaCore(shim, init.id, (l) =>
-        applyCreateItem(l, milestoneId, init, this.now()),
+        applyCreateItem(l, milestoneId, init, this.now(), refCtx),
       );
     });
     this.indexUpsertActive(ledgerId, item);
@@ -684,8 +699,9 @@ export class SqliteLedgerStore implements LedgerStore {
   async createMilestone(init: CreateMilestoneItemInit): Promise<Item> {
     const item = immediateWriteTransaction(this.db(), () => {
       const ledger = this.loadLedger(MILESTONES_LEDGER);
+      const refCtx = this.buildRefValidationContext();
       return this.insertItemViaCore(ledger, init.id, (l) =>
-        applyCreateMilestoneItem(l, init, this.now()),
+        applyCreateMilestoneItem(l, init, this.now(), refCtx),
       );
     });
     this.indexUpsertActive(MILESTONES_LEDGER, item);
@@ -1252,6 +1268,32 @@ export class SqliteLedgerStore implements LedgerStore {
       };
     }
     return undefined;
+  }
+
+  /**
+   * Build the cross-ledger {@link RefValidationContext} for a create/update
+   * write (G80/M245). Must run INSIDE the write transaction so the registry +
+   * existence probes see the same committed snapshot the write serializes
+   * against. Prefix registry from the `ledgers` table; active existence from
+   * `items`; ARCHIVED existence from `archived_items` (referencing an archived
+   * item is legal). All probes are prepared statements reused per entry.
+   */
+  private buildRefValidationContext(): RefValidationContext {
+    const db = this.db();
+    const rows = db.query("SELECT name, schema_json FROM ledgers").all() as Array<{
+      name: string;
+      schema_json: string;
+    }>;
+    const registry = buildPrefixRegistry(
+      rows.map((r) => ({ name: r.name, schema: JSON.parse(r.schema_json) as LedgerSchema })),
+    );
+    const activeQ = db.query("SELECT 1 FROM items WHERE ledger = ? AND id = ? LIMIT 1");
+    const archivedQ = db.query("SELECT 1 FROM archived_items WHERE ledger = ? AND id = ? LIMIT 1");
+    return {
+      registry,
+      refExists: (ledger: string, id: string): boolean =>
+        activeQ.get(ledger, id) !== null || archivedQ.get(ledger, id) !== null,
+    };
   }
 
   /** {@link loadLedger}, but absent ledgers yield `undefined` (F2 inputs). */

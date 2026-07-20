@@ -433,6 +433,26 @@ export class GoalPreconditionError extends LedgerError {
 }
 
 /**
+ * Thrown by a create/update write (G80/M245 write-side) when a NEWLY-ADDED
+ * `dependsOn` / `blockedBy` entry parses+canonicalizes to a `<ledger>:<id>`
+ * ref whose target does NOT exist in that ledger — neither as an ACTIVE nor an
+ * ARCHIVED item. Fail-fast: catches typo'd / stale dependency refs at write
+ * time. Only NEWLY-added entries are checked; entries already present on the
+ * item round-trip untouched (never throw), and a referenced ARCHIVED item is
+ * legal (existed once, accepted). Free-text and unresolvable-prefix entries are
+ * advisory and pass through verbatim — never this error.
+ */
+export class DanglingRefError extends LedgerError {
+  constructor(raw: string, ledger: string, id: string) {
+    super(
+      `dependency ref "${raw}" resolves to ${ledger}:${id}, which does not exist ` +
+        `(no active or archived item in ledger "${ledger}")`,
+    );
+    this.name = "DanglingRefError";
+  }
+}
+
+/**
  * Thrown when an operation would violate a bootstrapped invariant of
  * the `milestones` ledger — e.g. attempting to archive the bootstrap
  * active group, or to re-create the milestones ledger with a different
