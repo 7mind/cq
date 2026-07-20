@@ -224,7 +224,8 @@ A task is **READY** iff ALL hold:
 - every entry in its `dependsOn` is SATISFIED — each entry is a `<ledger>:<id>`
   ref (bare ids tolerated as a legacy shorthand), resolved against its TARGET
   ledger's declared satisfies-dependency statuses (tasks: `done`; defects:
-  `resolved`; questions: `answered`; other ledgers per their own declaration);
+  `resolved`; questions: `answered`; a ledger that declares no
+  satisfies-dependency set falls back to its terminal statuses);
   a `milestones` target is satisfied when all its tasks are terminal;
   free-text/unresolvable entries and refs to an archived or absent item are
   satisfied by default; a terminal-but-non-satisfying status such as a task's

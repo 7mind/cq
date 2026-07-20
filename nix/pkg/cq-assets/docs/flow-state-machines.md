@@ -59,8 +59,15 @@ Before each stage `/cq:advance` runs a read-only ledger query (sourced from one
   (`planned`, `building`, `done`, `abandoned` are locked/terminal for planning.)
 - **P-implement** — TRUE iff some goal in `planned` or `building` has a
   DAG-ready non-terminal task (status non-terminal and not `blocked`; every
-  `dependsOn` task `done`; milestone `dependsOn` satisfied; no linked `open`
-  question).
+  `dependsOn` entry SATISFIED — each is a `<ledger>:<id>` ref (bare ids
+  tolerated as a legacy shorthand) resolved against its TARGET ledger's
+  declared satisfies-dependency statuses (tasks: `done`; defects: `resolved`;
+  questions: `answered`; a ledger that declares no satisfies-dependency set
+  falls back to its terminal statuses), a milestone target satisfied when all
+  its tasks are terminal, free-text/unresolvable entries and refs to an
+  archived or absent item satisfied by default, and a terminal-but-non-
+  satisfying status such as `abandoned`/`wontfix` NEVER satisfying; milestone
+  `dependsOn` satisfied; no linked `open` question).
 
 ### The cycle
 
@@ -413,7 +420,11 @@ The `tasks` schema statuses are `planned`, `wip`, `done`, `blocked`,
 
 1. **Derive the READY-SET** — resume any `blocked` task whose questions are now
    answered (`blocked → planned`); a task is READY iff non-terminal and not
-   `blocked`, every `dependsOn` task `done`, its milestone's `dependsOn`
+   `blocked`, every `dependsOn` entry satisfied per its target ledger's
+   satisfies-dependency statuses (tasks: `done`; defects: `resolved`;
+   questions: `answered`; undeclared → terminal statuses; milestone target →
+   all its tasks terminal; free-text/archived/absent refs satisfy by default;
+   `abandoned`/`wontfix` never satisfy), its milestone's `dependsOn`
    satisfied, and no linked `open` question.
 2. **Dispatch workers** — up to N = 8 concurrently; set each `planned → wip` and
    dispatch an `implement-worker` into an isolated worktree.
