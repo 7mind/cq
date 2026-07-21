@@ -1228,9 +1228,17 @@ export class PostgresLedgerStore implements LedgerStore {
       );
     }
     if (!groupsBefore.has(item.milestoneId)) {
+      // ON CONFLICT DO NOTHING (parity with runBootstrapWrites' milestones-group
+      // provisioning): `groupsBefore` is this INSTANCE's in-memory cache, so two
+      // DIFFERENT processes racing to be first to write into a brand-new
+      // milestoneId's group both see it missing and both attempt this INSERT —
+      // a genuine cross-process race the K102 multi-writer stress harness
+      // (T576) surfaced as an unhandled unique-violation (23505, not a
+      // serialization failure, so withSerializationRetry never saw it).
       await tx`
         INSERT INTO groups (project_key, ledger, id, title, description)
         VALUES (${this.projectKey}, ${ledger.id}, ${item.milestoneId}, '', '')
+        ON CONFLICT DO NOTHING
       `;
     }
     await this.insertActiveRow(tx, ledger.id, item);

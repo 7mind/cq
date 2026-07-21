@@ -1,0 +1,17 @@
+# Throwaway local Postgres for the ledger's postgres-backed test suites
+# (postgres-*.test.ts, store-postgres.test.ts, log-put-postgres.test.ts,
+# multi-writer-stress-postgres.test.ts) — see ./README.md for usage.
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cq
+      POSTGRES_PASSWORD: cq
+      POSTGRES_DB: cq_test
+    ports:
+      - "5432:5432"
+    volumes:
+      - cq-test-pg:/var/lib/postgresql/data
+volumes:
+  cq-test-pg:
