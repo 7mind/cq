@@ -101,8 +101,13 @@ export async function readDumpOrphanBranch(
   return files;
 }
 
-/** The dump, fully parsed via the existing parsers — ready to write to a store. */
-interface ParsedDump {
+/**
+ * The dump, fully parsed via the existing parsers — ready to write to a
+ * store. Exported (T580) so {@link restoreDumpToPostgres} (the postgres
+ * analogue of {@link restoreDumpToXdg}) reuses the SAME parse step rather
+ * than duplicating it.
+ */
+export interface ParsedDump {
   registry: LedgerRegistry;
   ledgers: Map<string, Ledger>;
   archives: Map<string, Map<string, ArchiveContent>>;
@@ -118,8 +123,12 @@ interface ParsedDump {
  * LedgerError} on a structurally incomplete dump (missing `ledgers.yaml`, a
  * registered ledger's `.md`, or an archive pointer's target file) — restore
  * must fail loud on a corrupt/partial dump rather than silently drop state.
+ *
+ * Exported (T580): the store-neutral parse step shared by BOTH
+ * {@link restoreDumpToXdg} (sqlite) and `restoreDumpToPostgres`
+ * (postgres/restoreImporter.ts).
  */
-function parseBackupDump(dump: readonly BackupDumpFile[]): ParsedDump {
+export function parseBackupDump(dump: readonly BackupDumpFile[]): ParsedDump {
   const byPath = new Map(dump.map((f) => [f.path, f.content] as const));
 
   const registrySrc = byPath.get("ledgers.yaml");

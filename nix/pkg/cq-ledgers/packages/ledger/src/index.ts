@@ -70,8 +70,9 @@ export {
   readDumpOrphanBranch,
   restoreDumpToXdg,
   isXdgPrimaryEmpty,
+  parseBackupDump,
 } from "./store/restoreImporter.js";
-export type { RestoreSummary } from "./store/restoreImporter.js";
+export type { RestoreSummary, ParsedDump } from "./store/restoreImporter.js";
 export { atomicWrite } from "./store/fsAtomic.js";
 export { GitPlumbing, StaleRefError, GitCommandError, nodeGitRunner } from "./store/git/GitPlumbing.js";
 export type { TreeEntry, GitResult, GitRunOpts, GitRunner } from "./store/git/GitPlumbing.js";
@@ -93,6 +94,10 @@ export { resolveDisplayName } from "./store/postgres/displayName.js";
 export type { DisplayNameCandidates } from "./store/postgres/displayName.js";
 export { startPostgresCoherenceWatcher } from "./store/postgres/coherenceWatcher.js";
 export type { PostgresCoherenceWatcher } from "./store/postgres/coherenceWatcher.js";
+export {
+  restoreDumpToPostgres,
+  isPostgresTenantEmpty,
+} from "./store/postgres/restoreImporter.js";
 export {
   createLedgerStore,
   openLegacyLedgerStore,
