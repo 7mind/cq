@@ -533,3 +533,70 @@ ledgers:
         discarded: []
       satisfiesDependencyStatuses:
         - planned
+  - name: researches
+    schema:
+      statusValues:
+        - open
+        - wip
+        - concluded
+        - inconclusive
+        - abandoned
+      terminalStatuses:
+        - concluded
+        - abandoned
+      fields:
+        question:
+          type: string
+          required: true
+        scope:
+          type: string
+          required: false
+        findings:
+          type: string
+          required: false
+        conclusion:
+          type: string
+          required: false
+        recommendation:
+          type: string
+          required: false
+        sessionLogs:
+          type: string[]
+          required: false
+        rawLogs:
+          type: string[]
+          required: false
+        sourceRefs:
+          type: string[]
+          required: false
+        blockedBy:
+          type: id[]
+          required: false
+        dependsOn:
+          type: id[]
+          required: false
+        ledgerRefs:
+          type: id[]
+          required: false
+        tags:
+          type: string[]
+          required: false
+        suggestedModel:
+          type: string
+          required: false
+      idPrefix: RS
+      transitions:
+        open:
+          - wip
+          - abandoned
+        wip:
+          - concluded
+          - inconclusive
+          - abandoned
+        inconclusive:
+          - wip
+          - abandoned
+        concluded: []
+        abandoned: []
+      satisfiesDependencyStatuses:
+        - concluded

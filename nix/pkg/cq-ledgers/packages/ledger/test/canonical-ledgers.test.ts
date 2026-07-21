@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, afterAll } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir, readFile, copyFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, mkdir, readFile, copyFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -34,11 +34,14 @@ import {
   HANDOFFS_SCHEMA,
   IDEAS_LEDGER,
   IDEAS_SCHEMA,
+  RESEARCHES_LEDGER,
+  RESEARCHES_SCHEMA,
   MILESTONES_AMBIENT_ID,
   InvalidStatusError,
   InvalidTransitionError,
   SchemaValidationError,
   BootstrapViolationError,
+  MissingRequiredFieldError,
   DEFECTS_SCHEMA,
   TASKS_SCHEMA,
   HYPOTHESIS_SCHEMA,
@@ -50,6 +53,9 @@ import {
   type FieldValue,
   LEDGER_STORAGE_DIRNAME,
 } from "../src/index.js";
+import { SqliteLedgerStore } from "../src/store/sqlite/SqliteLedgerStore.js";
+import { openLedgerDb } from "../src/store/sqlite/connection.js";
+import { ensureSchema } from "../src/store/sqlite/schema.js";
 
 const dirs: string[] = [];
 afterAll(async () => {
@@ -162,6 +168,17 @@ const CASES: LedgerCase[] = [
     terminalStatus: "discarded",
     // open → discarded is a legal direct edge; `open` is the first status.
   },
+  {
+    ledger: RESEARCHES_LEDGER,
+    prefix: "RS",
+    create: { question: "Does the read-side resolver settle on prefixed refs?" },
+    update: { status: "concluded", fields: { conclusion: "yes, per T552/T554" } },
+    searchNeedle: "read-side resolver",
+    terminalStatus: "concluded",
+    // F1: open→concluded is illegal (no direct edge); create at `wip`, which
+    // has a direct legal edge to `concluded`.
+    createStatus: "wip",
+  },
 ];
 
 for (const factory of [inMem, fs_]) {
@@ -242,7 +259,7 @@ for (const factory of [inMem, fs_]) {
           const m2 = id.match(/^([A-Z]+)\d+$/);
           return m2 ? m2[1] : id;
         });
-        expect(prefixes.sort()).toEqual(["D", "G", "H", "HO", "I", "K", "Q", "R", "T"]);
+        expect(prefixes.sort()).toEqual(["D", "G", "H", "HO", "I", "K", "Q", "R", "RS", "T"]);
       } finally {
         await store.dispose();
       }
@@ -354,6 +371,7 @@ describe("bootstrap idempotence + divergence guard", () => {
     [GOALS_LEDGER, GOALS_SCHEMA],
     [HANDOFFS_LEDGER, HANDOFFS_SCHEMA],
     [IDEAS_LEDGER, IDEAS_SCHEMA],
+    [RESEARCHES_LEDGER, RESEARCHES_SCHEMA],
   ];
 
   for (const [name] of schemas) {
@@ -721,9 +739,9 @@ describe("HANDOFFS_SCHEMA shape", () => {
     expect(f!.required).toBe(false);
   });
 
-  it("CANONICAL_LEDGERS has 10 entries and ideas is last", () => {
-    expect(CANONICAL_LEDGERS).toHaveLength(10);
-    expect(CANONICAL_LEDGERS[CANONICAL_LEDGERS.length - 1]!.name).toBe(IDEAS_LEDGER);
+  it("CANONICAL_LEDGERS has 11 entries and researches is last", () => {
+    expect(CANONICAL_LEDGERS).toHaveLength(11);
+    expect(CANONICAL_LEDGERS[CANONICAL_LEDGERS.length - 1]!.name).toBe(RESEARCHES_LEDGER);
   });
 });
 
@@ -1241,6 +1259,218 @@ describe("T335: ideas ledger — fresh FsLedgerStore bootstrap + lifecycle + fla
     } finally {
       await store.dispose();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T556 — researches ledger (G80/M246 root, Q261 design + Q266 satisfies-lock):
+// schema shape, transition legality (inconclusive→wip re-open; concluded/
+// abandoned terminal; no open→concluded edge), missing-required-field guard,
+// RS1 id allocation, and bootstrap-on-a-store-that-predates-researches with NO
+// divergence backup (both adapters).
+// ---------------------------------------------------------------------------
+
+describe("T556: RESEARCHES_SCHEMA shape", () => {
+  it("statusValues are exactly open, wip, concluded, inconclusive, abandoned", () => {
+    expect(RESEARCHES_SCHEMA.statusValues).toEqual([
+      "open",
+      "wip",
+      "concluded",
+      "inconclusive",
+      "abandoned",
+    ]);
+  });
+
+  it("terminalStatuses are exactly concluded + abandoned", () => {
+    expect(RESEARCHES_SCHEMA.terminalStatuses).toEqual(["concluded", "abandoned"]);
+  });
+
+  it("idPrefix is RS (distinct from R/reviews)", () => {
+    expect(RESEARCHES_SCHEMA.idPrefix).toBe("RS");
+  });
+
+  it("satisfiesDependencyStatuses is exactly [\"concluded\"] (Q266 lock)", () => {
+    expect(RESEARCHES_SCHEMA.satisfiesDependencyStatuses).toEqual(["concluded"]);
+    expect(RESEARCHES_SCHEMA.satisfiesDependencyStatuses).not.toContain("abandoned");
+  });
+
+  it("question is the sole required field; scope/findings/conclusion/recommendation/sessionLogs/rawLogs are optional", () => {
+    expect(RESEARCHES_SCHEMA.fields["question"]).toEqual({ type: "string", required: true });
+    for (const f of ["scope", "findings", "conclusion", "recommendation"]) {
+      expect(RESEARCHES_SCHEMA.fields[f]).toEqual({ type: "string", required: false });
+    }
+    expect(RESEARCHES_SCHEMA.fields["sessionLogs"]).toEqual({ type: "string[]", required: false });
+    expect(RESEARCHES_SCHEMA.fields["rawLogs"]).toEqual({ type: "string[]", required: false });
+    const required = Object.entries(RESEARCHES_SCHEMA.fields)
+      .filter(([, f]) => f.required)
+      .map(([name]) => name);
+    expect(required).toEqual(["question"]);
+  });
+
+  it("transitions: open→[wip,abandoned]; wip→[concluded,inconclusive,abandoned]; inconclusive→[wip,abandoned]; concluded/abandoned terminal", () => {
+    const t = RESEARCHES_SCHEMA.transitions!;
+    expect(t["open"]).toEqual(["wip", "abandoned"]);
+    expect(t["wip"]).toEqual(["concluded", "inconclusive", "abandoned"]);
+    expect(t["inconclusive"]).toEqual(["wip", "abandoned"]);
+    expect(t["concluded"]).toEqual([]);
+    expect(t["abandoned"]).toEqual([]);
+  });
+
+  it("CANONICAL_LEDGERS includes researches", () => {
+    expect(CANONICAL_LEDGERS.map((c) => c.name)).toContain(RESEARCHES_LEDGER);
+  });
+});
+
+for (const factory of [inMem, fs_]) {
+  describe(`T556: researches ledger — lifecycle + guards (${factory.name})`, () => {
+    it("bootstraps `researches`, allocates RS1, and exercises the full transition legality", async () => {
+      const store = await factory.build();
+      try {
+        expect(store.enumerate()).toContain(RESEARCHES_LEDGER);
+
+        const m = await store.createMilestone({ title: "researches milestone" });
+        const r = await store.createItem(RESEARCHES_LEDGER, m.id, {
+          status: "open",
+          fields: { question: "Does read-side resolution tolerate both ref forms?" },
+        });
+        expect(r.id).toBe("RS1");
+        expect(r.status).toBe("open");
+
+        // No direct open→concluded edge.
+        await expect(
+          store.updateItem(RESEARCHES_LEDGER, r.id, { status: "concluded" }),
+        ).rejects.toThrow(InvalidTransitionError);
+
+        // open → wip → inconclusive → wip (re-open) → concluded.
+        const wip = await store.updateItem(RESEARCHES_LEDGER, r.id, { status: "wip" });
+        expect(wip.status).toBe("wip");
+        const inconclusive = await store.updateItem(RESEARCHES_LEDGER, r.id, {
+          status: "inconclusive",
+        });
+        expect(inconclusive.status).toBe("inconclusive");
+
+        // No direct inconclusive→concluded edge either.
+        await expect(
+          store.updateItem(RESEARCHES_LEDGER, r.id, { status: "concluded" }),
+        ).rejects.toThrow(InvalidTransitionError);
+
+        const reopened = await store.updateItem(RESEARCHES_LEDGER, r.id, { status: "wip" });
+        expect(reopened.status).toBe("wip");
+        const concluded = await store.updateItem(RESEARCHES_LEDGER, r.id, {
+          status: "concluded",
+          fields: { conclusion: "resolver tolerates both forms" },
+        });
+        expect(concluded.status).toBe("concluded");
+
+        // concluded is terminal — no outgoing transitions.
+        await expect(
+          store.updateItem(RESEARCHES_LEDGER, r.id, { status: "wip" }),
+        ).rejects.toThrow(InvalidTransitionError);
+
+        // abandoned is terminal too — from a second item at wip.
+        const r2 = await store.createItem(RESEARCHES_LEDGER, m.id, {
+          status: "wip",
+          fields: { question: "Second research question" },
+        });
+        const abandoned = await store.updateItem(RESEARCHES_LEDGER, r2.id, {
+          status: "abandoned",
+        });
+        expect(abandoned.status).toBe("abandoned");
+        await expect(
+          store.updateItem(RESEARCHES_LEDGER, r2.id, { status: "wip" }),
+        ).rejects.toThrow(InvalidTransitionError);
+      } finally {
+        await store.dispose();
+      }
+    });
+
+    it("create_item(researches) missing `question` is rejected with MissingRequiredFieldError", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "researches missing-field milestone" });
+        await expect(
+          store.createItem(RESEARCHES_LEDGER, m.id, { status: "open", fields: {} }),
+        ).rejects.toThrow(MissingRequiredFieldError);
+      } finally {
+        await store.dispose();
+      }
+    });
+
+    it("enumerate/fetch shows researches with idPrefix RS", async () => {
+      const store = await factory.build();
+      try {
+        expect(store.enumerate()).toContain(RESEARCHES_LEDGER);
+        const fetched = store.fetch(RESEARCHES_LEDGER);
+        expect(fetched.schema.idPrefix).toBe("RS");
+      } finally {
+        await store.dispose();
+      }
+    });
+  });
+}
+
+describe("T556: bootstrap on a store that predates `researches` — provisioned with NO divergence backup", () => {
+  it("FsLedgerStore: a registry missing the `researches` entry gets it appended in place, no .cq/.backup dir", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ledger-researches-predates-"));
+    dirs.push(dir);
+    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
+    await mkdir(docsDir, { recursive: true });
+    const preResearches = CANONICAL_LEDGERS.filter((c) => c.name !== RESEARCHES_LEDGER);
+    await writeFile(
+      path.join(docsDir, "ledgers.yaml"),
+      serializeRegistry({ version: 1, ledgers: preResearches }),
+      "utf8",
+    );
+
+    const store = new FsLedgerStore({ root: dir });
+    await store.init();
+    try {
+      expect(store.enumerate()).toContain(RESEARCHES_LEDGER);
+      const created = await store.createItem(RESEARCHES_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "open",
+        fields: { question: "predates-researches bootstrap check" },
+      });
+      expect(created.id).toBe("RS1");
+
+      // No divergence backup: the `.cq/.backup/` dir must not even exist.
+      const entries = await readdir(path.join(docsDir, ".backup")).catch(() => []);
+      expect(entries).toEqual([]);
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  it("SqliteLedgerStore: a db missing the `researches` row gets it provisioned in place, no .backup- sibling db", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ledger-researches-sqlite-predates-"));
+    dirs.push(dir);
+    const dbPath = path.join(dir, "ledger.db");
+    const db = openLedgerDb(dbPath);
+    ensureSchema(db);
+    const insert = db.query(
+      "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
+    );
+    for (const c of CANONICAL_LEDGERS) {
+      if (c.name === RESEARCHES_LEDGER) continue;
+      insert.run(c.name, JSON.stringify(c.schema));
+    }
+    db.close();
+
+    const store = new SqliteLedgerStore({ dbPath });
+    await store.init();
+    try {
+      expect(store.enumerate()).toContain(RESEARCHES_LEDGER);
+      const created = await store.createItem(RESEARCHES_LEDGER, MILESTONES_AMBIENT_ID, {
+        status: "open",
+        fields: { question: "predates-researches sqlite bootstrap check" },
+      });
+      expect(created.id).toBe("RS1");
+    } finally {
+      await store.dispose();
+    }
+
+    const entries = await readdir(dir);
+    const backups = entries.filter((f) => f.includes(".backup-"));
+    expect(backups).toEqual([]);
   });
 });
 

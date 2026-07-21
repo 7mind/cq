@@ -118,10 +118,11 @@ const TASKS = "tasks";
 const QUESTIONS = "questions";
 const REVIEWS = "reviews";
 const MILESTONES = "milestones";
+const RESEARCHES = "researches";
 
 // Sanity guard: the fixtures below assume the canonical names are bootstrapped.
 const canonicalNames = new Set(CANONICAL_LEDGERS.map((c) => c.name));
-for (const name of [DEFECTS, GOALS, TASKS, QUESTIONS, REVIEWS, MILESTONES]) {
+for (const name of [DEFECTS, GOALS, TASKS, QUESTIONS, REVIEWS, MILESTONES, RESEARCHES]) {
   if (!canonicalNames.has(name)) throw new Error(`expected canonical ledger ${name}`);
 }
 
@@ -756,6 +757,46 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
             fields: { headline: "still-open", severity: "high" },
           });
           await seedCandidate(store, m.id, [form.make(DEFECTS, d.id)]);
+
+          const p = derivePredicates(store);
+          expect(p.pImplement).toEqual({ value: false, items: [] });
+        } finally {
+          await factory.teardown(store);
+        }
+      });
+
+      // T556/Q266 — cross-ledger dep on a CONCLUDED research satisfies (the
+      // researches satisfy-set is {concluded}).
+      it(`(g80-dep) cross-ledger dep on a concluded research → ready (${form.name})`, async () => {
+        const store = await factory.build();
+        try {
+          const m = await store.createMilestone({ title: "m" });
+          const r = await store.createItem(RESEARCHES, m.id, {
+            status: "concluded",
+            fields: { question: "does the resolver settle on both forms?" },
+          });
+          const tId = await seedCandidate(store, m.id, [form.make(RESEARCHES, r.id)]);
+
+          const p = derivePredicates(store);
+          expect(p.pImplement).toEqual({ value: true, items: [tId] });
+        } finally {
+          await factory.teardown(store);
+        }
+      });
+
+      // T556/Q266 — cross-ledger dep on an ABANDONED research must NOT satisfy:
+      // abandoned is terminal but is NOT in the researches satisfy-set — the
+      // dependent STAYS gated even though the research is done investigating.
+      it(`(g80-dep) cross-ledger dep on an abandoned research → NOT ready, stays gated (${form.name})`, async () => {
+        const store = await factory.build();
+        try {
+          const m = await store.createMilestone({ title: "m" });
+          const r = await store.createItem(RESEARCHES, m.id, {
+            status: "wip",
+            fields: { question: "does the resolver settle on both forms?" },
+          });
+          await store.updateItem(RESEARCHES, r.id, { status: "abandoned" });
+          await seedCandidate(store, m.id, [form.make(RESEARCHES, r.id)]);
 
           const p = derivePredicates(store);
           expect(p.pImplement).toEqual({ value: false, items: [] });

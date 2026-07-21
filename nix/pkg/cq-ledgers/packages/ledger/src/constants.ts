@@ -456,6 +456,63 @@ export const IDEAS_SCHEMA: LedgerSchema = {
 };
 
 /**
+ * G80/M246 — researches ledger (Q261 design, Q266 satisfies-lock). idPrefix
+ * `RS` — a distinct two-letter prefix from `R` (reviews); the refs.ts
+ * exact-alpha resolution (`BARE_ID_RE`'s full-leading-alpha-run match) keeps
+ * them from colliding, the same way `H`/`HO` never collide.
+ *
+ * Lifecycle (Q261 DECIDED):
+ *   open → wip → {concluded | inconclusive} → …
+ *
+ * - `open` is intake; it may move only to `wip` or straight to `abandoned` —
+ *   there is NO direct `open`→`concluded` edge (a research question must pass
+ *   through active investigation before it can conclude).
+ * - `wip` is active investigation; it reaches either terminal directly
+ *   (`concluded`) or the re-openable `inconclusive` hold, or `abandoned`.
+ * - `inconclusive` is a re-openable hold (investigation did not converge): it
+ *   returns to `wip` or is `abandoned`. It does NOT reach `concluded` directly
+ *   — a re-opened investigation must pass back through `wip` to conclude.
+ * - `concluded` and `abandoned` are terminal (no outgoing transitions).
+ *
+ * `satisfiesDependencyStatuses: ["concluded"]` (Q266 LOCKED): only `concluded`
+ * satisfies a dependency on a research — `abandoned` is terminal (archivable)
+ * but must NOT silently satisfy (same design lock as tasks/defects/etc.).
+ */
+export const RESEARCHES_LEDGER = "researches" as const;
+
+export const RESEARCHES_SCHEMA: LedgerSchema = {
+  statusValues: ["open", "wip", "concluded", "inconclusive", "abandoned"],
+  terminalStatuses: ["concluded", "abandoned"],
+  // G80/Q266: only `concluded` satisfies a dependency on a research —
+  // `abandoned` is terminal (archivable) but must NOT silently satisfy
+  // (design lock).
+  satisfiesDependencyStatuses: ["concluded"],
+  idPrefix: "RS",
+  // F1 transition guard. Q261 VERBATIM: open reaches only wip + abandoned (NO
+  // open→concluded, NO open→inconclusive). concluded/inconclusive are
+  // reachable ONLY from wip; inconclusive may loop back to wip.
+  transitions: {
+    open: ["wip", "abandoned"],
+    wip: ["concluded", "inconclusive", "abandoned"],
+    inconclusive: ["wip", "abandoned"],
+    concluded: [],
+    abandoned: [],
+  },
+  fields: {
+    question: { type: "string", required: true },
+    scope: { type: "string", required: false },
+    findings: { type: "string", required: false },
+    conclusion: { type: "string", required: false },
+    recommendation: { type: "string", required: false },
+    /** Repo-relative paths to session log files (.cq/logs/<ts>-<agent-id>.md). */
+    sessionLogs: { type: "string[]", required: false },
+    /** Repo-relative paths to raw transcript files (.cq/logs/raw/<ts>-<agent-id>.jsonl). */
+    rawLogs: { type: "string[]", required: false },
+    ...COMMON_REF_FIELDS,
+  },
+};
+
+/**
  * Bootstrap manifest. `milestones` MUST be first (the others reference it
  * for milestone-group resolution). On init() every entry is provisioned if
  * its file is absent and guarded against on-disk schema divergence.
@@ -471,6 +528,7 @@ export const CANONICAL_LEDGERS: ReadonlyArray<{ name: string; schema: LedgerSche
   { name: REVIEWS_LEDGER, schema: REVIEWS_SCHEMA },
   { name: HANDOFFS_LEDGER, schema: HANDOFFS_SCHEMA },
   { name: IDEAS_LEDGER, schema: IDEAS_SCHEMA },
+  { name: RESEARCHES_LEDGER, schema: RESEARCHES_SCHEMA },
 ];
 
 // ---------------------------------------------------------------------------

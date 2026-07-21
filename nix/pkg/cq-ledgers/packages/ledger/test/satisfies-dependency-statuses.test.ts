@@ -31,6 +31,7 @@ import {
   IDEAS_SCHEMA,
   MILESTONES_SCHEMA,
   QUESTIONS_SCHEMA,
+  RESEARCHES_SCHEMA,
   REVIEWS_SCHEMA,
   TASKS_SCHEMA,
   TASKS_LEDGER,
@@ -82,6 +83,10 @@ describe("satisfiesDependencyStatuses — canonical declarations (G80 locked tab
 
   it("ideas: [\"planned\"]", () => {
     expect(IDEAS_SCHEMA.satisfiesDependencyStatuses).toEqual(["planned"]);
+  });
+
+  it("researches: [\"concluded\"] (G80/M246, Q266 lock)", () => {
+    expect(RESEARCHES_SCHEMA.satisfiesDependencyStatuses).toEqual(["concluded"]);
   });
 
   it("no schema's list contains an abandoned/wontfix/withdrawn-shaped status (design lock)", () => {
