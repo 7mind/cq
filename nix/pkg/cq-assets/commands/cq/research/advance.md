@@ -15,8 +15,8 @@ outputs:
   - "hypothesis tree mutations: new nodes (create_item) and status updates (update_item)"
   - "validated evidence stored on hypothesis items (evidence[] free-text, [correct]/[incorrect] prefix — Q262)"
   - "research status transitions: open->wip->{concluded | inconclusive}"
-  - "on concluded: researches.findings + conclusion + recommendation written; the FULL cited synthesis routed through `cq log put` to logs/<ts>-research-<RS>.md (recorded in sessionLogs) — NO working-tree write (Q269)"
-  - "per explorer/experimenter: a summary log logs/<timestamp>-<agent-id>.md AND a raw transcript logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
+  - "on concluded: researches.findings + conclusion + recommendation written; the FULL cited synthesis routed through `cq log put` to .cq/logs/<ts>-research-<RS>.md (recorded in sessionLogs) — NO working-tree write (Q269)"
+  - "per explorer/experimenter: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
 ioSchema:
   - "ONE research round per invocation; idempotent and resumable from ledger state"
   - "explorer concurrency: parallel for disjoint root seeds; serial while drilling a single branch (Q27 mirror)"
@@ -168,9 +168,9 @@ tool result, then:
    (compose the header+summary to an OS-temp path — never the working tree — or
    pipe via `--stdin --dest logs/<timestamp>-<agent-id>.md`).
 4. **Record BOTH paths on the hypothesis item**: `sessionLogs +=` the
-   `logs/<timestamp>-<agent-id>.md` summary path; `rawLogs +=` the
-   `logs/raw/<timestamp>-<agent-id>.jsonl` raw path (step 4 attaches them in the
-   SAME `update_item` that stores the validated evidence — see below).
+   `.cq/logs/<timestamp>-<agent-id>.md` summary path; `rawLogs +=` the
+   `.cq/logs/raw/<timestamp>-<agent-id>.jsonl` raw path (step 4 attaches them in
+   the SAME `update_item` that stores the validated evidence — see below).
 
 **Absent transcript (older run / crash / non-Claude harness).** When the
 `agent-<agent-id>.jsonl` file does not exist, do NOT fabricate a raw log: write an
@@ -187,7 +187,7 @@ its stdout was unparseable (so a failed external call leaves a trace). Also writ
 summary `.md` (header: research id, hypothesis id, the alias + `pi`
 provider/model) via `cq log put` to `logs/<timestamp>-pi-<alias>.md`. Add the
 summary `.md` to the hypothesis item's `sessionLogs` and the raw
-`logs/raw/<timestamp>-pi-<alias>.md` to its `rawLogs`.
+`.cq/logs/raw/<timestamp>-pi-<alias>.md` to its `rawLogs`.
 
 ---
 
@@ -361,8 +361,8 @@ so re-open every citation yourself:
   **`[correct]`**; otherwise store it prefixed **`[incorrect]`** (wrong line,
   paraphrase that misrepresents source, stale/low-authority web claim, or
   irrelevant). `update_item("hypothesis", H, fields: { evidence: [...], sessionLogs:
-  ["logs/<ts>-<explorer-agent-id>.md", ...], rawLogs:
-  ["logs/raw/<ts>-<explorer-agent-id>.jsonl", ...] })` — include the explorer's
+  [".cq/logs/<ts>-<explorer-agent-id>.md", ...], rawLogs:
+  [".cq/logs/raw/<ts>-<explorer-agent-id>.jsonl", ...] })` — include the explorer's
   (and, when a `probeRequest` was run this round, the experimenter's) summary-log
   path(s) in `sessionLogs` AND raw-transcript path(s) in `rawLogs` in the SAME
   `update_item` that stores the evidence (the log pair(s) for this subagent were
@@ -402,8 +402,8 @@ status: "concluded", fields: { findings: "<the validated evidence narrative — 
 text, with the [correct] citations that establish it>", conclusion: "<the answer to
 the research question the confirmed hypotheses establish>", recommendation: "<the
 concrete recommendation the evidence points to, if any>", sessionLogs:
-["logs/<ts>-<agent-id>.md", ...], rawLogs: ["logs/raw/<ts>-<agent-id>.jsonl", ...]
-})` — include ALL summary-log paths (`sessionLogs`) AND all raw-transcript paths
+[".cq/logs/<ts>-<agent-id>.md", ...], rawLogs: [".cq/logs/raw/<ts>-<agent-id>.jsonl",
+...] })` — include ALL summary-log paths (`sessionLogs`) AND all raw-transcript paths
 (`rawLogs`) written for this research round (all explorer + experimenter log pairs)
 in the SAME `update_item` call that sets `concluded`. Do NOT defer
 `sessionLogs`/`rawLogs` to a separate update. (Omit a `rawLogs` entry for any
@@ -416,10 +416,11 @@ subagent whose transcript was absent.) The `concluded` status (legal only from
 adjudicated hypothesis tree, and every `[correct]` citation with its verbatim
 excerpt — as a MARKDOWN artifact and write it ONLY via `cq log put`, never with a
 `Write` to the working tree (compose to an OS-temp path, never inside the repo, then
-pipe): `… | cq log put --stdin --dest logs/<ts>-research-<RS>.md`. Then RECORD that
-returned path in the research item's `sessionLogs` (append it in the same
-`update_item` as (a), or a follow-up `update_item` if the artifact is composed
-after). This synthesis artifact is the durable, human-readable record of the answer;
+pipe): `… | cq log put --stdin --dest logs/<ts>-research-<RS>.md`. Then RECORD the
+resulting `.cq/logs/<ts>-research-<RS>.md` path in the research item's `sessionLogs`
+(append it in the same `update_item` as (a), or a follow-up `update_item` if the
+artifact is composed after). This synthesis artifact is the durable, human-readable
+record of the answer;
 it lives in the `cq log put`-managed logs area, NOT in the working tree.
 
 ### 6. NEEDS user input → file an open question and STOP (resumable)
@@ -463,7 +464,7 @@ Summarize the round concisely:
   the question is answered; `inconclusive` when researched but unresolved) and the
   documented path it followed (`open → wip → {concluded | inconclusive}`);
 - on a **concluded** research → the `conclusion`/`recommendation`, and the synthesis
-  artifact path written via `cq log put` (`logs/<ts>-research-<RS>.md`);
+  artifact path written via `cq log put` (`.cq/logs/<ts>-research-<RS>.md`);
 - whether the loop is **parked on a question** (id to answer) — if so, "answer it in
   the TUI/web, then run `/cq:research:advance RS` to resume";
 - if the tree still has `uncertain`/`open` leaves and no question is pending, say
@@ -527,10 +528,11 @@ in the SAME inline session, so you already KNOW which context you are in.
   prose, mirror the §Report); `flow` = `research`; `ledgerRefs` = the stop-causing
   items (`researches:<RS>`); `blockingQuestions` = the `open` question ids for an
   `answers-required`/`mixed` stop; `handoffReasons` = the component reasons for a
-  `mixed`/`user-action-required` stop; `sessionLogs` = the `logs/<ts>-<agent-id>.md`
-  summary path(s) (including the `logs/<ts>-research-<RS>.md` synthesis on a
-  concluded stop) AND `rawLogs` = the `logs/raw/<ts>-<agent-id>.jsonl` (and
-  `logs/raw/<ts>-pi-<alias>.md`) raw path(s) written this round — populate them in
+  `mixed`/`user-action-required` stop; `sessionLogs` = the
+  `.cq/logs/<ts>-<agent-id>.md` summary path(s) (including the
+  `.cq/logs/<ts>-research-<RS>.md` synthesis on a concluded stop) AND `rawLogs` =
+  the `.cq/logs/raw/<ts>-<agent-id>.jsonl` (and `.cq/logs/raw/<ts>-pi-<alias>.md`)
+  raw path(s) written this round — populate them in
   the SAME `create_item` call (omit a `rawLogs` entry for any subagent whose
   transcript was absent). Stamp `author`/`session`. Append-only: written once at the
   stop, never updated. **Then commit the ledger** (§Commit the ledger): stage the
