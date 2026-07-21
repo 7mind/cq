@@ -17,7 +17,8 @@
       "@cq/ledger": ["../ledger/src/index.ts"],
       "@cq/ledger-mcp": ["../ledger-mcp/src/main.ts"],
       "@cq/ledger-tui": ["../ledger-tui/src/main.tsx"],
-      "@cq/ledger-web": ["../ledger-web/src/serve.ts"]
+      "@cq/ledger-web": ["../ledger-web/src/serve.ts"],
+      "@cq/ledger-web/hub": ["../ledger-web/src/hubServe.ts"]
     }
   },
   "references": [

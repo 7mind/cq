@@ -37,11 +37,11 @@ import {
  * called with.  All describe blocks that need it use THIS single definition.
  */
 function recordingModes(): ModeDelegates & { calls: Record<string, readonly string[][]> } {
-  const calls: Record<string, readonly string[][]> = { mcp: [], tui: [], web: [] };
+  const calls: Record<string, readonly string[][]> = { mcp: [], tui: [], web: [], serve: [] };
   const record = (k: string) => async (argv: readonly string[]) => {
     (calls[k] as string[][]).push([...argv]);
   };
-  return { calls, mcp: record("mcp"), tui: record("tui"), web: record("web") };
+  return { calls, mcp: record("mcp"), tui: record("tui"), web: record("web"), serve: record("serve") };
 }
 
 // Temp dirs created by (e) tests; cleaned up in afterAll.
@@ -85,11 +85,12 @@ describe("dispatch", () => {
     expect(io.errs.join("\n")).toBe(USAGE);
   });
 
-  it("USAGE text includes all three modes and all six native subcommands", () => {
+  it("USAGE text includes all four modes and all six native subcommands", () => {
     // modes
     expect(USAGE).toContain("mcp");
     expect(USAGE).toContain("tui");
     expect(USAGE).toContain("web");
+    expect(USAGE).toContain("serve");
     // native subcommands
     expect(USAGE).toContain("init");
     expect(USAGE).toContain("reset");
@@ -115,9 +116,9 @@ describe("dispatch", () => {
  * The full routing matrix is T389; here we only assert the seam wiring with
  * mocked delegates so no real server / Ink render launches.
  */
-describe("dispatch MODE routing (mcp|tui|web)", () => {
+describe("dispatch MODE routing (mcp|tui|web|serve)", () => {
   it("delegates each mode with argv.slice(1) verbatim, exit 0, longRunning true, no usage printed", async () => {
-    for (const mode of ["mcp", "tui", "web"] as const) {
+    for (const mode of ["mcp", "tui", "web", "serve"] as const) {
       const io = recordingDispatchIo();
       const modes = recordingModes();
       const outcome = await dispatch([mode, "--cwd", "X", "extra"], io, modes);
@@ -308,6 +309,7 @@ describe("dispatch native subcommands — mode delegate never fires (T389 case e
       expect(modes.calls["mcp"]).toEqual([]);
       expect(modes.calls["tui"]).toEqual([]);
       expect(modes.calls["web"]).toEqual([]);
+      expect(modes.calls["serve"]).toEqual([]);
     } finally {
       if (prevStateHome === undefined) delete process.env["XDG_STATE_HOME"];
       else process.env["XDG_STATE_HOME"] = prevStateHome;
@@ -331,6 +333,7 @@ describe("dispatch native subcommands — mode delegate never fires (T389 case e
     expect(modes.calls["mcp"]).toEqual([]);
     expect(modes.calls["tui"]).toEqual([]);
     expect(modes.calls["web"]).toEqual([]);
+      expect(modes.calls["serve"]).toEqual([]);
   });
 
   it("advance-gate: routes to runAdvanceGate (no marker → allow, exit 0); no mode delegate fired", async () => {
@@ -358,6 +361,7 @@ describe("dispatch native subcommands — mode delegate never fires (T389 case e
       expect(modes.calls["mcp"]).toEqual([]);
       expect(modes.calls["tui"]).toEqual([]);
       expect(modes.calls["web"]).toEqual([]);
+      expect(modes.calls["serve"]).toEqual([]);
     } finally {
       if (prevXdg === undefined) delete process.env["XDG_RUNTIME_DIR"];
       else process.env["XDG_RUNTIME_DIR"] = prevXdg;

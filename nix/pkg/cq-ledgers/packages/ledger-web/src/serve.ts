@@ -39,7 +39,8 @@ const DEFAULT_HOST = "127.0.0.1";
 const MAX_PORT_SCAN = 64;
 
 const WEB_SRC = path.resolve(import.meta.dir, "main.tsx");
-const DEFAULT_OUTDIR = path.resolve(import.meta.dir, "..", "dist");
+/** Exported so hubServe.ts (`cq serve`, T586) can reuse the same bundle output dir. */
+export const DEFAULT_OUTDIR = path.resolve(import.meta.dir, "..", "dist");
 
 export interface ServeOpts {
   host: string;
@@ -178,9 +179,10 @@ interface WsData {
 
 /**
  * Serve a static asset from `outdir` for `url`, with SPA fallback to
- * index.html. Shared by both the proxy and embedded servers.
+ * index.html. Shared by the proxy and embedded servers, and (T586) by
+ * hubServe.ts's `cq serve` hub server.
  */
-async function serveStatic(url: URL, outdir: string, indexPath: string): Promise<Response> {
+export async function serveStatic(url: URL, outdir: string, indexPath: string): Promise<Response> {
   const reqPath = url.pathname === "/" ? "/index.html" : url.pathname;
   // Resolve within outdir; reject path traversal.
   const resolved = path.resolve(outdir, `.${reqPath}`);

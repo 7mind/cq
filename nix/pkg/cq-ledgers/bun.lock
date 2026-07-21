@@ -74,9 +74,6 @@
     "packages/ledger-mcp": {
       "name": "@cq/ledger-mcp",
       "version": "0.0.1",
-      "bin": {
-        "ledger-mcp": "./src/main.ts",
-      },
       "dependencies": {
         "@cq/config": "workspace:*",
         "@cq/ledger": "workspace:*",
@@ -110,11 +107,9 @@
     "packages/ledger-web": {
       "name": "@cq/ledger-web",
       "version": "0.0.1",
-      "bin": {
-        "ledger-web": "./src/serve.ts",
-      },
       "dependencies": {
         "@cq/config": "workspace:*",
+        "@cq/ledger": "workspace:*",
         "@cq/ledger-live": "workspace:*",
         "@cq/ledger-mcp": "workspace:*",
         "@modelcontextprotocol/sdk": "1.29.0",
@@ -126,7 +121,6 @@
         "remark-gfm": "4.0.1",
       },
       "devDependencies": {
-        "@cq/ledger": "workspace:*",
         "@happy-dom/global-registrator": "^15.0.0",
         "@types/react": "19.2.6",
         "@types/react-dom": "19.2.3",

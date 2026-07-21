@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@cq/config": "workspace:*",
+    "@cq/ledger": "workspace:*",
     "@cq/ledger-live": "workspace:*",
     "@cq/ledger-mcp": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
@@ -16,7 +17,6 @@
     "remark-gfm": "4.0.1"
   },
   "devDependencies": {
-    "@cq/ledger": "workspace:*",
     "@happy-dom/global-registrator": "^15.0.0",
     "@types/react": "19.2.6",
     "@types/react-dom": "19.2.3",

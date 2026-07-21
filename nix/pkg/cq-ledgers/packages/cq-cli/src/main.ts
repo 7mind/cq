@@ -92,8 +92,15 @@ function isSubcommand(s: string): s is Subcommand {
  * `tui`/`web` delegate to long-running entries (Ink render / web server); their
  * awaited `main` resolves only when the process exits, mirroring the standalone
  * bins. `mcp` keeps stdout PROTOCOL-ONLY — the dispatcher prints nothing on it.
+ *
+ * `serve` (T586) is the pure-CLI multi-tenant hub server skeleton: unlike
+ * every other mode it resolves NO ledger root at all (no `--cwd`, no
+ * `cq.toml`) — its config is `--pg-url`/`--host`/`--port`/`--token` (+ env DSN
+ * fallback) only. It delegates to `@cq/ledger-web`'s `hubServe.ts` module
+ * (imported via the `@cq/ledger-web/hub` subpath, distinct from `web`'s
+ * `serve.ts` entry) rather than its `main` export.
  */
-export const MODES = ["mcp", "tui", "web"] as const;
+export const MODES = ["mcp", "tui", "web", "serve"] as const;
 export type Mode = (typeof MODES)[number];
 
 function isMode(s: string): s is Mode {
@@ -113,6 +120,7 @@ export interface ModeDelegates {
   mcp(argv: readonly string[]): Promise<void>;
   tui(argv: readonly string[]): Promise<void>;
   web(argv: readonly string[]): Promise<void>;
+  serve(argv: readonly string[]): Promise<void>;
 }
 
 function defaultModeDelegates(): ModeDelegates {
@@ -120,6 +128,7 @@ function defaultModeDelegates(): ModeDelegates {
     mcp: async (argv) => (await import("@cq/ledger-mcp")).main(argv),
     tui: async (argv) => (await import("@cq/ledger-tui")).main(argv),
     web: async (argv) => (await import("@cq/ledger-web")).main(argv),
+    serve: async (argv) => (await import("@cq/ledger-web/hub")).main(argv),
   };
 }
 
@@ -157,6 +166,10 @@ export const USAGE = [
   "  tui         [--cwd <path>] [--mcp-url <url>]    run the terminal UI",
   "  web         [--port <n>] [--host <h>] [--cwd <path>] [--mcp-url <url>]",
   "                                                  run the web UI (default port 5180)",
+  "  serve       --pg-url <dsn> [--host <h>] [--port <n>] [--token <t>]",
+  "                                                  run the multi-tenant hub server (default port",
+  "                                                  5190); NO --cwd/cq.toml — DSN resolves from",
+  "                                                  --pg-url, else $CQ_LEDGER_PG_URL/$DATABASE_URL",
   "",
   "commands:",
   "  init        [--cwd <path>] [--force]            initialise the canonical ledger set",
@@ -1104,7 +1117,7 @@ const HANDLERS: Record<Subcommand, (args: SubcommandArgs, io: DispatchIo) => Pro
 /**
  * Route `argv` (the args after the program name) to a MODE or a subcommand.
  *
- * MODE routing runs FIRST: if `argv[0]` is a {@link Mode} (mcp|tui|web), the
+ * MODE routing runs FIRST: if `argv[0]` is a {@link Mode} (mcp|tui|web|serve), the
  * dispatcher delegates to that product's exported `main(argv.slice(1))` with the
  * post-mode args VERBATIM — no native flag parsing — and returns exit 0 once the
  * delegated main resolves (long-running for tui/web). The `mcp` path emits
