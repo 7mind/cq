@@ -59,6 +59,7 @@ describe("[ledger] and [webui] are harness-invariant (T483)", () => {
       remote: "origin",
       backup: "none",
       projectId: null,
+      url: null,
     });
     expect(underClaude.ledger).toEqual(underPi.ledger);
     expect(underDefault.ledger).toEqual(underPi.ledger);

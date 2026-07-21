@@ -53,6 +53,17 @@ export interface RawLedger {
   readonly remote: unknown;
   readonly backup: unknown;
   readonly projectId: unknown;
+  readonly url: unknown;
+}
+
+/**
+ * The raw `[project]` table as produced by the parser: cells are left as
+ * smol-toml emitted them (unknown JS values) for the config layer to
+ * type-check at the boundary (`parseConfig` -> `CqConfigError`). Absent
+ * cells are `undefined` (T570).
+ */
+export interface RawProject {
+  readonly name: unknown;
 }
 
 /**
@@ -99,6 +110,8 @@ export interface RawToml {
   readonly agentEfforts: Record<string, string> | null;
   /** The `[ledger]` table, or null if absent. */
   readonly ledger: RawLedger | null;
+  /** The `[project]` table, or null if absent (T570). */
+  readonly project: RawProject | null;
   /**
    * The `[harness.<name>]` per-harness override tables (Q240): harness name
    * (`claude`/`pi`) -> its raw overridable subset. Null if the document
@@ -125,6 +138,7 @@ const ALLOWED_TOP_LEVEL = new Set([
   "agent_tiers",
   "agent_efforts",
   "ledger",
+  "project",
   "harness",
 ]);
 
@@ -200,19 +214,20 @@ function parseWebui(value: unknown): RawWebui {
   return { host: value.host, port: value.port };
 }
 
-/** The exact set of keys the `[ledger]` table permits (T349, T494). */
+/** The exact set of keys the `[ledger]` table permits (T349, T494, T570). */
 const ALLOWED_LEDGER_KEYS = new Set([
   "backend",
   "branch",
   "remote",
   "backup",
   "projectId",
+  "url",
 ]);
 
 /**
  * Structurally validate the `[ledger]` table: it must be a table whose only
- * keys are `backend`, `branch`, `remote`, `backup`, and `projectId`. The
- * values are passed through untouched — `parseConfig` type-checks and
+ * keys are `backend`, `branch`, `remote`, `backup`, `projectId`, and `url`.
+ * The values are passed through untouched — `parseConfig` type-checks and
  * validates them and raises a `CqConfigError` at the boundary.
  */
 function parseLedgerRaw(value: unknown): RawLedger {
@@ -230,7 +245,28 @@ function parseLedgerRaw(value: unknown): RawLedger {
     remote: value.remote,
     backup: value.backup,
     projectId: value.projectId,
+    url: value.url,
   };
+}
+
+/** The exact set of keys the `[project]` table permits (T570). */
+const ALLOWED_PROJECT_KEYS = new Set(["name"]);
+
+/**
+ * Structurally validate the `[project]` table: it must be a table whose only
+ * key is `name`. The value is passed through untouched — `parseConfig`
+ * type-checks it and raises a `CqConfigError` at the boundary.
+ */
+function parseProjectRaw(value: unknown): RawProject {
+  if (!isTable(value)) {
+    throw new TomlSyntaxError("[project] must be a table");
+  }
+  for (const key of Object.keys(value)) {
+    if (!ALLOWED_PROJECT_KEYS.has(key)) {
+      throw new TomlSyntaxError(`unexpected key "${key}" in [project]`);
+    }
+  }
+  return { name: value.name };
 }
 
 /**
@@ -321,6 +357,7 @@ export function parseToml(source: string): RawToml {
       ? parseStringTable("agent_efforts", doc.agent_efforts)
       : null;
   const ledger = "ledger" in doc ? parseLedgerRaw(doc.ledger) : null;
+  const project = "project" in doc ? parseProjectRaw(doc.project) : null;
   const harnessOverrides =
     "harness" in doc ? parseHarnessOverrides(doc.harness) : null;
 
@@ -333,6 +370,7 @@ export function parseToml(source: string): RawToml {
     agentTiers,
     agentEfforts,
     ledger,
+    project,
     harnessOverrides,
   };
 }

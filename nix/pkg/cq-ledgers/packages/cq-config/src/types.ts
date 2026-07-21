@@ -184,17 +184,18 @@ export interface TiersConfig {
 }
 
 /**
- * The supported ledger storage backends (T349, T494).
+ * The supported ledger storage backends (T349, T494, T570).
  *
  * - `fs` / `git-object`: the LEGACY in-tree backends. They remain PARSEABLE
  *   (never removed from this union) so `cq migrate` can read a `cq.toml`
  *   that still names one to locate the source data — but after the T505
  *   cutover neither selects a runtime primary store.
- * - `xdg`: the new out-of-tree bun:sqlite primary at the XDG location (K102).
- *   The on-disk format (SQLite, WAL + busy_timeout) is an implementation
- *   detail of that backend, not part of this config schema.
+ * - `xdg`: the out-of-tree bun:sqlite primary at the XDG location (K102) —
+ *   the DEFAULT runtime primary.
+ * - `postgres`: an OPT-IN external Postgres primary (G81). Config-surface
+ *   only here — see `url` below; the store-side wiring lands in T577.
  */
-export const LEDGER_BACKENDS = ["fs", "git-object", "xdg"] as const;
+export const LEDGER_BACKENDS = ["fs", "git-object", "xdg", "postgres"] as const;
 
 /** A ledger backend identifier. */
 export type LedgerBackend = (typeof LEDGER_BACKENDS)[number];
@@ -228,10 +229,15 @@ export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
  * - `projectId`: an optional committed project-identity string, used for
  *   repo-identity keying (Q246) — e.g. to locate the right out-of-tree store
  *   when the repo is cloned to multiple paths. `null` when absent.
+ * - `url`: an optional committed connection string for the `postgres` backend
+ *   (G81, Q272/Q278 hybrid). MUST be credential-less (no embedded password) —
+ *   `null` when absent. A `CQ_LEDGER_PG_URL` / `DATABASE_URL` environment
+ *   variable takes precedence over this value at resolution time (the
+ *   resolver itself is T571, not this config layer). `null` when absent.
  *
  * `branch` and `remote` are consumed by the git-object backend (W5/T355);
  * they are parsed and stored for any backend, but only meaningful for
- * 'git-object'.
+ * 'git-object'. `url` is only meaningful for 'postgres'.
  */
 export interface LedgerConfig {
   readonly backend: LedgerBackend;
@@ -239,6 +245,16 @@ export interface LedgerConfig {
   readonly remote: string;
   readonly backup: LedgerBackupMode;
   readonly projectId: string | null;
+  readonly url: string | null;
+}
+
+/**
+ * The `[project]` table: project-level metadata (Q270, T570).
+ *
+ * - `name`: an optional display name for the project, `null` when absent.
+ */
+export interface ProjectConfig {
+  readonly name: string | null;
 }
 
 /**
@@ -264,8 +280,9 @@ export interface LedgerConfig {
  *   harness effort vocabularies; harness-specific validity (`isEffort`) is
  *   checked at resolution time, once the agent's harness is known.
  * - `ledger`: the `[ledger]` table (backend + branch + remote + backup +
- *   projectId), or null if absent. When null, `backend` defaults to 'fs' and
- *   `backup` defaults to 'none'.
+ *   projectId + url), or null if absent. When null, `backend` defaults to
+ *   'fs' and `backup` defaults to 'none'.
+ * - `project`: the `[project]` table (name), or null if absent (T570).
  */
 export interface CqConfig {
   readonly aliases: Record<string, ReviewerToken>;
@@ -280,4 +297,6 @@ export interface CqConfig {
   readonly agentEfforts: Record<string, Effort>;
   /** The `[ledger]` table (backend + branch + remote), or null if absent. */
   readonly ledger: LedgerConfig | null;
+  /** The `[project]` table (name), or null if absent. */
+  readonly project: ProjectConfig | null;
 }

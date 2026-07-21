@@ -20,7 +20,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
-import { parseToml, type RawWebui } from "./toml.js";
+import { parseToml, type RawWebui, type RawProject } from "./toml.js";
 import {
   DEFAULT_HARNESS,
   resolveActiveHarnessFromProcess,
@@ -38,6 +38,7 @@ import {
   type Effort,
   type Harness,
   type LedgerConfig,
+  type ProjectConfig,
   type ReviewerToken,
   type Tier,
   type TierEntry,
@@ -199,13 +200,15 @@ const DEFAULT_LEDGER_BACKUP: LedgerConfig["backup"] = "none";
  * Type-check the raw `[ledger]` table at the boundary.
  *
  * `backend` (if present) must be a string equal to a known {@link LedgerBackend}
- * ('fs', 'git-object', or 'xdg'); any other value is rejected as a
+ * ('fs', 'git-object', 'xdg', or 'postgres'); any other value is rejected as a
  * `CqConfigError`. `branch` and `remote` (if present) must be non-empty
  * strings. `backup` (if present) must be a known backup mode
  * ('none' | 'in-tree' | 'orphan-branch'); `projectId` (if present) must be a
- * string. Absent `backend` defaults to 'fs'; absent `branch` defaults to
- * 'cq-ledger'; absent `remote` defaults to 'origin'; absent `backup` defaults
- * to 'none' (Q244); absent `projectId` is `null`.
+ * string. `url` (if present) must be a string (G81, Q272/Q278 hybrid — a
+ * committed credential-less DSN; the env-wins resolver is T571). Absent
+ * `backend` defaults to 'fs'; absent `branch` defaults to 'cq-ledger'; absent
+ * `remote` defaults to 'origin'; absent `backup` defaults to 'none' (Q244);
+ * absent `projectId` is `null`; absent `url` is `null`.
  */
 function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
   let backend: LedgerConfig["backend"] = "fs";
@@ -215,7 +218,7 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
     }
     if (!isLedgerBackend(raw.backend)) {
       throw new CqConfigError(
-        `[ledger] backend "${raw.backend}" is not a valid backend (expected fs, git-object, or xdg)`,
+        `[ledger] backend "${raw.backend}" is not a valid backend (expected fs, git-object, xdg, or postgres)`,
       );
     }
     backend = raw.backend;
@@ -258,7 +261,32 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
     projectId = raw.projectId;
   }
 
-  return { backend, branch, remote, backup, projectId };
+  let url: string | null = null;
+  if (raw.url !== undefined) {
+    if (typeof raw.url !== "string") {
+      throw new CqConfigError("[ledger] url must be a string");
+    }
+    url = raw.url;
+  }
+
+  return { backend, branch, remote, backup, projectId, url };
+}
+
+/**
+ * Type-check the raw `[project]` table at the boundary (T570).
+ *
+ * `name` (if present) must be a string; absent `name` is `null`.
+ */
+function parseProject(raw: RawProject): ProjectConfig {
+  let name: string | null = null;
+  if (raw.name !== undefined) {
+    if (typeof raw.name !== "string") {
+      throw new CqConfigError("[project] name must be a string");
+    }
+    name = raw.name;
+  }
+
+  return { name };
 }
 
 /**
@@ -328,6 +356,7 @@ export function parseConfig(
   const agentEfforts =
     raw.agentEfforts === null ? {} : parseAgentEfforts(raw.agentEfforts);
   const ledger = raw.ledger === null ? null : parseLedger(raw.ledger);
+  const project = raw.project === null ? null : parseProject(raw.project);
   return {
     aliases,
     reviewers,
@@ -337,6 +366,7 @@ export function parseConfig(
     agentTiers,
     agentEfforts,
     ledger,
+    project,
   };
 }
 

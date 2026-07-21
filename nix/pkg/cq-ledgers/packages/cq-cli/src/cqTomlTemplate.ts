@@ -96,6 +96,7 @@ export const CQ_TOML_TEMPLATE: string = `\
 # the out-of-tree bun:sqlite primary (K102), keyed off this repo's git
 # identity (or [ledger].projectId below). "fs" (in-tree .cq/) and
 # "git-object" remain available — set backend explicitly to opt back in.
+# "postgres" is an opt-in external backend (G81; store wiring pending).
 # backup (default: "none") is OFF by default (Q244); projectId is an
 # optional committed project-identity key (Q246), needed only for a repo
 # with no stable git root commit (e.g. a shallow clone).

@@ -1289,6 +1289,117 @@ projectId = "acme-widgets"
       remote: "origin",
       backup: "in-tree",
       projectId: "acme-widgets",
+      url: null,
     });
+  });
+});
+
+// ── T570: 'postgres' backend + [ledger].url + [project].name (G81) ───────────
+
+describe("parseConfig with [ledger] backend='postgres' and url (T570)", () => {
+  it("[ledger] backend='postgres' parses (config-surface only — store wiring is T577)", () => {
+    const config = parseConfig(`
+[ledger]
+backend = "postgres"
+`);
+    expect(config.ledger).not.toBeNull();
+    expect(config.ledger!.backend).toBe("postgres");
+  });
+
+  it("[ledger].url is optional — null when absent", () => {
+    const config = parseConfig(`
+[ledger]
+backend = "postgres"
+`);
+    expect(config.ledger!.url).toBeNull();
+  });
+
+  it("[ledger].url parses as a credential-less DSN string when present", () => {
+    const config = parseConfig(`
+[ledger]
+backend = "postgres"
+url     = "postgres://db.example.com:5432/cq_ledger"
+`);
+    expect(config.ledger!.url).toBe("postgres://db.example.com:5432/cq_ledger");
+  });
+
+  it("throws CqConfigError on a non-string [ledger].url", () => {
+    expect(() =>
+      parseConfig(`
+[ledger]
+url = 42
+`),
+    ).toThrow(/\[ledger\] url must be a string/);
+  });
+
+  it("[ledger].url is accepted alongside any backend (not postgres-exclusive at parse time)", () => {
+    const config = parseConfig(`
+[ledger]
+backend = "xdg"
+url     = "postgres://db.example.com:5432/cq_ledger"
+`);
+    expect(config.ledger!.backend).toBe("xdg");
+    expect(config.ledger!.url).toBe("postgres://db.example.com:5432/cq_ledger");
+  });
+});
+
+describe("parseConfig / loadConfig with [project] (Q270, T570)", () => {
+  it("project defaults to null when [project] is absent", () => {
+    const config = parseConfig(VALID_TOML);
+    expect(config.project).toBeNull();
+  });
+
+  it("[project].name parses as a string when present", () => {
+    const config = parseConfig(`
+[project]
+name = "acme-widgets"
+`);
+    expect(config.project).not.toBeNull();
+    expect(config.project!.name).toBe("acme-widgets");
+  });
+
+  it("[project].name is optional — null when [project] is present but name is absent", () => {
+    const config = parseConfig(`
+[project]
+`);
+    expect(config.project).not.toBeNull();
+    expect(config.project!.name).toBeNull();
+  });
+
+  it("throws CqConfigError on a non-string [project].name", () => {
+    expect(() =>
+      parseConfig(`
+[project]
+name = 42
+`),
+    ).toThrow(/\[project\] name must be a string/);
+  });
+
+  it("throws TomlSyntaxError on an unknown key inside [project]", () => {
+    expect(() =>
+      parseConfig(`
+[project]
+bogus = "x"
+`),
+    ).toThrow(/unexpected key "bogus" in \[project\]/);
+  });
+
+  it("loadConfig surfaces [project].name from a cq.toml on disk", () => {
+    writeCqToml(`
+${VALID_TOML}
+
+[project]
+name = "acme-widgets"
+`);
+    const config = loadConfig(dir);
+    expect(config).not.toBeNull();
+    expect(config!.project).not.toBeNull();
+    expect(config!.project!.name).toBe("acme-widgets");
+  });
+
+  it("loadConfig's project is null when cq.toml has no [project] table", () => {
+    writeCqToml(VALID_TOML);
+    const config = loadConfig(dir);
+    expect(config!.project).toBeNull();
   });
 });

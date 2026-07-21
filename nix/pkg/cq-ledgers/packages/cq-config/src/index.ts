@@ -20,6 +20,7 @@ export type {
   LedgerBackend,
   LedgerBackupMode,
   LedgerConfig,
+  ProjectConfig,
 } from "./types.js";
 export {
   HARNESSES,
@@ -61,6 +62,7 @@ export type {
   RawToml,
   RawWebui,
   RawLedger,
+  RawProject,
   RawHarnessOverride,
 } from "./toml.js";
 export { parseToml } from "./toml.js";
