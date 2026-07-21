@@ -1,5 +1,5 @@
 ---
-description: Advance the WHOLE flow one cycle — chain /cq:investigate:advance, /cq:plan:advance, /cq:implement:advance to quiescence, then report DRAINED / BLOCKED-ON-QUESTIONS / MIXED.
+description: Advance the WHOLE flow one cycle — chain /cq:investigate:advance, /cq:plan:advance, /cq:research:advance, /cq:implement:advance to quiescence, then report DRAINED / BLOCKED-ON-QUESTIONS / MIXED.
 argument-hint:   # no argument; operates on the entire ledger
 allowed-tools: mcp__ledger__*, Read, Grep, Glob, Bash
 ---
@@ -15,18 +15,18 @@ outputs:
   - "end-of-run report: DRAINED | BLOCKED-ON-QUESTIONS | BLOCKED-ON-USER-ACTION | MIXED"
   - "ledger git commit after every archive_milestone and at run stop"
 ioSchema:
-  - "detection: P-investigate (actionable defects), P-seed (root-caused unowned at/above-floor defects), P-plan (movable goals), P-implement (DAG-ready tasks); informational belowFloor companion (sub-floor root-caused defects — never gates a stop)"
-  - "cycle order: investigate -> seed -> plan -> implement -> re-check investigate"
-  - "stop only when all four P-predicates FALSE or every TRUE predicate gated by open questions/user action"
+  - "detection: P-investigate (actionable defects), P-seed (root-caused unowned at/above-floor defects), P-plan (movable goals), P-research (actionable researches), P-implement (DAG-ready tasks); informational belowFloor companion (sub-floor root-caused defects — never gates a stop)"
+  - "cycle order: investigate -> seed -> plan -> research -> implement -> re-check investigate"
+  - "stop only when all five P-predicates FALSE or every TRUE predicate gated by open questions/user action"
   - "handoffs item statuses: drained | answers-required | user-action-required | mixed | illness-detected"
   - "handoffs item fields: summary, flow=advance, ledgerRefs, blockingQuestions, handoffReasons, sessionLogs, rawLogs"
 ```
 
 You are the **top-level flow sequencer**. You drive an end-to-end run by chaining
-the three existing per-flow advance commands — `/cq:investigate:advance`,
-`/cq:plan:advance`, `/cq:implement:advance` — to quiescence. You are a
-**command-of-commands** (decision **K12**: a *command* may chain another command;
-a *subagent* still cannot). This command runs in the **MAIN session** and
+the four existing per-flow advance commands — `/cq:investigate:advance`,
+`/cq:plan:advance`, `/cq:research:advance`, `/cq:implement:advance` — to
+quiescence. You are a **command-of-commands** (decision **K12**: a *command*
+may chain another command; a *subagent* still cannot). This command runs in the **MAIN session** and
 **dispatches NO subagents of its own** (Q58). Every subagent (explorers, planner,
 reviewer, implement workers/reviewers/conflict-resolvers) is spawned by the
 sub-commands you chain — never directly by you. Your DIRECT ledger MUTATIONS are
@@ -45,7 +45,7 @@ answering questions); it picks up exactly where the durable ledger state left of
 ## Conventions this command obeys (K12)
 - **Pure sequencer.** You do not re-implement any sub-flow's logic — you RUN the
   sub-command (chaining it inline in this same main session, exactly per its own
-  prompt: `/cq:investigate:advance`, `/cq:plan:advance`,
+  prompt: `/cq:investigate:advance`, `/cq:plan:advance`, `/cq:research:advance`,
   `/cq:implement:advance`). The subagents-cannot-spawn-subagents rule is
   preserved because ONLY this command (a command) chains commands; the sub-flows'
   subagents still spawn nothing.
@@ -77,7 +77,7 @@ it when chained under `/cq:advance`, so `/cq:advance` is the sole writer of the
 one authoritative run-level handoff). EVERY OTHER mutation — defect triage,
 goal/task status, milestone archive, reviews, questions — remains delegated to
 the chained sub-commands, which stamp `author`/`session` per their own prompts.
-Detection stays strictly read-only (the four predicates + the informational
+Detection stays strictly read-only (the five predicates + the informational
 `belowFloor` companion query item STATUS; they never write — the SEED stage acts
 on P-seed's verdict, but the derivation that produced it is read-only).
 
@@ -107,7 +107,7 @@ T137, now in `CANONICAL_LEDGERS`) carries this item shape:
   end-of-run report prose);
 - `flow` — `advance` (this command is the writer);
 - `ledgerRefs` — the stop-causing items (the `defects:<D>` / `goals:<G>` /
-  `tasks:<id>` the report enumerates);
+  `researches:<RS>` / `tasks:<id>` the report enumerates);
 - `blockingQuestions` — `open` question ids for `answers-required`/`mixed` stops
   (mirrors the BLOCKED-ON-QUESTIONS enumeration);
 - `handoffReasons` — for a `mixed` stop, the component reasons (e.g.
@@ -208,9 +208,9 @@ below). This is the switch that causes the `claudeStopGateHook` (§Stop-conditio
 gate) to block premature stops for the lifetime of this run.
 
 At the very start of each `/cq:advance` run (and at the start of each cycle),
-obtain **all six detection values** (P-investigate, P-seed, P-plan, P-implement,
-the open-question gate, and the informational `belowFloor` companion) from **ONE
-tool call**:
+obtain **all seven detection values** (P-investigate, P-seed, P-plan, P-research,
+P-implement, the open-question gate, and the informational `belowFloor`
+companion) from **ONE tool call**:
 
 ```
 mcp__ledger__derive_predicates()
@@ -224,6 +224,7 @@ required params). It returns:
   "pInvestigate":      { "value": boolean, "items": ["<itemId>", ...] },
   "pSeed":             { "value": boolean, "items": ["<itemId>", ...] },
   "pPlan":             { "value": boolean, "items": ["<itemId>", ...] },
+  "pResearch":         { "value": boolean, "items": ["<itemId>", ...] },
   "pImplement":        { "value": boolean, "items": ["<itemId>", ...] },
   "openQuestionGate":  { "value": boolean, "items": ["<itemId>", ...] },
   "belowFloor":        { "value": boolean, "items": ["<itemId>", ...] }
@@ -270,7 +271,7 @@ document what it computes).
 
 ---
 
-## Detection predicates (the four ledger queries — Q55; + belowFloor companion)
+## Detection predicates (the five ledger queries — Q55; + belowFloor companion)
 
 **Operational source of truth: `mcp__ledger__derive_predicates`.** Before each
 stage, call `mcp__ledger__derive_predicates` (§Bootstrap recipe) and read the
@@ -280,7 +281,7 @@ procedure. The same shared `derivePredicates()` logic that backs this MCP tool
 also backs the `cq advance-gate` Stop-hook CLI, so the prose definitions, the
 MCP tool, and the stop-hook always agree.
 
-All four predicates (and the `belowFloor` companion) read item STATUS using the
+All five predicates (and the `belowFloor` companion) read item STATUS using the
 queryable lifecycles (the NEW defect statuses from **T116/M33**); none parses
 prose.
 
@@ -348,6 +349,22 @@ TRUE iff there exists a **goal** G whose phase is a MOVABLE planning phase:
 (`planned`, `building`, `done`, `abandoned` are locked/terminal for planning and
 do NOT make P-plan true.)
 
+### P-research — is there a research actionable by /cq:research:advance? (G80/M246, Q265/Q261)
+TRUE iff there exists a **researches** item RS such that BOTH hold:
+- RS's `status` is **ACTIONABLE** — `open`, `wip`, or `inconclusive` (mirrors the
+  defect actionability set: `inconclusive` is re-openable, so an answered
+  question can revive an inconclusive research; `concluded`/`abandoned` are
+  terminal — EXCLUDED);
+- RS is **NOT gated by an open linked question** — no `open` `questions` item
+  whose `ledgerRefs` name `researches:<RS>`. A research parked on an unanswered
+  question is BLOCKED, not actionable (mirrors P-investigate's question gate).
+
+(The `researches` schema declares `satisfiesDependencyStatuses ["concluded"]`,
+so the P-implement dependency resolver SEPARATELY gates research-dependent
+tasks: a task whose `dependsOn` names `researches:<RS>` is satisfied ONLY by a
+`concluded` research — an `abandoned` one never satisfies. P-research itself
+looks only at the two conditions above.)
+
 ### P-implement — is there a DAG-ready task to implement?
 TRUE iff there exists a **goal** G in `planned` or `building` that has a
 **DAG-READY non-terminal task** — a task in the implement-flow READY-SET per
@@ -374,7 +391,7 @@ bounded by PROGRESS, not by a counter. Each stage runs its sub-command's own
 internal loop (which is itself bounded by that command's stop predicates), then
 you re-derive the predicates and continue.
 
-### Cycle order: investigate → seed → plan → implement, then RE-CHECK investigate
+### Cycle order: investigate → seed → plan → research → implement, then RE-CHECK investigate
 1. **Investigate stage.** Evaluate **P-investigate**. If TRUE, for each defect D in
    its worklist run **`/cq:investigate:advance D` INLINE** — exactly per
    `/cq:investigate:advance` (do NOT re-implement it; RUN it). This
@@ -425,7 +442,18 @@ you re-derive the predicates and continue.
    its goal-linked defects (its own auto-investigate phase) — so /cq:advance does NOT
    double-triage them (Q57); the plan stage handles them as part of its own round.
    If P-plan is FALSE, skip this stage.
-4. **Implement stage.** Evaluate **P-implement**. If TRUE, run
+4. **Research stage.** Evaluate **P-research**. If TRUE, for each research RS in
+   `pResearch.items` run **`/cq:research:advance RS` INLINE** — exactly per
+   `/cq:research:advance` (K12 chaining: do NOT re-implement it; RUN it). The
+   chained round SUPPRESSES its own at-stop handoff record and at-stop ledger
+   commit (the standard chained-mode suppression — `/cq:advance` remains the sole
+   writer of the run-level handoff and the sole at-stop committer). If P-research
+   is FALSE, skip this stage. **After the research stage, RE-CHECK P-implement**
+   (re-derive the predicates before step 5): a research concluded this stage may
+   have satisfied a `researches:<RS>` `dependsOn` entry (`concluded` is the
+   researches ledger's satisfies-dependency status) and thereby unblocked
+   research-gated tasks into the ready-set.
+5. **Implement stage.** Evaluate **P-implement**. If TRUE, run
    **`/cq:implement:advance` INLINE** (no argument) exactly per
    `/cq:implement:advance`. "Resume" INCLUDES a just-`planned` goal with
    no prior implement pass: `/cq:implement:advance` derives its ready-set from the
@@ -434,7 +462,7 @@ you re-derive the predicates and continue.
    reason to skip the stage or to ask — bootstrap and build. Its reviewers may
    FILE new `open` defects (file-and-defer, K13). If P-implement is FALSE, skip
    this stage.
-5. **RE-CHECK investigate (and seed) after implement.** Because the implement
+6. **RE-CHECK investigate (and seed) after implement.** Because the implement
    reviewer may have filed new defects this cycle — and investigate may have
    root-caused one into a fresh seed candidate — re-evaluate **P-investigate**
    (and **P-seed**) at the END of the cycle. If either is now TRUE again (new
@@ -456,21 +484,25 @@ Operationally, STOP when, at the end of a cycle, ALL hold:
   gates nothing.)
 - **P-plan is FALSE** — no goal is in a movable planning phase (every unlocked
   goal is parked on open questions, or all goals are locked/terminal);
+- **P-research is FALSE** — every research is terminal (`concluded`/`abandoned`)
+  or BLOCKED solely on an unanswered open linked question; no
+  `open`/`wip`/`inconclusive` research remains actionable;
 - **P-implement is FALSE** — no goal has a DAG-ready non-terminal task (every
   remaining task is terminal or blocked on an open question).
 
 In other words: stop when **every ledger is DRAINED** (nothing actionable
-anywhere — including no un-seeded root-caused defect) **OR every actionable item
-is BLOCKED on an unanswered user question**.
+anywhere — including no un-seeded root-caused defect and no pending research)
+**OR every actionable item is BLOCKED on an unanswered user question**.
 
 ### The stop is PROGRESS-bounded, never EFFORT-bounded (hard gate)
 A stop is legitimate ONLY when the predicates say so — never because the run has
 cost effort. Before you may end a run you MUST do BOTH, in order:
 
 1. **Re-derive and STATE the gate.** Call `mcp__ledger__derive_predicates` and
-   emit the FIVE values explicitly: `P-investigate=… / P-seed=… / P-plan=… /
-   P-implement=… / open-Q-gate=…`. You may end ONLY if that line shows all FOUR
-   P-predicates FALSE (DRAINED) or every still-TRUE predicate is gated solely by an
+   emit the SIX values explicitly: `P-investigate=… / P-seed=… / P-plan=… /
+   P-research=… / P-implement=… / open-Q-gate=…`. You may end ONLY if that line
+   shows all FIVE P-predicates FALSE (DRAINED) or every still-TRUE predicate is
+   gated solely by an
    unanswered `open` question (BLOCKED / MIXED). If any predicate is TRUE and
    nothing blocks it, you have NOT reached a legal stop — **CONTINUE**. (The
    informational `belowFloor` companion is NOT part of this gate — it never keeps
@@ -478,7 +510,7 @@ cost effort. Before you may end a run you MUST do BOTH, in order:
 2. **Write the run-level `handoffs` record** (§Provenance / §End-of-run). This is
    the GATE: its only legal statuses are `drained` / `answers-required` /
    `user-action-required` / `mixed` / `illness-detected`, and each REQUIRES a
-   specific predicate condition (`drained` needs all four P-predicates FALSE;
+   specific predicate condition (`drained` needs all five P-predicates FALSE;
    `answers-required` / `mixed` need a non-empty `blockingQuestions[]`;
    `user-action-required` needs a SPECIFIC NAMED item whose only remaining step is
    the user's manual/environment action — see the user-action gate below — with
@@ -657,7 +689,7 @@ that is the standing go-ahead to fix everything.
 
 If you find yourself reaching for any of the above, that is the signal to
 **CONTINUE**, not to classify. Keep cycling while ANY stage still moves the
-ledger forward. A cycle that made progress (any stage acted, or re-check (5)
+ledger forward. A cycle that made progress (any stage acted, or re-check (6)
 surfaced new work) means another cycle is warranted.
 
 ---
@@ -819,10 +851,12 @@ report it. Mirror `/cq:implement:advance`'s end-of-pass report style
 
 - **DRAINED** — nothing actionable remains anywhere: every defect terminal or
   plan/seed-owned, every root-caused at/above-floor defect already owned by a live
-  fix goal, every goal locked/terminal for planning, every task terminal, and NO
-  actionable item is blocked on an open question. Report: the work that landed
-  across the run (defects root-caused/resolved/seeded, goals planned, tasks merged,
-  milestones archived), and that the run is complete — no user action needed. The
+  fix goal, every goal locked/terminal for planning, every research terminal
+  (`concluded`/`abandoned`), every task terminal, and NO actionable item is
+  blocked on an open question. Report: the work that landed across the run
+  (defects root-caused/resolved/seeded, goals planned, researches concluded,
+  tasks merged, milestones archived), and that the run is complete — no user
+  action needed. The
   DRAINED report **MUST** (not SHOULD) list the `belowFloor` defects
   informationally — every root-caused, unowned, un-gated defect whose severity is
   BELOW the seed floor — by id with a one-line note, so the low-severity backlog
@@ -830,8 +864,10 @@ report it. Mirror `/cq:implement:advance`'s end-of-pass report style
   user can raise a severity or otherwise act on them.)
 - **BLOCKED-ON-QUESTIONS** — progress stopped ONLY because actionable items are
   parked on unanswered `open` questions. **Enumerate every blocking question** by
-  id, each with its OWNING item (the `defects:<D>` / `goals:<G>` / `tasks:<id>` it
-  ledgerRefs) and a one-line summary. Instruct the user: **answer the listed
+  id, each with its OWNING item (the `defects:<D>` / `goals:<G>` /
+  `researches:<RS>` / `tasks:<id>` it ledgerRefs) and a one-line summary (a
+  pending research parked on an open question surfaces here like any other
+  gated item). Instruct the user: **answer the listed
   questions in the TUI/web, then re-run `/cq:advance`** to resume (the loop folds the
   answers back in and continues).
 - **BLOCKED-ON-USER-ACTION** — progress stopped ONLY because a SPECIFIC NAMED item's
@@ -854,7 +890,7 @@ report it. Mirror `/cq:implement:advance`'s end-of-pass report style
   perform the named action, then re-run `/cq:advance`.
 
 To build the report, call `mcp__ledger__derive_predicates` one final time: if all
-four P-predicates are FALSE and no `open` question gates any actionable item →
+five P-predicates are FALSE and no `open` question gates any actionable item →
 **DRAINED** (and list `belowFloor.items` informationally); if the only thing
 standing between an item and progress is an
 unanswered question → **BLOCKED-ON-QUESTIONS**; if the only thing standing between
