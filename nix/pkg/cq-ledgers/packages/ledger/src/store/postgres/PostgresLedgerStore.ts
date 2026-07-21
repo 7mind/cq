@@ -133,6 +133,16 @@ export interface PostgresLedgerStoreOpts {
 const MILESTONES_MUTEX_KEY = "__milestones__";
 
 /**
+ * Lock key serializing `createLedger` (the registry write path). Review r1
+ * fix: without it two concurrent in-instance createLedger calls both pass the
+ * duplicate-name / prefix-uniqueness checks against the cache BEFORE either
+ * INSERT commits — the same-name loser would surface a raw PG unique-violation
+ * instead of `DuplicateIdError`, and two DIFFERENT names with COLLIDING
+ * idPrefixes would BOTH commit, persisting a Q-CANL-8 violation.
+ */
+const REGISTRY_MUTEX_KEY = "__registry__";
+
+/**
  * Allowed shape for a created ledger's name (same rule as
  * SqliteLedgerStore.createLedger): path-safe, no separators.
  */
@@ -289,7 +299,19 @@ export class PostgresLedgerStore implements LedgerStore {
     });
   }
 
-  /** Cold-load the whole tenant's rows into the in-memory cache. */
+  /**
+   * Cold-load the whole tenant's rows into the in-memory cache.
+   *
+   * Row order: every query ORDERs BY the monotonic `seq` identity column
+   * (T573 review r1 — `ctid` is unstable across UPDATEs, whereas `seq` is
+   * assigned once at INSERT), giving sqlite-rowid / fs-document-order parity
+   * across restart/invalidate. One deliberate consequence, matching the sqlite
+   * backend's semantics exactly: `unarchiveItem` re-INSERTs the reattached
+   * item row, so it gets a FRESH seq and sorts to the END of its group on a
+   * later reload — the same end-of-group placement sqlite's rowid gives its
+   * unarchive re-insert, and the same position `applyReattachItem` pushes to
+   * in the live cache, so the cache and a reload agree.
+   */
   private async loadCache(): Promise<void> {
     const pool = this.pool();
     const pk = this.projectKey;
@@ -315,7 +337,7 @@ export class PostgresLedgerStore implements LedgerStore {
     const groupIndex = new Map<string, Map<string, Item[]>>();
     const groupRows = await pool<GroupRow[]>`
       SELECT ledger, id, title, description
-      FROM groups WHERE project_key = ${pk} ORDER BY ledger, ctid
+      FROM groups WHERE project_key = ${pk} ORDER BY ledger, seq
     `;
     for (const g of groupRows) {
       const ledger = this.ledgers.get(g.ledger);
@@ -332,7 +354,7 @@ export class PostgresLedgerStore implements LedgerStore {
 
     const itemRows = await pool<ItemRow[]>`
       SELECT ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session
-      FROM items WHERE project_key = ${pk} ORDER BY ledger, ctid
+      FROM items WHERE project_key = ${pk} ORDER BY ledger, seq
     `;
     for (const ir of itemRows) {
       const arr = groupIndex.get(ir.ledger)?.get(ir.milestone_id);
@@ -348,7 +370,7 @@ export class PostgresLedgerStore implements LedgerStore {
 
     const pointerRows = await pool<PointerRow[]>`
       SELECT ledger, id, summary, title, status
-      FROM archive_pointers WHERE project_key = ${pk} ORDER BY ledger, ctid
+      FROM archive_pointers WHERE project_key = ${pk} ORDER BY ledger, seq
     `;
     for (const p of pointerRows) {
       const ledger = this.ledgers.get(p.ledger);
@@ -364,7 +386,7 @@ export class PostgresLedgerStore implements LedgerStore {
 
     const archivedRows = await pool<ArchivedItemRow[]>`
       SELECT ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session
-      FROM archived_items WHERE project_key = ${pk} ORDER BY ledger, ctid
+      FROM archived_items WHERE project_key = ${pk} ORDER BY ledger, seq
     `;
     for (const ar of archivedRows) {
       this.absorbArchivedRow(ar);
@@ -596,29 +618,35 @@ export class PostgresLedgerStore implements LedgerStore {
       throw new LedgerError(`invalid ledger name "${name}": only A-Za-z0-9_- are allowed`);
     }
     validateSchema(schema);
-    if (this.ledgers.has(name)) throw new DuplicateIdError("ledger", name);
-    // Prefix uniqueness gives global item-id uniqueness (Q-CANL-8).
-    assertPrefixUnique(
-      name,
-      schema,
-      Array.from(this.ledgers.values(), (l) => ({ name: l.id, schema: l.schema })),
-    );
     const pk = this.projectKey;
-    await writeTransaction(this.pool(), async (tx) => {
-      await tx`
-        INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
-        VALUES (${pk}, ${name}, ${JSON.stringify(schema)}, 0, 0)
-      `;
+    // Review r1 fix: the registry-level mutex serializes the cache-read
+    // validation (duplicate name, Q-CANL-8 prefix uniqueness) with the awaited
+    // INSERT + cache set, so two concurrent in-instance createLedger calls
+    // cannot both pass validation against the pre-INSERT cache.
+    const view = await this.mutexFor(REGISTRY_MUTEX_KEY).run(async () => {
+      if (this.ledgers.has(name)) throw new DuplicateIdError("ledger", name);
+      // Prefix uniqueness gives global item-id uniqueness (Q-CANL-8).
+      assertPrefixUnique(
+        name,
+        schema,
+        Array.from(this.ledgers.values(), (l) => ({ name: l.id, schema: l.schema })),
+      );
+      await writeTransaction(this.pool(), async (tx) => {
+        await tx`
+          INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
+          VALUES (${pk}, ${name}, ${JSON.stringify(schema)}, 0, 0)
+        `;
+      });
+      const ledger: Ledger = {
+        id: name,
+        schema,
+        counters: { milestone: 0, item: 0 },
+        milestones: [],
+        archivePointers: [],
+      };
+      this.ledgers.set(name, ledger);
+      return materialiseFetchedLedger(ledger, this.getLedger(MILESTONES_LEDGER));
     });
-    const ledger: Ledger = {
-      id: name,
-      schema,
-      counters: { milestone: 0, item: 0 },
-      milestones: [],
-      archivePointers: [],
-    };
-    this.ledgers.set(name, ledger);
-    const view = materialiseFetchedLedger(ledger, this.getLedger(MILESTONES_LEDGER));
     await this.afterCommit(name, "create", false);
     return view;
   }
@@ -1164,7 +1192,7 @@ export class PostgresLedgerStore implements LedgerStore {
     const groupIndex = new Map<string, Item[]>();
     const groupRows = await pool<GroupRow[]>`
       SELECT ledger, id, title, description
-      FROM groups WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY ctid
+      FROM groups WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY seq
     `;
     for (const g of groupRows) {
       const items: Item[] = [];
@@ -1173,7 +1201,7 @@ export class PostgresLedgerStore implements LedgerStore {
     }
     const itemRows = await pool<ItemRow[]>`
       SELECT ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session
-      FROM items WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY ctid
+      FROM items WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY seq
     `;
     for (const ir of itemRows) {
       const arr = groupIndex.get(ir.milestone_id);
@@ -1186,7 +1214,7 @@ export class PostgresLedgerStore implements LedgerStore {
     }
     const pointerRows = await pool<PointerRow[]>`
       SELECT ledger, id, summary, title, status
-      FROM archive_pointers WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY ctid
+      FROM archive_pointers WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY seq
     `;
     for (const p of pointerRows) {
       ledger.archivePointers.push({
@@ -1200,7 +1228,7 @@ export class PostgresLedgerStore implements LedgerStore {
     this.ledgers.set(ledgerId, ledger);
     const archivedRows = await pool<ArchivedItemRow[]>`
       SELECT ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session
-      FROM archived_items WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY ctid
+      FROM archived_items WHERE project_key = ${pk} AND ledger = ${ledgerId} ORDER BY seq
     `;
     for (const ar of archivedRows) this.absorbArchivedRow(ar);
     this.rebuildLedgerIndexActive(ledgerId);
@@ -1245,10 +1273,21 @@ export class PostgresLedgerStore implements LedgerStore {
   }
 
   private mutexFor(key: string): AsyncMutex {
-    let m = this.mutexes.get(key);
+    // Review r1 fix: EVERY milestones-ledger mutation serializes on the SAME
+    // __milestones__ mutex. Without this normalization, withLock("milestones")
+    // (reopenItem/unarchiveItem/updateItem on the milestones ledger) and
+    // withMilestonesLock (createMilestone/updateMilestone/archiveMilestone)
+    // would guard the SAME cached Ledger object with TWO different mutexes:
+    // both writers clone the same base, AWAIT their network write transaction,
+    // and the last post-commit cache swap discards the other's committed write.
+    // No deadlock results: no code path acquires a per-ledger lock before the
+    // milestones lock (createItem/archiveMilestone take __milestones__ FIRST,
+    // and createItem refuses ledgerId === milestones outright).
+    const normalized = key === MILESTONES_LEDGER ? MILESTONES_MUTEX_KEY : key;
+    let m = this.mutexes.get(normalized);
     if (m === undefined) {
       m = new AsyncMutex();
-      this.mutexes.set(key, m);
+      this.mutexes.set(normalized, m);
     }
     return m;
   }

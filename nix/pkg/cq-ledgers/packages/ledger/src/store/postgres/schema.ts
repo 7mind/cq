@@ -34,7 +34,14 @@ import { withAdvisoryLock } from "./connection.js";
 /**
  * On-disk (per-database) schema version, recorded in meta('schema_version').
  *
- * - v1 (T572, G81/M248): initial multi-tenant normalized-row layout.
+ * - v1 (T572, G81/M248): initial multi-tenant normalized-row layout. Amended
+ *   in T573 (still v1 — the schema was never released, so no migration): the
+ *   four row tables (groups/items/archive_pointers/archived_items) gained a
+ *   monotonic `seq BIGINT GENERATED ALWAYS AS IDENTITY` column, the stable
+ *   insertion-order key the store's cache load ORDERs BY. `ctid` is NOT usable
+ *   for this: Postgres rewrites a tuple's ctid on UPDATE, so ordering by it
+ *   reorders updated rows across restart/invalidate — unlike the sqlite
+ *   backend's stable rowid.
  */
 export const PG_SCHEMA_VERSION = 1;
 
@@ -76,6 +83,7 @@ export async function ensureSchema(pool: SQL): Promise<void> {
 
     await locked`
       CREATE TABLE IF NOT EXISTS groups (
+        seq         BIGINT GENERATED ALWAYS AS IDENTITY,
         project_key TEXT NOT NULL,
         ledger      TEXT NOT NULL,
         id          TEXT NOT NULL,
@@ -88,6 +96,7 @@ export async function ensureSchema(pool: SQL): Promise<void> {
 
     await locked`
       CREATE TABLE IF NOT EXISTS items (
+        seq          BIGINT GENERATED ALWAYS AS IDENTITY,
         project_key  TEXT NOT NULL,
         ledger       TEXT NOT NULL,
         id           TEXT NOT NULL,
@@ -105,6 +114,7 @@ export async function ensureSchema(pool: SQL): Promise<void> {
 
     await locked`
       CREATE TABLE IF NOT EXISTS archive_pointers (
+        seq         BIGINT GENERATED ALWAYS AS IDENTITY,
         project_key TEXT NOT NULL,
         ledger      TEXT NOT NULL,
         id          TEXT NOT NULL,
@@ -119,6 +129,7 @@ export async function ensureSchema(pool: SQL): Promise<void> {
 
     await locked`
       CREATE TABLE IF NOT EXISTS archived_items (
+        seq          BIGINT GENERATED ALWAYS AS IDENTITY,
         project_key  TEXT NOT NULL,
         ledger       TEXT NOT NULL,
         pointer_id   TEXT NOT NULL,
