@@ -290,20 +290,16 @@ export class PostgresLedgerStore implements LedgerStore {
     const pool = this.pool();
     const pk = this.projectKey;
 
-    // Auto-registration (Q270): UPSERT the projects row on EVERY connect —
-    // not just first registration — so a later cq.toml rename propagates to
-    // display_name on reconnect. Must precede any ledgers row (FK: ledgers ->
-    // projects).
-    await pool`
-      INSERT INTO projects (project_key, display_name)
-      VALUES (${pk}, ${this.displayName})
-      ON CONFLICT (project_key) DO UPDATE SET display_name = ${this.displayName}, updated_at = now()
-    `;
-
     // Pass 1 — READ-ONLY divergence detection over this tenant's persisted
     // canonical ledgers (parity with SqliteLedgerStore.init): classify every
     // canonical name as missing / widened (forward-compatible, T407) /
-    // divergent, via the pure classifyCanonicalLedgers (divergence.ts).
+    // divergent, via the pure classifyCanonicalLedgers (divergence.ts). Runs
+    // BEFORE the projects UPSERT (review r1 criticism 2) so the 'abort'
+    // policy is genuinely side-effect-free — a divergent tenant's
+    // display_name must not be overwritten by a connect that then refuses to
+    // start. Reading ledgers rows before their projects parent exists is
+    // fine: the classification is read-only, and a fresh tenant simply has
+    // no rows (all canonical names classify as missing).
     const existingRows = await pool<LedgerRow[]>`
       SELECT name, schema_json, milestone_counter, item_counter
       FROM ledgers WHERE project_key = ${pk}
@@ -315,12 +311,22 @@ export class PostgresLedgerStore implements LedgerStore {
 
     if (divergent.length > 0 && this.onSchemaDivergence === "abort") {
       // Opt-out: refuse to start so the divergence is loud + operator-handled.
-      // No backup — parity with SqliteLedgerStore (the backup-reinit action is
-      // only reached on the default policy).
+      // No backup, no projects UPSERT — NOTHING is written on abort (parity
+      // with SqliteLedgerStore, whose abort path leaves the db untouched).
       throw new BootstrapViolationError(
         `existing ${divergent.join(", ")} ledger(s) have a different schema than their canonical bootstrap schema (project_key ${pk})`,
       );
     }
+
+    // Auto-registration (Q270): UPSERT the projects row on EVERY connect —
+    // not just first registration — so a later cq.toml rename propagates to
+    // display_name on reconnect. Runs AFTER the read-only Pass 1 + abort gate
+    // (above), but BEFORE any bootstrap WRITE (FK: ledgers -> projects).
+    await pool`
+      INSERT INTO projects (project_key, display_name)
+      VALUES (${pk}, ${this.displayName})
+      ON CONFLICT (project_key) DO UPDATE SET display_name = ${this.displayName}, updated_at = now()
+    `;
 
     if (divergent.length > 0) {
       // Default policy — TENANT-SCOPED backup + reinit (see
@@ -460,6 +466,15 @@ export class PostgresLedgerStore implements LedgerStore {
         SELECT ${shadowKey}, ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session
         FROM archived_items WHERE project_key = ${pk}
       `;
+      // Review r2 (criticism 1): the tenant-keyed `logs` rows (T575's
+      // log-artifact storage) are tenant state too — copy them into the
+      // shadow and wipe them below, keeping the backup complete for THIS
+      // tenant and the reinit'd tenant genuinely fresh.
+      await tx`
+        INSERT INTO logs (project_key, path, content, created_at)
+        SELECT ${shadowKey}, path, content, created_at
+        FROM logs WHERE project_key = ${pk}
+      `;
 
       // Wipe the ORIGINAL tenant's rows (children first, FK order), then
       // reseed the full canonical set fresh — same write shape as
@@ -469,6 +484,7 @@ export class PostgresLedgerStore implements LedgerStore {
       await tx`DELETE FROM items WHERE project_key = ${pk}`;
       await tx`DELETE FROM groups WHERE project_key = ${pk}`;
       await tx`DELETE FROM ledgers WHERE project_key = ${pk}`;
+      await tx`DELETE FROM logs WHERE project_key = ${pk}`;
 
       await this.runBootstrapWrites(
         tx,

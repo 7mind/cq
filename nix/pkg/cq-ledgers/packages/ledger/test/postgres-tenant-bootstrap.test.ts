@@ -141,11 +141,11 @@ if (PG_URL === undefined || PG_URL.length === 0) {
   // ---------------------------------------------------------------------
 
   describe("divergent canonical schema — 'abort' policy", () => {
-    it("init() rejects with BootstrapViolationError, no shadow project created", async () => {
+    it("init() rejects with BootstrapViolationError, no shadow project created, display_name untouched", async () => {
       await schemaReady;
       const projectKey = freshProjectKey();
       await setupPool`
-        INSERT INTO projects (project_key, display_name) VALUES (${projectKey}, ${projectKey})
+        INSERT INTO projects (project_key, display_name) VALUES (${projectKey}, ${"Pre-Divergence Name"})
       `;
       const divergentSchema = { ...GOALS_SCHEMA, statusValues: [...GOALS_SCHEMA.statusValues, "extra"] };
       await setupPool`
@@ -156,7 +156,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
       const store = new PostgresLedgerStore({
         pool: openPgPool(PG_URL),
         projectKey,
-        displayName: projectKey,
+        displayName: "Must Not Land",
         onSchemaDivergence: "abort",
       });
 
@@ -166,11 +166,19 @@ if (PG_URL === undefined || PG_URL.length === 0) {
         SELECT project_key FROM projects WHERE project_key LIKE ${`${projectKey}__divergence-backup-%`}
       `;
       expect(shadowRows).toHaveLength(0);
+
+      // Review r2 (criticism 2): abort is side-effect-free — the projects
+      // UPSERT must NOT have run, so the pre-existing display_name survives.
+      const nameRows = await setupPool<Array<{ display_name: string }>>`
+        SELECT display_name FROM projects WHERE project_key = ${projectKey}
+      `;
+      expect(nameRows).toHaveLength(1);
+      expect(nameRows[0]?.display_name).toBe("Pre-Divergence Name");
     });
   });
 
   describe("divergent canonical schema — 'backup-reinit' (default) policy", () => {
-    it("init() resolves, tenant-scoped shadow project holds the prior divergent row, live ledger is fresh-canonical", async () => {
+    it("init() resolves, tenant-scoped shadow holds the prior divergent + logs rows, live tenant is fresh-canonical", async () => {
       await schemaReady;
       const projectKey = freshProjectKey();
       await setupPool`
@@ -180,6 +188,12 @@ if (PG_URL === undefined || PG_URL.length === 0) {
       await setupPool`
         INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
         VALUES (${projectKey}, ${GOALS_LEDGER}, ${JSON.stringify(divergentSchema)}, 0, 0)
+      `;
+      // Review r2 (criticism 1): a tenant-keyed logs row (T575) must be
+      // carried into the shadow copy and wiped from the reinit'd tenant.
+      await setupPool`
+        INSERT INTO logs (project_key, path, content)
+        VALUES (${projectKey}, ${"logs/raw/pre-divergence.md"}, ${"pre-divergence log content"})
       `;
 
       const store = new PostgresLedgerStore({
@@ -202,6 +216,20 @@ if (PG_URL === undefined || PG_URL.length === 0) {
       `;
       expect(shadowLedgerRows).toHaveLength(1);
       expect(JSON.parse(shadowLedgerRows[0]!.schema_json)).toEqual(divergentSchema);
+
+      // logs: copied into the shadow, wiped from the reinit'd tenant.
+      const shadowLogRows = await setupPool<Array<{ path: string; content: string }>>`
+        SELECT path, content FROM logs
+        WHERE project_key LIKE ${`${projectKey}__divergence-backup-%`}
+      `;
+      expect(shadowLogRows).toHaveLength(1);
+      expect(shadowLogRows[0]?.path).toBe("logs/raw/pre-divergence.md");
+      expect(shadowLogRows[0]?.content).toBe("pre-divergence log content");
+
+      const liveLogRows = await setupPool<Array<{ path: string }>>`
+        SELECT path FROM logs WHERE project_key = ${projectKey}
+      `;
+      expect(liveLogRows).toHaveLength(0);
     });
   });
 }
