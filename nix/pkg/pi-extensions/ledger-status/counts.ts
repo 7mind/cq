@@ -12,7 +12,12 @@
 // `ledgerSummaries` is an array of `{ name, itemCount, statusCounts,
 // completedCount, progressTotal }` — one entry per ledger. This module only
 // extracts `{ done: completedCount, total: progressTotal }` for the
-// questions/tasks/defects ledgers, matched by the entry's `name` field.
+// questions/tasks/defects/researches ledgers, matched by the entry's `name`
+// field. For `researches` (T556, G80/M246), `completedCount` counts the
+// schema's terminal statuses — `concluded` AND `abandoned` (both are terminal
+// per the researches schema's `terminalStatuses`, even though only `concluded`
+// satisfies a dependency per Q266) — same computeLedgerSummaries mechanism as
+// the other ledgers, nothing researches-specific here.
 
 /** One ledger's done/total counters, extracted from its ledgerSummaries entry. */
 export interface LedgerCounts {
@@ -25,10 +30,11 @@ export interface ParsedCounts {
   readonly questions?: LedgerCounts;
   readonly tasks?: LedgerCounts;
   readonly defects?: LedgerCounts;
+  readonly researches?: LedgerCounts;
 }
 
-/** The three ledgers this status line covers, in Q257 display order. */
-const LEDGER_NAMES = ["questions", "tasks", "defects"] as const;
+/** The four ledgers this status line covers, in Q257/T560 display order. */
+const LEDGER_NAMES = ["questions", "tasks", "defects", "researches"] as const;
 type LedgerName = (typeof LEDGER_NAMES)[number];
 
 /** Narrow an arbitrary value to a non-null object (a string-keyed record). */
@@ -62,7 +68,7 @@ function parseLedgerCounts(raw: unknown, name: string): LedgerCounts {
 
 /**
  * Parse the `cq counts` stdout JSON into a `ParsedCounts` covering the
- * questions/tasks/defects ledgers. Throws on malformed JSON, a non-object
+ * questions/tasks/defects/researches ledgers. Throws on malformed JSON, a non-object
  * payload, or a missing/mistyped `ledgerSummaries` array, and on a malformed
  * entry (non-object, or a non-string `name`). A ledger that is simply ABSENT
  * from `ledgerSummaries` (e.g. not yet created in this ledger root) is
@@ -102,19 +108,21 @@ export function parseCounts(stdout: string): ParsedCounts {
   return result;
 }
 
-/** Segment label per ledger, in Q257 display order. */
+/** Segment label per ledger, in Q257/T560 display order. */
 const SEGMENT_LABELS: Record<LedgerName, string> = {
   questions: "Q",
   tasks: "T",
   defects: "D",
+  researches: "R",
 };
 
 /**
- * Format the compact single-line status per decision Q257, e.g.
- * `Q 3/12  T 5/20  D 1/4`: one `<label> <done>/<total>` segment per ledger
- * present in `counts` (questions/tasks/defects order), joined by two spaces.
- * A ledger absent from `counts` is OMITTED entirely (not rendered as `0/0`);
- * a ledger with a genuine zero total renders as `0/0`.
+ * Format the compact single-line status per decision Q257 (extended by T560
+ * for researches), e.g. `Q 3/12  T 5/20  D 1/4  R 2/6`: one `<label>
+ * <done>/<total>` segment per ledger present in `counts`
+ * (questions/tasks/defects/researches order), joined by two spaces. A ledger
+ * absent from `counts` is OMITTED entirely (not rendered as `0/0`); a ledger
+ * with a genuine zero total renders as `0/0`.
  */
 export function formatStatus(counts: ParsedCounts): string {
   const segments: string[] = [];

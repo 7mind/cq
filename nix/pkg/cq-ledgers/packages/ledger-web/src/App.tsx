@@ -1036,6 +1036,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         <LedgerProgressBar testid="progress-questions" label="questions" ledgers={ledgers} />
         <LedgerProgressBar testid="progress-tasks" label="tasks" ledgers={ledgers} />
         <LedgerProgressBar testid="progress-defects" label="defects" ledgers={ledgers} />
+        <LedgerProgressBar testid="progress-researches" label="researches" ledgers={ledgers} />
         <button
           type="button"
           data-testid="help-toggle"

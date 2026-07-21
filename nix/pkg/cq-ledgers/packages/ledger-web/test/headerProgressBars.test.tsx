@@ -1,6 +1,6 @@
 /**
- * Tests for the three header progress bars (T3):
- *   progress-questions / progress-tasks / progress-defects
+ * Tests for the header progress bars (T3, researches bar added T560):
+ *   progress-questions / progress-tasks / progress-defects / progress-researches
  *
  * Each bar is fed by LedgerSummary.completedCount/itemCount computed server-side
  * (T1). No client-side schema or terminal-status classification is performed.
@@ -288,6 +288,25 @@ describe("header progress bars (T3)", () => {
     expect(fillWidth(testid("progress-defects"))).toBe(0);
     // Title shows 0/<total>.
     expect(barTitle(testid("progress-questions"))).toBe("questions: 0/7");
+  });
+
+  it("researches bar renders when the summary includes it (T560)", async () => {
+    const client = new ProgressFakeClient([
+      { name: "questions", itemCount: 5, completedCount: 1 },
+      { name: "tasks", itemCount: 5, completedCount: 1 },
+      { name: "defects", itemCount: 5, completedCount: 1 },
+      { name: "researches", itemCount: 6, completedCount: 2 },
+    ]);
+    await act(async () => {
+      root.render(createElement(App, { connect: async () => client, initialUrl: "http://x/mcp" }));
+    });
+    await flush();
+
+    const bar = testid("progress-researches");
+    expect(bar).not.toBeNull();
+    expect(fillWidth(bar)).toBeCloseTo(2 / 6);
+    expect(barTitle(bar)).toBe("researches: 2/6");
+    expect(barLabel(bar)).toBe("R: 2/6");
   });
 
   it("bars update after a simulated 'changed' refresh", async () => {

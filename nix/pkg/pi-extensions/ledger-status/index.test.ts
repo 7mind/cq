@@ -342,7 +342,7 @@ describe("failure path", () => {
     await flush();
 
     // ...and the slot degrades to the short marker rather than a real line.
-    expect(statusCalls).toEqual([{ key: SLOT_KEY, text: "Q?/T?/D?" }]);
+    expect(statusCalls).toEqual([{ key: SLOT_KEY, text: "Q?/T?/D?/R?" }]);
   });
 
   test("malformed counts stdout paints the marker (parse error is caught)", async () => {
@@ -356,6 +356,6 @@ describe("failure path", () => {
     api.fire("turn_end", makeFakeCtx(statusCalls));
     await flush();
 
-    expect(statusCalls).toEqual([{ key: SLOT_KEY, text: "Q?/T?/D?" }]);
+    expect(statusCalls).toEqual([{ key: SLOT_KEY, text: "Q?/T?/D?/R?" }]);
   });
 });

@@ -1,10 +1,11 @@
 // index.ts — cq ledger-status Pi extension entry point (T535, G76, decision
 // Q257/Q258).
 //
-// Paints a compact `Q d/t  T d/t  D d/t` status-bar line from `cq counts`
-// (T533) into Pi's footer, in a DISTINCT slot from the auto-driver's `cq-auto`
-// slot (Q257 — the two must coexist). The pure parse/format logic lives in
-// ./counts (T534); this module is the imperative Pi wiring on top.
+// Paints a compact `Q d/t  T d/t  D d/t  R d/t` status-bar line from `cq
+// counts` (T533) into Pi's footer, in a DISTINCT slot from the auto-driver's
+// `cq-auto` slot (Q257 — the two must coexist). The pure parse/format logic
+// lives in ./counts (T534, extended T560 for the researches `R` segment);
+// this module is the imperative Pi wiring on top.
 //
 // Pi-typing discipline (mirrors auto-driver/driver.ts, oracle.ts,
 // cq-subagent-dispatch): this is a STANDALONE store-path file OUTSIDE the
@@ -89,8 +90,9 @@ const MAX_BUFFER_BYTES = 1024 * 1024;
 /**
  * Short marker painted on a spawn/parse failure so the slot degrades visibly
  * instead of throwing into the host loop (fail-fast at the boundary, Q258).
+ * Extended by T560 with the `R?` researches segment, consistent with Q/T/D.
  */
-const FAILURE_MARKER = "Q?/T?/D?";
+const FAILURE_MARKER = "Q?/T?/D?/R?";
 
 // ---------------------------------------------------------------------------
 // cq counts shell-out (invocation copied VERBATIM from auto-driver/oracle.ts).
