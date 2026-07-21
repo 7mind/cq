@@ -31,7 +31,6 @@ import {
   assertGitWorkTree,
   GitEnvironmentError,
   LegacyBackendError,
-  PostgresBackupNotWiredError,
   PostgresLedgerStore,
   FsLedgerStore,
   GitObjectLedgerBackend,
@@ -375,26 +374,6 @@ describe("createLedgerStore — postgres backend (T577, G81/M248)", () => {
       delete process.env[name];
     }
     await expect(createLedgerStore(dir)).rejects.toBeInstanceOf(PostgresDsnResolutionError);
-  });
-
-  it("[ledger].backup != 'none' fails fast with PostgresBackupNotWiredError — checked BEFORE any connection", async () => {
-    const dir = await gitRepo();
-    // A DSN that would never resolve (bogus host) proves the failure happens
-    // before any network I/O: resolvePostgresDsn only needs a NON-BLANK
-    // string to succeed, and the backup check runs before openPgPool.
-    await writeCqToml(
-      dir,
-      '[ledger]\nbackend = "postgres"\nurl = "postgres://unresolvable.invalid:5432/db"\nbackup = "in-tree"\n',
-    );
-    delete process.env["CQ_LEDGER_PG_URL"];
-    delete process.env["DATABASE_URL"];
-    const err = await createLedgerStore(dir).then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(err).toBeInstanceOf(PostgresBackupNotWiredError);
-    expect((err as Error).message).toContain("in-tree");
-    expect((err as Error).message).toContain("T582");
   });
 
   describe.skipIf(!PG_URL)("live round-trip (CQ_TEST_PG_URL)", () => {

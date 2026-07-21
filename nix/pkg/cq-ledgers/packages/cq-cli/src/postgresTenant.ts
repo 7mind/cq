@@ -49,7 +49,7 @@ export interface PostgresTenantHandle {
    * (erase refuses before it would need this).
    */
   readonly candidateDisplayName: string;
-  /** `[ledger].backup`, surfaced so callers can enforce the T582-deferred fail-fast. */
+  /** `[ledger].backup`, surfaced so `cq reset` can enforce its pre-wipe-snapshot fail-fast. */
   readonly backup: LedgerConfig["backup"];
 }
 
@@ -101,9 +101,10 @@ export async function countTenantActiveItems(
 /**
  * DELETE every row `projectKey` owns, children-first (FK order) — the same
  * wipe order {@link PostgresLedgerStore.backupAndReinitTenant} uses, minus its
- * shadow-copy step (no backup here: the caller enforces `[ledger].backup ===
- * 'none'` before calling this — T582 owns postgres backup parity, see
- * `PostgresBackupNotWiredError`). `includeProjectRow` also drops the
+ * shadow-copy step (no backup here: `cq reset` enforces `[ledger].backup ===
+ * 'none'` before calling this — its own pre-wipe snapshot is not yet wired,
+ * see `PostgresBackupNotWiredError`; the general `cq backup`/`cq restore`
+ * parity IS wired, T582). `includeProjectRow` also drops the
  * `projects` registry row (erase only; reset keeps it so the tenant stays
  * registered through the reinit).
  */

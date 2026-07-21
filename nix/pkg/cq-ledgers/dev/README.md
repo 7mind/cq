@@ -3,8 +3,9 @@
 `@cq/ledger`'s Postgres backend (G81/M248) is exercised by a set of
 env-gated suites that skip cleanly when no server is reachable:
 `packages/ledger/test/postgres-*.test.ts`, `store-postgres.test.ts`,
-`multi-writer-stress-postgres.test.ts`, and
-`packages/cq-cli/test/log-put-postgres.test.ts`. All of them gate on the
+`multi-writer-stress-postgres.test.ts`, the postgres block of
+`backup-exporter.test.ts`, and the `packages/cq-cli/test/*-postgres.test.ts`
+suites (log-put / reset-erase / backup-restore). All of them gate on the
 same `CQ_TEST_PG_URL` environment variable (Q286) — a `postgres://` DSN
 pointing at a throwaway database.
 

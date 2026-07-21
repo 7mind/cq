@@ -103,11 +103,12 @@ export interface ResolvedLedgerStore {
    */
   readonly logsDir?: string;
   /**
-   * The debounced post-mutation backup trigger (T502) — present ONLY when the
-   * xdg backend is configured with a non-`none` `[ledger].backup`. The store's
-   * `onMutation` hook `schedule()`s it; hosts/tests may `flush()` for a
-   * deterministic export or `close()` on shutdown. Best-effort by design: its
-   * timers are unref'd and a backup failure never unwinds a store write.
+   * The debounced post-mutation backup trigger (T502; postgres parity T582) —
+   * present ONLY when the xdg OR postgres backend is configured with a
+   * non-`none` `[ledger].backup`. The store's `onMutation` hook `schedule()`s
+   * it; hosts/tests may `flush()` for a deterministic export or `close()` on
+   * shutdown. Best-effort by design: its timers are unref'd and a backup
+   * failure never unwinds a store write.
    */
   readonly backup?: BackupScheduler;
   /**
@@ -184,28 +185,28 @@ export class LegacyBackendError extends Error {
 }
 
 /**
- * Thrown when `backend = 'postgres'` is configured with `[ledger].backup !=
- * 'none'` (T577, Q275 full-parity decision DEFERRED to T582). Even though
- * {@link runBackupExport}'s dump builder is already store-agnostic (T575's
- * `listLogs` duck-type lets a postgres store's tenant-scoped logs feed the
- * SAME `.cq/`-layout dump the xdg backend produces), THIS factory does not
- * yet wire the debounced post-mutation trigger for postgres — T582 owns that
- * decision (wire it through per Q275's "full parity" answer, or an explicit
- * warn-once-and-skip, either way recorded as a locked decision). Failing fast
- * here — rather than silently accepting a `[ledger].backup` the running
- * process will never honour — matches this factory's existing fail-fast style
- * ({@link LegacyBackendError} / `PostgresDsnResolutionError`): a configured
- * backup target that quietly never runs is a worse failure mode than a loud
- * one at startup.
+ * Thrown by `cq reset`'s postgres branch (`runResetPostgres`, main.ts / T583)
+ * when `[ledger].backup != 'none'`: unlike the fs backend's `reset()` (which
+ * atomically snapshots-then-reinitialises), the postgres reset path does not
+ * (yet) take its OWN pre-wipe backup snapshot before deleting a tenant's rows.
+ *
+ * This is now a NARROW gap, not a general one: T582 wired `cq backup`/`cq
+ * restore` and the debounced post-mutation exporter for `backend = 'postgres'`
+ * (via {@link runBackupExport}'s store-agnostic dump builder + T575's
+ * `listLogs` duck-type) — {@link createLedgerStore} below no longer throws
+ * this error. Only `cq reset`'s specific "snapshot immediately before
+ * wiping" safety net remains unimplemented; run `cq backup` yourself right
+ * before `cq reset` in the meantime.
  */
 export class PostgresBackupNotWiredError extends Error {
   constructor(backupTarget: LedgerBackupMode, root: string) {
     super(
       `[ledger] backend = 'postgres' at ${root} is configured with [ledger].backup = ` +
-        `'${backupTarget}', but the debounced backup exporter is not yet wired for the ` +
-        `postgres backend (T582 owns that decision/implementation). Set [ledger].backup = ` +
-        `"none" for a postgres-backed project until T582 lands, or run \`pg_dump\` directly ` +
-        `for now.`,
+        `'${backupTarget}'; \`cq reset\` does not yet take a pre-wipe backup snapshot for the ` +
+        `postgres backend (the general backup mechanism — \`cq backup\`/\`cq restore\` + the ` +
+        `debounced auto-export — is wired; this is only reset's own safety net). Run ` +
+        `\`cq backup\` immediately before \`cq reset\`, or set [ledger].backup = "none" to skip ` +
+        `this guard.`,
     );
     this.name = "PostgresBackupNotWiredError";
   }
@@ -326,10 +327,6 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
  *    IS the projectKey, same as xdg's stateDir key.
  *  - `resolvePostgresDsn` lets {@link PostgresDsnResolutionError} propagate
  *    when no connection info is configured (dsn.ts).
- *  - a configured `[ledger].backup != 'none'` fails fast with
- *    {@link PostgresBackupNotWiredError} (T582's deferred scope — see that
- *    error's doc) — checked BEFORE opening any connection, since it is a
- *    pure config-shape defect that needs no I/O to detect.
  *
  * The display name is the RECONCILED four-rung chain (Q270, displayName.ts):
  * cq.toml `[project].name` > `[ledger].projectId` > the repo root's basename
@@ -341,6 +338,13 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
  * ledger rows AND log artifacts both live in the database, not on this host's
  * filesystem. The returned `pg` handle (pool + resolved dsn + projectKey) is
  * what T578's LISTEN/NOTIFY coherence watcher needs.
+ *
+ * `[ledger].backup != 'none'` (T582, Q275 full-parity decision): mirrors the
+ * xdg branch's {@link BackupScheduler} wiring exactly — `runBackupExport`'s
+ * dump builder is store-agnostic (T575's `listLogs` duck-type feeds it this
+ * store's tenant-scoped logs in place of a filesystem `logsDir`, which this
+ * backend passes as `null`), so the SAME debounced post-mutation trigger the
+ * xdg backend uses works unchanged against `PostgresLedgerStore`.
  *
  * On any failure after the pool is opened (schema DDL, tenant bootstrap,
  * `init()`), the pool is closed before the error propagates — otherwise a
@@ -372,9 +376,6 @@ async function createPostgresLedgerStore(
   const dsn = resolution.kind === "dsn" ? resolution.dsn : "";
 
   const backupTarget = ledgerConfig.backup;
-  if (backupTarget !== "none") {
-    throw new PostgresBackupNotWiredError(backupTarget, root);
-  }
 
   const displayName = resolveDisplayName({
     projectName: config?.project?.name,
@@ -386,8 +387,28 @@ async function createPostgresLedgerStore(
   const pool = openPgPool(dsn);
   try {
     await ensureSchema(pool);
-    const store = new PostgresLedgerStore({ pool, projectKey, displayName });
+    let backup: BackupScheduler | undefined;
+    const store = new PostgresLedgerStore({
+      pool,
+      projectKey,
+      displayName,
+      onMutation: () => backup?.schedule(),
+    });
     await store.init();
+    if (backupTarget !== "none") {
+      backup = new BackupScheduler(async () => {
+        await runBackupExport({ store, root, target: backupTarget, branch, logsDir: null });
+      });
+      return {
+        store,
+        configRoot: root,
+        backend: "postgres",
+        branch,
+        pg: { pool, dsn, projectKey },
+        projectKey,
+        backup,
+      };
+    }
     return {
       store,
       configRoot: root,

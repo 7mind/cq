@@ -35,6 +35,8 @@ import {
   readDumpOrphanBranch,
   restoreDumpToXdg,
   isXdgPrimaryEmpty,
+  restoreDumpToPostgres,
+  isPostgresTenantEmpty,
   PostgresBackupNotWiredError,
   type LedgerStore,
   type ResetSummary,
@@ -414,13 +416,17 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
 }
 
 /**
- * `cq reset` — postgres backend (T583). Tenant-scoped backup-equivalent
- * (reused from the parity backup path when `[ledger].backup != 'none'` — but
- * that combination is not yet wired for postgres, see
- * {@link PostgresBackupNotWiredError} / T582, so it fails fast here instead)
- * + DELETE every row this tenant owns (children-first FK order, same order
- * `PostgresLedgerStore.backupAndReinitTenant` uses) + re-init the canonical
- * ledger set — never touching any OTHER tenant's rows in the shared database.
+ * `cq reset` — postgres backend (T583). DELETEs every row this tenant owns
+ * (children-first FK order, same order `PostgresLedgerStore.backupAndReinitTenant`
+ * uses) + re-inits the canonical ledger set — never touching any OTHER
+ * tenant's rows in the shared database.
+ *
+ * Unlike the fs backend's `reset()` (which atomically snapshots-then-reinits),
+ * this postgres path does NOT (yet) take its own pre-wipe backup snapshot: a
+ * configured `[ledger].backup != 'none'` fails fast with
+ * {@link PostgresBackupNotWiredError} instead (that error's doc explains the
+ * narrower remaining gap — `cq backup`/`cq restore` and the debounced
+ * auto-export themselves ARE wired for postgres, T582/Q275).
  *
  * Resolves the tenant (project_key + display name) via
  * {@link resolvePostgresTenant} BEFORE confirming, so the prompt names the
@@ -454,7 +460,7 @@ async function runResetPostgres(args: SubcommandArgs, io: DispatchIo): Promise<S
       `cq reset: reset postgres tenant "${displayName}" (project_key ${tenant.projectKey}) at ${args.cwd}`,
     );
     io.out(
-      `  backup: none ([ledger] backend='postgres' tenant-scoped backup is not yet wired; see T582)`,
+      `  backup: none ([ledger].backup = "none" — run \`cq backup\` before reset for a pre-wipe dump)`,
     );
     for (const { name, itemCount } of before) {
       io.out(`  ${name}: ${itemCount} item(s) wiped, reinitialised empty`);
@@ -810,9 +816,14 @@ export async function runLogCmd(
  *   - `in-tree`             → write the dump under `<root>/.cq/`.
  *   - `orphan-branch`       → commit the dump tree to `refs/heads/<branch>`.
  *
- * Only the `xdg` backend is supported: the exporter dumps the OUT-OF-TREE
- * primary (SQLite + xdg logs area, Q247) into today's `.cq/` layout. The fs /
- * git-object backends already keep their state in that human-readable form.
+ * The `xdg` AND `postgres` backends are supported (T582, Q275 full-parity
+ * decision): the exporter dumps the OUT-OF-TREE primary — xdg's SQLite + xdg
+ * logs area (Q247), or postgres's tenant rows + tenant-keyed `logs` table via
+ * the store-agnostic `buildBackupDump`/T575 `listLogs` seam — into today's
+ * `.cq/` layout, SCOPED to the connecting project/tenant (never the whole
+ * postgres database — that remains `pg_dump`'s job). The fs / git-object
+ * backends remain genuinely unsupported: they already keep their state in
+ * that human-readable form in place, so there is nothing to dump.
  */
 export async function runBackup(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const { backend, branch } = resolveLedgerBackend(args.cwd);
@@ -826,11 +837,11 @@ export async function runBackup(args: SubcommandArgs, io: DispatchIo): Promise<S
     );
     return { exitCode: EXIT_USAGE };
   }
-  if (backend !== "xdg") {
+  if (backend !== "xdg" && backend !== "postgres") {
     io.err(
       `cq backup: [ledger] backend='${backend}' does not support the backup exporter ` +
-        `(it dumps the out-of-tree xdg primary into the .cq/ layout, which the '${backend}' ` +
-        `backend already keeps human-readable). Use backend='xdg'.`,
+        `(it dumps the out-of-tree xdg primary or the postgres tenant into the .cq/ layout, which ` +
+        `the '${backend}' backend already keeps human-readable). Use backend='xdg' or backend='postgres'.`,
     );
     return { exitCode: EXIT_USAGE };
   }
@@ -863,25 +874,30 @@ export async function runBackup(args: SubcommandArgs, io: DispatchIo): Promise<S
 }
 
 /**
- * `cq restore` (T503 / Q244): the explicit one-way IMPORT counterpart of
- * `cq backup` — reads the dump at the CONFIGURED `[ledger].backup` target
- * (in-tree `.cq/` or the orphan ref, same source `cq backup` writes to) and
- * writes its content into the out-of-tree xdg primary (SQLite rows + the
- * primary logs area), so `fetch_ledger`/`fetch_item`/`read_log` serve the
- * restored state. Disaster recovery, NOT sync — no merge semantics: the
- * primary is wiped and replaced wholesale.
+ * `cq restore` (T503 / Q244; postgres parity T582 / Q275): the explicit
+ * one-way IMPORT counterpart of `cq backup` — reads the dump at the
+ * CONFIGURED `[ledger].backup` target (in-tree `.cq/` or the orphan ref, same
+ * source `cq backup` writes to) and writes its content into the out-of-tree
+ * primary — xdg's SQLite rows + primary logs area, or (T580)
+ * `restoreDumpToPostgres`'s id/timestamp-preserving import into the
+ * connecting project's postgres tenant — so `fetch_ledger`/`fetch_item`/
+ * `read_log` serve the restored state. Disaster recovery, NOT sync — no merge
+ * semantics: the primary (xdg) / tenant (postgres) is wiped and replaced
+ * wholesale, SCOPED to that one tenant only under postgres — never the whole
+ * shared database.
  *
  * Refuses the SAME two ways `cq backup` does (no configured target; a
- * non-xdg backend), plus the destructive-op confirmation policy (shared with
- * `reset`/`erase`) when the primary is non-empty:
+ * genuinely unsupported backend — fs / git-object), plus the destructive-op
+ * confirmation policy (shared with `reset`/`erase`) when the primary/tenant is
+ * non-empty:
  *   - `--yes`             → proceed unattended (no prompt).
  *   - TTY, no `--yes`     → prompt; proceed only on a `y`/`Y` answer.
  *   - non-TTY, no `--yes` → REFUSE (exit 2) — never overwrite silently.
- * An EMPTY primary (nothing beyond the canonical bootstrap state) restores
- * unconditionally — there is nothing destructive to confirm.
+ * An EMPTY primary/tenant (nothing beyond the canonical bootstrap state)
+ * restores unconditionally — there is nothing destructive to confirm.
  *
  * The dump is read and parsed BEFORE any confirmation/wipe, so a malformed or
- * incomplete dump fails loud without touching the primary.
+ * incomplete dump fails loud without touching the primary/tenant.
  */
 export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
   const { backend, branch } = resolveLedgerBackend(args.cwd);
@@ -895,11 +911,11 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
     );
     return { exitCode: EXIT_USAGE };
   }
-  if (backend !== "xdg") {
+  if (backend !== "xdg" && backend !== "postgres") {
     io.err(
       `cq restore: [ledger] backend='${backend}' does not support restore (it imports INTO the ` +
-        `out-of-tree xdg primary; the '${backend}' backend already keeps its state human-readable ` +
-        `in place). Use backend='xdg'.`,
+        `out-of-tree xdg primary or the postgres tenant; the '${backend}' backend already keeps its ` +
+        `state human-readable in place). Use backend='xdg' or backend='postgres'.`,
     );
     return { exitCode: EXIT_USAGE };
   }
@@ -913,6 +929,10 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
   } catch (e) {
     io.err(`cq restore: failed to read the ${target} dump: ${e instanceof Error ? e.message : String(e)}`);
     return { exitCode: EXIT_USAGE };
+  }
+
+  if (backend === "postgres") {
+    return runRestorePostgres(args, io, target, dump);
   }
 
   const resolved = await createLedgerStore(args.cwd);
@@ -946,6 +966,59 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
       `from the ${target} dump at ${args.cwd}`,
   );
   return { exitCode: 0 };
+}
+
+/**
+ * `cq restore`'s postgres branch (T582, Q275 full-parity decision) —
+ * {@link runRestore}'s delegate, split out only for readability. Resolves the
+ * tenant via {@link resolvePostgresTenant} (self-sufficient: it does NOT
+ * pre-register the tenant, mirroring `restoreDumpToPostgres`'s own UPSERT of
+ * the `projects` row — T580's doc), applies the SAME destructive-op
+ * confirmation policy `runRestore`'s xdg path uses (keyed off
+ * {@link isPostgresTenantEmpty}, the postgres analogue of
+ * `isXdgPrimaryEmpty`), then imports via `restoreDumpToPostgres` — scoped
+ * STRICTLY to this one `project_key`, never another tenant's rows.
+ */
+async function runRestorePostgres(
+  args: SubcommandArgs,
+  io: DispatchIo,
+  target: "in-tree" | "orphan-branch",
+  dump: Awaited<ReturnType<typeof readDumpInTree>>,
+): Promise<SubcommandOutcome> {
+  const tenant = await resolvePostgresTenant(args.cwd);
+  const displayName = tenant.registeredDisplayName ?? tenant.candidateDisplayName;
+  try {
+    const empty = await isPostgresTenantEmpty(tenant.pool, tenant.projectKey);
+    if (!empty) {
+      const decision = await confirmDestructive(
+        args.yes,
+        `Restore will OVERWRITE the non-empty postgres tenant "${displayName}" ` +
+          `(project_key ${tenant.projectKey}) at ${args.cwd}? [y/N] `,
+        `cq restore: refusing to overwrite the non-empty postgres tenant "${displayName}" ` +
+          `(project_key ${tenant.projectKey}) at ${args.cwd} without confirmation; re-run with ` +
+          `--yes to restore non-interactively.`,
+        io.confirm,
+      );
+      if (!decision.proceed) {
+        return { exitCode: decision.exitCode };
+      }
+    }
+
+    const summary = await restoreDumpToPostgres({
+      pool: tenant.pool,
+      projectKey: tenant.projectKey,
+      displayName,
+      dump,
+    });
+    io.out(
+      `cq restore: restored ${summary.ledgerCount} ledger(s) + ${summary.logCount} log artifact(s) ` +
+        `from the ${target} dump at ${args.cwd} (postgres tenant "${displayName}", ` +
+        `project_key ${tenant.projectKey})`,
+    );
+    return { exitCode: 0 };
+  } finally {
+    await tenant.pool.close();
+  }
 }
 
 /**

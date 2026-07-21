@@ -430,8 +430,8 @@ async function runLogPutXdg(
  * shortcut (`config?.project?.name ?? projectKey`, review R697 deferred
  * defect) — a bare `projectKey` fallback here could downgrade an already
  * `projects.display_name` from an earlier connect with a fuller candidate
- * set — and the factory's `[ledger].backup != 'none'` fail-fast guard
- * ({@link PostgresBackupNotWiredError}).
+ * set — and (T582) the factory's debounced backup-exporter wiring for a
+ * configured `[ledger].backup != 'none'`.
  *
  * The destination-path normalisation mirrors {@link runLogPutXdg} EXACTLY
  * (strip the leading `logs/` prefix via {@link LOGS_PREFIX}) so
@@ -443,9 +443,9 @@ async function runLogPutPostgres(
   io: LogPutIo,
   content: string,
 ): Promise<LogPutOutcome> {
-  // createLedgerStore lets PostgresDsnResolutionError / PostgresBackupNotWiredError
-  // propagate as the fail-fast (uncaught here, consistent with the rest of
-  // this function's error handling).
+  // createLedgerStore lets PostgresDsnResolutionError propagate as the
+  // fail-fast (uncaught here, consistent with the rest of this function's
+  // error handling).
   const resolved = await createLedgerStore(args.cwd);
   try {
     if (resolved.pg === undefined) {

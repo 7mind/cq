@@ -25,6 +25,7 @@
 import { describe, it, expect, afterAll, beforeEach, afterEach } from "bun:test";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -281,6 +282,144 @@ describe("backup exporter — T502 acceptance (xdg backend, debounced trigger)",
       expect(await fs.readFile(path.join(root, ".cq"), "utf8")).toBe("not a directory\n");
     } finally {
       resolved.backup?.close();
+      await resolved.store.dispose();
+    }
+  });
+});
+
+const PG_URL = process.env.CQ_TEST_PG_URL;
+
+/**
+ * T582 (Q275 full-parity decision): the SAME debounced-trigger acceptance as
+ * the xdg suite above, but for `backend = 'postgres'` — a mutation's
+ * `onMutation` hook schedules the SAME `BackupScheduler`, and `buildBackupDump`
+ * feeds it this tenant's rows + the T575 `listLogs` seam (the tenant-keyed
+ * `logs` table) INSTEAD OF a filesystem `logsDir` (which this backend has
+ * none of). Env-gated on CQ_TEST_PG_URL (Q286) — skips cleanly offline.
+ */
+describe.skipIf(!PG_URL)("backup exporter — T582 acceptance (postgres backend, debounced trigger)", () => {
+  /** A throwaway initialised git repo with a UNIQUE first commit (distinct tenant per test). */
+  async function pgGitRepo(prefix: string): Promise<string> {
+    const dir = await fs.mkdtemp(path.join(tmpdir(), prefix));
+    dirs.push(dir);
+    await exec("git", ["init", "-q"], { cwd: dir });
+    await exec("git", ["config", "user.email", "t@example.com"], { cwd: dir });
+    await exec("git", ["config", "user.name", "t"], { cwd: dir });
+    await exec("git", ["config", "commit.gpgsign", "false"], { cwd: dir });
+    await fs.writeFile(path.join(dir, "README.md"), `# repo ${randomUUID()}\n`);
+    await exec("git", ["add", "README.md"], { cwd: dir });
+    await exec("git", ["commit", "-q", "-m", "init"], { cwd: dir });
+    return dir;
+  }
+
+  let originalPgUrl: string | undefined;
+
+  beforeEach(() => {
+    originalPgUrl = process.env["CQ_LEDGER_PG_URL"];
+    process.env["CQ_LEDGER_PG_URL"] = PG_URL;
+  });
+
+  afterEach(() => {
+    if (originalPgUrl === undefined) {
+      delete process.env["CQ_LEDGER_PG_URL"];
+    } else {
+      process.env["CQ_LEDGER_PG_URL"] = originalPgUrl;
+    }
+  });
+
+  it('backup="in-tree": a mutation produces a parseable .cq/ dump carrying every tenant log artifact byte-identically', async () => {
+    const root = await pgGitRepo("bk-pg-intree-");
+    await fs.writeFile(
+      path.join(root, "cq.toml"),
+      '[ledger]\nbackend = "postgres"\nbackup = "in-tree"\n',
+    );
+
+    const resolved = await createLedgerStore(root);
+    try {
+      expect(resolved.backend).toBe("postgres");
+      expect(resolved.backup).toBeInstanceOf(BackupScheduler);
+      // Store-side log writes (the postgres analogue of seedPrimaryLogs) —
+      // MUST happen after init() so the tenant is registered.
+      const store = resolved.store as unknown as {
+        putLog(relPath: string, content: string): Promise<void>;
+      };
+      await store.putLog(SUMMARY_REL, SUMMARY_BYTES);
+      await store.putLog(RAW_REL, RAW_BYTES);
+
+      await mutate(resolved);
+      await resolved.backup!.flush();
+
+      const docsDir = path.join(root, ".cq");
+      const registry = parseRegistry(await fs.readFile(path.join(docsDir, "ledgers.yaml"), "utf8"));
+      const names = registry.ledgers.map((e) => e.name);
+      expect(names).toContain(TASKS_LEDGER);
+
+      const tasksSchema = registry.ledgers.find((e) => e.name === TASKS_LEDGER)!.schema;
+      const tasks = parseLedger(await fs.readFile(path.join(docsDir, "tasks.md"), "utf8"), {
+        schema: tasksSchema,
+      });
+      const t1 = tasks.milestones.flatMap((m) => m.items).find((i) => i.id === "T1");
+      expect(t1?.fields["headline"]).toBe("backed-up task");
+
+      // T575 listLogs seam: the tenant-keyed logs table feeds the SAME
+      // .cq/logs/** path, byte-identical to the stored artifact.
+      expect(await fs.readFile(path.join(docsDir, "logs", SUMMARY_REL), "utf8")).toBe(SUMMARY_BYTES);
+      expect(await fs.readFile(path.join(docsDir, "logs", RAW_REL), "utf8")).toBe(RAW_BYTES);
+    } finally {
+      resolved.backup?.close();
+      await resolved.store.dispose();
+    }
+  });
+
+  it('backup="orphan-branch": the dump lands as a commit on the configured ref with the same tenant .cq/logs/** bytes', async () => {
+    const root = await pgGitRepo("bk-pg-orphan-");
+    await fs.writeFile(
+      path.join(root, "cq.toml"),
+      '[ledger]\nbackend = "postgres"\nbackup = "orphan-branch"\nbranch = "cq-backup-pg"\n',
+    );
+
+    const resolved = await createLedgerStore(root);
+    try {
+      const store = resolved.store as unknown as {
+        putLog(relPath: string, content: string): Promise<void>;
+      };
+      await store.putLog(SUMMARY_REL, SUMMARY_BYTES);
+
+      await mutate(resolved);
+      await resolved.backup!.flush();
+
+      const git = GitPlumbing.withCwd(root, path.join(root, ".git"));
+      const ref = "refs/heads/cq-backup-pg";
+      expect(await git.readRef(ref)).not.toBeNull();
+
+      const paths = await git.lsTree(ref);
+      expect(paths).toContain(".cq/ledgers.yaml");
+      expect(paths).toContain(".cq/tasks.md");
+      expect(paths).toContain(`.cq/logs/${SUMMARY_REL}`);
+      expect(await git.catFile(ref, `.cq/logs/${SUMMARY_REL}`)).toBe(SUMMARY_BYTES);
+
+      // Orphan-branch writes NOTHING into the work tree.
+      expect(await exists(path.join(root, ".cq"))).toBe(false);
+    } finally {
+      resolved.backup?.close();
+      await resolved.store.dispose();
+    }
+  });
+
+  it("default config (backup=none): NOTHING is written in-tree or to any ref; no scheduler is constructed", async () => {
+    const root = await pgGitRepo("bk-pg-none-");
+    await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "postgres"\n');
+
+    const resolved = await createLedgerStore(root);
+    try {
+      expect(resolved.backup).toBeUndefined();
+      await mutate(resolved);
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(await exists(path.join(root, ".cq"))).toBe(false);
+      const git = GitPlumbing.withCwd(root, path.join(root, ".git"));
+      expect(await git.readRef("refs/heads/cq-ledger")).toBeNull();
+    } finally {
       await resolved.store.dispose();
     }
   });
