@@ -56,9 +56,12 @@ work, instead of inline TODOs or scratch files.
   fields now accept the `<ledger>:<id>` grammar (e.g., `tasks:T523`, `researches:RS42`) as
   canonical form; bare ids (e.g., `T523`, `RS42`) are accepted as input shorthand and
   canonicalized on write. Cross-ledger gating is real: a task blocked on a research is
-  unready until that research is `concluded`. Dangling refs (unknown ledger name or
-  unregistered id prefix) are rejected at write time. The `ledgerRefs` field enables
-  hypothesis reuse: a `researches:<RS>` ref surfaces its findings across items.
+  unready until that research is `concluded`. Dangling refs are rejected only for a
+  NEWLY-ADDED entry that canonicalizes to a known ledger whose target id does not exist
+  (`DanglingRefError`); an unknown ledger name or unregistered alpha prefix passes
+  through verbatim as advisory free-text, and pre-existing entries always survive
+  verbatim. The `ledgerRefs` field enables hypothesis reuse: a `researches:<RS>` ref
+  surfaces its findings across items.
 - **On completion**: set items terminal, then `archive_milestone` once every
   item under the milestone is terminal.
 - **Detail goes in fields** (markdown is supported), not the headline. Don't
@@ -73,18 +76,23 @@ work, instead of inline TODOs or scratch files.
 
 The ledger-suite harness runs four cooperating **flows**: *investigate*, *plan*, *research*,
 and *implement*, chained by the `/cq:advance` sequencer (which runs them to quiescence).
-Plan-flow owns a defect-to-fix path; investigate-flow roots causes; research-flow explores
-open questions; implement-flow executes task DAGs. Each flow is driven by `/cq:*:advance` and
-dispatches domain-specific subagents (e.g., `investigate-explorer`, `plan-advance`,
-`research-querier`). The `/cq:research:advance` flow investigates open `questions` ledger
-items whose `ledgerRefs` name `researches:<RS>` items, then updates the research's
-`findings`/`conclusion` fields. A research that concludes (`concluded` status) gates its
-dependent tasks via the satisfies-dependency rule (only `concluded` satisfies a
-`researches:RS` dependency). The Q269 synthesis artifact is the research item's `conclusion`
-field (markdown-backed findings and recommendation, persisted in the ledger).
+Plan-flow owns a defect-to-fix path; investigate-flow roots causes; research-flow answers
+empirical research questions; implement-flow executes task DAGs. Each flow is driven by
+`/cq:*:advance` and dispatches domain-specific subagents. `/cq:research` +
+`/cq:research:advance` drive a `researches` item over a hypothesis tree of candidate
+answers using two subagent roles: the read-only `research-explorer` (evidence gathering)
+and the execution-capable `research-experimenter` (runs probes on a `probeRequest`). On a
+confirmed answer the command writes the research's `findings`/`conclusion`/`recommendation`
+fields (pure narrative, in-ledger) and — per Q269's no-working-tree-write discipline —
+routes the FULL cited synthesis as a SEPARATE markdown artifact through `cq log put` to
+`.cq/logs/<ts>-research-<RS>.md`, recorded in the item's `sessionLogs`. A research that
+concludes (`concluded` status) gates its dependent tasks via the satisfies-dependency rule
+(only `concluded` satisfies a `researches:RS` dependency).
 
-The triage rule: an `open` `questions` item whose `ledgerRefs` name a `researches:<RS>`
-belongs to research-flow; other questions gate investigation/plan/implement directly.
+The question-vs-research triage rule (Q267): triage each unknown by WHO can answer it. An
+EMPIRICALLY answerable unknown (verifiable by experiment — benchmarks, API behavior,
+feasibility) becomes a `researches` item, NOT a user question; a PREFERENCE or requirements
+decision only the user can make stays a `questions` item.
 
 ### Session and raw-log artifacts
 

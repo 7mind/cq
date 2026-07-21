@@ -63,9 +63,9 @@ Before each stage `/cq:advance` runs a read-only ledger query (sourced from one
   (`planned`, `building`, `done`, `abandoned` are locked/terminal for planning.)
 - **P-research** — TRUE iff some `researches` item has an ACTIONABLE status
   (`open`, `wip`, or `inconclusive`) AND is not blocked solely on an unanswered
-  `open` question. Research-flow investigates open `questions` items whose
-  `ledgerRefs` name `researches:<RS>` items; a concluded research satisfies
-  dependent tasks via the satisfies-dependency rule.
+  `open` question (an open `questions` item whose `ledgerRefs` name
+  `researches:<RS>`); a concluded research satisfies dependent tasks via the
+  satisfies-dependency rule.
 - **P-implement** — TRUE iff some goal in `planned` or `building` has a
   DAG-ready non-terminal task (status non-terminal and not `blocked`; every
   `dependsOn` entry SATISFIED — each is a `<ledger>:<id>` ref (bare ids
@@ -91,8 +91,9 @@ counter):
    defects. Also advances P-seed (root-caused, unowned defects) and files
    defect-seeded goals for fix planning.
 3. **Research stage** — if P-research, run `/cq:research:advance` inline.
-   Research-flow investigates open `questions` items whose `ledgerRefs` name
-   `researches:<RS>` items, then updates the research's findings/conclusion.
+   Research-flow drives each actionable `researches` item over a hypothesis
+   tree of candidate answers, then writes the research's
+   findings/conclusion/recommendation on a confirmed answer.
 4. **Implement stage** — if P-implement, run `/cq:implement:advance` inline. A
    just-`planned` goal with no prior implement pass is bootstrapped and built;
    reviewers may file new `open` defects (file-and-defer).
@@ -101,7 +102,7 @@ counter):
    again the loop made progress and continues.
 
 It **stops** only when progress is genuinely impossible: a full cycle in which no
-stage did work and no new actionable item appeared — i.e. all three predicates
+stage did work and no new actionable item appeared — i.e. all five predicates
 FALSE (everything DRAINED), or every still-actionable item is BLOCKED on an
 unanswered `open` user question. The stop is progress-bounded, never
 effort-bounded.
@@ -292,13 +293,16 @@ or re-opened goal typically lands `awaiting-answers` (handoff `answers-required`
 
 ## Research flow
 
-The research flow investigates open `questions` items whose `ledgerRefs` name
-`researches:<RS>` items, then updates the research's findings and conclusion.
-It is driven by a single `researches` ledger item and advanced by
-`/cq:research:advance`. The `research-querier` subagent gathers and synthesizes
-evidence, then the command validates and updates the research record. When a
-research concludes (`concluded` status), it satisfies dependent tasks via the
-satisfies-dependency rule (only `concluded` satisfies a `researches:RS`
+The research flow answers an empirical research question by driving a hypothesis
+tree of candidate answers, mirroring the investigate flow's shape. It is driven
+by a single `researches` ledger item, advanced one research round per invocation
+by `/cq:research:advance`. The loop lives in the command (subagents cannot spawn
+subagents); the `research-explorer` is a read-only evidence gatherer and the
+`research-experimenter` is its execution-capable sibling (runs probes in a
+throwaway worktree on a `probeRequest`). Neither writes the ledger or
+adjudicates — the command validates every citation and sets node status itself.
+When a research concludes (`concluded` status), it satisfies dependent tasks via
+the satisfies-dependency rule (only `concluded` satisfies a `researches:RS`
 dependency). A research that remains `inconclusive` may be re-opened when new
 evidence emerges.
 
@@ -320,19 +324,21 @@ The `researches` schema statuses are `open`, `wip`, `concluded`, `inconclusive`,
 - **inconclusive** — research did not converge to a definitive answer; a
   re-openable hold. Reachable ONLY from `wip`; it returns to `wip` (on new
   evidence) or is abandoned (`abandoned`).
-- **abandoned** — terminal; the research was dropped.
+- **abandoned** — terminal; **USER-INITIATED ONLY**. The autonomous flow never
+  transitions a research to `abandoned` and never solicits that disposition; a
+  non-converging research is `inconclusive`, not `abandoned`.
 
 ### Transitions (labelled)
 
 | from → to | trigger |
 | --------- | ------- |
 | `open → wip` | research begins this round (exploration about to happen). Mandatory before any adjudication write. |
-| `open → abandoned` | the research is dropped. |
+| `open → abandoned` | the research is dropped (user-initiated). |
 | `wip → concluded` | sufficient evidence converges on a definitive answer with findings and recommendation. |
 | `wip → inconclusive` | research was conducted but no clear answer emerged. |
-| `wip → abandoned` | the research is dropped. |
+| `wip → abandoned` | the research is dropped (user-initiated). |
 | `inconclusive → wip` | new evidence emerged; re-open research. |
-| `inconclusive → abandoned` | the research is abandoned. |
+| `inconclusive → abandoned` | the research is abandoned (user-initiated). |
 
 ### The research round (orchestration)
 
@@ -340,18 +346,30 @@ One `/cq:research:advance` invocation = one round:
 
 1. **READ state** from the ledger; if parked on an unanswered `open` question,
    skip to report. Move `open → wip` if research is about to happen.
-2. **FORM the research plan** — scope the question and plan evidence-gathering.
-3. **DISPATCH querier** — a `research-querier` subagent gathers, evaluates, and
-   synthesizes evidence (Q269: synthesis artifact is the `conclusion` field).
-4. **UPDATE the research** — on sufficient convergence, set the research
-   `concluded` with `findings`/`conclusion`/`recommendation`. On inconclusive
-   evidence, set `inconclusive`. If new evidence needed, file an `open` question
-   and STOP.
+2. **FORM hypotheses** — seed disjoint candidate answers and/or drill an
+   `uncertain` branch of the tree.
+3. **DISPATCH explorers** — `research-explorer` subagents gather read-only
+   evidence; parallel for disjoint roots, serial while drilling a branch.
+4. **VALIDATE citations + adjudicate** — re-check every citation; set each
+   node's status; dispatch a `research-experimenter` into a throwaway worktree
+   (harvest-then-discard) when an explorer returns a `probeRequest`.
+5. **CONFIRMED answer → CONCLUDE** — set the research `concluded` and write its
+   `findings`/`conclusion`/`recommendation` fields (pure narrative, in-ledger),
+   then — per Q269's no-working-tree-write discipline — route the FULL cited
+   synthesis (question, adjudicated tree, every `[correct]` citation with
+   verbatim excerpt) as a SEPARATE markdown artifact through `cq log put` to
+   `.cq/logs/<ts>-research-<RS>.md`, recorded in the item's `sessionLogs`.
+6. **NEEDS user input → file an `open` question and STOP** — only for a genuine
+   requirements/preference ambiguity, a decisive experiment that cannot be
+   produced from the repo or the reachable web, or missing external access.
+   Never a whether-to-answer / out-of-scope / magnitude disposition question.
 
 ### Research-flow handoffs
 
-- Research-flow is currently driven by `/cq:research:advance` inline under
-  `/cq:advance` and does not emit its own standalone handoff (it is chained).
+- The standalone stop maps to a handoff: `drained` (concluded, or nothing
+  actionable), `answers-required` (parked on a step-6 question), `mixed`, or
+  `illness-detected`. Suppressed when chained under `/cq:advance` (the wrapper
+  writes the single run-level handoff).
 - A concluded research satisfies its dependent tasks; a dependent task blocked
   on an inconclusive research awaits either a research re-opening (answering the
   gating `open` question) or user action.
