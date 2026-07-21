@@ -2,8 +2,8 @@
  * Shared flow-detection predicates (T361 / G44, fixes D50; P-seed T542 / G77 /
  * M240, fixes D94).
  *
- * The SINGLE SOURCE OF TRUTH for the `/cq:advance` flow's four detection
- * predicates — P-investigate, P-seed, P-plan, P-implement — plus the
+ * The SINGLE SOURCE OF TRUTH for the `/cq:advance` flow's five detection
+ * predicates — P-investigate, P-seed, P-plan, P-research, P-implement — plus the
  * open-question gate and the informational `belowFloor` companion. Both
  * `@cq/cli` and `@cq/ledger-mcp` import this so the flow's actionability
  * semantics are derived in exactly ONE place rather than re-implemented per
@@ -29,6 +29,13 @@
  *    predicates, so the flow falsely reported DRAINED.
  *  - P-plan — a goal in `clarifying` with NO open linked question, OR a goal in
  *    `planning`.
+ *  - P-research (G80/M246, Q265/Q261) — a `researches` item in an ACTIONABLE
+ *    status (open/wip/inconclusive, mirroring DEFECT_ACTIONABLE_STATUSES: an
+ *    answered question can revive an inconclusive research) that is NOT gated
+ *    solely by an open linked question (an open `questions` item whose
+ *    `ledgerRefs` name `researches:<RS>`). Because RESEARCHES_SCHEMA declares
+ *    `satisfiesDependencyStatuses ["concluded"]`, the dependency resolver
+ *    separately gates research-dependent tasks in P-implement.
  *  - P-implement — a goal in `planned`/`building` with a DAG-READY non-terminal
  *    task: status non-terminal and not `blocked`; every entry in its `dependsOn`
  *    is SATISFIED (see the dependency-resolution spec below); its milestone's
@@ -73,6 +80,7 @@ import {
   GOALS_LEDGER,
   MILESTONES_LEDGER,
   QUESTIONS_LEDGER,
+  RESEARCHES_LEDGER,
   TASKS_LEDGER,
 } from "../constants.js";
 import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
@@ -90,16 +98,17 @@ export interface PredicateVerdict {
 
 /**
  * The flow-detection verdicts derived from one store snapshot. `pInvestigate`,
- * `pSeed`, `pPlan`, and `pImplement` mirror the `/cq:advance` cycle stages (in
- * flow order); `openQuestionGate` enumerates the open questions that gate any of
- * them; `belowFloor` is an INFORMATIONAL companion to `pSeed` (root-caused,
- * unowned, un-gated defects whose severity is below the seed floor) that MUST
- * NOT gate any stop.
+ * `pSeed`, `pPlan`, `pResearch`, and `pImplement` mirror the `/cq:advance` cycle
+ * stages (in flow order); `openQuestionGate` enumerates the open questions that
+ * gate any of them; `belowFloor` is an INFORMATIONAL companion to `pSeed`
+ * (root-caused, unowned, un-gated defects whose severity is below the seed
+ * floor) that MUST NOT gate any stop.
  */
 export interface DerivedPredicates {
   pInvestigate: PredicateVerdict;
   pSeed: PredicateVerdict;
   pPlan: PredicateVerdict;
+  pResearch: PredicateVerdict;
   pImplement: PredicateVerdict;
   openQuestionGate: PredicateVerdict;
   belowFloor: PredicateVerdict;
@@ -109,6 +118,12 @@ export interface DerivedPredicates {
 
 /** Defect statuses that are ACTIONABLE by investigate-flow. */
 const DEFECT_ACTIONABLE_STATUSES = new Set(["open", "wip", "inconclusive"]);
+/**
+ * Research statuses that are ACTIONABLE by research-flow (P-research). Mirrors
+ * DEFECT_ACTIONABLE_STATUSES: `inconclusive` is re-openable, so an answered
+ * question can revive an inconclusive research.
+ */
+const RESEARCH_ACTIONABLE_STATUSES = new Set(["open", "wip", "inconclusive"]);
 /** The defect status that makes a defect a P-seed candidate (fix-owning gap). */
 const DEFECT_SEED_STATUS = "root-caused";
 /**
@@ -189,6 +204,7 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
   const tasks = activeItems(store, TASKS_LEDGER);
   const questions = activeItems(store, QUESTIONS_LEDGER);
   const milestones = activeItems(store, MILESTONES_LEDGER);
+  const researches = activeItems(store, RESEARCHES_LEDGER);
 
   // --- dependency-resolution indexes (G80/M245), built ONCE up front --------
   // A single snapshot of every registered ledger: its active items keyed by id
@@ -344,6 +360,22 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
     }
   }
 
+  // --- P-research ----------------------------------------------------------
+  // A P-research is a `researches` item in an ACTIONABLE status that is not
+  // gated solely by an open linked question (mirrors P-investigate's gating).
+  // The T552 dependency resolver separately gates research-dependent tasks
+  // (RESEARCHES_SCHEMA.satisfiesDependencyStatuses = ["concluded"]).
+  const researchItems: string[] = [];
+  for (const r of researches) {
+    if (!RESEARCH_ACTIONABLE_STATUSES.has(r.status)) continue;
+    const blockingQs = questionsGating(RESEARCHES_LEDGER, r.id);
+    if (blockingQs.length > 0) {
+      for (const qid of blockingQs) gatingQuestionIds.add(qid);
+      continue;
+    }
+    researchItems.push(r.id);
+  }
+
   // --- P-implement ---------------------------------------------------------
   // Lookup tables P-implement needs:
   //  - tasks grouped by milestone (for milestone-dependsOn satisfaction);
@@ -420,6 +452,7 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
     pInvestigate: { value: investigateItems.length > 0, items: investigateItems },
     pSeed: { value: seedItems.length > 0, items: seedItems },
     pPlan: { value: planItems.length > 0, items: planItems },
+    pResearch: { value: researchItems.length > 0, items: researchItems },
     pImplement: { value: implementItems.length > 0, items: implementItems },
     openQuestionGate: {
       value: gatingQuestionIds.size > 0,

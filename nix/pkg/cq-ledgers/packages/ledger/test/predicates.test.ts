@@ -370,6 +370,8 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
         const p = derivePredicates(store);
         expect(p.pInvestigate).toEqual({ value: false, items: [] });
         expect(p.pPlan).toEqual({ value: false, items: [] });
+        // G80/M246: the DRAINED snapshot carries an all-false P-research verdict.
+        expect(p.pResearch).toEqual({ value: false, items: [] });
         expect(p.pImplement).toEqual({ value: false, items: [] });
         expect(p.openQuestionGate).toEqual({ value: false, items: [] });
         // G77/M240: the DRAINED snapshot also carries an all-false seed verdict
@@ -405,6 +407,7 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
         const p = derivePredicates(store);
         expect(p.pInvestigate).toEqual({ value: false, items: [] });
         expect(p.pPlan).toEqual({ value: false, items: [] });
+        expect(p.pResearch).toEqual({ value: false, items: [] });
         expect(p.pImplement).toEqual({ value: false, items: [] });
         const ext = p as unknown as SeedProbe;
         expectVerdict(ext.pSeed, true, [d.id]);
@@ -657,6 +660,179 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
         expectVerdict(ext.belowFloor, true, [med.id, low.id]);
         expect(ext.pSeed!.items).not.toContain(med.id);
         expect(ext.pSeed!.items).not.toContain(low.id);
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // (G80/M246) P-research predicate — a `researches` item in an ACTIONABLE
+    // status (open/wip/inconclusive) that is not gated solely by an open linked
+    // question. Positioned between P-plan and P-implement in the flow.
+    // -----------------------------------------------------------------------
+
+    // (research-1) REPRODUCTION (D94 pattern) — ONE open research and nothing
+    //     else: WITHOUT pResearch the store would report DRAINED (all stage
+    //     predicates FALSE), yet pResearch names the actionable research.
+    it("(research-1) lone open research → pResearch=[RS1] while every other P-predicate is FALSE", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const r = await store.createItem(RESEARCHES, m.id, {
+          status: "open",
+          fields: { question: "how does X behave under load?" },
+        });
+
+        const p = derivePredicates(store);
+        expect(p.pResearch).toEqual({ value: true, items: [r.id] });
+        // The would-be-DRAINED-without-pResearch shape: everything else FALSE.
+        expect(p.pInvestigate).toEqual({ value: false, items: [] });
+        expect(p.pPlan).toEqual({ value: false, items: [] });
+        expect(p.pImplement).toEqual({ value: false, items: [] });
+        expect(p.openQuestionGate).toEqual({ value: false, items: [] });
+        const ext = p as unknown as SeedProbe;
+        expectVerdict(ext.pSeed, false, []);
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    // (research-2) wip and inconclusive researches are ACTIONABLE too.
+    it("(research-2) wip and inconclusive researches → pResearch actionable", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const rWip = await store.createItem(RESEARCHES, m.id, {
+          status: "wip",
+          fields: { question: "wip research" },
+        });
+        const rInc = await store.createItem(RESEARCHES, m.id, {
+          status: "inconclusive",
+          fields: { question: "inconclusive research" },
+        });
+
+        const p = derivePredicates(store);
+        expect(p.pResearch).toEqual({ value: true, items: [rWip.id, rInc.id] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    // (research-3) concluded / abandoned researches are terminal → NOT
+    //     actionable, so pResearch is FALSE.
+    it("(research-3) concluded / abandoned researches → pResearch FALSE", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        await store.createItem(RESEARCHES, m.id, {
+          status: "concluded",
+          fields: { question: "settled" },
+        });
+        await store.createItem(RESEARCHES, m.id, {
+          status: "abandoned",
+          fields: { question: "dropped" },
+        });
+
+        const p = derivePredicates(store);
+        expect(p.pResearch).toEqual({ value: false, items: [] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    // (research-4) an open research gated SOLELY by an open linked question is
+    //     NOT in pResearch.items, and the question id surfaces in
+    //     openQuestionGate (mirrors defects' gating).
+    it("(research-4) open research gated by an open linked question → NOT actionable + question in gate", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const r = await store.createItem(RESEARCHES, m.id, {
+          status: "open",
+          fields: { question: "needs a decision first" },
+        });
+        const q = await store.createItem(QUESTIONS, m.id, {
+          status: "open",
+          fields: { question: "which scope?", ledgerRefs: [`${RESEARCHES}:${r.id}`] },
+        });
+
+        const p = derivePredicates(store);
+        expect(p.pResearch).toEqual({ value: false, items: [] });
+        expect(p.openQuestionGate.value).toBe(true);
+        expect(p.openQuestionGate.items).toContain(q.id);
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    // (research-5) answering the linked question REVIVES the (inconclusive)
+    //     research: it becomes actionable again and the gate clears.
+    it("(research-5) answered question linked to an inconclusive research → actionable again", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const r = await store.createItem(RESEARCHES, m.id, {
+          status: "inconclusive",
+          fields: { question: "did not converge" },
+        });
+        const q = await store.createItem(QUESTIONS, m.id, {
+          status: "open",
+          fields: { question: "need input to re-open?", ledgerRefs: [`${RESEARCHES}:${r.id}`] },
+        });
+
+        // Open question gates the inconclusive research.
+        const gated = derivePredicates(store);
+        expect(gated.pResearch).toEqual({ value: false, items: [] });
+        expect(gated.openQuestionGate.items).toContain(q.id);
+
+        // Answer it → the inconclusive research is actionable again.
+        await store.updateItem(QUESTIONS, q.id, { status: "answered", fields: { answer: "yes" } });
+        const answered = derivePredicates(store);
+        expect(answered.pResearch).toEqual({ value: true, items: [r.id] });
+        expect(answered.openQuestionGate).toEqual({ value: false, items: [] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    // (research-6) E2E lifecycle — an open research + a task that dependsOn
+    //     researches:RS1 under a planned goal: pResearch TRUE (open research is
+    //     actionable) while pImplement FALSE (the task's research dep is not yet
+    //     `concluded`). Concluding the research (open→wip→concluded) flips both:
+    //     pResearch FALSE (terminal) and pImplement TRUE (dep satisfied).
+    it("(research-6) e2e: open research gates a dependent task; concluding flips pResearch→FALSE, pImplement→TRUE", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const g = await store.createItem(GOALS, m.id, {
+          status: "planned",
+          fields: { title: "g", description: "d" },
+        });
+        const r = await store.createItem(RESEARCHES, m.id, {
+          status: "open",
+          fields: { question: "prerequisite investigation" },
+        });
+        const t = await store.createItem(TASKS, m.id, {
+          status: "planned",
+          fields: {
+            headline: "research-dependent",
+            ledgerRefs: [`${GOALS}:${g.id}`],
+            dependsOn: [`${RESEARCHES}:${r.id}`],
+          },
+        });
+
+        // Open research: actionable, and its dep holds the task out of implement.
+        const before = derivePredicates(store);
+        expect(before.pResearch).toEqual({ value: true, items: [r.id] });
+        expect(before.pImplement).toEqual({ value: false, items: [] });
+
+        // Conclude the research (F1: open→wip→concluded).
+        await store.updateItem(RESEARCHES, r.id, { status: "wip" });
+        await store.updateItem(RESEARCHES, r.id, { status: "concluded" });
+
+        const after = derivePredicates(store);
+        expect(after.pResearch).toEqual({ value: false, items: [] });
+        expect(after.pImplement).toEqual({ value: true, items: [t.id] });
       } finally {
         await factory.teardown(store);
       }

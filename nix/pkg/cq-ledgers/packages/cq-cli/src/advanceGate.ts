@@ -220,6 +220,7 @@ function allowVerdict(reason: string): AdvanceGateVerdict {
       pInvestigate: empty,
       pSeed: empty,
       pPlan: empty,
+      pResearch: empty,
       pImplement: empty,
       openQuestionGate: empty,
       belowFloor: empty,
