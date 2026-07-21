@@ -3,7 +3,7 @@
  *
  * Returns an array of `tool()` instances for
  * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
- * The 26-tool surface is `LEDGER_TOOL_NAMES` (see the section dividers below);
+ * The 27-tool surface is `LEDGER_TOOL_NAMES` (see the section dividers below);
  * the stdio counterpart is `registerLedgerStdioTools` (./stdioLedgerTools.ts).
  *
  * Capability-gated tools:
@@ -12,6 +12,11 @@
  *  - get_reviewers / get_planners / get_config require an injected
  *    `configCapability` (constructed in @cq/ledger-mcp over @cq/config, R193/G18);
  *    absent it they throw `ConfigNotImplementedError`.
+ *  - list_projects requires an injected `listProjects` capability (T585 /
+ *    Q284); UNLIKE the above, every real server always supplies one (the
+ *    public `createLedgerMcpServer` builder never leaves it undefined) — the
+ *    `ListProjectsNotImplementedError` it throws when absent is reachable
+ *    only by calling this factory directly without threading one.
  *
  * Each handler turns validated input into a single LedgerStore call, serialises
  * the result as JSON, and returns it as a text content block. Errors surface via
@@ -40,6 +45,10 @@ import {
   PromptCatalogNotImplementedError,
   type PromptCatalogCapability,
 } from "./promptCatalogCapability.js";
+import {
+  ListProjectsNotImplementedError,
+  type ListProjectsCapability,
+} from "./listProjects.js";
 
 /**
  * The SDK's `tools?:` field on createSdkMcpServer is typed as
@@ -151,6 +160,7 @@ export function createLedgerMcpTools(
   configCapability?: ConfigCapability,
   promptCatalog?: PromptCatalogCapability,
   toolPrefix: string = "",
+  listProjects?: ListProjectsCapability,
 ): AnyTool[] {
   // Fail fast on an invalid prefix at the system boundary (Q205 / T373).
   assertToolPrefix(toolPrefix);
@@ -630,6 +640,23 @@ ${QUERY_LANGUAGE_HELP}`,
     },
   );
 
+  // ---- Multi-project overview (1) ----------------------------------------
+
+  const listProjectsTool = tool(
+    "list_projects",
+    "List every project this server's store knows about. Returns " +
+      "{ projects: [{ key, displayName, createdAt? }] }. A multi-tenant " +
+      "backend (postgres) returns every registered tenant; every other " +
+      "backend (xdg, in-memory) returns EXACTLY ONE entry synthesized from " +
+      "this server's own resolved project — so callers never need to sniff " +
+      "the backend to know how many projects to expect.",
+    {} as Record<string, never>,
+    async () => {
+      if (listProjects === undefined) throw new ListProjectsNotImplementedError();
+      return jsonResult(await listProjects());
+    },
+  );
+
   const tools = [
     enumerateLedgers,
     fetchLedger,
@@ -657,6 +684,7 @@ ${QUERY_LANGUAGE_HELP}`,
     fetchPrompt,
     validateInput,
     validateOutput,
+    listProjectsTool,
   ] as unknown as AnyTool[];
 
   // Pure name transform (Q208): register each tool under its prefixed name.
@@ -742,4 +770,5 @@ export const LEDGER_TOOL_NAMES = [
   "fetch_prompt",
   "validate_input",
   "validate_output",
+  "list_projects",
 ] as const;

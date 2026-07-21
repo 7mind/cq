@@ -118,7 +118,7 @@ export class McpLedgerClient implements LedgerClient {
   static async embedded(cwd: string): Promise<McpLedgerClient> {
     const resolved = await createEmbeddedStore(cwd);
     const store = resolved.store;
-    const server = buildServer(store, path.basename(cwd), resolved.configRoot);
+    const server = buildServer(store, path.basename(cwd), resolved.configRoot, resolved.projectKey);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     const client = new Client(

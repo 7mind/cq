@@ -121,6 +121,7 @@ import {
   MAX_READ_LOG_BYTES,
   type ReadLogResult,
 } from "../../mcp/readLog.js";
+import type { ListProjectsResult } from "../../mcp/listProjects.js";
 import { notifyProjectChanged, writeTransaction } from "./connection.js";
 import { classifyCanonicalLedgers } from "./divergence.js";
 
@@ -685,6 +686,31 @@ export class PostgresLedgerStore implements LedgerStore {
     for (const row of rows) {
       yield { path: row.path, content: row.content };
     }
+  }
+
+  /**
+   * List every registered tenant in the `projects` table (T585 / Q284) — the
+   * genuine multi-tenant `list_projects` answer, duck-typed by
+   * `listProjectsOf` (ledger-mcp/main.ts) exactly like `readLog`/`listLogs`
+   * above. Ordered by `display_name` for a stable, human-friendly listing;
+   * scoped to NO tenant (unlike every other query on this store) since
+   * listing every project IS the point.
+   */
+  async listProjects(): Promise<ListProjectsResult> {
+    const rows = await this.pool()<
+      Array<{ project_key: string; display_name: string; created_at: string }>
+    >`
+      SELECT project_key, display_name, created_at::text AS created_at
+      FROM projects
+      ORDER BY display_name
+    `;
+    return {
+      projects: rows.map((row) => ({
+        key: row.project_key,
+        displayName: row.display_name,
+        createdAt: row.created_at,
+      })),
+    };
   }
 
   /**

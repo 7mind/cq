@@ -1,6 +1,6 @@
 #!/usr/bin/env -S bun run
 /**
- * ledger-mcp — standalone MCP server exposing the 26 ledger tools.
+ * ledger-mcp — standalone MCP server exposing the 27 ledger tools.
  *
  * This is the cq-free ledger MCP server: it serves the tool surface backed
  * by the store `createLedgerStore` resolves for the supplied `--cwd` directory
@@ -46,6 +46,7 @@ import {
   type ReadLogCapability,
   type ConfigCapability,
   type PromptCatalogCapability,
+  type ListProjectsCapability,
   type ResolvedLedgerStore,
   type XdgCoherenceWatcher,
   type PostgresCoherenceWatcher,
@@ -300,7 +301,7 @@ export function projectInstructionLine(displayName: string): string {
 }
 
 /**
- * Build a fresh McpServer with the 26 ledger tools (LEDGER_TOOL_NAMES) bound to
+ * Build a fresh McpServer with the 27 ledger tools (LEDGER_TOOL_NAMES) bound to
  * `store`. read_log is wired only when `store` is filesystem-backed.
  *
  * `displayName` is the basename of the resolved `--cwd` (the project directory
@@ -347,6 +348,28 @@ export function readLogOf(store: LedgerStore): ReadLogCapability | undefined {
   if (typeof candidate !== "function") return undefined;
   const fn = candidate as ReadLogCapability;
   return (relPath) => fn.call(store, relPath);
+}
+
+/**
+ * Build the ALWAYS-DEFINED `list_projects` capability (T585 / Q284): the
+ * store's own genuine multi-tenant `listProjects()` when it advertises one
+ * (duck-typed exactly like {@link readLogOf} — PostgresLedgerStore is the
+ * only implementor today), else a closure synthesizing the single-project
+ * fallback entry from `fallback` (this server's own resolved projectKey +
+ * display name). Unlike `readLogOf`, this NEVER returns `undefined` — every
+ * server built through {@link createLedgerMcpServer} answers `list_projects`,
+ * so frontends never need to sniff the backend (Q284).
+ */
+export function listProjectsOf(
+  store: LedgerStore,
+  fallback: { key: string; displayName: string },
+): ListProjectsCapability {
+  const candidate = (store as { listProjects?: unknown }).listProjects;
+  if (typeof candidate === "function") {
+    const fn = candidate as ListProjectsCapability;
+    return () => fn.call(store);
+  }
+  return () => ({ projects: [fallback] });
 }
 
 /**
@@ -400,7 +423,7 @@ export function startLedgerCoherenceWatcher(
  * Options for {@link createLedgerMcpServer}, the public builder for an
  * `McpServer` bound to one `store` (G45 / Q209).
  *
- * `toolPrefix` is OPTIONAL and defaults to `''` (the unprefixed 26-tool
+ * `toolPrefix` is OPTIONAL and defaults to `''` (the unprefixed 27-tool
  * surface). A non-empty prefix renames every registered tool to its
  * `prefixToolName(prefix, name)` form and rewrites the matching tool names in
  * the server-level `instructions`. The prefix is validated by
@@ -422,6 +445,15 @@ export interface CreateLedgerMcpServerOptions {
    * `ResolvedLedgerStore` is available (falls back to `rootDirOf(store)`).
    */
   configRoot?: string;
+  /**
+   * This server's resolved `projectKey` (T585 / Q284) — `ResolvedLedgerStore.
+   * projectKey` from `createLedgerStore`. Feeds the single-project
+   * `list_projects` fallback (`listProjectsOf`) when `store` is not itself
+   * multi-tenant. Omitted, the fallback keys off `displayName` instead (the
+   * honest minimal for a caller with no `ResolvedLedgerStore` at hand, e.g. a
+   * test constructing a server directly over an in-memory store).
+   */
+  projectKey?: string;
 }
 
 /**
@@ -432,7 +464,7 @@ export interface CreateLedgerMcpServerOptions {
  *
  * With `toolPrefix` omitted or `''` the behaviour is BYTE-IDENTICAL to the
  * historical `buildServer` (serverInfo, instructions, capability gating, and the
- * registered 26-tool names are all unchanged). A non-empty prefix renames the
+ * registered 27-tool names are all unchanged). A non-empty prefix renames the
  * tools and the instruction references via the shared
  * {@link buildServerInstructions} / {@link registerLedgerStdioTools} prefix path.
  */
@@ -471,7 +503,22 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
     rootDir !== undefined ? createConfigCapability(rootDir) : undefined;
   const promptCatalog: PromptCatalogCapability | undefined =
     rootDir !== undefined ? createPromptCatalogCapability(rootDir) : undefined;
-  registerLedgerStdioTools(server, store, readLog, configCapability, promptCatalog, toolPrefix);
+  // list_projects (T585 / Q284): ALWAYS wired, never left undefined — see
+  // listProjectsOf's doc. The single-project fallback key defaults to
+  // `displayName` when the caller has no resolved `projectKey` at hand.
+  const listProjects: ListProjectsCapability = listProjectsOf(store, {
+    key: opts.projectKey ?? displayName,
+    displayName,
+  });
+  registerLedgerStdioTools(
+    server,
+    store,
+    readLog,
+    configCapability,
+    promptCatalog,
+    toolPrefix,
+    listProjects,
+  );
   return server;
 }
 
@@ -479,17 +526,19 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
  * Thin unprefixed wrapper over {@link createLedgerMcpServer} (G45 / Q209). Kept
  * BYTE-IDENTICAL in behaviour to its historical form for both call sites — the
  * stdio `main()` path and `attachMcpHttp` — so cq frontends/commands that rely
- * on the unprefixed 26-tool surface are unaffected.
+ * on the unprefixed 27-tool surface are unaffected.
  */
 export function buildServer(
   store: LedgerStore,
   displayName: string,
   configRoot?: string,
+  projectKey?: string,
 ): McpServer {
   return createLedgerMcpServer({
     store,
     displayName,
     ...(configRoot !== undefined ? { configRoot } : {}),
+    ...(projectKey !== undefined ? { projectKey } : {}),
   });
 }
 
@@ -531,6 +580,7 @@ export function attachMcpHttp(
   displayName: string,
   toolPrefix = "",
   configRoot?: string,
+  projectKey?: string,
 ): McpHttpHandlers {
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
@@ -572,6 +622,7 @@ export function attachMcpHttp(
       displayName,
       toolPrefix,
       ...(configRoot !== undefined ? { configRoot } : {}),
+      ...(projectKey !== undefined ? { projectKey } : {}),
     });
     await server.connect(transport);
     // Body already consumed above; hand it back so the transport doesn't
@@ -619,8 +670,15 @@ export function serveHttp(
   displayName: string,
   toolPrefix = "",
   configRoot?: string,
+  projectKey?: string,
 ): ReturnType<typeof Bun.serve> {
-  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(store, displayName, toolPrefix, configRoot);
+  const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
+    store,
+    displayName,
+    toolPrefix,
+    configRoot,
+    projectKey,
+  );
 
   return Bun.serve({
     hostname: opts.host,
@@ -673,7 +731,14 @@ export async function main(argv: readonly string[]): Promise<void> {
   const store = resolved.store;
 
   if (http !== null) {
-    const server = serveHttp(store, http, displayName, toolPrefix, resolved.configRoot);
+    const server = serveHttp(
+      store,
+      http,
+      displayName,
+      toolPrefix,
+      resolved.configRoot,
+      resolved.projectKey,
+    );
     // Watch the ledger for out-of-process advances; push a `changed` frame to
     // subscribed UIs on any change. The watcher is selected by backend (file
     // watch for fs, orphan-ref-sha poll for git-object).
@@ -698,6 +763,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     displayName,
     toolPrefix,
     configRoot: resolved.configRoot,
+    ...(resolved.projectKey !== undefined ? { projectKey: resolved.projectKey } : {}),
   });
   // Even on stdio, watch the ledger so this server's cache stays fresh when
   // another process writes the same ledgers (file watch for fs, ref-sha poll

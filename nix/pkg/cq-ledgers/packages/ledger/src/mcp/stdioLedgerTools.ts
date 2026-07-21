@@ -1,7 +1,7 @@
 /**
  * Stdio MCP tool registration for the ledger surface.
  *
- * Registers the 26-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
+ * Registers the 27-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
  * `@modelcontextprotocol/sdk` `McpServer` via `registerTool`, backed by a
  * `LedgerStore`. Stdio counterpart to `createLedgerMcpTools` (the in-process
  * Claude-SDK `tool()` factory in `./ledgerTools.ts`): identical operational
@@ -32,6 +32,10 @@ import {
   PromptCatalogNotImplementedError,
   type PromptCatalogCapability,
 } from "./promptCatalogCapability.js";
+import {
+  ListProjectsNotImplementedError,
+  type ListProjectsCapability,
+} from "./listProjects.js";
 import { assertToolPrefix, prefixToolName } from "./ledgerTools.js";
 
 // ---------------------------------------------------------------------------
@@ -117,7 +121,7 @@ function jsonResult(value: unknown): {
 }
 
 /**
- * Register the 26 ledger tools on the given MCP server. Identical
+ * Register the 27 ledger tools on the given MCP server. Identical
  * semantics to the Claude-side factory in `./ledgerTools.ts`.
  *
  * `readLog` is the explicit, FS-store-backed `read_log` capability (Q87 /
@@ -141,6 +145,12 @@ function jsonResult(value: unknown): {
  * The default `''` registers byte-identically to the unprefixed surface
  * (`LEDGER_TOOL_NAMES`); a non-empty prefix registers `prefixedToolNames(prefix)`.
  * Validated once at the boundary via `assertToolPrefix`.
+ *
+ * `listProjects` (T585 / Q284) is the `list_projects` capability. Unlike the
+ * capabilities above, every real server always supplies one (the public
+ * `createLedgerMcpServer` builder never leaves it undefined); omitted, the
+ * tool throws `ListProjectsNotImplementedError` — reachable only by calling
+ * this factory directly without threading one.
  */
 export function registerLedgerStdioTools(
   server: McpServer,
@@ -149,6 +159,7 @@ export function registerLedgerStdioTools(
   configCapability?: ConfigCapability,
   promptCatalog?: PromptCatalogCapability,
   toolPrefix: string = "",
+  listProjects?: ListProjectsCapability,
 ): void {
   assertToolPrefix(toolPrefix);
 
@@ -668,6 +679,26 @@ ${QUERY_LANGUAGE_HELP}`,
     (args) => {
       if (promptCatalog === undefined) throw new PromptCatalogNotImplementedError();
       return jsonResult(promptCatalog.validateOutput(args.roleId, args.output));
+    },
+  );
+
+  // ---- Multi-project overview (1) -----------------------------------------
+
+  reg(
+    "list_projects",
+    {
+      description:
+        "List every project this server's store knows about. Returns " +
+        "{ projects: [{ key, displayName, createdAt? }] }. A multi-tenant " +
+        "backend (postgres) returns every registered tenant; every other " +
+        "backend (xdg, in-memory) returns EXACTLY ONE entry synthesized from " +
+        "this server's own resolved project — so callers never need to sniff " +
+        "the backend to know how many projects to expect.",
+      inputSchema: {},
+    },
+    async () => {
+      if (listProjects === undefined) throw new ListProjectsNotImplementedError();
+      return jsonResult(await listProjects());
     },
   );
 }

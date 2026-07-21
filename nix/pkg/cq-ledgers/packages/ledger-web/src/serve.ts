@@ -294,6 +294,7 @@ async function serveEmbedded(
     path.basename(opts.cwd),
     "",
     resolved.configRoot,
+    resolved.projectKey,
   );
 
   const server = scanForPort(opts.port, (p) =>

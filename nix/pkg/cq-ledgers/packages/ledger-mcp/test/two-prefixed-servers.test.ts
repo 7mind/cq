@@ -7,7 +7,7 @@
  *
  * Proves that the tool-prefix mechanism delivers process-level co-residency:
  *  (1) the two tools/list name sets are DISJOINT — zero collision;
- *  (2) the unprefixed set === `LEDGER_TOOL_NAMES` (26), the prefixed set ===
+ *  (2) the unprefixed set === `LEDGER_TOOL_NAMES` (27), the prefixed set ===
  *      `prefixedToolNames('myproj')`;
  *  (3) BOTH servers are functional end-to-end — a real `create_milestone` +
  *      `create_item` + `fetch_item` round-trip on EACH (the prefixed one via
@@ -141,7 +141,7 @@ describe("two prefixed ledger-MCP servers in one process (T380 / Q211)", () => {
       const intersection = ppNames.filter((n) => cqSet.has(n));
       expect(intersection).toEqual([]);
 
-      // (2) Exact surfaces: unprefixed === LEDGER_TOOL_NAMES (26),
+      // (2) Exact surfaces: unprefixed === LEDGER_TOOL_NAMES (27),
       //     prefixed === prefixedToolNames('myproj').
       expect(cqNames).toEqual([...LEDGER_TOOL_NAMES].sort());
       expect(cqNames.length).toBe(LEDGER_TOOL_NAMES.length);

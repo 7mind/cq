@@ -152,6 +152,8 @@ export {
   ReadLogNotImplementedError,
 } from "./mcp/readLog.js";
 export type { ReadLogCapability, ReadLogResult } from "./mcp/readLog.js";
+export { ListProjectsNotImplementedError } from "./mcp/listProjects.js";
+export type { ListProjectsCapability, ListProjectsResult, ProjectEntry } from "./mcp/listProjects.js";
 export { ConfigNotImplementedError } from "./mcp/configCapability.js";
 export type {
   ConfigCapability,

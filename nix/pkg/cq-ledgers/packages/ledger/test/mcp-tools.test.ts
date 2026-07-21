@@ -57,11 +57,11 @@ function decode<T>(result: { content: Array<{ type: string; text: string }> }): 
 }
 
 describe("ledger MCP tools", () => {
-  it("exports the expected tool names (26 tools)", async () => {
+  it("exports the expected tool names (27 tools)", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...LEDGER_TOOL_NAMES].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(26);
+    expect(LEDGER_TOOL_NAMES.length).toBe(27);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
@@ -75,6 +75,7 @@ describe("ledger MCP tools", () => {
     expect(LEDGER_TOOL_NAMES).toContain("fetch_prompt");
     expect(LEDGER_TOOL_NAMES).toContain("validate_input");
     expect(LEDGER_TOOL_NAMES).toContain("validate_output");
+    expect(LEDGER_TOOL_NAMES).toContain("list_projects");
   });
 
   it("prefixed factory names equal prefixedToolNames(prefix) — drift guard", async () => {
@@ -91,6 +92,41 @@ describe("ledger MCP tools", () => {
     await expect(
       callTool(tools, "read_log", { path: "anything.md" }),
     ).rejects.toThrow(/not implemented/i);
+  });
+
+  it("list_projects with no capability supplied throws the documented not-implemented error", async () => {
+    const store = await buildStore();
+    // No listProjects capability supplied at the raw factory level -> the
+    // documented not-implemented error (the public createLedgerMcpServer
+    // builder never leaves it undefined; see listProjects.ts's doc).
+    const tools = createLedgerMcpTools(store);
+    await expect(
+      callTool(tools, "list_projects", {}),
+    ).rejects.toThrow(/not implemented/i);
+  });
+
+  it("list_projects dispatches to an injected capability (multi-tenant shape)", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(
+      store,
+      undefined,
+      undefined,
+      undefined,
+      "",
+      () => ({
+        projects: [
+          { key: "proj-a", displayName: "Project A", createdAt: "2026-01-01T00:00:00.000Z" },
+          { key: "proj-b", displayName: "Project B" },
+        ],
+      }),
+    );
+    const result = decode<{ projects: Array<{ key: string; displayName: string; createdAt?: string }> }>(
+      await callTool(tools, "list_projects", {}),
+    );
+    expect(result.projects).toEqual([
+      { key: "proj-a", displayName: "Project A", createdAt: "2026-01-01T00:00:00.000Z" },
+      { key: "proj-b", displayName: "Project B" },
+    ]);
   });
 
   it("fetch_prompt/validate_input/validate_output without a catalog capability throw not-implemented", async () => {

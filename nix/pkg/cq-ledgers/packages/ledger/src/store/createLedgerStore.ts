@@ -121,6 +121,16 @@ export interface ResolvedLedgerStore {
    * own tenant). `undefined` for every other backend.
    */
   readonly pg?: ResolvedPostgresHandle;
+  /**
+   * This repo's resolved `projectKey` (T585 / Q284) — the SAME value
+   * `resolveProjectKey` computed to key the xdg `stateDir` / the postgres
+   * tenant row, exposed here so ledger-mcp's `createLedgerMcpServer` can
+   * synthesize the single-project `list_projects` fallback entry without
+   * re-resolving it. `undefined` only for the legacy backends
+   * {@link openLegacyLedgerStore} returns (no such concept there — that
+   * internal path is not a `list_projects`-serving runtime primary).
+   */
+  readonly projectKey?: string;
 }
 
 /**
@@ -301,9 +311,9 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
     backup = new BackupScheduler(async () => {
       await runBackupExport({ store, root, target: backupTarget, branch, logsDir });
     });
-    return { store, configRoot: root, backend, branch, dbPath, logsDir, backup };
+    return { store, configRoot: root, backend, branch, dbPath, logsDir, backup, projectKey };
   }
-  return { store, configRoot: root, backend, branch, dbPath, logsDir };
+  return { store, configRoot: root, backend, branch, dbPath, logsDir, projectKey };
 }
 
 /**
@@ -384,6 +394,7 @@ async function createPostgresLedgerStore(
       backend: "postgres",
       branch,
       pg: { pool, dsn, projectKey },
+      projectKey,
     };
   } catch (err) {
     await pool.close().catch(() => undefined);
