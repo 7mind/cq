@@ -35,6 +35,7 @@ import {
   readDumpOrphanBranch,
   restoreDumpToXdg,
   isXdgPrimaryEmpty,
+  PostgresBackupNotWiredError,
   type LedgerStore,
   type ResetSummary,
 } from "@cq/ledger";
@@ -50,6 +51,13 @@ import { runAdvanceGate } from "./advanceGate.js";
 import { runPredicates } from "./predicates.js";
 import { runCounts } from "./counts.js";
 import { parseLogPutArgs, runLogPut, EXIT_USAGE as LOG_PUT_EXIT_USAGE } from "./logPut.js";
+import {
+  resolvePostgresTenant,
+  countTenantActiveItems,
+  wipeTenantRows,
+  reseedCanonicalTenant,
+  type PostgresTenantHandle,
+} from "./postgresTenant.js";
 
 /**
  * The `cq.toml` config filename, resolved relative to the ledger root. Kept as
@@ -333,6 +341,16 @@ export async function runInit(args: SubcommandArgs, io: DispatchIo): Promise<Sub
  *   - non-TTY, no `--yes`→ REFUSE (exit 2) — never wipe a tree silently.
  */
 export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
+  // backend='postgres' (T583, Q275 context) is scoped to ONE tenant's rows in
+  // a SHARED database — routed to its own handler below rather than the
+  // generic isResettable dispatch: the confirmation message must name the
+  // tenant (display name + project_key) BEFORE createLedgerStore's init()
+  // would auto-register a not-yet-registered one as a side effect.
+  const { backend: preflightBackend } = resolveLedgerBackend(args.cwd);
+  if (preflightBackend === "postgres") {
+    return runResetPostgres(args, io);
+  }
+
   const decision = await confirmDestructive(
     args.yes,
     `Reset ledgers at ${args.cwd}? Backup -> ${LEDGER_STORAGE_DIRNAME}/.backup/ [y/N] `,
@@ -369,6 +387,58 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
 }
 
 /**
+ * `cq reset` — postgres backend (T583). Tenant-scoped backup-equivalent
+ * (reused from the parity backup path when `[ledger].backup != 'none'` — but
+ * that combination is not yet wired for postgres, see
+ * {@link PostgresBackupNotWiredError} / T582, so it fails fast here instead)
+ * + DELETE every row this tenant owns (children-first FK order, same order
+ * `PostgresLedgerStore.backupAndReinitTenant` uses) + re-init the canonical
+ * ledger set — never touching any OTHER tenant's rows in the shared database.
+ *
+ * Resolves the tenant (project_key + display name) via
+ * {@link resolvePostgresTenant} BEFORE confirming, so the prompt names the
+ * blast radius, then wipes + reseeds on the SAME pool/projectKey.
+ */
+async function runResetPostgres(args: SubcommandArgs, io: DispatchIo): Promise<SubcommandOutcome> {
+  const tenant = await resolvePostgresTenant(args.cwd);
+  try {
+    const displayName = tenant.registeredDisplayName ?? tenant.candidateDisplayName;
+    const decision = await confirmDestructive(
+      args.yes,
+      `Reset postgres tenant "${displayName}" (project_key ${tenant.projectKey}) at ${args.cwd}? ` +
+        `DELETEs ALL of this tenant's rows, then reinitialises the canonical ledger set. [y/N] `,
+      `cq reset: refusing to reset postgres tenant "${displayName}" (project_key ${tenant.projectKey}) ` +
+        `at ${args.cwd} without confirmation; re-run with --yes to reset non-interactively.`,
+      io.confirm,
+    );
+    if (!decision.proceed) {
+      return { exitCode: decision.exitCode };
+    }
+
+    if (tenant.backup !== "none") {
+      throw new PostgresBackupNotWiredError(tenant.backup, args.cwd);
+    }
+
+    const before = await countTenantActiveItems(tenant.pool, tenant.projectKey);
+    await wipeTenantRows(tenant.pool, tenant.projectKey, false);
+    await reseedCanonicalTenant(tenant.pool, tenant.projectKey, displayName);
+
+    io.out(
+      `cq reset: reset postgres tenant "${displayName}" (project_key ${tenant.projectKey}) at ${args.cwd}`,
+    );
+    io.out(
+      `  backup: none ([ledger] backend='postgres' tenant-scoped backup is not yet wired; see T582)`,
+    );
+    for (const { name, itemCount } of before) {
+      io.out(`  ${name}: ${itemCount} item(s) wiped, reinitialised empty`);
+    }
+    return { exitCode: 0 };
+  } finally {
+    await tenant.pool.close();
+  }
+}
+
+/**
  * `cq erase` (Q110, the MOST destructive subcommand): DESTROY everything the
  * ledger suite owns under `args.cwd` — with NO backup and NO reinit. Per the
  * user's answer ("erase should erase everything including archives and config"),
@@ -399,6 +469,16 @@ export async function runReset(args: SubcommandArgs, io: DispatchIo): Promise<Su
  * resolved BEST-EFFORT (a malformed cq.toml, no git identity, etc. all degrade
  * to "unknown" rather than aborting the erase) so the fs+config bounded delete
  * below is unaffected by an unresolvable xdg identity.
+ *
+ * backend='postgres' (T583, Q275 context): the tenant's rows live in a SHARED
+ * database (T572) — this repo's `project_key` is ONE of many. Erase resolves
+ * the tenant via {@link resolvePostgresTenant} (also BEST-EFFORT, same
+ * degrade-to-fs-only rationale as xdg above) and, when resolvable, additionally
+ * DELETEs EXACTLY that tenant's rows (items, groups, ledgers, logs, and the
+ * `projects` registry entry) — never another tenant's. Unlike xdg, a
+ * resolvable-but-UNREGISTERED tenant hard-refuses (nothing to erase) rather
+ * than silently skipping the tenant wipe while still deleting the local
+ * fs+config artifacts — see the guard below.
  *
  * Confirmation policy (shared with `reset`, see ./confirm.ts):
  *   - `--yes`             → proceed unattended (no prompt).
@@ -441,11 +521,14 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
   const storageExists = await pathExists(storageDir);
   const configExists = await pathExists(configFile);
 
-  // Best-effort resolve the xdg out-of-tree project dir (T501). Only attempted
-  // when a cq.toml exists to read; any failure (malformed toml, no git
-  // identity/shallow clone, backend isn't 'xdg', …) leaves this undefined and
-  // erase falls back to the bounded fs+config delete only, exactly as before.
+  // Best-effort resolve the xdg out-of-tree project dir (T501), OR the
+  // postgres tenant this cq.toml names (T583). Only attempted when a cq.toml
+  // exists to read; any failure (malformed toml, no git identity/shallow
+  // clone, backend isn't 'xdg'/'postgres', an unreachable postgres, …) leaves
+  // both undefined and erase falls back to the bounded fs+config delete only,
+  // exactly as before.
   let xdgProjectDir: string | undefined;
+  let postgresTenant: PostgresTenantHandle | undefined;
   if (configExists) {
     try {
       const { backend } = resolveLedgerBackend(args.cwd);
@@ -454,9 +537,12 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
         const projectId = config?.ledger?.projectId ?? null;
         const projectKey = await resolveProjectKey({ repoRoot: args.cwd, projectId });
         xdgProjectDir = resolveStateDirBase(projectKey);
+      } else if (backend === "postgres") {
+        postgresTenant = await resolvePostgresTenant(args.cwd);
       }
     } catch {
       xdgProjectDir = undefined;
+      postgresTenant = undefined;
     }
   }
   // D91: deliberately OUTSIDE the try/catch above — an invariant violation
@@ -465,6 +551,20 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     assertXdgProjectDirScoped(xdgProjectDir, resolveStateDirBase(""));
   }
   const xdgProjectDirExists = xdgProjectDir !== undefined && (await pathExists(xdgProjectDir));
+
+  // Postgres-specific guard (T583): a project_key with no `projects` row has
+  // no tenant rows in the shared database to erase — refuse rather than
+  // silently no-op the tenant wipe while still deleting the bounded
+  // fs+config artifacts (which would read as "erase succeeded" to an
+  // operator who wanted the live tenant rows gone).
+  if (postgresTenant !== undefined && postgresTenant.registeredDisplayName === null) {
+    await postgresTenant.pool.close();
+    io.err(
+      `cq erase: nothing to erase — project_key ${postgresTenant.projectKey} at ${args.cwd} ` +
+        `is not registered in the postgres tenant registry.`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
 
   // SAFETY: nothing to erase → refuse (don't silently succeed on an empty root).
   if (!storageExists && !configExists && !xdgProjectDirExists) {
@@ -475,14 +575,19 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     return { exitCode: EXIT_USAGE };
   }
 
+  const tenantLabel =
+    postgresTenant !== undefined
+      ? ` — postgres tenant "${postgresTenant.registeredDisplayName}" (project_key ${postgresTenant.projectKey})`
+      : "";
   const decision = await confirmDestructive(
     args.yes,
-    `ERASE all ledgers + config at ${args.cwd}? This is IRREVERSIBLE. [y/N] `,
-    `cq erase: refusing to erase ledgers + config at ${args.cwd} without confirmation; ` +
+    `ERASE all ledgers + config at ${args.cwd}${tenantLabel}? This is IRREVERSIBLE. [y/N] `,
+    `cq erase: refusing to erase ledgers + config at ${args.cwd}${tenantLabel} without confirmation; ` +
       `re-run with --yes to erase non-interactively.`,
     io.confirm,
   );
   if (!decision.proceed) {
+    if (postgresTenant !== undefined) await postgresTenant.pool.close();
     return { exitCode: decision.exitCode };
   }
 
@@ -511,9 +616,31 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
     removed.push(xdgProjectDir);
   }
 
+  // postgres (T583): DELETE exactly this tenant's rows — items, groups,
+  // ledgers, logs, AND the projects registry entry — never another tenant's.
+  let postgresWipeSummary:
+    | { projectKey: string; items: Array<{ name: string; itemCount: number }> }
+    | undefined;
+  if (postgresTenant !== undefined) {
+    const items = await countTenantActiveItems(postgresTenant.pool, postgresTenant.projectKey);
+    await wipeTenantRows(postgresTenant.pool, postgresTenant.projectKey, true);
+    await postgresTenant.pool.close();
+    removed.push(
+      `postgres tenant "${postgresTenant.registeredDisplayName}" (project_key ${postgresTenant.projectKey})`,
+    );
+    postgresWipeSummary = { projectKey: postgresTenant.projectKey, items };
+  }
+
   io.out(`cq erase: erased ledgers + config at ${args.cwd} (IRREVERSIBLE, no backup)`);
   for (const p of removed) {
     io.out(`  removed: ${p}`);
+  }
+  if (postgresWipeSummary !== undefined) {
+    for (const { name, itemCount } of postgresWipeSummary.items) {
+      io.out(
+        `  ${name}: ${itemCount} item(s) removed (postgres project_key ${postgresWipeSummary.projectKey})`,
+      );
+    }
   }
   if (storageDirPreserved) {
     io.out(`  preserved: ${storageDir} (non-ledger content remains)`);
