@@ -1104,19 +1104,32 @@ export class PostgresLedgerStore implements LedgerStore {
           detachedGroups = new Map();
           msClone = cloneLedger(this.getLedger(MILESTONES_LEDGER));
 
-          // Detach the milestone-ITEM first: verifies it exists + is terminal
+          // D101: locate the milestone item in msClone's active group and
+          // compute msTitle/msStatus BEFORE calling applyDetachMilestoneItem —
+          // that function stamps the passed title/status directly onto the
+          // ArchivePointer it pushes into msClone.archivePointers, so
+          // computing them from its *return value* (as before) is too late:
+          // the cached pointer had already been pushed with the placeholder
+          // "" / "" args. Mirrors InMemoryLedgerStore.performArchive.
+          const activeGroup = msClone.milestones.find(
+            (m) => m.id === MILESTONES_ACTIVE_GROUP_ID,
+          );
+          const milestoneItem = activeGroup?.items.find((it) => it.id === milestoneId);
+          const msTitle =
+            typeof milestoneItem?.fields["title"] === "string" ? milestoneItem.fields["title"] : "";
+          const msStatus = milestoneItem?.status ?? "";
+
+          // Detach the milestone-ITEM: verifies it exists + is terminal
           // (throws MilestoneItemNotFoundError / NonTerminalItemsError before
-          // any mutation) and yields the title/status stamped on every pointer.
+          // any mutation).
           const { item: msItem } = applyDetachMilestoneItem(
             msClone,
             milestoneId,
             summary,
             `./archive/${MILESTONES_LEDGER}/${milestoneId}.md`,
-            "",
-            "",
+            msTitle,
+            msStatus,
           );
-          const msTitle = typeof msItem.fields["title"] === "string" ? msItem.fields["title"] : "";
-          const msStatus = msItem.status;
           detachedItem = msItem;
 
           // Detach each participating non-milestones group (verifies every item
