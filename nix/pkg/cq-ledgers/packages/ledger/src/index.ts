@@ -91,6 +91,8 @@ export { ensureSchema } from "./store/postgres/schema.js";
 export { resolvePostgresDsn } from "./store/postgres/dsn.js";
 export { resolveDisplayName } from "./store/postgres/displayName.js";
 export type { DisplayNameCandidates } from "./store/postgres/displayName.js";
+export { startPostgresCoherenceWatcher } from "./store/postgres/coherenceWatcher.js";
+export type { PostgresCoherenceWatcher } from "./store/postgres/coherenceWatcher.js";
 export {
   createLedgerStore,
   openLegacyLedgerStore,

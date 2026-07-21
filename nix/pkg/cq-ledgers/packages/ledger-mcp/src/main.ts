@@ -48,8 +48,10 @@ import {
   type PromptCatalogCapability,
   type ResolvedLedgerStore,
   type XdgCoherenceWatcher,
+  type PostgresCoherenceWatcher,
   createLedgerStore,
   startXdgCoherenceWatcher,
+  startPostgresCoherenceWatcher,
   nodeGitRunner,
   registerLedgerStdioTools,
   LEDGER_TOOL_NAMES,
@@ -351,23 +353,25 @@ export function readLogOf(store: LedgerStore): ReadLogCapability | undefined {
  * Start the per-backend coherence watcher for a resolved store (T357 item 5;
  * xdg case wired in T500): file-watch ({@link startLedgerWatcher}) for the fs
  * backend, ref-sha-watch ({@link startLedgerRefWatcher}, T353) for git-object,
- * data_version-poll ({@link startXdgCoherenceWatcher}, T530) for xdg. All three
- * return a handle with `.close()`, so the host wires shutdown identically
- * regardless of backend. The git-object path binds a {@link nodeGitRunner} at
- * the repo root so the watcher polls `refs/heads/<branch>` for ledger advances
- * by another process.
+ * data_version-poll ({@link startXdgCoherenceWatcher}, T530) for xdg, and
+ * LISTEN/NOTIFY push ({@link startPostgresCoherenceWatcher}, T578) for
+ * postgres. All four return a handle with `.close()`, so the host wires
+ * shutdown identically regardless of backend. The git-object path binds a
+ * {@link nodeGitRunner} at the repo root so the watcher polls
+ * `refs/heads/<branch>` for ledger advances by another process.
  *
- * The xdg watcher bulk-invalidates every known ledger off a single
- * `data_version` bump with no per-ledger granularity to report, so its
+ * The xdg AND postgres watchers bulk-invalidate every known ledger off a
+ * single coherence signal (a `data_version` bump / a NOTIFY on the tenant's
+ * `project_key`) with no per-ledger granularity to report, so their
  * `onChange` (D89) fires once per invalidate pass with `null` rather than once
- * per ledger id — `onChange` is forwarded here exactly as for the other two
+ * per ledger id — `onChange` is forwarded here exactly as for the other
  * backends, driving the same WS "changed" push for a peer process's write.
  */
 export function startLedgerCoherenceWatcher(
   resolved: ResolvedLedgerStore,
   root: string,
   onChange?: (ledgerId: string | null) => void,
-): LedgerWatcher | XdgCoherenceWatcher {
+): LedgerWatcher | XdgCoherenceWatcher | PostgresCoherenceWatcher {
   if (resolved.backend === "git-object") {
     return startLedgerRefWatcher(resolved.store, resolved.branch, nodeGitRunner(root), onChange);
   }
@@ -379,6 +383,15 @@ export function startLedgerCoherenceWatcher(
       );
     }
     return startXdgCoherenceWatcher(resolved.store, resolved.dbPath, undefined, onChange);
+  }
+  if (resolved.backend === "postgres") {
+    if (resolved.pg === undefined) {
+      throw new Error(
+        "startLedgerCoherenceWatcher: backend 'postgres' resolved without a pg handle — " +
+          "createLedgerStore must always set pg for the postgres backend.",
+      );
+    }
+    return startPostgresCoherenceWatcher(resolved.store, resolved.pg, onChange);
   }
   return startLedgerWatcher(resolved.store, root, onChange);
 }

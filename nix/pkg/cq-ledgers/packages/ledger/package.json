@@ -36,6 +36,7 @@
     "@cq/config": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
     "minisearch": "7.2.0",
+    "postgres": "3.4.9",
     "remark-frontmatter": "^5.0.0",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
