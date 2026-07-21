@@ -1,18 +1,19 @@
 // index.ts — cq auto-driver Pi extension entry point (T468, G-auto-driver).
 //
 // Exports `registerAllAutoCommands` — the single function that registers ALL
-// FOUR `:auto` commands into a live Pi session. Call this from the Pi extension
+// FIVE `:auto` commands into a live Pi session. Call this from the Pi extension
 // default export (T469 will wire it into nix/hm/pi.nix):
 //
 //   import { registerAllAutoCommands } from "./auto-driver/index.ts";
 //   export default function(pi) { registerAllAutoCommands(pi); }
 //
-// Four commands are registered (names WITHOUT the leading `/`; Pi prepends `/`
+// Five commands are registered (names WITHOUT the leading `/`; Pi prepends `/`
 // when they appear as slash commands in the session):
 //
 //   cq:advance:auto      — drains the whole flow  (wraps /cq:advance)
 //   cq:plan:auto         — drains plan-flow        (wraps /cq:plan:advance)
 //   cq:investigate:auto  — drains investigate-flow  (wraps /cq:investigate:advance)
+//   cq:research:auto     — drains research-flow     (wraps /cq:research:advance)
 //   cq:implement:auto    — drains implement-flow    (wraps /cq:implement:advance)
 //
 // Pi-typing discipline: this module is a STANDALONE store-path file OUTSIDE the
@@ -24,6 +25,7 @@ import {
   planAutoPreset,
   investigateAutoPreset,
   implementAutoPreset,
+  researchAutoPreset,
 } from "./decision";
 import {
   registerAutoDriver,
@@ -31,7 +33,7 @@ import {
 } from "./driver";
 
 /**
- * Register all four `:auto` commands into the Pi session.
+ * Register all five `:auto` commands into the Pi session.
  *
  * Each command is a thin preset wrapper over the generic `runAutoDriver` loop:
  * it binds the correct `{ wrappedCommand, terminalPredicate }` from the
@@ -42,7 +44,7 @@ import {
  * extension factory function by Pi's loader.
  *
  * Options:
- *   `maxIterations` — hard iteration bound for ALL four commands (default:
+ *   `maxIterations` — hard iteration bound for ALL five commands (default:
  *   `DEFAULT_MAX_ITERATIONS` = 25). Override in tests or when a lower budget
  *   is preferred.
  */
@@ -54,6 +56,7 @@ export function registerAllAutoCommands(
   registerAutoDriver(api, planAutoPreset, options);
   registerAutoDriver(api, investigateAutoPreset, options);
   registerAutoDriver(api, implementAutoPreset, options);
+  registerAutoDriver(api, researchAutoPreset, options);
 }
 
 // Pi extension default export (T469): the loader calls this with the live Pi

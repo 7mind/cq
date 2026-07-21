@@ -35,15 +35,17 @@ export interface PredicateVerdict {
 
 /**
  * The flow-detection verdicts derived from one store snapshot. `pInvestigate`,
- * `pSeed`, `pPlan`, and `pImplement` mirror the `/cq:advance` cycle stages (in
- * flow order); `openQuestionGate` enumerates the open questions that gate any of
- * them; `belowFloor` is an INFORMATIONAL companion to `pSeed` (root-caused,
- * unowned, un-gated defects below the severity floor) that gates NOTHING.
+ * `pSeed`, `pPlan`, `pResearch`, and `pImplement` mirror the `/cq:advance` cycle
+ * stages (in flow order); `openQuestionGate` enumerates the open questions that
+ * gate any of them; `belowFloor` is an INFORMATIONAL companion to `pSeed`
+ * (root-caused, unowned, un-gated defects below the severity floor) that gates
+ * NOTHING.
  */
 export interface DerivedPredicates {
   pInvestigate: PredicateVerdict;
   pSeed: PredicateVerdict;
   pPlan: PredicateVerdict;
+  pResearch: PredicateVerdict;
   pImplement: PredicateVerdict;
   openQuestionGate: PredicateVerdict;
   belowFloor: PredicateVerdict;
@@ -105,16 +107,20 @@ export interface AutoPreset {
 }
 
 /**
- * `cq:advance:auto` — drains the whole flow. Terminal when ALL FOUR stage
- * P-predicates are FALSE (no investigate, seed, plan, or implement work
- * remains). The informational `belowFloor` companion is intentionally NOT part
- * of the terminal check — a sub-floor defect never keeps the run alive.
+ * `cq:advance:auto` — drains the whole flow. Terminal when ALL FIVE stage
+ * P-predicates are FALSE (no investigate, seed, plan, research, or implement
+ * work remains). The informational `belowFloor` companion is intentionally NOT
+ * part of the terminal check — a sub-floor defect never keeps the run alive.
  * Wraps `/cq:advance`; registered as `cq:advance:auto`.
  */
 export const advanceAutoPreset: AutoPreset = {
   wrappedCommand: "cq:advance",
   terminalPredicate: (p) =>
-    !p.pInvestigate.value && !p.pSeed.value && !p.pPlan.value && !p.pImplement.value,
+    !p.pInvestigate.value &&
+    !p.pSeed.value &&
+    !p.pPlan.value &&
+    !p.pResearch.value &&
+    !p.pImplement.value,
 };
 
 /**
@@ -148,4 +154,15 @@ export const implementAutoPreset: AutoPreset = {
   wrappedCommand: "cq:implement:advance",
   commandName: "cq:implement:auto",
   terminalPredicate: (p) => !p.pImplement.value,
+};
+
+/**
+ * `cq:research:auto` — drains research-flow. Terminal when `pResearch.value`
+ * is FALSE.
+ * Wraps `/cq:research:advance`; registered as `cq:research:auto`.
+ */
+export const researchAutoPreset: AutoPreset = {
+  wrappedCommand: "cq:research:advance",
+  commandName: "cq:research:auto",
+  terminalPredicate: (p) => !p.pResearch.value,
 };

@@ -19,9 +19,9 @@
 //   => the in-process MCP channel is CONFIRMED ABSENT.
 //
 // CHOSEN CHANNEL (STEP 2): the `cq predicates` CLI subcommand. It prints a
-//   JSON object `{ predicates: { pInvestigate, pSeed, pPlan, pImplement,
-//   openQuestionGate, belowFloor } }` to stdout, where `predicates` shares the SAME
-//   `derivePredicates` single source of truth as the ledger MCP
+//   JSON object `{ predicates: { pInvestigate, pSeed, pPlan, pResearch,
+//   pImplement, openQuestionGate, belowFloor } }` to stdout, where `predicates`
+//   shares the SAME `derivePredicates` single source of truth as the ledger MCP
 //   `derive_predicates` tool. `cq predicates` is harness-agnostic — it ALWAYS
 //   derives from the fs store, uses NO session, requires NO marker, and ALWAYS
 //   exits 0. Chosen over the prior Claude-Stop-hook-specific, session-dependent
@@ -58,6 +58,7 @@ const PREDICATE_KEYS = [
   "pInvestigate",
   "pSeed",
   "pPlan",
+  "pResearch",
   "pImplement",
   "openQuestionGate",
   "belowFloor",
@@ -147,7 +148,7 @@ export function parsePredicatesOutput(stdout: string): DerivedPredicates {
 }
 
 /**
- * Obtain the four derived flow-detection predicates at runtime via the pinned
+ * Obtain the derived flow-detection predicates at runtime via the pinned
  * `cq predicates` channel. Runs the CLI in `ctx.cwd` and parses its
  * `predicates` object into the copied `DerivedPredicates` type.
  */

@@ -158,6 +158,7 @@ const PREDICATE_KEYS: ReadonlyArray<keyof DerivedPredicates> = [
   "pInvestigate",
   "pSeed",
   "pPlan",
+  "pResearch",
   "pImplement",
   "openQuestionGate",
 ];
@@ -165,8 +166,8 @@ const PREDICATE_KEYS: ReadonlyArray<keyof DerivedPredicates> = [
 /**
  * Canonical no-progress equality between two predicate snapshots.
  *
- * Returns true iff, for ALL FOUR keys (pInvestigate, pPlan, pImplement,
- * openQuestionGate):
+ * Returns true iff, for ALL SIX keys (pInvestigate, pSeed, pPlan, pResearch,
+ * pImplement, openQuestionGate):
  *   (i)  a[key].value === b[key].value, AND
  *   (ii) the SET of a[key].items[] ids equals the set of b[key].items[] ids,
  *        compared as SORTED id arrays (order-insensitive).
@@ -224,8 +225,8 @@ function sameIdSet(a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean 
  * "would-be drained" snapshot); a predicate is named as a blocker iff, starting
  * from that baseline, re-setting just that one predicate to TRUE flips the
  * oracle back to non-terminal. This names exactly the predicates the specific
- * preset (advance vs plan vs investigate vs implement) cares about, without this
- * pure module knowing which preset it is.
+ * preset (advance vs plan vs investigate vs research vs implement) cares about,
+ * without this pure module knowing which preset it is.
  */
 export function composeRedrivePrompt(
   predicates: DerivedPredicates,
@@ -235,7 +236,13 @@ export function composeRedrivePrompt(
     return "The terminal predicate is already satisfied — no redrive is needed; STOP_DRAINED.";
   }
 
-  const stageKeys: ReadonlyArray<StageKey> = ["pInvestigate", "pSeed", "pPlan", "pImplement"];
+  const stageKeys: ReadonlyArray<StageKey> = [
+    "pInvestigate",
+    "pSeed",
+    "pPlan",
+    "pResearch",
+    "pImplement",
+  ];
 
   // Baseline: every still-TRUE stage predicate cleared. If the oracle depends on
   // a given stage, re-asserting it from this baseline will flip the oracle.
@@ -286,13 +293,14 @@ export function composeRedrivePrompt(
   ].join("\n");
 }
 
-/** The four stage predicates the redrive prompt may name as blockers. */
-type StageKey = "pInvestigate" | "pSeed" | "pPlan" | "pImplement";
+/** The five stage predicates the redrive prompt may name as blockers. */
+type StageKey = "pInvestigate" | "pSeed" | "pPlan" | "pResearch" | "pImplement";
 
-/** Human-readable labels for the four stage predicates, for prompt text. */
+/** Human-readable labels for the five stage predicates, for prompt text. */
 const STAGE_LABELS: Record<StageKey, string> = {
   pInvestigate: "investigate-flow work remains",
   pSeed: "seed-flow work remains (root-caused defect awaiting a fix goal)",
   pPlan: "plan-flow work remains",
+  pResearch: "research-flow work remains (actionable research awaiting conclusion)",
   pImplement: "implement-flow work remains",
 };

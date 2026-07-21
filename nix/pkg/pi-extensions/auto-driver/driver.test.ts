@@ -33,6 +33,7 @@ import {
   planAutoPreset,
   investigateAutoPreset,
   implementAutoPreset,
+  researchAutoPreset,
   type AutoPreset,
   type DerivedPredicates,
 } from "./decision";
@@ -131,6 +132,7 @@ const ALL_FALSE: DerivedPredicates = {
   pInvestigate: { value: false, items: [] },
   pSeed: { value: false, items: [] },
   pPlan: { value: false, items: [] },
+  pResearch: { value: false, items: [] },
   pImplement: { value: false, items: [] },
   openQuestionGate: { value: false, items: [] },
   belowFloor: { value: false, items: [] },
@@ -863,6 +865,13 @@ describe("T468: registerAutoDriver — command name derived from preset", () => 
     expect(registrations[0]!.commandName).toBe("cq:implement:auto");
   });
 
+  test("researchAutoPreset registers as 'cq:research:auto'", () => {
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAutoDriver(api, researchAutoPreset);
+    expect(registrations).toHaveLength(1);
+    expect(registrations[0]!.commandName).toBe("cq:research:auto");
+  });
+
   test("description mentions the wrappedCommand so the command is self-documenting", () => {
     const { api, registrations } = makeSimpleRegistrationApi();
     registerAutoDriver(api, advanceAutoPreset);
@@ -886,6 +895,10 @@ describe("T468: preset wrappedCommand strings (launch slash commands)", () => {
   test("implementAutoPreset.wrappedCommand is 'cq:implement:advance'", () => {
     expect(implementAutoPreset.wrappedCommand).toBe("cq:implement:advance");
   });
+
+  test("researchAutoPreset.wrappedCommand is 'cq:research:advance'", () => {
+    expect(researchAutoPreset.wrappedCommand).toBe("cq:research:advance");
+  });
 });
 
 describe("T468: preset terminalPredicates (bound correctly to each flow)", () => {
@@ -893,12 +906,13 @@ describe("T468: preset terminalPredicates (bound correctly to each flow)", () =>
     pInvestigate: { value: false, items: [] },
     pSeed: { value: false, items: [] },
     pPlan: { value: false, items: [] },
+    pResearch: { value: false, items: [] },
     pImplement: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
   };
 
-  test("advanceAutoPreset terminal when ALL FOUR p-predicates are false", () => {
+  test("advanceAutoPreset terminal when ALL FIVE p-predicates are false", () => {
     expect(advanceAutoPreset.terminalPredicate(ALL_FALSE_P)).toBe(true);
   });
 
@@ -935,16 +949,24 @@ describe("T468: preset terminalPredicates (bound correctly to each flow)", () =>
   test("implementAutoPreset not terminal when pImplement is true", () => {
     expect(implementAutoPreset.terminalPredicate({ ...ALL_FALSE_P, pImplement: { value: true, items: ["T1"] } })).toBe(false);
   });
-});
 
-describe("T468: registerAllAutoCommands — all four commands registered", () => {
-  test("registers exactly 4 commands", () => {
-    const { api, registrations } = makeSimpleRegistrationApi();
-    registerAllAutoCommands(api);
-    expect(registrations).toHaveLength(4);
+  test("researchAutoPreset terminal when pResearch is false", () => {
+    expect(researchAutoPreset.terminalPredicate(ALL_FALSE_P)).toBe(true);
   });
 
-  test("all four command names are present", () => {
+  test("researchAutoPreset not terminal when pResearch is true", () => {
+    expect(researchAutoPreset.terminalPredicate({ ...ALL_FALSE_P, pResearch: { value: true, items: ["RS1"] } })).toBe(false);
+  });
+});
+
+describe("T468: registerAllAutoCommands — all five commands registered", () => {
+  test("registers exactly 5 commands", () => {
+    const { api, registrations } = makeSimpleRegistrationApi();
+    registerAllAutoCommands(api);
+    expect(registrations).toHaveLength(5);
+  });
+
+  test("all five command names are present", () => {
     const { api, registrations } = makeSimpleRegistrationApi();
     registerAllAutoCommands(api);
     const names = registrations.map((r) => r.commandName);
@@ -952,14 +974,15 @@ describe("T468: registerAllAutoCommands — all four commands registered", () =>
     expect(names).toContain("cq:plan:auto");
     expect(names).toContain("cq:investigate:auto");
     expect(names).toContain("cq:implement:auto");
+    expect(names).toContain("cq:research:auto");
   });
 
-  test("no command name collisions (all four are distinct)", () => {
+  test("no command name collisions (all five are distinct)", () => {
     const { api, registrations } = makeSimpleRegistrationApi();
     registerAllAutoCommands(api);
     const names = registrations.map((r) => r.commandName);
     const unique = new Set(names);
-    expect(unique.size).toBe(4);
+    expect(unique.size).toBe(5);
   });
 
   test("no collision with existing /cq:advance slash command (advance:auto ≠ advance)", () => {
@@ -972,6 +995,7 @@ describe("T468: registerAllAutoCommands — all four commands registered", () =>
     expect(names).not.toContain("cq:plan:advance");
     expect(names).not.toContain("cq:investigate:advance");
     expect(names).not.toContain("cq:implement:advance");
+    expect(names).not.toContain("cq:research:advance");
   });
 
   test("wrappedCommand for advance preset sends /cq:advance (verified via runAutoDriver first prompt)", async () => {

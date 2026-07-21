@@ -38,19 +38,21 @@ function emptyPredicates(): DerivedPredicates {
     pInvestigate: { value: false, items: [] },
     pSeed: { value: false, items: [] },
     pPlan: { value: false, items: [] },
+    pResearch: { value: false, items: [] },
     pImplement: { value: false, items: [] },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
   };
 }
 
-/** Predicates with all four stage predicates TRUE and no gate. */
+/** Predicates with all five stage predicates TRUE and no gate. */
 function allActivePredicates(items?: string[]): DerivedPredicates {
   const it = items ?? ["T1", "T2"];
   return {
     pInvestigate: { value: true, items: it },
     pSeed: { value: true, items: it },
     pPlan: { value: true, items: it },
+    pResearch: { value: true, items: it },
     pImplement: { value: true, items: it },
     openQuestionGate: { value: false, items: [] },
     belowFloor: { value: false, items: [] },
@@ -58,12 +60,15 @@ function allActivePredicates(items?: string[]): DerivedPredicates {
 }
 
 /**
- * Fill the two G77/M240 fields (pSeed + belowFloor) with all-false defaults for
- * the many inline fixtures below that predate them and don't exercise them.
- * A test that DOES exercise pSeed builds its snapshot explicitly instead.
+ * Fill the fields (pSeed + belowFloor, G77/M240; pResearch, G80/M246) added
+ * after the many inline fixtures below were first written, with all-false
+ * defaults, so those fixtures don't need touching for fields they don't
+ * exercise. A test that DOES exercise one of these builds its snapshot
+ * explicitly instead.
  */
 const SEED_DEFAULTS = {
   pSeed: { value: false, items: [] as string[] },
+  pResearch: { value: false, items: [] as string[] },
   belowFloor: { value: false, items: [] as string[] },
 };
 
@@ -675,6 +680,17 @@ describe("predicatesEqual", () => {
     const different: DerivedPredicates = {
       ...base,
       openQuestionGate: { value: true, items: ["Q1"] },
+    };
+    expect(predicatesEqual(base, different)).toBe(false);
+  });
+
+  test("(T559/G80/M246) ONLY pResearch changes => false (a research-only-progress cycle is NOT a stall)", () => {
+    // Without pResearch in PREDICATE_KEYS, this pair would compare equal
+    // (every OTHER key is identical) and a research-only-progress cycle would
+    // be misread as STOP_NO_PROGRESS.
+    const different: DerivedPredicates = {
+      ...base,
+      pResearch: { value: true, items: ["RS1"] }, // base has pResearch false (SEED_DEFAULTS)
     };
     expect(predicatesEqual(base, different)).toBe(false);
   });
