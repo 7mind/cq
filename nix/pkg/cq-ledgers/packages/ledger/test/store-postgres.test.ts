@@ -14,8 +14,11 @@
  * Seeding parity with store-sqlite.test.ts: pre-registered ledgers are
  * inserted as raw rows through a setup pool (no store, no hook) BEFORE the
  * store is constructed, so the D-COHERENCE hook-firing-matrix assertions are
- * not contaminated by seed-time events. Tenant registration itself is also the
- * test's job here — auto-registration is T574's concern, not the store's.
+ * not contaminated by seed-time events. `prepareTenant` still INSERTs the
+ * `projects` row itself (raw SQL) here, because the seed ledgers rows it
+ * writes are FK-scoped to `projects(project_key)` and land BEFORE the store
+ * (and its own auto-registering `init()`, T574) is even constructed; the
+ * store's UPSERT on `init()` then simply re-affirms the same row.
  */
 
 import { afterAll, describe, it } from "bun:test";
@@ -63,7 +66,11 @@ if (PG_URL === undefined || PG_URL.length === 0) {
     timeoutMs: 20_000,
     async build(seed: Array<{ name: string; schema: LedgerSchema }>): Promise<LedgerStore> {
       const projectKey = await prepareTenant(seed);
-      const store = new PostgresLedgerStore({ pool: openPgPool(PG_URL), projectKey });
+      const store = new PostgresLedgerStore({
+        pool: openPgPool(PG_URL),
+        projectKey,
+        displayName: projectKey,
+      });
       await store.init();
       return store;
     },
@@ -75,6 +82,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
       const store = new PostgresLedgerStore({
         pool: openPgPool(PG_URL),
         projectKey,
+        displayName: projectKey,
         onMutation,
       });
       await store.init();

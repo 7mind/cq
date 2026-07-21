@@ -32,11 +32,21 @@
  * never collides.
  *
  * Scope (T573): the full LedgerStore surface + write-through + cache + NOTIFY.
- * Tenant bootstrap/auto-registration (inserting the `projects` row) is T574's
- * concern — this store constructs against an already-ensured schema and a
- * seeded-or-empty, already-registered tenant, and provisions the canonical
- * ledgers on `init()` when the tenant has none (so the abstract suite's
- * bootstrapped-store expectations hold).
+ *
+ * Tenant bootstrap + auto-registration + display-name chain (T574): `init()`
+ * (a) UPSERTs the `projects` row for this tenant's `projectKey` on EVERY
+ * connect, so a later cq.toml rename (Q270) propagates to `display_name` on
+ * reconnect — the caller (T577's factory) computes the RECONCILED name via
+ * `resolveDisplayName` (displayName.ts) and passes it in as a constructor
+ * input; (b) runs a Pass-1/Pass-2 divergence detection over this tenant's
+ * persisted canonical-ledger rows, mirroring SqliteLedgerStore.init() (same
+ * `classifyCanonicalLedgers` classification, divergence.ts, built on the same
+ * `schemasEqual`/`schemaCompatible` helpers): missing ledgers are provisioned,
+ * widened ledgers upgraded in place, and — unlike the sqlite backend — a
+ * genuinely DIVERGENT canonical schema routes through `onSchemaDivergence`
+ * with a TENANT-SCOPED backup (see {@link PostgresLedgerStore.backupAndReinitTenant}
+ * for why this diverges from sqlite's whole-file `VACUUM INTO` and why the
+ * DEFAULT policy still matches sqlite's `'backup-reinit'`).
  */
 
 import type { SQL } from "bun";
@@ -105,6 +115,7 @@ import {
   QUESTIONS_LEDGER,
 } from "../../constants.js";
 import { notifyProjectChanged, writeTransaction } from "./connection.js";
+import { classifyCanonicalLedgers } from "./divergence.js";
 
 export interface PostgresLedgerStoreOpts {
   /**
@@ -115,10 +126,20 @@ export interface PostgresLedgerStoreOpts {
   pool: SQL;
   /**
    * This store's tenant key. Every row this store reads/writes is scoped by
-   * `project_key = projectKey`. The `projects` row is assumed to already exist
-   * (registration is T574's concern).
+   * `project_key = projectKey`. Registration (the `projects` row) is this
+   * store's job (T574): `init()` UPSERTs it from `displayName` on every
+   * connect, so no pre-existing row is assumed.
    */
   projectKey: string;
+  /**
+   * This tenant's RECONCILED display name (Q270) — the caller (T577's
+   * factory) computes it via `resolveDisplayName` (displayName.ts) from cq.toml
+   * `[project].name` / `[ledger].projectId` / the repo basename / `projectKey`,
+   * and passes the WINNER in here. `init()` UPSERTs it into
+   * `projects.display_name` on EVERY connect (not just first registration), so
+   * a later cq.toml rename propagates on reconnect.
+   */
+  displayName: string;
   /** Returns an ISO 8601 UTC timestamp. Defaults to `() => new Date().toISOString()`. */
   now?: () => string;
   /**
@@ -127,6 +148,23 @@ export interface PostgresLedgerStoreOpts {
    * logged, never unwinds the committed write.
    */
   onMutation?: OnMutation;
+  /**
+   * Policy for a persisted canonical-ledger schema that diverged from canon
+   * (detected at `init()` Pass 1 via `classifyCanonicalLedgers`, the same
+   * `schemasEqual`/`schemaCompatible` detection SqliteLedgerStore uses):
+   *
+   * - `'backup-reinit'` (DEFAULT — parity with SqliteLedgerStore's default):
+   *   copy ONLY this tenant's rows (never another tenant's — this is a SHARED
+   *   multi-tenant database, so a whole-database `VACUUM INTO` byte copy like
+   *   sqlite's would be both disproportionate and wrong-scoped) into a
+   *   timestamped shadow `project_key`, then wipe this tenant's original rows
+   *   and reseed fresh canonical state. See
+   *   {@link PostgresLedgerStore.backupAndReinitTenant} for the documented
+   *   cheap-enough-to-default rationale.
+   * - `'abort'`: refuse to start — throw `BootstrapViolationError` — so the
+   *   divergence is loud and operator-handled, with NO row touched.
+   */
+  onSchemaDivergence?: "backup-reinit" | "abort";
 }
 
 /** Lock key for the global milestones mutex (mirrors InMemoryLedgerStore). */
@@ -211,8 +249,10 @@ function cloneLedger(ledger: Ledger): Ledger {
 
 export class PostgresLedgerStore implements LedgerStore {
   private readonly projectKey: string;
+  private readonly displayName: string;
   private readonly now: () => string;
   private readonly onMutation: OnMutation | null;
+  private readonly onSchemaDivergence: "backup-reinit" | "abort";
   private handle: SQL | null;
 
   /** In-memory materialized cache of this tenant's ACTIVE state (K102 read model). */
@@ -228,8 +268,10 @@ export class PostgresLedgerStore implements LedgerStore {
   constructor(opts: PostgresLedgerStoreOpts) {
     this.handle = opts.pool;
     this.projectKey = opts.projectKey;
+    this.displayName = opts.displayName;
     this.now = opts.now ?? (() => new Date().toISOString());
     this.onMutation = opts.onMutation ?? null;
+    this.onSchemaDivergence = opts.onSchemaDivergence ?? "backup-reinit";
   }
 
   // ---------------------------------------------------------------------------
@@ -239,20 +281,58 @@ export class PostgresLedgerStore implements LedgerStore {
   async init(): Promise<void> {
     if (this.initialised) return;
     const pool = this.pool();
-    // Provision any MISSING canonical ledgers (parity with
-    // SqliteLedgerStore.init's Pass 2 — no schema-divergence backup here: the
-    // suite always constructs a fresh/empty tenant, so there is no persisted
-    // canonical schema to diverge). A tenant seeded with custom ledgers still
-    // lacks the canonical ones on first init.
-    const existing = (
-      await pool<LedgerRow[]>`
-        SELECT name, schema_json, milestone_counter, item_counter
-        FROM ledgers WHERE project_key = ${this.projectKey}
-      `
-    ).map((r) => r.name);
-    const present = new Set(existing);
-    const missing = CANONICAL_LEDGERS.map((c) => c.name).filter((n) => !present.has(n));
-    if (missing.length > 0) await this.bootstrapCanonicalRows(missing);
+    const pk = this.projectKey;
+
+    // Auto-registration (Q270): UPSERT the projects row on EVERY connect —
+    // not just first registration — so a later cq.toml rename propagates to
+    // display_name on reconnect. Must precede any ledgers row (FK: ledgers ->
+    // projects).
+    await pool`
+      INSERT INTO projects (project_key, display_name)
+      VALUES (${pk}, ${this.displayName})
+      ON CONFLICT (project_key) DO UPDATE SET display_name = ${this.displayName}, updated_at = now()
+    `;
+
+    // Pass 1 — READ-ONLY divergence detection over this tenant's persisted
+    // canonical ledgers (parity with SqliteLedgerStore.init): classify every
+    // canonical name as missing / widened (forward-compatible, T407) /
+    // divergent, via the pure classifyCanonicalLedgers (divergence.ts).
+    const existingRows = await pool<LedgerRow[]>`
+      SELECT name, schema_json, milestone_counter, item_counter
+      FROM ledgers WHERE project_key = ${pk}
+    `;
+    const persistedByName = new Map(
+      existingRows.map((r) => [r.name, JSON.parse(r.schema_json) as LedgerSchema]),
+    );
+    const { missing, widened, divergent } = classifyCanonicalLedgers(persistedByName);
+
+    if (divergent.length > 0 && this.onSchemaDivergence === "abort") {
+      // Opt-out: refuse to start so the divergence is loud + operator-handled.
+      // No backup — parity with SqliteLedgerStore (the backup-reinit action is
+      // only reached on the default policy).
+      throw new BootstrapViolationError(
+        `existing ${divergent.join(", ")} ledger(s) have a different schema than their canonical bootstrap schema (project_key ${pk})`,
+      );
+    }
+
+    if (divergent.length > 0) {
+      // Default policy — TENANT-SCOPED backup + reinit (see
+      // backupAndReinitTenant's doc for why this diverges from
+      // SqliteLedgerStore's whole-file VACUUM INTO).
+      const shadowKey = await this.backupAndReinitTenant();
+      process.stderr.write(
+        `WARNING: PostgresLedgerStore divergence detected for project_key ${pk} ` +
+          `(ledgers: ${divergent.join(", ")}) — prior tenant state backed up to project_key ${shadowKey}\n`,
+      );
+    } else {
+      // Pass 2 — bootstrap writes, atomically: provision missing canonical
+      // ledgers, apply widening upgrades, seed the milestones bootstrap
+      // active group + the immortal M-AMBIENT milestone. Always runs (even
+      // when missing/widened are both empty) so a RECONNECT to an
+      // already-provisioned tenant still gets the bootstrap group/M-AMBIENT
+      // guarantee — parity with SqliteLedgerStore's unconditional Pass 2.
+      await this.bootstrapCanonicalRows(missing, widened);
+    }
 
     await this.loadCache();
     this.initialised = true;
@@ -264,39 +344,132 @@ export class PostgresLedgerStore implements LedgerStore {
   }
 
   /**
-   * Provision the given canonical ledgers from canon + seed the milestones
-   * bootstrap active group and the immortal M-AMBIENT milestone, all under one
-   * write transaction, scoped by `project_key` (parity with
-   * SqliteLedgerStore.bootstrapCanonicalRows).
+   * Provision the given canonical ledgers from canon, apply any widening
+   * upgrades, and seed the milestones bootstrap active group + the immortal
+   * M-AMBIENT milestone, all under one write transaction, scoped by
+   * `project_key` (parity with SqliteLedgerStore.bootstrapCanonicalRows).
    */
-  private async bootstrapCanonicalRows(missing: string[]): Promise<void> {
+  private async bootstrapCanonicalRows(missing: string[], widened: string[] = []): Promise<void> {
+    await writeTransaction(this.pool(), (tx) => this.runBootstrapWrites(tx, missing, widened));
+  }
+
+  /**
+   * The bootstrap writes themselves, parameterised over the SQL handle so
+   * {@link backupAndReinitTenant} can run them inside the SAME transaction as
+   * its wipe (one atomic backup+wipe+reseed, rather than three separate
+   * transactions with a window for a crash to leave the tenant half-wiped).
+   */
+  private async runBootstrapWrites(tx: SQL, missing: string[], widened: string[]): Promise<void> {
     const canonSchema = new Map(CANONICAL_LEDGERS.map((c) => [c.name, c.schema]));
     const pk = this.projectKey;
+    for (const name of missing) {
+      await tx`
+        INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
+        VALUES (${pk}, ${name}, ${JSON.stringify(canonSchema.get(name))}, 0, 0)
+      `;
+    }
+    for (const name of widened) {
+      await tx`
+        UPDATE ledgers SET schema_json = ${JSON.stringify(canonSchema.get(name))}
+        WHERE project_key = ${pk} AND name = ${name}
+      `;
+    }
+    await tx`
+      INSERT INTO groups (project_key, ledger, id, title, description)
+      VALUES (${pk}, ${MILESTONES_LEDGER}, ${MILESTONES_ACTIVE_GROUP_ID}, ${MILESTONES_ACTIVE_GROUP_TITLE}, '')
+      ON CONFLICT DO NOTHING
+    `;
+    const ambient = await tx<Array<{ id: string }>>`
+      SELECT id FROM items
+      WHERE project_key = ${pk} AND ledger = ${MILESTONES_LEDGER} AND id = ${MILESTONES_AMBIENT_ID}
+    `;
+    if (ambient.length === 0) {
+      const now = this.now();
+      await tx`
+        INSERT INTO items (project_key, ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+        VALUES (${pk}, ${MILESTONES_LEDGER}, ${MILESTONES_AMBIENT_ID}, ${MILESTONES_ACTIVE_GROUP_ID}, 'open',
+                ${JSON.stringify({ title: "ambient" })}, ${now}, ${now}, ${null}, ${null})
+      `;
+    }
+  }
+
+  /**
+   * Divergence BACKUP+REINIT action (T574), TENANT-SCOPED — the multi-tenant
+   * analogue of SqliteLedgerStore's whole-file `VACUUM INTO` backup.
+   *
+   * DECISION (documented per the task): a byte-level backup of the WHOLE
+   * database, mirroring sqlite's approach exactly, is the WRONG shape here —
+   * one Postgres database holds EVERY tenant's rows, so copying the whole
+   * database would back up (and, on reinit, imply wiping) other tenants' data
+   * that never diverged. The right-scoped alternative — copying only THIS
+   * tenant's rows — turns out to be genuinely CHEAP: every row this backend
+   * touches is already `project_key`-scoped (T572/T573), so "copy this
+   * tenant" is just `INSERT INTO <table> (...) SELECT <shadow_key>, ... FROM
+   * <table> WHERE project_key = <this tenant>` per table, no new tooling, no
+   * `VACUUM` (which cannot run inside a transaction and would need its own
+   * connection). That cheapness is why this backend's DEFAULT policy still
+   * matches sqlite's `'backup-reinit'` rather than defaulting to `'abort'`.
+   *
+   * The whole thing — copy every table's rows for this tenant into a fresh
+   * `<projectKey>__divergence-backup-<sanitized-now>` shadow project_key, wipe
+   * the original tenant's rows (children first, FK order), reseed the full
+   * canonical set fresh — runs as ONE write transaction: a crash mid-way rolls
+   * back entirely rather than leaving the tenant half-wiped (an improvement
+   * over sqlite, whose `VACUUM INTO` cannot share a transaction with the wipe).
+   *
+   * Returns the shadow `project_key` (the locator named in the stderr
+   * WARNING).
+   */
+  private async backupAndReinitTenant(): Promise<string> {
+    const pk = this.projectKey;
+    const shadowKey = `${pk}__divergence-backup-${this.now().replace(/[^0-9A-Za-z]/g, "-")}`;
     await writeTransaction(this.pool(), async (tx) => {
-      for (const name of missing) {
-        await tx`
-          INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
-          VALUES (${pk}, ${name}, ${JSON.stringify(canonSchema.get(name))}, 0, 0)
-        `;
-      }
+      await tx`
+        INSERT INTO projects (project_key, display_name)
+        VALUES (${shadowKey}, ${`${this.displayName} (schema-divergence backup)`})
+      `;
+      await tx`
+        INSERT INTO ledgers (project_key, name, schema_json, milestone_counter, item_counter)
+        SELECT ${shadowKey}, name, schema_json, milestone_counter, item_counter
+        FROM ledgers WHERE project_key = ${pk}
+      `;
       await tx`
         INSERT INTO groups (project_key, ledger, id, title, description)
-        VALUES (${pk}, ${MILESTONES_LEDGER}, ${MILESTONES_ACTIVE_GROUP_ID}, ${MILESTONES_ACTIVE_GROUP_TITLE}, '')
-        ON CONFLICT DO NOTHING
+        SELECT ${shadowKey}, ledger, id, title, description
+        FROM groups WHERE project_key = ${pk}
       `;
-      const ambient = await tx<Array<{ id: string }>>`
-        SELECT id FROM items
-        WHERE project_key = ${pk} AND ledger = ${MILESTONES_LEDGER} AND id = ${MILESTONES_AMBIENT_ID}
+      await tx`
+        INSERT INTO items (project_key, ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+        SELECT ${shadowKey}, ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session
+        FROM items WHERE project_key = ${pk}
       `;
-      if (ambient.length === 0) {
-        const now = this.now();
-        await tx`
-          INSERT INTO items (project_key, ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
-          VALUES (${pk}, ${MILESTONES_LEDGER}, ${MILESTONES_AMBIENT_ID}, ${MILESTONES_ACTIVE_GROUP_ID}, 'open',
-                  ${JSON.stringify({ title: "ambient" })}, ${now}, ${now}, ${null}, ${null})
-        `;
-      }
+      await tx`
+        INSERT INTO archive_pointers (project_key, ledger, id, summary, title, status, archived_at)
+        SELECT ${shadowKey}, ledger, id, summary, title, status, archived_at
+        FROM archive_pointers WHERE project_key = ${pk}
+      `;
+      await tx`
+        INSERT INTO archived_items (project_key, ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+        SELECT ${shadowKey}, ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session
+        FROM archived_items WHERE project_key = ${pk}
+      `;
+
+      // Wipe the ORIGINAL tenant's rows (children first, FK order), then
+      // reseed the full canonical set fresh — same write shape as
+      // runBootstrapWrites's Pass 2, sharing THIS transaction.
+      await tx`DELETE FROM archived_items WHERE project_key = ${pk}`;
+      await tx`DELETE FROM archive_pointers WHERE project_key = ${pk}`;
+      await tx`DELETE FROM items WHERE project_key = ${pk}`;
+      await tx`DELETE FROM groups WHERE project_key = ${pk}`;
+      await tx`DELETE FROM ledgers WHERE project_key = ${pk}`;
+
+      await this.runBootstrapWrites(
+        tx,
+        CANONICAL_LEDGERS.map((c) => c.name),
+        [],
+      );
     });
+    return shadowKey;
   }
 
   /**
