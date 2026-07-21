@@ -33,6 +33,7 @@ import * as path from "node:path";
 import { runPredicates, type PredicatesIo } from "../src/predicates.js";
 import {
   MILESTONES_AMBIENT_ID,
+  RESEARCHES_LEDGER,
   createLedgerStore,
   derivePredicates,
 } from "@cq/ledger";
@@ -42,6 +43,7 @@ const PREDICATE_KEYS = [
   "pInvestigate",
   "pSeed",
   "pPlan",
+  "pResearch",
   "pImplement",
   "openQuestionGate",
   "belowFloor",
@@ -167,7 +169,36 @@ describe("cq predicates — unconditional real-predicate emitter (T476)", () => 
     expect(parsed.predicates.belowFloor.items).toEqual([med.id]);
   });
 
-  it("emits stdout that parses via the auto-driver oracle's parser SHAPE (parsed.predicates, 6 verdict keys)", async () => {
+  it("emits a P-research store's real predicates: pResearch names the open research (RS id)", async () => {
+    const root = await makeTmpDir("cq-predicates-research-ledger-");
+    await writeFile(
+      path.join(root, "cq.toml"),
+      `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,
+      "utf8",
+    );
+    const { store } = await createLedgerStore(root);
+    const research = await store.createItem(RESEARCHES_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "open",
+      fields: { question: "does this need a research?" },
+    });
+    await store.dispose();
+
+    const io = recordingIo();
+    const outcome = await runPredicates({ cwd: root }, io);
+    expect(outcome.exitCode).toBe(0);
+
+    const parsed = JSON.parse(io.outs[0]!) as {
+      predicates: {
+        pResearch: { value: boolean; items: string[] };
+        pInvestigate: { value: boolean };
+      };
+    };
+    expect(parsed.predicates.pResearch.value).toBe(true);
+    expect(parsed.predicates.pResearch.items).toEqual([research.id]);
+    expect(research.id.startsWith("RS")).toBe(true);
+  });
+
+  it("emits stdout that parses via the auto-driver oracle's parser SHAPE (parsed.predicates, 7 verdict keys)", async () => {
     const root = await seedActionableLedger();
 
     const io = recordingIo();

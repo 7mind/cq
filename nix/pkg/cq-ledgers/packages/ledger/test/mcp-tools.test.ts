@@ -666,6 +666,15 @@ describe("ledger MCP tools", () => {
       status: "planned",
       fields: { headline: "do the work", ledgerRefs: [`goals:${goal.item.id}`] },
     });
+    // Seed an open research too, so pResearch is also TRUE-and-unblocked.
+    const research = decode<{ item: { id: string } }>(
+      await callTool(tools, "create_item", {
+        ledger_id: "researches",
+        milestone_id: "M1",
+        status: "open",
+        fields: { question: "does this need a research?" },
+      }),
+    );
 
     // The tool's output must equal the shared derivePredicates(store) directly.
     const expected = derivePredicates(store);
@@ -677,6 +686,9 @@ describe("ledger MCP tools", () => {
     // And the seeded task makes pImplement TRUE, naming that task id.
     expect(actual.pImplement.value).toBe(true);
     expect(actual.pImplement.items.length).toBe(1);
+    // And the seeded research makes pResearch TRUE, naming that research id.
+    expect(actual.pResearch.value).toBe(true);
+    expect(actual.pResearch.items).toEqual([research.item.id]);
   });
 
   it("reopen_item moves a terminal item to a non-terminal status", async () => {

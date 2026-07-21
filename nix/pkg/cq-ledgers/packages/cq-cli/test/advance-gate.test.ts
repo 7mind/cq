@@ -37,6 +37,7 @@ import {
   MILESTONES_AMBIENT_ID,
   GOALS_LEDGER,
   TASKS_LEDGER,
+  RESEARCHES_LEDGER,
   type LedgerStore,
 } from "@cq/ledger";
 
@@ -188,6 +189,18 @@ async function seedSeedLedger(): Promise<string> {
   return root;
 }
 
+/** Seed a fresh ledger root making P-research TRUE: one OPEN research item. */
+async function seedResearchLedger(): Promise<string> {
+  const root = await xdgRoot();
+  await seedStore(root, async (store) => {
+    await store.createItem(RESEARCHES_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "open",
+      fields: { question: "does this need a research?" },
+    });
+  });
+  return root;
+}
+
 /**
  * Seed a fresh ledger root with ONLY a below-floor root-caused defect (medium):
  * belowFloor names it, but NO stage predicate is TRUE, so the gate ALLOWS.
@@ -258,6 +271,28 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
     expect(verdict.predicates.pSeed.items.length).toBeGreaterThan(0);
   });
 
+  // --- Case 1d: marker PRESENT + P-research TRUE ⇒ BLOCK (non-zero) ---------
+
+  it("(1d) marker present + P-research TRUE (open research) → block=true, non-zero exit, reason names P-research", async () => {
+    const root = await seedResearchLedger();
+    await writeFile(markerFile(runtimeDir), "started\n", "utf8");
+
+    const { exitCode, verdict } = await runGate(root);
+
+    expect(exitCode).toBe(EXIT_BLOCK);
+    expect(exitCode).not.toBe(0);
+    expect(verdict.block).toBe(true);
+    expect(verdict.reason).toContain("P-research=TRUE");
+    expect(verdict.reason).toContain("continue per D41");
+    // No earlier-in-order stage predicate is TRUE, so P-research is the named one.
+    expect(verdict.predicates.pInvestigate.value).toBe(false);
+    expect(verdict.predicates.pSeed.value).toBe(false);
+    expect(verdict.predicates.pPlan.value).toBe(false);
+    expect(verdict.predicates.pResearch.value).toBe(true);
+    expect(verdict.predicates.pResearch.items.length).toBeGreaterThan(0);
+    expect(verdict.predicates.pImplement.value).toBe(false);
+  });
+
   // --- Case 2: marker PRESENT + all-FALSE ledger ⇒ ALLOW (exit 0) -----------
 
   it("(2) marker present + all predicates FALSE → block=false, exit 0", async () => {
@@ -271,6 +306,7 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
     expect(verdict.predicates.pInvestigate.value).toBe(false);
     expect(verdict.predicates.pSeed.value).toBe(false);
     expect(verdict.predicates.pPlan.value).toBe(false);
+    expect(verdict.predicates.pResearch.value).toBe(false);
     expect(verdict.predicates.pImplement.value).toBe(false);
     expect(verdict.predicates.belowFloor.value).toBe(false);
   });
@@ -289,6 +325,7 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
     expect(verdict.predicates.pInvestigate.value).toBe(false);
     expect(verdict.predicates.pSeed.value).toBe(false);
     expect(verdict.predicates.pPlan.value).toBe(false);
+    expect(verdict.predicates.pResearch.value).toBe(false);
     expect(verdict.predicates.pImplement.value).toBe(false);
     expect(verdict.predicates.belowFloor.value).toBe(true);
     expect(verdict.predicates.belowFloor.items.length).toBeGreaterThan(0);
@@ -307,10 +344,11 @@ describe("cq advance-gate — verdict + exit-code contract (T367)", () => {
     expect(verdict.block).toBe(false);
     // Marker-absent path does NOT read the ledger → predicates are the empty
     // placeholder (all FALSE) despite the actionable defect on disk. The full
-    // six-key empty shape is emitted (pSeed + belowFloor included).
+    // seven-key empty shape is emitted (pSeed + pResearch + belowFloor included).
     expect(verdict.predicates.pInvestigate).toEqual({ value: false, items: [] });
     expect(verdict.predicates.pSeed).toEqual({ value: false, items: [] });
     expect(verdict.predicates.pPlan).toEqual({ value: false, items: [] });
+    expect(verdict.predicates.pResearch).toEqual({ value: false, items: [] });
     expect(verdict.predicates.pImplement).toEqual({ value: false, items: [] });
     expect(verdict.predicates.openQuestionGate).toEqual({ value: false, items: [] });
     expect(verdict.predicates.belowFloor).toEqual({ value: false, items: [] });

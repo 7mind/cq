@@ -110,6 +110,7 @@ const STUB_BLOCK_VERDICT = JSON.stringify({
   predicates: {
     pInvestigate: { value: false, items: [] },
     pPlan: { value: false, items: [] },
+    pResearch: { value: false, items: [] },
     pImplement: { value: true, items: ["T999"] },
   },
 });
@@ -119,6 +120,7 @@ const STUB_ALLOW_VERDICT = JSON.stringify({
   predicates: {
     pInvestigate: { value: false, items: [] },
     pPlan: { value: false, items: [] },
+    pResearch: { value: false, items: [] },
     pImplement: { value: false, items: [] },
   },
 });

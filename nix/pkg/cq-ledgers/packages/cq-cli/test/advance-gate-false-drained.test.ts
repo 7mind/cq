@@ -127,6 +127,7 @@ describe("cq advance-gate — marker-gated false-DRAINED (T474 characterization)
     expect(verdict.predicates.pInvestigate.value).toBe(false);
     expect(verdict.predicates.pSeed.value).toBe(false);
     expect(verdict.predicates.pPlan.value).toBe(false);
+    expect(verdict.predicates.pResearch.value).toBe(false);
     expect(verdict.predicates.pImplement.value).toBe(false);
     expect(verdict.predicates.openQuestionGate.value).toBe(false);
     expect(verdict.predicates.belowFloor.value).toBe(false);
