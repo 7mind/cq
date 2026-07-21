@@ -135,6 +135,15 @@ export interface SubcommandArgs {
    * `$CLAUDE_CODE_SESSION_ID`); other subcommands ignore it.
    */
   session: string | null;
+  /**
+   * `--to <value>`: `migrate`'s target-leg selector (T581) — the RAW string
+   * value, unvalidated here (mirrors `--session`'s leniency, and matters for
+   * the RETIRED `move-ledger` subcommand, which also recognised a `--to
+   * <local|git>` flag it now ignores — see move-ledger.test.ts's "old flags
+   * ignored" contract). `runMigrateCmd` is the ONE place that validates it
+   * against `"postgres"`. `null` when the flag is absent.
+   */
+  to: string | null;
 }
 
 export const USAGE = [
@@ -179,12 +188,20 @@ export const USAGE = [
   "                                                  per [ledger].backup) INTO the xdg primary",
   "                                                  (incl. logs); disaster recovery, no merge;",
   "                                                  refuses a non-empty primary without --yes.",
-  "  migrate     [--cwd <path>] [--yes|-y]           one-shot migration of the LEGACY backend",
-  "                                                  cq.toml names (fs .cq/ | git-object orphan",
-  "                                                  ref), state AND logs, INTO the out-of-tree",
-  "                                                  xdg primary; flips [ledger] backend to xdg;",
-  "                                                  legacy data is left in place untouched;",
-  "                                                  refuses a non-empty target without --yes.",
+  "  migrate     [--cwd <path>] [--yes|-y] [--to postgres]",
+  "                                                  one-shot migration; default (no --to): the",
+  "                                                  LEGACY backend cq.toml names (fs .cq/ |",
+  "                                                  git-object orphan ref), state AND logs, INTO",
+  "                                                  the out-of-tree xdg primary; flips [ledger]",
+  "                                                  backend to xdg; refuses a non-empty target",
+  "                                                  without --yes. `--to postgres` (requires",
+  "                                                  backend='xdg' already): the xdg primary,",
+  "                                                  state AND logs, INTO a Postgres tenant (DSN",
+  "                                                  via CQ_LEDGER_PG_URL / DATABASE_URL /",
+  "                                                  [ledger].url / PG* env); flips [ledger]",
+  "                                                  backend to postgres; hard-refuses a",
+  "                                                  non-empty tenant (no override). Either leg",
+  "                                                  leaves its source untouched.",
   "",
   "ledger root: --cwd > $LEDGER_ROOT > current working directory",
 ].join("\n");
@@ -212,6 +229,7 @@ export function parseSubcommandArgs(argv: readonly string[]): SubcommandArgs {
   let yes = false;
   let force = false;
   let session: string | null = null;
+  let to: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--yes" || a === "-y") {
@@ -236,9 +254,18 @@ export function parseSubcommandArgs(argv: readonly string[]): SubcommandArgs {
       session = v;
     } else if (a !== undefined && a.startsWith("--session=")) {
       session = a.slice("--session=".length);
+    } else if (a === "--to") {
+      i += 1;
+      const v = argv[i];
+      if (v === undefined) {
+        throw new Error("cq: --to requires a value");
+      }
+      to = v;
+    } else if (a !== undefined && a.startsWith("--to=")) {
+      to = a.slice("--to=".length);
     }
   }
-  return { cwd: resolveRoot(cwd), yes, force, session };
+  return { cwd: resolveRoot(cwd), yes, force, session, to };
 }
 
 /**
@@ -922,17 +949,28 @@ export async function runRestore(args: SubcommandArgs, io: DispatchIo): Promise<
 }
 
 /**
- * `cq migrate` (T504 / Q243): the explicit one-shot LEGACY (fs | git-object)
- * → xdg migration. The full logic lives in ./migrate.ts; this thin wrapper
- * bridges {@link SubcommandArgs} to its {@link MigrateArgs} and threads the
- * dispatcher IO (out/err + the shared confirmation IO).
+ * `cq migrate` (T504 / Q243, xdg->postgres leg T581): the explicit one-shot
+ * LEGACY (fs | git-object) → xdg migration, or (`--to postgres`) the xdg →
+ * postgres migration. The full logic lives in ./migrate.ts; this thin
+ * wrapper bridges {@link SubcommandArgs} to its {@link MigrateArgs} and
+ * threads the dispatcher IO (out/err + the shared confirmation IO).
+ *
+ * `args.to` is the RAW, unvalidated `--to` value (parseSubcommandArgs is
+ * shared across every subcommand, so it stays lenient — see its doc). THIS
+ * is the one place that validates it: `"postgres"` selects the xdg ->
+ * postgres leg, absent (`null`) selects the default leg, and any OTHER
+ * value is a usage error naming the one recognised value.
  */
 export async function runMigrateCmd(
   args: SubcommandArgs,
   io: DispatchIo,
 ): Promise<SubcommandOutcome> {
+  if (args.to !== null && args.to !== "postgres") {
+    io.err(`cq migrate: --to only recognises "postgres" (got "${args.to}").`);
+    return { exitCode: EXIT_USAGE };
+  }
   return runMigrate(
-    { cwd: args.cwd, yes: args.yes },
+    { cwd: args.cwd, yes: args.yes, to: args.to },
     { out: io.out, err: io.err, confirm: io.confirm },
   );
 }
