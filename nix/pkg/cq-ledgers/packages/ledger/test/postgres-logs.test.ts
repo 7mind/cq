@@ -37,7 +37,7 @@ describe.skipIf(!PG_URL)("PostgresLedgerStore log artifacts (T575)", () => {
 
   async function buildStore(): Promise<{ store: PostgresLedgerStore; projectKey: string }> {
     const projectKey = await registerTenant();
-    const store = new PostgresLedgerStore({ pool: openPgPool(PG_URL!), projectKey });
+    const store = new PostgresLedgerStore({ pool: openPgPool(PG_URL!), projectKey, displayName: projectKey });
     await store.init();
     return { store, projectKey };
   }

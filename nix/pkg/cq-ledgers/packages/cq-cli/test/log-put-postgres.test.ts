@@ -117,7 +117,7 @@ describe.skipIf(!PG_URL)("cq log put postgres — write path + readLog round-tri
 
     const pool = openPgPool(PG_URL!);
     await ensureSchema(pool);
-    const store = new PostgresLedgerStore({ pool, projectKey });
+    const store = new PostgresLedgerStore({ pool, projectKey, displayName: projectKey });
     await store.init();
     try {
       const mdRes = await store.readLog("20260101-abc.md");

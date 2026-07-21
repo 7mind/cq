@@ -479,7 +479,7 @@ async function runLogPutPostgres(
       VALUES (${projectKey}, ${displayName})
       ON CONFLICT (project_key) DO NOTHING
     `;
-    store = new PostgresLedgerStore({ pool, projectKey });
+    store = new PostgresLedgerStore({ pool, projectKey, displayName });
     await store.init();
 
     // args.dest is validated (validateLogDest) to start with "logs/" — strip
