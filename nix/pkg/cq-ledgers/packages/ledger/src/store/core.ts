@@ -33,7 +33,7 @@ import {
   NonTerminalItemsError,
   SchemaValidationError,
 } from "../types.js";
-import { canonicalizeRef, parseRef } from "../refs.js";
+import { canonicalizeRef, DEPENDENCY_REF_FIELDS, parseRef } from "../refs.js";
 import {
   GOALS_LEDGER,
   HANDOFFS_LEDGER,
@@ -283,8 +283,9 @@ export type StatusChangePrecondition = (from: string, to: string) => void;
  * The two item/milestone fields that carry cross-ledger dependency refs and are
  * subject to write-side canonicalization + dangling-rejection. `ledgerRefs` and
  * `sourceRefs` are deliberately NOT here — they stay ADVISORY and UNVALIDATED.
+ * Shared single source of truth with the stored-data normalizer in `refs.ts`.
  */
-const REF_FIELDS = ["dependsOn", "blockedBy"] as const;
+const REF_FIELDS = DEPENDENCY_REF_FIELDS;
 
 /**
  * Cross-ledger context the store supplies so the pure create/update helpers can

@@ -24,7 +24,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { ArchiveContent, LedgerStore } from "./LedgerStore.js";
-import type { Ledger, LedgerRegistry } from "../types.js";
+import type { FieldValue, Ledger, LedgerRegistry } from "../types.js";
 import { LedgerError } from "../types.js";
 import { parseArchive, parseLedger, parseMilestoneItemArchive } from "../parser/parse.js";
 import { parseRegistry } from "../registry.js";
@@ -41,6 +41,7 @@ import { GitPlumbing } from "./git/GitPlumbing.js";
 import type { BackupDumpFile } from "./backupExporter.js";
 import { openLedgerDb, immediateWriteTransaction } from "./sqlite/connection.js";
 import { ensureSchema } from "./sqlite/schema.js";
+import { buildPrefixRegistry, normalizeStoredRefFields } from "../refs.js";
 
 /** Result of {@link restoreDumpToXdg}: counts for CLI reporting. */
 export interface RestoreSummary {
@@ -211,6 +212,21 @@ export async function restoreDumpToXdg(opts: {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
 
+      // G80/M245 (T553): normalize dependsOn/blockedBy to the canonical
+      // `<ledger>:<id>` form as rows are (re-)inserted, so importing an OLD
+      // (pre-grammar) backup with bare refs lands normalized — matching the
+      // v1→v2 on-open migration's output for the same data. The removed legacy
+      // fs/git-object primaries re-enter the xdg primary ONLY via `cq restore`
+      // / `cq migrate` (which builds a dump then calls this), so THIS path is
+      // what carries the git-object rollback ref forward normalized too. The
+      // registry spans the dump's full ledger set (canonical + custom), the
+      // same shape the writers' prefix registry uses.
+      const refRegistry = buildPrefixRegistry(
+        [...parsed.ledgers].map(([name, l]) => ({ name, schema: l.schema })),
+      );
+      const normalizeFieldsJson = (item: { fields: Record<string, FieldValue> }): string =>
+        JSON.stringify(normalizeStoredRefFields(item.fields, refRegistry).fields);
+
       for (const [name, ledger] of parsed.ledgers) {
         insertLedger.run(
           name,
@@ -226,7 +242,7 @@ export async function restoreDumpToXdg(opts: {
               item.id,
               item.milestoneId,
               item.status,
-              JSON.stringify(item.fields),
+              normalizeFieldsJson(item),
               item.createdAt,
               item.updatedAt,
               item.author ?? null,
@@ -247,7 +263,7 @@ export async function restoreDumpToXdg(opts: {
               item.id,
               item.milestoneId,
               item.status,
-              JSON.stringify(item.fields),
+              normalizeFieldsJson(item),
               item.createdAt,
               item.updatedAt,
               item.author ?? null,

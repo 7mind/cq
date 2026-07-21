@@ -51,6 +51,7 @@ import type { Database } from "bun:sqlite";
 import type {
   ArchivePointer,
   FetchedLedger,
+  FieldValue,
   Item,
   Ledger,
   LedgerSchema,
@@ -98,7 +99,7 @@ import {
   validateSchema,
 } from "../core.js";
 import type { RefValidationContext, StatusChangePrecondition } from "../core.js";
-import { buildPrefixRegistry } from "../../refs.js";
+import { buildPrefixRegistry, normalizeStoredRefFields } from "../../refs.js";
 import { cloneItem, materialiseFetchedLedger } from "../InMemoryLedgerStore.js";
 import { LedgerSearchIndex } from "../../search/LedgerSearchIndex.js";
 import { schemaCompatible, schemasEqual } from "../schemaCompat.js";
@@ -116,7 +117,7 @@ import {
   LEDGER_LOGS_RELATIVE_PREFIX,
 } from "../../constants.js";
 import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
-import { ensureSchema } from "./schema.js";
+import { ensureSchema, SCHEMA_VERSION } from "./schema.js";
 import {
   MAX_READ_LOG_BYTES,
   ReadLogNotImplementedError,
@@ -247,6 +248,13 @@ export class SqliteLedgerStore implements LedgerStore {
     if (this.initialised) return;
     const db = openLedgerDb(this.dbPath);
     ensureSchema(db);
+
+    // v1→v2 in-place migration (T553, G80/M245): settle every stored
+    // dependsOn/blockedBy entry on the canonical `<ledger>:<id>` form and
+    // give canonical ledgers a schema_json carrying satisfiesDependencyStatuses.
+    // Runs BEFORE Pass 1 so the divergence check sees the already-canonicalized
+    // schemas; a strict no-op on a store already at SCHEMA_VERSION.
+    this.migrateStoredRefsToV2(db);
 
     // Pass 1 — READ-ONLY divergence detection over the persisted canonical
     // ledgers (parity with AbstractLedgerStore.init): a missing canonical
@@ -379,12 +387,110 @@ export class SqliteLedgerStore implements LedgerStore {
    * WARNING).
    */
   private backupDivergentState(db: Database): string {
+    return this.vacuumIntoSibling(db, "backup");
+  }
+
+  /**
+   * `VACUUM INTO` a `<dbPath-stem>.<label>-<ts><ext>` sibling of `dbPath` — a
+   * byte-complete point-in-time snapshot of the WHOLE database, taken BEFORE
+   * any row is touched. Shared by the T529 divergence backup and the T553
+   * pre-migration snapshot. Must run OUTSIDE any transaction (VACUUM refuses to
+   * run inside one). Returns the snapshot file's path.
+   */
+  private vacuumIntoSibling(db: Database, label: string): string {
     const ts = this.now().replace(/:/g, "-");
     const ext = path.extname(this.dbPath);
     const base = ext.length > 0 ? this.dbPath.slice(0, -ext.length) : this.dbPath;
-    const backupPath = `${base}.backup-${ts}${ext}`;
-    db.query("VACUUM INTO ?").run(backupPath);
-    return backupPath;
+    const dest = `${base}.${label}-${ts}${ext}`;
+    db.query("VACUUM INTO ?").run(dest);
+    return dest;
+  }
+
+  /**
+   * Versioned in-place v1→v2 migration (T553, G80/M245 — the final
+   * expand-then-migrate step). READ meta('schema_version'); when it is already
+   * at {@link SCHEMA_VERSION} this is a STRICT no-op (opening a v2 store touches
+   * nothing). Otherwise, for a v1 store:
+   *
+   *  (a) SNAPSHOT the whole db FIRST via `VACUUM INTO` a timestamped sibling
+   *      (OUTSIDE the transaction — VACUUM cannot run inside one), with a
+   *      stderr locator line, so the pre-migration state is always recoverable.
+   *  (b) In ONE immediate write transaction, rewrite every `items` AND
+   *      `archived_items` row's `fields_json` dependsOn/blockedBy entries to the
+   *      canonical prefixed form by exact alpha-prefix resolution against the
+   *      SAME registry the writers use (canonical + custom ledgers present in
+   *      this store). An entry that does not resolve (free-text, unknown alpha
+   *      prefix, the dash-bearing M-AMBIENT) is preserved VERBATIM — the
+   *      migration NEVER destroys data — with a single stderr warning per store.
+   *  (c) Rewrite `ledgers.schema_json` to the current canonical schema (now
+   *      carrying satisfiesDependencyStatuses) for CANONICAL ledgers only —
+   *      Pass 1's schemasEqual ignores satisfiesDependencyStatuses, so it would
+   *      NOT upgrade this facet on its own. Custom ledgers are left untouched.
+   *  (d) Bump meta('schema_version') to {@link SCHEMA_VERSION}.
+   *
+   * Idempotent: because (b) canonicalizes to a fixed point and the version gate
+   * skips an already-v2 store, running twice yields byte-identical rows.
+   */
+  private migrateStoredRefsToV2(db: Database): void {
+    const versionRow = db
+      .query("SELECT value FROM meta WHERE key = 'schema_version'")
+      .get() as { value: number } | null;
+    const version = versionRow === null ? 1 : Number(versionRow.value);
+    if (version >= SCHEMA_VERSION) return;
+
+    // (a) Snapshot BEFORE any write, OUTSIDE the transaction.
+    const snapshotPath = this.vacuumIntoSibling(db, "pre-v2-migration");
+    process.stderr.write(
+      `WARNING: LedgerStore schema v${version}→v${SCHEMA_VERSION} migration — ` +
+        `pre-migration snapshot written to ${snapshotPath}\n`,
+    );
+
+    let anyUnresolved = false;
+    immediateWriteTransaction(db, () => {
+      const ledgerRows = db.query("SELECT name, schema_json FROM ledgers").all() as Array<{
+        name: string;
+        schema_json: string;
+      }>;
+      // Registry spans every registered ledger (canonical + custom) — the same
+      // input buildRefValidationContext feeds the writers, so the migration
+      // resolves bare ids exactly as a subsequent write would.
+      const registry = buildPrefixRegistry(
+        ledgerRows.map((r) => ({ name: r.name, schema: JSON.parse(r.schema_json) as LedgerSchema })),
+      );
+
+      // (b) Canonicalize dependsOn/blockedBy in active AND archived rows.
+      for (const table of ["items", "archived_items"] as const) {
+        const rows = db
+          .query(`SELECT rowid AS rid, fields_json FROM ${table}`)
+          .all() as Array<{ rid: number; fields_json: string }>;
+        const update = db.query(`UPDATE ${table} SET fields_json = ? WHERE rowid = ?`);
+        for (const row of rows) {
+          const fields = JSON.parse(row.fields_json) as Record<string, FieldValue>;
+          const result = normalizeStoredRefFields(fields, registry);
+          if (result.unresolved) anyUnresolved = true;
+          if (!result.changed) continue;
+          update.run(JSON.stringify(result.fields), row.rid);
+        }
+      }
+
+      // (c) Refresh CANONICAL ledgers' schema_json to canon (custom untouched).
+      const present = new Set(ledgerRows.map((r) => r.name));
+      const upgradeSchema = db.query("UPDATE ledgers SET schema_json = ? WHERE name = ?");
+      for (const canonical of CANONICAL_LEDGERS) {
+        if (!present.has(canonical.name)) continue;
+        upgradeSchema.run(JSON.stringify(canonical.schema), canonical.name);
+      }
+
+      // (d) Bump the on-disk schema version.
+      db.query("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(SCHEMA_VERSION);
+    });
+
+    if (anyUnresolved) {
+      process.stderr.write(
+        `WARNING: LedgerStore v${SCHEMA_VERSION} migration left one or more ` +
+          `dependsOn/blockedBy entries VERBATIM (free-text or unknown prefix — data preserved)\n`,
+      );
+    }
   }
 
   /**

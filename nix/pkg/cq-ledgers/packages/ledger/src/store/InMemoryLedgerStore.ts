@@ -41,7 +41,7 @@ import {
   validateSchema,
 } from "./core.js";
 import type { RefValidationContext, StatusChangePrecondition } from "./core.js";
-import { buildPrefixRegistry } from "../refs.js";
+import { buildPrefixRegistry, normalizeStoredRefFields } from "../refs.js";
 import type {
   ArchiveContent,
   CreateItemInit,
@@ -195,11 +195,42 @@ export class InMemoryLedgerStore implements LedgerStore {
       }
       this.ledgers.set(name, freshLedger(name, schema));
     }
+    // G80/M245 (T553): normalize every materialized item's dependsOn/blockedBy
+    // to the canonical `<ledger>:<id>` form on LOAD, the same expand-then-
+    // migrate step the sqlite store runs as its v1→v2 migration — via the SAME
+    // shared pure helper, resolved against the SAME full prefix registry the
+    // writers use. This store has no on-disk version cell, so the pass is
+    // unconditional; it is idempotent (already-canonical entries are untouched)
+    // and never destroys data (an unresolvable entry survives verbatim). Live
+    // writes already arrive canonical through the T551 write gate, so this is
+    // the load-time counterpart that keeps directly-materialized state settled.
+    this.normalizeStoredRefs();
     this.initialised = true;
     // Build the FTS index for every ledger present after bootstrap + seed.
     for (const name of this.ledgers.keys()) {
       this.rebuildLedgerIndexActive(name);
       this.refreshLedgerIndexArchived(name);
+    }
+  }
+
+  /**
+   * Load-time dependency-ref normalization (T553): rewrite each materialized
+   * item's `dependsOn`/`blockedBy` in place to the canonical `<ledger>:<id>`
+   * form. Shared with the sqlite v1→v2 migration and the restore importer via
+   * {@link normalizeStoredRefFields}; the registry spans every registered
+   * ledger so a bare "T1" resolves to `tasks:T1` regardless of the owning
+   * ledger.
+   */
+  private normalizeStoredRefs(): void {
+    const registry = buildPrefixRegistry(
+      [...this.ledgers].map(([name, l]) => ({ name, schema: l.schema })),
+    );
+    for (const ledger of this.ledgers.values()) {
+      for (const milestone of ledger.milestones) {
+        for (const item of milestone.items) {
+          item.fields = normalizeStoredRefFields(item.fields, registry).fields;
+        }
+      }
     }
   }
 

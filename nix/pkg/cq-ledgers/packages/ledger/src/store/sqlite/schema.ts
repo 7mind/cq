@@ -16,8 +16,18 @@
 
 import type { Database } from "bun:sqlite";
 
-/** On-disk normalized-row schema version, recorded in meta('schema_version'). */
-export const SCHEMA_VERSION = 1;
+/**
+ * On-disk normalized-row schema version, recorded in meta('schema_version').
+ *
+ * - v1: initial normalized-row layout (G67-C1).
+ * - v2 (T553, G80/M245): `dependsOn`/`blockedBy` entries settled on the
+ *   canonical `<ledger>:<id>` ref form and canonical ledgers' `schema_json`
+ *   carrying `satisfiesDependencyStatuses`. A store opened at v1 is migrated
+ *   in place by {@link SqliteLedgerStore.init}; a store born here starts at v2
+ *   (its bootstrap writes are already canonical, so there is nothing to
+ *   normalize).
+ */
+export const SCHEMA_VERSION = 2;
 
 /**
  * Apply the normalized-row DDL to `db`. Idempotent: every statement is

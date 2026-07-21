@@ -20,7 +20,7 @@
  */
 
 import { LedgerError } from "./types.js";
-import type { LedgerSchema } from "./types.js";
+import type { FieldValue, LedgerSchema } from "./types.js";
 
 /**
  * Bare item-id shape: a leading run of uppercase letters (the ledger's
@@ -173,4 +173,69 @@ export function canonicalizeRef(raw: string, registry: ReadonlyMap<string, strin
     throw new RefParseError(raw, `unknown id prefix "${alphaPrefix}"`);
   }
   return `${ledger}:${parsed.bare}`;
+}
+
+/**
+ * The two item/milestone fields carrying cross-ledger dependency refs subject
+ * to `<ledger>:<id>` canonicalization (G80/M245). Single source of truth: the
+ * write-side (`core.ts`) and the stored-data normalization below share this
+ * list. `ledgerRefs` / `sourceRefs` stay ADVISORY and UNVALIDATED — not here.
+ */
+export const DEPENDENCY_REF_FIELDS = ["dependsOn", "blockedBy"] as const;
+
+/** Outcome of {@link normalizeStoredRefFields}: the rewritten field set plus
+ * flags the caller uses to decide whether to persist and/or warn. */
+export interface StoredRefNormalization {
+  /** A shallow copy of `fields` with `dependsOn`/`blockedBy` canonicalized. */
+  fields: Record<string, FieldValue>;
+  /** True iff at least one entry's string value actually changed. */
+  changed: boolean;
+  /** True iff at least one entry could NOT be resolved (left verbatim). */
+  unresolved: boolean;
+}
+
+/**
+ * Normalize the `dependsOn` / `blockedBy` entries of an ALREADY-STORED item's
+ * field set to the canonical `<ledger>:<id>` form (G80/M245 expand-then-migrate
+ * step — the read-side resolver and write-side gate already tolerate both
+ * forms; this rewrites the data at rest so it settles on the prefixed form).
+ *
+ * This is the DATA-MIGRATION counterpart of `core.ts`'s write-side
+ * `processRefEntry`, and differs from it deliberately in two ways: it does NOT
+ * consult item existence (a `refExists` probe) and it NEVER throws. Each entry
+ * is resolved purely by exact alpha-prefix lookup against `registry`
+ * ({@link canonicalizeRef}); an entry that does NOT parse/resolve — free-text
+ * prose, an unknown alpha prefix, or the dash-bearing `M-AMBIENT` — is left
+ * VERBATIM (and flips `unresolved`). The migration never destroys data:
+ * write-time strictness applies only to newly-added entries, and the write
+ * gate's tolerance lets every preserved value round-trip.
+ *
+ * Pure: a fresh shallow copy is returned; `fields` is not mutated. Key order is
+ * preserved (the ref fields are overwritten in place), so re-normalizing an
+ * already-canonical field set is a byte-identical no-op (`changed === false`).
+ */
+export function normalizeStoredRefFields(
+  fields: Record<string, FieldValue>,
+  registry: ReadonlyMap<string, string>,
+): StoredRefNormalization {
+  const out: Record<string, FieldValue> = { ...fields };
+  let changed = false;
+  let unresolved = false;
+  for (const field of DEPENDENCY_REF_FIELDS) {
+    const value = fields[field];
+    // Only touch a present string[] value; a non-array or absent field means
+    // "not a dependency-ref list written on this item".
+    if (!Array.isArray(value)) continue;
+    out[field] = value.map((raw) => {
+      try {
+        const canonical = canonicalizeRef(raw, registry);
+        if (canonical !== raw) changed = true;
+        return canonical;
+      } catch {
+        unresolved = true;
+        return raw; // free-text / unknown prefix / M-AMBIENT → verbatim
+      }
+    });
+  }
+  return { fields: out, changed, unresolved };
 }

@@ -63,7 +63,7 @@ describe("sqlite connection + schema (T525)", () => {
       const meta = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: number };
-      expect(meta.value).toBe(1);
+      expect(meta.value).toBe(2);
       expect(meta.value).toBe(SCHEMA_VERSION);
     } finally {
       db.close();
@@ -81,7 +81,7 @@ describe("sqlite connection + schema (T525)", () => {
         key: string;
         value: number;
       }>;
-      expect(metaRows).toEqual([{ key: "schema_version", value: 1 }]);
+      expect(metaRows).toEqual([{ key: "schema_version", value: 2 }]);
     } finally {
       db.close();
     }
