@@ -1,11 +1,11 @@
 # Harness flow state machines
 
-The `cq:` command suite is four cooperating **flows** — *plan*, *investigate*,
-*implement*, and the *advance* sequencer that chains the other three. Each flow
-is a state machine whose durable state lives in the ledger (the `goals`,
-`defects`, `tasks`, `hypothesis`, `questions`, `reviews`, `handoffs` ledgers),
-never in process memory: every command re-derives its state from the ledger on
-each invocation, so a run is idempotent and resumable.
+The `cq:` command suite is five cooperating **flows** — *investigate*, *plan*,
+*research*, *implement*, and the *advance* sequencer that chains the other four.
+Each flow is a state machine whose durable state lives in the ledger (the `goals`,
+`defects`, `tasks`, `hypothesis`, `questions`, `researches`, `reviews`,
+`handoffs` ledgers), never in process memory: every command re-derives its state
+from the ledger on each invocation, so a run is idempotent and resumable.
 
 This document is a prose reference for humans. It is the **authoritative
 description** of the flow state machines; the phase-2 Flows-tab render-data
@@ -37,14 +37,14 @@ the single authoritative handoff for the whole run.
 ## Overview — the advance sequencer and the cross-flow handoff topology
 
 `/cq:advance` is the top-level sequencer. It drives an end-to-end run by chaining
-the three per-flow advance commands to **quiescence**, then writes one run-level
+the four per-flow advance commands to **quiescence**, then writes one run-level
 handoff. It is a *command-of-commands* (decision K12: a command may chain another
 command; a subagent still cannot). It runs in the main session, dispatches no
 subagents of its own (every subagent is spawned by the sub-commands it chains),
 and its only direct ledger calls are read-only detection queries plus the single
 end-of-run handoff write.
 
-### The three detection predicates
+### The five detection predicates
 
 Before each stage `/cq:advance` runs a read-only ledger query (sourced from one
 `snapshot()` call) to decide whether that stage has work:
@@ -54,20 +54,29 @@ Before each stage `/cq:advance` runs a read-only ledger query (sourced from one
   `open` question AND is not already owned by a planning goal. (`root-caused`
   defects are READY-TO-SEED and handled by plan's auto-investigate, so they are
   EXCLUDED here; `resolved`/`wontfix` are terminal, EXCLUDED.)
+- **P-seed** — TRUE iff some `defect` has status `root-caused`, severity at or above
+  the floor (critical/high), is NOT owned by any LIVE goal (clarifying/planning/planned/building,
+  bidirectional linking), and is NOT gated by an open linked question. This gates the
+  fix-owning gap: a root-caused defect with no plan-flow goal is a seed candidate.
 - **P-plan** — TRUE iff some `goal` is in a movable planning phase: `clarifying`
   with no `open` question linked to it, or `planning` (always movable).
   (`planned`, `building`, `done`, `abandoned` are locked/terminal for planning.)
+- **P-research** — TRUE iff some `researches` item has an ACTIONABLE status
+  (`open`, `wip`, or `inconclusive`) AND is not blocked solely on an unanswered
+  `open` question. Research-flow investigates open `questions` items whose
+  `ledgerRefs` name `researches:<RS>` items; a concluded research satisfies
+  dependent tasks via the satisfies-dependency rule.
 - **P-implement** — TRUE iff some goal in `planned` or `building` has a
   DAG-ready non-terminal task (status non-terminal and not `blocked`; every
   `dependsOn` entry SATISFIED — each is a `<ledger>:<id>` ref (bare ids
   tolerated as a legacy shorthand) resolved against its TARGET ledger's
   declared satisfies-dependency statuses (tasks: `done`; defects: `resolved`;
-  questions: `answered`; a ledger that declares no satisfies-dependency set
-  falls back to its terminal statuses), a milestone target satisfied when all
-  its tasks are terminal, free-text/unresolvable entries and refs to an
-  archived or absent item satisfied by default, and a terminal-but-non-
-  satisfying status such as `abandoned`/`wontfix` NEVER satisfying; milestone
-  `dependsOn` satisfied; no linked `open` question).
+  questions: `answered`; researches: `concluded`; a ledger that declares no
+  satisfies-dependency set falls back to its terminal statuses), a milestone
+  target satisfied when all its tasks are terminal, free-text/unresolvable
+  entries and refs to an archived or absent item satisfied by default, and a
+  terminal-but-non-satisfying status such as `abandoned`/`wontfix` NEVER
+  satisfying; milestone `dependsOn` satisfied; no linked `open` question).
 
 ### The cycle
 
@@ -79,11 +88,15 @@ counter):
    for plan's auto-investigate, to avoid double-triage — Q57).
 2. **Plan stage** — if P-plan, run `/cq:plan:advance` inline (no argument —
    every unlocked goal). Plan-flow OWNS auto-investigate of its goal-linked
-   defects.
-3. **Implement stage** — if P-implement, run `/cq:implement:advance` inline. A
+   defects. Also advances P-seed (root-caused, unowned defects) and files
+   defect-seeded goals for fix planning.
+3. **Research stage** — if P-research, run `/cq:research:advance` inline.
+   Research-flow investigates open `questions` items whose `ledgerRefs` name
+   `researches:<RS>` items, then updates the research's findings/conclusion.
+4. **Implement stage** — if P-implement, run `/cq:implement:advance` inline. A
    just-`planned` goal with no prior implement pass is bootstrapped and built;
    reviewers may file new `open` defects (file-and-defer).
-4. **Re-check investigate** — because the implement reviewer may have filed new
+5. **Re-check investigate** — because the implement reviewer may have filed new
    defects, re-evaluate P-investigate at the end of the cycle; if it is TRUE
    again the loop made progress and continues.
 
@@ -140,9 +153,9 @@ The labelled handoffs are:
   Implement does NOT auto-launch investigate inline (it is an execution flow);
   the next `/cq:plan:advance` auto-investigate cycle, or a direct user
   `/cq:investigate <D>`, triages them.
-- **advance → all three**: the advance sequencer chains the three per-flow
+- **advance → all four**: the advance sequencer chains the four per-flow
   advance commands and re-derives the predicates each cycle, so the
-  investigate→plan→implement→investigate topology runs to quiescence.
+  investigate→plan→research→implement→investigate topology runs to quiescence.
 
 ### Handoff statuses (emitted by every flow)
 
@@ -274,6 +287,74 @@ A `reviews` item records one round's verdict. Both statuses are terminal:
 `/cq:plan` and `/cq:plan:follow-up` bootstrap the goal (create / re-open) and
 hand the first round to the planner, then write the standalone handoff. A fresh
 or re-opened goal typically lands `awaiting-answers` (handoff `answers-required`).
+
+---
+
+## Research flow
+
+The research flow investigates open `questions` items whose `ledgerRefs` name
+`researches:<RS>` items, then updates the research's findings and conclusion.
+It is driven by a single `researches` ledger item and advanced by
+`/cq:research:advance`. The `research-querier` subagent gathers and synthesizes
+evidence, then the command validates and updates the research record. When a
+research concludes (`concluded` status), it satisfies dependent tasks via the
+satisfies-dependency rule (only `concluded` satisfies a `researches:RS`
+dependency). A research that remains `inconclusive` may be re-opened when new
+evidence emerges.
+
+### States (the `researches` lifecycle)
+
+The `researches` schema statuses are `open`, `wip`, `concluded`, `inconclusive`,
+`abandoned`; `concluded` and `abandoned` are terminal.
+
+- **open** — intake. A freshly filed research question. From `open` the only
+  edges are to `wip` or straight to `abandoned`. There is **no
+  `open → concluded` edge** and no `open → inconclusive` edge.
+- **wip** — active research in progress. The flow MUST move an `open` research
+  to `wip` when exploration begins (so the later `concluded`/`inconclusive`
+  write is legal). Evidence is gathered and synthesized while the research is
+  `wip`.
+- **concluded** — the research question is answered with findings and a
+  recommendation. Reachable ONLY from `wip`. Only `concluded` satisfies
+  dependent tasks.
+- **inconclusive** — research did not converge to a definitive answer; a
+  re-openable hold. Reachable ONLY from `wip`; it returns to `wip` (on new
+  evidence) or is abandoned (`abandoned`).
+- **abandoned** — terminal; the research was dropped.
+
+### Transitions (labelled)
+
+| from → to | trigger |
+| --------- | ------- |
+| `open → wip` | research begins this round (exploration about to happen). Mandatory before any adjudication write. |
+| `open → abandoned` | the research is dropped. |
+| `wip → concluded` | sufficient evidence converges on a definitive answer with findings and recommendation. |
+| `wip → inconclusive` | research was conducted but no clear answer emerged. |
+| `wip → abandoned` | the research is dropped. |
+| `inconclusive → wip` | new evidence emerged; re-open research. |
+| `inconclusive → abandoned` | the research is abandoned. |
+
+### The research round (orchestration)
+
+One `/cq:research:advance` invocation = one round:
+
+1. **READ state** from the ledger; if parked on an unanswered `open` question,
+   skip to report. Move `open → wip` if research is about to happen.
+2. **FORM the research plan** — scope the question and plan evidence-gathering.
+3. **DISPATCH querier** — a `research-querier` subagent gathers, evaluates, and
+   synthesizes evidence (Q269: synthesis artifact is the `conclusion` field).
+4. **UPDATE the research** — on sufficient convergence, set the research
+   `concluded` with `findings`/`conclusion`/`recommendation`. On inconclusive
+   evidence, set `inconclusive`. If new evidence needed, file an `open` question
+   and STOP.
+
+### Research-flow handoffs
+
+- Research-flow is currently driven by `/cq:research:advance` inline under
+  `/cq:advance` and does not emit its own standalone handoff (it is chained).
+- A concluded research satisfies its dependent tasks; a dependent task blocked
+  on an inconclusive research awaits either a research re-opening (answering the
+  gating `open` question) or user action.
 
 ---
 
@@ -493,6 +574,7 @@ For grounding, the canonical status lifecycles (from
 | `tasks` | planned → wip → **done** / **abandoned** (blocked ↔ planned/wip) | implement |
 | `hypothesis` | open → uncertain → **confirmed** / **wrong** | investigate (internal tree) |
 | `questions` | open → **answered** / **withdrawn** | all (the user-pause gate) |
+| `researches` | open → wip → {**concluded** \| inconclusive} → **abandoned** (inconclusive ↔ wip) | research |
 | `reviews` | **go-ahead** / **revise** (both terminal — immutable per-round record) | plan, implement |
 | `decisions` | proposed → **locked** / **superseded** | plan (the `locked` plan-approval decision gating `planned`) |
 | `handoffs` | **drained** / **answers-required** / **mixed** / **illness-detected** (all terminal) | every flow's stop record |

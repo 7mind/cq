@@ -48,10 +48,17 @@ work, instead of inline TODOs or scratch files.
   - `defects` — bugs (severity required; open → wip → resolved)
   - `hypothesis` — things to confirm; `decisions` — locked choices;
     `questions` — open questions for the user.
+  - `researches` — research questions (question required; open → wip → {concluded | inconclusive | abandoned}; idPrefix RS).
 - **While working**: keep `update_item` status current; record a non-obvious
   choice as a `decisions` item and a bug as a `defects` item.
 - **Dependencies**: express milestone ordering via `dependsOn` / `blockedBy`
-  (advisory); same fields exist on items for cross-references.
+  (advisory); same fields exist on items for cross-references. The `dependsOn`/`blockedBy`
+  fields now accept the `<ledger>:<id>` grammar (e.g., `tasks:T523`, `researches:RS42`) as
+  canonical form; bare ids (e.g., `T523`, `RS42`) are accepted as input shorthand and
+  canonicalized on write. Cross-ledger gating is real: a task blocked on a research is
+  unready until that research is `concluded`. Dangling refs (unknown ledger name or
+  unregistered id prefix) are rejected at write time. The `ledgerRefs` field enables
+  hypothesis reuse: a `researches:<RS>` ref surfaces its findings across items.
 - **On completion**: set items terminal, then `archive_milestone` once every
   item under the milestone is terminal.
 - **Detail goes in fields** (markdown is supported), not the headline. Don't
@@ -62,9 +69,26 @@ work, instead of inline TODOs or scratch files.
   so the ledger records who wrote each item.
 - Don't `create_ledger` unless asked; the canonical set is enough.
 
+### Flows and research-driven investigation
+
+The ledger-suite harness runs four cooperating **flows**: *investigate*, *plan*, *research*,
+and *implement*, chained by the `/cq:advance` sequencer (which runs them to quiescence).
+Plan-flow owns a defect-to-fix path; investigate-flow roots causes; research-flow explores
+open questions; implement-flow executes task DAGs. Each flow is driven by `/cq:*:advance` and
+dispatches domain-specific subagents (e.g., `investigate-explorer`, `plan-advance`,
+`research-querier`). The `/cq:research:advance` flow investigates open `questions` ledger
+items whose `ledgerRefs` name `researches:<RS>` items, then updates the research's
+`findings`/`conclusion` fields. A research that concludes (`concluded` status) gates its
+dependent tasks via the satisfies-dependency rule (only `concluded` satisfies a
+`researches:RS` dependency). The Q269 synthesis artifact is the research item's `conclusion`
+field (markdown-backed findings and recommendation, persisted in the ledger).
+
+The triage rule: an `open` `questions` item whose `ledgerRefs` name a `researches:<RS>`
+belongs to research-flow; other questions gate investigation/plan/implement directly.
+
 ### Session and raw-log artifacts
 
-Ledger workflows (plan, investigate, implement) capture raw subagent transcripts
+Ledger workflows (plan, investigate, implement, research) capture raw subagent transcripts
 as log artifacts in the out-of-tree `xdg` primary store:
 
 - **Artifact formats**: Claude native Agent subagents (plan/investigate/implement)
