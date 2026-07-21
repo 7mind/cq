@@ -2,7 +2,7 @@
 /**
  * Codegen for the Agents tab catalogue (T276, goal G34; Q148 + Q151–Q153).
  *
- * Walks the Q148 role assets under `cq-assets/` (7 `agents/*.md` subagents + 12
+ * Walks the Q148 role assets under `cq-assets/` (9 `agents/*.md` subagents + 14
  * `commands/cq/*.md` orchestrator commands), runs the pure
  * {@link parseAgentMarkdown} over each, and emits the COMMITTED generated module
  * `packages/ledger-web/src/agentsCatalogue.gen.ts`, overwriting the T275
@@ -81,8 +81,8 @@ interface RoleSpec {
 }
 
 /**
- * The 19 Q148 roles, in a fixed order: the 7 subagents first (by the
- * link-prompts flow order), then the 12 orchestrator commands. Each subagent's
+ * The 23 Q148 roles, in a fixed order: the 9 subagents first (by the
+ * link-prompts flow order), then the 14 orchestrator commands. Each subagent's
  * `agentTierKey` is its `[agent_tiers]` lookup key (its name); commands are not
  * model-configurable so their key is null.
  */
@@ -95,6 +95,8 @@ const ROLES: readonly RoleSpec[] = [
   { id: "implement-conflict-resolver", name: "implement-conflict-resolver", kind: "agent-subagent", source: "agents/implement-conflict-resolver.md", agentTierKey: "implement-conflict-resolver" },
   { id: "investigate-explorer", name: "investigate-explorer", kind: "agent-subagent", source: "agents/investigate-explorer.md", agentTierKey: "investigate-explorer" },
   { id: "investigate-prober", name: "investigate-prober", kind: "agent-subagent", source: "agents/investigate-prober.md", agentTierKey: "investigate-prober" },
+  { id: "research-explorer", name: "research-explorer", kind: "agent-subagent", source: "agents/research-explorer.md", agentTierKey: "research-explorer" },
+  { id: "research-experimenter", name: "research-experimenter", kind: "agent-subagent", source: "agents/research-experimenter.md", agentTierKey: "research-experimenter" },
   // --- commands/cq/*.md (orchestrators) ---
   { id: "advance", name: "/cq:advance", kind: "orchestrator", source: "commands/cq/advance.md", agentTierKey: null },
   { id: "plan", name: "/cq:plan", kind: "orchestrator", source: "commands/cq/plan.md", agentTierKey: null },
@@ -102,6 +104,8 @@ const ROLES: readonly RoleSpec[] = [
   { id: "plan/follow-up", name: "/cq:plan:follow-up", kind: "orchestrator", source: "commands/cq/plan/follow-up.md", agentTierKey: null },
   { id: "investigate", name: "/cq:investigate", kind: "orchestrator", source: "commands/cq/investigate.md", agentTierKey: null },
   { id: "investigate/advance", name: "/cq:investigate:advance", kind: "orchestrator", source: "commands/cq/investigate/advance.md", agentTierKey: null },
+  { id: "research", name: "/cq:research", kind: "orchestrator", source: "commands/cq/research.md", agentTierKey: null },
+  { id: "research/advance", name: "/cq:research:advance", kind: "orchestrator", source: "commands/cq/research/advance.md", agentTierKey: null },
   { id: "implement/start", name: "/cq:implement:start", kind: "orchestrator", source: "commands/cq/implement/start.md", agentTierKey: null },
   { id: "implement/advance", name: "/cq:implement:advance", kind: "orchestrator", source: "commands/cq/implement/advance.md", agentTierKey: null },
   { id: "plan-review", name: "/cq:plan-review", kind: "orchestrator", source: "commands/cq/plan-review.md", agentTierKey: null },
@@ -269,7 +273,7 @@ ${entries}
  * the ledger-mcp `computeAgentModels` capability resolves over). The shared
  * roster is the single source of truth for the join keys; this script owns only
  * the per-role display metadata (`name`/`kind`/`source`). They must agree on the
- * 19 ids, their order, and which carry an `[agent_tiers]` key.
+ * 23 ids, their order, and which carry an `[agent_tiers]` key.
  */
 function assertRosterMatchesShared(): void {
   const local = ROLES.map((r) => `${r.id}=${r.agentTierKey ?? "null"}`);

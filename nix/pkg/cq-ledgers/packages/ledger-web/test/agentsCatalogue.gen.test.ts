@@ -40,8 +40,8 @@ const GEN_FILE = path.resolve(TEST_DIR, "..", "src", "agentsCatalogue.gen.ts");
 // ---------------------------------------------------------------------------
 
 /**
- * The 19 Q148 role ids in the FIXED generation order (same as ROLES[] in the
- * gen script): 7 subagents first, then 12 orchestrator commands.
+ * The 23 Q148 role ids in the FIXED generation order (same as ROLES[] in the
+ * gen script): 9 subagents first, then 14 orchestrator commands.
  */
 const EXPECTED_ROLE_IDS: readonly string[] = [
   // subagents
@@ -52,6 +52,8 @@ const EXPECTED_ROLE_IDS: readonly string[] = [
   "implement-conflict-resolver",
   "investigate-explorer",
   "investigate-prober",
+  "research-explorer",
+  "research-experimenter",
   // orchestrator commands
   "advance",
   "plan",
@@ -59,6 +61,8 @@ const EXPECTED_ROLE_IDS: readonly string[] = [
   "plan/follow-up",
   "investigate",
   "investigate/advance",
+  "research",
+  "research/advance",
   "implement/start",
   "implement/advance",
   "plan-review",
@@ -68,8 +72,8 @@ const EXPECTED_ROLE_IDS: readonly string[] = [
 ];
 
 describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
-  it("exports exactly 19 roles in the fixed generation order", () => {
-    expect(AGENT_ROLES.length).toBe(19);
+  it("exports exactly 23 roles in the fixed generation order", () => {
+    expect(AGENT_ROLES.length).toBe(23);
     expect(AGENT_ROLES.map((r) => r.id)).toEqual([...EXPECTED_ROLE_IDS]);
   });
 
@@ -123,16 +127,16 @@ describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
     expect(role!.exposedTools).toContain("isolation: worktree");
   });
 
-  it("all 7 subagents are agent-subagent kind", () => {
-    const subagentIds = EXPECTED_ROLE_IDS.slice(0, 7);
+  it("all 9 subagents are agent-subagent kind", () => {
+    const subagentIds = EXPECTED_ROLE_IDS.slice(0, 9);
     for (const id of subagentIds) {
       const role = AGENT_ROLES.find((r) => r.id === id)!;
       expect(role.kind, `${id}: expected agent-subagent`).toBe("agent-subagent");
     }
   });
 
-  it("all 12 orchestrator commands are orchestrator kind", () => {
-    const cmdIds = EXPECTED_ROLE_IDS.slice(7);
+  it("all 14 orchestrator commands are orchestrator kind", () => {
+    const cmdIds = EXPECTED_ROLE_IDS.slice(9);
     for (const id of cmdIds) {
       const role = AGENT_ROLES.find((r) => r.id === id)!;
       expect(role.kind, `${id}: expected orchestrator`).toBe("orchestrator");
@@ -140,9 +144,9 @@ describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
   });
 
   it("every dispatched-subagent role carries typed input + output schemas (T341)", () => {
-    // The 7 subagents are the dispatched-subagent roles (non-null agentTierKey);
+    // The 9 subagents are the dispatched-subagent roles (non-null agentTierKey);
     // each must carry the typed schemas sourced from the @cq/config sidecars.
-    const subagentIds = EXPECTED_ROLE_IDS.slice(0, 7);
+    const subagentIds = EXPECTED_ROLE_IDS.slice(0, 9);
     for (const id of subagentIds) {
       const role = AGENT_ROLES.find((r) => r.id === id)!;
       expect(role.inputSchema, `${id}: missing inputSchema`).toBeDefined();
@@ -154,7 +158,7 @@ describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
   });
 
   it("no orchestrator-command role carries a typed schema (T341)", () => {
-    const cmdIds = EXPECTED_ROLE_IDS.slice(7);
+    const cmdIds = EXPECTED_ROLE_IDS.slice(9);
     for (const id of cmdIds) {
       const role = AGENT_ROLES.find((r) => r.id === id)!;
       expect(role.inputSchema, `${id}: unexpected inputSchema`).toBeUndefined();

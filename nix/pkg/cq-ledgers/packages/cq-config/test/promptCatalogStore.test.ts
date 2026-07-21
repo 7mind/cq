@@ -41,8 +41,8 @@ describe("typed prompt-catalog store — roster cross-check (T341)", () => {
     expect(Object.keys(DISPATCHED_ROLE_SIDECARS)).toEqual(ROSTER_DISPATCHED_IDS);
   });
 
-  test("there are exactly 7 dispatched-subagent roles", () => {
-    expect(ROSTER_DISPATCHED_IDS.length).toBe(7);
+  test("there are exactly 9 dispatched-subagent roles", () => {
+    expect(ROSTER_DISPATCHED_IDS.length).toBe(9);
   });
 
   test("every orchestrator-command role has NO sidecar", () => {

@@ -28,6 +28,8 @@ import { implementReviewerSidecar } from "./schemas/implement-reviewer.js";
 import { implementConflictResolverSidecar } from "./schemas/implement-conflict-resolver.js";
 import { investigateExplorerSidecar } from "./schemas/investigate-explorer.js";
 import { investigateProberSidecar } from "./schemas/investigate-prober.js";
+import { researchExplorerSidecar } from "./schemas/research-explorer.js";
+import { researchExperimenterSidecar } from "./schemas/research-experimenter.js";
 
 /**
  * The per-role schema sidecar for every DISPATCHED-SUBAGENT role, keyed by role
@@ -42,6 +44,8 @@ export const DISPATCHED_ROLE_SIDECARS: Readonly<Record<string, RoleSchemaSidecar
   "implement-conflict-resolver": implementConflictResolverSidecar,
   "investigate-explorer": investigateExplorerSidecar,
   "investigate-prober": investigateProberSidecar,
+  "research-explorer": researchExplorerSidecar,
+  "research-experimenter": researchExperimenterSidecar,
 };
 
 /** The dispatched-subagent role ids (non-null agentTierKey) from the shared roster. */

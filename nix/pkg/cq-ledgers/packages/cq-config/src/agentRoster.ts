@@ -2,7 +2,7 @@
  * The fixed Q148/Q158 agent-role roster — the SHARED anti-drift source of
  * truth for the `(id, agentTierKey)` pairs (T285).
  *
- * Two consumers must agree on the SAME 19 roles and which of them carry an
+ * Two consumers must agree on the SAME 23 roles and which of them carry an
  * `[agent_tiers]` key:
  *  - the ledger-mcp `computeAgentModels` capability (the `get_agent_models`
  *    server payload), and
@@ -33,8 +33,8 @@ export interface AgentRoleTier {
 }
 
 /**
- * The 19 Q148 roles, in a fixed order matching the codegen ROLES table: the 7
- * subagents first (each model-configurable, `agentTierKey === id`), then the 12
+ * The 23 Q148 roles, in a fixed order matching the codegen ROLES table: the 9
+ * subagents first (each model-configurable, `agentTierKey === id`), then the 14
  * orchestrator commands (not model-configurable, `agentTierKey === null`).
  */
 export const AGENT_ROLE_TIERS: readonly AgentRoleTier[] = [
@@ -46,6 +46,8 @@ export const AGENT_ROLE_TIERS: readonly AgentRoleTier[] = [
   { id: "implement-conflict-resolver", agentTierKey: "implement-conflict-resolver" },
   { id: "investigate-explorer", agentTierKey: "investigate-explorer" },
   { id: "investigate-prober", agentTierKey: "investigate-prober" },
+  { id: "research-explorer", agentTierKey: "research-explorer" },
+  { id: "research-experimenter", agentTierKey: "research-experimenter" },
   // --- orchestrator commands (not model-configurable) ---
   { id: "advance", agentTierKey: null },
   { id: "plan", agentTierKey: null },
@@ -53,6 +55,8 @@ export const AGENT_ROLE_TIERS: readonly AgentRoleTier[] = [
   { id: "plan/follow-up", agentTierKey: null },
   { id: "investigate", agentTierKey: null },
   { id: "investigate/advance", agentTierKey: null },
+  { id: "research", agentTierKey: null },
+  { id: "research/advance", agentTierKey: null },
   { id: "implement/start", agentTierKey: null },
   { id: "implement/advance", agentTierKey: null },
   { id: "plan-review", agentTierKey: null },

@@ -36,7 +36,7 @@ function looksLikeSchema(schema: JSONSchema): boolean {
 
 describe("typed prompt catalog is importable by ledger-mcp (T341)", () => {
   it("imports the dispatched-role sidecar store from @cq/config", () => {
-    expect(Object.keys(DISPATCHED_ROLE_SIDECARS).length).toBe(7);
+    expect(Object.keys(DISPATCHED_ROLE_SIDECARS).length).toBe(9);
   });
 
   it("every dispatched-subagent role in the shared roster resolves a sidecar here", () => {

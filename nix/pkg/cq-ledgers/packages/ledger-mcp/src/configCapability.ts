@@ -196,7 +196,7 @@ function groupByHarness(
  * Compute the `get_agent_models` payload for `repoRoot` (Q156–Q158).
  *
  * Re-reads `cq.toml` per call (no caching), like the other compute* methods.
- * Walks the fixed {@link AGENT_ROLE_TIERS} 19-role roster (the SHARED anti-drift
+ * Walks the fixed {@link AGENT_ROLE_TIERS} 23-role roster (the SHARED anti-drift
  * roster the codegen also consumes) and, per role:
  *
  *  - `agentTierKey === null` (orchestrator commands) -> status
