@@ -33,6 +33,10 @@ import {
   LEDGER_LOGS_DIRNAME,
   resolveProjectKey,
   resolveLogsDir,
+  PostgresLedgerStore,
+  openPgPool,
+  ensureSchema,
+  resolvePostgresDsn,
   type TreeEntry,
 } from "@cq/ledger";
 
@@ -268,6 +272,10 @@ export async function runLogPut(
     return runLogPutXdg(args, io, redacted);
   }
 
+  if (backend === "postgres") {
+    return runLogPutPostgres(args, io, redacted);
+  }
+
   // backend === 'fs' (the historical default) — write under <cwd>/.cq/<dest>.
 
   // --- Resolve the on-disk destination path ---
@@ -406,4 +414,89 @@ async function runLogPutXdg(
   await atomicWrite(destAbs, content);
   io.out(destAbs);
   return { exitCode: 0 };
+}
+
+/**
+ * The postgres backend write path (T575, Q274/Q285). Same redaction +
+ * strict-JSONL validation as every other backend (run by the caller,
+ * `runLogPut`); only the final write differs — into the tenant-keyed `logs`
+ * table (T572 schema) via {@link PostgresLedgerStore.putLog} instead of the
+ * xdg out-of-tree files.
+ *
+ * HONEST-MINIMAL NOTE (per the task method): `createLedgerStore` — the ONE
+ * backend-selecting store factory — does NOT yet wire `backend = 'postgres'`
+ * (that is T577's job); this branch is written against the seam T577 will
+ * complete, constructing a `PostgresLedgerStore` directly from the T571 DSN
+ * resolver + T572 schema module rather than blocking this task on T577.
+ * Tenant registration (the `projects` row) is documented as T574's concern,
+ * not yet implemented anywhere in this codebase — until T574 lands, this
+ * function performs the same minimal `INSERT ... ON CONFLICT DO NOTHING`
+ * upsert T573's own test harness (store-postgres.test.ts) uses, so a fresh
+ * tenant is immediately usable. `projectKey` reuses the SAME repo-identity
+ * resolver ({@link resolveProjectKey}) the xdg backend keys its out-of-tree
+ * store off, for lack of any postgres-specific tenant-keying primitive today
+ * — T574 may replace this with a dedicated mechanism.
+ *
+ * The destination-path normalisation mirrors {@link runLogPutXdg} EXACTLY
+ * (strip the leading `logs/` prefix via {@link LOGS_PREFIX}) so
+ * sessionLogs/rawLogs references keep resolving identically regardless of
+ * backend.
+ */
+async function runLogPutPostgres(
+  args: LogPutArgs,
+  io: LogPutIo,
+  content: string,
+): Promise<LogPutOutcome> {
+  const config = loadConfig(args.cwd);
+  const ledgerConfig = config?.ledger;
+  if (ledgerConfig === null || ledgerConfig === undefined) {
+    io.err(
+      "cq log put: [ledger] backend = 'postgres' requires a [ledger] table in cq.toml",
+    );
+    return { exitCode: 1 };
+  }
+
+  // resolvePostgresDsn lets PostgresDsnResolutionError propagate as the
+  // fail-fast (mirrors resolveProjectKey's ProjectKeyResolutionError below —
+  // neither is caught here, consistent with the rest of this function).
+  const resolution = resolvePostgresDsn(ledgerConfig, process.env);
+  // PG_DRIVER_DEFAULTS (no explicit DSN, but standard PG* env vars present)
+  // means "let the driver read its own defaults" — Bun's SQL constructor
+  // does this when given an empty connection string.
+  const dsn = resolution.kind === "dsn" ? resolution.dsn : "";
+
+  const pool = openPgPool(dsn);
+  let store: PostgresLedgerStore | undefined;
+  try {
+    await ensureSchema(pool);
+    const projectKey = await resolveProjectKey({
+      repoRoot: args.cwd,
+      projectId: ledgerConfig.projectId,
+    });
+    const displayName = config?.project?.name ?? projectKey;
+    await pool`
+      INSERT INTO projects (project_key, display_name)
+      VALUES (${projectKey}, ${displayName})
+      ON CONFLICT (project_key) DO NOTHING
+    `;
+    store = new PostgresLedgerStore({ pool, projectKey });
+    await store.init();
+
+    // args.dest is validated (validateLogDest) to start with "logs/" — strip
+    // it exactly as runLogPutXdg does so the stored key matches what readLog
+    // resolves (bare, logsDir-relative form).
+    const rel = args.dest.slice(LOGS_PREFIX.length);
+    await store.putLog(rel, content);
+
+    io.out(`postgres:${projectKey}/${args.dest}`);
+    return { exitCode: 0 };
+  } finally {
+    // store.dispose() closes the pool; if construction never reached that
+    // point (an error thrown before `store` was assigned), close it here.
+    if (store !== undefined) {
+      await store.dispose();
+    } else {
+      await pool.close();
+    }
+  }
 }

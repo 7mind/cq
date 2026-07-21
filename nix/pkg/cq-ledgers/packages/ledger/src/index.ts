@@ -80,6 +80,26 @@ export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";
 export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 export type { SqliteLedgerStoreOpts } from "./store/sqlite/SqliteLedgerStore.js";
+export { PostgresLedgerStore } from "./store/postgres/PostgresLedgerStore.js";
+export type { PostgresLedgerStoreOpts } from "./store/postgres/PostgresLedgerStore.js";
+export {
+  openPgPool,
+  withAdvisoryLock,
+  notifyProjectChanged,
+  writeTransaction,
+  isPgSerializationError,
+  withSerializationRetry,
+  LEDGER_CHANGE_CHANNEL,
+  WRITE_TXN_MAX_ATTEMPTS,
+} from "./store/postgres/connection.js";
+export { ensureSchema, PG_SCHEMA_VERSION } from "./store/postgres/schema.js";
+export {
+  resolvePostgresDsn,
+  PostgresDsnResolutionError,
+  PG_DRIVER_DEFAULTS,
+  PG_STANDARD_ENV_VARS,
+} from "./store/postgres/dsn.js";
+export type { PgDsnResolution, PgDsnSource } from "./store/postgres/dsn.js";
 export {
   createLedgerStore,
   openLegacyLedgerStore,

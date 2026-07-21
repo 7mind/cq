@@ -49,6 +49,7 @@
  * DEFAULT policy still matches sqlite's `'backup-reinit'`).
  */
 
+import * as path from "node:path";
 import type { SQL } from "bun";
 import type {
   ArchivePointer,
@@ -107,6 +108,8 @@ import {
   CANONICAL_LEDGERS,
   DECISIONS_LEDGER,
   GOALS_LEDGER,
+  LEDGER_LOGS_RELATIVE_PREFIX,
+  LEDGER_LOGS_STRIP_RE,
   MILESTONES_ACTIVE_GROUP_ID,
   MILESTONES_ACTIVE_GROUP_TITLE,
   MILESTONES_AMBIENT_ID,
@@ -114,6 +117,10 @@ import {
   QUESTIONS_ANSWER_FIELD,
   QUESTIONS_LEDGER,
 } from "../../constants.js";
+import {
+  MAX_READ_LOG_BYTES,
+  type ReadLogResult,
+} from "../../mcp/readLog.js";
 import { notifyProjectChanged, writeTransaction } from "./connection.js";
 import { classifyCanonicalLedgers } from "./divergence.js";
 
@@ -591,6 +598,98 @@ export class PostgresLedgerStore implements LedgerStore {
     this.itemArchives.clear();
     this.mutexes.clear();
     this.initialised = false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Log artifacts (T575, Q274/Q285) — the tenant-keyed `logs` table (T572
+  // schema) is this store's analogue of the xdg backend's out-of-tree logsDir.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Bounded read of a log artifact from the tenant-keyed `logs` table — the
+   * Postgres analogue of {@link SqliteLedgerStore.readLog}, serving the SAME
+   * `ReadLogCapability` contract (main.ts's `readLogOf` duck-typing picks it
+   * up unchanged): absolute paths rejected, a leading `.cq/logs/` prefix
+   * stripped (sessionLogs/rawLogs store that repo-relative form regardless of
+   * backend), a `..` escape rejected, oversized content truncated to
+   * {@link MAX_READ_LOG_BYTES} and flagged `truncated: true`. Unlike the
+   * filesystem-backed stores there is no symlink/TOCTOU surface to defend
+   * against — a `logs` row is either present or it is not.
+   */
+  async readLog(relPath: string): Promise<ReadLogResult> {
+    const rel = this.normalizeLogPath(relPath);
+    const rows = await this.pool()<Array<{ content: string }>>`
+      SELECT content FROM logs WHERE project_key = ${this.projectKey} AND path = ${rel}
+    `;
+    const row = rows[0];
+    if (row === undefined) {
+      throw new LedgerError(`read_log: no log at ${LEDGER_LOGS_RELATIVE_PREFIX}/${rel}`);
+    }
+    const buf = Buffer.from(row.content, "utf8");
+    if (buf.byteLength > MAX_READ_LOG_BYTES) {
+      return {
+        path: relPath,
+        content: buf.subarray(0, MAX_READ_LOG_BYTES).toString("utf8"),
+        truncated: true,
+      };
+    }
+    return { path: relPath, content: row.content };
+  }
+
+  /**
+   * Write one log artifact into the tenant-keyed `logs` table (T575) — the
+   * store-side half of `cq log put`'s postgres branch, called AFTER the SAME
+   * redaction + strict-JSONL-validation pipeline every other backend runs
+   * (logPut.ts). Upserts on `(project_key, path)` so a retried/re-run `log
+   * put` overwrites rather than conflicts.
+   */
+  async putLog(relPath: string, content: string): Promise<void> {
+    const rel = this.normalizeLogPath(relPath);
+    await this.pool()`
+      INSERT INTO logs (project_key, path, content)
+      VALUES (${this.projectKey}, ${rel}, ${content})
+      ON CONFLICT (project_key, path) DO UPDATE SET content = EXCLUDED.content, created_at = now()
+    `;
+  }
+
+  /**
+   * Enumerate every log artifact this tenant owns (T575, review R690) — the
+   * store-supplied logs source `buildBackupDump` (backupExporter.ts) prefers
+   * over a filesystem `logsDir` when present, since postgres has no
+   * filesystem logs area for `buildBackupDump` to walk. Yields the FULL
+   * content alongside each path (unlike `readLog`, which caps at
+   * {@link MAX_READ_LOG_BYTES}) so a backup dump is never silently truncated.
+   * Scoped strictly by `project_key` — a second tenant's rows are never
+   * visible here.
+   */
+  async *listLogs(): AsyncIterable<{ path: string; content: string }> {
+    const rows = await this.pool()<Array<{ path: string; content: string }>>`
+      SELECT path, content FROM logs WHERE project_key = ${this.projectKey} ORDER BY path
+    `;
+    for (const row of rows) {
+      yield { path: row.path, content: row.content };
+    }
+  }
+
+  /**
+   * Normalize + confine a log path exactly like
+   * {@link SqliteLedgerStore.readLog} (absolute rejected, a leading
+   * `.cq/logs/` prefix stripped, a `..` escape rejected) — there is no
+   * filesystem/symlink surface here, so containment reduces to a lexical
+   * check on the normalized POSIX path.
+   */
+  private normalizeLogPath(relPath: string): string {
+    if (path.isAbsolute(relPath) || path.posix.isAbsolute(relPath)) {
+      throw new LedgerError(`read_log: absolute paths are not allowed: ${relPath}`);
+    }
+    const stripped = relPath.replace(LEDGER_LOGS_STRIP_RE, "");
+    const normalized = path.posix.normalize(stripped);
+    if (normalized === ".." || normalized.startsWith("../")) {
+      throw new LedgerError(
+        `read_log: path escapes ${LEDGER_LOGS_RELATIVE_PREFIX} root: ${relPath}`,
+      );
+    }
+    return normalized;
   }
 
   // ---------------------------------------------------------------------------

@@ -26,6 +26,16 @@
  * byte-identical to the stored (already-redacted) artifact bytes. There is no
  * target that omits logs.
  *
+ * STORE-SUPPLIED LOGS SOURCE (T575, review R690): the postgres backend has no
+ * filesystem `logsDir` to walk — its log artifacts live in the tenant-keyed
+ * `logs` table (T572). `buildBackupDump` therefore ALSO accepts a duck-typed
+ * `listLogs` capability (mirroring the existing `readLog` duck-type, T408):
+ * when `store` exposes one (e.g. `PostgresLedgerStore`), it is preferred over
+ * `logsDir` unconditionally — there is no filesystem area to fall back to
+ * under postgres, and a store that advertises `listLogs` is authoritative
+ * regardless of backend. The xdg/fs/git-object `logsDir`-walking path is
+ * untouched.
+ *
  * Trigger: {@link BackupScheduler} — a best-effort DEBOUNCED export after
  * mutations, mirroring the old cache-mirror hook semantics: fire-and-forget,
  * GUARDED — a backup failure is swallowed (logged to stderr) and NEVER blocks
@@ -62,6 +72,24 @@ export interface BackupDumpFile {
 
 /** Regular-file git mode for a dump blob (mirrors GitPersistence / logPut). */
 const BLOB_MODE = "100644";
+
+/**
+ * Duck-typed store-supplied logs source (T575, review R690) — the postgres
+ * analogue's alternative to a filesystem `logsDir`. Mirrors
+ * `main.ts`'s `readLogOf` duck-type: a store opts in simply by exposing a
+ * `listLogs(): AsyncIterable<{ path, content }>` method (no `LedgerStore`
+ * interface change required); a store with none (fs/git-object/xdg, or the
+ * in-memory test store) returns `undefined` and `buildBackupDump` falls back
+ * to walking `logsDir`.
+ */
+function listLogsOf(
+  store: LedgerStore,
+): (() => AsyncIterable<{ path: string; content: string }>) | undefined {
+  const candidate = (store as { listLogs?: unknown }).listLogs;
+  if (typeof candidate !== "function") return undefined;
+  const fn = candidate as () => AsyncIterable<{ path: string; content: string }>;
+  return () => fn.call(store);
+}
 
 /**
  * Bounded retries for the orphan-branch CAS commit — the backup writer runs
@@ -127,7 +155,14 @@ export async function buildBackupDump(
     }
   }
 
-  if (logsDir !== null) {
+  const listLogs = listLogsOf(store);
+  if (listLogs !== undefined) {
+    // Store-supplied logs source (postgres) takes unconditional precedence:
+    // there is no filesystem logs area to fall back to under that backend.
+    for await (const entry of listLogs()) {
+      files.push({ path: path.posix.join(LEDGER_LOGS_DIRNAME, entry.path), content: entry.content });
+    }
+  } else if (logsDir !== null) {
     for (const rel of await walkFiles(logsDir)) {
       const content = await fs.readFile(path.join(logsDir, rel), "utf8");
       files.push({ path: path.posix.join(LEDGER_LOGS_DIRNAME, rel), content });
