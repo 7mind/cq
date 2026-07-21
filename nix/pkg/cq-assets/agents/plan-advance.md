@@ -111,6 +111,36 @@ the real goal id for `<G>` (e.g. `["goals:G1"]`). The server forbids the goal
 leaving `clarifying` while any linked question is `open`, so these gate the next
 phase by construction.
 
+### Triage each unknown FIRST — empirical unknown → a `researches` item, NOT a user question (Q267)
+Before filing ANY clarifying question, TRIAGE each unknown by WHO can answer it:
+
+- **EMPIRICALLY answerable** — the answer is a *verifiable-by-experiment* fact
+  about the code or the world (which library / data structure / algorithm /
+  approach performs best; whether an API behaves as documented; a benchmark,
+  compatibility, or feasibility result). The user cannot settle an empirical
+  fact by preference, so do NOT file a user question — file a **`researches`
+  item** instead: `create_item("researches", M, status: "open", fields: {
+  question: "<the empirical question>", scope?: "<what to try / how to bound the
+  investigation>", ledgerRefs: ["goals:<G>"] })`. `question` is REQUIRED; `scope`
+  is optional. A research is created at `open` (lifecycle `open → wip →
+  concluded | inconclusive`); this planner does NOT investigate it — the
+  `/cq:advance` **research stage** drives it to a conclusion (see the orchestrator
+  note in `commands/cq/plan/advance.md`; subagents-cannot-spawn-subagents holds,
+  so this planner never runs `/cq:research:advance`).
+- **PREFERENCE / REQUIREMENTS decision** — the answer is a *choice* only the user
+  can make (scope boundaries, product requirements, acceptable trade-offs, a
+  policy/naming preference, a green-field direction). File it as a user
+  `questions` item exactly as **Filing clarifying questions** above. User
+  questions stay RESERVED for these preference/requirements decisions.
+
+This is a BOUNDED sanctioned-creation rule — the direct analogue of the
+`/cq:advance` **Seed stage** goal carve-out (`commands/cq/plan/advance.md`): it
+authorises the planner to create `researches` items (and NOTHING else) for
+empirical unknowns. It does NOT relax the **never-fabricate-a-GOAL** guard in any
+way — this planner still NEVER creates a goal; it only files a research question
+in place of a user question when the unknown is empirical rather than a
+preference the user must decide.
+
 ## Decide the single step (match the FIRST applicable rule)
 
 The `goals` phases are `clarifying → planning → planned → building → done /
@@ -187,6 +217,22 @@ throw `InvalidTransitionError`. Do not attempt any other transition.
            - `fast` — trivial mechanical work (renames, link wiring, doc tables).
            Choose from the task's nature, not its size alone. Setting it on every
            task means `/implement:*` never has to warn about a missing hint.
+         - **RESEARCH-GATED tasks (Q267) — `dependsOn: ["researches:<RS>"]`.** A
+           task whose work cannot begin until an empirical unknown is settled MAY
+           carry the prefixed `"researches:<RS>"` ref in its `dependsOn` (RS = the
+           `researches` item you filed per the triage rule above). The engine then
+           gates the task for real: the `researches` schema declares
+           `satisfiesDependencyStatuses: ["concluded"]`, so P-implement treats a
+           `researches:<RS>` dependency as satisfied ONLY when RS is `concluded`
+           (an `abandoned` research never satisfies) — the task stays out of the
+           implement ready-set until the research concludes. **CREATE-ORDER
+           (mandatory):** create the `researches` item FIRST, THEN the task that
+           depends on it. The write-time dangling-ref validation (T551) rejects a
+           NEWLY-ADDED `dependsOn` entry that names a known ledger (`researches`)
+           whose target does not yet exist — so a task emitted before its
+           `researches:<RS>` target exists throws `DanglingRefError`. Filing the
+           research at the triage step above already puts it ahead of the task DAG,
+           satisfying this order.
      - **If the goal (or its answers) describes a DEFECT** — a fault to fix rather
        than greenfield work — model it per **Defect-aware planning** below
        (an `open` defects record PLUS its fix tasks), instead of (or alongside)
@@ -430,7 +476,16 @@ titles/headlines to the real `W…`/`T…` ids when it calls `create_milestone` 
     task MUST name a milestone present in `milestones[]`.)
   - **`dependsOn`** (optional, array) — task ordering; an array of OTHER
     `tasks[].headline` values in this same array. Maps to the `tasks.dependsOn`
-    id[] once the judge resolves headlines → `T…` ids.
+    id[] once the judge resolves headlines → `T…` ids. **Research gate (Q267):**
+    a candidate task's `dependsOn` MAY ALSO include an already-persisted
+    `"researches:<RS>"` token VERBATIM — unlike task/milestone references (by
+    headline/title, since their ids do not exist until the judge persists), a
+    `researches:<RS>` id already exists (the triage step filed it before the
+    candidate round), so it is carried as the literal prefixed id. The
+    judge/synthesis PRESERVES these `researches:<RS>` tokens as-is when it
+    persists the winning DAG (no headline resolution needed — they are already
+    real ids), and the write-time dangling-ref validation passes because the
+    research already exists.
   - **`ledgerRefs`** (array) — maps to the `tasks.ledgerRefs` id[]. ALWAYS
     include `"goals:<G>"` (substitute the real goal id, e.g. `"goals:G1"`). For a
     DEFECT fix task, ALSO include `"defects:<D>"` exactly as default-mode

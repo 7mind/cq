@@ -630,6 +630,25 @@ relevant), and report it** — these predicates REPLACE the numeric cap:
     new confidence to relaunch, stops on convergence or on a non-converging /
     dead cycle), so the pass provably converges.
 
+## Research items the planner filed are driven by `/cq:advance`, NOT here (Q267)
+
+The `plan-advance` planner subagent (`agents/plan-advance.md`) may file
+`researches` items for EMPIRICAL unknowns — the Q267 triage rule: an
+empirically-answerable unknown (which library / data structure / approach
+performs best; a verifiable-by-experiment fact) becomes an `open` `researches`
+item linked `goals:<G>` INSTEAD of a user question, while user questions stay
+reserved for preference/requirements decisions. Those research items are **NOT
+this orchestrator's to drive.** Unlike the defects the round files — which THIS
+orchestrator auto-investigates INLINE (the auto-investigate phase above) — an
+actionable `researches` item linked `goals:<G>` is driven by **`/cq:advance`'s
+RESEARCH stage** (`commands/cq/advance.md` §The cycle → Research stage, which
+runs `/cq:research:advance` on each actionable research). `/cq:plan:advance` does
+**NOT** spawn research subagents itself and does NOT chain `/cq:research:advance`:
+subagents-cannot-spawn-subagents holds (the planner subagent only FILES the
+research), and the flow-level `/cq:advance` wrapper owns the research stage and
+its P-research gate. Treat any filed research item as advisory context in the
+§Report only; it is picked up by the next `/cq:advance` cycle's research stage.
+
 ## Session logs (after EVERY subagent returns)
 
 Each subagent (planner and reviewer) ends its reply with a `### Session summary`
