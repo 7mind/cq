@@ -159,8 +159,10 @@ export type { FtsSearchOpts, FtsSearchHit } from "./search/LedgerSearchIndex.js"
 export {
   defectFixTaskIds,
   hypothesisRelationships,
+  hypothesesLinkedToRef,
+  hypothesisForest,
 } from "./relationships.js";
-export type { HypothesisRelationships } from "./relationships.js";
+export type { HypothesisRelationships, HypothesisForestNode } from "./relationships.js";
 export {
   eligibleColumnFields,
   defaultColumns,

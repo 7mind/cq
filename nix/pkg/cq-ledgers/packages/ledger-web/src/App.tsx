@@ -28,7 +28,13 @@ import { ROLE_FLOWS, ROLE_KIND_FILL, type RoleFlowDefinition, type RoleKind } fr
 import { AGENT_ROLES } from "./agentsCatalogue.js";
 import type { JSONSchema } from "@cq/config";
 import { LiveManager, type LiveStats } from "@cq/ledger-live";
-import { defectFixTaskIds, hypothesisRelationships } from "@cq/ledger/relationships";
+import {
+  defectFixTaskIds,
+  hypothesisRelationships,
+  hypothesesLinkedToRef,
+  hypothesisForest,
+  type HypothesisForestNode,
+} from "@cq/ledger/relationships";
 import { HoldButton, type HoldClock } from "./HoldButton.js";
 import { useBackdropDismiss } from "./useBackdropDismiss.js";
 // Browser-safe JSONL transcript parser (T412): turns the raw `.jsonl` content
@@ -49,6 +55,9 @@ import { MILESTONES_SCHEMA, IDEAS_LEDGER } from "@cq/ledger/constants";
 const DEFECTS_LEDGER = "defects";
 const TASKS_LEDGER = "tasks";
 const HYPOTHESIS_LEDGER = "hypothesis";
+// G80/M246 (T561, Q262): the researches ledger reuses the hypothesis ledger
+// as-is for research hypotheses, linked via `ledgerRefs: ["researches:<RS>"]`.
+const RESEARCHES_LEDGER = "researches";
 // Default ledger the batch-answer modal (Q33) steps through. The modal scope is
 // ANY answerable ledger (via canAnswer), but it opens on the questions ledger.
 const QUESTIONS_LEDGER = "questions";
@@ -820,6 +829,23 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         setAuxItems((prev) => ({ ...prev, [TASKS_LEDGER]: items }));
       }
     }).catch(() => { /* tasks ledger may not exist */ });
+    return () => {
+      alive = false;
+    };
+  }, [client, ledger, selected, auxItems]);
+
+  // When a researches item is selected, lazily fetch the hypothesis ledger so
+  // the linked hypothesis-tree panel can resolve it (T561, G80/M246, Q262).
+  useEffect(() => {
+    if (client === null || ledger !== RESEARCHES_LEDGER || selected === null) return;
+    if (auxItems[HYPOTHESIS_LEDGER] !== undefined) return; // already cached
+    let alive = true;
+    void client.fetchLedger(HYPOTHESIS_LEDGER).then((v) => {
+      if (alive) {
+        const items = v.milestones.flatMap((g) => g.items);
+        setAuxItems((prev) => ({ ...prev, [HYPOTHESIS_LEDGER]: items }));
+      }
+    }).catch(() => { /* hypothesis ledger may not exist */ });
     return () => {
       alive = false;
     };
@@ -3381,6 +3407,14 @@ function DetailPanel({
           onNavigate={(id) => onNavigateToItem?.(HYPOTHESIS_LEDGER, id)}
         />
       )}
+      {/* Research → linked hypothesis tree panel (T561, G80/M246, Q262) */}
+      {ledger === RESEARCHES_LEDGER && !isDraft && (
+        <ResearchHypothesisTreePanel
+          researchId={row.item.id}
+          hypotheses={auxItems?.[HYPOTHESIS_LEDGER] ?? []}
+          onNavigate={(id) => onNavigateToItem?.(HYPOTHESIS_LEDGER, id)}
+        />
+      )}
       {/* Session logs panel */}
       {!isDraft && onReadLog !== undefined && (
         <SessionLogsPanel item={row.item} onReadLog={onReadLog} />
@@ -3515,6 +3549,70 @@ function HypothesisTreePanel({
           </ul>
         </>
       )}
+    </section>
+  );
+}
+
+/**
+ * Renders the FULL linked hypothesis tree for a selected `researches` item
+ * (T561, G80/M246, Q262): every hypothesis whose `ledgerRefs` contains
+ * `researches:<researchId>` (the investigate-flow convention of tagging every
+ * node in the tree with the owning ref — see
+ * `nix/pkg/cq-assets/commands/cq/investigate/advance.md`), nested into a
+ * forest by `parentHypothesis` via the shared `hypothesisForest` helper.
+ * Unlike `HypothesisTreePanel` (a single hypothesis's ancestry + direct
+ * children), this shows every linked node at every depth, since a research
+ * may have multiple root hypotheses.
+ */
+function ResearchHypothesisTreePanel({
+  researchId,
+  hypotheses,
+  onNavigate,
+}: {
+  researchId: string;
+  hypotheses: readonly Item[];
+  onNavigate: (hypothesisId: string) => void;
+}): React.ReactElement | null {
+  const linked = hypothesesLinkedToRef(`researches:${researchId}`, hypotheses);
+  if (linked.length === 0) return null;
+  const forest = hypothesisForest(linked);
+
+  const byId = new Map<string, Item>();
+  for (const h of linked) byId.set(h.id, h);
+
+  const renderNode = (node: HypothesisForestNode): React.ReactElement => {
+    const item = byId.get(node.id);
+    return (
+      <li key={node.id}>
+        <button
+          type="button"
+          className="lw-rel-row"
+          data-testid={`research-hyp-${node.id}`}
+          onClick={() => onNavigate(node.id)}
+        >
+          <span className="lw-rel-id">{node.id}</span>
+          {item !== undefined && (
+            <>
+              <span className={`lw-status lw-status-${item.status}`} data-testid={`research-hyp-status-${node.id}`}>
+                {item.status}
+              </span>
+              <span className="lw-rel-summary lw-dim">{summarize(item)}</span>
+            </>
+          )}
+        </button>
+        {node.children.length > 0 && (
+          <ul className="lw-rel-list">{node.children.map(renderNode)}</ul>
+        )}
+      </li>
+    );
+  };
+
+  return (
+    <section className="lw-rel-section" data-testid="research-hypothesis-tree-section">
+      <h4 className="lw-rel-heading">Hypothesis tree</h4>
+      <ul className="lw-rel-list" data-testid="research-hypothesis-tree">
+        {forest.map(renderNode)}
+      </ul>
     </section>
   );
 }

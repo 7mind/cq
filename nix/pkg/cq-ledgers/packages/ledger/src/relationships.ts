@@ -10,6 +10,20 @@
  *  - defectFixTaskIds: for a defect item D, the set of task ids that fix it.
  *  - hypothesisRelationships: for a hypothesis H, the ancestry chain to the
  *    root and the set of direct children.
+ *
+ * G80/M246 (T561, Q262) — the hypothesis ledger is reused as-is for research
+ * hypotheses, linked via `ledgerRefs: ["researches:<RS>"]` the same way a
+ * defect's hypothesis tree is linked via `ledgerRefs: ["defects:<D>"]`
+ * (`nix/pkg/cq-assets/commands/cq/investigate/advance.md` — every node in the
+ * tree, not just the root, carries the owning ref). Two more owner-agnostic
+ * helpers support rendering a FULL forest (multiple roots, arbitrary depth)
+ * for a given owning ref, as opposed to `hypothesisRelationships`'s
+ * single-hypothesis ancestry/children view:
+ *  - hypothesesLinkedToRef: filters hypotheses whose `ledgerRefs` contains a
+ *    given owning ref (e.g. `"researches:RS1"` or `"defects:D3"`).
+ *  - hypothesisForest: nests a (typically pre-filtered) set of hypotheses into
+ *    a forest via `parentHypothesis`, tolerating parents outside the set (they
+ *    become forest roots) and parentHypothesis cycles.
  */
 
 import type { Item } from "./types.js";
@@ -171,4 +185,71 @@ export function hypothesisRelationships(
   }
 
   return { ancestors, children };
+}
+
+// ---------------------------------------------------------------------------
+// Hypothesis forest, keyed by an arbitrary owning ref (G80/M246, Q262)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the hypothesis items whose `ledgerRefs` field contains `ownerRef`
+ * verbatim (e.g. `"researches:RS1"` or `"defects:D3"`).
+ *
+ * @param ownerRef    The exact cross-ledger ref string to match.
+ * @param hypotheses  All hypothesis items available to search.
+ */
+export function hypothesesLinkedToRef(ownerRef: string, hypotheses: readonly Item[]): Item[] {
+  return hypotheses.filter((h) => {
+    const ledgerRefs = h.fields["ledgerRefs"];
+    return Array.isArray(ledgerRefs) && ledgerRefs.includes(ownerRef);
+  });
+}
+
+/** One node of a hypothesis forest: an id plus its nested children. */
+export interface HypothesisForestNode {
+  id: string;
+  children: HypothesisForestNode[];
+}
+
+/**
+ * Nests a set of hypothesis items into a forest via `parentHypothesis`. A
+ * hypothesis is a ROOT of the forest when its `parentHypothesis` is absent OR
+ * names an item NOT present in `hypotheses` (e.g. the parent belongs to a
+ * different owning ref, or was archived) — this keeps the forest well-formed
+ * even over an already-filtered subset such as `hypothesesLinkedToRef`'s
+ * result. Guards against `parentHypothesis` cycles the same way
+ * `hypothesisRelationships` does (a visited-set per root-to-node path).
+ *
+ * @param hypotheses  The hypothesis items to nest (typically pre-filtered to
+ *                     one owning ref via `hypothesesLinkedToRef`).
+ * @returns           The forest roots, each with its `children` nested
+ *                     recursively. Order follows `hypotheses`' input order.
+ */
+export function hypothesisForest(hypotheses: readonly Item[]): HypothesisForestNode[] {
+  const byId = new Map<string, Item>();
+  for (const h of hypotheses) byId.set(h.id, h);
+
+  const childrenOf = new Map<string, string[]>();
+  const rootIds: string[] = [];
+  for (const h of hypotheses) {
+    const parentField = h.fields["parentHypothesis"];
+    if (typeof parentField === "string" && parentField !== "" && byId.has(parentField)) {
+      const siblings = childrenOf.get(parentField) ?? [];
+      siblings.push(h.id);
+      childrenOf.set(parentField, siblings);
+    } else {
+      rootIds.push(h.id);
+    }
+  }
+
+  function buildNode(id: string, ancestry: ReadonlySet<string>): HypothesisForestNode {
+    const nextAncestry = new Set(ancestry);
+    nextAncestry.add(id);
+    const kids = (childrenOf.get(id) ?? [])
+      .filter((cid) => !ancestry.has(cid)) // cycle guard
+      .map((cid) => buildNode(cid, nextAncestry));
+    return { id, children: kids };
+  }
+
+  return rootIds.map((id) => buildNode(id, new Set()));
 }

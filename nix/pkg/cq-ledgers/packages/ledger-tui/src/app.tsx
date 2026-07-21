@@ -41,14 +41,31 @@ import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchem
 import {
   defectFixTaskIds,
   hypothesisRelationships,
+  hypothesesLinkedToRef,
+  hypothesisForest,
+  type HypothesisForestNode,
   eligibleColumnFields,
   defaultColumns,
   DEFECTS_LEDGER,
   TASKS_LEDGER,
   HYPOTHESIS_LEDGER,
+  RESEARCHES_LEDGER,
   GOALS_LEDGER,
 MILESTONES_SCHEMA,
 } from "@cq/ledger";
+
+/**
+ * The secondary ledger to lazily fetch for a given primary ledger's
+ * relationship panel, or `null` when the primary ledger needs none
+ * (T561, G80/M246, Q262 — generalized from the defects-only original so the
+ * researches ledger's linked-hypothesis-tree panel can reuse the same
+ * lazy-fetch + prop-threading path).
+ */
+function secondaryLedgerFor(ledger: string): string | null {
+  if (ledger === DEFECTS_LEDGER) return TASKS_LEDGER;
+  if (ledger === RESEARCHES_LEDGER) return HYPOTHESIS_LEDGER;
+  return null;
+}
 
 const MILESTONES = "milestones";
 /** Goals (T84): the `id[]` field holding a goal's work-milestone ids, shown as
@@ -480,11 +497,12 @@ export function App({
   }, [client, reloadItems]);
 
   // Lazily fetch secondary ledgers needed for relationship resolution.
-  // When the user is browsing defects, fetch tasks (for fix-task links).
+  // When the user is browsing defects, fetch tasks (for fix-task links); when
+  // browsing researches, fetch hypothesis (for the linked hypothesis tree,
+  // T561 / G80/M246 / Q262).
   useEffect(() => {
     if (top.kind !== "items") return;
-    let secondary: string | null = null;
-    if (top.ledger === DEFECTS_LEDGER) secondary = TASKS_LEDGER;
+    const secondary = secondaryLedgerFor(top.ledger);
     if (secondary === null || crossItems.has(secondary)) return;
     let alive = true;
     client.fetchLedger(secondary).then((view) => {
@@ -1056,8 +1074,10 @@ export function App({
     );
     // Flat list of all items in the current view (for relationship resolution).
     const viewItems = allRows.map((r) => r.item);
-    // Cross-ledger items for secondary relationship lookups.
-    const taskItems = crossItems.get(TASKS_LEDGER) ?? [];
+    // Cross-ledger items for secondary relationship lookups (fix-tasks for
+    // defects, linked hypotheses for researches — T561).
+    const secondaryLedger = secondaryLedgerFor(top.ledger);
+    const secondaryItems = secondaryLedger !== null ? crossItems.get(secondaryLedger) ?? [] : [];
     contentEl =
       cur !== undefined ? (
         <ContentPane
@@ -1069,7 +1089,7 @@ export function App({
           scroll={top.scroll}
           readOnly={cursorInArchive}
           viewItems={viewItems}
-          taskItems={taskItems}
+          secondaryItems={secondaryItems}
           maxScrollRef={contentMaxScroll}
         />
       ) : (
@@ -1380,7 +1400,7 @@ function ContentPane({
   scroll,
   readOnly = false,
   viewItems = [],
-  taskItems = [],
+  secondaryItems = [],
   maxScrollRef,
 }: {
   row: Row;
@@ -1400,10 +1420,11 @@ function ContentPane({
    */
   viewItems?: readonly Item[];
   /**
-   * Items from the tasks ledger (lazily fetched); used for defect → fix-task
-   * reverse-link resolution.
+   * Items from the secondary ledger `secondaryLedgerFor(ledger)` lazily
+   * fetches: tasks for defect → fix-task reverse-link resolution, or
+   * hypothesis for a research's linked-hypothesis-tree resolution (T561).
    */
-  taskItems?: readonly Item[];
+  secondaryItems?: readonly Item[];
 }): React.ReactElement {
   const f = row.item.fields;
   const question = isQuestion(schema);
@@ -1435,16 +1456,21 @@ function ContentPane({
   const { author, session } = row.item;
   const hasProvenance = author !== undefined || session !== undefined;
 
-  // Relationship blocks (T48): defects → fix tasks; hypothesis → ancestry + children.
+  // Relationship blocks (T48): defects → fix tasks; hypothesis → ancestry +
+  // children; researches → the full linked hypothesis tree (T561, Q262).
   const isDefect = ledger === DEFECTS_LEDGER;
   const isHypothesis = ledger === HYPOTHESIS_LEDGER;
-  const fixTaskIds = isDefect ? defectFixTaskIds(row.item.id, viewItems, taskItems) : [];
+  const isResearch = ledger === RESEARCHES_LEDGER;
+  const fixTaskIds = isDefect ? defectFixTaskIds(row.item.id, viewItems, secondaryItems) : [];
   const hypoRels = isHypothesis ? hypothesisRelationships(row.item.id, viewItems) : null;
+  const researchForest = isResearch
+    ? hypothesisForest(hypothesesLinkedToRef(`researches:${row.item.id}`, secondaryItems))
+    : [];
 
-  // Helper: find an item by id across viewItems and taskItems.
+  // Helper: find an item by id across viewItems and secondaryItems.
   const findItem = (id: string): Item | undefined =>
     (viewItems as Item[]).find((i) => i.id === id) ??
-    (taskItems as Item[]).find((i) => i.id === id);
+    (secondaryItems as Item[]).find((i) => i.id === id);
 
   // Build the detail as a FLAT list of one-row elements, then render only the
   // visible [scroll, scroll+height] slice. Windowing keeps each render cheap —
@@ -1549,12 +1575,15 @@ function ContentPane({
     }
   }
 
-  // Relationship row helper (fix tasks / hypothesis tree).
-  const relRow = (id: string): void => {
+  // Relationship row helper (fix tasks / hypothesis tree). `depth` controls
+  // the indent (2 spaces per level) — the flat blocks (Fix tasks/Ancestry/
+  // Children) use the default depth of 1; the research forest (T561) nests
+  // deeper per level.
+  const relRow = (id: string, depth = 1): void => {
     const it = findItem(id);
     push(
       <>
-        {"  "}
+        {"  ".repeat(depth)}
         <Text bold>{id}</Text>
         {it !== undefined ? (
           <>
@@ -1592,6 +1621,19 @@ function ContentPane({
       push("Children", { bold: true, color: "gray" });
       for (const cid of hypoRels.children) relRow(cid);
     }
+  }
+
+  // Research → linked hypothesis tree block (T561, G80/M246, Q262): every
+  // hypothesis whose ledgerRefs contains "researches:<id>", nested by
+  // parentHypothesis (potentially multiple roots, arbitrary depth).
+  if (isResearch && researchForest.length > 0) {
+    pushBlank();
+    push("Hypothesis tree", { bold: true, color: "gray" });
+    const pushNode = (node: HypothesisForestNode, depth: number): void => {
+      relRow(node.id, depth);
+      for (const child of node.children) pushNode(child, depth + 1);
+    };
+    for (const node of researchForest) pushNode(node, 1);
   }
 
   const maxScroll = Math.max(0, lines.length - height);
