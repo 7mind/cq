@@ -334,23 +334,6 @@ in
       '';
     };
 
-    smind.hm.dev.llm.yolo.darwin.keychainServicePrefix = lib.mkOption {
-      type = lib.types.str;
-      default = "claude-code-";
-      example = "anthropic-";
-      description = ''
-        Darwin only. Keychain service-name PREFIX for the per-profile Claude
-        OAuth-token lookup the yolo-darwin launcher performs. For a named
-        profile `<name>` the launcher reads the generic-password whose service
-        is `<prefix><name>` (account `$USER`) and injects it as
-        `CLAUDE_CODE_OAUTH_TOKEN` into the confined `claude` invocation only,
-        taking precedence over the shared-Keychain `/login` credential. Passed
-        to the yolo-darwin package as
-        the `YOLO_KEYCHAIN_SERVICE_PREFIX` env var the launcher reads. No effect
-        on Linux — the bubblewrap sandbox has no macOS Keychain.
-      '';
-    };
-
     smind.hm.dev.llm.yolo.hooks.pre-start.host = lib.mkOption {
       type = lib.types.listOf hookType;
       default = [ ];
@@ -470,8 +453,6 @@ in
       home.packages = [
         (pkgs.callPackage ../pkg/yolo-darwin/default.nix {
           claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
-          # The package wrapper exports this as YOLO_KEYCHAIN_SERVICE_PREFIX.
-          inherit (cfg.yolo.darwin) keychainServicePrefix;
         })
       ];
     })

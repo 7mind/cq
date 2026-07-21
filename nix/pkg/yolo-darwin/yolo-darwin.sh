@@ -4,9 +4,6 @@
 # Required env vars (set by the Nix wrapper):
 #   YOLO_SANDBOX_EXEC - path to the Darwin sandbox-exec wrapper/binary
 #   YOLO_JQ           - path to jq binary
-#
-# Optional env vars:
-#   YOLO_KEYCHAIN_SERVICE_PREFIX - per-profile Claude Keychain service prefix
 # Darwin omits Linux --disable because its tags control bwrap-only resources.
 
 : "${YOLO_SANDBOX_EXEC:?must be set}"
@@ -204,21 +201,6 @@ ensure_codex_config() {
   chmod u+w "$out_file"
 }
 
-# Named profiles prefer a <prefix><profile> Keychain token for Claude only.
-# A missing entry intentionally falls back to the shared /login credential;
-# tokens enter the child environment without appearing in argv.
-CLAUDE_ENV_PAIRS=()
-resolve_claude_oauth_token() {
-  local prefix="${YOLO_KEYCHAIN_SERVICE_PREFIX:-claude-code-}"
-  local service="${prefix}${PROFILE}"
-  local token
-  if token="$(security find-generic-password -a "$USER" -s "$service" -w 2>/dev/null)"; then
-    CLAUDE_ENV_PAIRS+=("CLAUDE_CODE_OAUTH_TOKEN=$token")
-  else
-    echo "Warning: no Keychain OAuth token for profile '$PROFILE' (service '$service'); falling back to the shared login credential." >&2
-  fi
-}
-
 # pi resolves all per-user state below PI_CODING_AGENT_DIR. Its MCP registry
 # remains shared because pi-mcp-adapter reads ~/.config/mcp/mcp.json directly.
 PI_SHARED_ASSETS=(settings.json AGENTS.md skills extensions mcp.json)
@@ -265,13 +247,11 @@ yolo_exec_agent() {
   trap "rm -f -- '$yolo_sb_profile'" EXIT
   render_sandbox_profile "$PROFILE" "$PWD" > "$yolo_sb_profile"
   local sandbox_argv=("$YOLO_SANDBOX_EXEC" --use-profile "$yolo_sb_profile" --target-dir "$PWD" --)
-  exec env "${PROFILE_ENV_PAIRS[@]}" "${CLAUDE_ENV_PAIRS[@]}" "${ENV_PAIRS[@]}" SMIND_SANDBOXED=1 "${sandbox_argv[@]}" "${agent_argv[@]}" "$@"
+  exec env "${PROFILE_ENV_PAIRS[@]}" "${ENV_PAIRS[@]}" SMIND_SANDBOXED=1 "${sandbox_argv[@]}" "${agent_argv[@]}" "$@"
 }
 
 case "$SUBCMD" in
   claude)
-    # Named profiles override the shared /login credential with their token.
-    [[ -n "$PROFILE" ]] && resolve_claude_oauth_token
     reshare_profile_assets claude
     yolo_exec_agent claude "${CMD_ARGS[@]}"
     ;;

@@ -10,6 +10,7 @@ GOLDEN_FILE="$SCRIPT_DIR/testdata/profile-foo.sb"
 
 # Satisfy mandatory paths; these commands are never invoked before the exec seam.
 _true_path="$(command -v true || echo /bin/true)"
+_bash_path="$(command -v bash || echo /bin/bash)"
 _jq_path="$(command -v jq || echo /usr/bin/jq)"
 export YOLO_SANDBOX_EXEC="$_true_path"
 export YOLO_JQ="$_jq_path"
@@ -162,6 +163,44 @@ DUMP_DEFAULT="$(dump_state cmd true)"
 assert_contains "default: CLAUDE_CONFIG_DIR unset" "$DUMP_DEFAULT" "CLAUDE_CONFIG_DIR=<unset>"
 assert_contains "default: CODEX_HOME unset" "$DUMP_DEFAULT" "CODEX_HOME=<unset>"
 assert_contains "default: PI_PROFILE_DIR is the real ~/.pi" "$DUMP_DEFAULT" "PI_PROFILE_DIR=$FAKE_HOME/.pi"
+
+# ── Claude native per-profile authentication ──────────────────────────────────
+FAKE_BIN="$WORKDIR/fake-bin"
+mkdir -p "$FAKE_BIN"
+printf '%s\n' \
+  "#!$_bash_path" \
+  "printf invoked > \"\$FAKE_SECURITY_MARKER\"" \
+  "if [[ \"\${FAKE_SECURITY_FAIL:-0}\" == 1 ]]; then exit 44; fi" \
+  'printf "%s\n" custom-keychain-token' > "$FAKE_BIN/security"
+printf '%s\n' \
+  "#!$_bash_path" \
+  "printf \"sandbox_oauth=%s\\n\" \"\${CLAUDE_CODE_OAUTH_TOKEN:-<unset>}\"" > "$FAKE_BIN/sandbox"
+chmod +x "$FAKE_BIN/security" "$FAKE_BIN/sandbox"
+
+run_claude_exec() {
+  local security_fail="$1"
+  rm -f "$WORKDIR/security-invoked"
+  OUT="$(
+    cd "$PROJECT_DIR" &&
+      unset CLAUDE_CODE_OAUTH_TOKEN &&
+      HOME="$FAKE_HOME" \
+      USER=test-user \
+      PATH="$FAKE_BIN:$PATH" \
+      FAKE_SECURITY_FAIL="$security_fail" \
+      FAKE_SECURITY_MARKER="$WORKDIR/security-invoked" \
+      YOLO_SANDBOX_EXEC="$FAKE_BIN/sandbox" \
+      bash "$SCRIPT" --profile foo claude 2>&1
+  )"
+  STATUS=$?
+}
+
+run_claude_exec 0
+assert_zero "claude launch with an available custom Keychain token succeeds" "$STATUS"
+assert_contains "claude does not inject a custom Keychain token" "$OUT" "sandbox_oauth=<unset>"
+assert_eq "claude does not query a custom Keychain token" "no" "$(if [[ -e "$WORKDIR/security-invoked" ]]; then echo yes; else echo no; fi)"
+run_claude_exec 1
+assert_zero "claude launch with no custom Keychain token succeeds" "$STATUS"
+assert_not_contains "claude does not warn about custom-token fallback" "$OUT" "falling back to the shared login credential"
 
 # ── copied HM assets ─────────────────────────────────────────────────────────
 # Run all agents in one shell so a second pass can verify copy-if-absent.

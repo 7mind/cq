@@ -132,58 +132,21 @@ When using a named profile, the Seatbelt profile implements credential isolation
 1. Denying access to the entire `~/.config/yolo` tree by default.
 2. Re-granting read-write access **only** to the active profile's subdirectories (e.g., `~/.config/yolo/work/claude`, `~/.config/yolo/work/codex`, `~/.config/yolo/work/pi`).
 
-This ensures that one profile **cannot** read or write another profile's credentials or session state.
+This isolates file-backed credentials and session state. Claude Code's native credentials remain in the user's shared macOS Keychain database; `CLAUDE_CONFIG_DIR` makes Claude Code select a profile-specific Keychain item, but Seatbelt path rules do not isolate individual Keychain items by service name.
 
 ## Per-profile authentication setup
 
 Each named profile requires one-time manual setup so that Claude Code, Codex, and pi each authenticate independently.
 
-### Claude Code — token-based setup (recommended for terminal)
+### Claude Code — native per-profile login
 
-Claude Code supports per-profile subscription separation via long-lived inference tokens stored in macOS Keychain:
+Claude Code scopes its macOS Keychain credential to `CLAUDE_CONFIG_DIR`. Authenticate each named profile directly:
 
-1. **Generate a token** (once per account):
+```bash
+yolo --profile work claude
+```
 
-   ```bash
-   # Use the default profile (your main account) or a specific profile
-   yolo --profile work claude setup-token
-   ```
-
-   Complete the browser login flow with the intended Claude subscription account. The command prints the token to the terminal and does NOT save it automatically.
-
-2. **Store the token in macOS Keychain** (using Keychain Access or the command line):
-
-   Using the command line:
-
-   ```bash
-   security add-generic-password \
-     -a "$USER" \
-     -s "claude-code-work" \
-     -w "<paste-the-token-here>" \
-     -U
-   ```
-
-   Or use the Keychain Access app:
-   - Open Keychain Access (⌘ Space → "Keychain Access").
-   - Click the lock to unlock, if needed.
-   - Select the "login" keychain.
-   - Choose File → New Generic Password Item.
-   - Fill in:
-     - Keychain Item Name: `claude-code-work` (or your profile name).
-     - Account Name: Your macOS username (the output of `whoami`).
-     - Password: The token printed by `claude setup-token`.
-   - Click "Add".
-
-3. **On next launch**, `yolo-darwin` automatically retrieves the token from Keychain and injects it as `CLAUDE_CODE_OAUTH_TOKEN` into the Claude Code process **only**, taking precedence over any shared Keychain credential.
-
-   Keychain service-name format: `<prefix><profile>`, where `<prefix>` defaults to `"claude-code-"` and is configurable via the Nix home-manager option `smind.hm.dev.llm.yolo.darwin.keychainServicePrefix`.
-
-**Token limitations:**
-- The token is long-lived (up to one year) but not indefinite.
-- It provides inference-only authentication; Remote Control sessions require the full `/login` OAuth flow (see the recommendations document for separate-account strategies).
-- The token enters the agent's environment and can be inherited by child processes.
-
-If you need full-scope independent `/login` authentication across profiles (including Remote Control), consider using separate macOS user accounts.
+Run `/login` and complete the browser flow with the intended subscription account. Claude Code stores the credential in a profile-specific Keychain item whose name starts with `Claude Code-credentials-`; subsequent launches with the same profile reuse that credential. The default profile continues to use the unsuffixed `Claude Code-credentials` item.
 
 ### Codex — file-based credentials
 
@@ -247,7 +210,7 @@ When an agent runs under `yolo-darwin`:
 
 The launcher's SBPL profile generation, the per-profile `~/.config/yolo/<name>/<agent>` directory layout (created `700`), the `$PWD==$HOME` guard, and `$PWD` sandbox confinement are covered **automatically** by the nix flake checks — `yolo-darwin-profile` (all systems) and `yolo-darwin-confinement` (macOS) — so they are not repeated here.
 
-The steps below are the remaining runtime behaviors a Mac-less CI cannot exercise: real account/credential resolution, session isolation across a live agent, and OAuth-token refresh. Run them on a Mac using an actual test repository.
+The steps below are the remaining runtime behaviors a Mac-less CI cannot exercise: real account/credential resolution, session isolation across a live agent, and OAuth refresh. Run them on a Mac using an actual test repository.
 
 For each profile you set up (e.g., "personal" and "work"):
 
@@ -289,11 +252,11 @@ For each profile you set up (e.g., "personal" and "work"):
    ```
 
    Each should still show its original account. If you see the wrong account, check:
-   - For Claude Code: Did you store the token in Keychain with the correct service name (e.g., `claude-code-personal`)?
+   - For Claude Code: Did you run `/login` separately inside each named profile?
    - For Codex: Is the profile's `config.toml` using `cli_auth_credentials_store = "file"`?
    - For pi: Is the `auth.json` in the correct profile directory?
 
-6. **For Claude Code, re-test after OAuth refresh** — If you wait long enough (hours to days), Claude Code may refresh its OAuth token. Restart Claude Code after a refresh and confirm that it still shows the correct account for the profile. This verifies that the `CLAUDE_CODE_OAUTH_TOKEN` injection and token-refresh handling are working correctly together.
+6. **For Claude Code, re-test after OAuth refresh** — If you wait long enough (hours to days), Claude Code may refresh its OAuth token. Restart Claude Code after a refresh and confirm that it still shows the correct account for the profile. This verifies that the native profile-specific credential remains associated with the intended account.
 
    **Timing note**: Token refresh is automatic and depends on the token's age and usage. You may not observe a refresh during a single session; this step is optional but recommended for long-running environments.
 
@@ -331,7 +294,7 @@ yolo --unsafe-share-home claude
 
 For the default (no-profile) case, Claude Code uses the shared macOS Keychain credential. If you previously logged in with a different account, that credential may persist. Solution:
 
-1. Use a named profile with per-profile token storage (see "Claude Code — token-based setup" above).
+1. Use a named profile and run `/login` inside it (see "Claude Code — native per-profile login" above).
 2. Or, open Claude Code's settings and sign out from `/login`, then sign back in with the desired account.
 
 ### Codex login fails or shows the wrong account
@@ -378,4 +341,4 @@ The sandbox grants read-write access only to the working directory, `~/.cache`, 
 ## See also
 
 - `yolo-darwin.sh` — The launcher script and its internal implementation details.
-- `nix/hm/yolo.nix` — The home-manager module that configures the launcher; see the `smind.hm.dev.llm.yolo.darwin.keychainServicePrefix` option for Keychain service-name prefix configuration.
+- `nix/hm/yolo.nix` — The home-manager module that configures the launcher.
