@@ -192,6 +192,27 @@ describe("ledger-tui researches detail view (T561)", () => {
     r.unmount();
   });
 
+  it("indents H2 deeper than H1 (nested child, not a flat sibling root)", async () => {
+    const client = new ResearchClient();
+    const r = render(<App client={client} />);
+    await tick();
+    r.stdin.write(ENTER); // open researches — RS1 is cursor 0
+    await waitFor(() => r.lastFrame() ?? "", "Hypothesis tree");
+    const f = r.lastFrame() ?? "";
+    // relRow indents 2 spaces per depth level: H1 (root, depth 1) renders at
+    // a shallower column than H2 (its child, depth 2). A regression rendering
+    // the forest FLAT would place both ids at the SAME column and fail here.
+    // Match "H1 ["/"H2 [" (id + status-opening-bracket) so the id is only
+    // found on its tree row, not elsewhere in the frame.
+    const lines = f.split("\n");
+    const h1Line = lines.find((l) => l.includes("H1 ["));
+    const h2Line = lines.find((l) => l.includes("H2 ["));
+    expect(h1Line).toBeDefined();
+    expect(h2Line).toBeDefined();
+    expect(h2Line!.indexOf("H2 [")).toBeGreaterThan(h1Line!.indexOf("H1 ["));
+    r.unmount();
+  });
+
   it("shows hypothesis summaries alongside their ids in the tree block", async () => {
     const client = new ResearchClient();
     const r = render(<App client={client} />);
