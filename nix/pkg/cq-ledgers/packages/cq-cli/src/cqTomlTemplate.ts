@@ -23,7 +23,14 @@
  *    primary is the default for a FRESH `cq init`. This ONLY affects fresh
  *    inits — an existing repo's cq.toml (untouched by `cq init` without
  *    `--force`) keeps whatever backend it already has. The backup mode
- *    defaults to `none` (T494; unaffected).
+ *    defaults to `none` (T494; unaffected). A commented `backend = "postgres"`
+ *    + `url` example documents the opt-in multi-tenant backend (G81/T584)
+ *    right below the active `xdg` line, alongside the secret-hygiene warning:
+ *    a real DSN belongs in `CQ_LEDGER_PG_URL`/`DATABASE_URL` (env), never in
+ *    the committed `url` key.
+ *  - `[project]` (T570/Q270) is documented, commented out: its one key
+ *    (`name`) is a purely cosmetic display-name override — no credentials
+ *    ever belong there either.
  */
 
 export const CQ_TOML_TEMPLATE: string = `\
@@ -96,7 +103,8 @@ export const CQ_TOML_TEMPLATE: string = `\
 # the out-of-tree bun:sqlite primary (K102), keyed off this repo's git
 # identity (or [ledger].projectId below). "fs" (in-tree .cq/) and
 # "git-object" remain available — set backend explicitly to opt back in.
-# "postgres" is an opt-in external backend (G81; store wiring pending).
+# "postgres" is an opt-in, multi-tenant external backend (G81; full store
+# parity — init/reset/erase/backup/restore/migrate all wired, T577-T584).
 # backup (default: "none") is OFF by default (Q244); projectId is an
 # optional committed project-identity key (Q246), needed only for a repo
 # with no stable git root commit (e.g. a shallow clone).
@@ -104,4 +112,25 @@ export const CQ_TOML_TEMPLATE: string = `\
   backend   = "xdg"
 # backup    = "none"
 # projectId = "my-project"
+
+# To opt into the postgres backend instead, uncomment the block below (and
+# comment out/remove the active [ledger] table above — cq.toml has exactly
+# one active [ledger] table). \`url\` here is a COMMITTED, credential-less
+# default (Q278) — e.g. "postgres://host:5432/dbname" with no user/password.
+# SECRET HYGIENE: a real connection string (with credentials) belongs in the
+# CQ_LEDGER_PG_URL or DATABASE_URL environment variable — highest precedence,
+# resolved at runtime — NEVER in this committed file. \`cq migrate --to
+# postgres\` (from an existing backend = "xdg" repo) is the one-shot importer.
+# [ledger]
+#   backend = "postgres"
+#   url     = "postgres://host:5432/dbname"   # credential-less; see CQ_LEDGER_PG_URL above
+# backup    = "none"
+# projectId = "my-project"
+
+# [project] (T570) — optional project-level metadata; \`name\` is a cosmetic
+# display-name override (Q270's reconciled chain: [project].name >
+# [ledger].projectId > repo root basename > the resolved projectKey itself).
+# No credentials belong here either.
+# [project]
+#   name = "my-project"
 `;

@@ -190,6 +190,26 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     expect(config.ledger?.backup).toBe("none");
     expect(config.ledger?.projectId).toBeNull();
   });
+
+  it("documents the commented-out backend='postgres' + url example, with the secret-hygiene warning (T584)", () => {
+    // The postgres example is COMMENTED OUT (the active [ledger] table stays
+    // backend='xdg', asserted above) — so this checks the rendered TEXT, not
+    // the parsed config. parseConfig succeeding (first test in this describe)
+    // already proves the extra commented lines don't break TOML parsing.
+    expect(CQ_TOML_TEMPLATE).toContain('backend = "postgres"');
+    expect(CQ_TOML_TEMPLATE).toContain("url     = ");
+    expect(CQ_TOML_TEMPLATE).toContain("SECRET HYGIENE");
+    expect(CQ_TOML_TEMPLATE).toContain("CQ_LEDGER_PG_URL");
+    expect(CQ_TOML_TEMPLATE).toContain("DATABASE_URL");
+  });
+
+  it("documents the commented-out [project].name key (T570/T584)", () => {
+    expect(CQ_TOML_TEMPLATE).toContain("[project]");
+    expect(CQ_TOML_TEMPLATE).toContain('name = "my-project"');
+    // [project] stays absent from the ACTIVE (uncommented) config.
+    const config = parseConfig(CQ_TOML_TEMPLATE);
+    expect(config.project).toBeNull();
+  });
 });
 
 describe("cq.toml.example active model set equals CQ_TOML_TEMPLATE (T331/T440)", () => {
