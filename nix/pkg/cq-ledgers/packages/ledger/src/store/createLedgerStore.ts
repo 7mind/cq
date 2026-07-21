@@ -34,13 +34,19 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
-import { loadConfig, type LedgerBackend } from "@cq/config";
+import { basename, join } from "node:path";
+import type { SQL } from "bun";
+import { loadConfig, type LedgerBackend, type LedgerBackupMode } from "@cq/config";
 import type { LedgerStore } from "./LedgerStore.js";
 import { FsLedgerStore } from "./FsLedgerStore.js";
 import { GitObjectLedgerBackend } from "./git/GitObjectLedgerBackend.js";
 import { SqliteLedgerStore } from "./sqlite/SqliteLedgerStore.js";
 import { dataVersion, openLedgerDb } from "./sqlite/connection.js";
+import { openPgPool } from "./postgres/connection.js";
+import { ensureSchema } from "./postgres/schema.js";
+import { resolvePostgresDsn } from "./postgres/dsn.js";
+import { resolveDisplayName } from "./postgres/displayName.js";
+import { PostgresLedgerStore } from "./postgres/PostgresLedgerStore.js";
 import { resolveProjectKey } from "../projectKey.js";
 import { resolveStateDir, resolveLogsDir, ensureStateDir } from "../stateDir.js";
 import { BackupScheduler, runBackupExport } from "./backupExporter.js";
@@ -104,6 +110,36 @@ export interface ResolvedLedgerStore {
    * timers are unref'd and a backup failure never unwinds a store write.
    */
   readonly backup?: BackupScheduler;
+  /**
+   * The live Postgres handle (`backend = 'postgres'` only, T577/G81) — what
+   * T578's LISTEN/NOTIFY coherence watcher needs: the
+   * connection pool to reserve a dedicated LISTEN connection from, the
+   * resolved DSN (to re-`new SQL(dsn)` on a dropped LISTEN connection, since
+   * `PG_DRIVER_DEFAULTS` resolves to `""` for "let the driver use its own
+   * defaults" — the SAME empty-string convention `runLogPutPostgres` uses),
+   * and this tenant's `projectKey` (to filter NOTIFY payloads to this store's
+   * own tenant). `undefined` for every other backend.
+   */
+  readonly pg?: ResolvedPostgresHandle;
+}
+
+/**
+ * The `backend = 'postgres'`-only handle carried on {@link ResolvedLedgerStore}
+ * (see `pg` above). Kept as its own named interface (rather than inlined) so
+ * T578's watcher signature reads as `startPostgresCoherenceWatcher(store,
+ * pgHandle, onChange?)` against a stable type.
+ */
+export interface ResolvedPostgresHandle {
+  /** The connection pool `PostgresLedgerStore` was constructed with. */
+  readonly pool: SQL;
+  /**
+   * The resolved DSN, or `""` when {@link resolvePostgresDsn} returned the
+   * `PG_DRIVER_DEFAULTS` sentinel (no explicit DSN — the driver reads `PG*`
+   * env vars itself).
+   */
+  readonly dsn: string;
+  /** This store's tenant key (`projects.project_key`). */
+  readonly projectKey: string;
 }
 
 /**
@@ -134,6 +170,34 @@ export class LegacyBackendError extends Error {
         `set backend = "xdg" in cq.toml (\`cq init\` writes it) for a fresh project.`,
     );
     this.name = "LegacyBackendError";
+  }
+}
+
+/**
+ * Thrown when `backend = 'postgres'` is configured with `[ledger].backup !=
+ * 'none'` (T577, Q275 full-parity decision DEFERRED to T582). Even though
+ * {@link runBackupExport}'s dump builder is already store-agnostic (T575's
+ * `listLogs` duck-type lets a postgres store's tenant-scoped logs feed the
+ * SAME `.cq/`-layout dump the xdg backend produces), THIS factory does not
+ * yet wire the debounced post-mutation trigger for postgres — T582 owns that
+ * decision (wire it through per Q275's "full parity" answer, or an explicit
+ * warn-once-and-skip, either way recorded as a locked decision). Failing fast
+ * here — rather than silently accepting a `[ledger].backup` the running
+ * process will never honour — matches this factory's existing fail-fast style
+ * ({@link LegacyBackendError} / `PostgresDsnResolutionError`): a configured
+ * backup target that quietly never runs is a worse failure mode than a loud
+ * one at startup.
+ */
+export class PostgresBackupNotWiredError extends Error {
+  constructor(backupTarget: LedgerBackupMode, root: string) {
+    super(
+      `[ledger] backend = 'postgres' at ${root} is configured with [ledger].backup = ` +
+        `'${backupTarget}', but the debounced backup exporter is not yet wired for the ` +
+        `postgres backend (T582 owns that decision/implementation). Set [ledger].backup = ` +
+        `"none" for a postgres-backed project until T582 lands, or run \`pg_dump\` directly ` +
+        `for now.`,
+    );
+    this.name = "PostgresBackupNotWiredError";
   }
 }
 
@@ -196,8 +260,12 @@ export function assertGitWorkTree(root: string): void {
 export async function createLedgerStore(root: string): Promise<ResolvedLedgerStore> {
   const { backend, branch } = resolveLedgerBackend(root);
 
-  if (backend !== "xdg") {
+  if (backend === "fs" || backend === "git-object") {
     throw new LegacyBackendError(backend, root);
+  }
+
+  if (backend === "postgres") {
+    return createPostgresLedgerStore(root, branch);
   }
 
   // backend === 'xdg' (T530): the out-of-tree bun:sqlite primary (K102).
@@ -236,6 +304,91 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
     return { store, configRoot: root, backend, branch, dbPath, logsDir, backup };
   }
   return { store, configRoot: root, backend, branch, dbPath, logsDir };
+}
+
+/**
+ * The `backend = 'postgres'` construction path (T577, G81/M248) —
+ * {@link createLedgerStore}'s delegate, split out only for readability.
+ *
+ * Mirrors the xdg branch's fail-fast shape:
+ *  - `resolveProjectKey` lets {@link ProjectKeyResolutionError} propagate
+ *    (same no-fallback rationale, Q246) — the postgres backend's tenant key
+ *    IS the projectKey, same as xdg's stateDir key.
+ *  - `resolvePostgresDsn` lets {@link PostgresDsnResolutionError} propagate
+ *    when no connection info is configured (dsn.ts).
+ *  - a configured `[ledger].backup != 'none'` fails fast with
+ *    {@link PostgresBackupNotWiredError} (T582's deferred scope — see that
+ *    error's doc) — checked BEFORE opening any connection, since it is a
+ *    pure config-shape defect that needs no I/O to detect.
+ *
+ * The display name is the RECONCILED four-rung chain (Q270, displayName.ts):
+ * cq.toml `[project].name` > `[ledger].projectId` > the repo root's basename
+ * > the projectKey itself (which never fails to resolve). `PostgresLedgerStore`
+ * UPSERTs it into `projects.display_name` on every `init()`, so a later
+ * cq.toml rename propagates on reconnect.
+ *
+ * `dbPath`/`logsDir` stay `undefined` (unlike the xdg branch) — this backend's
+ * ledger rows AND log artifacts both live in the database, not on this host's
+ * filesystem. The returned `pg` handle (pool + resolved dsn + projectKey) is
+ * what T578's LISTEN/NOTIFY coherence watcher needs.
+ *
+ * On any failure after the pool is opened (schema DDL, tenant bootstrap,
+ * `init()`), the pool is closed before the error propagates — otherwise a
+ * failed construction would leak a live connection pool.
+ */
+async function createPostgresLedgerStore(
+  root: string,
+  branch: string,
+): Promise<ResolvedLedgerStore> {
+  const config = loadConfig(root);
+  const ledgerConfig = config?.ledger;
+  if (ledgerConfig === null || ledgerConfig === undefined) {
+    // Unreachable in practice: resolveLedgerBackend's no-`[ledger]`-table
+    // default resolves to 'fs', never 'postgres' — a second loadConfig here
+    // finding no `[ledger]` table would mean cq.toml changed between the two
+    // reads. Fail loud rather than silently treat it as misconfigured.
+    throw new Error(
+      `[ledger] backend = 'postgres' resolved at ${root}, but reloading cq.toml found no ` +
+        `[ledger] table — cq.toml may have changed concurrently; re-run.`,
+    );
+  }
+
+  const projectKey = await resolveProjectKey({
+    repoRoot: root,
+    projectId: ledgerConfig.projectId,
+  });
+
+  const resolution = resolvePostgresDsn(ledgerConfig, process.env);
+  const dsn = resolution.kind === "dsn" ? resolution.dsn : "";
+
+  const backupTarget = ledgerConfig.backup;
+  if (backupTarget !== "none") {
+    throw new PostgresBackupNotWiredError(backupTarget, root);
+  }
+
+  const displayName = resolveDisplayName({
+    projectName: config?.project?.name,
+    projectId: ledgerConfig.projectId,
+    repoBasename: basename(root),
+    projectKey,
+  });
+
+  const pool = openPgPool(dsn);
+  try {
+    await ensureSchema(pool);
+    const store = new PostgresLedgerStore({ pool, projectKey, displayName });
+    await store.init();
+    return {
+      store,
+      configRoot: root,
+      backend: "postgres",
+      branch,
+      pg: { pool, dsn, projectKey },
+    };
+  } catch (err) {
+    await pool.close().catch(() => undefined);
+    throw err;
+  }
 }
 
 /**

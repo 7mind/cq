@@ -33,10 +33,8 @@ import {
   LEDGER_LOGS_DIRNAME,
   resolveProjectKey,
   resolveLogsDir,
+  createLedgerStore,
   PostgresLedgerStore,
-  openPgPool,
-  ensureSchema,
-  resolvePostgresDsn,
   type TreeEntry,
 } from "@cq/ledger";
 
@@ -423,19 +421,17 @@ async function runLogPutXdg(
  * table (T572 schema) via {@link PostgresLedgerStore.putLog} instead of the
  * xdg out-of-tree files.
  *
- * HONEST-MINIMAL NOTE (per the task method): `createLedgerStore` — the ONE
- * backend-selecting store factory — does NOT yet wire `backend = 'postgres'`
- * (that is T577's job); this branch is written against the seam T577 will
- * complete, constructing a `PostgresLedgerStore` directly from the T571 DSN
- * resolver + T572 schema module rather than blocking this task on T577.
- * Tenant registration (the `projects` row) is documented as T574's concern,
- * not yet implemented anywhere in this codebase — until T574 lands, this
- * function performs the same minimal `INSERT ... ON CONFLICT DO NOTHING`
- * upsert T573's own test harness (store-postgres.test.ts) uses, so a fresh
- * tenant is immediately usable. `projectKey` reuses the SAME repo-identity
- * resolver ({@link resolveProjectKey}) the xdg backend keys its out-of-tree
- * store off, for lack of any postgres-specific tenant-keying primitive today
- * — T574 may replace this with a dedicated mechanism.
+ * Routes through {@link createLedgerStore} (T577) — the ONE backend-selecting
+ * store factory — instead of constructing a `PostgresLedgerStore` directly
+ * (this function's former shape, written before T577 existed). This picks up
+ * the factory's RECONCILED four-rung display-name chain (`resolveDisplayName`
+ * over `[project].name` / `[ledger].projectId` / the repo basename /
+ * `projectKey`, displayName.ts) in place of this file's former two-rung
+ * shortcut (`config?.project?.name ?? projectKey`, review R697 deferred
+ * defect) — a bare `projectKey` fallback here could downgrade an already
+ * `projects.display_name` from an earlier connect with a fuller candidate
+ * set — and the factory's `[ledger].backup != 'none'` fail-fast guard
+ * ({@link PostgresBackupNotWiredError}).
  *
  * The destination-path normalisation mirrors {@link runLogPutXdg} EXACTLY
  * (strip the leading `logs/` prefix via {@link LOGS_PREFIX}) so
@@ -447,56 +443,34 @@ async function runLogPutPostgres(
   io: LogPutIo,
   content: string,
 ): Promise<LogPutOutcome> {
-  const config = loadConfig(args.cwd);
-  const ledgerConfig = config?.ledger;
-  if (ledgerConfig === null || ledgerConfig === undefined) {
-    io.err(
-      "cq log put: [ledger] backend = 'postgres' requires a [ledger] table in cq.toml",
-    );
-    return { exitCode: 1 };
-  }
-
-  // resolvePostgresDsn lets PostgresDsnResolutionError propagate as the
-  // fail-fast (mirrors resolveProjectKey's ProjectKeyResolutionError below —
-  // neither is caught here, consistent with the rest of this function).
-  const resolution = resolvePostgresDsn(ledgerConfig, process.env);
-  // PG_DRIVER_DEFAULTS (no explicit DSN, but standard PG* env vars present)
-  // means "let the driver read its own defaults" — Bun's SQL constructor
-  // does this when given an empty connection string.
-  const dsn = resolution.kind === "dsn" ? resolution.dsn : "";
-
-  const pool = openPgPool(dsn);
-  let store: PostgresLedgerStore | undefined;
+  // createLedgerStore lets PostgresDsnResolutionError / PostgresBackupNotWiredError
+  // propagate as the fail-fast (uncaught here, consistent with the rest of
+  // this function's error handling).
+  const resolved = await createLedgerStore(args.cwd);
   try {
-    await ensureSchema(pool);
-    const projectKey = await resolveProjectKey({
-      repoRoot: args.cwd,
-      projectId: ledgerConfig.projectId,
-    });
-    const displayName = config?.project?.name ?? projectKey;
-    await pool`
-      INSERT INTO projects (project_key, display_name)
-      VALUES (${projectKey}, ${displayName})
-      ON CONFLICT (project_key) DO NOTHING
-    `;
-    store = new PostgresLedgerStore({ pool, projectKey, displayName });
-    await store.init();
+    if (resolved.pg === undefined) {
+      // Invariant: runLogPut only dispatches here when resolveLedgerBackend
+      // already returned 'postgres', so createLedgerStore must have taken
+      // its postgres branch and populated `pg`.
+      throw new Error(
+        "cq log put: createLedgerStore resolved backend='postgres' without a pg handle " +
+          "(internal inconsistency)",
+      );
+    }
 
     // args.dest is validated (validateLogDest) to start with "logs/" — strip
     // it exactly as runLogPutXdg does so the stored key matches what readLog
     // resolves (bare, logsDir-relative form).
     const rel = args.dest.slice(LOGS_PREFIX.length);
+    // `putLog` is postgres-specific (not part of the LedgerStore interface,
+    // duck-typed like `listLogs`/`readLog` elsewhere) — safe to cast given
+    // the `pg` handle check above.
+    const store = resolved.store as PostgresLedgerStore;
     await store.putLog(rel, content);
 
-    io.out(`postgres:${projectKey}/${args.dest}`);
+    io.out(`postgres:${resolved.pg.projectKey}/${args.dest}`);
     return { exitCode: 0 };
   } finally {
-    // store.dispose() closes the pool; if construction never reached that
-    // point (an error thrown before `store` was assigned), close it here.
-    if (store !== undefined) {
-      await store.dispose();
-    } else {
-      await pool.close();
-    }
+    await resolved.store.dispose();
   }
 }

@@ -98,10 +98,15 @@ export {
   assertGitWorkTree,
   GitEnvironmentError,
   LegacyBackendError,
+  PostgresBackupNotWiredError,
   startXdgCoherenceWatcher,
   XDG_DB_FILENAME,
 } from "./store/createLedgerStore.js";
-export type { ResolvedLedgerStore, XdgCoherenceWatcher } from "./store/createLedgerStore.js";
+export type {
+  ResolvedLedgerStore,
+  ResolvedPostgresHandle,
+  XdgCoherenceWatcher,
+} from "./store/createLedgerStore.js";
 export { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 export type { InMemoryLedgerStoreOpts } from "./store/InMemoryLedgerStore.js";
 export { validateSchema } from "./store/core.js";
