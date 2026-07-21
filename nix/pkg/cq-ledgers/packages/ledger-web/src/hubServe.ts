@@ -10,23 +10,41 @@
  *
  *   cq serve --pg-url postgres://... [--host <h>] [--port <p>] [--token <t>]
  *
- * This module is the SKELETON (T586): argv parsing, DSN resolution + fail-fast,
- * schema bootstrap under the advisory lock, a whole-registry projects listing,
- * and static web-bundle serving on ONE bound port. Per-project routing (a
- * `/p/<projectKey>/mcp` style mount per tenant, reusing `attachMcpHttp`) is
- * EXPLICITLY DEFERRED to T587, and `--token` enforcement to T588 — this module
- * parses and threads the flag through but does not yet gate any request on it.
+ * T586 landed the SKELETON: argv parsing, DSN resolution + fail-fast, schema
+ * bootstrap under the advisory lock, a whole-registry projects listing, and
+ * static web-bundle serving on ONE bound port. T587 adds PER-PROJECT ROUTING
+ * (Q283 lock: URL-path addressing, zero tool-schema churn): `/p/<projectKey>/mcp`
+ * mounts a per-tenant {@link attachMcpHttp} over a LAZILY-constructed
+ * `PostgresLedgerStore` (one per tenant, all sharing the hub pool), and
+ * `/p/<projectKey>/ws` upgrades to a socket on a per-tenant pub/sub topic, fed
+ * by ONE hub-level LISTEN connection that dispatches every NOTIFY by payload
+ * `project_key`. Unknown `projectKey` → 404. `--token` enforcement remains
+ * DEFERRED to T588 — this module parses and threads the flag through but does
+ * not yet gate any request on it.
  *
  * Reuses ledger-web's existing bundle-serving internals (`buildBundle`,
  * `prepare`, `serveStatic`, `scanForPort`, `DEFAULT_OUTDIR`) from serve.ts —
  * the SAME browser bundle `cq web` serves, since the hub's `GET /` is the
- * identical React app (T587 will teach it to talk to the right per-project
- * endpoint once those exist).
+ * identical React app.
  */
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { openPgPool, ensureSchema, type ProjectEntry } from "@cq/ledger";
+import type { ServerWebSocket } from "bun";
+import {
+  openPgPool,
+  ensureSchema,
+  PostgresLedgerStore,
+  startPostgresHubCoherenceWatcher,
+  type ProjectEntry,
+  type PostgresCoherenceWatcher,
+} from "@cq/ledger";
+import {
+  attachMcpHttp,
+  changedFrame,
+  wsHeartbeat,
+  type McpHttpHandlers,
+} from "@cq/ledger-mcp";
 import { prepare, serveStatic, scanForPort, DEFAULT_OUTDIR } from "./serve.js";
 
 /** Default bind host for `cq serve` (mirrors ledger-web's DEFAULT_HOST). */
@@ -145,6 +163,71 @@ export async function fetchRegisteredProjects(pool: ReturnType<typeof openPgPool
   }));
 }
 
+/**
+ * Look up ONE tenant's display name by `projectKey` — the per-request registry
+ * validation for the per-project routes (T587). Returns the `display_name` when
+ * the tenant is registered, else `null` (→ the route answers 404). A raw
+ * single-row SELECT (like {@link fetchRegisteredProjects}), NOT a
+ * `PostgresLedgerStore.listProjects()` scan, since routing only needs the one
+ * row and the store is what we are deciding whether to construct.
+ */
+export async function fetchProjectDisplayName(
+  pool: ReturnType<typeof openPgPool>,
+  projectKey: string,
+): Promise<string | null> {
+  const rows = await pool<Array<{ display_name: string }>>`
+    SELECT display_name FROM projects WHERE project_key = ${projectKey}
+  `;
+  const row = rows[0];
+  return row !== undefined ? row.display_name : null;
+}
+
+/** URL prefix under which every per-project endpoint is mounted: `/p/<key>/…`. */
+export const PROJECT_ROUTE_PREFIX = "/p/";
+
+/**
+ * Match a per-project route pathname `/p/<projectKey>/<leaf>` where `<leaf>` is
+ * `mcp` or `ws`. Returns the decoded `projectKey` + `leaf`, or `null` when the
+ * pathname is not a per-project route. `<projectKey>` is a single path segment
+ * (no embedded `/`), URL-decoded so a key with reserved characters round-trips.
+ */
+export function matchProjectRoute(
+  pathname: string,
+): { projectKey: string; leaf: "mcp" | "ws" } | null {
+  const m = /^\/p\/([^/]+)\/(mcp|ws)$/.exec(pathname);
+  if (m === null) return null;
+  return { projectKey: decodeURIComponent(m[1]!), leaf: m[2] as "mcp" | "ws" };
+}
+
+/**
+ * The Bun pub/sub topic a project's live-change frames are published to — one
+ * topic PER TENANT (`ledger:<projectKey>`), so a `/p/A/ws` socket subscribed to
+ * A's topic never sees B's writes. Distinct from ledger-mcp's single-project
+ * {@link import("@cq/ledger-mcp").LEDGER_TOPIC} (`"ledger"`).
+ */
+export function hubTopic(projectKey: string): string {
+  return `ledger:${projectKey}`;
+}
+
+/** Bun.serve per-socket data for the hub's WebSocket: which tenant it belongs to. */
+interface HubWsData {
+  projectKey: string;
+}
+
+/**
+ * A lazily-constructed per-tenant runtime: the tenant's own
+ * {@link PostgresLedgerStore} (sharing the hub pool), the
+ * {@link attachMcpHttp} handlers bound to it, and a coalesced `refresh` that
+ * bulk-invalidates the store and publishes a change frame to the tenant's
+ * topic. Cached for the hub's lifetime (one per tenant that is ever addressed).
+ */
+interface ProjectRuntime {
+  store: PostgresLedgerStore;
+  handlers: McpHttpHandlers;
+  /** Coalesced full invalidate of this store + publish a change frame to its topic. */
+  refresh: () => void;
+}
+
 /** Resolved options for {@link serveHub}, after DSN resolution + argv parsing. */
 export interface HubServeOpts {
   host: string;
@@ -168,22 +251,115 @@ export async function bootHub(
 }
 
 /**
- * Bind ONE `Bun.serve` port hosting the web bundle (`GET /` + assets, via
- * `serveStatic`) and the whole-registry projects listing (`GET /api/projects`).
- * Per-project routing (a `/mcp` mount per tenant) and `opts.token` enforcement
- * are EXPLICITLY OUT OF SCOPE here — T587/T588 respectively; this skeleton
- * answers only the two routes named in T586's acceptance criterion.
+ * Bind ONE `Bun.serve` port hosting: the web bundle (`GET /` + assets, via
+ * `serveStatic`); the whole-registry projects listing (`GET /api/projects`);
+ * and — the T587 addition — per-tenant MCP + live-change routes under
+ * `/p/<projectKey>/{mcp,ws}` (Q283 lock: URL-path addressing, zero tool-schema
+ * churn).
+ *
+ * Per-project wiring (T587):
+ *  - Each addressed tenant gets a LAZILY-constructed {@link PostgresLedgerStore}
+ *    (one per project, all SHARING the hub's `pool`), cached on first request.
+ *    An unknown `projectKey` (no `projects` row) → 404.
+ *  - `/p/<k>/mcp` routes to that tenant's {@link attachMcpHttp} handlers —
+ *    per-(session, project) session management exactly as `attachMcpHttp`
+ *    provides per instance.
+ *  - `/p/<k>/ws` upgrades to a socket subscribed to the tenant's OWN pub/sub
+ *    topic ({@link hubTopic}), so cross-tenant frames never leak.
+ *  - ONE hub-level LISTEN connection ({@link startPostgresHubCoherenceWatcher})
+ *    dispatches every NOTIFY by payload `project_key`: invalidate that tenant's
+ *    store (if constructed) and publish a change frame to its topic — reusing
+ *    the coherence-watcher porsager internals rather than N per-store LISTEN
+ *    connections. A tenant's own write, a peer hub, and an EXTERNAL store
+ *    process all reach subscribed sockets by this one path.
+ *
+ * The per-project stores share `pool`, so their `dispose()` (which closes the
+ * pool) is intentionally NOT called per tenant on shutdown — that would close
+ * the shared pool out from under every other tenant. The single shared pool is
+ * closed ONCE by the caller (`main`) after `server.stop()`; the returned
+ * server's `stop` is wrapped to close ONLY the hub LISTEN connection. The
+ * per-store in-memory caches are released with the process.
+ *
+ * `dsn` is threaded in (alongside the already-open `pool`) because the porsager
+ * LISTEN connection needs its OWN connection from the DSN — `Bun.sql` (the pool)
+ * implements no LISTEN/NOTIFY (RS1). `opts.token` enforcement remains T588.
  */
 export function serveHub(
   opts: HubServeOpts,
   pool: ReturnType<typeof openPgPool>,
+  dsn: string,
   indexPath: string,
 ): ReturnType<typeof Bun.serve> {
-  return scanForPort(opts.port, (p) =>
-    Bun.serve({
+  // Lazily-constructed per-tenant runtimes, keyed by projectKey. Stored as a
+  // PROMISE so two concurrent first-requests for the same tenant share ONE
+  // construction (no double-construct racing the same pool). A failed or
+  // unknown-project construction is evicted so a later request can retry.
+  const runtimes = new Map<string, Promise<ProjectRuntime | null>>();
+
+  /** Coalesced full-invalidate + publish for one store/topic (mirrors the single-store watcher). */
+  function makeRefresh(store: PostgresLedgerStore, projectKey: string): () => void {
+    let running = false;
+    let pending = false;
+    return () => {
+      if (running) {
+        pending = true;
+        return;
+      }
+      running = true;
+      void (async () => {
+        try {
+          do {
+            pending = false;
+            for (const ledgerId of store.enumerate()) {
+              await store.invalidate(ledgerId);
+            }
+            server.publish(hubTopic(projectKey), changedFrame(null));
+          } while (pending);
+        } finally {
+          running = false;
+        }
+      })();
+    };
+  }
+
+  /**
+   * Resolve (constructing + caching on first use) the runtime for `projectKey`,
+   * or `null` when the tenant is not registered (→ 404). Construction is fully
+   * inside the cached promise so concurrent callers never double-construct.
+   */
+  function getRuntime(projectKey: string): Promise<ProjectRuntime | null> {
+    const existing = runtimes.get(projectKey);
+    if (existing !== undefined) return existing;
+    const built: Promise<ProjectRuntime | null> = (async () => {
+      const displayName = await fetchProjectDisplayName(pool, projectKey);
+      if (displayName === null) return null; // unknown tenant → 404
+      const store = new PostgresLedgerStore({ pool, projectKey, displayName });
+      await store.init();
+      const handlers = attachMcpHttp(store, displayName, "", undefined, projectKey);
+      return { store, handlers, refresh: makeRefresh(store, projectKey) };
+    })();
+    runtimes.set(projectKey, built);
+    // Do not cache a negative/failed result: evict so a tenant registered later
+    // (or a transient construction error) is retried on the next request.
+    void built
+      .then((rt) => {
+        if (rt === null) runtimes.delete(projectKey);
+      })
+      .catch(() => runtimes.delete(projectKey));
+    return built;
+  }
+
+  // `makeRefresh` / `getRuntime` / the watcher callbacks below close over
+  // `server`; all such uses are DEFERRED (request handlers, notification
+  // callbacks), and `scanForPort` binds the server synchronously before any of
+  // them can fire — so referencing the `const` from the earlier closures is
+  // safe (no use before initialization at runtime).
+  const server = scanForPort(opts.port, (p) =>
+    Bun.serve<HubWsData>({
       hostname: opts.host,
       port: p,
-      async fetch(req): Promise<Response> {
+      idleTimeout: 0, // long-lived SSE / WS streams must not time out
+      async fetch(req, srv): Promise<Response | undefined> {
         const url = new URL(req.url);
         if (url.pathname === "/api/projects") {
           const projects = await fetchRegisteredProjects(pool);
@@ -192,10 +368,66 @@ export function serveHub(
             headers: { "content-type": "application/json" },
           });
         }
+        const route = matchProjectRoute(url.pathname);
+        if (route !== null) {
+          const runtime = await getRuntime(route.projectKey);
+          if (runtime === null) {
+            return new Response("unknown project", { status: 404 });
+          }
+          if (route.leaf === "mcp") {
+            return runtime.handlers.handle(req);
+          }
+          // route.leaf === "ws": upgrade, tagging the socket with its tenant so
+          // `websocket.open` subscribes it to the right per-project topic.
+          if (srv.upgrade(req, { data: { projectKey: route.projectKey } })) return undefined;
+          return new Response("expected a websocket upgrade", { status: 426 });
+        }
         return serveStatic(url, opts.outdir, indexPath);
+      },
+      websocket: {
+        open(ws: ServerWebSocket<HubWsData>): void {
+          ws.subscribe(hubTopic(ws.data.projectKey));
+        },
+        message(ws: ServerWebSocket<HubWsData>, raw: string | Buffer): void {
+          wsHeartbeat((s) => ws.send(s), raw);
+        },
       },
     }),
   );
+
+  // ONE hub-level LISTEN connection dispatching every tenant's NOTIFY by its
+  // payload project_key. onProjectChange: invalidate that tenant's store (if
+  // constructed) and publish to its topic; when the store is NOT yet
+  // constructed there is no cache to invalidate, but subscribed sockets still
+  // want the frame, so publish directly. onListen (reconnect safety):
+  // re-invalidate + publish for every constructed tenant.
+  const watcher: PostgresCoherenceWatcher = startPostgresHubCoherenceWatcher(dsn, {
+    onProjectChange: (projectKey: string): void => {
+      const rt = runtimes.get(projectKey);
+      if (rt !== undefined) {
+        void rt.then((r) => r?.refresh()).catch(() => undefined);
+      } else {
+        server.publish(hubTopic(projectKey), changedFrame(null));
+      }
+    },
+    onListen: (): void => {
+      for (const rt of runtimes.values()) {
+        void rt.then((r) => r?.refresh()).catch(() => undefined);
+      }
+    },
+  });
+
+  // Tear down the hub LISTEN connection when the server stops (main()/tests call
+  // server.stop()). The shared pool is closed by the caller AFTER stop — never
+  // per-store here (a store's dispose() closes the shared pool). Return type
+  // stays the Bun server.
+  const origStop = server.stop.bind(server);
+  server.stop = (closeActiveConnections?: boolean): Promise<void> => {
+    watcher.close();
+    return origStop(closeActiveConnections);
+  };
+
+  return server;
 }
 
 export async function main(argv: readonly string[]): Promise<void> {
@@ -220,9 +452,12 @@ export async function main(argv: readonly string[]): Promise<void> {
   const indexPath = path.join(outdir, "index.html");
 
   const opts: HubServeOpts = { host: args.host, port: args.port, token: args.token, outdir };
-  const server = serveHub(opts, pool, indexPath);
+  const server = serveHub(opts, pool, dsn, indexPath);
 
   const shutdown = (): void => {
+    // serveHub's wrapped stop() closes the hub LISTEN connection; the shared
+    // pool is closed here, ONCE, afterwards (never per-store — that would close
+    // the pool shared across every tenant).
     server.stop(true);
     void pool.close();
     process.exit(0);

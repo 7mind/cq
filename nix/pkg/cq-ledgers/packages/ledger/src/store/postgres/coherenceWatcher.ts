@@ -134,3 +134,69 @@ export function startPostgresCoherenceWatcher(
     },
   };
 }
+
+/**
+ * Callbacks for {@link startPostgresHubCoherenceWatcher}, the MULTI-PROJECT
+ * dispatch variant used by the `cq serve` hub (T587). Where the single-store
+ * {@link startPostgresCoherenceWatcher} filters the shared channel down to ONE
+ * tenant and bulk-invalidates that store itself, the hub owns MANY tenants over
+ * one shared pool, so it wants ONE LISTEN connection that dispatches every
+ * notification to the right project by its payload `project_key` — rather than
+ * N per-store LISTEN connections — and does the per-project invalidate +
+ * publish itself.
+ */
+export interface PostgresHubWatcherCallbacks {
+  /**
+   * A NOTIFY arrived on {@link LEDGER_CHANGE_CHANNEL}; `projectKey` is its
+   * payload (the tenant whose data changed). The hub uses it to invalidate that
+   * project's store (if constructed) and publish a change frame to that
+   * project's pub/sub topic. Called for EVERY tenant's notification — the hub
+   * decides what (if anything) to do per key.
+   */
+  onProjectChange: (projectKey: string) => void;
+  /**
+   * Fires on the INITIAL connect AND on EVERY reconnect (porsager `onlisten`) —
+   * the missed-notification safety hook. On a reconnect the hub re-invalidates
+   * every constructed store, since any NOTIFY emitted while the LISTEN
+   * connection was down carries no per-tenant scope to replay. On the initial
+   * connect (no stores constructed yet) it is a no-op for the hub.
+   */
+  onListen: () => void;
+}
+
+/**
+ * Start the MULTI-PROJECT hub LISTEN/NOTIFY dispatcher (T587) — the SAME
+ * porsager primitive and {@link LEDGER_CHANGE_CHANNEL} as the single-store
+ * {@link startPostgresCoherenceWatcher}, but WITHOUT the per-tenant filter or
+ * the built-in bulk-invalidate: the hub owns many tenants sharing one pool, so
+ * it dispatches raw notifications by payload `project_key` back to
+ * {@link PostgresHubWatcherCallbacks} and does the per-project invalidate +
+ * publish itself. Exactly ONE such connection serves the whole hub.
+ *
+ * `dsn` is the hub's resolved DSN; an empty string means "let porsager read its
+ * own PG* env defaults" (the no-argument form), matching the single-store path.
+ * The returned handle shares {@link PostgresCoherenceWatcher}'s `close()`
+ * contract so the host tears it down identically.
+ */
+export function startPostgresHubCoherenceWatcher(
+  dsn: string,
+  callbacks: PostgresHubWatcherCallbacks,
+): PostgresCoherenceWatcher {
+  const listenSql = dsn === "" ? postgres() : postgres(dsn);
+  const subscription = listenSql.listen(
+    LEDGER_CHANGE_CHANNEL,
+    (payload: string): void => {
+      callbacks.onProjectChange(payload);
+    },
+    (): void => {
+      callbacks.onListen();
+    },
+  );
+  void subscription.catch(() => undefined);
+  return {
+    close(): void {
+      void subscription.then((meta) => meta.unlisten()).catch(() => undefined);
+      void listenSql.end({ timeout: CLOSE_TIMEOUT_S }).catch(() => undefined);
+    },
+  };
+}

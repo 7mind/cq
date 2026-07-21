@@ -635,20 +635,32 @@ export function attachMcpHttp(
   }
 
   function onWsMessage(ws: ServerWebSocket<undefined>, raw: string | Buffer): void {
-    // App-level heartbeat (resilient-ws-ui R3): echo ping nonce + ts so the
-    // client can measure RTT and detect a dead connection.
-    let msg: { type?: string; nonce?: string; ts?: number } | undefined;
-    try {
-      msg = JSON.parse(typeof raw === "string" ? raw : raw.toString()) as typeof msg;
-    } catch {
-      return;
-    }
-    if (msg?.type === "ping") {
-      ws.send(JSON.stringify({ type: "pong", nonce: msg.nonce, ts: msg.ts, serverTs: Date.now() }));
-    }
+    wsHeartbeat((s) => ws.send(s), raw);
   }
 
   return { handle, onWsOpen, onWsMessage };
+}
+
+/**
+ * App-level WebSocket heartbeat (resilient-ws-ui R3): on a `{type:"ping"}`
+ * frame, echo a `{type:"pong"}` carrying the client's `nonce`/`ts` plus a
+ * `serverTs`, so the client can measure RTT and detect a dead connection. A
+ * non-JSON or non-ping frame is ignored. `send` is injected (rather than a
+ * concrete `ServerWebSocket`) so both `attachMcpHttp`'s single-project socket
+ * and the `cq serve` hub's per-project socket (whose Bun.serve `data` type
+ * differs — it carries the projectKey) share ONE protocol implementation with
+ * no drift.
+ */
+export function wsHeartbeat(send: (frame: string) => void, raw: string | Buffer): void {
+  let msg: { type?: string; nonce?: string; ts?: number } | undefined;
+  try {
+    msg = JSON.parse(typeof raw === "string" ? raw : raw.toString()) as typeof msg;
+  } catch {
+    return;
+  }
+  if (msg?.type === "ping") {
+    send(JSON.stringify({ type: "pong", nonce: msg.nonce, ts: msg.ts, serverTs: Date.now() }));
+  }
 }
 
 /**
