@@ -169,7 +169,7 @@
           # @cq/ledger runtime deps.
           mkdir -p "$WORKSPACE/packages/ledger/node_modules/@anthropic-ai" \
                    "$WORKSPACE/packages/ledger/node_modules/@modelcontextprotocol"
-          for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify minisearch bun-types; do
+          for dep in zod yaml unified remark-frontmatter remark-parse remark-stringify minisearch postgres bun-types; do
             if [ -e "${bunNodeModules}/packages/ledger/node_modules/$dep" ]; then
               ln -s "${bunNodeModules}/packages/ledger/node_modules/$dep" \
                 "$WORKSPACE/packages/ledger/node_modules/$dep"
@@ -365,6 +365,26 @@
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
 
             runHook postInstall
+          '';
+
+          # Smoke assertion (D103): run the installed binary once so a staging
+          # omission (a runtime dep missing from a closure fragment's symlink
+          # loop) fails the BUILD instead of every later invocation. A healthy
+          # dispatcher prints USAGE and exits 2 on the unknown `--help` token;
+          # a module-resolution crash exits 1 with no usage text.
+          doInstallCheck = true;
+          installCheckPhase = ''
+            runHook preInstallCheck
+            set +e
+            smoke=$(HOME=$TMPDIR $out/bin/cq --help 2>&1)
+            code=$?
+            set -e
+            if [ "$code" -ne 2 ] || [ "''${smoke#*usage: cq}" = "$smoke" ]; then
+              echo "cq smoke check FAILED (exit $code, expected usage + exit 2):" >&2
+              echo "$smoke" >&2
+              exit 1
+            fi
+            runHook postInstallCheck
           '';
 
           dontStrip = true;
