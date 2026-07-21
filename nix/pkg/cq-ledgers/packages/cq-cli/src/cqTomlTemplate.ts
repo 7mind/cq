@@ -54,6 +54,8 @@ export const CQ_TOML_TEMPLATE: string = `\
 [agent_tiers]
   investigate-explorer        = "frontier"
   investigate-prober          = "standard"
+  research-explorer           = "frontier"
+  research-experimenter       = "frontier"
   plan-advance                = "frontier"
   plan-reviewer               = "frontier"
   implement-worker            = "standard"
