@@ -415,6 +415,78 @@
           # longer a package input — it rides in via sandboxPackages (wired by
           # the home-manager module), so the bare package needs no args.
           yolo = pkgs.callPackage ./nix/pkg/yolo/default.nix { };
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          # Darwin uses Seatbelt via claude-code-sandbox; Linux uses bwrap above.
+          yolo-darwin = pkgs.callPackage ./nix/pkg/yolo-darwin/default.nix {
+            claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
+          };
+        };
+
+        # Policy generation runs everywhere; real Seatbelt enforcement runs on Darwin.
+        checks =
+          {
+            yolo-darwin-profile =
+              pkgs.runCommand "yolo-darwin-profile"
+                {
+                  nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq ];
+                }
+                ''
+                  cp -r ${./nix/pkg/yolo-darwin} yolo-darwin
+                  chmod -R u+w yolo-darwin
+                  cd yolo-darwin
+                  shellcheck yolo-darwin.sh profile-test.sh
+                  bash profile-test.sh
+                  touch $out
+                '';
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          yolo-darwin-confinement =
+            pkgs.runCommand "yolo-darwin-confinement"
+              {
+                nativeBuildInputs = [ self.packages.${system}.yolo-darwin ];
+              }
+              ''
+                set -euo pipefail
+
+                # Keep HOME outside the granted working directory.
+                export HOME="$(mktemp -d)"
+                work="$(mktemp -d)"
+
+                inside="$work/inside.txt"
+                echo "INSIDE-OK" > "$inside"
+
+                # Exercise the blanket sibling-profile deny after the base allows.
+                outside_dir="$HOME/.config/yolo/other-profile"
+                mkdir -p "$outside_dir"
+                outside="$outside_dir/secret.txt"
+                echo "OUTSIDE-SECRET" > "$outside"
+
+                cd "$work"
+
+                if ! yolo cmd cat "$inside" > got-inside 2> err-inside; then
+                  echo "FAIL: read of a file INSIDE \$PWD was denied" >&2
+                  cat err-inside >&2
+                  exit 1
+                fi
+                grep -q INSIDE-OK got-inside || {
+                  echo "FAIL: inside-\$PWD read returned unexpected content" >&2
+                  exit 1
+                }
+
+                # Reject both a successful read and a non-zero command that leaked data.
+                if yolo cmd cat "$outside" > got-outside 2> err-outside; then
+                  echo "FAIL: read of a file OUTSIDE \$PWD SUCCEEDED but must be denied" >&2
+                  cat got-outside >&2
+                  exit 1
+                fi
+                if grep -q OUTSIDE-SECRET got-outside; then
+                  echo "FAIL: outside-\$PWD read leaked secret content to stdout despite non-zero exit" >&2
+                  exit 1
+                fi
+
+                echo "yolo-darwin confinement OK: inside-\$PWD allowed, outside-\$PWD denied (no leak)"
+                touch "$out"
+              '';
         };
 
         apps.default = {

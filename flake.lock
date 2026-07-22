@@ -6,11 +6,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1782222298,
-        "narHash": "sha256-Ztn9zl0Q8Pbj0mVwYsaofyWRLv4fpEGIJnHMTfUAgtY=",
+        "lastModified": 1784590444,
+        "narHash": "sha256-Hpr17vBzXROrzlsEA2cM2Vo1Dvqdid+H6C9hqDMLQzE=",
         "owner": "neko-kai",
         "repo": "claude-code-sandbox",
-        "rev": "705c572558328c2612e65722b3cdf814fe1d97a5",
+        "rev": "48e39fbbb2cddc1d88738c407c92737765811cc9",
         "type": "github"
       },
       "original": {

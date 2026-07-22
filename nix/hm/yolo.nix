@@ -23,6 +23,7 @@
 let
   system = pkgs.stdenv.hostPlatform.system;
   isLinux = pkgs.stdenv.hostPlatform.isLinux;
+  isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
   codegraphPkg = pkgs.callPackage ../pkg/codegraph/package.nix {
     src = inputs.codegraph;
   };
@@ -444,6 +445,15 @@ in
       home.packages = [
         pkgs.bubblewrap
         yoloPkg
+      ];
+    })
+    # Keep the callPackage inside mkIf so Linux evaluation never forces the
+    # Darwin-only claude-code-sandbox package attribute.
+    (lib.mkIf (cfg.enable && isDarwin) {
+      home.packages = [
+        (pkgs.callPackage ../pkg/yolo-darwin/default.nix {
+          claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
+        })
       ];
     })
   ];
