@@ -16,8 +16,22 @@ Macs (`x86_64-darwin`) are not supported by the top-level flake.
 
 ## 1. Prerequisites
 
-Install Nix with flakes enabled. A multi-user Nix installation is recommended
-on macOS. Confirm that it works:
+1. Install Nix using the official **[Nix macOS installation
+   instructions](https://nixos.org/download/#nix-install-macos)**. Use the
+   recommended multi-user installation, then open a new terminal so its shell
+   environment takes effect.
+2. Enable the `nix-command` and `flakes` experimental features as described by
+   the official **[nix.dev flakes
+   documentation](https://nix.dev/concepts/flakes.html#running-commands)**.
+3. Read Home Manager's **[installation
+   overview](https://nix-community.github.io/home-manager/installation.html)**
+   and **[standalone installation
+   notes](https://nix-community.github.io/home-manager/installation/standalone.html)**
+   if this is your first Home Manager configuration. Do not add the legacy Home
+   Manager channel when following this guide: the flake below pins Home Manager,
+   builds the first generation directly, and enables the `home-manager` command.
+
+Confirm that Nix and flakes work before continuing:
 
 ```sh
 nix --version
