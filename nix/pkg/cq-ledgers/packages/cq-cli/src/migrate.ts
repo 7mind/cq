@@ -68,6 +68,7 @@ import {
   isXdgPrimaryEmpty,
   LEDGER_LOGS_DIRNAME,
   LEDGER_STORAGE_DIRNAME,
+  hasLegacyFsLedger,
   openLegacyLedgerStore,
   openPgPool,
   resolveDisplayName,
@@ -224,25 +225,44 @@ export async function runMigrate(args: MigrateArgs, io: MigrateIo): Promise<Migr
  * doc for the full contract.
  */
 async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<MigrateOutcome> {
-  const { backend, branch } = resolveLedgerBackend(args.cwd);
+  const resolved = resolveLedgerBackend(args.cwd);
+  let backend = resolved.backend;
+  const branch = resolved.branch;
 
   if (backend === "xdg") {
-    io.err(
-      `cq migrate: [ledger] backend is already 'xdg' at ${args.cwd} — there is no legacy ` +
-        `(fs | git-object) source configured to migrate from. Nothing to do. (Did you mean ` +
-        `\`cq migrate --to postgres\`, to migrate the xdg primary onward into postgres?)`,
-    );
-    return { exitCode: EXIT_USAGE };
+    // K117: with 'xdg' now the DEFAULT resolution, a cq.toml-less legacy repo
+    // resolves here too — detect its in-tree fs ledger and migrate it rather
+    // than refusing. An EXPLICIT backend = 'xdg' keeps the refusal: the user
+    // already flipped, so there is no configured legacy source.
+    if (!resolved.explicit && hasLegacyFsLedger(args.cwd)) {
+      io.out(
+        `cq migrate: no [ledger] backend configured at ${args.cwd}, but a legacy in-tree ` +
+          `ledger (${LEDGER_STORAGE_DIRNAME}/ledgers.yaml) is present — migrating it as an ` +
+          `'fs' source.`,
+      );
+      backend = "fs";
+    } else {
+      io.err(
+        `cq migrate: [ledger] backend is already 'xdg' at ${args.cwd} — there is no legacy ` +
+          `(fs | git-object) source configured to migrate from. Nothing to do. (Did you mean ` +
+          `\`cq migrate --to postgres\`, to migrate the xdg primary onward into postgres?)`,
+      );
+      return { exitCode: EXIT_USAGE };
+    }
   }
 
   // --- Read the ENTIRE legacy source (state + logs) before any target write.
-  // openLegacyLedgerStore (the INTERNAL legacy read path, T505 — the runtime
-  // factory createLedgerStore now rejects fs/git-object) constructs + init()s
-  // the legacy store (fs reads the tracked .cq/ tree; git-object reads the
-  // orphan ref) — init() is the same idempotent load every server start
-  // performed; it never rewrites existing content. buildBackupDump reads via
-  // the PUBLIC store surface only.
-  const legacy = await openLegacyLedgerStore(args.cwd);
+  // openLegacyLedgerStore (the legacy read path, T505/K117) constructs +
+  // init()s the legacy store (fs reads the tracked .cq/ tree; git-object
+  // reads the orphan ref) — init() is the same idempotent load every server
+  // start performed; it never rewrites existing content. buildBackupDump
+  // reads via the PUBLIC store surface only. The resolved source backend is
+  // passed explicitly: for the cq.toml-less case above, resolution alone
+  // would yield the K117 'xdg' default, not the fs source.
+  const legacy = await openLegacyLedgerStore(
+    args.cwd,
+    backend === "fs" || backend === "git-object" ? backend : undefined,
+  );
   let dump: BackupDumpFile[];
   try {
     const fsLogsDir =

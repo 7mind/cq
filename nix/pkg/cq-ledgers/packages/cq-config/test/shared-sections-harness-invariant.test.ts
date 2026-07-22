@@ -55,6 +55,7 @@ describe("[ledger] and [webui] are harness-invariant (T483)", () => {
 
     expect(underPi.ledger).toEqual({
       backend: "git-object",
+      backendExplicit: true,
       branch: "cq-ledger",
       remote: "origin",
       backup: "none",

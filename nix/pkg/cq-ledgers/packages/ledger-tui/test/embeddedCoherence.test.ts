@@ -9,9 +9,11 @@
  *
  *  1. `McpLedgerClient.embedded` exposes the resolved backend descriptor
  *     (`embedded.resolved`) — backend 'xdg' with a concrete dbPath;
- *  2. a root whose cq.toml names a LEGACY backend (or carries no cq.toml at
- *     all — the historical fs default) REJECTS with LegacyBackendError naming
- *     `cq migrate` instead of silently constructing a legacy store;
+ *  2. the no-cq.toml default resolves to xdg (K117) — on a non-git root that
+ *     surfaces as ProjectKeyResolutionError (no repo identity), never a
+ *     silent in-tree legacy store; an explicit legacy 'git-object' takes the
+ *     K117 warn-and-open path, which on a non-git root fails its git-env
+ *     check;
  *  3. driving the SAME watcher wiring main.tsx uses —
  *     `startLedgerCoherenceWatcher(ctx.resolved, ctx.cwd, onChange)` — fires
  *     onChange on an EXTERNAL write (a second SqliteLedgerStore process-peer
@@ -24,7 +26,12 @@ import { describe, it, expect, afterAll, beforeAll } from "bun:test";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { LegacyBackendError, SqliteLedgerStore, type LedgerSchema } from "@cq/ledger";
+import {
+  GitEnvironmentError,
+  ProjectKeyResolutionError,
+  SqliteLedgerStore,
+  type LedgerSchema,
+} from "@cq/ledger";
 import { startLedgerCoherenceWatcher } from "@cq/ledger-mcp";
 import { McpLedgerClient } from "../src/mcpClient.js";
 
@@ -94,20 +101,19 @@ describe("embedded TUI exposes the resolved backend descriptor (D51 / T505)", ()
     }
   });
 
-  it("rejects the no-cq.toml default (legacy fs) with LegacyBackendError naming cq migrate", async () => {
+  it("the no-cq.toml default resolves to xdg (K117): a non-git root fails with ProjectKeyResolutionError, never a silent legacy store", async () => {
     const dir = await plainDir();
-    await expect(McpLedgerClient.embedded(dir)).rejects.toBeInstanceOf(LegacyBackendError);
+    await expect(McpLedgerClient.embedded(dir)).rejects.toBeInstanceOf(ProjectKeyResolutionError);
   });
 
-  it("rejects [ledger] backend='git-object' with LegacyBackendError", async () => {
+  it("[ledger] backend='git-object' takes the K117 warn-and-open path — on a non-git root the git-env check fails", async () => {
     const dir = await plainDir();
     await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
     const err = await McpLedgerClient.embedded(dir).then(
       () => null,
       (e: unknown) => e,
     );
-    expect(err).toBeInstanceOf(LegacyBackendError);
-    expect((err as Error).message).toContain("cq migrate");
+    expect(err).toBeInstanceOf(GitEnvironmentError);
   });
 });
 

@@ -1,22 +1,20 @@
 /**
- * T505: `cq init` with a cq.toml naming a LEGACY backend.
+ * T505 as relaxed by K117: `cq init` with a cq.toml naming a LEGACY backend.
  *
- * The legacy in-tree backends (fs / git-object) are no longer selectable
- * runtime primaries: `cq init` on a root whose cq.toml names one fails fast
- * with the documented LegacyBackendError pointing at `cq migrate`, and writes
- * NOTHING (no .cq/ tree, no orphan ref). (Historically these tests asserted
- * the git-object init path — see git history / T357.)
+ * An explicit legacy backend (fs / git-object) takes the warn-and-open path:
+ * `cq init` bootstraps the legacy store (pre-T505 behavior) while a stderr
+ * deprecation warning names `cq migrate`. (The T505 hard-refusal assertions
+ * live in git history.)
  *
  * Throwaway repos via mkdtemp; cleaned up in afterAll.
  */
 
-import { describe, it, expect, afterAll } from "bun:test";
+import { describe, it, expect, afterAll, spyOn } from "bun:test";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { LegacyBackendError } from "@cq/ledger";
 import { dispatch, type ConfirmIo, type DispatchIo } from "../src/main.js";
 
 const exec = promisify(execFile);
@@ -52,21 +50,25 @@ async function gitRepo(): Promise<string> {
   return dir;
 }
 
-describe("cq init — legacy backends rejected (T505)", () => {
-  it("backend='git-object' rejects with LegacyBackendError naming cq migrate; nothing is written", async () => {
+describe("cq init — legacy backends warn and open (K117)", () => {
+  it("backend='git-object' warns DEPRECATED and seeds the orphan ref", async () => {
     const root = await gitRepo();
     // A pre-existing cq.toml selecting the legacy git-object backend.
     await writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "git-object"\n', "utf8");
 
-    const err = await dispatch(["init", "--cwd", root], recordingIo()).then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(err).toBeInstanceOf(LegacyBackendError);
-    expect((err as Error).message).toContain("cq migrate");
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const outcome = await dispatch(["init", "--cwd", root], recordingIo());
+      expect(outcome.exitCode).toBe(0);
+      const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+      expect(warned).toContain("DEPRECATED");
+      expect(warned).toContain("'git-object'");
+      expect(warned).toContain("cq migrate");
+    } finally {
+      stderrSpy.mockRestore();
+    }
 
-    // Nothing was written: no .cq/ tree, no orphan ref.
-    await expect(stat(path.join(root, ".cq"))).rejects.toThrow();
+    // The orphan ref was seeded (pre-T505 git-object init behavior).
     const refExists = await exec(
       "git",
       ["rev-parse", "--verify", "-q", "refs/heads/cq-ledger"],
@@ -75,20 +77,26 @@ describe("cq init — legacy backends rejected (T505)", () => {
       () => true,
       () => false,
     );
-    expect(refExists).toBe(false);
+    expect(refExists).toBe(true);
+    // The git-object backend keeps state in the ref, not a .cq/ tree.
+    await expect(stat(path.join(root, ".cq"))).rejects.toThrow();
   });
 
-  it("backend='fs' rejects with LegacyBackendError naming cq migrate; no .cq/ is created", async () => {
+  it("backend='fs' warns DEPRECATED and bootstraps the in-tree .cq/ store", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "cq-init-fs-legacy-"));
     dirs.push(root);
     await writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "fs"\n', "utf8");
 
-    const err = await dispatch(["init", "--cwd", root], recordingIo()).then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(err).toBeInstanceOf(LegacyBackendError);
-    expect((err as Error).message).toContain("cq migrate");
-    await expect(stat(path.join(root, ".cq"))).rejects.toThrow();
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const outcome = await dispatch(["init", "--cwd", root], recordingIo());
+      expect(outcome.exitCode).toBe(0);
+      const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+      expect(warned).toContain("DEPRECATED");
+      expect(warned).toContain("cq migrate");
+    } finally {
+      stderrSpy.mockRestore();
+    }
+    await expect(stat(path.join(root, ".cq", "ledgers.yaml"))).resolves.toBeDefined();
   });
 });

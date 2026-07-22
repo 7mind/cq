@@ -219,9 +219,15 @@ export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
 /**
  * The `[ledger]` table: storage backend configuration (T349, T494).
  *
- * - `backend`: the storage backend to use; 'fs' is the default (FsLedgerStore),
- *   'git-object' is opt-in experimental (Q189), 'xdg' is the new out-of-tree
- *   bun:sqlite primary (K102).
+ * - `backend`: the storage backend to use; 'xdg' — the out-of-tree bun:sqlite
+ *   primary (K102) — is the default (K117). 'fs' and 'git-object' are the
+ *   LEGACY in-repo backends: still selectable explicitly, but construction
+ *   emits a deprecation warning pointing at `cq migrate`. 'postgres' is the
+ *   opt-in multi-tenant backend (G81).
+ * - `backendExplicit`: whether cq.toml carried an explicit `backend` key
+ *   (K117) — lets callers distinguish a deliberate backend choice from the
+ *   'xdg' default (the legacy-shadow warning and `cq migrate`'s source
+ *   detection key off this).
  * - `branch`: the git branch for the git-object backend (default 'cq-ledger').
  * - `remote`: the git remote for the git-object backend (default 'origin').
  * - `backup`: the mandatory human-readable markdown export/backup mode;
@@ -241,6 +247,7 @@ export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
  */
 export interface LedgerConfig {
   readonly backend: LedgerBackend;
+  readonly backendExplicit: boolean;
   readonly branch: string;
   readonly remote: string;
   readonly backup: LedgerBackupMode;
@@ -281,7 +288,7 @@ export interface ProjectConfig {
  *   checked at resolution time, once the agent's harness is known.
  * - `ledger`: the `[ledger]` table (backend + branch + remote + backup +
  *   projectId + url), or null if absent. When null, `backend` defaults to
- *   'fs' and `backup` defaults to 'none'.
+ *   'xdg' (K117) and `backup` defaults to 'none'.
  * - `project`: the `[project]` table (name), or null if absent (T570).
  */
 export interface CqConfig {

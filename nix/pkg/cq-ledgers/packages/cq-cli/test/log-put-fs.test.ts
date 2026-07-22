@@ -2,8 +2,9 @@
  * T410: `cq log put` — fs-backend write path integration tests.
  *
  * Acceptance:
- *   - With no cq.toml (fs default), `cq log put --stdin --dest logs/raw/<name>.jsonl`
- *     on a transcript containing a fake AKIA… key produces a file whose content
+ *   - With an explicit backend='fs' cq.toml (the no-cq.toml default is xdg
+ *     since K117), `cq log put --stdin --dest logs/raw/<name>.jsonl` on a
+ *     transcript containing a fake AKIA… key produces a file whose content
  *     is redacted ([REDACTED:aws-key]) and otherwise byte-identical.
  *   - A malformed (pretty-printed) .jsonl input exits non-zero citing the
  *     offending line and writes NOTHING.
@@ -31,6 +32,9 @@ afterAll(async () => {
 async function makeTmpDir(): Promise<string> {
   const dir = await fsPromises.mkdtemp(path.join(tmpdir(), "cq-log-put-fs-"));
   tmpDirs.push(dir);
+  // Pin the legacy fs backend explicitly: the no-cq.toml default is xdg (K117),
+  // and these tests exercise the in-tree fs write path.
+  await fsPromises.writeFile(path.join(dir, "cq.toml"), '[ledger]\nbackend = "fs"\n', "utf8");
   return dir;
 }
 

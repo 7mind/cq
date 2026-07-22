@@ -104,8 +104,8 @@ interface SeededState {
  * done, archiveMilestone) so the migrate parity covers archives too. Logs are
  * seeded separately via `cq log put` (the same path a real session uses).
  */
-async function seedLegacy(root: string): Promise<SeededState> {
-  const seeded = await openLegacyLedgerStore(root);
+async function seedLegacy(root: string, backend?: "fs" | "git-object"): Promise<SeededState> {
+  const seeded = await openLegacyLedgerStore(root, backend);
   try {
     const milestone = await seeded.store.createMilestone({ title: "active work" });
     const item = await seeded.store.createItem(TASKS_LEDGER, milestone.id, {
@@ -253,6 +253,26 @@ describe("cq migrate (T504)", () => {
     expect(bytesAfter).toEqual(bytesBefore);
 
     // A second run without --yes refuses (the backend is already xdg).
+    const second = await dispatch(["migrate", "--cwd", root], recordingIo());
+    expect(second.exitCode).toBe(EXIT_USAGE);
+  });
+
+  it("K117: a cq.toml-less legacy tree migrates as an fs source (default resolution is xdg, but the in-tree ledger is detected)", async () => {
+    const root = await gitRepo("cq-migrate-noconfig-");
+    // NO cq.toml at all — pre-K117 this root resolved to the fs default; now
+    // it resolves to xdg with explicit=false, and migrate must still find the
+    // legacy in-tree source.
+    const seed = await seedLegacy(root, "fs");
+    await seedLogs(root);
+
+    const io = recordingIo();
+    const outcome = await dispatch(["migrate", "--cwd", root], io);
+    expect(outcome.exitCode).toBe(0);
+    expect(io.outs.join("\n")).toContain("legacy in-tree ledger");
+
+    await assertMigratedParity(root, seed);
+
+    // A second run refuses: cq.toml now names xdg explicitly.
     const second = await dispatch(["migrate", "--cwd", root], recordingIo());
     expect(second.exitCode).toBe(EXIT_USAGE);
   });

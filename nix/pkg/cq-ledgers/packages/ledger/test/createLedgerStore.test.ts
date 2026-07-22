@@ -2,22 +2,24 @@
  * createLedgerStore / openLegacyLedgerStore / git-env tests (T357 / G43;
  * legacy cutover T505 / G67).
  *
- * Covers the factory contract after the legacy cutover:
- *  1. cq.toml naming a LEGACY backend (`fs` explicit, `fs` via the no-cq.toml
- *     default, `git-object`) FAILS FAST with the documented
- *     {@link LegacyBackendError} naming `cq migrate` — the legacy backends are
- *     no longer selectable runtime primaries;
+ * Covers the factory contract after the legacy cutover (T505) as relaxed by
+ * K117 (xdg default + legacy warnings):
+ *  1. the DEFAULT backend (no cq.toml / no `[ledger]` / no `backend` key) is
+ *     'xdg'; an EXPLICIT legacy `fs` / `git-object` opens the in-tree store
+ *     with a stderr deprecation warning naming `cq migrate`;
  *  2. `backend = 'xdg'` resolves to a working SqliteLedgerStore under the XDG
  *     state dir (and a shallow clone fails fast with
- *     ProjectKeyResolutionError);
- *  3. `openLegacyLedgerStore` — the INTERNAL read path `cq migrate` uses —
- *     still constructs the legacy stores, and refuses an xdg config;
+ *     ProjectKeyResolutionError); a DEFAULT-resolved xdg over a root carrying
+ *     a legacy `.cq/ledgers.yaml` warns that the in-tree ledger is shadowed;
+ *  3. `openLegacyLedgerStore` — the read path `cq migrate` uses — constructs
+ *     the legacy stores (incl. via the explicit backend override), and
+ *     refuses an xdg config;
  *  4. the git-env fail-fast (`assertGitWorkTree`) on a non-git cwd.
  *
  * Throwaway dirs/repos via `mkdtemp`; cleaned up in `afterAll`.
  */
 
-import { describe, it, expect, afterAll, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, afterAll, beforeEach, afterEach, spyOn, type Mock } from "bun:test";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -30,7 +32,6 @@ import {
   resolveLedgerBackend,
   assertGitWorkTree,
   GitEnvironmentError,
-  LegacyBackendError,
   PostgresLedgerStore,
   FsLedgerStore,
   GitObjectLedgerBackend,
@@ -106,21 +107,43 @@ afterAll(async () => {
 });
 
 describe("resolveLedgerBackend", () => {
-  it("defaults to fs when no cq.toml is present", async () => {
+  it("defaults to xdg (K117) when no cq.toml is present, with explicit=false", async () => {
     const dir = await plainDir();
-    expect(resolveLedgerBackend(dir)).toEqual({ backend: "fs", branch: "cq-ledger" });
+    expect(resolveLedgerBackend(dir)).toEqual({
+      backend: "xdg",
+      branch: "cq-ledger",
+      explicit: false,
+    });
   });
 
-  it("defaults to fs when cq.toml has no [ledger] table", async () => {
+  it("defaults to xdg when cq.toml has no [ledger] table, with explicit=false", async () => {
     const dir = await plainDir();
     await writeCqToml(dir, 'reviewers = []\nplanners = []\n');
-    expect(resolveLedgerBackend(dir).backend).toBe("fs");
+    expect(resolveLedgerBackend(dir)).toEqual({
+      backend: "xdg",
+      branch: "cq-ledger",
+      explicit: false,
+    });
   });
 
-  it("reads backend + branch from the [ledger] table", async () => {
+  it("defaults to xdg when the [ledger] table has no backend key, with explicit=false", async () => {
+    const dir = await plainDir();
+    await writeCqToml(dir, '[ledger]\nbackup = "none"\n');
+    expect(resolveLedgerBackend(dir)).toEqual({
+      backend: "xdg",
+      branch: "cq-ledger",
+      explicit: false,
+    });
+  });
+
+  it("reads backend + branch from the [ledger] table, with explicit=true", async () => {
     const dir = await plainDir();
     await writeCqToml(dir, '[ledger]\nbackend = "git-object"\nbranch = "my-ledger"\n');
-    expect(resolveLedgerBackend(dir)).toEqual({ backend: "git-object", branch: "my-ledger" });
+    expect(resolveLedgerBackend(dir)).toEqual({
+      backend: "git-object",
+      branch: "my-ledger",
+      explicit: true,
+    });
   });
 
   it("T483: [ledger] backend is harness-invariant — CQ_HARNESS=pi yields same backend as unset", async () => {
@@ -159,7 +182,7 @@ describe("resolveLedgerBackend", () => {
       delete process.env["CQ_HARNESS"];
       const underUnset = resolveLedgerBackend(dir);
 
-      expect(underPi).toEqual({ backend: "fs", branch: "cq-ledger" });
+      expect(underPi).toEqual({ backend: "fs", branch: "cq-ledger", explicit: true });
       expect(underClaude).toEqual(underPi);
       expect(underUnset).toEqual(underPi);
     } finally {
@@ -172,50 +195,87 @@ describe("resolveLedgerBackend", () => {
   });
 });
 
-describe("createLedgerStore — legacy backends are no longer runtime primaries (T505)", () => {
-  it("rejects the no-cq.toml default (fs) with LegacyBackendError naming cq migrate", async () => {
-    const dir = await plainDir();
-    const err = await createLedgerStore(dir).then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(err).toBeInstanceOf(LegacyBackendError);
-    expect((err as Error).message).toContain("cq migrate");
-    expect((err as Error).message).toContain("'fs'");
-    // Nothing was constructed: no .cq/ tree appeared.
-    await expect(fs.stat(path.join(dir, ".cq"))).rejects.toThrow();
+describe("createLedgerStore — legacy backends warn and open (K117, was T505's hard refusal)", () => {
+  let stderrSpy: Mock<typeof process.stderr.write>;
+  const stderrText = (): string =>
+    stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+
+  beforeEach(() => {
+    stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+  afterEach(() => {
+    stderrSpy.mockRestore();
   });
 
-  it("rejects explicit backend='fs' with LegacyBackendError naming cq migrate", async () => {
+  it("explicit backend='fs' opens an FsLedgerStore with a deprecation warning naming cq migrate", async () => {
     const dir = await plainDir();
     await writeCqToml(dir, '[ledger]\nbackend = "fs"\n');
-    const err = await createLedgerStore(dir).then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(err).toBeInstanceOf(LegacyBackendError);
-    expect((err as Error).message).toContain("cq migrate");
+    const { store, backend } = await createLedgerStore(dir);
+    try {
+      expect(backend).toBe("fs");
+      expect(store).toBeInstanceOf(FsLedgerStore);
+      expect(stderrText()).toContain("DEPRECATED");
+      expect(stderrText()).toContain("'fs'");
+      expect(stderrText()).toContain("cq migrate");
+    } finally {
+      await store.dispose();
+    }
   });
 
-  it("rejects backend='git-object' with LegacyBackendError naming cq migrate (even in a git repo)", async () => {
+  it("explicit backend='git-object' opens a GitObjectLedgerBackend with a deprecation warning", async () => {
     const dir = await gitRepo();
     await writeCqToml(dir, '[ledger]\nbackend = "git-object"\n');
-    const err = await createLedgerStore(dir).then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(err).toBeInstanceOf(LegacyBackendError);
-    expect((err as Error).message).toContain("cq migrate");
-    expect((err as Error).message).toContain("'git-object'");
-    // The orphan ref was never seeded.
-    const refCheck = await exec("git", ["rev-parse", "--verify", "-q", "refs/heads/cq-ledger"], {
-      cwd: dir,
-      encoding: "utf8",
-    }).then(
-      () => true,
-      () => false,
-    );
-    expect(refCheck).toBe(false);
+    const { store, backend } = await createLedgerStore(dir);
+    try {
+      expect(backend).toBe("git-object");
+      expect(store).toBeInstanceOf(GitObjectLedgerBackend);
+      expect(stderrText()).toContain("DEPRECATED");
+      expect(stderrText()).toContain("'git-object'");
+      expect(stderrText()).toContain("cq migrate");
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  it("the no-cq.toml default resolves to the xdg store — no .cq/ is created, no warning on a clean root", async () => {
+    const dir = await gitRepo();
+    const { store, backend } = await createLedgerStore(dir);
+    try {
+      expect(backend).toBe("xdg");
+      expect(store).toBeInstanceOf(SqliteLedgerStore);
+      await expect(fs.stat(path.join(dir, ".cq"))).rejects.toThrow();
+      expect(stderrText()).toBe("");
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  it("a DEFAULT-resolved xdg over a root carrying .cq/ledgers.yaml warns that the legacy ledger is shadowed", async () => {
+    const dir = await gitRepo();
+    await fs.mkdir(path.join(dir, ".cq"), { recursive: true });
+    await fs.writeFile(path.join(dir, ".cq", "ledgers.yaml"), "ledgers: []\n");
+    const { store, backend } = await createLedgerStore(dir);
+    try {
+      expect(backend).toBe("xdg");
+      expect(stderrText()).toContain("legacy in-tree ledger");
+      expect(stderrText()).toContain("NOT read");
+      expect(stderrText()).toContain("cq migrate");
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  it("an EXPLICIT backend='xdg' over the same legacy tree does NOT warn (deliberate choice)", async () => {
+    const dir = await gitRepo();
+    await writeCqToml(dir, '[ledger]\nbackend = "xdg"\n');
+    await fs.mkdir(path.join(dir, ".cq"), { recursive: true });
+    await fs.writeFile(path.join(dir, ".cq", "ledgers.yaml"), "ledgers: []\n");
+    const { store } = await createLedgerStore(dir);
+    try {
+      expect(stderrText()).toBe("");
+    } finally {
+      await store.dispose();
+    }
   });
 });
 
@@ -249,6 +309,14 @@ describe("openLegacyLedgerStore — the internal cq-migrate read path (T505)", (
     const dir = await plainDir();
     await writeCqToml(dir, '[ledger]\nbackend = "xdg"\n');
     await expect(openLegacyLedgerStore(dir)).rejects.toThrow(/not a legacy/);
+  });
+
+  it("the explicit backend override opens an fs source on a cq.toml-less root (K117 migrate path)", async () => {
+    const dir = await plainDir();
+    const { store, backend } = await openLegacyLedgerStore(dir, "fs");
+    expect(backend).toBe("fs");
+    expect(store).toBeInstanceOf(FsLedgerStore);
+    await store.dispose();
   });
 });
 
@@ -361,10 +429,17 @@ describe("createLedgerStore — postgres backend (T577, G81/M248)", () => {
     }
   });
 
-  it("backend='fs' still throws LegacyBackendError (unaffected by the new postgres branch)", async () => {
+  it("backend='fs' still takes the legacy warn-and-open path (unaffected by the postgres branch)", async () => {
     const dir = await gitRepo();
     await writeCqToml(dir, '[ledger]\nbackend = "fs"\n');
-    await expect(createLedgerStore(dir)).rejects.toBeInstanceOf(LegacyBackendError);
+    const spy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const { store } = await createLedgerStore(dir);
+      expect(store).toBeInstanceOf(FsLedgerStore);
+      await store.dispose();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("missing DSN throws PostgresDsnResolutionError — no connection attempted, no server needed", async () => {

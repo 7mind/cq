@@ -14,16 +14,19 @@
  *     cannot be resolved (a shallow clone, or no git at all) FAILS FAST with
  *     {@link ProjectKeyResolutionError} rather than silently mislocating the
  *     store.
- *   - `backend = 'fs' | 'git-object'` (including the no-cq.toml default,
- *     which still resolves to 'fs') → {@link LegacyBackendError} (T505 /
- *     Q244): the legacy in-tree backends are no longer selectable runtime
- *     primaries. The error names `cq migrate` (the one-shot legacy → xdg
- *     import) so an existing ledger is never silently shadowed by an empty
- *     xdg store.
+ *   - `backend = 'fs' | 'git-object'` (EXPLICIT in cq.toml — the no-cq.toml
+ *     default is 'xdg' since K117) → the legacy in-tree store is opened
+ *     as-is, with a DEPRECATION WARNING on stderr naming `cq migrate` (K117
+ *     relaxed T505's hard {@link LegacyBackendError} refusal to a warning).
+ *   - a DEFAULT-resolved 'xdg' (no explicit `backend` key) at a root that
+ *     still carries a legacy in-tree ledger (`.cq/ledgers.yaml`) → the xdg
+ *     store is used, with a SHADOW WARNING on stderr naming `cq migrate` —
+ *     preserving T505's protection against silently shadowing an existing
+ *     in-tree ledger with an empty xdg store, without the hard stop.
  *
- * `cq migrate` still needs to READ a live legacy backend; that internal
- * read path is {@link openLegacyLedgerStore} below — deliberately NOT wired
- * to this factory's runtime selection.
+ * `cq migrate` reads a live legacy backend through
+ * {@link openLegacyLedgerStore} below (which also accepts an explicit
+ * backend override for the default-xdg-with-legacy-tree case).
  *
  * The factory `init()`s the returned store before handing it back, mirroring the
  * historical `new FsLedgerStore(); await store.init()` pattern at each site.
@@ -34,6 +37,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { SQL } from "bun";
 import { loadConfig, type LedgerBackend, type LedgerBackupMode } from "@cq/config";
@@ -47,6 +51,7 @@ import { ensureSchema } from "./postgres/schema.js";
 import { resolvePostgresDsn } from "./postgres/dsn.js";
 import { resolveDisplayName } from "./postgres/displayName.js";
 import { PostgresLedgerStore } from "./postgres/PostgresLedgerStore.js";
+import { LEDGER_STORAGE_DIRNAME } from "../constants.js";
 import { resolveProjectKey } from "../projectKey.js";
 import { resolveStateDir, resolveLogsDir, ensureStateDir } from "../stateDir.js";
 import { BackupScheduler, runBackupExport } from "./backupExporter.js";
@@ -166,22 +171,36 @@ export class GitEnvironmentError extends Error {
 }
 
 /**
- * Thrown when cq.toml (or the no-cq.toml default) names a LEGACY in-tree
- * backend (`fs` | `git-object`) as the runtime primary (T505 / Q244). The
- * legacy backends remain readable ONLY through `cq migrate`'s internal
- * {@link openLegacyLedgerStore} path; every runtime construction site fails
- * fast here so an existing legacy ledger is never silently shadowed.
+ * The legacy in-tree store presence probe (K117): a root with a
+ * `.cq/ledgers.yaml` registry carries an fs-backend ledger. Used by the
+ * factory's shadow warning and by `cq migrate`'s cq.toml-less source
+ * detection — both key off the SAME signal so they can never disagree.
  */
-export class LegacyBackendError extends Error {
-  constructor(backend: LedgerBackend, root: string) {
-    super(
-      `[ledger] backend = '${backend}' at ${root} is no longer a runtime primary — the ledger ` +
-        `now lives out-of-tree under the XDG state dir (backend = 'xdg'). Run \`cq migrate\` to ` +
-        `import the existing legacy ledger into the xdg primary (it flips cq.toml for you), or ` +
-        `set backend = "xdg" in cq.toml (\`cq init\` writes it) for a fresh project.`,
-    );
-    this.name = "LegacyBackendError";
-  }
+export function hasLegacyFsLedger(root: string): boolean {
+  return existsSync(join(root, LEDGER_STORAGE_DIRNAME, "ledgers.yaml"));
+}
+
+/**
+ * K117 relaxed T505's hard `LegacyBackendError` to stderr warnings; these two
+ * writers are the ONLY places the deprecation / shadow text lives. Warnings,
+ * not errors: the store still constructs, so warning emission must never
+ * unwind a caller.
+ */
+function warnLegacyBackendDeprecated(backend: LedgerBackend, root: string): void {
+  process.stderr.write(
+    `warning: [ledger] backend = '${backend}' at ${root} is a DEPRECATED legacy in-tree ` +
+      `backend — the runtime primary is the out-of-tree xdg store. Run \`cq migrate\` to ` +
+      `import this ledger into the xdg primary (it flips cq.toml for you).\n`,
+  );
+}
+
+function warnLegacyLedgerShadowedByXdgDefault(root: string): void {
+  process.stderr.write(
+    `warning: ${root} carries a legacy in-tree ledger (${LEDGER_STORAGE_DIRNAME}/ledgers.yaml) ` +
+      `but cq.toml names no [ledger] backend, so the DEFAULT out-of-tree xdg store is used — ` +
+      `the in-tree ledger is NOT read. Run \`cq migrate\` to import it into the xdg primary, ` +
+      `or set backend = "fs" explicitly to keep reading it (deprecated).\n`,
+  );
 }
 
 /**
@@ -213,18 +232,26 @@ export class PostgresBackupNotWiredError extends Error {
 }
 
 /**
- * Resolve the `[ledger]` backend for `root` from cq.toml. No cq.toml (or no
- * `[ledger]` table) → `'fs'`, matching {@link loadConfig}'s contract and the
- * historical default (which {@link createLedgerStore} now rejects with
- * {@link LegacyBackendError} — the resolver stays truthful so `cq migrate`
- * can locate the legacy source).
+ * Resolve the `[ledger]` backend for `root` from cq.toml. No cq.toml, no
+ * `[ledger]` table, or a `[ledger]` table without a `backend` key → `'xdg'`
+ * (K117), with `explicit: false` so callers can tell the default apart from a
+ * deliberate choice (the factory's legacy-shadow warning and `cq migrate`'s
+ * cq.toml-less source detection both key off it).
  */
-export function resolveLedgerBackend(root: string): { backend: LedgerBackend; branch: string } {
+export function resolveLedgerBackend(root: string): {
+  backend: LedgerBackend;
+  branch: string;
+  explicit: boolean;
+} {
   const config = loadConfig(root);
   if (config === null || config.ledger === null) {
-    return { backend: "fs", branch: DEFAULT_BRANCH };
+    return { backend: "xdg", branch: DEFAULT_BRANCH, explicit: false };
   }
-  return { backend: config.ledger.backend, branch: config.ledger.branch };
+  return {
+    backend: config.ledger.backend,
+    branch: config.ledger.branch,
+    explicit: config.ledger.backendExplicit,
+  };
 }
 
 /**
@@ -262,21 +289,28 @@ export function assertGitWorkTree(root: string): void {
  * Construct and initialise the ledger store selected by cq.toml's `[ledger]`
  * backend at `root`. The ONE backend-selection site for the running products.
  *
- * Only `backend = 'xdg'` constructs a store; the legacy `fs` / `git-object`
- * values (and the no-cq.toml default, 'fs') fail fast with
- * {@link LegacyBackendError} naming `cq migrate` (T505).
+ * `backend = 'xdg'` (the K117 default) and `'postgres'` are the runtime
+ * primaries. An EXPLICIT legacy `fs` / `git-object` opens the in-tree store
+ * with a deprecation warning; a DEFAULT-resolved xdg over a root that still
+ * carries a legacy in-tree ledger warns that the in-tree ledger is shadowed
+ * (both warnings name `cq migrate`; K117 relaxed T505's hard refusal).
  *
  * The store is `init()`-ed before return (mirrors every historical call site).
  */
 export async function createLedgerStore(root: string): Promise<ResolvedLedgerStore> {
-  const { backend, branch } = resolveLedgerBackend(root);
+  const { backend, branch, explicit } = resolveLedgerBackend(root);
 
   if (backend === "fs" || backend === "git-object") {
-    throw new LegacyBackendError(backend, root);
+    warnLegacyBackendDeprecated(backend, root);
+    return openLegacyLedgerStore(root, backend);
   }
 
   if (backend === "postgres") {
     return createPostgresLedgerStore(root, branch);
+  }
+
+  if (!explicit && hasLegacyFsLedger(root)) {
+    warnLegacyLedgerShadowedByXdgDefault(root);
   }
 
   // backend === 'xdg' (T530): the out-of-tree bun:sqlite primary (K102).
@@ -424,20 +458,29 @@ async function createPostgresLedgerStore(
 }
 
 /**
- * Open the LIVE LEGACY backend cq.toml names at `root` — the INTERNAL read
- * path `cq migrate` (T504) uses to export a legacy ledger's state, and the
- * ONLY remaining construction site for {@link FsLedgerStore} /
- * {@link GitObjectLedgerBackend} in the products (T505). Deliberately NOT a
- * cq.toml-selectable runtime primary: {@link createLedgerStore} rejects these
- * backends with {@link LegacyBackendError}.
+ * Open a LIVE LEGACY backend at `root` — the read path `cq migrate` (T504)
+ * uses to export a legacy ledger's state, the construction site for
+ * {@link FsLedgerStore} / {@link GitObjectLedgerBackend}, and (since K117)
+ * {@link createLedgerStore}'s delegate for an EXPLICIT deprecated
+ * `backend = 'fs' | 'git-object'`.
+ *
+ * `backendOverride` bypasses cq.toml resolution: `cq migrate` passes `'fs'`
+ * for the cq.toml-less legacy-tree case (where resolution now yields the
+ * K117 `'xdg'` default), and {@link createLedgerStore} passes its
+ * already-resolved backend to avoid a second cq.toml read.
  *
  * `init()` is the same idempotent load every historical server start
  * performed — it never rewrites existing content, so a migrate source stays
- * byte-identical. Throws when cq.toml already names `xdg` (there is no legacy
- * source to open).
+ * byte-identical. Throws when the resolved backend is not a legacy one
+ * (there is no legacy source to open).
  */
-export async function openLegacyLedgerStore(root: string): Promise<ResolvedLedgerStore> {
-  const { backend, branch } = resolveLedgerBackend(root);
+export async function openLegacyLedgerStore(
+  root: string,
+  backendOverride?: "fs" | "git-object",
+): Promise<ResolvedLedgerStore> {
+  const resolved = resolveLedgerBackend(root);
+  const backend = backendOverride ?? resolved.backend;
+  const branch = resolved.branch;
 
   if (backend === "git-object") {
     assertGitWorkTree(root);

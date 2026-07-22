@@ -734,11 +734,11 @@ export async function main(argv: readonly string[]): Promise<void> {
   const displayName = path.basename(cwd);
 
   // Construct the store via the backend-selecting factory (T357), init it, then
-  // register tools. The factory honours cq.toml's `[ledger]` backend ('xdg';
-  // a legacy fs/git-object value fails fast with LegacyBackendError naming
-  // `cq migrate`, T505). If construction/init fails we surface the error to
-  // stderr and exit non-zero — the parent MCP client sees the channel close
-  // and treats the server as unhealthy.
+  // register tools. The factory honours cq.toml's `[ledger]` backend ('xdg'
+  // is the K117 default; an explicit legacy fs/git-object opens with a
+  // deprecation warning naming `cq migrate`). If construction/init fails we
+  // surface the error to stderr and exit non-zero — the parent MCP client
+  // sees the channel close and treats the server as unhealthy.
   const resolved = await createLedgerStore(cwd);
   const store = resolved.store;
 

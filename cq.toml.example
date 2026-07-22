@@ -12,7 +12,7 @@
 #   [agent_tiers]    — maps agent-name -> tier name (default: "standard")
 #   [agent_efforts]  — maps agent-name -> reasoning-effort override (optional)
 #   [ledger]         — ledger storage backend (backend, branch, remote, backup,
-#                      projectId; default: backend="fs", backup="none")
+#                      projectId; default: backend="xdg", backup="none")
 #
 # Panel vs per-role decoupling (T438/T440):
 #   reviewers/planners are the PANEL lists — used for multi-reviewer review
@@ -152,19 +152,20 @@ planners = ["opus"]
 # [agent_efforts]
 #   plan-reviewer = "max"
 
-# [ledger] — Ledger storage backend configuration (T349, T494, G81).
-# Absence of this block (or of cq.toml entirely) defaults to backend="fs"
-# (the standard filesystem-backed FsLedgerStore) and backup="none".
-# The "git-object" backend is opt-in experimental (Q189): it stores ledger
-# data in git object storage instead of plain files. "xdg" is the new
-# out-of-tree bun:sqlite primary at the XDG location (K102) — the on-disk
-# format is an implementation detail of that backend. "fs"/"git-object"
-# remain PARSEABLE indefinitely so `cq migrate` can locate legacy source data.
-# "postgres" is an opt-in multi-tenant backend (G81, T572-T585) for shared
+# [ledger] — Ledger storage backend configuration (T349, T494, G81, K117).
+# Absence of this block (or of cq.toml entirely) defaults to backend="xdg"
+# (the out-of-tree bun:sqlite primary at the XDG location, K102) and
+# backup="none". "fs" (the historical in-tree FsLedgerStore) and "git-object"
+# (git object storage, Q189) are LEGACY backends: still selectable
+# explicitly, but construction emits a deprecation warning pointing at
+# `cq migrate` (the one-shot legacy -> xdg importer). A root that still
+# carries a legacy in-tree .cq/ ledger while resolving to the xdg DEFAULT
+# gets a shadow warning — the in-tree data is not read until migrated.
+# "postgres" is an opt-in multi-tenant backend (G81, T570-T591) for shared
 # databases — all projects in ONE Postgres database, isolated by tenant key.
 #
 # Keys:
-#   backend   — storage backend: "fs" (default) | "git-object" | "xdg" | "postgres"
+#   backend   — storage backend: "xdg" (default) | "postgres" | "fs" (legacy, deprecated) | "git-object" (legacy, deprecated)
 #   url       — optional DSN for postgres backend (CREDENTIAL-LESS; env override required for credentials)
 #               Example: "postgres://localhost:5432/cq_ledger" (no user/password).
 #               Resolution precedence: CQ_LEDGER_PG_URL > DATABASE_URL > [ledger].url > PG* driver defaults.
@@ -177,12 +178,12 @@ planners = ["opus"]
 #   projectId — optional committed project-identity string, used for
 #               repo-identity keying (Q246); no default (absent => null)
 #
-# To activate the git-object backend, uncomment the block below and set
-# backend = "git-object".  The branch/remote keys are optional; the shown
-# values are the defaults.
+# To activate the LEGACY git-object backend (deprecated — construction
+# warns), uncomment the block below and set backend = "git-object". The
+# branch/remote keys are optional; the shown values are the defaults.
 #
 # [ledger]
-#   backend   = "git-object"   # "fs" (default) | "git-object" (experimental) | "xdg" | "postgres"
+#   backend   = "git-object"   # "xdg" (default) | "postgres" | "fs" (legacy) | "git-object" (legacy)
 #   branch    = "cq-ledger"    # git branch to store ledger objects on
 #   remote    = "origin"       # git remote to push/fetch ledger objects from
 #   backup    = "none"         # "none" (default) | "in-tree" | "orphan-branch"
@@ -192,7 +193,8 @@ planners = ["opus"]
 # and edit the block below. The `url` field is a COMMITTED, CREDENTIAL-LESS
 # DSN (no user/password). A real connection with credentials belongs in the
 # environment variables CQ_LEDGER_PG_URL or DATABASE_URL (highest precedence
-# at runtime). See cq.toml-postgres.md for the full postgres setup guide.
+# at runtime). See docs/drafts/20260722-1230-postgres-backend-and-cq-serve.md
+# for the full postgres setup guide.
 #
 # [ledger]
 #   backend = "postgres"

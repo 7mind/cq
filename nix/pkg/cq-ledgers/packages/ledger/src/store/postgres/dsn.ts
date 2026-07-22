@@ -74,8 +74,8 @@ export type PgDsnResolution =
  * Thrown when `backend = 'postgres'` but NONE of `CQ_LEDGER_PG_URL`,
  * `DATABASE_URL`, `[ledger].url`, or any standard `PG*` env var resolves a
  * way to reach a database — a fail-fast, actionable error naming every
- * input this resolver considered, mirroring {@link ProjectKeyResolutionError}
- * / `LegacyBackendError`'s style.
+ * input this resolver considered, mirroring {@link ProjectKeyResolutionError}'s
+ * style.
  */
 export class PostgresDsnResolutionError extends Error {
   constructor() {

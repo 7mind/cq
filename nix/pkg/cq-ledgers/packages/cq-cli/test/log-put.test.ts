@@ -31,6 +31,9 @@ afterAll(async () => {
 async function makeTmpDir(): Promise<string> {
   const dir = await fsPromises.mkdtemp(path.join(tmpdir(), "cq-log-put-test-"));
   tmpDirs.push(dir);
+  // Pin the legacy fs backend explicitly: the no-cq.toml default is xdg (K117),
+  // and this routing test asserts the in-tree fs write path.
+  await fsPromises.writeFile(path.join(dir, "cq.toml"), '[ledger]\nbackend = "fs"\n', "utf8");
   return dir;
 }
 

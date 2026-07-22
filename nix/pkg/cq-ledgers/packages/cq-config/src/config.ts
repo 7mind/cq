@@ -206,12 +206,17 @@ const DEFAULT_LEDGER_BACKUP: LedgerConfig["backup"] = "none";
  * ('none' | 'in-tree' | 'orphan-branch'); `projectId` (if present) must be a
  * string. `url` (if present) must be a string (G81, Q272/Q278 hybrid — a
  * committed credential-less DSN; the env-wins resolver is T571). Absent
- * `backend` defaults to 'fs'; absent `branch` defaults to 'cq-ledger'; absent
- * `remote` defaults to 'origin'; absent `backup` defaults to 'none' (Q244);
- * absent `projectId` is `null`; absent `url` is `null`.
+ * `backend` defaults to 'xdg' (K117 — the out-of-tree runtime primary; the
+ * old 'fs' default had not been a selectable primary since T505), with
+ * `backendExplicit` recording whether the key was present so callers can
+ * distinguish a deliberate choice from the default. Absent `branch` defaults
+ * to 'cq-ledger'; absent `remote` defaults to 'origin'; absent `backup`
+ * defaults to 'none' (Q244); absent `projectId` is `null`; absent `url` is
+ * `null`.
  */
 function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
-  let backend: LedgerConfig["backend"] = "fs";
+  let backend: LedgerConfig["backend"] = "xdg";
+  const backendExplicit = raw.backend !== undefined;
   if (raw.backend !== undefined) {
     if (typeof raw.backend !== "string") {
       throw new CqConfigError("[ledger] backend must be a string");
@@ -269,7 +274,7 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
     url = raw.url;
   }
 
-  return { backend, branch, remote, backup, projectId, url };
+  return { backend, backendExplicit, branch, remote, backup, projectId, url };
 }
 
 /**

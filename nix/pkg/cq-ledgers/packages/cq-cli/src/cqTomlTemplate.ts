@@ -99,10 +99,11 @@ export const CQ_TOML_TEMPLATE: string = `\
   standard = "terra"               # balanced everyday
   fast     = "luna"                # fast, high-volume
 
-# Ledger storage backend — "xdg" (T501) is the default for a fresh \`cq init\`:
-# the out-of-tree bun:sqlite primary (K102), keyed off this repo's git
-# identity (or [ledger].projectId below). "fs" (in-tree .cq/) and
-# "git-object" remain available — set backend explicitly to opt back in.
+# Ledger storage backend — "xdg" is the DEFAULT (K117; also what a fresh
+# \`cq init\` writes, T501): the out-of-tree bun:sqlite primary (K102), keyed
+# off this repo's git identity (or [ledger].projectId below). "fs" (in-tree
+# .cq/) and "git-object" are LEGACY, deprecated — selecting one explicitly
+# still works but warns and points at \`cq migrate\`.
 # "postgres" is an opt-in, multi-tenant external backend (G81; full store
 # parity — init/reset/erase/backup/restore/migrate all wired, T577-T584).
 # backup (default: "none") is OFF by default (Q244); projectId is an

@@ -1285,6 +1285,7 @@ projectId = "acme-widgets"
 `);
     expect(config.ledger).toEqual({
       backend: "xdg",
+      backendExplicit: true,
       branch: "cq-ledger",
       remote: "origin",
       backup: "in-tree",

@@ -1,10 +1,9 @@
 /**
  * T189 + T338: `cq init` — idempotent create-empty-ledgers-if-none + cq.toml write.
  *
- * (a)/(b) — T505: a cq.toml pinning the LEGACY backend='fs' no longer selects
- * a runtime primary; `cq init` on such a root fails fast with the documented
- * LegacyBackendError naming `cq migrate` and creates no .cq/ tree. (The
- * historical fs init-path assertions live in git history / T189.)
+ * (a)/(b) — T505 as relaxed by K117: a cq.toml pinning the LEGACY backend='fs'
+ * takes the warn-and-open path — `cq init` bootstraps the in-tree fs store
+ * (as it did pre-T505) while a stderr deprecation warning names `cq migrate`.
  *
  * T338 asserts, on a truly FRESH init (git repo + XDG_STATE_HOME override, so
  * the new xdg default resolves and nothing touches the real machine state):
@@ -13,7 +12,7 @@
  *   (e) `cq init --force` overwrites a modified cq.toml back to the template.
  */
 
-import { describe, it, expect, afterAll, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, afterAll, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtemp, rm, stat, readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -26,7 +25,7 @@ import {
   type DispatchIo,
 } from "../src/main.js";
 import { CQ_TOML_TEMPLATE } from "../src/cqTomlTemplate.js";
-import { LegacyBackendError, LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
+import { LEDGER_STORAGE_DIRNAME } from "@cq/ledger";
 
 const exec = promisify(execFile);
 const dirs: string[] = [];
@@ -72,19 +71,25 @@ async function gitRepo(): Promise<string> {
 }
 
 describe("cq init", () => {
-  it("(a/b — T505) backend='fs' pinned: rejects with LegacyBackendError naming cq migrate, creates no .cq/", async () => {
+  it("(a/b — K117) backend='fs' pinned: warns DEPRECATED on stderr and bootstraps the in-tree fs store", async () => {
     const root = await makeTmpDir();
     await writeFile(path.join(root, CQ_CONFIG_FILENAME), '[ledger]\nbackend = "fs"\n', "utf8");
 
-    const err = await dispatch(["init", "--cwd", root], recordingIo()).then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(err).toBeInstanceOf(LegacyBackendError);
-    expect((err as Error).message).toContain("cq migrate");
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const outcome = await dispatch(["init", "--cwd", root], recordingIo());
+      expect(outcome.exitCode).toBe(0);
+      const warned = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+      expect(warned).toContain("DEPRECATED");
+      expect(warned).toContain("cq migrate");
+    } finally {
+      stderrSpy.mockRestore();
+    }
 
-    // No .cq/ tree was created.
-    await expect(stat(path.join(root, LEDGER_STORAGE_DIRNAME))).rejects.toThrow();
+    // The legacy fs tree WAS bootstrapped (pre-T505 behavior, restored by K117).
+    await expect(
+      stat(path.join(root, LEDGER_STORAGE_DIRNAME, "ledgers.yaml")),
+    ).resolves.toBeDefined();
   });
 
   describe("on a fresh root (xdg default, T501)", () => {
