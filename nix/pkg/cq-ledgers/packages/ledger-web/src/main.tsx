@@ -19,7 +19,7 @@
 
 import { createRoot } from "react-dom/client";
 import { createElement } from "react";
-import { App } from "./App.js";
+import { App, appendWsToken } from "./App.js";
 import { McpLedgerClient } from "./mcpClient.js";
 import "./styles.css";
 
@@ -57,13 +57,14 @@ export function resolveToken(loc?: Pick<Location, "search">): string | null {
  * Scheme follows the page: `ws://` on a plain-http page, `wss://` on https —
  * a secure page may not open an insecure socket (mixed content), and a
  * plain-http page must not attempt wss. Appends `?token=` (T588 / Q273) when
- * one was resolved from the page URL — `loc` is injectable for tests.
+ * one was resolved from the page URL — via the SHARED {@link appendWsToken}
+ * helper, so the project-switch path (App.tsx, T589-r2) uses the identical
+ * encoding. `loc` is injectable for tests.
  */
 export function liveWsUrl(token: string | null, loc?: Pick<Location, "protocol" | "host">): string {
   const l = loc ?? window.location;
   const proto = l.protocol === "https:" ? "wss:" : "ws:";
-  const base = `${proto}//${l.host}/ws`;
-  return token !== null ? `${base}?token=${encodeURIComponent(token)}` : base;
+  return appendWsToken(`${proto}//${l.host}/ws`, token);
 }
 
 const rootEl = document.getElementById("root");

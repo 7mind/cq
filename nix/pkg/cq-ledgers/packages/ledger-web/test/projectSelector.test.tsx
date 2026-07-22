@@ -55,9 +55,34 @@ function setValue(el: Element | null, value: string): void {
   });
 }
 
+/** Minimal fake WebSocket the tests drive (mirrors app.test.tsx's FakeWS). */
+class FakeWS {
+  static instances: FakeWS[] = [];
+  readyState = 0;
+  onopen: ((e: unknown) => void) | null = null;
+  onmessage: ((e: unknown) => void) | null = null;
+  onclose: ((e: unknown) => void) | null = null;
+  onerror: ((e: unknown) => void) | null = null;
+  constructor(public url: string) {
+    FakeWS.instances.push(this);
+  }
+  send(): void {}
+  close(): void {
+    this.readyState = 3;
+  }
+  open(): void {
+    this.readyState = 1;
+    this.onopen?.({});
+  }
+  push(obj: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(obj) });
+  }
+}
+
 beforeEach(() => {
   localStorage.clear();
   window.history.replaceState(null, "", "about:blank");
+  FakeWS.instances = [];
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -120,30 +145,6 @@ describe("project selector — multi-project hub", () => {
       return url.includes("/p/p2/mcp") ? p2 : p1;
     };
 
-    class FakeWS {
-      static instances: FakeWS[] = [];
-      readyState = 0;
-      onopen: ((e: unknown) => void) | null = null;
-      onmessage: ((e: unknown) => void) | null = null;
-      onclose: ((e: unknown) => void) | null = null;
-      onerror: ((e: unknown) => void) | null = null;
-      constructor(public url: string) {
-        FakeWS.instances.push(this);
-      }
-      send(): void {}
-      close(): void {
-        this.readyState = 3;
-      }
-      open(): void {
-        this.readyState = 1;
-        this.onopen?.({});
-      }
-      push(obj: unknown): void {
-        this.onmessage?.({ data: JSON.stringify(obj) });
-      }
-    }
-    FakeWS.instances = [];
-
     await act(async () => {
       root.render(
         createElement(App, {
@@ -180,6 +181,8 @@ describe("project selector — multi-project hub", () => {
 
     // A new MCP connect was issued to /p/p2/mcp, and a new ws opened to /p/p2/ws
     // (the old p1 ws subscription is torn down — a fresh FakeWS is constructed).
+    // With NO token the derived URLs stay clean: no `?token=`, no dangling `?`
+    // (T589-r2 — exact-equality asserts both).
     expect(connectedUrls).toEqual(["http://x/p/p1/mcp", "http://x/p/p2/mcp"]);
     expect(FakeWS.instances).toHaveLength(2);
     expect(FakeWS.instances[1]!.url).toBe("ws://x/p/p2/ws");
@@ -199,5 +202,55 @@ describe("project selector — multi-project hub", () => {
     act(() => FakeWS.instances[1]!.push({ type: "changed", ledger: "bugs" }));
     await flush();
     expect(text()).toContain("pushed after switch");
+  });
+
+  it("threads the T588 bearer token through a project switch: ws keeps ?token=, MCP reuses the token-bound connect", async () => {
+    const p1 = makeProject("Project One");
+    const p2 = makeProject("Project Two");
+
+    // Mirror main.tsx's production wiring (T588): the resolved page token is
+    // BOUND INTO the injected connect closure — `(url) =>
+    // McpLedgerClient.connect(url, token ?? undefined)` — so every connect the
+    // App issues (boot AND switch) carries the same Authorization bearer.
+    // mcpClientAuthToken.test.ts proves connect(url, token) → the header; here
+    // we prove the switch goes through that SAME closure with the derived URL.
+    const token = "s3cr t"; // embedded space → proves the encoding round-trips
+    const connects: Array<{ url: string; bearer: string }> = [];
+    const connect = async (url: string): Promise<LedgerClient> => {
+      connects.push({ url, bearer: token });
+      return url.includes("/p/p2/mcp") ? p2 : p1;
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect,
+          initialUrl: "http://x/p/p1/mcp",
+          // What main.tsx's liveWsUrl(token) produces on a token-protected hub.
+          liveUrl: "ws://x/p/p1/ws?token=s3cr%20t",
+          liveWsCtor: FakeWS as unknown as { new (url: string): WebSocket },
+        }),
+      );
+    });
+    await flush();
+    expect(FakeWS.instances).toHaveLength(1);
+    expect(FakeWS.instances[0]!.url).toBe("ws://x/p/p1/ws?token=s3cr%20t");
+
+    // Switch to p2.
+    const select = testid("project-selector") as HTMLSelectElement | null;
+    setValue(select, "p2");
+    await flush();
+
+    // The new MCP connect went through the token-bound closure with the
+    // derived /p/p2/mcp URL (the token rides as the Authorization header, NOT
+    // as an MCP query param — the derived URL stays clean).
+    expect(connects.map((c) => c.url)).toEqual(["http://x/p/p1/mcp", "http://x/p/p2/mcp"]);
+    expect(connects[1]!.bearer).toBe(token);
+
+    // The new ws URL re-appends ?token= with the same encoding liveWsUrl uses
+    // — without it, a token-protected hub answers 401 and live updates
+    // silently stop (the T589-r2 defect).
+    expect(FakeWS.instances).toHaveLength(2);
+    expect(FakeWS.instances[1]!.url).toBe("ws://x/p/p2/ws?token=s3cr%20t");
   });
 });

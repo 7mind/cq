@@ -213,6 +213,35 @@ export function deriveProjectWsUrl(mcpUrl: string): string {
   return u.toString();
 }
 
+/**
+ * Append the `?token=` bearer secret to a ws URL (T588 / Q273) — browsers
+ * cannot set custom headers on a WebSocket handshake, so the query param is
+ * the one mechanism a token-protected hub's `/ws` accepts. The SINGLE encoding
+ * point shared by main.tsx's `liveWsUrl` (boot) and {@link App}'s project
+ * switch (T589-r2), so the two can never drift. No-op when no token is known
+ * (`base` carries no query, so the URL stays clean — no dangling `?`).
+ */
+export function appendWsToken(base: string, token: string | null): string {
+  return token !== null ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+/**
+ * Extract the `?token=` bearer secret a live `/ws` URL carries (T588), or
+ * `null` when absent/blank. The `liveUrl` prop is the token's single carrier
+ * into the App (main.tsx builds it via `liveWsUrl(token)`), so a project
+ * switch recovers the secret from here to re-append it onto the derived
+ * `/p/<key>/ws` URL (T589-r2).
+ */
+export function wsTokenOf(wsUrl: string | null): string | null {
+  if (wsUrl === null) return null;
+  try {
+    const t = new URL(wsUrl).searchParams.get("token");
+    return t !== null && t.length > 0 ? t : null;
+  } catch {
+    return null;
+  }
+}
+
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -614,7 +643,14 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     (key: string) => {
       if (key === activeProjectKey) return;
       const newMcpUrl = deriveProjectMcpUrl(url, key);
-      const newLiveUrl = liveUrl !== null ? deriveProjectWsUrl(newMcpUrl) : null;
+      // Re-append the T588 bearer token (recovered from the current live URL,
+      // its single carrier) onto the derived /p/<key>/ws — without it a
+      // token-protected hub answers 401 and live updates silently stop
+      // (T589-r2). The MCP side needs nothing here: the token rides as the
+      // Authorization header inside the injected `connect` closure (main.tsx),
+      // which this switch reuses unchanged.
+      const newLiveUrl =
+        liveUrl !== null ? appendWsToken(deriveProjectWsUrl(newMcpUrl), wsTokenOf(liveUrl)) : null;
       try {
         const next = new URL(window.location.href);
         next.searchParams.set(PROJECT_QUERY_KEY, key);
