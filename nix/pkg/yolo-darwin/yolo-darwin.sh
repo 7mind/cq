@@ -4,16 +4,24 @@
 # Required env vars (set by the Nix wrapper):
 #   YOLO_SANDBOX_EXEC - path to the Darwin sandbox-exec wrapper/binary
 #   YOLO_JQ           - path to jq binary
-# Darwin omits Linux --disable because its tags control bwrap-only resources.
+#   YOLO_CUSTOM_PROMPT - path to the shared prompt-composition library
+# Darwin applies --disable tags to prompt fragments; Linux also applies them to
+# bwrap-only resources and hooks that Darwin does not provide.
 
 : "${YOLO_SANDBOX_EXEC:?must be set}"
 : "${YOLO_JQ:?must be set}"
+: "${YOLO_CUSTOM_PROMPT:?must be set}"
 
 # An empty profile preserves each agent's native home-directory defaults.
 PROFILE=""
 UNSAFE_SHARE_HOME=0
 # Applied only to the child; explicit pairs override profile-derived values.
 ENV_PAIRS=()
+# Feature suppression: --disable=TAG is repeatable and comma-separated.
+# shellcheck disable=SC2034
+DISABLE_TAGS=()
+# shellcheck source=/dev/null
+source "$YOLO_CUSTOM_PROMPT"
 
 validate_env_pair() {
   if [[ ! "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
@@ -30,6 +38,10 @@ while [[ $# -gt 0 ]]; do
       fi
       PROFILE="$2"; shift 2 ;;
     --work|-w) PROFILE="work"; shift ;;
+    --disable=*)
+      IFS=',' read -ra _dtags <<< "${1#*=}"
+      DISABLE_TAGS+=("${_dtags[@]}")
+      shift ;;
     --unsafe-share-home) UNSAFE_SHARE_HOME=1; shift ;;
     --env)
       if [[ $# -lt 2 || -z "$2" ]]; then
@@ -62,7 +74,7 @@ if [[ "$_pwd_real" == "$_home_real" && $UNSAFE_SHARE_HOME -ne 1 ]]; then
 fi
 
 if [[ $# -eq 0 ]]; then
-  echo "Usage: yolo-darwin [--profile NAME|-p NAME] [--work] [--unsafe-share-home] [--env KEY=VAL]... <claude|codex|pi|shell|cmd> [args...]" >&2
+  echo "Usage: yolo-darwin [--profile NAME|-p NAME] [--work] [--disable=TAG]... [--unsafe-share-home] [--env KEY=VAL]... <claude|codex|pi|shell|cmd> [args...]" >&2
   exit 1
 fi
 
@@ -231,11 +243,20 @@ reshare_profile_assets() {
 yolo_exec_agent() {
   local subcmd="$1"; shift
   # cmd supplies its executable through "$@"; other modes prepend fixed argv.
+  local agent_prompt=""
   local agent_argv=()
   case "$subcmd" in
-    claude) agent_argv=(claude --permission-mode bypassPermissions --disallowed-tools AskUserQuestion) ;;
+    claude)
+      agent_prompt="$(compose_prompt claude)"
+      agent_argv=(claude --permission-mode bypassPermissions --disallowed-tools AskUserQuestion)
+      [[ -n "$agent_prompt" ]] && agent_argv+=(--append-system-prompt "$agent_prompt")
+      ;;
     codex)  agent_argv=(codex --dangerously-bypass-approvals-and-sandbox --search) ;;
-    pi)     agent_argv=(pi) ;;
+    pi)
+      agent_prompt="$(compose_prompt pi)"
+      agent_argv=(pi)
+      [[ -n "$agent_prompt" ]] && agent_argv+=(--append-system-prompt "$agent_prompt")
+      ;;
     shell)  agent_argv=("${SHELL:-/bin/sh}") ;;
     cmd)    agent_argv=() ;;
   esac

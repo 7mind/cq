@@ -14,6 +14,7 @@ _bash_path="$(command -v bash || echo /bin/bash)"
 _jq_path="$(command -v jq || echo /usr/bin/jq)"
 export YOLO_SANDBOX_EXEC="$_true_path"
 export YOLO_JQ="$_jq_path"
+export YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh"
 
 FAILURES=0
 TESTS_RUN=0
@@ -106,7 +107,7 @@ run_script --profile .. cmd true
 assert_nonzero "invalid profile '..' exits non-zero" "$STATUS"
 assert_contains "invalid profile '..' reports charset error" "$OUT" "invalid profile name"
 run_script
-assert_not_contains "usage does not mention --disable" "$OUT" "--disable"
+assert_contains "usage mentions --disable" "$OUT" "--disable=TAG"
 
 # ── generated policy ─────────────────────────────────────────────────────────
 RENDERED="$(render_profile foo /tmp/x)"
@@ -175,7 +176,20 @@ printf '%s\n' \
 printf '%s\n' \
   "#!$_bash_path" \
   "printf \"sandbox_oauth=%s\\n\" \"\${CLAUDE_CODE_OAUTH_TOKEN:-<unset>}\"" > "$FAKE_BIN/sandbox"
-chmod +x "$FAKE_BIN/security" "$FAKE_BIN/sandbox"
+# The generated script, rather than this test process, expands its positional parameters.
+# shellcheck disable=SC2016
+printf '%s\n' \
+  "#!$_bash_path" \
+  'if [[ "${1:-}" == "--write-base-profile" ]]; then printf "(version 1)\n"; exit 0; fi' \
+  'while [[ $# -gt 0 ]]; do' \
+  '  if [[ "$1" == "--append-system-prompt" ]]; then' \
+  '    printf "prompt<<%s>>\n" "$2"' \
+  '    shift 2' \
+  '  else' \
+  '    shift' \
+  '  fi' \
+  'done' > "$FAKE_BIN/prompt-sandbox"
+chmod +x "$FAKE_BIN/security" "$FAKE_BIN/sandbox" "$FAKE_BIN/prompt-sandbox"
 
 run_claude_exec() {
   local security_fail="$1"
@@ -201,6 +215,33 @@ assert_eq "claude does not query a custom Keychain token" "no" "$(if [[ -e "$WOR
 run_claude_exec 1
 assert_zero "claude launch with no custom Keychain token succeeds" "$STATUS"
 assert_not_contains "claude does not warn about custom-token fallback" "$OUT" "falling back to the shared login credential"
+
+# ── custom system prompt ──
+PROMPT_JSON='[{"target":"claude","tags":[],"prompt":"claude only"},{"target":"*","tags":["gpu"],"prompt":"shared line"},{"target":"*","tags":["audio"],"prompt":"audio line"},{"target":"pi","tags":[],"prompt":"pi only"}]'
+run_prompt_exec() {
+  OUT="$(
+    cd "$PROJECT_DIR" &&
+      HOME="$FAKE_HOME" \
+      YOLO_PROMPT_JSON="$PROMPT_JSON" \
+      YOLO_SANDBOX_EXEC="$FAKE_BIN/prompt-sandbox" \
+      bash "$SCRIPT" "$@" 2>&1
+  )"
+  STATUS=$?
+}
+
+run_prompt_exec claude
+assert_zero "claude launch with custom prompt succeeds" "$STATUS"
+assert_contains "claude receives targeted and shared prompt fragments" "$OUT" $'prompt<<claude only\n\nshared line\n\naudio line>>'
+assert_not_contains "claude excludes pi-targeted prompt fragments" "$OUT" "pi only"
+run_prompt_exec pi
+assert_zero "pi launch with custom prompt succeeds" "$STATUS"
+assert_contains "pi receives shared and targeted prompt fragments" "$OUT" $'prompt<<shared line\n\naudio line\n\npi only>>'
+assert_not_contains "pi excludes claude-targeted prompt fragments" "$OUT" "claude only"
+run_prompt_exec --disable=unused,gpu --disable=audio claude
+assert_zero "claude launch with disabled prompt tags succeeds" "$STATUS"
+assert_contains "repeatable and comma-separated disable tags preserve untagged fragments" "$OUT" "prompt<<claude only>>"
+assert_not_contains "disabled gpu prompt fragment is excluded" "$OUT" "shared line"
+assert_not_contains "disabled audio prompt fragment is excluded" "$OUT" "audio line"
 
 # ── copied HM assets ─────────────────────────────────────────────────────────
 # Run all agents in one shell so a second pass can verify copy-if-absent.

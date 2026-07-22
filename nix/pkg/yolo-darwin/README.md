@@ -51,6 +51,14 @@ yolo --profile personal claude
 yolo --work codex --search
 ```
 
+### Feature suppression
+
+- `--disable=TAG` — Exclude prompt fragments carrying `TAG`. Repeatable and comma-separated, matching Linux `yolo` parsing.
+
+```bash
+yolo --disable=gpu,ssh --disable=github claude
+```
+
 ### Working directory safety
 
 By default, `yolo-darwin` refuses to launch from your home directory (`$HOME`) because the sandbox grants read-write access to `$PWD`. Launching from `$HOME` would expose every credential, key, and shell history in your home directory, defeating profile isolation.

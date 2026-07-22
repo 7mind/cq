@@ -6,6 +6,7 @@
 #   YOLO_SANDBOX_ENTRYPOINT     - path to the in-sandbox entrypoint (loads secrets + sandbox hooks, then exec)
 #   YOLO_NIX_LD                 - path to nix-ld binary (bound as /lib64/ld-linux-x86-64.so.2)
 #   YOLO_JQ                     - path to jq binary
+#   YOLO_CUSTOM_PROMPT          - path to the shared prompt-composition library
 #
 # Optional env vars:
 #   YOLO_PODMAN_SOCKET_PATH - rootless podman socket path (enables container forwarding)
@@ -33,6 +34,7 @@
 : "${YOLO_SANDBOX_ENTRYPOINT:?must be set}"
 : "${YOLO_NIX_LD:?must be set}"
 : "${YOLO_JQ:?must be set}"
+: "${YOLO_CUSTOM_PROMPT:?must be set}"
 
 # PROFILE selects an isolated config namespace. Empty means the default
 # profile: agents read their real home dirs (~/.claude, ~/.codex, ...).
@@ -49,7 +51,10 @@ UNSAFE_SHARE_HOME=0
 # pre-start hook (hooks.pre-start.host) carrying TAG. Audio is tagged "audio"
 # (on by default → `--disable=audio` mutes it); the codegraph index bootstrap is
 # tagged "codegraph" (`--disable=codegraph` skips it).
+# shellcheck disable=SC2034
 DISABLE_TAGS=()
+# shellcheck source=/dev/null
+source "$YOLO_CUSTOM_PROMPT"
 ENV_ARGS=()
 # Ad-hoc bind paths given on the CLI (`--ro PATH` / `--rw PATH`, repeatable).
 # Unlike the Nix-configured YOLO_EXTRA_{RO,RW}_PATHS these are per-invocation;
@@ -396,27 +401,6 @@ BASE_ARGS=(
 
 EXTRA_ARGS=()
 EXEC_CMD=()
-
-# Compose the --append-system-prompt text for an agent from YOLO_PROMPT_JSON — a
-# JSON array of { target, tags, prompt } objects (see promptExtensions). jq keeps
-# objects whose target matches the agent (or "*") and none of whose tags is in
-# the --disable set, then joins their prompts with blank lines. Runtime
-# suppression (`--disable=gpu`) thus drops a note exactly as it drops the matching
-# device bind. yolo.sh no longer hardcodes the auth / GPU notes — they are
-# promptExtensions. Codex has no --append-system-prompt, so it gets nothing.
-compose_prompt() {
-  local agent="$1" dis
-  [[ -z "${YOLO_PROMPT_JSON:-}" ]] && return 0
-  # The --disable tags as a JSON array (empty array when none).
-  dis="$("$YOLO_JQ" -nc '$ARGS.positional' --args "${DISABLE_TAGS[@]}")"
-  printf '%s' "$YOLO_PROMPT_JSON" | "$YOLO_JQ" -r \
-    --arg agent "$agent" --argjson dis "$dis" '
-      [ .[]
-        | select((.target == $agent or .target == "*") and ((.tags - $dis) == .tags))
-        | .prompt
-      ] | join("\n\n")
-    '
-}
 
 # For named profiles, each agent's config is backed by a dir under
 # ~/.config/yolo/<profile>/<agent>/ and bound onto the agent's standard

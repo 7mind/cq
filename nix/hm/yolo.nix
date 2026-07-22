@@ -453,6 +453,7 @@ in
       home.packages = [
         (pkgs.callPackage ../pkg/yolo-darwin/default.nix {
           claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
+          inherit promptJson;
         })
       ];
     })

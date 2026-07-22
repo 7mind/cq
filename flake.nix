@@ -431,10 +431,11 @@
                   nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq ];
                 }
                 ''
+                  cp -r ${./nix/pkg/yolo} yolo
                   cp -r ${./nix/pkg/yolo-darwin} yolo-darwin
                   chmod -R u+w yolo-darwin
                   cd yolo-darwin
-                  shellcheck yolo-darwin.sh profile-test.sh
+                  shellcheck ../yolo/custom-prompt.sh yolo-darwin.sh profile-test.sh
                   bash profile-test.sh
                   touch $out
                 '';

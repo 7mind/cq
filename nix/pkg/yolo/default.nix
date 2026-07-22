@@ -18,6 +18,7 @@
 
 let
   yoloScript = ./yolo.sh;
+  customPromptScript = pkgs.writeText "yolo-custom-prompt.sh" (builtins.readFile ./custom-prompt.sh);
 
   # The bubblewrap path-whitelisting layer yolo execs internally (see
   # llm-sandbox.sh / `exec "$YOLO_LLM_SANDBOX"`). It has no use on its own, so
@@ -109,6 +110,7 @@ pkgs.writeShellScriptBin "yolo" ''
   export YOLO_SANDBOX_ENTRYPOINT="${sandboxEntrypoint}/bin/yolo-sandbox-entrypoint"
   export YOLO_NIX_LD="${nix-ld}/bin/nix-ld"
   export YOLO_JQ="${jq}/bin/jq"
+  export YOLO_CUSTOM_PROMPT="${customPromptScript}"
   ${podmanExports}
   ${extraRoExports}
   ${extraRwExports}
