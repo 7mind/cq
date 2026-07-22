@@ -60,7 +60,10 @@ docker volume rm <compose-dir>_postgres_data  # optional; clean up volumes
 If you have nix + direnv:
 
 ```bash
-# Create an ephemeral postgres in a temporary directory
+# Enter an ephemeral shell with postgres on PATH; every command below runs
+# INSIDE this shell (nix shell without -c drops you into an interactive
+# subshell — a straight paste of this whole block therefore works only if
+# you paste it AFTER this line has started the shell).
 nix shell nixpkgs#postgresql
 
 # Initialize a fresh cluster
@@ -76,7 +79,8 @@ createdb -h /tmp cq_ledger
 # Export the DSN
 export CQ_TEST_PG_URL="postgres:///cq_ledger?host=/tmp"
 
-# Run tests
+# Run tests (from nix/pkg/cq-ledgers; the env-gated postgres suites
+# activate whenever CQ_TEST_PG_URL is set)
 bun test
 
 # Shut down postgres
@@ -332,9 +336,9 @@ For postgres backend, this:
 - Creates the `projects` registry entry if missing
 - Initializes the canonical ledgers (tasks, defects, hypotheses, etc.)
 
-### `cq reset` (Backup + Reinit)
+### `cq reset` (Tenant Wipe + Reinit)
 
-Destructively reinitialize ledgers, with a backup first:
+Destructively reinitialize ledgers:
 
 ```bash
 cq reset [--yes|-y]
@@ -343,6 +347,12 @@ cq reset [--yes|-y]
 - Non-interactive (`--yes`): proceed without prompting
 - TTY (default): prompt for confirmation
 - Non-TTY without `--yes`: refuse (no surprise wipes)
+
+Unlike the fs backend's reset (which snapshots before reinit), the postgres
+path takes NO pre-wipe backup of its own: with `[ledger].backup = "none"` it
+wipes the tenant's rows with no snapshot (run `cq backup` first if you want a
+pre-wipe dump), and with `backup != "none"` it fails fast with
+`PostgresBackupNotWiredError` rather than silently skipping the snapshot.
 
 ### `cq erase` (Remove Tenant Rows)
 
@@ -375,7 +385,11 @@ cq serve --pg-url <dsn> [--host <h>] [--port <n>] [--token <t>]
 
 1. `CQ_LEDGER_PG_URL` — highest-precedence env override
 2. `DATABASE_URL` — conventional cross-tool var
-3. `PG*` driver defaults — `PGHOST`, `PGPORT`, `PGDATABASE`, etc.
+
+Note: unlike the per-repo `resolvePostgresDsn` (mcp/tui/web modes), the hub
+reads NEITHER `cq.toml [ledger].url` NOR the `PG*` driver defaults — with no
+`--pg-url` and neither env var set, `cq serve` fails fast naming exactly
+these three sources.
 
 ### Authentication (Q273)
 
@@ -532,11 +546,11 @@ The project selector lists all registered tenants; click to switch between them 
 - **T586/T587:** Hub server skeleton and per-project routing
 - **T588:** Token authentication (Q273)
 - **T589/T590:** Project selector UI
-- **G81:** Postgres backend epic (T572-T585)
+- **G81:** Postgres backend epic (T570–T591)
 - **Q271:** Advisory lock for schema bootstrap
 - **Q272/Q278:** DSN resolution hybrid (env override + committed default)
 - **Q273:** Token requirement for non-loopback binds
-- **Q279:** Per-database schema version
+- **Q279:** Multi-tenancy keying (project_key column in shared tables + projects registry)
 - **Q281:** LISTEN/NOTIFY design (push, not poll)
 - **Q283:** URL path addressing (`/p/<projectKey>/…`)
 - **Q285:** Backup semantics (pg_dump for whole-database, cq commands for project scope)
