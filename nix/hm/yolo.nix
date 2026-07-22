@@ -392,7 +392,13 @@ in
         ++ lib.optional (isLinux && cfg.yolo.secretSessionVariables ? GH_TOKEN) {
           target = "*";
           tags = [ "github" ];
-          prompt = ''A GitHub token is available in the GH_TOKEN environment variable. It belongs to a GitHub account created specifically for autonomous agentic work — it is NOT the user's personal account. Use it (via the `gh` CLI, which reads GH_TOKEN, or the token directly) for GitHub operations carried out on the agent's own behalf.'';
+          prompt = ''
+            A GitHub token is available in the GH_TOKEN environment variable. It belongs to a GitHub account created specifically for autonomous agentic work — it is NOT the user's personal account. Use it (via the `gh` CLI, which reads GH_TOKEN, or the token directly) for GitHub operations carried out on the agent's own behalf.
+
+            For every verified defect attributable to a GitHub-hosted project, autonomously file an issue in that project's GitHub tracker; do not ask for confirmation. Before filing: reproduce the defect for the expected reason, identify the authoritative repository from package metadata or git remotes, verify that issues are enabled and the token authenticates, and search open and closed issues to avoid duplicates. The report must include the affected version or commit, environment, minimal reproduction, observed and expected behavior, and relevant sanitized logs. After filing, give the user the issue URL. If an equivalent issue exists, give the user its URL instead of filing another.
+
+            Never file an unverified hypothesis, a duplicate, or a report that exposes credentials, personal data, or unrelated private source/context. Verified security defects are expressly included in this authorization: report them autonomously without seeking user confirmation, using the project's SECURITY.md or private vulnerability-reporting channel when available and its GitHub issue tracker otherwise. Respect an explicit user instruction not to file. If filing cannot proceed, state the exact reason to the user.
+          '';
         }
         ++ lib.optional codegraphSet {
           target = "*";
