@@ -142,7 +142,7 @@ export async function main(argv: readonly string[]): Promise<void> {
         }
       : null;
   const app = render(
-    <App client={client} liveUrl={liveUrl} onSubscribe={onSubscribe} />,
+    <App client={client} liveUrl={liveUrl} onSubscribe={onSubscribe} mcpUrl={mcpUrl} />,
     TUI_RENDER_OPTIONS,
   );
   await app.waitUntilExit();

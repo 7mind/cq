@@ -26,6 +26,7 @@ import type {
   LedgerClient,
   LedgerSummary,
   MilestonePatch,
+  ProjectEntry,
 } from "./types.js";
 
 export class LedgerToolError extends Error {
@@ -239,6 +240,10 @@ export class McpLedgerClient implements LedgerClient {
     return (await this.call<{ milestone: Item }>("update_milestone", args)).milestone;
   }
 
+  async listProjects(): Promise<ProjectEntry[]> {
+    return (await this.call<{ projects: ProjectEntry[] }>("list_projects", {})).projects;
+  }
+
   async close(): Promise<void> {
     await this.client.close();
     // Embedded mode owns the in-process store; dispose it so its watcher /
@@ -247,6 +252,27 @@ export class McpLedgerClient implements LedgerClient {
       await this.embeddedCtx.store.dispose();
     }
   }
+}
+
+/**
+ * Rewrite a base `--mcp-url` into a `cq serve` hub's per-project MCP endpoint
+ * (T587 routing, Q283 lock): same origin, path replaced wholesale with
+ * `/p/<key>/mcp`. Used by the project selector (T590) to reconnect
+ * {@link McpLedgerClient} when the user picks a different project.
+ */
+export function projectMcpUrl(baseMcpUrl: string, key: string): string {
+  const u = new URL(baseMcpUrl);
+  return `${u.protocol}//${u.host}/p/${encodeURIComponent(key)}/mcp`;
+}
+
+/**
+ * The paired live-change WebSocket endpoint for {@link projectMcpUrl}'s
+ * result: same origin (scheme swapped http→ws / https→wss), `/p/<key>/ws`.
+ */
+export function projectLiveUrl(baseMcpUrl: string, key: string): string {
+  const u = new URL(baseMcpUrl);
+  const proto = u.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${u.host}/p/${encodeURIComponent(key)}/ws`;
 }
 
 // Re-export FieldValue so UI code importing from the client need not reach

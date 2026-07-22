@@ -20,6 +20,7 @@ import { SelectList } from "./components/SelectList.js";
 import { TextPrompt } from "./components/TextPrompt.js";
 import { Markdown, markdownLines } from "./markdownText.js";
 import { useTermSize } from "./useTermSize.js";
+import { McpLedgerClient, projectMcpUrl, projectLiveUrl } from "./mcpClient.js";
 import { LiveManager, type LiveStats } from "@cq/ledger-live";
 import {
   statusColor,
@@ -37,7 +38,7 @@ import {
   isQuestion,
   type StatusFilter,
 } from "./status.js";
-import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary } from "./types.js";
+import type { FetchedLedger, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, ProjectEntry } from "./types.js";
 import {
   defectFixTaskIds,
   hypothesisRelationships,
@@ -347,6 +348,8 @@ type Overlay =
   | { t: "createItem"; milestones: Item[] }
   | { t: "filter" }
   | { t: "pickColumns"; ledger: string }
+  /** Project picker (T590 / Q276 / Q284): switch the connected project. */
+  | { t: "projects" }
   /**
    * Batch-answer (T64): a full-screen stepper over the open answerable items of
    * one ledger. `ledger` identifies the write target (which may differ from the
@@ -360,10 +363,12 @@ type Overlay =
 // ---------------------------------------------------------------------------
 
 export function App({
-  client,
-  liveUrl = null,
+  client: initialClient,
+  liveUrl: initialLiveUrl = null,
   liveWsCtor,
   onSubscribe = null,
+  mcpUrl = null,
+  connect = McpLedgerClient.connect,
 }: {
   client: LedgerClient;
   liveUrl?: string | null;
@@ -374,15 +379,41 @@ export function App({
    * null) the App refreshes on external file changes via this instead of a WS.
    */
   onSubscribe?: ((onChange: () => void) => () => void) | null;
+  /**
+   * Base `--mcp-url` this client connected with (remote mode only); `null` in
+   * embedded mode. The project selector (T590) derives each project's
+   * `/p/<key>/mcp` (+ `/p/<key>/ws`) endpoint from this on switch; `null`
+   * means there is nothing to reconnect to, so switching is a no-op.
+   */
+  mcpUrl?: string | null;
+  /**
+   * Connect to a remote MCP endpoint on a project switch. Defaults to
+   * {@link McpLedgerClient.connect}; overridable so tests can stub a
+   * multi-project reconnect without a real network.
+   */
+  connect?: (url: string) => Promise<LedgerClient>;
 }): React.ReactElement {
   const { exit } = useApp();
   const { cols, rows } = useTermSize();
+  // The active client/live-URL are STATE (not just props): the project
+  // selector (T590) swaps them on a successful reconnect. Every existing
+  // reference to `client`/`liveUrl` below reads this state, so switching
+  // projects re-runs the connect/enumerate/live-subscribe effects unchanged.
+  const [client, setClient] = useState<LedgerClient>(initialClient);
+  const [liveUrl, setLiveUrl] = useState<string | null>(initialLiveUrl);
   // displayName() is synchronous (captured at connect time by the client).
   const dn = client.displayName();
   const headerTitle = dn.length > 0 ? `[${dn}] LLM ledgers` : "ledger-tui";
   const [conn, setConn] = useState<"connecting" | "connected" | "error">("connecting");
   const [connErr, setConnErr] = useState("");
   const [ledgers, setLedgers] = useState<LedgerSummary[]>([]);
+  // Project selector state (T590 / Q276 / Q284): every project this server
+  // knows about, plus the key of the currently-connected one. Loaded (and
+  // reloaded on every client swap) via `listProjects()` when the client
+  // supports it; a client that doesn't (pre-T590 fakes) gets a synthesized
+  // single entry so the indicator always has something to show.
+  const [projects, setProjects] = useState<ProjectEntry[]>([]);
+  const [projectKey, setProjectKey] = useState<string>("");
   const [stack, setStack] = useState<Frame[]>([{ kind: "ledgers", cursor: 0 }]);
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [flash, setFlash] = useState("");
@@ -429,6 +460,40 @@ export function App({
     };
   }, [client]);
 
+  // Project list (T590): reload on every client swap. `listProjects` is
+  // OPTIONAL on LedgerClient (pre-T590 fakes) — absent, or a rejected call,
+  // synthesizes a single entry from `displayName()` so the indicator always
+  // has something to show. The current key prefers the PREVIOUS selection
+  // (stable across a reconnect that just set it), then a displayName match
+  // against the now-active client, then the registry's first entry.
+  useEffect(() => {
+    let alive = true;
+    const fallback = (): ProjectEntry[] => [{ key: "", displayName: client.displayName() }];
+    const load = async (): Promise<ProjectEntry[]> => {
+      if (typeof client.listProjects !== "function") return fallback();
+      try {
+        const ps = await client.listProjects();
+        return ps.length > 0 ? ps : fallback();
+      } catch {
+        return fallback();
+      }
+    };
+    void load().then((ps) => {
+      if (!alive) return;
+      setProjects(ps);
+      setProjectKey(
+        (prev) =>
+          ps.find((p) => p.key === prev)?.key ??
+          ps.find((p) => p.displayName === client.displayName())?.key ??
+          ps[0]?.key ??
+          "",
+      );
+    });
+    return () => {
+      alive = false;
+    };
+  }, [client]);
+
   const top = stack[stack.length - 1]!;
   const patchTop = useCallback((patch: Partial<Frame>): void => {
     setStack((s) => {
@@ -436,6 +501,42 @@ export function App({
       return [...s.slice(0, -1), { ...t, ...patch } as Frame];
     });
   }, []);
+
+  /**
+   * Project switch (T590 / Q276 / Q284 selector-only boundary): reconnects
+   * the CONNECTION LAYER only — a new client + live-URL — then resets the
+   * navigation stack to the ledgers root so every existing view (list,
+   * detail, overlays) picks up the newly-connected project unmodified.
+   *
+   * A no-op when `entry` is already the connected project, or in EMBEDDED
+   * mode (`mcpUrl === null`) — embedded backs exactly one project, so there
+   * is never a second endpoint to reconnect to. In REMOTE mode, rewrites
+   * `mcpUrl`'s path to `/p/<key>/mcp` (+ the paired `/p/<key>/ws`) and
+   * reconnects via `connect`; the previous client is closed once the new one
+   * is live.
+   */
+  const selectProject = useCallback(
+    async (entry: ProjectEntry) => {
+      setOverlay(null);
+      if (mcpUrl === null || entry.key === projectKey) return;
+      setFlash(`switching to ${entry.displayName || entry.key}…`);
+      try {
+        const newClient = await connect(projectMcpUrl(mcpUrl, entry.key));
+        const prevClient = client;
+        setClient(newClient);
+        setLiveUrl(projectLiveUrl(mcpUrl, entry.key));
+        setProjectKey(entry.key);
+        setStack([{ kind: "ledgers", cursor: 0 }]);
+        setFilter({ kind: "all" });
+        setCrossItems(new Map());
+        setFlash(`switched to ${entry.displayName || entry.key}`);
+        void prevClient.close().catch(() => {});
+      } catch (e) {
+        setFlash(errMsg(e));
+      }
+    },
+    [client, mcpUrl, connect, projectKey],
+  );
 
   // Effective extra columns for a ledger: the session selection if the user
   // has customised it, else the per-ledger defaults (seeded lazily).
@@ -811,6 +912,12 @@ export function App({
         setPanel((p) => ({ ...p, ratio: clampRatio(p.ratio + PANEL_STEP) }));
         return;
       }
+      // Project selector (T590): keybound picker overlay, available from
+      // anywhere (both frames, either focus) — mirrors o/[/] above.
+      if (input === "p") {
+        setOverlay({ t: "projects" });
+        return;
+      }
       if (top.kind === "ledgers") {
         if (key.upArrow || input === "k") patchTop({ cursor: Math.max(0, top.cursor - 1) });
         else if (key.downArrow || input === "j")
@@ -953,7 +1060,7 @@ export function App({
 
   if (top.kind === "ledgers") {
     pathStr = "all ledgers";
-    hints = "↑↓ move · Enter open · / search · o/[ ] panes · q quit";
+    hints = "↑↓ move · Enter open · / search · o/[ ] panes · p project · q quit";
     // Right-align the per-ledger item count: pad the name out to fill the row
     // (less the cursor prefix and a scrollbar column when one is shown).
     const showBar = ledgers.length > listInnerH;
@@ -1017,8 +1124,8 @@ export function App({
       : "";
     hints =
       top.focus === "content"
-        ? `↑↓/PgUp/Dn scroll · s status${answerHint} · e edit · o/[ ] panes · Esc back to list${cursorInArchive ? " [read-only]" : ""}`
-        : `↑↓ move · PgUp/Dn page · Home/End first/last · Enter focus · s status${answerHint} · e edit · n new · b batch-answer · f filter · c columns · / search · o/[ ] panes${archiveHint} · Esc back`;
+        ? `↑↓/PgUp/Dn scroll · s status${answerHint} · e edit · o/[ ] panes · p project · Esc back to list${cursorInArchive ? " [read-only]" : ""}`
+        : `↑↓ move · PgUp/Dn page · Home/End first/last · Enter focus · s status${answerHint} · e edit · n new · b batch-answer · f filter · c columns · / search · o/[ ] panes · p project${archiveHint} · Esc back`;
     // Column widths (T62) computed over all displayed rows, and the active
     // list entries — both from the memoized bundle (see ItemsDerived). The
     // archive section header + rows are appended cheaply below.
@@ -1103,6 +1210,13 @@ export function App({
         <Text bold color="cyan">
           {headerTitle}
         </Text>
+        {/* Project indicator sits right after the title, BEFORE the
+            conn-status/path text — pathStr often ends in the current item's
+            bare id (e.g. "T1"), so anything appended AFTER it risks a false
+            substring match against list-pane assertions like `"T1 "` (id +
+            padding space) elsewhere in the frame. Keeping pathStr the tail of
+            the line preserves that invariant. */}
+        <ProjectIndicator projects={projects} activeKey={projectKey} />
         <Text dimColor>
           {"  "}
           {conn === "connected" ? "● " : conn === "connecting" ? "○ " : "✕ "}
@@ -1186,6 +1300,9 @@ export function App({
                 setColumnsFor(ledger, cols);
                 setOverlay(null);
               }}
+              projects={projects}
+              activeProjectKey={projectKey}
+              onSelectProject={(p) => void selectProject(p)}
               setOverlay={setOverlay}
               onCancel={() => setOverlay(null)}
             />
@@ -1228,6 +1345,32 @@ function LiveBadge({ stats }: { stats: LiveStats | null }): React.ReactElement {
     <Text color={v.color}>
       {"  "}
       {v.glyph} {v.text}
+    </Text>
+  );
+}
+
+/**
+ * Always-visible project indicator (T590 / Q276 / Q284): shows the currently
+ * connected project's display name in the chrome, in BOTH embedded and
+ * remote mode (embedded always has exactly one synthesized entry — see the
+ * `listProjects` fallback in {@link App}). `p` opens the picker overlay to
+ * switch; a bracketed count appears once there is more than one project to
+ * pick from.
+ */
+function ProjectIndicator({
+  projects,
+  activeKey,
+}: {
+  projects: readonly ProjectEntry[];
+  activeKey: string;
+}): React.ReactElement {
+  const active = projects.find((p) => p.key === activeKey) ?? projects[0];
+  const label = active !== undefined && active.displayName.length > 0 ? active.displayName : (active?.key ?? "…");
+  return (
+    <Text dimColor>
+      {"  "}
+      project: <Text color="cyan">{label}</Text>
+      {projects.length > 1 ? ` [${projects.length}]` : ""}
     </Text>
   );
 }
@@ -1843,6 +1986,9 @@ function Overlays({
   onFilter,
   columnsFor,
   onColumns,
+  projects,
+  activeProjectKey,
+  onSelectProject,
   setOverlay,
   onCancel,
 }: {
@@ -1859,6 +2005,10 @@ function Overlays({
   onFilter: (f: StatusFilter) => void;
   columnsFor: (ledger: string) => string[];
   onColumns: (ledger: string, cols: string[]) => void;
+  /** Project selector (T590): the known projects, the connected one's key, and the switch handler. */
+  projects: readonly ProjectEntry[];
+  activeProjectKey: string;
+  onSelectProject: (p: ProjectEntry) => void;
   setOverlay: (o: Overlay | null) => void;
   onCancel: () => void;
 }): React.ReactElement {
@@ -1900,6 +2050,18 @@ function Overlays({
         />
       );
     }
+    case "projects":
+      return (
+        <SelectList
+          items={projects}
+          getLabel={(p) =>
+            `${p.key === activeProjectKey ? "● " : "  "}${p.displayName.length > 0 ? p.displayName : p.key}${p.key === activeProjectKey ? " (current)" : ""}`
+          }
+          onSelect={onSelectProject}
+          onCancel={onCancel}
+          emptyLabel="(no projects)"
+        />
+      );
     case "status": {
       // Guard-aligned quick transitions: when the schema declares a
       // `transitions` map, offer ONLY the statuses legal from the item's

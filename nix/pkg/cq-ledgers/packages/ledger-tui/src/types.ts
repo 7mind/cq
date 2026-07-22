@@ -15,10 +15,11 @@ import type {
   LedgerSummary,
   ResolvedMilestone,
   LedgerSchema,
+  ProjectEntry,
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
 
-export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent };
+export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, ProjectEntry };
 
 /** A single `fts_search` hit. */
 export interface FtsHit {
@@ -78,5 +79,13 @@ export interface LedgerClient {
   ftsSearch(query: string, opts?: { ledger?: string }): Promise<FtsHit[]>;
   createMilestone(init: { title: string; description?: string; id?: string }): Promise<Item>;
   updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item>;
+  /**
+   * List every project the connected server's store knows about (the
+   * `list_projects` tool, T585/Q284) — feeds the always-visible project
+   * selector (T590). OPTIONAL: pre-T590 test fakes need no update. Absent
+   * (or a rejected call) is treated by the UI as "exactly one, unnamed
+   * project" — a single entry synthesized from {@link displayName}.
+   */
+  listProjects?(): Promise<ProjectEntry[]>;
   close(): Promise<void>;
 }
