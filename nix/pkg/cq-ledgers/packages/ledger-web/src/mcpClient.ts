@@ -8,6 +8,12 @@
  *
  * Cross-origin requests require the server's CORS support (ledger-mcp --http
  * exposes `mcp-session-id` and answers preflight).
+ *
+ * `token` (T588 / Q273): when the target is a `cq serve` hub bound with
+ * `--token`, every `/mcp` request needs an `Authorization: Bearer <token>`
+ * header — passed here via the SDK transport's `requestInit`, since the
+ * `fetch`-based Streamable HTTP transport applies it to every request the
+ * transport issues (initialize + every subsequent call).
  */
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -74,8 +80,12 @@ export class McpLedgerClient implements LedgerClient {
     return "";
   }
 
-  static async connect(url: string): Promise<McpLedgerClient> {
-    const transport = new StreamableHTTPClientTransport(new URL(url));
+  /** `token`, when given, is sent as `Authorization: Bearer <token>` on every request (T588). */
+  static async connect(url: string, token?: string): Promise<McpLedgerClient> {
+    const transport = new StreamableHTTPClientTransport(
+      new URL(url),
+      token !== undefined ? { requestInit: { headers: { authorization: `Bearer ${token}` } } } : undefined,
+    );
     const client = new Client(
       { name: "ledger-web", version: "0.0.1" },
       { capabilities: {} },

@@ -15,6 +15,11 @@
  *   3. LISTEN: a write from an EXTERNAL store process (its OWN pool / DSN
  *      connection) to A also reaches the /p/A/ws client (the one hub-level
  *      LISTEN connection dispatching by payload project_key).
+ *
+ * A second live-Postgres describe block below (T588 / Q273) spins up its OWN
+ * `--token`-armed hub and asserts the bearer-auth gate: unauthenticated /mcp
+ * POSTs and /ws upgrades get 401 (no token echoed back), authenticated ones
+ * succeed, and the static bundle + `/` stay open regardless of --token.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
@@ -248,6 +253,135 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
     } finally {
       await extStore.dispose();
       wsA.close();
+    }
+  }, 30_000);
+});
+
+describe.skipIf(!PG_URL)("cq serve — bearer-token auth over live Postgres (T588, Q273)", () => {
+  let outdir: string;
+  let base: string;
+  let key: string;
+  let proc: ReturnType<typeof bunSpawn>;
+  const TOKEN = "t588-secret-token";
+
+  beforeAll(async () => {
+    outdir = await fs.mkdtemp(path.join(os.tmpdir(), "cq-serve-t588-"));
+    const tag = `t588-${randomUUID().slice(0, 8)}`;
+    key = `${tag}-a`;
+    await registerTenant(key, `T588 Tenant ${tag}`);
+
+    const p = bunSpawn({
+      cmd: [
+        process.execPath,
+        "run",
+        hubMain,
+        "--pg-url",
+        PG_URL!,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "0",
+        "--token",
+        TOKEN,
+      ],
+      cwd: os.tmpdir(),
+      env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc = p;
+    const reader = p.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    const deadline = Date.now() + 20_000;
+    while (!buf.includes("\n")) {
+      if (Date.now() > deadline) throw new Error("hubServe did not emit a URL within 20s");
+      const { done, value } = await reader.read();
+      if (done) throw new Error("stdout closed without a URL line");
+      buf += decoder.decode(value, { stream: true });
+    }
+    reader.releaseLock();
+    const urlLine = buf.slice(0, buf.indexOf("\n")).trim();
+    const match = urlLine.match(/^(http:\/\/127\.0\.0\.1:\d+)\/$/);
+    if (match === null) throw new Error(`unexpected URL line: ${urlLine}`);
+    base = match[1]!;
+  }, 30_000);
+
+  afterAll(async () => {
+    proc.kill();
+    await proc.exited;
+    await fs.rm(outdir, { recursive: true, force: true });
+  });
+
+  it("GET / (static bundle) stays open with no Authorization header", async () => {
+    const resp = await fetch(`${base}/`);
+    expect(resp.status).toBe(200);
+  });
+
+  it("GET /api/projects: 401 with no/wrong bearer, 200 with the right one — never echoes the token", async () => {
+    const noAuth = await fetch(`${base}/api/projects`);
+    expect(noAuth.status).toBe(401);
+    expect(await noAuth.text()).not.toContain(TOKEN);
+
+    const wrongAuth = await fetch(`${base}/api/projects`, { headers: { authorization: "Bearer wrong-token" } });
+    expect(wrongAuth.status).toBe(401);
+
+    const rightAuth = await fetch(`${base}/api/projects`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    expect(rightAuth.status).toBe(200);
+  });
+
+  it("POST /p/<key>/mcp: 401 with no/wrong bearer (no token echo), 200/session on the right one", async () => {
+    const noAuth = await fetch(`${base}/p/${encodeURIComponent(key)}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(noAuth.status).toBe(401);
+    expect(await noAuth.text()).not.toContain(TOKEN);
+
+    const wrongAuth = await fetch(`${base}/p/${encodeURIComponent(key)}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer wrong-token" },
+      body: "{}",
+    });
+    expect(wrongAuth.status).toBe(401);
+
+    // Authenticated: a full MCP session over the SDK client, carrying the
+    // bearer header via requestInit — proves the auth gate lets a real session
+    // through, not merely that SOME 200 is returned.
+    const transport = new StreamableHTTPClientTransport(new URL(`${base}/p/${encodeURIComponent(key)}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${TOKEN}` } },
+    });
+    const client = new Client({ name: "t588-auth", version: "0.0.1" }, { capabilities: {} });
+    await client.connect(transport as unknown as Transport);
+    try {
+      const msId = `M${Math.floor(Math.random() * 1_000_000) + 10_000}`;
+      const created = decode<{ milestone: { id: string } }>(
+        await client.callTool({ name: "create_milestone", arguments: { id: msId, title: "T588 auth" } }),
+      );
+      expect(created.milestone.id).toBe(msId);
+    } finally {
+      await client.close();
+    }
+  }, 30_000);
+
+  it("GET /p/<key>/ws (upgrade attempt): 401 with no/wrong ?token=, opens with the right one", async () => {
+    const noToken = await fetch(`${base}/p/${encodeURIComponent(key)}/ws`);
+    expect(noToken.status).toBe(401);
+    expect(await noToken.text()).not.toContain(TOKEN);
+
+    const wrongToken = await fetch(`${base}/p/${encodeURIComponent(key)}/ws?token=wrong-token`);
+    expect(wrongToken.status).toBe(401);
+
+    const wsUrl = `${base.replace(/^http/, "ws")}/p/${encodeURIComponent(key)}/ws?token=${encodeURIComponent(TOKEN)}`;
+    const ws = new WebSocket(wsUrl);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.addEventListener("open", () => resolve());
+        ws.addEventListener("error", () => reject(new Error(`ws failed to open: ${wsUrl}`)));
+      });
+    } finally {
+      ws.close();
     }
   }, 30_000);
 });

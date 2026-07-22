@@ -27,6 +27,9 @@ import {
   HubDsnResolutionError,
   HUB_DEFAULT_HOST,
   HUB_DEFAULT_PORT,
+  isLoopbackHost,
+  assertTokenIfNonLoopback,
+  HubTokenRequiredError,
 } from "../src/hubServe.js";
 
 describe("parseHubArgs", () => {
@@ -129,6 +132,39 @@ describe("resolveHubDsn", () => {
   });
 });
 
+describe("isLoopbackHost (Q273)", () => {
+  it("treats 127.0.0.0/8, ::1, and localhost as loopback", () => {
+    for (const h of ["127.0.0.1", "127.0.0.53", "127.255.255.255", "localhost", "::1"]) {
+      expect(isLoopbackHost(h)).toBe(true);
+    }
+  });
+
+  it("treats 0.0.0.0, ::, LAN IPs, and hostnames as non-loopback", () => {
+    for (const h of ["0.0.0.0", "::", "10.0.0.5", "192.168.1.1", "example.com", "128.0.0.1"]) {
+      expect(isLoopbackHost(h)).toBe(false);
+    }
+  });
+});
+
+describe("assertTokenIfNonLoopback (Q273)", () => {
+  it("does not require --token for a loopback --host, with or without one", () => {
+    expect(() => assertTokenIfNonLoopback("127.0.0.1", null)).not.toThrow();
+    expect(() => assertTokenIfNonLoopback("localhost", null)).not.toThrow();
+    expect(() => assertTokenIfNonLoopback("::1", null)).not.toThrow();
+    expect(() => assertTokenIfNonLoopback("127.0.0.1", "secret")).not.toThrow();
+  });
+
+  it("requires --token for a non-loopback --host, naming the flag in the error", () => {
+    expect(() => assertTokenIfNonLoopback("0.0.0.0", null)).toThrow(HubTokenRequiredError);
+    expect(() => assertTokenIfNonLoopback("0.0.0.0", null)).toThrow(/--token/);
+    expect(() => assertTokenIfNonLoopback("10.0.0.5", null)).toThrow(/--token/);
+  });
+
+  it("is satisfied by a non-loopback --host once --token is given", () => {
+    expect(() => assertTokenIfNonLoopback("0.0.0.0", "secret")).not.toThrow();
+  });
+});
+
 const here = new URL(".", import.meta.url).pathname;
 const hubMain = path.resolve(here, "..", "src", "hubServe.ts");
 
@@ -161,6 +197,20 @@ describe("cq serve — missing DSN fails fast (no live Postgres needed)", () => 
     expect(stdout).toBe("");
     expect(stderr).toContain("--pg-url");
     expect(stderr).toContain("CQ_LEDGER_PG_URL");
+  });
+});
+
+describe("cq serve — non-loopback bind requires --token (Q273, no live Postgres needed)", () => {
+  it("exits non-zero naming --token, BEFORE the DSN check, when --host is non-loopback and --token is absent", async () => {
+    const { exitCode, stdout, stderr } = await runHub(["--host", "0.0.0.0", "--port", "0"], {
+      CQ_LEDGER_PG_URL: undefined,
+      DATABASE_URL: undefined,
+    });
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("--token");
+    // The token gate runs before DSN resolution, so the DSN error never fires.
+    expect(stderr).not.toContain("CQ_LEDGER_PG_URL");
   });
 });
 

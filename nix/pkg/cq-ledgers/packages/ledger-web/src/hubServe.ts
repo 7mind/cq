@@ -18,9 +18,26 @@
  * `PostgresLedgerStore` (one per tenant, all sharing the hub pool), and
  * `/p/<projectKey>/ws` upgrades to a socket on a per-tenant pub/sub topic, fed
  * by ONE hub-level LISTEN connection that dispatches every NOTIFY by payload
- * `project_key`. Unknown `projectKey` → 404. `--token` enforcement remains
- * DEFERRED to T588 — this module parses and threads the flag through but does
- * not yet gate any request on it.
+ * `project_key`. Unknown `projectKey` → 404.
+ *
+ * T588 (Q273 lock) enforces `--token`: a non-loopback `--host` (anything
+ * outside 127.0.0.0/8 / `::1` / `localhost`) is REFUSED at startup unless
+ * `--token <secret>` is also given ({@link assertTokenIfNonLoopback}) — a
+ * clear, actionable error naming the flag, checked BEFORE DSN resolution so
+ * a misconfigured bind never even touches Postgres. When a token IS set,
+ * every data route requires it: `/api/projects` and `/p/<key>/mcp` read an
+ * `Authorization: Bearer <token>` header; `/p/<key>/ws` reads a `?token=`
+ * query param (browsers cannot set headers on a WebSocket handshake, so the
+ * query-param form is the one the web client sends — see main.tsx). A
+ * mismatch or missing credential answers 401 with NO token echoed back in
+ * the body. The static bundle (`GET /` + assets, `serveStatic`) stays
+ * unauthenticated either way — the UI itself surfaces the token as a
+ * `?token=` page param it forwards to `/ws` and as the `/mcp` Authorization
+ * header (T588). Comparison is constant-time ({@link tokensMatch}): both
+ * sides are SHA-256-hashed to a fixed 32-byte digest before
+ * `crypto.timingSafeEqual`, so neither raw-length nor byte-position timing
+ * leaks the secret. A loopback bind with no `--token` keeps T586/T587's open
+ * behavior unchanged.
  *
  * Reuses ledger-web's existing bundle-serving internals (`buildBundle`,
  * `prepare`, `serveStatic`, `scanForPort`, `DEFAULT_OUTDIR`) from serve.ts —
@@ -30,6 +47,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { ServerWebSocket } from "bun";
 import {
   openPgPool,
@@ -64,9 +82,10 @@ export interface HubServeArgs {
   /** `--pg-url <dsn>`; `undefined` when omitted (env fallback applies — see {@link resolveHubDsn}). */
   pgUrlArg: string | undefined;
   /**
-   * `--token <secret>`, parsed and threaded through to {@link HubServeOpts} but
-   * NOT YET ENFORCED — auth gating on this value is T588's job. `null` when
-   * the flag is absent.
+   * `--token <secret>`, threaded through to {@link HubServeOpts} and enforced
+   * (T588 / Q273) on every data route once set: see {@link assertTokenIfNonLoopback}
+   * for the startup gate and {@link checkBearerAuth}/{@link checkWsAuth} for the
+   * per-request gate. `null` when the flag is absent.
    */
   token: string | null;
 }
@@ -135,6 +154,46 @@ export function resolveHubDsn(
     if (value !== undefined && value.trim() !== "") return value;
   }
   throw new HubDsnResolutionError();
+}
+
+/**
+ * True when `host` is a loopback bind (Q273): `localhost`, `::1`, or anything
+ * in `127.0.0.0/8`. Anything else — `0.0.0.0`/`::` (all interfaces), a LAN IP,
+ * or a hostname that isn't the literal `localhost` — is NON-loopback and
+ * requires `--token` (see {@link assertTokenIfNonLoopback}).
+ */
+export function isLoopbackHost(host: string): boolean {
+  if (host === "localhost" || host === "::1") return true;
+  const m = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (m === null) return false;
+  return [m[1]!, m[2]!, m[3]!].every((octet) => Number(octet) <= 255);
+}
+
+/**
+ * Thrown when `--host` is non-loopback and `--token` is absent — `cq serve`'s
+ * other fail-fast startup error (Q273 lock), naming the flag so the fix is
+ * obvious.
+ */
+export class HubTokenRequiredError extends Error {
+  constructor(host: string) {
+    super(
+      `cq serve: --host ${host} is not loopback; a --token <secret> is REQUIRED when binding a ` +
+        "non-loopback host (Q273) — pass --token, or bind a loopback host (127.0.0.1 / localhost / ::1) " +
+        "to keep the open loopback behavior.",
+    );
+    this.name = "HubTokenRequiredError";
+  }
+}
+
+/**
+ * Startup gate (Q273): refuse a non-loopback `--host` with no `--token`. Runs
+ * BEFORE DSN resolution in {@link main} so a misconfigured bind never touches
+ * Postgres. A loopback host is unaffected whether or not `--token` is given.
+ */
+export function assertTokenIfNonLoopback(host: string, token: string | null): void {
+  if (token === null && !isLoopbackHost(host)) {
+    throw new HubTokenRequiredError(host);
+  }
 }
 
 /** `GET /api/projects` response body. */
@@ -232,9 +291,58 @@ interface ProjectRuntime {
 export interface HubServeOpts {
   host: string;
   port: number;
-  /** Parsed from `--token` but NOT YET ENFORCED anywhere — see the module doc; T588 wires auth. */
+  /** Parsed from `--token`; `null` disables auth (only legal on a loopback bind — see the module doc). */
   token: string | null;
   outdir: string;
+}
+
+/** Parses the `Authorization: Bearer <token>` header, or `null` if absent/malformed. */
+function extractBearerToken(req: Request): string | null {
+  const header = req.headers.get("authorization");
+  if (header === null) return null;
+  const m = /^Bearer\s+(.+)$/.exec(header);
+  return m !== null ? m[1]! : null;
+}
+
+/**
+ * Constant-time token comparison (Q273): both sides are SHA-256-hashed to a
+ * fixed 32-byte digest FIRST, then compared with `crypto.timingSafeEqual` —
+ * hashing first means unequal-length secrets never leak length via an early
+ * `timingSafeEqual` length check, and the raw secret bytes are never compared
+ * directly.
+ */
+function tokensMatch(provided: string, expected: string): boolean {
+  const a = createHash("sha256").update(provided).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
+/** 401 with a fixed body — NEVER echoes the provided/expected token back. */
+function unauthorized(): Response {
+  return new Response("unauthorized", { status: 401 });
+}
+
+/**
+ * Bearer-header auth gate for `/api/projects` and `/p/<key>/mcp` (Q273).
+ * `token === null` means auth is off (loopback-only, per the startup gate) —
+ * every request passes.
+ */
+function checkBearerAuth(req: Request, token: string | null): boolean {
+  if (token === null) return true;
+  const provided = extractBearerToken(req);
+  return provided !== null && tokensMatch(provided, token);
+}
+
+/**
+ * `?token=` query-param auth gate for `/p/<key>/ws` (Q273): browsers cannot
+ * set custom headers on a WebSocket handshake, so the query param is the
+ * mechanism the web client uses (see main.tsx's `liveWsUrl`). `token === null`
+ * means auth is off; every upgrade passes.
+ */
+function checkWsAuth(url: URL, token: string | null): boolean {
+  if (token === null) return true;
+  const provided = url.searchParams.get("token");
+  return provided !== null && tokensMatch(provided, token);
 }
 
 /**
@@ -362,6 +470,7 @@ export function serveHub(
       async fetch(req, srv): Promise<Response | undefined> {
         const url = new URL(req.url);
         if (url.pathname === "/api/projects") {
+          if (!checkBearerAuth(req, opts.token)) return unauthorized();
           const projects = await fetchRegisteredProjects(pool);
           const body: ProjectsResponse = { projects };
           return new Response(JSON.stringify(body), {
@@ -370,6 +479,14 @@ export function serveHub(
         }
         const route = matchProjectRoute(url.pathname);
         if (route !== null) {
+          // Auth gate (Q273) BEFORE any tenant lookup/construction: an
+          // unauthenticated caller gets a uniform 401 regardless of whether the
+          // projectKey is even registered.
+          if (route.leaf === "mcp") {
+            if (!checkBearerAuth(req, opts.token)) return unauthorized();
+          } else if (!checkWsAuth(url, opts.token)) {
+            return unauthorized();
+          }
           const runtime = await getRuntime(route.projectKey);
           if (runtime === null) {
             return new Response("unknown project", { status: 404 });
@@ -382,6 +499,8 @@ export function serveHub(
           if (srv.upgrade(req, { data: { projectKey: route.projectKey } })) return undefined;
           return new Response("expected a websocket upgrade", { status: 426 });
         }
+        // Static bundle + assets stay unauthenticated even when --token is set
+        // (Q273) — the UI needs to load before it can surface the token input.
         return serveStatic(url, opts.outdir, indexPath);
       },
       websocket: {
@@ -432,6 +551,16 @@ export function serveHub(
 
 export async function main(argv: readonly string[]): Promise<void> {
   const args = parseHubArgs(argv);
+  // Q273 startup gate: a non-loopback --host with no --token is refused
+  // BEFORE DSN resolution, so a misconfigured bind never touches Postgres.
+  try {
+    assertTokenIfNonLoopback(args.host, args.token);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`cq: fatal: ${msg}\n`);
+    process.exit(1);
+    return;
+  }
   let dsn: string;
   try {
     dsn = resolveHubDsn(args.pgUrlArg, process.env);
@@ -470,7 +599,9 @@ export async function main(argv: readonly string[]): Promise<void> {
   process.stdout.write(`http://${args.host}:${actualPort}/\n`);
   process.stderr.write(
     `cq serve: serving http://${args.host}:${actualPort}/ ` +
-      (args.token !== null ? "(--token set; enforcement lands in T588)\n" : "(no --token; auth deferred to T588)\n"),
+      (args.token !== null
+        ? "(--token set; Authorization: Bearer <token> required on /mcp + /api/projects, ?token= on /ws)\n"
+        : "(no --token; loopback bind, auth open)\n"),
   );
 }
 
