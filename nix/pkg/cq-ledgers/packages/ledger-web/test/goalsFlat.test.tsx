@@ -30,6 +30,7 @@ import type {
   LedgerClient,
   LedgerSchema,
   LedgerSummary,
+  ListProjectsResult,
   MilestonePatch,
   ReadLogResult,
 } from "../src/types.js";
@@ -139,6 +140,9 @@ class GoalsClient implements LedgerClient {
   async getAgentModels(): Promise<AgentModelsResult> {
     // Minimal stub — not used in goals-flat tests.
     return { configured: false, agents: [] };
+  }
+  async listProjects(): Promise<ListProjectsResult> {
+    return { projects: [{ key: "cq1", displayName: "cq1" }] };
   }
   async close(): Promise<void> {
     /* no-op */

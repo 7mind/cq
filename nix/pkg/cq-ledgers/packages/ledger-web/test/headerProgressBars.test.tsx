@@ -24,6 +24,7 @@ import type {
   ItemPatch,
   LedgerClient,
   LedgerSummary,
+  ListProjectsResult,
   MilestonePatch,
   ReadLogResult,
 } from "../src/types.js";
@@ -170,6 +171,9 @@ class ProgressFakeClient implements LedgerClient {
   }
   async getAgentModels(): Promise<AgentModelsResult> {
     return this.base.getAgentModels();
+  }
+  async listProjects(): Promise<ListProjectsResult> {
+    return this.base.listProjects();
   }
   async close(): Promise<void> {
     return this.base.close();

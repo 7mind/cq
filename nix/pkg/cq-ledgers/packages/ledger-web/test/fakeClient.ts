@@ -16,7 +16,9 @@ import type {
   LedgerClient,
   LedgerSchema,
   LedgerSummary,
+  ListProjectsResult,
   MilestonePatch,
+  ProjectEntry,
   ReadLogResult,
 } from "../src/types.js";
 
@@ -211,12 +213,20 @@ export class FakeClient implements LedgerClient {
    * overlay (T297) set this to `'resolved'` or another mode explicitly.
    */
   agentModelsMode: AgentModelsMode = "not-configured";
+  /**
+   * The `list_projects` answer (T589 / Q276/Q284). Defaults to the
+   * single-entry embedded/xdg fallback (key === displayName, mirroring
+   * `listProjectsOf`'s single-project synthesis); tests exercising a
+   * multi-project hub override this directly before mounting.
+   */
+  projects: ProjectEntry[];
   private readonly _displayName: string;
   private msCounter = 1;
   private itemCounter = 1;
 
   constructor(displayName = "cq1") {
     this._displayName = displayName;
+    this.projects = [{ key: displayName, displayName }];
   }
 
   displayName(): string {
@@ -528,6 +538,9 @@ export class FakeClient implements LedgerClient {
           ],
         };
     }
+  }
+  async listProjects(): Promise<ListProjectsResult> {
+    return { projects: this.projects };
   }
   async readLog(path: string): Promise<ReadLogResult> {
     const override = this.readLogResults.get(path);

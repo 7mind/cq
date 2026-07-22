@@ -15,10 +15,12 @@ import type {
   AgentModelsResult,
   AgentModelEntry,
   AgentModelStatus,
+  ListProjectsResult,
+  ProjectEntry,
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
 
-export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus };
+export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus, ListProjectsResult, ProjectEntry };
 
 export interface FtsHit {
   ledgerId: string;
@@ -89,5 +91,14 @@ export interface LedgerClient {
   readLog(path: string): Promise<ReadLogResult>;
   /** Retrieve per-agent resolved model overlays via the get_agent_models MCP tool. */
   getAgentModels(): Promise<AgentModelsResult>;
+  /**
+   * Enumerate every project this server knows about (list_projects MCP tool,
+   * T585/T589/Q276/Q284): the genuine multi-tenant registry for a `cq serve`
+   * hub, or a synthesized single entry for every other backend. ALWAYS
+   * answered — every real server wires this capability (see
+   * `ListProjectsNotImplementedError`'s doc), so the web client never needs to
+   * sniff the backend.
+   */
+  listProjects(): Promise<ListProjectsResult>;
   close(): Promise<void>;
 }

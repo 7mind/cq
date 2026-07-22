@@ -17,7 +17,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentModelEntry, ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, MilestonePatch } from "./types.js";
+import type { AgentModelEntry, ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, MilestonePatch, ProjectEntry } from "./types.js";
 import { DagView } from "./DagView.js";
 import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
@@ -187,6 +187,32 @@ export function clampPanelSize(size: number, max: number): number {
   return Math.max(MIN_PANEL, Math.min(size, Math.max(MIN_PANEL, max)));
 }
 
+/** Query-string key the active project is persisted under (T589 / Q276/Q284). */
+const PROJECT_QUERY_KEY = "project";
+
+/**
+ * Derive the sibling `/p/<key>/mcp` URL for a project switch (T589 / Q283/Q284
+ * routing convention), sharing `baseUrl`'s origin. Any prior path/query/hash on
+ * `baseUrl` is replaced — this always targets exactly the hub's per-project MCP
+ * route, regardless of whether `baseUrl` was itself hub-shaped (`/p/<old>/mcp`)
+ * or embedded (`/mcp`).
+ */
+export function deriveProjectMcpUrl(baseUrl: string, key: string): string {
+  const u = new URL(baseUrl);
+  u.pathname = `/p/${encodeURIComponent(key)}/mcp`;
+  u.search = "";
+  u.hash = "";
+  return u.toString();
+}
+
+/** Derive the paired `/p/<key>/ws` (ws:/wss:) URL from a {@link deriveProjectMcpUrl} result. */
+export function deriveProjectWsUrl(mcpUrl: string): string {
+  const u = new URL(mcpUrl);
+  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+  u.pathname = u.pathname.replace(/\/mcp$/, "/ws");
+  return u.toString();
+}
+
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -298,6 +324,15 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   // (Q155=DROP / R341): there is no build-time AgentRole.model fallback.
   const [agentOverlay, setAgentOverlay] = useState<Map<string, AgentModelEntry> | null>(null);
   const [agentOverlayError, setAgentOverlayError] = useState(false);
+  // Always-visible project selector (T589 / Q276/Q284): `projects` is the
+  // server's list_projects answer (one entry for embedded/xdg, N for a `cq
+  // serve` hub); `activeProjectKey` is the currently-selected entry's key.
+  // `activeLiveUrl` starts at the `liveUrl` prop but is re-derived on a project
+  // switch (see `switchProject`) so the live-updates effect below reconnects
+  // to the newly-selected project's own /ws topic.
+  const [projects, setProjects] = useState<ProjectEntry[]>([]);
+  const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
+  const [activeLiveUrl, setActiveLiveUrl] = useState<string | null>(liveUrl);
   const [ledgers, setLedgers] = useState<LedgerSummary[]>([]);
   const [ledger, setLedger] = useState<string | null>(null);
   const [view, setView] = useState<FetchedLedger | null>(null);
@@ -335,6 +370,12 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   // Latest-callback ref: the live connection lives across ledger changes, so
   // its onChanged must call the freshest refresh closure, not a stale one.
   const refreshRef = useRef<() => void>(() => {});
+  // A project switch's derived ws URL, applied to `activeLiveUrl` only once
+  // the NEW client is confirmed (see the connect effect below) — so `client`
+  // and `activeLiveUrl` transition TOGETHER in one batched render, rather than
+  // `activeLiveUrl` jumping ahead while `client` still points at the OLD
+  // project (which would open, then immediately tear down, a throwaway ws).
+  const pendingLiveUrlRef = useRef<{ url: string | null } | null>(null);
   // Batch-answer modal (Q33). `batchRows` is the snapshot of open items
   // captured when the modal opens; `batchIndex` is the current step;
   // `batchSchema` is the (questions) ledger schema those rows belong to.
@@ -462,8 +503,39 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
           return;
         }
         setClient(c);
+        // Apply a pending project-switch's derived ws URL in the SAME batched
+        // update as `setClient(c)` (T589) — see `pendingLiveUrlRef`'s doc.
+        if (pendingLiveUrlRef.current !== null) {
+          setActiveLiveUrl(pendingLiveUrlRef.current.url);
+          pendingLiveUrlRef.current = null;
+        }
         setLedgers(ls);
         setConn("connected");
+        // Fetch the project list once on connect (T589 / Q276/Q284): ALWAYS
+        // answered by a real server (list_projects never throws not-implemented
+        // through the public builder), so no catch-all fallback is needed here
+        // — a thrown error just leaves the selector empty for this connection.
+        try {
+          const pr = await c.listProjects();
+          if (!alive) {
+            await c.close();
+            return;
+          }
+          setProjects(pr.projects);
+          // `?project=<key>` wins when it names a known project (deep-link /
+          // reload persistence); otherwise default to the first listed entry.
+          const fromQuery = new URLSearchParams(window.location.search).get(PROJECT_QUERY_KEY);
+          const chosen =
+            fromQuery !== null && pr.projects.some((p) => p.key === fromQuery)
+              ? fromQuery
+              : (pr.projects[0]?.key ?? null);
+          setActiveProjectKey(chosen);
+        } catch {
+          if (alive) {
+            setProjects([]);
+            setActiveProjectKey(null);
+          }
+        }
         // Fetch the live per-agent model overlay once on connect (T293). A
         // catch-ALL: any thrown error — a LedgerToolError, or a generic SDK
         // unknown-tool error from an older/embedded server that does not
@@ -527,6 +599,35 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   }, [ledger, selected, mainView]);
 
   const isMilestones = ledger === MILESTONES;
+
+  /**
+   * Switch the active project (T589 / Q276/Q284): derive the sibling
+   * `/p/<key>/mcp` + `/p/<key>/ws` endpoints, persist the choice to
+   * `?project=<key>` (so a reload or a shared link lands on the same
+   * project), then swap `url` — the connect effect above tears down the old
+   * client/ws (via its own cleanup + the live-updates effect's dependency on
+   * `client`/`activeLiveUrl`) and reconnects fresh. A no-op when `key` is
+   * already active (single-project mode: selecting the one entry does
+   * nothing).
+   */
+  const switchProject = useCallback(
+    (key: string) => {
+      if (key === activeProjectKey) return;
+      const newMcpUrl = deriveProjectMcpUrl(url, key);
+      const newLiveUrl = liveUrl !== null ? deriveProjectWsUrl(newMcpUrl) : null;
+      try {
+        const next = new URL(window.location.href);
+        next.searchParams.set(PROJECT_QUERY_KEY, key);
+        window.history.replaceState(null, "", next.toString());
+      } catch {
+        /* URL/history unavailable — persistence degrades gracefully */
+      }
+      setActiveProjectKey(key);
+      pendingLiveUrlRef.current = { url: newLiveUrl };
+      setUrl(newMcpUrl);
+    },
+    [url, liveUrl, activeProjectKey],
+  );
 
   const openLedger = useCallback(
     async (name: string) => {
@@ -761,10 +862,13 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   }, [client, reload, ledger, mainView]);
 
   // Live updates: subscribe once we have a client + a /ws URL; refetch on push.
+  // `activeLiveUrl` (not the raw `liveUrl` prop) drives this so a project
+  // switch tears down the old project's subscription and opens a fresh one on
+  // the newly-selected project's /ws topic (T589 / Q276/Q284).
   useEffect(() => {
-    if (client === null || liveUrl === null) return;
+    if (client === null || activeLiveUrl === null) return;
     const mgr = new LiveManager({
-      url: liveUrl,
+      url: activeLiveUrl,
       ...(liveWsCtor !== undefined ? { WebSocketCtor: liveWsCtor } : {}),
       onChanged: () => refreshRef.current(),
       onUpdate: (s) => setLive(s),
@@ -782,7 +886,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
       mgr.destroy();
       setLive(null);
     };
-  }, [client, liveUrl, liveWsCtor]);
+  }, [client, activeLiveUrl, liveWsCtor]);
 
   // All items in the currently-fetched ledger (unfiltered; used by relationship panels).
   const allCurrentItems = useMemo<Item[]>(
@@ -1044,7 +1148,26 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         <span className={`lw-conn lw-conn-${conn}`} data-testid="conn-status">
           {conn === "connected" ? "● connected" : conn === "connecting" ? "○ connecting…" : "✕ error"}
         </span>
-        {liveUrl !== null && <LiveIndicator stats={live} />}
+        {/* Always-visible project selector (T589 / Q276, supersedes Q284's
+            hide-when-single recommendation): one entry in embedded/xdg
+            single-project mode (switch is then a no-op), N entries against a
+            multi-project `cq serve` hub. Controlled <select> — fine under
+            happy-dom per the uncontrolled-input convention (text inputs only). */}
+        <select
+          className="lw-project-selector"
+          data-testid="project-selector"
+          aria-label="active project"
+          disabled={client === null}
+          value={activeProjectKey ?? ""}
+          onChange={(e) => switchProject(e.target.value)}
+        >
+          {projects.map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.displayName}
+            </option>
+          ))}
+        </select>
+        {activeLiveUrl !== null && <LiveIndicator stats={live} />}
         <SearchBar onSearch={(q) => void runSearch(q)} disabled={client === null} />
         <button
           type="button"

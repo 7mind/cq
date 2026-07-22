@@ -24,6 +24,7 @@ import type {
   LedgerClient,
   LedgerSchema,
   LedgerSummary,
+  ListProjectsResult,
   MilestonePatch,
   ReadLogResult,
 } from "../src/types.js";
@@ -173,6 +174,7 @@ class IdeasClient implements LedgerClient {
   async updateMilestone(_m: string, _p: MilestonePatch): Promise<Item> { throw new Error("not used"); }
   async readLog(): Promise<ReadLogResult> { throw new Error("not used"); }
   async getAgentModels(): Promise<AgentModelsResult> { return { configured: false, agents: [] }; }
+  async listProjects(): Promise<ListProjectsResult> { return { projects: [{ key: "cq1", displayName: "cq1" }] }; }
   async close(): Promise<void> { /* no-op */ }
 }
 

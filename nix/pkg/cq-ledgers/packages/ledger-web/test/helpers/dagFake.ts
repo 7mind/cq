@@ -13,6 +13,7 @@ import type {
   LedgerClient,
   LedgerSchema,
   LedgerSummary,
+  ListProjectsResult,
   ReadLogResult,
 } from "../../src/types.js";
 
@@ -152,6 +153,9 @@ export class DagFakeClient implements LedgerClient {
   async getAgentModels(): Promise<AgentModelsResult> {
     // Minimal stub — not used in DAG tests.
     return { configured: false, agents: [] };
+  }
+  async listProjects(): Promise<ListProjectsResult> {
+    return { projects: [{ key: "cq1", displayName: "cq1" }] };
   }
   async close(): Promise<void> {
     /* no-op */

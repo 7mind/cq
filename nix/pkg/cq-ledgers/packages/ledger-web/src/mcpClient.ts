@@ -29,6 +29,7 @@ import type {
   ItemPatch,
   LedgerClient,
   LedgerSummary,
+  ListProjectsResult,
   MilestonePatch,
   ReadLogResult,
 } from "./types.js";
@@ -213,6 +214,10 @@ export class McpLedgerClient implements LedgerClient {
 
   async getAgentModels(): Promise<AgentModelsResult> {
     return await this.call<AgentModelsResult>("get_agent_models", {});
+  }
+
+  async listProjects(): Promise<ListProjectsResult> {
+    return await this.call<ListProjectsResult>("list_projects", {});
   }
 
   async close(): Promise<void> {
