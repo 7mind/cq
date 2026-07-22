@@ -94,6 +94,17 @@ describe("cq migrate --to postgres (T581) — offline refusal", () => {
     expect(io.errs.join("\n")).toContain("not 'xdg'");
   });
 
+  it("K117: refuses --to postgres on a cq.toml-less root with a clean usage error (default-xdg resolution must not fall through)", async () => {
+    const root = await gitRepo("cq-migrate-pg-noconfig-");
+    // NO cq.toml: resolution yields the K117 xdg DEFAULT (explicit=false).
+    // This leg needs an explicit xdg config (the DSN/flip live in cq.toml) —
+    // it must refuse with EXIT_USAGE, not throw an internal error.
+    const io = recordingIo();
+    const outcome = await dispatch(["migrate", "--cwd", root, "--to", "postgres"], io);
+    expect(outcome.exitCode).toBe(EXIT_USAGE);
+    expect(io.errs.join("\n")).toContain("no [ledger] backend configured");
+  });
+
   it("rejects an unrecognised --to value with a usage error (no crash)", async () => {
     const root = await gitRepo("cq-migrate-pg-badflag-");
     await fs.writeFile(path.join(root, "cq.toml"), '[ledger]\nbackend = "xdg"\n');

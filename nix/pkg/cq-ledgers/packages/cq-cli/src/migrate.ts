@@ -337,7 +337,21 @@ async function runMigrateLegacyToXdg(args: MigrateArgs, io: MigrateIo): Promise<
  * the module doc for the full contract.
  */
 async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promise<MigrateOutcome> {
-  const { backend } = resolveLedgerBackend(args.cwd);
+  const { backend, explicit } = resolveLedgerBackend(args.cwd);
+  if (backend === "xdg" && !explicit) {
+    // K117: 'xdg' is now also the DEFAULT resolution (no cq.toml / no
+    // [ledger].backend key). This leg needs a real cq.toml to read the
+    // committed DSN context from and to flip to 'postgres' afterwards —
+    // refuse cleanly rather than fall through to the (previously
+    // unreachable) config===null internal error below.
+    io.err(
+      `cq migrate --to postgres: no [ledger] backend configured at ${args.cwd} (the 'xdg' ` +
+        `resolution is the default, not a committed choice). Run \`cq init\` (or \`cq migrate\` ` +
+        `from a legacy tree) to write cq.toml with backend = "xdg" first, then ` +
+        `\`cq migrate --to postgres\`.`,
+    );
+    return { exitCode: EXIT_USAGE };
+  }
   if (backend !== "xdg") {
     io.err(
       `cq migrate --to postgres: [ledger] backend at ${args.cwd} is '${backend}', not 'xdg' — ` +
@@ -382,9 +396,10 @@ async function runMigrateXdgToPostgres(args: MigrateArgs, io: MigrateIo): Promis
   // propagates here the same fail-fast way.
   const config = loadConfig(args.cwd);
   if (config === null || config.ledger === null) {
-    // Unreachable: resolveLedgerBackend already found backend='xdg' above,
-    // which requires a non-null config.ledger — cq.toml would have had to
-    // change concurrently between the two reads.
+    // Unreachable: the explicit-xdg guard above already required a cq.toml
+    // with a [ledger].backend key (a DEFAULT-resolved xdg refuses with
+    // EXIT_USAGE, K117) — cq.toml would have had to change concurrently
+    // between the two reads.
     throw new Error(
       `cq migrate --to postgres: [ledger] backend='xdg' resolved at ${args.cwd}, but reloading ` +
         `cq.toml found no [ledger] table — cq.toml may have changed concurrently; re-run.`,
