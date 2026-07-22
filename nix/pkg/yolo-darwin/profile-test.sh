@@ -246,11 +246,21 @@ assert_not_contains "disabled audio prompt fragment is excluded" "$OUT" "audio l
 # ── copied HM assets ─────────────────────────────────────────────────────────
 # Run all agents in one shell so a second pass can verify copy-if-absent.
 RESHARE_HOME="$WORKDIR/reshare-home"
-mkdir -p "$RESHARE_HOME/.claude/skills" "$RESHARE_HOME/.codex/skills" "$RESHARE_HOME/.pi/agent/skills"
+mkdir -p \
+  "$RESHARE_HOME/.claude/skills" \
+  "$RESHARE_HOME/.codex/prompts" \
+  "$RESHARE_HOME/.codex/skills" \
+  "$RESHARE_HOME/.pi/agent/cq-agents" \
+  "$RESHARE_HOME/.pi/agent/prompts" \
+  "$RESHARE_HOME/.pi/agent/skills"
 echo x > "$RESHARE_HOME/.claude/settings.json"
 echo x > "$RESHARE_HOME/.claude/CLAUDE.md"
 echo x > "$RESHARE_HOME/.codex/AGENTS.md"
+echo x > "$RESHARE_HOME/.codex/prompts/cq:plan.md"
 echo x > "$RESHARE_HOME/.pi/agent/settings.json"
+echo x > "$RESHARE_HOME/.pi/agent/APPEND_SYSTEM.md"
+echo x > "$RESHARE_HOME/.pi/agent/cq-agents/plan-reviewer.md"
+echo x > "$RESHARE_HOME/.pi/agent/prompts/cq:plan.md"
 (cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" bash -c '
   source "$1" --profile foo cmd true
   reshare_profile_assets claude
@@ -268,10 +278,15 @@ assert_eq "reshare: claude settings.json copied as a real file" "yes" "$(_is_rea
 assert_eq "reshare: claude CLAUDE.md copied as a real file" "yes" "$(_is_real_file "$RESHARE_PROF/claude/CLAUDE.md")"
 assert_eq "reshare: claude skills copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/claude/skills")"
 assert_eq "reshare: codex AGENTS.md copied as a real file" "yes" "$(_is_real_file "$RESHARE_PROF/codex/AGENTS.md")"
+assert_eq "reshare: codex prompts copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/codex/prompts")"
 assert_eq "reshare: codex skills copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/codex/skills")"
 assert_eq "reshare: pi settings.json copied as a real file" "yes" "$(_is_real_file "$RESHARE_PROF/pi/settings.json")"
+assert_eq "reshare: pi appended system prompt copied as a real file" "yes" "$(_is_real_file "$RESHARE_PROF/pi/APPEND_SYSTEM.md")"
+assert_eq "reshare: pi cq agents copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/pi/cq-agents")"
+assert_eq "reshare: pi prompts copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/pi/prompts")"
 assert_eq "reshare: pi skills copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/pi/skills")"
 assert_eq "reshare: copied content matches the source" "x" "$(cat "$RESHARE_PROF/codex/AGENTS.md")"
+assert_eq "reshare: copied Codex prompt content matches the source" "x" "$(cat "$RESHARE_PROF/codex/prompts/cq:plan.md" 2>/dev/null)"
 assert_eq "reshare: copy-if-absent preserves an existing dest (sentinel)" "sentinel" "$(cat "$RESHARE_PROF/claude/settings.json")"
 
 # ── $PWD==$HOME refusal guard (+ --unsafe-share-home + symlink canonicalization)

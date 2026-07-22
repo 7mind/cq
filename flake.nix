@@ -445,6 +445,19 @@
         # Policy generation runs everywhere; real Seatbelt enforcement runs on Darwin.
         checks =
           {
+            yolo-profile =
+              pkgs.runCommand "yolo-profile"
+                {
+                  nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq ];
+                }
+                ''
+                  cp -r ${./nix/pkg/yolo} yolo
+                  chmod -R u+w yolo
+                  cd yolo
+                  shellcheck --severity=warning custom-prompt.sh yolo.sh profile-test.sh
+                  bash profile-test.sh
+                  touch $out
+                '';
             yolo-darwin-profile =
               pkgs.runCommand "yolo-darwin-profile"
                 {

@@ -215,7 +215,7 @@ ensure_codex_config() {
 
 # pi resolves all per-user state below PI_CODING_AGENT_DIR. Its MCP registry
 # remains shared because pi-mcp-adapter reads ~/.config/mcp/mcp.json directly.
-PI_SHARED_ASSETS=(settings.json AGENTS.md skills extensions mcp.json)
+PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md cq-agents prompts skills extensions mcp.json)
 # Seatbelt cannot bind-mount HM assets, so copy and dereference store symlinks.
 # Copy-if-absent preserves profile edits; HM updates require profile recreation.
 reshare_profile_assets() {
@@ -225,7 +225,7 @@ reshare_profile_assets() {
   local -a assets
   case "$agent" in
     claude) src_dir="${HOME}/.claude";   dst_dir="$CLAUDE_CONFIG_DIR"; assets=(settings.json CLAUDE.md skills plugins commands agents) ;;
-    codex)  src_dir="${HOME}/.codex";    dst_dir="$CODEX_HOME";        assets=(AGENTS.md skills) ;;
+    codex)  src_dir="${HOME}/.codex";    dst_dir="$CODEX_HOME";        assets=(AGENTS.md prompts skills) ;;
     pi)     src_dir="${HOME}/.pi/agent"; dst_dir="$PI_PROFILE_DIR";    assets=("${PI_SHARED_ASSETS[@]}") ;;
     *) return 0 ;;
   esac

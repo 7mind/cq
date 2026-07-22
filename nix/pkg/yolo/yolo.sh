@@ -453,14 +453,14 @@ add_codex_binds() {
     # main (HM) config with $PWD pre-trusted; bound in via $A/home below. The
     # host ~/.codex is left untouched in profile mode.
     ensure_codex_config "$A/home/config.toml" "${HOME}/.codex/config.toml" "${PWD}"
-    clear_reshare_leftovers "$A/home" AGENTS.md skills
+    clear_reshare_leftovers "$A/home" AGENTS.md prompts skills
     EXTRA_ARGS+=(
       --bind "$A/home,${HOME}/.codex"
       --bind "$A/config,${HOME}/.config/codex"
     )
     # config.toml now comes from $A/home (writable, trusted); only the remaining
     # HM-managed assets are shared read-only from the main profile.
-    for item in AGENTS.md skills; do
+    for item in AGENTS.md prompts skills; do
       EXTRA_ARGS+=(--ro-bind "${HOME}/.codex/$item,${HOME}/.codex/$item")
     done
   else
@@ -491,11 +491,28 @@ add_pi_binds() {
   if [[ -n "$PROFILE" ]]; then
     local A item; A="$(profile_dir pi)"
     mkdir -p "$A/home/agent"
-    clear_reshare_leftovers "$A/home" agent/settings.json agent/AGENTS.md agent/skills agent/extensions agent/mcp.json
+    clear_reshare_leftovers \
+      "$A/home" \
+      agent/settings.json \
+      agent/AGENTS.md \
+      agent/APPEND_SYSTEM.md \
+      agent/cq-agents \
+      agent/prompts \
+      agent/skills \
+      agent/extensions \
+      agent/mcp.json
     EXTRA_ARGS+=(--bind "$A/home,${HOME}/.pi")
     # Share the HM-managed (read-only, store-symlinked) assets from the main
     # profile; non-existent paths are filtered by the llm-sandbox layer.
-    for item in agent/settings.json agent/AGENTS.md agent/skills agent/extensions agent/mcp.json; do
+    for item in \
+      agent/settings.json \
+      agent/AGENTS.md \
+      agent/APPEND_SYSTEM.md \
+      agent/cq-agents \
+      agent/prompts \
+      agent/skills \
+      agent/extensions \
+      agent/mcp.json; do
       EXTRA_ARGS+=(--ro-bind "${HOME}/.pi/$item,${HOME}/.pi/$item")
     done
   else
