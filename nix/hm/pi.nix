@@ -51,7 +51,7 @@ let
       wrapProgram $out/bin/pi \
         --prefix PATH : ${ddgsPython}/bin \
         --set CQ_HARNESS pi \
-        --run 'export CQ_AGENTS_DIR="$HOME/.pi/agent/cq-agents"'
+        --run 'export CQ_AGENTS_DIR="''${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/cq-agents"'
     '';
   };
 
@@ -277,12 +277,11 @@ in
         promptTemplates = cfg.merged.commands;
         settings = {
           theme = "dark";
-          # xAI Grok Build (Coding Plan) via pi-xai (Responses API). grok-build
-          # always reasons at maximum depth — it rejects an explicit
-          # reasoningEffort / defaultThinkingLevel. `/login grok-build` (OAuth);
-          # other providers (openai-codex, openrouter, ...) stay selectable at runtime.
-          defaultProvider = "grok-build";
-          defaultModel = "grok-build";
+          # OpenAI Codex via ChatGPT subscription OAuth (`/login openai-codex`).
+          # Other providers (grok-build, openrouter, ...) stay selectable at runtime.
+          defaultProvider = "openai-codex";
+          defaultModel = "gpt-5.6-sol";
+          defaultThinkingLevel = "xhigh";
           # User-requested: terminal progress (OSC 9;4; off by default in 0.78+),
           # steering/follow-up modes, hide reasoning, disable install telemetry.
           terminal = {

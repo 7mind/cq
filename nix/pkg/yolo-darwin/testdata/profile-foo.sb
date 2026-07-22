@@ -2,10 +2,11 @@
 ;; Profile: foo
 ;; Network remains open; filesystem grants are narrowed below.
 
-;; Grant PWD, shared cache, and native homes for the default profile.
+;; Grant PWD, shared cache, cq state, and native homes for the default profile.
 (allow file-read* file-write* file-write-create file-read-metadata file-ioctl
     (subpath "/tmp/x")
     (subpath (string-append (param "HOME_DIR") "/.cache"))
+    (subpath (string-append (param "HOME_DIR") "/.local/state/cq"))
 )
 
 ;; Deny every named profile before re-granting the active one.

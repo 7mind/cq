@@ -203,7 +203,8 @@ in
 
       # CodeGraph MCP server — declared once, pulled into each agent CLI via
       # its enableMcpIntegration option below. Started on-demand per project by
-      # the agent; building the per-project index is a manual `codegraph init -i`.
+      # the agent. Yolo builds the per-project index in its sandbox pre-start
+      # hook; outside yolo, initialize it manually with `codegraph init`.
       programs.mcp = {
         enable = true;
         servers.codegraph = {

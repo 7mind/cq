@@ -5,8 +5,8 @@
     "": {
       "name": "@cq/ledger-status",
       "devDependencies": {
-        "@types/node": "^22.0.0",
-        "typescript": "^5.0.0",
+        "@types/node": "^22.20.1",
+        "typescript": "^5.9.3",
       },
     },
   },

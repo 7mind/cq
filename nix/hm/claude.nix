@@ -13,8 +13,8 @@ let
   codexPluginCc = pkgs.fetchFromGitHub {
     owner = "openai";
     repo = "codex-plugin-cc";
-    rev = "6a5c2ba53b734f3cdd8daacbd49f68f3e6c8c167";
-    hash = "sha256-4kqtfdHlcg3YXWX1og9b5JuLgnB/3Nj5dFMe4Ryt7No=";
+    rev = "db52e28f4d9ded852ab3942cea316258ae4ef346";
+    hash = "sha256-S/R4kHTcIHBcG0TRX063C7ILXZZm0oMqunchPGg6ToU=";
   };
 
   # claude-code pinned to the local native-tarball build (../pkg/claude-code),

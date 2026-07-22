@@ -6,8 +6,8 @@ One flake, two products:
    and browser frontends for browsing and editing them.
 2. **LLM coding-agent harness** — a portable home-manager module
    (`homeManagerModules.dev-llm`) that configures Claude Code, Codex and Pi,
-   the bubblewrap `yolo` sandbox, a shared MCP registry, and the prompt/skill
-   asset bundles they share.
+   the `yolo` sandbox (bubblewrap on Linux, Seatbelt on macOS), a shared MCP
+   registry, and the prompt/skill asset bundles they share.
 
 The two are independent: consume the ledger products on their own, the harness
 module on its own, or both.
@@ -23,7 +23,7 @@ nix/
       package.json bun.lock tsconfig*.json …
       examples/sample-ledger/ # ready-made dataset
     cq-assets/                # ledger's contributed LLM assets (assets.nix, commands/, agents/)
-    yolo/                     # bubblewrap sandbox wrapper (+ internal llm-sandbox.sh)
+    yolo/ yolo-darwin/       # Linux bubblewrap and macOS Seatbelt wrappers
     llm-skills/               # SKILL.md set + meta.yaml validation
     llm-contexts/             # general-context.md + pi-context.md
     claude-code/ codex/       # vendored agent CLIs (pinned releases)
@@ -122,10 +122,14 @@ docs/
 
 `homeManagerModules.dev-llm` is a portable home-manager module — curried over
 this flake's own `inputs` and `self` — that sets up the Claude Code / Codex /
-Pi coding agents, the bubblewrap `yolo` sandbox, a shared `programs.mcp`
-registry (codegraph + ledger), and the merged prompt/skill/command/agent asset
-bundles. Any local-model (ollama) provider config is deliberately **left to the
+Pi coding agents, the platform `yolo` sandbox, a shared `programs.mcp` registry
+(codegraph + ledger), and the merged prompt/skill/command/agent asset bundles.
+Any local-model (ollama) provider config is deliberately **left to the
 consumer**.
+
+For a complete new-machine procedure, including prerequisites, activation,
+authentication, project initialization, hooks, skills, and the macOS Seatbelt
+sandbox, see **[Install the cq harness on a new Mac with Home Manager](docs/macos-home-manager.md)**.
 
 ```nix
 # flake.nix
@@ -141,12 +145,13 @@ consumer wires from its own system config:
 
 | Option | Purpose |
 |---|---|
-| `smind.hm.dev.llm.yolo.gpu.{nvidia,amd,intel}Enable` | Expose a GPU to the `yolo` sandbox. |
-| `smind.hm.dev.llm.ollamaModelsDir` | Host ollama models dir to ro-bind. |
-| `smind.hm.dev.llm.podman.{socketPath,socketUri}` | Rootless-Podman socket for container access. |
-| `smind.hm.dev.llm.llmSshKeyPath` | SSH key to bind into the sandbox. |
-| `smind.hm.dev.llm.yolo.{extraReadOnlyPaths,extraReadWritePaths,extraPromptFragments,gpuByDefault}` | Per-host sandbox extras. |
-| `smind.hm.dev.llm.{memorySections,assetBundles}` | Append memory text / asset bundles. |
+| `smind.hm.dev.llm.yolo.promptExtensions` | Add tagged agent prompt fragments; works on Linux and macOS. |
+| `smind.hm.dev.llm.yolo.{extraReadOnlyPaths,extraReadWritePaths,extraDevicePaths}` | Linux bubblewrap binds and device passthrough. |
+| `smind.hm.dev.llm.yolo.{packages,sessionVariables,secretSessionVariables,hooks}` | Linux-only sandbox packages, environment, secret files, and pre-start hooks. |
+| `smind.hm.dev.llm.podman.{socketPath,socketUri}` | Linux rootless-Podman socket for container access. |
+| `smind.hm.dev.llm.llmSshKeyPath` | Linux SSH-key bind plus an agent prompt fragment. |
+| `smind.hm.dev.llm.pi.mcpDirectTools` | Expose selected MCP servers directly in Pi instead of only through its proxy. |
+| `smind.hm.dev.llm.{memorySections,assetBundles}` | Append memory text or asset bundles. |
 
 Other modules can append their own `assetBundles` (same shape as
 `cq.llmAssets`); the merged result is exposed read-only at
@@ -154,8 +159,9 @@ Other modules can append their own `assetBundles` (same shape as
 modules to reuse.
 
 The harness building blocks are also exposed as individual packages —
-`packages.<system>.{yolo,claude-code,codex,pi-coding-agent,llm-skills,
-llm-contexts,reattach-llm}` — so they can be built or consumed directly.
+`packages.<system>.{claude-code,codex,pi-coding-agent,llm-skills,llm-contexts}`
+plus Linux `yolo`/`reattach-llm` or macOS `yolo-darwin` — so they can be built
+or consumed directly.
 
 ## How you drive it (the cq flow)
 
@@ -166,8 +172,9 @@ agent does the rest; the ledger is where you and it meet.
 
 A typical run:
 
-1. **Stand up the sandbox.** Bring up the `yolo` bubblewrap sandbox so the
-   agent runs without per-action permission prompts.
+1. **Stand up the sandbox.** Launch through `yolo` (bubblewrap on Linux,
+   Seatbelt on macOS) so the agent runs with project-scoped filesystem access
+   and without per-action permission prompts.
 2. **Install the assets.** Bring in the MCP servers and the prompt/skill/command
    bundles — via the `homeManagerModules.dev-llm` module this is one import; that
    is what makes the `/cq:*` commands and the `ledger` MCP server available.
@@ -210,6 +217,6 @@ dependencies. After changing dependencies (and `bun.lock`), refresh its
 
 Outputs:
 - `packages.{cq,node-modules}` + `apps.{default,cq}` (default is `cq mcp`).
-- `packages.{yolo,claude-code,codex,pi-coding-agent,llm-skills,llm-contexts,llm-context-with-env,reattach-llm}` — harness building blocks.
+- `packages.{claude-code,codex,pi-coding-agent,codegraph,llm-skills,llm-contexts,llm-context-with-env}` plus platform-specific Linux `yolo`/`reattach-llm` or macOS `yolo-darwin` — harness building blocks.
 - `homeManagerModules.dev-llm` — the coding-agent harness module.
 - `llmAssets` — the ledger's system-agnostic prompt/skill asset bundle.

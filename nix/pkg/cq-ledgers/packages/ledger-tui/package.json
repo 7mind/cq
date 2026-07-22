@@ -15,12 +15,12 @@
     "@cq/ledger-live": "workspace:*",
     "@cq/ledger-mcp": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "ink": "7.0.5",
-    "react": "19.2.6"
+    "ink": "7.1.1",
+    "react": "19.2.8"
   },
   "devDependencies": {
     "@cq/ledger": "workspace:*",
-    "@types/react": "19.2.6",
+    "@types/react": "19.2.17",
     "bun-types": "^1.1.0",
     "ink-testing-library": "4.0.0",
     "node-pty": "1.1.0"

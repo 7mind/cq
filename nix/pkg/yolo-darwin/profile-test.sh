@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Deterministic tests source the real pre-exec helpers without reaching exec.
-# They cover yolo's policy fragment, profile layout, and HOME guard; the
-# Darwin-only flake check covers the upstream base and Seatbelt enforcement.
+# They cover yolo's policy fragment, profile layout, and HOME guard. Live
+# Seatbelt enforcement must run outside Nix's own Darwin sandbox because
+# sandbox-exec cannot nest there; see README.md's manual checklist.
 set -u
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -115,6 +116,11 @@ GOLDEN="$(cat "$GOLDEN_FILE" 2>/dev/null || true)"
 assert_eq "rendered foo profile matches testdata/profile-foo.sb" "$GOLDEN" "$RENDERED"
 assert_contains "allows read+write to \$PWD (/tmp/x)" "$RENDERED" '(subpath "/tmp/x")'
 assert_contains "allows ~/.cache" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.cache"))'
+# Regression: cq's default XDG primary lives here and must remain reachable
+# from the confined MCP server and Claude stop hook.
+assert_contains "allows cq default XDG state" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.local/state/cq"))'
+RENDERED_CUSTOM_XDG="$(XDG_STATE_HOME='/tmp/custom state' render_profile foo /tmp/x)"
+assert_contains "allows cq custom absolute XDG state" "$RENDERED_CUSTOM_XDG" '(subpath "/tmp/custom state/cq")'
 assert_contains "allows active profile claude dir" "$RENDERED" '"/.config/yolo/foo/claude"'
 assert_contains "allows active profile codex dir" "$RENDERED" '"/.config/yolo/foo/codex"'
 assert_contains "allows active profile pi dir" "$RENDERED" '"/.config/yolo/foo/pi"'

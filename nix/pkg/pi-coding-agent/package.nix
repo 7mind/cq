@@ -2,6 +2,7 @@
   lib,
   buildNpmPackage,
   fetchFromGitHub,
+  fetchzip,
   nix-update-script,
   versionCheckHook,
   writableTmpDirAsHomeHook,
@@ -11,16 +12,16 @@
 }:
 buildNpmPackage (finalAttrs: {
   pname = "pi-coding-agent";
-  version = "0.80.6";
+  version = "0.81.1";
 
   src = fetchFromGitHub {
     owner = "earendil-works";
     repo = "pi";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-e/wcHruEcBAHDF5tKvwew7LXjVp0eraHh2k+QaL2sCA=";
+    hash = "sha256-xo3uoR7HceOCL3wqoMcacOe8WXP1o7ReAXne5t6Hgao=";
   };
 
-  npmDepsHash = "sha256-xXEOR0epZcfbXayYGyJdBiFVliamBexqA+1Sd7wlGhU=";
+  npmDepsHash = "sha256-lzKQZbnITzgV9koucsMno6f61ubBLYUcwQEXtak1r1s=";
 
   npmWorkspace = "packages/coding-agent";
 
@@ -31,20 +32,27 @@ buildNpmPackage (finalAttrs: {
     makeBinaryWrapper
   ];
 
-  # Build workspace dependencies in order, then the coding-agent.
-  # We invoke tsgo directly for workspace deps to skip pi-ai's
-  # generate-models script which requires network access
-  # (models.generated.ts is committed to the repo).
-  buildPhase = ''
-    runHook preBuild
+  # Build workspace dependencies in order, then the coding-agent. Upstream's
+  # generated provider JSON is gitignored, so hydrate it from the matching
+  # published pi-ai package and use its network-free build target.
+  buildPhase =
+    let
+      modelData = fetchzip {
+        url = "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${finalAttrs.version}.tgz";
+        hash = "sha256-V0Y25hxMHxPS7D+u/mAYUsmTvX3Q5zLP09biC7dLHHI=";
+      };
+    in
+    ''
+      runHook preBuild
 
-    npx tsgo -p packages/ai/tsconfig.build.json
-    npx tsgo -p packages/tui/tsconfig.build.json
-    npx tsgo -p packages/agent/tsconfig.build.json
-    npm run build --workspace=packages/coding-agent
+      cp -r ${modelData}/dist/providers/data packages/ai/src/providers/data
+      npm run build:offline --workspace=packages/ai
+      npx tsgo -p packages/tui/tsconfig.build.json
+      npx tsgo -p packages/agent/tsconfig.build.json
+      npm run build --workspace=packages/coding-agent
 
-    runHook postBuild
-  '';
+      runHook postBuild
+    '';
 
   # npm workspace symlinks in the output point into packages/ which
   # doesn't exist there. Replace runtime deps with built content and

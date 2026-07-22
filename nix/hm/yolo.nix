@@ -5,8 +5,9 @@
 # focused module. Imported alongside dev-llm via `homeManagerModules.dev-llm`,
 # so it shares the same `config`: it reuses `smind.hm.dev.llm.enable` as its
 # on/off switch. Provider/API-key secrets are wired here via
-# `smind.hm.dev.llm.yolo.secretSessionVariables` (composed + sourced inside the
-# sandbox), so every harness in the sandbox inherits them.
+# `smind.hm.dev.llm.yolo.secretSessionVariables` on Linux (composed + sourced
+# inside bubblewrap), so every Linux harness inherits them. Darwin inherits the
+# launcher's environment; secret-file composition is not wired there.
 #
 # Curried over the flake's `inputs` (for the codegraph package the per-project
 # index bootstrap needs). All host/hardware coupling (device passthrough,
@@ -67,7 +68,7 @@ let
   sandboxHooksJson = builtins.toJSON cfg.yolo.hooks.pre-start.sandbox;
 
   # codegraph passed into the sandbox via the package set (no dedicated binary
-  # env anymore); the per-project index bootstrap is a pre-start host hook
+  # env anymore); the per-project index bootstrap is a sandbox pre-start hook
   # (contributed in config below). null disables all codegraph integration.
   codegraphSet = cfg.yolo.codegraph != null;
 
@@ -120,12 +121,11 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = ''
-        Path to an SSH private key for remote worker machines. When set, the key
-        is read-only bound into the sandbox at the same path it lives at on the
-        host (folded into the read-only bind set), AND a prompt fragment
-        (tagged "ssh") is added telling agents to authenticate with it when
-        instructed to use remote workers (e.g. `ssh -i <path>` /
-        `GIT_SSH_COMMAND='ssh -i <path>'`). null disables both.
+        Linux-only path to an SSH private key for remote worker machines. When
+        set on Linux, the key is read-only bound into the sandbox at the same
+        host path (folded into the read-only bind set), AND a prompt fragment
+        (tagged "ssh") tells agents how to authenticate. Darwin does not add a
+        filesystem grant or prompt for this option. null disables both.
       '';
     };
 
@@ -243,12 +243,10 @@ in
         agent's `--append-system-prompt`, filtered per agent by `target`, gated
         statically by `when` (Nix-eval) and at runtime by `tags` + the
         `yolo --disable=<tag>` flag. List-merges across modules: this module
-        contributes the YOLO pre-authorization note (target "claude"), and —
-        when configured — the remote-worker SSH note (tag "ssh", see
-        {option}`smind.hm.dev.llm.llmSshKeyPath`) and the GitHub agent-account
-        note (tag "github", when `GH_TOKEN` is in
-        {option}`smind.hm.dev.llm.yolo.secretSessionVariables`), all via
-        `mkBefore`; the consumer appends host-specific fragments (e.g. the GPU
+        contributes the YOLO pre-authorization note (target "claude") and, on
+        Linux only, the configured remote-worker SSH note (tag "ssh") and
+        GitHub agent-account note (tag "github"). The consumer appends
+        host-specific fragments (e.g. the GPU
         availability note, tagged "gpu"). Replaces the old hardcoded
         permission/GPU notes and the former `extraPromptFragments` option. Codex
         receives none (no CLI hook).
@@ -280,12 +278,11 @@ in
         }
       '';
       description = ''
-        Environment variables to set INSIDE the yolo sandbox session, as a
-        NAME -> value map. Applied to every `yolo` subcommand
-        (claude/codex/pi/shell/cmd) via the sandbox's `--env`, and overridable
-        per-invocation by an explicit `--env NAME=VALUE` flag. Values may contain
-        `=` but not newlines. Mirrors home-manager's `home.sessionVariables`, but
-        scoped to the sandbox only — these are NOT exported into the host session.
+        Linux-only environment variables to set inside the bubblewrap session,
+        as a NAME -> value map. Applied to every Linux `yolo` subcommand and
+        overridable by `--env NAME=VALUE`. Values may contain `=` but not
+        newlines. Darwin instead inherits the launcher's environment and accepts
+        per-invocation `--env`; this declarative map is not wired there.
       '';
     };
 
@@ -304,17 +301,14 @@ in
         the environment-variable name to the host path of the secret FILE (e.g.
         an agenix secret under `/run/agenix`, or `config.age.secrets.<n>.path`).
 
-        Unlike {option}`smind.hm.dev.llm.yolo.sessionVariables` (literal values),
-        these never pass through bwrap's argv. At launch, yolo reads each readable
-        secret file's content on the host, composes a single mode-0600 file of
-        `NAME=VALUE` lines, binds ONLY that one file into the sandbox, and
-        re-exports each line verbatim inside before exec — so every harness
-        (claude/codex/pi/shell/cmd) inherits the vars, and tokens stay out of argv
-        and the Nix store. The composed file lives in tmpfs and is removed on
-        exit. A secret whose file is unreadable on this host is skipped with a
-        warning, so hosts missing a secret degrade gracefully. Values are
-        single-line (API tokens); use {option}`smind.hm.dev.llm.llmSshKeyPath`
-        for multi-line key files.
+        Linux-only secret-file-backed environment variables. Unlike
+        {option}`smind.hm.dev.llm.yolo.sessionVariables`, these never pass
+        through bwrap's argv: yolo composes one mode-0600 file, binds it into
+        bubblewrap, sources it before exec, and removes it on exit. Unreadable
+        files are skipped with a warning. Darwin does not compose or bind these
+        files; use native OAuth or the launcher's inherited environment there.
+        Values are single-line API tokens; use
+        {option}`smind.hm.dev.llm.llmSshKeyPath` for Linux multi-line key files.
       '';
     };
 
@@ -326,7 +320,7 @@ in
         The codegraph package, or null to disable codegraph integration. When
         set, codegraph is added to the sandbox package set (its CLI / `init -i`
         work inside the sandbox), the per-project index bootstrap is registered
-        as a `codegraph`-tagged pre-start host hook (run `yolo --disable=codegraph`
+        as a `codegraph`-tagged sandbox pre-start hook (run `yolo --disable=codegraph`
         to skip it), and a `codegraph`-tagged usage note is added to
         {option}`smind.hm.dev.llm.yolo.promptExtensions`. null removes all three.
         The codegraph MCP server is configured separately (in tools.nix) and is
@@ -343,9 +337,7 @@ in
         them), each via `bash -c`. Run in declaration order, best-effort (a
         failure warns but does not abort). A hook is skipped if any of its
         `tags` is in the runtime `yolo --disable=<tag>` set. List-merges across
-        modules: the per-project codegraph index bootstrap is contributed here
-        (tag "codegraph") when {option}`smind.hm.dev.llm.yolo.codegraph` is
-        non-null.
+        modules.
       '';
     };
 
@@ -361,6 +353,9 @@ in
         inherited by the agent (and it may use the secret env vars). Run in
         declaration order; a non-zero command does not abort (no `set -e`). A
         hook is skipped if any of its `tags` is in the `yolo --disable=<tag>` set.
+        List-merges across modules: the per-project codegraph index bootstrap is
+        contributed here (tag "codegraph") when
+        {option}`smind.hm.dev.llm.yolo.codegraph` is non-null.
       '';
     };
   };
@@ -372,8 +367,8 @@ in
       #   - YOLO authorization (claude only — Pi/Codex have no permission system).
       #   - Sandbox-active note (every harness — yolo always sets SMIND_SANDBOXED,
       #     so presence of this fragment IS the "sandbox active" signal).
-      #   - SSH remote-worker key usage (only when llmSshKeyPath is set).
-      #   - GitHub agent-account note (only when GH_TOKEN is a secret session var).
+      #   - SSH remote-worker key usage (Linux, when llmSshKeyPath is set).
+      #   - GitHub agent-account note (Linux, when GH_TOKEN is a secret session var).
       smind.hm.dev.llm.yolo.promptExtensions = lib.mkBefore (
         [
           {
@@ -382,15 +377,19 @@ in
           }
           {
             target = "*";
-            prompt = ''Sandbox: ACTIVE (bubblewrap via the 'yolo' wrapper; SMIND_SANDBOXED=1). Writes persist only inside the project directory and /tmp/exchange. For access to $HOME or system paths, follow the /environment skill.'';
+            prompt =
+              if isLinux then
+                ''Sandbox: ACTIVE (bubblewrap via the 'yolo' wrapper; SMIND_SANDBOXED=1). Writes persist only inside the project directory and /tmp/exchange. For access to $HOME or system paths, follow the /environment skill.''
+              else
+                ''Sandbox: ACTIVE (macOS Seatbelt via the 'yolo' wrapper; SMIND_SANDBOXED=1). Network access remains available. Filesystem writes are confined to the project directory, agent configuration/profile directories, shared cache, temporary directories allowed by the base policy, and cq's XDG state directory; unrelated home-directory paths are denied.'';
           }
         ]
-        ++ lib.optional sshKeySet {
+        ++ lib.optional (sshKeySet && isLinux) {
           target = "*";
           tags = [ "ssh" ];
           prompt = ''A dedicated SSH private key for logging into remote worker machines is bound read-only at ${cfg.llmSshKeyPath} inside the sandbox. When you are instructed to use remote worker machines, authenticate with this key — e.g. `ssh -i ${cfg.llmSshKeyPath} <user>@<host>` or `GIT_SSH_COMMAND='ssh -i ${cfg.llmSshKeyPath}' git <push|fetch> ...`.'';
         }
-        ++ lib.optional (cfg.yolo.secretSessionVariables ? GH_TOKEN) {
+        ++ lib.optional (isLinux && cfg.yolo.secretSessionVariables ? GH_TOKEN) {
           target = "*";
           tags = [ "github" ];
           prompt = ''A GitHub token is available in the GH_TOKEN environment variable. It belongs to a GitHub account created specifically for autonomous agentic work — it is NOT the user's personal account. Use it (via the `gh` CLI, which reads GH_TOKEN, or the token directly) for GitHub operations carried out on the agent's own behalf.'';
@@ -402,39 +401,17 @@ in
         }
       );
     }
-    # codegraph per-project index bootstrap as a pre-start host hook (tag
-    # "codegraph"). Idempotent + cheap on the warm path; `--disable=codegraph`
-    # skips it. Tool paths are interpolated, so the hook is self-contained.
+    # CodeGraph per-project index bootstrap as a sandbox pre-start hook (tag
+    # "codegraph"). Running after bwrap hides unbound ancestor indexes, so the
+    # index selected here is necessarily visible to the agent's MCP server.
+    # `--disable=codegraph` skips it; explicit tool paths keep it self-contained.
     (lib.mkIf codegraphSet {
-      smind.hm.dev.llm.yolo.hooks.pre-start.host = lib.mkBefore [
+      smind.hm.dev.llm.yolo.hooks.pre-start.sandbox = lib.mkBefore [
         {
           tags = [ "codegraph" ];
           command = ''
-            cg=${cfg.yolo.codegraph}/bin/codegraph
-            jq=${pkgs.jq}/bin/jq
-            git=${pkgs.git}/bin/git
-            # In a git work tree, ensure the per-project index is git-ignored by
-            # appending `.codegraph/` to the TRACKED root .gitignore (idempotent
-            # on the exact line; creates the file if absent, fixing a missing
-            # trailing newline first so the entry lands on its own line).
-            _root="$("$git" rev-parse --show-toplevel 2>/dev/null || true)"
-            if [ -n "$_root" ] && ! grep -qxF '.codegraph/' "$_root/.gitignore" 2>/dev/null; then
-              if [ -s "$_root/.gitignore" ] && [ -n "$(tail -c1 "$_root/.gitignore")" ]; then
-                printf '\n' >> "$_root/.gitignore"
-              fi
-              printf '%s\n' '.codegraph/' >> "$_root/.gitignore"
-            fi
-            read -r initialized file_count < <("$cg" status --json 2>/dev/null | "$jq" -r '"\(.initialized // false) \(.fileCount // 0)"' 2>/dev/null)
-            if [ "$initialized" = "true" ] && [ "''${file_count:-0}" -gt 0 ]; then
-              echo "yolo: syncing CodeGraph index for $PWD…" >&2
-              "$cg" sync >&2 || echo "warning: codegraph sync failed; continuing with the existing index" >&2
-            else
-              echo "yolo: building CodeGraph index for $PWD (one-time; pass --disable=codegraph to skip)…" >&2
-              if [ "$initialized" != "true" ]; then
-                "$cg" init >&2 || { echo "warning: codegraph init failed; launching without a code index" >&2; exit 0; }
-              fi
-              "$cg" index >&2 || echo "warning: codegraph index failed; launching without a code index" >&2
-            fi
+            ${pkgs.bash}/bin/bash ${../pkg/yolo/codegraph-bootstrap.sh} \
+              ${cfg.yolo.codegraph}/bin/codegraph ${pkgs.jq}/bin/jq ${pkgs.git}/bin/git
           '';
         }
       ];

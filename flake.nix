@@ -128,8 +128,8 @@
           # system. To add a system: set its entry to nixpkgs lib.fakeHash
           # (sha256-AAAA…), `nix build .#node-modules`, paste the reported `got:`.
           outputHash = {
-            "x86_64-linux" = "sha256-J6Z2LIvr1CEZGKh1bJtQquY1PdZ49Y3dQcV1PXS4MAc=";
-            "aarch64-darwin" = "sha256-I5SAJnHLOR1mh43XqRwNcJaBptSm6IX4xeT8pPXHrJE=";
+            "x86_64-linux" = "sha256-h9NUky98kMbvFyj+CidvJZYt08W/PGTMe3HIxlOEW6g=";
+            "aarch64-darwin" = "sha256-ZUsAV/hv8BnTp7TYqPXhmCN1Zu5S1Q1Yw3YPr69TGIU=";
           }.${system} or (throw "ledger-node-modules: no FOD hash pinned for ${system}");
         };
 
@@ -442,20 +442,24 @@
           };
         };
 
-        # Policy generation runs everywhere; real Seatbelt enforcement runs on Darwin.
+        # Deterministic launcher/policy checks run on every build system. A live
+        # sandbox-exec probe cannot run inside Nix's own Darwin Seatbelt sandbox
+        # (nested sandbox_apply returns EPERM), so runtime confinement is verified
+        # outside the Nix builder; see docs/macos-home-manager.md.
         checks =
           {
             yolo-profile =
               pkgs.runCommand "yolo-profile"
                 {
-                  nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq ];
+                  nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq pkgs.git self.packages.${system}.codegraph ];
                 }
                 ''
                   cp -r ${./nix/pkg/yolo} yolo
                   chmod -R u+w yolo
                   cd yolo
-                  shellcheck --severity=warning custom-prompt.sh yolo.sh profile-test.sh
+                  shellcheck --severity=warning custom-prompt.sh yolo.sh profile-test.sh codegraph-bootstrap.sh codegraph-bootstrap-test.sh
                   bash profile-test.sh
+                  bash codegraph-bootstrap-test.sh "$(command -v codegraph)" "$(command -v jq)" "$(command -v git)"
                   touch $out
                 '';
             yolo-darwin-profile =
@@ -472,56 +476,7 @@
                   bash profile-test.sh
                   touch $out
                 '';
-          }
-          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-          yolo-darwin-confinement =
-            pkgs.runCommand "yolo-darwin-confinement"
-              {
-                nativeBuildInputs = [ self.packages.${system}.yolo-darwin ];
-              }
-              ''
-                set -euo pipefail
-
-                # Keep HOME outside the granted working directory.
-                export HOME="$(mktemp -d)"
-                work="$(mktemp -d)"
-
-                inside="$work/inside.txt"
-                echo "INSIDE-OK" > "$inside"
-
-                # Exercise the blanket sibling-profile deny after the base allows.
-                outside_dir="$HOME/.config/yolo/other-profile"
-                mkdir -p "$outside_dir"
-                outside="$outside_dir/secret.txt"
-                echo "OUTSIDE-SECRET" > "$outside"
-
-                cd "$work"
-
-                if ! yolo cmd cat "$inside" > got-inside 2> err-inside; then
-                  echo "FAIL: read of a file INSIDE \$PWD was denied" >&2
-                  cat err-inside >&2
-                  exit 1
-                fi
-                grep -q INSIDE-OK got-inside || {
-                  echo "FAIL: inside-\$PWD read returned unexpected content" >&2
-                  exit 1
-                }
-
-                # Reject both a successful read and a non-zero command that leaked data.
-                if yolo cmd cat "$outside" > got-outside 2> err-outside; then
-                  echo "FAIL: read of a file OUTSIDE \$PWD SUCCEEDED but must be denied" >&2
-                  cat got-outside >&2
-                  exit 1
-                fi
-                if grep -q OUTSIDE-SECRET got-outside; then
-                  echo "FAIL: outside-\$PWD read leaked secret content to stdout despite non-zero exit" >&2
-                  exit 1
-                fi
-
-                echo "yolo-darwin confinement OK: inside-\$PWD allowed, outside-\$PWD denied (no leak)"
-                touch "$out"
-              '';
-        };
+          };
 
         apps.default = {
           type = "app";

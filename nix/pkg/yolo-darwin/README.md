@@ -112,6 +112,7 @@ Each directory is created with `chmod 700` (read-write-execute for the owner onl
 All three agents get the home-manager-managed shared assets **copied** into their profile directory on launch (claude: settings.json, CLAUDE.md, skills, plugins, commands, agents; codex: AGENTS.md, prompts, skills; pi: settings.json, AGENTS.md, APPEND_SYSTEM.md, cq-agents, prompts, skills, extensions, mcp.json). The copies are dereferenced and self-contained (no symlinks back into the sandbox-denied real homes) and are copy-if-absent: an existing file in the profile directory is never overwritten, so HM changes only propagate into a profile directory that is recreated.
 
 The default profile (empty, no `--profile` flag) does NOT create any directories. Agents use their real home directories:
+
 - Claude Code reads/writes `~/.claude/` and `~/.claude.json`.
 - Codex reads/writes `~/.codex/`.
 - pi reads/writes `~/.pi/`.
@@ -123,11 +124,14 @@ The default profile (empty, no `--profile` flag) does NOT create any directories
 ### What is confined
 
 Read-write access is granted only to:
+
 - **The working directory** (`$PWD`) — where you launched `yolo`.
 - **`~/.cache`** — cache directory shared across profiles.
+- **cq's XDG state root** — `$XDG_STATE_HOME/cq` when `XDG_STATE_HOME` is an absolute path, otherwise `~/.local/state/cq`; required by the ledger MCP server and Claude stop gate.
 - **This profile's configuration directories** (when a named profile is active) — only the active profile's `~/.config/yolo/<name>/claude`, `~/.config/yolo/<name>/codex`, `~/.config/yolo/<name>/pi` directories are accessible; sibling profiles are explicitly denied.
 
 Read-only access is granted to system files required to run the agent:
+
 - `/usr`, `/bin`, `/opt` (executables and libraries).
 - `/nix` (Nix store packages).
 - `~/.config/git`, `~/.gitconfig`, `~/.config/jj` (version control configuration).
@@ -143,6 +147,7 @@ Read-only access is granted to system files required to run the agent:
 ### Credential isolation
 
 When using a named profile, the Seatbelt profile implements credential isolation by:
+
 1. Denying access to the entire `~/.config/yolo` tree by default.
 2. Re-granting read-write access **only** to the active profile's subdirectories (e.g., `~/.config/yolo/work/claude`, `~/.config/yolo/work/codex`, `~/.config/yolo/work/pi`).
 
@@ -202,6 +207,7 @@ pi (the Anthropic coding agent) exposes a configuration-directory environment va
 2. Copies the HM-managed shared assets (settings.json, AGENTS.md, APPEND_SYSTEM.md, cq-agents, prompts, skills, extensions, mcp.json) from your main pi installation (`~/.pi/agent/`) into the profile directory, so it is self-contained (the real `~/.pi` stays denied by the sandbox).
 
 This means:
+
 - Each profile's pi instance has its own `auth.json`, sessions, trust store, and npm packages.
 - Shared assets (like skill definitions) are copied in on first launch; existing files are never overwritten, so HM updates reach a profile only when its directory is recreated.
 
@@ -222,9 +228,9 @@ When an agent runs under `yolo-darwin`:
 
 ## Manual macOS verification checklist
 
-The launcher's SBPL profile generation, the per-profile `~/.config/yolo/<name>/<agent>` directory layout (created `700`), the `$PWD==$HOME` guard, and `$PWD` sandbox confinement are covered **automatically** by the nix flake checks — `yolo-darwin-profile` (all systems) and `yolo-darwin-confinement` (macOS) — so they are not repeated here.
+The `yolo-darwin-profile` flake check covers deterministic SBPL generation, the per-profile `~/.config/yolo/<name>/<agent>` directory layout (created `700`), and the `$PWD==$HOME` guard. Live Seatbelt execution must run outside the Nix Darwin builder because macOS rejects nested `sandbox-exec` with `sandbox_apply: Operation not permitted`.
 
-The steps below are the remaining runtime behaviors a Mac-less CI cannot exercise: real account/credential resolution, session isolation across a live agent, and OAuth refresh. Run them on a Mac using an actual test repository.
+Run the steps below on a Mac using an actual test repository. They cover live confinement, account/credential resolution, session isolation, and OAuth refresh. At minimum, confirm `yolo cmd pwd` succeeds from the repository and that `yolo cmd cat <an unrelated home path>` fails without leaking its contents.
 
 For each profile you set up (e.g., "personal" and "work"):
 
@@ -274,7 +280,7 @@ For each profile you set up (e.g., "personal" and "work"):
 
    **Timing note**: Token refresh is automatic and depends on the token's age and usage. You may not observe a refresh during a single session; this step is optional but recommended for long-running environments.
 
-(Sandbox confinement — that a read outside `$PWD` / of a sibling profile's dir is denied — is verified automatically by the `yolo-darwin-confinement` flake check on macOS; it is no longer a manual step.)
+Repeat the live inside/outside-path probe after policy or macOS upgrades; deterministic flake checks cannot substitute for executing Seatbelt on the host.
 
 ## Environment variable precedence
 
@@ -347,7 +353,7 @@ yolo --profile work pi login
 
 ### Sandbox permission denied on a file I need
 
-The sandbox grants read-write access only to the working directory, `~/.cache`, and (for named profiles) the active profile's directories. If you need access to another path:
+The sandbox grants read-write access only to the working directory, `~/.cache`, cq's XDG state root, and (for named profiles) the active profile's directories. If you need access to another path:
 
 1. Copy or symlink it into your working directory.
 2. Or, run the agent without a profile (`yolo claude`) to use the default configuration (but lose profile isolation).

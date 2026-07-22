@@ -13,19 +13,18 @@
 // CANNOT/​MUST NOT import `@earendil-works/pi-*` or `@cq/*`. The pieces of the
 // Pi ExtensionAPI / ExtensionContext this extension needs are therefore
 // declared as LOCAL STRUCTURAL interfaces, copied from the ACTUAL installed Pi
-// v0.80.6 typings (D86 corrected the stale 0.80.3 comment; the vendored
-// version is 0.80.6 — read from the real store path, not assumed):
-//   pi-coding-agent-0.80.6/lib/node_modules/pi-monorepo/dist/core/extensions/types.d.ts
+// v0.81.1 typings (read from the real store path, not assumed):
+//   pi-coding-agent-0.81.1/lib/node_modules/pi-monorepo/dist/core/extensions/types.d.ts
 //     - ExtensionUIContext.setStatus(key, text|undefined): void            L79
 //     - ExtensionContext.ui: ExtensionUIContext                            L210
 //     - ExtensionContext.hasUI: boolean (false in print/RPC mode)          L214
 //     - ExtensionContext.cwd: string                                       L216
-//     - ExtensionAPI.on("session_start",   ExtensionHandler<…>)            L842
-//     - ExtensionAPI.on("turn_end",        ExtensionHandler<…>)            L860
-//     - ExtensionAPI.on("tool_execution_end", ExtensionHandler<…>)         L866
-//     - ExtensionAPI.on("session_shutdown", ExtensionHandler<…>)           L848
-//     - ExtensionHandler<E> = (event, ctx: ExtensionContext) => …          L835
-//     - ExtensionFactory = (pi: ExtensionAPI) => void|Promise<void>        L1060
+//     - ExtensionAPI.on("session_start",   ExtensionHandler<…>)            L846
+//     - ExtensionAPI.on("turn_end",        ExtensionHandler<…>)            L864
+//     - ExtensionAPI.on("tool_execution_end", ExtensionHandler<…>)         L870
+//     - ExtensionAPI.on("session_shutdown", ExtensionHandler<…>)           L852
+//     - ExtensionHandler<E> = (event, ctx: ExtensionContext) => …          L839
+//     - ExtensionFactory = (pi: ExtensionAPI) => void|Promise<void>        L1072
 // KEEP IN SYNC with those typings. NO `@cq/*` / `@earendil-works/*` imports.
 
 import { execFile } from "node:child_process";
@@ -160,15 +159,15 @@ export interface LedgerStatusOptions {
 /**
  * Wire the ledger-status refresh pipeline into a live Pi session.
  *
- * Refresh triggers satisfy Q258's intent against the REAL pi 0.80.6 events
+ * Refresh triggers satisfy Q258's intent against the REAL pi 0.81.1 events
  * (verified in dist/core/extensions/types.d.ts — NOT assumed):
- *   (a) initial on-load paint  → `session_start`   (L842)
- *   (b) post-turn / post-tool  → `turn_end` (L860) + `tool_execution_end` (L866)
+ *   (a) initial on-load paint  → `session_start`   (L846)
+ *   (b) post-turn / post-tool  → `turn_end` (L864) + `tool_execution_end` (L870)
  *   (c) periodic poll          → setInterval(POLL_INTERVAL_MS)
  *
  * The on-load paint does NOT hard-depend on `session_start`: `turn_end`,
  * `tool_execution_end`, and the poll ALL paint too, so an initial paint still
- * occurs if `session_start` never fires. Disposal (`session_shutdown`, L848)
+ * occurs if `session_start` never fires. Disposal (`session_shutdown`, L852)
  * clears the poll. The refresh is SINGLE-FLIGHT (overlapping triggers do not
  * stack `cq counts` spawns) and NEVER throws into the host loop.
  */
@@ -209,9 +208,9 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
     }
   }
 
-  // Chosen event names — VERIFIED present in the installed pi 0.80.6 extension
-  // typings (dist/core/extensions/types.d.ts): session_start (L842), turn_end
-  // (L860), tool_execution_end (L866), session_shutdown (L848).
+  // Chosen event names — VERIFIED present in the installed pi 0.81.1 extension
+  // typings (dist/core/extensions/types.d.ts): session_start (L846), turn_end
+  // (L864), tool_execution_end (L870), session_shutdown (L852).
   api.on("session_start", (_event, ctx) => {
     void refresh(ctx); // (a) initial on-load paint
   });

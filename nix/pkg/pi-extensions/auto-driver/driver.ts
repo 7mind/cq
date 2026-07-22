@@ -173,7 +173,7 @@ export interface DriverApi {
    * next turn (what the driver wants); `"steer"` merges it into the in-flight
    * turn.
    *
-   * NAME MISMATCH (Pi 0.80.3): the .d.ts typings call this option `deliverAs`,
+   * NAME MISMATCH (Pi 0.81.1): the .d.ts typings call this option `deliverAs`,
    * but the runtime error string names it `streamingBehavior`. To be robust
    * against whichever the runtime actually reads, we send BOTH (extra keys are
    * ignored by Pi's option destructuring).

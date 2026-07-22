@@ -122,17 +122,27 @@ _render_base() {
 # parameter while literal PWD keeps this fragment deterministic for testing.
 _render_yolo_rules() {
   local name="$1" pwd_dir="$2"
-  local esc_pwd label
+  local esc_pwd esc_cq_state label
   esc_pwd="$(_sb_escape "$pwd_dir")"
+  if [[ -n "${XDG_STATE_HOME:-}" && "$XDG_STATE_HOME" == /* ]]; then
+    esc_cq_state="$(_sb_escape "${XDG_STATE_HOME%/}/cq")"
+  else
+    esc_cq_state=""
+  fi
   if [[ -n "$name" ]]; then label="$name"; else label="(default)"; fi
 
   printf ';; yolo-darwin rules appended after claude-code-sandbox noread.sb.\n'
   printf ';; Profile: %s\n' "$label"
   printf ';; Network remains open; filesystem grants are narrowed below.\n\n'
-  printf ';; Grant PWD, shared cache, and native homes for the default profile.\n'
+  printf ';; Grant PWD, shared cache, cq state, and native homes for the default profile.\n'
   printf '(allow file-read* file-write* file-write-create file-read-metadata file-ioctl\n'
   printf '    (subpath "%s")\n' "$esc_pwd"
   printf '    (subpath (string-append (param "HOME_DIR") "/.cache"))\n'
+  if [[ -n "$esc_cq_state" ]]; then
+    printf '    (subpath "%s")\n' "$esc_cq_state"
+  else
+    printf '    (subpath (string-append (param "HOME_DIR") "/.local/state/cq"))\n'
+  fi
   if [[ -z "$name" ]]; then
     printf '    ;; default profile: the agents'"'"' real home config dirs\n'
     printf '    (subpath (string-append (param "HOME_DIR") "/.claude"))\n'
