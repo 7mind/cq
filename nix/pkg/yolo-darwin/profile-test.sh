@@ -121,9 +121,17 @@ assert_contains "allows ~/.cache" "$RENDERED" '(subpath (string-append (param "H
 assert_contains "allows cq default XDG state" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.local/state/cq"))'
 RENDERED_CUSTOM_XDG="$(XDG_STATE_HOME='/tmp/custom state' render_profile foo /tmp/x)"
 assert_contains "allows cq custom absolute XDG state" "$RENDERED_CUSTOM_XDG" '(subpath "/tmp/custom state/cq")'
+assert_contains "allows /Users metadata traversal" "$RENDERED" '(literal "/Users")'
+assert_contains "allows home root metadata traversal" "$RENDERED" '(literal (param "HOME_DIR"))'
+assert_contains "allows named profile .config read traversal" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.config"))'
+assert_contains "allows named profile yolo read traversal" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.config/yolo"))'
+assert_contains "allows active profile root read traversal" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.config/yolo/foo"))'
 assert_contains "allows active profile claude dir" "$RENDERED" '"/.config/yolo/foo/claude"'
+assert_contains "allows active profile claude root canonicalization" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.config/yolo/foo/claude"))'
 assert_contains "allows active profile codex dir" "$RENDERED" '"/.config/yolo/foo/codex"'
+assert_contains "allows active profile codex root canonicalization" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.config/yolo/foo/codex"))'
 assert_contains "allows active profile pi dir" "$RENDERED" '"/.config/yolo/foo/pi"'
+assert_contains "allows active profile pi root canonicalization" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.config/yolo/foo/pi"))'
 assert_contains "explicitly denies the ~/.config/yolo profiles tree" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.config/yolo")))'
 assert_not_contains "no (version 1) line (the base provides it)" "$RENDERED" '(version 1)'
 

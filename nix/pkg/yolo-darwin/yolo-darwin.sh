@@ -171,9 +171,21 @@ _render_yolo_rules() {
     printf '    (subpath (string-append (param "HOME_DIR") "/Library/Caches/claude-cli-nodejs")))\n'
     printf '\n'
     printf ';; Re-grant active profile "%s" last; siblings remain denied.\n' "$name"
+    printf ';; Ancestor grants let realpath/canonicalize traverse to the profile.\n'
+    printf '(allow file-read-metadata\n'
+    printf '    (literal "/Users")\n'
+    printf '    (literal (param "HOME_DIR")))\n'
+    printf '(allow file-read*\n'
+    printf '    (literal (string-append (param "HOME_DIR") "/.config"))\n'
+    printf '    (literal (string-append (param "HOME_DIR") "/.config/yolo"))\n'
+    printf '    (literal (string-append (param "HOME_DIR") "/.config/yolo/%s")))\n' "$name"
     printf '(allow file-read* file-write* file-write-create file-read-metadata file-ioctl\n'
+    printf '    ;; literal roots are required by realpath/canonicalize; subpath covers descendants\n'
+    printf '    (literal (string-append (param "HOME_DIR") "/.config/yolo/%s/claude"))\n' "$name"
     printf '    (subpath (string-append (param "HOME_DIR") "/.config/yolo/%s/claude"))\n' "$name"
+    printf '    (literal (string-append (param "HOME_DIR") "/.config/yolo/%s/codex"))\n' "$name"
     printf '    (subpath (string-append (param "HOME_DIR") "/.config/yolo/%s/codex"))\n' "$name"
+    printf '    (literal (string-append (param "HOME_DIR") "/.config/yolo/%s/pi"))\n' "$name"
     printf '    (subpath (string-append (param "HOME_DIR") "/.config/yolo/%s/pi")))\n' "$name"
   fi
 }

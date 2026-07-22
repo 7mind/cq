@@ -25,7 +25,19 @@
     (subpath (string-append (param "HOME_DIR") "/Library/Caches/claude-cli-nodejs")))
 
 ;; Re-grant active profile "foo" last; siblings remain denied.
+;; Ancestor grants let realpath/canonicalize traverse to the profile.
+(allow file-read-metadata
+    (literal "/Users")
+    (literal (param "HOME_DIR")))
+(allow file-read*
+    (literal (string-append (param "HOME_DIR") "/.config"))
+    (literal (string-append (param "HOME_DIR") "/.config/yolo"))
+    (literal (string-append (param "HOME_DIR") "/.config/yolo/foo")))
 (allow file-read* file-write* file-write-create file-read-metadata file-ioctl
+    ;; literal roots are required by realpath/canonicalize; subpath covers descendants
+    (literal (string-append (param "HOME_DIR") "/.config/yolo/foo/claude"))
     (subpath (string-append (param "HOME_DIR") "/.config/yolo/foo/claude"))
+    (literal (string-append (param "HOME_DIR") "/.config/yolo/foo/codex"))
     (subpath (string-append (param "HOME_DIR") "/.config/yolo/foo/codex"))
+    (literal (string-append (param "HOME_DIR") "/.config/yolo/foo/pi"))
     (subpath (string-append (param "HOME_DIR") "/.config/yolo/foo/pi")))
