@@ -51,8 +51,12 @@ buildNpmPackage {
     # on V8's Liftoff baseline compiler, avoiding the turboshaft Zone OOM
     # (CodeGraph issues #293/#298). Built with printf (not a heredoc) so the
     # shebang lands at column 0 regardless of this nix string's indentation.
+    # CODEGRAPH_TELEMETRY defaults to 0: upstream sends anonymous usage
+    # telemetry unless opted out, and the CLI opt-out (~/.codegraph/
+    # telemetry.json) does not survive sandboxed sessions. The env var wins
+    # over stored config; an explicit CODEGRAPH_TELEMETRY=1 still opts in.
     mkdir -p $out/bin
-    printf '#!/bin/sh\nexec %s --liftoff-only %s/lib/codegraph/dist/bin/codegraph.js "$@"\n' \
+    printf '#!/bin/sh\nexport CODEGRAPH_TELEMETRY="''${CODEGRAPH_TELEMETRY:-0}"\nexec %s --liftoff-only %s/lib/codegraph/dist/bin/codegraph.js "$@"\n' \
       '${nodejs_24}/bin/node' "$out" > $out/bin/codegraph
     chmod +x $out/bin/codegraph
 

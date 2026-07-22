@@ -323,6 +323,11 @@ in
           #   package as a *peer* dependency, which Pi's --legacy-peer-deps
           #   managed install skips (and Pi does not alias `ollama`), so it fails
           #   to load with "Cannot find module 'ollama'".
+          #   0.7.0 upstreamed the web-tool auth fix we previously carried as
+          #   the vendored fix-ollama-cloud-web-tools-auth.ts extension (its
+          #   getCloudApiKey now awaits the registry lookup and falls back to
+          #   OLLAMA_API_KEY), so the extension was removed — the old copy also
+          #   crashed pi 0.80.8+, which dropped the SDK's AuthStorage export.
           # - @sinamtz/pi-minimax-provider: MiniMax M3 provider (Anthropic-compat
           #   streaming). Registers the `minimax` provider against
           #   https://api.minimax.io (apiKey `$MINIMAX_API_KEY`). Self-contained:
@@ -361,13 +366,6 @@ in
             # child `pi -p` turn that cannot itself re-dispatch. See the
             # extension header for the Route-A subprocess mechanism (T221/T224).
             "${../pkg/pi-extensions/cq-subagent-dispatch.ts}"
-            # Fix pi-ollama-cloud's broken web-tool auth: its getCloudApiKey
-            # forgets to await the async getApiKey, so the OLLAMA_API_KEY env
-            # fallback is dead code and ollama_web_search/_fetch fail with
-            # "No Ollama Cloud API key configured" despite the key being set.
-            # We re-register both tools (at load, pre-empting the package's
-            # session_start registration) with corrected resolution. See header.
-            "${../pkg/pi-extensions/fix-ollama-cloud-web-tools-auth.ts}"
             # cq auto-driver: registers /cq:advance:auto, /cq:plan:auto,
             # /cq:investigate:auto, and /cq:implement:auto — drive-and-await
             # loops that re-run the underlying cq:* command until its terminal
