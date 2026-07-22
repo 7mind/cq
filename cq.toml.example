@@ -152,7 +152,7 @@ planners = ["opus"]
 # [agent_efforts]
 #   plan-reviewer = "max"
 
-# [ledger] — Ledger storage backend configuration (T349, T494).
+# [ledger] — Ledger storage backend configuration (T349, T494, G81).
 # Absence of this block (or of cq.toml entirely) defaults to backend="fs"
 # (the standard filesystem-backed FsLedgerStore) and backup="none".
 # The "git-object" backend is opt-in experimental (Q189): it stores ledger
@@ -160,9 +160,16 @@ planners = ["opus"]
 # out-of-tree bun:sqlite primary at the XDG location (K102) — the on-disk
 # format is an implementation detail of that backend. "fs"/"git-object"
 # remain PARSEABLE indefinitely so `cq migrate` can locate legacy source data.
+# "postgres" is an opt-in multi-tenant backend (G81, T572-T585) for shared
+# databases — all projects in ONE Postgres database, isolated by tenant key.
 #
 # Keys:
-#   backend   — storage backend: "fs" (default) | "git-object" | "xdg"
+#   backend   — storage backend: "fs" (default) | "git-object" | "xdg" | "postgres"
+#   url       — optional DSN for postgres backend (CREDENTIAL-LESS; env override required for credentials)
+#               Example: "postgres://localhost:5432/cq_ledger" (no user/password).
+#               Resolution precedence: CQ_LEDGER_PG_URL > DATABASE_URL > [ledger].url > PG* driver defaults.
+#               SECRET HYGIENE: Never commit plaintext passwords to [ledger].url.
+#               Use CQ_LEDGER_PG_URL or DATABASE_URL environment variables instead.
 #   branch    — git branch for the git-object backend (default: "cq-ledger")
 #   remote    — git remote for the git-object backend (default: "origin")
 #   backup    — human-readable markdown export/backup mode:
@@ -175,11 +182,23 @@ planners = ["opus"]
 # values are the defaults.
 #
 # [ledger]
-#   backend   = "git-object"   # "fs" (default) | "git-object" (experimental) | "xdg"
+#   backend   = "git-object"   # "fs" (default) | "git-object" (experimental) | "xdg" | "postgres"
 #   branch    = "cq-ledger"    # git branch to store ledger objects on
 #   remote    = "origin"       # git remote to push/fetch ledger objects from
 #   backup    = "none"         # "none" (default) | "in-tree" | "orphan-branch"
 #   projectId = "my-project"   # optional repo-identity key (Q246)
+#
+# To activate the postgres backend (multi-tenant shared database), uncomment
+# and edit the block below. The `url` field is a COMMITTED, CREDENTIAL-LESS
+# DSN (no user/password). A real connection with credentials belongs in the
+# environment variables CQ_LEDGER_PG_URL or DATABASE_URL (highest precedence
+# at runtime). See cq.toml-postgres.md for the full postgres setup guide.
+#
+# [ledger]
+#   backend = "postgres"
+#   url     = "postgres://localhost:5432/cq_ledger"   # credential-less; see CQ_LEDGER_PG_URL/DATABASE_URL
+#   backup  = "none"
+#   projectId = "my-project"
 
 # ---------------------------------------------------------------------------
 # PER-HARNESS LAYERED OVERRIDES (Q239 / Q240)
@@ -230,3 +249,21 @@ planners = ["opus"]
 # [harness.pi.tiers]
 # frontier = "grok"      # tier -> model; value resolves to pi:grok-build/grok-build
 # fast     = "minimax"   # tier -> model; value resolves to pi:ollama-cloud/minimax-m3
+
+# ---------------------------------------------------------------------------
+# [project] — OPTIONAL PROJECT-LEVEL METADATA (Q270, T570)
+# ---------------------------------------------------------------------------
+#
+# A [project] table holds optional metadata for this project.
+#
+# Keys:
+#   name — a cosmetic DISPLAY NAME for the project (string, optional).
+#          Shown in ledger-web / ledger-tui header and cq serve project selector.
+#          Defaults (if absent) to [ledger].projectId > repo root basename >
+#          the resolved projectKey itself.
+#          No credentials or secrets belong here — it is display-only.
+#
+# Example (COMMENTED OUT — uncomment to set a display name):
+#
+# [project]
+#   name = "my-project"
