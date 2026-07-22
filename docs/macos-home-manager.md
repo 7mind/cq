@@ -332,6 +332,7 @@ codex --version
 pi --version
 cq --help || test "$?" -eq 2       # usage intentionally exits 2
 yolo cmd pwd                       # run from a project directory
+yolo cmd git status                # uses the profile's Nix Git inside Seatbelt
 
 test -e ~/.claude/settings.json
 test -e ~/.pi/agent/settings.json
