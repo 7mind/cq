@@ -40,8 +40,8 @@ const GEN_FILE = path.resolve(TEST_DIR, "..", "src", "agentsCatalogue.gen.ts");
 // ---------------------------------------------------------------------------
 
 /**
- * The 23 Q148 role ids in the FIXED generation order (same as ROLES[] in the
- * gen script): 9 subagents first, then 14 orchestrator commands.
+ * The 24 Q148 role ids in the FIXED generation order (same as ROLES[] in the
+ * gen script): 9 subagents first, then 15 orchestrator commands.
  */
 const EXPECTED_ROLE_IDS: readonly string[] = [
   // subagents
@@ -55,6 +55,7 @@ const EXPECTED_ROLE_IDS: readonly string[] = [
   "research-explorer",
   "research-experimenter",
   // orchestrator commands
+  "begin",
   "advance",
   "plan",
   "plan/advance",
@@ -72,8 +73,8 @@ const EXPECTED_ROLE_IDS: readonly string[] = [
 ];
 
 describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
-  it("exports exactly 23 roles in the fixed generation order", () => {
-    expect(AGENT_ROLES.length).toBe(23);
+  it("exports exactly 24 roles in the fixed generation order", () => {
+    expect(AGENT_ROLES.length).toBe(24);
     expect(AGENT_ROLES.map((r) => r.id)).toEqual([...EXPECTED_ROLE_IDS]);
   });
 
@@ -135,7 +136,7 @@ describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
     }
   });
 
-  it("all 14 orchestrator commands are orchestrator kind", () => {
+  it("all 15 orchestrator commands are orchestrator kind", () => {
     const cmdIds = EXPECTED_ROLE_IDS.slice(9);
     for (const id of cmdIds) {
       const role = AGENT_ROLES.find((r) => r.id === id)!;

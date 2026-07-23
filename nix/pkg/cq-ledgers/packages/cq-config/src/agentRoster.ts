@@ -2,7 +2,7 @@
  * The fixed Q148/Q158 agent-role roster — the SHARED anti-drift source of
  * truth for the `(id, agentTierKey)` pairs (T285).
  *
- * Two consumers must agree on the SAME 23 roles and which of them carry an
+ * Two consumers must agree on the SAME 24 roles and which of them carry an
  * `[agent_tiers]` key:
  *  - the ledger-mcp `computeAgentModels` capability (the `get_agent_models`
  *    server payload), and
@@ -33,8 +33,8 @@ export interface AgentRoleTier {
 }
 
 /**
- * The 23 Q148 roles, in a fixed order matching the codegen ROLES table: the 9
- * subagents first (each model-configurable, `agentTierKey === id`), then the 14
+ * The 24 Q148 roles, in a fixed order matching the codegen ROLES table: the 9
+ * subagents first (each model-configurable, `agentTierKey === id`), then the 15
  * orchestrator commands (not model-configurable, `agentTierKey === null`).
  */
 export const AGENT_ROLE_TIERS: readonly AgentRoleTier[] = [
@@ -49,6 +49,7 @@ export const AGENT_ROLE_TIERS: readonly AgentRoleTier[] = [
   { id: "research-explorer", agentTierKey: "research-explorer" },
   { id: "research-experimenter", agentTierKey: "research-experimenter" },
   // --- orchestrator commands (not model-configurable) ---
+  { id: "begin", agentTierKey: null },
   { id: "advance", agentTierKey: null },
   { id: "plan", agentTierKey: null },
   { id: "plan/advance", agentTierKey: null },

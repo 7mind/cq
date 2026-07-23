@@ -603,7 +603,7 @@ ${QUERY_LANGUAGE_HELP}`,
     "get_agent_models",
     {
       description:
-        "Return the per-role model overlay for every agent in the 23-role roster. " +
+        "Return the per-role model overlay for every agent in the 24-role roster. " +
         "Returns { configured, agents: [{ id, status, modelClass, modelMappings }] }. " +
         "Four status variants: " +
         "'resolved' — a live token was found for the role's tier class; " +

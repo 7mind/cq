@@ -2,7 +2,7 @@
 /**
  * Codegen for the Agents tab catalogue (T276, goal G34; Q148 + Q151–Q153).
  *
- * Walks the Q148 role assets under `cq-assets/` (9 `agents/*.md` subagents + 14
+ * Walks the Q148 role assets under `cq-assets/` (9 `agents/*.md` subagents + 15
  * `commands/cq/*.md` orchestrator commands), runs the pure
  * {@link parseAgentMarkdown} over each, and emits the COMMITTED generated module
  * `packages/ledger-web/src/agentsCatalogue.gen.ts`, overwriting the T275
@@ -81,8 +81,8 @@ interface RoleSpec {
 }
 
 /**
- * The 23 Q148 roles, in a fixed order: the 9 subagents first (by the
- * link-prompts flow order), then the 14 orchestrator commands. Each subagent's
+ * The 24 Q148 roles, in a fixed order: the 9 subagents first (by the
+ * link-prompts flow order), then the 15 orchestrator commands. Each subagent's
  * `agentTierKey` is its `[agent_tiers]` lookup key (its name); commands are not
  * model-configurable so their key is null.
  */
@@ -98,6 +98,7 @@ const ROLES: readonly RoleSpec[] = [
   { id: "research-explorer", name: "research-explorer", kind: "agent-subagent", source: "agents/research-explorer.md", agentTierKey: "research-explorer" },
   { id: "research-experimenter", name: "research-experimenter", kind: "agent-subagent", source: "agents/research-experimenter.md", agentTierKey: "research-experimenter" },
   // --- commands/cq/*.md (orchestrators) ---
+  { id: "begin", name: "/cq:begin", kind: "orchestrator", source: "commands/cq/begin.md", agentTierKey: null },
   { id: "advance", name: "/cq:advance", kind: "orchestrator", source: "commands/cq/advance.md", agentTierKey: null },
   { id: "plan", name: "/cq:plan", kind: "orchestrator", source: "commands/cq/plan.md", agentTierKey: null },
   { id: "plan/advance", name: "/cq:plan:advance", kind: "orchestrator", source: "commands/cq/plan/advance.md", agentTierKey: null },
@@ -273,7 +274,7 @@ ${entries}
  * the ledger-mcp `computeAgentModels` capability resolves over). The shared
  * roster is the single source of truth for the join keys; this script owns only
  * the per-role display metadata (`name`/`kind`/`source`). They must agree on the
- * 23 ids, their order, and which carry an `[agent_tiers]` key.
+ * 24 ids, their order, and which carry an `[agent_tiers]` key.
  */
 function assertRosterMatchesShared(): void {
   const local = ROLES.map((r) => `${r.id}=${r.agentTierKey ?? "null"}`);

@@ -582,11 +582,11 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
    * T287: get_agent_models MCP tool — server-level tests via stdio binary.
    *
    * Asserts the wiring lands on the full stdio binary path:
-   *  - with a fixture cq.toml: returns 23 agent entries (the full roster).
-   *  - without a cq.toml: returns configured:false with 23 entries (not-configured
+   *  - with a fixture cq.toml: returns 24 agent entries (the full roster).
+   *  - without a cq.toml: returns configured:false with 24 entries (not-configured
    *    for model-configurable roles, not-model-configurable for command roles).
    */
-  it("get_agent_models returns 23 agent entries with a fixture cq.toml (T287)", async () => {
+  it("get_agent_models returns 24 agent entries with a fixture cq.toml (T287)", async () => {
     const agentRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-agents-"));
     try {
       await fs.writeFile(
@@ -616,8 +616,8 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
           }>;
         }>(await client.callTool({ name: "get_agent_models", arguments: {} }));
         expect(result.configured).toBe(true);
-        // The fixed roster has exactly 23 roles.
-        expect(result.agents).toHaveLength(23);
+        // The fixed roster has exactly 24 roles.
+        expect(result.agents).toHaveLength(24);
         // Every entry has the required fields.
         for (const agent of result.agents) {
           expect(typeof agent.id).toBe("string");
@@ -632,7 +632,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
     }
   });
 
-  it("get_agent_models returns 23 unresolved entries when cq.toml carries no aliases ([ledger]-only) (T287)", async () => {
+  it("get_agent_models returns 24 unresolved entries when cq.toml carries no aliases ([ledger]-only) (T287)", async () => {
     // T505: a runnable root always carries a cq.toml, so the leanest spawnable
     // root is [ledger]-only. `configured` (= a parseable cq.toml is present) is
     // true; computeAgentModels only emits `not-configured` when NO cq.toml is
@@ -657,7 +657,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
           agents: Array<{ id: string; status: string }>;
         }>(await client.callTool({ name: "get_agent_models", arguments: {} }));
         expect(result.configured).toBe(true);
-        expect(result.agents).toHaveLength(23);
+        expect(result.agents).toHaveLength(24);
         for (const agent of result.agents) {
           expect(["no-live-token", "not-model-configurable"]).toContain(agent.status);
         }

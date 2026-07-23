@@ -1,5 +1,5 @@
 /**
- * T285: computeAgentModels over the fixed 23-role roster (Q156–Q158).
+ * T285: computeAgentModels over the fixed 24-role roster (Q156–Q158).
  *
  * Asserts the per-role model overlay the `get_agent_models` tool returns:
  *  - a fixture cq.toml with [agent_tiers]+[tiers]+[aliases] yields `resolved`
@@ -224,10 +224,10 @@ describe("T285: computeAgentModels — absent cq.toml", () => {
 });
 
 describe("T285: roster shape", () => {
-  it("walks all 23 roles, 9 model-configurable", () => {
+  it("walks all 24 roles, 9 model-configurable", () => {
     const result = computeAgentModels(dir);
-    expect(result.agents).toHaveLength(23);
-    expect(AGENT_ROLE_TIERS).toHaveLength(23);
+    expect(result.agents).toHaveLength(24);
+    expect(AGENT_ROLE_TIERS).toHaveLength(24);
     expect(AGENT_ROLE_TIERS.filter((r) => r.agentTierKey !== null)).toHaveLength(9);
   });
 });
