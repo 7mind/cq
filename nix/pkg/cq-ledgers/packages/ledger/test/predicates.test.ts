@@ -1092,6 +1092,129 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
         await factory.teardown(store);
       }
     });
+
+    // -----------------------------------------------------------------------
+    // (G84/D113) goalDrift — the REPORT-ONLY phase-drift signal: a goal still
+    // at `planned` whose owned tasks (task ledgerRefs `goals:<G>`, the same
+    // ownership pattern P-implement reads) already show execution progress
+    // (`wip`/`done`). Like belowFloor it NEVER gates a stop condition — these
+    // fixtures only assert the verdict itself.
+    // -----------------------------------------------------------------------
+
+    it("(drift-1) planned goal with a wip task → goalDrift=[goal]", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const g = await store.createItem(GOALS, m.id, {
+          status: "planned",
+          fields: { title: "g-drifted", description: "d" },
+        });
+        await store.createItem(TASKS, m.id, {
+          status: "wip",
+          fields: { headline: "already-started", ledgerRefs: [`${GOALS}:${g.id}`] },
+        });
+
+        const p = derivePredicates(store);
+        expect(p.goalDrift).toEqual({ value: true, items: [g.id] });
+        // Report-only: the drift introduces no stop gate.
+        expect(p.openQuestionGate).toEqual({ value: false, items: [] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    it("(drift-2) planned goal with a done task → goalDrift=[goal]", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const g = await store.createItem(GOALS, m.id, {
+          status: "planned",
+          fields: { title: "g-drifted-done", description: "d" },
+        });
+        await store.createItem(TASKS, m.id, {
+          status: "done",
+          fields: { headline: "already-finished", ledgerRefs: [`${GOALS}:${g.id}`] },
+        });
+
+        const p = derivePredicates(store);
+        expect(p.goalDrift).toEqual({ value: true, items: [g.id] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    it("(drift-3) building goal with wip/done tasks → goalDrift FALSE (building is the expected phase)", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const g = await store.createItem(GOALS, m.id, {
+          status: "building",
+          fields: { title: "g-building", description: "d" },
+        });
+        await store.createItem(TASKS, m.id, {
+          status: "wip",
+          fields: { headline: "in-progress", ledgerRefs: [`${GOALS}:${g.id}`] },
+        });
+        await store.createItem(TASKS, m.id, {
+          status: "done",
+          fields: { headline: "finished", ledgerRefs: [`${GOALS}:${g.id}`] },
+        });
+
+        const p = derivePredicates(store);
+        expect(p.goalDrift).toEqual({ value: false, items: [] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    it("(drift-4) goal-less wip/done tasks → goalDrift FALSE (no goals:<G> ref, nothing to drift)", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        // A planned goal exists, but the progressing tasks do NOT reference it.
+        await store.createItem(GOALS, m.id, {
+          status: "planned",
+          fields: { title: "g-unreferenced", description: "d" },
+        });
+        await store.createItem(TASKS, m.id, {
+          status: "wip",
+          fields: { headline: "unowned-wip" },
+        });
+        await store.createItem(TASKS, m.id, {
+          status: "done",
+          fields: { headline: "unowned-done" },
+        });
+
+        const p = derivePredicates(store);
+        expect(p.goalDrift).toEqual({ value: false, items: [] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    it("(drift-5) planned goal with only planned tasks → goalDrift FALSE (no execution progress yet)", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const g = await store.createItem(GOALS, m.id, {
+          status: "planned",
+          fields: { title: "g-not-started", description: "d" },
+        });
+        await store.createItem(TASKS, m.id, {
+          status: "planned",
+          fields: { headline: "queued-1", ledgerRefs: [`${GOALS}:${g.id}`] },
+        });
+        await store.createItem(TASKS, m.id, {
+          status: "planned",
+          fields: { headline: "queued-2", ledgerRefs: [`${GOALS}:${g.id}`] },
+        });
+
+        const p = derivePredicates(store);
+        expect(p.goalDrift).toEqual({ value: false, items: [] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
   });
 }
 

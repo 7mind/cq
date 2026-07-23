@@ -71,6 +71,10 @@
  *    floor (medium/low/unrecognized/empty). INFORMATIONAL only: it reports the
  *    root-caused defects that would seed a fix but for their sub-floor severity,
  *    and MUST NOT gate any stop (it never contributes to the open-question gate).
+ *  - goalDrift (G84 / D113) — a goal still at `planned` whose owned tasks (task
+ *    `ledgerRefs` naming `goals:<G>`, the same ownership pattern P-implement
+ *    reads) already show execution progress (`wip`/`done`). REPORT-ONLY, like
+ *    belowFloor: it never participates in any stop condition.
  */
 
 import type { Item, LedgerSchema } from "../types.js";
@@ -112,6 +116,17 @@ export interface DerivedPredicates {
   pImplement: PredicateVerdict;
   openQuestionGate: PredicateVerdict;
   belowFloor: PredicateVerdict;
+  /**
+   * REPORT-ONLY phase-drift signal (G84 / D113): TRUE with the ids of goals
+   * still at `planned` whose owned tasks (task `ledgerRefs` naming
+   * `goals:<G>`) already show execution progress (`wip`/`done`) — the goal's
+   * phase lags its tasks. Like `belowFloor`, this signal NEVER participates
+   * in any stop condition (it neither gates a stop nor feeds the
+   * open-question gate). Known limitation: `derivePredicates` walks ACTIVE
+   * items only, so a drifted goal whose milestone is already archived is
+   * invisible to this signal — the one-time migration sweep covers those.
+   */
+  goalDrift: PredicateVerdict;
 }
 
 // --- lifecycle constants (mirror the schemas in constants.ts) --------------
@@ -142,6 +157,10 @@ const GOAL_CLARIFYING_STATUS = "clarifying";
 const GOAL_PLANNING_STATUS = "planning";
 /** Goal phases in which implement-flow may build DAG-ready tasks. */
 const GOAL_BUILDABLE_STATUSES = new Set(["planned", "building"]);
+/** Goal phase that should NOT yet show task execution progress (goalDrift). */
+const GOAL_PLANNED_STATUS = "planned";
+/** Task statuses that count as EXECUTION PROGRESS for the goalDrift signal. */
+const TASK_PROGRESS_STATUSES = new Set(["wip", "done"]);
 /** Status an `open` question carries. */
 const QUESTION_OPEN_STATUS = "open";
 /** Task statuses that are TERMINAL (per TASKS_SCHEMA). */
@@ -448,6 +467,26 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
     implementItems.push(t.id);
   }
 
+  // --- goalDrift (REPORT-ONLY, G84 / D113) ----------------------------------
+  // A goal still at `planned` whose owned tasks (task ledgerRefs `goals:<G>`,
+  // the same ownership pattern P-implement reads above) already show execution
+  // progress (wip/done). Purely informational — nothing below consults it for
+  // gating, mirroring belowFloor. ACTIVE items only: a drifted goal under an
+  // archived milestone is invisible here (the migration sweep covers those).
+  const plannedGoalIds = new Set(
+    goals.filter((g) => g.status === GOAL_PLANNED_STATUS).map((g) => g.id),
+  );
+  const driftedGoalIds = new Set<string>();
+  for (const t of tasks) {
+    if (!TASK_PROGRESS_STATUSES.has(t.status)) continue;
+    for (const ref of refList(t, "ledgerRefs")) {
+      if (!ref.startsWith(`${GOALS_LEDGER}:`)) continue;
+      const goalId = ref.slice(GOALS_LEDGER.length + 1);
+      if (plannedGoalIds.has(goalId)) driftedGoalIds.add(goalId);
+    }
+  }
+  const goalDriftItems = [...driftedGoalIds];
+
   return {
     pInvestigate: { value: investigateItems.length > 0, items: investigateItems },
     pSeed: { value: seedItems.length > 0, items: seedItems },
@@ -459,5 +498,6 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
       items: [...gatingQuestionIds],
     },
     belowFloor: { value: belowFloorItems.length > 0, items: belowFloorItems },
+    goalDrift: { value: goalDriftItems.length > 0, items: goalDriftItems },
   };
 }

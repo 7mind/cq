@@ -16,13 +16,13 @@ import { parsePredicatesOutput } from "./oracle";
 import { advanceAutoPreset, type DerivedPredicates } from "./decision";
 
 // Representative `cq predicates` stdout (predicates shape identical to T463
-// verification, now carrying the G77/M240 pSeed + belowFloor keys, plus the
-// G80/M246 pResearch key).
+// verification, now carrying the G77/M240 pSeed + belowFloor keys, the
+// G80/M246 pResearch key, and the G84/D113 report-only goalDrift key).
 const REAL_PREDICATES_STDOUT =
-  '{"predicates":{"pInvestigate":{"value":true,"items":["D72","D73"]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":true,"items":["T463"]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]}}}';
+  '{"predicates":{"pInvestigate":{"value":true,"items":["D72","D73"]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":true,"items":["T463"]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
 
 describe("parsePredicatesOutput", () => {
-  test("parses the real cq predicates verdict into all seven predicates", () => {
+  test("parses the real cq predicates verdict into all eight predicates", () => {
     const expected: DerivedPredicates = {
       pInvestigate: { value: true, items: ["D72", "D73"] },
       pSeed: { value: false, items: [] },
@@ -31,13 +31,14 @@ describe("parsePredicatesOutput", () => {
       pImplement: { value: true, items: ["T463"] },
       openQuestionGate: { value: false, items: [] },
       belowFloor: { value: false, items: [] },
+      goalDrift: { value: false, items: [] },
     };
     expect(parsePredicatesOutput(REAL_PREDICATES_STDOUT)).toEqual(expected);
   });
 
   test("parses an all-false drained verdict", () => {
     const stdout =
-      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]}}}';
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
     expect(parsePredicatesOutput(stdout)).toEqual({
       pInvestigate: { value: false, items: [] },
       pSeed: { value: false, items: [] },
@@ -46,6 +47,7 @@ describe("parsePredicatesOutput", () => {
       pImplement: { value: false, items: [] },
       openQuestionGate: { value: false, items: [] },
       belowFloor: { value: false, items: [] },
+      goalDrift: { value: false, items: [] },
     });
   });
 
@@ -53,7 +55,7 @@ describe("parsePredicatesOutput", () => {
     // A root-caused defect owned by no goal → ONLY pSeed TRUE. The parser must
     // surface it and the advance preset must NOT read it as DRAINED.
     const stdout =
-      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":true,"items":["D94"]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]}}}';
+      '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":true,"items":["D94"]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":false,"items":[]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
     const parsed = parsePredicatesOutput(stdout);
     expect(parsed.pSeed).toEqual({ value: true, items: ["D94"] });
     expect(advanceAutoPreset.terminalPredicate(parsed)).toBe(false);
@@ -140,7 +142,7 @@ function oldAdvanceTerminalPredicate(p: Record<string, { value: boolean }>): boo
 // drained), but pResearch — a key the OLD auto-driver has never heard of — is
 // TRUE with outstanding research work.
 const NEW_PAYLOAD_RESEARCH_ONLY =
-  '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":true,"items":["RS1"]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]}}}';
+  '{"predicates":{"pInvestigate":{"value":false,"items":[]},"pSeed":{"value":false,"items":[]},"pPlan":{"value":false,"items":[]},"pResearch":{"value":true,"items":["RS1"]},"pImplement":{"value":false,"items":[]},"openQuestionGate":{"value":false,"items":[]},"belowFloor":{"value":false,"items":[]},"goalDrift":{"value":false,"items":[]}}}';
 
 describe("T559 false-DRAINED characterization (corrected model, G80/M246)", () => {
   test("OLD key set fed the NEW payload => parses fine but SILENTLY DROPS pResearch, and the old advance preset terminates", () => {

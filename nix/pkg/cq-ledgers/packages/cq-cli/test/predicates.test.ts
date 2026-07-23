@@ -47,6 +47,7 @@ const PREDICATE_KEYS = [
   "pImplement",
   "openQuestionGate",
   "belowFloor",
+  "goalDrift",
 ] as const;
 
 const dirs: string[] = [];
@@ -198,7 +199,42 @@ describe("cq predicates — unconditional real-predicate emitter (T476)", () => 
     expect(research.id.startsWith("RS")).toBe(true);
   });
 
-  it("emits stdout that parses via the auto-driver oracle's parser SHAPE (parsed.predicates, 7 verdict keys)", async () => {
+  it("emits the REPORT-ONLY goalDrift verdict: a planned goal with a wip task is named (G84/D113)", async () => {
+    const root = await makeTmpDir("cq-predicates-drift-ledger-");
+    await writeFile(
+      path.join(root, "cq.toml"),
+      `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,
+      "utf8",
+    );
+    const { store } = await createLedgerStore(root);
+    const goal = await store.createItem("goals", MILESTONES_AMBIENT_ID, {
+      status: "planned",
+      fields: { title: "drifted goal", description: "tasks already progressing" },
+    });
+    await store.createItem("tasks", MILESTONES_AMBIENT_ID, {
+      status: "wip",
+      fields: { headline: "already started", ledgerRefs: [`goals:${goal.id}`] },
+    });
+    await store.dispose();
+
+    const io = recordingIo();
+    const outcome = await runPredicates({ cwd: root }, io);
+    expect(outcome.exitCode).toBe(0);
+
+    const parsed = JSON.parse(io.outs[0]!) as {
+      predicates: {
+        goalDrift: { value: boolean; items: string[] };
+        openQuestionGate: { value: boolean; items: string[] };
+      };
+    };
+    // The emitted JSON carries the goalDrift verdict { value, items[] } naming
+    // the drifted goal; report-only — it introduces no question gate.
+    expect(parsed.predicates.goalDrift.value).toBe(true);
+    expect(parsed.predicates.goalDrift.items).toEqual([goal.id]);
+    expect(parsed.predicates.openQuestionGate).toEqual({ value: false, items: [] });
+  });
+
+  it("emits stdout that parses via the auto-driver oracle's parser SHAPE (parsed.predicates, 8 verdict keys)", async () => {
     const root = await seedActionableLedger();
 
     const io = recordingIo();

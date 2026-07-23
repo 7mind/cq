@@ -152,7 +152,9 @@ export function decideNextAction(input: DecideInput): AutoAction {
 /**
  * The predicate keys compared for no-progress equality. `belowFloor` is
  * intentionally EXCLUDED: it is informational, so a change confined to it is
- * not "forward progress" for the stall detector.
+ * not "forward progress" for the stall detector. `goalDrift` (G84/D113) is
+ * EXCLUDED for the same reason: it is report-only, so a drift-only delta must
+ * NOT count as forward progress either.
  */
 const PREDICATE_KEYS: ReadonlyArray<keyof DerivedPredicates> = [
   "pInvestigate",

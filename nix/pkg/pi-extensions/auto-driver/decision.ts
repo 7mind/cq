@@ -39,7 +39,9 @@ export interface PredicateVerdict {
  * stages (in flow order); `openQuestionGate` enumerates the open questions that
  * gate any of them; `belowFloor` is an INFORMATIONAL companion to `pSeed`
  * (root-caused, unowned, un-gated defects below the severity floor) that gates
- * NOTHING.
+ * NOTHING; `goalDrift` (G84/D113) is the REPORT-ONLY phase-drift signal
+ * (goals still `planned` whose owned tasks are already wip/done) that
+ * likewise gates NOTHING.
  */
 export interface DerivedPredicates {
   pInvestigate: PredicateVerdict;
@@ -49,6 +51,7 @@ export interface DerivedPredicates {
   pImplement: PredicateVerdict;
   openQuestionGate: PredicateVerdict;
   belowFloor: PredicateVerdict;
+  goalDrift: PredicateVerdict;
 }
 
 // ---------------------------------------------------------------------------
