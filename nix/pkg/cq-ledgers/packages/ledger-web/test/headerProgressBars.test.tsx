@@ -18,6 +18,7 @@ import type {
   AgentModelsResult,
   ArchiveContent,
   ArchivePointer,
+  DerivedPredicates,
   FetchedLedger,
   FtsHit,
   Item,
@@ -178,6 +179,9 @@ class ProgressFakeClient implements LedgerClient {
   }
   async listProjects(): Promise<ListProjectsResult> {
     return this.base.listProjects();
+  }
+  async derivePredicates(): Promise<DerivedPredicates> {
+    return this.base.derivePredicates();
   }
   async close(): Promise<void> {
     return this.base.close();

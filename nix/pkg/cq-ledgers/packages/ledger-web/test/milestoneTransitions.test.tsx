@@ -30,6 +30,7 @@ import type {
   AgentModelsResult,
   ArchiveContent,
   ArchivePointer,
+  DerivedPredicates,
   FetchedLedger,
   FtsHit,
   Item,
@@ -171,6 +172,7 @@ class MilestonesClient implements LedgerClient {
   async readLog(): Promise<ReadLogResult> { throw new Error("not used"); }
   async getAgentModels(): Promise<AgentModelsResult> { return { configured: false, agents: [] }; }
   async listProjects(): Promise<ListProjectsResult> { return { projects: [{ key: "cq1", displayName: "cq1" }] }; }
+  async derivePredicates(): Promise<DerivedPredicates> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }
 

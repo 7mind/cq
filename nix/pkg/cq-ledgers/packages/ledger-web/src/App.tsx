@@ -17,7 +17,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentModelEntry, ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, MilestonePatch, ProjectEntry } from "./types.js";
+import type { AgentModelEntry, ArchiveContent, FetchedLedger, FetchedMilestoneGroup, FieldValue, FtsHit, Item, LedgerClient, LedgerSchema, LedgerSummary, MilestonePatch, PredicateVerdict, ProjectEntry } from "./types.js";
 import { DagView } from "./DagView.js";
 import { Markdown } from "./Markdown.js";
 import { loadDagData, type DagData } from "./dagData.js";
@@ -363,6 +363,11 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
   const [activeLiveUrl, setActiveLiveUrl] = useState<string | null>(liveUrl);
   const [ledgers, setLedgers] = useState<LedgerSummary[]>([]);
+  // REPORT-ONLY goalDrift verdict (derive_predicates MCP tool, G84/D113, T611):
+  // null until the first successful fetch (indicator hidden), then the
+  // { value, items } verdict — refreshed on connect and on every WS 'changed'
+  // push alongside the ledger counters.
+  const [goalDrift, setGoalDrift] = useState<PredicateVerdict | null>(null);
   const [ledger, setLedger] = useState<string | null>(null);
   const [view, setView] = useState<FetchedLedger | null>(null);
   const [selected, setSelected] = useState<Row | null>(null);
@@ -580,6 +585,21 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
           setAgentOverlay(new Map(overlay.agents.map((e) => [e.id, e])));
         } catch {
           if (alive) setAgentOverlayError(true);
+        }
+        // Fetch the goalDrift REPORT-ONLY verdict once on connect (G84/D113,
+        // T611, derive_predicates MCP tool). Catch-ALL, mirroring the overlay
+        // fetch above: an older/embedded server that predates the tool just
+        // leaves the indicator hidden (goalDrift stays null) rather than
+        // surfacing a spurious error.
+        try {
+          const predicates = await c.derivePredicates();
+          if (!alive) {
+            await c.close();
+            return;
+          }
+          setGoalDrift(predicates.goalDrift);
+        } catch {
+          /* server predates derive_predicates — indicator stays hidden */
         }
         // Restore the previous view (reload persistence): re-open the saved
         // ledger, re-select the saved item, and re-enter graph mode if it was
@@ -892,6 +912,14 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
           if (mainView === "dag" && ledger !== null) setDag(await loadDagData(client, ledger));
         } catch {
           /* a transient fetch error surfaces on the next change */
+        }
+        // Refresh the goalDrift verdict on the same 'changed' push (G84/D113,
+        // T611); independent try/catch so an unsupported/older server doesn't
+        // suppress the counters refresh above.
+        try {
+          setGoalDrift((await client.derivePredicates()).goalDrift);
+        } catch {
+          /* server predates derive_predicates — indicator stays hidden */
         }
       })();
     };
@@ -1218,6 +1246,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
           {mainView === "dag" ? "table" : "graph"}
         </button>
         <div className="lw-header-right">
+        <GoalDriftIndicator goalDrift={goalDrift} />
         <LedgerProgressBar testid="progress-questions" label="questions" ledgers={ledgers} />
         <LedgerProgressBar testid="progress-tasks" label="tasks" ledgers={ledgers} />
         <LedgerProgressBar testid="progress-defects" label="defects" ledgers={ledgers} />
@@ -1678,6 +1707,29 @@ function LedgerProgressBar({
     >
       <div className="lw-progress-fill" style={{ width: `${pct}%` }} />
       <span className="lw-progress-label">{`${short}: ${done}/${total}`}</span>
+    </div>
+  );
+}
+
+/**
+ * Header warning indicator for the REPORT-ONLY goalDrift signal (G84/D113,
+ * T611: derive_predicates MCP tool's `goalDrift` verdict). Renders NOTHING
+ * when `goalDrift` is null (not yet fetched / server predates the tool) or
+ * `value` is false; when true, lists the drifted goal ids so the user can
+ * jump to them. Never gates anything — purely informational, mirroring the
+ * @cq/cli report.
+ */
+function GoalDriftIndicator({ goalDrift }: { goalDrift: PredicateVerdict | null }): React.ReactElement | null {
+  if (goalDrift === null || !goalDrift.value) return null;
+  const ids = goalDrift.items.join(", ");
+  return (
+    <div
+      className="lw-goal-drift"
+      data-testid="goal-drift-indicator"
+      title={`goal phase lags task progress: ${ids}`}
+      aria-label={`goal drift warning: ${ids}`}
+    >
+      ⚠ drift: {ids}
     </div>
   );
 }

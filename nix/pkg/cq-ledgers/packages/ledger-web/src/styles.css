@@ -97,6 +97,17 @@ body {
   align-items: center;
   gap: 8px;
 }
+/* goalDrift REPORT-ONLY warning indicator (G84/D113, T611): only rendered
+   when a goal's phase lags its tasks' execution progress. */
+.lw-goal-drift {
+  font-size: 11px;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 /* Small ledger progress bar track + fill, with an overlaid Q/T/D: done/total
    label so the three bars are distinguishable and readable. */
 .lw-progress-bar {

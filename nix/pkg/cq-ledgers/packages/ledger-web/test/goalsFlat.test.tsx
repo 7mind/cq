@@ -23,6 +23,7 @@ import type {
   AgentModelsResult,
   ArchiveContent,
   ArchivePointer,
+  DerivedPredicates,
   FetchedLedger,
   FtsHit,
   Item,
@@ -147,6 +148,9 @@ class GoalsClient implements LedgerClient {
   }
   async listProjects(): Promise<ListProjectsResult> {
     return { projects: [{ key: "cq1", displayName: "cq1" }] };
+  }
+  async derivePredicates(): Promise<DerivedPredicates> {
+    throw new Error("not used");
   }
   async close(): Promise<void> {
     /* no-op */

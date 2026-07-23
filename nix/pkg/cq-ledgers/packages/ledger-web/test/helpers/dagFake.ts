@@ -9,6 +9,7 @@
 import type {
   AgentModelsResult,
   ArchivePointer,
+  DerivedPredicates,
   FetchedLedger,
   Item,
   LedgerClient,
@@ -160,6 +161,9 @@ export class DagFakeClient implements LedgerClient {
   }
   async listProjects(): Promise<ListProjectsResult> {
     return { projects: [{ key: "cq1", displayName: "cq1" }] };
+  }
+  async derivePredicates(): Promise<DerivedPredicates> {
+    throw new Error("not used in DAG tests");
   }
   async close(): Promise<void> {
     /* no-op */

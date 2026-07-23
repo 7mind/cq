@@ -8,6 +8,7 @@ import type {
   AgentModelsResult,
   ArchiveContent,
   ArchivePointer,
+  DerivedPredicates,
   FetchedLedger,
   FieldValue,
   FtsHit,
@@ -22,6 +23,21 @@ import type {
   ProjectEntry,
   ReadLogResult,
 } from "../src/types.js";
+
+/** Builds a fresh all-false DerivedPredicates verdict (default `derivePredicates()` answer). */
+function emptyPredicates(): DerivedPredicates {
+  const emptyVerdict = (): { value: boolean; items: string[] } => ({ value: false, items: [] });
+  return {
+    pInvestigate: emptyVerdict(),
+    pSeed: emptyVerdict(),
+    pPlan: emptyVerdict(),
+    pResearch: emptyVerdict(),
+    pImplement: emptyVerdict(),
+    openQuestionGate: emptyVerdict(),
+    belowFloor: emptyVerdict(),
+    goalDrift: emptyVerdict(),
+  };
+}
 
 const TS = "2026-01-01T00:00:00.000Z";
 
@@ -214,6 +230,13 @@ export class FakeClient implements LedgerClient {
    * overlay (T297) set this to `'resolved'` or another mode explicitly.
    */
   agentModelsMode: AgentModelsMode = "not-configured";
+  /**
+   * Stubbable answer for `derivePredicates()` (G84/D113, T611): defaults to
+   * every verdict false/empty (mirrors an idle ledger); tests exercising the
+   * goalDrift warning indicator override `goalDrift` (or the whole object)
+   * directly before mounting.
+   */
+  derivePredicatesResult: DerivedPredicates = emptyPredicates();
   /**
    * The `list_projects` answer (T589 / Q276/Q284). Defaults to the
    * single-entry embedded/xdg fallback (key === displayName, mirroring
@@ -552,6 +575,9 @@ export class FakeClient implements LedgerClient {
   }
   async listProjects(): Promise<ListProjectsResult> {
     return { projects: this.projects };
+  }
+  async derivePredicates(): Promise<DerivedPredicates> {
+    return this.derivePredicatesResult;
   }
   async readLog(path: string): Promise<ReadLogResult> {
     const override = this.readLogResults.get(path);

@@ -18,10 +18,12 @@ import type {
   ListProjectsResult,
   ProjectEntry,
   ArchivePointer,
+  DerivedPredicates,
+  PredicateVerdict,
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
 
-export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus, ListProjectsResult, ProjectEntry, ArchivePointer };
+export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus, ListProjectsResult, ProjectEntry, ArchivePointer, DerivedPredicates, PredicateVerdict };
 
 export interface FtsHit {
   ledgerId: string;
@@ -108,5 +110,13 @@ export interface LedgerClient {
    * sniff the backend.
    */
   listProjects(): Promise<ListProjectsResult>;
+  /**
+   * Derive the /cq:advance flow-detection predicates from the current ledger
+   * state (derive_predicates MCP tool, G84/D113): the same
+   * `{ pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate,
+   * belowFloor, goalDrift }` verdicts @cq/cli reads. The web UI consumes only
+   * `goalDrift` today (report-only phase-drift warning).
+   */
+  derivePredicates(): Promise<DerivedPredicates>;
   close(): Promise<void>;
 }

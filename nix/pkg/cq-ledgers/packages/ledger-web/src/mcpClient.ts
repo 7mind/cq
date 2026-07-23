@@ -23,6 +23,7 @@ import type {
   AgentModelsResult,
   ArchiveContent,
   ArchivePointer,
+  DerivedPredicates,
   FetchedLedger,
   FtsHit,
   Item,
@@ -228,6 +229,10 @@ export class McpLedgerClient implements LedgerClient {
 
   async listProjects(): Promise<ListProjectsResult> {
     return await this.call<ListProjectsResult>("list_projects", {});
+  }
+
+  async derivePredicates(): Promise<DerivedPredicates> {
+    return await this.call<DerivedPredicates>("derive_predicates", {});
   }
 
   async close(): Promise<void> {
