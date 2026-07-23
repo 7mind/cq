@@ -15,7 +15,7 @@ import React from "react";
 import { render } from "ink-testing-library";
 import { App, buildItemEntries } from "../src/app.js";
 import { FakeClient } from "./fakeClient.js";
-import type { ArchiveContent, FetchedLedger, Item, LedgerClient, LedgerSummary } from "../src/types.js";
+import type { ArchiveContent, ArchivePointer, FetchedLedger, Item, LedgerClient, LedgerSummary } from "../src/types.js";
 import type { Milestone } from "@cq/ledger";
 import { MILESTONES_SCHEMA } from "@cq/ledger";
 
@@ -80,6 +80,9 @@ class ManyItemsClient implements LedgerClient {
   async updateMilestone(): Promise<Item> {
     throw new Error("not used");
   }
+  async archiveMilestone(): Promise<ArchivePointer> {
+    throw new Error("not used");
+  }
   async close(): Promise<void> {
     /* no-op */
   }
@@ -133,6 +136,9 @@ class NoTransitionsClient implements LedgerClient {
     throw new Error("not used");
   }
   async updateMilestone(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async archiveMilestone(): Promise<ArchivePointer> {
     throw new Error("not used");
   }
   async close(): Promise<void> {
@@ -715,6 +721,7 @@ class MultiMilestoneClient implements LedgerClient {
   async ftsSearch(): Promise<never[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }
 
@@ -909,6 +916,7 @@ class ArchiveClient implements LedgerClient {
   async ftsSearch(): Promise<never[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }
 
@@ -1150,6 +1158,7 @@ class MultiMilestoneArchiveClient implements LedgerClient {
   async ftsSearch(): Promise<never[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }
 
@@ -1619,6 +1628,7 @@ class GoalsClient implements LedgerClient {
   async ftsSearch(): Promise<never[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }
 

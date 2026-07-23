@@ -17,6 +17,7 @@ import { buildServer, createEmbeddedStore } from "@cq/ledger-mcp";
 import type { LedgerStore, ResolvedLedgerStore } from "@cq/ledger";
 import type {
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   FieldValue,
   FtsHit,
@@ -238,6 +239,11 @@ export class McpLedgerClient implements LedgerClient {
     if (patch.title !== undefined) args["title"] = patch.title;
     if (patch.description !== undefined) args["description"] = patch.description;
     return (await this.call<{ milestone: Item }>("update_milestone", args)).milestone;
+  }
+
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+    const args: Record<string, unknown> = { milestone_id: milestoneId, summary };
+    return (await this.call<{ pointer: ArchivePointer }>("archive_milestone", args)).pointer;
   }
 
   async listProjects(): Promise<ProjectEntry[]> {

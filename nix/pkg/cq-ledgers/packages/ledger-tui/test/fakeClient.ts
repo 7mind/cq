@@ -6,6 +6,7 @@
 
 import type {
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   FieldValue,
   FtsHit,
@@ -287,6 +288,10 @@ export class FakeClient implements LedgerClient {
     if (patch.title !== undefined) it.fields["title"] = patch.title;
     if (patch.description !== undefined) it.fields["description"] = patch.description;
     return it;
+  }
+
+  async archiveMilestone(_milestoneId: string, _summary: string): Promise<ArchivePointer> {
+    throw new Error("archiveMilestone not implemented in FakeClient");
   }
 
   async close(): Promise<void> {

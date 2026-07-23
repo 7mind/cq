@@ -26,6 +26,7 @@ import { render } from "ink-testing-library";
 import { App, derivationCounters, resetDerivationCounters } from "../src/app.js";
 import type {
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   Item,
   ItemInit,
@@ -123,6 +124,9 @@ class LargeClient implements LedgerClient {
     throw new Error("not implemented");
   }
   async updateMilestone(_id: string, _p: MilestonePatch): Promise<Item> {
+    throw new Error("not implemented");
+  }
+  async archiveMilestone(): Promise<ArchivePointer> {
     throw new Error("not implemented");
   }
   async close(): Promise<void> {}

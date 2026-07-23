@@ -21,6 +21,7 @@ import { render } from "ink-testing-library";
 import { App } from "../src/app.js";
 import type {
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   FtsHit,
   Item,
@@ -122,6 +123,9 @@ class NamedProjectClient implements LedgerClient {
     throw new Error("not used");
   }
   async updateMilestone(_id: string, _p: MilestonePatch): Promise<Item> {
+    throw new Error("not used");
+  }
+  async archiveMilestone(): Promise<ArchivePointer> {
     throw new Error("not used");
   }
   async close(): Promise<void> {

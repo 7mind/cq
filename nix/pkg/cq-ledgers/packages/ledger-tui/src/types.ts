@@ -17,9 +17,9 @@ import type {
   LedgerSchema,
   ProjectEntry,
 } from "@cq/ledger";
-import type { ArchiveContent } from "@cq/ledger";
+import type { ArchiveContent, ArchivePointer } from "@cq/ledger";
 
-export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, ProjectEntry };
+export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, ArchivePointer, ProjectEntry };
 
 /** A single `fts_search` hit. */
 export interface FtsHit {
@@ -79,6 +79,13 @@ export interface LedgerClient {
   ftsSearch(query: string, opts?: { ledger?: string }): Promise<FtsHit[]>;
   createMilestone(init: { title: string; description?: string; id?: string }): Promise<Item>;
   updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item>;
+  /**
+   * Archive a milestone globally (2-level): sweeps every ledger's group with
+   * this id into `./archive/<ledger>/<id>.md`, then moves the milestone-item
+   * itself to `./archive/milestones/<id>.md`. Refused if any item in any
+   * ledger is non-terminal (`archive_milestone` MCP tool).
+   */
+  archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
   /**
    * List every project the connected server's store knows about (the
    * `list_projects` tool, T585/Q284) — feeds the always-visible project

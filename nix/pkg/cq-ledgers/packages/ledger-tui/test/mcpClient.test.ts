@@ -128,6 +128,23 @@ describe("McpLedgerClient over HTTP", () => {
     expect(updated.status).toBe("done");
   });
 
+  it("archives a milestone and returns an ArchivePointer (T617)", async () => {
+    await client.createMilestone({ id: "M22", title: "archive coverage" });
+    const item = await client.createItem("bugs", "M22", {
+      status: "open",
+      fields: { headline: "to be archived" },
+    });
+    await client.updateItem("bugs", item.id, { status: "closed" });
+    await client.updateMilestone("M22", { status: "done" });
+
+    const pointer = await client.archiveMilestone("M22", "archived for T617 test");
+    expect(pointer.id).toBe("M22");
+    expect(pointer.summary).toBe("archived for T617 test");
+
+    const ledger = await client.fetchLedger("bugs");
+    expect(ledger.archivePointers.some((p) => p.id === "M22")).toBe(true);
+  });
+
   it("surfaces server validation errors as LedgerToolError", async () => {
     let caught: unknown;
     try {

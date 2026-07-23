@@ -46,6 +46,7 @@ import { TUI_RENDER_OPTIONS } from "../src/main.js";
 import { DEFECTS_LEDGER } from "@cq/ledger";
 import type {
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   Item,
   ItemInit,
@@ -143,6 +144,9 @@ class DistinctDefectsClient implements LedgerClient {
     throw new Error("not implemented");
   }
   async updateMilestone(_id: string, _p: MilestonePatch): Promise<Item> {
+    throw new Error("not implemented");
+  }
+  async archiveMilestone(): Promise<ArchivePointer> {
     throw new Error("not implemented");
   }
   async close(): Promise<void> {}

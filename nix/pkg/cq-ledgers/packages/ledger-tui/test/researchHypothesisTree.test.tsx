@@ -13,6 +13,7 @@ import { render } from "ink-testing-library";
 import { App } from "../src/app.js";
 import type {
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   FtsHit,
   Item,
@@ -160,6 +161,7 @@ class ResearchClient implements LedgerClient {
   async ftsSearch(): Promise<FtsHit[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }
 
