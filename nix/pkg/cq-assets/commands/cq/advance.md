@@ -459,9 +459,11 @@ you re-derive the predicates and continue.
    no prior implement pass: `/cq:implement:advance` derives its ready-set from the
    planned tasks (every non-archived, non-terminal milestone with non-terminal
    tasks), so a missing `/cq:implement:start` or "no run bootstrapped yet" is NEVER a
-   reason to skip the stage or to ask — bootstrap and build. Its reviewers may
-   FILE new `open` defects (file-and-defer, K13). If P-implement is FALSE, skip
-   this stage.
+   reason to skip the stage or to ask — bootstrap and build. The chained
+   `/cq:implement:advance` pass performs the `planned → building` goal transition
+   per its §2 dispatch step — including for a just-`planned` goal with no prior
+   implement pass (see implement/advance.md §2). Its reviewers may FILE new `open`
+   defects (file-and-defer, K13). If P-implement is FALSE, skip this stage.
 6. **RE-CHECK investigate (and seed) after implement.** Because the implement
    reviewer may have filed new defects this cycle — and investigate may have
    root-caused one into a fresh seed candidate — re-evaluate **P-investigate**
