@@ -46,6 +46,33 @@ session start; never rely on cross-session recall.
   /skill:<name>.
 - Prompt templates are /<name> slash commands for repeatable workflows.
 
+## Chaining cq commands inline
+Pi expands a prompt template only when the slash command enters through user
+input. Pi does not recursively expand a `/cq:*` command name embedded in an
+already-expanded prompt.
+
+When an executing cq prompt says to run another `/cq:*` command **INLINE**:
+1. Convert the invocation to its prompt-catalog role id: remove the `/cq:`
+   prefix and replace each remaining `:` with `/`.
+2. Call the ledger MCP `fetch_prompt` capability for that role id (as a direct
+   tool when exposed, otherwise through the `mcp` proxy), and require
+   `kind: "orchestrator-command"` with `dispatched: false`.
+3. Substitute any text following the invocation for `$ARGUMENTS`, then execute
+   the returned `promptTemplate` INLINE in this same parent session before
+   resuming the caller. Preserve the caller's chained context, including any
+   instruction to suppress the nested command's standalone handoff.
+
+The `/cq:advance` sub-flow mappings are:
+- `/cq:investigate:advance` → `fetch_prompt("investigate/advance")`
+- `/cq:plan:advance` → `fetch_prompt("plan/advance")`
+- `/cq:research:advance` → `fetch_prompt("research/advance")`
+- `/cq:implement:advance` → `fetch_prompt("implement/advance")`
+
+Do NOT infer or re-implement the nested command from its name, and do not send
+an orchestrator-command role to `dispatch_agent`. If `fetch_prompt` is
+unavailable or fails, report the composition failure and stop before performing
+the nested flow's ledger mutations in the parent.
+
 ## Dispatching cq subagents
 The shared cq command prompts speak a harness-agnostic named-agent + task
 convention: they say things like "dispatch via the Agent tool with

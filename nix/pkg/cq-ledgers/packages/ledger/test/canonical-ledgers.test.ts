@@ -1774,3 +1774,21 @@ describe("T365: G44 advance.md grep-invariant — marker-lifecycle + external-si
     });
   }
 });
+
+describe("D122: Pi executes nested cq commands through the prompt catalog", () => {
+  const piContext = path.resolve(import.meta.dir, "../../../../llm-contexts/pi-context.md");
+
+  it("maps every /cq:advance sub-flow to fetch_prompt and forbids parent-session simulation", async () => {
+    const text = await readFile(piContext, "utf8");
+    const mappings = [
+      '`/cq:investigate:advance` → `fetch_prompt("investigate/advance")`',
+      '`/cq:plan:advance` → `fetch_prompt("plan/advance")`',
+      '`/cq:research:advance` → `fetch_prompt("research/advance")`',
+      '`/cq:implement:advance` → `fetch_prompt("implement/advance")`',
+    ];
+
+    for (const mapping of mappings) expect(text).toContain(mapping);
+    expect(text).toContain("returned `promptTemplate` INLINE");
+    expect(text).toContain("Do NOT infer or re-implement the nested command");
+  });
+});
