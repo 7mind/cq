@@ -632,9 +632,10 @@ command in the SAME inline session, so you already KNOW which context you are in
   raw path(s) written this round — populate them in the SAME `create_item` call
   (omit a `rawLogs` entry for any subagent whose transcript was absent). Stamp
   `author`/`session`. Append-only: written
-  once at the stop, never updated. **Then commit the ledger** (§Commit the
-  ledger): stage the ledger artifacts only and commit, so a standalone
-  investigate round never leaves the ledger uncommitted.
+  once at the stop, never updated. Persistence is the store's job — no git
+  action here; when the optional `[ledger].backup` mode (in-tree /
+  orphan-branch) is enabled, the debounced exporter mirrors the ledger + logs
+  to git.
 
   **TURN-vs-RUN clause (D39).** A RUN and a TURN are distinct scopes. A **RUN**
   spans as many turns as needed and is durably resumable from ledger state on the

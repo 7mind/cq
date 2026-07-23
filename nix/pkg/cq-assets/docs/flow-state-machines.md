@@ -576,7 +576,7 @@ orchestrator reports a goal as ready-to-close and the user sets `building → do
   reachable tasks merged), `answers-required` (tasks blocked on questions),
   `mixed`, or `illness-detected` (ill-loop / merge-conflict / invariant
   violation). Suppressed when chained under `/cq:advance` or
-  `/cq:implement:start` (the per-archive ledger commits still fire either way).
+  `/cq:implement:start`.
 
 ---
 
