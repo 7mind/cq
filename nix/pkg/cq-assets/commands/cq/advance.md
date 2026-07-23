@@ -15,7 +15,7 @@ outputs:
   - "end-of-run report: DRAINED | BLOCKED-ON-QUESTIONS | BLOCKED-ON-USER-ACTION | MIXED"
   - "ledger git commit after every archive_milestone and at run stop"
 ioSchema:
-  - "detection: P-investigate (actionable defects), P-seed (root-caused unowned at/above-floor defects), P-plan (movable goals), P-research (actionable researches), P-implement (DAG-ready tasks); informational belowFloor and goalDrift companions (sub-floor defects / goal-phase-drift — never gates a stop)"
+  - "detection: P-investigate (actionable defects), P-seed (root-caused unowned at/above-floor defects), P-plan (movable goals), P-research (actionable researches), P-implement (DAG-ready tasks); informational belowFloor, goalDrift, and research-parked companions (sub-floor defects / goal-phase-drift / defects whose hypothesis tree is fully parked on non-terminal research — never gates a stop; T626)"
   - "cycle order: investigate -> seed -> plan -> research -> implement -> re-check investigate"
   - "stop only when all five P-predicates FALSE or every TRUE predicate gated by open questions/user action"
   - "handoffs item statuses: drained | answers-required | user-action-required | mixed | illness-detected"
@@ -107,7 +107,11 @@ T137, now in `CANONICAL_LEDGERS`) carries this item shape:
   end-of-run report prose);
 - `flow` — `advance` (this command is the writer);
 - `ledgerRefs` — the stop-causing items (the `defects:<D>` / `goals:<G>` /
-  `researches:<RS>` / `tasks:<id>` the report enumerates);
+  `researches:<RS>` / `tasks:<id>` the report enumerates), PLUS — informationally,
+  never stop-causing — any still-parked research-blocked `defects:<D>` +
+  `researches:<RS>` pairs the report names (T626; mirrors how `belowFloor`/
+  `goalDrift` items are named in `summary` prose rather than treated as a
+  distinct bucket);
 - `blockingQuestions` — `open` question ids for `answers-required`/`mixed` stops
   (mirrors the BLOCKED-ON-QUESTIONS enumeration);
 - `handoffReasons` — for a `mixed` stop, the component reasons (e.g.
@@ -414,6 +418,45 @@ you re-derive the predicates and continue.
    triages only the NOT-owned-by-a-planning-goal defects (Q57); a defect already
    linked to a `clarifying`/`planning` goal is left for the plan stage's
    auto-investigate. If P-investigate is FALSE, skip this stage.
+
+   **Exclude research-parked defects from this cycle's dispatch (T626 — with
+   T625's park-as-uncertain in place).** Before calling `/cq:investigate:advance D`
+   on a worklist defect, check whether D is **research-blocked**: read D's
+   hypothesis tree (`search_items`/`fts_search` the `hypothesis` ledger for nodes
+   whose `ledgerRefs` contain `defects:<D>` — the same read
+   `/cq:investigate:advance` §1 performs) and test whether EVERY currently
+   unresolved branch (every leaf with no `confirmed`/adjudicated descendant) is
+   `uncertain` and carries a `researches:<RS>` ledgerRef (the T625 park marker)
+   whose research is STILL `open`/`wip`. When ALL of D's live branches are parked
+   this way and nothing else is adjudicable, D is research-blocked: SKIP
+   dispatching it this cycle rather than re-running `/cq:investigate:advance D`
+   every cycle for no progress — investigate-flow's own step 1 would immediately
+   re-confirm the same park (`commands/cq/investigate/advance.md` §Research
+   escalation (d)) without adjudicating anything new.
+   **Un-block rule (mirrors §Research escalation (d) exactly).** D becomes
+   eligible for dispatch again the moment ANY of its linked researches reaches a
+   TERMINAL status: `concluded` **satisfies** (the branch re-adjudicates from the
+   research's `findings`/`conclusion`); `inconclusive`/`abandoned` **ALSO
+   un-block** (so the tree can be re-adjudicated from the remaining evidence
+   rather than waiting forever for an answer that may never come). Dispatch D
+   normally on the first investigate-stage pass after any one of its linked
+   researches goes terminal — do not wait for ALL of them.
+   **No new STOP-condition gating (state explicitly).** This exclusion only
+   narrows WHICH defects in `pInvestigate.items` receive an
+   `/cq:investigate:advance` call this cycle — it does NOT redefine
+   **P-investigate** itself (§Detection predicates / §Stop condition, both
+   unchanged): a research-blocked defect stays `open`/`wip`, so
+   `derive_predicates` keeps computing the five predicates exactly as before. A
+   research-blocked defect's still-actionable linked research also keeps
+   **P-research** TRUE, so the run remains progress-able via the research stage
+   this cycle — it is never mistaken for DRAINED on account of this exclusion;
+   the Stop-condition five-predicate logic is otherwise unchanged.
+   **Report it.** Name every defect skipped this cycle for being research-blocked
+   as an INFORMATIONAL line in this cycle's narration — `defects:<D>` parked on
+   `researches:<RS>` (with the research's current status) — and carry the same
+   `researches:<RS>` + `defects:<D>` enumeration into the §End-of-run report and
+   the run-level handoff if any such defect is still parked when the run stops
+   (see §End-of-run report).
 2. **Seed stage.** Evaluate **P-seed**. If FALSE, skip this stage. If TRUE, seed
    the fix-owning gap D94 (this is the autonomous root-caused→fix edge that
    enforces the fix-every-defect hard rule below; per Q259 option A the seed
@@ -910,9 +953,25 @@ report it. Mirror `/cq:implement:advance`'s end-of-pass report style
   user-action-required]`; Q139). Next action: answer the listed questions and/or
   perform the named action, then re-run `/cq:advance`.
 
+**Research-parked defects — informational, in ANY category (T626).** Whichever
+category the run classifies as, if any defect is currently research-blocked
+(§The cycle, Investigate stage — every live hypothesis branch parked `uncertain`
+on a non-terminal `researches:<RS>`), name it informationally in the SAME
+report, alongside `belowFloor`/`goalDrift` — `defects:<D>` parked on
+`researches:<RS>` (with the research's current status), one line per
+defect/research pair. This is purely informational exactly like
+`belowFloor`/`goalDrift`: it NEVER changes the classification and never gates the
+stop (the defect stays `open`/`wip` and its research keeps P-research
+progress-able, so the situation is never mistaken for DRAINED — see §The cycle,
+Investigate stage). It is surfaced so a defect sitting on a slow-moving research
+is never silently invisible in the report; once the linked research reaches a
+terminal status the un-block rule applies and the defect drops off this list on
+the next cycle's investigate stage.
+
 To build the report, call `mcp__ledger__derive_predicates` one final time: if all
 five P-predicates are FALSE and no `open` question gates any actionable item →
-**DRAINED** (and list `belowFloor.items` and `goalDrift.items` informationally); if
+**DRAINED** (and list `belowFloor.items`, `goalDrift.items`, and any
+research-parked defects informationally); if
 the only thing standing between an item and progress is an unanswered question →
 **BLOCKED-ON-QUESTIONS**; if the only thing standing between a SPECIFIC NAMED
 item and progress is a user manual/environment action (no `open` question
