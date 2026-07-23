@@ -208,7 +208,7 @@ below). This is the switch that causes the `claudeStopGateHook` (§Stop-conditio
 gate) to block premature stops for the lifetime of this run.
 
 At the very start of each `/cq:advance` run (and at the start of each cycle),
-obtain **all nine detection values** (P-investigate, P-seed, P-plan, P-research,
+obtain **all eight detection values** (P-investigate, P-seed, P-plan, P-research,
 P-implement, the open-question gate, and the informational `belowFloor` and
 `goalDrift` companions) from **ONE tool call**:
 
