@@ -282,6 +282,11 @@ in
           defaultProvider = "openai-codex";
           defaultModel = "gpt-5.6-sol";
           defaultThinkingLevel = "xhigh";
+          compaction = {
+            enabled = true;
+            reserveTokens = 100000;
+            keepRecentTokens = 20000;
+          };
           # User-requested: terminal progress (OSC 9;4; off by default in 0.78+),
           # steering/follow-up modes, hide reasoning, disable install telemetry.
           terminal = {
