@@ -142,7 +142,11 @@ describe("computeArchivePlan (Q290 — mirrors performArchive)", () => {
   const affectedIds = plan.affected.map((e) => e.id);
 
   it("archives only item-terminal AND self-terminal milestones, never the ambient one", () => {
-    expect(plan.affected).toContainEqual({ id: "M4", action: "archive-milestone" });
+    expect(plan.affected).toContainEqual({
+      id: "M4",
+      action: "archive-milestone",
+      title: "complete and closed",
+    });
     // M3 is item-complete but its own status is still `open` (phase 1b).
     expect(affectedIds).not.toContain("M3");
     expect(affectedIds).not.toContain("M1");

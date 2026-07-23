@@ -32,6 +32,13 @@
  *    the ambient milestone is excluded (the server refuses it anyway). Note
  *    the asymmetry with apply-done: an EMPTY milestone with a terminal status
  *    IS archivable — phase 1 passes vacuously on the server too.
+ *
+ * T615 adds the executor half: a minimal structural `FinalizeOps` interface
+ * (both frontends' `LedgerClient` satisfy it as a subset — nothing here
+ * imports `mcpClient.ts`, keeping this module DI/import-free as above) plus
+ * `runApplyDone`/`runArchive`, which walk a computed `FinalizePlan.affected`
+ * sequentially and capture a per-id `{ id, action, ok, error? }` result
+ * instead of throwing mid-sweep (Q292 partial-failure reporting).
  */
 
 import { GOALS_LEDGER, MILESTONES_AMBIENT_ID, MILESTONES_LEDGER } from "./constants.js";
@@ -112,6 +119,13 @@ export interface FinalizePlanEntry {
   id: string;
   action: FinalizeAction;
   targetStatus?: string;
+  /**
+   * Present only on `archive-milestone` entries: the milestone's own
+   * `fields.title`, when set. `runArchive` (T615) uses it to synthesize the
+   * mandatory `archive_milestone` summary string; absent it falls back to
+   * the id.
+   */
+  title?: string;
 }
 
 /**
@@ -163,6 +177,12 @@ export interface FinalizePlan {
 /** All milestone-items of the milestones view (its groups' items, flattened). */
 function milestoneItems(snapshot: FinalizeSnapshot): Item[] {
   return snapshot.milestones.milestones.flatMap((group) => group.items);
+}
+
+/** A milestone-item's `fields.title`, when it is set and a string. */
+function milestoneTitle(item: Item): string | undefined {
+  const raw: FieldValue | undefined = item.fields["title"];
+  return typeof raw === "string" ? raw : undefined;
 }
 
 /** Per-milestone work summary across every non-milestones ledger. */
@@ -363,8 +383,120 @@ export function computeArchivePlan(snapshot: FinalizeSnapshot): FinalizePlan {
       skipped.push({ id: item.id, reason: SKIP_MILESTONE_NOT_TERMINAL, detail: item.status });
       continue;
     }
-    affected.push({ id: item.id, action: "archive-milestone" });
+    const entry: FinalizePlanEntry = { id: item.id, action: "archive-milestone" };
+    const title = milestoneTitle(item);
+    if (title !== undefined) entry.title = title;
+    affected.push(entry);
   }
 
   return { affected, skipped };
+}
+
+// ---------------------------------------------------------------------------
+// Executor (T615): apply a computed plan through an injected, structural ops
+// interface. Both frontends' `LedgerClient` satisfy `FinalizeOps` as a subset
+// of their full interface — this module imports neither.
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal structural subset of both frontends' `LedgerClient` the executor
+ * needs. Deliberately spelled out here (not imported) so this module stays
+ * free of any frontend/server import — a `LedgerClient` instance satisfies
+ * this interface as-is, by structural typing.
+ */
+export interface FinalizeOps {
+  /** Mirrors `LedgerClient.updateItem` (used for `close-goal` entries). */
+  updateItem(ledgerId: string, itemId: string, patch: { status: string }): Promise<unknown>;
+  /** Mirrors `LedgerClient.updateMilestone` (used for `close-milestone` entries). */
+  updateMilestone(milestoneId: string, patch: { status: string }): Promise<unknown>;
+  /** Mirrors `LedgerClient.archiveMilestone` (used for `archive-milestone` entries). */
+  archiveMilestone(milestoneId: string, summary: string): Promise<unknown>;
+}
+
+/**
+ * Per-id outcome of executing one {@link FinalizePlanEntry}. `error` is the
+ * caught rejection's message, present only when `ok` is `false`.
+ */
+export interface FinalizeExecResult {
+  id: string;
+  action: FinalizeAction;
+  ok: boolean;
+  error?: string;
+}
+
+/** Render a caught value (typically an `Error`, but not guaranteed) as a message string. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Apply one plan entry through `ops`. `close-milestone`/`close-goal` entries
+ * require `targetStatus` (always set by `computeApplyDonePlan`); a plan built
+ * by hand without it is a caller error, reported like any other execution
+ * failure via the per-id result rather than thrown past the sweep.
+ */
+async function applyEntry(ops: FinalizeOps, entry: FinalizePlanEntry): Promise<void> {
+  switch (entry.action) {
+    case "close-milestone": {
+      if (entry.targetStatus === undefined) {
+        throw new FinalizePlanError(`close-milestone entry "${entry.id}" is missing targetStatus`);
+      }
+      await ops.updateMilestone(entry.id, { status: entry.targetStatus });
+      return;
+    }
+    case "close-goal": {
+      if (entry.targetStatus === undefined) {
+        throw new FinalizePlanError(`close-goal entry "${entry.id}" is missing targetStatus`);
+      }
+      await ops.updateItem(GOALS_LEDGER, entry.id, { status: entry.targetStatus });
+      return;
+    }
+    case "archive-milestone": {
+      const summary = `finalized: ${entry.title ?? entry.id}`;
+      await ops.archiveMilestone(entry.id, summary);
+      return;
+    }
+  }
+}
+
+/**
+ * Execute `entries` sequentially against `ops` (client-side composition is
+ * non-atomic per Q293 — each write is its own MCP round-trip), capturing a
+ * per-id `{ id, action, ok, error? }` result instead of throwing mid-sweep
+ * (Q292): a failure on one entry does not prevent later entries from running.
+ * The returned list is in the same order as `entries`.
+ */
+async function executeSequential(
+  ops: FinalizeOps,
+  entries: FinalizePlanEntry[],
+): Promise<FinalizeExecResult[]> {
+  const results: FinalizeExecResult[] = [];
+  for (const entry of entries) {
+    try {
+      await applyEntry(ops, entry);
+      results.push({ id: entry.id, action: entry.action, ok: true });
+    } catch (err) {
+      results.push({ id: entry.id, action: entry.action, ok: false, error: errorMessage(err) });
+    }
+  }
+  return results;
+}
+
+/**
+ * Execute an apply-done plan's `affected` entries (from
+ * {@link computeApplyDonePlan}) against `ops`. Sequential, in the plan's own
+ * order — milestone closes before goal closes, per that function's doc.
+ */
+export function runApplyDone(ops: FinalizeOps, plan: FinalizePlan): Promise<FinalizeExecResult[]> {
+  return executeSequential(ops, plan.affected);
+}
+
+/**
+ * Execute an archive plan's `affected` entries (from
+ * {@link computeArchivePlan}) against `ops`, synthesizing the mandatory
+ * `archive_milestone` summary per entry (`'finalized: <title>'`, falling back
+ * to the id when no title was recorded).
+ */
+export function runArchive(ops: FinalizeOps, plan: FinalizePlan): Promise<FinalizeExecResult[]> {
+  return executeSequential(ops, plan.affected);
 }
