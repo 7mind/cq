@@ -15,7 +15,7 @@ outputs:
   - "end-of-run report: DRAINED | BLOCKED-ON-QUESTIONS | BLOCKED-ON-USER-ACTION | MIXED"
   - "ledger git commit after every archive_milestone and at run stop"
 ioSchema:
-  - "detection: P-investigate (actionable defects), P-seed (root-caused unowned at/above-floor defects), P-plan (movable goals), P-research (actionable researches), P-implement (DAG-ready tasks); informational belowFloor companion (sub-floor root-caused defects — never gates a stop)"
+  - "detection: P-investigate (actionable defects), P-seed (root-caused unowned at/above-floor defects), P-plan (movable goals), P-research (actionable researches), P-implement (DAG-ready tasks); informational belowFloor and goalDrift companions (sub-floor defects / goal-phase-drift — never gates a stop)"
   - "cycle order: investigate -> seed -> plan -> research -> implement -> re-check investigate"
   - "stop only when all five P-predicates FALSE or every TRUE predicate gated by open questions/user action"
   - "handoffs item statuses: drained | answers-required | user-action-required | mixed | illness-detected"
@@ -78,8 +78,8 @@ one authoritative run-level handoff). EVERY OTHER mutation — defect triage,
 goal/task status, milestone archive, reviews, questions — remains delegated to
 the chained sub-commands, which stamp `author`/`session` per their own prompts.
 Detection stays strictly read-only (the five predicates + the informational
-`belowFloor` companion query item STATUS; they never write — the SEED stage acts
-on P-seed's verdict, but the derivation that produced it is read-only).
+`belowFloor` and `goalDrift` companions query item STATUS; they never write — the
+SEED stage acts on P-seed's verdict, but the derivation that produced it is read-only).
 
 ### The end-of-run write — the run-level handoff (Q83/Q84/Q85)
 At end-of-run, after you classify the run (see §End-of-run report), write ONE
@@ -208,9 +208,9 @@ below). This is the switch that causes the `claudeStopGateHook` (§Stop-conditio
 gate) to block premature stops for the lifetime of this run.
 
 At the very start of each `/cq:advance` run (and at the start of each cycle),
-obtain **all seven detection values** (P-investigate, P-seed, P-plan, P-research,
-P-implement, the open-question gate, and the informational `belowFloor`
-companion) from **ONE tool call**:
+obtain **all nine detection values** (P-investigate, P-seed, P-plan, P-research,
+P-implement, the open-question gate, and the informational `belowFloor` and
+`goalDrift` companions) from **ONE tool call**:
 
 ```
 mcp__ledger__derive_predicates()
@@ -227,7 +227,8 @@ required params). It returns:
   "pResearch":         { "value": boolean, "items": ["<itemId>", ...] },
   "pImplement":        { "value": boolean, "items": ["<itemId>", ...] },
   "openQuestionGate":  { "value": boolean, "items": ["<itemId>", ...] },
-  "belowFloor":        { "value": boolean, "items": ["<itemId>", ...] }
+  "belowFloor":        { "value": boolean, "items": ["<itemId>", ...] },
+  "goalDrift":         { "value": boolean, "items": ["<itemId>", ...] }
 }
 ```
 
@@ -236,8 +237,9 @@ plain array of ledger-item **id strings** (e.g. `["D50", "T361"]`) naming the
 items that drove the result (the actionable items, the seed candidates, or the
 open-question gate ids). `pSeed.items` is the root-caused, at/above-floor,
 unowned, un-gated defect backlog the SEED stage drains; `belowFloor.items` is the
-INFORMATIONAL sub-floor companion (reported, but it gates NOTHING). **These values
-ARE the predicates** — do not re-derive them by hand from raw ledger state.
+INFORMATIONAL sub-floor companion (reported, but it gates NOTHING); `goalDrift.items`
+is the INFORMATIONAL goal-phase-drift companion (reported, but it gates NOTHING).
+**These values ARE the predicates** — do not re-derive them by hand from raw ledger state.
 
 `derive_predicates` applies the SAME shared `derivePredicates()` logic that
 backs the `cq advance-gate` Stop-hook CLI — so the prose definitions below,
@@ -338,6 +340,20 @@ the root-caused defects that WOULD seed a fix but for their sub-floor severity,
 and **MUST NOT gate any stop**: a below-floor defect never contributes to the
 open-question gate and never keeps the loop running. The DRAINED report lists it
 so the low-severity backlog is never silently hidden (§End-of-run report).
+
+**`goalDrift` — INFORMATIONAL companion, NEVER a stop gate.**
+`derive_predicates` also returns `goalDrift`: TRUE when there exists an **ACTIVE
+goal** G at status `planned` that carries, via task-ownership references
+(`ledgerRefs` `goals:<G>`), at least one task T at status `wip` or a
+terminal-progress status (`done`). This signals a goal-phase mismatch: the goal
+was written `planned` (finalized, ready to build) but work proceeded (`wip` /
+`done` tasks) without a corresponding `planned → building` transition — the
+planned→building write was missed. It is **purely informational** — it reports
+this drift for visibility and **MUST NOT gate any stop**: a drifted goal never
+contributes to the open-question gate and never keeps the loop running. The
+DRAINED report lists it so phase-drift anomalies are visible (§End-of-run
+report). Known limitation: `goalDrift` walks ACTIVE items only, so goals whose
+milestones are archived are invisible to this signal.
 
 ### P-plan — is there a goal in a movable planning phase?
 TRUE iff there exists a **goal** G whose phase is a MOVABLE planning phase:
@@ -863,7 +879,10 @@ report it. Mirror `/cq:implement:advance`'s end-of-pass report style
   informationally — every root-caused, unowned, un-gated defect whose severity is
   BELOW the seed floor — by id with a one-line note, so the low-severity backlog
   is never silently hidden. (These do NOT gate the stop; they are surfaced so the
-  user can raise a severity or otherwise act on them.)
+  user can raise a severity or otherwise act on them.) The DRAINED report **MUST**
+  also list any `goalDrift` items informationally — every `planned` goal carrying
+  `wip` or terminal-progress tasks — by id with a one-line note, so phase-drift
+  anomalies are visible. (These do NOT gate the stop; they are surfaced for awareness.)
 - **BLOCKED-ON-QUESTIONS** — progress stopped ONLY because actionable items are
   parked on unanswered `open` questions. **Enumerate every blocking question** by
   id, each with its OWNING item (the `defects:<D>` / `goals:<G>` /
@@ -893,15 +912,15 @@ report it. Mirror `/cq:implement:advance`'s end-of-pass report style
 
 To build the report, call `mcp__ledger__derive_predicates` one final time: if all
 five P-predicates are FALSE and no `open` question gates any actionable item →
-**DRAINED** (and list `belowFloor.items` informationally); if the only thing
-standing between an item and progress is an
-unanswered question → **BLOCKED-ON-QUESTIONS**; if the only thing standing between
-a SPECIFIC NAMED item and progress is a user manual/environment action (no `open`
-question involved) with every autonomous step already done →
-**BLOCKED-ON-USER-ACTION** (or **MIXED** when the run also landed work and/or both
-kinds of block co-occur). Always close with the concrete next action and (for the
-blocked categories) the exact list of question ids to answer and/or the exact
-user command/action with the item it unblocks.
+**DRAINED** (and list `belowFloor.items` and `goalDrift.items` informationally); if
+the only thing standing between an item and progress is an unanswered question →
+**BLOCKED-ON-QUESTIONS**; if the only thing standing between a SPECIFIC NAMED
+item and progress is a user manual/environment action (no `open` question
+involved) with every autonomous step already done → **BLOCKED-ON-USER-ACTION** (or
+**MIXED** when the run also landed work and/or both kinds of block co-occur).
+Always close with the concrete next action and (for the blocked categories) the
+exact list of question ids to answer and/or the exact user command/action with
+the item it unblocks.
 
 After emitting the report, persist it as the single run-level `handoffs` record
 — the SECOND of `/cq:advance`'s two sanctioned writer classes (the first being
