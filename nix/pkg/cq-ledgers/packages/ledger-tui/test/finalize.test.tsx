@@ -197,6 +197,98 @@ class EligibleClient implements LedgerClient {
   }
 }
 
+/**
+ * Partial-failure fixture (review round 1): TWO apply-done-eligible
+ * milestones — M1 (open, "Alpha") and M2 (open, "Gamma") — each with only
+ * terminal work. `updateMilestone` REJECTS for M1 and succeeds for M2, so a
+ * sweep must continue past the failure (Q292 mid-sweep continuation) and the
+ * results step must render the per-id failed/ok split. Every attempt is
+ * recorded, success or not.
+ */
+class PartialFailureClient implements LedgerClient {
+  attempts: Array<[string, MilestonePatch]> = [];
+
+  displayName(): string {
+    return "cq1";
+  }
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [
+      { name: "milestones", itemCount: 2 },
+      { name: "tasks", itemCount: 2 },
+    ];
+  }
+  async fetchLedger(id: string): Promise<FetchedLedger> {
+    if (id === "milestones") {
+      return {
+        id,
+        schema: milestonesSchema,
+        counters: { milestone: 3, item: 3 },
+        milestones: [
+          {
+            id: "active",
+            milestone: { id: "active", status: "open", title: "", description: "" },
+            items: [
+              item("M1", "active", "open", { title: "Alpha" }),
+              item("M2", "active", "open", { title: "Gamma" }),
+            ],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    if (id === "tasks") {
+      return {
+        id,
+        schema: tasksSchema,
+        counters: { milestone: 3, item: 3 },
+        milestones: [
+          {
+            id: "M1",
+            milestone: { id: "M1", status: "open", title: "Alpha", description: "" },
+            items: [item("T1", "M1", "done", { headline: "shipped" })],
+          },
+          {
+            id: "M2",
+            milestone: { id: "M2", status: "open", title: "Gamma", description: "" },
+            items: [item("T2", "M2", "done", { headline: "also shipped" })],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    throw new Error(`Ledger not found: ${id}`);
+  }
+  async fetchLedgerArchive(): Promise<ArchiveContent> {
+    throw new Error("not used");
+  }
+  async fetchItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async createItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async ftsSearch(): Promise<never[]> {
+    return [];
+  }
+  async createMilestone(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
+    this.attempts.push([milestoneId, patch]);
+    if (milestoneId === "M1") throw new Error("disk on fire");
+    return item(milestoneId, "active", patch.status ?? "open", { title: "Gamma" });
+  }
+  async archiveMilestone(): Promise<ArchivePointer> {
+    throw new Error("not used");
+  }
+  async close(): Promise<void> {
+    /* no-op */
+  }
+}
+
 /** Open the milestones frame of the default FakeClient (ledgers sort: bugs,
  * milestones, questions, reviews, tasks → milestones is index 1). */
 async function openFakeMilestones(h: Harness): Promise<void> {
@@ -259,6 +351,33 @@ describe("TUI finalize overlay (T621)", () => {
     expect(h.frame()).toContain("M1");
     await escapeUntilGone(h, "finalize · results"); // Esc closes at the results step
     expect(h.frame()).not.toContain("close-milestone");
+    h.unmount();
+  });
+
+  it("partial failure: the sweep continues past a rejecting id and results render the per-id failed/ok split", async () => {
+    const client = new PartialFailureClient();
+    const h = await mount(client);
+    await h.key(ENTER); // open milestones (index 0)
+    await waitFor(h, "M1");
+    await h.key("F");
+    await waitFor(h, PICK_APPLY);
+    await advance(h, PICK_APPLY, "close-milestone"); // pick apply-done → preview
+    // Both milestones are eligible — the preview lists both.
+    expect(h.frame()).toContain("M1");
+    expect(h.frame()).toContain("M2");
+    await advance(h, "Enter execute", "finalize · results"); // execute
+    // Mid-sweep continuation: M1's rejection did not stop the M2 write.
+    expect(client.attempts).toEqual([
+      ["M1", { status: "done" }],
+      ["M2", { status: "done" }],
+    ]);
+    // Per-id split: the rejecting id shows the failed marker + its error
+    // text; the later id shows ok. Both ids are listed.
+    expect(h.frame()).toContain("failed M1");
+    expect(h.frame()).toContain("disk on fire");
+    expect(h.frame()).toMatch(/ok\s+M2/);
+    // Footer counts the failures.
+    expect(h.frame()).toContain("1 failed");
     h.unmount();
   });
 
