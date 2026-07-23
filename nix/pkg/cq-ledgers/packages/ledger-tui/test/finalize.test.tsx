@@ -12,6 +12,7 @@ import React from "react";
 import { render } from "ink-testing-library";
 import { App } from "../src/app.js";
 import { FakeClient } from "./fakeClient.js";
+import { SKIP_INCOMPLETE_MILESTONE, SKIP_WRONG_PHASE } from "@cq/ledger/finalize";
 import type {
   ArchiveContent,
   ArchivePointer,
@@ -103,7 +104,12 @@ const tasksSchema: LedgerSchema = {
   idPrefix: "T",
 };
 
-function item(id: string, milestoneId: string, status: string, fields: Record<string, string>): Item {
+function item(
+  id: string,
+  milestoneId: string,
+  status: string,
+  fields: Record<string, string | string[]>,
+): Item {
   return { id, milestoneId, status, fields, createdAt: TS, updatedAt: TS };
 }
 
@@ -297,6 +303,202 @@ async function openFakeMilestones(h: Harness): Promise<void> {
   await waitFor(h, "M1");
 }
 
+const goalsSchema: LedgerSchema = {
+  statusValues: ["clarifying", "planning", "planned", "building", "done", "abandoned"],
+  terminalStatuses: ["done", "abandoned"],
+  fields: {
+    title: { type: "string", required: true },
+    description: { type: "string", required: true },
+    milestones: { type: "id[]", required: false },
+  },
+  idPrefix: "G",
+};
+
+/**
+ * Goals-frame fixture (delta coverage, T623): `F` is gated on the goals frame
+ * too (app.tsx: `top.ledger === MILESTONES || top.ledger === GOALS_LEDGER`).
+ * M1 is a milestone with ZERO items recorded under it in any OTHER ledger
+ * (this fixture registers only "milestones" + "goals") — Q288/R722 treats
+ * that as `SKIP_EMPTY_MILESTONE`, so M1 never joins `completeForGoals`.
+ * G1 is not in the `building` phase → `SKIP_WRONG_PHASE`; G2 is `building`
+ * but lists the (incomplete) M1 as its only work milestone →
+ * `SKIP_INCOMPLETE_MILESTONE`. Both land in the apply-done plan's
+ * `skipped[]`, which the preview must render with their reasons — this is
+ * the assertion that fails if the TUI stops consuming `plan.skipped[]`.
+ */
+class GoalsClient implements LedgerClient {
+  displayName(): string {
+    return "cq1";
+  }
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [
+      { name: "goals", itemCount: 2 },
+      { name: "milestones", itemCount: 1 },
+    ];
+  }
+  async fetchLedger(id: string): Promise<FetchedLedger> {
+    if (id === "milestones") {
+      return {
+        id,
+        schema: milestonesSchema,
+        counters: { milestone: 2, item: 2 },
+        milestones: [
+          {
+            id: "active",
+            milestone: { id: "active", status: "open", title: "", description: "" },
+            items: [item("M1", "active", "open", { title: "Alpha" })],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    if (id === "goals") {
+      return {
+        id,
+        schema: goalsSchema,
+        counters: { milestone: 2, item: 2 },
+        milestones: [
+          {
+            id: "GHOME",
+            milestone: { id: "GHOME", status: "open", title: "", description: "" },
+            items: [
+              item("G1", "GHOME", "planning", { title: "Ship the thing", description: "d", milestones: ["M1"] }),
+              item("G2", "GHOME", "building", { title: "Ship the other thing", description: "d", milestones: ["M1"] }),
+            ],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    throw new Error(`Ledger not found: ${id}`);
+  }
+  async fetchLedgerArchive(): Promise<ArchiveContent> {
+    throw new Error("not used");
+  }
+  async fetchItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async createItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async ftsSearch(): Promise<never[]> {
+    return [];
+  }
+  async createMilestone(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateMilestone(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async archiveMilestone(): Promise<ArchivePointer> {
+    throw new Error("not used");
+  }
+  async close(): Promise<void> {
+    /* no-op */
+  }
+}
+
+/**
+ * Archive-sweep exactness fixture (delta coverage, T623): three milestones
+ * spanning the archive predicate's (Q290) three outcomes — MA is fully
+ * terminal (all grouped items terminal AND its own status is terminal) →
+ * archivable; MB's grouped items are all terminal but the milestone ITSELF
+ * is still "open" (item-terminal-but-self-open) → `SKIP_MILESTONE_NOT_TERMINAL`;
+ * MC has a non-terminal grouped item → `SKIP_NON_TERMINAL_ITEMS`. Only MA may
+ * ever reach `archiveMilestone`.
+ */
+class ArchiveExactnessClient implements LedgerClient {
+  archives: Array<[string, string]> = [];
+
+  displayName(): string {
+    return "cq1";
+  }
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [
+      { name: "milestones", itemCount: 3 },
+      { name: "tasks", itemCount: 3 },
+    ];
+  }
+  async fetchLedger(id: string): Promise<FetchedLedger> {
+    if (id === "milestones") {
+      return {
+        id,
+        schema: milestonesSchema,
+        counters: { milestone: 4, item: 4 },
+        milestones: [
+          {
+            id: "active",
+            milestone: { id: "active", status: "open", title: "", description: "" },
+            items: [
+              item("MA", "active", "done", { title: "Alpha" }),
+              item("MB", "active", "open", { title: "Bravo" }),
+              item("MC", "active", "open", { title: "Charlie" }),
+            ],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    if (id === "tasks") {
+      return {
+        id,
+        schema: tasksSchema,
+        counters: { milestone: 4, item: 4 },
+        milestones: [
+          {
+            id: "MA",
+            milestone: { id: "MA", status: "done", title: "Alpha", description: "" },
+            items: [item("T1", "MA", "done", { headline: "a-work" })],
+          },
+          {
+            id: "MB",
+            milestone: { id: "MB", status: "open", title: "Bravo", description: "" },
+            items: [item("T2", "MB", "done", { headline: "b-work" })],
+          },
+          {
+            id: "MC",
+            milestone: { id: "MC", status: "open", title: "Charlie", description: "" },
+            items: [item("T3", "MC", "planned", { headline: "c-work" })],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    throw new Error(`Ledger not found: ${id}`);
+  }
+  async fetchLedgerArchive(): Promise<ArchiveContent> {
+    throw new Error("not used");
+  }
+  async fetchItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async createItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async ftsSearch(): Promise<never[]> {
+    return [];
+  }
+  async createMilestone(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateMilestone(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+    this.archives.push([milestoneId, summary]);
+    return { id: milestoneId, path: `./archive/milestones/${milestoneId}.md`, summary, title: milestoneId, status: "done" };
+  }
+  async close(): Promise<void> {
+    /* no-op */
+  }
+}
+
 describe("TUI finalize overlay (T621)", () => {
   it("F on the milestones frame opens the two-option select; Esc closes it", async () => {
     const h = await mount(new FakeClient());
@@ -400,6 +602,70 @@ describe("TUI finalize overlay (T621)", () => {
     await advance(h, "Enter execute", "finalize · results"); // execute
     expect(client.archives).toEqual([["M2", "finalized: Beta"]]);
     expect(h.frame()).toContain("M2");
+    expect(h.frame()).toContain("ok");
+    h.unmount();
+  });
+
+  it("F is inert (and unadvertised) on the tasks frame", async () => {
+    const h = await mount(new FakeClient());
+    // ledgers sort: bugs, milestones, questions, reviews, tasks → tasks is index 4.
+    await h.key(DOWN);
+    await h.key(DOWN);
+    await h.key(DOWN);
+    await h.key(DOWN);
+    await h.key(ENTER);
+    await waitFor(h, "T1");
+    expect(h.frame()).not.toContain("F finalize");
+    await h.key("F");
+    await tick(30);
+    expect(h.frame()).not.toContain(PICK_APPLY);
+    h.unmount();
+  });
+
+  it("apply-done: preview on the GOALS frame lists skipped goals with their reasons", async () => {
+    const h = await mount(new GoalsClient());
+    await h.key(ENTER); // open goals (index 0, alphabetically before milestones)
+    await waitFor(h, "G1");
+    expect(h.frame()).toContain("F finalize"); // footer hint live on the goals frame too
+    await h.key("F");
+    await waitFor(h, PICK_APPLY);
+    await advance(h, PICK_APPLY, "finalize · apply done · preview"); // pick apply-done → preview
+    // G1 is not `building` → SKIP_WRONG_PHASE (detail: its actual status).
+    expect(h.frame()).toContain(`G1 — ${SKIP_WRONG_PHASE} (planning)`);
+    // G2 is `building` but its only work milestone (M1) is empty/incomplete
+    // → SKIP_INCOMPLETE_MILESTONE (detail: the offending milestone id). This
+    // assertion binds to the shared plan's skipped[] list (@cq/ledger/finalize)
+    // and fails if the TUI stops rendering it.
+    expect(h.frame()).toContain(`G2 — ${SKIP_INCOMPLETE_MILESTONE} (M1)`);
+    await escapeUntilGone(h, "finalize · apply done · preview");
+    h.unmount();
+  });
+
+  it("archive: sweep issues archiveMilestone for exactly the fully-terminal milestones in a mixed fixture", async () => {
+    const client = new ArchiveExactnessClient();
+    const h = await mount(client);
+    await h.key(ENTER); // open milestones (index 0)
+    await waitFor(h, "MA");
+    await h.key("F");
+    await waitFor(h, PICK_ARCHIVE);
+    {
+      const end = Date.now() + 2000;
+      while (!h.frame().includes(`› ${PICK_ARCHIVE}`) && Date.now() < end) await h.key(DOWN);
+    }
+    await advance(h, `› ${PICK_ARCHIVE}`, "finalize · archive"); // pick archive → preview
+    await waitFor(h, "archive-milestone");
+    // MA (fully terminal, incl. its own status) is the only affected entry.
+    expect(h.frame()).toContain("MA");
+    // MB: grouped items all terminal, but the milestone's OWN status ("open")
+    // is not — item-terminal-but-self-open.
+    expect(h.frame()).toContain("MB — milestone status not terminal (open)");
+    // MC: has a non-terminal grouped item.
+    expect(h.frame()).toContain("MC — non-terminal items (tasks:T3)");
+    await advance(h, "Enter execute", "finalize · results"); // execute
+    // Exactness: archiveMilestone was called for MA only, with the
+    // synthesized 'finalized: <title>' summary — never for MB or MC.
+    expect(client.archives).toEqual([["MA", "finalized: Alpha"]]);
+    expect(h.frame()).toContain("MA");
     expect(h.frame()).toContain("ok");
     h.unmount();
   });
