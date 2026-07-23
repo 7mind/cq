@@ -236,6 +236,37 @@ class FinalizeClient implements LedgerClient {
   async close(): Promise<void> { /* no-op */ }
 }
 
+/**
+ * FinalizeClient whose fetchLedger can be parked (T620 review round 1): with
+ * `defer` on, every call snapshots the fixture variant (`msId` substituted for
+ * M1) at CALL time but resolves only on releaseMany(). Exercises the
+ * generation-token guard against a stale fan-out from a dismissed session.
+ */
+class DeferredFinalizeClient extends FinalizeClient {
+  defer = false;
+  /** Id substituted for M1 in views built for NEW fetchLedger calls. */
+  msId = "M1";
+  private waiting: Array<() => void> = [];
+  get pendingCount(): number { return this.waiting.length; }
+  releaseMany(n: number): void {
+    for (let i = 0; i < n; i++) {
+      const release = this.waiting.shift();
+      if (release === undefined) throw new Error("releaseMany: nothing pending");
+      release();
+    }
+  }
+  override async fetchLedger(id: string): Promise<FetchedLedger> {
+    const base = await super.fetchLedger(id);
+    const view =
+      this.msId === "M1"
+        ? base
+        : (JSON.parse(JSON.stringify(base).replaceAll('"M1"', `"${this.msId}"`)) as FetchedLedger);
+    if (!this.defer) return view;
+    await new Promise<void>((resolve) => this.waiting.push(resolve));
+    return view;
+  }
+}
+
 let container: HTMLElement;
 let root: Root;
 let fakeClient: FinalizeClient;
@@ -253,6 +284,11 @@ const testids = (prefix: string): string[] =>
 function click(el: Element | null): void {
   if (el === null) throw new Error("click: element not found");
   act(() => { (el as HTMLElement).click(); });
+}
+function press(key: string): void {
+  act(() => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+  });
 }
 async function holdFull(el: Element | null): Promise<void> {
   if (el === null) throw new Error("holdFull: element not found");
@@ -368,6 +404,51 @@ describe("T620 — web finalize preview modal", () => {
     ]);
     expect(testids("finalize-result-")).toEqual(["M3"]);
     expect(testid("finalize-result-M3")?.textContent).toContain("ok");
+  });
+
+  it("a stale fan-out resolve from a dismissed session cannot clobber a re-opened same-mode preview", async () => {
+    const client = new DeferredFinalizeClient();
+    await mount(client);
+    click(testid("ledger-milestones"));
+    await flush();
+
+    // NOTE: element presence is asserted in boolean form throughout this test
+    // (`=== null`) — a failing toBeNull() on a happy-dom element makes the
+    // runner serialize the whole element tree into the diff, which is
+    // pathologically slow.
+    client.defer = true;
+    click(testid("finalize-btn"));
+    await flush();
+    click(testid("finalize-option-apply-done"));
+    await flush();
+    expect(testid("finalize-loading") !== null).toBe(true);
+    expect(client.pendingCount).toBe(3); // goals + milestones + tasks, parked
+
+    // Dismiss while the fan-out is in flight…
+    press("Escape");
+    await flush();
+    expect(testid("finalize-preview") === null).toBe(true);
+
+    // …then reopen the SAME mode against a CHANGED fixture (M1 renamed M9).
+    client.msId = "M9";
+    click(testid("finalize-btn"));
+    await flush();
+    click(testid("finalize-option-apply-done"));
+    await flush();
+    expect(client.pendingCount).toBe(6);
+
+    // Resolving the FIRST (stale) fan-out must not install its pre-reopen
+    // plan into the new session — it still shows the loading step.
+    client.releaseMany(3);
+    await flush();
+    expect(testid("finalize-affected-M1") === null).toBe(true);
+    expect(testid("finalize-loading") !== null).toBe(true);
+
+    // The SECOND fan-out's plan is the one that renders.
+    client.releaseMany(3);
+    await flush();
+    expect(testids("finalize-affected-")).toEqual(["M9", "G1"]);
+    expect(testid("finalize-affected-M1") === null).toBe(true);
   });
 
   it("an empty plan renders an explicit 'nothing eligible' state with the skipped list and no execute button", async () => {

@@ -427,6 +427,13 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   // lives elsewhere (T620/T622) — this component only wires the plumbing.
   const [finalizeMenuOpen, setFinalizeMenuOpen] = useState(false);
   const [finalizePreview, setFinalizePreview] = useState<FinalizePreviewState | null>(null);
+  // Per-open generation token for the finalize modal (T620 review round 1):
+  // incremented on every open AND every close. Each async finalize flow
+  // (snapshot fan-out, execution) captures the token at dispatch and drops
+  // its post-await state writes when the token has moved on — shape checks
+  // alone (mode + step) would let a stale resolve from a dismissed session
+  // write into a re-opened same-mode session.
+  const finalizeGenRef = useRef(0);
   const workareaRef = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState<LiveStats | null>(null);
   // Archive: show/hide the archived subsections. Per-group expand + lazy-fetch
@@ -720,6 +727,14 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     [url, liveUrl, activeProjectKey],
   );
 
+  // Close the finalize preview modal, invalidating every in-flight finalize
+  // async flow by bumping the generation token (T620 review round 1). ALL
+  // close paths — Escape, backdrop/✕, the openLedger reset — go through here.
+  const closeFinalizePreview = useCallback(() => {
+    finalizeGenRef.current += 1;
+    setFinalizePreview(null);
+  }, []);
+
   const openLedger = useCallback(
     async (name: string) => {
       if (client === null) return;
@@ -735,14 +750,14 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         // a picked-but-not-yet-consumed preview from the previous ledger
         // must not leak into the newly selected one.
         setFinalizeMenuOpen(false);
-        setFinalizePreview(null);
+        closeFinalizePreview();
         // In graph mode, re-graph the newly selected ledger (stay in graph).
         if (mainView === "dag") setDag(await loadDagData(client, name));
       } catch (e) {
         setFlash(errMsg(e));
       }
     },
-    [client, mainView],
+    [client, mainView, closeFinalizePreview],
   );
 
   const reload = useCallback(async () => {
@@ -772,6 +787,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   const openFinalizePreview = useCallback(
     async (mode: FinalizeMode) => {
       if (client === null) return;
+      const gen = ++finalizeGenRef.current;
       setFinalizePreview({ mode, step: { t: "loading" } });
       try {
         const names = new Set<string>((await client.enumerateLedgers()).map((l) => l.name));
@@ -781,18 +797,19 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         const plan =
           mode === "apply-done" ? computeApplyDonePlan(snapshot) : computeArchivePlan(snapshot);
         setFinalizePreview((cur) =>
-          cur !== null && cur.mode === mode && cur.step.t === "loading"
+          finalizeGenRef.current === gen && cur !== null && cur.mode === mode && cur.step.t === "loading"
             ? { mode, step: { t: "preview", plan } }
             : cur,
         );
       } catch (e) {
+        // A stale rejection from a dismissed session must neither flash its
+        // error nor close a re-opened modal.
+        if (finalizeGenRef.current !== gen) return;
         setFlash(errMsg(e));
-        setFinalizePreview((cur) =>
-          cur !== null && cur.mode === mode && cur.step.t === "loading" ? null : cur,
-        );
+        closeFinalizePreview();
       }
     },
-    [client],
+    [client, closeFinalizePreview],
   );
 
   // Execute the previewed plan through the shared executor with ops backed by
@@ -802,10 +819,17 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   const executeFinalize = useCallback(
     async (mode: FinalizeMode, plan: FinalizePlan) => {
       if (client === null) return;
+      // Execution belongs to the currently-open session's generation; if the
+      // modal is dismissed (and possibly re-opened) mid-sweep, the stale
+      // results must not overwrite the new session's state. The writes DID
+      // happen, so the view refresh below stays unconditional.
+      const gen = finalizeGenRef.current;
       const results =
         mode === "apply-done" ? await runApplyDone(client, plan) : await runArchive(client, plan);
       setFinalizePreview((cur) =>
-        cur !== null && cur.mode === mode ? { mode, step: { t: "results", results } } : cur,
+        finalizeGenRef.current === gen && cur !== null && cur.mode === mode
+          ? { mode, step: { t: "results", results } }
+          : cur,
       );
       refreshRef.current();
     },
@@ -1217,7 +1241,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     if (finalizePreview !== null) {
       if (e.key === "Escape") {
         e.preventDefault();
-        setFinalizePreview(null);
+        closeFinalizePreview();
       }
       return;
     }
@@ -1430,7 +1454,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
           state={finalizePreview}
           holdClock={holdClock}
           onExecute={(plan) => void executeFinalize(finalizePreview.mode, plan)}
-          onClose={() => setFinalizePreview(null)}
+          onClose={closeFinalizePreview}
         />
       )}
 
