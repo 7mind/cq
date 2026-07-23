@@ -164,7 +164,7 @@ It also materializes the shared configuration:
 | Destination              | Installed content                                                                                                                 |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
 | `~/.claude/`             | settings, global `CLAUDE.md`, skills, `/cq:*` commands, cq agents, plugins, SessionStart hook, and stop-gate hook                 |
-| `~/.codex/`              | settings, global `AGENTS.md`, skills, and cq prompt files                                                                         |
+| `~/.codex/`              | settings, global `AGENTS.md`, shared skills, native `$cq-*` workflow skills, and legacy cq prompt files                            |
 | `~/.pi/agent/`           | settings, global `AGENTS.md`, appended system prompt, skills, cq prompts and agents, Pi extensions, and MCP adapter configuration |
 | `~/.config/mcp/mcp.json` | shared `ledger` and `codegraph` MCP server registry                                                                               |
 

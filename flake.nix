@@ -45,6 +45,14 @@
           config.allowUnfree = true;
         };
 
+        mkCodexCommandSkills = import ./nix/lib/codex-command-skills.nix { lib = pkgs.lib; };
+        codexCqSkillSpecs = mkCodexCommandSkills llmAssets.commands;
+        codexCommandSkillsTest = import ./nix/lib/codex-command-skills-test.nix {
+          lib = pkgs.lib;
+          commands = llmAssets.commands;
+          inherit pkgs mkCodexCommandSkills;
+        };
+
         # Fixed-output derivation: fetches all npm dependencies via
         # `bun install --frozen-lockfile`. Nix allows network access inside
         # FODs; hermeticity is guaranteed by the output hash.
@@ -476,6 +484,37 @@
                   bash profile-test.sh
                   touch $out
                 '';
+            codex-cq-skills =
+              assert codexCommandSkillsTest;
+              pkgs.runCommand "codex-cq-skills" { } ''
+                set -eu
+                mkdir -p "$out"
+                ${pkgs.lib.concatMapStringsSep "\n"
+                  (name: ''
+                    mkdir -p "$out/${name}"
+                    cp ${
+                      builtins.toFile "${name}-SKILL.md" codexCqSkillSpecs.${name}.skillMd
+                    } "$out/${name}/SKILL.md"
+                    mkdir -p "$out/${name}/references"
+                    ${pkgs.lib.concatMapStringsSep "\n"
+                      (referenceName: ''
+                        cp ${
+                          builtins.toFile
+                            "${name}-${referenceName}"
+                            codexCqSkillSpecs.${name}.references.${referenceName}
+                        } "$out/${name}/references/${referenceName}"
+                      '')
+                      (builtins.attrNames codexCqSkillSpecs.${name}.references)}
+                  '')
+                  (builtins.attrNames codexCqSkillSpecs)}
+                test "$(
+                  find "$out" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l
+                )" -eq "${toString (builtins.length (builtins.attrNames codexCqSkillSpecs))}"
+                if ${pkgs.ripgrep}/bin/rg -n '/cq:' "$out"; then
+                  echo "generated Codex skills contain unresolved Claude command names" >&2
+                  exit 1
+                fi
+              '';
           };
 
         apps.default = {

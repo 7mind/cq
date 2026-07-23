@@ -15,6 +15,33 @@ let
   # `pkgs.codex` via an overlay.
   codexPkg = pkgs.callPackage ../pkg/codex/package.nix { };
 
+  mkCodexCommandSkills = import ../lib/codex-command-skills.nix { inherit lib; };
+  cqCommandSkillSpecs = mkCodexCommandSkills cfg.merged.commands;
+  skillNameCollisions =
+    lib.intersectLists
+      (builtins.attrNames cfg.merged.skills)
+      (builtins.attrNames cqCommandSkillSpecs);
+
+  cqCommandSkillFiles = lib.listToAttrs (
+    lib.concatMap (
+      skillName:
+      let
+        spec = cqCommandSkillSpecs.${skillName};
+        skillRoot = ".codex/skills/${skillName}";
+      in
+      [
+        {
+          name = "${skillRoot}/SKILL.md";
+          value.text = spec.skillMd;
+        }
+      ]
+      ++ lib.mapAttrsToList (referenceName: body: {
+        name = "${skillRoot}/references/${referenceName}";
+        value.text = body;
+      }) spec.references
+    ) (builtins.attrNames cqCommandSkillSpecs)
+  );
+
   # Command bundles key entries as "<ns>/<name>"; flat slash-prompt harnesses
   # derive the command name from the filename stem, so fold "/" → ":" (matching
   # the same transform tools.nix uses for its collision assertion and Claude's
@@ -46,10 +73,19 @@ in
       };
 
       home.file.".codex/config.toml".force = true;
+
+      assertions = [
+        {
+          assertion = skillNameCollisions == [ ];
+          message =
+            "Codex cq command skills collide with shared skills: "
+            + lib.concatStringsSep ", " skillNameCollisions;
+        }
+      ];
     }
     {
-      # Codex exposes no native commands/agents option (unlike claude-code), so
-      # deliver merged commands as ~/.codex/prompts/<stem>.md slash-prompts.
+      # Materialize Codex-specific cq skill packages (SKILL.md plus transitive
+      # workflow references) and retain the legacy prompt delivery.
       # Separate mkMerge element because the block above sets attrpath
       # `home.file."<path>"`, which can't coexist with a dynamic `home.file =
       # <attrs>` in one attribute set.
@@ -58,11 +94,13 @@ in
       # verbatim, no char filtering), so this surfaces as /prompts:plan:advance.
       # Codex agents have no canonical markdown home and are intentionally not
       # materialized (Claude receives them via its agents option).
-      home.file = lib.mapAttrs'
-        (
-          key: body: lib.nameValuePair ".codex/prompts/${commandKeyToStem key}.md" { text = body; }
-        )
-        cfg.merged.commands;
+      home.file =
+        cqCommandSkillFiles
+        // lib.mapAttrs'
+          (
+            key: body: lib.nameValuePair ".codex/prompts/${commandKeyToStem key}.md" { text = body; }
+          )
+          cfg.merged.commands;
     }
   ]);
 }

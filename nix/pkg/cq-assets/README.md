@@ -8,6 +8,7 @@ Claude Code, Codex, *and* a home-manager materializer with no per-tool copies.
 
 ```
 commands/<ns>/<name>.md       → slash command  /<ns>:<name>
+                                Codex skill    $<ns>-<name>
 agents/<name>.md              → subagent (name/description/tools frontmatter)
 skills/<name>/{meta.yaml,content.md}   → skill   (none in this repo yet)
 context.md                    → CLAUDE.md / AGENTS.md fragment (optional; none here)
@@ -64,15 +65,22 @@ Edit the files in this directory, never a symlink or a consumer's copy.
    | `.claude/commands/cq/implement-review.md` | `../cq-assets/commands/cq/implement-review.md` |
    | `.claude/commands/cq/reviewers.md`        | `../cq-assets/commands/cq/reviewers.md`        |
 
-2. **Codex** (`.codex/prompts/*`) — committed symlinks into this tree; a fresh
-   clone works with no extra step.
+2. **Codex** — home-manager projects every `cq/*` command into a native skill
+   under `~/.codex/skills/cq-*/SKILL.md`: `/cq:plan:advance` becomes
+   `$cq-plan-advance`. Each Codex-specific skill package contains a small
+   `SKILL.md` adapter plus its transitive workflow closure under `references/`.
+   The projection maps accompanying user text to `$ARGUMENTS`, rewrites internal
+   `/cq:*` names to `$cq-*`, and resolves INLINE workflow calls by loading the
+   corresponding reference in the same session. The shared command sources stay
+   unchanged. The committed `.codex/prompts/*` symlinks remain as the legacy
+   repo-local command surface during the transition.
 
 3. **Nix / home-manager** — `flake.nix` exposes assets (see `./assets.nix`),
    a pure, IFD-free attrset `{ skills, commands, agents, context }` of file
    *contents*. A home-manager LLM module (e.g. in a nix-config) consumes these
    assets and materializes every asset into each agent's layout (`~/.claude/commands`,
-   `~/.codex/prompts`, …) globally — no symlink script needed there. The repo-local
-   symlinks above remain for in-repo dogfooding.
+   `~/.codex/skills`, `~/.codex/prompts`, …) globally — no symlink script needed
+   there. The repo-local symlinks above remain for in-repo dogfooding.
 
 ## Configuration — cq.toml and the ledger MCP
 
