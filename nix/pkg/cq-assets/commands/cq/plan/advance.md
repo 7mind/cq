@@ -16,7 +16,7 @@ outputs:
   - "one aggregated reviews item per round (written by reviewer subagent or orchestrator)"
   - "auto-investigate: /cq:investigate:advance inline for each goal-linked actionable defect"
   - "per planner/reviewer: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl (pi:* → .cq/logs/raw/<ts>-pi-<alias>.md plain), BOTH written via `cq log put`"
-  - "handoffs item (standalone only) and ledger git commit (standalone only)"
+  - "handoffs item (standalone only)"
 ioSchema:
   - "planner loop token: awaiting-answers | review-requested | completed | noop"
   - "single-planner fallback: plan-advance writes the ledger; orchestrator writes nothing for the plan"
@@ -60,30 +60,6 @@ outcome.
 > **single-planner fallback** the `plan-advance` subagent writes the plan and in
 > the **single-reviewer fallback** the `plan-reviewer` subagent writes the
 > review, so an unconfigured round stays read-only-to-you.
-
-## Auto-fetch the ledger ref at run START (git-object backend only — T355/Q194)
-
-**When the ledger `[ledger]` backend is `git-object`** (NOT the default `fs`
-backend), auto-fetch the orphan ledger branch from the configured remote ONCE at
-the very start of the run, BEFORE selecting the target goal(s) below — so the
-round reads the latest shared ledger state. When the backend is `fs` (the
-default, or no `cq.toml`), SKIP this step entirely; it does NOTHING on the
-filesystem backend. **Suppress this fetch when chained** under a wrapping flow
-command (`/cq:advance` / `/<flow>:start` / `/<flow>:follow-up`) — the wrapper owns
-the single run-START fetch (mirroring the at-stop handoff/commit suppression); run
-it only on a STANDALONE `/cq:plan:advance` invocation.
-
-The remote name comes from `[ledger] remote` (default `origin`); the ledger
-branch is `cq-ledger` (`[ledger] branch`, default `cq-ledger`). Run from the
-ledger root (the MCP `--cwd`):
-```
-git fetch <remote> refs/heads/cq-ledger:refs/heads/cq-ledger
-```
-**Single-branch / shallow clones must fetch this ref EXPLICITLY** — it is an
-orphan branch outside the normal fetch refspec (see the runbook,
-`docs/drafts/20260610-1300-orphan-ledger-runbook.md`). A non-fast-forward fetch
-failure means the local ref diverged from the remote — STOP and follow the
-runbook's divergence recovery rather than forcing the ref.
 
 ## Select the target goal(s)
 
@@ -663,11 +639,11 @@ stage in BOTH flows, never driven inline by the filing subagent.
 ## Session logs (after EVERY subagent returns)
 
 Each subagent (planner and reviewer) ends its reply with a `### Session summary`
-section. **ALL log writes go through `cq log put` under BOTH backends — never a
-direct `Write` to `.cq/logs/`, and never `git add` a log file** (`cq log put`
-does redaction + strict-JSONL validation IN the CLI, and under `git-object`
-commits the log to the orphan ref itself; under `fs` it writes the file under
-`.cq/logs/`, which the per-round ledger checkpoint already carries). Stamp
+section. **ALL log writes go through `cq log put` — never a direct `Write` to a
+log path, and never `git add` a log file** (`cq log put` does redaction +
+strict-JSONL validation IN the CLI and writes into the primary store's
+out-of-tree logs area; the logical paths `.cq/logs/…` are recorded in
+sessionLogs/rawLogs and read back via `read_log`). Stamp
 `<timestamp>` (`Bash`: `date -u +%Y%m%d-%H%M%S`) once per returned subagent.
 
 **Native `Agent` subagent (planner / reviewer / `plan-synthesizer`).** Take
@@ -849,9 +825,10 @@ context you are in.
   `author`/`session`. Append-only: written
   once at the stop, never updated. (The auto-investigate sub-rounds this command
   chains do NOT each write a handoff — investigate/advance.md suppresses its own
-  handoff whenever chained, so this one record covers the whole pass.) **Then
-  commit the ledger** (§Commit the ledger): stage the ledger artifacts only and
-  commit, so a standalone plan round never leaves the ledger uncommitted.
+  handoff whenever chained, so this one record covers the whole pass.)
+  Persistence is the store's job — no git action here; when the optional
+  `[ledger].backup` mode (in-tree / orphan-branch) is enabled, the debounced
+  exporter mirrors the ledger + logs to git.
 
   **TURN-vs-RUN clause (D39).** A RUN and a TURN are distinct scopes. A **RUN**
   spans as many turns as needed and is durably resumable from ledger state on the
@@ -921,8 +898,7 @@ context you are in.
 
 - **Run CHAINED INLINE by any wrapping flow command** (`/cq:advance`, or a
   `/<flow>:start` / `/<flow>:follow-up` that runs this pass inline):
-  **SUPPRESS this handoff write** — AND suppress the at-stop ledger commit (the
-  outermost wrapper owns both). The outermost wrapper owns the single
+  **SUPPRESS this handoff write**. The outermost wrapper owns the single
   authoritative run-level handoff and writes it once at its stop — `/cq:advance`
   per its §Provenance (it is the sole `handoffs` writer for the whole run);
   a `/<flow>:start` or `/<flow>:follow-up` writes it directly in its own
@@ -931,56 +907,7 @@ context you are in.
   suppression; a standalone invocation has no such wrapper. Suppressing here is
   what guarantees exactly ONE handoff per run — never a duplicate.
 
-## Commit the ledger (after the planning-lock + at the standalone stop)
-The ledger files are tracked git artifacts. Commit the ledger — and ONLY the
-ledger (`.cq/*.md` + `.cq/archive` + `.cq/logs`; NEVER `docs/ledgers.yaml`,
-gitignored; NEVER code) — at TWO points:
-
-- **After the planning-lock** — immediately after a goal reaches `planned` (its
-  decision locked + status `planned`; the planner's `completed` outcome at
-  sub-step 1c). Commit right then, so a locked plan's milestones / tasks /
-  locked-decision land in a durable checkpoint as soon as they exist. This
-  checkpoint **ALWAYS fires, even when chained** under `/cq:advance` — it
-  OVERRIDES the chained-suppression for THIS commit specifically (D43 part-b:
-  otherwise a planning round that reaches `planned` while chained would leave
-  the plan's milestones/tasks/locked-decision uncommitted). Use the mechanism
-  below with a message like `chore(ledger): /cq:plan:advance — planned: <G>`.
-- **At the standalone stop** — after the standalone handoff write. SUPPRESS this
-  at-stop commit when chained (the wrapper owns the single run-stop commit). The
-  after-planning-lock commit above still fires either way.
-
-Mechanism — **when `[ledger] backend` is `fs` (the default); SKIP under
-`git-object`, whose orphan ref already carries each write** (run from the ledger
-root):
-```
-git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:plan:advance — <planned: <G> | stop: <status>>
-
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-```
-The `git diff --cached --quiet` guard makes it a NO-OP when nothing changed
-(idempotent). Scope `git add` to the ledger artifacts only — never `git add -A`.
-
-## Auto-push the ledger ref at run END (git-object backend only — T355/Q194)
-
-**When the ledger `[ledger]` backend is `git-object`**, auto-push the orphan
-ledger branch to the configured remote ONCE at the STANDALONE stop, immediately
-after the standalone at-stop ledger commit above. When the backend is `fs` (the
-default), SKIP this step. This is a once-per-run push (NOT per-write) — the
-symmetric partner of the run-START fetch. **SUPPRESS this push when chained**
-(`/cq:advance` / `/<flow>:start` / `/<flow>:follow-up`) exactly as the at-stop
-commit is suppressed — the outermost wrapper owns the single run-END push.
-
-The remote name comes from `[ledger] remote` (default `origin`). Run from the
-ledger root:
-```
-git push <remote> cq-ledger
-```
-This is a **PLAIN, NON-FORCED push** — deliberately **NO `--force`**. If the
-remote `cq-ledger` has diverged since this run's START fetch, the push is
-REJECTED and **FAILS LOUDLY** (non-fast-forward) rather than silently
-overwriting. The local CAS `update-ref` already guards against lost updates
-within this checkout; the non-forced push guards against clobbering another
-checkout's pushed updates. On a rejected push, DO NOT add `--force` — follow the
-runbook (`docs/drafts/20260610-1300-orphan-ledger-runbook.md`): fetch, inspect
-`git log cq-ledger`, reconcile, then retry the plain push.
+## Ledger persistence (no git action)
+Persistence is the store's job — no git action here; when the optional
+`[ledger].backup` mode (in-tree / orphan-branch) is enabled, the debounced
+exporter mirrors the ledger + logs to git.

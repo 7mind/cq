@@ -13,7 +13,6 @@ outputs:
   - "seed-stage ledger writes (SANCTIONED second writer class, Q259 option A): per seed-stage pass, one create_milestone + one create_item(goals, planning) cluster-grouping up to SEED_BATCH_CAP=5 root-caused defects into ONE fix goal, plus a goals:<G> back-link written into each seeded defect's ledgerRefs"
   - "one run-level handoffs ledger item (create_item to handoffs ledger)"
   - "end-of-run report: DRAINED | BLOCKED-ON-QUESTIONS | BLOCKED-ON-USER-ACTION | MIXED"
-  - "ledger git commit after every archive_milestone and at run stop"
 ioSchema:
   - "detection: P-investigate (actionable defects), P-seed (root-caused unowned at/above-floor defects), P-plan (movable goals), P-research (actionable researches), P-implement (DAG-ready tasks); informational belowFloor, goalDrift, and research-parked companions (sub-floor defects / goal-phase-drift / defects whose hypothesis tree is fully parked on non-terminal research — never gates a stop; T626)"
   - "cycle order: investigate -> seed -> plan -> research -> implement -> re-check investigate"
@@ -141,9 +140,7 @@ Stamp `author`/`session` on this write like any other. The handoff is
 APPEND-ONLY (written once at end-of-run, never updated). This handoff is the
 SECOND of `/cq:advance`'s two sanctioned writer classes — the FIRST being the
 SEED stage's fix-goal writes (§Provenance opener / §The cycle, Seed stage). All
-OTHER ledger mutations remain delegated to the chained sub-commands. (The §Commit
-the ledger `git commit`s are git operations on the already-written ledger files,
-not ledger writes.)
+OTHER ledger mutations remain delegated to the chained sub-commands.
 
 **This write is the STOP GATE** (see §Stop condition). You may not conclude an
 `/cq:advance` run without it, and you may only write it once the run genuinely maps
@@ -153,47 +150,28 @@ on a user action whose every autonomous step is already done (see §Stop-conditi
 gate). If no status legitimately applies because a
 predicate is still TRUE and unblocked, the run has NOT reached a legal stop:
 CONTINUE the cycle instead of writing a handoff. **Immediately after writing the
-handoff, unlink the run-active marker and perform the run-stop ledger commit
-(§Commit the ledger)** — the marker removal and the terminal handoff are coupled
-so they cannot diverge: remove the marker as the final act of the
-handoff+commit sequence:
+handoff, unlink the run-active marker** — the marker removal and the terminal
+handoff are coupled so they cannot diverge: remove the marker as the final act
+of the handoff sequence:
 
 ```sh
 rm -f "${XDG_RUNTIME_DIR:-/tmp}/cq-advance-active-$CLAUDE_CODE_SESSION_ID"
 ```
 
 Run this immediately after the `create_item` call that writes the handoff
-record, then proceed to the run-stop ledger commit. That commit is the final
-act of the run.
+record. That removal is the final act of the run. Persistence is the store's
+job — no git action here; when the optional `[ledger].backup` mode (in-tree /
+orphan-branch) is enabled, the debounced exporter mirrors the ledger + logs to
+git.
 
 ## Session logs
 This command spawns no subagents, so it writes no session-log file of its own.
-Each chained sub-command logs ITS subagents to `.cq/logs/` per that command's
-own §Session logs rule — follow each sub-command's logging rule while running it.
+Each chained sub-command logs ITS subagents via `cq log put` into the primary
+store's out-of-tree logs area (logical paths `.cq/logs/…` recorded in
+sessionLogs/rawLogs; read back via `read_log`) per that command's own §Session
+logs rule — follow each sub-command's logging rule while running it.
 
 ---
-
-## Auto-fetch the ledger ref at run START (git-object backend only — T355/Q194)
-
-**When the ledger `[ledger]` backend is `git-object`** (NOT the default `fs`
-backend), auto-fetch the orphan ledger branch from the configured remote ONCE at
-the very start of the run, BEFORE the Bootstrap recipe below — so the run reads
-the latest shared ledger state. When the backend is `fs` (the default, or no
-`cq.toml`), SKIP this step entirely — it does NOTHING on the filesystem backend.
-
-The remote name comes from `[ledger] remote` (default `origin`); the ledger
-branch is `cq-ledger` (`[ledger] branch`, default `cq-ledger`). Run from the
-ledger root (the MCP `--cwd`, the repo root here):
-```
-git fetch <remote> refs/heads/cq-ledger:refs/heads/cq-ledger
-```
-This is a once-per-run fetch (NOT per-read): it updates the local `cq-ledger` ref
-to the remote's tip so detection and every chained sub-flow operate on current
-state. **Single-branch / shallow clones must fetch this ref EXPLICITLY** — it is
-an orphan branch outside the normal fetch refspec (see the runbook,
-`docs/drafts/20260610-1300-orphan-ledger-runbook.md`). A non-fast-forward fetch
-failure here means the local ref diverged from the remote — STOP and follow the
-runbook's rejected-push / divergence recovery rather than forcing the ref.
 
 ## Bootstrap recipe (T156 / Q79 — derive_predicates-first start)
 
@@ -206,9 +184,8 @@ hook ONLY while an active `/cq:advance` run is in progress:
 touch "${XDG_RUNTIME_DIR:-/tmp}/cq-advance-active-$CLAUDE_CODE_SESSION_ID"
 ```
 
-Run this shell command as the **FIRST action of the run** (after the
-git-object run-START fetch step above, BEFORE the `derive_predicates` call
-below). This is the switch that causes the `claudeStopGateHook` (§Stop-condition
+Run this shell command as the **FIRST action of the run** (BEFORE the
+`derive_predicates` call below). This is the switch that causes the `claudeStopGateHook` (§Stop-condition
 gate) to block premature stops for the lifetime of this run.
 
 At the very start of each `/cq:advance` run (and at the start of each cycle),
@@ -504,9 +481,9 @@ you re-derive the predicates and continue.
 4. **Research stage.** Evaluate **P-research**. If TRUE, for each research RS in
    `pResearch.items` run **`/cq:research:advance RS` INLINE** — exactly per
    `/cq:research:advance` (K12 chaining: do NOT re-implement it; RUN it). The
-   chained round SUPPRESSES its own at-stop handoff record and at-stop ledger
-   commit (the standard chained-mode suppression — `/cq:advance` remains the sole
-   writer of the run-level handoff and the sole at-stop committer). If P-research
+   chained round SUPPRESSES its own at-stop handoff record (the standard
+   chained-mode suppression — `/cq:advance` remains the sole
+   writer of the run-level handoff). If P-research
    is FALSE, skip this stage. **After the research stage, RE-CHECK P-implement**
    (re-derive the predicates before step 5): a research concluded this stage may
    have satisfied a `researches:<RS>` `dependsOn` entry (`concluded` is the
@@ -792,8 +769,7 @@ now-eligible coordination milestone automatically.
 ## End-of-run worktree/branch cleanup sweep (end-of-run) <!-- G38-1a-end-sweep -->
 
 After the loop reaches quiescence — adjacent to the milestone archive sweep
-above, and before/with the run-stop ledger commit (§Commit the ledger) — run the
-**generalized worktree/branch cleanup sweep**. This is the SAME recipe as the
+above — run the **generalized worktree/branch cleanup sweep**. This is the SAME recipe as the
 implement-flow **start-of-pass** sweep (`commands/cq/implement/advance.md`
 §1, marker `G38-1a-start-sweep`) — keep the two in sync, do not let them
 diverge; whatever one removes, the other would remove for the same key.
@@ -836,71 +812,11 @@ Finish the whole sweep with a closing `git worktree prune`.
 
 ---
 
-## Commit the ledger (after every milestone archive + every task merge-back + at the run stop)
+## Ledger persistence (no git action)
 
-The ledger files are tracked git artifacts; persist them so a run never leaves
-the ledger uncommitted. Commit the ledger — and ONLY the ledger (its markdown +
-`.cq/archive` + `.cq/logs` session logs; NEVER `docs/ledgers.yaml`, the
-per-cwd runtime registry, which is gitignored; and NEVER code) — at these
-always-fire checkpoints:
-
-- **After every `archive_milestone`** (the sweep above, and any archive a
-  chained sub-flow performs): commit immediately, so each completed milestone is
-  a durable checkpoint.
-- **After every task merge-back** the chained implement sub-flow performs
-  (implement/advance.md §7.5): the chained implement pass's per-merge commit is
-  NOT suppressed — it fires even when the implement sub-flow runs chained under
-  `/cq:advance`, so each merged task is a durable checkpoint. This is an
-  always-fire checkpoint, on the same footing as the per-archive commit above.
-- **At the run STOP**, immediately after you write the run-level `handoffs`
-  record (§Provenance / §The end-of-run write): one final commit capturing the
-  end-of-run ledger state.
-
-Mechanism — **when `[ledger] backend` is `fs` (the default); SKIP under
-`git-object`, whose orphan ref already carries each write** (run from the ledger
-root — the MCP `--cwd`, the repo root here):
-```
-git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:advance — <Mxx archived | run stop: <status>>
-
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-```
-The `git diff --cached --quiet` guard makes the commit a NO-OP when nothing
-changed (idempotent — safe to repeat, never errors on an empty commit). Scope
-the `git add` to the ledger artifacts only; do NOT `git add -A` (code changes
-land on their own task branches; a ledger commit must contain only ledger
-files). **`/cq:advance` is the SOLE at-stop committer for a full run** — chained
-sub-flows SUPPRESS their own at-stop ledger commit (mirroring the handoff
-suppression), and ONLY their at-stop commit is suppressed: a milestone archived
-inside a chained sub-flow's pass is still committed at the point of archive, and
-a task merged inside the chained implement pass is still committed at the point
-of merge-back (both are always-fire checkpoints, not at-stop commits).
-
-## Auto-push the ledger ref at run END (git-object backend only — T355/Q194)
-
-**When the ledger `[ledger]` backend is `git-object`**, auto-push the orphan
-ledger branch to the configured remote ONCE at the run STOP, immediately after
-the run-stop ledger commit above (§Commit the ledger). When the backend is `fs`
-(the default), SKIP this step entirely. This is a once-per-run push (NOT
-per-write) — the symmetric partner of the run-START fetch above. As the SOLE
-at-stop committer, `/cq:advance` is also the SOLE at-end pusher for a full run:
-the chained sub-flows SUPPRESS their own at-end push exactly as they suppress
-their at-stop commit.
-
-The remote name comes from `[ledger] remote` (default `origin`). Run from the
-ledger root:
-```
-git push <remote> cq-ledger
-```
-This is a **PLAIN, NON-FORCED push** — there is deliberately **NO `--force`**.
-If the remote `cq-ledger` has diverged (someone else pushed since this run's
-START fetch), the push is REJECTED and **FAILS LOUDLY** (non-fast-forward) rather
-than silently overwriting their work. The local CAS `update-ref` already guards
-against lost updates *within* this checkout; the non-forced push guards against
-clobbering *another* checkout's pushed updates. On a rejected push, DO NOT add
-`--force` — follow the runbook
-(`docs/drafts/20260610-1300-orphan-ledger-runbook.md`): fetch, inspect
-`git log cq-ledger`, reconcile, then retry the plain push.
+Persistence is the store's job — no git action here; when the optional
+`[ledger].backup` mode (in-tree / orphan-branch) is enabled, the debounced
+exporter mirrors the ledger + logs to git.
 
 ---
 

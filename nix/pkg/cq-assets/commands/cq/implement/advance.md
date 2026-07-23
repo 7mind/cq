@@ -15,7 +15,7 @@ outputs:
   - "one reviews item per task (written by reviewer subagent or orchestrator)"
   - "merged commits on base branch via rebase-merge (conflict-resolver dispatched on conflict)"
   - "per worker/reviewer/conflict-resolver: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
-  - "handoffs item (standalone only) and ledger git commit (standalone only)"
+  - "handoffs item (standalone only)"
 ioSchema:
   - "ready-set: tasks status non-terminal and not blocked, all dependsOn satisfied per target ledger's satisfies-dependency statuses (abandoned/wontfix never satisfy), milestone dependsOn satisfied, no open question"
   - "worker dispatch: isolation=worktree, branch=implement/<taskId>, up to N=8 concurrent"
@@ -98,11 +98,11 @@ On every `create_item` / `update_item`, pass `author` = your OWN model class
 
 ## Session logs (after EVERY subagent returns)
 Each subagent ends its reply with a `### Session summary` block. **ALL log writes
-go through `cq log put` under BOTH backends — never a direct `Write` to
-`.cq/logs/`, and never `git add` a log file** (`cq log put` does redaction +
-strict-JSONL validation IN the CLI, and under `git-object` commits the log to the
-orphan ref itself; under `fs` it writes the file under `.cq/logs/`, which the
-per-merge ledger checkpoint already carries). Stamp `<timestamp>` (`Bash`: `date
+go through `cq log put` — never a direct `Write` to a log path, and never
+`git add` a log file** (`cq log put` does redaction + strict-JSONL validation IN
+the CLI and writes into the primary store's out-of-tree logs area; the logical
+paths `.cq/logs/…` are recorded in sessionLogs/rawLogs and read back via
+`read_log`). Stamp `<timestamp>` (`Bash`: `date
 -u +%Y%m%d-%H%M%S`) once per returned subagent.
 
 **Native `Agent` subagent (worker / reviewer / conflict-resolver).** Take
@@ -142,30 +142,6 @@ trace). Also write a summary `.md` (header: task id, role `implement-reviewer
 (§Record, §7.3).
 
 ---
-
-## Auto-fetch the ledger ref at run START (git-object backend only — T355/Q194)
-
-**When the ledger `[ledger]` backend is `git-object`** (NOT the default `fs`
-backend), auto-fetch the orphan ledger branch from the configured remote ONCE at
-the very start of the run, BEFORE the first pass below — so the run reads the
-latest shared ledger state. When the backend is `fs` (the default, or no
-`cq.toml`), SKIP this step entirely; it does NOTHING on the filesystem backend.
-**Suppress this fetch when chained** under a wrapping flow command (`/cq:advance`
-/ `/cq:implement:start`) — the wrapper owns the single run-START fetch (mirroring
-the at-stop handoff/commit suppression); run it only on a STANDALONE
-`/cq:implement:advance` invocation.
-
-The remote name comes from `[ledger] remote` (default `origin`); the ledger
-branch is `cq-ledger` (`[ledger] branch`, default `cq-ledger`). Run from the
-ledger root (the MCP `--cwd`):
-```
-git fetch <remote> refs/heads/cq-ledger:refs/heads/cq-ledger
-```
-**Single-branch / shallow clones must fetch this ref EXPLICITLY** — it is an
-orphan branch outside the normal fetch refspec (see the runbook,
-`docs/drafts/20260610-1300-orphan-ledger-runbook.md`). A non-fast-forward fetch
-failure means the local ref diverged from the remote — STOP and follow the
-runbook's divergence recovery rather than forcing the ref.
 
 ## The pass (repeat until no task is ready)
 
@@ -249,8 +225,9 @@ never blocked on it — a missing owning goal is not a precondition failure, it
 just means there is nothing to advance. Stamp `author`/`session` on this write
 per the provenance rule (§Provenance) like any other ledger write. This adds
 ONLY the `planned → building` edge — the exact non-terminal edge
-`flow-state-machines.md:221` already assigns to the implement flow ("the
-implement flow begins consuming the task DAG") and this command's own
+`flow-state-machines.md:221` already assigns to the implement flow (its
+`planned → building` row names this very step — implement/advance.md §2,
+"Goal ownership write" — as the idempotent transitioner) and this command's own
 "Goal-vs-milestone asymmetry (explicit)" paragraph (under "### Milestone
 auto-close+archive sweep (factored predicate)" below) already permits
 ("`planned`→`building` may stay automatic as it is non-terminal").
@@ -572,21 +549,9 @@ after every task in its `dependsOn` has merged). For each:
    what landed across the fix tasks>" })`. If any fix task is still non-terminal,
    leave D `open` — a later merge-back closes it. The orchestrator OWNS this
    closure; the reviewer and worker never touch the defects ledger status.
-5. **Commit the ledger after every task merge-back (ALWAYS fires, even when
-   chained).** Right after the §7.3 `done` write (and the §7.4 defect closure,
-   if any), commit the ledger artifacts — once per merged task — so a long
-   chained run does NOT accrue a large uncommitted ledger between archives. This
-   checkpoint OVERRIDES the chained-suppression: it fires under `/cq:advance`
-   too, exactly like the after-archive commit. Use the idempotent commit form
-   (ledger artifacts only — see §Commit the ledger). **When `[ledger] backend`
-   is `fs` (the default); SKIP under `git-object`, whose orphan ref already
-   carries each write:**
-   ```
-   git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-   git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:implement:advance — merged <Txx>
-
-   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-   ```
+5. **Ledger persistence.** Persistence is the store's job — no git action here;
+   when the optional `[ledger].backup` mode (in-tree / orphan-branch) is
+   enabled, the debounced exporter mirrors the ledger + logs to git.
 
 ### 8. Loop
 After merge-back, RE-DERIVE the ready-set (step 1) — tasks unblocked by the
@@ -664,63 +629,10 @@ all of goal `G`'s work milestones are archived, the orchestrator REPORTS that
 and once the user DOES close `G`, the next sweep archives `G`'s now-eligible
 coordination milestone automatically.
 
-### Commit the ledger (after every task merge-back + after every milestone archive; at-stop only standalone)
-The ledger files are tracked git artifacts. Commit the ledger — and ONLY the
-ledger (`.cq/*.md` + `.cq/archive` + `.cq/logs`; NEVER `docs/ledgers.yaml`,
-gitignored; NEVER code, which lands on task branches) — at THREE points, of
-which TWO ALWAYS fire (even chained) and ONE is suppressed when chained:
-- **(ALWAYS) After every task merge-back** (§7.5): commit immediately once per
-  merged task, right after its `done` write + defect closure, so a long chained
-  run does NOT accrue a large uncommitted ledger between archives. This ALWAYS
-  fires, even when chained under `/cq:advance` — the chained-suppression does
-  NOT apply to this checkpoint.
-- **(ALWAYS) After every `archive_milestone`** (the sweep above, and each
-  merge-back archive): commit immediately, so each completed milestone is a
-  durable checkpoint. This ALWAYS fires, even when chained under `/cq:advance`.
-- **(SUPPRESSED WHEN CHAINED) At this pass's STOP**, right after the §Handoff
-  record write — but ONLY when run STANDALONE. When CHAINED under `/cq:advance`,
-  SUPPRESS the at-stop commit (the wrapper owns the single run-stop commit,
-  mirroring the handoff suppression). The two ALWAYS-fire checkpoints above
-  (after every task merge-back + after every milestone archive) still fire
-  either way.
-
-Mechanism — **when `[ledger] backend` is `fs` (the default); SKIP under
-`git-object`, whose orphan ref already carries each write** (run from the ledger
-root — same idempotent form at every checkpoint, only the `-m` message differs):
-```
-git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:implement:advance — <merged <Txx> | <Mxx> archived | stop: <status>>
-
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-```
-The `git diff --cached --quiet` guard makes the commit a NO-OP when nothing
-changed (idempotent). Scope `git add` to the ledger artifacts only — never
-`git add -A`.
-
-### Auto-push the ledger ref at run END (git-object backend only — T355/Q194)
-
-**When the ledger `[ledger]` backend is `git-object`**, auto-push the orphan
-ledger branch to the configured remote ONCE at the STANDALONE pass STOP,
-immediately after the standalone at-stop ledger commit above. When the backend
-is `fs` (the default), SKIP this step. This is a once-per-run push (NOT
-per-write, NOT per-merge-back) — the symmetric partner of the run-START fetch.
-**SUPPRESS this push when chained** (`/cq:advance` / `/cq:implement:start`)
-exactly as the at-stop commit is suppressed — the outermost wrapper owns the
-single run-END push.
-
-The remote name comes from `[ledger] remote` (default `origin`). Run from the
-ledger root:
-```
-git push <remote> cq-ledger
-```
-This is a **PLAIN, NON-FORCED push** — deliberately **NO `--force`**. If the
-remote `cq-ledger` has diverged since this run's START fetch, the push is
-REJECTED and **FAILS LOUDLY** (non-fast-forward) rather than silently
-overwriting. The local CAS `update-ref` already guards against lost updates
-within this checkout; the non-forced push guards against clobbering another
-checkout's pushed updates. On a rejected push, DO NOT add `--force` — follow the
-runbook (`docs/drafts/20260610-1300-orphan-ledger-runbook.md`): fetch, inspect
-`git log cq-ledger`, reconcile, then retry the plain push.
+### Ledger persistence (no git action)
+Persistence is the store's job — no git action here; when the optional
+`[ledger].backup` mode (in-tree / orphan-branch) is enabled, the debounced
+exporter mirrors the ledger + logs to git.
 
 ## Report to the user
 Summarize the pass concisely:
@@ -780,8 +692,10 @@ context you are in.
   `.cq/logs/raw/<ts>-<agent-id>.jsonl` raw-transcript path(s) written this pass —
   populate them in the SAME `create_item` call (omit a `rawLogs` entry for any
   subagent whose transcript was absent). Stamp `author`/`session`. Append-only: written
-  once at the stop, never updated. **Then commit the ledger** (§Commit the
-  ledger, at-stop commit) — this is the final act of the standalone pass.
+  once at the stop, never updated — this is the final act of the standalone
+  pass. Persistence is the store's job — no git action here; when the optional
+  `[ledger].backup` mode (in-tree / orphan-branch) is enabled, the debounced
+  exporter mirrors the ledger + logs to git.
 
   **Ready-to-close goals (user action).** When all work milestones under goal `G` are archived, `G` is ready to close — include it in the §Report with explicit instruction to set its status to `done` in the TUI/web. Closing a goal is the user's decision and cannot be automated — **GOALS NEVER auto-close** (restated: the orchestrator MUST NEVER transition a goal to `done`; only the user can).
 
@@ -854,9 +768,7 @@ context you are in.
 
 - **Run CHAINED INLINE by any wrapping flow command** (`/cq:advance`, or a
   `/<flow>:start` that runs this pass inline):
-  **SUPPRESS this handoff write** — AND suppress the at-stop ledger commit (the
-  outermost wrapper owns both). The per-archive ledger commits (§Commit the
-  ledger) still fire. The outermost wrapper owns the single
+  **SUPPRESS this handoff write**. The outermost wrapper owns the single
   authoritative run-level handoff and writes it once at its stop — `/cq:advance`
   per its §Provenance (it is the sole `handoffs` writer for the whole run);
   a `/<flow>:start` writes it directly in its own §Handoff record step. You can

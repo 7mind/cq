@@ -191,29 +191,6 @@ summary `.md` to the hypothesis item's `sessionLogs` and the raw
 
 ---
 
-## Auto-fetch the ledger ref at run START (git-object backend only — T355/Q194)
-
-**When the ledger `[ledger]` backend is `git-object`** (NOT the default `fs`
-backend), auto-fetch the orphan ledger branch from the configured remote ONCE at
-the very start of the round, BEFORE step 1 below — so the round reads the latest
-shared ledger state. When the backend is `fs` (the default, or no `cq.toml`), SKIP
-this step entirely. **Suppress this fetch when chained** under a wrapping flow
-command (`/cq:advance` or `/cq:research`) — the wrapper owns the single run-START
-fetch (mirroring the at-stop handoff/commit suppression); run it only on a
-STANDALONE `/cq:research:advance` invocation.
-
-The remote name comes from `[ledger] remote` (default `origin`); the ledger branch
-is `cq-ledger` (`[ledger] branch`, default `cq-ledger`). Run from the ledger root
-(the MCP `--cwd`):
-```
-git fetch <remote> refs/heads/cq-ledger:refs/heads/cq-ledger
-```
-**Single-branch / shallow clones must fetch this ref EXPLICITLY** — it is an orphan
-branch outside the normal fetch refspec (see the runbook,
-`docs/drafts/20260610-1300-orphan-ledger-runbook.md`). A non-fast-forward fetch
-failure means the local ref diverged from the remote — STOP and follow the
-runbook's divergence recovery rather than forcing the ref.
-
 ## The research round (the six steps)
 
 ### 1. READ state (purely from the ledger)
@@ -535,9 +512,9 @@ in the SAME inline session, so you already KNOW which context you are in.
   raw path(s) written this round — populate them in
   the SAME `create_item` call (omit a `rawLogs` entry for any subagent whose
   transcript was absent). Stamp `author`/`session`. Append-only: written once at the
-  stop, never updated. **Then commit the ledger** (§Commit the ledger): stage the
-  ledger artifacts only and commit, so a standalone research round never leaves the
-  ledger uncommitted.
+  stop, never updated. Persistence is the store's job — no git action here; when
+  the optional `[ledger].backup` mode (in-tree / orphan-branch) is enabled, the
+  debounced exporter mirrors the ledger + logs to git.
 
   **TURN-vs-RUN clause (D39).** A RUN and a TURN are distinct scopes. A **RUN**
   spans as many turns as needed and is durably resumable from ledger state on the
@@ -604,8 +581,7 @@ in the SAME inline session, so you already KNOW which context you are in.
   instead.
 
 - **Run CHAINED INLINE by any wrapping flow command** (`/cq:advance` or
-  `/cq:research` that runs this pass inline): **SUPPRESS this handoff write** — AND
-  suppress the at-stop ledger commit (the outermost wrapper owns both). The
+  `/cq:research` that runs this pass inline): **SUPPRESS this handoff write**. The
   outermost wrapper owns the single authoritative run-level handoff and writes it
   once at its stop — `/cq:advance` per its §Provenance (it is the sole `handoffs`
   writer for the whole run); `/cq:research` writes it directly in its own §Handoff
@@ -614,40 +590,7 @@ in the SAME inline session, so you already KNOW which context you are in.
   invocation has no such wrapper. Suppressing here is what guarantees exactly ONE
   handoff per run — never a duplicate.
 
-## Commit the ledger (standalone stop)
-After the standalone handoff write, persist the ledger to git — **when `[ledger]
-backend` is `fs` (the default); SKIP under `git-object`, whose orphan ref already
-carries each write** — and ONLY the ledger (`.cq/*.md` + `.cq/archive` +
-`.cq/logs`; NEVER `docs/ledgers.yaml`, gitignored; NEVER code, and NEVER a
-research-content file in the working tree — the synthesis lives in `cq log
-put`-managed logs, never a tracked working-tree file):
-```
-git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:research:advance — <stop: <status>>
-
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-```
-The `git diff --cached --quiet` guard makes it a NO-OP when nothing changed.
-SUPPRESS this commit when chained (the wrapper owns the single run-stop commit).
-
-## Auto-push the ledger ref at run END (git-object backend only — T355/Q194)
-
-**When the ledger `[ledger]` backend is `git-object`**, auto-push the orphan ledger
-branch to the configured remote ONCE at the STANDALONE stop, immediately after the
-standalone at-stop ledger commit above. When the backend is `fs` (the default),
-SKIP this step. This is a once-per-run push (NOT per-write) — the symmetric partner
-of the run-START fetch. **SUPPRESS this push when chained** (`/cq:advance` or
-`/cq:research`) exactly as the at-stop commit is suppressed — the outermost wrapper
-owns the single run-END push.
-
-The remote name comes from `[ledger] remote` (default `origin`). Run from the
-ledger root:
-```
-git push <remote> cq-ledger
-```
-This is a **PLAIN, NON-FORCED push** — deliberately **NO `--force`**. If the remote
-`cq-ledger` has diverged since this run's START fetch, the push is REJECTED and
-**FAILS LOUDLY** (non-fast-forward) rather than silently overwriting. On a rejected
-push, DO NOT add `--force` — follow the runbook
-(`docs/drafts/20260610-1300-orphan-ledger-runbook.md`): fetch, inspect `git log
-cq-ledger`, reconcile, then retry the plain push.
+## Ledger persistence (standalone stop)
+Persistence is the store's job — no git action here; when the optional
+`[ledger].backup` mode (in-tree / orphan-branch) is enabled, the debounced
+exporter mirrors the ledger + logs to git.

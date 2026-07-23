@@ -1046,13 +1046,12 @@ describe("T264: D39 stop-discipline grep invariant — turn-vs-run + euphemism-b
 //
 // Cell 1 (T301): implement-worker.md — worktree-confinement Boundary.
 //   Marker: `MUST NOT run git against the main checkout`
-// Cell 2 (T302): plan/advance.md — commit-after-planning-lock checkpoint.
-//   Marker: `after the planning-lock`
-// Cell 3 (T303): implement/advance.md — commit-after-every-merge-back checkpoint.
-//   Marker: `after every task merge-back`
-// Cell 4 (T304): advance.md — chained-path clause (absent from implement/advance.md,
-//   confirming file-specificity).
-//   Marker: `it fires even when the implement sub-flow runs chained under`
+// Cells 2-4 (T302-T304, retargeted by T631/G87): the ledger-git-commit
+// checkpoints those cells originally guarded were removed by the Q297/Q298
+// xdg-consistency sweep — persistence is the store's job now. Each cell
+// asserts the replacement persistence sentence is present in its file AND
+// that no `git add .cq/` commit step survives.
+//   Marker: `Persistence is the store's job — no git action here`
 //
 // Path resolution: same pattern as T255/T264 above.
 //   cq-assets/commands/cq/  → path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq")
@@ -1068,19 +1067,22 @@ describe("D43: T301-T304 prompt-hardening grep invariants — file-scoped", () =
     expect(text).toContain("MUST NOT run git against the main checkout");
   });
 
-  it("D43/T302: plan/advance.md contains commit-after-planning-lock checkpoint marker", async () => {
+  it("D43/T302 (T631): plan/advance.md carries the persistence sentence, no ledger git-commit step", async () => {
     const text = await readFile(path.join(cqCommandsRoot, "plan", "advance.md"), "utf8");
-    expect(text).toContain("after the planning-lock");
+    expect(text).toContain("Persistence is the store's job — no git action here");
+    expect(text).not.toContain("git add .cq/");
   });
 
-  it("D43/T303: implement/advance.md contains commit-after-every-merge-back checkpoint marker", async () => {
+  it("D43/T303 (T631): implement/advance.md carries the persistence sentence, no ledger git-commit step", async () => {
     const text = await readFile(path.join(cqCommandsRoot, "implement", "advance.md"), "utf8");
-    expect(text).toContain("after every task merge-back");
+    expect(text).toContain("Persistence is the store's job — no git action here");
+    expect(text).not.toContain("git add .cq/");
   });
 
-  it("D43/T304: advance.md contains chained-path clause marker (file-specific, absent from implement/advance.md)", async () => {
+  it("D43/T304 (T631): advance.md carries the persistence sentence, no ledger git-commit step", async () => {
     const text = await readFile(path.join(cqCommandsRoot, "advance.md"), "utf8");
-    expect(text).toContain("it fires even when the implement sub-flow runs chained under");
+    expect(text).toContain("Persistence is the store's job — no git action here");
+    expect(text).not.toContain("git add .cq/");
   });
 });
 

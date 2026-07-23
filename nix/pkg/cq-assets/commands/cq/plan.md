@@ -14,7 +14,7 @@ outputs:
   - "for each idea-seeded goal: bidirectional ledgerRefs link (goal↔idea) + idea status→planned"
   - "first batch of clarifying questions (filed by plan-advance subagent)"
   - "planner summary log .cq/logs/<timestamp>-<agent-id>.md AND raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
-  - "handoffs item (answers-required) and ledger git commit"
+  - "handoffs item (answers-required)"
 ioSchema:
   - "bootstrap only — no plan logic; plan-advance subagent owns question generation"
   - "goal schema fields: title, description (required); grounding, milestones (set later by planner)"
@@ -130,11 +130,12 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
 
 4. **Write the session logs and attach them to the goal.** The `plan-advance`
    subagent ends its reply with a `### Session summary` section. Persist BOTH a
-   raw transcript and a summary — **ALL log writes go through `cq log put` under
-   BOTH backends; never a direct `Write` to `.cq/logs/`, and never `git add` a
-   log file** (`cq log put` does redaction + strict-JSONL validation IN the CLI,
-   and under `git-object` commits to the orphan ref; under `fs` it writes under
-   `.cq/logs/`, which the step-8 ledger commit already carries). Take
+   raw transcript and a summary — **ALL log writes go through `cq log put`;
+   never a direct `Write` to a log path, and never `git add` a
+   log file** (`cq log put` does redaction + strict-JSONL validation IN the CLI
+   and writes into the primary store's out-of-tree logs area; the logical paths
+   `.cq/logs/…` are recorded in sessionLogs/rawLogs and read back via
+   `read_log`). Take
    `<agent-id>` from the `Agent` tool result and stamp `<timestamp>` via `Bash`
    (`date -u +%Y%m%d-%H%M%S`), then:
    - **Raw transcript.** Locate the native transcript at
@@ -208,19 +209,9 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
    `/<flow>:start` is listed as a suppress-context; this command owns the single
    authoritative write).
 
-8. **Commit the ledger.** This command is the outermost wrapper, so it owns the
-   single run-stop ledger commit. Immediately after the handoff write, persist
-   the ledger to git — **when `[ledger] backend` is `fs` (the default); SKIP
-   under `git-object`, whose orphan ref already carries each write** — ONLY the
-   ledger (`.cq/*.md` + `.cq/archive` + `.cq/logs`; NEVER
-   `docs/ledgers.yaml`, gitignored; NEVER code):
-   ```
-   git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-   git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:plan — goal G<n> bootstrapped (awaiting-answers)
-
-   Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-   ```
-   The `git diff --cached --quiet` guard makes it a NO-OP when nothing changed.
+8. **Ledger persistence.** Persistence is the store's job — no git action here;
+   when the optional `[ledger].backup` mode (in-tree / orphan-branch) is
+   enabled, the debounced exporter mirrors the ledger + logs to git.
 
 Do not file questions, transition the goal, or emit any plan yourself — the
 `plan-advance` planner and `/cq:plan:advance` own everything after the goal is

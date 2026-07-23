@@ -12,7 +12,7 @@ outputs:
   - "intake path: coordination milestone M + research item RS on the researches ledger"
   - "resume path: validates existing research RS (aborts if terminal)"
   - "research-flow advance round run inline (full /cq:research:advance output)"
-  - "handoffs item and ledger git commit (this command is the outermost wrapper)"
+  - "handoffs item (this command is the outermost wrapper)"
 ioSchema:
   - "intake path: creates a researches item with fields question (required), scope (optional)"
   - "researches lifecycle: open -> wip -> {concluded | inconclusive}; abandoned is user-initiated only"
@@ -140,19 +140,9 @@ This command is the outermost wrapper for this invocation (the user ran
 handoff write** (per `/cq:research:advance`'s §Handoff record — `/cq:research` is listed
 as a suppress-context), and **this command** writes the ONE `handoffs` record at the
 stop. Use the field schema from `/cq:research:advance`'s §Handoff record, STANDALONE
-branch (do not restate the mapping here). **Then commit the ledger** — this command is
-the outermost wrapper, so it owns the single run-stop ledger commit; immediately after
-the handoff write, persist the ledger to git — **when `[ledger] backend` is `fs` (the
-default); SKIP under `git-object`, whose orphan ref already carries each write** — ONLY
-the ledger (`.cq/*.md` + `.cq/archive` + `.cq/logs`; NEVER `docs/ledgers.yaml`,
-gitignored; NEVER code):
-```
-git add .cq/ 2>/dev/null  # ledger dir; .gitignore excludes ledgers.yaml + lockfiles/backups
-git diff --cached --quiet -- .cq/ || git commit -q -m "chore(ledger): /cq:research — research RS<n> <intake|resume> + first round
-
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
-```
-The `git diff --cached --quiet` guard makes it a NO-OP when nothing changed.
+branch (do not restate the mapping here). Persistence is the store's job — no git
+action here; when the optional `[ledger].backup` mode (in-tree / orphan-branch) is
+enabled, the debounced exporter mirrors the ledger + logs to git.
 
 The run is resumable: after the user answers any registered questions, they re-run
 **`/cq:research:advance RS`** (no need to re-run `/cq:research`).

@@ -93,14 +93,14 @@ Every subagent these flows dispatch (plan-flow *and* implement-flow) ends its
 final message with a `### Session summary` block (**Did / Achieved / Discovered
 / Issues**). The subagent writes **no file** — it only emits the section. The
 **orchestrator** command (`cq/plan`, `plan/advance`, `implement/start`,
-`implement/advance`) persists it to
-`.cq/logs/<timestamp>-<agent-id>.md` after each `Agent` call returns:
+`implement/advance`) persists it after each `Agent` call returns via
+`cq log put` into the primary store's out-of-tree logs area — the logical path
+`.cq/logs/<timestamp>-<agent-id>.md` is recorded in the item's
+`sessionLogs`/`rawLogs` and read back via `read_log`:
 `<agent-id>` comes from the Agent tool result, `<timestamp>` is stamped by the
 orchestrator (`date -u +%Y%m%d-%H%M%S`). This keeps subagents read-only (no
 `Write` tool), avoids carrying a log file across worktree merge-back, and stays
-concurrency-safe (a single writer, unique filenames). `.cq/logs/` is tracked
-via `.gitkeep`; the `.cq/*.md` ledger files live in a different place and are
-unaffected.
+concurrency-safe (a single writer, unique filenames).
 
 ## No root `AGENTS.md` — deliberate
 

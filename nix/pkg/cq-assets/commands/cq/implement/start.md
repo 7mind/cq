@@ -11,7 +11,7 @@ inputs:
 outputs:
   - "scope report: target milestone ids, task counts, initial ready-set"
   - "implement-flow advance pass run inline (full /cq:implement:advance output)"
-  - "handoffs item and ledger git commit (this command is the outermost wrapper)"
+  - "handoffs item (this command is the outermost wrapper)"
 ioSchema:
   - "bootstrap only — scope resolution + DAG sanity check; /cq:implement:advance owns all execution"
   - "ready-set: tasks with no unsatisfied dependsOn, not blocked, no open question"
