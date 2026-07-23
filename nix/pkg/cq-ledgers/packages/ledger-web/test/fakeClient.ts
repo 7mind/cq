@@ -7,6 +7,7 @@ import type {
   AgentModelEntry,
   AgentModelsResult,
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   FieldValue,
   FtsHit,
@@ -483,6 +484,16 @@ export class FakeClient implements LedgerClient {
     if (patch.title !== undefined) it.fields["title"] = patch.title;
     if (patch.description !== undefined) it.fields["description"] = patch.description;
     return it;
+  }
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+    const it = this.find("milestones", milestoneId);
+    return {
+      id: milestoneId,
+      path: `./archive/milestones/${milestoneId}.md`,
+      summary,
+      title: String(it.fields["title"] ?? ""),
+      status: it.status,
+    };
   }
   async getAgentModels(): Promise<AgentModelsResult> {
     switch (this.agentModelsMode) {

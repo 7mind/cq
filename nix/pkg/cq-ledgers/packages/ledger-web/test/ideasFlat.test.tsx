@@ -17,6 +17,7 @@ import { HOLD_MS, type HoldClock } from "../src/HoldButton.js";
 import type {
   AgentModelsResult,
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   FtsHit,
   Item,
@@ -172,6 +173,7 @@ class IdeasClient implements LedgerClient {
   async ftsSearch(): Promise<FtsHit[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(_m: string, _p: MilestonePatch): Promise<Item> { throw new Error("not used"); }
+  async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async readLog(): Promise<ReadLogResult> { throw new Error("not used"); }
   async getAgentModels(): Promise<AgentModelsResult> { return { configured: false, agents: [] }; }
   async listProjects(): Promise<ListProjectsResult> { return { projects: [{ key: "cq1", displayName: "cq1" }] }; }

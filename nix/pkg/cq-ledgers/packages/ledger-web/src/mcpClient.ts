@@ -22,6 +22,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type {
   AgentModelsResult,
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   FtsHit,
   Item,
@@ -206,6 +207,15 @@ export class McpLedgerClient implements LedgerClient {
     if (patch.blockedBy !== undefined) args["blockedBy"] = patch.blockedBy;
     if (patch.dependsOn !== undefined) args["dependsOn"] = patch.dependsOn;
     return (await this.call<{ milestone: Item }>("update_milestone", args)).milestone;
+  }
+
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+    return (
+      await this.call<{ pointer: ArchivePointer }>("archive_milestone", {
+        milestone_id: milestoneId,
+        summary,
+      })
+    ).pointer;
   }
 
   async readLog(path: string): Promise<ReadLogResult> {

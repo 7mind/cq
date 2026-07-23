@@ -22,6 +22,7 @@ import { App } from "../src/App";
 import type {
   AgentModelsResult,
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   FtsHit,
   Item,
@@ -132,6 +133,9 @@ class GoalsClient implements LedgerClient {
     throw new Error("not used");
   }
   async updateMilestone(_m: string, _p: MilestonePatch): Promise<Item> {
+    throw new Error("not used");
+  }
+  async archiveMilestone(): Promise<ArchivePointer> {
     throw new Error("not used");
   }
   async readLog(): Promise<ReadLogResult> {

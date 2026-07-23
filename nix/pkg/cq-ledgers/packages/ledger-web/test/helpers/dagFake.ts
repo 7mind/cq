@@ -8,6 +8,7 @@
 
 import type {
   AgentModelsResult,
+  ArchivePointer,
   FetchedLedger,
   Item,
   LedgerClient,
@@ -145,6 +146,9 @@ export class DagFakeClient implements LedgerClient {
     return [];
   }
   async createMilestone(): Promise<Item> {
+    throw new Error("not used in DAG tests");
+  }
+  async archiveMilestone(): Promise<ArchivePointer> {
     throw new Error("not used in DAG tests");
   }
   async readLog(): Promise<ReadLogResult> {

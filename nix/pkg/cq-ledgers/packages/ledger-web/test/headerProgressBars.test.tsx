@@ -17,6 +17,7 @@ import { FakeClient } from "./fakeClient";
 import type {
   AgentModelsResult,
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   FtsHit,
   Item,
@@ -165,6 +166,9 @@ class ProgressFakeClient implements LedgerClient {
   }
   async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
     return this.base.updateMilestone(milestoneId, patch);
+  }
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+    return this.base.archiveMilestone(milestoneId, summary);
   }
   async readLog(path: string): Promise<ReadLogResult> {
     return this.base.readLog(path);

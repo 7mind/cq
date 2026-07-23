@@ -17,10 +17,11 @@ import type {
   AgentModelStatus,
   ListProjectsResult,
   ProjectEntry,
+  ArchivePointer,
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
 
-export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus, ListProjectsResult, ProjectEntry };
+export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus, ListProjectsResult, ProjectEntry, ArchivePointer };
 
 export interface FtsHit {
   ledgerId: string;
@@ -87,6 +88,13 @@ export interface LedgerClient {
   ftsSearch(query: string, opts?: { ledger?: string }): Promise<FtsHit[]>;
   createMilestone(init: { title: string; description?: string; id?: string }): Promise<Item>;
   updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item>;
+  /**
+   * Archive a milestone globally (archive_milestone MCP tool): sweeps every
+   * ledger's group with this id, then the milestone-item itself, into
+   * ./archive/. Refused server-side if any item under the milestone is
+   * non-terminal.
+   */
+  archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
   /** Read a log file under docs/logs/ via the read_log MCP tool. */
   readLog(path: string): Promise<ReadLogResult>;
   /** Retrieve per-agent resolved model overlays via the get_agent_models MCP tool. */
