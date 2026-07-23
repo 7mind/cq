@@ -54,6 +54,15 @@ import {
   GOALS_LEDGER,
 MILESTONES_SCHEMA,
 } from "@cq/ledger";
+import {
+  buildFinalizeSnapshot,
+  computeApplyDonePlan,
+  computeArchivePlan,
+  runApplyDone,
+  runArchive,
+  type FinalizeExecResult,
+  type FinalizePlan,
+} from "@cq/ledger/finalize";
 
 /**
  * The secondary ledger to lazily fetch for a given primary ledger's
@@ -337,6 +346,23 @@ type Frame =
       archiveLoading: boolean;
     };
 
+/** Which finalize sweep (Q291) the pick step selected. */
+type FinalizeMode = "apply-done" | "archive";
+/** The two pick-step options, in display order (Q291 labels verbatim). */
+const FINALIZE_OPTIONS: ReadonlyArray<{ mode: FinalizeMode; label: string }> = [
+  { mode: "apply-done", label: "Apply Done to completed items" },
+  { mode: "archive", label: "Archive all Done items" },
+];
+/**
+ * Internal step of the finalize overlay (T621): pick a sweep → preview the
+ * shared plan (the SAME computed id list the web preview shows, Q292, plus
+ * skipped reasons) → per-id execution results.
+ */
+type FinalizeStep =
+  | { t: "pick" }
+  | { t: "preview"; mode: FinalizeMode; plan: FinalizePlan }
+  | { t: "results"; results: FinalizeExecResult[] };
+
 type Overlay =
   | { t: "search" }
   | { t: "status"; row: Row }
@@ -356,7 +382,9 @@ type Overlay =
    * frame the user is on — defaults to the questions ledger). `rows` is the
    * snapshot of open answerable rows at entry; `idx` is the current position.
    */
-  | { t: "batchAnswer"; ledger: string; rows: Row[]; idx: number };
+  | { t: "batchAnswer"; ledger: string; rows: Row[]; idx: number }
+  /** Finalize sweeps (G83/T621): `F` on the goals/milestones frames only. */
+  | { t: "finalize"; step: FinalizeStep };
 
 // ---------------------------------------------------------------------------
 // App
@@ -745,6 +773,39 @@ export function App({
     [client, top, patchTop],
   );
 
+  // Finalize (G83/T621): after a pick, assemble the snapshot from ALL ledgers
+  // the shared predicates read (milestones + every item ledger — fetched
+  // concurrently), compute the shared plan, and show the preview step.
+  const finalizePreview = useCallback(
+    async (mode: FinalizeMode) => {
+      try {
+        const names = new Set<string>(ledgers.map((l) => l.name));
+        names.add(MILESTONES);
+        const views = await Promise.all([...names].map((n) => client.fetchLedger(n)));
+        const snapshot = buildFinalizeSnapshot(views);
+        const plan = mode === "apply-done" ? computeApplyDonePlan(snapshot) : computeArchivePlan(snapshot);
+        setOverlay({ t: "finalize", step: { t: "preview", mode, plan } });
+      } catch (e) {
+        setFlash(errMsg(e));
+        setOverlay(null);
+      }
+    },
+    [client, ledgers],
+  );
+
+  // Execute the previewed plan through the shared executor with ops backed by
+  // this client (updateMilestone / updateItem / archiveMilestone), then show
+  // the per-id results step and refresh the visible data.
+  const finalizeExecute = useCallback(
+    async (mode: FinalizeMode, plan: FinalizePlan) => {
+      const results =
+        mode === "apply-done" ? await runApplyDone(client, plan) : await runArchive(client, plan);
+      setOverlay({ t: "finalize", step: { t: "results", results } });
+      refreshRef.current();
+    },
+    [client],
+  );
+
   const applyField = useCallback(
     async (row: Row, field: string, raw: string) => {
       if (top.kind !== "items") return;
@@ -1033,6 +1094,9 @@ export function App({
       else if (input === "c") setOverlay({ t: "pickColumns", ledger: top.ledger });
       else if (input === "/") setOverlay({ t: "search" });
       else if (input === "A") void toggleArchive();
+      // Finalize sweeps (G83/T621): gated on the goals/milestones frames only.
+      else if (input === "F" && (top.ledger === MILESTONES || top.ledger === GOALS_LEDGER))
+        setOverlay({ t: "finalize", step: { t: "pick" } });
     },
     { isActive: true },
   );
@@ -1122,10 +1186,13 @@ export function App({
     const archiveHint = top.view.archivePointers.length > 0
       ? ` · A ${top.showArchive ? "hide" : "show"} archived`
       : "";
+    // Finalize (G83/T621): advertised only where the keybinding is live.
+    const finalizeHint =
+      top.ledger === MILESTONES || top.ledger === GOALS_LEDGER ? " · F finalize" : "";
     hints =
       top.focus === "content"
         ? `↑↓/PgUp/Dn scroll · s status${answerHint} · e edit · o/[ ] panes · p project · Esc back to list${cursorInArchive ? " [read-only]" : ""}`
-        : `↑↓ move · PgUp/Dn page · Home/End first/last · Enter focus · s status${answerHint} · e edit · n new · b batch-answer · f filter · c columns · / search · o/[ ] panes · p project${archiveHint} · Esc back`;
+        : `↑↓ move · PgUp/Dn page · Home/End first/last · Enter focus · s status${answerHint} · e edit · n new · b batch-answer · f filter · c columns${finalizeHint} · / search · o/[ ] panes · p project${archiveHint} · Esc back`;
     // Column widths (T62) computed over all displayed rows, and the active
     // list entries — both from the memoized bundle (see ItemsDerived). The
     // archive section header + rows are appended cheaply below.
@@ -1303,6 +1370,8 @@ export function App({
               projects={projects}
               activeProjectKey={projectKey}
               onSelectProject={(p) => void selectProject(p)}
+              onFinalizeMode={(m) => void finalizePreview(m)}
+              onFinalizeExecute={(m, plan) => void finalizeExecute(m, plan)}
               setOverlay={setOverlay}
               onCancel={() => setOverlay(null)}
             />
@@ -1989,6 +2058,8 @@ function Overlays({
   projects,
   activeProjectKey,
   onSelectProject,
+  onFinalizeMode,
+  onFinalizeExecute,
   setOverlay,
   onCancel,
 }: {
@@ -2009,6 +2080,10 @@ function Overlays({
   projects: readonly ProjectEntry[];
   activeProjectKey: string;
   onSelectProject: (p: ProjectEntry) => void;
+  /** Finalize (T621): a pick-step selection → compute + preview the plan. */
+  onFinalizeMode: (mode: FinalizeMode) => void;
+  /** Finalize (T621): Enter on the preview → execute the previewed plan. */
+  onFinalizeExecute: (mode: FinalizeMode, plan: FinalizePlan) => void;
   setOverlay: (o: Overlay | null) => void;
   onCancel: () => void;
 }): React.ReactElement {
@@ -2132,7 +2207,144 @@ function Overlays({
     case "batchAnswer":
       // Rendered full-screen by the App (BatchAnswerOverlay), not here.
       return <></>;
+    case "finalize": {
+      const step = overlay.step;
+      if (step.t === "pick") {
+        return (
+          <SelectList
+            items={FINALIZE_OPTIONS}
+            getLabel={(o) => o.label}
+            onSelect={(o) => onFinalizeMode(o.mode)}
+            onCancel={onCancel}
+          />
+        );
+      }
+      if (step.t === "preview") {
+        return (
+          <FinalizePreview
+            mode={step.mode}
+            plan={step.plan}
+            onExecute={() => onFinalizeExecute(step.mode, step.plan)}
+            onCancel={onCancel}
+          />
+        );
+      }
+      return <FinalizeResults results={step.results} onClose={onCancel} />;
+    }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Finalize overlay steps (G83/T621): preview the shared plan, then the per-id
+// execution results. Both own input while mounted (same pattern as LiveSearch).
+// ---------------------------------------------------------------------------
+
+function FinalizePreview({
+  mode,
+  plan,
+  onExecute,
+  onCancel,
+}: {
+  mode: FinalizeMode;
+  plan: FinalizePlan;
+  onExecute: () => void;
+  onCancel: () => void;
+}): React.ReactElement {
+  // Guard against a double Enter re-running the sweep while it executes.
+  const [running, setRunning] = useState(false);
+  useInput((_input, key) => {
+    if (key.escape) onCancel();
+    else if (key.return && plan.affected.length > 0 && !running) {
+      setRunning(true);
+      onExecute();
+    }
+  });
+  const title = mode === "apply-done" ? "apply done" : "archive";
+  return (
+    <Box flexDirection="column">
+      <Text bold color="cyan">
+        finalize · {title} · preview
+      </Text>
+      {plan.affected.length === 0 ? (
+        <Text color="yellow">nothing eligible</Text>
+      ) : (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>affected ({plan.affected.length}):</Text>
+          {plan.affected.map((e) => (
+            <Text key={e.id} wrap="truncate-end">
+              {"  "}
+              <Text bold>{e.id}</Text>
+              <Text dimColor>
+                {" "}
+                {e.action}
+                {e.targetStatus !== undefined ? ` → ${e.targetStatus}` : ""}
+              </Text>
+            </Text>
+          ))}
+        </Box>
+      )}
+      {plan.skipped.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold dimColor>
+            skipped ({plan.skipped.length}):
+          </Text>
+          {plan.skipped.map((s) => (
+            <Text key={s.id} dimColor wrap="truncate-end">
+              {"  "}
+              {s.id} — {s.reason}
+              {s.detail !== undefined ? ` (${s.detail})` : ""}
+            </Text>
+          ))}
+        </Box>
+      )}
+      <Box marginTop={1}>
+        <Text dimColor>
+          {running
+            ? "executing…"
+            : plan.affected.length > 0
+              ? "Enter execute · Esc cancel"
+              : "Esc close"}
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
+function FinalizeResults({
+  results,
+  onClose,
+}: {
+  results: FinalizeExecResult[];
+  onClose: () => void;
+}): React.ReactElement {
+  useInput((_input, key) => {
+    if (key.escape || key.return) onClose();
+  });
+  const failed = results.filter((r) => !r.ok).length;
+  return (
+    <Box flexDirection="column">
+      <Text bold color="cyan">
+        finalize · results
+      </Text>
+      {results.length === 0 ? (
+        <Text dimColor>(nothing executed)</Text>
+      ) : (
+        results.map((r) => (
+          <Text key={r.id} wrap="truncate-end">
+            {"  "}
+            <Text color={r.ok ? "green" : "red"}>{r.ok ? "ok    " : "failed"}</Text>{" "}
+            <Text bold>{r.id}</Text> <Text dimColor>{r.action}</Text>
+            {r.error !== undefined ? <Text color="red"> — {r.error}</Text> : null}
+          </Text>
+        ))
+      )}
+      <Box marginTop={1}>
+        <Text dimColor>
+          {failed > 0 ? `${failed} failed · ` : ""}Enter/Esc close
+        </Text>
+      </Box>
+    </Box>
+  );
 }
 
 // ---------------------------------------------------------------------------
