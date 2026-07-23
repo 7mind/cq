@@ -78,7 +78,10 @@ function makeView(id: string, schema: LedgerSchema, groups: Record<string, Item[
 
 /**
  * Fixture covering every case in the T618 acceptance:
- *  - M-AMBIENT  open   all-terminal items but the ambient group → never affected (R722, (d))
+ *  - M-AMBIENT  open   its grouped goals (below) are all NON-terminal → excluded
+ *               outright by the R722 ambient special-case regardless (this
+ *               fixture does not by itself prove the exclusion is what keeps
+ *               it out — see the dedicated all-terminal variant below, (d))
  *  - M1         open   all tasks done BUT one open defect → NOT complete (Q288, (a))
  *  - M1Q        open   all tasks done BUT one open question → NOT complete (Q288, (a))
  *  - M2         open   EMPTY (zero items in any ledger) → never affected (R722, (d))
@@ -189,12 +192,36 @@ describe("computeApplyDonePlan (Q288/Q289 + R722)", () => {
     expect(skippedById.get("G5")).toEqual({ id: "G5", reason: SKIP_NO_MILESTONES });
   });
 
-  it("(d) NEVER affects the ambient milestone, even though its (sole) group is vacuously terminal", () => {
+  it("(d) NEVER affects the ambient milestone (fixture's grouped goals happen to be non-terminal too)", () => {
     expect(affectedIds).not.toContain(MILESTONES_AMBIENT_ID);
     expect(skippedById.get(MILESTONES_AMBIENT_ID)).toEqual({
       id: MILESTONES_AMBIENT_ID,
       reason: SKIP_AMBIENT_GROUP,
     });
+  });
+
+  it("(d) NEVER affects the ambient milestone even when its grouped items are genuinely ALL terminal", () => {
+    // Literal R722 scenario: unlike the shared fixture above (whose ambient
+    // group holds non-terminal goals, which would exclude it via Q288 alone),
+    // this snapshot's ambient group is a single terminal ("done") goal — so
+    // Q288 completeness would call it complete. It must still be excluded,
+    // proving the ambient special-case is the operative gate, not an
+    // incidental non-terminal-items result.
+    const allTerminalAmbientSnapshot: FinalizeSnapshot = buildFinalizeSnapshot([
+      makeView(MILESTONES_LEDGER, MILESTONES_SCHEMA, {
+        active: [makeItem(MILESTONES_AMBIENT_ID, "open", { title: "ambient" })],
+      }),
+      makeView(GOALS_LEDGER, GOALS_SCHEMA, {
+        [MILESTONES_AMBIENT_ID]: [
+          makeItem("G9", "done", { title: "t", description: "d" }),
+        ],
+      }),
+    ]);
+    const variantPlan = computeApplyDonePlan(allTerminalAmbientSnapshot);
+    expect(variantPlan.affected.map((e) => e.id)).not.toContain(MILESTONES_AMBIENT_ID);
+    expect(
+      variantPlan.skipped.find((s) => s.id === MILESTONES_AMBIENT_ID),
+    ).toEqual({ id: MILESTONES_AMBIENT_ID, reason: SKIP_AMBIENT_GROUP });
   });
 
   it("(d) NEVER affects an empty milestone (zero items across all ledgers)", () => {
