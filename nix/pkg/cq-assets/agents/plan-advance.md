@@ -112,7 +112,9 @@ leaving `clarifying` while any linked question is `open`, so these gate the next
 phase by construction.
 
 ### Triage each unknown FIRST — empirical unknown → a `researches` item, NOT a user question (Q267)
-Before filing ANY clarifying question, TRIAGE each unknown by WHO can answer it:
+Before filing ANY clarifying question, TRIAGE each unknown by WHO can answer it.
+This is the SAME Q267 rule `commands/cq/investigate/advance.md` §"Research
+escalation" applies to investigate-flow — the two flows read consistently:
 
 - **EMPIRICALLY answerable** — the answer is a *verifiable-by-experiment* fact
   about the code or the world (which library / data structure / algorithm /

@@ -649,6 +649,17 @@ research), and the flow-level `/cq:advance` wrapper owns the research stage and
 its P-research gate. Treat any filed research item as advisory context in the
 §Report only; it is picked up by the next `/cq:advance` cycle's research stage.
 
+A task whose `dependsOn` names the filed `researches:<RS>` is not "stalled" —
+it is **GATED**, exactly the vocabulary `commands/cq/advance.md` §P-implement /
+§The cycle (Research stage) use: the task simply stays out of the implement
+ready-set until RS reaches `concluded` (the `researches` schema's
+`satisfiesDependencyStatuses`), at which point the post-research-stage
+RE-CHECK of P-implement admits it. This mirrors the investigate flow's own
+research parking — see `commands/cq/investigate/advance.md` §"Research
+escalation" — so the two flows read consistently: an empirical unknown is
+filed as a `researches` item and file-and-deferred to `/cq:advance`'s research
+stage in BOTH flows, never driven inline by the filing subagent.
+
 ## Session logs (after EVERY subagent returns)
 
 Each subagent (planner and reviewer) ends its reply with a `### Session summary`
