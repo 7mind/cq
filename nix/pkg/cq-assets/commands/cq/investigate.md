@@ -118,7 +118,10 @@ Note the chosen severity and why (one line) in the report.
 Now execute the `/cq:investigate:advance` pass for defect **D** — follow the full loop spec
 in `/cq:investigate:advance` (READ state → FORM hypotheses → DISPATCH
 explorers → VALIDATE citations → adjudicate → CONFIRMED handoff or NEEDS-USER-INPUT
-park, plus its session-log writing and provenance rules). Do NOT restate or duplicate
+park, plus its session-log writing and provenance rules — including its
+**§Research escalation** (Q301): an EMPIRICALLY answerable unknown files a
+`researches` item and parks the dependent hypothesis branch, never a user
+question and never an inline `/cq:research` run). Do NOT restate or duplicate
 that logic here; run it. Then produce `/cq:investigate:advance`'s end-of-round report.
 
 This command is the outermost wrapper for this invocation (the user ran

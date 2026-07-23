@@ -16,6 +16,7 @@ outputs:
   - "validated evidence stored on hypothesis items"
   - "defect status transitions: open->wip->root-caused | inconclusive"
   - "on root-caused: defects.rootCause + suggestedFix written; defect-seeded plan-flow goal seeded/extended"
+  - "on empirical unknown (Q301): researches item written (create_item, ledgerRefs=defects:<D>); dependent hypothesis branch parked uncertain with a researches:<RS> ledgerRef appended"
   - "per explorer/prober: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
 ioSchema:
   - "ONE research round per invocation; idempotent and resumable from ledger state"
@@ -230,6 +231,15 @@ existing `rootCause`/`suggestedFix`. Then derive the current tree:
   skip to **Report** (resumable: the user answers in the TUI/web, then re-runs
   `/cq:investigate:advance D`). If a previously-open question is now `answered`
   (non-empty `answer`), fold its answer into this round's framing and continue.
+- check parked-on-research branches (§Research escalation): for each `uncertain`
+  hypothesis node carrying a `researches:<RS>` ledgerRef, `fetch_item("researches",
+  RS)` and apply the un-park rules of §Research escalation (d): `concluded` →
+  un-park and re-adjudicate the branch from the research's
+  `findings`/`conclusion`; `inconclusive`/`abandoned` → un-park and re-adjudicate
+  from the remaining evidence; `open`/`wip` → the branch STAYS parked, skip it
+  this round. If EVERY unresolved branch is parked on a live research and nothing
+  else is adjudicable, skip to **Report** (the "parked on research" line) —
+  resumable once the `/cq:advance` research stage concludes the research.
 
 **Move the defect to `wip` the moment investigation begins.** If the defect's
 status is still `open` and you are about to do real research this round (form
@@ -378,6 +388,14 @@ citation yourself:
   evidence: [...], sessionLogs: [".cq/logs/<ts>-<explorer-agent-id>.md", ...],
   rawLogs: [".cq/logs/raw/<ts>-<explorer-agent-id>.jsonl", ...] })`. (This is the HYPOTHESIS-tree vocabulary
   `open|uncertain|confirmed|wrong` — distinct from the defect STATUS below.)
+- **Escalate instead of thrash (Q301):** when H cannot be adjudicated because it
+  hinges on an EMPIRICALLY answerable unknown that outgrows a step-4 probe (a
+  benchmark, an API-behavior question, a feasibility result — something needing
+  research-flow's full treatment, not one bounded local probe), do NOT spin more
+  explorers/probers at it and do NOT file a user question — file-and-defer per
+  **§Research escalation**: create the `researches` item, park H as `uncertain`
+  with a `researches:<RS>` ledgerRef, and continue with other adjudicable
+  branches this round.
 - **Reflect the verdict onto the DEFECT's STATUS** (the lifecycle carrier — never
   free-text markers). The defect is already `wip` (set in step 1):
   - a node reached `confirmed` (the root cause is pinned) → proceed to step 5,
@@ -459,6 +477,10 @@ without the user. The legitimate triggers are NARROW:
 
 These are NOT step-6 questions — **CONTINUE** (and, on a confirmed cause,
 file-and-defer per step 5) instead of filing one:
+- **an EMPIRICALLY answerable unknown** (a benchmark, API behavior, feasibility
+  — anything verifiable by experiment): that is the Q267 triage's `researches`
+  territory — file-and-defer per **§Research escalation**, never a user
+  question;
 - **fix-vs-wontfix / whether-to-fix** a confirmed or known defect — the default
   disposition is ALWAYS FIX; never park a defect on a disposition question;
 - **"out of scope" / "pre-existing"** — file the fix as a separate task, do not ask;
@@ -481,6 +503,65 @@ INTACT (durable). The user answers in the TUI/web, then re-runs
 `/cq:investigate:advance D` — step 1 folds the answer back in and the loop resumes
 exactly where it left off.
 
+## Research escalation — EMPIRICAL unknown → file a `researches` item and PARK the branch (Q301)
+
+A hypothesis node sometimes cannot be adjudicated because it HINGES on an
+unknown no amount of reading — and no single bounded probe — settles. Before
+parking anything, **triage the unknown by WHO can answer it** — the SAME Q267
+rule `agents/plan-advance.md` §"Triage each unknown FIRST" applies to plan-flow:
+
+- **EMPIRICALLY answerable** — the answer is a *verifiable-by-experiment* fact
+  about the code or the world (which library / data structure / algorithm /
+  approach performs best; whether an API behaves as documented; a benchmark,
+  compatibility, or feasibility result). The user cannot settle an empirical
+  fact by preference, so do NOT file a step-6 user question — file-and-defer to
+  a **`researches` item** as below.
+- **PREFERENCE / REQUIREMENTS decision** — the answer is a *choice* only the
+  user can make (intended behaviour, ambiguous/contradictory requirements,
+  scope, acceptable trade-offs). That is step 6's territory: file a user
+  `questions` item there. User questions stay RESERVED for
+  preference/requirements decisions.
+
+For an empirical unknown, this is pure **file-and-defer** (Q301) — the research
+sibling of the step-5 plan handoff:
+
+(a) **File the research.** `create_item("researches", <defect's milestone>,
+    status: "open", fields: { question: "<the empirical question>", scope?:
+    "<what to try / how to bound the investigation>", ledgerRefs:
+    ["defects:<D>"] })` — save the returned id as **RS**. `question` is
+    REQUIRED; `scope` is optional; the `defects:<D>` ledgerRef ties the
+    research back to this investigation (lifecycle `open → wip → {concluded |
+    inconclusive | abandoned}`).
+(b) **PARK the dependent branch as `uncertain`.** `update_item("hypothesis", H,
+    status: "uncertain", fields: { ledgerRefs: [<existing entries>,
+    "researches:<RS>"] })` — APPEND `researches:<RS>` to the node's
+    `ledgerRefs`, preserving every existing entry (`defects:<D>` included).
+    The `researches:<RS>` entry IS the park marker: step 1 recognises a
+    parked-on-research branch by it.
+(c) **NEVER run the research inline.** You MUST NOT invoke `/cq:research` or
+    `/cq:research:advance` inline — one flow per invocation; the **`/cq:advance`
+    research stage** drives filed researches to a conclusion (exactly as
+    plan-flow defers its Q267-filed researches — see
+    `commands/cq/plan/advance.md` §"Research items the planner filed are driven
+    by `/cq:advance`, NOT here"). A parked branch is NOT a stop: keep advancing
+    the OTHER adjudicable branches this round, and park the round only when
+    nothing else is adjudicable (§Report, the "parked on research" line).
+(d) **Resume on a later round** (step 1 performs this check). For each parked
+    branch — an `uncertain` node with a `researches:<RS>` ledgerRef — fetch RS:
+    - `concluded` → **UN-PARK and re-adjudicate** the branch using the
+      research's `findings`/`conclusion`: fold them into the branch framing
+      (step 2 drilling or a fresh step-3 explorer dispatch as warranted) and
+      route any resulting citations through the step-4 validation path;
+    - `inconclusive` / `abandoned` (terminal WITHOUT an answer) → **UN-PARK
+      anyway**: re-adjudicate from the remaining evidence rather than waiting
+      forever — the branch may still settle `confirmed`/`wrong` on other
+      grounds, or decompose into narrower sub-claims (step 2);
+    - `open` / `wip` → the branch STAYS parked; skip it this round.
+
+This escalation does not alter the step-5 confirmed-root-cause → plan handoff
+(K8) in any way; a research conclusion only feeds re-adjudication, whose
+`confirmed` outcome then follows step 5 unchanged.
+
 ---
 
 ## Report to the user
@@ -501,6 +582,11 @@ Summarize the round concisely:
     automatically — no user action needed;
 - whether the loop is **parked on a question** (id to answer) — if so, "answer it
   in the TUI/web, then run `/cq:investigate:advance D` to resume";
+- whether any branch is **parked on research** (§Research escalation) — enumerate
+  the `researches:<RS>` ids with their parked hypothesis node ids (e.g. "parked
+  on research: researches:RS12 (H34), researches:RS13 (H35)"); the `/cq:advance`
+  research stage drives them — re-run `/cq:investigate:advance D` once a research
+  reaches a terminal status to un-park and re-adjudicate;
 - if the tree still has `uncertain`/`open` leaves and no question is pending, say
   another round is warranted: "run `/cq:investigate:advance D` again".
 
