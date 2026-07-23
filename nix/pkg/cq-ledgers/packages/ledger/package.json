@@ -29,6 +29,10 @@
     "./refs": {
       "import": "./dist/src/refs.js",
       "types": "./dist/src/refs.d.ts"
+    },
+    "./finalize": {
+      "import": "./dist/src/finalize.js",
+      "types": "./dist/src/finalize.d.ts"
     }
   },
   "dependencies": {

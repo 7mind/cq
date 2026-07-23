@@ -15,6 +15,7 @@
       "@cq/ledger/columns": ["../ledger/src/columns.ts"],
       "@cq/ledger/constants": ["../ledger/src/constants.ts"],
       "@cq/ledger/refs": ["../ledger/src/refs.ts"],
+      "@cq/ledger/finalize": ["../ledger/src/finalize.ts"],
       "@cq/ledger-live": ["../ledger-live/src/index.ts"],
       "@cq/ledger-mcp": ["../ledger-mcp/src/main.ts"]
     }
