@@ -336,6 +336,17 @@ export interface AppProps {
   holdClock?: HoldClock | undefined;
 }
 
+/**
+ * Finalize-preview state (T619): raised when the user picks one of the
+ * finalize-menu options on the milestones/goals views. Plumbing only — this
+ * task does not execute anything against it; T620's preview modal consumes
+ * it (and T622 wires the actual finalize executor from @cq/ledger/finalize).
+ */
+export type FinalizeMode = "apply-done" | "archive";
+export interface FinalizePreviewState {
+  mode: FinalizeMode;
+}
+
 export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock }: AppProps): React.ReactElement {
   const [url, setUrl] = useState(initialUrl);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -392,6 +403,11 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   // the column-selector popup in the toolbar.
   const [columnsByLedger, setColumnsByLedger] = useState<Record<string, string[]>>(loadColumns);
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  // Finalize button + menu (T619): open/closed state of the small options
+  // menu, plus the finalize-preview state it raises on a pick. Execution
+  // lives elsewhere (T620/T622) — this component only wires the plumbing.
+  const [finalizeMenuOpen, setFinalizeMenuOpen] = useState(false);
+  const [finalizePreview, setFinalizePreview] = useState<FinalizePreviewState | null>(null);
   const workareaRef = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState<LiveStats | null>(null);
   // Archive: show/hide the archived subsections. Per-group expand + lazy-fetch
@@ -1113,6 +1129,14 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
       }
       return;
     }
+    // While the finalize menu is open, Esc closes it (T619).
+    if (finalizeMenuOpen) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setFinalizeMenuOpen(false);
+      }
+      return;
+    }
     if (e.key === "/" && !typing) {
       e.preventDefault();
       const box = document.querySelector('[data-testid="search-input"]') as HTMLInputElement | null;
@@ -1317,6 +1341,17 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
           holdClock={holdClock}
         />
       )}
+      {/*
+       * finalizePreview is raised by FinalizeControl (T619) and consumed by
+       * the finalize preview-modal task (T620), which replaces this stub with
+       * the real preview UI. No execution happens here — see @cq/ledger/finalize
+       * (T614/T615) for the shared predicate/executor T620/T622 will call.
+       */}
+      {finalizePreview !== null && (
+        <span data-testid="finalize-preview-mode" style={{ display: "none" }}>
+          {finalizePreview.mode}
+        </span>
+      )}
 
       {conn === "error" && (
         <div className="lw-error" data-testid="conn-error">
@@ -1442,6 +1477,17 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
                 >
                   {isMilestones ? "+ milestone" : "+ item"}
                 </button>
+                {(isMilestones || ledger === GOALS_LEDGER) && (
+                  <FinalizeControl
+                    open={finalizeMenuOpen}
+                    onToggle={() => setFinalizeMenuOpen((o) => !o)}
+                    onClose={() => setFinalizeMenuOpen(false)}
+                    onPick={(mode) => {
+                      setFinalizePreview({ mode });
+                      setFinalizeMenuOpen(false);
+                    }}
+                  />
+                )}
                 <select
                   className="lw-filter"
                   data-testid="status-filter"
@@ -1676,6 +1722,63 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
 // ---------------------------------------------------------------------------
 // Subcomponents
 // ---------------------------------------------------------------------------
+
+/**
+ * Toolbar 'Finalize' control (T619): a button that opens a small two-option
+ * menu, dismissed on Escape (via the parent's keyRef handler, keyed off
+ * `open`) or on a backdrop click (useBackdropDismiss, matching the
+ * lw-modal-backdrop/lw-modal convention used by LogModal/BatchAnswerModal).
+ * Picking an option raises the finalize-preview state one level up — no
+ * execution happens here or in the parent (T620/T622 own that).
+ */
+function FinalizeControl({
+  open,
+  onToggle,
+  onClose,
+  onPick,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onPick: (mode: FinalizeMode) => void;
+}): React.ReactElement {
+  const backdropProps = useBackdropDismiss(onClose);
+  return (
+    <div className="lw-finalize">
+      <button type="button" data-testid="finalize-btn" onClick={onToggle}>
+        Finalize
+      </button>
+      {open && (
+        <div className="lw-modal-backdrop" data-testid="finalize-backdrop" {...backdropProps}>
+          <div
+            className="lw-modal lw-finalize-menu"
+            data-testid="finalize-menu"
+            role="menu"
+            aria-label="finalize"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="finalize-option-apply-done"
+              onClick={() => onPick("apply-done")}
+            >
+              Apply Done to completed items
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="finalize-option-archive"
+              onClick={() => onPick("archive")}
+            >
+              Archive all Done items
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Small progress bar for one ledger, fed by server-computed completedCount/itemCount.

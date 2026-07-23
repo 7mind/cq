@@ -237,6 +237,23 @@ body {
   text-overflow: ellipsis;
   word-break: break-word;
 }
+/* Toolbar 'Finalize' button + its small options menu (T619). Reuses the
+   lw-modal-backdrop/lw-modal shell but overrides the width/layout — the
+   menu is a short list of two options, not a full document viewer. */
+.lw-finalize {
+  display: inline-flex;
+}
+.lw-finalize-menu {
+  width: auto;
+  min-width: 220px;
+  max-height: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+.lw-finalize-menu button {
+  text-align: left;
+}
 /* Raw-log "raw" toggle next to a summary log link (T414). */
 .lw-log-raw-toggle {
   margin-left: 6px;
