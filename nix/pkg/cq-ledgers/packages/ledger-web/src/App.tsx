@@ -712,6 +712,11 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         setHits(null);
         setCreating(null);
         setFlash("");
+        // The finalize menu/preview are per-ledger transient state (T619):
+        // a picked-but-not-yet-consumed preview from the previous ledger
+        // must not leak into the newly selected one.
+        setFinalizeMenuOpen(false);
+        setFinalizePreview(null);
         // In graph mode, re-graph the newly selected ledger (stay in graph).
         if (mainView === "dag") setDag(await loadDagData(client, name));
       } catch (e) {

@@ -7,7 +7,13 @@
  *     after the '+ item'/'+ milestone' control;
  *  2. clicking it opens a menu with exactly the two labeled options;
  *  3. Escape closes the menu;
- *  4. the button is absent on a non-milestones/goals view (tasks).
+ *  4. the button is absent on a non-milestones/goals view (tasks);
+ *  5. picking each option raises the finalize-preview state (surfaced via the
+ *     hidden finalize-preview-mode stub) and closes the menu;
+ *  6. the button also renders on the goals view (via a local FakeClient
+ *     subclass carrying a minimal goals-ledger fixture — the shared
+ *     fakeClient.ts has no goals ledger and gains none from this file);
+ *  7. switching ledgers resets any pending finalize-preview/menu-open state.
  *
  * This task wires button + menu + state plumbing only — no execution (T620
  * consumes the raised finalize-preview state; see App.tsx's exported
@@ -22,6 +28,52 @@ import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "../src/App";
 import { FakeClient } from "./fakeClient";
+import type { FetchedLedger, LedgerSummary } from "../src/types.js";
+
+const GOALS_TS = "2026-01-01T00:00:00.000Z";
+
+/**
+ * FakeClient + a minimal `goals` ledger, purpose-built for this test file
+ * only (the shared fakeClient.ts intentionally carries no goals fixture, so
+ * this stays local rather than widening every other test's sidebar/ledger
+ * enumeration).
+ */
+class FakeClientWithGoals extends FakeClient {
+  override async enumerateLedgers(): Promise<LedgerSummary[]> {
+    const base = await super.enumerateLedgers();
+    return [...base, { name: "goals", itemCount: 1 }].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  override async fetchLedger(ledgerId: string): Promise<FetchedLedger> {
+    if (ledgerId !== "goals") return super.fetchLedger(ledgerId);
+    return {
+      id: "goals",
+      schema: {
+        statusValues: ["open", "done"],
+        terminalStatuses: ["done"],
+        fields: { title: { type: "string", required: true } },
+        idPrefix: "G",
+      },
+      counters: { milestone: 1, item: 1 },
+      milestones: [
+        {
+          id: "M1",
+          milestone: { id: "M1", status: "open", title: "Bootstrap", description: "" },
+          items: [
+            {
+              id: "G1",
+              milestoneId: "M1",
+              status: "open",
+              fields: { title: "Ship G83" },
+              createdAt: GOALS_TS,
+              updatedAt: GOALS_TS,
+            },
+          ],
+        },
+      ],
+      archivePointers: [],
+    };
+  }
+}
 
 let container: HTMLElement;
 let root: Root;
@@ -49,8 +101,8 @@ function press(key: string): void {
   });
 }
 
-async function mount(): Promise<void> {
-  fake = new FakeClient();
+async function mount(client: FakeClient = new FakeClient()): Promise<void> {
+  fake = client;
   await act(async () => {
     root.render(createElement(App, { connect: async () => fake, initialUrl: "http://x/mcp" }));
   });
@@ -117,5 +169,54 @@ describe("ledger-web finalize menu", () => {
     await mount();
     await openLedger("tasks");
     expect(testid("finalize-btn")).toBeNull();
+  });
+
+  it("renders 'finalize-btn' on the goals view too", async () => {
+    await mount(new FakeClientWithGoals());
+    await openLedger("goals");
+    expect(testid("finalize-btn")).not.toBeNull();
+  });
+
+  it("picking 'apply-done' raises the preview state and closes the menu", async () => {
+    await mount();
+    await openLedger("milestones");
+    click(testid("finalize-btn"));
+    await flush();
+    expect(testid("finalize-preview-mode")).toBeNull();
+
+    click(testid("finalize-option-apply-done"));
+    await flush();
+    expect(testid("finalize-menu")).toBeNull();
+    expect(testid("finalize-preview-mode")?.textContent).toBe("apply-done");
+  });
+
+  it("picking 'archive' raises the preview state and closes the menu", async () => {
+    await mount();
+    await openLedger("milestones");
+    click(testid("finalize-btn"));
+    await flush();
+
+    click(testid("finalize-option-archive"));
+    await flush();
+    expect(testid("finalize-menu")).toBeNull();
+    expect(testid("finalize-preview-mode")?.textContent).toBe("archive");
+  });
+
+  it("resets the finalize preview/menu state on a ledger switch", async () => {
+    await mount();
+    await openLedger("milestones");
+    click(testid("finalize-btn"));
+    await flush();
+    click(testid("finalize-option-archive"));
+    await flush();
+    expect(testid("finalize-preview-mode")?.textContent).toBe("archive");
+
+    await openLedger("tasks");
+    expect(testid("finalize-preview-mode")).toBeNull();
+    expect(testid("finalize-menu")).toBeNull();
+
+    // Switching back to milestones must not resurrect the stale preview.
+    await openLedger("milestones");
+    expect(testid("finalize-preview-mode")).toBeNull();
   });
 });
