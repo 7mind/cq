@@ -556,7 +556,7 @@ describe("T622 — web finalize flow regression suite", () => {
     expect(testid("finalize-result-MD")?.textContent).toContain("ok");
   });
 
-  it("Escape dismisses the finalize preview modal at the PREVIEW step", async () => {
+  it("Escape dismisses the finalize preview modal at the PREVIEW step without executing anything", async () => {
     const client = new ArchiveExactnessClient();
     await mount(client);
     await openPreview("milestones", "archive");
@@ -565,9 +565,11 @@ describe("T622 — web finalize flow regression suite", () => {
     press("Escape");
     await flush();
     expect(testid("finalize-preview")).toBeNull();
+    // Dismissing at the preview step must not have fired any write.
+    expect(client.calls).toEqual([]);
   });
 
-  it("Escape dismisses the finalize preview modal at the RESULTS (summary) step", async () => {
+  it("Escape dismisses the finalize preview modal at the RESULTS (summary) step without re-executing or reverting", async () => {
     const client = new ArchiveExactnessClient();
     await mount(client);
     await openPreview("milestones", "archive");
@@ -577,6 +579,11 @@ describe("T622 — web finalize flow regression suite", () => {
     press("Escape");
     await flush();
     expect(testid("finalize-preview")).toBeNull();
+    // The single sweep call from the hold-execute is unchanged by Escape —
+    // dismissal at the results step neither re-runs nor reverts it.
+    expect(client.calls).toEqual([
+      { op: "archiveMilestone", milestoneId: "MA", summary: "finalized: Alpha" },
+    ]);
   });
 
   it("does not regress the '+ milestone' create flow on the milestones view now that finalize-btn shares its toolbar row", async () => {
