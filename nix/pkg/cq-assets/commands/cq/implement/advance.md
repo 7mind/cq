@@ -251,11 +251,13 @@ per the provenance rule (§Provenance) like any other ledger write. This adds
 ONLY the `planned → building` edge — the exact non-terminal edge
 `flow-state-machines.md:221` already assigns to the implement flow ("the
 implement flow begins consuming the task DAG") and this command's own
-:638-639 already permits ("`planned→building` may stay automatic as it is
-non-terminal"). **`building → done` stays strictly user-only** (the G3-B/M16
-invariant restated below at §Milestone completion, "GOALS-NEVER-AUTO-CLOSE" —
-unchanged by this instruction): this write NEVER performs, and must never be
-conflated with, that terminal edge.
+"Goal-vs-milestone asymmetry (explicit)" paragraph (under "### Milestone
+auto-close+archive sweep (factored predicate)" below) already permits
+("`planned`→`building` may stay automatic as it is non-terminal").
+**`building → done` stays strictly user-only** (the G3-B/M16 invariant
+restated in that same paragraph, "**GOALS NEVER auto-close**" — unchanged by
+this instruction): this write NEVER performs, and must never be conflated
+with, that terminal edge.
 
 Take up to N ready tasks. For each, resolve its model via `get_config` (§K4), set
 `update_item("tasks", <id>, status: "wip")`, prepare its worktree (Claude:
