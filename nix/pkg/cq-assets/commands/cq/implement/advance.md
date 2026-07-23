@@ -237,6 +237,26 @@ A task is **READY** iff ALL hold:
 If the ready-set is empty: skip to **Report** (nothing left to do this pass).
 
 ### 2. Dispatch workers (up to N concurrently)
+
+**Goal ownership write (D113/H78 — `planned → building`, non-terminal).** BEFORE
+dispatching this pass's batch, for each ready task resolve its owning goal:
+scan the task's `ledgerRefs` for a `goals:<G>` entry. If found AND that goal's
+status is `planned`, perform `update_item("goals", G, status: "building")`
+ONCE, idempotently — skip the write when the goal is already `building` (or
+any other non-`planned` status; only a `planned` goal advances). A task with
+NO `goals:<G>` entry (M-AMBIENT / goal-less work) is SKIPPED for this write,
+never blocked on it — a missing owning goal is not a precondition failure, it
+just means there is nothing to advance. Stamp `author`/`session` on this write
+per the provenance rule (§Provenance) like any other ledger write. This adds
+ONLY the `planned → building` edge — the exact non-terminal edge
+`flow-state-machines.md:221` already assigns to the implement flow ("the
+implement flow begins consuming the task DAG") and this command's own
+:638-639 already permits ("`planned→building` may stay automatic as it is
+non-terminal"). **`building → done` stays strictly user-only** (the G3-B/M16
+invariant restated below at §Milestone completion, "GOALS-NEVER-AUTO-CLOSE" —
+unchanged by this instruction): this write NEVER performs, and must never be
+conflated with, that terminal edge.
+
 Take up to N ready tasks. For each, resolve its model via `get_config` (§K4), set
 `update_item("tasks", <id>, status: "wip")`, prepare its worktree (Claude:
 `isolation: "worktree"`; Codex: manual `git worktree add`), and dispatch an
