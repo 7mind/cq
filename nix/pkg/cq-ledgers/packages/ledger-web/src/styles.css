@@ -254,6 +254,31 @@ body {
 .lw-finalize-menu button {
   text-align: left;
 }
+/* Finalize preview modal (T620): plan preview + per-id result summary. */
+.lw-finalize-preview {
+  width: auto;
+  min-width: 360px;
+  max-width: 560px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+.lw-finalize-heading {
+  margin: 6px 0 2px;
+}
+.lw-finalize-list {
+  margin: 0;
+  padding-left: 18px;
+}
+.lw-finalize-ok {
+  color: var(--ok);
+}
+.lw-finalize-failed {
+  color: var(--err);
+}
+.lw-finalize-actions {
+  margin-top: 8px;
+}
 /* Raw-log "raw" toggle next to a summary log link (T414). */
 .lw-log-raw-toggle {
   margin-left: 6px;

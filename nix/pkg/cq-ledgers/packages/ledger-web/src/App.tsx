@@ -48,6 +48,19 @@ import { eligibleColumnFields, defaultColumns } from "@cq/ledger/columns";
 // Leaf subpath: constants.ts is data-only (no Node.js builtins). Importing
 // MILESTONES_SCHEMA from here avoids the duplicated local copy (D6).
 import { MILESTONES_SCHEMA, IDEAS_LEDGER } from "@cq/ledger/constants";
+// Leaf subpath (browser-safe like ./constants above): the shared finalize
+// predicates + executor (G83, T614/T615). The web modal (T620) mirrors the
+// TUI's finalize overlay (T621) for Q292 parity — same snapshot fan-out, same
+// computed plan, same per-id execution results.
+import {
+  buildFinalizeSnapshot,
+  computeApplyDonePlan,
+  computeArchivePlan,
+  runApplyDone,
+  runArchive,
+  type FinalizeExecResult,
+  type FinalizePlan,
+} from "@cq/ledger/finalize";
 
 // Ledger names for the relationship panels — consistent with the canonical
 // constants in @cq/ledger but defined locally to avoid bundling Node.js
@@ -337,14 +350,20 @@ export interface AppProps {
 }
 
 /**
- * Finalize-preview state (T619): raised when the user picks one of the
- * finalize-menu options on the milestones/goals views. Plumbing only — this
- * task does not execute anything against it; T620's preview modal consumes
- * it (and T622 wires the actual finalize executor from @cq/ledger/finalize).
+ * Finalize-preview state (T619 plumbing, T620 modal): raised when the user
+ * picks one of the finalize-menu options on the milestones/goals views, then
+ * walked through the modal's three steps (mirrors the TUI's FinalizeStep):
+ * `loading` while the snapshot fan-out is in flight, `preview` once the
+ * shared plan is computed, `results` after the HoldButton-gated execution.
  */
 export type FinalizeMode = "apply-done" | "archive";
+export type FinalizeStep =
+  | { t: "loading" }
+  | { t: "preview"; plan: FinalizePlan }
+  | { t: "results"; results: FinalizeExecResult[] };
 export interface FinalizePreviewState {
   mode: FinalizeMode;
+  step: FinalizeStep;
 }
 
 export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock }: AppProps): React.ReactElement {
@@ -741,6 +760,57 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
       setFlash(errMsg(e));
     }
   }, [client, ledger]);
+
+  // Finalize preview (T620): after a menu pick, assemble the snapshot from
+  // ALL ledgers the shared predicates read (enumerateLedgers + concurrent
+  // fetchLedger fan-out, Set-deduped with the milestones view — same pattern
+  // as loadDagData and the TUI's finalizePreview), compute the shared plan
+  // (Q292 parity), and show the preview step. Both setFinalizePreview writes
+  // after an await are guarded functional updates so a stale resolve cannot
+  // resurrect state a ledger switch already cleared (D120 discipline —
+  // openLedger nulls finalizePreview).
+  const openFinalizePreview = useCallback(
+    async (mode: FinalizeMode) => {
+      if (client === null) return;
+      setFinalizePreview({ mode, step: { t: "loading" } });
+      try {
+        const names = new Set<string>((await client.enumerateLedgers()).map((l) => l.name));
+        names.add(MILESTONES);
+        const views = await Promise.all([...names].map((n) => client.fetchLedger(n)));
+        const snapshot = buildFinalizeSnapshot(views);
+        const plan =
+          mode === "apply-done" ? computeApplyDonePlan(snapshot) : computeArchivePlan(snapshot);
+        setFinalizePreview((cur) =>
+          cur !== null && cur.mode === mode && cur.step.t === "loading"
+            ? { mode, step: { t: "preview", plan } }
+            : cur,
+        );
+      } catch (e) {
+        setFlash(errMsg(e));
+        setFinalizePreview((cur) =>
+          cur !== null && cur.mode === mode && cur.step.t === "loading" ? null : cur,
+        );
+      }
+    },
+    [client],
+  );
+
+  // Execute the previewed plan through the shared executor with ops backed by
+  // this client (updateMilestone / updateItem / archiveMilestone — LedgerClient
+  // satisfies FinalizeOps structurally), then swap the modal body to the
+  // per-id results step and refresh the visible ledger views.
+  const executeFinalize = useCallback(
+    async (mode: FinalizeMode, plan: FinalizePlan) => {
+      if (client === null) return;
+      const results =
+        mode === "apply-done" ? await runApplyDone(client, plan) : await runArchive(client, plan);
+      setFinalizePreview((cur) =>
+        cur !== null && cur.mode === mode ? { mode, step: { t: "results", results } } : cur,
+      );
+      refreshRef.current();
+    },
+    [client],
+  );
 
   /**
    * Persist an edited item: status + all fields in one call. Milestones route
@@ -1142,6 +1212,15 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
       }
       return;
     }
+    // While the finalize preview modal is open it captures the keyboard:
+    // Esc dismisses it (T620); execution is pointer/keyboard-hold only.
+    if (finalizePreview !== null) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setFinalizePreview(null);
+      }
+      return;
+    }
     if (e.key === "/" && !typing) {
       e.preventDefault();
       const box = document.querySelector('[data-testid="search-input"]') as HTMLInputElement | null;
@@ -1346,16 +1425,13 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
           holdClock={holdClock}
         />
       )}
-      {/*
-       * finalizePreview is raised by FinalizeControl (T619) and consumed by
-       * the finalize preview-modal task (T620), which replaces this stub with
-       * the real preview UI. No execution happens here — see @cq/ledger/finalize
-       * (T614/T615) for the shared predicate/executor T620/T622 will call.
-       */}
       {finalizePreview !== null && (
-        <span data-testid="finalize-preview-mode" style={{ display: "none" }}>
-          {finalizePreview.mode}
-        </span>
+        <FinalizePreviewModal
+          state={finalizePreview}
+          holdClock={holdClock}
+          onExecute={(plan) => void executeFinalize(finalizePreview.mode, plan)}
+          onClose={() => setFinalizePreview(null)}
+        />
       )}
 
       {conn === "error" && (
@@ -1488,8 +1564,8 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
                     onToggle={() => setFinalizeMenuOpen((o) => !o)}
                     onClose={() => setFinalizeMenuOpen(false)}
                     onPick={(mode) => {
-                      setFinalizePreview({ mode });
                       setFinalizeMenuOpen(false);
+                      void openFinalizePreview(mode);
                     }}
                   />
                 )}
@@ -1781,6 +1857,141 @@ function FinalizeControl({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Finalize preview modal (T620): consumes the raised FinalizePreviewState and
+ * walks its three steps — `loading` (snapshot fan-out in flight), `preview`
+ * (the shared plan's affected ids in execution order, plus EVERY skipped id
+ * with its reason — per Q289 the sweep must never appear to 'do nothing'
+ * unexplained; an empty plan renders an explicit 'nothing eligible' state
+ * instead of the execute button), and `results` (per-id ok/failed summary
+ * from the shared executor, with the caught error text on failures).
+ * Execution is gated behind the HoldButton hold gesture (Q292), driven by the
+ * injectable HoldClock in tests. Mirrors the TUI's FinalizePreview/
+ * FinalizeResults overlay (T621) for cross-frontend parity.
+ */
+function FinalizePreviewModal({
+  state,
+  holdClock,
+  onExecute,
+  onClose,
+}: {
+  state: FinalizePreviewState;
+  holdClock?: HoldClock | undefined;
+  onExecute: (plan: FinalizePlan) => void;
+  onClose: () => void;
+}): React.ReactElement {
+  const backdropProps = useBackdropDismiss(onClose);
+  // Guard against a second completed hold re-running the sweep while the
+  // first execution is still in flight (the button unmounts on `results`).
+  const [running, setRunning] = useState(false);
+  const { mode, step } = state;
+  const modeLabel = mode === "apply-done" ? "apply done" : "archive";
+  return (
+    <div className="lw-modal-backdrop" data-testid="finalize-preview-backdrop" {...backdropProps}>
+      <div
+        className="lw-modal lw-finalize-preview"
+        data-testid="finalize-preview"
+        role="dialog"
+        aria-label={`finalize ${modeLabel}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="lw-help-head">
+          <strong>
+            finalize · <span data-testid="finalize-preview-mode">{mode}</span> ·{" "}
+            {step.t === "results" ? "results" : "preview"}
+          </strong>
+          <button
+            type="button"
+            className="lw-close"
+            data-testid="finalize-preview-close"
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </div>
+        {step.t === "loading" && (
+          <p className="lw-empty" data-testid="finalize-loading">
+            computing plan…
+          </p>
+        )}
+        {step.t === "preview" && (
+          <>
+            {step.plan.affected.length === 0 ? (
+              <p className="lw-empty" data-testid="finalize-empty">
+                nothing eligible
+              </p>
+            ) : (
+              <>
+                <p className="lw-finalize-heading">affected ({step.plan.affected.length}):</p>
+                <ul className="lw-finalize-list" data-testid="finalize-affected">
+                  {step.plan.affected.map((entry) => (
+                    <li key={entry.id} data-testid={`finalize-affected-${entry.id}`}>
+                      <strong>{entry.id}</strong> <span className="lw-dim">{entry.action}</span>
+                      {entry.targetStatus !== undefined && (
+                        <span className="lw-dim"> → {entry.targetStatus}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {step.plan.skipped.length > 0 && (
+              <>
+                <p className="lw-finalize-heading lw-dim">
+                  skipped ({step.plan.skipped.length}):
+                </p>
+                <ul className="lw-finalize-list lw-dim" data-testid="finalize-skipped">
+                  {step.plan.skipped.map((s) => (
+                    <li key={s.id} data-testid={`finalize-skipped-${s.id}`}>
+                      {s.id} — {s.reason}
+                      {s.detail !== undefined ? ` (${s.detail})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {step.plan.affected.length > 0 && (
+              <div className="lw-finalize-actions">
+                <HoldButton
+                  data-testid="finalize-execute"
+                  disabled={running}
+                  clock={holdClock}
+                  onConfirm={() => {
+                    setRunning(true);
+                    onExecute(step.plan);
+                  }}
+                >
+                  {running ? "executing…" : `hold to ${modeLabel}`}
+                </HoldButton>
+              </div>
+            )}
+          </>
+        )}
+        {step.t === "results" && (
+          <>
+            <ul className="lw-finalize-list" data-testid="finalize-results">
+              {step.results.map((r) => (
+                <li key={r.id} data-testid={`finalize-result-${r.id}`}>
+                  <span className={r.ok ? "lw-finalize-ok" : "lw-finalize-failed"}>
+                    {r.ok ? "ok" : "failed"}
+                  </span>{" "}
+                  <strong>{r.id}</strong> <span className="lw-dim">{r.action}</span>
+                  {r.error !== undefined ? <span className="lw-finalize-failed"> — {r.error}</span> : null}
+                </li>
+              ))}
+            </ul>
+            <p className="lw-dim" data-testid="finalize-results-tally">
+              {step.results.filter((r) => !r.ok).length > 0
+                ? `${step.results.filter((r) => !r.ok).length} of ${step.results.length} failed`
+                : `all ${step.results.length} succeeded`}
+            </p>
+          </>
+        )}
+      </div>
     </div>
   );
 }
