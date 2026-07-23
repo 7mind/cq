@@ -3437,7 +3437,7 @@ function DetailPanel({
         {answerable
           ? fieldDtDd(ANSWER_FIELD, answerBox)
           : ansVal !== undefined && fieldDtDd(ANSWER_FIELD, renderVal(ansVal))}
-        {transitionTargets.length > 0 && !isMilestones && onSave !== undefined && !isArchived && (
+        {transitionTargets.length > 0 && onSave !== undefined && !isArchived && (
           <>
             <dt>transition to</dt>
             <dd>
@@ -3484,7 +3484,7 @@ function DetailPanel({
                 <dd>{answerBox}</dd>
               </>
             )}
-            {transitionTargets.length > 0 && !isMilestones && onSave !== undefined && !isArchived && (
+            {transitionTargets.length > 0 && onSave !== undefined && !isArchived && (
               <>
                 <dt>transition to</dt>
                 <dd>
