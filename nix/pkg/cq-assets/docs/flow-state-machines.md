@@ -218,7 +218,7 @@ The legal `goals` transitions and their triggers:
 | `clarifying → planning` | the planner has enough answered context (or the goal is defect-seeded) to write a grounded plan; it grounds itself, emits work milestones + tasks, and moves the goal to `planning`. |
 | `planning → clarifying` (revise edge) | the reviewer returned `revise` with NON-EMPTY `new_questions`; the planner files each as an `open` question and moves the goal back to `clarifying` (await user answers). |
 | `planning → planned` | the reviewer returned `go-ahead`; the planner first creates the `locked` `decisions` item, then locks the goal to `planned`. |
-| `planned → building` | the implement flow begins consuming the task DAG (non-terminal; may be automatic). |
+| `planned → building` | the implement-flow orchestrator's worker-dispatch step (implement/advance.md §2, 'Goal ownership write') idempotently transitions a `planned` goal to `building` when dispatching its first task; also performed by the /cq:advance implement stage. |
 | `building → done` | **user only** — the user closes the goal in the TUI/web after the delivered work satisfies them. Never automatic. |
 | `→ abandoned` | from any non-terminal phase (`clarifying`/`planning`/`planned`/`building`) — the goal is dropped. |
 | `planned → planning` (re-open) | reserved for `/cq:plan:follow-up`: adding scope to an already-planned goal. |
