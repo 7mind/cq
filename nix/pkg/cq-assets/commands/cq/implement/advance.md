@@ -728,10 +728,12 @@ Summarize the pass concisely:
 - tasks **blocked** on questions (id + the question ids to answer);
 - tasks **failed**/skipped and why;
 - whether any milestone was archived;
-- whether goal `G` is **ready to close** (all work milestones archived) —
-  instruct the user to close it in the TUI/web (set status to `done`);
 - the next action: if anything is `blocked`, "answer the listed questions in the
   TUI/web, then run `/cq:implement:advance` to resume"; if all done, say so.
+
+### Ready to close (user action)
+When all work milestones under a goal `G` are archived, list each ready-to-close goal with explicit instruction:
+- **Set its status to `done` in the TUI/web** — this user action cannot be automated. Closing a goal is always the user's decision.
 
 ---
 
@@ -780,6 +782,8 @@ context you are in.
   subagent whose transcript was absent). Stamp `author`/`session`. Append-only: written
   once at the stop, never updated. **Then commit the ledger** (§Commit the
   ledger, at-stop commit) — this is the final act of the standalone pass.
+
+  **Ready-to-close goals (user action).** When all work milestones under goal `G` are archived, `G` is ready to close — list it in the §Report with explicit instruction to set its status to `done` in the TUI/web. If the pass ends with one or more ready-to-close goals and no other blocking issues, use handoff `status: "user-action-required"` with `handoffReasons: ["ready-to-close goal: <goal-id>", ...]`. If there are blocked tasks AND ready-to-close goals, use `status: "mixed"` with both `blockingQuestions` (for the blocked task questions) and `handoffReasons` (for ready-to-close goals). Closing a goal is the user's decision and cannot be automated — **GOALS NEVER auto-close** (restated: the orchestrator MUST NEVER transition a goal to `done`; only the user can).
 
   **TURN-vs-RUN clause (D39).** A RUN and a TURN are distinct scopes. A **RUN**
   spans as many turns as needed and is durably resumable from ledger state on the
