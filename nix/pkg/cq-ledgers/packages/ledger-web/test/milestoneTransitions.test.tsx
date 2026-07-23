@@ -29,6 +29,7 @@ import { MILESTONES_SCHEMA } from "@cq/ledger";
 import type {
   AgentModelsResult,
   ArchiveContent,
+  ArchivePointer,
   FetchedLedger,
   FtsHit,
   Item,
@@ -155,6 +156,7 @@ class MilestonesClient implements LedgerClient {
   }
   async ftsSearch(): Promise<FtsHit[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
+  async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
     this.updateMilestoneCalls.push({ milestoneId, patch });
     return {
