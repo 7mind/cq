@@ -783,7 +783,7 @@ context you are in.
   once at the stop, never updated. **Then commit the ledger** (§Commit the
   ledger, at-stop commit) — this is the final act of the standalone pass.
 
-  **Ready-to-close goals (user action).** When all work milestones under goal `G` are archived, `G` is ready to close — list it in the §Report with explicit instruction to set its status to `done` in the TUI/web. If the pass ends with one or more ready-to-close goals and no other blocking issues, use handoff `status: "user-action-required"` with `handoffReasons: ["ready-to-close goal: <goal-id>", ...]`. If there are blocked tasks AND ready-to-close goals, use `status: "mixed"` with both `blockingQuestions` (for the blocked task questions) and `handoffReasons` (for ready-to-close goals). Closing a goal is the user's decision and cannot be automated — **GOALS NEVER auto-close** (restated: the orchestrator MUST NEVER transition a goal to `done`; only the user can).
+  **Ready-to-close goals (user action).** When all work milestones under goal `G` are archived, `G` is ready to close — include it in the §Report with explicit instruction to set its status to `done` in the TUI/web. Closing a goal is the user's decision and cannot be automated — **GOALS NEVER auto-close** (restated: the orchestrator MUST NEVER transition a goal to `done`; only the user can).
 
   **TURN-vs-RUN clause (D39).** A RUN and a TURN are distinct scopes. A **RUN**
   spans as many turns as needed and is durably resumable from ledger state on the
