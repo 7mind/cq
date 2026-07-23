@@ -10,12 +10,6 @@
     "types": ["bun-types", "react", "react-dom"],
     "paths": {
       "@cq/config": ["../cq-config/src/index.ts"],
-      "@cq/ledger": ["../ledger/src/index.ts"],
-      "@cq/ledger/relationships": ["../ledger/src/relationships.ts"],
-      "@cq/ledger/columns": ["../ledger/src/columns.ts"],
-      "@cq/ledger/constants": ["../ledger/src/constants.ts"],
-      "@cq/ledger/refs": ["../ledger/src/refs.ts"],
-      "@cq/ledger/finalize": ["../ledger/src/finalize.ts"],
       "@cq/ledger-live": ["../ledger-live/src/index.ts"],
       "@cq/ledger-mcp": ["../ledger-mcp/src/main.ts"]
     }

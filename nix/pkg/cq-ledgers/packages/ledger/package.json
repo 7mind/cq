@@ -3,36 +3,36 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "main": "./dist/src/index.js",
-  "types": "./dist/src/index.d.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "scripts": {
     "bench": "bun run bench/storeBackendBench.ts",
     "bench:concurrent": "bun run bench/proto/concurrentWriterSmoke.ts"
   },
   "exports": {
     ".": {
-      "import": "./dist/src/index.js",
-      "types": "./dist/src/index.d.ts"
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
     },
     "./relationships": {
-      "import": "./dist/src/relationships.js",
-      "types": "./dist/src/relationships.d.ts"
+      "import": "./src/relationships.ts",
+      "types": "./src/relationships.ts"
     },
     "./columns": {
-      "import": "./dist/src/columns.js",
-      "types": "./dist/src/columns.d.ts"
+      "import": "./src/columns.ts",
+      "types": "./src/columns.ts"
     },
     "./constants": {
-      "import": "./dist/src/constants.js",
-      "types": "./dist/src/constants.d.ts"
+      "import": "./src/constants.ts",
+      "types": "./src/constants.ts"
     },
     "./refs": {
-      "import": "./dist/src/refs.js",
-      "types": "./dist/src/refs.d.ts"
+      "import": "./src/refs.ts",
+      "types": "./src/refs.ts"
     },
     "./finalize": {
-      "import": "./dist/src/finalize.js",
-      "types": "./dist/src/finalize.d.ts"
+      "import": "./src/finalize.ts",
+      "types": "./src/finalize.ts"
     }
   },
   "dependencies": {
