@@ -70,14 +70,15 @@ export interface BundleBuild {
 }
 
 /** Bundle the browser entry with Bun.build; returns the emitted asset paths. */
-export async function buildBundle(outdir: string): Promise<BundleBuild> {
+export async function buildBundle(outdir: string, entry: string = WEB_SRC): Promise<BundleBuild> {
   const result = await Bun.build({
-    entrypoints: [WEB_SRC],
+    entrypoints: [entry],
     outdir,
     target: "browser",
     minify: false,
     sourcemap: "linked",
     naming: "[name].[ext]",
+    throw: false,
   });
   if (!result.success) {
     const msgs = result.logs.map((l) => l.message).join("\n");
