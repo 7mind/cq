@@ -186,7 +186,7 @@ class EligibleClient implements LedgerClient {
       { name: "tasks", itemCount: 2 },
     ];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id === "milestones") {
       return {
         id,
@@ -230,7 +230,7 @@ class EligibleClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
   async createItem(): Promise<Item> {
@@ -239,7 +239,7 @@ class EligibleClient implements LedgerClient {
   async updateItem(): Promise<Item> {
     throw new Error("not used");
   }
-  async ftsSearch(): Promise<never[]> {
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
   async createMilestone(): Promise<Item> {
@@ -278,7 +278,7 @@ class PartialFailureClient implements LedgerClient {
       { name: "tasks", itemCount: 2 },
     ];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id === "milestones") {
       return {
         id,
@@ -322,7 +322,7 @@ class PartialFailureClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
   async createItem(): Promise<Item> {
@@ -331,7 +331,7 @@ class PartialFailureClient implements LedgerClient {
   async updateItem(): Promise<Item> {
     throw new Error("not used");
   }
-  async ftsSearch(): Promise<never[]> {
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
   async createMilestone(): Promise<Item> {
@@ -391,7 +391,7 @@ class GoalsClient implements LedgerClient {
       { name: "milestones", itemCount: 1 },
     ];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id === "milestones") {
       return {
         id,
@@ -430,7 +430,7 @@ class GoalsClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
   async createItem(): Promise<Item> {
@@ -439,7 +439,7 @@ class GoalsClient implements LedgerClient {
   async updateItem(): Promise<Item> {
     throw new Error("not used");
   }
-  async ftsSearch(): Promise<never[]> {
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
   async createMilestone(): Promise<Item> {
@@ -491,7 +491,7 @@ class GoalsFinalizeClient implements LedgerClient {
       { name: "tasks", itemCount: 2 },
     ];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id === "milestones") {
       return {
         id,
@@ -569,7 +569,7 @@ class GoalsFinalizeClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
   async createItem(): Promise<Item> {
@@ -583,7 +583,7 @@ class GoalsFinalizeClient implements LedgerClient {
       milestones: [itemId === "G1" ? "MW1" : "MW2"],
     });
   }
-  async ftsSearch(): Promise<never[]> {
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
   async createMilestone(): Promise<Item> {
@@ -627,7 +627,7 @@ class GoalsParityClient implements LedgerClient {
       { name: "tasks", itemCount: GOALS_PARITY_FIXTURE.tasks.length },
     ];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id === "milestones") {
       return {
         id,
@@ -705,7 +705,7 @@ class GoalsParityClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
   async createItem(): Promise<Item> {
@@ -725,7 +725,7 @@ class GoalsParityClient implements LedgerClient {
       milestones: [],
     });
   }
-  async ftsSearch(): Promise<never[]> {
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
   async createMilestone(): Promise<Item> {
@@ -779,7 +779,7 @@ class ArchiveExactnessClient implements LedgerClient {
       { name: "tasks", itemCount: 3 },
     ];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id === "milestones") {
       return {
         id,
@@ -829,7 +829,7 @@ class ArchiveExactnessClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
   async createItem(): Promise<Item> {
@@ -838,7 +838,7 @@ class ArchiveExactnessClient implements LedgerClient {
   async updateItem(): Promise<Item> {
     throw new Error("not used");
   }
-  async ftsSearch(): Promise<never[]> {
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
   async createMilestone(): Promise<Item> {
@@ -1085,9 +1085,9 @@ describe("TUI finalize overlay (T621)", () => {
   it("matches the common representative selection, operation, and suppression contract", async () => {
     const client = new GoalsParityClient();
     const snapshot = buildFinalizeSnapshot(await Promise.all([
-      client.fetchLedger("goals"),
-      client.fetchLedger("milestones"),
-      client.fetchLedger("tasks"),
+      client.fetchLedger("goals", "full"),
+      client.fetchLedger("milestones", "full"),
+      client.fetchLedger("tasks", "full"),
     ]));
     let executedPlan: GoalsFinalizePlan | null = null;
     const preview = await mountElement(

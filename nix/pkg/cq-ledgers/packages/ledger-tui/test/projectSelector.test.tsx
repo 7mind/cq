@@ -79,7 +79,7 @@ class NamedProjectClient implements LedgerClient {
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "work", itemCount: 1 }];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id !== "work") throw new Error(`Ledger not found: ${id}`);
     return {
       id: "work",
@@ -107,7 +107,7 @@ class NamedProjectClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
   async createItem(): Promise<Item> {
@@ -116,7 +116,7 @@ class NamedProjectClient implements LedgerClient {
   async updateItem(): Promise<Item> {
     throw new Error("not used");
   }
-  async ftsSearch(): Promise<FtsHit[]> {
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<FtsHit[]> {
     return [];
   }
   async createMilestone(): Promise<Item> {

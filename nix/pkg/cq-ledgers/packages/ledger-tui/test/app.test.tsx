@@ -35,7 +35,7 @@ class ManyItemsClient implements LedgerClient {
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "work", itemCount: this.n }];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id !== "work") throw new Error(`Ledger not found: ${id}`);
     const items: Item[] = Array.from({ length: this.n }, (_, i) => ({
       id: `T${i}`,
@@ -62,7 +62,7 @@ class ManyItemsClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
   async createItem(): Promise<Item> {
@@ -71,7 +71,7 @@ class ManyItemsClient implements LedgerClient {
   async updateItem(): Promise<Item> {
     throw new Error("not used");
   }
-  async ftsSearch(): Promise<never[]> {
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
   async createMilestone(): Promise<Item> {
@@ -94,7 +94,7 @@ class NoTransitionsClient implements LedgerClient {
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "work", itemCount: 1 }];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id !== "work") throw new Error(`Ledger not found: ${id}`);
     return {
       id: "work",
@@ -120,7 +120,7 @@ class NoTransitionsClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
   async createItem(): Promise<Item> {
@@ -129,7 +129,7 @@ class NoTransitionsClient implements LedgerClient {
   async updateItem(): Promise<Item> {
     throw new Error("not used");
   }
-  async ftsSearch(): Promise<never[]> {
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
   async createMilestone(): Promise<Item> {
@@ -293,7 +293,8 @@ describe("ledger-tui App", () => {
     await h.key(ENTER); // -> wip (first allowed target)
     await tick(40);
     expect(h.frame()).toContain("D1 → wip");
-    expect((await h.client.fetchItem("bugs", "D1")).status).toBe("wip");
+    expect(h.frame()).toContain("D1 @ bugs  wip");
+    expect((await h.client.fetchItem("bugs", "D1", "full")).status).toBe("wip");
     h.unmount();
   });
 
@@ -354,7 +355,8 @@ describe("ledger-tui App", () => {
     await type(h, " fixed"); // append to the prefilled value
     await h.key(ENTER);
     await tick(40);
-    expect((await h.client.fetchItem("bugs", "D1")).fields["headline"]).toBe("warp leak fixed");
+    expect(h.frame()).toContain("headline: warp leak fixed");
+    expect((await h.client.fetchItem("bugs", "D1", "full")).fields["headline"]).toBe("warp leak fixed");
     h.unmount();
   });
 
@@ -368,7 +370,7 @@ describe("ledger-tui App", () => {
     await type(h, "ship it");
     await h.key(ENTER);
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q1");
+    const q = await h.client.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("ship it");
     h.unmount();
@@ -381,7 +383,7 @@ describe("ledger-tui App", () => {
     await h.key(ENTER); // open questions
     await h.key("r"); // answer as recommended (Q1 has a recommendation)
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q1");
+    const q = await h.client.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("as recommended");
     h.unmount();
@@ -415,7 +417,7 @@ describe("ledger-tui App", () => {
     await type(h, "do it");
     await h.key(ENTER);
     await tick(40);
-    const q1 = await h.client.fetchItem("questions", "Q1");
+    const q1 = await h.client.fetchItem("questions", "Q1", "full");
     expect(q1.status).toBe("answered");
     expect(q1.fields["answer"]).toBe("do it");
     // Q1 dropped out; the stepper now shows Q2 as the first of the 2 remaining.
@@ -429,7 +431,7 @@ describe("ledger-tui App", () => {
     await openBatch(h); // first open item is Q1 (has a recommendation)
     await h.key(CTRL_R);
     await tick(40);
-    const q1 = await h.client.fetchItem("questions", "Q1");
+    const q1 = await h.client.fetchItem("questions", "Q1", "full");
     expect(q1.status).toBe("answered");
     expect(q1.fields["answer"]).toBe("as recommended");
     h.unmount();
@@ -472,10 +474,11 @@ describe("ledger-tui App", () => {
     await type(h, "Phase Two");
     await h.key(ENTER);
     await tick(40);
-    const ms = await h.client.fetchLedger("milestones");
+    const ms = await h.client.fetchLedger("milestones", "full");
     const titles = ms.milestones.flatMap((g) => g.items.map((i) => i.fields["title"]));
     expect(titles).toContain("Phase Two");
     expect(h.frame()).toContain("created M2");
+    expect(h.frame()).toContain("milestones → active → M2");
     h.unmount();
   });
 
@@ -495,9 +498,11 @@ describe("ledger-tui App", () => {
     await type(h, "ion drive misalignment"); // headline*
     await advance(h, "field 1/2", "field 2/2"); // submit headline → note field
     await advance(h, "field 2/2", "created"); // submit (empty note) → "created Dn" flash
-    const ledger = await h.client.fetchLedger("bugs");
+    const ledger = await h.client.fetchLedger("bugs", "full");
     const headlines = ledger.milestones.flatMap((g) => g.items.map((i) => i.fields["headline"]));
     expect(headlines).toContain("ion drive misalignment");
+    expect(h.frame()).toContain("bugs → M1 → D3");
+    expect(h.frame()).toContain("headline: ion drive misalignment");
     h.unmount();
   }, 20_000); // explicit 20 s: generous budget for worst-case CPU contention
 
@@ -683,7 +688,7 @@ class MultiMilestoneClient implements LedgerClient {
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "tasks", itemCount: 3 }];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id !== "tasks") throw new Error(`Ledger not found: ${id}`);
     return {
       id: "tasks",
@@ -715,10 +720,10 @@ class MultiMilestoneClient implements LedgerClient {
     };
   }
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
-  async fetchItem(): Promise<Item> { throw new Error("not used"); }
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
   async createItem(): Promise<Item> { throw new Error("not used"); }
   async updateItem(): Promise<Item> { throw new Error("not used"); }
-  async ftsSearch(): Promise<never[]> { return []; }
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
@@ -867,7 +872,7 @@ class ArchiveClient implements LedgerClient {
     return [{ name: "jobs", itemCount: 1 }];
   }
 
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id !== "jobs") throw new Error(`Ledger not found: ${id}`);
     return {
       id: "jobs",
@@ -907,13 +912,13 @@ class ArchiveClient implements LedgerClient {
     return { kind: "group", milestone };
   }
 
-  async fetchItem(): Promise<Item> { throw new Error("not used"); }
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
   async createItem(): Promise<Item> { throw new Error("not used"); }
   async updateItem(): Promise<Item> {
     this.statusApplied = true;
     throw new Error("should not be called on archived item");
   }
-  async ftsSearch(): Promise<never[]> { return []; }
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
@@ -1102,7 +1107,7 @@ class MultiMilestoneArchiveClient implements LedgerClient {
     return [{ name: "tasks", itemCount: 2 }];
   }
 
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id !== "tasks") throw new Error(`Ledger not found: ${id}`);
     return {
       id: "tasks",
@@ -1149,13 +1154,13 @@ class MultiMilestoneArchiveClient implements LedgerClient {
     return { kind: "group", milestone };
   }
 
-  async fetchItem(): Promise<Item> { throw new Error("not used"); }
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
   async createItem(): Promise<Item> { throw new Error("not used"); }
   async updateItem(_ledger: string, _id: string, patch: import("../src/types.js").ItemPatch): Promise<Item> {
     this.statusApplied = patch.status ?? "";
     return { id: "T1", milestoneId: "M1", status: patch.status ?? "planned", fields: { headline: "active item" }, createdAt: TS, updatedAt: TS };
   }
-  async ftsSearch(): Promise<never[]> { return []; }
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
@@ -1563,7 +1568,7 @@ class GoalsClient implements LedgerClient {
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: "goals", itemCount: 2 }, { name: "tasks", itemCount: 1 }];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id === "goals") {
       return {
         id: "goals",
@@ -1622,10 +1627,10 @@ class GoalsClient implements LedgerClient {
     throw new Error(`Ledger not found: ${id}`);
   }
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
-  async fetchItem(): Promise<Item> { throw new Error("not used"); }
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
   async createItem(): Promise<Item> { throw new Error("not used"); }
   async updateItem(): Promise<Item> { throw new Error("not used"); }
-  async ftsSearch(): Promise<never[]> { return []; }
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
@@ -1711,7 +1716,7 @@ describe("ledger-tui number-key suggestion picker (T87)", () => {
     await tick(20);
     await h.key("2"); // pick 2nd suggestion "opt b"
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q2");
+    const q = await h.client.fetchItem("questions", "Q2", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("opt b");
     h.unmount();
@@ -1724,7 +1729,7 @@ describe("ledger-tui number-key suggestion picker (T87)", () => {
     await tick(20);
     await h.key("1"); // pick 1st suggestion "opt a"
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q2");
+    const q = await h.client.fetchItem("questions", "Q2", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("opt a");
     h.unmount();
@@ -1737,7 +1742,7 @@ describe("ledger-tui number-key suggestion picker (T87)", () => {
     await tick(20);
     await h.key("9"); // beyond range — no-op
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q2");
+    const q = await h.client.fetchItem("questions", "Q2", "full");
     expect(q.status).toBe("open"); // unchanged
     h.unmount();
   });
@@ -1750,7 +1755,7 @@ describe("ledger-tui number-key suggestion picker (T87)", () => {
     await tick(20);
     await h.key("2"); // pick 2nd suggestion
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q2");
+    const q = await h.client.fetchItem("questions", "Q2", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("opt b");
     h.unmount();
@@ -1762,7 +1767,7 @@ describe("ledger-tui number-key suggestion picker (T87)", () => {
     // Q1 is at cursor 0: has recommendation "yes, ship it" but no suggestions field
     await h.key("1"); // no-op
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q1");
+    const q = await h.client.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("open"); // unchanged
     h.unmount();
   });
@@ -1776,7 +1781,7 @@ describe("ledger-tui number-key suggestion picker (T87)", () => {
     await tick(20);
     await h.key("1"); // no-op — not answerable
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q2");
+    const q = await h.client.fetchItem("questions", "Q2", "full");
     expect(q.fields["answer"]).toBe("pre-answered"); // unchanged
     h.unmount();
   });
@@ -1823,7 +1828,7 @@ describe("ledger-tui inert r/1-9 when persisted answer non-empty (T89)", () => {
     await openQ3(h);
     await h.key("r"); // Q3 has recommendation AND non-empty answer → inert
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q3");
+    const q = await h.client.fetchItem("questions", "Q3", "full");
     // status must remain open; answer must remain the original "picked s1"
     expect(q.status).toBe("open");
     expect(q.fields["answer"]).toBe("picked s1");
@@ -1837,7 +1842,7 @@ describe("ledger-tui inert r/1-9 when persisted answer non-empty (T89)", () => {
     await tick(20);
     await h.key("r"); // inert
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q3");
+    const q = await h.client.fetchItem("questions", "Q3", "full");
     expect(q.status).toBe("open");
     expect(q.fields["answer"]).toBe("picked s1");
     h.unmount();
@@ -1848,7 +1853,7 @@ describe("ledger-tui inert r/1-9 when persisted answer non-empty (T89)", () => {
     await openQ3(h);
     await h.key("1"); // Q3 has suggestions AND non-empty answer → inert
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q3");
+    const q = await h.client.fetchItem("questions", "Q3", "full");
     expect(q.status).toBe("open");
     expect(q.fields["answer"]).toBe("picked s1");
     h.unmount();
@@ -1861,7 +1866,7 @@ describe("ledger-tui inert r/1-9 when persisted answer non-empty (T89)", () => {
     await tick(20);
     await h.key("1"); // inert
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q3");
+    const q = await h.client.fetchItem("questions", "Q3", "full");
     expect(q.status).toBe("open");
     expect(q.fields["answer"]).toBe("picked s1");
     h.unmount();
@@ -1872,7 +1877,7 @@ describe("ledger-tui inert r/1-9 when persisted answer non-empty (T89)", () => {
     await openQuestions(h); // lands on Q1: has recommendation, no persisted answer
     await h.key("r");
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q1");
+    const q = await h.client.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("as recommended");
     h.unmount();
@@ -1885,7 +1890,7 @@ describe("ledger-tui inert r/1-9 when persisted answer non-empty (T89)", () => {
     await tick(20);
     await h.key("1");
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q2");
+    const q = await h.client.fetchItem("questions", "Q2", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("opt a");
     h.unmount();
@@ -1925,7 +1930,7 @@ describe("ledger-tui inert r/1-9 when persisted answer non-empty (T89)", () => {
     expect(h.frame()).toContain("Q3");
     await h.key(CTRL_R); // Q3 has recommendation + persisted answer → inert
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q3");
+    const q = await h.client.fetchItem("questions", "Q3", "full");
     // Q3's answer must remain "picked s1" (not overwritten with "as recommended")
     expect(q.fields["answer"]).toBe("picked s1");
     expect(q.status).toBe("open");
@@ -1949,7 +1954,7 @@ describe("ledger-tui D29: empty answer Enter is a no-op (T164)", () => {
     // immediately without typing anything.
     await h.key(ENTER);
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q1");
+    const q = await h.client.fetchItem("questions", "Q1", "full");
     // Status must remain open; no answered transition fired.
     expect(q.status).toBe("open");
     h.unmount();
@@ -1963,7 +1968,7 @@ describe("ledger-tui D29: empty answer Enter is a no-op (T164)", () => {
     await type(h, "   "); // type only spaces
     await h.key(ENTER);
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q1");
+    const q = await h.client.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("open");
     h.unmount();
   });
@@ -1976,7 +1981,7 @@ describe("ledger-tui D29: empty answer Enter is a no-op (T164)", () => {
     await type(h, "yes");
     await h.key(ENTER);
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q1");
+    const q = await h.client.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("yes");
     h.unmount();
@@ -1993,7 +1998,7 @@ describe("ledger-tui D29: empty answer Enter is a no-op (T164)", () => {
     // Press Enter immediately without typing anything.
     await h.key(ENTER);
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q1");
+    const q = await h.client.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("open");
     expect(h.frame()).toContain("Q1"); // still on Q1, not auto-advanced
     h.unmount();
@@ -2007,7 +2012,7 @@ describe("ledger-tui D29: empty answer Enter is a no-op (T164)", () => {
     await type(h, "  "); // type only spaces
     await h.key(ENTER);
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q1");
+    const q = await h.client.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("open");
     h.unmount();
   });
@@ -2020,7 +2025,7 @@ describe("ledger-tui D29: empty answer Enter is a no-op (T164)", () => {
     await type(h, "ship it");
     await h.key(ENTER);
     await tick(40);
-    const q = await h.client.fetchItem("questions", "Q1");
+    const q = await h.client.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("ship it");
     h.unmount();

@@ -67,7 +67,11 @@ beforeAll(async () => {
   await seed.createLedger("bugs", {
     statusValues: ["open", "wip", "closed"],
     terminalStatuses: ["closed"],
-    fields: { headline: { type: "string", required: true }, note: { type: "string", required: false } },
+    fields: {
+      headline: { type: "string", required: true },
+      note: { type: "string", required: false },
+      dependsOn: { type: "id[]", required: false },
+    },
   });
   await seed.dispose();
 
@@ -113,19 +117,31 @@ describe("McpLedgerClient.embedded (in-process, in-memory transport)", () => {
 
   it("creates, updates, fetches and searches an item — no subprocess", async () => {
     await client.createMilestone({ id: "M30", title: "embedded coverage" });
+    const dependency = await client.createItem("tasks", "M30", {
+      status: "planned",
+      fields: { headline: "embedded dependency" },
+    });
     const created = await client.createItem("bugs", "M30", {
       status: "open",
-      fields: { headline: "tachyon leak", note: "in-process" },
+      fields: {
+        headline: "tachyon leak",
+        note: "in-process",
+        dependsOn: [dependency.id],
+      },
     });
-    expect(created.fields["headline"]).toBe("tachyon leak");
+    expect(created.fields).toEqual({
+      dependsOn: [`tasks:${dependency.id}`],
+    });
 
     const updated = await client.updateItem("bugs", created.id, { status: "wip" });
     expect(updated.status).toBe("wip");
 
-    const fetched = await client.fetchItem("bugs", created.id);
+    const fetched = await client.fetchItem("bugs", created.id, "full");
     expect(fetched.status).toBe("wip");
+    expect(fetched.fields["headline"]).toBe("tachyon leak");
+    expect(fetched.fields["dependsOn"]).toEqual([`tasks:${dependency.id}`]);
 
-    const hits = await client.ftsSearch("tachyon");
+    const hits = await client.ftsSearch("tachyon", "compact");
     expect(hits.some((h) => h.item.id === created.id)).toBe(true);
   });
 

@@ -102,7 +102,7 @@ class DistinctDefectsClient implements LedgerClient {
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [{ name: DEFECTS_LEDGER, itemCount: this.n }];
   }
-  async fetchLedger(_ledgerId: string): Promise<FetchedLedger> {
+  async fetchLedger(_ledgerId: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     const items: Item[] = Array.from({ length: this.n }, (_, i) => ({
       id: `D${i + 1}`,
       milestoneId: "M1",
@@ -128,7 +128,7 @@ class DistinctDefectsClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not implemented");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not implemented");
   }
   async createItem(_l: string, _m: string, _init: ItemInit): Promise<Item> {
@@ -137,7 +137,7 @@ class DistinctDefectsClient implements LedgerClient {
   async updateItem(_l: string, _id: string, _p: ItemPatch): Promise<Item> {
     throw new Error("not implemented");
   }
-  async ftsSearch(): Promise<never[]> {
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
   async createMilestone(): Promise<Item> {

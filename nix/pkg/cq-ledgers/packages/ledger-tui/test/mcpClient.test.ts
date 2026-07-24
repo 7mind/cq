@@ -45,7 +45,11 @@ beforeAll(async () => {
   await seed.createLedger("bugs", {
     statusValues: ["open", "wip", "closed"],
     terminalStatuses: ["closed"],
-    fields: { headline: { type: "string", required: true }, note: { type: "string", required: false } },
+    fields: {
+      headline: { type: "string", required: true },
+      note: { type: "string", required: false },
+      dependsOn: { type: "id[]", required: false },
+    },
   });
   await seed.dispose();
 
@@ -95,31 +99,43 @@ describe("McpLedgerClient over HTTP", () => {
   it("creates a milestone and lists it via fetchLedger(milestones)", async () => {
     const ms = await client.createMilestone({ id: "M21", title: "client coverage" });
     expect(ms.id).toBe("M21");
-    const milestones = await client.fetchLedger("milestones");
+    const milestones = await client.fetchLedger("milestones", "full");
     const ids = milestones.milestones.flatMap((g) => g.items.map((i) => i.id));
     expect(ids).toContain("M21");
   });
 
   it("creates, updates, fetches and searches an item", async () => {
+    const dependency = await client.createItem("tasks", "M21", {
+      status: "planned",
+      fields: { headline: "dependency target" },
+    });
     const created = await client.createItem("bugs", "M21", {
       status: "open",
-      fields: { headline: "warp drive overheats", note: "intermittent" },
+      fields: {
+        headline: "warp drive overheats",
+        note: "intermittent",
+        dependsOn: [dependency.id],
+      },
     });
     expect(created.status).toBe("open");
-    expect(created.fields["headline"]).toBe("warp drive overheats");
+    expect(created.fields).toEqual({
+      dependsOn: [`tasks:${dependency.id}`],
+    });
 
     const updated = await client.updateItem("bugs", created.id, { status: "wip" });
     expect(updated.status).toBe("wip");
 
-    const fetched = await client.fetchItem("bugs", created.id);
+    const fetched = await client.fetchItem("bugs", created.id, "full");
     expect(fetched.id).toBe(created.id);
     expect(fetched.status).toBe("wip");
+    expect(fetched.fields["headline"]).toBe("warp drive overheats");
+    expect(fetched.fields["dependsOn"]).toEqual([`tasks:${dependency.id}`]);
 
-    const ledger = await client.fetchLedger("bugs");
+    const ledger = await client.fetchLedger("bugs", "full");
     const allItems = ledger.milestones.flatMap((g) => g.items);
     expect(allItems.some((i) => i.id === created.id)).toBe(true);
 
-    const hits = await client.ftsSearch("warp");
+    const hits = await client.ftsSearch("warp", "compact");
     expect(hits.some((h) => h.item.id === created.id)).toBe(true);
   });
 
@@ -141,7 +157,7 @@ describe("McpLedgerClient over HTTP", () => {
     expect(pointer.id).toBe("M22");
     expect(pointer.summary).toBe("archived for T617 test");
 
-    const ledger = await client.fetchLedger("bugs");
+    const ledger = await client.fetchLedger("bugs", "full");
     expect(ledger.archivePointers.some((p) => p.id === "M22")).toBe(true);
   });
 

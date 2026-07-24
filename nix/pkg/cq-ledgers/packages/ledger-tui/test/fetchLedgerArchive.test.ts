@@ -65,7 +65,7 @@ afterAll(async () => {
 
 describe("McpLedgerClient.fetchLedgerArchive (T29)", () => {
   it("fetchLedger returns an archivePointer for the archived milestone", async () => {
-    const ledger = await client.fetchLedger("jobs");
+    const ledger = await client.fetchLedger("jobs", "full");
     expect(ledger.archivePointers).toHaveLength(1);
     expect(ledger.archivePointers[0]!.id).toBe("M50");
   });

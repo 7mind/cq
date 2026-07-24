@@ -599,7 +599,7 @@ export function App({
   const openLedger = useCallback(
     async (name: string) => {
       try {
-        const view = await client.fetchLedger(name);
+        const view = await client.fetchLedger(name, "full");
         setStack((s) => [...s, { kind: "items", ledger: name, view, cursor: 0, focus: "list", scroll: 0, showArchive: false, archiveRows: [], archiveLoading: false }]);
         setFilter({ kind: "all" });
         setFlash("");
@@ -610,15 +610,23 @@ export function App({
     [client],
   );
 
-  const reloadItems = useCallback(async (): Promise<void> => {
-    if (top.kind !== "items") return;
+  const reloadItems = useCallback(async (selectItemId?: string): Promise<boolean> => {
+    if (top.kind !== "items") return false;
     try {
-      const view = await client.fetchLedger(top.ledger);
-      patchTop({ view });
+      const view = await client.fetchLedger(top.ledger, "full");
+      if (selectItemId === undefined) {
+        patchTop({ view });
+        return true;
+      }
+      const rows = filterVisibleRows(view, filter);
+      const cursor = rows.findIndex((row) => row.item.id === selectItemId);
+      patchTop({ view, ...(cursor >= 0 ? { cursor } : {}) });
+      return true;
     } catch (e) {
       setFlash(errMsg(e));
+      return false;
     }
-  }, [client, top, patchTop]);
+  }, [client, top, patchTop, filter]);
 
   // Keep the refresh closure current for the long-lived live connection.
   useEffect(() => {
@@ -643,7 +651,7 @@ export function App({
     const secondary = secondaryLedgerFor(top.ledger);
     if (secondary === null || crossItems.has(secondary)) return;
     let alive = true;
-    client.fetchLedger(secondary).then((view) => {
+    client.fetchLedger(secondary, "compact").then((view) => {
       if (!alive) return;
       const items = view.milestones.flatMap((g) => g.items);
       setCrossItems((prev) => {
@@ -698,8 +706,7 @@ export function App({
       try {
         if (isMilestonesLedger) await client.updateMilestone(row.item.id, { status });
         else await client.updateItem(top.ledger, row.item.id, { status, author: UI_AUTHOR });
-        setFlash(`${row.item.id} → ${status}`);
-        await reloadItems();
+        if (await reloadItems()) setFlash(`${row.item.id} → ${status}`);
       } catch (e) {
         setFlash(errMsg(e));
       }
@@ -719,8 +726,7 @@ export function App({
           fields: { [ANSWER_FIELD]: answer },
           author: UI_AUTHOR,
         });
-        setFlash(`${row.item.id} answered`);
-        await reloadItems();
+        if (await reloadItems()) setFlash(`${row.item.id} answered`);
       } catch (e) {
         setFlash(errMsg(e));
       }
@@ -740,7 +746,7 @@ export function App({
       let view = top.view;
       if (answerableRows(view).length === 0 && ledger !== QUESTIONS_LEDGER) {
         ledger = QUESTIONS_LEDGER;
-        view = await client.fetchLedger(ledger);
+        view = await client.fetchLedger(ledger, "full");
       }
       const rows = answerableRows(view);
       if (rows.length === 0) {
@@ -764,11 +770,11 @@ export function App({
           fields: { [ANSWER_FIELD]: answer },
           author: UI_AUTHOR,
         });
-        setFlash(`${row.item.id} answered`);
         // Refetch the batch ledger to recompute the open set. Keep the visible
         // frame in sync when it shows the same ledger.
-        const view = await client.fetchLedger(overlay.ledger);
+        const view = await client.fetchLedger(overlay.ledger, "full");
         if (top.kind === "items" && top.ledger === overlay.ledger) patchTop({ view });
+        setFlash(`${row.item.id} answered`);
         const rows = answerableRows(view);
         if (rows.length === 0) {
           setOverlay(null);
@@ -785,7 +791,9 @@ export function App({
   const loadFinalizeSnapshot = useCallback(async (): Promise<FinalizeSnapshot> => {
     const names = new Set<string>(ledgers.map((ledger) => ledger.name));
     names.add(MILESTONES);
-    const views = await Promise.all([...names].map((name) => client.fetchLedger(name)));
+    const views = await Promise.all(
+      [...names].map((name) => client.fetchLedger(name, "full")),
+    );
     return buildFinalizeSnapshot(views);
   }, [client, ledgers]);
 
@@ -849,8 +857,7 @@ export function App({
           fields: { [field]: parseFieldValue(raw, spec?.type ?? "string") },
           author: UI_AUTHOR,
         });
-        setFlash(`${row.item.id}.${field} updated`);
-        await reloadItems();
+        if (await reloadItems()) setFlash(`${row.item.id}.${field} updated`);
       } catch (e) {
         setFlash(errMsg(e));
       }
@@ -863,8 +870,7 @@ export function App({
     async (row: Row, title: string) => {
       try {
         await client.updateMilestone(row.item.id, { title });
-        setFlash(`${row.item.id} title updated`);
-        await reloadItems();
+        if (await reloadItems()) setFlash(`${row.item.id} title updated`);
       } catch (e) {
         setFlash(errMsg(e));
       }
@@ -880,7 +886,7 @@ export function App({
       return;
     }
     try {
-      const ms = await client.fetchLedger(MILESTONES);
+      const ms = await client.fetchLedger(MILESTONES, "compact");
       setOverlay({ t: "createItem", milestones: ms.milestones.flatMap((g) => g.items) });
     } catch (e) {
       setFlash(errMsg(e));
@@ -934,12 +940,15 @@ export function App({
   }, [client, top, patchTop, visibleRows]);
 
   // The live-search overlay drives this directly as the user types.
-  const search = useCallback((query: string) => client.ftsSearch(query), [client]);
+  const search = useCallback(
+    (query: string) => client.ftsSearch(query, "compact"),
+    [client],
+  );
 
   const openHit = useCallback(
     async (hit: FtsHit) => {
       try {
-        const view = await client.fetchLedger(hit.ledgerId);
+        const view = await client.fetchLedger(hit.ledgerId, "full");
         const rs = ledgerRows(view);
         const idx = Math.max(0, rs.findIndex((r) => r.item.id === hit.item.id));
         // Replace the stack: a fresh ledgers root, then push the hit's ledger.
@@ -1372,8 +1381,7 @@ export function App({
               onCreateMilestone={async (title) => {
                 try {
                   const m = await client.createMilestone({ title });
-                  setFlash(`created ${m.id}`);
-                  await reloadItems();
+                  if (await reloadItems(m.id)) setFlash(`created ${m.id}`);
                 } catch (e) {
                   setFlash(errMsg(e));
                 }
@@ -1387,8 +1395,7 @@ export function App({
                     fields,
                     author: UI_AUTHOR,
                   });
-                  setFlash(`created ${it.id}`);
-                  await reloadItems();
+                  if (await reloadItems(it.id)) setFlash(`created ${it.id}`);
                 } catch (e) {
                   setFlash(errMsg(e));
                 }

@@ -77,7 +77,7 @@ class DefectsClient implements LedgerClient {
     return [{ name: "defects", itemCount: 2 }];
   }
 
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id === "defects") {
       return {
         id: "defects",
@@ -147,10 +147,10 @@ class DefectsClient implements LedgerClient {
   }
 
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
-  async fetchItem(): Promise<Item> { throw new Error("not used"); }
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
   async createItem(): Promise<Item> { throw new Error("not used"); }
   async updateItem(): Promise<Item> { throw new Error("not used"); }
-  async ftsSearch(): Promise<FtsHit[]> { return []; }
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<FtsHit[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
@@ -191,7 +191,7 @@ class HypothesisClient implements LedgerClient {
     return [{ name: "hypothesis", itemCount: 3 }];
   }
 
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: import("../src/types.js").ItemProjection): Promise<FetchedLedger> {
     if (id !== "hypothesis") throw new Error(`Ledger not found: ${id}`);
     return {
       id: "hypothesis",
@@ -234,10 +234,10 @@ class HypothesisClient implements LedgerClient {
   }
 
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
-  async fetchItem(): Promise<Item> { throw new Error("not used"); }
+  async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
   async createItem(): Promise<Item> { throw new Error("not used"); }
   async updateItem(): Promise<Item> { throw new Error("not used"); }
-  async ftsSearch(): Promise<FtsHit[]> { return []; }
+  async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<FtsHit[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async updateMilestone(): Promise<Item> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }

@@ -24,10 +24,13 @@ import type {
   FtsHit,
   Item,
   ItemInit,
+  ItemMutationAckDto,
   ItemPatch,
+  ItemProjection,
   LedgerClient,
   LedgerSummary,
   MilestonePatch,
+  MilestoneMutationAckDto,
   ProjectEntry,
 } from "./types.js";
 
@@ -191,9 +194,16 @@ export class McpLedgerClient implements LedgerClient {
     });
   }
 
-  async fetchLedger(ledgerId: string): Promise<FetchedLedger> {
-    return (await this.call<{ ledger: FetchedLedger }>("fetch_ledger", { ledger_id: ledgerId }))
-      .ledger;
+  async fetchLedger(
+    ledgerId: string,
+    projection: ItemProjection,
+  ): Promise<FetchedLedger> {
+    return (
+      await this.call<{ ledger: FetchedLedger }>("fetch_ledger", {
+        ledger_id: ledgerId,
+        projection,
+      })
+    ).ledger;
   }
 
   async fetchLedgerArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
@@ -205,9 +215,18 @@ export class McpLedgerClient implements LedgerClient {
     ).archive;
   }
 
-  async fetchItem(ledgerId: string, itemId: string): Promise<Item> {
-    return (await this.call<{ item: Item }>("fetch_item", { ledger_id: ledgerId, item_id: itemId }))
-      .item;
+  async fetchItem(
+    ledgerId: string,
+    itemId: string,
+    projection: ItemProjection,
+  ): Promise<Item> {
+    return (
+      await this.call<{ item: Item }>("fetch_item", {
+        ledger_id: ledgerId,
+        item_id: itemId,
+        projection,
+      })
+    ).item;
   }
 
   async fetchPrompt(roleId: string): Promise<string> {
@@ -218,7 +237,11 @@ export class McpLedgerClient implements LedgerClient {
     return await this.call<FetchPromptResult>("fetch_prompt", { roleId });
   }
 
-  async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<Item> {
+  async createItem(
+    ledgerId: string,
+    milestoneId: string,
+    init: ItemInit,
+  ): Promise<ItemMutationAckDto> {
     const args: Record<string, unknown> = {
       ledger_id: ledgerId,
       milestone_id: milestoneId,
@@ -228,37 +251,64 @@ export class McpLedgerClient implements LedgerClient {
     if (init.id !== undefined) args["id"] = init.id;
     if (init.author !== undefined) args["author"] = init.author;
     if (init.session !== undefined) args["session"] = init.session;
-    return (await this.call<{ item: Item }>("create_item", args)).item;
+    return (
+      await this.call<{ item: ItemMutationAckDto }>("create_item", args)
+    ).item;
   }
 
-  async updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<Item> {
+  async updateItem(
+    ledgerId: string,
+    itemId: string,
+    patch: ItemPatch,
+  ): Promise<ItemMutationAckDto> {
     const args: Record<string, unknown> = { ledger_id: ledgerId, item_id: itemId };
     if (patch.status !== undefined) args["status"] = patch.status;
     if (patch.fields !== undefined) args["fields"] = patch.fields;
     if (patch.author !== undefined) args["author"] = patch.author;
     if (patch.session !== undefined) args["session"] = patch.session;
-    return (await this.call<{ item: Item }>("update_item", args)).item;
+    return (
+      await this.call<{ item: ItemMutationAckDto }>("update_item", args)
+    ).item;
   }
 
-  async ftsSearch(query: string, opts?: { ledger?: string }): Promise<FtsHit[]> {
-    const args: Record<string, unknown> = { query };
+  async ftsSearch(
+    query: string,
+    projection: ItemProjection,
+    opts?: { ledger?: string },
+  ): Promise<FtsHit[]> {
+    const args: Record<string, unknown> = { query, projection };
     if (opts?.ledger !== undefined) args["ledger"] = opts.ledger;
     return (await this.call<{ results: FtsHit[] }>("fts_search", args)).results;
   }
 
-  async createMilestone(init: { title: string; description?: string; id?: string }): Promise<Item> {
+  async createMilestone(
+    init: { title: string; description?: string; id?: string },
+  ): Promise<MilestoneMutationAckDto> {
     const args: Record<string, unknown> = { title: init.title };
     if (init.description !== undefined) args["description"] = init.description;
     if (init.id !== undefined) args["id"] = init.id;
-    return (await this.call<{ milestone: Item }>("create_milestone", args)).milestone;
+    return (
+      await this.call<{ milestone: MilestoneMutationAckDto }>(
+        "create_milestone",
+        args,
+      )
+    ).milestone;
   }
 
-  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
+  async updateMilestone(
+    milestoneId: string,
+    patch: MilestonePatch,
+  ): Promise<MilestoneMutationAckDto> {
     const args: Record<string, unknown> = { milestone_id: milestoneId };
     if (patch.status !== undefined) args["status"] = patch.status;
     if (patch.title !== undefined) args["title"] = patch.title;
     if (patch.description !== undefined) args["description"] = patch.description;
-    return (await this.call<{ milestone: Item }>("update_milestone", args)).milestone;
+    return (
+      await this.call<{ milestone: MilestoneMutationAckDto }>(
+        "update_milestone",
+        args,
+      )
+    ).milestone;
   }
 
   async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
