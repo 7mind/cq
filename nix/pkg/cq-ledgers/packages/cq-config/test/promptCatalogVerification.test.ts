@@ -24,13 +24,27 @@ function fixture(): PromptCatalogVerificationInput {
     },
     intentionalDifference: INVOCATION_DIFFERENCE,
   };
+  const policyBinding = {
+    fragment: "policy",
+    supportedSurfaces: SURFACES,
+    forbiddenVocabulary: {
+      claude: [],
+      codex: [],
+      pi: [],
+    },
+    intentionalDifference: {
+      kind: "tool-vocabulary",
+      reason: "A policy fragment may vary when a surface requires it.",
+      surfaces: SURFACES,
+    },
+  } as const;
   const catalog = [
     {
       roleId: "worker",
       roleKind: "dispatched-subagent",
       canonicalSource: "agents/worker.md",
       surfaces: SURFACES,
-      fragmentBindings: [binding],
+      fragmentBindings: [binding, policyBinding],
       dispatchRelations: [],
       intentionalDifferences: [INVOCATION_DIFFERENCE],
       sidecar: { schemaRoleId: "worker" },
@@ -40,7 +54,7 @@ function fixture(): PromptCatalogVerificationInput {
       roleKind: "orchestrator-command",
       canonicalSource: "commands/cq/start.md",
       surfaces: SURFACES,
-      fragmentBindings: [binding],
+      fragmentBindings: [binding, policyBinding],
       dispatchRelations: [
         { kind: "dispatch", targetRoleId: "worker" },
         { kind: "recursion", targetRoleId: "start" },
@@ -57,20 +71,20 @@ function fixture(): PromptCatalogVerificationInput {
     schemaVersion: 1,
     catalog,
     catalogMetadataHash,
-    fragmentContracts: [binding],
+    fragmentContracts: [binding, policyBinding],
   };
   const roleBodies: Record<PromptSurface, Readonly<Record<string, string>>> = {
     claude: {
-      worker: "worker /cq:advance $ARGUMENTS\n",
-      start: "start /cq:advance $ARGUMENTS\n",
+      worker: "worker /cq:advance $ARGUMENTS policy common\n",
+      start: "start /cq:advance $ARGUMENTS policy common\n",
     },
     codex: {
-      worker: "worker $cq-advance $ARGUMENTS\n",
-      start: "start $cq-advance $ARGUMENTS\n",
+      worker: "worker $cq-advance $ARGUMENTS policy common\n",
+      start: "start $cq-advance $ARGUMENTS policy common\n",
     },
     pi: {
-      worker: "worker CQ::advance $ARGUMENTS\n",
-      start: "start CQ::advance $ARGUMENTS\n",
+      worker: "worker CQ::advance $ARGUMENTS policy common\n",
+      start: "start CQ::advance $ARGUMENTS policy common\n",
     },
   };
   const roots = Object.fromEntries(
@@ -102,9 +116,25 @@ function fixture(): PromptCatalogVerificationInput {
     expectedRoots: structuredClone(roots),
     packagedRoots: structuredClone(roots),
     localClaudeRoot: structuredClone(roots.claude),
+    canonicalSources: {
+      "agents/worker.md":
+        "worker {{cq:fragment:cq-command-invocation}} policy {{cq:fragment:policy}}\n",
+      "commands/cq/start.md":
+        "start {{cq:fragment:cq-command-invocation}} policy {{cq:fragment:policy}}\n",
+    },
     fragmentObservations: [
       { roleId: "worker", fragment: binding.fragment, contents: fragmentContents },
       { roleId: "start", fragment: binding.fragment, contents: fragmentContents },
+      {
+        roleId: "worker",
+        fragment: policyBinding.fragment,
+        contents: { claude: "common", codex: "common", pi: "common" },
+      },
+      {
+        roleId: "start",
+        fragment: policyBinding.fragment,
+        contents: { claude: "common", codex: "common", pi: "common" },
+      },
     ],
     sidecarRoleIds: ["worker"],
   };
@@ -112,6 +142,24 @@ function fixture(): PromptCatalogVerificationInput {
 
 function mutableFixture(): PromptCatalogVerificationInput {
   return structuredClone(fixture());
+}
+
+function mutateRenderedRole(
+  input: PromptCatalogVerificationInput,
+  roleId: string,
+  mutate: (surface: PromptSurface, content: string) => string,
+): void {
+  const artifactPath = `roles/${roleId}.md`;
+  for (const surface of SURFACES) {
+    const expected = input.expectedRoots[surface].artifacts as Record<string, string>;
+    const packaged = input.packagedRoots[surface].artifacts as Record<string, string>;
+    expected[artifactPath] = mutate(surface, expected[artifactPath]!);
+    packaged[artifactPath] = mutate(surface, packaged[artifactPath]!);
+    if (surface === "claude") {
+      const local = input.localClaudeRoot.artifacts as Record<string, string>;
+      local[artifactPath] = mutate(surface, local[artifactPath]!);
+    }
+  }
 }
 
 describe("prompt-catalog centralized verification mutation fixtures", () => {
@@ -190,6 +238,12 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
       }
     ).catalog;
     missingCatalog[0]!.intentionalDifferences = [];
+    const missingGeneratedCatalog = (
+      missing.generatedProjection as {
+        catalog: Array<{ intentionalDifferences: unknown[] }>;
+      }
+    ).catalog;
+    missingGeneratedCatalog[0]!.intentionalDifferences = [];
     expect(() => verifyPromptCatalog(missing)).toThrow("missing difference declaration");
 
     const stale = mutableFixture();
@@ -198,7 +252,9 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
       observation.contents.claude;
     (observation.contents as Record<PromptSurface, string>).pi =
       observation.contents.claude;
-    expect(() => verifyPromptCatalog(stale)).toThrow("stale difference declaration");
+    expect(() => verifyPromptCatalog(stale)).toThrow(
+      "source drift from authoritative fragment input",
+    );
 
     const unknown = mutableFixture();
     const unknownCatalog = (
@@ -222,6 +278,31 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
     duplicateCatalog[0]!.intentionalDifferences.push(INVOCATION_DIFFERENCE);
     expect(() => verifyPromptCatalog(duplicate)).toThrow(
       "duplicate difference declaration",
+    );
+  });
+
+  test("rejects an undeclared difference observed only in a rendered slot segment", () => {
+    const undeclaredRenderedDifference = mutableFixture();
+    mutateRenderedRole(
+      undeclaredRenderedDifference,
+      "worker",
+      (surface, content) => content.replace("policy common", `policy ${surface}`),
+    );
+    expect(() => verifyPromptCatalog(undeclaredRenderedDifference)).toThrow(
+      "missing difference declaration",
+    );
+  });
+
+  test("rejects a stale declaration whose rendered slot segment is identical", () => {
+    const staleRenderedDifference = mutableFixture();
+    mutateRenderedRole(staleRenderedDifference, "worker", (_surface, content) =>
+      content.replace(
+        /(?:\/cq:advance|\$cq-advance|CQ::advance) \$ARGUMENTS/,
+        "same-invocation $ARGUMENTS",
+      ),
+    );
+    expect(() => verifyPromptCatalog(staleRenderedDifference)).toThrow(
+      "stale difference declaration",
     );
   });
 });

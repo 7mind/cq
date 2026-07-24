@@ -3,7 +3,6 @@ import { readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import {
   DISPATCHED_ROLE_SIDECARS,
-  renderPromptSurfaceTree,
   verifyPromptCatalog,
   type PromptSurface,
   type PromptVerificationRoot,
@@ -157,6 +156,67 @@ function rootFromFilesystem(
   return rootFromArtifacts(surface, artifacts);
 }
 
+function substitutePromptSlots(
+  role: CatalogEntry & { readonly fragmentBindings: readonly FragmentBinding[] },
+  surface: PromptSurface,
+  canonicalSource: string,
+  fragmentSources: readonly FragmentSource[],
+): string {
+  let rendered = canonicalSource;
+  for (const binding of role.fragmentBindings) {
+    const marker = `{{cq:fragment:${binding.fragment}}}`;
+    const parts = rendered.split(marker);
+    if (parts.length !== 2) {
+      throw new Error(
+        `${role.canonicalSource}: expected one typed slot marker "${marker}"`,
+      );
+    }
+    const fragmentSource = fragmentSources.find(
+      (candidate) =>
+        candidate.surface === surface &&
+        candidate.roleId === role.roleId &&
+        candidate.fragment === binding.fragment,
+    );
+    if (fragmentSource === undefined) {
+      throw new Error(
+        `missing fragment source ${surface}:${role.roleId}:${binding.fragment}`,
+      );
+    }
+    rendered =
+      parts[0]! +
+      readFileSync(path.join(ASSETS_ROOT, fragmentSource.source), "utf8") +
+      parts[1]!;
+  }
+  if (rendered.includes("{{cq:fragment:")) {
+    throw new Error(`${role.canonicalSource}: unresolved typed slot marker`);
+  }
+  return rendered;
+}
+
+function independentlyRenderRoot(
+  surface: PromptSurface,
+  catalogJson: string,
+  roles: readonly (CatalogEntry & {
+    readonly fragmentBindings: readonly FragmentBinding[];
+  })[],
+  canonicalSources: Readonly<Record<string, string>>,
+  fragmentSources: readonly FragmentSource[],
+): PromptVerificationRoot {
+  return rootFromArtifacts(surface, [
+    { path: "catalog.json", content: catalogJson },
+    { path: "surface.json", content: JSON.stringify({ surface }) },
+    ...roles.map((role) => ({
+      path: `roles/${role.roleId}.md`,
+      content: substitutePromptSlots(
+        role,
+        surface,
+        canonicalSources[role.canonicalSource]!,
+        fragmentSources,
+      ),
+    })),
+  ]);
+}
+
 function publishClaudeRoot(
   artifacts: PromptVerificationRoot["artifacts"],
 ): PromptVerificationRoot {
@@ -288,27 +348,21 @@ describe("assets.nix prompt-catalog authority", () => {
       const fragmentSources = JSON.parse(
         evaluateRaw("promptFragmentSourcesJson"),
       ) as readonly FragmentSource[];
-      const sourcePaths = roles.map((role) => ({
-        canonicalSource: role.canonicalSource,
-        path: path.join(ASSETS_ROOT, role.canonicalSource),
-      }));
+      const canonicalSources = Object.fromEntries(
+        roles.map((role) => [
+          role.canonicalSource,
+          readFileSync(path.join(ASSETS_ROOT, role.canonicalSource), "utf8"),
+        ]),
+      );
       const expectedRoots = Object.fromEntries(
         SURFACES.map((surface) => [
           surface,
-          rootFromArtifacts(
+          independentlyRenderRoot(
             surface,
-            renderPromptSurfaceTree({
-              surface,
-              catalogJson,
-              sourcePaths,
-              fragmentPaths: fragmentSources
-                .filter((source) => source.surface === surface)
-                .map((source) => ({
-                  roleId: source.roleId,
-                  fragment: source.fragment,
-                  path: path.join(ASSETS_ROOT, source.source),
-                })),
-            }).artifacts,
+            catalogJson,
+            roles,
+            canonicalSources,
+            fragmentSources,
           ),
         ]),
       ) as Record<PromptSurface, PromptVerificationRoot>;
@@ -358,6 +412,7 @@ describe("assets.nix prompt-catalog authority", () => {
         expectedRoots,
         packagedRoots,
         localClaudeRoot: publishClaudeRoot(expectedRoots.claude.artifacts),
+        canonicalSources,
         fragmentObservations,
         sidecarRoleIds: Object.keys(DISPATCHED_ROLE_SIDECARS),
       });

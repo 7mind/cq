@@ -5,6 +5,7 @@ import {
 } from "./promptCatalog.js";
 
 const SLOT_MARKER_PREFIX = "{{cq:fragment:";
+const SLOT_MARKER_PATTERN = /\{\{cq:fragment:([^{}\r\n]+)\}\}/g;
 const RUNTIME_PLACEHOLDER_PATTERN =
   /\$[A-Z_][A-Z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\}|\{\{(?!cq:fragment:)[^{}\r\n]+\}\}/g;
 
@@ -26,6 +27,7 @@ export interface PromptCatalogVerificationInput {
   readonly expectedRoots: Readonly<Record<PromptSurface, PromptVerificationRoot>>;
   readonly packagedRoots: Readonly<Record<PromptSurface, PromptVerificationRoot>>;
   readonly localClaudeRoot: PromptVerificationRoot;
+  readonly canonicalSources: Readonly<Record<string, string>>;
   readonly fragmentObservations: readonly PromptFragmentObservation[];
   readonly sidecarRoleIds: readonly string[];
 }
@@ -139,7 +141,6 @@ function placeholders(value: string): readonly string[] {
 function assertCatalogStructure(
   roles: readonly CatalogRole[],
   fragmentContracts: readonly FragmentBinding[],
-  observations: readonly PromptFragmentObservation[],
   sidecarRoleIds: readonly string[],
 ): void {
   const rolesById = new Map<string, CatalogRole>();
@@ -226,31 +227,17 @@ function assertCatalogStructure(
     contractsByFragment.set(contract.fragment, contract);
   }
 
-  const observationsByKey = new Map<string, PromptFragmentObservation>();
-  for (const observation of observations) {
-    const key = observationKey(observation.roleId, observation.fragment);
-    if (observationsByKey.has(key)) {
-      fail(
-        "fragmentObservations",
-        `duplicate observation "${observation.roleId}:${observation.fragment}"`,
-      );
-    }
-    observationsByKey.set(key, observation);
-  }
-
-  const consumedObservations = new Set<string>();
   for (const role of roles) {
-    const declarations = new Map<string, number>();
+    const declarationKeys = new Set<string>();
     for (const declaration of role.intentionalDifferences) {
       const key = differenceKey(declaration);
-      const count = (declarations.get(key) ?? 0) + 1;
-      if (count > 1) {
+      if (declarationKeys.has(key)) {
         fail(
           `catalog.${role.roleId}.intentionalDifferences`,
           `duplicate difference declaration "${declaration.kind}"`,
         );
       }
-      declarations.set(key, count);
+      declarationKeys.add(key);
     }
 
     const boundDeclarationKeys = new Set<string>();
@@ -268,32 +255,6 @@ function assertCatalogStructure(
       }
       const declarationKey = differenceKey(binding.intentionalDifference);
       boundDeclarationKeys.add(declarationKey);
-      const key = observationKey(role.roleId, binding.fragment);
-      const observation = observationsByKey.get(key);
-      if (observation === undefined) {
-        fail(
-          "fragmentObservations",
-          `missing observation "${role.roleId}:${binding.fragment}"`,
-        );
-      }
-      consumedObservations.add(key);
-      const observedContents = PROMPT_SURFACES.map(
-        (surface) => observation.contents[surface],
-      );
-      const observedDifference = new Set(observedContents).size > 1;
-      const declarationCount = declarations.get(declarationKey) ?? 0;
-      if (observedDifference && declarationCount !== 1) {
-        fail(
-          `catalog.${role.roleId}.intentionalDifferences`,
-          `missing difference declaration for "${binding.fragment}"`,
-        );
-      }
-      if (!observedDifference && declarationCount === 1) {
-        fail(
-          `catalog.${role.roleId}.intentionalDifferences`,
-          `stale difference declaration for "${binding.fragment}"`,
-        );
-      }
     }
     for (const declaration of role.intentionalDifferences) {
       if (!boundDeclarationKeys.has(differenceKey(declaration))) {
@@ -304,15 +265,324 @@ function assertCatalogStructure(
       }
     }
   }
-  const extraObservation = observations.find(
-    (observation) =>
-      !consumedObservations.has(observationKey(observation.roleId, observation.fragment)),
+}
+
+interface CanonicalSourceTemplate {
+  readonly fragments: readonly string[];
+  readonly literals: readonly string[];
+}
+
+function indexCanonicalSources(
+  roles: readonly CatalogRole[],
+  sources: Readonly<Record<string, string>>,
+): ReadonlyMap<string, string> {
+  const expectedPaths = roles.map((role) => role.canonicalSource).sort();
+  const actualPaths = Object.keys(sources).sort();
+  const missing = expectedPaths.find((sourcePath) => !actualPaths.includes(sourcePath));
+  if (missing !== undefined) {
+    fail("canonicalSources", `missing canonical source "${missing}"`);
+  }
+  const extra = actualPaths.find((sourcePath) => !expectedPaths.includes(sourcePath));
+  if (extra !== undefined) {
+    fail("canonicalSources", `unknown canonical source "${extra}"`);
+  }
+  for (const sourcePath of expectedPaths) {
+    if (typeof sources[sourcePath] !== "string") {
+      fail(`canonicalSources.${sourcePath}`, "expected source bytes");
+    }
+  }
+  return new Map(expectedPaths.map((sourcePath) => [sourcePath, sources[sourcePath]!]));
+}
+
+function parseCanonicalSource(
+  role: CatalogRole,
+  source: string,
+): CanonicalSourceTemplate {
+  const fragments: string[] = [];
+  const literals: string[] = [];
+  let offset = 0;
+  for (const match of source.matchAll(SLOT_MARKER_PATTERN)) {
+    const index = match.index;
+    const marker = match[0];
+    const fragment = match[1];
+    if (index === undefined || fragment === undefined) {
+      fail(`canonicalSources.${role.canonicalSource}`, "invalid typed slot marker");
+    }
+    literals.push(source.slice(offset, index));
+    fragments.push(fragment);
+    offset = index + marker.length;
+  }
+  literals.push(source.slice(offset));
+
+  const duplicate = fragments.find(
+    (fragment, index) => fragments.indexOf(fragment) !== index,
   );
-  if (extraObservation !== undefined) {
+  if (duplicate !== undefined) {
+    fail(
+      `canonicalSources.${role.canonicalSource}`,
+      `duplicate typed slot marker "${duplicate}"`,
+    );
+  }
+  const expectedFragments = role.fragmentBindings
+    .map((binding) => binding.fragment)
+    .sort();
+  const actualFragments = [...fragments].sort();
+  if (!sameOrderedValues(actualFragments, expectedFragments)) {
+    fail(
+      `canonicalSources.${role.canonicalSource}`,
+      "typed slot-marker closure differs from catalog bindings",
+    );
+  }
+  for (let index = 1; index < literals.length - 1; index += 1) {
+    if (literals[index] === "") {
+      fail(
+        `canonicalSources.${role.canonicalSource}`,
+        "adjacent typed slot markers have no literal provenance anchor",
+      );
+    }
+  }
+  return { fragments, literals };
+}
+
+function extractRenderedSegments(
+  template: CanonicalSourceTemplate,
+  rendered: string,
+  provenanceLengths: Readonly<Record<string, number>>,
+  path: string,
+): Readonly<Record<string, string>> {
+  const solutions: string[][] = [];
+  const visit = (
+    slotIndex: number,
+    offset: number,
+    segments: readonly string[],
+  ): void => {
+    const literal = template.literals[slotIndex]!;
+    if (!rendered.startsWith(literal, offset)) {
+      return;
+    }
+    const segmentStart = offset + literal.length;
+    if (slotIndex === template.fragments.length) {
+      if (segmentStart === rendered.length) {
+        solutions.push([...segments]);
+      }
+      return;
+    }
+
+    const nextLiteral = template.literals[slotIndex + 1]!;
+    if (nextLiteral === "") {
+      visit(
+        slotIndex + 1,
+        rendered.length,
+        [...segments, rendered.slice(segmentStart)],
+      );
+      return;
+    }
+    let boundary = rendered.indexOf(nextLiteral, segmentStart);
+    while (boundary !== -1) {
+      visit(
+        slotIndex + 1,
+        boundary,
+        [...segments, rendered.slice(segmentStart, boundary)],
+      );
+      boundary = rendered.indexOf(nextLiteral, boundary + 1);
+    }
+  };
+
+  visit(0, 0, []);
+  if (solutions.length === 0) {
+    fail(path, "source drift from canonical literal anchors");
+  }
+  let selected = solutions[0]!;
+  if (solutions.length > 1) {
+    const ranked = solutions.map((segments) => ({
+      segments,
+      score: segments.reduce(
+        (total, segment, index) =>
+          total +
+          Math.abs(
+            segment.length -
+              provenanceLengths[template.fragments[index]!]!,
+          ),
+        0,
+      ),
+    }));
+    const bestScore = Math.min(...ranked.map(({ score }) => score));
+    const best = ranked.filter(({ score }) => score === bestScore);
+    if (best.length !== 1) {
+      fail(path, "ambiguous canonical literal-anchor provenance");
+    }
+    selected = best[0]!.segments;
+  }
+  return Object.fromEntries(
+    template.fragments.map((fragment, index) => [
+      fragment,
+      selected[index]!,
+    ]),
+  );
+}
+
+function observeRenderedFragments(
+  roles: readonly CatalogRole[],
+  roots: Readonly<Record<PromptSurface, PromptVerificationRoot>>,
+  canonicalSources: ReadonlyMap<string, string>,
+  authoritativeObservations: ReadonlyMap<string, PromptFragmentObservation>,
+): readonly PromptFragmentObservation[] {
+  return roles.flatMap((role) => {
+    const source = canonicalSources.get(role.canonicalSource);
+    if (source === undefined) {
+      fail(
+        `canonicalSources.${role.canonicalSource}`,
+        "missing canonical source",
+      );
+    }
+    const template = parseCanonicalSource(role, source);
+    const bySurface = Object.fromEntries(
+      PROMPT_SURFACES.map((surface) => {
+        const provenanceLengths = Object.fromEntries(
+          role.fragmentBindings.map((binding) => {
+            const observation = authoritativeObservations.get(
+              observationKey(role.roleId, binding.fragment),
+            );
+            if (observation === undefined) {
+              fail(
+                "fragmentObservations",
+                `missing observation "${role.roleId}:${binding.fragment}"`,
+              );
+            }
+            return [binding.fragment, observation.contents[surface].length];
+          }),
+        );
+        return [
+          surface,
+          extractRenderedSegments(
+            template,
+            roots[surface].artifacts[`roles/${role.roleId}.md`]!,
+            provenanceLengths,
+            `packagedRoots.${surface}.roles/${role.roleId}.md`,
+          ),
+        ];
+      }),
+    ) as Record<PromptSurface, Readonly<Record<string, string>>>;
+    return role.fragmentBindings.map((binding) => ({
+      roleId: role.roleId,
+      fragment: binding.fragment,
+      contents: Object.fromEntries(
+        PROMPT_SURFACES.map((surface) => [
+          surface,
+          bySurface[surface][binding.fragment]!,
+        ]),
+      ) as Record<PromptSurface, string>,
+    }));
+  });
+}
+
+function indexFragmentObservations(
+  roles: readonly CatalogRole[],
+  observations: readonly PromptFragmentObservation[],
+): ReadonlyMap<string, PromptFragmentObservation> {
+  const byKey = new Map<string, PromptFragmentObservation>();
+  for (const observation of observations) {
+    const key = observationKey(observation.roleId, observation.fragment);
+    if (byKey.has(key)) {
+      fail(
+        "fragmentObservations",
+        `duplicate observation "${observation.roleId}:${observation.fragment}"`,
+      );
+    }
+    for (const surface of PROMPT_SURFACES) {
+      if (typeof observation.contents[surface] !== "string") {
+        fail(
+          `fragmentObservations.${observation.roleId}.${observation.fragment}.${surface}`,
+          "expected authoritative fragment bytes",
+        );
+      }
+    }
+    byKey.set(key, observation);
+  }
+
+  const expectedKeys = roles.flatMap((role) =>
+    role.fragmentBindings.map((binding) =>
+      observationKey(role.roleId, binding.fragment),
+    ),
+  );
+  const missing = expectedKeys.find((key) => !byKey.has(key));
+  if (missing !== undefined) {
+    const [roleId, fragment] = missing.split("\0");
+    fail("fragmentObservations", `missing observation "${roleId}:${fragment}"`);
+  }
+  const extra = observations.find(
+    (observation) =>
+      !expectedKeys.includes(observationKey(observation.roleId, observation.fragment)),
+  );
+  if (extra !== undefined) {
     fail(
       "fragmentObservations",
-      `unknown observation "${extraObservation.roleId}:${extraObservation.fragment}"`,
+      `unknown observation "${extra.roleId}:${extra.fragment}"`,
     );
+  }
+  return byKey;
+}
+
+function assertDifferenceDeclarations(
+  roles: readonly CatalogRole[],
+  renderedObservations: ReadonlyMap<string, PromptFragmentObservation>,
+): void {
+  for (const role of roles) {
+    const declarations = new Set(
+      role.intentionalDifferences.map(differenceKey),
+    );
+    for (const binding of role.fragmentBindings) {
+      const observation = renderedObservations.get(
+        observationKey(role.roleId, binding.fragment),
+      );
+      if (observation === undefined) {
+        fail(
+          "renderedObservations",
+          `missing observation "${role.roleId}:${binding.fragment}"`,
+        );
+      }
+      const observedDifference =
+        new Set(PROMPT_SURFACES.map((surface) => observation.contents[surface]))
+          .size > 1;
+      const declared = declarations.has(
+        differenceKey(binding.intentionalDifference),
+      );
+      if (observedDifference && !declared) {
+        fail(
+          `catalog.${role.roleId}.intentionalDifferences`,
+          `missing difference declaration for "${binding.fragment}"`,
+        );
+      }
+      if (!observedDifference && declared) {
+        fail(
+          `catalog.${role.roleId}.intentionalDifferences`,
+          `stale difference declaration for "${binding.fragment}"`,
+        );
+      }
+    }
+  }
+}
+
+function assertAuthoritativeFragmentParity(
+  rendered: ReadonlyMap<string, PromptFragmentObservation>,
+  authoritative: ReadonlyMap<string, PromptFragmentObservation>,
+): void {
+  for (const [key, renderedObservation] of rendered) {
+    const authoritativeObservation = authoritative.get(key);
+    if (authoritativeObservation === undefined) {
+      fail("fragmentObservations", "missing authoritative fragment input");
+    }
+    for (const surface of PROMPT_SURFACES) {
+      if (
+        renderedObservation.contents[surface] !==
+        authoritativeObservation.contents[surface]
+      ) {
+        fail(
+          `packagedRoots.${surface}.roles/${renderedObservation.roleId}.md`,
+          `source drift from authoritative fragment input "${renderedObservation.fragment}"`,
+        );
+      }
+    }
   }
 }
 
@@ -402,7 +672,6 @@ export function verifyPromptCatalog(input: PromptCatalogVerificationInput): void
   assertCatalogStructure(
     authority.catalog,
     authority.fragmentContracts,
-    input.fragmentObservations,
     input.sidecarRoleIds,
   );
   if (generated.schemaVersion !== authority.schemaVersion) {
@@ -420,7 +689,6 @@ export function verifyPromptCatalog(input: PromptCatalogVerificationInput): void
   if (generated.catalogMetadataHash !== authority.catalogMetadataHash) {
     fail("generatedProjection.catalogMetadataHash", "different metadata hash");
   }
-
   for (const surface of PROMPT_SURFACES) {
     assertRoot(
       input.packagedRoots[surface],
@@ -443,6 +711,28 @@ export function verifyPromptCatalog(input: PromptCatalogVerificationInput): void
   ) {
     fail("localClaudeRoot", "atomic local Claude root differs from the packaged root");
   }
+  const canonicalSources = indexCanonicalSources(
+    authority.catalog,
+    input.canonicalSources,
+  );
+  const authoritativeObservations = indexFragmentObservations(
+    authority.catalog,
+    input.fragmentObservations,
+  );
+  const renderedObservations = indexFragmentObservations(
+    authority.catalog,
+    observeRenderedFragments(
+      authority.catalog,
+      input.packagedRoots,
+      canonicalSources,
+      authoritativeObservations,
+    ),
+  );
+  assertDifferenceDeclarations(authority.catalog, renderedObservations);
+  assertAuthoritativeFragmentParity(
+    renderedObservations,
+    authoritativeObservations,
+  );
 
   let catalogValue: unknown;
   try {
