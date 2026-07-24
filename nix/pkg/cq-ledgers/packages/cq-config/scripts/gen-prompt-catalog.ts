@@ -11,6 +11,7 @@ const OUT_FILE = path.resolve(SCRIPT_DIR, "..", "src", "promptCatalog.gen.ts");
 interface PromptCatalogProjection {
   readonly schemaVersion: number;
   readonly catalog: readonly unknown[];
+  readonly catalogMetadataHash: string;
   readonly fragmentContracts: readonly unknown[];
 }
 
@@ -30,6 +31,8 @@ function evaluateProjection(): PromptCatalogProjection {
   if (
     value.schemaVersion !== 1 ||
     !Array.isArray(value.catalog) ||
+    typeof value.catalogMetadataHash !== "string" ||
+    !/^[0-9a-f]{64}$/.test(value.catalogMetadataHash) ||
     !Array.isArray(value.fragmentContracts)
   ) {
     throw new Error("prompt catalog Nix projection has an unsupported shape");

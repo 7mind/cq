@@ -48,9 +48,11 @@ assert builtins.fromJSON assets.catalogJson == catalog;
 assert assets.promptCatalogProjection == {
   schemaVersion = 1;
   inherit catalog;
+  catalogMetadataHash = assets.catalogMetadataHash;
   fragmentContracts = assets.fragmentContracts;
 };
-assert builtins.hashString "sha256" assets.catalogJson
+assert assets.catalogMetadataHash == builtins.hashString "sha256" assets.catalogJson;
+assert assets.catalogMetadataHash
   == "895415b3928fa9680255d669bf4327deff1bbf02f956b3bf147b0f562ba62f4c";
 assert assets.promptSurfaceLayout == map (
   surface:

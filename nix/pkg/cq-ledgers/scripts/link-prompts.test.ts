@@ -10,6 +10,7 @@
  * ../cq-assets/.
  */
 import { expect, test, describe } from "bun:test";
+import { PROMPT_ROLE_SOURCE_INVENTORY } from "../packages/cq-config/src/index.ts";
 import { LINKS, checkLinks } from "./link-prompts.ts";
 
 describe("link-prompts import-safety", () => {
@@ -22,6 +23,15 @@ describe("link-prompts import-safety", () => {
 });
 
 describe("link-prompts D30 fix: all sources resolve (T180)", () => {
+  test("LINKS preserves the canonical generated roster order and source metadata", () => {
+    expect(LINKS).toEqual(
+      PROMPT_ROLE_SOURCE_INVENTORY.map((role) => ({
+        link: `.claude/${role.source}`,
+        source: `../cq-assets/${role.source}`,
+      })),
+    );
+  });
+
   test("all LINKS entries reference ../cq-assets/ sources", () => {
     for (const { source } of LINKS) {
       expect(source.startsWith("../cq-assets/")).toBe(true);

@@ -494,9 +494,10 @@ let
 
   catalog = validatePromptCatalog authoredCatalog;
   catalogJson = builtins.toJSON catalog;
+  catalogMetadataHash = builtins.hashString "sha256" catalogJson;
   promptCatalogProjection = {
     schemaVersion = 1;
-    inherit catalog fragmentContracts;
+    inherit catalog catalogMetadataHash fragmentContracts;
   };
 
   promptSurfaceLayout = map (
@@ -524,6 +525,7 @@ assert lib.sort builtins.lessThan fragmentContractIds
     agents
     catalog
     catalogJson
+    catalogMetadataHash
     fragmentContracts
     promptCatalogProjection
     promptSurfaceLayout

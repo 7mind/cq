@@ -3048,6 +3048,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
+  "catalogMetadataHash": "895415b3928fa9680255d669bf4327deff1bbf02f956b3bf147b0f562ba62f4c",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
