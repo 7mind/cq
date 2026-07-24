@@ -129,8 +129,6 @@ interface PanelLayout {
   orientation: PanelOrientation;
   size: number;
 }
-
-
 const DEFAULT_PANEL: PanelLayout = { orientation: "right", size: 380 };
 
 function loadPanel(): PanelLayout {
@@ -1940,69 +1938,71 @@ function FinalizePreviewModal({
           </button>
         </div>
         <div className="lw-modal-body">
-        {step.t === "loading" && (
-          <p className="lw-empty" data-testid="finalize-loading">
-            computing plan…
-          </p>
-        )}
-        {step.t === "preview" && (
-          <>
-            {step.plan.affected.length === 0 ? (
-              <p className="lw-empty" data-testid="finalize-empty">
-                nothing eligible
-              </p>
-            ) : (
-              <>
-                <p className="lw-finalize-heading">affected ({step.plan.affected.length}):</p>
-                <ul className="lw-finalize-list" data-testid="finalize-affected">
-                  {step.plan.affected.map((entry) => (
-                    <li key={entry.id} data-testid={`finalize-affected-${entry.id}`}>
-                      <strong>{entry.id}</strong> <span className="lw-dim">{entry.action}</span>
-                      {entry.targetStatus !== undefined && (
-                        <span className="lw-dim"> → {entry.targetStatus}</span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {step.plan.skipped.length > 0 && (
-              <>
-                <p className="lw-finalize-heading lw-dim">
-                  skipped ({step.plan.skipped.length}):
-                </p>
-                <ul className="lw-finalize-list lw-dim" data-testid="finalize-skipped">
-                  {step.plan.skipped.map((s) => (
-                    <li key={s.id} data-testid={`finalize-skipped-${s.id}`}>
-                      {s.id} — {s.reason}
-                      {s.detail !== undefined ? ` (${s.detail})` : ""}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-          </>
-        )}
-        {step.t === "results" && (
-          <>
-            <ul className="lw-finalize-list" data-testid="finalize-results">
-              {step.results.map((r) => (
-                <li key={r.id} data-testid={`finalize-result-${r.id}`}>
-                  <span className={r.ok ? "lw-finalize-ok" : "lw-finalize-failed"}>
-                    {r.ok ? "ok" : "failed"}
-                  </span>{" "}
-                  <strong>{r.id}</strong> <span className="lw-dim">{r.action}</span>
-                  {r.error !== undefined ? <span className="lw-finalize-failed"> — {r.error}</span> : null}
-                </li>
-              ))}
-            </ul>
-            <p className="lw-dim" data-testid="finalize-results-tally">
-              {step.results.filter((r) => !r.ok).length > 0
-                ? `${step.results.filter((r) => !r.ok).length} of ${step.results.length} failed`
-                : `all ${step.results.length} succeeded`}
+          {step.t === "loading" && (
+            <p className="lw-empty" data-testid="finalize-loading">
+              computing plan…
             </p>
-          </>
-        )}
+          )}
+          {step.t === "preview" && (
+            <>
+              {step.plan.affected.length === 0 ? (
+                <p className="lw-empty" data-testid="finalize-empty">
+                  nothing eligible
+                </p>
+              ) : (
+                <>
+                  <p className="lw-finalize-heading">affected ({step.plan.affected.length}):</p>
+                  <ul className="lw-finalize-list" data-testid="finalize-affected">
+                    {step.plan.affected.map((entry) => (
+                      <li key={entry.id} data-testid={`finalize-affected-${entry.id}`}>
+                        <strong>{entry.id}</strong> <span className="lw-dim">{entry.action}</span>
+                        {entry.targetStatus !== undefined && (
+                          <span className="lw-dim"> → {entry.targetStatus}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {step.plan.skipped.length > 0 && (
+                <>
+                  <p className="lw-finalize-heading lw-dim">
+                    skipped ({step.plan.skipped.length}):
+                  </p>
+                  <ul className="lw-finalize-list lw-dim" data-testid="finalize-skipped">
+                    {step.plan.skipped.map((s) => (
+                      <li key={s.id} data-testid={`finalize-skipped-${s.id}`}>
+                        {s.id} — {s.reason}
+                        {s.detail !== undefined ? ` (${s.detail})` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </>
+          )}
+          {step.t === "results" && (
+            <>
+              <ul className="lw-finalize-list" data-testid="finalize-results">
+                {step.results.map((r) => (
+                  <li key={r.id} data-testid={`finalize-result-${r.id}`}>
+                    <span className={r.ok ? "lw-finalize-ok" : "lw-finalize-failed"}>
+                      {r.ok ? "ok" : "failed"}
+                    </span>{" "}
+                    <strong>{r.id}</strong> <span className="lw-dim">{r.action}</span>
+                    {r.error !== undefined ? (
+                      <span className="lw-finalize-failed"> — {r.error}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+              <p className="lw-dim" data-testid="finalize-results-tally">
+                {step.results.filter((r) => !r.ok).length > 0
+                  ? `${step.results.filter((r) => !r.ok).length} of ${step.results.length} failed`
+                  : `all ${step.results.length} succeeded`}
+              </p>
+            </>
+          )}
         </div>
         {step.t === "preview" && step.plan.affected.length > 0 && (
           <div className="lw-finalize-actions">
@@ -4465,3 +4465,4 @@ function CreateMilestoneForm({
     </form>
   );
 }
+
