@@ -1,9 +1,16 @@
 name: baboon
 description: >-
-  Baboon data model compiler reference. Covers model syntax, multi-version
-  evolution, code generation, wire-format conversions, database migrations,
-  backward compatibility, and version negotiation. TRIGGER when: designing,
-  changing, or discussing any external API, working with .baboon model files,
-  updating data models, adding new fields or types, bumping model versions,
-  running code generation, implementing conversions, writing database migrations,
-  or discussing API versioning strategy.
+  Baboon data model compiler — model syntax, multi-version evolution, codegen,
+  wire-format conversions, DB migrations, backward compatibility, and version
+  negotiation. Baboon is OPT-IN, NOT a default: use this skill ONLY for (a) a
+  project that ALREADY uses baboon (`.baboon` files present, or baboon in the
+  build/codegen), or (b) work the user explicitly scoped to baboon — a
+  GREENFIELD API on baboon, or a migration they asked for. TRIGGER when: editing
+  or adding `.baboon` files; bumping a baboon model version; running baboon
+  codegen or writing its conversions; or the user names baboon for a new API or
+  a migration. Before applying, CONFIRM baboon is in use (look for `.baboon`
+  files) or that the user chose it. SKIP for ordinary API or data-model work in
+  a project with NO baboon models — do NOT reach for baboon just because a task
+  touches an external API, adds a field, or writes a DB migration, and do NOT
+  migrate a non-baboon project to baboon on your own (you may propose it; act
+  only on the user's go-ahead).

@@ -1,6 +1,17 @@
 # Baboon Data Model Compiler
 
-[Baboon](https://github.com/7mind/baboon) is a data model compiler with reliable automatic conversion derivation. When you need to update a data model, create a new version of the baboon domain according to these guidelines and rely on its conversion facilities rather than implementing things manually.
+[Baboon](https://github.com/7mind/baboon) is a data model compiler with reliable automatic conversion derivation.
+
+## When this applies (read first)
+
+Baboon is an **opt-in** toolchain, not a default way to model data. Apply this skill only when one of these holds:
+
+- **The project already uses baboon** — there are `.baboon` model files, or baboon is wired into the build/codegen. Confirm this (e.g. look for `.baboon` files) before acting.
+- **The user explicitly scoped the work to baboon** — designing a *greenfield* API on baboon, or a migration they asked for.
+
+Do **not** introduce baboon into a project that has no baboon models just because a task touches an external API, adds a field, changes a type, or needs a database migration — use the project's existing modelling approach. Migrating an existing project onto baboon is a decision for the user: you may **propose** it, but do not start a migration on your own — act only on the user's explicit go-ahead.
+
+Once baboon is confirmed to be in use (or chosen): when you need to update a data model, create a new version of the baboon domain according to these guidelines and rely on its conversion facilities rather than implementing things manually.
 
 ## Model structure
 
