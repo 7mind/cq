@@ -224,3 +224,8 @@ export { resolveProjectKey, ProjectKeyResolutionError } from "./projectKey.js";
 export type { ResolveProjectKeyOpts } from "./projectKey.js";
 export { parseRef, buildPrefixRegistry, canonicalizeRef, RefParseError } from "./refs.js";
 export type { ParsedRef } from "./refs.js";
+export {
+  FINALIZE_PRESENTATION,
+  describeFinalizeEmptyPlan,
+} from "./finalizePresentation.js";
+export type { FinalizePresentation, FinalizeScope } from "./finalizePresentation.js";
