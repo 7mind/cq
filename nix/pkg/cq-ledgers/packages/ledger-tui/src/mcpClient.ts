@@ -209,6 +209,14 @@ export class McpLedgerClient implements LedgerClient {
       .item;
   }
 
+  async fetchPrompt(roleId: string): Promise<string> {
+    return (
+      await this.call<{ promptTemplate: string }>("fetch_prompt", {
+        roleId,
+      })
+    ).promptTemplate;
+  }
+
   async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<Item> {
     const args: Record<string, unknown> = {
       ledger_id: ledgerId,

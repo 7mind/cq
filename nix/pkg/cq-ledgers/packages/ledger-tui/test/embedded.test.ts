@@ -16,14 +16,35 @@ import { McpLedgerClient, LedgerToolError } from "../src/mcpClient.js";
 let tmpRoot: string;
 let xdgHome: string;
 let prevXdgStateHome: string | undefined;
+let prevPromptRoot: string | undefined;
+let prevPromptSurface: string | undefined;
+let promptRoot: string;
 let client: McpLedgerClient;
+const PROMPT_BYTES = "tui codex {{cq:literal}} and $ARGUMENTS\n";
 
 beforeAll(async () => {
   // The runtime store is the out-of-tree xdg primary (T505): point
   // XDG_STATE_HOME at a temp dir and pin the backend with a projectId.
   prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  prevPromptRoot = process.env["CQ_PROMPT_ROOT"];
+  prevPromptSurface = process.env["CQ_PROMPT_SURFACE"];
   xdgHome = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-tui-embedded-xdg-"));
   process.env["XDG_STATE_HOME"] = xdgHome;
+  promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-tui-prompts-"));
+  await fs.mkdir(path.join(promptRoot, "roles"));
+  await fs.writeFile(
+    path.join(promptRoot, "catalog.json"),
+    JSON.stringify([
+      {
+        roleId: "plan-advance",
+        roleKind: "dispatched-subagent",
+        sidecar: { schemaRoleId: "plan-advance" },
+      },
+    ]),
+  );
+  await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);
+  process.env["CQ_PROMPT_ROOT"] = promptRoot;
+  process.env["CQ_PROMPT_SURFACE"] = "codex";
 
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-tui-embedded-"));
   await fs.writeFile(
@@ -46,7 +67,12 @@ afterAll(async () => {
   await client.close(); // disposes the in-process store
   if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
   else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+  if (prevPromptRoot === undefined) delete process.env["CQ_PROMPT_ROOT"];
+  else process.env["CQ_PROMPT_ROOT"] = prevPromptRoot;
+  if (prevPromptSurface === undefined) delete process.env["CQ_PROMPT_SURFACE"];
+  else process.env["CQ_PROMPT_SURFACE"] = prevPromptSurface;
   await fs.rm(xdgHome, { recursive: true, force: true });
+  await fs.rm(promptRoot, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
 
@@ -64,6 +90,10 @@ describe("McpLedgerClient.embedded (in-process, in-memory transport)", () => {
     const names = (await client.enumerateLedgers()).map((l) => l.name);
     expect(names).toContain("bugs");
     expect(names).toContain("milestones");
+  });
+
+  it("fetches exact bytes from the selected prompt root over the embedded transport", async () => {
+    expect(await client.fetchPrompt("plan-advance")).toBe(PROMPT_BYTES);
   });
 
   it("creates, updates, fetches and searches an item — no subprocess", async () => {

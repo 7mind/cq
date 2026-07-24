@@ -57,8 +57,10 @@ let tmpRoot: string;
 let xdgHome: string;
 let prevXdgStateHome: string | undefined;
 let outdir: string;
+let promptRoot: string;
 let web: Subprocess;
 let webPort: number;
+const PROMPT_BYTES = "embedded web pi {{cq:literal}} and $ARGUMENTS\n";
 
 beforeAll(async () => {
   // The runtime store is the out-of-tree xdg primary (T505): pin the backend
@@ -83,11 +85,29 @@ beforeAll(async () => {
   await seed.dispose();
 
   outdir = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-out-"));
+  promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-prompts-"));
+  await fs.mkdir(path.join(promptRoot, "roles"));
+  await fs.writeFile(
+    path.join(promptRoot, "catalog.json"),
+    JSON.stringify([
+      {
+        roleId: "plan-advance",
+        roleKind: "dispatched-subagent",
+        sidecar: { schemaRoleId: "plan-advance" },
+      },
+    ]),
+  );
+  await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);
   webPort = await freePort();
   // No --mcp-url ⇒ embedded MCP rooted at --cwd.
   web = bunSpawn({
     cmd: [process.execPath, "run", webMain, "--cwd", tmpRoot, "--port", String(webPort)],
-    env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+    env: {
+      ...process.env,
+      LEDGER_WEB_OUTDIR: outdir,
+      CQ_PROMPT_SURFACE: "pi",
+      CQ_PROMPT_ROOT: promptRoot,
+    },
     stdout: "ignore",
     stderr: "ignore",
   });
@@ -102,6 +122,7 @@ afterAll(async () => {
   await fs.rm(xdgHome, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
   await fs.rm(outdir, { recursive: true, force: true });
+  await fs.rm(promptRoot, { recursive: true, force: true });
 });
 
 const base = (): string => `http://127.0.0.1:${webPort}`;
@@ -119,6 +140,15 @@ describe("ledger-web embedded MCP (same-origin /mcp, no upstream process)", () =
     try {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
+
+      const promptResult = await client.callTool({
+        name: "fetch_prompt",
+        arguments: { roleId: "plan-advance" },
+      });
+      const prompt = JSON.parse(
+        (promptResult.content as Array<{ text: string }>)[0]!.text,
+      ) as { promptTemplate: string };
+      expect(prompt.promptTemplate).toBe(PROMPT_BYTES);
 
       await client.callTool({ name: "create_milestone", arguments: { id: "M40", title: "embedded web" } });
       const res = await client.callTool({

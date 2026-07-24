@@ -32,6 +32,13 @@ function nonEmpty(value: string | undefined): string | undefined {
   return value !== undefined && value !== "" ? value : undefined;
 }
 
+function hasEnvironmentSelector(
+  environment: Readonly<Record<string, string | undefined>>,
+  name: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(environment, name);
+}
+
 export function parsePromptSurface(value: string): PromptSurface {
   if ((PROMPT_SURFACES as readonly string[]).includes(value)) {
     return value as PromptSurface;
@@ -54,6 +61,12 @@ export function resolvePromptSurface(
   const explicitRoot = nonEmpty(input.promptRoot);
   const injectedRoot = nonEmpty(input.environment[CQ_PROMPT_ROOT_ENV]);
   const surfacesRoot = nonEmpty(input.environment[CQ_PROMPT_SURFACES_ROOT_ENV]);
+  const selectorPresent =
+    input.promptSurface !== undefined ||
+    input.promptRoot !== undefined ||
+    hasEnvironmentSelector(input.environment, CQ_PROMPT_SURFACE_ENV) ||
+    hasEnvironmentSelector(input.environment, CQ_PROMPT_ROOT_ENV) ||
+    hasEnvironmentSelector(input.environment, CQ_PROMPT_SURFACES_ROOT_ENV);
   let root: string | undefined;
   if (explicitRoot !== undefined) {
     root = path.resolve(explicitRoot);
@@ -71,6 +84,11 @@ export function resolvePromptSurface(
   }
 
   if (root === undefined) {
+    if (selectorPresent) {
+      throw new PromptSurfaceSelectionError(
+        "configured prompt selector does not resolve a prompt artifact root",
+      );
+    }
     return undefined;
   }
   return Object.freeze({

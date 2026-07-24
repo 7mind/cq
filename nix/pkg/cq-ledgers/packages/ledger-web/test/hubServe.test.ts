@@ -20,6 +20,9 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { openPgPool, ensureSchema, PostgresLedgerStore } from "@cq/ledger";
 import {
   parseHubArgs,
@@ -219,6 +222,20 @@ describe("cq serve — missing DSN fails fast (no live Postgres needed)", () => 
     expect(stderr).toContain("--pg-url");
     expect(stderr).toContain("CQ_LEDGER_PG_URL");
   });
+
+  it("rejects an unresolved prompt selector before DSN resolution or serving", async () => {
+    const { exitCode, stderr, stdout } = await runHub(["--port", "0"], {
+      CQ_PROMPT_SURFACE: "codex",
+      CQ_PROMPT_ROOT: undefined,
+      CQ_PROMPT_SURFACES_ROOT: undefined,
+      CQ_LEDGER_PG_URL: undefined,
+      DATABASE_URL: undefined,
+    });
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("does not resolve a prompt artifact root");
+    expect(stderr).not.toContain("CQ_LEDGER_PG_URL");
+  });
 });
 
 describe("cq serve — non-loopback bind requires --token (Q273, no live Postgres needed)", () => {
@@ -257,12 +274,27 @@ describe.skipIf(!process.env["CQ_TEST_PG_URL"])("cq serve — live boot (T586)",
   let tag: string;
   let projectKey: string;
   let displayName: string;
+  let promptRoot: string;
+  const PROMPT_BYTES = "hub claude {{cq:literal}} and $ARGUMENTS\n";
 
   beforeAll(async () => {
     outdir = await fs.mkdtemp(path.join(os.tmpdir(), "cq-serve-out-"));
     tag = `t586-${randomUUID()}`;
     projectKey = `${tag}-proj`;
     displayName = `T586 Hub Test ${tag}`;
+    promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cq-serve-prompts-"));
+    await fs.mkdir(path.join(promptRoot, "roles"));
+    await fs.writeFile(
+      path.join(promptRoot, "catalog.json"),
+      JSON.stringify([
+        {
+          roleId: "plan-advance",
+          roleKind: "dispatched-subagent",
+          sidecar: { schemaRoleId: "plan-advance" },
+        },
+      ]),
+    );
+    await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);
     // Register a tenant directly (mirrors postgres-list-projects.test.ts) so
     // GET /api/projects has something of ours to find.
     const pool = openPgPool(PG_URL!);
@@ -274,13 +306,19 @@ describe.skipIf(!process.env["CQ_TEST_PG_URL"])("cq serve — live boot (T586)",
 
   afterAll(async () => {
     await fs.rm(outdir, { recursive: true, force: true });
+    await fs.rm(promptRoot, { recursive: true, force: true });
   });
 
   it("boots with --pg-url --port 0, no repo cwd; serves the bundle + the projects listing", async () => {
     const proc = bunSpawn({
       cmd: [process.execPath, "run", hubMain, "--pg-url", PG_URL!, "--host", "127.0.0.1", "--port", "0"],
       cwd: os.tmpdir(), // NO repo cwd / cq.toml anywhere near this dir
-      env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+      env: {
+        ...process.env,
+        LEDGER_WEB_OUTDIR: outdir,
+        CQ_PROMPT_SURFACE: "claude",
+        CQ_PROMPT_ROOT: promptRoot,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -317,6 +355,26 @@ describe.skipIf(!process.env["CQ_TEST_PG_URL"])("cq serve — live boot (T586)",
       const found = projJson.projects.find((p) => p.key === projectKey);
       expect(found).toBeDefined();
       expect(found!.displayName).toBe(displayName);
+
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${String(port)}/p/${encodeURIComponent(projectKey)}/mcp`),
+      );
+      const client = new Client({ name: "hub-prompt-test", version: "0.0.1" }, {
+        capabilities: {},
+      });
+      await client.connect(transport as unknown as Transport);
+      try {
+        const promptResult = await client.callTool({
+          name: "fetch_prompt",
+          arguments: { roleId: "plan-advance" },
+        });
+        const prompt = JSON.parse(
+          (promptResult.content as Array<{ text: string }>)[0]!.text,
+        ) as { promptTemplate: string };
+        expect(prompt.promptTemplate).toBe(PROMPT_BYTES);
+      } finally {
+        await client.close();
+      }
     } finally {
       proc.kill();
       await proc.exited;

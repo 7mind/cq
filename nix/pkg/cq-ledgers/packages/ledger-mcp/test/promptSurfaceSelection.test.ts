@@ -153,6 +153,17 @@ describe("prompt surface selection", () => {
     );
   });
 
+  test("rejects every present selector when no usable prompt root resolves", () => {
+    for (const environment of [
+      { [CQ_PROMPT_SURFACE_ENV]: "codex" },
+      { [CQ_PROMPT_SURFACE_ENV]: "codex", [CQ_PROMPT_ROOT_ENV]: "" },
+      { [CQ_PROMPT_ROOT_ENV]: "" },
+      { [CQ_PROMPT_SURFACES_ROOT_ENV]: "" },
+    ]) {
+      expect(() => resolve({ environment })).toThrow("does not resolve a prompt artifact root");
+    }
+  });
+
   test("returns no store only for the source-run compatibility path with no selector", () => {
     expect(resolve({ environment: { CQ_HARNESS: "codex" } })).toBeUndefined();
   });
