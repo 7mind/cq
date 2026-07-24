@@ -56,11 +56,20 @@ import {
   buildFinalizeSnapshot,
   computeApplyDonePlan,
   computeArchivePlan,
+  computeGoalsFinalizePlan,
   runApplyDone,
   runArchive,
+  runGoalsFinalize,
   type FinalizeExecResult,
   type FinalizePlan,
+  type FinalizeSnapshot,
+  type GoalsFinalizeExecResult,
+  type GoalsFinalizePlan,
 } from "@cq/ledger/finalize";
+import {
+  FINALIZE_PRESENTATION,
+  describeFinalizeEmptyPlan,
+} from "@cq/ledger/finalizePresentation";
 
 // Ledger names for the relationship panels — consistent with the canonical
 // constants in @cq/ledger but defined locally to avoid bundling Node.js
@@ -357,14 +366,24 @@ export interface AppProps {
  * shared plan is computed, `results` after the HoldButton-gated execution.
  */
 export type FinalizeMode = "apply-done" | "archive";
+export type FinalizeIntent = FinalizeMode | "goals";
 export type FinalizeStep =
   | { t: "loading" }
   | { t: "preview"; plan: FinalizePlan }
   | { t: "results"; results: FinalizeExecResult[] };
-export interface FinalizePreviewState {
-  mode: FinalizeMode;
-  step: FinalizeStep;
-}
+export type GoalsFinalizeStep =
+  | { t: "loading" }
+  | { t: "preview"; snapshot: FinalizeSnapshot; plan: GoalsFinalizePlan }
+  | { t: "results"; results: GoalsFinalizeExecResult[] };
+export type FinalizePreviewState =
+  | {
+      mode: FinalizeMode;
+      step: FinalizeStep;
+    }
+  | {
+      mode: "goals";
+      step: GoalsFinalizeStep;
+    };
 
 export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock }: AppProps): React.ReactElement {
   const [url, setUrl] = useState(initialUrl);
@@ -785,7 +804,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   // resurrect state a ledger switch already cleared (D120 discipline —
   // openLedger nulls finalizePreview).
   const openFinalizePreview = useCallback(
-    async (mode: FinalizeMode) => {
+    async (mode: FinalizeIntent) => {
       if (client === null) return;
       const gen = ++finalizeGenRef.current;
       setFinalizePreview({ mode, step: { t: "loading" } });
@@ -794,13 +813,28 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         names.add(MILESTONES);
         const views = await Promise.all([...names].map((n) => client.fetchLedger(n)));
         const snapshot = buildFinalizeSnapshot(views);
-        const plan =
-          mode === "apply-done" ? computeApplyDonePlan(snapshot) : computeArchivePlan(snapshot);
-        setFinalizePreview((cur) =>
-          finalizeGenRef.current === gen && cur !== null && cur.mode === mode && cur.step.t === "loading"
-            ? { mode, step: { t: "preview", plan } }
-            : cur,
-        );
+        if (mode === "goals") {
+          const plan = computeGoalsFinalizePlan(snapshot);
+          setFinalizePreview((cur) =>
+            finalizeGenRef.current === gen &&
+            cur !== null &&
+            cur.mode === mode &&
+            cur.step.t === "loading"
+              ? { mode, step: { t: "preview", snapshot, plan } }
+              : cur,
+          );
+        } else {
+          const plan =
+            mode === "apply-done" ? computeApplyDonePlan(snapshot) : computeArchivePlan(snapshot);
+          setFinalizePreview((cur) =>
+            finalizeGenRef.current === gen &&
+            cur !== null &&
+            cur.mode === mode &&
+            cur.step.t === "loading"
+              ? { mode, step: { t: "preview", plan } }
+              : cur,
+          );
+        }
       } catch (e) {
         // A stale rejection from a dismissed session must neither flash its
         // error nor close a re-opened modal.
@@ -829,6 +863,38 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
       setFinalizePreview((cur) =>
         finalizeGenRef.current === gen && cur !== null && cur.mode === mode
           ? { mode, step: { t: "results", results } }
+          : cur,
+      );
+      refreshRef.current();
+    },
+    [client],
+  );
+
+  const setGoalsFinalizeSelection = useCallback((goalId: string, selected: boolean) => {
+    setFinalizePreview((cur) => {
+      if (cur === null || cur.mode !== "goals" || cur.step.t !== "preview") return cur;
+      const deselectedGoalIds = cur.step.plan.eligibleGoals
+        .filter((goal) => (goal.id === goalId ? !selected : !goal.selected))
+        .map((goal) => goal.id);
+      return {
+        mode: "goals",
+        step: {
+          t: "preview",
+          snapshot: cur.step.snapshot,
+          plan: computeGoalsFinalizePlan(cur.step.snapshot, { deselectedGoalIds }),
+        },
+      };
+    });
+  }, []);
+
+  const executeGoalsFinalize = useCallback(
+    async (plan: GoalsFinalizePlan) => {
+      if (client === null) return;
+      const gen = finalizeGenRef.current;
+      const results = await runGoalsFinalize(client, plan);
+      setFinalizePreview((cur) =>
+        finalizeGenRef.current === gen && cur !== null && cur.mode === "goals"
+          ? { mode: "goals", step: { t: "results", results } }
           : cur,
       );
       refreshRef.current();
@@ -1453,7 +1519,9 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         <FinalizePreviewModal
           state={finalizePreview}
           holdClock={holdClock}
-          onExecute={(plan) => void executeFinalize(finalizePreview.mode, plan)}
+          onExecute={(mode, plan) => void executeFinalize(mode, plan)}
+          onExecuteGoals={(plan) => void executeGoalsFinalize(plan)}
+          onGoalSelectionChange={setGoalsFinalizeSelection}
           onClose={closeFinalizePreview}
         />
       )}
@@ -1584,6 +1652,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
                 </button>
                 {(isMilestones || ledger === GOALS_LEDGER) && (
                   <FinalizeControl
+                    scope={isMilestones ? "global" : "goals"}
                     open={finalizeMenuOpen}
                     onToggle={() => setFinalizeMenuOpen((o) => !o)}
                     onClose={() => setFinalizeMenuOpen(false)}
@@ -1829,23 +1898,22 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
 // ---------------------------------------------------------------------------
 
 /**
- * Toolbar 'Finalize' control (T619): a button that opens a small two-option
- * menu, dismissed on Escape (via the parent's keyRef handler, keyed off
- * `open`) or on a backdrop click (useBackdropDismiss, matching the
- * lw-modal-backdrop/lw-modal convention used by LogModal/BatchAnswerModal).
- * Picking an option raises the finalize-preview state one level up — no
- * execution happens here or in the parent (T620/T622 own that).
+ * Toolbar 'Finalize' control: milestones keep the two global sweep modes;
+ * goals expose the combined selectable goals-scope operation. The menu is
+ * dismissed on Escape or backdrop click.
  */
 function FinalizeControl({
+  scope,
   open,
   onToggle,
   onClose,
   onPick,
 }: {
+  scope: "global" | "goals";
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
-  onPick: (mode: FinalizeMode) => void;
+  onPick: (mode: FinalizeIntent) => void;
 }): React.ReactElement {
   const backdropProps = useBackdropDismiss(onClose);
   return (
@@ -1862,22 +1930,35 @@ function FinalizeControl({
             aria-label="finalize"
             onClick={(e) => e.stopPropagation()}
           >
-            <button
-              type="button"
-              role="menuitem"
-              data-testid="finalize-option-apply-done"
-              onClick={() => onPick("apply-done")}
-            >
-              Apply Done to completed items
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              data-testid="finalize-option-archive"
-              onClick={() => onPick("archive")}
-            >
-              Archive all Done items
-            </button>
+            {scope === "global" ? (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="finalize-option-apply-done"
+                  onClick={() => onPick("apply-done")}
+                >
+                  Apply Done to completed items
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  data-testid="finalize-option-archive"
+                  onClick={() => onPick("archive")}
+                >
+                  Archive all Done items
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="finalize-option-goals"
+                onClick={() => onPick("goals")}
+              >
+                Finalize completed goals
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1887,12 +1968,10 @@ function FinalizeControl({
 
 /**
  * Finalize preview modal (T620): consumes the raised FinalizePreviewState and
- * walks its three steps — `loading` (snapshot fan-out in flight), `preview`
- * (the shared plan's affected ids in execution order, plus EVERY skipped id
- * with its reason — per Q289 the sweep must never appear to 'do nothing'
- * unexplained; an empty plan renders an explicit 'nothing eligible' state
- * instead of the execute button), and `results` (per-id ok/failed summary
- * from the shared executor, with the caught error text on failures).
+ * walks its three steps — `loading`, `preview`, and `results`. Global plans
+ * retain the existing affected/skipped contract. Goals plans additionally
+ * expose default-selected eligible goals, exact operation ids, and
+ * attempted/failed/suppressed results.
  * Execution is gated behind the HoldButton hold gesture (Q292), driven by the
  * injectable HoldClock in tests. Mirrors the TUI's FinalizePreview/
  * FinalizeResults overlay (T621) for cross-frontend parity.
@@ -1901,19 +1980,40 @@ function FinalizePreviewModal({
   state,
   holdClock,
   onExecute,
+  onExecuteGoals,
+  onGoalSelectionChange,
   onClose,
 }: {
   state: FinalizePreviewState;
   holdClock?: HoldClock | undefined;
-  onExecute: (plan: FinalizePlan) => void;
+  onExecute: (mode: FinalizeMode, plan: FinalizePlan) => void;
+  onExecuteGoals: (plan: GoalsFinalizePlan) => void;
+  onGoalSelectionChange: (goalId: string, selected: boolean) => void;
   onClose: () => void;
 }): React.ReactElement {
   const backdropProps = useBackdropDismiss(onClose);
-  // Guard against a second completed hold re-running the sweep while the
-  // first execution is still in flight (the button unmounts on `results`).
   const [running, setRunning] = useState(false);
-  const { mode, step } = state;
-  const modeLabel = mode === "apply-done" ? "apply done" : "archive";
+  const runningRef = useRef(false);
+  const modeLabel =
+    state.mode === "apply-done"
+      ? "apply done"
+      : state.mode === "archive"
+        ? "archive"
+        : "finalize selected goals";
+  const executable =
+    state.step.t === "preview" &&
+    (state.mode === "goals"
+      ? state.step.plan.operations.length > 0
+      : state.step.plan.affected.length > 0);
+
+  const execute = (): void => {
+    if (runningRef.current || state.step.t !== "preview") return;
+    runningRef.current = true;
+    setRunning(true);
+    if (state.mode === "goals") onExecuteGoals(state.step.plan);
+    else onExecute(state.mode, state.step.plan);
+  };
+
   return (
     <div className="lw-modal-backdrop" data-testid="finalize-preview-backdrop" {...backdropProps}>
       <div
@@ -1925,8 +2025,8 @@ function FinalizePreviewModal({
       >
         <div className="lw-help-head">
           <strong>
-            finalize · <span data-testid="finalize-preview-mode">{mode}</span> ·{" "}
-            {step.t === "results" ? "results" : "preview"}
+            finalize · <span data-testid="finalize-preview-mode">{state.mode}</span> ·{" "}
+            {state.step.t === "results" ? "results" : "preview"}
           </strong>
           <button
             type="button"
@@ -1938,22 +2038,27 @@ function FinalizePreviewModal({
           </button>
         </div>
         <div className="lw-modal-body">
-          {step.t === "loading" && (
+          <p className="lw-dim" data-testid="finalize-caption">
+            {FINALIZE_PRESENTATION[state.mode === "goals" ? "goals" : "global"].caption}
+          </p>
+          {state.step.t === "loading" && (
             <p className="lw-empty" data-testid="finalize-loading">
               computing plan…
             </p>
           )}
-          {step.t === "preview" && (
+          {state.mode !== "goals" && state.step.t === "preview" && (
             <>
-              {step.plan.affected.length === 0 ? (
+              {state.step.plan.affected.length === 0 ? (
                 <p className="lw-empty" data-testid="finalize-empty">
-                  nothing eligible
+                  {describeFinalizeEmptyPlan(state.step.plan.skipped)}
                 </p>
               ) : (
                 <>
-                  <p className="lw-finalize-heading">affected ({step.plan.affected.length}):</p>
+                  <p className="lw-finalize-heading">
+                    affected ({state.step.plan.affected.length}):
+                  </p>
                   <ul className="lw-finalize-list" data-testid="finalize-affected">
-                    {step.plan.affected.map((entry) => (
+                    {state.step.plan.affected.map((entry) => (
                       <li key={entry.id} data-testid={`finalize-affected-${entry.id}`}>
                         <strong>{entry.id}</strong> <span className="lw-dim">{entry.action}</span>
                         {entry.targetStatus !== undefined && (
@@ -1964,13 +2069,13 @@ function FinalizePreviewModal({
                   </ul>
                 </>
               )}
-              {step.plan.skipped.length > 0 && (
+              {state.step.plan.skipped.length > 0 && (
                 <>
                   <p className="lw-finalize-heading lw-dim">
-                    skipped ({step.plan.skipped.length}):
+                    skipped ({state.step.plan.skipped.length}):
                   </p>
                   <ul className="lw-finalize-list lw-dim" data-testid="finalize-skipped">
-                    {step.plan.skipped.map((s) => (
+                    {state.step.plan.skipped.map((s) => (
                       <li key={s.id} data-testid={`finalize-skipped-${s.id}`}>
                         {s.id} — {s.reason}
                         {s.detail !== undefined ? ` (${s.detail})` : ""}
@@ -1981,10 +2086,77 @@ function FinalizePreviewModal({
               )}
             </>
           )}
-          {step.t === "results" && (
+          {state.mode === "goals" && state.step.t === "preview" && (
+            <>
+              {state.step.plan.eligibleGoals.length > 0 && (
+                <fieldset data-testid="finalize-goals-selection">
+                  <legend>eligible goals</legend>
+                  {state.step.plan.eligibleGoals.map((goal) => (
+                    <label key={goal.id}>
+                      <input
+                        type="checkbox"
+                        data-testid={`finalize-goal-${goal.id}`}
+                        checked={goal.selected}
+                        onChange={(event) =>
+                          onGoalSelectionChange(goal.id, event.currentTarget.checked)
+                        }
+                      />{" "}
+                      <strong>{goal.id}</strong> <span className="lw-dim">{goal.status}</span>
+                    </label>
+                  ))}
+                </fieldset>
+              )}
+              {state.step.plan.operations.length === 0 ? (
+                <p className="lw-empty" data-testid="finalize-empty">
+                  {describeFinalizeEmptyPlan(state.step.plan.skipped)}
+                </p>
+              ) : (
+                <>
+                  <p className="lw-finalize-heading">
+                    operations ({state.step.plan.operations.length}):
+                  </p>
+                  <ul className="lw-finalize-list" data-testid="finalize-goals-operations">
+                    {state.step.plan.operations.map((operation) => (
+                      <li
+                        key={operation.id}
+                        data-testid={`finalize-operation-${operation.id}`}
+                      >
+                        <strong>{operation.id}</strong>{" "}
+                        <span className="lw-dim">
+                          {operation.action} {operation.targetId}
+                          {operation.targetStatus !== undefined
+                            ? ` → ${operation.targetStatus}`
+                            : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {state.step.plan.skipped.length > 0 && (
+                <>
+                  <p className="lw-finalize-heading lw-dim">
+                    skipped ({state.step.plan.skipped.length}):
+                  </p>
+                  <ul className="lw-finalize-list lw-dim" data-testid="finalize-skipped">
+                    {state.step.plan.skipped.map((skipped) => (
+                      <li
+                        key={skipped.id}
+                        data-testid={`finalize-skipped-${skipped.id}`}
+                      >
+                        {skipped.id} — {skipped.reason}
+                        {skipped.detail !== undefined ? ` (${skipped.detail})` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </>
+          )}
+          {state.mode !== "goals" && state.step.t === "results" && (
             <>
               <ul className="lw-finalize-list" data-testid="finalize-results">
-                {step.results.map((r) => (
+                {state.step.results.map((r) => (
                   <li key={r.id} data-testid={`finalize-result-${r.id}`}>
                     <span className={r.ok ? "lw-finalize-ok" : "lw-finalize-failed"}>
                       {r.ok ? "ok" : "failed"}
@@ -1997,23 +2169,50 @@ function FinalizePreviewModal({
                 ))}
               </ul>
               <p className="lw-dim" data-testid="finalize-results-tally">
-                {step.results.filter((r) => !r.ok).length > 0
-                  ? `${step.results.filter((r) => !r.ok).length} of ${step.results.length} failed`
-                  : `all ${step.results.length} succeeded`}
+                {state.step.results.filter((result) => !result.ok).length > 0
+                  ? `${state.step.results.filter((result) => !result.ok).length} of ${state.step.results.length} failed`
+                  : `all ${state.step.results.length} succeeded`}
+              </p>
+            </>
+          )}
+          {state.mode === "goals" && state.step.t === "results" && (
+            <>
+              <ul className="lw-finalize-list" data-testid="finalize-results">
+                {state.step.results.map((result) => (
+                  <li key={result.id} data-testid={`finalize-result-${result.id}`}>
+                    <span className={result.ok ? "lw-finalize-ok" : "lw-finalize-failed"}>
+                      {result.ok ? "ok" : result.attempted ? "failed" : "suppressed"}
+                    </span>{" "}
+                    <strong>{result.id}</strong>{" "}
+                    <span className="lw-dim">
+                      {result.action} {result.targetId}
+                    </span>
+                    {"error" in result ? (
+                      <span className="lw-finalize-failed"> — {result.error}</span>
+                    ) : "failedPrerequisite" in result ? (
+                      <span className="lw-finalize-failed">
+                        {" "}
+                        — prerequisite {result.failedPrerequisite}
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+              <p className="lw-dim" data-testid="finalize-results-tally">
+                {state.step.results.every((result) => result.ok)
+                  ? `all ${state.step.results.length} succeeded`
+                  : `${state.step.results.filter((result) => result.attempted && !result.ok).length} failed, ${state.step.results.filter((result) => !result.attempted).length} suppressed of ${state.step.results.length}`}
               </p>
             </>
           )}
         </div>
-        {step.t === "preview" && step.plan.affected.length > 0 && (
+        {executable && (
           <div className="lw-finalize-actions">
             <HoldButton
               data-testid="finalize-execute"
               disabled={running}
               clock={holdClock}
-              onConfirm={() => {
-                setRunning(true);
-                onExecute(step.plan);
-              }}
+              onConfirm={execute}
             >
               {running ? "executing…" : `hold to ${modeLabel}`}
             </HoldButton>
@@ -4465,4 +4664,3 @@ function CreateMilestoneForm({
     </form>
   );
 }
-

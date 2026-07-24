@@ -33,6 +33,10 @@
     "./finalize": {
       "import": "./src/finalize.ts",
       "types": "./src/finalize.ts"
+    },
+    "./finalizePresentation": {
+      "import": "./src/finalizePresentation.ts",
+      "types": "./src/finalizePresentation.ts"
     }
   },
   "dependencies": {

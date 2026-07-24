@@ -7,10 +7,9 @@
  * updateItem id, archive summary synthesis, empty-plan state, stale-async
  * generation-token regression):
  *
- *  1. apply-done launched from the GOALS view closes ONLY building goals and
- *     lists every skipped goal/milestone with its reason (bound to the
- *     SKIP_* constants exported from @cq/ledger/finalize so drift fails loud
- *     — mirrors the TUI's GoalsClient fixture, T623);
+ *  1. Finalize launched from the GOALS view opens the combined goals-scope
+ *     graph, defaults every eligible goal selected, and recomputes exact
+ *     work/coordination operations after per-goal opt-out;
  *  2. archive-sweep exactness: a 3-way milestone fixture (fully-terminal /
  *     item-terminal-but-self-open / non-terminal-item) mirroring T623's TUI
  *     ArchiveExactnessClient — only the fully-terminal milestone is ever
@@ -34,12 +33,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { App } from "../src/App";
 import { HOLD_MS, type HoldClock } from "../src/HoldButton.js";
 import { MILESTONES_SCHEMA } from "@cq/ledger/constants";
-import {
-  SKIP_INCOMPLETE_MILESTONE,
-  SKIP_MILESTONE_NOT_TERMINAL,
-  SKIP_NON_TERMINAL_ITEMS,
-  SKIP_WRONG_PHASE,
-} from "@cq/ledger/finalize";
+import { SKIP_INCOMPLETE_MILESTONE, SKIP_MILESTONE_NOT_TERMINAL, SKIP_NON_TERMINAL_ITEMS } from "@cq/ledger/finalize";
 import type {
   AgentModelsResult,
   ArchiveContent,
@@ -115,12 +109,15 @@ const tasksSchema: LedgerSchema = {
   idPrefix: "T",
   fields: { headline: { type: "string", required: true } },
 };
-// No `transitions` map on goals: building -> done is unguarded (matches the
-// plan's transitionPermitted fallback), same as finalizePreviewModal.test.tsx.
 const goalsSchema: LedgerSchema = {
-  statusValues: ["shaping", "building", "done"],
+  statusValues: ["planned", "building", "done"],
   terminalStatuses: ["done"],
   idPrefix: "G",
+  transitions: {
+    planned: ["building"],
+    building: ["done"],
+    done: [],
+  },
   fields: {
     title: { type: "string", required: true },
     milestones: { type: "string[]", required: false },
@@ -133,20 +130,35 @@ type RecordedCall =
   | { op: "archiveMilestone"; milestoneId: string; summary: string };
 
 /**
- * Milestones + tasks + goals fixture for scenario (1): M1 (open, task done ->
- * complete), M2 (open, task wip -> incomplete). Goals: G1 (building,
- * milestones=[M1] -> close-goal), G2 (building, milestones=[M2] -> skipped,
- * SKIP_INCOMPLETE_MILESTONE), G3 (shaping -> skipped, SKIP_WRONG_PHASE).
+ * Goals-scope fixture for scenario (1). G1 (planned) and G2 (building) share
+ * coordination milestone C-SHARED and reference complete work milestones W1
+ * and W2. G3 references incomplete W-BAD and remains skipped. Deselecting G2
+ * must remove W2's unique archive and make C-SHARED ineligible under projected
+ * Q290 because the deselected G2 remains non-terminal.
  */
 class GoalsFlowClient implements LedgerClient {
   readonly calls: RecordedCall[] = [];
+  failG1Building = false;
+  deferNextArchive = false;
+  private archiveRelease: (() => void) | null = null;
+
+  get archivePending(): boolean {
+    return this.archiveRelease !== null;
+  }
+
+  releaseArchive(): void {
+    const release = this.archiveRelease;
+    if (release === null) throw new Error("releaseArchive: no archive pending");
+    this.archiveRelease = null;
+    release();
+  }
 
   displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
     return [
       { name: "goals", itemCount: 3 },
-      { name: "milestones", itemCount: 2 },
-      { name: "tasks", itemCount: 2 },
+      { name: "milestones", itemCount: 5 },
+      { name: "tasks", itemCount: 3 },
     ];
   }
   async fetchLedger(id: string): Promise<FetchedLedger> {
@@ -154,14 +166,17 @@ class GoalsFlowClient implements LedgerClient {
       return {
         id: "milestones",
         schema: MILESTONES_SCHEMA,
-        counters: { milestone: 1, item: 2 },
+        counters: { milestone: 1, item: 5 },
         milestones: [
           {
             id: "active",
             milestone: { id: "active", status: "open", title: "active", description: "" },
             items: [
-              item("M1", "active", "open", { title: "Wave 1" }),
-              item("M2", "active", "open", { title: "Wave 2" }),
+              item("W1", "active", "open", { title: "Work one" }),
+              item("W2", "active", "done", { title: "Work two" }),
+              item("W-BAD", "active", "open", { title: "Incomplete work" }),
+              item("C-SHARED", "active", "open", { title: "Shared coordination" }),
+              item("C-BAD", "active", "open", { title: "Incomplete coordination" }),
             ],
           },
         ],
@@ -172,10 +187,11 @@ class GoalsFlowClient implements LedgerClient {
       return {
         id: "tasks",
         schema: tasksSchema,
-        counters: { milestone: 1, item: 2 },
+        counters: { milestone: 1, item: 3 },
         milestones: [
-          { id: "M1", milestone: { id: "M1", status: "open", title: "M1", description: "" }, items: [item("T1", "M1", "done", { headline: "t1" })] },
-          { id: "M2", milestone: { id: "M2", status: "open", title: "M2", description: "" }, items: [item("T2", "M2", "wip", { headline: "t2" })] },
+          { id: "W1", milestone: { id: "W1", status: "open", title: "W1", description: "" }, items: [item("T1", "W1", "done", { headline: "t1" })] },
+          { id: "W2", milestone: { id: "W2", status: "done", title: "W2", description: "" }, items: [item("T2", "W2", "done", { headline: "t2" })] },
+          { id: "W-BAD", milestone: { id: "W-BAD", status: "open", title: "W-BAD", description: "" }, items: [item("T3", "W-BAD", "wip", { headline: "t3" })] },
         ],
         archivePointers: [],
       };
@@ -187,12 +203,18 @@ class GoalsFlowClient implements LedgerClient {
         counters: { milestone: 1, item: 3 },
         milestones: [
           {
-            id: "active",
-            milestone: { id: "active", status: "open", title: "active", description: "" },
+            id: "C-SHARED",
+            milestone: { id: "C-SHARED", status: "open", title: "Shared coordination", description: "" },
             items: [
-              item("G1", "active", "building", { title: "Goal one", milestones: ["M1"] }),
-              item("G2", "active", "building", { title: "Goal two", milestones: ["M2"] }),
-              item("G3", "active", "shaping", { title: "Goal three", milestones: ["M1"] }),
+              item("G1", "C-SHARED", "planned", { title: "Goal one", milestones: ["W1"] }),
+              item("G2", "C-SHARED", "building", { title: "Goal two", milestones: ["W2"] }),
+            ],
+          },
+          {
+            id: "C-BAD",
+            milestone: { id: "C-BAD", status: "open", title: "Incomplete coordination", description: "" },
+            items: [
+              item("G3", "C-BAD", "building", { title: "Goal three", milestones: ["W-BAD"] }),
             ],
           },
         ],
@@ -206,12 +228,21 @@ class GoalsFlowClient implements LedgerClient {
   async createItem(): Promise<Item> { throw new Error("not used"); }
   async updateItem(ledger: string, id: string, patch: ItemPatch): Promise<Item> {
     this.calls.push({ op: "updateItem", ledger, id, status: patch.status });
-    return item(id, "active", patch.status ?? "open", patch.fields ?? {});
+    if (this.failG1Building && id === "G1" && patch.status === "building") {
+      throw new Error("G1 building refused");
+    }
+    return item(id, "C-SHARED", patch.status ?? "open", patch.fields ?? {});
   }
   async ftsSearch(): Promise<FtsHit[]> { return []; }
   async createMilestone(): Promise<Item> { throw new Error("not used"); }
   async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
     this.calls.push({ op: "archiveMilestone", milestoneId, summary });
+    if (this.deferNextArchive) {
+      this.deferNextArchive = false;
+      await new Promise<void>((resolve) => {
+        this.archiveRelease = resolve;
+      });
+    }
     return { id: milestoneId, path: `./archive/milestones/${milestoneId}.md`, summary, title: milestoneId, status: "done" };
   }
   async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
@@ -223,6 +254,20 @@ class GoalsFlowClient implements LedgerClient {
   async listProjects(): Promise<ListProjectsResult> { return { projects: [{ key: "cq1", displayName: "cq1" }] }; }
   async derivePredicates(): Promise<DerivedPredicates> { return emptyPredicates(); }
   async close(): Promise<void> { /* no-op */ }
+}
+
+class EmptyGoalsFlowClient extends GoalsFlowClient {
+  override async fetchLedger(id: string): Promise<FetchedLedger> {
+    const view = await super.fetchLedger(id);
+    if (id !== "tasks") return view;
+    return {
+      ...view,
+      milestones: view.milestones.map((group) => ({
+        ...group,
+        items: group.items.map((entry) => ({ ...entry, status: "wip" })),
+      })),
+    };
+  }
 }
 
 /**
@@ -476,6 +521,15 @@ async function openPreview(view: string, mode: "apply-done" | "archive"): Promis
   await flush();
 }
 
+async function openGoalsPreview(): Promise<void> {
+  click(testid("ledger-goals"));
+  await flush();
+  click(testid("finalize-btn"));
+  await flush();
+  click(testid("finalize-option-goals"));
+  await flush();
+}
+
 beforeEach(() => {
   localStorage.clear();
   container = document.createElement("div");
@@ -488,28 +542,163 @@ afterEach(() => {
 });
 
 describe("T622 — web finalize flow regression suite", () => {
-  it("apply-done launched from the GOALS view closes only building goals, listing every skipped id with its reason", async () => {
+  it("goals view imports the shared presentation and opens the combined default-all graph", async () => {
     const client = new GoalsFlowClient();
     await mount(client);
-    await openPreview("goals", "apply-done");
+    await openGoalsPreview();
 
-    expect(testid("finalize-preview-mode")?.textContent).toBe("apply-done");
-    // Plan order: milestone close before goal close (M1 before G1).
-    expect(testids("finalize-affected-")).toEqual(["M1", "G1"]);
-    expect(testid("finalize-affected-G1")?.textContent).toContain("close-goal");
-    // G2 and G3 are NOT closed — bound to the SKIP_* constants so drift fails loud.
-    expect(new Set(testids("finalize-skipped-"))).toEqual(new Set(["M2", "G2", "G3"]));
-    expect(testid("finalize-skipped-G2")?.textContent).toContain(SKIP_INCOMPLETE_MILESTONE);
-    expect(testid("finalize-skipped-G3")?.textContent).toContain(SKIP_WRONG_PHASE);
+    expect(testid("finalize-preview-mode")?.textContent).toBe("goals");
+    expect(testid("finalize-caption")?.textContent).toContain("selected completed goals");
+    expect(testid("finalize-caption")?.textContent).toContain("work and coordination milestones");
+    expect(testid("finalize-caption")?.textContent).toContain("Q290");
+    expect((testid("finalize-goal-G1") as HTMLInputElement).checked).toBe(true);
+    expect((testid("finalize-goal-G2") as HTMLInputElement).checked).toBe(true);
+    expect(testids("finalize-operation-")).toEqual([
+      "milestone:W1:close",
+      "goal:G1:to-building",
+      "goal:G1:to-done",
+      "goal:G2:to-done",
+      "milestone:C-SHARED:close",
+      "milestone:W1:archive",
+      "milestone:C-SHARED:archive",
+      "milestone:W2:archive",
+    ]);
+    expect(testid("finalize-skipped-G3")?.textContent).toContain(SKIP_INCOMPLETE_MILESTONE);
+
+    const modal = testid("finalize-preview")!;
+    const body = modal.querySelector<HTMLElement>(".lw-modal-body")!;
+    const execute = testid("finalize-execute")!;
+    expect(body.contains(testid("finalize-goals-selection"))).toBe(true);
+    expect(body.contains(testid("finalize-goals-operations"))).toBe(true);
+    expect(body.contains(execute)).toBe(false);
+    expect(execute.parentElement?.parentElement).toBe(modal);
+  });
+
+  it("goal opt-out recomputes unique operations and shared coordination Q290 eligibility", async () => {
+    const client = new GoalsFlowClient();
+    await mount(client);
+    await openGoalsPreview();
+
+    click(testid("finalize-goal-G2"));
+    await flush();
+
+    expect((testid("finalize-goal-G1") as HTMLInputElement).checked).toBe(true);
+    expect((testid("finalize-goal-G2") as HTMLInputElement).checked).toBe(false);
+    expect(testids("finalize-operation-")).toEqual([
+      "milestone:W1:close",
+      "goal:G1:to-building",
+      "goal:G1:to-done",
+      "milestone:W1:archive",
+    ]);
+    expect(testid("finalize-operation-goal:G2:to-done")).toBeNull();
+    expect(testid("finalize-operation-milestone:W2:archive")).toBeNull();
+    expect(testid("finalize-operation-milestone:C-SHARED:close")).toBeNull();
+    expect(testid("finalize-operation-milestone:C-SHARED:archive")).toBeNull();
+  });
+
+  it("renders the shared explanatory empty state when no goal is eligible", async () => {
+    await mount(new EmptyGoalsFlowClient());
+    await openGoalsPreview();
+
+    expect(testid("finalize-goals-selection")).toBeNull();
+    expect(testid("finalize-goals-operations")).toBeNull();
+    expect(testid("finalize-empty")?.textContent).toBe(
+      "No actions are eligible for this Finalize operation.",
+    );
+    expect(testid("finalize-execute")).toBeNull();
+  });
+
+  it("partial hold writes nothing; completed hold dispatches once and renders stable attempted results", async () => {
+    const client = new GoalsFlowClient();
+    await mount(client);
+    await openGoalsPreview();
+
+    const execute = testid("finalize-execute")!;
+    act(() => {
+      execute.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true }));
+    });
+    act(() => { holdClock.advance(HOLD_MS / 2); });
+    act(() => {
+      execute.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(client.calls).toEqual([]);
 
     await holdFull(testid("finalize-execute"));
 
-    // Only M1 (milestone) and G1 (building goal) were ever written.
     expect(client.calls).toEqual([
-      { op: "updateMilestone", milestoneId: "M1", status: "done" },
+      { op: "updateMilestone", milestoneId: "W1", status: "done" },
+      { op: "updateItem", ledger: "goals", id: "G1", status: "building" },
       { op: "updateItem", ledger: "goals", id: "G1", status: "done" },
+      { op: "updateItem", ledger: "goals", id: "G2", status: "done" },
+      { op: "updateMilestone", milestoneId: "C-SHARED", status: "done" },
+      { op: "archiveMilestone", milestoneId: "W1", summary: "finalized: Work one" },
+      { op: "archiveMilestone", milestoneId: "C-SHARED", summary: "finalized: Shared coordination" },
+      { op: "archiveMilestone", milestoneId: "W2", summary: "finalized: Work two" },
     ]);
-    expect(testid("finalize-result-G1")?.textContent).toContain("ok");
+    expect(testids("finalize-result-")).toEqual([
+      "milestone:W1:close",
+      "goal:G1:to-building",
+      "goal:G1:to-done",
+      "goal:G2:to-done",
+      "milestone:C-SHARED:close",
+      "milestone:W1:archive",
+      "milestone:C-SHARED:archive",
+      "milestone:W2:archive",
+    ]);
+    expect(testid("finalize-results-tally")?.textContent).toBe("all 8 succeeded");
+    expect(testid("finalize-execute")).toBeNull();
+  });
+
+  it("renders failed and suppressed repeated-target results under unique operation ids", async () => {
+    const client = new GoalsFlowClient();
+    client.failG1Building = true;
+    await mount(client);
+    await openGoalsPreview();
+    await holdFull(testid("finalize-execute"));
+
+    expect(testid("finalize-result-goal:G1:to-building")?.textContent).toContain("failed");
+    expect(testid("finalize-result-goal:G1:to-building")?.textContent).toContain("G1 building refused");
+    expect(testid("finalize-result-goal:G1:to-done")?.textContent).toContain("suppressed");
+    expect(testid("finalize-result-goal:G1:to-done")?.textContent).toContain(
+      "goal:G1:to-building",
+    );
+    expect(testid("finalize-result-milestone:C-SHARED:close")?.textContent).toContain(
+      "suppressed",
+    );
+    expect(
+      client.calls.filter((call) => call.op === "updateItem" && call.id === "G1"),
+    ).toEqual([{ op: "updateItem", ledger: "goals", id: "G1", status: "building" }]);
+    expect(
+      client.calls.some(
+        (call) => call.op === "archiveMilestone" && call.milestoneId === "C-SHARED",
+      ),
+    ).toBe(false);
+  });
+
+  it("a stale goals execution completion cannot overwrite a reopened goals preview", async () => {
+    const client = new GoalsFlowClient();
+    client.deferNextArchive = true;
+    await mount(client);
+    await openGoalsPreview();
+
+    await holdFull(testid("finalize-execute"));
+    expect(client.archivePending).toBe(true);
+    press("Escape");
+    await flush();
+    expect(testid("finalize-preview")).toBeNull();
+
+    click(testid("finalize-btn"));
+    await flush();
+    click(testid("finalize-option-goals"));
+    await flush();
+    expect(testid("finalize-goals-selection")).not.toBeNull();
+    expect(testid("finalize-results")).toBeNull();
+
+    client.releaseArchive();
+    await flush();
+    expect(testid("finalize-goals-selection")).not.toBeNull();
+    expect(testid("finalize-results")).toBeNull();
   });
 
   it("archive sweep archives exactly the fully-terminal milestone in a 3-way mixed fixture", async () => {

@@ -175,6 +175,11 @@ describe("ledger-web finalize menu", () => {
     await mount(new FakeClientWithGoals());
     await openLedger("goals");
     expect(testid("finalize-btn")).not.toBeNull();
+    click(testid("finalize-btn"));
+    await flush();
+    expect(testid("finalize-option-goals")?.textContent).toBe("Finalize completed goals");
+    expect(testid("finalize-option-apply-done")).toBeNull();
+    expect(testid("finalize-option-archive")).toBeNull();
   });
 
   it("picking 'apply-done' raises the preview state and closes the menu", async () => {

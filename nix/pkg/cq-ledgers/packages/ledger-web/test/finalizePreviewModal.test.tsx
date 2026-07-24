@@ -359,6 +359,9 @@ describe("T620 — web finalize preview modal", () => {
 
     expect(testid("finalize-preview")).not.toBeNull();
     expect(testid("finalize-preview-mode")?.textContent).toBe("apply-done");
+    expect(testid("finalize-caption")?.textContent).toBe(
+      "This is a store-wide milestone sweep across all ledgers.",
+    );
     // Exactly the plan's affected ids, in execution order (M1 close before G1).
     expect(testids("finalize-affected-")).toEqual(["M1", "G1"]);
     expect(testid("finalize-affected-M1")?.textContent).toContain("close-milestone");
@@ -508,7 +511,9 @@ describe("T620 — web finalize preview modal", () => {
     await openPreview("apply-done");
 
     expect(testid("finalize-preview")).not.toBeNull();
-    expect(testid("finalize-empty")?.textContent).toContain("nothing eligible");
+    expect(testid("finalize-empty")?.textContent).toBe(
+      "No actions are eligible: 1 milestone still have non-terminal items.",
+    );
     expect(testid("finalize-execute")).toBeNull();
     expect(new Set(testids("finalize-skipped-"))).toEqual(new Set(["M2", "G2"]));
     expect(fakeClient.calls.length).toBe(0);
