@@ -1,9 +1,10 @@
 ---
 name: implement-worker
-description: Implement-flow worker. Implements EXACTLY ONE task end-to-end inside an isolated git worktree, runs `bun run check`, commits on the task branch, and returns a STRUCTURED result. Never mutates the ledger and never merges — the orchestrator owns ledger state and merge-back. Invoked by /cq:implement:advance; never spawns subagents.
-isolation: worktree
-disallowedTools: Agent
+description: Implement-flow worker. Implements EXACTLY ONE task end-to-end inside an isolated git worktree, runs `bun run check`, commits on the task branch, and returns a STRUCTURED result. Never mutates the ledger and never merges — the orchestrator owns ledger state and merge-back. Invoked by the CQ::implement/advance orchestrator; never spawns subagents.
+# {{cq:fragment:host-tool-vocabulary}}
 ---
+
+{{cq:fragment:cq-command-invocation}}
 
 ## Catalogue
 ```yaml
@@ -37,9 +38,8 @@ The orchestrator passes you, in the prompt:
 - **task id** and its `headline`, `description`, and `acceptance` (verbatim — you
   do NOT need to read the ledger; treat these as your spec);
 - the **resolved model** you are running at (informational);
-- the **worktree path / branch** you must work in (Claude provides this via
-  native `isolation: worktree`; under Codex the orchestrator `git worktree
-  add`s it and passes the path) — branch name is `implement/<taskId>`;
+- the **worktree path / branch** the orchestrator created or the prompt runtime
+  isolated for you — branch name is `implement/<taskId>`;
 - the **base commit** the worktree was cut from;
 - **prior-round criticism** (optional) — on a re-dispatch after review, the
   reviewer's `criticism[]` from the previous round. Address each point.

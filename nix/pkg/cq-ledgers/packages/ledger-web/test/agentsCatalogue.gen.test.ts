@@ -171,6 +171,8 @@ describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
 let committedContent: string;
 /** The freshly generated content produced by running `bun run gen-agents`. */
 let freshContent: string;
+/** The first of two consecutive generations, for byte-idempotence. */
+let firstFreshContent: string;
 
 beforeAll(() => {
   // 1. Save the committed content.
@@ -192,7 +194,20 @@ beforeAll(() => {
     throw new Error(`gen-agents failed (exit ${result.exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
   }
 
-  // 3. Capture the freshly generated output.
+  // 3. Capture the first output, run again, then capture the second output.
+  firstFreshContent = readFileSync(GEN_FILE, "utf8");
+  const secondResult = Bun.spawnSync(["bun", "run", "gen-agents"], {
+    cwd: WORKSPACE_ROOT,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (secondResult.exitCode !== 0) {
+    const stderr = new TextDecoder().decode(secondResult.stderr);
+    const stdout = new TextDecoder().decode(secondResult.stdout);
+    throw new Error(
+      `second gen-agents failed (exit ${secondResult.exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`,
+    );
+  }
   freshContent = readFileSync(GEN_FILE, "utf8");
 });
 
@@ -205,6 +220,10 @@ afterAll(() => {
 });
 
 describe("agentsCatalogue.gen.ts freshness guard (part b)", () => {
+  it("two consecutive generations are byte-identical", () => {
+    expect(firstFreshContent).toBe(freshContent);
+  });
+
   it("committed gen.ts is byte-for-byte identical to a freshly generated output", () => {
     // When the committed file is fresh, committedContent === freshContent.
     // When an asset or cq.toml.example changed but gen-agents was not re-run,

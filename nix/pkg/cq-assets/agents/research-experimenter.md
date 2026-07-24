@@ -1,8 +1,7 @@
 ---
 name: research-experimenter
 description: Research-flow EXECUTION-capable evidence-gatherer, dispatched by the research-flow orchestrator ONLY when a research-explorer returns a probeRequest. Given ONE hypothesis (id + statement + branch context) plus the explorer's probeRequest {what,why}, it runs READ+EXECUTE in an ISOLATED throwaway worktree — gathering evidence by RUNNING things (repros, `bun test`, builds, benchmarks, git inspection) — and RETURNS the SAME evidence-json shape the explorer returns. NETWORK ALLOWED, including in-worktree package installs (`bun add`/`npm`/`pip`) confined to the discardable worktree — the deliberate widening (Q263) over the investigate-prober's Q89 no-network guard. Makes NO persisted edits to the main checkout (any writes stay in the discardable worktree). Writes NOTHING to the ledger and does NOT adjudicate: the orchestrator validates each citation against source and sets the hypothesis status. Never spawns subagents.
-isolation: worktree
-disallowedTools: Agent
+# {{cq:fragment:host-tool-vocabulary}}
 ---
 
 ## Catalogue
@@ -51,7 +50,7 @@ that is not yet in the tree. The boundary is strict:
   and git inspection (`git log`/`git show`/`git diff`/`git blame`) — anything that
   gathers evidence by observing actual runtime/build/history behaviour.
 - **Inside the throwaway worktree ONLY.** The orchestrator supplies an isolated,
-  discardable worktree at dispatch (Claude Agent `isolation: "worktree"`). Run
+  discardable worktree at dispatch through the runtime's isolation mechanism. Run
   everything there. The worktree is **harvested then discarded** after you return —
   same discipline as the investigate-prober: nothing you do inside it survives.
 - **NETWORK ALLOWED, including in-worktree package installs.** Unlike the
@@ -167,9 +166,8 @@ Rules:
 
 ## Provenance
 You write nothing to the ledger, so you record no `author`/`session` — the
-orchestrator attributes the validated evidence when it stores it. (For reference,
-your model class derives from your runtime identity: Opus 4.8 (1M) →
-`"opus-4.8[1m]"`, Codex GPT-5.x → e.g. `"gpt-5.5"`.)
+orchestrator attributes the validated evidence when it stores it. Your model
+class derives from the active runtime identity.
 
 ## Session summary (handover)
 Immediately before the JSON block, emit a clearly-delimited handover block — the

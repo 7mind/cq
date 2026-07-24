@@ -70,10 +70,16 @@ describe("prompt fragment inventory closure", () => {
           expect(entry.dispatchEdges.some((edge) => edge.kind === "recursion")).toBe(true);
         }
       } else {
-        expect(slots.includes("cq-command-invocation")).toBe(source.includes("/cq:"));
-        expect(slots.includes("host-tool-vocabulary")).toBe(
-          /^(?:allowed-tools|disallowedTools):/m.test(source),
-        );
+        for (const slot of slots) {
+          expect(source.match(new RegExp(`\\{\\{cq:fragment:${slot}\\}\\}`, "g"))).toHaveLength(
+            1,
+          );
+        }
+        expect(source).not.toMatch(/^(?:allowed-tools|disallowedTools|isolation):/m);
+        expect(source).not.toMatch(/\b(?:Claude|Codex|Pi)\b|\/cq:|\$cq-/);
+        if (slots.includes("cq-command-invocation")) {
+          expect(source).toContain("CQ::");
+        }
       }
       for (const edge of entry.dispatchEdges) {
         expect(AGENT_ROLE_TIERS.some((role) => role.id === edge.targetRoleId)).toBe(true);

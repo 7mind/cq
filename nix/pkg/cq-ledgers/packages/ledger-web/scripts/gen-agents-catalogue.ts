@@ -44,6 +44,11 @@ import {
   getRoleSidecar,
 } from "@cq/config";
 import {
+  renderPromptSurfaceTree,
+  type PromptCatalogFileInput,
+  type PromptFragmentFileInput,
+} from "@cq/config/prompt-renderer";
+import {
   parseAgentMarkdown,
   deriveSubagentPrivilege,
   deriveCommandPrivilege,
@@ -85,6 +90,18 @@ interface RoleSpec {
   readonly agentTierKey: string | null;
 }
 
+interface NixPromptRole {
+  readonly roleId: string;
+  readonly canonicalSource: string;
+}
+
+interface NixPromptFragmentSource {
+  readonly surface: string;
+  readonly roleId: string;
+  readonly fragment: string;
+  readonly source: string;
+}
+
 /** Static role metadata derived from the generated canonical Nix projection. */
 const ROLES: readonly RoleSpec[] = PROMPT_ROLE_SOURCE_INVENTORY.map((role) => ({
   id: role.roleId,
@@ -102,18 +119,72 @@ const ROLES: readonly RoleSpec[] = PROMPT_ROLE_SOURCE_INVENTORY.map((role) => ({
 /** A precise, exit-worthy error for a role whose asset is missing/incomplete. */
 class GenError extends Error {}
 
+function evaluateNixRaw(attribute: string): string {
+  const result = Bun.spawnSync(["nix", "eval", "--raw", `.#llmAssets.${attribute}`], {
+    cwd: REPO_ROOT,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) {
+    throw new GenError(
+      `cannot evaluate llmAssets.${attribute}: ${new TextDecoder().decode(result.stderr)}`,
+    );
+  }
+  return new TextDecoder().decode(result.stdout);
+}
+
+function renderClaudeAgentSources(): ReadonlyMap<string, string> {
+  const catalogJson = evaluateNixRaw("agentCatalogJson");
+  const catalog = JSON.parse(catalogJson) as readonly NixPromptRole[];
+  const roleIds = new Set(catalog.map(({ roleId }) => roleId));
+  const sourcePaths: PromptCatalogFileInput[] = catalog.map((role) => ({
+    canonicalSource: role.canonicalSource,
+    path: path.join(ASSETS_ROOT, role.canonicalSource),
+  }));
+  const fragmentSources = JSON.parse(
+    evaluateNixRaw("promptFragmentSourcesJson"),
+  ) as readonly NixPromptFragmentSource[];
+  const fragmentPaths: PromptFragmentFileInput[] = fragmentSources
+    .filter(({ surface, roleId }) => surface === "claude" && roleIds.has(roleId))
+    .map(({ roleId, fragment, source }) => ({
+      roleId,
+      fragment,
+      path: path.join(ASSETS_ROOT, source),
+    }));
+  const tree = renderPromptSurfaceTree({
+    surface: "claude",
+    catalogJson,
+    sourcePaths,
+    fragmentPaths,
+  });
+  return new Map(
+    catalog.map((role, index) => [role.roleId, tree.artifacts[index + 1]!.content]),
+  );
+}
+
 /**
  * Read + parse ONE role asset and assemble its {@link AgentRole}. Hard-fails
  * (throws {@link GenError}) when the file is unreadable, has no description, has
  * no `## Catalogue` block, or the Catalogue is missing inputs/outputs/ioSchema.
  */
-function buildRole(spec: RoleSpec): AgentRole {
+function buildRole(
+  spec: RoleSpec,
+  renderedAgentSources: ReadonlyMap<string, string>,
+): AgentRole {
   const absPath = path.join(ASSETS_ROOT, spec.source);
   let raw: string;
-  try {
-    raw = readFileSync(absPath, "utf8");
-  } catch (err) {
-    throw new GenError(`role "${spec.id}": cannot read ${spec.source}: ${(err as Error).message}`);
+  if (spec.kind === "agent-subagent") {
+    const rendered = renderedAgentSources.get(spec.id);
+    if (rendered === undefined) {
+      throw new GenError(`role "${spec.id}": missing rendered Claude prompt source`);
+    }
+    raw = rendered;
+  } else {
+    try {
+      raw = readFileSync(absPath, "utf8");
+    } catch (err) {
+      throw new GenError(`role "${spec.id}": cannot read ${spec.source}: ${(err as Error).message}`);
+    }
   }
   const { frontmatter, catalogue, body } = parseAgentMarkdown(raw);
 
@@ -296,12 +367,13 @@ function assertSidecarsMatchDispatchedRoster(): void {
 function main(): void {
   assertRosterMatchesShared();
   assertSidecarsMatchDispatchedRoster();
+  const renderedAgentSources = renderClaudeAgentSources();
 
   const roles: AgentRole[] = [];
   const errors: string[] = [];
   for (const spec of ROLES) {
     try {
-      roles.push(buildRole(spec));
+      roles.push(buildRole(spec, renderedAgentSources));
     } catch (err) {
       if (err instanceof GenError) {
         errors.push(err.message);

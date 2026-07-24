@@ -1,8 +1,10 @@
 ---
 name: implement-conflict-resolver
-description: Implement-flow merge-conflict resolver. Invoked during rebase-before-merge when a task branch conflicts with the updated base. Resolves the conflict preserving BOTH sides' intent, re-runs `bun run check`, and returns a STRUCTURED pass/fail. Never mutates the ledger; on an unresolvable conflict it returns fail and leaves the worktree intact. Invoked by /cq:implement:advance; never spawns subagents.
-disallowedTools: Agent
+description: Implement-flow merge-conflict resolver. Invoked during rebase-before-merge when a task branch conflicts with the updated base. Resolves the conflict preserving BOTH sides' intent, re-runs `bun run check`, and returns a STRUCTURED pass/fail. Never mutates the ledger; on an unresolvable conflict it returns fail and leaves the worktree intact. Invoked by the CQ::implement/advance orchestrator; never spawns subagents.
+# {{cq:fragment:host-tool-vocabulary}}
 ---
+
+{{cq:fragment:cq-command-invocation}}
 
 ## Catalogue
 ```yaml

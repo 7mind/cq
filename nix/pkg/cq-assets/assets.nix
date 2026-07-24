@@ -12,6 +12,7 @@
 #     context  = [ "<CLAUDE.md / AGENTS.md fragment>" ];
 #     catalog  = [ <ordered validated prompt-role entries> ];
 #     catalogJson = "<deterministic JSON projection>";
+#     agentCatalogJson = "<dispatched-role JSON projection>";
 #     promptSurfaceLayout = [ <per-surface output paths> ]; }
 #
 # Directory convention under ./llm:
@@ -516,6 +517,9 @@ let
 
   catalog = validatePromptCatalog authoredCatalog;
   catalogJson = builtins.toJSON catalog;
+  agentCatalogJson = builtins.toJSON (
+    lib.filter (role: role.roleKind == "dispatched-subagent") catalog
+  );
   orchestratorCatalogJson = builtins.toJSON (
     lib.filter (role: role.roleKind == "orchestrator-command") catalog
   );
@@ -523,7 +527,10 @@ let
   promptFragmentSource =
     surface: role: binding:
     if surface == "claude" && binding.fragment == T then
-      "fragments/${surface}/commands/cq/${role.roleId}/${binding.fragment}.md"
+      if role.roleKind == "dispatched-subagent" then
+        "fragments/${surface}/agents/${role.roleId}/${binding.fragment}.md"
+      else
+        "fragments/${surface}/commands/cq/${role.roleId}/${binding.fragment}.md"
     else
       "fragments/${surface}/${binding.fragment}.md";
   rawPromptFragmentSources = lib.concatMap (
@@ -536,7 +543,7 @@ let
         inherit (binding) fragment;
         source = promptFragmentSource surface role binding;
       }) role.fragmentBindings
-    ) (lib.filter (role: role.roleKind == "orchestrator-command") catalog)
+    ) catalog
   ) promptSurfaces;
   promptFragmentSourceKeys = map (
     entry: "${entry.surface}:${entry.roleId}:${entry.fragment}"
@@ -584,6 +591,7 @@ assert lib.sort builtins.lessThan fragmentContractIds
     agents
     catalog
     catalogJson
+    agentCatalogJson
     orchestratorCatalogJson
     catalogMetadataHash
     fragmentContracts

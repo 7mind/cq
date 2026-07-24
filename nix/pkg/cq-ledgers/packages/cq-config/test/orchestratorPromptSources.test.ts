@@ -189,9 +189,13 @@ describe("orchestrator command prompt sources", () => {
       canonicalSource: role.canonicalSource,
       path: path.join(ASSETS_ROOT, role.canonicalSource),
     }));
+    const roleIds = new Set(catalog.map(({ roleId }) => roleId));
+    const commandFragmentSources = fragmentSources.filter(({ roleId }) =>
+      roleIds.has(roleId),
+    );
 
     expect(catalog.some(({ roleId }) => roleId === "begin")).toBe(true);
-    expect(fragmentSources).toHaveLength(
+    expect(commandFragmentSources).toHaveLength(
       catalog.reduce((count, role) => count + role.fragmentBindings.length, 0) *
         PROMPT_SURFACES.length,
     );
@@ -210,7 +214,7 @@ describe("orchestrator command prompt sources", () => {
     }
 
     for (const surface of PROMPT_SURFACES) {
-      const fragmentPaths: PromptFragmentFileInput[] = fragmentSources
+      const fragmentPaths: PromptFragmentFileInput[] = commandFragmentSources
         .filter((entry) => entry.surface === surface)
         .map((entry) => ({
           roleId: entry.roleId,
@@ -268,8 +272,9 @@ describe("orchestrator command prompt sources", () => {
       canonicalSource: role.canonicalSource,
       path: path.join(ASSETS_ROOT, role.canonicalSource),
     }));
+    const roleIds = new Set(catalog.map(({ roleId }) => roleId));
     const fragmentPaths: PromptFragmentFileInput[] = fragmentSources
-      .filter((entry) => entry.surface === "codex")
+      .filter((entry) => entry.surface === "codex" && roleIds.has(entry.roleId))
       .map((entry) => ({
         roleId: entry.roleId,
         fragment: entry.fragment,
