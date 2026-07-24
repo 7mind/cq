@@ -13,6 +13,7 @@
     "bench:concurrent": "bun run packages/ledger/bench/proto/concurrentWriterSmoke.ts",
     "regen-bootstrap": "bun run scripts/regen-bootstrap.ts",
     "link-prompts": "bun run scripts/link-prompts.ts",
+    "gen-prompt-catalog": "bun run packages/cq-config/scripts/gen-prompt-catalog.ts",
     "gen-agents": "bun run packages/ledger-web/scripts/gen-agents-catalogue.ts"
   },
   "devDependencies": {

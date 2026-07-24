@@ -16,6 +16,7 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir, lstat, unlink, symlink, readlink, access } from "node:fs/promises";
+import { PROMPT_ROLE_SOURCE_INVENTORY } from "../packages/cq-config/src/index.ts";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -27,33 +28,11 @@ export interface PromptLink {
   readonly source: string;
 }
 
-/** Single source of truth for all Claude symlinks. Exported for tests and --check mode. */
-export const LINKS: readonly PromptLink[] = [
-  { link: ".claude/commands/cq/plan.md", source: "../cq-assets/commands/cq/plan.md" },
-  { link: ".claude/commands/cq/plan/advance.md", source: "../cq-assets/commands/cq/plan/advance.md" },
-  { link: ".claude/commands/cq/plan/follow-up.md", source: "../cq-assets/commands/cq/plan/follow-up.md" },
-  { link: ".claude/agents/plan-advance.md", source: "../cq-assets/agents/plan-advance.md" },
-  { link: ".claude/agents/plan-reviewer.md", source: "../cq-assets/agents/plan-reviewer.md" },
-  { link: ".claude/commands/cq/implement/start.md", source: "../cq-assets/commands/cq/implement/start.md" },
-  { link: ".claude/commands/cq/implement/advance.md", source: "../cq-assets/commands/cq/implement/advance.md" },
-  { link: ".claude/agents/implement-worker.md", source: "../cq-assets/agents/implement-worker.md" },
-  { link: ".claude/agents/implement-reviewer.md", source: "../cq-assets/agents/implement-reviewer.md" },
-  { link: ".claude/agents/implement-conflict-resolver.md", source: "../cq-assets/agents/implement-conflict-resolver.md" },
-  { link: ".claude/commands/cq/investigate.md", source: "../cq-assets/commands/cq/investigate.md" },
-  { link: ".claude/commands/cq/investigate/advance.md", source: "../cq-assets/commands/cq/investigate/advance.md" },
-  { link: ".claude/agents/investigate-explorer.md", source: "../cq-assets/agents/investigate-explorer.md" },
-  { link: ".claude/agents/investigate-prober.md", source: "../cq-assets/agents/investigate-prober.md" },
-  { link: ".claude/commands/cq/research.md", source: "../cq-assets/commands/cq/research.md" },
-  { link: ".claude/commands/cq/research/advance.md", source: "../cq-assets/commands/cq/research/advance.md" },
-  { link: ".claude/agents/research-explorer.md", source: "../cq-assets/agents/research-explorer.md" },
-  { link: ".claude/agents/research-experimenter.md", source: "../cq-assets/agents/research-experimenter.md" },
-  { link: ".claude/commands/cq/begin.md", source: "../cq-assets/commands/cq/begin.md" },
-  { link: ".claude/commands/cq/advance.md", source: "../cq-assets/commands/cq/advance.md" },
-  { link: ".claude/commands/cq/plan-review.md", source: "../cq-assets/commands/cq/plan-review.md" },
-  { link: ".claude/commands/cq/implement-review.md", source: "../cq-assets/commands/cq/implement-review.md" },
-  { link: ".claude/commands/cq/reviewers.md", source: "../cq-assets/commands/cq/reviewers.md" },
-  { link: ".claude/commands/cq/planners.md", source: "../cq-assets/commands/cq/planners.md" },
-];
+/** Every Claude link, projected from the canonical ordered prompt catalog. */
+export const LINKS: readonly PromptLink[] = PROMPT_ROLE_SOURCE_INVENTORY.map((role) => ({
+  link: `.claude/${role.source}`,
+  source: `../cq-assets/${role.source}`,
+}));
 
 /** A link whose target does not resolve on disk. */
 export interface MissingTarget {

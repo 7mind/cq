@@ -148,6 +148,11 @@ let
     inline-command-recursion = "inline chained-command execution instructions";
     host-tool-vocabulary = "frontmatter host tool and isolation capabilities";
   };
+  sharedSourceBlock = {
+    sourceBlock = "all prose outside the classified surface-sensitive blocks";
+    classification = "shared-prose";
+    targetFragment = null;
+  };
 
   validateFragmentContract =
     index: contract:
@@ -236,6 +241,7 @@ let
         canonicalSource
         fragmentBindings
         dispatchRelations
+        sharedSourceBlock
         ;
       name =
         if roleKind == "dispatched-subagent" then
@@ -401,6 +407,7 @@ let
       "name"
       "roleId"
       "roleKind"
+      "sharedSourceBlock"
       "sidecar"
       "surfaces"
     ] then
@@ -415,6 +422,8 @@ let
       fail "${rolePath}.canonicalSource" "invalid canonical source reference"
     else if role.surfaces != promptSurfaces then
       fail "${rolePath}.surfaces" "expected every prompt surface exactly once in canonical order"
+    else if role.sharedSourceBlock != sharedSourceBlock then
+      fail "${rolePath}.sharedSourceBlock" "does not match the canonical shared-prose contract"
     else if !builtins.isList role.fragmentBindings then
       fail "${rolePath}.fragmentBindings" "expected a list"
     else if builtins.length bindingFragments != builtins.length (unique bindingFragments) then
@@ -485,6 +494,10 @@ let
 
   catalog = validatePromptCatalog authoredCatalog;
   catalogJson = builtins.toJSON catalog;
+  promptCatalogProjection = {
+    schemaVersion = 1;
+    inherit catalog fragmentContracts;
+  };
 
   promptSurfaceLayout = map (
     surface:
@@ -512,6 +525,7 @@ assert lib.sort builtins.lessThan fragmentContractIds
     catalog
     catalogJson
     fragmentContracts
+    promptCatalogProjection
     promptSurfaceLayout
     promptSurfaces
     validatePromptCatalog

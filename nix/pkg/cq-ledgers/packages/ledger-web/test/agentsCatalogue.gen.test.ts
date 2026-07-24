@@ -19,6 +19,7 @@ import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { AGENT_ROLE_TIERS } from "@cq/config";
 import { AGENT_ROLES } from "../src/agentsCatalogue";
 import type { AgentRole } from "../src/agentsCatalogue";
 
@@ -39,38 +40,8 @@ const GEN_FILE = path.resolve(TEST_DIR, "..", "src", "agentsCatalogue.gen.ts");
 // Part (a) — CONTENT: role-set invariants
 // ---------------------------------------------------------------------------
 
-/**
- * The 24 Q148 role ids in the FIXED generation order (same as ROLES[] in the
- * gen script): 9 subagents first, then 15 orchestrator commands.
- */
-const EXPECTED_ROLE_IDS: readonly string[] = [
-  // subagents
-  "plan-advance",
-  "plan-reviewer",
-  "implement-worker",
-  "implement-reviewer",
-  "implement-conflict-resolver",
-  "investigate-explorer",
-  "investigate-prober",
-  "research-explorer",
-  "research-experimenter",
-  // orchestrator commands
-  "begin",
-  "advance",
-  "plan",
-  "plan/advance",
-  "plan/follow-up",
-  "investigate",
-  "investigate/advance",
-  "research",
-  "research/advance",
-  "implement/start",
-  "implement/advance",
-  "plan-review",
-  "implement-review",
-  "planners",
-  "reviewers",
-];
+/** The role ids in canonical Nix-catalog order. */
+const EXPECTED_ROLE_IDS: readonly string[] = AGENT_ROLE_TIERS.map((role) => role.id);
 
 describe("AGENT_ROLES — Q148 role-set invariants (part a)", () => {
   it("exports exactly 24 roles in the fixed generation order", () => {

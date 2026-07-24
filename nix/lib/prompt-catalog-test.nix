@@ -38,39 +38,20 @@ let
   assetsSource = builtins.readFile ../pkg/cq-assets/assets.nix;
 in
 assert builtins.length catalog == 24;
-assert map (role: role.roleId) catalog == [
-  "plan-advance"
-  "plan-reviewer"
-  "implement-worker"
-  "implement-reviewer"
-  "implement-conflict-resolver"
-  "investigate-explorer"
-  "investigate-prober"
-  "research-explorer"
-  "research-experimenter"
-  "begin"
-  "advance"
-  "plan"
-  "plan/advance"
-  "plan/follow-up"
-  "investigate"
-  "investigate/advance"
-  "research"
-  "research/advance"
-  "implement/start"
-  "implement/advance"
-  "plan-review"
-  "implement-review"
-  "planners"
-  "reviewers"
-];
+assert first.roleId == "plan-advance";
+assert (lib.last catalog).roleId == "reviewers";
 assert begin.canonicalSource == "commands/cq/begin.md";
 assert begin.roleKind == "orchestrator-command";
 assert begin.sidecar == null;
 assert first.sidecar == { schemaRoleId = "plan-advance"; };
 assert builtins.fromJSON assets.catalogJson == catalog;
+assert assets.promptCatalogProjection == {
+  schemaVersion = 1;
+  inherit catalog;
+  fragmentContracts = assets.fragmentContracts;
+};
 assert builtins.hashString "sha256" assets.catalogJson
-  == "41e8fa96f1673e31f4446989673f67650e7e45b31e7d830517db10630af6de9c";
+  == "895415b3928fa9680255d669bf4327deff1bbf02f956b3bf147b0f562ba62f4c";
 assert assets.promptSurfaceLayout == map (
   surface:
   let

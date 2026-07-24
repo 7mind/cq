@@ -1,6 +1,6 @@
 /**
- * The fixed Q148/Q158 agent-role roster — the SHARED anti-drift source of
- * truth for the `(id, agentTierKey)` pairs (T285).
+ * The Q148/Q158 agent-role model-resolution view, generated from the canonical
+ * Nix prompt catalog's `(roleId, roleKind)` pairs.
  *
  * Two consumers must agree on the SAME 24 roles and which of them carry an
  * `[agent_tiers]` key:
@@ -9,12 +9,11 @@
  *  - the ledger-web `gen-agents-catalogue.ts` codegen (the committed
  *    `AGENT_ROLES` catalogue).
  *
- * Defining the pairs ONCE here — rather than duplicating the literal list in
- * both places — keeps the server's per-role model overlay and the web
- * catalogue from drifting apart. The codegen owns the per-role DISPLAY
- * metadata (`name`/`kind`/`source`); this module owns only the join key (`id`)
- * and the model-configurability key (`agentTierKey`).
+ * The generated projection keeps the server's per-role model overlay and the
+ * web catalogue from drifting apart without another authored roster.
  */
+
+import { PROMPT_CATALOG_PROJECTION } from "./promptCatalog.gen.js";
 
 /**
  * One role's stable identity for model resolution: its `AgentRole.id` (the
@@ -33,35 +32,11 @@ export interface AgentRoleTier {
 }
 
 /**
- * The 24 Q148 roles, in a fixed order matching the codegen ROLES table: the 9
- * subagents first (each model-configurable, `agentTierKey === id`), then the 15
- * orchestrator commands (not model-configurable, `agentTierKey === null`).
+ * The Q148 roles in canonical Nix-catalog order. Dispatched roles remain
+ * model-configurable by their role id; orchestrator commands remain null.
  */
-export const AGENT_ROLE_TIERS: readonly AgentRoleTier[] = [
-  // --- subagents (model-configurable) ---
-  { id: "plan-advance", agentTierKey: "plan-advance" },
-  { id: "plan-reviewer", agentTierKey: "plan-reviewer" },
-  { id: "implement-worker", agentTierKey: "implement-worker" },
-  { id: "implement-reviewer", agentTierKey: "implement-reviewer" },
-  { id: "implement-conflict-resolver", agentTierKey: "implement-conflict-resolver" },
-  { id: "investigate-explorer", agentTierKey: "investigate-explorer" },
-  { id: "investigate-prober", agentTierKey: "investigate-prober" },
-  { id: "research-explorer", agentTierKey: "research-explorer" },
-  { id: "research-experimenter", agentTierKey: "research-experimenter" },
-  // --- orchestrator commands (not model-configurable) ---
-  { id: "begin", agentTierKey: null },
-  { id: "advance", agentTierKey: null },
-  { id: "plan", agentTierKey: null },
-  { id: "plan/advance", agentTierKey: null },
-  { id: "plan/follow-up", agentTierKey: null },
-  { id: "investigate", agentTierKey: null },
-  { id: "investigate/advance", agentTierKey: null },
-  { id: "research", agentTierKey: null },
-  { id: "research/advance", agentTierKey: null },
-  { id: "implement/start", agentTierKey: null },
-  { id: "implement/advance", agentTierKey: null },
-  { id: "plan-review", agentTierKey: null },
-  { id: "implement-review", agentTierKey: null },
-  { id: "planners", agentTierKey: null },
-  { id: "reviewers", agentTierKey: null },
-];
+export const AGENT_ROLE_TIERS: readonly AgentRoleTier[] =
+  PROMPT_CATALOG_PROJECTION.catalog.map((role) => ({
+    id: role.roleId,
+    agentTierKey: role.roleKind === "dispatched-subagent" ? role.roleId : null,
+  }));

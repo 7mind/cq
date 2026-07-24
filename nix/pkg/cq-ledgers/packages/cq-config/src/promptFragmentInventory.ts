@@ -1,4 +1,5 @@
 import { AGENT_ROLE_TIERS } from "./agentRoster.js";
+import { PROMPT_CATALOG_PROJECTION } from "./promptCatalog.gen.js";
 import {
   PROMPT_SURFACES,
   PromptCatalogSchemaError,
@@ -8,14 +9,11 @@ import {
   type RoleKind,
 } from "./promptCatalog.js";
 
-/** The only adapter-fragment slots accepted by the prompt-source contract. */
-export const PROMPT_FRAGMENT_SLOTS = [
-  "cq-command-invocation",
-  "subagent-dispatch",
-  "inline-command-recursion",
-  "host-tool-vocabulary",
-] as const;
-export type PromptFragmentSlot = (typeof PROMPT_FRAGMENT_SLOTS)[number];
+/** The adapter-fragment vocabulary generated from the canonical Nix catalog. */
+export type PromptFragmentSlot =
+  (typeof PROMPT_CATALOG_PROJECTION.fragmentContracts)[number]["fragment"];
+export const PROMPT_FRAGMENT_SLOTS: readonly PromptFragmentSlot[] =
+  PROMPT_CATALOG_PROJECTION.fragmentContracts.map((contract) => contract.fragment);
 
 export const PROMPT_BLOCK_CLASSIFICATIONS = ["shared-prose", "surface-fragment"] as const;
 export type PromptBlockClassification = (typeof PROMPT_BLOCK_CLASSIFICATIONS)[number];
@@ -69,193 +67,6 @@ export interface ResolvedPromptFragmentInventoryEntry {
   readonly dispatchEdges: readonly PromptDispatchEdge[];
   readonly intentionalDifference: IntentionalDifferenceDeclaration;
 }
-
-const ALL_SURFACES: readonly PromptSurface[] = PROMPT_SURFACES;
-
-/** One semantic contract per reusable slot; role sources bind these by name. */
-export const PROMPT_FRAGMENT_SLOT_CONTRACTS: readonly PromptFragmentSlotContract[] = [
-  {
-    fragment: "cq-command-invocation",
-    supportedSurfaces: ALL_SURFACES,
-    forbiddenVocabulary: { claude: ["$cq-"], codex: ["/cq:"], pi: ["$cq-"] },
-    intentionalDifference: {
-      kind: "invocation-syntax",
-      reason:
-        "Claude and Pi invoke CQ slash commands while Codex invokes generated CQ skills.",
-      surfaces: ALL_SURFACES,
-    },
-  },
-  {
-    fragment: "subagent-dispatch",
-    supportedSurfaces: ALL_SURFACES,
-    forbiddenVocabulary: {
-      claude: ["dispatch_agent("],
-      codex: ["Agent(", "dispatch_agent("],
-      pi: ["Agent("],
-    },
-    intentionalDifference: {
-      kind: "dispatch-protocol",
-      reason:
-        "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
-      surfaces: ALL_SURFACES,
-    },
-  },
-  {
-    fragment: "inline-command-recursion",
-    supportedSurfaces: ALL_SURFACES,
-    forbiddenVocabulary: {
-      claude: ["fetch_prompt(", "$cq-"],
-      codex: ["/cq:", "fetch_prompt("],
-      pi: ["$cq-"],
-    },
-    intentionalDifference: {
-      kind: "recursion-protocol",
-      reason:
-        "Claude chains native commands, Codex follows skill references, and Pi loads nested prompts through fetch_prompt.",
-      surfaces: ALL_SURFACES,
-    },
-  },
-  {
-    fragment: "host-tool-vocabulary",
-    supportedSurfaces: ALL_SURFACES,
-    forbiddenVocabulary: {
-      claude: ["dispatch_agent(", "$cq-"],
-      codex: ["allowed-tools:", "disallowedTools:", "mcp__ledger__", "Agent"],
-      pi: ["Agent", "$cq-"],
-    },
-    intentionalDifference: {
-      kind: "tool-vocabulary",
-      reason:
-        "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
-      surfaces: ALL_SURFACES,
-    },
-  },
-];
-
-const SHARED_BLOCK: SharedPromptSourceBlock = {
-  sourceBlock: "all prose outside the classified surface-sensitive blocks",
-  classification: "shared-prose",
-  targetFragment: null,
-};
-
-const SOURCE_BLOCK_BY_FRAGMENT: Readonly<Record<PromptFragmentSlot, string>> = {
-  "cq-command-invocation": "frontmatter and body CQ command references",
-  "subagent-dispatch": "subagent dispatch instructions and host transport branch",
-  "inline-command-recursion": "inline chained-command execution instructions",
-  "host-tool-vocabulary": "frontmatter host tool and isolation capabilities",
-};
-
-function source(
-  roleId: string,
-  sourcePath: string,
-  fragments: readonly PromptFragmentSlot[],
-  dispatchEdges: readonly PromptDispatchEdge[],
-): PromptRoleSourceInventoryEntry {
-  const rosterRole = AGENT_ROLE_TIERS.find((role) => role.id === roleId);
-  if (rosterRole === undefined) {
-    throw new PromptCatalogSchemaError("promptRoleSource.roleId", `unknown role "${roleId}"`);
-  }
-  return {
-    roleId,
-    roleKind:
-      rosterRole.agentTierKey === null ? "orchestrator-command" : "dispatched-subagent",
-    source: sourcePath,
-    blocks: [
-      SHARED_BLOCK,
-      ...fragments.map(
-        (fragment): FragmentPromptSourceBlock => ({
-          sourceBlock: SOURCE_BLOCK_BY_FRAGMENT[fragment],
-          classification: "surface-fragment",
-          targetFragment: fragment,
-        }),
-      ),
-    ],
-    dispatchEdges,
-  };
-}
-
-const dispatch = (targetRoleId: string): PromptDispatchEdge => ({
-  kind: "dispatch",
-  targetRoleId,
-});
-const recursion = (targetRoleId: string): PromptDispatchEdge => ({
-  kind: "recursion",
-  targetRoleId,
-});
-
-const I: PromptFragmentSlot = "cq-command-invocation";
-const D: PromptFragmentSlot = "subagent-dispatch";
-const R: PromptFragmentSlot = "inline-command-recursion";
-const T: PromptFragmentSlot = "host-tool-vocabulary";
-
-/**
- * Authoritative ordered inventory: nine dispatched roles, then fifteen
- * orchestrator commands. `begin` remains explicit and binds invocation,
- * recursion, and tool-vocabulary fragments.
- */
-export const PROMPT_ROLE_SOURCE_INVENTORY: readonly PromptRoleSourceInventoryEntry[] = [
-  source("plan-advance", "agents/plan-advance.md", [I, T], []),
-  source("plan-reviewer", "agents/plan-reviewer.md", [I, T], []),
-  source("implement-worker", "agents/implement-worker.md", [I, T], []),
-  source("implement-reviewer", "agents/implement-reviewer.md", [I, T], []),
-  source("implement-conflict-resolver", "agents/implement-conflict-resolver.md", [I, T], []),
-  source("investigate-explorer", "agents/investigate-explorer.md", [I, T], []),
-  source("investigate-prober", "agents/investigate-prober.md", [I, T], []),
-  source("research-explorer", "agents/research-explorer.md", [I, T], []),
-  source("research-experimenter", "agents/research-experimenter.md", [T], []),
-  source("begin", "commands/cq/begin.md", [I, T, R], [
-    recursion("plan"),
-    recursion("plan/follow-up"),
-    recursion("investigate"),
-    recursion("research"),
-    recursion("advance"),
-  ]),
-  source("advance", "commands/cq/advance.md", [I, T, R], [
-    recursion("investigate/advance"),
-    recursion("plan/advance"),
-    recursion("research/advance"),
-    recursion("implement/advance"),
-  ]),
-  source("plan", "commands/cq/plan.md", [I, T, D, R], [
-    dispatch("plan-advance"),
-    recursion("investigate/advance"),
-  ]),
-  source("plan/advance", "commands/cq/plan/advance.md", [I, T, D, R], [
-    dispatch("plan-advance"),
-    dispatch("plan-reviewer"),
-    recursion("investigate/advance"),
-  ]),
-  source("plan/follow-up", "commands/cq/plan/follow-up.md", [I, T, D, R], [
-    dispatch("plan-advance"),
-    recursion("investigate/advance"),
-  ]),
-  source("investigate", "commands/cq/investigate.md", [I, T, R], [
-    recursion("investigate/advance"),
-  ]),
-  source("investigate/advance", "commands/cq/investigate/advance.md", [I, T, D], [
-    dispatch("investigate-explorer"),
-    dispatch("investigate-prober"),
-  ]),
-  source("research", "commands/cq/research.md", [I, T, R], [
-    recursion("research/advance"),
-  ]),
-  source("research/advance", "commands/cq/research/advance.md", [I, T, D], [
-    dispatch("research-explorer"),
-    dispatch("research-experimenter"),
-  ]),
-  source("implement/start", "commands/cq/implement/start.md", [I, T, R], [
-    recursion("implement/advance"),
-  ]),
-  source("implement/advance", "commands/cq/implement/advance.md", [I, T, D], [
-    dispatch("implement-worker"),
-    dispatch("implement-reviewer"),
-    dispatch("implement-conflict-resolver"),
-  ]),
-  source("plan-review", "commands/cq/plan-review.md", [T], []),
-  source("implement-review", "commands/cq/implement-review.md", [I], []),
-  source("planners", "commands/cq/planners.md", [I, T], []),
-  source("reviewers", "commands/cq/reviewers.md", [I, T], []),
-];
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -382,6 +193,33 @@ function parseRoleSource(value: unknown, index: number): PromptRoleSourceInvento
     dispatchEdges,
   };
 }
+
+/** Typed compile-time mirror of the fragment contracts authored in assets.nix. */
+export const PROMPT_FRAGMENT_SLOT_CONTRACTS: readonly PromptFragmentSlotContract[] =
+  PROMPT_CATALOG_PROJECTION.fragmentContracts.map(parseContract);
+
+/**
+ * Compatibility view of the canonical Nix role catalog in T660's public
+ * source-inventory shape. No role, source, fragment, or relation is authored
+ * here; the checked-in generated projection supplies every value.
+ */
+export const PROMPT_ROLE_SOURCE_INVENTORY: readonly PromptRoleSourceInventoryEntry[] =
+  PROMPT_CATALOG_PROJECTION.catalog.map((role) => ({
+    roleId: role.roleId,
+    roleKind: role.roleKind,
+    source: role.canonicalSource,
+    blocks: [
+      role.sharedSourceBlock,
+      ...role.fragmentBindings.map(
+        (binding): FragmentPromptSourceBlock => ({
+          sourceBlock: binding.sourceBlock,
+          classification: "surface-fragment",
+          targetFragment: binding.fragment,
+        }),
+      ),
+    ],
+    dispatchEdges: role.dispatchRelations,
+  }));
 
 /**
  * Prove role/slot closure, then join each classified fragment block to its

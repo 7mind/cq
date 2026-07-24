@@ -37,7 +37,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { AGENT_ROLE_TIERS, getRoleSidecar, DISPATCHED_ROLE_IDS } from "@cq/config";
+import {
+  AGENT_ROLE_TIERS,
+  DISPATCHED_ROLE_IDS,
+  PROMPT_ROLE_SOURCE_INVENTORY,
+  getRoleSidecar,
+} from "@cq/config";
 import {
   parseAgentMarkdown,
   deriveSubagentPrivilege,
@@ -80,40 +85,17 @@ interface RoleSpec {
   readonly agentTierKey: string | null;
 }
 
-/**
- * The 24 Q148 roles, in a fixed order: the 9 subagents first (by the
- * link-prompts flow order), then the 15 orchestrator commands. Each subagent's
- * `agentTierKey` is its `[agent_tiers]` lookup key (its name); commands are not
- * model-configurable so their key is null.
- */
-const ROLES: readonly RoleSpec[] = [
-  // --- agents/*.md (subagents) ---
-  { id: "plan-advance", name: "plan-advance", kind: "agent-subagent", source: "agents/plan-advance.md", agentTierKey: "plan-advance" },
-  { id: "plan-reviewer", name: "plan-reviewer", kind: "agent-subagent", source: "agents/plan-reviewer.md", agentTierKey: "plan-reviewer" },
-  { id: "implement-worker", name: "implement-worker", kind: "agent-subagent", source: "agents/implement-worker.md", agentTierKey: "implement-worker" },
-  { id: "implement-reviewer", name: "implement-reviewer", kind: "agent-subagent", source: "agents/implement-reviewer.md", agentTierKey: "implement-reviewer" },
-  { id: "implement-conflict-resolver", name: "implement-conflict-resolver", kind: "agent-subagent", source: "agents/implement-conflict-resolver.md", agentTierKey: "implement-conflict-resolver" },
-  { id: "investigate-explorer", name: "investigate-explorer", kind: "agent-subagent", source: "agents/investigate-explorer.md", agentTierKey: "investigate-explorer" },
-  { id: "investigate-prober", name: "investigate-prober", kind: "agent-subagent", source: "agents/investigate-prober.md", agentTierKey: "investigate-prober" },
-  { id: "research-explorer", name: "research-explorer", kind: "agent-subagent", source: "agents/research-explorer.md", agentTierKey: "research-explorer" },
-  { id: "research-experimenter", name: "research-experimenter", kind: "agent-subagent", source: "agents/research-experimenter.md", agentTierKey: "research-experimenter" },
-  // --- commands/cq/*.md (orchestrators) ---
-  { id: "begin", name: "/cq:begin", kind: "orchestrator", source: "commands/cq/begin.md", agentTierKey: null },
-  { id: "advance", name: "/cq:advance", kind: "orchestrator", source: "commands/cq/advance.md", agentTierKey: null },
-  { id: "plan", name: "/cq:plan", kind: "orchestrator", source: "commands/cq/plan.md", agentTierKey: null },
-  { id: "plan/advance", name: "/cq:plan:advance", kind: "orchestrator", source: "commands/cq/plan/advance.md", agentTierKey: null },
-  { id: "plan/follow-up", name: "/cq:plan:follow-up", kind: "orchestrator", source: "commands/cq/plan/follow-up.md", agentTierKey: null },
-  { id: "investigate", name: "/cq:investigate", kind: "orchestrator", source: "commands/cq/investigate.md", agentTierKey: null },
-  { id: "investigate/advance", name: "/cq:investigate:advance", kind: "orchestrator", source: "commands/cq/investigate/advance.md", agentTierKey: null },
-  { id: "research", name: "/cq:research", kind: "orchestrator", source: "commands/cq/research.md", agentTierKey: null },
-  { id: "research/advance", name: "/cq:research:advance", kind: "orchestrator", source: "commands/cq/research/advance.md", agentTierKey: null },
-  { id: "implement/start", name: "/cq:implement:start", kind: "orchestrator", source: "commands/cq/implement/start.md", agentTierKey: null },
-  { id: "implement/advance", name: "/cq:implement:advance", kind: "orchestrator", source: "commands/cq/implement/advance.md", agentTierKey: null },
-  { id: "plan-review", name: "/cq:plan-review", kind: "orchestrator", source: "commands/cq/plan-review.md", agentTierKey: null },
-  { id: "implement-review", name: "/cq:implement-review", kind: "orchestrator", source: "commands/cq/implement-review.md", agentTierKey: null },
-  { id: "planners", name: "/cq:planners", kind: "orchestrator", source: "commands/cq/planners.md", agentTierKey: null },
-  { id: "reviewers", name: "/cq:reviewers", kind: "orchestrator", source: "commands/cq/reviewers.md", agentTierKey: null },
-];
+/** Static role metadata derived from the generated canonical Nix projection. */
+const ROLES: readonly RoleSpec[] = PROMPT_ROLE_SOURCE_INVENTORY.map((role) => ({
+  id: role.roleId,
+  name:
+    role.roleKind === "dispatched-subagent"
+      ? role.roleId
+      : `/cq:${role.roleId.replaceAll("/", ":")}`,
+  kind: role.roleKind === "dispatched-subagent" ? "agent-subagent" : "orchestrator",
+  source: role.source,
+  agentTierKey: role.roleKind === "dispatched-subagent" ? role.roleId : null,
+}));
 
 // --- Role assembly ---------------------------------------------------------
 
