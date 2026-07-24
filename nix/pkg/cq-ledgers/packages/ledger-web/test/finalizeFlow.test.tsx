@@ -28,6 +28,7 @@ import { registerDom } from "./helpers/dom";
 registerDom();
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { readFileSync } from "node:fs";
 import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "../src/App";
@@ -52,6 +53,35 @@ import type {
 } from "../src/types.js";
 
 const TS = "2026-01-01T00:00:00.000Z";
+
+interface GoalsParityFixture {
+  milestones: Array<{ id: string; status: string; title: string }>;
+  archivePointers: ArchivePointer[];
+  tasks: Array<{ id: string; milestoneId: string; status: string }>;
+  goals: Array<{
+    id: string;
+    milestoneId: string;
+    status: string;
+    title: string;
+    milestones: string[];
+  }>;
+  failure: { goalId: string; status: string; message: string };
+  expected: {
+    eligibleGoalSelections: Array<{ id: string; selected: boolean }>;
+    skippedGoalId: string;
+    incompleteMilestoneId: string;
+    operationIds: string[];
+    attemptedOperationIds: string[];
+    suppressedOperationIds: string[];
+  };
+}
+
+const GOALS_PARITY_FIXTURE = JSON.parse(
+  readFileSync(
+    new URL("../../ledger/test/fixtures/goals-finalize-parity.json", import.meta.url),
+    "utf8",
+  ),
+) as GoalsParityFixture;
 
 class FakeClock implements HoldClock {
   private current = 0;
@@ -268,6 +298,142 @@ class EmptyGoalsFlowClient extends GoalsFlowClient {
       })),
     };
   }
+}
+
+class GoalsParityClient implements LedgerClient {
+  readonly calls: RecordedCall[] = [];
+
+  displayName(): string { return "cq1"; }
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [
+      { name: "goals", itemCount: GOALS_PARITY_FIXTURE.goals.length },
+      { name: "milestones", itemCount: GOALS_PARITY_FIXTURE.milestones.length },
+      { name: "tasks", itemCount: GOALS_PARITY_FIXTURE.tasks.length },
+    ];
+  }
+  async fetchLedger(id: string): Promise<FetchedLedger> {
+    if (id === "milestones") {
+      return {
+        id,
+        schema: MILESTONES_SCHEMA,
+        counters: { milestone: 1, item: 1 },
+        milestones: [{
+          id: "active",
+          milestone: { id: "active", status: "open", title: "active", description: "" },
+          items: GOALS_PARITY_FIXTURE.milestones.map((entry) =>
+            item(entry.id, "active", entry.status, { title: entry.title }),
+          ),
+        }],
+        archivePointers: GOALS_PARITY_FIXTURE.archivePointers,
+      };
+    }
+    if (id === "tasks") {
+      return {
+        id,
+        schema: tasksSchema,
+        counters: { milestone: 1, item: 1 },
+        milestones: GOALS_PARITY_FIXTURE.tasks.map((entry) => {
+          const milestone = GOALS_PARITY_FIXTURE.milestones.find(
+            ({ id: milestoneId }) => milestoneId === entry.milestoneId,
+          );
+          if (milestone === undefined) throw new Error(`missing milestone ${entry.milestoneId}`);
+          return {
+            id: entry.milestoneId,
+            milestone: {
+              id: entry.milestoneId,
+              status: milestone.status,
+              title: milestone.title,
+              description: "",
+            },
+            items: [item(entry.id, entry.milestoneId, entry.status, { headline: entry.id })],
+          };
+        }),
+        archivePointers: [],
+      };
+    }
+    if (id === "goals") {
+      const coordinationIds = [...new Set(
+        GOALS_PARITY_FIXTURE.goals.map(({ milestoneId }) => milestoneId),
+      )];
+      return {
+        id,
+        schema: goalsSchema,
+        counters: { milestone: 1, item: 1 },
+        milestones: coordinationIds.map((coordinationId) => {
+          const milestone = GOALS_PARITY_FIXTURE.milestones.find(
+            ({ id: milestoneId }) => milestoneId === coordinationId,
+          );
+          if (milestone === undefined) throw new Error(`missing milestone ${coordinationId}`);
+          return {
+            id: coordinationId,
+            milestone: {
+              id: coordinationId,
+              status: milestone.status,
+              title: milestone.title,
+              description: "",
+            },
+            items: GOALS_PARITY_FIXTURE.goals
+              .filter(({ milestoneId }) => milestoneId === coordinationId)
+              .map((goal) => item(goal.id, coordinationId, goal.status, {
+                title: goal.title,
+                milestones: goal.milestones,
+              })),
+          };
+        }),
+        archivePointers: [],
+      };
+    }
+    throw new Error(`Ledger not found: ${id}`);
+  }
+  async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
+  async fetchItem(): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<Item> { throw new Error("not used"); }
+  async updateItem(ledger: string, id: string, patch: ItemPatch): Promise<Item> {
+    this.calls.push({ op: "updateItem", ledger, id, status: patch.status });
+    if (
+      id === GOALS_PARITY_FIXTURE.failure.goalId &&
+      patch.status === GOALS_PARITY_FIXTURE.failure.status
+    ) {
+      throw new Error(GOALS_PARITY_FIXTURE.failure.message);
+    }
+    return item(id, "active", patch.status ?? "open", patch.fields ?? {});
+  }
+  async ftsSearch(): Promise<FtsHit[]> { return []; }
+  async createMilestone(): Promise<Item> { throw new Error("not used"); }
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+    this.calls.push({ op: "archiveMilestone", milestoneId, summary });
+    return {
+      id: milestoneId,
+      path: `./archive/milestones/${milestoneId}.md`,
+      summary,
+      title: milestoneId,
+      status: "done",
+    };
+  }
+  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
+    this.calls.push({ op: "updateMilestone", milestoneId, status: patch.status });
+    return item(milestoneId, "active", patch.status ?? "open", {});
+  }
+  async readLog(): Promise<ReadLogResult> { throw new Error("not used"); }
+  async getAgentModels(): Promise<AgentModelsResult> { return { configured: false, agents: [] }; }
+  async listProjects(): Promise<ListProjectsResult> {
+    return { projects: [{ key: "cq1", displayName: "cq1" }] };
+  }
+  async derivePredicates(): Promise<DerivedPredicates> { return emptyPredicates(); }
+  async close(): Promise<void> { /* no-op */ }
+}
+
+function recordedOperationIds(calls: RecordedCall[]): string[] {
+  return calls.map((call) => {
+    switch (call.op) {
+      case "updateMilestone":
+        return `milestone:${call.milestoneId}:close`;
+      case "updateItem":
+        return `goal:${call.id}:to-${call.status}`;
+      case "archiveMilestone":
+        return `milestone:${call.milestoneId}:archive`;
+    }
+  });
 }
 
 /**
@@ -594,6 +760,48 @@ describe("T622 — web finalize flow regression suite", () => {
     expect(testid("finalize-operation-milestone:W2:archive")).toBeNull();
     expect(testid("finalize-operation-milestone:C-SHARED:close")).toBeNull();
     expect(testid("finalize-operation-milestone:C-SHARED:archive")).toBeNull();
+  });
+
+  it("matches the common representative selection, operation, and suppression contract", async () => {
+    const client = new GoalsParityClient();
+    await mount(client);
+    await openGoalsPreview();
+
+    expect(testids("finalize-goal-")).toEqual(
+      GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections.map(({ id }) => id),
+    );
+    for (const expected of GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections) {
+      if (!expected.selected) click(testid(`finalize-goal-${expected.id}`));
+    }
+    await flush();
+
+    for (const expected of GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections) {
+      expect((testid(`finalize-goal-${expected.id}`) as HTMLInputElement).checked).toBe(
+        expected.selected,
+      );
+    }
+    expect(testid(`finalize-skipped-${GOALS_PARITY_FIXTURE.expected.skippedGoalId}`)?.textContent)
+      .toContain(GOALS_PARITY_FIXTURE.expected.incompleteMilestoneId);
+    expect(testids("finalize-operation-")).toEqual(
+      GOALS_PARITY_FIXTURE.expected.operationIds,
+    );
+
+    await holdFull(testid("finalize-execute"));
+
+    expect(testids("finalize-result-")).toEqual(GOALS_PARITY_FIXTURE.expected.operationIds);
+    expect(recordedOperationIds(client.calls)).toEqual(
+      GOALS_PARITY_FIXTURE.expected.attemptedOperationIds,
+    );
+    expect(
+      testid(`finalize-result-goal:${GOALS_PARITY_FIXTURE.failure.goalId}:to-building`)
+        ?.textContent,
+    ).toContain(GOALS_PARITY_FIXTURE.failure.message);
+    for (const operationId of GOALS_PARITY_FIXTURE.expected.suppressedOperationIds) {
+      expect(testid(`finalize-result-${operationId}`)?.textContent).toContain("suppressed");
+    }
+    expect(testid("finalize-result-goal:G-INDEPENDENT:to-done")?.textContent).toContain("ok");
+    expect(testid("finalize-result-milestone:C-INDEPENDENT:archive")?.textContent)
+      .toContain("ok");
   });
 
   it("renders the shared explanatory empty state when no goal is eligible", async () => {

@@ -1,0 +1,111 @@
+{
+  "milestones": [
+    { "id": "W-PLAN", "status": "open", "title": "Planned work" },
+    { "id": "W-SHARED", "status": "open", "title": "Shared work" },
+    { "id": "W-BUILD", "status": "done", "title": "Built work" },
+    { "id": "W-INCOMPLETE", "status": "open", "title": "Incomplete work" },
+    { "id": "C-SHARED", "status": "open", "title": "Shared coordination" },
+    { "id": "C-DESELECT", "status": "open", "title": "Deselected coordination" },
+    { "id": "C-INDEPENDENT", "status": "open", "title": "Independent coordination" },
+    { "id": "C-INCOMPLETE", "status": "open", "title": "Incomplete coordination" }
+  ],
+  "archivePointers": [
+    {
+      "id": "W-ARCHIVED",
+      "path": "./archive/milestones/W-ARCHIVED.md",
+      "summary": "finalized: Archived work",
+      "title": "Archived work",
+      "status": "done"
+    }
+  ],
+  "tasks": [
+    { "id": "T-PLAN", "milestoneId": "W-PLAN", "status": "done" },
+    { "id": "T-SHARED", "milestoneId": "W-SHARED", "status": "done" },
+    { "id": "T-BUILD", "milestoneId": "W-BUILD", "status": "done" },
+    { "id": "T-INCOMPLETE", "milestoneId": "W-INCOMPLETE", "status": "wip" }
+  ],
+  "goals": [
+    {
+      "id": "G-PLAN",
+      "milestoneId": "C-SHARED",
+      "status": "planned",
+      "title": "Planned goal",
+      "milestones": ["W-PLAN", "W-SHARED"]
+    },
+    {
+      "id": "G-BUILD",
+      "milestoneId": "C-SHARED",
+      "status": "building",
+      "title": "Building goal",
+      "milestones": ["W-BUILD", "W-SHARED"]
+    },
+    {
+      "id": "G-DESELECT",
+      "milestoneId": "C-DESELECT",
+      "status": "planned",
+      "title": "Deselected goal",
+      "milestones": ["W-ARCHIVED"]
+    },
+    {
+      "id": "G-INDEPENDENT",
+      "milestoneId": "C-INDEPENDENT",
+      "status": "building",
+      "title": "Independent goal",
+      "milestones": ["W-ARCHIVED"]
+    },
+    {
+      "id": "G-INCOMPLETE",
+      "milestoneId": "C-INCOMPLETE",
+      "status": "building",
+      "title": "Incomplete goal",
+      "milestones": ["W-INCOMPLETE"]
+    }
+  ],
+  "failure": {
+    "goalId": "G-PLAN",
+    "status": "building",
+    "message": "planned transition refused"
+  },
+  "expected": {
+    "eligibleGoalSelections": [
+      { "id": "G-PLAN", "selected": true },
+      { "id": "G-BUILD", "selected": true },
+      { "id": "G-DESELECT", "selected": false },
+      { "id": "G-INDEPENDENT", "selected": true }
+    ],
+    "skippedGoalId": "G-INCOMPLETE",
+    "incompleteMilestoneId": "W-INCOMPLETE",
+    "operationIds": [
+      "milestone:W-PLAN:close",
+      "milestone:W-SHARED:close",
+      "goal:G-PLAN:to-building",
+      "goal:G-PLAN:to-done",
+      "goal:G-BUILD:to-done",
+      "goal:G-INDEPENDENT:to-done",
+      "milestone:C-SHARED:close",
+      "milestone:C-INDEPENDENT:close",
+      "milestone:W-PLAN:archive",
+      "milestone:W-SHARED:archive",
+      "milestone:C-SHARED:archive",
+      "milestone:W-BUILD:archive",
+      "milestone:C-INDEPENDENT:archive"
+    ],
+    "attemptedOperationIds": [
+      "milestone:W-PLAN:close",
+      "milestone:W-SHARED:close",
+      "goal:G-PLAN:to-building",
+      "goal:G-BUILD:to-done",
+      "goal:G-INDEPENDENT:to-done",
+      "milestone:C-INDEPENDENT:close",
+      "milestone:W-PLAN:archive",
+      "milestone:W-SHARED:archive",
+      "milestone:W-BUILD:archive",
+      "milestone:C-INDEPENDENT:archive"
+    ],
+    "suppressedOperationIds": [
+      "goal:G-PLAN:to-done",
+      "milestone:C-SHARED:close",
+      "milestone:C-SHARED:archive"
+    ]
+  }
+}

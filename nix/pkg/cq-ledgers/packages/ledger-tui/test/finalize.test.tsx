@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { render } from "ink-testing-library";
 import { App } from "../src/app.js";
@@ -33,6 +34,35 @@ const BACKSPACE = "\x7f";
 const SPACE = " ";
 
 const TS = "2026-01-01T00:00:00.000Z";
+
+interface GoalsParityFixture {
+  milestones: Array<{ id: string; status: string; title: string }>;
+  archivePointers: ArchivePointer[];
+  tasks: Array<{ id: string; milestoneId: string; status: string }>;
+  goals: Array<{
+    id: string;
+    milestoneId: string;
+    status: string;
+    title: string;
+    milestones: string[];
+  }>;
+  failure: { goalId: string; status: string; message: string };
+  expected: {
+    eligibleGoalSelections: Array<{ id: string; selected: boolean }>;
+    skippedGoalId: string;
+    incompleteMilestoneId: string;
+    operationIds: string[];
+    attemptedOperationIds: string[];
+    suppressedOperationIds: string[];
+  };
+}
+
+const GOALS_PARITY_FIXTURE = JSON.parse(
+  readFileSync(
+    new URL("../../ledger/test/fixtures/goals-finalize-parity.json", import.meta.url),
+    "utf8",
+  ),
+) as GoalsParityFixture;
 
 const PICK_APPLY = "Apply Done to completed items";
 const PICK_ARCHIVE = "Archive all Done items";
@@ -574,6 +604,142 @@ class GoalsFinalizeClient implements LedgerClient {
   }
 }
 
+class GoalsParityClient implements LedgerClient {
+  readonly calls: string[] = [];
+
+  displayName(): string {
+    return "cq1";
+  }
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [
+      { name: "goals", itemCount: GOALS_PARITY_FIXTURE.goals.length },
+      { name: "milestones", itemCount: GOALS_PARITY_FIXTURE.milestones.length },
+      { name: "tasks", itemCount: GOALS_PARITY_FIXTURE.tasks.length },
+    ];
+  }
+  async fetchLedger(id: string): Promise<FetchedLedger> {
+    if (id === "milestones") {
+      return {
+        id,
+        schema: milestonesSchema,
+        counters: { milestone: 1, item: 1 },
+        milestones: [{
+          id: "active",
+          milestone: { id: "active", status: "open", title: "active", description: "" },
+          items: GOALS_PARITY_FIXTURE.milestones.map((entry) =>
+            item(entry.id, "active", entry.status, { title: entry.title }),
+          ),
+        }],
+        archivePointers: GOALS_PARITY_FIXTURE.archivePointers,
+      };
+    }
+    if (id === "tasks") {
+      return {
+        id,
+        schema: tasksSchema,
+        counters: { milestone: 1, item: 1 },
+        milestones: GOALS_PARITY_FIXTURE.tasks.map((entry) => {
+          const milestone = GOALS_PARITY_FIXTURE.milestones.find(
+            ({ id: milestoneId }) => milestoneId === entry.milestoneId,
+          );
+          if (milestone === undefined) throw new Error(`missing milestone ${entry.milestoneId}`);
+          return {
+            id: entry.milestoneId,
+            milestone: {
+              id: entry.milestoneId,
+              status: milestone.status,
+              title: milestone.title,
+              description: "",
+            },
+            items: [item(entry.id, entry.milestoneId, entry.status, { headline: entry.id })],
+          };
+        }),
+        archivePointers: [],
+      };
+    }
+    if (id === "goals") {
+      const coordinationIds = [...new Set(
+        GOALS_PARITY_FIXTURE.goals.map(({ milestoneId }) => milestoneId),
+      )];
+      return {
+        id,
+        schema: goalsSchema,
+        counters: { milestone: 1, item: 1 },
+        milestones: coordinationIds.map((coordinationId) => {
+          const milestone = GOALS_PARITY_FIXTURE.milestones.find(
+            ({ id: milestoneId }) => milestoneId === coordinationId,
+          );
+          if (milestone === undefined) throw new Error(`missing milestone ${coordinationId}`);
+          return {
+            id: coordinationId,
+            milestone: {
+              id: coordinationId,
+              status: milestone.status,
+              title: milestone.title,
+              description: "",
+            },
+            items: GOALS_PARITY_FIXTURE.goals
+              .filter(({ milestoneId }) => milestoneId === coordinationId)
+              .map((goal) => item(goal.id, coordinationId, goal.status, {
+                title: goal.title,
+                description: "",
+                milestones: goal.milestones,
+              })),
+          };
+        }),
+        archivePointers: [],
+      };
+    }
+    throw new Error(`Ledger not found: ${id}`);
+  }
+  async fetchLedgerArchive(): Promise<ArchiveContent> {
+    throw new Error("not used");
+  }
+  async fetchItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async createItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<Item> {
+    this.calls.push(`goal:${itemId}:to-${patch.status}`);
+    if (
+      itemId === GOALS_PARITY_FIXTURE.failure.goalId &&
+      patch.status === GOALS_PARITY_FIXTURE.failure.status
+    ) {
+      throw new Error(GOALS_PARITY_FIXTURE.failure.message);
+    }
+    return item(itemId, "active", patch.status ?? "open", {
+      title: itemId,
+      description: "",
+      milestones: [],
+    });
+  }
+  async ftsSearch(): Promise<never[]> {
+    return [];
+  }
+  async createMilestone(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
+    this.calls.push(`milestone:${milestoneId}:close`);
+    return item(milestoneId, "active", patch.status ?? "open", { title: milestoneId });
+  }
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+    this.calls.push(`milestone:${milestoneId}:archive`);
+    return {
+      id: milestoneId,
+      path: `./archive/milestones/${milestoneId}.md`,
+      summary,
+      title: milestoneId,
+      status: "done",
+    };
+  }
+  async close(): Promise<void> {
+    /* no-op */
+  }
+}
+
 async function openGoalsFinalize(h: Harness): Promise<void> {
   await h.key(ENTER);
   await waitFor(h, "G1");
@@ -903,6 +1069,49 @@ describe("TUI finalize overlay (T621)", () => {
 
     await h.key(UP);
     expect(h.frame()).toContain("› [x] G1");
+    h.unmount();
+  });
+
+  it("matches the common representative selection, operation, and suppression contract", async () => {
+    const client = new GoalsParityClient();
+    const h = await mount(client);
+    await h.key(ENTER);
+    const firstGoalId = GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections[0]!.id;
+    await waitFor(h, firstGoalId);
+    for (const goal of GOALS_PARITY_FIXTURE.goals) expect(h.frame()).toContain(goal.id);
+    await h.key("F");
+    await waitFor(h, "This finalizes selected completed goals");
+    await tick(50);
+
+    const deselectedIndex = GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections.findIndex(
+      ({ selected }) => !selected,
+    );
+    if (deselectedIndex < 0) throw new Error("parity fixture must contain a deselected goal");
+    for (let index = 0; index < deselectedIndex; index += 1) await h.key(DOWN);
+    await h.key(SPACE);
+
+    expect(h.frame()).toContain(GOALS_PARITY_FIXTURE.expected.skippedGoalId);
+    expect(h.frame()).toContain(SKIP_INCOMPLETE_MILESTONE);
+    expect(h.frame()).not.toContain("goal:G-DESELECT:to-building");
+    expect(h.frame()).not.toContain("milestone:C-DESELECT:archive");
+
+    await confirmFinalize(h);
+    await waitFor(h, "finalize · results");
+
+    expect(client.calls).toEqual(GOALS_PARITY_FIXTURE.expected.attemptedOperationIds);
+    expect(
+      GOALS_PARITY_FIXTURE.expected.operationIds.filter(
+        (operationId) => !client.calls.includes(operationId),
+      ),
+    ).toEqual(
+      GOALS_PARITY_FIXTURE.expected.suppressedOperationIds,
+    );
+    expect(h.frame()).toContain(GOALS_PARITY_FIXTURE.failure.message);
+    expect(h.frame()).toContain(
+      `${GOALS_PARITY_FIXTURE.expected.suppressedOperationIds.length} suppressed`,
+    );
+    expect(h.frame()).toContain("ok goal:G-INDEPENDENT:to-done");
+    expect(h.frame()).toContain("ok milestone:C-INDEPENDENT:archive");
     h.unmount();
   });
 

@@ -23,6 +23,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   buildFinalizeSnapshot,
   computeApplyDonePlan,
@@ -42,6 +43,7 @@ import {
   type FinalizeOps,
   type FinalizePlan,
   type FinalizeSnapshot,
+  type GoalsFinalizeOperationId,
 } from "../src/finalize.js";
 import {
   DEFECTS_LEDGER,
@@ -59,6 +61,38 @@ import {
 import type { FetchedLedger, FieldValue, Item, LedgerSchema } from "../src/types.js";
 
 const NOW = "2026-07-23T00:00:00.000Z";
+
+interface GoalsParityFixture {
+  milestones: Array<{ id: string; status: string; title: string }>;
+  archivePointers: Array<{
+    id: string;
+    path: string;
+    summary: string;
+    title: string;
+    status: string;
+  }>;
+  tasks: Array<{ id: string; milestoneId: string; status: string }>;
+  goals: Array<{
+    id: string;
+    milestoneId: string;
+    status: string;
+    title: string;
+    milestones: string[];
+  }>;
+  failure: { goalId: string; status: string; message: string };
+  expected: {
+    eligibleGoalSelections: Array<{ id: string; selected: boolean }>;
+    skippedGoalId: string;
+    incompleteMilestoneId: string;
+    operationIds: GoalsFinalizeOperationId[];
+    attemptedOperationIds: GoalsFinalizeOperationId[];
+    suppressedOperationIds: GoalsFinalizeOperationId[];
+  };
+}
+
+const GOALS_PARITY_FIXTURE = JSON.parse(
+  readFileSync(new URL("./fixtures/goals-finalize-parity.json", import.meta.url), "utf8"),
+) as GoalsParityFixture;
 
 function makeItem(id: string, status: string, fields: Record<string, FieldValue> = {}): Item {
   return { id, milestoneId: "", status, fields, createdAt: NOW, updatedAt: NOW };
@@ -139,44 +173,31 @@ function fixture(): FinalizeSnapshot {
  */
 function goalsScopeFixture(): FinalizeSnapshot {
   const milestones = makeView(MILESTONES_LEDGER, MILESTONES_SCHEMA, {
-    active: [
-      makeItem("W-PLAN", "open", { title: "Planned work" }),
-      makeItem("W-SHARED", "open", { title: "Shared work" }),
-      makeItem("W-BUILD", "done", { title: "Built work" }),
-      makeItem("W-INCOMPLETE", "open", { title: "Incomplete work" }),
-      makeItem("C-SHARED", "open", { title: "Shared coordination" }),
-      makeItem("C-DESELECT", "open", { title: "Deselected coordination" }),
-      makeItem("C-INDEPENDENT", "open", { title: "Independent coordination" }),
-    ],
+    active: GOALS_PARITY_FIXTURE.milestones.map(({ id, status, title }) =>
+      makeItem(id, status, { title }),
+    ),
   });
-  milestones.archivePointers.push({
-    id: "W-ARCHIVED",
-    path: "./archive/milestones/W-ARCHIVED.md",
-    summary: "finalized: Archived work",
-    title: "Archived work",
-    status: "done",
-  });
-  const tasks = makeView(TASKS_LEDGER, TASKS_SCHEMA, {
-    "W-PLAN": [makeItem("T-PLAN", "done")],
-    "W-SHARED": [makeItem("T-SHARED", "done")],
-    "W-BUILD": [makeItem("T-BUILD", "done")],
-    "W-INCOMPLETE": [makeItem("T-INCOMPLETE", "wip")],
-  });
-  const goals = makeView(GOALS_LEDGER, GOALS_SCHEMA, {
-    "C-SHARED": [
-      makeItem("G-PLAN", "planned", { title: "Planned goal", description: "", milestones: ["W-PLAN", "W-SHARED"] }),
-      makeItem("G-BUILD", "building", { title: "Building goal", description: "", milestones: ["W-BUILD", "W-SHARED"] }),
-    ],
-    "C-DESELECT": [
-      makeItem("G-DESELECT", "planned", { title: "Deselected goal", description: "", milestones: ["W-ARCHIVED"] }),
-    ],
-    "C-INDEPENDENT": [
-      makeItem("G-INDEPENDENT", "building", { title: "Independent goal", description: "", milestones: ["W-ARCHIVED"] }),
-    ],
-    "C-INCOMPLETE": [
-      makeItem("G-INCOMPLETE", "building", { title: "Incomplete goal", description: "", milestones: ["W-INCOMPLETE"] }),
-    ],
-  });
+  milestones.archivePointers.push(...GOALS_PARITY_FIXTURE.archivePointers);
+  const taskGroups = Object.fromEntries(
+    GOALS_PARITY_FIXTURE.tasks.map(({ id, milestoneId, status }) => [
+      milestoneId,
+      [makeItem(id, status)],
+    ]),
+  );
+  const goalGroups: Record<string, Item[]> = {};
+  for (const goal of GOALS_PARITY_FIXTURE.goals) {
+    const group = goalGroups[goal.milestoneId] ?? [];
+    group.push(
+      makeItem(goal.id, goal.status, {
+        title: goal.title,
+        description: "",
+        milestones: goal.milestones,
+      }),
+    );
+    goalGroups[goal.milestoneId] = group;
+  }
+  const tasks = makeView(TASKS_LEDGER, TASKS_SCHEMA, taskGroups);
+  const goals = makeView(GOALS_LEDGER, GOALS_SCHEMA, goalGroups);
   return buildFinalizeSnapshot([milestones, tasks, goals]);
 }
 
@@ -461,35 +482,22 @@ describe("(e) SKIP_MILESTONE_NOT_TERMINAL is exposed for archive-plan callers", 
 describe("goals-scope planner and executor parity (T648)", () => {
   it("selects the same eligible goals and emits one ordered graph across shared, archived, deselected, and independent cases", () => {
     const plan = computeGoalsFinalizePlan(goalsScopeFixture(), {
-      deselectedGoalIds: ["G-DESELECT"],
+      deselectedGoalIds: GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections
+        .filter(({ selected }) => !selected)
+        .map(({ id }) => id),
     });
 
-    expect(plan.eligibleGoals.map(({ id, selected }) => ({ id, selected }))).toEqual([
-      { id: "G-PLAN", selected: true },
-      { id: "G-BUILD", selected: true },
-      { id: "G-DESELECT", selected: false },
-      { id: "G-INDEPENDENT", selected: true },
-    ]);
+    expect(plan.eligibleGoals.map(({ id, selected }) => ({ id, selected }))).toEqual(
+      GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections,
+    );
     expect(plan.skipped).toContainEqual({
-      id: "G-INCOMPLETE",
+      id: GOALS_PARITY_FIXTURE.expected.skippedGoalId,
       reason: SKIP_INCOMPLETE_MILESTONE,
-      detail: "W-INCOMPLETE",
+      detail: GOALS_PARITY_FIXTURE.expected.incompleteMilestoneId,
     });
-    expect(plan.operations.map((operation) => operation.id)).toEqual([
-      "milestone:W-PLAN:close",
-      "milestone:W-SHARED:close",
-      "goal:G-PLAN:to-building",
-      "goal:G-PLAN:to-done",
-      "goal:G-BUILD:to-done",
-      "goal:G-INDEPENDENT:to-done",
-      "milestone:C-SHARED:close",
-      "milestone:C-INDEPENDENT:close",
-      "milestone:W-PLAN:archive",
-      "milestone:W-SHARED:archive",
-      "milestone:C-SHARED:archive",
-      "milestone:W-BUILD:archive",
-      "milestone:C-INDEPENDENT:archive",
-    ]);
+    expect(plan.operations.map((operation) => operation.id)).toEqual(
+      GOALS_PARITY_FIXTURE.expected.operationIds,
+    );
     expect(
       plan.operations.find((operation) => operation.id === "milestone:C-SHARED:close"),
     ).toMatchObject({
@@ -503,13 +511,20 @@ describe("goals-scope planner and executor parity (T648)", () => {
 
   it("records the graph in stable order, suppressing only the failed-prerequisite branch", async () => {
     const plan = computeGoalsFinalizePlan(goalsScopeFixture(), {
-      deselectedGoalIds: ["G-DESELECT"],
+      deselectedGoalIds: GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections
+        .filter(({ selected }) => !selected)
+        .map(({ id }) => id),
     });
     const calls: string[] = [];
     const results = await runGoalsFinalize({
       async updateItem(_ledger, id, patch) {
         calls.push(`goal:${id}:${patch.status}`);
-        if (id === "G-PLAN" && patch.status === "building") throw new Error("planned transition refused");
+        if (
+          id === GOALS_PARITY_FIXTURE.failure.goalId &&
+          patch.status === GOALS_PARITY_FIXTURE.failure.status
+        ) {
+          throw new Error(GOALS_PARITY_FIXTURE.failure.message);
+        }
       },
       async updateMilestone(id, patch) {
         calls.push(`milestone:${id}:${patch.status}`);
@@ -519,11 +534,11 @@ describe("goals-scope planner and executor parity (T648)", () => {
       },
     }, plan);
 
-    expect(results.map((result) => result.id)).toEqual(plan.operations.map((operation) => operation.id));
+    expect(results.map((result) => result.id)).toEqual(GOALS_PARITY_FIXTURE.expected.operationIds);
     expect(results.find((result) => result.id === "goal:G-PLAN:to-building")).toMatchObject({
       attempted: true,
       ok: false,
-      error: "planned transition refused",
+      error: GOALS_PARITY_FIXTURE.failure.message,
     });
     expect(results.find((result) => result.id === "goal:G-PLAN:to-done")).toMatchObject({
       attempted: false,
@@ -537,17 +552,12 @@ describe("goals-scope planner and executor parity (T648)", () => {
       attempted: false,
       failedPrerequisite: "goal:G-PLAN:to-done",
     });
-    expect(calls).toEqual([
-      "milestone:W-PLAN:done",
-      "milestone:W-SHARED:done",
-      "goal:G-PLAN:building",
-      "goal:G-BUILD:done",
-      "goal:G-INDEPENDENT:done",
-      "milestone:C-INDEPENDENT:done",
-      "archive:W-PLAN:finalized: Planned work",
-      "archive:W-SHARED:finalized: Shared work",
-      "archive:W-BUILD:finalized: Built work",
-      "archive:C-INDEPENDENT:finalized: Independent coordination",
-    ]);
+    expect(
+      results.filter(({ attempted }) => attempted).map(({ id }) => id),
+    ).toEqual(GOALS_PARITY_FIXTURE.expected.attemptedOperationIds);
+    expect(
+      results.filter(({ attempted }) => !attempted).map(({ id }) => id),
+    ).toEqual(GOALS_PARITY_FIXTURE.expected.suppressedOperationIds);
+    expect(calls).toHaveLength(GOALS_PARITY_FIXTURE.expected.attemptedOperationIds.length);
   });
 });
