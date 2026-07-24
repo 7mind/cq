@@ -23,6 +23,7 @@ import {
   changedFrame,
   createEmbeddedStore,
   LEDGER_TOPIC,
+  resolvePromptSurface,
   startLedgerCoherenceWatcher,
 } from "@cq/ledger-mcp";
 import type { WebuiConfig } from "@cq/config";
@@ -290,6 +291,11 @@ async function serveEmbedded(
   opts: ServeOpts,
   indexPath: string,
 ): Promise<ReturnType<typeof Bun.serve>> {
+  const promptSurface = resolvePromptSurface({
+    promptSurface: undefined,
+    promptRoot: undefined,
+    environment: process.env,
+  });
   const resolved = await createEmbeddedStore(opts.cwd);
   const store = resolved.store;
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
@@ -298,6 +304,7 @@ async function serveEmbedded(
     "",
     resolved.configRoot,
     resolved.projectKey,
+    promptSurface?.store,
   );
 
   const server = scanForPort(opts.port, (p) =>

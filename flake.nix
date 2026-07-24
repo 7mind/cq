@@ -401,14 +401,20 @@
             ln -s "$WORKSPACE/packages/ledger-live" \
               "$WORKSPACE/packages/cq-cli/node_modules/@cq/ledger-live"
 
-            # ── 4. Wrapper ──────────────────────────────────────────────── #
+            # ── 4. Immutable prompt surfaces ────────────────────────────── #
+            mkdir -p "$WORKSPACE/prompt-surfaces"
+            ln -s ${claudePromptRoot} "$WORKSPACE/prompt-surfaces/claude"
+            ln -s ${codexPromptRoot} "$WORKSPACE/prompt-surfaces/codex"
+            ln -s ${piPromptRoot} "$WORKSPACE/prompt-surfaces/pi"
+
+            # ── 5. Wrapper ──────────────────────────────────────────────── #
             # LEDGER_WEB_OUTDIR redirects embedded `cq web` Bun.build output to a
             # writable path (the store closure is read-only). Carried over from
             # the standalone ledger-web wrapper.
             makeWrapper ${pkgs.bun}/bin/bun $out/bin/cq \
               --add-flags "run $WORKSPACE/packages/cq-cli/src/main.ts --" \
               --run 'export LEDGER_WEB_OUTDIR="''${LEDGER_WEB_OUTDIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/ledger-web/dist}"' \
-              --set-default CQ_ASSETS_DIR "${./nix/pkg/cq-assets}" \
+              --set-default CQ_PROMPT_SURFACES_ROOT "$WORKSPACE/prompt-surfaces" \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
 
             runHook postInstall
@@ -527,9 +533,11 @@
                   touch $out
                 '';
             codex-cq-skills =
-              assert codexCommandSkillsTest;
+              assert codexCommandSkillsTest.passed;
               pkgs.runCommand "codex-cq-skills" { } ''
                 set -eu
+                ${pkgs.ripgrep}/bin/rg -q 'CQ_PROMPT_SURFACE.*codex' ${codexCommandSkillsTest.package}/bin/codex
+                ${pkgs.ripgrep}/bin/rg -q ${pkgs.lib.escapeShellArg (toString codexPromptRoot)} ${codexCommandSkillsTest.package}/bin/codex
                 mkdir -p "$out"
                 ${pkgs.lib.concatMapStringsSep "\n"
                   (name: ''
@@ -582,6 +590,8 @@
             '';
             pi-prompt-root = pkgs.runCommand "pi-prompt-root-check" { } ''
               : ${if piPromptRootTest.passed then "pi-home-manager-projection-ok" else "pi-home-manager-projection-failed"}
+              ${pkgs.ripgrep}/bin/rg -q 'CQ_PROMPT_SURFACE.*pi' ${piPromptRootTest.package}/bin/pi
+              ${pkgs.ripgrep}/bin/rg -q ${pkgs.lib.escapeShellArg (toString piPromptRoot)} ${piPromptRootTest.package}/bin/pi
               test "$(find ${piPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
               test -f ${piPromptRoot}/roles/begin.md
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \

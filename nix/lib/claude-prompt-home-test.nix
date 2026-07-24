@@ -117,6 +117,10 @@ pkgs.runCommand "claude-prompt-home-check"
     test ${toString (builtins.length promptCatalog)} -eq 24
     test ${toString commandCount} -eq 15
     test ${toString agentCount} -eq 9
+    test ${lib.escapeShellArg claudeConfig.package.promptSurface} = claude
+    test ${lib.escapeShellArg (toString claudeConfig.package.promptRoot)} = ${lib.escapeShellArg (toString claudePromptRoot)}
+    rg -q 'CQ_PROMPT_SURFACE.*claude' ${claudeConfig.package}/bin/claude
+    rg -q ${lib.escapeShellArg (toString claudePromptRoot)} ${claudeConfig.package}/bin/claude
     test "$(find "$out/home/${lib.removePrefix "${homeDirectory}/" configDir}/commands/cq" -type f -name '*.md' | wc -l)" -eq ${toString commandCount}
     test "$(find "$out/home/${lib.removePrefix "${homeDirectory}/" configDir}/agents" -type f -name '*.md' | wc -l)" -eq ${toString agentCount}
     test -f "$out/home/${lib.removePrefix "${homeDirectory}/" configDir}/commands/cq/begin.md"

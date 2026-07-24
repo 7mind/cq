@@ -89,3 +89,34 @@ describe("parseArgs --tool-prefix (T379)", () => {
     expect(a.http).toEqual({ host: "127.0.0.1", port: 8888 });
   });
 });
+
+describe("parseArgs prompt surface selection (T655)", () => {
+  it("parses explicit surface and root in space form", () => {
+    const args = parseArgs(["--prompt-surface", "codex", "--prompt-root", "/nix/store/codex-root"]);
+    expect(args.promptSurface).toBe("codex");
+    expect(args.promptRoot).toBe("/nix/store/codex-root");
+  });
+
+  it("parses explicit surface and root in equals form", () => {
+    const args = parseArgs(["--prompt-surface=pi", "--prompt-root=/nix/store/pi-root"]);
+    expect(args.promptSurface).toBe("pi");
+    expect(args.promptRoot).toBe("/nix/store/pi-root");
+  });
+
+  it("resolves a relative explicit root against the process CWD", () => {
+    expect(parseArgs(["--prompt-root", "built/prompts"]).promptRoot).toBe(
+      path.resolve("built/prompts"),
+    );
+  });
+
+  it("rejects an invalid explicit surface before server construction", () => {
+    expect(() => parseArgs(["--prompt-surface", "terminal"])).toThrow(
+      'unsupported prompt surface "terminal"',
+    );
+  });
+
+  it("rejects missing prompt selector values", () => {
+    expect(() => parseArgs(["--prompt-surface"])).toThrow("--prompt-surface requires a value");
+    expect(() => parseArgs(["--prompt-root"])).toThrow("--prompt-root requires a value");
+  });
+});

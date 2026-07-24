@@ -60,8 +60,10 @@ import {
 import {
   attachMcpHttp,
   changedFrame,
+  resolvePromptSurface,
   wsHeartbeat,
   type McpHttpHandlers,
+  type PromptArtifactStore,
 } from "@cq/ledger-mcp";
 import { prepare, serveStatic, scanForPort, DEFAULT_OUTDIR } from "./serve.js";
 
@@ -419,6 +421,7 @@ export function serveHub(
   pool: ReturnType<typeof openPgPool>,
   dsn: string,
   indexPath: string,
+  promptArtifactStore?: PromptArtifactStore,
 ): ReturnType<typeof Bun.serve> {
   // Lazily-constructed per-tenant runtimes, keyed by projectKey. Stored as a
   // PROMISE so two concurrent first-requests for the same tenant share ONE
@@ -465,7 +468,14 @@ export function serveHub(
       if (displayName === null) return null; // unknown tenant → 404
       const store = new PostgresLedgerStore({ pool, projectKey, displayName });
       await store.init();
-      const handlers = attachMcpHttp(store, displayName, "", undefined, projectKey);
+      const handlers = attachMcpHttp(
+        store,
+        displayName,
+        "",
+        undefined,
+        projectKey,
+        promptArtifactStore,
+      );
       return { store, handlers, refresh: makeRefresh(store, projectKey) };
     })();
     runtimes.set(projectKey, built);
@@ -573,6 +583,11 @@ export function serveHub(
 
 export async function main(argv: readonly string[]): Promise<void> {
   const args = parseHubArgs(argv);
+  const promptSurface = resolvePromptSurface({
+    promptSurface: undefined,
+    promptRoot: undefined,
+    environment: process.env,
+  });
   // Token resolves --token (CLI) > CQ_SERVE_TOKEN (env) > null, so the secret
   // can be injected out-of-band (env) instead of via a `ps`-visible flag.
   const token = resolveHubToken(args.token, process.env);
@@ -606,7 +621,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   const indexPath = path.join(outdir, "index.html");
 
   const opts: HubServeOpts = { host: args.host, port: args.port, token, outdir };
-  const server = serveHub(opts, pool, dsn, indexPath);
+  const server = serveHub(opts, pool, dsn, indexPath, promptSurface?.store);
 
   const shutdown = (): void => {
     // serveHub's wrapped stop() closes the hub LISTEN connection; the shared

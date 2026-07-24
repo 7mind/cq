@@ -115,10 +115,17 @@ in
       package = pkgs.symlinkJoin {
         name = "claude-code-no-autoupdate";
         inherit (claudePkg) version;
+        passthru = {
+          promptSurface = "claude";
+          promptRoot = claudePromptRoot;
+        };
         paths = [ claudePkg ];
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postBuild = ''
-          wrapProgram $out/bin/claude --set-default DISABLE_AUTOUPDATER 1
+          wrapProgram $out/bin/claude \
+            --set-default DISABLE_AUTOUPDATER 1 \
+            --set CQ_PROMPT_SURFACE claude \
+            --set CQ_PROMPT_ROOT ${claudePromptRoot}
         '';
       };
       plugins = [ "${codexPluginCc}/plugins/codex" ];

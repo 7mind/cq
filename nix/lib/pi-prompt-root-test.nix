@@ -81,6 +81,7 @@ let
     ];
   };
   files = evaluatedPiModule.config.home.file;
+  piPackage = evaluatedPiModule.config.programs.pi.package;
   piSettings = evaluatedPiModule.config.programs.pi.settings;
   command = files."/home/test/.pi/agent/prompts/cq:begin.md";
   externalCommand = files."/home/test/.pi/agent/prompts/other:example.md";
@@ -91,11 +92,14 @@ let
 in
 {
   inherit mcpJson;
+  package = piPackage;
   passed =
     assert command.source == "${piPromptRoot}/roles/begin.md";
     assert externalCommand.text == "external command";
     assert agent.source == "${piPromptRoot}/roles/plan-reviewer.md";
     assert externalAgent.text == "external agent";
+    assert piPackage.promptSurface == "pi";
+    assert piPackage.promptRoot == piPromptRoot;
     assert lib.hasInfix ''fetch_prompt("investigate/advance")'' appendSystem.text;
     assert lib.any (
       extension: lib.hasSuffix "cq-subagent-dispatch.ts" extension

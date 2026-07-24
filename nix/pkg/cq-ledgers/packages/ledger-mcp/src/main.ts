@@ -65,6 +65,11 @@ import {
   createPromptCatalogCapability,
 } from "./promptCatalogCapability.js";
 import type { PromptArtifactStore } from "./promptArtifactStore.js";
+import {
+  parsePromptSurface,
+  resolvePromptSurface,
+  type PromptSurface,
+} from "./promptSurfaceSelection.js";
 import { startLedgerWatcher, type LedgerWatcher } from "./watcher.js";
 import { startLedgerRefWatcher } from "./refWatcher.js";
 
@@ -78,6 +83,16 @@ export {
   PromptArtifactNotFoundError,
   PromptArtifactStoreError,
 } from "./promptArtifactStore.js";
+export {
+  CQ_PROMPT_ROOT_ENV,
+  CQ_PROMPT_SURFACE_ENV,
+  CQ_PROMPT_SURFACES_ROOT_ENV,
+  DEFAULT_PROMPT_SURFACE,
+  parsePromptSurface,
+  PROMPT_SURFACES,
+  PromptSurfaceSelectionError,
+  resolvePromptSurface,
+} from "./promptSurfaceSelection.js";
 export type {
   InMemoryPromptRoleArtifact,
   PromptArtifactManifest,
@@ -86,6 +101,11 @@ export type {
   PromptArtifactStore,
   PromptRoleArtifact,
 } from "./promptArtifactStore.js";
+export type {
+  PromptSurface,
+  PromptSurfaceSelectionInput,
+  ResolvedPromptSurface,
+} from "./promptSurfaceSelection.js";
 
 const SERVER_INFO = { name: "ledger-mcp", version: "0.0.1" } as const;
 const DEFAULT_HTTP_HOST = "127.0.0.1";
@@ -127,6 +147,8 @@ export interface ParsedArgs {
   http: HttpOpts | null;
   /** Optional ledger-tool name prefix (default `''` = unprefixed). */
   toolPrefix: string;
+  promptSurface: PromptSurface | undefined;
+  promptRoot: string | undefined;
 }
 
 /**
@@ -164,6 +186,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   let cwd: string | undefined;
   let http: HttpOpts | null = null;
   let toolPrefix = "";
+  let promptSurface: PromptSurface | undefined;
+  let promptRoot: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--cwd") {
@@ -193,6 +217,24 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       toolPrefix = v;
     } else if (a !== undefined && a.startsWith("--tool-prefix=")) {
       toolPrefix = a.slice("--tool-prefix=".length);
+    } else if (a === "--prompt-surface") {
+      i += 1;
+      const v = argv[i];
+      if (v === undefined) {
+        throw new Error("ledger-mcp: --prompt-surface requires a value");
+      }
+      promptSurface = parsePromptSurface(v);
+    } else if (a !== undefined && a.startsWith("--prompt-surface=")) {
+      promptSurface = parsePromptSurface(a.slice("--prompt-surface=".length));
+    } else if (a === "--prompt-root") {
+      i += 1;
+      const v = argv[i];
+      if (v === undefined) {
+        throw new Error("ledger-mcp: --prompt-root requires a value");
+      }
+      promptRoot = path.resolve(v);
+    } else if (a !== undefined && a.startsWith("--prompt-root=")) {
+      promptRoot = path.resolve(a.slice("--prompt-root=".length));
     }
   }
   // Validate the prefix at parse time so a malformed value fails before the
@@ -200,7 +242,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   assertToolPrefix(toolPrefix);
   // Ledger root precedence: --cwd > $LEDGER_ROOT > process CWD; a relative
   // value resolves against the CWD. (See file header for the rationale.)
-  return { cwd: resolveRoot(cwd), http, toolPrefix };
+  return { cwd: resolveRoot(cwd), http, toolPrefix, promptSurface, promptRoot };
 }
 
 /** Top-level CLI usage text (mirrors the file-header JSDoc; printed by --help/-h). */
@@ -211,6 +253,8 @@ export const TOP_LEVEL_USAGE = [
   "  --cwd <path>          Ledger root (default: $LEDGER_ROOT or current working directory)",
   "  --http [host:]port    Serve Streamable HTTP instead of stdio (default host: 127.0.0.1)",
   '  --tool-prefix <p>     Prefix all tool names with "<p>_"',
+  "  --prompt-surface <s>  Select claude, codex, or pi (default: $CQ_PROMPT_SURFACE or claude)",
+  "  --prompt-root <path>  Use an explicit built prompt-artifact root",
   "  -h, --help            Print this usage and exit",
 ].join("\n");
 
@@ -556,12 +600,14 @@ export function buildServer(
   displayName: string,
   configRoot?: string,
   projectKey?: string,
+  promptArtifactStore?: PromptArtifactStore,
 ): McpServer {
   return createLedgerMcpServer({
     store,
     displayName,
     ...(configRoot !== undefined ? { configRoot } : {}),
     ...(projectKey !== undefined ? { projectKey } : {}),
+    ...(promptArtifactStore !== undefined ? { promptArtifactStore } : {}),
   });
 }
 
@@ -604,6 +650,7 @@ export function attachMcpHttp(
   toolPrefix = "",
   configRoot?: string,
   projectKey?: string,
+  promptArtifactStore?: PromptArtifactStore,
 ): McpHttpHandlers {
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
@@ -646,6 +693,7 @@ export function attachMcpHttp(
       toolPrefix,
       ...(configRoot !== undefined ? { configRoot } : {}),
       ...(projectKey !== undefined ? { projectKey } : {}),
+      ...(promptArtifactStore !== undefined ? { promptArtifactStore } : {}),
     });
     await server.connect(transport);
     // Body already consumed above; hand it back so the transport doesn't
@@ -706,6 +754,7 @@ export function serveHttp(
   toolPrefix = "",
   configRoot?: string,
   projectKey?: string,
+  promptArtifactStore?: PromptArtifactStore,
 ): ReturnType<typeof Bun.serve> {
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
     store,
@@ -713,6 +762,7 @@ export function serveHttp(
     toolPrefix,
     configRoot,
     projectKey,
+    promptArtifactStore,
   );
 
   return Bun.serve({
@@ -755,8 +805,13 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const { cwd, http, toolPrefix } = parseArgs(argv);
+  const { cwd, http, toolPrefix, promptSurface, promptRoot } = parseArgs(argv);
   const displayName = path.basename(cwd);
+  const resolvedPromptSurface = resolvePromptSurface({
+    promptSurface,
+    promptRoot,
+    environment: process.env,
+  });
 
   // Construct the store via the backend-selecting factory (T357), init it, then
   // register tools. The factory honours cq.toml's `[ledger]` backend ('xdg'
@@ -775,6 +830,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       toolPrefix,
       resolved.configRoot,
       resolved.projectKey,
+      resolvedPromptSurface?.store,
     );
     // Watch the ledger for out-of-process advances; push a `changed` frame to
     // subscribed UIs on any change. The watcher is selected by backend (file
@@ -801,6 +857,9 @@ export async function main(argv: readonly string[]): Promise<void> {
     toolPrefix,
     configRoot: resolved.configRoot,
     ...(resolved.projectKey !== undefined ? { projectKey: resolved.projectKey } : {}),
+    ...(resolvedPromptSurface !== undefined
+      ? { promptArtifactStore: resolvedPromptSurface.store }
+      : {}),
   });
   // Even on stdio, watch the ledger so this server's cache stays fresh when
   // another process writes the same ledgers (file watch for fs, ref-sha poll

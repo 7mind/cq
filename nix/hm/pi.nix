@@ -81,12 +81,18 @@ let
   ddgsPython = pkgs.python3.withPackages (ps: [ ps.ddgs ]);
   piWrapped = pkgs.symlinkJoin {
     name = "pi-coding-agent-wrapped";
+    passthru = {
+      promptSurface = "pi";
+      promptRoot = piPromptRoot;
+    };
     paths = [ piBase ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postBuild = ''
       wrapProgram $out/bin/pi \
         --prefix PATH : ${ddgsPython}/bin \
         --set CQ_HARNESS pi \
+        --set CQ_PROMPT_SURFACE pi \
+        --set CQ_PROMPT_ROOT ${piPromptRoot} \
         --run 'export CQ_AGENTS_DIR="''${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/cq-agents"'
     '';
   };

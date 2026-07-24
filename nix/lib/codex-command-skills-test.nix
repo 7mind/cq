@@ -178,39 +178,46 @@ let
     ];
   };
   codexHomeFiles = evaluatedCodexModule.config.home.file;
+  codexPackage = evaluatedCodexModule.config.programs.codex.package;
 in
-assert builtins.attrNames fixture.skills == [
-  "cq-entry"
-  "cq-nested"
-];
-assert fixture.roles.worker.sidecar.schemaRoleId == "worker";
-assert entry.roleIds == [
-  "worker"
-  "entry"
-  "nested"
-];
-assert builtins.attrNames entry.references == [
-  "cq-entry.md"
-  "cq-nested.md"
-  "role-worker.md"
-];
-assert entry.references."cq-entry.md" == "${fixtureRoot}/roles/entry.md";
-assert entry.references."cq-nested.md" == "${fixtureRoot}/roles/nested.md";
-assert entry.references."role-worker.md" == "${fixtureRoot}/roles/worker.md";
-assert lib.hasInfix "Treat text accompanying `$cq-entry`" entry.skillMd;
-assert lib.hasInfix "`$cq-nested`" entry.skillMd;
-assert lib.hasInfix "role `worker`" entry.skillMd;
-assert !lib.hasInfix "/cq:" entry.skillMd;
-assert !unsupportedRelation.success;
-assert !unsupportedSurface.success;
-assert !invalidDispatchTarget.success;
-assert !invalidSidecar.success;
-assert !collidingNames.success;
-assert builtins.length projectedSkillNames == 15;
-assert builtins.length projectedRoleNames == 9;
-assert projected.catalog == "${promptRoot}/catalog.json";
-assert lib.all (name: builtins.hasAttr ".codex/skills/${name}" codexHomeFiles) projectedSkillNames;
-assert lib.all (path: !(builtins.hasAttr path codexHomeFiles)) projectedCommandPromptPaths;
-assert codexHomeFiles.${sentinelPromptPath}.text == sentinelPromptBody;
-assert lib.all (entry: entry.assertion) evaluatedCodexModule.config.assertions;
-true
+{
+  package = codexPackage;
+  passed =
+    assert builtins.attrNames fixture.skills == [
+      "cq-entry"
+      "cq-nested"
+    ];
+    assert fixture.roles.worker.sidecar.schemaRoleId == "worker";
+    assert entry.roleIds == [
+      "worker"
+      "entry"
+      "nested"
+    ];
+    assert builtins.attrNames entry.references == [
+      "cq-entry.md"
+      "cq-nested.md"
+      "role-worker.md"
+    ];
+    assert entry.references."cq-entry.md" == "${fixtureRoot}/roles/entry.md";
+    assert entry.references."cq-nested.md" == "${fixtureRoot}/roles/nested.md";
+    assert entry.references."role-worker.md" == "${fixtureRoot}/roles/worker.md";
+    assert lib.hasInfix "Treat text accompanying `$cq-entry`" entry.skillMd;
+    assert lib.hasInfix "`$cq-nested`" entry.skillMd;
+    assert lib.hasInfix "role `worker`" entry.skillMd;
+    assert !lib.hasInfix "/cq:" entry.skillMd;
+    assert !unsupportedRelation.success;
+    assert !unsupportedSurface.success;
+    assert !invalidDispatchTarget.success;
+    assert !invalidSidecar.success;
+    assert !collidingNames.success;
+    assert builtins.length projectedSkillNames == 15;
+    assert builtins.length projectedRoleNames == 9;
+    assert projected.catalog == "${promptRoot}/catalog.json";
+    assert lib.all (name: builtins.hasAttr ".codex/skills/${name}" codexHomeFiles) projectedSkillNames;
+    assert lib.all (path: !(builtins.hasAttr path codexHomeFiles)) projectedCommandPromptPaths;
+    assert codexHomeFiles.${sentinelPromptPath}.text == sentinelPromptBody;
+    assert codexPackage.promptSurface == "codex";
+    assert codexPackage.promptRoot == promptRoot;
+    assert lib.all (entry: entry.assertion) evaluatedCodexModule.config.assertions;
+    true;
+}

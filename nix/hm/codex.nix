@@ -20,6 +20,21 @@ let
     inherit pkgs lib;
     surface = "codex";
   };
+  codexWrapped = pkgs.symlinkJoin {
+    name = "codex-with-prompt-root";
+    inherit (codexPkg) version;
+    passthru = {
+      promptSurface = "codex";
+      promptRoot = codexPromptRoot;
+    };
+    paths = [ codexPkg ];
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    postBuild = ''
+      wrapProgram $out/bin/codex \
+        --set CQ_PROMPT_SURFACE codex \
+        --set CQ_PROMPT_ROOT ${codexPromptRoot}
+    '';
+  };
   mkCodexCommandSkills = import ../lib/codex-command-skills.nix { inherit lib; };
   codexProjection = mkCodexCommandSkills {
     catalog = assets.catalog;
@@ -79,7 +94,7 @@ in
   config = lib.mkIf cfg.enable (lib.mkMerge [
     {
       programs.codex = sharedAgentWiring // {
-        package = codexPkg;
+        package = codexWrapped;
         settings = {
           model = "gpt-5.6-sol";
           model_reasoning_effort = "xhigh";

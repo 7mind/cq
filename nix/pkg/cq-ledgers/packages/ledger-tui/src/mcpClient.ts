@@ -13,7 +13,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { buildServer, createEmbeddedStore } from "@cq/ledger-mcp";
+import { buildServer, createEmbeddedStore, resolvePromptSurface } from "@cq/ledger-mcp";
 import type { LedgerStore, ResolvedLedgerStore } from "@cq/ledger";
 import type {
   ArchiveContent,
@@ -118,9 +118,20 @@ export class McpLedgerClient implements LedgerClient {
    * Used when ledger-tui is launched with no `--mcp-url`.
    */
   static async embedded(cwd: string): Promise<McpLedgerClient> {
+    const promptSurface = resolvePromptSurface({
+      promptSurface: undefined,
+      promptRoot: undefined,
+      environment: process.env,
+    });
     const resolved = await createEmbeddedStore(cwd);
     const store = resolved.store;
-    const server = buildServer(store, path.basename(cwd), resolved.configRoot, resolved.projectKey);
+    const server = buildServer(
+      store,
+      path.basename(cwd),
+      resolved.configRoot,
+      resolved.projectKey,
+      promptSurface?.store,
+    );
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     const client = new Client(
