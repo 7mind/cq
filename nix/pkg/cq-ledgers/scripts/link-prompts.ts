@@ -18,6 +18,7 @@ import {
   readlink,
   rename,
   rm,
+  rmdir,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -32,6 +33,7 @@ const SLOT_MARKER = "{{cq:fragment:";
 const GENERATION_PATTERN = /^sha256-[0-9a-f]{64}$/;
 const STAGING_PREFIX = ".tmp-";
 const SYMLINK_TEMP_PREFIX = ".cq-prompt-link-";
+const PUBLICATION_LOCK = ".publication.lock";
 
 /** One UTF-8 file in a complete rendered prompt root. */
 export interface PromptFile {
@@ -51,11 +53,18 @@ export interface PromptLink {
   readonly source: string;
 }
 
-/** A link whose rendered source target does not resolve. */
-export interface MissingTarget {
+export type PromptLinkFailureReason =
+  "source-missing" | "link-missing" | "link-not-symlink" | "target-mismatch";
+
+/** A catalog link that does not exactly match the published current-root link. */
+export interface PromptLinkFailure {
   readonly link: string;
   readonly source: string;
+  readonly absLink: string;
   readonly absSource: string;
+  readonly reason: PromptLinkFailureReason;
+  readonly expectedTarget: string;
+  readonly actualTarget?: string;
 }
 
 export type PromptPathKind = "missing" | "directory" | "symlink" | "other";
@@ -66,12 +75,15 @@ export type PromptPathKind = "missing" | "directory" | "symlink" | "other";
  * in-memory implementation.
  */
 export interface PromptPublicationStore {
+  acquirePublicationLock(generatedRoot: string): Promise<string>;
+  releasePublicationLock(lockPath: string): Promise<void>;
   createStagingDirectory(generatedRoot: string): Promise<string>;
   writeTree(root: string, files: readonly PromptFile[]): Promise<void>;
   readTree(root: string): Promise<readonly PromptFile[]>;
   pathKind(targetPath: string): Promise<PromptPathKind>;
   completeGeneration(source: string, destination: string): Promise<void>;
   replaceSymlinkAtomic(linkPath: string, targetPath: string): Promise<void>;
+  readLink(linkPath: string): Promise<string>;
   listDirectory(directory: string): Promise<readonly string[]>;
   removeTree(targetPath: string): Promise<void>;
 }
@@ -235,15 +247,64 @@ function treesEqual(left: readonly PromptFile[], right: readonly PromptFile[]): 
   );
 }
 
-async function refuseNonSymlink(
+type SymlinkState =
+  { readonly kind: "missing" } | { readonly kind: "symlink"; readonly target: string };
+
+async function snapshotReplaceableSymlink(
   store: PromptPublicationStore,
   targetPath: string,
   displayPath: string,
-): Promise<void> {
+): Promise<SymlinkState> {
   const kind = await store.pathKind(targetPath);
-  if (kind !== "missing" && kind !== "symlink") {
+  if (kind === "missing") {
+    return { kind };
+  }
+  if (kind !== "symlink") {
     throw new Error(`refusing to replace non-symlink ${displayPath}; remove it manually`);
   }
+  return { kind, target: await store.readLink(targetPath) };
+}
+
+async function restoreSymlink(
+  store: PromptPublicationStore,
+  linkPath: string,
+  state: SymlinkState,
+): Promise<void> {
+  if (state.kind === "missing") {
+    await store.removeTree(linkPath);
+    return;
+  }
+  await store.replaceSymlinkAtomic(linkPath, state.target);
+}
+
+async function rollbackPublishedLinks(
+  store: PromptPublicationStore,
+  currentPath: string,
+  currentState: SymlinkState,
+  linkPaths: readonly string[],
+  linkStates: readonly SymlinkState[],
+  originalError: unknown,
+): Promise<never> {
+  const rollbackErrors: unknown[] = [];
+  for (let index = linkPaths.length - 1; index >= 0; index -= 1) {
+    try {
+      await restoreSymlink(store, linkPaths[index] as string, linkStates[index] as SymlinkState);
+    } catch (error) {
+      rollbackErrors.push(error);
+    }
+  }
+  try {
+    await restoreSymlink(store, currentPath, currentState);
+  } catch (error) {
+    rollbackErrors.push(error);
+  }
+  if (rollbackErrors.length > 0) {
+    throw new AggregateError(
+      [originalError, ...rollbackErrors],
+      "prompt publication failed and rollback could not restore the prior links",
+    );
+  }
+  throw originalError;
 }
 
 async function cleanupAfterSwitch(
@@ -269,23 +330,33 @@ export async function materializeClaudePrompts(
   options: MaterializeClaudePromptsOptions,
 ): Promise<MaterializedClaudePrompts> {
   const { store, renderer, ledgersRoot, generatedRoot } = options;
-  const staging = await store.createStagingDirectory(generatedRoot);
-  let stagingExists = true;
+  const lockPath = await store.acquirePublicationLock(generatedRoot);
+  let staging: string | undefined;
 
   try {
+    staging = await store.createStagingDirectory(generatedRoot);
     const rendered = await renderer.render();
     await store.writeTree(staging, rendered);
     const stagedTree = await store.readTree(staging);
     const catalog = validateRenderedClaudeRoot(stagedTree);
     const links = linksFromCatalog(catalog);
+    const currentPath = path.join(generatedRoot, "current");
+    const linkPaths = links.map((link) => path.join(ledgersRoot, link.link));
 
-    await refuseNonSymlink(
+    const currentState = await snapshotReplaceableSymlink(
       store,
-      path.join(generatedRoot, "current"),
-      path.relative(ledgersRoot, path.join(generatedRoot, "current")),
+      currentPath,
+      path.relative(ledgersRoot, currentPath),
     );
-    for (const link of links) {
-      await refuseNonSymlink(store, path.join(ledgersRoot, link.link), link.link);
+    const linkStates: SymlinkState[] = [];
+    for (let index = 0; index < links.length; index += 1) {
+      linkStates.push(
+        await snapshotReplaceableSymlink(
+          store,
+          linkPaths[index] as string,
+          (links[index] as PromptLink).link,
+        ),
+      );
     }
 
     const generationName = `sha256-${treeDigest(stagedTree)}`;
@@ -293,30 +364,43 @@ export async function materializeClaudePrompts(
     const generationKind = await store.pathKind(generation);
     if (generationKind === "missing") {
       await store.completeGeneration(staging, generation);
-      stagingExists = false;
+      staging = undefined;
     } else if (generationKind === "directory") {
       const existingTree = await store.readTree(generation);
       if (!treesEqual(stagedTree, existingTree)) {
         throw new Error(`content-addressed prompt generation "${generationName}" differs`);
       }
       await store.removeTree(staging);
-      stagingExists = false;
+      staging = undefined;
     } else {
       throw new Error(`prompt generation path "${generationName}" is not a directory`);
     }
 
-    await store.replaceSymlinkAtomic(path.join(generatedRoot, "current"), generation);
-    for (const link of links) {
+    try {
       await store.replaceSymlinkAtomic(
-        path.join(ledgersRoot, link.link),
-        path.join(ledgersRoot, link.source),
+        currentPath,
+        path.relative(path.dirname(currentPath), generation),
       );
+      for (let index = 0; index < links.length; index += 1) {
+        const link = links[index] as PromptLink;
+        const linkPath = linkPaths[index] as string;
+        await store.replaceSymlinkAtomic(
+          linkPath,
+          path.relative(path.dirname(linkPath), path.join(ledgersRoot, link.source)),
+        );
+      }
+    } catch (error) {
+      await rollbackPublishedLinks(store, currentPath, currentState, linkPaths, linkStates, error);
     }
     await cleanupAfterSwitch(store, generatedRoot, generationName);
     return { generation, links };
   } finally {
-    if (stagingExists) {
-      await store.removeTree(staging);
+    try {
+      if (staging !== undefined) {
+        await store.removeTree(staging);
+      }
+    } finally {
+      await store.releasePublicationLock(lockPath);
     }
   }
 }
@@ -345,8 +429,27 @@ async function makeDirectoryTreeWritable(root: string): Promise<void> {
 
 /** Production filesystem adapter. */
 export class NodePromptPublicationStore implements PromptPublicationStore {
-  async createStagingDirectory(generatedRoot: string): Promise<string> {
+  async acquirePublicationLock(generatedRoot: string): Promise<string> {
     await mkdir(generatedRoot, { recursive: true });
+    const lockPath = path.join(generatedRoot, PUBLICATION_LOCK);
+    try {
+      await mkdir(lockPath);
+    } catch (error) {
+      if (errnoCode(error) === "EEXIST") {
+        throw new Error(
+          `prompt publication lock exists at "${lockPath}"; another publisher is active or a stale lock requires manual removal`,
+        );
+      }
+      throw error;
+    }
+    return lockPath;
+  }
+
+  async releasePublicationLock(lockPath: string): Promise<void> {
+    await rmdir(lockPath);
+  }
+
+  async createStagingDirectory(generatedRoot: string): Promise<string> {
     return mkdtemp(path.join(generatedRoot, STAGING_PREFIX));
   }
 
@@ -413,7 +516,7 @@ export class NodePromptPublicationStore implements PromptPublicationStore {
     await rename(source, destination);
   }
 
-  async replaceSymlinkAtomic(linkPath: string, targetPath: string): Promise<void> {
+  async replaceSymlinkAtomic(linkPath: string, linkTarget: string): Promise<void> {
     const kind = await this.pathKind(linkPath);
     if (kind !== "missing" && kind !== "symlink") {
       throw new Error(`refusing to replace non-symlink ${linkPath}; remove it manually`);
@@ -423,9 +526,8 @@ export class NodePromptPublicationStore implements PromptPublicationStore {
       path.dirname(linkPath),
       `${SYMLINK_TEMP_PREFIX}${process.pid}-${randomUUID()}`,
     );
-    const relativeTarget = path.relative(path.dirname(linkPath), targetPath);
     try {
-      await symlink(relativeTarget, temporaryLink);
+      await symlink(linkTarget, temporaryLink);
       await rename(temporaryLink, linkPath);
     } finally {
       await rm(temporaryLink, { force: true });
@@ -483,24 +585,75 @@ export class NixClaudePromptRenderer implements ClaudePromptRenderer {
   }
 }
 
-/**
- * Check which rendered sources are absent. This remains side-effect free and
- * accepts an explicit root for temporary-filesystem tests.
- */
+/** Check every catalog link and its exact current-root target without mutation. */
 export async function checkLinks(
   links: readonly PromptLink[],
   ledgersRoot: string = LEDGERS_ROOT,
-): Promise<MissingTarget[]> {
-  const missing: MissingTarget[] = [];
+): Promise<PromptLinkFailure[]> {
+  const failures: PromptLinkFailure[] = [];
   for (const { link, source } of links) {
+    const absLink = path.join(ledgersRoot, link);
     const absSource = path.join(ledgersRoot, source);
+    const expectedTarget = path.relative(path.dirname(absLink), absSource);
     try {
       await access(absSource);
-    } catch {
-      missing.push({ link, source, absSource });
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") throw error;
+      failures.push({
+        link,
+        source,
+        absLink,
+        absSource,
+        reason: "source-missing",
+        expectedTarget,
+      });
+      continue;
+    }
+
+    let stat;
+    try {
+      stat = await lstat(absLink);
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") throw error;
+      failures.push({
+        link,
+        source,
+        absLink,
+        absSource,
+        reason: "link-missing",
+        expectedTarget,
+      });
+      continue;
+    }
+    if (!stat.isSymbolicLink()) {
+      failures.push({
+        link,
+        source,
+        absLink,
+        absSource,
+        reason: "link-not-symlink",
+        expectedTarget,
+      });
+      continue;
+    }
+
+    const actualTarget = await readlink(absLink);
+    if (
+      actualTarget !== expectedTarget ||
+      path.resolve(path.dirname(absLink), actualTarget) !== absSource
+    ) {
+      failures.push({
+        link,
+        source,
+        absLink,
+        absSource,
+        reason: "target-mismatch",
+        expectedTarget,
+        actualTarget,
+      });
     }
   }
-  return missing;
+  return failures;
 }
 
 async function main(): Promise<void> {
@@ -509,11 +662,15 @@ async function main(): Promise<void> {
     const current = path.join(GENERATED_ROOT, "current");
     const catalog = validateRenderedClaudeRoot(await store.readTree(current));
     const links = linksFromCatalog(catalog);
-    const missing = await checkLinks(links);
-    if (missing.length > 0) {
-      console.error("link-prompts --check: missing targets:");
-      for (const { link, source, absSource } of missing) {
-        console.error(`  ${link} -> ${source} (resolved: ${absSource})`);
+    const failures = await checkLinks(links);
+    if (failures.length > 0) {
+      console.error("link-prompts --check: invalid links:");
+      for (const failure of failures) {
+        const actual =
+          failure.actualTarget === undefined ? "" : `, actual: ${failure.actualTarget}`;
+        console.error(
+          `  ${failure.link}: ${failure.reason} (expected: ${failure.expectedTarget}${actual})`,
+        );
       }
       process.exit(1);
     }

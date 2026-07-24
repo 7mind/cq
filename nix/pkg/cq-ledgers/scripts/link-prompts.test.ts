@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
   NodePromptPublicationStore,
+  checkLinks,
   linksFromCatalog,
   materializeClaudePrompts,
   validateRenderedClaudeRoot,
@@ -57,6 +58,32 @@ class FailingRenderer implements ClaudePromptRenderer {
   }
 }
 
+class GatedRenderer implements ClaudePromptRenderer {
+  readonly entered: Promise<void>;
+  private readonly gate: Promise<void>;
+  private signalEntered!: () => void;
+  private releaseGate!: () => void;
+
+  constructor(private readonly files: readonly PromptFile[]) {
+    this.entered = new Promise((resolve) => {
+      this.signalEntered = resolve;
+    });
+    this.gate = new Promise((resolve) => {
+      this.releaseGate = resolve;
+    });
+  }
+
+  async render(): Promise<readonly PromptFile[]> {
+    this.signalEntered();
+    await this.gate;
+    return this.files;
+  }
+
+  release(): void {
+    this.releaseGate();
+  }
+}
+
 interface MemoryNode {
   readonly kind: "directory" | "file" | "symlink";
   readonly content?: string;
@@ -105,6 +132,22 @@ class MemoryPromptPublicationStore implements PromptPublicationStore {
     const normalized = this.normalize(filePath);
     this.ensureDirectory(path.posix.dirname(normalized));
     this.nodes.set(normalized, { kind: "file", content });
+  }
+
+  async acquirePublicationLock(generatedRoot: string): Promise<string> {
+    this.ensureDirectory(generatedRoot);
+    const lockPath = path.posix.join(generatedRoot, ".publication.lock");
+    if (this.nodes.has(this.normalize(lockPath))) {
+      throw new Error(
+        `prompt publication lock exists at "${lockPath}"; another publisher is active or a stale lock requires manual removal`,
+      );
+    }
+    this.ensureDirectory(lockPath);
+    return lockPath;
+  }
+
+  async releasePublicationLock(lockPath: string): Promise<void> {
+    await this.removeTree(lockPath);
   }
 
   async createStagingDirectory(generatedRoot: string): Promise<string> {
@@ -167,7 +210,7 @@ class MemoryPromptPublicationStore implements PromptPublicationStore {
     }
   }
 
-  async replaceSymlinkAtomic(linkPath: string, targetPath: string): Promise<void> {
+  async replaceSymlinkAtomic(linkPath: string, linkTarget: string): Promise<void> {
     const normalizedLink = this.normalize(linkPath);
     const kind = await this.pathKind(normalizedLink);
     if (kind !== "missing" && kind !== "symlink") {
@@ -176,7 +219,7 @@ class MemoryPromptPublicationStore implements PromptPublicationStore {
     this.ensureDirectory(path.posix.dirname(normalizedLink));
     this.nodes.set(normalizedLink, {
       kind: "symlink",
-      target: path.posix.relative(path.posix.dirname(normalizedLink), targetPath),
+      target: linkTarget,
     });
   }
 
@@ -212,11 +255,22 @@ class MemoryPromptPublicationStore implements PromptPublicationStore {
   }
 }
 
-class FailingSwitchStore implements PromptPublicationStore {
+class OneShotFailingSymlinkStore implements PromptPublicationStore {
+  private armed = true;
+
   constructor(
     private readonly delegate: PromptPublicationStore,
-    private readonly currentPath: string,
+    private readonly failedPath: string,
+    private readonly failAfterReplacement = false,
   ) {}
+
+  acquirePublicationLock(generatedRoot: string): Promise<string> {
+    return this.delegate.acquirePublicationLock(generatedRoot);
+  }
+
+  releasePublicationLock(lockPath: string): Promise<void> {
+    return this.delegate.releasePublicationLock(lockPath);
+  }
 
   createStagingDirectory(generatedRoot: string): Promise<string> {
     return this.delegate.createStagingDirectory(generatedRoot);
@@ -238,11 +292,19 @@ class FailingSwitchStore implements PromptPublicationStore {
     return this.delegate.completeGeneration(source, destination);
   }
 
-  replaceSymlinkAtomic(linkPath: string, targetPath: string): Promise<void> {
-    if (linkPath === this.currentPath) {
-      throw new Error("injected current switch failure");
+  async replaceSymlinkAtomic(linkPath: string, targetPath: string): Promise<void> {
+    if (this.armed && linkPath === this.failedPath) {
+      this.armed = false;
+      if (this.failAfterReplacement) {
+        await this.delegate.replaceSymlinkAtomic(linkPath, targetPath);
+      }
+      throw new Error("injected symlink replacement failure");
     }
-    return this.delegate.replaceSymlinkAtomic(linkPath, targetPath);
+    await this.delegate.replaceSymlinkAtomic(linkPath, targetPath);
+  }
+
+  readLink(linkPath: string): Promise<string> {
+    return this.delegate.readLink(linkPath);
   }
 
   listDirectory(directory: string): Promise<readonly string[]> {
@@ -385,6 +447,50 @@ function publicationContract(
       ]);
     });
 
+    for (const [label, contenderTree] of [
+      ["identical content", OLD_TREE],
+      ["different content", NEW_TREE],
+    ] as const) {
+      test(`fails fast without disturbing an active ${label} publication`, async () => {
+        const gatedRenderer = new GatedRenderer(OLD_TREE);
+        const activePublication = publish(harness, gatedRenderer);
+        await gatedRenderer.entered;
+        let activeResult!: Awaited<ReturnType<typeof publish>>;
+
+        try {
+          const before = await harness.store.listDirectory(harness.generatedRoot);
+          expect(before).toContain(".publication.lock");
+          expect(before.filter((entry) => entry.startsWith(".tmp-"))).toHaveLength(1);
+
+          await expect(publish(harness, new StaticRenderer(contenderTree))).rejects.toThrow(
+            "another publisher is active or a stale lock",
+          );
+          expect(await harness.store.listDirectory(harness.generatedRoot)).toEqual(before);
+        } finally {
+          gatedRenderer.release();
+          activeResult = await activePublication;
+        }
+
+        expect(await harness.store.pathKind(activeResult.generation)).toBe("directory");
+        expect(await harness.store.listDirectory(harness.generatedRoot)).not.toContain(
+          ".publication.lock",
+        );
+      });
+    }
+
+    test("does not reclaim a stale publication lock automatically", async () => {
+      const lockPath = path.join(harness.generatedRoot, ".publication.lock");
+      await harness.putDirectory(lockPath);
+
+      await expect(publish(harness, new StaticRenderer(OLD_TREE))).rejects.toThrow(
+        "a stale lock requires manual removal",
+      );
+      expect(await harness.store.pathKind(lockPath)).toBe("directory");
+      expect(await harness.store.listDirectory(harness.generatedRoot)).toEqual([
+        ".publication.lock",
+      ]);
+    });
+
     test("render failure preserves the old pointer and leaves stale artifacts untouched", async () => {
       await expect(publish(harness, new FailingRenderer())).rejects.toThrow(
         "injected render failure",
@@ -447,10 +553,10 @@ function publicationContract(
       const oldPointer = await harness.readLink(currentPath(harness));
       const beginLink = path.join(harness.ledgersRoot, ".claude/commands/cq/begin.md");
       const oldLink = await harness.readLink(beginLink);
-      const failingStore = new FailingSwitchStore(harness.store, currentPath(harness));
+      const failingStore = new OneShotFailingSymlinkStore(harness.store, currentPath(harness));
 
       await expect(publish(harness, new StaticRenderer(NEW_TREE), failingStore)).rejects.toThrow(
-        "injected current switch failure",
+        "injected symlink replacement failure",
       );
 
       expect(await harness.readLink(currentPath(harness))).toBe(oldPointer);
@@ -464,9 +570,9 @@ function publicationContract(
     });
 
     test("switch failure creates no first pointer", async () => {
-      const failingStore = new FailingSwitchStore(harness.store, currentPath(harness));
+      const failingStore = new OneShotFailingSymlinkStore(harness.store, currentPath(harness));
       await expect(publish(harness, new StaticRenderer(OLD_TREE), failingStore)).rejects.toThrow(
-        "injected current switch failure",
+        "injected symlink replacement failure",
       );
 
       expect(await harness.store.pathKind(currentPath(harness))).toBe("missing");
@@ -480,6 +586,57 @@ function publicationContract(
           entry.startsWith(".tmp-"),
         ),
       ).toEqual([]);
+    });
+
+    test("rolls back the exact prior pointer and links after every prompt-link failure", async () => {
+      await publish(harness, new StaticRenderer(OLD_TREE));
+      const promptLinks = linksFromCatalog(validateRenderedClaudeRoot(OLD_TREE));
+      const linkPaths = promptLinks.map((link) => path.join(harness.ledgersRoot, link.link));
+      await harness.store.replaceSymlinkAtomic(
+        currentPath(harness),
+        `./${await harness.readLink(currentPath(harness))}`,
+      );
+      for (const linkPath of linkPaths) {
+        await harness.store.replaceSymlinkAtomic(linkPath, `./${await harness.readLink(linkPath)}`);
+      }
+      const oldPointer = await harness.readLink(currentPath(harness));
+      const oldLinks = await Promise.all(linkPaths.map((linkPath) => harness.readLink(linkPath)));
+
+      for (const failedPath of linkPaths) {
+        await expect(
+          publish(
+            harness,
+            new StaticRenderer(NEW_TREE),
+            new OneShotFailingSymlinkStore(harness.store, failedPath, true),
+          ),
+        ).rejects.toThrow("injected symlink replacement failure");
+
+        expect(await harness.readLink(currentPath(harness))).toBe(oldPointer);
+        expect(await Promise.all(linkPaths.map((linkPath) => harness.readLink(linkPath)))).toEqual(
+          oldLinks,
+        );
+        expect(await harness.store.readTree(currentPath(harness))).toEqual(OLD_TREE);
+      }
+    });
+
+    test("removes the first pointer and every link after each prompt-link failure", async () => {
+      const promptLinks = linksFromCatalog(validateRenderedClaudeRoot(OLD_TREE));
+      const linkPaths = promptLinks.map((link) => path.join(harness.ledgersRoot, link.link));
+
+      for (const failedPath of linkPaths) {
+        await expect(
+          publish(
+            harness,
+            new StaticRenderer(OLD_TREE),
+            new OneShotFailingSymlinkStore(harness.store, failedPath, true),
+          ),
+        ).rejects.toThrow("injected symlink replacement failure");
+
+        expect(await harness.store.pathKind(currentPath(harness))).toBe("missing");
+        expect(
+          await Promise.all(linkPaths.map((linkPath) => harness.store.pathKind(linkPath))),
+        ).toEqual(linkPaths.map(() => "missing"));
+      }
     });
 
     test("rejects an ordinary link path before switching or changing any link", async () => {
@@ -557,6 +714,112 @@ describe("NodePromptPublicationStore atomic symlink semantics", () => {
       );
     } finally {
       await store.removeTree(root);
+    }
+  });
+
+  test("publishes generation directories and files without write permission", async () => {
+    const harness = await makeRealHarness();
+    try {
+      const result = await publish(harness, new StaticRenderer(OLD_TREE));
+      const directories = [result.generation, path.join(result.generation, "roles")];
+      const files = [
+        path.join(result.generation, "catalog.json"),
+        path.join(result.generation, "roles", "begin.md"),
+        path.join(result.generation, "roles", "plan-advance.md"),
+      ];
+
+      for (const targetPath of [...directories, ...files]) {
+        expect((await stat(targetPath)).mode & 0o222).toBe(0);
+      }
+      await expect(writeFile(files[0]!, "mutation", "utf8")).rejects.toMatchObject({
+        code: "EACCES",
+      });
+      await expect(
+        writeFile(path.join(result.generation, "undeclared.md"), "mutation", "utf8"),
+      ).rejects.toMatchObject({ code: "EACCES" });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+});
+
+describe("prompt publication review reproductions", () => {
+  test("restores the prior current pointer when the first prompt link fails", async () => {
+    const harness = await makeRealHarness();
+    try {
+      await publish(harness, new StaticRenderer(OLD_TREE));
+      const oldPointer = await harness.readLink(currentPath(harness));
+      const failedLink = path.join(harness.ledgersRoot, ".claude/commands/cq/begin.md");
+
+      await expect(
+        publish(
+          harness,
+          new StaticRenderer(NEW_TREE),
+          new OneShotFailingSymlinkStore(harness.store, failedLink, true),
+        ),
+      ).rejects.toThrow("injected symlink replacement failure");
+
+      expect(await harness.readLink(currentPath(harness))).toBe(oldPointer);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("checkLinks rejects a missing catalog link even when its source exists", async () => {
+    const harness = await makeRealHarness();
+    try {
+      const result = await publish(harness, new StaticRenderer(OLD_TREE));
+      await harness.store.removeTree(path.join(harness.ledgersRoot, result.links[0]!.link));
+
+      expect(await checkLinks(result.links, harness.ledgersRoot)).toEqual([
+        expect.objectContaining({
+          link: result.links[0]!.link,
+          reason: "link-missing",
+        }),
+      ]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("checkLinks rejects a symlink with the wrong target", async () => {
+    const harness = await makeRealHarness();
+    try {
+      const result = await publish(harness, new StaticRenderer(OLD_TREE));
+      const checkedLink = result.links[0]!;
+      await harness.store.replaceSymlinkAtomic(
+        path.join(harness.ledgersRoot, checkedLink.link),
+        path.join(harness.ledgersRoot, result.links[1]!.source),
+      );
+
+      expect(await checkLinks(result.links, harness.ledgersRoot)).toEqual([
+        expect.objectContaining({
+          link: checkedLink.link,
+          reason: "target-mismatch",
+        }),
+      ]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("checkLinks rejects an ordinary file at a catalog link path", async () => {
+    const harness = await makeRealHarness();
+    try {
+      const result = await publish(harness, new StaticRenderer(OLD_TREE));
+      const checkedLink = result.links[0]!;
+      const absoluteLink = path.join(harness.ledgersRoot, checkedLink.link);
+      await harness.store.removeTree(absoluteLink);
+      await harness.putFile(absoluteLink, "not a link");
+
+      expect(await checkLinks(result.links, harness.ledgersRoot)).toEqual([
+        expect.objectContaining({
+          link: checkedLink.link,
+          reason: "link-not-symlink",
+        }),
+      ]);
+    } finally {
+      await harness.cleanup();
     }
   });
 });
