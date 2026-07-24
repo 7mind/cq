@@ -128,11 +128,15 @@ describe("dispatched-role prompt sources", () => {
       expect(
         renderPromptSurfaceTree({ surface, catalogJson, sourcePaths, fragmentPaths }),
       ).toEqual(tree);
-      expect(tree.artifacts).toHaveLength(catalog.length + 1);
+      expect(tree.artifacts).toHaveLength(catalog.length + 2);
+      expect(tree.artifacts[1]).toEqual({
+        path: "surface.json",
+        content: JSON.stringify({ surface }),
+      });
 
       for (const [index, role] of catalog.entries()) {
-        const content = tree.artifacts[index + 1]!.content;
-        expect(tree.artifacts[index + 1]!.path).toBe(`roles/${role.roleId}.md`);
+        const content = tree.artifacts[index + 2]!.content;
+        expect(tree.artifacts[index + 2]!.path).toBe(`roles/${role.roleId}.md`);
         expect(content).toStartWith("---\n");
         expect(content).toContain(`name: ${role.roleId}`);
         expect(content).not.toContain("{{cq:fragment:");

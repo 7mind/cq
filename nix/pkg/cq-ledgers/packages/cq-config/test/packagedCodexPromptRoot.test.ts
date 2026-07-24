@@ -125,6 +125,9 @@ describe("packaged Codex prompt root and command skills", () => {
       expect(readFileSync(path.join(promptRoot, "catalog.json"), "utf8")).toBe(
         catalogJson,
       );
+      expect(readFileSync(path.join(promptRoot, "surface.json"), "utf8")).toBe(
+        '{"surface":"codex"}',
+      );
       for (const artifact of direct.artifacts.slice(1)) {
         expect(readFileSync(path.join(promptRoot, artifact.path), "utf8")).toBe(
           artifact.content,

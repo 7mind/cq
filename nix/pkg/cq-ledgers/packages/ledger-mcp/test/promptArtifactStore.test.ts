@@ -40,6 +40,7 @@ const SHARED_SOURCE_BLOCK = Object.freeze({
 });
 
 interface StoreFixture {
+  readonly surfaceBytes: Uint8Array;
   readonly manifestBytes: Uint8Array;
   readonly artifacts: readonly InMemoryPromptRoleArtifact[];
 }
@@ -80,6 +81,7 @@ function fixture(
   artifacts: readonly InMemoryPromptRoleArtifact[],
 ): StoreFixture {
   return {
+    surfaceBytes: encoder.encode(JSON.stringify({ surface: PROMPT_SURFACE })),
     manifestBytes: encoder.encode(JSON.stringify(roles)),
     artifacts,
   };
@@ -110,7 +112,12 @@ function memoryAdapter(): StoreAdapter {
   return {
     label: "strict in-memory dummy",
     create: (input) => ({
-      store: new InMemoryPromptArtifactStore(PROMPT_SURFACE, input.manifestBytes, input.artifacts),
+      store: new InMemoryPromptArtifactStore(
+        PROMPT_SURFACE,
+        input.surfaceBytes,
+        input.manifestBytes,
+        input.artifacts,
+      ),
       cleanup: () => undefined,
     }),
   };
@@ -121,6 +128,7 @@ function filesystemAdapter(): StoreAdapter {
     label: "production filesystem adapter",
     create: (input) => {
       const root = mkdtempSync(path.join(tmpdir(), "cq-prompt-artifact-store-"));
+      writeFileSync(path.join(root, "surface.json"), input.surfaceBytes);
       writeFileSync(path.join(root, "catalog.json"), input.manifestBytes);
       mkdirSync(path.join(root, "roles"));
       for (const artifact of [...input.artifacts].reverse()) {
@@ -151,6 +159,7 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
           "roles/plan/advance.md",
           "roles/plan-advance.md",
         ]);
+        expect(manifest.promptSurface).toBe(PROMPT_SURFACE);
       } finally {
         handle.cleanup();
       }
@@ -281,6 +290,26 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
       );
       expect(() => adapter.create(incomplete)).toThrow(
         "catalog.json[0].fragmentBindings: expected an array",
+      );
+    });
+
+    test("rejects a selected surface that does not match the immutable root identity", () => {
+      const mismatched = {
+        ...CONTRACT_FIXTURE,
+        surfaceBytes: encoder.encode('{"surface":"pi"}'),
+      };
+      expect(() => adapter.create(mismatched)).toThrow(
+        'surface.json.surface: selected prompt surface "codex" does not match built root "pi"',
+      );
+    });
+
+    test("rejects additional surface metadata fields", () => {
+      const malformed = {
+        ...CONTRACT_FIXTURE,
+        surfaceBytes: encoder.encode('{"surface":"codex","extra":true}'),
+      };
+      expect(() => adapter.create(malformed)).toThrow(
+        'surface.json: expected exactly one "surface" field',
       );
     });
   });

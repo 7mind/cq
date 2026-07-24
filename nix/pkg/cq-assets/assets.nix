@@ -576,6 +576,7 @@ let
     {
       inherit surface root;
       catalog = "${root}/catalog.json";
+      surfaceMetadata = "${root}/surface.json";
       roles = "${root}/roles";
       roleArtifacts = map (role: {
         roleId = role.roleId;

@@ -87,6 +87,7 @@ beforeAll(async () => {
   outdir = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-out-"));
   promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-prompts-"));
   await fs.mkdir(path.join(promptRoot, "roles"));
+  await fs.writeFile(path.join(promptRoot, "surface.json"), '{"surface":"pi"}');
   await fs.writeFile(
     path.join(promptRoot, "catalog.json"),
     JSON.stringify([

@@ -73,7 +73,18 @@ beforeAll(async () => {
 
   ({ port, proc } = await spawnWithFreePort(
     (p) => [process.execPath, "run", serverMain, "--cwd", tmpRoot, "--http", String(p)],
-    { stdout: "inherit", stderr: "inherit", env: { ...process.env } },
+    {
+      stdout: "inherit",
+      stderr: "inherit",
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([name]) =>
+            name !== "CQ_PROMPT_ROOT" &&
+            name !== "CQ_PROMPT_SURFACE" &&
+            name !== "CQ_PROMPT_SURFACES_ROOT",
+        ),
+      ),
+    },
   ));
   client = await McpLedgerClient.connect(`http://127.0.0.1:${port}/mcp`);
 });

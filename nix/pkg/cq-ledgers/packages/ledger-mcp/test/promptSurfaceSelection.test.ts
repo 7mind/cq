@@ -19,9 +19,11 @@ const ROLE_ID = "plan-advance";
 let fixtureRoot: string;
 let surfacesRoot: string;
 let explicitRoot: string;
+let explicitPiRoot: string;
 
-function writePromptRoot(root: string, body: string): void {
+function writePromptRoot(root: string, surface: PromptSurface, body: string): void {
   mkdirSync(path.join(root, "roles"), { recursive: true });
+  writeFileSync(path.join(root, "surface.json"), JSON.stringify({ surface }));
   writeFileSync(
     path.join(root, "catalog.json"),
     encoder.encode(
@@ -57,10 +59,12 @@ beforeAll(() => {
   fixtureRoot = mkdtempSync(path.join(tmpdir(), "cq-prompt-selection-"));
   surfacesRoot = path.join(fixtureRoot, "prompt-surfaces");
   for (const surface of SURFACES) {
-    writePromptRoot(path.join(surfacesRoot, surface), promptBody(surface));
+    writePromptRoot(path.join(surfacesRoot, surface), surface, promptBody(surface));
   }
   explicitRoot = path.join(fixtureRoot, "explicit");
-  writePromptRoot(explicitRoot, "explicit root bytes\n");
+  writePromptRoot(explicitRoot, "codex", "explicit root bytes\n");
+  explicitPiRoot = path.join(fixtureRoot, "explicit-pi");
+  writePromptRoot(explicitPiRoot, "pi", "explicit Pi root bytes\n");
 });
 
 afterAll(() => {
@@ -113,14 +117,16 @@ describe("prompt surface selection", () => {
   test("an injected root beats CQ_PROMPT_SURFACE root selection", () => {
     const resolved = resolve({
       environment: {
-        [CQ_PROMPT_ROOT_ENV]: explicitRoot,
+        [CQ_PROMPT_ROOT_ENV]: explicitPiRoot,
         [CQ_PROMPT_SURFACE_ENV]: "pi",
         [CQ_PROMPT_SURFACES_ROOT_ENV]: surfacesRoot,
       },
     });
     expect(resolved?.surface).toBe("pi");
-    expect(resolved?.root).toBe(explicitRoot);
-    expect(decoder.decode(resolved?.store.readRole(ROLE_ID).bytes)).toBe("explicit root bytes\n");
+    expect(resolved?.root).toBe(explicitPiRoot);
+    expect(decoder.decode(resolved?.store.readRole(ROLE_ID).bytes)).toBe(
+      "explicit Pi root bytes\n",
+    );
   });
 
   test("defaults exactly to claude and ignores CQ_HARNESS", () => {

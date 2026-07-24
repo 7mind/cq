@@ -557,6 +557,8 @@
                   find "$out" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l
                 )" -eq "${toString (builtins.length (builtins.attrNames codexCqSkillSpecs))}"
                 test "$(find ${codexPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
+                cmp ${builtins.toFile "cq-expected-codex-surface.json" (builtins.toJSON { surface = "codex"; })} \
+                  ${codexPromptRoot}/surface.json
                 if ${pkgs.ripgrep}/bin/rg -n \
                   'Agent\\(|Task\\(|dispatch_agent\\(|/cq:|\\{\\{cq:fragment:' \
                   ${codexPromptRoot}/roles; then
@@ -580,6 +582,8 @@
             claude-prompt-root = pkgs.runCommand "claude-prompt-root-check" { } ''
               test "$(find ${claudePromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
               test -f ${claudePromptRoot}/roles/begin.md
+              cmp ${builtins.toFile "cq-expected-claude-surface.json" (builtins.toJSON { surface = "claude"; })} \
+                ${claudePromptRoot}/surface.json
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
                 ${claudePromptRoot}/catalog.json
               if ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS' ${claudePromptRoot}; then
@@ -594,6 +598,8 @@
               ${pkgs.ripgrep}/bin/rg -q ${pkgs.lib.escapeShellArg (toString piPromptRoot)} ${piPromptRootTest.package}/bin/pi
               test "$(find ${piPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
               test -f ${piPromptRoot}/roles/begin.md
+              cmp ${builtins.toFile "cq-expected-pi-surface.json" (builtins.toJSON { surface = "pi"; })} \
+                ${piPromptRoot}/surface.json
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
                 ${piPromptRoot}/catalog.json
               ${pkgs.jq}/bin/jq -e '

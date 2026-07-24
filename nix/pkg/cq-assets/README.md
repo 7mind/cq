@@ -79,7 +79,7 @@ Edit the files in this directory, never a symlink or a consumer's copy.
    a pure, IFD-free attrset of file contents plus the authoritative ordered
    `catalog`, its deterministic `catalogJson` projection, and
    `promptSurfaceLayout`. Each packaged surface follows
-   `$out/share/cq/prompt-surfaces/<surface>/{catalog.json,roles/...}`. A
+   `$out/share/cq/prompt-surfaces/<surface>/{catalog.json,surface.json,roles/...}`. A
    home-manager LLM module (e.g. in a nix-config) consumes these assets and
    materializes every asset into each agent's layout (`~/.claude/commands`,
    `~/.codex/skills`, `~/.codex/prompts`, …) globally — no symlink script needed

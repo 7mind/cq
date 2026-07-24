@@ -39,7 +39,7 @@ export interface RenderedPromptArtifact {
 
 export interface RenderedPromptSurfaceTree {
   readonly surface: PromptSurface;
-  /** `catalog.json` first, followed by role artifacts in canonical catalog order. */
+  /** `catalog.json`, `surface.json`, then role artifacts in canonical catalog order. */
   readonly artifacts: readonly RenderedPromptArtifact[];
 }
 
@@ -443,6 +443,7 @@ export function renderPromptSurfaceTree(
   const fragmentPaths = indexFragmentPaths(input.fragmentPaths, roles, surface);
   const artifacts: RenderedPromptArtifact[] = [
     { path: "catalog.json", content: input.catalogJson },
+    { path: "surface.json", content: JSON.stringify({ surface }) },
   ];
 
   for (const role of roles) {

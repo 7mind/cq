@@ -78,8 +78,11 @@ describe("packaged Claude prompt root", () => {
 
       expect(catalog).toHaveLength(24);
       expect(catalog.some(({ roleId }) => roleId === "begin")).toBe(true);
-      expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles"]);
+      expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles", "surface.json"]);
       expect(readFileSync(path.join(output, "catalog.json"), "utf8")).toBe(catalogJson);
+      expect(readFileSync(path.join(output, "surface.json"), "utf8")).toBe(
+        '{"surface":"claude"}',
+      );
       expect(
         [...new Bun.Glob("**/*.md").scanSync({ cwd: path.join(output, "roles") })].sort(),
       ).toEqual(catalog.map(({ roleId }) => `${roleId}.md`).sort());

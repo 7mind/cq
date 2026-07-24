@@ -32,6 +32,7 @@ beforeAll(async () => {
   process.env["XDG_STATE_HOME"] = xdgHome;
   promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-tui-prompts-"));
   await fs.mkdir(path.join(promptRoot, "roles"));
+  await fs.writeFile(path.join(promptRoot, "surface.json"), '{"surface":"codex"}');
   await fs.writeFile(
     path.join(promptRoot, "catalog.json"),
     JSON.stringify([

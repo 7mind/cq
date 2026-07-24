@@ -132,8 +132,11 @@ describe("packaged Pi prompt root", () => {
     const direct = directPiTree(catalogJson);
 
     expect(catalog).toHaveLength(24);
-    expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles"]);
+    expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles", "surface.json"]);
     expect(readFileSync(path.join(output, "catalog.json"), "utf8")).toBe(catalogJson);
+    expect(readFileSync(path.join(output, "surface.json"), "utf8")).toBe(
+      '{"surface":"pi"}',
+    );
     expect(
       [...new Bun.Glob("**/*.md").scanSync({ cwd: path.join(output, "roles") })].sort(),
     ).toEqual(catalog.map(({ roleId }) => `${roleId}.md`).sort());

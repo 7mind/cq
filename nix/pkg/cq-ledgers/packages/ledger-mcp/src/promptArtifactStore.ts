@@ -12,6 +12,7 @@ import type {
 
 const SAFE_ROLE_ID_PATTERN = /^[a-z0-9-]+(?:\/[a-z0-9-]+)*$/;
 const MANIFEST_FILENAME = "catalog.json";
+const SURFACE_METADATA_FILENAME = "surface.json";
 const ROLE_ARTIFACTS_DIRECTORY = "roles";
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 const PROMPT_RENDERER_CAPABILITIES = [
@@ -58,6 +59,7 @@ export interface PromptArtifactRoleMetadata {
 export interface PromptArtifactManifest {
   readonly bytes: Uint8Array;
   readonly roles: readonly PromptArtifactRoleMetadata[];
+  readonly promptSurface?: PromptSurface;
 }
 
 export interface PromptRoleArtifact {
@@ -93,6 +95,7 @@ export class PromptArtifactNotFoundError extends PromptArtifactStoreError {
 }
 
 interface PromptArtifactSnapshot {
+  readonly promptSurface?: PromptSurface;
   readonly manifestBytes: Uint8Array;
   readonly roles: readonly PromptArtifactRoleMetadata[];
   readonly artifacts: ReadonlyMap<string, Uint8Array>;
@@ -118,6 +121,53 @@ function parsePromptSurface(value: string, pathLabel: string): PromptSurface {
     pathLabel,
     `expected one of ${PROMPT_SURFACES.join(", ")}`,
   );
+}
+
+function parseSurfaceMetadata(surfaceBytes: Uint8Array): PromptSurface {
+  let surfaceText: string;
+  try {
+    surfaceText = new TextDecoder("utf-8", { fatal: true }).decode(surfaceBytes);
+  } catch {
+    throw new PromptArtifactStoreError(SURFACE_METADATA_FILENAME, "expected valid UTF-8");
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(surfaceText) as unknown;
+  } catch {
+    throw new PromptArtifactStoreError(SURFACE_METADATA_FILENAME, "expected valid JSON");
+  }
+  if (!isRecord(value)) {
+    throw new PromptArtifactStoreError(SURFACE_METADATA_FILENAME, "expected an object");
+  }
+  const fields = Object.keys(value);
+  if (fields.length !== 1 || fields[0] !== "surface") {
+    throw new PromptArtifactStoreError(
+      SURFACE_METADATA_FILENAME,
+      'expected exactly one "surface" field',
+    );
+  }
+  if (typeof value.surface !== "string") {
+    throw new PromptArtifactStoreError(
+      `${SURFACE_METADATA_FILENAME}.surface`,
+      `expected one of ${PROMPT_SURFACES.join(", ")}`,
+    );
+  }
+  return parsePromptSurface(value.surface, `${SURFACE_METADATA_FILENAME}.surface`);
+}
+
+function validateSelectedSurface(
+  selectedSurface: PromptSurface,
+  surfaceBytes: Uint8Array,
+): PromptSurface {
+  const builtSurface = parseSurfaceMetadata(surfaceBytes);
+  if (builtSurface !== selectedSurface) {
+    throw new PromptArtifactStoreError(
+      `${SURFACE_METADATA_FILENAME}.surface`,
+      `selected prompt surface "${selectedSurface}" does not match built root "${builtSurface}"`,
+    );
+  }
+  return builtSurface;
 }
 
 function parseNonEmptyString(value: unknown, pathLabel: string): string {
@@ -526,6 +576,7 @@ function buildSnapshot(
   }
 
   return Object.freeze({
+    ...(promptSurface !== undefined ? { promptSurface } : {}),
     manifestBytes: copyBytes(manifestBytes),
     roles,
     artifacts,
@@ -543,6 +594,9 @@ abstract class SnapshotPromptArtifactStore implements PromptArtifactStore {
     return Object.freeze({
       bytes: copyBytes(this.#snapshot.manifestBytes),
       roles: this.#snapshot.roles,
+      ...(this.#snapshot.promptSurface !== undefined
+        ? { promptSurface: this.#snapshot.promptSurface }
+        : {}),
     });
   }
 
@@ -572,26 +626,39 @@ export class InMemoryPromptArtifactStore extends SnapshotPromptArtifactStore {
   constructor(manifestBytes: Uint8Array, artifacts: readonly InMemoryPromptRoleArtifact[]);
   constructor(
     promptSurface: PromptSurface,
+    surfaceBytes: Uint8Array,
     manifestBytes: Uint8Array,
     artifacts: readonly InMemoryPromptRoleArtifact[],
   );
   constructor(
     promptSurfaceOrManifestBytes: PromptSurface | Uint8Array,
-    manifestBytesOrArtifacts: Uint8Array | readonly InMemoryPromptRoleArtifact[],
+    surfaceBytesOrArtifacts: Uint8Array | readonly InMemoryPromptRoleArtifact[],
+    maybeManifestBytes?: Uint8Array,
     maybeArtifacts?: readonly InMemoryPromptRoleArtifact[],
   ) {
     if (typeof promptSurfaceOrManifestBytes === "string") {
-      const promptSurface = parsePromptSurface(promptSurfaceOrManifestBytes, "promptSurface");
-      if (!(manifestBytesOrArtifacts instanceof Uint8Array) || maybeArtifacts === undefined) {
-        throw new PromptArtifactStoreError("constructor", "expected manifest bytes and artifacts");
+      const selectedSurface = parsePromptSurface(promptSurfaceOrManifestBytes, "promptSurface");
+      if (
+        !(surfaceBytesOrArtifacts instanceof Uint8Array) ||
+        maybeManifestBytes === undefined ||
+        maybeArtifacts === undefined
+      ) {
+        throw new PromptArtifactStoreError(
+          "constructor",
+          "expected surface metadata bytes, manifest bytes, and artifacts",
+        );
       }
-      super(buildSnapshot(promptSurface, manifestBytesOrArtifacts, maybeArtifacts));
+      const promptSurface = validateSelectedSurface(
+        selectedSurface,
+        surfaceBytesOrArtifacts,
+      );
+      super(buildSnapshot(promptSurface, maybeManifestBytes, maybeArtifacts));
       return;
     }
-    if (!Array.isArray(manifestBytesOrArtifacts)) {
+    if (!Array.isArray(surfaceBytesOrArtifacts)) {
       throw new PromptArtifactStoreError("constructor", "expected artifacts");
     }
-    super(buildSnapshot(undefined, promptSurfaceOrManifestBytes, manifestBytesOrArtifacts));
+    super(buildSnapshot(undefined, promptSurfaceOrManifestBytes, surfaceBytesOrArtifacts));
   }
 }
 
@@ -695,8 +762,25 @@ export class FileSystemPromptArtifactStore extends SnapshotPromptArtifactStore {
     if (!statSync(resolvedRoot).isDirectory()) {
       throw new PromptArtifactStoreError("root", "expected a directory");
     }
+    const validatedSurface =
+      promptSurface === undefined
+        ? undefined
+        : validateSelectedSurface(
+            promptSurface,
+            readContainedFile(
+              resolvedRoot,
+              SURFACE_METADATA_FILENAME,
+              SURFACE_METADATA_FILENAME,
+            ),
+          );
     const manifestBytes = readContainedFile(resolvedRoot, MANIFEST_FILENAME, MANIFEST_FILENAME);
-    super(buildSnapshot(promptSurface, manifestBytes, collectFilesystemArtifacts(resolvedRoot)));
+    super(
+      buildSnapshot(
+        validatedSurface,
+        manifestBytes,
+        collectFilesystemArtifacts(resolvedRoot),
+      ),
+    );
     this.root = resolvedRoot;
   }
 }

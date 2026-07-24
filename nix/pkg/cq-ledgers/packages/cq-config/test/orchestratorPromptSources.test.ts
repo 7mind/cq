@@ -167,11 +167,15 @@ describe("orchestrator command prompt sources", () => {
         fragmentPaths,
       });
 
-      expect(tree.artifacts[1]!.path).toBe("roles/begin.md");
-      expect(tree.artifacts[1]!.content).toStartWith("---\n");
-      expect(tree.artifacts[1]!.content).toContain("$ARGUMENTS");
-      expect(tree.artifacts[1]!.content).not.toContain("{{cq:fragment:");
-      expect(tree.artifacts[1]!.content).not.toContain("CQ_HARNESS");
+      expect(tree.artifacts[1]).toEqual({
+        path: "surface.json",
+        content: JSON.stringify({ surface }),
+      });
+      expect(tree.artifacts[2]!.path).toBe("roles/begin.md");
+      expect(tree.artifacts[2]!.content).toStartWith("---\n");
+      expect(tree.artifacts[2]!.content).toContain("$ARGUMENTS");
+      expect(tree.artifacts[2]!.content).not.toContain("{{cq:fragment:");
+      expect(tree.artifacts[2]!.content).not.toContain("CQ_HARNESS");
       expect(fragmentPaths).toHaveLength(begin!.fragmentBindings.length);
       expect(readFileSync(sourcePaths[0]!.path, "utf8")).toContain(
         "{{cq:fragment:inline-command-recursion}}",
@@ -226,12 +230,12 @@ describe("orchestrator command prompt sources", () => {
       const second = renderPromptSurfaceTree(input);
 
       expect(second).toEqual(first);
-      expect(first.artifacts).toHaveLength(catalog.length + 1);
+      expect(first.artifacts).toHaveLength(catalog.length + 2);
       for (const [index, role] of catalog.entries()) {
-        const content = first.artifacts[index + 1]!.content;
+        const content = first.artifacts[index + 2]!.content;
         const source = readFileSync(path.join(ASSETS_ROOT, role.canonicalSource), "utf8");
         const description = source.split("\n").find((line) => line.startsWith("description:"));
-        expect(first.artifacts[index + 1]!.path).toBe(`roles/${role.roleId}.md`);
+        expect(first.artifacts[index + 2]!.path).toBe(`roles/${role.roleId}.md`);
         expect(content).toStartWith("---\n");
         expect(content).toContain("\n---\n");
         expect(content).toContain(description!);

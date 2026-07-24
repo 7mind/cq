@@ -258,12 +258,17 @@ describe("deterministic prompt renderer core", () => {
     expect(tree.surface).toBe("codex");
     expect(tree.artifacts.map((artifact) => artifact.path)).toEqual([
       "catalog.json",
+      "surface.json",
       "roles/first.md",
       "roles/nested/second.md",
     ]);
     expect(tree.artifacts[0]!.content).toBe(fixture.catalogJson);
+    expect(tree.artifacts[1]).toEqual({
+      path: "surface.json",
+      content: '{"surface":"codex"}',
+    });
 
-    const first = tree.artifacts[1]!.content;
+    const first = tree.artifacts[2]!.content;
     expect(first).toStartWith(
       [
         "---",
@@ -292,13 +297,17 @@ describe("deterministic prompt renderer core", () => {
       expect(fixture.sourcePaths.every((input) => path.isAbsolute(input.path))).toBe(true);
       expect(fixture.fragmentPaths.every((input) => path.isAbsolute(input.path))).toBe(true);
       expect(tree.surface).toBe(surface);
-      expect(tree.artifacts).toHaveLength(fixture.catalog.length + 1);
+      expect(tree.artifacts).toHaveLength(fixture.catalog.length + 2);
       expect(tree.artifacts[0]).toEqual({
         path: "catalog.json",
         content: fixture.catalogJson,
       });
-      expect(tree.artifacts[1]!.content).toContain("$ARGUMENTS");
-      expect(tree.artifacts[1]!.content).toContain("{{runtime_value}}");
+      expect(tree.artifacts[1]).toEqual({
+        path: "surface.json",
+        content: JSON.stringify({ surface }),
+      });
+      expect(tree.artifacts[2]!.content).toContain("$ARGUMENTS");
+      expect(tree.artifacts[2]!.content).toContain("{{runtime_value}}");
       expect(tree.artifacts.every((artifact) => !artifact.content.includes("{{cq:fragment:"))).toBe(
         true,
       );
@@ -379,6 +388,7 @@ describe("deterministic prompt renderer core", () => {
     };
     expect(tree.artifacts).toEqual([
       { path: "catalog.json", content: catalogJson },
+      { path: "surface.json", content: '{"surface":"codex"}' },
       {
         path: "roles/isolated.md",
         content:

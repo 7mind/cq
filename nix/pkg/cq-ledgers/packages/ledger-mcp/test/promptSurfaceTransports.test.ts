@@ -220,6 +220,7 @@ beforeAll(async () => {
     const surfaceRoot = surfaceRoots[surface];
     await fs.mkdir(path.join(surfaceRoot, "roles"), { recursive: true });
     await fs.writeFile(path.join(surfaceRoot, "catalog.json"), JSON.stringify(CATALOG));
+    await fs.writeFile(path.join(surfaceRoot, "surface.json"), JSON.stringify({ surface }));
     await fs.writeFile(
       path.join(surfaceRoot, "roles", `${DISPATCHED_ROLE_ID}.md`),
       PROMPT_BYTES[surface],
@@ -238,6 +239,32 @@ afterAll(async () => {
 });
 
 describe("standalone prompt-surface transports", () => {
+  test("stdio rejects a selected surface that does not match the built root", async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [
+        "run",
+        mainPath,
+        "--cwd",
+        tmpRoot,
+        "--prompt-surface",
+        "pi",
+        "--prompt-root",
+        surfaceRoots.codex,
+      ],
+      env: childEnv({}),
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "prompt-stdio-mismatch-test", version: "0.0.1" }, {
+      capabilities: {},
+    });
+    try {
+      await expect(client.connect(transport)).rejects.toThrow();
+    } finally {
+      await client.close();
+    }
+  });
+
   test("stdio supports prior and new consumers across all selected surfaces", async () => {
     const schemaBytes: string[] = [];
     for (const surface of SURFACES) {
@@ -367,5 +394,36 @@ describe("standalone prompt-surface transports", () => {
       }
     }
     expect(new Set(schemaBytes).size).toBe(1);
+  });
+
+  test("HTTP rejects a selected surface that does not match the built root", async () => {
+    const port = await freePort();
+    const processHandle: Subprocess = bunSpawn({
+      cmd: [
+        process.execPath,
+        "run",
+        mainPath,
+        "--cwd",
+        tmpRoot,
+        "--http",
+        `127.0.0.1:${String(port)}`,
+      ],
+      env: childEnv({
+        CQ_PROMPT_SURFACE: "pi",
+        CQ_PROMPT_ROOT: surfaceRoots.codex,
+      }),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    try {
+      const startup = await Promise.race([
+        processHandle.exited.then(() => "exited" as const),
+        waitForPort(port).then(() => "bound" as const),
+      ]);
+      expect(startup).toBe("exited");
+    } finally {
+      processHandle.kill();
+      await processHandle.exited;
+    }
   });
 });

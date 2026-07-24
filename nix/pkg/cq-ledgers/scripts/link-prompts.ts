@@ -177,6 +177,25 @@ function parseCatalog(content: string): readonly ClaudePromptRole[] {
   });
 }
 
+function validateClaudeSurface(content: string): void {
+  let value: unknown;
+  try {
+    value = JSON.parse(content) as unknown;
+  } catch {
+    throw new Error("rendered prompt surface.json contains invalid JSON");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("rendered prompt surface.json must contain an object");
+  }
+  const fields = Object.keys(value);
+  if (fields.length !== 1 || fields[0] !== "surface") {
+    throw new Error('rendered prompt surface.json must contain exactly one "surface" field');
+  }
+  if (Reflect.get(value, "surface") !== "claude") {
+    throw new Error('rendered prompt surface.json.surface must equal "claude"');
+  }
+}
+
 /**
  * Validate a complete rendered root and return the ordered catalog projection.
  * Extra files, missing roles, duplicate paths, and unresolved slots all fail.
@@ -195,9 +214,15 @@ export function validateRenderedClaudeRoot(
   if (catalogFile === undefined) {
     throw new Error("rendered prompt root is missing catalog.json");
   }
+  const surfaceFile = tree.find((file) => file.path === "surface.json");
+  if (surfaceFile === undefined) {
+    throw new Error("rendered prompt root is missing surface.json");
+  }
+  validateClaudeSurface(surfaceFile.content);
   const catalog = parseCatalog(catalogFile.content);
   const expectedPaths = new Set([
     "catalog.json",
+    "surface.json",
     ...catalog.map((role) => `roles/${role.roleId}.md`),
   ]);
   for (const expectedPath of expectedPaths) {

@@ -36,6 +36,10 @@ const OLD_TREE: readonly PromptFile[] = [
     path: "roles/plan-advance.md",
     content: "---\nname: plan-advance\n---\n\nOld planner\n",
   },
+  {
+    path: "surface.json",
+    content: '{"surface":"claude"}',
+  },
 ];
 
 const NEW_TREE: readonly PromptFile[] = OLD_TREE.map((file) =>
@@ -665,6 +669,28 @@ publicationContract("memory dummy", makeMemoryHarness);
 publicationContract("real temporary filesystem", makeRealHarness);
 
 describe("rendered Claude root validation", () => {
+  test("requires the immutable Claude surface identity", () => {
+    expect(() =>
+      validateRenderedClaudeRoot(OLD_TREE.filter((file) => file.path !== "surface.json")),
+    ).toThrow("rendered prompt root is missing surface.json");
+    expect(() =>
+      validateRenderedClaudeRoot(
+        OLD_TREE.map((file) =>
+          file.path === "surface.json" ? { ...file, content: '{"surface":"pi"}' } : file,
+        ),
+      ),
+    ).toThrow('rendered prompt surface.json.surface must equal "claude"');
+    expect(() =>
+      validateRenderedClaudeRoot(
+        OLD_TREE.map((file) =>
+          file.path === "surface.json"
+            ? { ...file, content: '{"surface":"claude","extra":true}' }
+            : file,
+        ),
+      ),
+    ).toThrow('rendered prompt surface.json must contain exactly one "surface" field');
+  });
+
   test("requires the exact catalog-declared role set", () => {
     expect(() =>
       validateRenderedClaudeRoot(OLD_TREE.filter((file) => file.path !== "roles/begin.md")),
@@ -724,6 +750,7 @@ describe("NodePromptPublicationStore atomic symlink semantics", () => {
       const directories = [result.generation, path.join(result.generation, "roles")];
       const files = [
         path.join(result.generation, "catalog.json"),
+        path.join(result.generation, "surface.json"),
         path.join(result.generation, "roles", "begin.md"),
         path.join(result.generation, "roles", "plan-advance.md"),
       ];

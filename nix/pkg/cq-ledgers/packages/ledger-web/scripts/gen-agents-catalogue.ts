@@ -158,7 +158,17 @@ function renderClaudeAgentSources(): ReadonlyMap<string, string> {
     fragmentPaths,
   });
   return new Map(
-    catalog.map((role, index) => [role.roleId, tree.artifacts[index + 1]!.content]),
+    catalog.map((role) => {
+      const artifactPath = `roles/${role.roleId}.md`;
+      const artifact = tree.artifacts.find(({ path: candidate }) => candidate === artifactPath);
+      if (artifact === undefined) {
+        throw new GenError(
+          path.join(ASSETS_ROOT, role.canonicalSource),
+          `rendered prompt tree is missing ${artifactPath}`,
+        );
+      }
+      return [role.roleId, artifact.content] as const;
+    }),
   );
 }
 

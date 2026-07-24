@@ -88,18 +88,25 @@ const MANIFEST_BYTES = new TextEncoder().encode(
     ]),
   ]),
 );
+const SURFACE_BYTES = new TextEncoder().encode(JSON.stringify({ surface: PROMPT_SURFACE }));
 const ROLE_ARTIFACTS = [
   { roleId: DISPATCHED_ROLE, bytes: new TextEncoder().encode(DISPATCHED_PROMPT) },
   { roleId: COMMAND_ROLE, bytes: new TextEncoder().encode(COMMAND_PROMPT) },
 ] as const;
 
 function inMemoryStore(): PromptArtifactStore {
-  return new InMemoryPromptArtifactStore(PROMPT_SURFACE, MANIFEST_BYTES, ROLE_ARTIFACTS);
+  return new InMemoryPromptArtifactStore(
+    PROMPT_SURFACE,
+    SURFACE_BYTES,
+    MANIFEST_BYTES,
+    ROLE_ARTIFACTS,
+  );
 }
 
 function filesystemStore(): PromptArtifactStore {
   const root = mkdtempSync(path.join(tmpdir(), "cq-prompt-capability-"));
   try {
+    writeFileSync(path.join(root, "surface.json"), SURFACE_BYTES);
     writeFileSync(path.join(root, "catalog.json"), MANIFEST_BYTES);
     for (const artifact of ROLE_ARTIFACTS) {
       const artifactPath = path.join(root, "roles", `${artifact.roleId}.md`);

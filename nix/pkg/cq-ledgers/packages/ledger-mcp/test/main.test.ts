@@ -47,7 +47,14 @@ function xdgLedgerToml(projectId: string): string {
 function childEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined) env[k] = v;
+    if (
+      v !== undefined &&
+      k !== "CQ_PROMPT_ROOT" &&
+      k !== "CQ_PROMPT_SURFACE" &&
+      k !== "CQ_PROMPT_SURFACES_ROOT"
+    ) {
+      env[k] = v;
+    }
   }
   return env;
 }
@@ -283,7 +290,14 @@ async function withClientAtRootHarness(
   // exactly as the pi wrapper would (or strip it for the unset/default case).
   const childEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined) childEnv[k] = v;
+    if (
+      v !== undefined &&
+      k !== "CQ_PROMPT_ROOT" &&
+      k !== "CQ_PROMPT_SURFACE" &&
+      k !== "CQ_PROMPT_SURFACES_ROOT"
+    ) {
+      childEnv[k] = v;
+    }
   }
   delete childEnv["CQ_HARNESS"];
   // CLAUDE_CODE_SESSION_ID would resolve to "claude" when CQ_HARNESS is unset;
