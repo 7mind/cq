@@ -152,6 +152,8 @@ export type { LedgerToolName } from "./mcp/ledgerTools.js";
 export {
   COMPACT_ITEM_FIELD_NAMES,
   LEDGER_RESPONSE_CONTRACTS,
+  isProducedWireDto,
+  produceWireDto,
   projectCompactItemDto,
   projectFullItemDto,
   projectItemDto,
@@ -166,6 +168,7 @@ export {
   serializeWireDto,
 } from "./mcp/wireResponseContract.js";
 export type {
+  ProducedWireDto,
   ItemProjection,
   CompactItemFieldName,
   CompactItemFieldsDto,

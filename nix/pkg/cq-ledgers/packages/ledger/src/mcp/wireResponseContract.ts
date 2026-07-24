@@ -7,6 +7,12 @@ import type { FtsSearchHit } from "../search/LedgerSearchIndex.js";
 import type { FetchedMilestoneItem } from "../store/LedgerStore.js";
 import type { LedgerToolName } from "./ledgerTools.js";
 
+const PRODUCED_WIRE_DTO = Symbol("cq.producedWireDto");
+
+export type ProducedWireDto<T extends object> = T & {
+  readonly [PRODUCED_WIRE_DTO]: true;
+};
+
 export type ItemProjection = "compact" | "full";
 
 export const COMPACT_ITEM_FIELD_NAMES = [
@@ -199,10 +205,37 @@ const MILESTONE_REFERENCE_FIELD_NAMES = [
   "blockedBy",
 ] as const;
 
+function markProduced<T extends object>(value: T): ProducedWireDto<T> {
+  Object.defineProperty(value, PRODUCED_WIRE_DTO, {
+    value: true,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return value as ProducedWireDto<T>;
+}
+
+export function isProducedWireDto(
+  value: unknown,
+): value is ProducedWireDto<object> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Reflect.get(value, PRODUCED_WIRE_DTO) === true
+  );
+}
+
+export function produceWireDto<T extends object>(
+  value: T,
+): ProducedWireDto<T> {
+  const copy = Array.isArray(value) ? [...value] : { ...value };
+  return markProduced(copy as T);
+}
+
 function projectIntrinsicItem(
   item: Item,
   fields: CompactItemFieldsDto,
-): CompactItemDto {
+): ProducedWireDto<CompactItemDto> {
   const projected: CompactItemDto = {
     id: item.id,
     milestoneId: item.milestoneId,
@@ -213,10 +246,12 @@ function projectIntrinsicItem(
   };
   if (item.author !== undefined) projected.author = item.author;
   if (item.session !== undefined) projected.session = item.session;
-  return projected;
+  return markProduced(projected);
 }
 
-export function projectCompactItemDto(item: Item): CompactItemDto {
+export function projectCompactItemDto(
+  item: Item,
+): ProducedWireDto<CompactItemDto> {
   const fields: CompactItemFieldsDto = {};
   for (const name of COMPACT_ITEM_FIELD_NAMES) {
     const value = item.fields[name];
@@ -225,14 +260,21 @@ export function projectCompactItemDto(item: Item): CompactItemDto {
   return projectIntrinsicItem(item, fields);
 }
 
-export function projectFullItemDto(item: Item): FullItemDto {
-  return item;
+export function projectFullItemDto(
+  item: Item,
+): ProducedWireDto<FullItemDto> {
+  return markProduced({
+    ...item,
+    fields: { ...item.fields },
+  });
 }
 
 export function projectItemDto(
   item: Item,
   projection: ItemProjection,
-): CompactItemDto | FullItemDto {
+):
+  | ProducedWireDto<CompactItemDto>
+  | ProducedWireDto<FullItemDto> {
   switch (projection) {
     case "compact":
       return projectCompactItemDto(item);
@@ -244,14 +286,14 @@ export function projectItemDto(
 export function projectFetchedLedgerDto(
   ledger: FetchedLedger,
   projection: ItemProjection,
-): FetchedLedgerDto {
-  return {
+): ProducedWireDto<FetchedLedgerDto> {
+  return markProduced({
     ...ledger,
     milestones: ledger.milestones.map((group) => ({
       ...group,
       items: group.items.map((item) => projectItemDto(item, projection)),
     })),
-  };
+  });
 }
 
 export function projectPaginatedLedgerDto(
@@ -261,42 +303,46 @@ export function projectPaginatedLedgerDto(
     total: number;
   },
   projection: ItemProjection,
-): PaginatedLedgerDto {
-  return {
+): ProducedWireDto<PaginatedLedgerDto> {
+  return markProduced({
     ...response,
     items: response.items.map((item) => projectItemDto(item, projection)),
-  };
+  });
 }
 
 export function projectFtsSearchResultsDto(
   hits: FtsSearchHit[],
   projection: ItemProjection,
-): FtsSearchResultDto[] {
-  return hits.map((hit) => ({
-    ...hit,
-    item: projectItemDto(hit.item, projection),
-  }));
+): ProducedWireDto<FtsSearchResultDto[]> {
+  return markProduced(
+    hits.map((hit) => ({
+      ...hit,
+      item: projectItemDto(hit.item, projection),
+    })),
+  );
 }
 
 export function projectFetchedMilestoneDto(
   fetched: FetchedMilestoneItem,
   projection: ItemProjection,
-): FetchedMilestoneDto {
-  return {
+): ProducedWireDto<FetchedMilestoneDto> {
+  return markProduced({
     ...fetched,
     milestone: projectItemDto(fetched.milestone, projection),
-  };
+  });
 }
 
 export function projectMilestoneItemGroupsDto(
   groups: Record<string, Item[]>,
   projection: ItemProjection,
-): MilestoneItemGroupsDto {
-  return Object.fromEntries(
-    Object.entries(groups).map(([ledgerId, items]) => [
-      ledgerId,
-      items.map((item) => projectItemDto(item, projection)),
-    ]),
+): ProducedWireDto<MilestoneItemGroupsDto> {
+  return markProduced(
+    Object.fromEntries(
+      Object.entries(groups).map(([ledgerId, items]) => [
+        ledgerId,
+        items.map((item) => projectItemDto(item, projection)),
+      ]),
+    ),
   );
 }
 
@@ -320,7 +366,7 @@ function projectReferenceFields(
 
 export function projectItemMutationAckDto(
   item: Item,
-): ItemMutationAckDto {
+): ProducedWireDto<ItemMutationAckDto> {
   const projected: ItemMutationAckDto = {
     id: item.id,
     milestoneId: item.milestoneId,
@@ -331,18 +377,18 @@ export function projectItemMutationAckDto(
   };
   if (item.author !== undefined) projected.author = item.author;
   if (item.session !== undefined) projected.session = item.session;
-  return projected;
+  return markProduced(projected);
 }
 
 export function projectLedgerMutationAckDto(
   ledger: FetchedLedger,
-): LedgerMutationAckDto {
-  return { id: ledger.id };
+): ProducedWireDto<LedgerMutationAckDto> {
+  return markProduced({ id: ledger.id });
 }
 
 export function projectMilestoneMutationAckDto(
   milestone: Item,
-): MilestoneMutationAckDto {
+): ProducedWireDto<MilestoneMutationAckDto> {
   const projected: MilestoneMutationAckDto = {
     id: milestone.id,
     status: milestone.status,
@@ -355,9 +401,14 @@ export function projectMilestoneMutationAckDto(
   };
   if (milestone.author !== undefined) projected.author = milestone.author;
   if (milestone.session !== undefined) projected.session = milestone.session;
-  return projected;
+  return markProduced(projected);
 }
 
-export function serializeWireDto(value: unknown): string {
+export function serializeWireDto(
+  value: ProducedWireDto<object>,
+): string {
+  if (!isProducedWireDto(value)) {
+    throw new TypeError("serializeWireDto requires a produced wire DTO");
+  }
   return JSON.stringify(value);
 }

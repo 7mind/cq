@@ -1,9 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import type { FetchedLedger, Item, LedgerSchema } from "../src/types.js";
+import type { ArchiveContent } from "../src/store/LedgerStore.js";
+import type { ReadLogResult } from "../src/mcp/readLog.js";
+import type { GetConfigResult } from "../src/mcp/configCapability.js";
+import type { FetchPromptResult } from "../src/mcp/promptCatalogCapability.js";
 import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
 import { LEDGER_TOOL_NAMES } from "../src/mcp/ledgerTools.js";
 import {
   LEDGER_RESPONSE_CONTRACTS,
+  isProducedWireDto,
+  produceWireDto,
   projectCompactItemDto,
   projectFullItemDto,
   projectFetchedLedgerDto,
@@ -21,6 +27,7 @@ import {
   type ItemProjection,
   type LedgerMutationAckDto,
   type MilestoneMutationAckDto,
+  type ProducedWireDto,
 } from "../src/mcp/wireResponseContract.js";
 
 const createdAt = "2026-07-24T12:00:00.000Z";
@@ -47,7 +54,7 @@ function item(overrides: Partial<Item> = {}): Item {
   };
 }
 
-function reloadWire(value: unknown): unknown {
+function reloadWire(value: ProducedWireDto<object>): unknown {
   return JSON.parse(serializeWireDto(value));
 }
 
@@ -243,7 +250,9 @@ describe("item wire projections", () => {
     };
     const { milestones, ...ledgerMetadata } = ledger;
 
-    expect(projectFetchedLedgerDto(ledger, "compact")).toEqual({
+    expect(
+      reloadWire(projectFetchedLedgerDto(ledger, "compact")),
+    ).toEqual({
       ...ledger,
       milestones: [
         {
@@ -253,9 +262,11 @@ describe("item wire projections", () => {
       ],
     });
     expect(
-      projectPaginatedLedgerDto(
-        { ledger: ledgerMetadata, items: [source], total: 41 },
-        "compact",
+      reloadWire(
+        projectPaginatedLedgerDto(
+          { ledger: ledgerMetadata, items: [source], total: 41 },
+          "compact",
+        ),
       ),
     ).toEqual({
       ledger: ledgerMetadata,
@@ -263,16 +274,18 @@ describe("item wire projections", () => {
       total: 41,
     });
     expect(
-      projectFtsSearchResultsDto(
-        [
-          {
-            ledgerId: "tasks",
-            item: source,
-            score: 9.75,
-            matchedFields: ["headline"],
-          },
-        ],
-        "compact",
+      reloadWire(
+        projectFtsSearchResultsDto(
+          [
+            {
+              ledgerId: "tasks",
+              item: source,
+              score: 9.75,
+              matchedFields: ["headline"],
+            },
+          ],
+          "compact",
+        ),
       ),
     ).toEqual([
       {
@@ -283,18 +296,20 @@ describe("item wire projections", () => {
       },
     ]);
     expect(
-      projectFetchedMilestoneDto(
-        {
-          milestone: source,
-          resolved: {
-            id: "M1",
-            status: "open",
-            title: "Wire contract",
-            description: "Milestone metadata",
+      reloadWire(
+        projectFetchedMilestoneDto(
+          {
+            milestone: source,
+            resolved: {
+              id: "M1",
+              status: "open",
+              title: "Wire contract",
+              description: "Milestone metadata",
+            },
+            references: { tasks: 1, defects: 2 },
           },
-          references: { tasks: 1, defects: 2 },
-        },
-        "compact",
+          "compact",
+        ),
       ),
     ).toEqual({
       milestone: projectCompactItemDto(source),
@@ -307,9 +322,11 @@ describe("item wire projections", () => {
       references: { tasks: 1, defects: 2 },
     });
     expect(
-      projectMilestoneItemGroupsDto(
-        { tasks: [source], defects: [item({ id: "D1" })] },
-        "compact",
+      reloadWire(
+        projectMilestoneItemGroupsDto(
+          { tasks: [source], defects: [item({ id: "D1" })] },
+          "compact",
+        ),
       ),
     ).toEqual({
       tasks: [projectCompactItemDto(source)],
@@ -460,6 +477,10 @@ describe("mutation acknowledgement projections", () => {
       false,
     );
 
+    await store.updateItem("milestones", created.id, {
+      author: "gpt-5.6",
+      session: "session-milestone",
+    });
     const updated = await store.updateMilestone(created.id, {
       status: "blocked",
       dependsOn: [dependency.id],
@@ -471,15 +492,11 @@ describe("mutation acknowledgement projections", () => {
     );
     expect(updated.status).toBe("blocked");
     expect(updated.updatedAt).toBe(authoritativeUpdated.updatedAt);
-
-    const attributedMilestone = {
-      ...authoritativeUpdated,
-      author: "gpt-5.6",
-      session: "session-milestone",
-    };
-    expect(projectMilestoneMutationAckDto(attributedMilestone)).toEqual(
-      expectedMilestoneAck(attributedMilestone),
-    );
+    expect(authoritativeUpdated.author).toBe("gpt-5.6");
+    expect(authoritativeUpdated.session).toBe("session-milestone");
+    expect(
+      reloadWire(projectMilestoneMutationAckDto(authoritativeUpdated)),
+    ).toEqual(expectedMilestoneAck(authoritativeUpdated));
   });
 
   it("projects the actual createLedger FetchedLedger result without invented provenance", async () => {
@@ -504,117 +521,142 @@ describe("mutation acknowledgement projections", () => {
 
 describe("wire serialization", () => {
   it("uses minified JSON", () => {
-    expect(serializeWireDto({ id: "T1", status: "wip" })).toBe(
-      '{"id":"T1","status":"wip"}',
-    );
+    expect(
+      serializeWireDto(produceWireDto({ id: "T1", status: "wip" })),
+    ).toBe('{"id":"T1","status":"wip"}');
   });
 
-  it("preserves every representative requested-full-content payload", () => {
+  it("requires a produced marker and omits it from serialized JSON", () => {
+    const projected = projectCompactItemDto(item());
+
+    expect(isProducedWireDto(projected)).toBe(true);
+    expect(
+      Reflect.ownKeys(projected).some((key) => typeof key === "symbol"),
+    ).toBe(true);
+    const reloaded = JSON.parse(serializeWireDto(projected));
+    expect(isProducedWireDto(reloaded)).toBe(false);
+    expect(
+      Reflect.ownKeys(reloaded).some((key) => typeof key === "symbol"),
+    ).toBe(false);
+    expect(() =>
+      Reflect.apply(serializeWireDto, undefined, [{ id: "T1" }]),
+    ).toThrow("serializeWireDto requires a produced wire DTO");
+  });
+
+  it("preserves every requested-full-content response exactly once", () => {
     const fullItem = item({
       author: "gpt-5.6",
       session: "session-full-content",
     });
-    const payloads = {
-      archive: {
-        archive: {
-          milestone: {
-            id: "M1",
-            title: "Archived work",
-            description: "Complete archive narrative",
-            items: [fullItem],
-          },
-          pointer: {
-            id: "M1",
-            path: "./archive/tasks/M1.md",
-            summary: "Archived",
-            title: "Archived work",
-            status: "done",
-          },
-        },
-      },
-      log: {
-        path: "raw/session.jsonl",
-        content: '{"type":"result","body":"complete"}\n',
-        truncated: false,
-      },
-      config: {
-        configured: true,
-        aliases: {
-          opus: {
-            harness: "claude",
-            model: "claude-opus-4-6",
-            provider: null,
-            effort: "max",
-          },
-        },
-        tiers: {
-          claude: {
-            frontier: {
-              harness: "claude",
-              model: "claude-opus-4-6",
-              provider: null,
-              effort: "max",
-            },
-          },
-        },
-        agentEfforts: { "plan-reviewer": "max" },
-      },
-      models: {
-        configured: true,
-        agents: [
-          {
-            roleId: "implement-worker",
-            status: "resolved",
-            harness: "codex",
-            model: "gpt-5.6",
-            mappings: ["codex:gpt-5.6"],
-          },
-        ],
-      },
-      prompt: {
-        roleId: "plan-reviewer",
-        prompt: "Review the complete plan body.",
-        inputSchema: {
-          $schema: "https://json-schema.org/draft/2020-12/schema",
-          type: "object",
-          properties: { goalId: { type: "string" } },
-          required: ["goalId"],
-        },
-        outputSchema: {
-          $schema: "https://json-schema.org/draft/2020-12/schema",
-          type: "object",
-          properties: { verdict: { enum: ["go-ahead", "revise"] } },
-          required: ["verdict"],
-        },
-      },
-      validation: {
-        ok: false,
-        errors: [
-          {
-            path: ["goalId"],
-            keyword: "required",
-            message: "goalId is required",
-          },
-        ],
-      },
-      projects: {
-        projects: [
-          {
-            key: "project-key",
-            displayName: "ledger-suite",
-            createdAt: "2026-07-24T12:00:00.000Z",
-          },
-        ],
+    const archive: ArchiveContent = {
+      kind: "group",
+      milestone: {
+        id: "M1",
+        title: "Archived work",
+        description: "Complete archive narrative",
+        items: [fullItem],
       },
     };
+    const log: ReadLogResult = {
+      path: "raw/session.jsonl",
+      content: '{"type":"result","body":"complete"}\n',
+      truncated: false,
+    };
+    const config: GetConfigResult = {
+      configured: true,
+      aliases: {
+        opus: {
+          harness: "claude",
+          model: "claude-opus-4-6",
+          provider: null,
+          effort: "max",
+        },
+      },
+      reviewers: ["opus"],
+      planners: ["opus"],
+      tiers: {
+        frontier: {
+          harness: "claude",
+          model: "claude-opus-4-6",
+          provider: null,
+          effort: "max",
+        },
+      },
+      agentTiers: { "plan-reviewer": "frontier" },
+      agentEfforts: { "plan-reviewer": "max" },
+    };
+    const prompt: FetchPromptResult = {
+      roleId: "plan-reviewer",
+      kind: "dispatched-subagent",
+      dispatched: true,
+      promptTemplate: "Review the complete plan body.",
+      version: 1,
+      inputSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: { goalId: { type: "string" } },
+        required: ["goalId"],
+      },
+      outputSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: { verdict: { enum: ["go-ahead", "revise"] } },
+        required: ["verdict"],
+      },
+    };
+    const payloads = {
+      fetch_ledger_archive: { archive },
+      read_log: log,
+      get_config: config,
+      fetch_prompt: prompt,
+    } satisfies RequestedFullPayloads;
+    const requestedFullToolNames = [
+      "fetch_ledger_archive",
+      "read_log",
+      "get_config",
+      "fetch_prompt",
+    ] as const satisfies readonly RequestedFullToolName[];
+    const matrixRequestedFullToolNames = Object.entries(
+      LEDGER_RESPONSE_CONTRACTS,
+    )
+      .filter(([, contract]) => contract.kind === "requested-full-content")
+      .map(([toolName]) => toolName);
 
-    for (const [name, payload] of Object.entries(payloads)) {
-      const serialized = serializeWireDto(payload);
-      expect(JSON.parse(serialized), name).toEqual(payload);
-      expect(serialized.includes("\n"), name).toBe(false);
+    expect(matrixRequestedFullToolNames).toEqual([
+      ...requestedFullToolNames,
+    ]);
+    expect(new Set(requestedFullToolNames).size).toBe(
+      requestedFullToolNames.length,
+    );
+    for (const toolName of requestedFullToolNames) {
+      const payload = payloads[toolName];
+      const serialized = serializeWireDto(produceWireDto(payload));
+      expect(JSON.parse(serialized), toolName).toEqual(payload);
+      expect(serialized.includes("\n"), toolName).toBe(false);
     }
   });
 });
+
+type RequestedFullToolName = {
+  [ToolName in keyof typeof LEDGER_RESPONSE_CONTRACTS]:
+    (typeof LEDGER_RESPONSE_CONTRACTS)[ToolName] extends {
+      kind: "requested-full-content";
+    }
+      ? ToolName
+      : never;
+}[keyof typeof LEDGER_RESPONSE_CONTRACTS];
+
+interface RequestedFullPayloadByTool {
+  fetch_ledger_archive: { archive: ArchiveContent };
+  read_log: ReadLogResult;
+  get_config: GetConfigResult;
+  fetch_prompt: FetchPromptResult;
+}
+
+type RequestedFullPayloads = {
+  [ToolName in RequestedFullToolName]:
+    RequestedFullPayloadByTool[ToolName];
+};
 
 type Exact<Expected, Actual extends Expected> = Actual &
   Record<Exclude<keyof Actual, keyof Expected>, never>;
@@ -670,6 +712,35 @@ const structuralMilestoneAck = {
   session: "session-milestone",
 } satisfies MilestoneMutationAckDto;
 void structuralMilestoneAck;
+
+const widenedFullItem: Item = item();
+// @ts-expect-error full Items have not passed through the compact projector
+const invalidCompactProduction: ReturnType<
+  typeof projectCompactItemDto
+> = widenedFullItem;
+// @ts-expect-error full Items have not passed through the item acknowledgement projector
+const invalidItemAckProduction: ReturnType<
+  typeof projectItemMutationAckDto
+> = widenedFullItem;
+void invalidCompactProduction;
+void invalidItemAckProduction;
+
+const widenedFetchedLedger: FetchedLedger = {
+  id: "tasks",
+  schema: {
+    statusValues: ["wip"],
+    terminalStatuses: [],
+    fields: {},
+  },
+  counters: { milestone: 0, item: 0 },
+  milestones: [],
+  archivePointers: [],
+};
+// @ts-expect-error fetched ledgers have not passed through the ledger acknowledgement projector
+const invalidLedgerAckProduction: ReturnType<
+  typeof projectLedgerMutationAckDto
+> = widenedFetchedLedger;
+void invalidLedgerAckProduction;
 
 // @ts-expect-error mandatory item reads accept only compact or full
 const invalidProjection: ItemProjection = "summary";
