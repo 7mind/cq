@@ -532,6 +532,47 @@ describe("prompt renderer boundary failures", () => {
         `fragments.${roleWithToken.roleId}.${bindingWithToken.fragment}: forbidden vocabulary "${token}" for surface "${surface}"`,
       );
     });
+
+    test(`rejects a ${surface} harness token in direct Nix-catalog final output deterministically`, () => {
+      const fixture = makeNixFixture(surface);
+      const roleWithToken = fixture.catalog.find((role) =>
+        role.fragmentBindings.some(
+          (binding) => binding.forbiddenVocabulary[surface].length > 0,
+        ),
+      );
+      if (roleWithToken === undefined) {
+        throw new Error(`Nix catalog declares no forbidden ${surface} vocabulary`);
+      }
+      const bindingWithToken = roleWithToken.fragmentBindings.find(
+        (binding) => binding.forbiddenVocabulary[surface].length > 0,
+      );
+      if (bindingWithToken === undefined) {
+        throw new Error(`Nix catalog role has no forbidden ${surface} vocabulary`);
+      }
+      const token = bindingWithToken.forbiddenVocabulary[surface][0];
+      if (token === undefined) {
+        throw new Error(`Nix catalog role has an empty forbidden ${surface} token list`);
+      }
+      const sourceInput = fixture.sourcePaths.find(
+        ({ canonicalSource }) => canonicalSource === roleWithToken.canonicalSource,
+      );
+      if (sourceInput === undefined) {
+        throw new Error(`fixture omitted ${roleWithToken.canonicalSource}`);
+      }
+      writeFileSync(
+        sourceInput.path,
+        readFileSync(sourceInput.path, "utf8").replace(
+          "Shared ",
+          `Shared ${token} `,
+        ),
+      );
+      const expected =
+        `rendered.${roleWithToken.roleId}: forbidden vocabulary ` +
+        `"${token}" for surface "${surface}"`;
+
+      expect(() => renderNixFixture(fixture)).toThrow(expected);
+      expect(() => renderNixFixture(fixture)).toThrow(expected);
+    });
   }
 
   test("rejects undeclared source and fragment inputs", () => {
