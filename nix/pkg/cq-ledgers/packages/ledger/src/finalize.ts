@@ -614,9 +614,6 @@ export function computeGoalsFinalizePlan(
   const activeMilestones = new Map(
     milestoneItems(snapshot).map((milestone) => [milestone.id, milestone]),
   );
-  const archivedMilestones = new Set(
-    snapshot.milestones.archivePointers.map((pointer) => pointer.id),
-  );
   const milestoneTerminal = new Set(snapshot.milestones.schema.terminalStatuses);
   const milestoneTarget = doneLikeTerminal(
     snapshot.milestones.schema,
@@ -626,7 +623,7 @@ export function computeGoalsFinalizePlan(
   const archiveOperations = new Map<string, GoalsFinalizeOperation>();
 
   for (const [milestoneId] of relatedMilestones) {
-    if (milestoneId === MILESTONES_AMBIENT_ID || archivedMilestones.has(milestoneId)) continue;
+    if (milestoneId === MILESTONES_AMBIENT_ID) continue;
     const milestone = activeMilestones.get(milestoneId);
     if (milestone === undefined) continue;
 

@@ -346,6 +346,56 @@ describe("computeGoalsFinalizePlan", () => {
     expect(snapshot).toEqual(before);
   });
 
+  it("unions exact prerequisites when one milestone is both work and coordination", () => {
+    const snapshot = makeSnapshot({
+      milestones: [
+        makeItem("M-SHARED", "open"),
+        makeItem("M-COMPLETE", "done"),
+      ],
+      // An active/archive overlap cannot occur in a live store, but it is the
+      // only pure snapshot that keeps M-SHARED Q289-complete for G-WORK while
+      // a selected non-terminal G-COORD remains grouped under the same id.
+      archivedMilestones: [archived("M-SHARED")],
+      tasks: {
+        "M-SHARED": [makeItem("T1", "done")],
+        "M-COMPLETE": [makeItem("T2", "done")],
+      },
+      goals: {
+        "M-OTHER": [
+          makeItem("G-WORK", "building", {
+            title: "work role",
+            description: "d",
+            milestones: ["M-SHARED"],
+          }),
+        ],
+        "M-SHARED": [
+          makeItem("G-COORD", "building", {
+            title: "coordination role",
+            description: "d",
+            milestones: ["M-COMPLETE"],
+          }),
+        ],
+      },
+    });
+
+    const plan = computeGoalsFinalizePlan(snapshot);
+    expect(plan.eligibleGoals.map(({ id }) => id)).toEqual(["G-WORK", "G-COORD"]);
+    expect(
+      plan.operations.filter(({ id }) => id === "milestone:M-SHARED:close"),
+    ).toHaveLength(1);
+    expect(
+      plan.operations.filter(({ id }) => id === "milestone:M-SHARED:archive"),
+    ).toHaveLength(1);
+    expect(operation(plan.operations, "milestone:M-SHARED:close")).toMatchObject({
+      orderedAfter: ["goal:G-COORD:to-done"],
+      requiresSuccessOf: ["goal:G-COORD:to-done"],
+    });
+    expect(operation(plan.operations, "milestone:M-SHARED:archive")).toMatchObject({
+      orderedAfter: ["goal:G-COORD:to-done", "milestone:M-SHARED:close"],
+      requiresSuccessOf: ["goal:G-COORD:to-done", "milestone:M-SHARED:close"],
+    });
+  });
+
   it("adds no synthetic close prerequisite for an already-terminal coordination milestone", () => {
     const snapshot = makeSnapshot({
       milestones: [makeItem("M-WORK", "done"), makeItem("M-COORD", "done")],
