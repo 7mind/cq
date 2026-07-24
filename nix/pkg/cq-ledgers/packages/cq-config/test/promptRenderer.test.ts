@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  PromptRendererError,
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
   type PromptFragmentFileInput,
@@ -223,6 +224,15 @@ function renderNixFixture(fixture: NixFixture) {
     sourcePaths: fixture.sourcePaths,
     fragmentPaths: fixture.fragmentPaths,
   });
+}
+
+function captureThrown(action: () => unknown): unknown {
+  try {
+    action();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected action to throw");
 }
 
 function render(fixture: Fixture) {
@@ -569,9 +579,13 @@ describe("prompt renderer boundary failures", () => {
       const expected =
         `rendered.${roleWithToken.roleId}: forbidden vocabulary ` +
         `"${token}" for surface "${surface}"`;
+      const firstError = captureThrown(() => renderNixFixture(fixture));
+      const secondError = captureThrown(() => renderNixFixture(fixture));
 
-      expect(() => renderNixFixture(fixture)).toThrow(expected);
-      expect(() => renderNixFixture(fixture)).toThrow(expected);
+      expect(firstError).toBeInstanceOf(PromptRendererError);
+      expect(secondError).toBeInstanceOf(PromptRendererError);
+      expect((firstError as PromptRendererError).message).toBe(expected);
+      expect((secondError as PromptRendererError).message).toBe(expected);
     });
   }
 
