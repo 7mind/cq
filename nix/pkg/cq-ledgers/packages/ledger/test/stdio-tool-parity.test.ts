@@ -18,14 +18,6 @@ import {
 
 const FIXED_NOW = "2026-07-24T12:00:00.000Z";
 const PREFIXES = ["", "mirror"] as const;
-const PROJECTED_READS = [
-  "fetch_ledger",
-  "fetch_item",
-  "search_items",
-  "fts_search",
-  "fetch_milestone",
-  "list_milestone_items",
-] as const;
 
 const READ_LOG_RESULT = {
   path: "raw/session.jsonl",
@@ -150,21 +142,45 @@ const listProjects: ListProjectsCapability = () => PROJECTS_RESULT;
 
 type DirectTools = ReturnType<typeof createLedgerMcpTools>;
 
+interface ToolCapabilities {
+  readLog: ReadLogCapability | undefined;
+  config: ConfigCapability | undefined;
+  promptCatalog: PromptCatalogCapability | undefined;
+  listProjects: ListProjectsCapability | undefined;
+}
+
+const AVAILABLE_CAPABILITIES: ToolCapabilities = {
+  readLog,
+  config: configCapability,
+  promptCatalog,
+  listProjects,
+};
+
+const UNAVAILABLE_CAPABILITIES: ToolCapabilities = {
+  readLog: undefined,
+  config: undefined,
+  promptCatalog: undefined,
+  listProjects: undefined,
+};
+
 interface TextToolResult {
   content: Array<{ type: string; text?: string }>;
   isError?: boolean;
 }
 
-interface ToolOutcome {
-  kind: "success" | "error";
-  text: string;
-}
+type ToolOutcome =
+  | { kind: "success"; payload: unknown }
+  | {
+      kind: "error";
+      error:
+        | { category: "validation"; issues: unknown }
+        | { category: "handler"; message: string };
+    };
 
 interface ComparableToolDefinition {
   name: string;
   description: string;
-  inputs: string[];
-  required: string[];
+  schema: unknown;
 }
 
 interface Fixture {
@@ -255,14 +271,18 @@ async function buildFixture(): Promise<Fixture> {
   };
 }
 
-function directTools(store: LedgerStore, prefix: string): DirectTools {
+function directTools(
+  store: LedgerStore,
+  prefix: string,
+  capabilities: ToolCapabilities,
+): DirectTools {
   return createLedgerMcpTools(
     store,
-    readLog,
-    configCapability,
-    promptCatalog,
+    capabilities.readLog,
+    capabilities.config,
+    capabilities.promptCatalog,
     prefix,
-    listProjects,
+    capabilities.listProjects,
   );
 }
 
@@ -270,34 +290,38 @@ function prefixed(prefix: string, name: string): string {
   return prefix === "" ? name : `${prefix}_${name}`;
 }
 
-function requiredNames(schema: { required?: unknown }): string[] {
-  return Array.isArray(schema.required)
-    ? schema.required.filter((value): value is string => typeof value === "string").sort()
-    : [];
-}
+function normalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeJson);
+  if (value === null || typeof value !== "object") return value;
 
-function inputNames(schema: { properties?: unknown }): string[] {
+  const normalized = Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, normalizeJson(nested)]),
+  );
   if (
-    schema.properties === undefined ||
-    schema.properties === null ||
-    typeof schema.properties !== "object" ||
-    Array.isArray(schema.properties)
+    normalized["type"] === "object" &&
+    normalized["properties"] !== undefined &&
+    normalized["additionalProperties"] === undefined
   ) {
-    return [];
+    normalized["additionalProperties"] = false;
   }
-  return Object.keys(schema.properties).sort();
+  return Object.fromEntries(
+    Object.entries(normalized).sort(([left], [right]) =>
+      left.localeCompare(right),
+    ),
+  );
 }
 
 function comparableDefinition(
   name: string,
   description: string,
-  schema: { properties?: unknown; required?: unknown },
+  schema: unknown,
 ): ComparableToolDefinition {
   return {
     name,
     description,
-    inputs: inputNames(schema),
-    required: requiredNames(schema),
+    schema: normalizeJson(schema),
   };
 }
 
@@ -306,6 +330,7 @@ function directDefinitions(tools: DirectTools): ComparableToolDefinition[] {
     .map((tool) => {
       const schema = z.toJSONSchema(
         z.object(tool.inputSchema as Record<string, z.ZodType>),
+        { target: "draft-7" },
       );
       return comparableDefinition(tool.name, tool.description, schema);
     })
@@ -315,6 +340,7 @@ function directDefinitions(tools: DirectTools): ComparableToolDefinition[] {
 async function connectStdio(
   store: LedgerStore,
   prefix: string,
+  capabilities: ToolCapabilities,
 ): Promise<StdioConnection> {
   const server = new McpServer(
     { name: "stdio-parity-test", version: "0.0.1" },
@@ -323,11 +349,11 @@ async function connectStdio(
   registerLedgerStdioTools(
     server,
     store,
-    readLog,
-    configCapability,
-    promptCatalog,
+    capabilities.readLog,
+    capabilities.config,
+    capabilities.promptCatalog,
     prefix,
-    listProjects,
+    capabilities.listProjects,
   );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -365,6 +391,41 @@ function resultText(result: TextToolResult): string {
   return first.text;
 }
 
+function normalizedValidationError(issues: unknown): ToolOutcome {
+  return {
+    kind: "error",
+    error: {
+      category: "validation",
+      issues: normalizeJson(issues),
+    },
+  };
+}
+
+function normalizedHandlerError(message: string): ToolOutcome {
+  return {
+    kind: "error",
+    error: { category: "handler", message },
+  };
+}
+
+function normalizeResult(result: TextToolResult): ToolOutcome {
+  const text = resultText(result);
+  if (result.isError !== true) {
+    return { kind: "success", payload: normalizeJson(JSON.parse(text)) };
+  }
+
+  const validationMarker = "Invalid arguments for tool ";
+  const markerIndex = text.indexOf(validationMarker);
+  if (markerIndex >= 0) {
+    const issuesIndex = text.indexOf("[", markerIndex);
+    if (issuesIndex < 0) {
+      throw new Error(`validation error carried no issue array: ${text}`);
+    }
+    return normalizedValidationError(JSON.parse(text.slice(issuesIndex)));
+  }
+  return normalizedHandlerError(text);
+}
+
 async function invokeDirect(
   tools: DirectTools,
   name: string,
@@ -372,12 +433,20 @@ async function invokeDirect(
 ): Promise<ToolOutcome> {
   const tool = tools.find((candidate) => candidate.name === name);
   if (tool === undefined) throw new Error(`direct tool not found: ${name}`);
+  const input = z.object(tool.inputSchema as Record<string, z.ZodType>);
+  const parsed = input.safeParse(args);
+  if (!parsed.success) {
+    return normalizedValidationError(parsed.error.issues);
+  }
   try {
-    const result = await (tool.handler(args as never, null) as Promise<TextToolResult>);
-    return { kind: "success", text: resultText(result) };
+    const result = await (tool.handler(
+      parsed.data as never,
+      null,
+    ) as Promise<TextToolResult>);
+    return normalizeResult(result);
   } catch (error: unknown) {
     if (!(error instanceof Error)) throw error;
-    return { kind: "error", text: error.message };
+    return normalizedHandlerError(error.message);
   }
 }
 
@@ -390,15 +459,15 @@ async function invokeStdio(
     name,
     arguments: args,
   })) as TextToolResult;
-  return {
-    kind: result.isError === true ? "error" : "success",
-    text: resultText(result),
-  };
+  return normalizeResult(result);
 }
 
 function decode(outcome: ToolOutcome): unknown {
   expect(outcome.kind).toBe("success");
-  return JSON.parse(outcome.text) as unknown;
+  if (outcome.kind !== "success") {
+    throw new Error("expected successful tool outcome");
+  }
+  return outcome.payload;
 }
 
 function invocationMatrix(fixture: Fixture): Invocation[] {
@@ -676,8 +745,16 @@ describe("stdio/direct ledger tool differential contract", () => {
     it(`matches complete definitions for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
-      const direct = directTools(directFixture.store, prefix);
-      const stdio = await connectStdio(stdioFixture.store, prefix);
+      const direct = directTools(
+        directFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+      );
+      const stdio = await connectStdio(
+        stdioFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+      );
       try {
         const directDefinitionList = directDefinitions(direct);
         const expectedNames = LEDGER_TOOL_NAMES
@@ -685,14 +762,6 @@ describe("stdio/direct ledger tool differential contract", () => {
           .sort();
         expect(directDefinitionList.map((tool) => tool.name)).toEqual(expectedNames);
         expect(stdio.definitions).toEqual(directDefinitionList);
-
-        for (const name of PROJECTED_READS) {
-          const definition = directDefinitionList.find(
-            (tool) => tool.name === prefixed(prefix, name),
-          );
-          expect(definition?.inputs, `${name}: inputs`).toContain("projection");
-          expect(definition?.required, `${name}: required`).toContain("projection");
-        }
       } finally {
         await stdio.close();
         await directFixture.store.dispose();
@@ -707,8 +776,16 @@ describe("stdio/direct ledger tool differential contract", () => {
       expect(directFixture.ids).toEqual(stdioFixture.ids);
       expect(directFixture.store.snapshot()).toEqual(stdioFixture.store.snapshot());
 
-      const direct = directTools(directFixture.store, prefix);
-      const stdio = await connectStdio(stdioFixture.store, prefix);
+      const direct = directTools(
+        directFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+      );
+      const stdio = await connectStdio(
+        stdioFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+      );
       const invocations = invocationMatrix(directFixture);
       expect(
         invocations.map((invocation) => invocation.name).sort(),
@@ -782,54 +859,85 @@ describe("stdio/direct ledger tool differential contract", () => {
     });
   }
 
-  it("rejects a missing mandatory projection and preserves handler errors", async () => {
-    const directFixture = await buildFixture();
-    const stdioFixture = await buildFixture();
-    const direct = directTools(directFixture.store, "");
-    const stdio = await connectStdio(stdioFixture.store, "");
-    try {
-      const fetchItem = direct.find((tool) => tool.name === "fetch_item");
-      if (fetchItem === undefined) throw new Error("direct fetch_item not found");
-      const input = z.object(
-        fetchItem.inputSchema as Record<string, z.ZodType>,
+  for (const prefix of PREFIXES) {
+    it(`normalizes validation, handler, and unavailable-capability failures for prefix ${JSON.stringify(prefix)}`, async () => {
+      const directFixture = await buildFixture();
+      const stdioFixture = await buildFixture();
+      const direct = directTools(
+        directFixture.store,
+        prefix,
+        UNAVAILABLE_CAPABILITIES,
       );
-      expect(
-        input.safeParse({
-          ledger_id: "tasks",
-          item_id: directFixture.ids.targetItem,
-        }).success,
-      ).toBe(false);
-      const stdioValidation = await invokeStdio(stdio.client, "fetch_item", {
-        ledger_id: "tasks",
-        item_id: stdioFixture.ids.targetItem,
-      });
-      expect(stdioValidation.kind).toBe("error");
-      expect(stdioValidation.text).toContain("projection");
+      const stdio = await connectStdio(
+        stdioFixture.store,
+        prefix,
+        UNAVAILABLE_CAPABILITIES,
+      );
+      const failures: Invocation[] = [
+        {
+          name: "fetch_item",
+          args: {
+            ledger_id: "tasks",
+            item_id: directFixture.ids.targetItem,
+          },
+        },
+        {
+          name: "fetch_item",
+          args: {
+            ledger_id: "tasks",
+            item_id: directFixture.ids.targetItem,
+            projection: "summary",
+          },
+        },
+        {
+          name: "fetch_item",
+          args: {
+            ledger_id: "tasks",
+            item_id: "T999",
+            projection: "full",
+          },
+        },
+        { name: "read_log", args: { path: READ_LOG_RESULT.path } },
+        { name: "get_config", args: {} },
+        { name: "fetch_prompt", args: { roleId: PROMPT_RESULT.roleId } },
+        { name: "list_projects", args: {} },
+      ];
 
-      const missingArgs = {
-        ledger_id: "tasks",
-        item_id: "T999",
-        projection: "full",
-      };
-      const directError = await invokeDirect(
-        direct,
-        "fetch_item",
-        missingArgs,
-      );
-      const stdioError = await invokeStdio(
-        stdio.client,
-        "fetch_item",
-        missingArgs,
-      );
-      expect(stdioError).toEqual(directError);
-      expect(directError).toEqual({
-        kind: "error",
-        text: "Item not found in ledger tasks: T999",
-      });
-    } finally {
-      await stdio.close();
-      await directFixture.store.dispose();
-      await stdioFixture.store.dispose();
-    }
-  });
+      try {
+        for (const failure of failures) {
+          const name = prefixed(prefix, failure.name);
+          const directOutcome = await invokeDirect(
+            direct,
+            name,
+            failure.args,
+          );
+          const stdioOutcome = await invokeStdio(
+            stdio.client,
+            name,
+            failure.args,
+          );
+          expect(stdioOutcome, failure.name).toEqual(directOutcome);
+          expect(directOutcome.kind, failure.name).toBe("error");
+        }
+
+        expect(
+          await invokeDirect(direct, prefixed(prefix, "fetch_item"), {
+            ledger_id: "tasks",
+            item_id: "T999",
+            projection: "full",
+          }),
+        ).toEqual({
+          kind: "error",
+          error: {
+            category: "handler",
+            message: "Item not found in ledger tasks: T999",
+          },
+        });
+      } finally {
+        await stdio.close();
+        await directFixture.store.dispose();
+        await stdioFixture.store.dispose();
+      }
+    });
+  }
 });
