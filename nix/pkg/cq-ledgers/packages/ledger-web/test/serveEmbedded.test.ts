@@ -159,7 +159,11 @@ describe("ledger-web embedded MCP (same-origin /mcp, no upstream process)", () =
       const created = JSON.parse((res.content as Array<{ text: string }>)[0]!.text).item as { id: string };
       const fetched = await client.callTool({
         name: "fetch_item",
-        arguments: { ledger_id: "bugs", item_id: created.id },
+        arguments: {
+          ledger_id: "bugs",
+          item_id: created.id,
+          projection: "full",
+        },
       });
       const item = JSON.parse((fetched.content as Array<{ text: string }>)[0]!.text).item as {
         fields: Record<string, unknown>;

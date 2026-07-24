@@ -175,7 +175,11 @@ describe("ledger-mcp stdio binary", () => {
       const fetched = decode<{ item: { id: string; status: string } }>(
         await client.callTool({
           name: "fetch_item",
-          arguments: { ledger_id: "xenos", item_id: itemId },
+          arguments: {
+            ledger_id: "xenos",
+            item_id: itemId,
+            projection: "full",
+          },
         }),
       );
       expect(fetched.item.id).toBe(itemId);
@@ -184,7 +188,7 @@ describe("ledger-mcp stdio binary", () => {
       const hits = decode<{ results: Array<{ ledgerId: string }> }>(
         await client.callTool({
           name: "fts_search",
-          arguments: { query: "hive" },
+          arguments: { query: "hive", projection: "full" },
         }),
       );
       expect(hits.results.some((h) => h.ledgerId === "xenos")).toBe(true);

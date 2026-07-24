@@ -138,7 +138,10 @@ describe("ledger-mcp Streamable HTTP", () => {
       expect(updated.item.status).toBe("done");
 
       const hits = decode<{ results: Array<{ ledgerId: string }> }>(
-        await client.callTool({ name: "fts_search", arguments: { query: "tyranid" } }),
+        await client.callTool({
+          name: "fts_search",
+          arguments: { query: "tyranid", projection: "full" },
+        }),
       );
       expect(hits.results.some((h) => h.ledgerId === "xenos")).toBe(true);
     });

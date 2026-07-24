@@ -112,7 +112,7 @@ async function exerciseRoundTrip(client: Client, prefix: string): Promise<void> 
   const fetched = decode<{ item: { id: string; status: string } }>(
     await client.callTool({
       name: toolName(prefix, "fetch_item"),
-      arguments: { ledger_id: "tasks", item_id: itemId },
+      arguments: { ledger_id: "tasks", item_id: itemId, projection: "full" },
     }),
   );
   expect(fetched.item.id).toBe(itemId);

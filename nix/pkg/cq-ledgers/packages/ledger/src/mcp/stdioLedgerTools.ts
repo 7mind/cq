@@ -18,8 +18,23 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { LedgerStore, CreateItemInit, UpdateItemPatch } from "../store/LedgerStore.js";
 import { QUERY_LANGUAGE_HELP } from "../search/query.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
+import { paginate } from "../projection.js";
 import { derivePredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
+import {
+  produceWireDto,
+  projectFetchedLedgerDto,
+  projectFetchedMilestoneDto,
+  projectFtsSearchResultsDto,
+  projectItemDto,
+  projectItemMutationAckDto,
+  projectLedgerMutationAckDto,
+  projectMilestoneItemGroupsDto,
+  projectMilestoneMutationAckDto,
+  projectPaginatedLedgerDto,
+  serializeWireDto,
+  type ProducedWireDto,
+} from "./wireResponseContract.js";
 import {
   ReadLogNotImplementedError,
   type ReadLogCapability,
@@ -104,6 +119,10 @@ const fieldValueSchema = z.union([z.string(), z.array(z.string())]);
 
 const fieldsSchema = z.record(z.string(), fieldValueSchema);
 
+const projectionSchema = z
+  .enum(["compact", "full"])
+  .describe("required item projection: compact or full");
+
 const safeIdSchema = z
   .string()
   .regex(/^[A-Za-z0-9_-]+$/, "id may only contain A-Za-z0-9_-");
@@ -117,6 +136,14 @@ function jsonResult(value: unknown): {
 } {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value) }],
+  };
+}
+
+function wireResult(value: ProducedWireDto<object>): {
+  content: Array<{ type: "text"; text: string }>;
+} {
+  return {
+    content: [{ type: "text" as const, text: serializeWireDto(value) }],
   };
 }
 
@@ -184,11 +211,71 @@ export function registerLedgerStdioTools(
   reg(
     "fetch_ledger",
     {
-      description:
-        "Fetch a ledger: schema, active milestone groups (each expanded with resolved milestone metadata { id, status, title, description }), and archive pointers.",
-      inputSchema: { ledger_id: z.string() },
+      description: `Fetch a ledger: schema, active milestone groups (each expanded with resolved milestone metadata { id, status, title, description }), and archive pointers.
+
+Required params:
+- projection ("compact" | "full"): compact returns intrinsic item metadata plus approved discovery/reference fields; full returns every item field.
+
+Optional pagination params:
+- offset (integer, ≥0): zero-based index of the first item to return across the flattened item list. Enables pagination.
+- limit (integer, >0): maximum number of items to return.
+
+When offset or limit are provided the response shape changes to { ledger: { id, schema, counters, archivePointers }, items, total, offset, limit, nextOffset }. The milestone grouping is omitted; items are flattened across all milestone groups in their natural order. nextOffset is null when no next page remains.
+
+Without pagination the response is { ledger: FetchedLedger } with every item projected as requested.`,
+      inputSchema: {
+        ledger_id: z.string(),
+        projection: projectionSchema,
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("zero-based start index for pagination"),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("max items to return per page"),
+      },
     },
-    async (args) => jsonResult({ ledger: store.fetch(args.ledger_id) }),
+    async (args) => {
+      const fetched = store.fetch(args.ledger_id);
+      const usePagination =
+        args.offset !== undefined || args.limit !== undefined;
+
+      if (usePagination) {
+        const allItems = fetched.milestones.flatMap((group) => group.items);
+        const offset = args.offset ?? 0;
+        const { items, total } = paginate(allItems, offset, args.limit);
+        const nextOffset =
+          args.limit !== undefined && offset + items.length < total
+            ? offset + items.length
+            : null;
+        const { milestones: _omit, ...ledgerMeta } = fetched;
+        void _omit;
+        return wireResult(
+          projectPaginatedLedgerDto(
+            {
+              ledger: ledgerMeta,
+              items,
+              total,
+              offset,
+              limit: args.limit ?? null,
+              nextOffset,
+            },
+            args.projection,
+          ),
+        );
+      }
+
+      return wireResult(
+        produceWireDto({
+          ledger: projectFetchedLedgerDto(fetched, args.projection),
+        }),
+      );
+    },
   );
 
   reg(
@@ -208,13 +295,23 @@ export function registerLedgerStdioTools(
   reg(
     "fetch_item",
     {
-      description: "Fetch a single item by id from a specific ledger.",
+      description:
+        "Fetch a single item by id from a specific ledger using the required compact or full projection.",
       inputSchema: {
         ledger_id: z.string(),
         item_id: z.string(),
+        projection: projectionSchema,
       },
     },
-    async (args) => jsonResult({ item: store.fetchItem(args.ledger_id, args.item_id) }),
+    async (args) =>
+      wireResult(
+        produceWireDto({
+          item: projectItemDto(
+            store.fetchItem(args.ledger_id, args.item_id),
+            args.projection,
+          ),
+        }),
+      ),
   );
 
   reg(
@@ -238,7 +335,9 @@ export function registerLedgerStdioTools(
       if (args.author !== undefined) patch.author = args.author;
       if (args.session !== undefined) patch.session = args.session;
       const item = await store.updateItem(args.ledger_id, args.item_id, patch);
-      return jsonResult({ item });
+      return wireResult(
+        produceWireDto({ item: projectItemMutationAckDto(item) }),
+      );
     },
   );
 
@@ -266,7 +365,9 @@ export function registerLedgerStdioTools(
       if (args.author !== undefined) init.author = args.author;
       if (args.session !== undefined) init.session = args.session;
       const item = await store.createItem(args.ledger_id, args.milestone_id, init);
-      return jsonResult({ item });
+      return wireResult(
+        produceWireDto({ item: projectItemMutationAckDto(item) }),
+      );
     },
   );
 
@@ -282,28 +383,40 @@ export function registerLedgerStdioTools(
     },
     async (args) => {
       const ledger = await store.createLedger(args.name, args.schema as LedgerSchema);
-      return jsonResult({ ledger });
+      return wireResult(
+        produceWireDto({ ledger: projectLedgerMutationAckDto(ledger) }),
+      );
     },
   );
 
   reg(
     "search_items",
     {
-      description: "Substring search across status and field values within a single ledger.",
+      description:
+        "Substring search across status and field values within a single ledger using the required compact or full item projection.",
       inputSchema: {
         ledger_id: z.string(),
         query: z.string(),
+        projection: projectionSchema,
       },
     },
-    async (args) => jsonResult({ items: store.search(args.ledger_id, args.query) }),
+    async (args) =>
+      wireResult(
+        produceWireDto({
+          items: store
+            .search(args.ledger_id, args.query)
+            .map((item) => projectItemDto(item, args.projection)),
+        }),
+      ),
   );
 
   reg(
     "fts_search",
     {
-      description: `Ranked full-text search across ledger items, with a filter query language. Cross-ledger by default (pass \`ledger\` to restrict to one). Results are ranked by relevance (descending); field boosts favour headline/title/question over description/rationale over status. Each result carries the full item, its score, and the fields that matched. Use this for discovery; use search_items for precise single-ledger substring matching.
+      description: `Ranked full-text search across ledger items, with a filter query language. Cross-ledger by default (pass \`ledger\` to restrict to one). Results are ranked by relevance (descending); field boosts favour headline/title/question over description/rationale over status. Each result carries the requested item projection, its score, and the fields that matched. Use this for discovery; use search_items for precise single-ledger substring matching.
 
 Params:
+- projection ("compact" | "full"): required item projection for every ranked result.
 - status (string): dedicated pre-filter — applied before text ranking, accepts a single exact status value. Combine with inline status: qualifiers in query for multi-status OR: use query='(status:open OR status:wip)' (qualifier-only OR uses the structured evaluator, works correctly).
 - include_archived (boolean): when false (default) covers only active (non-archived) items; set true to also search items in milestone-group archives.
 - fuzzy / prefix (boolean): enable fuzzy matching or prefix matching on free-text terms.
@@ -313,6 +426,7 @@ Status semantics: terminalStatuses (e.g. done, resolved, abandoned per the ledge
 ${QUERY_LANGUAGE_HELP}`,
       inputSchema: {
         query: z.string(),
+        projection: projectionSchema,
         ledger: z.string().optional(),
         limit: z.number().int().positive().optional(),
         fuzzy: z.boolean().optional(),
@@ -347,14 +461,11 @@ ${QUERY_LANGUAGE_HELP}`,
       if (args.status !== undefined) opts.statusFilter = args.status;
       if (args.include_archived !== undefined) opts.includeArchived = args.include_archived;
       const hits = await store.ftsSearch(args.query, opts);
-      return jsonResult({
-        results: hits.map((h) => ({
-          ledgerId: h.ledgerId,
-          item: h.item,
-          score: h.score,
-          matchedFields: h.matchedFields,
-        })),
-      });
+      return wireResult(
+        produceWireDto({
+          results: projectFtsSearchResultsDto(hits, args.projection),
+        }),
+      );
     },
   );
 
@@ -386,7 +497,11 @@ ${QUERY_LANGUAGE_HELP}`,
       if (args.dependsOn !== undefined) init.dependsOn = args.dependsOn;
       if (args.id !== undefined) init.id = args.id;
       const milestone = await store.createMilestone(init);
-      return jsonResult({ milestone });
+      return wireResult(
+        produceWireDto({
+          milestone: projectMilestoneMutationAckDto(milestone),
+        }),
+      );
     },
   );
 
@@ -418,7 +533,11 @@ ${QUERY_LANGUAGE_HELP}`,
       if (args.blockedBy !== undefined) patch.blockedBy = args.blockedBy;
       if (args.dependsOn !== undefined) patch.dependsOn = args.dependsOn;
       const milestone = await store.updateMilestone(args.milestone_id, patch);
-      return jsonResult({ milestone });
+      return wireResult(
+        produceWireDto({
+          milestone: projectMilestoneMutationAckDto(milestone),
+        }),
+      );
     },
   );
 
@@ -426,12 +545,19 @@ ${QUERY_LANGUAGE_HELP}`,
     "fetch_milestone",
     {
       description:
-        "Fetch a milestone from the milestones ledger; also returns a per-ledger count of active items referencing this milestone.",
+        "Fetch a compact or full milestone item from the milestones ledger, plus resolved metadata and per-ledger active reference counts.",
       inputSchema: {
         milestone_id: safeIdSchema,
+        projection: projectionSchema,
       },
     },
-    async (args) => jsonResult(store.fetchMilestone(args.milestone_id)),
+    async (args) =>
+      wireResult(
+        projectFetchedMilestoneDto(
+          store.fetchMilestone(args.milestone_id),
+          args.projection,
+        ),
+      ),
   );
 
   reg(
@@ -454,12 +580,21 @@ ${QUERY_LANGUAGE_HELP}`,
     "list_milestone_items",
     {
       description:
-        "Return all active items grouped by ledger that reference this milestone. Convenience read for orchestration before archive.",
+        "Return all active items grouped by ledger that reference this milestone using the required compact or full projection.",
       inputSchema: {
         milestone_id: safeIdSchema,
+        projection: projectionSchema,
       },
     },
-    async (args) => jsonResult({ items: store.listMilestoneItems(args.milestone_id) }),
+    async (args) =>
+      wireResult(
+        produceWireDto({
+          items: projectMilestoneItemGroupsDto(
+            store.listMilestoneItems(args.milestone_id),
+            args.projection,
+          ),
+        }),
+      ),
   );
 
   // ---- Recovery tools (2) ------------------------------------------------
@@ -477,7 +612,9 @@ ${QUERY_LANGUAGE_HELP}`,
     },
     async (args) => {
       const item = await store.reopenItem(args.ledger_id, args.item_id, args.to_status);
-      return jsonResult({ item });
+      return wireResult(
+        produceWireDto({ item: projectItemMutationAckDto(item) }),
+      );
     },
   );
 
@@ -494,7 +631,9 @@ ${QUERY_LANGUAGE_HELP}`,
     },
     async (args) => {
       const item = await store.unarchiveItem(args.ledger_id, args.milestone_id, args.item_id);
-      return jsonResult({ item });
+      return wireResult(
+        produceWireDto({ item: projectItemMutationAckDto(item) }),
+      );
     },
   );
 

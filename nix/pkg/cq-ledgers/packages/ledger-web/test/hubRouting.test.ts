@@ -188,7 +188,14 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
     const s2 = await connectMcp(base, keyA, "t587-a2");
     try {
       const got = decode<{ item: { id: string; fields: { headline: string } } }>(
-        await s2.callTool({ name: "fetch_item", arguments: { ledger_id: "tasks", item_id: itemId } }),
+        await s2.callTool({
+          name: "fetch_item",
+          arguments: {
+            ledger_id: "tasks",
+            item_id: itemId,
+            projection: "full",
+          },
+        }),
       );
       expect(got.item.id).toBe(itemId);
       expect(got.item.fields.headline).toBe("A only");
@@ -199,7 +206,14 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
     // Tenant B must NOT see A's item.
     const sb = await connectMcp(base, keyB, "t587-b1");
     try {
-      const res = await sb.callTool({ name: "fetch_item", arguments: { ledger_id: "tasks", item_id: itemId } });
+      const res = await sb.callTool({
+        name: "fetch_item",
+        arguments: {
+          ledger_id: "tasks",
+          item_id: itemId,
+          projection: "full",
+        },
+      });
       expect(isError(res)).toBe(true);
     } finally {
       await sb.close();
