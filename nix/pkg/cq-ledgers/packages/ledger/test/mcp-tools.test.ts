@@ -317,7 +317,15 @@ describe("ledger MCP tools", () => {
     );
     expect(updated.item.status).toBe("done");
     expect(updated.item.fields).toEqual({});
-    expect(store.fetchItem("xenos", "X1").fields["note"]).toBe("bought milk");
+
+    const reloaded = decode<{ item: { fields: Record<string, string> } }>(
+      await callTool(tools, "fetch_item", {
+        ledger_id: "xenos",
+        item_id: "X1",
+        projection: "full",
+      }),
+    );
+    expect(reloaded.item.fields["note"]).toBe("bought milk");
   });
 
   it("create_item / update_item thread author + session provenance", async () => {
