@@ -1,0 +1,371 @@
+/**
+ * T643 — Behavioral-Active, Blackbox-Atomic coverage for the pure,
+ * selector-aware goals-scope Finalize planner.
+ */
+
+import { describe, expect, it } from "bun:test";
+import {
+  buildFinalizeSnapshot,
+  computeGoalsFinalizePlan,
+  SKIP_INCOMPLETE_MILESTONE,
+  SKIP_NO_MILESTONES,
+  SKIP_WRONG_PHASE,
+  type FinalizeSnapshot,
+  type GoalsFinalizeOperation,
+} from "../src/finalize.js";
+import {
+  DEFECTS_LEDGER,
+  DEFECTS_SCHEMA,
+  GOALS_LEDGER,
+  GOALS_SCHEMA,
+  MILESTONES_LEDGER,
+  MILESTONES_SCHEMA,
+  TASKS_LEDGER,
+  TASKS_SCHEMA,
+} from "../src/constants.js";
+import type {
+  ArchivePointer,
+  FetchedLedger,
+  FieldValue,
+  Item,
+  LedgerSchema,
+} from "../src/types.js";
+
+const NOW = "2026-07-24T00:00:00.000Z";
+
+function makeItem(id: string, status: string, fields: Record<string, FieldValue> = {}): Item {
+  return { id, milestoneId: "", status, fields, createdAt: NOW, updatedAt: NOW };
+}
+
+function makeView(
+  id: string,
+  schema: LedgerSchema,
+  groups: Record<string, Item[]>,
+  archivePointers: ArchivePointer[] = [],
+): FetchedLedger {
+  return {
+    id,
+    schema,
+    counters: { milestone: 1, item: 1 },
+    milestones: Object.entries(groups).map(([groupId, items]) => ({
+      id: groupId,
+      milestone: { id: groupId, status: "", title: "", description: "" },
+      items: items.map((item) => ({ ...item, milestoneId: groupId })),
+    })),
+    archivePointers,
+  };
+}
+
+function archived(id: string): ArchivePointer {
+  return { id, path: `./archive/milestones/${id}.md`, summary: id, title: id, status: "done" };
+}
+
+function makeSnapshot(input: {
+  milestones: Item[];
+  tasks?: Record<string, Item[]>;
+  defects?: Record<string, Item[]>;
+  goals?: Record<string, Item[]>;
+  archivedMilestones?: ArchivePointer[];
+}): FinalizeSnapshot {
+  const views: FetchedLedger[] = [
+    makeView(
+      MILESTONES_LEDGER,
+      MILESTONES_SCHEMA,
+      { active: input.milestones },
+      input.archivedMilestones ?? [],
+    ),
+  ];
+  if (input.tasks !== undefined) views.push(makeView(TASKS_LEDGER, TASKS_SCHEMA, input.tasks));
+  if (input.defects !== undefined) {
+    views.push(makeView(DEFECTS_LEDGER, DEFECTS_SCHEMA, input.defects));
+  }
+  if (input.goals !== undefined) views.push(makeView(GOALS_LEDGER, GOALS_SCHEMA, input.goals));
+  return buildFinalizeSnapshot(views);
+}
+
+function operation(
+  operations: GoalsFinalizeOperation[],
+  id: string,
+): GoalsFinalizeOperation {
+  const found = operations.find((candidate) => candidate.id === id);
+  if (found === undefined) throw new Error(`missing operation ${id}`);
+  return found;
+}
+
+function baseSnapshot(): FinalizeSnapshot {
+  return makeSnapshot({
+    milestones: [
+      makeItem("M-W-OPEN", "open", { title: "open work" }),
+      makeItem("M-W-DONE", "done", { title: "closed work" }),
+      makeItem("M-COORD", "open", { title: "coordination" }),
+    ],
+    tasks: {
+      "M-W-OPEN": [makeItem("T1", "done")],
+      "M-W-DONE": [makeItem("T2", "done")],
+    },
+    goals: {
+      "M-COORD": [
+        makeItem("G1", "planned", {
+          title: "planned complete",
+          description: "d",
+          milestones: ["M-W-OPEN"],
+        }),
+        makeItem("G2", "building", {
+          title: "building complete",
+          description: "d",
+          milestones: ["M-W-DONE"],
+        }),
+      ],
+    },
+  });
+}
+
+describe("computeGoalsFinalizePlan", () => {
+  it("defaults every eligible planned/building goal to selected and emits exact operation edges", () => {
+    const plan = computeGoalsFinalizePlan(baseSnapshot());
+
+    expect(plan.eligibleGoals).toEqual([
+      {
+        id: "G1",
+        status: "planned",
+        workMilestoneIds: ["M-W-OPEN"],
+        coordinationMilestoneId: "M-COORD",
+        selected: true,
+      },
+      {
+        id: "G2",
+        status: "building",
+        workMilestoneIds: ["M-W-DONE"],
+        coordinationMilestoneId: "M-COORD",
+        selected: true,
+      },
+    ]);
+
+    expect(operation(plan.operations, "goal:G1:to-building")).toMatchObject({
+      targetId: "G1",
+      action: "close-goal",
+      targetStatus: "building",
+      orderedAfter: ["milestone:M-W-OPEN:close"],
+      requiresSuccessOf: [],
+    });
+    expect(operation(plan.operations, "goal:G1:to-done")).toMatchObject({
+      targetId: "G1",
+      action: "close-goal",
+      targetStatus: "done",
+      orderedAfter: ["milestone:M-W-OPEN:close", "goal:G1:to-building"],
+      requiresSuccessOf: ["goal:G1:to-building"],
+    });
+    expect(operation(plan.operations, "goal:G2:to-done")).toMatchObject({
+      targetId: "G2",
+      action: "close-goal",
+      targetStatus: "done",
+      orderedAfter: [],
+      requiresSuccessOf: [],
+    });
+    expect(operation(plan.operations, "milestone:M-W-OPEN:archive")).toMatchObject({
+      requiresSuccessOf: ["milestone:M-W-OPEN:close"],
+    });
+    expect(operation(plan.operations, "milestone:M-W-DONE:archive")).toMatchObject({
+      requiresSuccessOf: [],
+    });
+    expect(operation(plan.operations, "milestone:M-COORD:close")).toMatchObject({
+      orderedAfter: ["goal:G1:to-done", "goal:G2:to-done"],
+      requiresSuccessOf: ["goal:G1:to-done", "goal:G2:to-done"],
+    });
+    expect(operation(plan.operations, "milestone:M-COORD:archive")).toMatchObject({
+      orderedAfter: [
+        "goal:G1:to-done",
+        "goal:G2:to-done",
+        "milestone:M-COORD:close",
+      ],
+      requiresSuccessOf: [
+        "goal:G1:to-done",
+        "goal:G2:to-done",
+        "milestone:M-COORD:close",
+      ],
+    });
+
+    const ids = plan.operations.map(({ id }) => id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("supports explicit opt-out and leaves deselected projected state able to block coordination archival", () => {
+    const plan = computeGoalsFinalizePlan(baseSnapshot(), { deselectedGoalIds: ["G2"] });
+    expect(plan.eligibleGoals.map(({ id, selected }) => [id, selected])).toEqual([
+      ["G1", true],
+      ["G2", false],
+    ]);
+
+    const ids = plan.operations.map(({ id }) => id);
+    expect(ids).toContain("goal:G1:to-building");
+    expect(ids).toContain("goal:G1:to-done");
+    expect(ids).toContain("milestone:M-W-OPEN:archive");
+    expect(ids).not.toContain("goal:G2:to-done");
+    expect(ids).not.toContain("milestone:M-W-DONE:archive");
+    expect(ids).not.toContain("milestone:M-COORD:close");
+    expect(ids).not.toContain("milestone:M-COORD:archive");
+  });
+
+  it("accepts open-complete and archived work while skipping incomplete, empty, and wrong-phase goals", () => {
+    const snapshot = makeSnapshot({
+      milestones: [
+        makeItem("M-OPEN", "open"),
+        makeItem("M-INCOMPLETE", "open"),
+        makeItem("M-EMPTY", "open"),
+        makeItem("M-COORD", "open"),
+      ],
+      archivedMilestones: [archived("M-ARCHIVED")],
+      tasks: {
+        "M-OPEN": [makeItem("T1", "done")],
+        "M-INCOMPLETE": [makeItem("T2", "wip")],
+      },
+      goals: {
+        "M-COORD": [
+          makeItem("G-OPEN", "building", {
+            title: "t",
+            description: "d",
+            milestones: ["M-OPEN"],
+          }),
+          makeItem("G-ARCHIVED", "planned", {
+            title: "t",
+            description: "d",
+            milestones: ["milestones:M-ARCHIVED"],
+          }),
+          makeItem("G-INCOMPLETE", "building", {
+            title: "t",
+            description: "d",
+            milestones: ["M-INCOMPLETE"],
+          }),
+          makeItem("G-EMPTY", "planned", {
+            title: "t",
+            description: "d",
+            milestones: ["M-EMPTY"],
+          }),
+          makeItem("G-NONE", "building", { title: "t", description: "d", milestones: [] }),
+          makeItem("G-WRONG", "planning", {
+            title: "t",
+            description: "d",
+            milestones: ["M-OPEN"],
+          }),
+        ],
+      },
+    });
+
+    const plan = computeGoalsFinalizePlan(snapshot);
+    expect(plan.eligibleGoals.map(({ id }) => id)).toEqual(["G-OPEN", "G-ARCHIVED"]);
+    expect(new Map(plan.skipped.map((entry) => [entry.id, entry]))).toEqual(
+      new Map([
+        [
+          "G-INCOMPLETE",
+          {
+            id: "G-INCOMPLETE",
+            reason: SKIP_INCOMPLETE_MILESTONE,
+            detail: "M-INCOMPLETE",
+          },
+        ],
+        [
+          "G-EMPTY",
+          { id: "G-EMPTY", reason: SKIP_INCOMPLETE_MILESTONE, detail: "M-EMPTY" },
+        ],
+        ["G-NONE", { id: "G-NONE", reason: SKIP_NO_MILESTONES }],
+        ["G-WRONG", { id: "G-WRONG", reason: SKIP_WRONG_PHASE, detail: "planning" }],
+      ]),
+    );
+    expect(plan.operations.map(({ id }) => id)).not.toContain("milestone:M-ARCHIVED:archive");
+  });
+
+  it("projects Q290 across every ledger and excludes unrelated global archive candidates", () => {
+    const snapshot = makeSnapshot({
+      milestones: [
+        makeItem("M-WORK", "done"),
+        makeItem("M-COORD", "open"),
+        makeItem("M-UNRELATED", "done"),
+      ],
+      tasks: {
+        "M-WORK": [makeItem("T1", "done")],
+        "M-UNRELATED": [makeItem("T2", "done")],
+      },
+      defects: {
+        "M-COORD": [makeItem("D1", "open", { severity: "major" })],
+      },
+      goals: {
+        "M-COORD": [
+          makeItem("G1", "building", {
+            title: "t",
+            description: "d",
+            milestones: ["M-WORK"],
+          }),
+        ],
+      },
+    });
+
+    const ids = computeGoalsFinalizePlan(snapshot).operations.map(({ id }) => id);
+    expect(ids).toContain("goal:G1:to-done");
+    expect(ids).toContain("milestone:M-WORK:archive");
+    expect(ids).not.toContain("milestone:M-COORD:close");
+    expect(ids).not.toContain("milestone:M-COORD:archive");
+    expect(ids).not.toContain("milestone:M-UNRELATED:archive");
+  });
+
+  it("deduplicates shared work and coordination targets and preserves snapshot purity", () => {
+    const snapshot = makeSnapshot({
+      milestones: [
+        makeItem("M-SHARED-WORK", "open"),
+        makeItem("M-SHARED-COORD", "open"),
+      ],
+      tasks: {
+        "M-SHARED-WORK": [makeItem("T1", "done")],
+      },
+      goals: {
+        "M-SHARED-COORD": [
+          makeItem("G1", "planned", {
+            title: "t",
+            description: "d",
+            milestones: ["M-SHARED-WORK"],
+          }),
+          makeItem("G2", "building", {
+            title: "t",
+            description: "d",
+            milestones: ["M-SHARED-WORK"],
+          }),
+        ],
+      },
+    });
+    const before = structuredClone(snapshot);
+
+    const plan = computeGoalsFinalizePlan(snapshot);
+    const ids = plan.operations.map(({ id }) => id);
+    expect(ids.filter((id) => id === "milestone:M-SHARED-WORK:close")).toHaveLength(1);
+    expect(ids.filter((id) => id === "milestone:M-SHARED-WORK:archive")).toHaveLength(1);
+    expect(ids.filter((id) => id === "milestone:M-SHARED-COORD:close")).toHaveLength(1);
+    expect(ids.filter((id) => id === "milestone:M-SHARED-COORD:archive")).toHaveLength(1);
+    expect(operation(plan.operations, "milestone:M-SHARED-COORD:close").requiresSuccessOf).toEqual([
+      "goal:G1:to-done",
+      "goal:G2:to-done",
+    ]);
+    expect(snapshot).toEqual(before);
+  });
+
+  it("adds no synthetic close prerequisite for an already-terminal coordination milestone", () => {
+    const snapshot = makeSnapshot({
+      milestones: [makeItem("M-WORK", "done"), makeItem("M-COORD", "done")],
+      tasks: { "M-WORK": [makeItem("T1", "done")] },
+      goals: {
+        "M-COORD": [
+          makeItem("G1", "building", {
+            title: "t",
+            description: "d",
+            milestones: ["M-WORK"],
+          }),
+        ],
+      },
+    });
+
+    const plan = computeGoalsFinalizePlan(snapshot);
+    expect(plan.operations.map(({ id }) => id)).not.toContain("milestone:M-COORD:close");
+    expect(operation(plan.operations, "milestone:M-COORD:archive")).toMatchObject({
+      orderedAfter: ["goal:G1:to-done"],
+      requiresSuccessOf: ["goal:G1:to-done"],
+    });
+  });
+});

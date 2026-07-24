@@ -55,6 +55,9 @@ export const GOAL_MILESTONES_FIELD = "milestones" as const;
 /** The goals-ledger phase from which the apply-done plan may close a goal (Q289). */
 export const GOAL_BUILDING_STATUS = "building" as const;
 
+/** The additional phase accepted by the reviewed goals-scope Finalize path (Q305). */
+export const GOAL_PLANNED_STATUS = "planned" as const;
+
 /**
  * The done-like status name preferred when a schema's `terminalStatuses`
  * offers more than one candidate.
@@ -390,6 +393,327 @@ export function computeArchivePlan(snapshot: FinalizeSnapshot): FinalizePlan {
   }
 
   return { affected, skipped };
+}
+
+// ---------------------------------------------------------------------------
+// Goals-scope planner (T643): a pure projected operation graph kept separate
+// from the existing global apply-done/archive contracts above.
+// ---------------------------------------------------------------------------
+
+export type GoalsFinalizeOperationId =
+  | `milestone:${string}:close`
+  | `goal:${string}:to-building`
+  | `goal:${string}:to-done`
+  | `milestone:${string}:archive`;
+
+/** One selected or deselected Q289-eligible goal exposed to preview UIs. */
+export interface GoalsFinalizeEligibleGoal {
+  id: string;
+  status: typeof GOAL_PLANNED_STATUS | typeof GOAL_BUILDING_STATUS;
+  workMilestoneIds: string[];
+  coordinationMilestoneId: string;
+  selected: boolean;
+}
+
+/** Explicit per-goal opt-out; every eligible id absent from this list is selected. */
+export interface GoalsFinalizeSelector {
+  deselectedGoalIds: readonly string[];
+}
+
+/**
+ * One node in the goals-scope operation graph. `orderedAfter` controls stable
+ * execution/presentation order; only `requiresSuccessOf` suppresses a node
+ * after a predecessor failure.
+ */
+export interface GoalsFinalizeOperation {
+  id: GoalsFinalizeOperationId;
+  targetId: string;
+  action: FinalizeAction;
+  targetStatus?: string;
+  title?: string;
+  orderedAfter: GoalsFinalizeOperationId[];
+  requiresSuccessOf: GoalsFinalizeOperationId[];
+}
+
+/** Pure preview model for the selector-aware goals-scope Finalize path. */
+export interface GoalsFinalizePlan {
+  eligibleGoals: GoalsFinalizeEligibleGoal[];
+  skipped: FinalizeSkippedEntry[];
+  operations: GoalsFinalizeOperation[];
+}
+
+interface ProjectedWorkSummary extends WorkSummary {
+  goalTerminalWrites: GoalsFinalizeOperationId[];
+}
+
+interface RelatedMilestone {
+  work: boolean;
+  coordination: boolean;
+}
+
+function uniqueInOrder<T>(values: Iterable<T>): T[] {
+  return [...new Set(values)];
+}
+
+function goalToBuildingId(goalId: string): GoalsFinalizeOperationId {
+  return `goal:${goalId}:to-building`;
+}
+
+function goalToDoneId(goalId: string): GoalsFinalizeOperationId {
+  return `goal:${goalId}:to-done`;
+}
+
+function milestoneCloseId(milestoneId: string): GoalsFinalizeOperationId {
+  return `milestone:${milestoneId}:close`;
+}
+
+function milestoneArchiveId(milestoneId: string): GoalsFinalizeOperationId {
+  return `milestone:${milestoneId}:archive`;
+}
+
+/**
+ * Work projected after every SELECTED eligible goal reaches its terminal
+ * target. The returned write ids name exactly the currently non-terminal
+ * goal items whose generated to-done operation removes a Q290 blocker.
+ */
+function summarizeProjectedWork(
+  snapshot: FinalizeSnapshot,
+  milestoneId: string,
+  selectedGoalDone: ReadonlyMap<string, GoalsFinalizeOperationId>,
+): ProjectedWorkSummary {
+  let itemCount = 0;
+  let nonTerminalCount = 0;
+  let firstNonTerminal: string | undefined;
+  const goalTerminalWrites: GoalsFinalizeOperationId[] = [];
+
+  for (const ledger of snapshot.ledgers) {
+    const group = ledger.milestones.find((candidate) => candidate.id === milestoneId);
+    if (group === undefined) continue;
+    const terminal = new Set(ledger.schema.terminalStatuses);
+    for (const item of group.items) {
+      itemCount += 1;
+      if (terminal.has(item.status)) continue;
+      const projectedGoalWrite =
+        ledger.id === GOALS_LEDGER ? selectedGoalDone.get(item.id) : undefined;
+      if (projectedGoalWrite !== undefined) {
+        goalTerminalWrites.push(projectedGoalWrite);
+        continue;
+      }
+      nonTerminalCount += 1;
+      firstNonTerminal ??= `${ledger.id}:${item.id}`;
+    }
+  }
+
+  return {
+    itemCount,
+    nonTerminalCount,
+    firstNonTerminal,
+    goalTerminalWrites: uniqueInOrder(goalTerminalWrites),
+  };
+}
+
+export function computeGoalsFinalizePlan(snapshot: FinalizeSnapshot): GoalsFinalizePlan;
+export function computeGoalsFinalizePlan(
+  snapshot: FinalizeSnapshot,
+  selector: GoalsFinalizeSelector,
+): GoalsFinalizePlan;
+/**
+ * Compute the reviewed goals-scope Finalize graph (Q305/Q307/Q310).
+ *
+ * Eligibility remains Q289: non-empty work milestones must already be
+ * complete (or archived). Projected writes affect only Q290 close/archive
+ * eligibility; a work-milestone close never becomes a success prerequisite
+ * of a goal transition.
+ */
+export function computeGoalsFinalizePlan(
+  snapshot: FinalizeSnapshot,
+  selector?: GoalsFinalizeSelector,
+): GoalsFinalizePlan {
+  const goalsView = snapshot.ledgers.find((ledger) => ledger.id === GOALS_LEDGER);
+  if (goalsView === undefined) return { eligibleGoals: [], skipped: [], operations: [] };
+
+  const deselectedGoalIds = new Set(selector === undefined ? [] : selector.deselectedGoalIds);
+  const completeForGoals = new Set(
+    snapshot.milestones.archivePointers.map((pointer) => pointer.id),
+  );
+  for (const milestone of milestoneItems(snapshot)) {
+    if (milestone.id === MILESTONES_AMBIENT_ID) continue;
+    const work = summarizeWork(snapshot, milestone.id);
+    if (work.itemCount > 0 && work.nonTerminalCount === 0) {
+      completeForGoals.add(milestone.id);
+    }
+  }
+
+  const eligibleGoals: GoalsFinalizeEligibleGoal[] = [];
+  const skipped: FinalizeSkippedEntry[] = [];
+  const goalTarget = doneLikeTerminal(goalsView.schema, goalsView.id);
+  for (const goal of goalsView.milestones.flatMap((group) => group.items)) {
+    if (goal.status !== GOAL_PLANNED_STATUS && goal.status !== GOAL_BUILDING_STATUS) {
+      skipped.push({ id: goal.id, reason: SKIP_WRONG_PHASE, detail: goal.status });
+      continue;
+    }
+
+    const workMilestoneIds = uniqueInOrder(goalWorkMilestoneIds(goal));
+    if (workMilestoneIds.length === 0) {
+      skipped.push({ id: goal.id, reason: SKIP_NO_MILESTONES });
+      continue;
+    }
+    const incomplete = workMilestoneIds.find((id) => !completeForGoals.has(id));
+    if (incomplete !== undefined) {
+      skipped.push({ id: goal.id, reason: SKIP_INCOMPLETE_MILESTONE, detail: incomplete });
+      continue;
+    }
+
+    if (
+      goal.status === GOAL_PLANNED_STATUS &&
+      !transitionPermitted(goalsView.schema, GOAL_PLANNED_STATUS, GOAL_BUILDING_STATUS)
+    ) {
+      skipped.push({
+        id: goal.id,
+        reason: SKIP_TRANSITION_FORBIDDEN,
+        detail: `${GOAL_PLANNED_STATUS} -> ${GOAL_BUILDING_STATUS}`,
+      });
+      continue;
+    }
+    if (!transitionPermitted(goalsView.schema, GOAL_BUILDING_STATUS, goalTarget)) {
+      skipped.push({
+        id: goal.id,
+        reason: SKIP_TRANSITION_FORBIDDEN,
+        detail: `${GOAL_BUILDING_STATUS} -> ${goalTarget}`,
+      });
+      continue;
+    }
+
+    eligibleGoals.push({
+      id: goal.id,
+      status: goal.status,
+      workMilestoneIds,
+      coordinationMilestoneId: goal.milestoneId,
+      selected: !deselectedGoalIds.has(goal.id),
+    });
+  }
+
+  const selectedGoals = eligibleGoals.filter((goal) => goal.selected);
+  const selectedGoalDone = new Map(
+    selectedGoals.map((goal) => [goal.id, goalToDoneId(goal.id)]),
+  );
+  const relatedMilestones = new Map<string, RelatedMilestone>();
+  const markRelated = (milestoneId: string, role: keyof RelatedMilestone): void => {
+    const current = relatedMilestones.get(milestoneId) ?? {
+      work: false,
+      coordination: false,
+    };
+    current[role] = true;
+    relatedMilestones.set(milestoneId, current);
+  };
+  for (const goal of selectedGoals) {
+    for (const milestoneId of goal.workMilestoneIds) markRelated(milestoneId, "work");
+    markRelated(goal.coordinationMilestoneId, "coordination");
+  }
+
+  const activeMilestones = new Map(
+    milestoneItems(snapshot).map((milestone) => [milestone.id, milestone]),
+  );
+  const archivedMilestones = new Set(
+    snapshot.milestones.archivePointers.map((pointer) => pointer.id),
+  );
+  const milestoneTerminal = new Set(snapshot.milestones.schema.terminalStatuses);
+  const milestoneTarget = doneLikeTerminal(
+    snapshot.milestones.schema,
+    snapshot.milestones.id,
+  );
+  const closeOperations = new Map<string, GoalsFinalizeOperation>();
+  const archiveOperations = new Map<string, GoalsFinalizeOperation>();
+
+  for (const [milestoneId] of relatedMilestones) {
+    if (milestoneId === MILESTONES_AMBIENT_ID || archivedMilestones.has(milestoneId)) continue;
+    const milestone = activeMilestones.get(milestoneId);
+    if (milestone === undefined) continue;
+
+    const projectedWork = summarizeProjectedWork(snapshot, milestoneId, selectedGoalDone);
+    if (projectedWork.nonTerminalCount > 0) continue;
+
+    let closeOperation: GoalsFinalizeOperation | undefined;
+    if (
+      !milestoneTerminal.has(milestone.status) &&
+      projectedWork.itemCount > 0 &&
+      transitionPermitted(snapshot.milestones.schema, milestone.status, milestoneTarget)
+    ) {
+      const prerequisites = projectedWork.goalTerminalWrites;
+      closeOperation = {
+        id: milestoneCloseId(milestoneId),
+        targetId: milestoneId,
+        action: "close-milestone",
+        targetStatus: milestoneTarget,
+        orderedAfter: [...prerequisites],
+        requiresSuccessOf: [...prerequisites],
+      };
+      closeOperations.set(milestoneId, closeOperation);
+    }
+
+    if (!milestoneTerminal.has(milestone.status) && closeOperation === undefined) continue;
+    const archivePrerequisites = [...projectedWork.goalTerminalWrites];
+    if (closeOperation !== undefined) archivePrerequisites.push(closeOperation.id);
+    const archiveOperation: GoalsFinalizeOperation = {
+      id: milestoneArchiveId(milestoneId),
+      targetId: milestoneId,
+      action: "archive-milestone",
+      orderedAfter: uniqueInOrder(archivePrerequisites),
+      requiresSuccessOf: uniqueInOrder(archivePrerequisites),
+    };
+    const title = milestoneTitle(milestone);
+    if (title !== undefined) archiveOperation.title = title;
+    archiveOperations.set(milestoneId, archiveOperation);
+  }
+
+  const goalBuildingOperations: GoalsFinalizeOperation[] = [];
+  const goalDoneOperations: GoalsFinalizeOperation[] = [];
+  for (const goal of selectedGoals) {
+    const orderingOnlyWorkCloses = goal.workMilestoneIds.flatMap((milestoneId) => {
+      const close = closeOperations.get(milestoneId);
+      return close !== undefined && close.requiresSuccessOf.length === 0 ? [close.id] : [];
+    });
+    if (goal.status === GOAL_PLANNED_STATUS) {
+      goalBuildingOperations.push({
+        id: goalToBuildingId(goal.id),
+        targetId: goal.id,
+        action: "close-goal",
+        targetStatus: GOAL_BUILDING_STATUS,
+        orderedAfter: uniqueInOrder(orderingOnlyWorkCloses),
+        requiresSuccessOf: [],
+      });
+    }
+    const buildingWrite =
+      goal.status === GOAL_PLANNED_STATUS ? [goalToBuildingId(goal.id)] : [];
+    goalDoneOperations.push({
+      id: goalToDoneId(goal.id),
+      targetId: goal.id,
+      action: "close-goal",
+      targetStatus: goalTarget,
+      orderedAfter: uniqueInOrder([...orderingOnlyWorkCloses, ...buildingWrite]),
+      requiresSuccessOf: buildingWrite,
+    });
+  }
+
+  const independentCloses: GoalsFinalizeOperation[] = [];
+  const goalDependentCloses: GoalsFinalizeOperation[] = [];
+  for (const close of closeOperations.values()) {
+    if (close.requiresSuccessOf.length === 0) independentCloses.push(close);
+    else goalDependentCloses.push(close);
+  }
+  const operations = [
+    ...independentCloses,
+    ...goalBuildingOperations,
+    ...goalDoneOperations,
+    ...goalDependentCloses,
+    ...archiveOperations.values(),
+  ];
+  const operationIds = operations.map((operation) => operation.id);
+  if (new Set(operationIds).size !== operationIds.length) {
+    throw new FinalizePlanError("goals-scope plan produced duplicate operation ids");
+  }
+
+  return { eligibleGoals, skipped, operations };
 }
 
 // ---------------------------------------------------------------------------
