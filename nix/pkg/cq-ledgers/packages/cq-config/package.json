@@ -9,6 +9,10 @@
     ".": {
       "import": "./src/index.ts",
       "types": "./src/index.ts"
+    },
+    "./prompt-renderer": {
+      "import": "./src/promptRenderer.ts",
+      "types": "./src/promptRenderer.ts"
     }
   },
   "dependencies": {
