@@ -81,6 +81,20 @@ allowed-tools: Read, Grep, Glob, WebSearch, WebFetch
 You judge the emitted plan by the canonical rubric.
 `;
 
+const QUOTED_COMMAND_FIXTURE = `---
+description: "Advance # quoted command metadata."
+argument-hint: '<goalId: optional>' # trailing comment
+allowed-tools: Read
+---
+`;
+
+const MISMATCHED_QUOTES_FIXTURE = `---
+description: "Mismatched description'
+argument-hint: '<mismatched hint>"
+allowed-tools: Read
+---
+`;
+
 describe("parseAgentMarkdown — agent fixture (deny-list)", () => {
   const parsed = parseAgentMarkdown(AGENT_RW_FIXTURE);
 
@@ -175,6 +189,20 @@ describe("parseAgentMarkdown — command fixture (allow-list)", () => {
     expect(parsed.frontmatter.disallowedTools).toBeUndefined();
     expect(parsed.frontmatter.isolation).toBeUndefined();
     expect(parsed.frontmatter.name).toBeUndefined();
+  });
+});
+
+describe("parseAgentMarkdown — quoted command metadata", () => {
+  it("strips matching quotes while preserving `#` in descriptions", () => {
+    const parsed = parseAgentMarkdown(QUOTED_COMMAND_FIXTURE);
+    expect(parsed.frontmatter.description).toBe("Advance # quoted command metadata.");
+    expect(parsed.frontmatter.argumentHint).toBe("<goalId: optional>");
+  });
+
+  it("preserves mismatched surrounding quotes", () => {
+    const parsed = parseAgentMarkdown(MISMATCHED_QUOTES_FIXTURE);
+    expect(parsed.frontmatter.description).toBe("\"Mismatched description'");
+    expect(parsed.frontmatter.argumentHint).toBe("'<mismatched hint>\"");
   });
 });
 

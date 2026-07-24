@@ -1,5 +1,5 @@
 ---
-description: Start an implement-flow run — resolve the target milestones (default: all open ones), validate their task DAG, then hand off to the /cq:implement:advance loop.
+description: "Start an implement-flow run — resolve the target milestones (default: all open ones), validate their task DAG, then hand off to the /cq:implement:advance loop."
 argument-hint: [milestoneId ...]   # optional; omit to target every open milestone
 allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob
 ---

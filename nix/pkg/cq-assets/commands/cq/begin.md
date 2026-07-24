@@ -1,6 +1,6 @@
 ---
 description: Universal intake splitter — segment a mixed request into plan-flow, investigate-flow, and research-flow intakes, then chain ONE /cq:advance sequencer pass over the whole batch.
-argument-hint: <mixed request: features, bug reports, research questions>
+argument-hint: "<mixed request: features, bug reports, research questions>"
 allowed-tools: mcp__ledger__*, Agent, Bash, Read, Grep, Glob
 ---
 

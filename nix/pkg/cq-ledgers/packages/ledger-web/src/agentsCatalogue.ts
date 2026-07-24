@@ -213,8 +213,8 @@ function parseFrontmatterBlock(raw: string): { fm: ParsedFrontmatter; rest: stri
         fm.name = stripInlineComment(rawValue);
         break;
       case "description":
-        // Descriptions are prose and may legitimately contain `#`; keep verbatim.
-        fm.description = rawValue;
+        // Descriptions may legitimately contain `#`; preserve their prose content.
+        fm.description = stripQuotes(rawValue);
         break;
       case "disallowedTools":
         fm.disallowedTools = splitToolList(stripInlineComment(rawValue));
@@ -223,7 +223,7 @@ function parseFrontmatterBlock(raw: string): { fm: ParsedFrontmatter; rest: stri
         fm.isolation = stripInlineComment(rawValue);
         break;
       case "argument-hint":
-        fm.argumentHint = stripInlineComment(rawValue);
+        fm.argumentHint = stripQuotes(stripInlineComment(rawValue));
         break;
       case "allowed-tools":
         fm.allowedTools = splitToolList(stripInlineComment(rawValue));
