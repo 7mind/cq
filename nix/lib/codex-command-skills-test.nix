@@ -122,13 +122,13 @@ assert lib.hasInfix "/cq:plan:advance" advanceBody;
 assert !missingDescription.success;
 assert !collidingNames.success;
 assert !unresolvedReference.success;
-assert builtins.hasAttr ".codex/skills/cq-advance/SKILL.md" codexHomeFiles;
+assert builtins.hasAttr ".codex/skills/cq-advance" codexHomeFiles;
+assert lib.isDerivation codexHomeFiles.".codex/skills/cq-advance".source;
+assert !(codexHomeFiles.".codex/skills/cq-advance".recursive or false);
+assert !builtins.hasAttr ".codex/skills/cq-advance/SKILL.md" codexHomeFiles;
 assert
-  builtins.hasAttr ".codex/skills/cq-advance/references/cq-plan-advance.md"
+  !builtins.hasAttr ".codex/skills/cq-advance/references/cq-plan-advance.md"
     codexHomeFiles;
 assert builtins.hasAttr ".codex/prompts/cq:advance.md" codexHomeFiles;
-assert
-  !lib.hasInfix "/cq:"
-    codexHomeFiles.".codex/skills/cq-advance/references/cq-advance.md".text;
 assert lib.all (entry: entry.assertion) evaluatedCodexModule.config.assertions;
 true

@@ -22,25 +22,28 @@ let
       (builtins.attrNames cfg.merged.skills)
       (builtins.attrNames cqCommandSkillSpecs);
 
-  cqCommandSkillFiles = lib.listToAttrs (
-    lib.concatMap (
-      skillName:
-      let
-        spec = cqCommandSkillSpecs.${skillName};
-        skillRoot = ".codex/skills/${skillName}";
-      in
-      [
-        {
-          name = "${skillRoot}/SKILL.md";
-          value.text = spec.skillMd;
-        }
-      ]
-      ++ lib.mapAttrsToList (referenceName: body: {
-        name = "${skillRoot}/references/${referenceName}";
-        value.text = body;
-      }) spec.references
-    ) (builtins.attrNames cqCommandSkillSpecs)
-  );
+  mkCodexCommandSkillPackage =
+    skillName: spec:
+    pkgs.runCommandLocal "${skillName}-codex-skill" { } (
+      ''
+        set -eu
+        mkdir -p "$out/references"
+        cp ${builtins.toFile "${skillName}-SKILL.md" spec.skillMd} "$out/SKILL.md"
+      ''
+      + lib.concatMapStringsSep "\n" (
+        referenceName: ''
+          cp ${
+            builtins.toFile "${skillName}-${referenceName}" spec.references.${referenceName}
+          } "$out/references/${referenceName}"
+        ''
+      ) (builtins.attrNames spec.references)
+    );
+
+  cqCommandSkillPackages = lib.mapAttrs mkCodexCommandSkillPackage cqCommandSkillSpecs;
+  cqCommandSkillFiles = lib.mapAttrs' (
+    skillName: source:
+    lib.nameValuePair ".codex/skills/${skillName}" { inherit source; }
+  ) cqCommandSkillPackages;
 
   # Command bundles key entries as "<ns>/<name>"; flat slash-prompt harnesses
   # derive the command name from the filename stem, so fold "/" → ":" (matching
@@ -84,8 +87,9 @@ in
       ];
     }
     {
-      # Materialize Codex-specific cq skill packages (SKILL.md plus transitive
-      # workflow references) and retain the legacy prompt delivery.
+      # Materialize each Codex-specific cq skill package as one directory
+      # symlink. Codex follows symlinked skill directories but ignores a real
+      # directory whose SKILL.md is itself a symlink. Retain legacy prompts.
       # Separate mkMerge element because the block above sets attrpath
       # `home.file."<path>"`, which can't coexist with a dynamic `home.file =
       # <attrs>` in one attribute set.
