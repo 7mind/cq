@@ -364,7 +364,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
 
   const ftsSearch = tool(
     "fts_search",
-    `Ranked full-text search across ledger items, with a filter query language. Cross-ledger by default (pass \`ledger\` to restrict to one). Results are ranked by relevance (descending); field boosts favour headline/title/question over description/rationale over status. Each result carries the full item, its score, and the fields that matched. Use this for discovery; use search_items for precise single-ledger substring matching.
+    `Ranked full-text search across ledger items, with a filter query language. Cross-ledger by default (pass \`ledger\` to restrict to one). Results are ranked by relevance (descending); field boosts favour headline/title/question over description/rationale over status. Each result carries the requested item projection, its score, and the fields that matched. Use this for discovery; use search_items for precise single-ledger substring matching.
 
 Params:
 - projection ("compact" | "full"): required item projection for every ranked result.

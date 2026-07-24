@@ -16,6 +16,7 @@ const schema: LedgerSchema = {
   fields: {
     headline: { type: "string", required: true },
     description: { type: "string", required: false },
+    note: { type: "string", required: false },
     tags: { type: "string[]", required: false },
   },
 };
@@ -57,6 +58,7 @@ async function buildFixture(
     fields: {
       headline: "Needle alpha",
       description: "Private needle narrative",
+      note: "Valid short field outside the compact allowlist",
       tags: ["one"],
     },
     author: "gpt-5.6",
@@ -67,6 +69,7 @@ async function buildFixture(
     fields: {
       headline: "Second item",
       description: "Different private narrative",
+      note: "Second valid short field outside the compact allowlist",
       tags: ["two"],
     },
   });
@@ -98,12 +101,12 @@ function callTool(
   return findTool(tools, name).handler(args as never, null) as Promise<ToolResult>;
 }
 
-function decode(result: ToolResult): unknown {
+function decode<T = unknown>(result: ToolResult): T {
   const first = result.content[0];
   if (first === undefined || first.type !== "text") {
     throw new Error("expected one text content block");
   }
-  return JSON.parse(first.text) as unknown;
+  return JSON.parse(first.text) as T;
 }
 
 function expectedItem(item: Item, projection: ItemProjection): Item {
@@ -136,6 +139,13 @@ function expectedItem(item: Item, projection: ItemProjection): Item {
   if (item.author !== undefined) compact.author = item.author;
   if (item.session !== undefined) compact.session = item.session;
   return compact;
+}
+
+function expectNoteOmitted(toolName: string, items: Item[]): void {
+  expect(items.length, `${toolName}: fixture items`).toBeGreaterThan(0);
+  for (const item of items) {
+    expect(item.fields, `${toolName}: ${item.id}`).not.toHaveProperty("note");
+  }
 }
 
 const READ_INPUTS = {
@@ -186,51 +196,49 @@ describe("createLedgerMcpTools mandatory read projections", () => {
           items: group.items.map((item) => expectedItem(item, projection)),
         })),
       };
-      expect(
-        decode(
-          await callTool(tools, "fetch_ledger", {
-            ledger_id: "xenos",
-            projection,
-          }),
-        ),
-        "fetch_ledger",
-      ).toEqual({ ledger: expectedLedger });
+      const ledgerResponse = decode<{ ledger: typeof expectedLedger }>(
+        await callTool(tools, "fetch_ledger", {
+          ledger_id: "xenos",
+          projection,
+        }),
+      );
+      expect(ledgerResponse, "fetch_ledger").toEqual({
+        ledger: expectedLedger,
+      });
 
-      expect(
-        decode(
-          await callTool(tools, "fetch_item", {
-            ledger_id: "xenos",
-            item_id: first.id,
-            projection,
-          }),
-        ),
-        "fetch_item",
-      ).toEqual({ item: expectedItem(first, projection) });
+      const itemResponse = decode<{ item: Item }>(
+        await callTool(tools, "fetch_item", {
+          ledger_id: "xenos",
+          item_id: first.id,
+          projection,
+        }),
+      );
+      expect(itemResponse, "fetch_item").toEqual({
+        item: expectedItem(first, projection),
+      });
 
-      expect(
-        decode(
-          await callTool(tools, "search_items", {
-            ledger_id: "xenos",
-            query: "Needle",
-            projection,
-          }),
-        ),
-        "search_items",
-      ).toEqual({ items: [expectedItem(first, projection)] });
+      const searchResponse = decode<{ items: Item[] }>(
+        await callTool(tools, "search_items", {
+          ledger_id: "xenos",
+          query: "Needle",
+          projection,
+        }),
+      );
+      expect(searchResponse, "search_items").toEqual({
+        items: [expectedItem(first, projection)],
+      });
 
       const authoritativeHits = await store.ftsSearch("needle", {
         ledger: "xenos",
       });
-      expect(
-        decode(
-          await callTool(tools, "fts_search", {
-            query: "needle",
-            ledger: "xenos",
-            projection,
-          }),
-        ),
-        "fts_search",
-      ).toEqual({
+      const ftsResponse = decode<{ results: Array<{ item: Item }> }>(
+        await callTool(tools, "fts_search", {
+          query: "needle",
+          ledger: "xenos",
+          projection,
+        }),
+      );
+      expect(ftsResponse, "fts_search").toEqual({
         results: authoritativeHits.map((hit) => ({
           ...hit,
           item: expectedItem(hit.item, projection),
@@ -238,29 +246,27 @@ describe("createLedgerMcpTools mandatory read projections", () => {
       });
 
       const fetchedMilestone = store.fetchMilestone(milestone.id);
-      expect(
-        decode(
-          await callTool(tools, "fetch_milestone", {
-            milestone_id: milestone.id,
-            projection,
-          }),
-        ),
-        "fetch_milestone",
-      ).toEqual({
+      const milestoneResponse = decode<{ milestone: Item }>(
+        await callTool(tools, "fetch_milestone", {
+          milestone_id: milestone.id,
+          projection,
+        }),
+      );
+      expect(milestoneResponse, "fetch_milestone").toEqual({
         ...fetchedMilestone,
         milestone: expectedItem(fetchedMilestone.milestone, projection),
       });
 
       const milestoneItems = store.listMilestoneItems(milestone.id);
-      expect(
-        decode(
-          await callTool(tools, "list_milestone_items", {
-            milestone_id: milestone.id,
-            projection,
-          }),
-        ),
-        "list_milestone_items",
-      ).toEqual({
+      const milestoneItemsResponse = decode<{
+        items: Record<string, Item[]>;
+      }>(
+        await callTool(tools, "list_milestone_items", {
+          milestone_id: milestone.id,
+          projection,
+        }),
+      );
+      expect(milestoneItemsResponse, "list_milestone_items").toEqual({
         items: Object.fromEntries(
           Object.entries(milestoneItems).map(([ledgerId, items]) => [
             ledgerId,
@@ -268,6 +274,26 @@ describe("createLedgerMcpTools mandatory read projections", () => {
           ]),
         ),
       });
+
+      if (projection === "compact") {
+        expectNoteOmitted(
+          "fetch_ledger",
+          ledgerResponse.ledger.milestones.flatMap((group) => group.items),
+        );
+        expectNoteOmitted("fetch_item", [itemResponse.item]);
+        expectNoteOmitted("search_items", searchResponse.items);
+        expectNoteOmitted(
+          "fts_search",
+          ftsResponse.results.map((result) => result.item),
+        );
+        expectNoteOmitted("fetch_milestone", [
+          milestoneResponse.milestone,
+        ]);
+        expectNoteOmitted(
+          "list_milestone_items",
+          Object.values(milestoneItemsResponse.items).flat(),
+        );
+      }
     });
   }
 
