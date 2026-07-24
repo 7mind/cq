@@ -135,7 +135,10 @@ class FinalizeClient implements LedgerClient {
   /** goals item ids whose updateItem rejects (deliberate per-id failure). */
   readonly failUpdateItemIds = new Set<string>();
 
-  constructor(private readonly eligible = true) {}
+  constructor(
+    private readonly eligible = true,
+    private readonly longArchiveList = false,
+  ) {}
 
   displayName(): string { return "cq1"; }
   async enumerateLedgers(): Promise<LedgerSummary[]> {
@@ -147,7 +150,14 @@ class FinalizeClient implements LedgerClient {
   }
   async fetchLedger(id: string): Promise<FetchedLedger> {
     if (id === "milestones") {
-      const items = this.eligible
+      const items = this.longArchiveList
+        ? [
+            ...Array.from({ length: 24 }, (_, index) =>
+              item(`ML${index + 1}`, "active", "done", { title: `Long ${index + 1}` }),
+            ),
+            item("M-open", "active", "open", { title: "Open" }),
+          ]
+        : this.eligible
         ? [
             item("M1", "active", "open", { title: "Wave 1" }),
             item("M2", "active", "open", { title: "Wave 2" }),
@@ -169,7 +179,15 @@ class FinalizeClient implements LedgerClient {
       };
     }
     if (id === "tasks") {
-      const groups = this.eligible
+      const groups = this.longArchiveList
+        ? [
+            ...Array.from({ length: 24 }, (_, index) => ({
+              id: `ML${index + 1}`,
+              items: [item(`TL${index + 1}`, `ML${index + 1}`, "done", { headline: "done" })],
+            })),
+            { id: "M-open", items: [item("T-open", "M-open", "wip", { headline: "open" })] },
+          ]
+        : this.eligible
         ? [
             { id: "M1", items: [item("T1", "M1", "done", { headline: "t1" })] },
             { id: "M2", items: [item("T2", "M2", "wip", { headline: "t2" })] },
@@ -365,6 +383,26 @@ describe("T620 — web finalize preview modal", () => {
     expect(body!.contains(execute)).toBe(false);
     expect(actions?.classList.contains("lw-finalize-actions")).toBe(true);
     expect(actions?.parentElement).toBe(modal);
+  });
+
+  it("keeps a long finalize list in the scroll body while the execute control remains in its footer", async () => {
+    await mount(new FinalizeClient(true, true));
+    await openPreview("archive");
+
+    const modal = testid("finalize-preview")!;
+    const body = modal.querySelector<HTMLElement>(".lw-modal-body");
+    const affected = testid("finalize-affected")!;
+    const skipped = testid("finalize-skipped")!;
+    const execute = testid("finalize-execute")!;
+    const actions = execute.parentElement!;
+
+    expect(testids("finalize-affected-")).toHaveLength(24);
+    expect(body).not.toBeNull();
+    expect(body!.contains(affected)).toBe(true);
+    expect(body!.contains(skipped)).toBe(true);
+    expect(execute.closest(".lw-modal-body")).toBeNull();
+    expect(actions.classList.contains("lw-finalize-actions")).toBe(true);
+    expect(actions.parentElement).toBe(modal);
   });
 
   it("holding to HOLD_MS fires the sweep in plan order and shows one result line per id incl. the failing one", async () => {
