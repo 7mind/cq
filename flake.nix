@@ -74,6 +74,7 @@
             mkCodexCommandSkills
             ;
           catalog = llmAssets.catalog;
+          commands = llmAssets.commands;
           promptRoot = codexPromptRoot;
         };
         claudePromptHomeTest = import ./nix/lib/claude-prompt-home-test.nix {

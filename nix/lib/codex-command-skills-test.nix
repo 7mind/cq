@@ -2,6 +2,7 @@
   lib,
   pkgs,
   catalog,
+  commands,
   promptRoot,
   mkCodexCommandSkills,
 }:
@@ -127,6 +128,11 @@ let
   };
   projectedSkillNames = builtins.attrNames projected.skills;
   projectedRoleNames = builtins.attrNames projected.roles;
+  projectedCommandPromptPaths = map (
+    role: ".codex/prompts/cq:${lib.replaceStrings [ "/" ] [ ":" ] role.roleId}.md"
+  ) (builtins.filter (role: role.roleKind == "orchestrator-command") catalog);
+  sentinelPromptPath = ".codex/prompts/other:sentinel.md";
+  sentinelPromptBody = "Unrelated legacy prompt.\n";
 
   evaluatedCodexModule = lib.evalModules {
     specialArgs = { inherit pkgs; };
@@ -159,7 +165,9 @@ let
             smind.hm.dev.llm = {
               enable = true;
               merged = {
-                commands = { };
+                commands = commands // {
+                  "other/sentinel" = sentinelPromptBody;
+                };
                 skills = { };
                 memoryText = "";
               };
@@ -202,5 +210,7 @@ assert builtins.length projectedSkillNames == 15;
 assert builtins.length projectedRoleNames == 9;
 assert projected.catalog == "${promptRoot}/catalog.json";
 assert lib.all (name: builtins.hasAttr ".codex/skills/${name}" codexHomeFiles) projectedSkillNames;
+assert lib.all (path: !(builtins.hasAttr path codexHomeFiles)) projectedCommandPromptPaths;
+assert codexHomeFiles.${sentinelPromptPath}.text == sentinelPromptBody;
 assert lib.all (entry: entry.assertion) evaluatedCodexModule.config.assertions;
 true

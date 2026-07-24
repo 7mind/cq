@@ -57,6 +57,14 @@ let
   # the same transform tools.nix uses for its collision assertion and Claude's
   # namespaced /plan:advance).
   commandKeyToStem = key: lib.replaceStrings [ "/" ] [ ":" ] key;
+  catalogCommandKeys = map (
+    role: "cq/${role.roleId}"
+  ) (builtins.filter (
+    role: role.roleKind == "orchestrator-command"
+  ) assets.catalog);
+  legacyPromptCommands = lib.filterAttrs (
+    key: _: !(builtins.elem key catalogCommandKeys)
+  ) cfg.merged.commands;
 
   # Wiring common to every skill-aware harness (see claude.nix); spread with
   # `//` into the programs.codex block (no key overlap).
@@ -112,7 +120,7 @@ in
           (
             key: body: lib.nameValuePair ".codex/prompts/${commandKeyToStem key}.md" { text = body; }
           )
-          cfg.merged.commands;
+          legacyPromptCommands;
     }
   ]);
 }
