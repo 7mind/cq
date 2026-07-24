@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type {
+  ArchivePointer,
   ItemMutationAckDto,
   MilestoneMutationAckDto,
 } from "@cq/ledger";
@@ -205,6 +206,32 @@ describe("McpLedgerClient fixed mutation acknowledgement contract", () => {
           milestone_id: "M9",
           status: "open",
           title: "updated title",
+        },
+      },
+    ]);
+  });
+});
+
+describe("McpLedgerClient archive acknowledgement contract", () => {
+  it("sends the archive arguments and decodes the pointer envelope", async () => {
+    const pointer: ArchivePointer = {
+      id: "M9",
+      path: "./archive/milestones/M9.md",
+      summary: "shipped",
+      title: "Milestone nine",
+      status: "done",
+    };
+    const { client, calls } = stubClient({
+      archive_milestone: { pointer },
+    });
+
+    expect(await client.archiveMilestone("M9", "shipped")).toEqual(pointer);
+    expect(calls).toEqual([
+      {
+        name: "archive_milestone",
+        arguments: {
+          milestone_id: "M9",
+          summary: "shipped",
         },
       },
     ]);

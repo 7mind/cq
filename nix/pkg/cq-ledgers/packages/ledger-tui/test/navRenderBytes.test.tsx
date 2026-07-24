@@ -131,19 +131,19 @@ class DistinctDefectsClient implements LedgerClient {
   async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not implemented");
   }
-  async createItem(_l: string, _m: string, _init: ItemInit): Promise<Item> {
+  async createItem(_l: string, _m: string, _init: ItemInit): Promise<never> {
     throw new Error("not implemented");
   }
-  async updateItem(_l: string, _id: string, _p: ItemPatch): Promise<Item> {
+  async updateItem(_l: string, _id: string, _p: ItemPatch): Promise<never> {
     throw new Error("not implemented");
   }
   async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
-  async createMilestone(): Promise<Item> {
+  async createMilestone(): Promise<never> {
     throw new Error("not implemented");
   }
-  async updateMilestone(_id: string, _p: MilestonePatch): Promise<Item> {
+  async updateMilestone(_id: string, _p: MilestonePatch): Promise<never> {
     throw new Error("not implemented");
   }
   async archiveMilestone(): Promise<ArchivePointer> {

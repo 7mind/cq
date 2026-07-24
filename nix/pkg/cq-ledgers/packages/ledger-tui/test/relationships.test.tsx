@@ -148,11 +148,11 @@ class DefectsClient implements LedgerClient {
 
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
   async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
-  async createItem(): Promise<Item> { throw new Error("not used"); }
-  async updateItem(): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<never> { throw new Error("not used"); }
+  async updateItem(): Promise<never> { throw new Error("not used"); }
   async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<FtsHit[]> { return []; }
-  async createMilestone(): Promise<Item> { throw new Error("not used"); }
-  async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async createMilestone(): Promise<never> { throw new Error("not used"); }
+  async updateMilestone(): Promise<never> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }
@@ -235,11 +235,11 @@ class HypothesisClient implements LedgerClient {
 
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
   async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
-  async createItem(): Promise<Item> { throw new Error("not used"); }
-  async updateItem(): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<never> { throw new Error("not used"); }
+  async updateItem(): Promise<never> { throw new Error("not used"); }
   async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<FtsHit[]> { return []; }
-  async createMilestone(): Promise<Item> { throw new Error("not used"); }
-  async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async createMilestone(): Promise<never> { throw new Error("not used"); }
+  async updateMilestone(): Promise<never> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }

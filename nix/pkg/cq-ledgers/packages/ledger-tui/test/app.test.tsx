@@ -15,7 +15,15 @@ import React from "react";
 import { render } from "ink-testing-library";
 import { App, buildItemEntries } from "../src/app.js";
 import { FakeClient } from "./fakeClient.js";
-import type { ArchiveContent, ArchivePointer, FetchedLedger, Item, LedgerClient, LedgerSummary } from "../src/types.js";
+import type {
+  ArchiveContent,
+  ArchivePointer,
+  FetchedLedger,
+  Item,
+  ItemMutationAckDto,
+  LedgerClient,
+  LedgerSummary,
+} from "../src/types.js";
 import type { Milestone } from "@cq/ledger";
 import { MILESTONES_SCHEMA } from "@cq/ledger";
 
@@ -65,19 +73,19 @@ class ManyItemsClient implements LedgerClient {
   async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
-  async createItem(): Promise<Item> {
+  async createItem(): Promise<never> {
     throw new Error("not used");
   }
-  async updateItem(): Promise<Item> {
+  async updateItem(): Promise<never> {
     throw new Error("not used");
   }
   async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
-  async createMilestone(): Promise<Item> {
+  async createMilestone(): Promise<never> {
     throw new Error("not used");
   }
-  async updateMilestone(): Promise<Item> {
+  async updateMilestone(): Promise<never> {
     throw new Error("not used");
   }
   async archiveMilestone(): Promise<ArchivePointer> {
@@ -123,19 +131,19 @@ class NoTransitionsClient implements LedgerClient {
   async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
-  async createItem(): Promise<Item> {
+  async createItem(): Promise<never> {
     throw new Error("not used");
   }
-  async updateItem(): Promise<Item> {
+  async updateItem(): Promise<never> {
     throw new Error("not used");
   }
   async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> {
     return [];
   }
-  async createMilestone(): Promise<Item> {
+  async createMilestone(): Promise<never> {
     throw new Error("not used");
   }
-  async updateMilestone(): Promise<Item> {
+  async updateMilestone(): Promise<never> {
     throw new Error("not used");
   }
   async archiveMilestone(): Promise<ArchivePointer> {
@@ -721,11 +729,11 @@ class MultiMilestoneClient implements LedgerClient {
   }
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
   async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
-  async createItem(): Promise<Item> { throw new Error("not used"); }
-  async updateItem(): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<never> { throw new Error("not used"); }
+  async updateItem(): Promise<never> { throw new Error("not used"); }
   async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> { return []; }
-  async createMilestone(): Promise<Item> { throw new Error("not used"); }
-  async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async createMilestone(): Promise<never> { throw new Error("not used"); }
+  async updateMilestone(): Promise<never> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }
@@ -913,14 +921,14 @@ class ArchiveClient implements LedgerClient {
   }
 
   async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
-  async createItem(): Promise<Item> { throw new Error("not used"); }
-  async updateItem(): Promise<Item> {
+  async createItem(): Promise<never> { throw new Error("not used"); }
+  async updateItem(): Promise<never> {
     this.statusApplied = true;
     throw new Error("should not be called on archived item");
   }
   async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> { return []; }
-  async createMilestone(): Promise<Item> { throw new Error("not used"); }
-  async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async createMilestone(): Promise<never> { throw new Error("not used"); }
+  async updateMilestone(): Promise<never> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }
@@ -1155,14 +1163,25 @@ class MultiMilestoneArchiveClient implements LedgerClient {
   }
 
   async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
-  async createItem(): Promise<Item> { throw new Error("not used"); }
-  async updateItem(_ledger: string, _id: string, patch: import("../src/types.js").ItemPatch): Promise<Item> {
+  async createItem(): Promise<never> { throw new Error("not used"); }
+  async updateItem(
+    _ledger: string,
+    _id: string,
+    patch: import("../src/types.js").ItemPatch,
+  ): Promise<ItemMutationAckDto> {
     this.statusApplied = patch.status ?? "";
-    return { id: "T1", milestoneId: "M1", status: patch.status ?? "planned", fields: { headline: "active item" }, createdAt: TS, updatedAt: TS };
+    return {
+      id: "T1",
+      milestoneId: "M1",
+      status: patch.status ?? "planned",
+      fields: {},
+      createdAt: TS,
+      updatedAt: TS,
+    };
   }
   async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> { return []; }
-  async createMilestone(): Promise<Item> { throw new Error("not used"); }
-  async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async createMilestone(): Promise<never> { throw new Error("not used"); }
+  async updateMilestone(): Promise<never> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }
@@ -1628,11 +1647,11 @@ class GoalsClient implements LedgerClient {
   }
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
   async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> { throw new Error("not used"); }
-  async createItem(): Promise<Item> { throw new Error("not used"); }
-  async updateItem(): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<never> { throw new Error("not used"); }
+  async updateItem(): Promise<never> { throw new Error("not used"); }
   async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<never[]> { return []; }
-  async createMilestone(): Promise<Item> { throw new Error("not used"); }
-  async updateMilestone(): Promise<Item> { throw new Error("not used"); }
+  async createMilestone(): Promise<never> { throw new Error("not used"); }
+  async updateMilestone(): Promise<never> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async close(): Promise<void> { /* no-op */ }
 }

@@ -110,19 +110,19 @@ class NamedProjectClient implements LedgerClient {
   async fetchItem(_ledgerId: string, _itemId: string, _projection: import("../src/types.js").ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
-  async createItem(): Promise<Item> {
+  async createItem(): Promise<never> {
     throw new Error("not used");
   }
-  async updateItem(): Promise<Item> {
+  async updateItem(): Promise<never> {
     throw new Error("not used");
   }
   async ftsSearch(_query: string, _projection: import("../src/types.js").ItemProjection): Promise<FtsHit[]> {
     return [];
   }
-  async createMilestone(): Promise<Item> {
+  async createMilestone(): Promise<never> {
     throw new Error("not used");
   }
-  async updateMilestone(_id: string, _p: MilestonePatch): Promise<Item> {
+  async updateMilestone(_id: string, _p: MilestonePatch): Promise<never> {
     throw new Error("not used");
   }
   async archiveMilestone(): Promise<ArchivePointer> {
