@@ -2457,7 +2457,7 @@ function FinalizePreview({
   );
 }
 
-function GoalsFinalizePreview({
+export function GoalsFinalizePreview({
   snapshot,
   onExecute,
   onCancel,
@@ -2593,7 +2593,7 @@ function FinalizeResults({
   );
 }
 
-function GoalsFinalizeResults({
+export function GoalsFinalizeResults({
   results,
   onClose,
 }: {

@@ -11,9 +11,15 @@ import { describe, it, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import React from "react";
 import { render } from "ink-testing-library";
-import { App } from "../src/app.js";
+import { App, GoalsFinalizePreview, GoalsFinalizeResults } from "../src/app.js";
 import { FakeClient } from "./fakeClient.js";
-import { SKIP_INCOMPLETE_MILESTONE, SKIP_WRONG_PHASE } from "@cq/ledger/finalize";
+import {
+  buildFinalizeSnapshot,
+  runGoalsFinalize,
+  SKIP_INCOMPLETE_MILESTONE,
+  SKIP_WRONG_PHASE,
+  type GoalsFinalizePlan,
+} from "@cq/ledger/finalize";
 import type {
   ArchiveContent,
   ArchivePointer,
@@ -75,8 +81,8 @@ interface Harness {
   unmount: () => void;
 }
 
-async function mount(client: LedgerClient): Promise<Harness> {
-  const r = render(<App client={client} />);
+async function mountElement(element: React.ReactElement): Promise<Harness> {
+  const r = render(element);
   await tick();
   return {
     frame: () => r.lastFrame() ?? "",
@@ -86,6 +92,10 @@ async function mount(client: LedgerClient): Promise<Harness> {
     },
     unmount: r.unmount,
   };
+}
+
+function mount(client: LedgerClient): Promise<Harness> {
+  return mountElement(<App client={client} />);
 }
 
 async function waitFor(h: Harness, substr: string, ms = 2000): Promise<void> {
@@ -1074,45 +1084,85 @@ describe("TUI finalize overlay (T621)", () => {
 
   it("matches the common representative selection, operation, and suppression contract", async () => {
     const client = new GoalsParityClient();
-    const h = await mount(client);
-    await h.key(ENTER);
-    const firstGoalId = GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections[0]!.id;
-    await waitFor(h, firstGoalId);
-    for (const goal of GOALS_PARITY_FIXTURE.goals) expect(h.frame()).toContain(goal.id);
-    await h.key("F");
-    await waitFor(h, "This finalizes selected completed goals");
-    await tick(50);
+    const snapshot = buildFinalizeSnapshot(await Promise.all([
+      client.fetchLedger("goals"),
+      client.fetchLedger("milestones"),
+      client.fetchLedger("tasks"),
+    ]));
+    let executedPlan: GoalsFinalizePlan | null = null;
+    const preview = await mountElement(
+      <GoalsFinalizePreview
+        snapshot={snapshot}
+        onExecute={(plan) => {
+          executedPlan = plan;
+        }}
+        onCancel={() => {
+          throw new Error("preview unexpectedly cancelled");
+        }}
+      />,
+    );
 
+    let previousRowIndex = -1;
+    for (const expected of GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections) {
+      const row = `[x] ${expected.id}`;
+      expect(preview.frame()).toContain(row);
+      expect(preview.frame().indexOf(row)).toBeGreaterThan(previousRowIndex);
+      previousRowIndex = preview.frame().indexOf(row);
+    }
     const deselectedIndex = GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections.findIndex(
       ({ selected }) => !selected,
     );
     if (deselectedIndex < 0) throw new Error("parity fixture must contain a deselected goal");
-    for (let index = 0; index < deselectedIndex; index += 1) await h.key(DOWN);
-    await h.key(SPACE);
+    for (let index = 0; index < deselectedIndex; index += 1) await preview.key(DOWN);
+    await preview.key(SPACE);
 
-    expect(h.frame()).toContain(GOALS_PARITY_FIXTURE.expected.skippedGoalId);
-    expect(h.frame()).toContain(SKIP_INCOMPLETE_MILESTONE);
-    expect(h.frame()).not.toContain("goal:G-DESELECT:to-building");
-    expect(h.frame()).not.toContain("milestone:C-DESELECT:archive");
+    previousRowIndex = -1;
+    for (const expected of GOALS_PARITY_FIXTURE.expected.eligibleGoalSelections) {
+      const row = `[${expected.selected ? "x" : " "}] ${expected.id}`;
+      expect(preview.frame()).toContain(row);
+      expect(preview.frame().indexOf(row)).toBeGreaterThan(previousRowIndex);
+      previousRowIndex = preview.frame().indexOf(row);
+    }
+    let previousOperationIndex = -1;
+    for (const operationId of GOALS_PARITY_FIXTURE.expected.operationIds) {
+      expect(preview.frame()).toContain(operationId);
+      expect(preview.frame().indexOf(operationId)).toBeGreaterThan(previousOperationIndex);
+      previousOperationIndex = preview.frame().indexOf(operationId);
+    }
+    expect(preview.frame()).toContain(GOALS_PARITY_FIXTURE.expected.skippedGoalId);
+    expect(preview.frame()).toContain(SKIP_INCOMPLETE_MILESTONE);
 
-    await confirmFinalize(h);
-    await waitFor(h, "finalize · results");
+    await typeFinalize(preview);
+    await preview.key(ENTER);
+    await tick(50);
+    if (executedPlan === null) throw new Error("typed confirmation did not emit a plan");
+    preview.unmount();
 
+    const results = await runGoalsFinalize(client, executedPlan);
     expect(client.calls).toEqual(GOALS_PARITY_FIXTURE.expected.attemptedOperationIds);
-    expect(
-      GOALS_PARITY_FIXTURE.expected.operationIds.filter(
-        (operationId) => !client.calls.includes(operationId),
-      ),
-    ).toEqual(
-      GOALS_PARITY_FIXTURE.expected.suppressedOperationIds,
+    const resultsView = await mountElement(
+      <GoalsFinalizeResults
+        results={results}
+        onClose={() => {
+          throw new Error("results unexpectedly closed");
+        }}
+      />,
     );
-    expect(h.frame()).toContain(GOALS_PARITY_FIXTURE.failure.message);
-    expect(h.frame()).toContain(
-      `${GOALS_PARITY_FIXTURE.expected.suppressedOperationIds.length} suppressed`,
-    );
-    expect(h.frame()).toContain("ok goal:G-INDEPENDENT:to-done");
-    expect(h.frame()).toContain("ok milestone:C-INDEPENDENT:archive");
-    h.unmount();
+
+    previousOperationIndex = -1;
+    for (const operationId of GOALS_PARITY_FIXTURE.expected.operationIds) {
+      const marker = operationId === `goal:${GOALS_PARITY_FIXTURE.failure.goalId}:to-building`
+        ? "failed"
+        : GOALS_PARITY_FIXTURE.expected.suppressedOperationIds.includes(operationId)
+          ? "suppressed"
+          : "ok";
+      const row = `${marker} ${operationId}`;
+      expect(resultsView.frame()).toContain(row);
+      expect(resultsView.frame().indexOf(row)).toBeGreaterThan(previousOperationIndex);
+      previousOperationIndex = resultsView.frame().indexOf(row);
+    }
+    expect(resultsView.frame()).toContain(GOALS_PARITY_FIXTURE.failure.message);
+    resultsView.unmount();
   });
 
   it("confirmation rejects bare, partial, and wrong-case input and resets after mismatch Enter", async () => {
