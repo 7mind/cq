@@ -82,6 +82,15 @@
           inherit pkgs claudePromptRoot;
           claudeModule = import ./nix/hm/claude.nix { inherit self; };
         };
+        piPromptRoot = import ./nix/pkg/cq-assets/render-prompt-surface.nix {
+          inherit pkgs;
+          lib = pkgs.lib;
+          surface = "pi";
+        };
+        piPromptRootTest = import ./nix/lib/pi-prompt-root-test.nix {
+          lib = pkgs.lib;
+          inherit pkgs piPromptRoot;
+        };
 
         # Fixed-output derivation: fetches all npm dependencies via
         # `bun install --frozen-lockfile`. Nix allows network access inside
@@ -460,6 +469,7 @@
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
           claude-prompt-root = claudePromptRoot;
           codex-prompt-root = codexPromptRoot;
+          pi-prompt-root = piPromptRoot;
           # CodeGraph — vendored from its `main` source (flake = false input),
           # built with our nixpkgs. platforms.unix -> builds on linux + darwin.
           codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix {
@@ -566,6 +576,18 @@
                 ${claudePromptRoot}/catalog.json
               if ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS' ${claudePromptRoot}; then
                 echo "packaged Claude prompt root contains an unresolved renderer token" >&2
+                exit 1
+              fi
+              touch "$out"
+            '';
+            pi-prompt-root = pkgs.runCommand "pi-prompt-root-check" { } ''
+              : ${if piPromptRootTest then "pi-home-manager-projection-ok" else "pi-home-manager-projection-failed"}
+              test "$(find ${piPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
+              test -f ${piPromptRoot}/roles/begin.md
+              cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
+                ${piPromptRoot}/catalog.json
+              if ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS|\$cq-|mcp__ledger__|Agent\(' ${piPromptRoot}/roles; then
+                echo "packaged Pi prompt root contains a foreign or unresolved renderer token" >&2
                 exit 1
               fi
               touch "$out"

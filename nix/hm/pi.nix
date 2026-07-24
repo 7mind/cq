@@ -23,6 +23,42 @@ let
   mkAgentHarness = import ../lib/mk-agent-harness.nix;
 
   llmContexts = pkgs.callPackage ../pkg/llm-contexts/default.nix { };
+  ledgerAssets = import ../pkg/cq-assets/assets.nix { inherit lib; };
+  piPromptRoot = import ../pkg/cq-assets/render-prompt-surface.nix {
+    inherit pkgs lib;
+    surface = "pi";
+  };
+  piCatalogAgents = lib.filter (
+    role: role.roleKind == "dispatched-subagent"
+  ) ledgerAssets.catalog;
+  piCatalogCommands = lib.filter (
+    role: role.roleKind == "orchestrator-command"
+  ) ledgerAssets.catalog;
+  piPromptTemplates =
+    lib.filterAttrs (name: _: !(lib.hasPrefix "cq/" name)) cfg.merged.commands
+    // lib.listToAttrs (
+      map (
+        role:
+        lib.nameValuePair "cq/${role.roleId}" "${piPromptRoot}/roles/${role.roleId}.md"
+      ) piCatalogCommands
+    );
+  piCatalogAgentNames = map (role: role.roleId) piCatalogAgents;
+  piAgentHomeFiles =
+    lib.mapAttrs'
+      (
+        name: body: lib.nameValuePair ".pi/agent/cq-agents/${name}.md" { text = body; }
+      )
+      (lib.filterAttrs (
+        name: _: !(builtins.elem name piCatalogAgentNames)
+      ) cfg.merged.agents)
+    // lib.listToAttrs (
+      map (
+        role:
+        lib.nameValuePair ".pi/agent/cq-agents/${role.roleId}.md" {
+          source = "${piPromptRoot}/roles/${role.roleId}.md";
+        }
+      ) piCatalogAgents
+    );
 
   # Pi: vendored formula (version pinned in ../pkg/pi-coding-agent/package.nix;
   # nixpkgs lags at 0.75.x, and its older releases have broken Codex/ChatGPT
@@ -274,7 +310,7 @@ in
         # Pi prompt templates. The harness materializes keys like
         # "plan/advance" as prompts/plan:advance.md so that /plan:advance
         # works exactly as it does for Claude (/plan:advance) and Codex.
-        promptTemplates = cfg.merged.commands;
+        promptTemplates = piPromptTemplates;
         settings = {
           theme = "dark";
           # OpenAI Codex via ChatGPT subscription OAuth (`/login openai-codex`).
@@ -403,11 +439,7 @@ in
       # Separate mkMerge element because the block above sets static
       # `home.file."<path>"` entries that can't coexist with a dynamic
       # `home.file = <attrs>` in one attribute set.
-      home.file = lib.mapAttrs'
-        (
-          name: body: lib.nameValuePair ".pi/agent/cq-agents/${name}.md" { text = body; }
-        )
-        cfg.merged.agents;
+      home.file = piAgentHomeFiles;
     }
     # Pi-specific extras (gated on the programs.pi sub-options declared above).
     # Pi's adapter reads the shared ~/.config/mcp/mcp.json registry (written by
