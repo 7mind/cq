@@ -16,6 +16,7 @@ import {
   prefixedToolNames,
   derivePredicates,
   type DerivedPredicates,
+  type Item,
   type LedgerSchema,
   type PromptCatalogCapability,
 } from "../src/index.js";
@@ -54,6 +55,43 @@ function decode<T>(result: { content: Array<{ type: string; text: string }> }): 
     throw new Error("expected single text content block");
   }
   return JSON.parse(first.text) as T;
+}
+
+function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
+  const fields: Record<string, string[]> = {};
+  for (const name of ["dependsOn", "blockedBy", "ledgerRefs"] as const) {
+    const value = item.fields[name];
+    if (Array.isArray(value)) fields[name] = value;
+  }
+  const acknowledgement: Record<string, unknown> = {
+    id: item.id,
+    milestoneId: item.milestoneId,
+    status: item.status,
+    fields,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+  if (item.author !== undefined) acknowledgement["author"] = item.author;
+  if (item.session !== undefined) acknowledgement["session"] = item.session;
+  return acknowledgement;
+}
+
+function expectedMilestoneAcknowledgement(item: Item): Record<string, unknown> {
+  const fields: Record<string, string[]> = {};
+  for (const name of ["dependsOn", "blockedBy"] as const) {
+    const value = item.fields[name];
+    if (Array.isArray(value)) fields[name] = value;
+  }
+  const acknowledgement: Record<string, unknown> = {
+    id: item.id,
+    status: item.status,
+    fields,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+  if (item.author !== undefined) acknowledgement["author"] = item.author;
+  if (item.session !== undefined) acknowledgement["session"] = item.session;
+  return acknowledgement;
 }
 
 describe("ledger MCP tools", () => {
@@ -236,7 +274,7 @@ describe("ledger MCP tools", () => {
       }),
     );
     expect(m.milestone.id).toBe("M1");
-    expect(m.milestone.fields["title"]).toBe("first");
+    expect(m.milestone.fields).toEqual({});
 
     const it = decode<{ item: { id: string; status: string; milestoneId: string } }>(
       await callTool(tools, "create_item", {
@@ -278,7 +316,8 @@ describe("ledger MCP tools", () => {
       }),
     );
     expect(updated.item.status).toBe("done");
-    expect(updated.item.fields["note"]).toBe("bought milk");
+    expect(updated.item.fields).toEqual({});
+    expect(store.fetchItem("xenos", "X1").fields["note"]).toBe("bought milk");
   });
 
   it("create_item / update_item thread author + session provenance", async () => {
@@ -310,6 +349,226 @@ describe("ledger MCP tools", () => {
     );
     expect(updated.item.author).toBe("user");
     expect(updated.item.session).toBe("sess-2");
+  });
+
+  // BG, specified-origin: mutation responses expose fixed wire acknowledgements.
+  it("create_item and update_item emit authoritative fixed acknowledgements", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+    await callTool(tools, "create_milestone", { title: "acknowledgement" });
+    await callTool(tools, "create_item", {
+      ledger_id: "tasks",
+      milestone_id: "M1",
+      status: "planned",
+      fields: { headline: "Dependency" },
+    });
+
+    const createResult = await callTool(tools, "create_item", {
+      ledger_id: "tasks",
+      milestone_id: "M1",
+      status: "planned",
+      fields: {
+        headline: "Wire acknowledgement",
+        description: "must not enter the mutation response",
+        dependsOn: ["T1"],
+        blockedBy: ["T1"],
+        ledgerRefs: ["goals:G93"],
+      },
+      author: "gpt-5.6",
+      session: "session-create",
+    });
+    const createResponse = decode<{ item: Record<string, unknown> }>(createResult);
+    const created = store.fetchItem("tasks", createResponse.item["id"] as string);
+
+    expect(createResponse).toEqual({
+      item: expectedItemAcknowledgement(created),
+    });
+    expect(created.fields["dependsOn"]).toEqual(["tasks:T1"]);
+    expect(created.fields["blockedBy"]).toEqual(["tasks:T1"]);
+    expect(createResult.content[0]?.text).toBe(JSON.stringify(createResponse));
+
+    const updateResult = await callTool(tools, "update_item", {
+      ledger_id: "tasks",
+      item_id: created.id,
+      status: "wip",
+      fields: {
+        description: "updated narrative must remain omitted",
+        dependsOn: ["T1"],
+        blockedBy: ["T1"],
+        ledgerRefs: ["goals:G93"],
+      },
+      author: "user",
+      session: "session-update",
+    });
+    const updateResponse = decode<{ item: Record<string, unknown> }>(updateResult);
+    const updated = store.fetchItem("tasks", created.id);
+
+    expect(updateResponse).toEqual({
+      item: expectedItemAcknowledgement(updated),
+    });
+    expect(updateResult.content[0]?.text).toBe(JSON.stringify(updateResponse));
+    expect(updated.author).toBe("user");
+    expect(updated.session).toBe("session-update");
+
+    const absentResult = await callTool(tools, "create_item", {
+      ledger_id: "tasks",
+      milestone_id: "M1",
+      status: "planned",
+      fields: { headline: "No provenance" },
+    });
+    const absent = decode<{ item: Record<string, unknown> }>(absentResult).item;
+    expect(Object.hasOwn(absent, "author")).toBe(false);
+    expect(Object.hasOwn(absent, "session")).toBe(false);
+  });
+
+  // BG, specified-origin: ledger and milestone writes expose fixed DTOs.
+  it("create_ledger and milestone mutations omit full content and preserve authoritative values", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+
+    const ledgerResult = await callTool(tools, "create_ledger", {
+      name: "ackledger",
+      schema: {
+        statusValues: ["open", "done"],
+        terminalStatuses: ["done"],
+        fields: { narrative: { type: "string", required: false } },
+      },
+    });
+    const ledgerResponse = decode<{ ledger: Record<string, unknown> }>(ledgerResult);
+    expect(ledgerResponse).toEqual({ ledger: { id: "ackledger" } });
+    expect(Object.hasOwn(ledgerResponse.ledger, "schema")).toBe(false);
+    expect(Object.hasOwn(ledgerResponse.ledger, "author")).toBe(false);
+    expect(Object.hasOwn(ledgerResponse.ledger, "session")).toBe(false);
+    expect(ledgerResult.content[0]?.text).toBe(JSON.stringify(ledgerResponse));
+
+    await callTool(tools, "create_milestone", { title: "Dependency" });
+    const createResult = await callTool(tools, "create_milestone", {
+      title: "Acknowledged milestone",
+      description: "narrative must be omitted",
+      dependsOn: ["M1"],
+      blockedBy: ["M1"],
+    });
+    const createResponse = decode<{ milestone: Record<string, unknown> }>(
+      createResult,
+    );
+    const created = store.fetchItem(
+      "milestones",
+      createResponse.milestone["id"] as string,
+    );
+
+    expect(createResponse).toEqual({
+      milestone: expectedMilestoneAcknowledgement(created),
+    });
+    expect(created.fields["dependsOn"]).toEqual(["milestones:M1"]);
+    expect(created.fields["blockedBy"]).toEqual(["milestones:M1"]);
+    expect(Object.hasOwn(createResponse.milestone, "author")).toBe(false);
+    expect(Object.hasOwn(createResponse.milestone, "session")).toBe(false);
+
+    await store.updateItem("milestones", created.id, {
+      author: "gpt-5.6",
+      session: "session-milestone",
+    });
+    const updateResult = await callTool(tools, "update_milestone", {
+      milestone_id: created.id,
+      status: "blocked",
+      title: "updated narrative must be omitted",
+      dependsOn: ["M1"],
+      blockedBy: ["M1"],
+    });
+    const updateResponse = decode<{ milestone: Record<string, unknown> }>(
+      updateResult,
+    );
+    const updated = store.fetchItem("milestones", created.id);
+
+    expect(updateResponse).toEqual({
+      milestone: expectedMilestoneAcknowledgement(updated),
+    });
+    expect(updateResponse.milestone["author"]).toBe("gpt-5.6");
+    expect(updateResponse.milestone["session"]).toBe("session-milestone");
+    expect(updateResult.content[0]?.text).toBe(JSON.stringify(updateResponse));
+  });
+
+  // BG, specified-origin: recovery acknowledgements retain stored provenance.
+  it("reopen_item and unarchive_item preserve present and absent provenance", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+
+    await callTool(tools, "create_milestone", { title: "Reopen" });
+    const authoredCreate = decode<{ item: { id: string } }>(
+      await callTool(tools, "create_item", {
+        ledger_id: "tasks",
+        milestone_id: "M1",
+        status: "done",
+        fields: { headline: "Reopen me" },
+        author: "gpt-5.6",
+        session: "session-reopen",
+      }),
+    );
+    const reopenResult = await callTool(tools, "reopen_item", {
+      ledger_id: "tasks",
+      item_id: authoredCreate.item.id,
+      to_status: "planned",
+    });
+    const reopenResponse = decode<{ item: Record<string, unknown> }>(
+      reopenResult,
+    );
+    const reopened = store.fetchItem("tasks", authoredCreate.item.id);
+    expect(reopenResponse).toEqual({
+      item: expectedItemAcknowledgement(reopened),
+    });
+    expect(reopenResponse.item["author"]).toBe("gpt-5.6");
+    expect(reopenResponse.item["session"]).toBe("session-reopen");
+
+    await callTool(tools, "create_milestone", { title: "Unarchive" });
+    const attributed = decode<{ item: { id: string } }>(
+      await callTool(tools, "create_item", {
+        ledger_id: "xenos",
+        milestone_id: "M2",
+        status: "done",
+        fields: { note: "attributed narrative" },
+        author: "user",
+        session: "session-unarchive",
+      }),
+    );
+    const unattributed = decode<{ item: { id: string } }>(
+      await callTool(tools, "create_item", {
+        ledger_id: "xenos",
+        milestone_id: "M2",
+        status: "done",
+        fields: { note: "unattributed narrative" },
+      }),
+    );
+    await callTool(tools, "update_milestone", {
+      milestone_id: "M2",
+      status: "done",
+    });
+    await callTool(tools, "archive_milestone", {
+      milestone_id: "M2",
+      summary: "recovery fixture",
+    });
+
+    for (const expected of [
+      { id: attributed.item.id, author: "user", session: "session-unarchive" },
+      { id: unattributed.item.id },
+    ]) {
+      const result = await callTool(tools, "unarchive_item", {
+        ledger_id: "xenos",
+        milestone_id: "M2",
+        item_id: expected.id,
+      });
+      const response = decode<{ item: Record<string, unknown> }>(result);
+      const authoritative = store.fetchItem("xenos", expected.id);
+      expect(response).toEqual({
+        item: expectedItemAcknowledgement(authoritative),
+      });
+      expect(Object.hasOwn(response.item, "author")).toBe(
+        Object.hasOwn(expected, "author"),
+      );
+      expect(Object.hasOwn(response.item, "session")).toBe(
+        Object.hasOwn(expected, "session"),
+      );
+      expect(result.content[0]?.text).toBe(JSON.stringify(response));
+    }
   });
 
   it("create_item refuses absent / terminal milestone (strict existence Q5)", async () => {

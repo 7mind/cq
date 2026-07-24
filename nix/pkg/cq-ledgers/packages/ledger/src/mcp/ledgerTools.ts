@@ -60,6 +60,14 @@ import {
   ListProjectsNotImplementedError,
   type ListProjectsCapability,
 } from "./listProjects.js";
+import {
+  produceWireDto,
+  projectItemMutationAckDto,
+  projectLedgerMutationAckDto,
+  projectMilestoneMutationAckDto,
+  serializeWireDto,
+  type ProducedWireDto,
+} from "./wireResponseContract.js";
 
 /**
  * The SDK's `tools?:` field on createSdkMcpServer is typed as
@@ -301,7 +309,9 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
       if (args.author !== undefined) patch.author = args.author;
       if (args.session !== undefined) patch.session = args.session;
       const item = await store.updateItem(args.ledger_id, args.item_id, patch);
-      return jsonResult({ item });
+      return wireResult(
+        produceWireDto({ item: projectItemMutationAckDto(item) }),
+      );
     },
   );
 
@@ -326,7 +336,9 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
       if (args.author !== undefined) init.author = args.author;
       if (args.session !== undefined) init.session = args.session;
       const item = await store.createItem(args.ledger_id, args.milestone_id, init);
-      return jsonResult({ item });
+      return wireResult(
+        produceWireDto({ item: projectItemMutationAckDto(item) }),
+      );
     },
   );
 
@@ -340,7 +352,9 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
     async (args) => {
       const schema = args.schema as LedgerSchema;
       const ledger = await store.createLedger(args.name, schema);
-      return jsonResult({ ledger });
+      return wireResult(
+        produceWireDto({ ledger: projectLedgerMutationAckDto(ledger) }),
+      );
     },
   );
 
@@ -444,7 +458,11 @@ ${QUERY_LANGUAGE_HELP}`,
       if (args.dependsOn !== undefined) init.dependsOn = args.dependsOn;
       if (args.id !== undefined) init.id = args.id;
       const milestone = await store.createMilestone(init);
-      return jsonResult({ milestone });
+      return wireResult(
+        produceWireDto({
+          milestone: projectMilestoneMutationAckDto(milestone),
+        }),
+      );
     },
   );
 
@@ -473,7 +491,11 @@ ${QUERY_LANGUAGE_HELP}`,
       if (args.blockedBy !== undefined) patch.blockedBy = args.blockedBy;
       if (args.dependsOn !== undefined) patch.dependsOn = args.dependsOn;
       const milestone = await store.updateMilestone(args.milestone_id, patch);
-      return jsonResult({ milestone });
+      return wireResult(
+        produceWireDto({
+          milestone: projectMilestoneMutationAckDto(milestone),
+        }),
+      );
     },
   );
 
@@ -536,7 +558,9 @@ ${QUERY_LANGUAGE_HELP}`,
     } as const,
     async (args) => {
       const item = await store.reopenItem(args.ledger_id, args.item_id, args.to_status);
-      return jsonResult({ item });
+      return wireResult(
+        produceWireDto({ item: projectItemMutationAckDto(item) }),
+      );
     },
   );
 
@@ -550,7 +574,9 @@ ${QUERY_LANGUAGE_HELP}`,
     } as const,
     async (args) => {
       const item = await store.unarchiveItem(args.ledger_id, args.milestone_id, args.item_id);
-      return jsonResult({ item });
+      return wireResult(
+        produceWireDto({ item: projectItemMutationAckDto(item) }),
+      );
     },
   );
 
