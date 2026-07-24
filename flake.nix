@@ -55,6 +55,9 @@
         promptSurfacesTest = import ./nix/lib/prompt-surfaces-test.nix {
           lib = pkgs.lib;
         };
+        promptCatalogTest = import ./nix/lib/prompt-catalog-test.nix {
+          lib = pkgs.lib;
+        };
 
         # Fixed-output derivation: fetches all npm dependencies via
         # `bun install --frozen-lockfile`. Nix allows network access inside
@@ -521,6 +524,9 @@
             prompt-surfaces =
               assert promptSurfacesTest;
               pkgs.runCommand "prompt-surfaces" { } "touch $out";
+            prompt-catalog =
+              assert promptCatalogTest;
+              pkgs.runCommand "prompt-catalog" { } "touch $out";
           };
 
         apps.default = {

@@ -76,9 +76,12 @@ Edit the files in this directory, never a symlink or a consumer's copy.
    repo-local command surface during the transition.
 
 3. **Nix / home-manager** — `flake.nix` exposes assets (see `./assets.nix`),
-   a pure, IFD-free attrset `{ skills, commands, agents, context }` of file
-   *contents*. A home-manager LLM module (e.g. in a nix-config) consumes these
-   assets and materializes every asset into each agent's layout (`~/.claude/commands`,
+   a pure, IFD-free attrset of file contents plus the authoritative ordered
+   `catalog`, its deterministic `catalogJson` projection, and
+   `promptSurfaceLayout`. Each packaged surface follows
+   `$out/share/cq/prompt-surfaces/<surface>/{catalog.json,roles/...}`. A
+   home-manager LLM module (e.g. in a nix-config) consumes these assets and
+   materializes every asset into each agent's layout (`~/.claude/commands`,
    `~/.codex/skills`, `~/.codex/prompts`, …) globally — no symlink script needed
    there. The repo-local symlinks above remain for in-repo dogfooding.
 
