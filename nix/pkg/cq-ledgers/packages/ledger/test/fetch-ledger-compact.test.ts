@@ -1,13 +1,13 @@
 /**
- * Tests for the fetch_ledger compact + pagination params (T144).
+ * Tests for the fetch_ledger projection + pagination contract.
  *
  * Covers:
- *  1. No params — backward-compatible full ledger response.
- *  2. compact:true — strips all long narrative fields (including goals
+ *  1. projection:full — returns the complete ledger response.
+ *  2. projection:compact — strips all long narrative fields (including goals
  *     `grounding`) from every item; response shape is { ledger: FetchedLedger }.
  *  3. offset/limit — flattens items, paginates, returns
- *     { ledger: { id, schema, counters, archivePointers }, items, total }.
- *  4. compact + offset/limit combined.
+ *     { ledger, items, total, offset, limit, nextOffset }.
+ *  4. compact projection + offset/limit combined.
  *  5. Token-overflow proof: a goals fixture with a large grounding blob (≥51.8 KB)
  *     fits well under the tool-output limit in compact mode.
  */
@@ -115,13 +115,13 @@ beforeEach(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. No params — backward-compatible full response
+// 1. Explicit full projection
 // ---------------------------------------------------------------------------
 
-describe("fetch_ledger — no params (backward compat)", () => {
+describe("fetch_ledger — projection:full", () => {
   it("returns { ledger: FetchedLedger } with full items including grounding", async () => {
     const result = decode<{ ledger: FetchedLedger }>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals" }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "full" }),
     );
     expect(result.ledger.id).toBe("goals");
     const allItems = result.ledger.milestones.flatMap((g) => g.items);
@@ -133,7 +133,7 @@ describe("fetch_ledger — no params (backward compat)", () => {
 
   it("does not include top-level items or total fields", async () => {
     const result = decode<Record<string, unknown>>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals" }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "full" }),
     );
     expect(result).not.toHaveProperty("items");
     expect(result).not.toHaveProperty("total");
@@ -141,13 +141,13 @@ describe("fetch_ledger — no params (backward compat)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 2. compact:true — projects items, strips long fields including grounding
+// 2. Compact projection strips long fields including grounding
 // ---------------------------------------------------------------------------
 
-describe("fetch_ledger — compact:true", () => {
+describe("fetch_ledger — projection:compact", () => {
   it("returns { ledger: FetchedLedger } shape (no flat items/total)", async () => {
     const result = decode<Record<string, unknown>>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals", compact: true }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "compact" }),
     );
     expect(result).toHaveProperty("ledger");
     expect(result).not.toHaveProperty("items");
@@ -158,7 +158,7 @@ describe("fetch_ledger — compact:true", () => {
 
   it("strips grounding from goals items", async () => {
     const result = decode<{ ledger: FetchedLedger }>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals", compact: true }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "compact" }),
     );
     const allItems = result.ledger.milestones.flatMap((g) => g.items);
     expect(allItems.length).toBe(2);
@@ -169,7 +169,7 @@ describe("fetch_ledger — compact:true", () => {
 
   it("strips all COMPACT_PROJECTION_DENYLIST fields", async () => {
     const result = decode<{ ledger: FetchedLedger }>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals", compact: true }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "compact" }),
     );
     const allItems = result.ledger.milestones.flatMap((g) => g.items);
     for (const item of allItems) {
@@ -181,7 +181,7 @@ describe("fetch_ledger — compact:true", () => {
 
   it("retains safe short fields (title, tags) after projection", async () => {
     const result = decode<{ ledger: FetchedLedger }>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals", compact: true }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "compact" }),
     );
     const allItems = result.ledger.milestones.flatMap((g) => g.items);
     const first = allItems[0]!;
@@ -191,7 +191,7 @@ describe("fetch_ledger — compact:true", () => {
 
   it("retains intrinsic item properties (id, status, milestoneId)", async () => {
     const result = decode<{ ledger: FetchedLedger }>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals", compact: true }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "compact" }),
     );
     const allItems = result.ledger.milestones.flatMap((g) => g.items);
     const first = allItems[0]!;
@@ -202,7 +202,7 @@ describe("fetch_ledger — compact:true", () => {
 
   it("retains schema, counters, archivePointers in the ledger", async () => {
     const result = decode<{ ledger: FetchedLedger }>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals", compact: true }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "compact" }),
     );
     expect(result.ledger.schema).toBeDefined();
     expect(result.ledger.counters).toBeDefined();
@@ -214,7 +214,7 @@ describe("fetch_ledger — compact:true", () => {
   it("compact goals response fits under tool-output limit (overflow proof)", async () => {
     const result = await callTool(tools, "fetch_ledger", {
       ledger_id: "goals",
-      compact: true,
+      projection: "compact",
     });
     const responseBytes = result.content[0]!.text.length;
     // The uncompacted payload would be > 52 KB * 2 goals items = > 104 KB.
@@ -225,7 +225,7 @@ describe("fetch_ledger — compact:true", () => {
   it("compact questions response strips context and recommendation, fits under limit", async () => {
     const result = await callTool(tools, "fetch_ledger", {
       ledger_id: "questions",
-      compact: true,
+      projection: "compact",
     });
     const responseBytes = result.content[0]!.text.length;
     expect(responseBytes).toBeLessThan(TOOL_OUTPUT_LIMIT_BYTES);
@@ -239,7 +239,7 @@ describe("fetch_ledger — compact:true", () => {
   });
 
   it("non-compact goals response overflows (control: confirms the problem compact solves)", async () => {
-    const result = await callTool(tools, "fetch_ledger", { ledger_id: "goals" });
+    const result = await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "full" });
     const responseBytes = result.content[0]!.text.length;
     // With 52 KB * 2 items the full response must be > 32 KB.
     expect(responseBytes).toBeGreaterThan(TOOL_OUTPUT_LIMIT_BYTES);
@@ -255,6 +255,7 @@ describe("fetch_ledger — offset/limit pagination", () => {
     const result = decode<Record<string, unknown>>(
       await callTool(tools, "fetch_ledger", {
         ledger_id: "goals",
+        projection: "full",
         offset: 0,
         limit: 1,
       }),
@@ -262,6 +263,9 @@ describe("fetch_ledger — offset/limit pagination", () => {
     expect(result).toHaveProperty("ledger");
     expect(result).toHaveProperty("items");
     expect(result).toHaveProperty("total");
+    expect(result).toHaveProperty("offset", 0);
+    expect(result).toHaveProperty("limit", 1);
+    expect(result).toHaveProperty("nextOffset", 1);
     const ledger = result["ledger"] as Record<string, unknown>;
     // milestones must NOT be present in the ledger meta when paginating
     expect(ledger).not.toHaveProperty("milestones");
@@ -271,6 +275,7 @@ describe("fetch_ledger — offset/limit pagination", () => {
     const result = decode<{ items: Item[]; total: number }>(
       await callTool(tools, "fetch_ledger", {
         ledger_id: "goals",
+        projection: "full",
         offset: 0,
         limit: 1,
       }),
@@ -283,6 +288,7 @@ describe("fetch_ledger — offset/limit pagination", () => {
     const result = decode<{ items: Item[]; total: number }>(
       await callTool(tools, "fetch_ledger", {
         ledger_id: "goals",
+        projection: "full",
         offset: 1,
         limit: 1,
       }),
@@ -290,41 +296,62 @@ describe("fetch_ledger — offset/limit pagination", () => {
     expect(result.total).toBe(2);
     expect(result.items.length).toBe(1);
     expect(result.items[0]!.id).toBe("G2");
+    expect(result).toMatchObject({
+      offset: 1,
+      limit: 1,
+      nextOffset: null,
+    });
   });
 
   it("offset beyond end returns empty items with correct total", async () => {
     const result = decode<{ items: Item[]; total: number }>(
       await callTool(tools, "fetch_ledger", {
         ledger_id: "goals",
+        projection: "full",
         offset: 100,
         limit: 10,
       }),
     );
     expect(result.total).toBe(2);
     expect(result.items).toEqual([]);
+    expect(result).toMatchObject({
+      offset: 100,
+      limit: 10,
+      nextOffset: null,
+    });
   });
 
   it("limit without offset defaults offset to 0", async () => {
     const result = decode<{ items: Item[]; total: number }>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals", limit: 1 }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "full", limit: 1 }),
     );
     expect(result.items.length).toBe(1);
     expect(result.items[0]!.id).toBe("G1");
     expect(result.total).toBe(2);
+    expect(result).toMatchObject({
+      offset: 0,
+      limit: 1,
+      nextOffset: 1,
+    });
   });
 
   it("offset without limit returns all items from that offset", async () => {
     const result = decode<{ items: Item[]; total: number }>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals", offset: 1 }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "full", offset: 1 }),
     );
     expect(result.items.length).toBe(1);
     expect(result.items[0]!.id).toBe("G2");
     expect(result.total).toBe(2);
+    expect(result).toMatchObject({
+      offset: 1,
+      limit: null,
+      nextOffset: null,
+    });
   });
 
   it("ledger meta in paginated response retains schema/counters/archivePointers", async () => {
     const result = decode<{ ledger: Record<string, unknown> }>(
-      await callTool(tools, "fetch_ledger", { ledger_id: "goals", offset: 0, limit: 1 }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "full", offset: 0, limit: 1 }),
     );
     expect(result.ledger["schema"]).toBeDefined();
     expect(result.ledger["counters"]).toBeDefined();
@@ -333,15 +360,15 @@ describe("fetch_ledger — offset/limit pagination", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. compact + pagination combined
+// 4. Compact projection + pagination combined
 // ---------------------------------------------------------------------------
 
-describe("fetch_ledger — compact + pagination combined", () => {
+describe("fetch_ledger — compact projection + pagination", () => {
   it("applies compact projection before pagination", async () => {
     const result = decode<{ items: Item[]; total: number }>(
       await callTool(tools, "fetch_ledger", {
         ledger_id: "goals",
-        compact: true,
+        projection: "compact",
         offset: 0,
         limit: 2,
       }),
@@ -358,7 +385,7 @@ describe("fetch_ledger — compact + pagination combined", () => {
   it("compact+paginated response fits under tool-output limit", async () => {
     const result = await callTool(tools, "fetch_ledger", {
       ledger_id: "goals",
-      compact: true,
+      projection: "compact",
       offset: 0,
       limit: 2,
     });
@@ -370,7 +397,7 @@ describe("fetch_ledger — compact + pagination combined", () => {
     const page1 = decode<{ items: Item[]; total: number }>(
       await callTool(tools, "fetch_ledger", {
         ledger_id: "goals",
-        compact: true,
+        projection: "compact",
         offset: 0,
         limit: 1,
       }),
@@ -378,7 +405,7 @@ describe("fetch_ledger — compact + pagination combined", () => {
     const page2 = decode<{ items: Item[]; total: number }>(
       await callTool(tools, "fetch_ledger", {
         ledger_id: "goals",
-        compact: true,
+        projection: "compact",
         offset: 1,
         limit: 1,
       }),

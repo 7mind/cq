@@ -215,7 +215,12 @@ describe("ledger MCP tools", () => {
 
     const fetched = decode<{
       ledger: { id: string; counters: { milestone: number; item: number } };
-    }>(await callTool(tools, "fetch_ledger", { ledger_id: "alpha" }));
+    }>(
+      await callTool(tools, "fetch_ledger", {
+        ledger_id: "alpha",
+        projection: "full",
+      }),
+    );
     expect(fetched.ledger.id).toBe("alpha");
     expect(fetched.ledger.counters).toEqual({ milestone: 0, item: 0 });
   });
@@ -254,7 +259,11 @@ describe("ledger MCP tools", () => {
     expect(counted.counts["milestones"]).toBeGreaterThanOrEqual(1);
 
     const fetched = decode<{ item: { fields: Record<string, string> } }>(
-      await callTool(tools, "fetch_item", { ledger_id: "xenos", item_id: "X1" }),
+      await callTool(tools, "fetch_item", {
+        ledger_id: "xenos",
+        item_id: "X1",
+        projection: "full",
+      }),
     );
     expect(fetched.item.fields["note"]).toBe("buy milk");
 
@@ -344,7 +353,12 @@ describe("ledger MCP tools", () => {
       milestone: { id: string };
       resolved: { id: string; title: string };
       references: Record<string, number>;
-    }>(await callTool(tools, "fetch_milestone", { milestone_id: "M1" }));
+    }>(
+      await callTool(tools, "fetch_milestone", {
+        milestone_id: "M1",
+        projection: "full",
+      }),
+    );
     expect(fm.milestone.id).toBe("M1");
     expect(fm.resolved.title).toBe("x");
     expect(fm.references).toEqual({ xenos: 1 });
@@ -354,12 +368,18 @@ describe("ledger MCP tools", () => {
       title: "renamed",
     });
     const fm2 = decode<{ resolved: { title: string } }>(
-      await callTool(tools, "fetch_milestone", { milestone_id: "M1" }),
+      await callTool(tools, "fetch_milestone", {
+        milestone_id: "M1",
+        projection: "full",
+      }),
     );
     expect(fm2.resolved.title).toBe("renamed");
 
     const list = decode<{ items: Record<string, Array<{ id: string }>> }>(
-      await callTool(tools, "list_milestone_items", { milestone_id: "M1" }),
+      await callTool(tools, "list_milestone_items", {
+        milestone_id: "M1",
+        projection: "full",
+      }),
     );
     expect(list.items["xenos"]?.[0]?.id).toBe("X1");
   });
@@ -573,7 +593,11 @@ describe("ledger MCP tools", () => {
       fields: { note: "wash car" },
     });
     const hits = decode<{ items: Array<{ id: string }> }>(
-      await callTool(tools, "search_items", { ledger_id: "xenos", query: "milk" }),
+      await callTool(tools, "search_items", {
+        ledger_id: "xenos",
+        query: "milk",
+        projection: "full",
+      }),
     );
     expect(hits.items.map((i) => i.id)).toEqual(["X1"]);
   });
@@ -601,7 +625,12 @@ describe("ledger MCP tools", () => {
         score: number;
         matchedFields: string[];
       }>;
-    }>(await callTool(tools, "fts_search", { query: "milk" }));
+    }>(
+      await callTool(tools, "fts_search", {
+        query: "milk",
+        projection: "full",
+      }),
+    );
     expect(out.results.length).toBe(1);
     const hit = out.results[0]!;
     expect(hit.ledgerId).toBe("xenos");
@@ -623,11 +652,18 @@ describe("ledger MCP tools", () => {
     await callTool(tools, "update_milestone", { milestone_id: "M1", status: "done" });
     await callTool(tools, "archive_milestone", { milestone_id: "M1", summary: "s" });
     const def = decode<{ results: unknown[] }>(
-      await callTool(tools, "fts_search", { query: "quokka" }),
+      await callTool(tools, "fts_search", {
+        query: "quokka",
+        projection: "full",
+      }),
     );
     expect(def.results.length).toBe(0);
     const incl = decode<{ results: Array<{ item: { id: string } }> }>(
-      await callTool(tools, "fts_search", { query: "quokka", include_archived: true }),
+      await callTool(tools, "fts_search", {
+        query: "quokka",
+        projection: "full",
+        include_archived: true,
+      }),
     );
     expect(incl.results.map((r) => r.item.id)).toEqual(["X1"]);
   });

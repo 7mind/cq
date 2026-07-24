@@ -63,6 +63,9 @@ export interface PaginatedLedgerDto {
   ledger: Omit<FetchedLedger, "milestones">;
   items: ItemDto[];
   total: number;
+  offset: number;
+  limit: number | null;
+  nextOffset: number | null;
 }
 
 export type FtsSearchResultDto = Omit<FtsSearchHit, "item"> & {
@@ -301,6 +304,9 @@ export function projectPaginatedLedgerDto(
     ledger: Omit<FetchedLedger, "milestones">;
     items: Item[];
     total: number;
+    offset: number;
+    limit: number | null;
+    nextOffset: number | null;
   },
   projection: ItemProjection,
 ): ProducedWireDto<PaginatedLedgerDto> {

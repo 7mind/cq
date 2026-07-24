@@ -264,7 +264,14 @@ describe("item wire projections", () => {
     expect(
       reloadWire(
         projectPaginatedLedgerDto(
-          { ledger: ledgerMetadata, items: [source], total: 41 },
+          {
+            ledger: ledgerMetadata,
+            items: [source],
+            total: 41,
+            offset: 20,
+            limit: 1,
+            nextOffset: 21,
+          },
           "compact",
         ),
       ),
@@ -272,6 +279,9 @@ describe("item wire projections", () => {
       ledger: ledgerMetadata,
       items: [projectCompactItemDto(source)],
       total: 41,
+      offset: 20,
+      limit: 1,
+      nextOffset: 21,
     });
     expect(
       reloadWire(
