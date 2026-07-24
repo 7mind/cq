@@ -90,6 +90,27 @@ export {
   parseIntentionalDifferenceDeclarationJSON,
   serializeIntentionalDifferenceDeclaration,
 } from "./promptCatalog.js";
+export type {
+  PromptFragmentSlot,
+  PromptBlockClassification,
+  PromptDispatchEdgeKind,
+  PromptDispatchEdge,
+  SharedPromptSourceBlock,
+  FragmentPromptSourceBlock,
+  PromptSourceBlock,
+  PromptRoleSourceInventoryEntry,
+  PromptFragmentSlotContract,
+  ResolvedPromptFragmentInventoryEntry,
+} from "./promptFragmentInventory.js";
+export {
+  PROMPT_FRAGMENT_SLOTS,
+  PROMPT_BLOCK_CLASSIFICATIONS,
+  PROMPT_DISPATCH_EDGE_KINDS,
+  PROMPT_FRAGMENT_SLOT_CONTRACTS,
+  PROMPT_ROLE_SOURCE_INVENTORY,
+  PROMPT_FRAGMENT_INVENTORY,
+  validatePromptFragmentInventory,
+} from "./promptFragmentInventory.js";
 export { planAdvanceSidecar, PLAN_ADVANCE_STATUS_TOKENS } from "./schemas/plan-advance.js";
 export { planReviewerSidecar, PLAN_REVIEW_VERDICTS } from "./schemas/plan-reviewer.js";
 export { implementWorkerSidecar, IMPLEMENT_WORKER_STATUSES } from "./schemas/implement-worker.js";
