@@ -1,9 +1,40 @@
 import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
+import type {
+  PromptFragmentBinding,
+  PromptIntentionalDifference,
+  PromptRendererCapability,
+  PromptRendererMetadata,
+  PromptSharedSourceBlock,
+  PromptSurface,
+  PromptWorkflowDependency,
+} from "@cq/ledger";
 
 const SAFE_ROLE_ID_PATTERN = /^[a-z0-9-]+(?:\/[a-z0-9-]+)*$/;
 const MANIFEST_FILENAME = "catalog.json";
 const ROLE_ARTIFACTS_DIRECTORY = "roles";
+const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
+const PROMPT_RENDERER_CAPABILITIES = [
+  "cq-command-invocation",
+  "subagent-dispatch",
+  "inline-command-recursion",
+  "host-tool-vocabulary",
+  "operational-tool-vocabulary",
+] as const;
+const INTENTIONAL_DIFFERENCE_KINDS = [
+  "invocation-syntax",
+  "dispatch-protocol",
+  "recursion-protocol",
+  "tool-vocabulary",
+] as const;
+const BUILD_METADATA_FIELDS = [
+  "canonicalSource",
+  "surfaces",
+  "sharedSourceBlock",
+  "fragmentBindings",
+  "dispatchRelations",
+  "intentionalDifferences",
+] as const;
 
 export type PromptArtifactRoleKind = "dispatched-subagent" | "orchestrator-command";
 
@@ -12,6 +43,16 @@ export interface PromptArtifactRoleMetadata {
   readonly roleKind: PromptArtifactRoleKind;
   readonly artifactPath: string;
   readonly sidecarSchemaRoleId: string | null;
+  readonly promptSurface?: PromptSurface;
+  readonly renderer?: PromptRendererMetadata;
+  readonly sourcePath?: string;
+  readonly workflowDependencies?: readonly PromptWorkflowDependency[];
+  /**
+   * Ordered deterministic-renderer fragment ids from the catalog's
+   * `fragmentBindings`, not a derived inventory of host runtime tools.
+   */
+  readonly requiredCapabilities?: readonly PromptRendererCapability[];
+  readonly intentionalDifferences?: readonly PromptIntentionalDifference[];
 }
 
 export interface PromptArtifactManifest {
@@ -69,7 +110,306 @@ function artifactPathFor(roleId: string): string {
   return path.posix.join(ROLE_ARTIFACTS_DIRECTORY, `${roleId}.md`);
 }
 
-function parseManifest(manifestBytes: Uint8Array): readonly PromptArtifactRoleMetadata[] {
+function parsePromptSurface(value: string, pathLabel: string): PromptSurface {
+  if ((PROMPT_SURFACES as readonly string[]).includes(value)) {
+    return value as PromptSurface;
+  }
+  throw new PromptArtifactStoreError(
+    pathLabel,
+    `expected one of ${PROMPT_SURFACES.join(", ")}`,
+  );
+}
+
+function parseNonEmptyString(value: unknown, pathLabel: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new PromptArtifactStoreError(pathLabel, "expected a non-empty string");
+  }
+  return value;
+}
+
+function parseSurfaceList(value: unknown, pathLabel: string): readonly PromptSurface[] {
+  if (!Array.isArray(value)) {
+    throw new PromptArtifactStoreError(pathLabel, "expected an array");
+  }
+  const surfaces = value.map((candidate, index) => {
+    if (typeof candidate !== "string") {
+      throw new PromptArtifactStoreError(
+        `${pathLabel}[${index}]`,
+        `expected one of ${PROMPT_SURFACES.join(", ")}`,
+      );
+    }
+    return parsePromptSurface(candidate, `${pathLabel}[${index}]`);
+  });
+  const duplicate = surfaces.find(
+    (surface, index) => surfaces.indexOf(surface) !== index,
+  );
+  if (duplicate !== undefined) {
+    throw new PromptArtifactStoreError(pathLabel, `duplicate prompt surface "${duplicate}"`);
+  }
+  return Object.freeze(surfaces);
+}
+
+function parseStringArray(value: unknown, pathLabel: string): readonly string[] {
+  if (!Array.isArray(value)) {
+    throw new PromptArtifactStoreError(pathLabel, "expected an array");
+  }
+  return Object.freeze(
+    value.map((candidate, index) =>
+      parseNonEmptyString(candidate, `${pathLabel}[${index}]`),
+    ),
+  );
+}
+
+function parseIntentionalDifference(
+  value: unknown,
+  pathLabel: string,
+): PromptIntentionalDifference {
+  if (!isRecord(value)) {
+    throw new PromptArtifactStoreError(pathLabel, "expected an object");
+  }
+  const kind = value.kind;
+  if (
+    typeof kind !== "string" ||
+    !(INTENTIONAL_DIFFERENCE_KINDS as readonly string[]).includes(kind)
+  ) {
+    throw new PromptArtifactStoreError(
+      `${pathLabel}.kind`,
+      `expected one of ${INTENTIONAL_DIFFERENCE_KINDS.join(", ")}`,
+    );
+  }
+  const reason = parseNonEmptyString(value.reason, `${pathLabel}.reason`);
+  const surfaces = parseSurfaceList(value.surfaces, `${pathLabel}.surfaces`);
+  if (surfaces.length < 2) {
+    throw new PromptArtifactStoreError(
+      `${pathLabel}.surfaces`,
+      "expected at least two participating surfaces",
+    );
+  }
+  return Object.freeze({
+    kind: kind as PromptIntentionalDifference["kind"],
+    reason,
+    surfaces,
+  });
+}
+
+function parseFragmentBinding(value: unknown, pathLabel: string): PromptFragmentBinding {
+  if (!isRecord(value)) {
+    throw new PromptArtifactStoreError(pathLabel, "expected an object");
+  }
+  const fragment = value.fragment;
+  if (
+    typeof fragment !== "string" ||
+    !(PROMPT_RENDERER_CAPABILITIES as readonly string[]).includes(fragment)
+  ) {
+    throw new PromptArtifactStoreError(
+      `${pathLabel}.fragment`,
+      `expected one of ${PROMPT_RENDERER_CAPABILITIES.join(", ")}`,
+    );
+  }
+  const supportedSurfaces = parseSurfaceList(
+    value.supportedSurfaces,
+    `${pathLabel}.supportedSurfaces`,
+  );
+  const vocabulary = value.forbiddenVocabulary;
+  if (!isRecord(vocabulary)) {
+    throw new PromptArtifactStoreError(
+      `${pathLabel}.forbiddenVocabulary`,
+      "expected one token array per prompt surface",
+    );
+  }
+  const unexpectedSurface = Object.keys(vocabulary).find(
+    (surface) => !(PROMPT_SURFACES as readonly string[]).includes(surface),
+  );
+  if (unexpectedSurface !== undefined) {
+    throw new PromptArtifactStoreError(
+      `${pathLabel}.forbiddenVocabulary.${unexpectedSurface}`,
+      "unknown prompt surface",
+    );
+  }
+  const forbiddenVocabulary = Object.freeze({
+    claude: parseStringArray(
+      vocabulary.claude,
+      `${pathLabel}.forbiddenVocabulary.claude`,
+    ),
+    codex: parseStringArray(
+      vocabulary.codex,
+      `${pathLabel}.forbiddenVocabulary.codex`,
+    ),
+    pi: parseStringArray(vocabulary.pi, `${pathLabel}.forbiddenVocabulary.pi`),
+  });
+  return Object.freeze({
+    fragment: fragment as PromptRendererCapability,
+    sourceBlock: parseNonEmptyString(value.sourceBlock, `${pathLabel}.sourceBlock`),
+    supportedSurfaces,
+    forbiddenVocabulary,
+    intentionalDifference: parseIntentionalDifference(
+      value.intentionalDifference,
+      `${pathLabel}.intentionalDifference`,
+    ),
+  });
+}
+
+function parseSharedSourceBlock(value: unknown, pathLabel: string): PromptSharedSourceBlock {
+  if (!isRecord(value)) {
+    throw new PromptArtifactStoreError(pathLabel, "expected an object");
+  }
+  if (value.classification !== "shared-prose") {
+    throw new PromptArtifactStoreError(
+      `${pathLabel}.classification`,
+      'expected "shared-prose"',
+    );
+  }
+  if (value.targetFragment !== null) {
+    throw new PromptArtifactStoreError(`${pathLabel}.targetFragment`, "expected null");
+  }
+  return Object.freeze({
+    classification: "shared-prose",
+    sourceBlock: parseNonEmptyString(value.sourceBlock, `${pathLabel}.sourceBlock`),
+    targetFragment: null,
+  });
+}
+
+function parseWorkflowDependency(
+  value: unknown,
+  pathLabel: string,
+): PromptWorkflowDependency {
+  if (!isRecord(value)) {
+    throw new PromptArtifactStoreError(pathLabel, "expected an object");
+  }
+  if (value.kind !== "dispatch" && value.kind !== "recursion") {
+    throw new PromptArtifactStoreError(
+      `${pathLabel}.kind`,
+      "expected dispatch or recursion",
+    );
+  }
+  const targetRoleId = value.targetRoleId;
+  if (typeof targetRoleId !== "string" || !SAFE_ROLE_ID_PATTERN.test(targetRoleId)) {
+    throw new PromptArtifactStoreError(
+      `${pathLabel}.targetRoleId`,
+      "expected a safe role identifier",
+    );
+  }
+  return Object.freeze({ kind: value.kind, targetRoleId });
+}
+
+interface ParsedBuildMetadata {
+  readonly renderer: PromptRendererMetadata;
+  readonly sourcePath: string;
+  readonly workflowDependencies: readonly PromptWorkflowDependency[];
+  readonly requiredCapabilities: readonly PromptRendererCapability[];
+  readonly intentionalDifferences: readonly PromptIntentionalDifference[];
+}
+
+function parseBuildMetadata(
+  candidate: Readonly<Record<string, unknown>>,
+  entryPath: string,
+  roleId: string,
+  roleKind: PromptArtifactRoleKind,
+  promptSurface: PromptSurface | undefined,
+): ParsedBuildMetadata | undefined {
+  if (!BUILD_METADATA_FIELDS.some((field) => candidate[field] !== undefined)) {
+    return undefined;
+  }
+
+  const sourcePath = parseNonEmptyString(
+    candidate.canonicalSource,
+    `${entryPath}.canonicalSource`,
+  );
+  const expectedSource =
+    roleKind === "dispatched-subagent"
+      ? `agents/${roleId}.md`
+      : `commands/cq/${roleId}.md`;
+  if (sourcePath !== expectedSource) {
+    throw new PromptArtifactStoreError(
+      `${entryPath}.canonicalSource`,
+      `expected "${expectedSource}"`,
+    );
+  }
+
+  const surfaces = parseSurfaceList(candidate.surfaces, `${entryPath}.surfaces`);
+  if (
+    surfaces.length !== PROMPT_SURFACES.length ||
+    PROMPT_SURFACES.some((surface, index) => surfaces[index] !== surface)
+  ) {
+    throw new PromptArtifactStoreError(
+      `${entryPath}.surfaces`,
+      `expected ${PROMPT_SURFACES.join(", ")} in canonical order`,
+    );
+  }
+  if (promptSurface !== undefined && !surfaces.includes(promptSurface)) {
+    throw new PromptArtifactStoreError(
+      `${entryPath}.surfaces`,
+      `selected prompt surface "${promptSurface}" is not supported`,
+    );
+  }
+
+  if (!Array.isArray(candidate.fragmentBindings)) {
+    throw new PromptArtifactStoreError(
+      `${entryPath}.fragmentBindings`,
+      "expected an array",
+    );
+  }
+  const fragmentBindings = Object.freeze(
+    candidate.fragmentBindings.map((binding, index) =>
+      parseFragmentBinding(binding, `${entryPath}.fragmentBindings[${index}]`),
+    ),
+  );
+  const requiredCapabilities = Object.freeze(
+    fragmentBindings.map(({ fragment }) => fragment),
+  );
+  if (new Set(requiredCapabilities).size !== requiredCapabilities.length) {
+    throw new PromptArtifactStoreError(
+      `${entryPath}.fragmentBindings`,
+      "duplicate renderer fragment capability",
+    );
+  }
+
+  if (!Array.isArray(candidate.dispatchRelations)) {
+    throw new PromptArtifactStoreError(
+      `${entryPath}.dispatchRelations`,
+      "expected an array",
+    );
+  }
+  const workflowDependencies = Object.freeze(
+    candidate.dispatchRelations.map((relation, index) =>
+      parseWorkflowDependency(relation, `${entryPath}.dispatchRelations[${index}]`),
+    ),
+  );
+
+  if (!Array.isArray(candidate.intentionalDifferences)) {
+    throw new PromptArtifactStoreError(
+      `${entryPath}.intentionalDifferences`,
+      "expected an array",
+    );
+  }
+  const intentionalDifferences = Object.freeze(
+    candidate.intentionalDifferences.map((difference, index) =>
+      parseIntentionalDifference(
+        difference,
+        `${entryPath}.intentionalDifferences[${index}]`,
+      ),
+    ),
+  );
+
+  return Object.freeze({
+    renderer: Object.freeze({
+      sharedSourceBlock: parseSharedSourceBlock(
+        candidate.sharedSourceBlock,
+        `${entryPath}.sharedSourceBlock`,
+      ),
+      fragmentBindings,
+    }),
+    sourcePath,
+    workflowDependencies,
+    requiredCapabilities,
+    intentionalDifferences,
+  });
+}
+
+function parseManifest(
+  manifestBytes: Uint8Array,
+  promptSurface: PromptSurface | undefined,
+): readonly PromptArtifactRoleMetadata[] {
   let manifestText: string;
   try {
     manifestText = new TextDecoder("utf-8", { fatal: true }).decode(manifestBytes);
@@ -127,21 +467,31 @@ function parseManifest(manifestBytes: Uint8Array): readonly PromptArtifactRoleMe
       sidecarSchemaRoleId = null;
     }
 
+    const buildMetadata = parseBuildMetadata(
+      candidate,
+      entryPath,
+      roleId,
+      roleKind,
+      promptSurface,
+    );
     return Object.freeze({
       roleId,
       roleKind,
       artifactPath: artifactPathFor(roleId),
       sidecarSchemaRoleId,
+      ...(promptSurface !== undefined ? { promptSurface } : {}),
+      ...(buildMetadata ?? {}),
     });
   });
   return Object.freeze(roles);
 }
 
 function buildSnapshot(
+  promptSurface: PromptSurface | undefined,
   manifestBytes: Uint8Array,
   inputArtifacts: readonly InMemoryPromptRoleArtifact[],
 ): PromptArtifactSnapshot {
-  const roles = parseManifest(manifestBytes);
+  const roles = parseManifest(manifestBytes, promptSurface);
   const artifacts = new Map<string, Uint8Array>();
   for (const [index, artifact] of inputArtifacts.entries()) {
     if (!SAFE_ROLE_ID_PATTERN.test(artifact.roleId)) {
@@ -219,8 +569,29 @@ abstract class SnapshotPromptArtifactStore implements PromptArtifactStore {
 }
 
 export class InMemoryPromptArtifactStore extends SnapshotPromptArtifactStore {
-  constructor(manifestBytes: Uint8Array, artifacts: readonly InMemoryPromptRoleArtifact[]) {
-    super(buildSnapshot(manifestBytes, artifacts));
+  constructor(manifestBytes: Uint8Array, artifacts: readonly InMemoryPromptRoleArtifact[]);
+  constructor(
+    promptSurface: PromptSurface,
+    manifestBytes: Uint8Array,
+    artifacts: readonly InMemoryPromptRoleArtifact[],
+  );
+  constructor(
+    promptSurfaceOrManifestBytes: PromptSurface | Uint8Array,
+    manifestBytesOrArtifacts: Uint8Array | readonly InMemoryPromptRoleArtifact[],
+    maybeArtifacts?: readonly InMemoryPromptRoleArtifact[],
+  ) {
+    if (typeof promptSurfaceOrManifestBytes === "string") {
+      const promptSurface = parsePromptSurface(promptSurfaceOrManifestBytes, "promptSurface");
+      if (!(manifestBytesOrArtifacts instanceof Uint8Array) || maybeArtifacts === undefined) {
+        throw new PromptArtifactStoreError("constructor", "expected manifest bytes and artifacts");
+      }
+      super(buildSnapshot(promptSurface, manifestBytesOrArtifacts, maybeArtifacts));
+      return;
+    }
+    if (!Array.isArray(manifestBytesOrArtifacts)) {
+      throw new PromptArtifactStoreError("constructor", "expected artifacts");
+    }
+    super(buildSnapshot(undefined, promptSurfaceOrManifestBytes, manifestBytesOrArtifacts));
   }
 }
 
@@ -304,7 +675,14 @@ function collectFilesystemArtifacts(root: string): readonly InMemoryPromptRoleAr
 export class FileSystemPromptArtifactStore extends SnapshotPromptArtifactStore {
   readonly root: string;
 
-  constructor(root: string) {
+  constructor(root: string);
+  constructor(promptSurface: PromptSurface, root: string);
+  constructor(promptSurfaceOrRoot: PromptSurface | string, maybeRoot?: string) {
+    const root = maybeRoot ?? promptSurfaceOrRoot;
+    const promptSurface =
+      maybeRoot === undefined
+        ? undefined
+        : parsePromptSurface(promptSurfaceOrRoot, "promptSurface");
     if (!path.isAbsolute(root)) {
       throw new PromptArtifactStoreError("root", "expected an absolute path");
     }
@@ -318,7 +696,7 @@ export class FileSystemPromptArtifactStore extends SnapshotPromptArtifactStore {
       throw new PromptArtifactStoreError("root", "expected a directory");
     }
     const manifestBytes = readContainedFile(resolvedRoot, MANIFEST_FILENAME, MANIFEST_FILENAME);
-    super(buildSnapshot(manifestBytes, collectFilesystemArtifacts(resolvedRoot)));
+    super(buildSnapshot(promptSurface, manifestBytes, collectFilesystemArtifacts(resolvedRoot)));
     this.root = resolvedRoot;
   }
 }

@@ -26,11 +26,69 @@ export type JSONSchemaDoc = Readonly<Record<string, unknown>>;
 /** Which side of the flow a catalog role plays (mirrors `@cq/config`'s RoleKind). */
 export type PromptRoleKind = "dispatched-subagent" | "orchestrator-command";
 
+/** The closed built-prompt surface vocabulary. */
+export type PromptSurface = "claude" | "codex" | "pi";
+
+/**
+ * A named renderer adapter capability. These ids come directly from the
+ * catalog's ordered `fragmentBindings[].fragment` declarations: they identify
+ * the surface-sensitive operations the deterministic renderer had to supply,
+ * rather than an inferred list of arbitrary runtime tools.
+ */
+export type PromptRendererCapability =
+  | "cq-command-invocation"
+  | "subagent-dispatch"
+  | "inline-command-recursion"
+  | "host-tool-vocabulary"
+  | "operational-tool-vocabulary";
+
+export type PromptIntentionalDifferenceKind =
+  | "invocation-syntax"
+  | "dispatch-protocol"
+  | "recursion-protocol"
+  | "tool-vocabulary";
+
+export interface PromptIntentionalDifference {
+  readonly kind: PromptIntentionalDifferenceKind;
+  readonly reason: string;
+  readonly surfaces: readonly PromptSurface[];
+}
+
+export interface PromptWorkflowDependency {
+  readonly kind: "dispatch" | "recursion";
+  readonly targetRoleId: string;
+}
+
+export interface PromptSharedSourceBlock {
+  readonly classification: "shared-prose";
+  readonly sourceBlock: string;
+  readonly targetFragment: null;
+}
+
+export interface PromptFragmentBinding {
+  readonly fragment: PromptRendererCapability;
+  readonly sourceBlock: string;
+  readonly supportedSurfaces: readonly PromptSurface[];
+  readonly forbiddenVocabulary: Readonly<Record<PromptSurface, readonly string[]>>;
+  readonly intentionalDifference: PromptIntentionalDifference;
+}
+
+/**
+ * The catalog inputs consumed by the deterministic renderer for one role.
+ * Prompt bytes have already been rendered when `fetch_prompt` runs.
+ */
+export interface PromptRendererMetadata {
+  readonly sharedSourceBlock: PromptSharedSourceBlock;
+  readonly fragmentBindings: readonly PromptFragmentBinding[];
+}
+
 /**
  * The `fetch_prompt` payload: the role's prompt template plus its role-scope
  * metadata. `inputSchema`/`outputSchema` are present IFF the role is a
  * dispatched subagent (role-scope decision 1); an orchestrator-command role
- * returns prompt + metadata with both schema fields ABSENT.
+ * returns prompt + metadata with both schema fields ABSENT. The surface-build
+ * metadata fields are additive and present for a selected built prompt root;
+ * they remain optional for the source-tree compatibility capability.
  */
 export interface FetchPromptResult {
   /** The resolved role id (echoes the request). */
@@ -41,6 +99,21 @@ export interface FetchPromptResult {
   readonly dispatched: boolean;
   /** The full prompt-template body (asset markdown after its frontmatter). */
   readonly promptTemplate: string;
+  /** The selected immutable prompt surface that supplied `promptTemplate`. */
+  readonly promptSurface?: PromptSurface;
+  /** The catalog renderer inputs that produced the selected artifact. */
+  readonly renderer?: PromptRendererMetadata;
+  /** The canonical source path recorded by the catalog. */
+  readonly sourcePath?: string;
+  /** Ordered catalog dispatch/recursion relations for this role. */
+  readonly workflowDependencies?: readonly PromptWorkflowDependency[];
+  /**
+   * Ordered renderer fragment capability ids, projected from
+   * `renderer.fragmentBindings[].fragment`.
+   */
+  readonly requiredCapabilities?: readonly PromptRendererCapability[];
+  /** Typed cross-surface differences declared by the catalog. */
+  readonly intentionalDifferences?: readonly PromptIntentionalDifference[];
   /** Contract version stamp; present only for a dispatched-subagent role. */
   readonly version?: number;
   /** The parent-supplied input contract; present only for a dispatched subagent. */

@@ -25,6 +25,7 @@ import type {
   ArchivePointer,
   DerivedPredicates,
   FetchedLedger,
+  FetchPromptResult,
   FtsHit,
   Item,
   ItemInit,
@@ -163,6 +164,10 @@ export class McpLedgerClient implements LedgerClient {
   async fetchItem(ledgerId: string, itemId: string): Promise<Item> {
     return (await this.call<{ item: Item }>("fetch_item", { ledger_id: ledgerId, item_id: itemId }))
       .item;
+  }
+
+  async fetchPromptResult(roleId: string): Promise<FetchPromptResult> {
+    return await this.call<FetchPromptResult>("fetch_prompt", { roleId });
   }
 
   async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<Item> {

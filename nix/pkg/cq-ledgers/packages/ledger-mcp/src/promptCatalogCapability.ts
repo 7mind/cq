@@ -103,9 +103,39 @@ function decodePrompt(artifact: PromptRoleArtifact): string {
   }
 }
 
+function fetchedCatalogMetadata(
+  metadata: PromptArtifactRoleMetadata,
+): Pick<
+  FetchPromptResult,
+  | "promptSurface"
+  | "renderer"
+  | "sourcePath"
+  | "workflowDependencies"
+  | "requiredCapabilities"
+  | "intentionalDifferences"
+> {
+  return {
+    ...(metadata.promptSurface !== undefined
+      ? { promptSurface: metadata.promptSurface }
+      : {}),
+    ...(metadata.renderer !== undefined ? { renderer: metadata.renderer } : {}),
+    ...(metadata.sourcePath !== undefined ? { sourcePath: metadata.sourcePath } : {}),
+    ...(metadata.workflowDependencies !== undefined
+      ? { workflowDependencies: metadata.workflowDependencies }
+      : {}),
+    ...(metadata.requiredCapabilities !== undefined
+      ? { requiredCapabilities: metadata.requiredCapabilities }
+      : {}),
+    ...(metadata.intentionalDifferences !== undefined
+      ? { intentionalDifferences: metadata.intentionalDifferences }
+      : {}),
+  };
+}
+
 function fetchPromptFor(store: PromptArtifactStore, roleId: string): FetchPromptResult {
   const artifact = roleArtifact(store, roleId);
   const promptTemplate = decodePrompt(artifact);
+  const catalogMetadata = fetchedCatalogMetadata(artifact.metadata);
 
   if (artifact.metadata.roleKind === "orchestrator-command") {
     return {
@@ -113,6 +143,7 @@ function fetchPromptFor(store: PromptArtifactStore, roleId: string): FetchPrompt
       kind: "orchestrator-command",
       dispatched: false,
       promptTemplate,
+      ...catalogMetadata,
     };
   }
 
@@ -129,6 +160,7 @@ function fetchPromptFor(store: PromptArtifactStore, roleId: string): FetchPrompt
     kind: "dispatched-subagent",
     dispatched: true,
     promptTemplate,
+    ...catalogMetadata,
     version: sidecar.version,
     inputSchema: sidecar.inputSchema as JSONSchemaDoc,
     outputSchema: sidecar.outputSchema as JSONSchemaDoc,

@@ -13,6 +13,31 @@ import {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const PROMPT_SURFACE = "codex";
+
+const INTENTIONAL_DIFFERENCE = Object.freeze({
+  kind: "tool-vocabulary",
+  reason: "Each prompt surface exposes different host tool names.",
+  surfaces: ["claude", "codex", "pi"] as const,
+});
+
+const FRAGMENT_BINDING = Object.freeze({
+  fragment: "host-tool-vocabulary",
+  sourceBlock: "frontmatter host tool and isolation capabilities",
+  supportedSurfaces: ["claude", "codex", "pi"] as const,
+  forbiddenVocabulary: {
+    claude: ["$cq-"] as const,
+    codex: ["Agent"] as const,
+    pi: ["Agent"] as const,
+  },
+  intentionalDifference: INTENTIONAL_DIFFERENCE,
+});
+
+const SHARED_SOURCE_BLOCK = Object.freeze({
+  classification: "shared-prose",
+  sourceBlock: "all prose outside the classified surface-sensitive blocks",
+  targetFragment: null,
+});
 
 interface StoreFixture {
   readonly manifestBytes: Uint8Array;
@@ -32,10 +57,20 @@ interface StoreAdapter {
 function role(
   roleId: string,
   roleKind: "dispatched-subagent" | "orchestrator-command",
+  dispatchRelations: readonly Readonly<Record<string, string>>[] = [],
 ): Readonly<Record<string, unknown>> {
   return {
     roleId,
     roleKind,
+    canonicalSource:
+      roleKind === "dispatched-subagent"
+        ? `agents/${roleId}.md`
+        : `commands/cq/${roleId}.md`,
+    surfaces: ["claude", "codex", "pi"],
+    sharedSourceBlock: SHARED_SOURCE_BLOCK,
+    fragmentBindings: [FRAGMENT_BINDING],
+    dispatchRelations,
+    intentionalDifferences: [INTENTIONAL_DIFFERENCE],
     sidecar: roleKind === "dispatched-subagent" ? { schemaRoleId: roleId } : null,
   };
 }
@@ -51,7 +86,12 @@ function fixture(
 }
 
 const CONTRACT_FIXTURE = fixture(
-  [role("plan/advance", "orchestrator-command"), role("plan-advance", "dispatched-subagent")],
+  [
+    role("plan/advance", "orchestrator-command", [
+      { kind: "dispatch", targetRoleId: "plan-advance" },
+    ]),
+    role("plan-advance", "dispatched-subagent"),
+  ],
   [
     {
       roleId: "plan-advance",
@@ -70,7 +110,7 @@ function memoryAdapter(): StoreAdapter {
   return {
     label: "strict in-memory dummy",
     create: (input) => ({
-      store: new InMemoryPromptArtifactStore(input.manifestBytes, input.artifacts),
+      store: new InMemoryPromptArtifactStore(PROMPT_SURFACE, input.manifestBytes, input.artifacts),
       cleanup: () => undefined,
     }),
   };
@@ -89,7 +129,7 @@ function filesystemAdapter(): StoreAdapter {
         writeFileSync(artifactPath, artifact.bytes);
       }
       return {
-        store: new FileSystemPromptArtifactStore(root),
+        store: new FileSystemPromptArtifactStore(PROMPT_SURFACE, root),
         cleanup: () => rmSync(root, { recursive: true, force: true }),
       };
     },
@@ -125,6 +165,15 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
           roleKind: "dispatched-subagent",
           artifactPath: "roles/plan-advance.md",
           sidecarSchemaRoleId: "plan-advance",
+          promptSurface: "codex",
+          renderer: {
+            sharedSourceBlock: SHARED_SOURCE_BLOCK,
+            fragmentBindings: [FRAGMENT_BINDING],
+          },
+          sourcePath: "agents/plan-advance.md",
+          workflowDependencies: [],
+          requiredCapabilities: ["host-tool-vocabulary"],
+          intentionalDifferences: [INTENTIONAL_DIFFERENCE],
         });
         expect(decoder.decode(artifact.bytes)).toBe(
           "---\ndescription: rendered\n---\n\nKeep {{cq:literal}}, $ARGUMENTS, and ${INPUT} unchanged.\n",
@@ -151,7 +200,13 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
         );
         expect(Object.isFrozen(manifest)).toBe(true);
         expect(Object.isFrozen(manifest.roles)).toBe(true);
-        expect(Object.isFrozen(manifest.roles[0])).toBe(true);
+        const firstRole = manifest.roles[0];
+        if (firstRole === undefined || firstRole.renderer === undefined) {
+          throw new Error("expected rendered role metadata");
+        }
+        expect(Object.isFrozen(firstRole)).toBe(true);
+        expect(Object.isFrozen(firstRole.renderer)).toBe(true);
+        expect(Object.isFrozen(firstRole.renderer.fragmentBindings)).toBe(true);
         expect(Object.isFrozen(artifact)).toBe(true);
       } finally {
         handle.cleanup();
@@ -209,6 +264,25 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
         'catalog.json[0].sidecar.schemaRoleId: expected "plan-advance"',
       );
     });
+
+    test("rejects incomplete renderer metadata instead of silently dropping it", () => {
+      const incomplete = fixture(
+        [
+          {
+            roleId: "plan-advance",
+            roleKind: "dispatched-subagent",
+            canonicalSource: "agents/plan-advance.md",
+            surfaces: ["claude", "codex", "pi"],
+            sharedSourceBlock: SHARED_SOURCE_BLOCK,
+            sidecar: { schemaRoleId: "plan-advance" },
+          },
+        ],
+        [{ roleId: "plan-advance", bytes: encoder.encode("body") }],
+      );
+      expect(() => adapter.create(incomplete)).toThrow(
+        "catalog.json[0].fragmentBindings: expected an array",
+      );
+    });
   });
 }
 
@@ -226,7 +300,7 @@ test("the filesystem contract leg constructs the production adapter", () => {
 });
 
 test("the filesystem adapter requires an explicit absolute root", () => {
-  expect(() => new FileSystemPromptArtifactStore("relative/root")).toThrow(
+  expect(() => new FileSystemPromptArtifactStore(PROMPT_SURFACE, "relative/root")).toThrow(
     "root: expected an absolute path",
   );
 });

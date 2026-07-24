@@ -19,6 +19,7 @@ import type {
   ArchiveContent,
   ArchivePointer,
   FetchedLedger,
+  FetchPromptResult,
   FieldValue,
   FtsHit,
   Item,
@@ -210,11 +211,11 @@ export class McpLedgerClient implements LedgerClient {
   }
 
   async fetchPrompt(roleId: string): Promise<string> {
-    return (
-      await this.call<{ promptTemplate: string }>("fetch_prompt", {
-        roleId,
-      })
-    ).promptTemplate;
+    return (await this.fetchPromptResult(roleId)).promptTemplate;
+  }
+
+  async fetchPromptResult(roleId: string): Promise<FetchPromptResult> {
+    return await this.call<FetchPromptResult>("fetch_prompt", { roleId });
   }
 
   async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<Item> {

@@ -627,7 +627,11 @@ ${QUERY_LANGUAGE_HELP}`,
     {
       description:
         "Fetch a role's typed prompt-catalog entry: { roleId, kind, dispatched, " +
-        "promptTemplate, version?, inputSchema?, outputSchema? }. A dispatched-subagent " +
+        "promptTemplate, promptSurface?, renderer?, sourcePath?, workflowDependencies?, " +
+        "requiredCapabilities?, intentionalDifferences?, version?, inputSchema?, " +
+        "outputSchema? }. Built prompt roots return the additive surface-build metadata; " +
+        "requiredCapabilities is the ordered catalog renderer-fragment capability list. " +
+        "A dispatched-subagent " +
         "role returns both JSON Schemas (draft 2020-12); an orchestrator-command role " +
         "returns prompt + metadata with inputSchema/outputSchema ABSENT. Fails fast on an " +
         "unknown roleId. Only available when the server has an asset-capable catalog root; " +

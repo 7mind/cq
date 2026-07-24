@@ -179,6 +179,14 @@ export type {
   PromptValidationResult,
   PromptValidationError,
   PromptRoleKind,
+  PromptSurface,
+  PromptRendererCapability,
+  PromptIntentionalDifferenceKind,
+  PromptIntentionalDifference,
+  PromptWorkflowDependency,
+  PromptSharedSourceBlock,
+  PromptFragmentBinding,
+  PromptRendererMetadata,
   JSONSchemaDoc,
 } from "./mcp/promptCatalogCapability.js";
 export { LedgerSearchIndex } from "./search/LedgerSearchIndex.js";

@@ -20,10 +20,11 @@ import type {
   ArchivePointer,
   DerivedPredicates,
   PredicateVerdict,
+  FetchPromptResult,
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
 
-export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus, ListProjectsResult, ProjectEntry, ArchivePointer, DerivedPredicates, PredicateVerdict };
+export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus, ListProjectsResult, ProjectEntry, ArchivePointer, DerivedPredicates, PredicateVerdict, FetchPromptResult };
 
 export interface FtsHit {
   ledgerId: string;
@@ -85,6 +86,8 @@ export interface LedgerClient {
   fetchLedger(ledgerId: string): Promise<FetchedLedger>;
   fetchLedgerArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent>;
   fetchItem(ledgerId: string, itemId: string): Promise<Item>;
+  /** Additive typed prompt metadata; optional so pre-catalog UI test fakes remain valid. */
+  fetchPromptResult?(roleId: string): Promise<FetchPromptResult>;
   createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<Item>;
   updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<Item>;
   ftsSearch(query: string, opts?: { ledger?: string }): Promise<FtsHit[]>;

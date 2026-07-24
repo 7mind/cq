@@ -32,22 +32,60 @@ import {
 /** A dispatched role with both schemas, and an orchestrator-command role with none. */
 const DISPATCHED_ROLE = "plan-advance";
 const COMMAND_ROLE = "advance";
+const PROMPT_SURFACE = "codex";
+
+const INTENTIONAL_DIFFERENCE = {
+  kind: "tool-vocabulary",
+  reason: "Each prompt surface exposes different host tool names.",
+  surfaces: ["claude", "codex", "pi"],
+} as const;
+
+const FRAGMENT_BINDING = {
+  fragment: "host-tool-vocabulary",
+  sourceBlock: "frontmatter host tool and isolation capabilities",
+  supportedSurfaces: ["claude", "codex", "pi"],
+  forbiddenVocabulary: {
+    claude: ["$cq-"],
+    codex: ["Agent"],
+    pi: ["Agent"],
+  },
+  intentionalDifference: INTENTIONAL_DIFFERENCE,
+} as const;
+
+function manifestRole(
+  roleId: string,
+  roleKind: "dispatched-subagent" | "orchestrator-command",
+  dispatchRelations: readonly Readonly<Record<string, string>>[],
+): Readonly<Record<string, unknown>> {
+  return {
+    roleId,
+    roleKind,
+    canonicalSource:
+      roleKind === "dispatched-subagent"
+        ? `agents/${roleId}.md`
+        : `commands/cq/${roleId}.md`,
+    surfaces: ["claude", "codex", "pi"],
+    sharedSourceBlock: {
+      classification: "shared-prose",
+      sourceBlock: "all prose outside the classified surface-sensitive blocks",
+      targetFragment: null,
+    },
+    fragmentBindings: [FRAGMENT_BINDING],
+    dispatchRelations,
+    intentionalDifferences: [INTENTIONAL_DIFFERENCE],
+    sidecar: roleKind === "dispatched-subagent" ? { schemaRoleId: roleId } : null,
+  };
+}
 
 const DISPATCHED_PROMPT =
   "---\ndescription: rendered\n---\n\nKeep {{cq:literal}} and $ARGUMENTS unchanged.\n";
 const COMMAND_PROMPT = "# /cq:advance\n\nRendered command prompt.\n";
 const MANIFEST_BYTES = new TextEncoder().encode(
   JSON.stringify([
-    {
-      roleId: DISPATCHED_ROLE,
-      roleKind: "dispatched-subagent",
-      sidecar: { schemaRoleId: DISPATCHED_ROLE },
-    },
-    {
-      roleId: COMMAND_ROLE,
-      roleKind: "orchestrator-command",
-      sidecar: null,
-    },
+    manifestRole(DISPATCHED_ROLE, "dispatched-subagent", []),
+    manifestRole(COMMAND_ROLE, "orchestrator-command", [
+      { kind: "dispatch", targetRoleId: DISPATCHED_ROLE },
+    ]),
   ]),
 );
 const ROLE_ARTIFACTS = [
@@ -56,7 +94,7 @@ const ROLE_ARTIFACTS = [
 ] as const;
 
 function inMemoryStore(): PromptArtifactStore {
-  return new InMemoryPromptArtifactStore(MANIFEST_BYTES, ROLE_ARTIFACTS);
+  return new InMemoryPromptArtifactStore(PROMPT_SURFACE, MANIFEST_BYTES, ROLE_ARTIFACTS);
 }
 
 function filesystemStore(): PromptArtifactStore {
@@ -68,7 +106,7 @@ function filesystemStore(): PromptArtifactStore {
       mkdirSync(path.dirname(artifactPath), { recursive: true });
       writeFileSync(artifactPath, artifact.bytes);
     }
-    return new FileSystemPromptArtifactStore(root);
+    return new FileSystemPromptArtifactStore(PROMPT_SURFACE, root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -88,6 +126,19 @@ function runPromptCatalogSuite(label: string, make: () => PromptCatalogCapabilit
       expect(result.kind).toBe("dispatched-subagent");
       expect(result.dispatched).toBe(true);
       expect(result.promptTemplate).toBe(DISPATCHED_PROMPT);
+      expect(result.promptSurface).toBe(PROMPT_SURFACE);
+      expect(result.renderer).toEqual({
+        sharedSourceBlock: {
+          classification: "shared-prose",
+          sourceBlock: "all prose outside the classified surface-sensitive blocks",
+          targetFragment: null,
+        },
+        fragmentBindings: [FRAGMENT_BINDING],
+      });
+      expect(result.sourcePath).toBe("agents/plan-advance.md");
+      expect(result.workflowDependencies).toEqual([]);
+      expect(result.requiredCapabilities).toEqual(["host-tool-vocabulary"]);
+      expect(result.intentionalDifferences).toEqual([INTENTIONAL_DIFFERENCE]);
       // Both schemas present, and they are the @cq/config draft-2020-12 documents.
       expect(result.inputSchema).toBeDefined();
       expect(result.outputSchema).toBeDefined();
@@ -157,6 +208,13 @@ function runPromptCatalogSuite(label: string, make: () => PromptCatalogCapabilit
       expect(result.kind).toBe("orchestrator-command");
       expect(result.dispatched).toBe(false);
       expect(result.promptTemplate.length).toBeGreaterThan(0);
+      expect(result.promptSurface).toBe(PROMPT_SURFACE);
+      expect(result.sourcePath).toBe("commands/cq/advance.md");
+      expect(result.workflowDependencies).toEqual([
+        { kind: "dispatch", targetRoleId: DISPATCHED_ROLE },
+      ]);
+      expect(result.requiredCapabilities).toEqual(["host-tool-vocabulary"]);
+      expect(result.intentionalDifferences).toEqual([INTENTIONAL_DIFFERENCE]);
       expect(result.inputSchema).toBeUndefined();
       expect(result.outputSchema).toBeUndefined();
     });

@@ -94,6 +94,6 @@ export function resolvePromptSurface(
   return Object.freeze({
     surface,
     root,
-    store: new FileSystemPromptArtifactStore(root),
+    store: new FileSystemPromptArtifactStore(surface, root),
   });
 }

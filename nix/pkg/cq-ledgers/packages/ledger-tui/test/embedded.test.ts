@@ -38,6 +38,16 @@ beforeAll(async () => {
       {
         roleId: "plan-advance",
         roleKind: "dispatched-subagent",
+        canonicalSource: "agents/plan-advance.md",
+        surfaces: ["claude", "codex", "pi"],
+        sharedSourceBlock: {
+          classification: "shared-prose",
+          sourceBlock: "all prose outside the classified surface-sensitive blocks",
+          targetFragment: null,
+        },
+        fragmentBindings: [],
+        dispatchRelations: [],
+        intentionalDifferences: [],
         sidecar: { schemaRoleId: "plan-advance" },
       },
     ]),
@@ -94,6 +104,10 @@ describe("McpLedgerClient.embedded (in-process, in-memory transport)", () => {
 
   it("fetches exact bytes from the selected prompt root over the embedded transport", async () => {
     expect(await client.fetchPrompt("plan-advance")).toBe(PROMPT_BYTES);
+    const result = await client.fetchPromptResult("plan-advance");
+    expect(result.promptSurface).toBe("codex");
+    expect(result.sourcePath).toBe("agents/plan-advance.md");
+    expect(result.requiredCapabilities).toEqual([]);
   });
 
   it("creates, updates, fetches and searches an item — no subprocess", async () => {

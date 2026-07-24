@@ -11,13 +11,96 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 const here = new URL(".", import.meta.url).pathname;
 const mainPath = path.resolve(here, "..", "src", "main.ts");
-const ROLE_ID = "plan-advance";
-const PROMPT_BYTES = "standalone codex {{cq:literal}} and $ARGUMENTS\n";
+const SURFACES = ["claude", "codex", "pi"] as const;
+type PromptSurface = (typeof SURFACES)[number];
+const DISPATCHED_ROLE_ID = "plan-advance";
+const ORCHESTRATOR_ROLE_ID = "advance";
+const PROMPT_BYTES: Readonly<Record<PromptSurface, string>> = {
+  claude: "standalone claude Agent and $ARGUMENTS\n",
+  codex: "standalone codex collaboration and $ARGUMENTS\n",
+  pi: "standalone pi dispatch_agent and $ARGUMENTS\n",
+};
+
+const INTENTIONAL_DIFFERENCE = {
+  kind: "tool-vocabulary",
+  reason: "Each prompt surface exposes different host tool names.",
+  surfaces: SURFACES,
+} as const;
+
+const FRAGMENT_BINDING = {
+  fragment: "host-tool-vocabulary",
+  sourceBlock: "frontmatter host tool and isolation capabilities",
+  supportedSurfaces: SURFACES,
+  forbiddenVocabulary: {
+    claude: ["$cq-"],
+    codex: ["Agent"],
+    pi: ["Agent"],
+  },
+  intentionalDifference: INTENTIONAL_DIFFERENCE,
+} as const;
+
+const CATALOG = [
+  {
+    roleId: DISPATCHED_ROLE_ID,
+    roleKind: "dispatched-subagent",
+    canonicalSource: `agents/${DISPATCHED_ROLE_ID}.md`,
+    surfaces: SURFACES,
+    sharedSourceBlock: {
+      classification: "shared-prose",
+      sourceBlock: "all prose outside the classified surface-sensitive blocks",
+      targetFragment: null,
+    },
+    fragmentBindings: [FRAGMENT_BINDING],
+    dispatchRelations: [],
+    intentionalDifferences: [INTENTIONAL_DIFFERENCE],
+    sidecar: { schemaRoleId: DISPATCHED_ROLE_ID },
+  },
+  {
+    roleId: ORCHESTRATOR_ROLE_ID,
+    roleKind: "orchestrator-command",
+    canonicalSource: `commands/cq/${ORCHESTRATOR_ROLE_ID}.md`,
+    surfaces: SURFACES,
+    sharedSourceBlock: {
+      classification: "shared-prose",
+      sourceBlock: "all prose outside the classified surface-sensitive blocks",
+      targetFragment: null,
+    },
+    fragmentBindings: [FRAGMENT_BINDING],
+    dispatchRelations: [{ kind: "dispatch", targetRoleId: DISPATCHED_ROLE_ID }],
+    intentionalDifferences: [INTENTIONAL_DIFFERENCE],
+    sidecar: null,
+  },
+] as const;
+
+interface PriorFetchPromptResult {
+  readonly roleId: string;
+  readonly kind: "dispatched-subagent" | "orchestrator-command";
+  readonly dispatched: boolean;
+  readonly promptTemplate: string;
+  readonly version?: number;
+  readonly inputSchema?: Readonly<Record<string, unknown>>;
+  readonly outputSchema?: Readonly<Record<string, unknown>>;
+}
+
+interface NewFetchPromptResult extends PriorFetchPromptResult {
+  readonly promptSurface: PromptSurface;
+  readonly renderer: {
+    readonly sharedSourceBlock: Readonly<Record<string, unknown>>;
+    readonly fragmentBindings: readonly Readonly<Record<string, unknown>>[];
+  };
+  readonly sourcePath: string;
+  readonly workflowDependencies: readonly {
+    readonly kind: "dispatch" | "recursion";
+    readonly targetRoleId: string;
+  }[];
+  readonly requiredCapabilities: readonly string[];
+  readonly intentionalDifferences: readonly Readonly<Record<string, unknown>>[];
+}
 
 let tmpRoot: string;
 let xdgHome: string;
 let surfacesRoot: string;
-let codexRoot: string;
+let surfaceRoots: Readonly<Record<PromptSurface, string>>;
 
 function childEnv(
   overrides: Readonly<Record<string, string>>,
@@ -36,13 +119,59 @@ function childEnv(
   return { ...environment, XDG_STATE_HOME: xdgHome, ...overrides };
 }
 
-function decodePrompt(result: unknown): string {
+function decodeResult(result: unknown): NewFetchPromptResult {
   const content = (result as { content: Array<{ type: string; text: string }> }).content;
   const first = content[0];
   if (first === undefined || first.type !== "text") {
     throw new Error("expected prompt result text");
   }
-  return (JSON.parse(first.text) as { promptTemplate: string }).promptTemplate;
+  return JSON.parse(first.text) as NewFetchPromptResult;
+}
+
+function decodePriorFields(result: unknown): PriorFetchPromptResult {
+  const decoded = decodeResult(result);
+  const {
+    roleId,
+    kind,
+    dispatched,
+    promptTemplate,
+    version,
+    inputSchema,
+    outputSchema,
+  } = decoded;
+  return {
+    roleId,
+    kind,
+    dispatched,
+    promptTemplate,
+    ...(version !== undefined ? { version } : {}),
+    ...(inputSchema !== undefined ? { inputSchema } : {}),
+    ...(outputSchema !== undefined ? { outputSchema } : {}),
+  };
+}
+
+function errorText(result: unknown): string {
+  const content = (result as { content: Array<{ type: string; text: string }> }).content;
+  return content[0]?.text ?? "";
+}
+
+async function fetchPrompt(client: Client, roleId: string): Promise<unknown> {
+  return await client.callTool({
+    name: "fetch_prompt",
+    arguments: { roleId },
+  });
+}
+
+function assertNewMetadata(result: NewFetchPromptResult, surface: PromptSurface): void {
+  expect(result.promptSurface).toBe(surface);
+  expect(result.renderer).toEqual({
+    sharedSourceBlock: CATALOG[0].sharedSourceBlock,
+    fragmentBindings: [FRAGMENT_BINDING],
+  });
+  expect(result.sourcePath).toBe(`agents/${DISPATCHED_ROLE_ID}.md`);
+  expect(result.workflowDependencies).toEqual([]);
+  expect(result.requiredCapabilities).toEqual(["host-tool-vocabulary"]);
+  expect(result.intentionalDifferences).toEqual([INTENTIONAL_DIFFERENCE]);
 }
 
 async function freePort(): Promise<number> {
@@ -84,19 +213,22 @@ beforeAll(async () => {
     `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(tmpRoot)}"\n`,
   );
   surfacesRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-prompt-surfaces-"));
-  codexRoot = path.join(surfacesRoot, "codex");
-  await fs.mkdir(path.join(codexRoot, "roles"), { recursive: true });
-  await fs.writeFile(
-    path.join(codexRoot, "catalog.json"),
-    JSON.stringify([
-      {
-        roleId: ROLE_ID,
-        roleKind: "dispatched-subagent",
-        sidecar: { schemaRoleId: ROLE_ID },
-      },
-    ]),
-  );
-  await fs.writeFile(path.join(codexRoot, "roles", `${ROLE_ID}.md`), PROMPT_BYTES);
+  surfaceRoots = Object.fromEntries(
+    SURFACES.map((surface) => [surface, path.join(surfacesRoot, surface)]),
+  ) as Readonly<Record<PromptSurface, string>>;
+  for (const surface of SURFACES) {
+    const surfaceRoot = surfaceRoots[surface];
+    await fs.mkdir(path.join(surfaceRoot, "roles"), { recursive: true });
+    await fs.writeFile(path.join(surfaceRoot, "catalog.json"), JSON.stringify(CATALOG));
+    await fs.writeFile(
+      path.join(surfaceRoot, "roles", `${DISPATCHED_ROLE_ID}.md`),
+      PROMPT_BYTES[surface],
+    );
+    await fs.writeFile(
+      path.join(surfaceRoot, "roles", `${ORCHESTRATOR_ROLE_ID}.md`),
+      `orchestrator ${surface}\n`,
+    );
+  }
 });
 
 afterAll(async () => {
@@ -106,77 +238,134 @@ afterAll(async () => {
 });
 
 describe("standalone prompt-surface transports", () => {
-  test("stdio fetch_prompt returns exact bytes from explicit CLI selection", async () => {
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [
-        "run",
-        mainPath,
-        "--cwd",
-        tmpRoot,
-        "--prompt-surface",
-        "codex",
-        "--prompt-root",
-        codexRoot,
-      ],
-      env: childEnv({}),
-      stderr: "pipe",
-    });
-    const client = new Client({ name: "prompt-stdio-test", version: "0.0.1" }, {
-      capabilities: {},
-    });
-    await client.connect(transport);
-    try {
-      const result = await client.callTool({
-        name: "fetch_prompt",
-        arguments: { roleId: ROLE_ID },
+  test("stdio supports prior and new consumers across all selected surfaces", async () => {
+    const schemaBytes: string[] = [];
+    for (const surface of SURFACES) {
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: [
+          "run",
+          mainPath,
+          "--cwd",
+          tmpRoot,
+          "--prompt-surface",
+          surface,
+          "--prompt-root",
+          surfaceRoots[surface],
+        ],
+        env: childEnv({}),
+        stderr: "pipe",
       });
-      expect(decodePrompt(result)).toBe(PROMPT_BYTES);
-    } finally {
-      await client.close();
-    }
-  });
-
-  test("HTTP fetch_prompt returns exact bytes from environment selection", async () => {
-    const port = await freePort();
-    const processHandle: Subprocess = bunSpawn({
-      cmd: [
-        process.execPath,
-        "run",
-        mainPath,
-        "--cwd",
-        tmpRoot,
-        "--http",
-        `127.0.0.1:${String(port)}`,
-      ],
-      env: childEnv({
-        CQ_PROMPT_SURFACE: "codex",
-        CQ_PROMPT_SURFACES_ROOT: surfacesRoot,
-      }),
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    try {
-      await waitForPort(port);
-      const transport = new StreamableHTTPClientTransport(
-        new URL(`http://127.0.0.1:${String(port)}/mcp`),
-      );
-      const client = new Client({ name: "prompt-http-test", version: "0.0.1" }, {
+      const client = new Client({ name: "prompt-stdio-test", version: "0.0.1" }, {
         capabilities: {},
       });
-      await client.connect(transport as unknown as Transport);
+      await client.connect(transport);
       try {
-        const result = await client.callTool({
-          name: "fetch_prompt",
-          arguments: { roleId: ROLE_ID },
-        });
-        expect(decodePrompt(result)).toBe(PROMPT_BYTES);
+        const result = await fetchPrompt(client, DISPATCHED_ROLE_ID);
+        const prior = decodePriorFields(result);
+        expect(prior.promptTemplate).toBe(PROMPT_BYTES[surface]);
+        expect(prior.roleId).toBe(DISPATCHED_ROLE_ID);
+        expect(prior.dispatched).toBe(true);
+        expect(prior.inputSchema).toBeDefined();
+        expect(prior.outputSchema).toBeDefined();
+
+        const current = decodeResult(result);
+        assertNewMetadata(current, surface);
+        schemaBytes.push(
+          JSON.stringify({
+            version: current.version,
+            inputSchema: current.inputSchema,
+            outputSchema: current.outputSchema,
+          }),
+        );
+
+        const orchestrator = decodeResult(await fetchPrompt(client, ORCHESTRATOR_ROLE_ID));
+        expect(orchestrator.promptSurface).toBe(surface);
+        expect(orchestrator.sourcePath).toBe(`commands/cq/${ORCHESTRATOR_ROLE_ID}.md`);
+        expect(orchestrator.workflowDependencies).toEqual([
+          { kind: "dispatch", targetRoleId: DISPATCHED_ROLE_ID },
+        ]);
+        expect(orchestrator.inputSchema).toBeUndefined();
+        expect(orchestrator.outputSchema).toBeUndefined();
+
+        const unknown = await fetchPrompt(client, "no-such-role");
+        expect((unknown as { isError?: boolean }).isError).toBe(true);
+        expect(errorText(unknown)).toContain(
+          'unknown role "no-such-role": not in the prompt catalog roster',
+        );
       } finally {
         await client.close();
       }
-    } finally {
-      processHandle.kill();
-      await processHandle.exited;
     }
+    expect(new Set(Object.values(PROMPT_BYTES)).size).toBe(SURFACES.length);
+    expect(new Set(schemaBytes).size).toBe(1);
+  });
+
+  test("HTTP supports prior and new consumers across all selected surfaces", async () => {
+    const schemaBytes: string[] = [];
+    for (const surface of SURFACES) {
+      const port = await freePort();
+      const processHandle: Subprocess = bunSpawn({
+        cmd: [
+          process.execPath,
+          "run",
+          mainPath,
+          "--cwd",
+          tmpRoot,
+          "--http",
+          `127.0.0.1:${String(port)}`,
+        ],
+        env: childEnv({
+          CQ_PROMPT_SURFACE: surface,
+          CQ_PROMPT_SURFACES_ROOT: surfacesRoot,
+        }),
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      try {
+        await waitForPort(port);
+        const transport = new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${String(port)}/mcp`),
+        );
+        const client = new Client({ name: "prompt-http-test", version: "0.0.1" }, {
+          capabilities: {},
+        });
+        await client.connect(transport as unknown as Transport);
+        try {
+          const result = await fetchPrompt(client, DISPATCHED_ROLE_ID);
+          const prior = decodePriorFields(result);
+          expect(prior.promptTemplate).toBe(PROMPT_BYTES[surface]);
+          expect(prior.inputSchema).toBeDefined();
+          expect(prior.outputSchema).toBeDefined();
+
+          const current = decodeResult(result);
+          assertNewMetadata(current, surface);
+          schemaBytes.push(
+            JSON.stringify({
+              version: current.version,
+              inputSchema: current.inputSchema,
+              outputSchema: current.outputSchema,
+            }),
+          );
+
+          const orchestrator = decodeResult(await fetchPrompt(client, ORCHESTRATOR_ROLE_ID));
+          expect(orchestrator.promptSurface).toBe(surface);
+          expect(orchestrator.inputSchema).toBeUndefined();
+          expect(orchestrator.outputSchema).toBeUndefined();
+
+          const unknown = await fetchPrompt(client, "no-such-role");
+          expect((unknown as { isError?: boolean }).isError).toBe(true);
+          expect(errorText(unknown)).toContain(
+            'unknown role "no-such-role": not in the prompt catalog roster',
+          );
+        } finally {
+          await client.close();
+        }
+      } finally {
+        processHandle.kill();
+        await processHandle.exited;
+      }
+    }
+    expect(new Set(schemaBytes).size).toBe(1);
   });
 });
