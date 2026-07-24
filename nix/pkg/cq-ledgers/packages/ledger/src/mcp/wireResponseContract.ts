@@ -2,7 +2,6 @@ import type {
   FieldValue,
   FetchedLedger,
   Item,
-  Ledger,
 } from "../types.js";
 import type { FtsSearchHit } from "../search/LedgerSearchIndex.js";
 import type { FetchedMilestoneItem } from "../store/LedgerStore.js";
@@ -31,10 +30,7 @@ export type CompactItemFieldsDto = Partial<
   Record<CompactItemFieldName, FieldValue>
 >;
 
-declare const compactItemDtoBrand: unique symbol;
-
 export interface CompactItemDto {
-  readonly [compactItemDtoBrand]: "CompactItemDto";
   id: string;
   milestoneId: string;
   status: string;
@@ -87,10 +83,7 @@ export interface MilestoneReferenceFieldsDto {
   blockedBy?: string[];
 }
 
-declare const itemMutationAckDtoBrand: unique symbol;
-
 export interface ItemMutationAckDto {
-  readonly [itemMutationAckDtoBrand]: "ItemMutationAckDto";
   id: string;
   milestoneId: string;
   status: string;
@@ -101,22 +94,18 @@ export interface ItemMutationAckDto {
   session?: string;
 }
 
-declare const ledgerMutationAckDtoBrand: unique symbol;
-
 export interface LedgerMutationAckDto {
-  readonly [ledgerMutationAckDtoBrand]: "LedgerMutationAckDto";
   id: string;
 }
 
-declare const milestoneMutationAckDtoBrand: unique symbol;
-
 export interface MilestoneMutationAckDto {
-  readonly [milestoneMutationAckDtoBrand]: "MilestoneMutationAckDto";
   id: string;
   status: string;
   fields: MilestoneReferenceFieldsDto;
   createdAt: string;
   updatedAt: string;
+  author?: string;
+  session?: string;
 }
 
 export interface MandatoryItemProjectionContract {
@@ -199,10 +188,6 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   list_projects: { kind: "purpose-built-small" },
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 
-const COMPACT_ITEM_FIELD_SET: ReadonlySet<string> = new Set(
-  COMPACT_ITEM_FIELD_NAMES,
-);
-
 const ITEM_REFERENCE_FIELD_NAMES = [
   "dependsOn",
   "blockedBy",
@@ -218,14 +203,14 @@ function projectIntrinsicItem(
   item: Item,
   fields: CompactItemFieldsDto,
 ): CompactItemDto {
-  const projected = {
+  const projected: CompactItemDto = {
     id: item.id,
     milestoneId: item.milestoneId,
     status: item.status,
     fields,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
-  } as CompactItemDto;
+  };
   if (item.author !== undefined) projected.author = item.author;
   if (item.session !== undefined) projected.session = item.session;
   return projected;
@@ -233,10 +218,9 @@ function projectIntrinsicItem(
 
 export function projectCompactItemDto(item: Item): CompactItemDto {
   const fields: CompactItemFieldsDto = {};
-  for (const [name, value] of Object.entries(item.fields)) {
-    if (COMPACT_ITEM_FIELD_SET.has(name)) {
-      fields[name as CompactItemFieldName] = value;
-    }
+  for (const name of COMPACT_ITEM_FIELD_NAMES) {
+    const value = item.fields[name];
+    if (value !== undefined) fields[name] = value;
   }
   return projectIntrinsicItem(item, fields);
 }
@@ -337,29 +321,29 @@ function projectReferenceFields(
 export function projectItemMutationAckDto(
   item: Item,
 ): ItemMutationAckDto {
-  const projected = {
+  const projected: ItemMutationAckDto = {
     id: item.id,
     milestoneId: item.milestoneId,
     status: item.status,
     fields: projectReferenceFields(item, ITEM_REFERENCE_FIELD_NAMES),
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
-  } as ItemMutationAckDto;
+  };
   if (item.author !== undefined) projected.author = item.author;
   if (item.session !== undefined) projected.session = item.session;
   return projected;
 }
 
 export function projectLedgerMutationAckDto(
-  ledger: Ledger,
+  ledger: FetchedLedger,
 ): LedgerMutationAckDto {
-  return { id: ledger.id } as LedgerMutationAckDto;
+  return { id: ledger.id };
 }
 
 export function projectMilestoneMutationAckDto(
   milestone: Item,
 ): MilestoneMutationAckDto {
-  return {
+  const projected: MilestoneMutationAckDto = {
     id: milestone.id,
     status: milestone.status,
     fields: projectReferenceFields(
@@ -368,7 +352,10 @@ export function projectMilestoneMutationAckDto(
     ),
     createdAt: milestone.createdAt,
     updatedAt: milestone.updatedAt,
-  } as MilestoneMutationAckDto;
+  };
+  if (milestone.author !== undefined) projected.author = milestone.author;
+  if (milestone.session !== undefined) projected.session = milestone.session;
+  return projected;
 }
 
 export function serializeWireDto(value: unknown): string {
