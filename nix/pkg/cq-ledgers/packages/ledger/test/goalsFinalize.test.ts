@@ -7,11 +7,15 @@ import { describe, expect, it } from "bun:test";
 import {
   buildFinalizeSnapshot,
   computeGoalsFinalizePlan,
+  runGoalsFinalize,
   SKIP_INCOMPLETE_MILESTONE,
   SKIP_NO_MILESTONES,
   SKIP_WRONG_PHASE,
+  type FinalizeOps,
   type FinalizeSnapshot,
+  type GoalsFinalizeExecResult,
   type GoalsFinalizeOperation,
+  type GoalsFinalizePlan,
 } from "../src/finalize.js";
 import {
   DEFECTS_LEDGER,
@@ -89,6 +93,40 @@ function operation(
 ): GoalsFinalizeOperation {
   const found = operations.find((candidate) => candidate.id === id);
   if (found === undefined) throw new Error(`missing operation ${id}`);
+  return found;
+}
+
+function makeRecordingOps(failures: ReadonlySet<string>): {
+  ops: FinalizeOps;
+  calls: string[];
+} {
+  const calls: string[] = [];
+  const record = (call: string): void => {
+    calls.push(call);
+    if (failures.has(call)) throw new Error(`recording failure: ${call}`);
+  };
+  return {
+    calls,
+    ops: {
+      async updateItem(ledgerId, itemId, patch) {
+        record(`updateItem:${ledgerId}:${itemId}:${patch.status}`);
+      },
+      async updateMilestone(milestoneId, patch) {
+        record(`updateMilestone:${milestoneId}:${patch.status}`);
+      },
+      async archiveMilestone(milestoneId, summary) {
+        record(`archiveMilestone:${milestoneId}:${summary}`);
+      },
+    },
+  };
+}
+
+function result(
+  results: GoalsFinalizeExecResult[],
+  id: string,
+): GoalsFinalizeExecResult {
+  const found = results.find((candidate) => candidate.id === id);
+  if (found === undefined) throw new Error(`missing result ${id}`);
   return found;
 }
 
@@ -417,5 +455,283 @@ describe("computeGoalsFinalizePlan", () => {
       orderedAfter: ["goal:G1:to-done"],
       requiresSuccessOf: ["goal:G1:to-done"],
     });
+  });
+});
+
+describe("runGoalsFinalize", () => {
+  it("records every selected operation once in deterministic topological order", async () => {
+    const plan = computeGoalsFinalizePlan(baseSnapshot());
+    const { ops, calls } = makeRecordingOps(new Set());
+
+    const results = await runGoalsFinalize(ops, plan);
+
+    expect(results.map(({ id }) => id)).toEqual([
+      "milestone:M-W-OPEN:close",
+      "goal:G1:to-building",
+      "goal:G1:to-done",
+      "goal:G2:to-done",
+      "milestone:M-COORD:close",
+      "milestone:M-W-OPEN:archive",
+      "milestone:M-COORD:archive",
+      "milestone:M-W-DONE:archive",
+    ]);
+    expect(calls).toEqual([
+      "updateMilestone:M-W-OPEN:done",
+      "updateItem:goals:G1:building",
+      "updateItem:goals:G1:done",
+      "updateItem:goals:G2:done",
+      "updateMilestone:M-COORD:done",
+      "archiveMilestone:M-W-OPEN:finalized: open work",
+      "archiveMilestone:M-COORD:finalized: coordination",
+      "archiveMilestone:M-W-DONE:finalized: closed work",
+    ]);
+    expect(results.every(({ attempted, ok }) => attempted && ok)).toBe(true);
+    expect(result(results, "goal:G1:to-building")).toMatchObject({
+      id: "goal:G1:to-building",
+      targetId: "G1",
+      attempted: true,
+      ok: true,
+    });
+    expect(result(results, "goal:G1:to-done")).toMatchObject({
+      id: "goal:G1:to-done",
+      targetId: "G1",
+      attempted: true,
+      ok: true,
+    });
+    expect(calls.filter((call) => call.startsWith("updateMilestone:M-COORD:"))).toHaveLength(1);
+    expect(calls.filter((call) => call.startsWith("archiveMilestone:M-COORD:"))).toHaveLength(1);
+  });
+
+  it("never writes deselected or skipped goals", async () => {
+    const snapshot = makeSnapshot({
+      milestones: [
+        makeItem("M-WORK", "done"),
+        makeItem("M-INCOMPLETE", "open"),
+        makeItem("M-COORD", "open"),
+      ],
+      tasks: {
+        "M-WORK": [makeItem("T-DONE", "done")],
+        "M-INCOMPLETE": [makeItem("T-WIP", "wip")],
+      },
+      goals: {
+        "M-COORD": [
+          makeItem("G-SELECTED", "building", {
+            title: "selected",
+            description: "d",
+            milestones: ["M-WORK"],
+          }),
+          makeItem("G-DESELECTED", "building", {
+            title: "deselected",
+            description: "d",
+            milestones: ["M-WORK"],
+          }),
+          makeItem("G-SKIPPED", "building", {
+            title: "skipped",
+            description: "d",
+            milestones: ["M-INCOMPLETE"],
+          }),
+        ],
+      },
+    });
+    const plan = computeGoalsFinalizePlan(snapshot, {
+      deselectedGoalIds: ["G-DESELECTED"],
+    });
+    const { ops, calls } = makeRecordingOps(new Set());
+
+    await runGoalsFinalize(ops, plan);
+
+    expect(calls).toContain("updateItem:goals:G-SELECTED:done");
+    expect(calls.some((call) => call.includes("G-DESELECTED"))).toBe(false);
+    expect(calls.some((call) => call.includes("G-SKIPPED"))).toBe(false);
+  });
+
+  it("does not let a failed ordering-only work close suppress goal transitions", async () => {
+    const plan = computeGoalsFinalizePlan(baseSnapshot());
+    const failedCall = "updateMilestone:M-W-OPEN:done";
+    const { ops, calls } = makeRecordingOps(new Set([failedCall]));
+
+    const results = await runGoalsFinalize(ops, plan);
+
+    expect(result(results, "milestone:M-W-OPEN:close")).toEqual({
+      id: "milestone:M-W-OPEN:close",
+      targetId: "M-W-OPEN",
+      action: "close-milestone",
+      attempted: true,
+      ok: false,
+      error: `recording failure: ${failedCall}`,
+    });
+    expect(result(results, "goal:G1:to-building")).toMatchObject({
+      attempted: true,
+      ok: true,
+    });
+    expect(result(results, "goal:G1:to-done")).toMatchObject({
+      attempted: true,
+      ok: true,
+    });
+    expect(result(results, "milestone:M-W-OPEN:archive")).toEqual({
+      id: "milestone:M-W-OPEN:archive",
+      targetId: "M-W-OPEN",
+      action: "archive-milestone",
+      attempted: false,
+      ok: false,
+      failedPrerequisite: "milestone:M-W-OPEN:close",
+    });
+    expect(calls.some((call) => call.startsWith("archiveMilestone:M-W-OPEN:"))).toBe(false);
+    expect(result(results, "milestone:M-COORD:archive")).toMatchObject({
+      attempted: true,
+      ok: true,
+    });
+  });
+
+  it("suppresses only the declared branch after a planned-to-building failure", async () => {
+    const failedCall = "updateItem:goals:G1:building";
+    const { ops, calls } = makeRecordingOps(new Set([failedCall]));
+
+    const results = await runGoalsFinalize(ops, computeGoalsFinalizePlan(baseSnapshot()));
+
+    expect(result(results, "goal:G1:to-building")).toMatchObject({
+      attempted: true,
+      ok: false,
+      error: `recording failure: ${failedCall}`,
+    });
+    expect(result(results, "goal:G1:to-done")).toMatchObject({
+      attempted: false,
+      ok: false,
+      failedPrerequisite: "goal:G1:to-building",
+    });
+    expect(result(results, "goal:G2:to-done")).toMatchObject({
+      attempted: true,
+      ok: true,
+    });
+    expect(result(results, "milestone:M-COORD:close")).toMatchObject({
+      attempted: false,
+      ok: false,
+      failedPrerequisite: "goal:G1:to-done",
+    });
+    expect(result(results, "milestone:M-COORD:archive")).toMatchObject({
+      attempted: false,
+      ok: false,
+      failedPrerequisite: "goal:G1:to-done",
+    });
+    expect(calls).not.toContain("updateItem:goals:G1:done");
+    expect(calls.some((call) => call.startsWith("updateMilestone:M-COORD:"))).toBe(false);
+    expect(calls.some((call) => call.startsWith("archiveMilestone:M-COORD:"))).toBe(false);
+    expect(result(results, "milestone:M-W-OPEN:archive")).toMatchObject({
+      attempted: true,
+      ok: true,
+    });
+    expect(result(results, "milestone:M-W-DONE:archive")).toMatchObject({
+      attempted: true,
+      ok: true,
+    });
+  });
+
+  it("suppresses every and only declared dependent of a failed shared prerequisite", async () => {
+    const plan: GoalsFinalizePlan = {
+      eligibleGoals: [],
+      skipped: [],
+      operations: [
+        {
+          id: "milestone:M-LEFT:archive",
+          targetId: "M-LEFT",
+          action: "archive-milestone",
+          orderedAfter: ["milestone:M-SHARED:close"],
+          requiresSuccessOf: ["milestone:M-SHARED:close"],
+        },
+        {
+          id: "milestone:M-SHARED:close",
+          targetId: "M-SHARED",
+          action: "close-milestone",
+          targetStatus: "done",
+          orderedAfter: [],
+          requiresSuccessOf: [],
+        },
+        {
+          id: "milestone:M-RIGHT:archive",
+          targetId: "M-RIGHT",
+          action: "archive-milestone",
+          orderedAfter: ["milestone:M-SHARED:close"],
+          requiresSuccessOf: ["milestone:M-SHARED:close"],
+        },
+        {
+          id: "goal:G-ORDERED:to-done",
+          targetId: "G-ORDERED",
+          action: "close-goal",
+          targetStatus: "done",
+          orderedAfter: ["milestone:M-SHARED:close"],
+          requiresSuccessOf: [],
+        },
+        {
+          id: "goal:G-INDEPENDENT:to-done",
+          targetId: "G-INDEPENDENT",
+          action: "close-goal",
+          targetStatus: "done",
+          orderedAfter: [],
+          requiresSuccessOf: [],
+        },
+      ],
+    };
+    const failedCall = "updateMilestone:M-SHARED:done";
+    const { ops, calls } = makeRecordingOps(new Set([failedCall]));
+
+    const results = await runGoalsFinalize(ops, plan);
+
+    expect(results.map(({ id }) => id)).toEqual([
+      "milestone:M-SHARED:close",
+      "milestone:M-LEFT:archive",
+      "milestone:M-RIGHT:archive",
+      "goal:G-ORDERED:to-done",
+      "goal:G-INDEPENDENT:to-done",
+    ]);
+    expect(result(results, "milestone:M-LEFT:archive")).toMatchObject({
+      attempted: false,
+      failedPrerequisite: "milestone:M-SHARED:close",
+    });
+    expect(result(results, "milestone:M-RIGHT:archive")).toMatchObject({
+      attempted: false,
+      failedPrerequisite: "milestone:M-SHARED:close",
+    });
+    expect(result(results, "goal:G-ORDERED:to-done")).toMatchObject({
+      attempted: true,
+      ok: true,
+    });
+    expect(result(results, "goal:G-INDEPENDENT:to-done")).toMatchObject({
+      attempted: true,
+      ok: true,
+    });
+    expect(calls).toEqual([
+      failedCall,
+      "updateItem:goals:G-ORDERED:done",
+      "updateItem:goals:G-INDEPENDENT:done",
+    ]);
+  });
+
+  it("emits no close result for already-terminal work and coordination milestones", async () => {
+    const snapshot = makeSnapshot({
+      milestones: [
+        makeItem("M-WORK", "done", { title: "work" }),
+        makeItem("M-COORD", "done", { title: "coordination" }),
+      ],
+      tasks: { "M-WORK": [makeItem("T1", "done")] },
+      goals: {
+        "M-COORD": [
+          makeItem("G1", "building", {
+            title: "goal",
+            description: "d",
+            milestones: ["M-WORK"],
+          }),
+        ],
+      },
+    });
+    const { ops, calls } = makeRecordingOps(new Set());
+
+    const results = await runGoalsFinalize(ops, computeGoalsFinalizePlan(snapshot));
+
+    expect(results.map(({ id }) => id)).toEqual([
+      "goal:G1:to-done",
+      "milestone:M-WORK:archive",
+      "milestone:M-COORD:archive",
+    ]);
+    expect(calls.some((call) => call.startsWith("updateMilestone:"))).toBe(false);
   });
 });

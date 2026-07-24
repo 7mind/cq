@@ -745,6 +745,22 @@ export interface FinalizeExecResult {
   error?: string;
 }
 
+interface GoalsFinalizeExecResultBase {
+  id: GoalsFinalizeOperationId;
+  targetId: string;
+  action: FinalizeAction;
+}
+
+/** Per-operation outcome of executing a {@link GoalsFinalizePlan}. */
+export type GoalsFinalizeExecResult =
+  | (GoalsFinalizeExecResultBase & { attempted: true; ok: true })
+  | (GoalsFinalizeExecResultBase & { attempted: true; ok: false; error: string })
+  | (GoalsFinalizeExecResultBase & {
+      attempted: false;
+      ok: false;
+      failedPrerequisite: GoalsFinalizeOperationId;
+    });
+
 /** Render a caught value (typically an `Error`, but not guaranteed) as a message string. */
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -820,4 +836,205 @@ export function runApplyDone(ops: FinalizeOps, plan: FinalizePlan): Promise<Fina
  */
 export function runArchive(ops: FinalizeOps, plan: FinalizePlan): Promise<FinalizeExecResult[]> {
   return executeSequential(ops, plan.affected);
+}
+
+function goalsOperationOrder(
+  operations: GoalsFinalizeOperation[],
+): GoalsFinalizeOperation[] {
+  const byId = new Map<GoalsFinalizeOperationId, GoalsFinalizeOperation>();
+  const indexById = new Map<GoalsFinalizeOperationId, number>();
+  const dependents = new Map<GoalsFinalizeOperationId, GoalsFinalizeOperationId[]>();
+  const indegree = new Map<GoalsFinalizeOperationId, number>();
+
+  for (const [index, operation] of operations.entries()) {
+    if (byId.has(operation.id)) {
+      throw new FinalizePlanError(`goals-scope plan contains duplicate operation "${operation.id}"`);
+    }
+    byId.set(operation.id, operation);
+    indexById.set(operation.id, index);
+    dependents.set(operation.id, []);
+    indegree.set(operation.id, 0);
+  }
+
+  for (const operation of operations) {
+    for (const predecessorId of uniqueInOrder(operation.orderedAfter)) {
+      if (!byId.has(predecessorId)) {
+        throw new FinalizePlanError(
+          `goals-scope operation "${operation.id}" orders after missing operation "${predecessorId}"`,
+        );
+      }
+      const predecessorDependents = dependents.get(predecessorId);
+      const operationIndegree = indegree.get(operation.id);
+      if (predecessorDependents === undefined || operationIndegree === undefined) {
+        throw new FinalizePlanError("goals-scope ordering index is inconsistent");
+      }
+      predecessorDependents.push(operation.id);
+      indegree.set(operation.id, operationIndegree + 1);
+    }
+    for (const prerequisiteId of operation.requiresSuccessOf) {
+      if (!byId.has(prerequisiteId)) {
+        throw new FinalizePlanError(
+          `goals-scope operation "${operation.id}" requires missing operation "${prerequisiteId}"`,
+        );
+      }
+    }
+  }
+
+  const ready = operations
+    .filter((operation) => indegree.get(operation.id) === 0)
+    .map((operation) => operation.id);
+  const ordered: GoalsFinalizeOperation[] = [];
+  while (ready.length > 0) {
+    ready.sort((left, right) => {
+      const leftIndex = indexById.get(left);
+      const rightIndex = indexById.get(right);
+      if (leftIndex === undefined || rightIndex === undefined) {
+        throw new FinalizePlanError("goals-scope ordering index is inconsistent");
+      }
+      return leftIndex - rightIndex;
+    });
+    const operationId = ready.shift();
+    if (operationId === undefined) {
+      throw new FinalizePlanError("goals-scope ready queue unexpectedly became empty");
+    }
+    const operation = byId.get(operationId);
+    if (operation === undefined) {
+      throw new FinalizePlanError(`goals-scope operation "${operationId}" disappeared`);
+    }
+    ordered.push(operation);
+    const operationDependents = dependents.get(operationId);
+    if (operationDependents === undefined) {
+      throw new FinalizePlanError("goals-scope dependency index is inconsistent");
+    }
+    for (const dependentId of operationDependents) {
+      const dependentIndegree = indegree.get(dependentId);
+      if (dependentIndegree === undefined) {
+        throw new FinalizePlanError("goals-scope dependency index is inconsistent");
+      }
+      const next = dependentIndegree - 1;
+      indegree.set(dependentId, next);
+      if (next === 0) ready.push(dependentId);
+    }
+  }
+
+  if (ordered.length !== operations.length) {
+    throw new FinalizePlanError("goals-scope operation graph contains an ordering cycle");
+  }
+  const orderedIndex = new Map(ordered.map((operation, index) => [operation.id, index]));
+  for (const operation of ordered) {
+    const operationIndex = orderedIndex.get(operation.id);
+    if (operationIndex === undefined) {
+      throw new FinalizePlanError("goals-scope ordering index is inconsistent");
+    }
+    for (const prerequisiteId of operation.requiresSuccessOf) {
+      const prerequisiteIndex = orderedIndex.get(prerequisiteId);
+      if (prerequisiteIndex === undefined) {
+        throw new FinalizePlanError("goals-scope ordering index is inconsistent");
+      }
+      if (prerequisiteIndex >= operationIndex) {
+        throw new FinalizePlanError(
+          `goals-scope operation "${operation.id}" requires "${prerequisiteId}" before it is ordered`,
+        );
+      }
+    }
+  }
+  return ordered;
+}
+
+async function applyGoalsOperation(
+  ops: FinalizeOps,
+  operation: GoalsFinalizeOperation,
+): Promise<void> {
+  switch (operation.action) {
+    case "close-milestone": {
+      if (operation.targetStatus === undefined) {
+        throw new FinalizePlanError(
+          `close-milestone operation "${operation.id}" is missing targetStatus`,
+        );
+      }
+      await ops.updateMilestone(operation.targetId, { status: operation.targetStatus });
+      return;
+    }
+    case "close-goal": {
+      if (operation.targetStatus === undefined) {
+        throw new FinalizePlanError(
+          `close-goal operation "${operation.id}" is missing targetStatus`,
+        );
+      }
+      await ops.updateItem(GOALS_LEDGER, operation.targetId, {
+        status: operation.targetStatus,
+      });
+      return;
+    }
+    case "archive-milestone": {
+      const summary = `finalized: ${operation.title ?? operation.targetId}`;
+      await ops.archiveMilestone(operation.targetId, summary);
+      return;
+    }
+  }
+}
+
+/**
+ * Execute a goals-scope graph in stable topological order. Ordering-only
+ * failures do not suppress later operations; only failed or suppressed
+ * `requiresSuccessOf` predecessors do.
+ */
+export async function runGoalsFinalize(
+  ops: FinalizeOps,
+  plan: GoalsFinalizePlan,
+): Promise<GoalsFinalizeExecResult[]> {
+  const ordered = goalsOperationOrder(plan.operations);
+  const results: GoalsFinalizeExecResult[] = [];
+  const byId = new Map<GoalsFinalizeOperationId, GoalsFinalizeExecResult>();
+
+  for (const operation of ordered) {
+    const failedPrerequisite = operation.requiresSuccessOf.find((id) => {
+      const result = byId.get(id);
+      if (result === undefined) {
+        throw new FinalizePlanError(
+          `goals-scope prerequisite "${id}" has no execution result`,
+        );
+      }
+      return result.ok === false;
+    });
+    if (failedPrerequisite !== undefined) {
+      const result: GoalsFinalizeExecResult = {
+        id: operation.id,
+        targetId: operation.targetId,
+        action: operation.action,
+        attempted: false,
+        ok: false,
+        failedPrerequisite,
+      };
+      results.push(result);
+      byId.set(operation.id, result);
+      continue;
+    }
+
+    try {
+      await applyGoalsOperation(ops, operation);
+      const result: GoalsFinalizeExecResult = {
+        id: operation.id,
+        targetId: operation.targetId,
+        action: operation.action,
+        attempted: true,
+        ok: true,
+      };
+      results.push(result);
+      byId.set(operation.id, result);
+    } catch (err) {
+      const result: GoalsFinalizeExecResult = {
+        id: operation.id,
+        targetId: operation.targetId,
+        action: operation.action,
+        attempted: true,
+        ok: false,
+        error: errorMessage(err),
+      };
+      results.push(result);
+      byId.set(operation.id, result);
+    }
+  }
+
+  return results;
 }
