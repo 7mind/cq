@@ -18,15 +18,19 @@ import type {
   ArchivePointer,
   FetchedLedger,
   Item,
+  ItemPatch,
   LedgerClient,
   LedgerSchema,
   LedgerSummary,
   MilestonePatch,
 } from "../src/types.js";
 
+const UP = "[A";
 const DOWN = "[B";
 const ENTER = "\r";
 const ESC = "";
+const BACKSPACE = "\x7f";
+const SPACE = " ";
 
 const TS = "2026-01-01T00:00:00.000Z";
 
@@ -78,6 +82,17 @@ async function advance(h: Harness, still: string, done: string, ms = 4000): Prom
     else await tick(10);
   }
   throw new Error(`advance: '${done}' never appeared (stuck on '${still}'); frame:\n${h.frame()}`);
+}
+
+async function typeFinalize(h: Harness): Promise<void> {
+  await tick(50);
+  for (const character of "FINALIZE") await h.key(character);
+}
+
+async function confirmFinalize(h: Harness): Promise<void> {
+  await typeFinalize(h);
+  expect(h.frame()).toContain("confirmation: FINALIZE▌");
+  await h.key(ENTER);
 }
 
 /** Press Esc until `marker` disappears from the frame (drop-resilient). */
@@ -401,6 +416,172 @@ class GoalsClient implements LedgerClient {
   }
 }
 
+class GoalsFinalizeClient implements LedgerClient {
+  itemUpdates: Array<[string, string, ItemPatch]> = [];
+  milestoneUpdates: Array<[string, MilestonePatch]> = [];
+  archives: Array<[string, string]> = [];
+  private firstMilestoneRelease: (() => void) | null = null;
+  private firstMilestoneWait: Promise<void> | null = null;
+
+  constructor(
+    private readonly failMilestoneId: string | null = null,
+    pauseFirstMilestone = false,
+  ) {
+    if (pauseFirstMilestone) {
+      this.firstMilestoneWait = new Promise((resolve) => {
+        this.firstMilestoneRelease = resolve;
+      });
+    }
+  }
+
+  releaseFirstMilestone(): void {
+    const release = this.firstMilestoneRelease;
+    if (release === null) throw new Error("first milestone write is not paused");
+    this.firstMilestoneRelease = null;
+    release();
+  }
+
+  displayName(): string {
+    return "cq1";
+  }
+  async enumerateLedgers(): Promise<LedgerSummary[]> {
+    return [
+      { name: "goals", itemCount: 2 },
+      { name: "milestones", itemCount: 4 },
+      { name: "tasks", itemCount: 2 },
+    ];
+  }
+  async fetchLedger(id: string): Promise<FetchedLedger> {
+    if (id === "milestones") {
+      return {
+        id,
+        schema: milestonesSchema,
+        counters: { milestone: 5, item: 5 },
+        milestones: [
+          {
+            id: "active",
+            milestone: { id: "active", status: "open", title: "", description: "" },
+            items: [
+              item("MW1", "active", "open", { title: "Work one" }),
+              item("MW2", "active", "done", { title: "Work two" }),
+              item("MC1", "active", "open", { title: "Coordination one" }),
+              item("MC2", "active", "done", { title: "Coordination two" }),
+            ],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    if (id === "goals") {
+      return {
+        id,
+        schema: goalsSchema,
+        counters: { milestone: 3, item: 3 },
+        milestones: [
+          {
+            id: "MC1",
+            milestone: { id: "MC1", status: "open", title: "Coordination one", description: "" },
+            items: [
+              item("G1", "MC1", "building", {
+                title: "First goal",
+                description: "d1",
+                milestones: ["MW1"],
+              }),
+            ],
+          },
+          {
+            id: "MC2",
+            milestone: { id: "MC2", status: "done", title: "Coordination two", description: "" },
+            items: [
+              item("G2", "MC2", "planned", {
+                title: "Second goal",
+                description: "d2",
+                milestones: ["MW2"],
+              }),
+            ],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    if (id === "tasks") {
+      return {
+        id,
+        schema: tasksSchema,
+        counters: { milestone: 3, item: 3 },
+        milestones: [
+          {
+            id: "MW1",
+            milestone: { id: "MW1", status: "open", title: "Work one", description: "" },
+            items: [item("T1", "MW1", "done", { headline: "first work" })],
+          },
+          {
+            id: "MW2",
+            milestone: { id: "MW2", status: "done", title: "Work two", description: "" },
+            items: [item("T2", "MW2", "done", { headline: "second work" })],
+          },
+        ],
+        archivePointers: [],
+      };
+    }
+    throw new Error(`Ledger not found: ${id}`);
+  }
+  async fetchLedgerArchive(): Promise<ArchiveContent> {
+    throw new Error("not used");
+  }
+  async fetchItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async createItem(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<Item> {
+    this.itemUpdates.push([ledgerId, itemId, patch]);
+    return item(itemId, itemId === "G1" ? "MC1" : "MC2", patch.status ?? "building", {
+      title: itemId,
+      description: "updated",
+      milestones: [itemId === "G1" ? "MW1" : "MW2"],
+    });
+  }
+  async ftsSearch(): Promise<never[]> {
+    return [];
+  }
+  async createMilestone(): Promise<Item> {
+    throw new Error("not used");
+  }
+  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
+    this.milestoneUpdates.push([milestoneId, patch]);
+    if (this.firstMilestoneWait !== null) {
+      const wait = this.firstMilestoneWait;
+      this.firstMilestoneWait = null;
+      await wait;
+    }
+    if (milestoneId === this.failMilestoneId) throw new Error(`cannot close ${milestoneId}`);
+    return item(milestoneId, "active", patch.status ?? "open", { title: milestoneId });
+  }
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+    this.archives.push([milestoneId, summary]);
+    return {
+      id: milestoneId,
+      path: `./archive/milestones/${milestoneId}.md`,
+      summary,
+      title: milestoneId,
+      status: "done",
+    };
+  }
+  async close(): Promise<void> {
+    /* no-op */
+  }
+}
+
+async function openGoalsFinalize(h: Harness): Promise<void> {
+  await h.key(ENTER);
+  await waitFor(h, "G1");
+  await h.key("F");
+  await waitFor(h, "finalize · goals · preview");
+  await tick(50);
+}
+
 /**
  * Archive-sweep exactness fixture (delta coverage, T623): three milestones
  * spanning the archive predicate's (Q290) three outcomes — MA is fully
@@ -529,6 +710,8 @@ describe("TUI finalize overlay (T621)", () => {
     await h.key("F");
     await waitFor(h, PICK_APPLY);
     await advance(h, PICK_APPLY, "nothing eligible"); // pick apply-done
+    expect(h.frame()).toContain("This is a store-wide milestone sweep across");
+    expect(h.frame()).toContain("all ledgers.");
     // Skipped reasons are listed (M1 blocked by a non-terminal item).
     expect(h.frame()).toContain("M1");
     expect(h.frame()).toContain("non-terminal items");
@@ -547,7 +730,8 @@ describe("TUI finalize overlay (T621)", () => {
     // The same computed id list the web preview shows (Q292) + skipped reasons.
     expect(h.frame()).toContain("M1");
     expect(h.frame()).toContain("already terminal"); // M2 skipped
-    await advance(h, "Enter execute", "finalize · results"); // execute
+    await confirmFinalize(h);
+    await waitFor(h, "finalize · results");
     expect(client.milestoneUpdates).toEqual([["M1", { status: "done" }]]);
     await waitFor(h, "ok");
     expect(h.frame()).toContain("M1");
@@ -567,7 +751,8 @@ describe("TUI finalize overlay (T621)", () => {
     // Both milestones are eligible — the preview lists both.
     expect(h.frame()).toContain("M1");
     expect(h.frame()).toContain("M2");
-    await advance(h, "Enter execute", "finalize · results"); // execute
+    await confirmFinalize(h);
+    await waitFor(h, "finalize · results");
     // Mid-sweep continuation: M1's rejection did not stop the M2 write.
     expect(client.attempts).toEqual([
       ["M1", { status: "done" }],
@@ -599,7 +784,8 @@ describe("TUI finalize overlay (T621)", () => {
     await waitFor(h, "archive-milestone");
     expect(h.frame()).toContain("M2");
     expect(h.frame()).toContain("milestone status not terminal"); // M1 skipped
-    await advance(h, "Enter execute", "finalize · results"); // execute
+    await confirmFinalize(h);
+    await waitFor(h, "finalize · results");
     expect(client.archives).toEqual([["M2", "finalized: Beta"]]);
     expect(h.frame()).toContain("M2");
     expect(h.frame()).toContain("ok");
@@ -622,14 +808,13 @@ describe("TUI finalize overlay (T621)", () => {
     h.unmount();
   });
 
-  it("apply-done: preview on the GOALS frame lists skipped goals with their reasons", async () => {
+  it("goals scope lists skipped goals with their reasons", async () => {
     const h = await mount(new GoalsClient());
     await h.key(ENTER); // open goals (index 0, alphabetically before milestones)
     await waitFor(h, "G1");
     expect(h.frame()).toContain("F finalize"); // footer hint live on the goals frame too
     await h.key("F");
-    await waitFor(h, PICK_APPLY);
-    await advance(h, PICK_APPLY, "finalize · apply done · preview"); // pick apply-done → preview
+    await waitFor(h, "finalize · goals · preview");
     // G1 is not `building` → SKIP_WRONG_PHASE (detail: its actual status).
     expect(h.frame()).toContain(`G1 — ${SKIP_WRONG_PHASE} (planning)`);
     // G2 is `building` but its only work milestone (M1) is empty/incomplete
@@ -637,7 +822,7 @@ describe("TUI finalize overlay (T621)", () => {
     // assertion binds to the shared plan's skipped[] list (@cq/ledger/finalize)
     // and fails if the TUI stops rendering it.
     expect(h.frame()).toContain(`G2 — ${SKIP_INCOMPLETE_MILESTONE} (M1)`);
-    await escapeUntilGone(h, "finalize · apply done · preview");
+    await escapeUntilGone(h, "finalize · goals · preview");
     h.unmount();
   });
 
@@ -661,12 +846,144 @@ describe("TUI finalize overlay (T621)", () => {
     expect(h.frame()).toContain("MB — milestone status not terminal (open)");
     // MC: has a non-terminal grouped item.
     expect(h.frame()).toContain("MC — non-terminal items (tasks:T3)");
-    await advance(h, "Enter execute", "finalize · results"); // execute
+    await confirmFinalize(h);
+    await waitFor(h, "finalize · results");
     // Exactness: archiveMilestone was called for MA only, with the
     // synthesized 'finalized: <title>' summary — never for MB or MC.
     expect(client.archives).toEqual([["MA", "finalized: Alpha"]]);
     expect(h.frame()).toContain("MA");
     expect(h.frame()).toContain("ok");
+    h.unmount();
+  });
+
+  it("goals scope defaults all eligible goals selected and Space recomputes work and coordination operations", async () => {
+    const h = await mount(new GoalsFinalizeClient());
+    await openGoalsFinalize(h);
+
+    expect(h.frame()).toContain("This finalizes selected completed goals and");
+    expect(h.frame()).toContain("their related work and coordination");
+    expect(h.frame()).toContain("Q290 are archived.");
+    expect(h.frame()).toContain("› [x] G1");
+    expect(h.frame()).toContain("  [x] G2");
+    expect(h.frame()).toContain("milestone:MW1:close");
+    expect(h.frame()).toContain("milestone:MC1:close");
+    expect(h.frame()).toContain("milestone:MW2:archive");
+    expect(h.frame()).toContain("milestone:MC2:archive");
+
+    await h.key(DOWN);
+    expect(h.frame()).toContain("› [x] G2");
+    await h.key(SPACE);
+    expect(h.frame()).toContain("› [ ] G2");
+    expect(h.frame()).not.toContain("goal:G2:to-building");
+    expect(h.frame()).not.toContain("goal:G2:to-done");
+    expect(h.frame()).not.toContain("milestone:MW2:archive");
+    expect(h.frame()).not.toContain("milestone:MC2:archive");
+    expect(h.frame()).toContain("milestone:MW1:close");
+    expect(h.frame()).toContain("milestone:MC1:close");
+
+    await h.key(UP);
+    expect(h.frame()).toContain("› [x] G1");
+    h.unmount();
+  });
+
+  it("confirmation rejects bare, partial, and wrong-case input and resets after mismatch Enter", async () => {
+    const client = new GoalsFinalizeClient();
+    const h = await mount(client);
+    await openGoalsFinalize(h);
+
+    await h.key(ENTER);
+    expect(h.frame()).toContain("confirmation did not match");
+    expect(h.frame()).toContain("confirmation: ▌");
+    expect(client.itemUpdates).toEqual([]);
+
+    for (const character of "FIN") await h.key(character);
+    await h.key(ENTER);
+    expect(h.frame()).toContain("confirmation did not match");
+    expect(h.frame()).toContain("confirmation: ▌");
+    expect(client.itemUpdates).toEqual([]);
+
+    for (const character of "finalize") await h.key(character);
+    await h.key(ENTER);
+    expect(h.frame()).toContain("confirmation did not match");
+    expect(h.frame()).toContain("confirmation: ▌");
+    expect(client.itemUpdates).toEqual([]);
+    expect(client.milestoneUpdates).toEqual([]);
+    expect(client.archives).toEqual([]);
+    h.unmount();
+  });
+
+  it("FINALIZX, Backspace, E, Enter dispatches once; running ignores further input", async () => {
+    const client = new GoalsFinalizeClient(null, true);
+    const h = await mount(client);
+    await openGoalsFinalize(h);
+
+    for (const character of "FINALIZX") await h.key(character);
+    await h.key(BACKSPACE);
+    await h.key("E");
+    expect(h.frame()).toContain("confirmation: FINALIZE▌");
+    await h.key(ENTER);
+    await waitFor(h, "executing…");
+    await waitFor(h, "MW1");
+    expect(client.milestoneUpdates).toEqual([["MW1", { status: "done" }]]);
+
+    await typeFinalize(h);
+    await h.key(ENTER);
+    await h.key(ESC);
+    expect(client.milestoneUpdates).toEqual([["MW1", { status: "done" }]]);
+    expect(h.frame()).toContain("executing…");
+
+    client.releaseFirstMilestone();
+    await waitFor(h, "finalize · results");
+    expect(client.itemUpdates.filter(([, itemId]) => itemId === "G1")).toHaveLength(1);
+    h.unmount();
+  });
+
+  it("Esc and every Space selection change discard confirmation and mismatch state", async () => {
+    const client = new GoalsFinalizeClient();
+    const h = await mount(client);
+    await openGoalsFinalize(h);
+
+    for (const character of "FIN") await h.key(character);
+    await h.key(ESC);
+    await waitFor(h, "G1");
+    expect(h.frame()).not.toContain("finalize · goals · preview");
+
+    await h.key("F");
+    await waitFor(h, "finalize · goals · preview");
+    await tick(50);
+    expect(h.frame()).toContain("confirmation: ▌");
+    expect(h.frame()).not.toContain("confirmation did not match");
+
+    await h.key(ENTER);
+    expect(h.frame()).toContain("confirmation did not match");
+    await typeFinalize(h);
+    await h.key(SPACE);
+    expect(h.frame()).toContain("confirmation: ▌");
+    expect(h.frame()).not.toContain("confirmation did not match");
+    await h.key(ENTER);
+    expect(client.itemUpdates).toEqual([]);
+    expect(client.milestoneUpdates).toEqual([]);
+    expect(client.archives).toEqual([]);
+
+    await typeFinalize(h);
+    await h.key(ENTER);
+    await waitFor(h, "finalize · results");
+    expect(client.itemUpdates.length + client.milestoneUpdates.length + client.archives.length).toBeGreaterThan(0);
+    h.unmount();
+  });
+
+  it("goals results distinguish attempted success, attempted failure, and suppressed operations by stable id", async () => {
+    const client = new GoalsFinalizeClient("MW1");
+    const h = await mount(client);
+    await openGoalsFinalize(h);
+    await confirmFinalize(h);
+    await waitFor(h, "finalize · results");
+
+    expect(h.frame()).toContain("failed milestone:MW1:close");
+    expect(h.frame()).toContain("cannot close MW1");
+    expect(h.frame()).toContain("ok goal:G1:to-done");
+    expect(h.frame()).toContain("suppressed milestone:MW1:archive");
+    expect(h.frame()).toContain("requires milestone:MW1:close");
     h.unmount();
   });
 });

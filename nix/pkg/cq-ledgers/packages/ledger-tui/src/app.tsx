@@ -14,7 +14,7 @@
  * as a centered overlay that owns input while active.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { SelectList } from "./components/SelectList.js";
 import { TextPrompt } from "./components/TextPrompt.js";
@@ -53,15 +53,22 @@ import {
   RESEARCHES_LEDGER,
   GOALS_LEDGER,
 MILESTONES_SCHEMA,
+  FINALIZE_PRESENTATION,
+  describeFinalizeEmptyPlan,
 } from "@cq/ledger";
 import {
   buildFinalizeSnapshot,
   computeApplyDonePlan,
   computeArchivePlan,
+  computeGoalsFinalizePlan,
   runApplyDone,
   runArchive,
+  runGoalsFinalize,
   type FinalizeExecResult,
   type FinalizePlan,
+  type FinalizeSnapshot,
+  type GoalsFinalizeExecResult,
+  type GoalsFinalizePlan,
 } from "@cq/ledger/finalize";
 
 /**
@@ -361,7 +368,9 @@ const FINALIZE_OPTIONS: ReadonlyArray<{ mode: FinalizeMode; label: string }> = [
 type FinalizeStep =
   | { t: "pick" }
   | { t: "preview"; mode: FinalizeMode; plan: FinalizePlan }
-  | { t: "results"; results: FinalizeExecResult[] };
+  | { t: "goals-preview"; snapshot: FinalizeSnapshot }
+  | { t: "results"; results: FinalizeExecResult[] }
+  | { t: "goals-results"; results: GoalsFinalizeExecResult[] };
 
 type Overlay =
   | { t: "search" }
@@ -773,16 +782,19 @@ export function App({
     [client, top, patchTop],
   );
 
-  // Finalize (G83/T621): after a pick, assemble the snapshot from ALL ledgers
-  // the shared predicates read (milestones + every item ledger — fetched
-  // concurrently), compute the shared plan, and show the preview step.
+  const loadFinalizeSnapshot = useCallback(async (): Promise<FinalizeSnapshot> => {
+    const names = new Set<string>(ledgers.map((ledger) => ledger.name));
+    names.add(MILESTONES);
+    const views = await Promise.all([...names].map((name) => client.fetchLedger(name)));
+    return buildFinalizeSnapshot(views);
+  }, [client, ledgers]);
+
+  // Finalize (G83/T621): after the milestones-frame mode picker, compute the
+  // existing store-wide plan without changing its predicates or executor.
   const finalizePreview = useCallback(
     async (mode: FinalizeMode) => {
       try {
-        const names = new Set<string>(ledgers.map((l) => l.name));
-        names.add(MILESTONES);
-        const views = await Promise.all([...names].map((n) => client.fetchLedger(n)));
-        const snapshot = buildFinalizeSnapshot(views);
+        const snapshot = await loadFinalizeSnapshot();
         const plan = mode === "apply-done" ? computeApplyDonePlan(snapshot) : computeArchivePlan(snapshot);
         setOverlay({ t: "finalize", step: { t: "preview", mode, plan } });
       } catch (e) {
@@ -790,7 +802,29 @@ export function App({
         setOverlay(null);
       }
     },
-    [client, ledgers],
+    [loadFinalizeSnapshot],
+  );
+
+  // Goals use the separate selector-aware operation graph. The snapshot stays
+  // fixed for the overlay lifetime so each Space toggle recomputes one exact,
+  // deterministic projection of the plan currently being confirmed.
+  const finalizeGoalsPreview = useCallback(async () => {
+    try {
+      const snapshot = await loadFinalizeSnapshot();
+      setOverlay({ t: "finalize", step: { t: "goals-preview", snapshot } });
+    } catch (e) {
+      setFlash(errMsg(e));
+      setOverlay(null);
+    }
+  }, [loadFinalizeSnapshot]);
+
+  const finalizeGoalsExecute = useCallback(
+    async (plan: GoalsFinalizePlan) => {
+      const results = await runGoalsFinalize(client, plan);
+      setOverlay({ t: "finalize", step: { t: "goals-results", results } });
+      refreshRef.current();
+    },
+    [client],
   );
 
   // Execute the previewed plan through the shared executor with ops backed by
@@ -1094,9 +1128,12 @@ export function App({
       else if (input === "c") setOverlay({ t: "pickColumns", ledger: top.ledger });
       else if (input === "/") setOverlay({ t: "search" });
       else if (input === "A") void toggleArchive();
-      // Finalize sweeps (G83/T621): gated on the goals/milestones frames only.
-      else if (input === "F" && (top.ledger === MILESTONES || top.ledger === GOALS_LEDGER))
+      // The milestones frame keeps the global two-mode sweep. Goals open the
+      // separate selector-aware operation graph directly.
+      else if (input === "F" && top.ledger === MILESTONES)
         setOverlay({ t: "finalize", step: { t: "pick" } });
+      else if (input === "F" && top.ledger === GOALS_LEDGER)
+        void finalizeGoalsPreview();
     },
     { isActive: true },
   );
@@ -1372,6 +1409,7 @@ export function App({
               onSelectProject={(p) => void selectProject(p)}
               onFinalizeMode={(m) => void finalizePreview(m)}
               onFinalizeExecute={(m, plan) => void finalizeExecute(m, plan)}
+              onGoalsFinalizeExecute={(plan) => void finalizeGoalsExecute(plan)}
               setOverlay={setOverlay}
               onCancel={() => setOverlay(null)}
             />
@@ -2060,6 +2098,7 @@ function Overlays({
   onSelectProject,
   onFinalizeMode,
   onFinalizeExecute,
+  onGoalsFinalizeExecute,
   setOverlay,
   onCancel,
 }: {
@@ -2084,6 +2123,8 @@ function Overlays({
   onFinalizeMode: (mode: FinalizeMode) => void;
   /** Finalize (T621): Enter on the preview → execute the previewed plan. */
   onFinalizeExecute: (mode: FinalizeMode, plan: FinalizePlan) => void;
+  /** Goals-scoped Finalize: execute the selector's currently displayed plan. */
+  onGoalsFinalizeExecute: (plan: GoalsFinalizePlan) => void;
   setOverlay: (o: Overlay | null) => void;
   onCancel: () => void;
 }): React.ReactElement {
@@ -2229,6 +2270,18 @@ function Overlays({
           />
         );
       }
+      if (step.t === "goals-preview") {
+        return (
+          <GoalsFinalizePreview
+            snapshot={step.snapshot}
+            onExecute={onGoalsFinalizeExecute}
+            onCancel={onCancel}
+          />
+        );
+      }
+      if (step.t === "goals-results") {
+        return <GoalsFinalizeResults results={step.results} onClose={onCancel} />;
+      }
       return <FinalizeResults results={step.results} onClose={onCancel} />;
     }
   }
@@ -2238,6 +2291,95 @@ function Overlays({
 // Finalize overlay steps (G83/T621): preview the shared plan, then the per-id
 // execution results. Both own input while mounted (same pattern as LiveSearch).
 // ---------------------------------------------------------------------------
+
+const FINALIZE_CONFIRMATION = "FINALIZE";
+
+interface FinalizeInputState {
+  buffer: string;
+  mismatch: boolean;
+  running: boolean;
+}
+
+function useFinalizeInput({
+  hasActions,
+  onExecute,
+  onCancel,
+  onUp,
+  onDown,
+  onToggle,
+}: {
+  hasActions: boolean;
+  onExecute: () => void;
+  onCancel: () => void;
+  onUp: (() => void) | null;
+  onDown: (() => void) | null;
+  onToggle: (() => void) | null;
+}): FinalizeInputState {
+  const [buffer, setBuffer] = useState("");
+  const bufferRef = useRef("");
+  const [mismatch, setMismatch] = useState(false);
+  const [running, setRunning] = useState(false);
+  const runningRef = useRef(false);
+
+  const replaceBuffer = (value: string): void => {
+    bufferRef.current = value;
+    setBuffer(value);
+  };
+  const clearConfirmation = (): void => {
+    replaceBuffer("");
+    setMismatch(false);
+  };
+
+  useInput((input, key) => {
+    if (runningRef.current) return;
+    if (key.escape) {
+      clearConfirmation();
+      onCancel();
+    } else if (key.upArrow && onUp !== null) {
+      onUp();
+    } else if (key.downArrow && onDown !== null) {
+      onDown();
+    } else if (input === " " && onToggle !== null) {
+      clearConfirmation();
+      onToggle();
+    } else if (key.return && hasActions) {
+      if (bufferRef.current === FINALIZE_CONFIRMATION) {
+        runningRef.current = true;
+        setRunning(true);
+        clearConfirmation();
+        onExecute();
+      } else {
+        replaceBuffer("");
+        setMismatch(true);
+      }
+    } else if (key.backspace || key.delete) {
+      replaceBuffer(bufferRef.current.slice(0, -1));
+      setMismatch(false);
+    } else if (input.length > 0 && !key.ctrl && !key.meta) {
+      replaceBuffer(bufferRef.current + input);
+      setMismatch(false);
+    }
+  });
+
+  return { buffer, mismatch, running };
+}
+
+function FinalizeConfirmationPrompt({
+  input,
+}: {
+  input: FinalizeInputState;
+}): React.ReactElement {
+  return (
+    <Box flexDirection="column">
+      <Text dimColor>type FINALIZE then Enter · Esc cancel</Text>
+      <Text>
+        confirmation: <Text color="cyan">{input.buffer}</Text>
+        <Text>▌</Text>
+        {input.mismatch ? <Text color="yellow"> — confirmation did not match</Text> : null}
+      </Text>
+    </Box>
+  );
+}
 
 function FinalizePreview({
   mode,
@@ -2250,14 +2392,13 @@ function FinalizePreview({
   onExecute: () => void;
   onCancel: () => void;
 }): React.ReactElement {
-  // Guard against a double Enter re-running the sweep while it executes.
-  const [running, setRunning] = useState(false);
-  useInput((_input, key) => {
-    if (key.escape) onCancel();
-    else if (key.return && plan.affected.length > 0 && !running) {
-      setRunning(true);
-      onExecute();
-    }
+  const input = useFinalizeInput({
+    hasActions: plan.affected.length > 0,
+    onExecute,
+    onCancel,
+    onUp: null,
+    onDown: null,
+    onToggle: null,
   });
   const title = mode === "apply-done" ? "apply done" : "archive";
   return (
@@ -2265,8 +2406,12 @@ function FinalizePreview({
       <Text bold color="cyan">
         finalize · {title} · preview
       </Text>
+      <Text dimColor>{FINALIZE_PRESENTATION.global.caption}</Text>
       {plan.affected.length === 0 ? (
-        <Text color="yellow">nothing eligible</Text>
+        <Box flexDirection="column">
+          <Text color="yellow">nothing eligible</Text>
+          <Text dimColor>{describeFinalizeEmptyPlan(plan.skipped)}</Text>
+        </Box>
       ) : (
         <Box flexDirection="column" marginTop={1}>
           <Text bold>affected ({plan.affected.length}):</Text>
@@ -2297,15 +2442,116 @@ function FinalizePreview({
           ))}
         </Box>
       )}
-      <Box marginTop={1}>
-        <Text dimColor>
-          {running
-            ? "executing…"
-            : plan.affected.length > 0
-              ? "Enter execute · Esc cancel"
-              : "Esc close"}
-        </Text>
-      </Box>
+      {input.running ? (
+        <Box marginTop={1}>
+          <Text dimColor>executing…</Text>
+        </Box>
+      ) : plan.affected.length > 0 ? (
+        <FinalizeConfirmationPrompt input={input} />
+      ) : (
+        <Box marginTop={1}>
+          <Text dimColor>Esc close</Text>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function GoalsFinalizePreview({
+  snapshot,
+  onExecute,
+  onCancel,
+}: {
+  snapshot: FinalizeSnapshot;
+  onExecute: (plan: GoalsFinalizePlan) => void;
+  onCancel: () => void;
+}): React.ReactElement {
+  const [deselectedGoalIds, setDeselectedGoalIds] = useState<readonly string[]>([]);
+  const [cursor, setCursor] = useState(0);
+  const plan = useMemo(
+    () => computeGoalsFinalizePlan(snapshot, { deselectedGoalIds }),
+    [snapshot, deselectedGoalIds],
+  );
+  const selectedCursor =
+    plan.eligibleGoals.length === 0 ? 0 : Math.min(cursor, plan.eligibleGoals.length - 1);
+  const toggleSelectedGoal = (): void => {
+    const goal = plan.eligibleGoals[selectedCursor];
+    if (goal === undefined) return;
+    setDeselectedGoalIds((current) =>
+      goal.selected
+        ? [...current, goal.id]
+        : current.filter((goalId) => goalId !== goal.id),
+    );
+  };
+  const input = useFinalizeInput({
+    hasActions: plan.operations.length > 0,
+    onExecute: () => onExecute(plan),
+    onCancel,
+    onUp: () => setCursor((current) => Math.max(0, current - 1)),
+    onDown: () =>
+      setCursor((current) => Math.max(0, Math.min(plan.eligibleGoals.length - 1, current + 1))),
+    onToggle: toggleSelectedGoal,
+  });
+
+  return (
+    <Box flexDirection="column">
+      <Text bold color="cyan">finalize · goals · preview</Text>
+      <Text dimColor>{FINALIZE_PRESENTATION.goals.caption}</Text>
+      {plan.eligibleGoals.length === 0 ? (
+        <Text dimColor>(no eligible goals)</Text>
+      ) : (
+        <Box flexDirection="column">
+          {plan.eligibleGoals.map((goal, index) => (
+            <Text key={goal.id} inverse={index === selectedCursor}>
+              {index === selectedCursor ? "› " : "  "}
+              [{goal.selected ? "x" : " "}] {goal.id} <Text dimColor>{goal.status}</Text>
+            </Text>
+          ))}
+        </Box>
+      )}
+      {plan.operations.length === 0 ? (
+        <Box flexDirection="column">
+          <Text color="yellow">nothing eligible</Text>
+          <Text dimColor>{describeFinalizeEmptyPlan(plan.skipped)}</Text>
+        </Box>
+      ) : (
+        <Box flexDirection="column">
+          <Text bold>actions ({plan.operations.length}):</Text>
+          {plan.operations.map((operation) => (
+            <Text key={operation.id} wrap="truncate-end">
+              {"  "}
+              <Text bold>{operation.id}</Text>
+              <Text dimColor>
+                {" "}— {operation.action} {operation.targetId}
+                {operation.targetStatus !== undefined ? ` → ${operation.targetStatus}` : ""}
+              </Text>
+            </Text>
+          ))}
+        </Box>
+      )}
+      {plan.skipped.length > 0 ? (
+        <Box flexDirection="column">
+          <Text bold dimColor>skipped ({plan.skipped.length}):</Text>
+          {plan.skipped.map((entry) => (
+            <Text key={entry.id} dimColor wrap="truncate-end">
+              {"  "}
+              {entry.id} — {entry.reason}
+              {entry.detail !== undefined ? ` (${entry.detail})` : ""}
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+      {input.running ? (
+        <Box>
+          <Text dimColor>executing…</Text>
+        </Box>
+      ) : plan.operations.length > 0 ? (
+        <FinalizeConfirmationPrompt input={input} />
+      ) : (
+        <Box>
+          <Text dimColor>↑↓ move · Space toggle · Esc close</Text>
+        </Box>
+      )}
     </Box>
   );
 }
@@ -2341,6 +2587,54 @@ function FinalizeResults({
       <Box marginTop={1}>
         <Text dimColor>
           {failed > 0 ? `${failed} failed · ` : ""}Enter/Esc close
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
+function GoalsFinalizeResults({
+  results,
+  onClose,
+}: {
+  results: GoalsFinalizeExecResult[];
+  onClose: () => void;
+}): React.ReactElement {
+  useInput((_input, key) => {
+    if (key.escape || key.return) onClose();
+  });
+  const failed = results.filter((result) => result.attempted && !result.ok).length;
+  const suppressed = results.filter((result) => !result.attempted).length;
+  return (
+    <Box flexDirection="column">
+      <Text bold color="cyan">finalize · results</Text>
+      {results.length === 0 ? (
+        <Text dimColor>(nothing executed)</Text>
+      ) : (
+        results.map((result) => {
+          const marker = !result.attempted ? "suppressed" : result.ok ? "ok" : "failed";
+          const color = !result.attempted ? "yellow" : result.ok ? "green" : "red";
+          return (
+            <Box key={result.id} flexDirection="column">
+              <Text wrap="truncate-end">
+                {"  "}
+                <Text color={color}>{marker}</Text> <Text bold>{result.id}</Text>
+                <Text dimColor> — {result.action} {result.targetId}</Text>
+              </Text>
+              {result.attempted && !result.ok ? (
+                <Text color="red">{"    "}error: {result.error}</Text>
+              ) : !result.attempted ? (
+                <Text color="yellow">{"    "}requires {result.failedPrerequisite}</Text>
+              ) : null}
+            </Box>
+          );
+        })
+      )}
+      <Box marginTop={1}>
+        <Text dimColor>
+          {failed > 0 ? `${failed} failed · ` : ""}
+          {suppressed > 0 ? `${suppressed} suppressed · ` : ""}
+          Enter/Esc close
         </Text>
       </Box>
     </Box>
