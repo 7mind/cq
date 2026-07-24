@@ -1,12 +1,30 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
+import {
+  DISPATCHED_ROLE_SIDECARS,
+  renderPromptSurfaceTree,
+  verifyPromptCatalog,
+  type PromptSurface,
+  type PromptVerificationRoot,
+} from "@cq/config";
 import { PROMPT_CATALOG_PROJECTION } from "../src/promptCatalog.gen.js";
 
 interface CatalogEntry {
   readonly roleId: string;
   readonly canonicalSource: string;
   readonly [key: string]: unknown;
+}
+
+interface FragmentBinding {
+  readonly fragment: string;
+}
+
+interface FragmentSource {
+  readonly surface: PromptSurface;
+  readonly roleId: string;
+  readonly fragment: string;
+  readonly source: string;
 }
 
 interface CatalogProjection {
@@ -27,20 +45,25 @@ const GENERATED_CATALOG = path.join(
   "src",
   "promptCatalog.gen.ts",
 );
+const ASSETS_ROOT = path.join(NIX_ROOT, "pkg", "cq-assets");
+const SURFACES = ["claude", "codex", "pi"] as const;
 
-function evaluateProjection(): CatalogProjection {
-  const result = Bun.spawnSync(
-    ["nix", "eval", "--json", ".#llmAssets.promptCatalogProjection"],
-    {
-      cwd: REPO_ROOT,
-      stdout: "pipe",
-      stderr: "pipe",
-    },
-  );
+function run(command: readonly string[]): string {
+  const result = Bun.spawnSync([...command], {
+    cwd: REPO_ROOT,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   if (result.exitCode !== 0) {
     throw new Error(new TextDecoder().decode(result.stderr));
   }
-  return JSON.parse(new TextDecoder().decode(result.stdout)) as CatalogProjection;
+  return new TextDecoder().decode(result.stdout).trimEnd();
+}
+
+function evaluateProjection(): CatalogProjection {
+  return JSON.parse(
+    run(["nix", "eval", "--json", ".#llmAssets.promptCatalogProjection"]),
+  ) as CatalogProjection;
 }
 
 function assertProjectionParity(
@@ -87,15 +110,112 @@ function cloneProjection(projection: CatalogProjection): {
 }
 
 function evaluateCatalog(): readonly CatalogEntry[] {
-  const result = Bun.spawnSync(["nix", "eval", "--json", ".#llmAssets.catalog"], {
-    cwd: REPO_ROOT,
+  return JSON.parse(
+    run(["nix", "eval", "--json", ".#llmAssets.catalog"]),
+  ) as readonly CatalogEntry[];
+}
+
+function evaluateRaw(attribute: string): string {
+  return run(["nix", "eval", "--raw", `.#llmAssets.${attribute}`]);
+}
+
+function buildPromptRoot(surface: PromptSurface): string {
+  return run([
+    "nix",
+    "build",
+    "--no-link",
+    "--print-out-paths",
+    `.#${surface}-prompt-root`,
+  ]);
+}
+
+function rootFromArtifacts(
+  surface: PromptSurface,
+  artifacts: readonly { readonly path: string; readonly content: string }[],
+): PromptVerificationRoot {
+  return {
+    surface,
+    artifacts: Object.fromEntries(
+      artifacts.map((artifact) => [artifact.path, artifact.content]),
+    ),
+  };
+}
+
+function rootFromFilesystem(
+  surface: PromptSurface,
+  root: string,
+): PromptVerificationRoot {
+  const artifacts = [...new Bun.Glob("**/*").scanSync({
+    cwd: root,
+    onlyFiles: true,
+  })]
+    .sort()
+    .map((artifactPath) => ({
+      path: artifactPath,
+      content: readFileSync(path.join(root, artifactPath), "utf8"),
+    }));
+  return rootFromArtifacts(surface, artifacts);
+}
+
+function publishClaudeRoot(
+  artifacts: PromptVerificationRoot["artifacts"],
+): PromptVerificationRoot {
+  const script = `
+    import { mkdir, mkdtemp } from "node:fs/promises";
+    import { tmpdir } from "node:os";
+    import * as path from "node:path";
+    import {
+      materializeClaudePrompts,
+      NodePromptPublicationStore,
+    } from "./scripts/link-prompts.ts";
+
+    const store = new NodePromptPublicationStore();
+    const files = JSON.parse(await Bun.stdin.text());
+    const tempRoot = await mkdtemp(path.join(tmpdir(), "cq-prompt-verification-"));
+    const ledgersRoot = path.join(tempRoot, "nix", "pkg", "cq-ledgers");
+    const generatedRoot = path.join(
+      tempRoot,
+      "nix",
+      "pkg",
+      "cq-assets",
+      ".generated",
+      "claude",
+    );
+    await mkdir(ledgersRoot, { recursive: true });
+    try {
+      await materializeClaudePrompts({
+        store,
+        ledgersRoot,
+        generatedRoot,
+        renderer: { render: async () => files },
+      });
+      process.stdout.write(JSON.stringify(
+        await store.readTree(path.join(generatedRoot, "current")),
+      ));
+    } finally {
+      await store.removeTree(tempRoot);
+    }
+  `;
+  const files = Object.entries(artifacts).map(([artifactPath, content]) => ({
+    path: artifactPath,
+    content,
+  }));
+  const result = Bun.spawnSync(["bun", "--eval", script], {
+    cwd: WORKSPACE_ROOT,
+    stdin: new Blob([JSON.stringify(files)]),
     stdout: "pipe",
     stderr: "pipe",
   });
   if (result.exitCode !== 0) {
     throw new Error(new TextDecoder().decode(result.stderr));
   }
-  return JSON.parse(new TextDecoder().decode(result.stdout)) as readonly CatalogEntry[];
+  return rootFromArtifacts(
+    "claude",
+    JSON.parse(new TextDecoder().decode(result.stdout)) as readonly {
+      readonly path: string;
+      readonly content: string;
+    }[],
+  );
 }
 
 describe("assets.nix prompt-catalog authority", () => {
@@ -156,6 +276,94 @@ describe("assets.nix prompt-catalog authority", () => {
     expect(result.exitCode).toBe(0);
     expect(fresh).toBe(committed);
   });
+
+  test(
+    "the centralized verifier accepts real packaged and atomically published roots",
+    async () => {
+      const catalogJson = evaluateRaw("catalogJson");
+      const projection = evaluateProjection();
+      const roles = projection.catalog as readonly (CatalogEntry & {
+        readonly fragmentBindings: readonly FragmentBinding[];
+      })[];
+      const fragmentSources = JSON.parse(
+        evaluateRaw("promptFragmentSourcesJson"),
+      ) as readonly FragmentSource[];
+      const sourcePaths = roles.map((role) => ({
+        canonicalSource: role.canonicalSource,
+        path: path.join(ASSETS_ROOT, role.canonicalSource),
+      }));
+      const expectedRoots = Object.fromEntries(
+        SURFACES.map((surface) => [
+          surface,
+          rootFromArtifacts(
+            surface,
+            renderPromptSurfaceTree({
+              surface,
+              catalogJson,
+              sourcePaths,
+              fragmentPaths: fragmentSources
+                .filter((source) => source.surface === surface)
+                .map((source) => ({
+                  roleId: source.roleId,
+                  fragment: source.fragment,
+                  path: path.join(ASSETS_ROOT, source.source),
+                })),
+            }).artifacts,
+          ),
+        ]),
+      ) as Record<PromptSurface, PromptVerificationRoot>;
+      const packagedRoots = {} as Record<PromptSurface, PromptVerificationRoot>;
+      for (const surface of SURFACES) {
+        packagedRoots[surface] = rootFromFilesystem(
+          surface,
+          buildPromptRoot(surface),
+        );
+      }
+
+      const fragmentObservations = await Promise.all(
+        roles.flatMap((role) =>
+          role.fragmentBindings.map(async (binding) => ({
+            roleId: role.roleId,
+            fragment: binding.fragment,
+            contents: Object.fromEntries(
+              await Promise.all(
+                SURFACES.map(async (surface) => {
+                  const source = fragmentSources.find(
+                    (candidate) =>
+                      candidate.surface === surface &&
+                      candidate.roleId === role.roleId &&
+                      candidate.fragment === binding.fragment,
+                  );
+                  if (source === undefined) {
+                    throw new Error(
+                      `missing fragment source ${surface}:${role.roleId}:${binding.fragment}`,
+                    );
+                  }
+                  return [
+                    surface,
+                    await Bun.file(path.join(ASSETS_ROOT, source.source)).text(),
+                  ];
+                }),
+              ),
+            ) as Record<PromptSurface, string>,
+          })),
+        ),
+      );
+      verifyPromptCatalog({
+        authoritativeCatalogJson: catalogJson,
+        authoritativeProjection:
+          projection as unknown as Readonly<Record<string, unknown>>,
+        generatedProjection:
+          PROMPT_CATALOG_PROJECTION as unknown as Readonly<Record<string, unknown>>,
+        expectedRoots,
+        packagedRoots,
+        localClaudeRoot: publishClaudeRoot(expectedRoots.claude.artifacts),
+        fragmentObservations,
+        sidecarRoleIds: Object.keys(DISPATCHED_ROLE_SIDECARS),
+      });
+    },
+    120_000,
+  );
 
   test("no independent authored full prompt roster exists elsewhere in the repository", async () => {
     const catalog = evaluateCatalog();

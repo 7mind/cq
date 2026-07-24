@@ -53,7 +53,7 @@ assert assets.promptCatalogProjection == {
 };
 assert assets.catalogMetadataHash == builtins.hashString "sha256" assets.catalogJson;
 assert assets.catalogMetadataHash
-  == "895415b3928fa9680255d669bf4327deff1bbf02f956b3bf147b0f562ba62f4c";
+  == "fe55989b39c071a2f7e419defafe669fa73ab1503b2be9773a7ab7f3aba8668a";
 assert assets.promptSurfaceLayout == map (
   surface:
   let

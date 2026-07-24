@@ -119,6 +119,15 @@ export type {
   RenderedPromptSurfaceTree,
 } from "./promptRenderer.js";
 export { PromptRendererError, renderPromptSurfaceTree } from "./promptRenderer.js";
+export type {
+  PromptVerificationRoot,
+  PromptFragmentObservation,
+  PromptCatalogVerificationInput,
+} from "./promptCatalogVerification.js";
+export {
+  PromptCatalogVerificationError,
+  verifyPromptCatalog,
+} from "./promptCatalogVerification.js";
 export { planAdvanceSidecar, PLAN_ADVANCE_STATUS_TOKENS } from "./schemas/plan-advance.js";
 export { planReviewerSidecar, PLAN_REVIEW_VERDICTS } from "./schemas/plan-reviewer.js";
 export { implementWorkerSidecar, IMPLEMENT_WORKER_STATUSES } from "./schemas/implement-worker.js";
