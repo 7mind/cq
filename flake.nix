@@ -527,6 +527,60 @@
             prompt-catalog =
               assert promptCatalogTest;
               pkgs.runCommand "prompt-catalog" { } "touch $out";
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            # Boot a NixOS VM with services.cq-server enabled and prove the hub
+            # comes up over a native, tuned Postgres: the schema bootstraps, the
+            # web bundle serves, and /api/projects answers.
+            cq-server-nixos = pkgs.testers.runNixOSTest {
+              name = "cq-server";
+              node.specialArgs = { inherit self; };
+              nodes.machine = { ... }: {
+                imports = [ self.nixosModules.cq-server ];
+                services.cq-server = {
+                  enable = true;
+                  # Non-loopback bind exercises the Q273 token gate: the module
+                  # injects the token via CQ_SERVE_TOKEN (env), not a --token flag.
+                  host = "0.0.0.0";
+                  tokenFile = "/etc/cq-server-token";
+                };
+                environment.etc."cq-server-token".text = "s3cr3t-token";
+                # The hub rebuilds the web bundle with bun on start — give it headroom.
+                virtualisation.memorySize = 2048;
+                environment.systemPackages = [ pkgs.curl ];
+              };
+              testScript = ''
+                start_all()
+                machine.wait_for_unit("postgresql.service")
+                machine.wait_for_unit("cq-server.service")
+                machine.wait_for_open_port(5190)
+                # The token gate: /api/projects is 401 without a bearer token.
+                machine.succeed(
+                    "test $(curl -s -o /dev/null -w '%{http_code}' "
+                    "http://127.0.0.1:5190/api/projects) = 401"
+                )
+                # With the token (injected via CQ_SERVE_TOKEN), it returns the
+                # (initially empty) tenant registry.
+                machine.succeed(
+                    "curl -sf -H 'Authorization: Bearer s3cr3t-token' "
+                    "http://127.0.0.1:5190/api/projects | grep -q '\"projects\"'"
+                )
+                # The React bundle is served at / (unauthenticated either way).
+                machine.succeed("curl -sf http://127.0.0.1:5190/ | grep -qi 'html'")
+                # The Postgres schema bootstrapped its tables under the cq role.
+                machine.succeed(
+                    "sudo -u postgres psql -tAc "
+                    "\"select count(*) from information_schema.tables "
+                    "where table_schema='public' and table_name='items'\" cq | grep -q 1"
+                )
+                # The secret is injected via env, not the argument list: it must
+                # not appear in the service process's /proc cmdline.
+                machine.succeed(
+                    "pid=$(systemctl show -p MainPID --value cq-server.service); "
+                    "! tr '\\0' ' ' < /proc/$pid/cmdline | grep -q s3cr3t-token"
+                )
+              '';
+            };
           };
 
         apps.default = {
@@ -577,5 +631,11 @@
           (import ./nix/hm/dev-llm.nix { inherit inputs self; })
         ];
       };
+
+      # NixOS module: the `cq serve` multi-tenant hub over a native, tuned
+      # PostgreSQL (no containers). Curried over `self` so `package` defaults to
+      # this flake's `cq` build for the host system. See ./nix/nixos/cq-server.nix.
+      nixosModules.cq-server = import ./nix/nixos/cq-server.nix { inherit self; };
+      nixosModules.default = self.nixosModules.cq-server;
     };
 }

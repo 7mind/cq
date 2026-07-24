@@ -104,6 +104,23 @@ A ready-made dataset lives in
 — point `--cwd` at it to explore immediately. See its README for the exact
 commands.
 
+## Server deployment (NixOS)
+
+`nixosModules.cq-server` runs the `cq serve` multi-tenant hub against a native,
+tuned PostgreSQL on the same host (no containers). Minimal config:
+
+```nix
+imports = [ inputs.cq.nixosModules.cq-server ];
+services.cq-server.enable = true;   # binds 127.0.0.1:5190, provisions local Postgres
+```
+
+Set `host` / `port` to change the bind, `tokenFile` for a bearer token
+(required for a non-loopback bind; injected via `CQ_SERVE_TOKEN`, not a
+`ps`-visible flag), and `postgres.tune.{totalMemoryMB,maxConnections,ssd}` to
+size the database. See
+[`docs/drafts/20260722-1230-postgres-backend-and-cq-serve.md`](docs/drafts/20260722-1230-postgres-backend-and-cq-serve.md)
+for the full option reference.
+
 ## Storage layout
 
 A ledger root is any directory; the store keeps state under `<root>/docs/`:
@@ -219,4 +236,5 @@ Outputs:
 - `packages.{cq,node-modules}` + `apps.{default,cq}` (default is `cq mcp`).
 - `packages.{claude-code,codex,pi-coding-agent,codegraph,llm-skills,llm-contexts,llm-context-with-env}` plus platform-specific Linux `yolo`/`reattach-llm` or macOS `yolo-darwin` — harness building blocks.
 - `homeManagerModules.dev-llm` — the coding-agent harness module.
+- `nixosModules.cq-server` — runs `cq serve` over a native, tuned PostgreSQL.
 - `llmAssets` — the ledger's system-agnostic prompt/skill asset bundle.

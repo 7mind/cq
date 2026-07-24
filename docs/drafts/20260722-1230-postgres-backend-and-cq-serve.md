@@ -379,9 +379,9 @@ cq serve --pg-url <dsn> [--host <h>] [--port <n>] [--token <t>]
 - **`--pg-url <dsn>`** — explicit postgres DSN override (highest precedence)
 - **`--host <h>`** — bind address (default: `127.0.0.1`, loopback)
 - **`--port <n>`** — bind port (default: `5190`, distinct from `cq web`'s `5180`)
-- **`--token <t>`** — optional API token for authentication
+- **`--token <t>`** — optional API token for authentication (env fallback: `CQ_SERVE_TOKEN`)
 
-### Environment Fallbacks (if `--pg-url` absent)
+### DSN Environment Fallbacks (if `--pg-url` absent)
 
 1. `CQ_LEDGER_PG_URL` — highest-precedence env override
 2. `DATABASE_URL` — conventional cross-tool var
@@ -391,13 +391,21 @@ reads NEITHER `cq.toml [ledger].url` NOR the `PG*` driver defaults — with no
 `--pg-url` and neither env var set, `cq serve` fails fast naming exactly
 these three sources.
 
+### Token Resolution
+
+The API token resolves `--token` (CLI flag, highest precedence) >
+`CQ_SERVE_TOKEN` (environment variable) > none. The env fallback lets an
+operator inject the secret out-of-band — e.g. a systemd credential in the
+`services.cq-server` NixOS module (see below) — instead of a `--token <secret>`
+flag, which would expose the token in the process argument list (`ps`).
+
 ### Authentication (Q273)
 
 **Loopback bind** (127.0.0.1 / localhost / ::1):
 - `--token` is **optional**; open access by default
 
 **Non-loopback bind** (0.0.0.0 / LAN IP / hostname):
-- `--token` is **required** (startup fails without it)
+- A token is **required** — via `--token` or `CQ_SERVE_TOKEN` (startup fails without either)
 - Clear, actionable error if missing
 
 **Token enforcement (when set):**
@@ -444,6 +452,71 @@ cq serve --pg-url "postgres://user:password@0.0.0.0:5432/cq_ledger" \
 Open http://localhost:5190 (or http://0.0.0.0:5190?token=my-secret-token for authenticated access).
 
 The project selector lists all registered tenants; click to switch between them without restart.
+
+## NixOS Deployment (`services.cq-server`)
+
+This flake exports a NixOS module — `nixosModules.cq-server` — that runs
+`cq serve` against a **native, tuned PostgreSQL** on the same host (no
+containers). Import it and enable the service:
+
+```nix
+{
+  imports = [ cq.nixosModules.cq-server ];        # cq = this flake
+
+  services.cq-server = {
+    enable = true;
+    host = "127.0.0.1";                            # bind address (default)
+    port = 5190;                                   # bind port (default)
+    # tokenFile = "/run/secrets/cq-server-token";  # required for a non-loopback host
+    postgres.tune = {
+      totalMemoryMB = 4096;                        # memory budget PostgreSQL plans around
+      maxConnections = 100;
+      ssd = true;                                  # random_page_cost=1.1, effective_io_concurrency=200
+    };
+  };
+}
+```
+
+The minimal form is just `services.cq-server.enable = true;`. It:
+
+- Provisions and tunes a local PostgreSQL (via `services.postgresql`),
+  listening on **TCP loopback only** (`listen_addresses = 127.0.0.1`).
+- Creates a role + database (both named `cq` by default; they must match for
+  `ensureDBOwnership`) and grants the role ownership so `cq serve` can bootstrap
+  the schema.
+- Runs a hardened `cq-server` systemd unit that connects over TCP loopback with
+  trust auth (loopback-only, single-host — no password), sets
+  `LEDGER_WEB_OUTDIR` to a writable state dir (the hub rebuilds the web bundle
+  on start; the package's own `dist/` is read-only in the Nix store), and
+  serves on `host:port`.
+
+### Why TCP, not a unix socket
+
+`cq`'s Postgres pool is `new SQL(dsn)` (Bun's builtin `Bun.sql`, see
+`store/postgres/connection.ts` `openPgPool`). **Bun.sql reaches a server only
+over TCP from a DSN string** — a `postgres:///db?host=/socket` DSN is parsed
+with `host` as a *server GUC*, not a unix-socket path, and the connection
+fails. The module therefore runs PostgreSQL on TCP loopback and points the hub
+at `postgres://<db>@127.0.0.1:<port>/<db>`.
+
+### Key options
+
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `enable` | `false` | Enable the hub + managed PostgreSQL. |
+| `host` / `port` | `127.0.0.1` / `5190` | `cq serve` bind address / port. |
+| `openFirewall` | `false` | Open `port` in the firewall. |
+| `tokenFile` | `null` | File with the bearer token; injected via `CQ_SERVE_TOKEN` (not a `ps`-visible flag). **Required when `host` is non-loopback.** |
+| `database.createLocally` | `true` | Provision + tune a local PostgreSQL. Set `false` to use an external server. |
+| `database.name` | `"cq"` | Name of the PostgreSQL role **and** database (and the connecting user). |
+| `database.urlFile` | `null` | File with a full DSN, used verbatim as `CQ_LEDGER_PG_URL`. **Required when `createLocally = false`.** |
+| `postgres.tune.{totalMemoryMB,maxConnections,ssd}` | `2048` / `100` / `true` | pgtune-style defaults; every derived `services.postgresql.settings` value is overridable. |
+
+For a non-loopback bind (e.g. LAN exposure) set both `host` and `tokenFile`;
+the module asserts this at evaluation time (mirroring cq's own Q273 gate). To
+target a remote database instead of a managed local one, set
+`database.createLocally = false` and `database.urlFile` (a file holding
+`postgres://user:pass@host:port/db`).
 
 ## Configuration Reference (cq.toml)
 

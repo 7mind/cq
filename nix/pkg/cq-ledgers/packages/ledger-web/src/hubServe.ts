@@ -156,6 +156,28 @@ export function resolveHubDsn(
   throw new HubDsnResolutionError();
 }
 
+/** Env var consulted for the API token when `--token` is absent. */
+export const HUB_TOKEN_ENV_VAR = "CQ_SERVE_TOKEN" as const;
+
+/**
+ * Resolve the hub's API token: `--token` (explicit CLI flag, highest
+ * precedence) > `CQ_SERVE_TOKEN` env var > `null` (no token — open loopback
+ * access). Mirrors {@link resolveHubDsn}'s flag-over-env shape. The env
+ * fallback exists so operators (e.g. the NixOS `services.cq-server` module)
+ * can inject the secret without it landing in the process argument list
+ * (`ps`), which a `--token <secret>` flag would expose. A blank value (empty
+ * or whitespace-only) counts as unset in both positions.
+ */
+export function resolveHubToken(
+  tokenArg: string | null,
+  env: Readonly<Record<string, string | undefined>>,
+): string | null {
+  if (tokenArg !== null && tokenArg.trim() !== "") return tokenArg;
+  const fromEnv = env[HUB_TOKEN_ENV_VAR];
+  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv;
+  return null;
+}
+
 /**
  * True when `host` is a loopback bind (Q273): `localhost`, `::1`, or anything
  * in `127.0.0.0/8`. Anything else — `0.0.0.0`/`::` (all interfaces), a LAN IP,
@@ -551,10 +573,13 @@ export function serveHub(
 
 export async function main(argv: readonly string[]): Promise<void> {
   const args = parseHubArgs(argv);
-  // Q273 startup gate: a non-loopback --host with no --token is refused
+  // Token resolves --token (CLI) > CQ_SERVE_TOKEN (env) > null, so the secret
+  // can be injected out-of-band (env) instead of via a `ps`-visible flag.
+  const token = resolveHubToken(args.token, process.env);
+  // Q273 startup gate: a non-loopback --host with no token is refused
   // BEFORE DSN resolution, so a misconfigured bind never touches Postgres.
   try {
-    assertTokenIfNonLoopback(args.host, args.token);
+    assertTokenIfNonLoopback(args.host, token);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`cq: fatal: ${msg}\n`);
@@ -580,7 +605,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   await prepare(outdir);
   const indexPath = path.join(outdir, "index.html");
 
-  const opts: HubServeOpts = { host: args.host, port: args.port, token: args.token, outdir };
+  const opts: HubServeOpts = { host: args.host, port: args.port, token, outdir };
   const server = serveHub(opts, pool, dsn, indexPath);
 
   const shutdown = (): void => {
@@ -599,9 +624,9 @@ export async function main(argv: readonly string[]): Promise<void> {
   process.stdout.write(`http://${args.host}:${actualPort}/\n`);
   process.stderr.write(
     `cq serve: serving http://${args.host}:${actualPort}/ ` +
-      (args.token !== null
-        ? "(--token set; Authorization: Bearer <token> required on /mcp + /api/projects, ?token= on /ws)\n"
-        : "(no --token; loopback bind, auth open)\n"),
+      (token !== null
+        ? "(token set; Authorization: Bearer <token> required on /mcp + /api/projects, ?token= on /ws)\n"
+        : "(no token; loopback bind, auth open)\n"),
   );
 }
 

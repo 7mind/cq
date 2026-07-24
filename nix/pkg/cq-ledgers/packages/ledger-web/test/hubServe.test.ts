@@ -24,6 +24,7 @@ import { openPgPool, ensureSchema, PostgresLedgerStore } from "@cq/ledger";
 import {
   parseHubArgs,
   resolveHubDsn,
+  resolveHubToken,
   HubDsnResolutionError,
   HUB_DEFAULT_HOST,
   HUB_DEFAULT_PORT,
@@ -132,6 +133,26 @@ describe("resolveHubDsn", () => {
   });
 });
 
+describe("resolveHubToken", () => {
+  it("prefers the --token flag over CQ_SERVE_TOKEN", () => {
+    expect(resolveHubToken("from-flag", { CQ_SERVE_TOKEN: "from-env" })).toBe("from-flag");
+  });
+
+  it("falls back to CQ_SERVE_TOKEN when no flag is given", () => {
+    expect(resolveHubToken(null, { CQ_SERVE_TOKEN: "from-env" })).toBe("from-env");
+  });
+
+  it("returns null when neither is set", () => {
+    expect(resolveHubToken(null, {})).toBeNull();
+  });
+
+  it("treats blank values as unset in both positions", () => {
+    expect(resolveHubToken("  ", { CQ_SERVE_TOKEN: "from-env" })).toBe("from-env");
+    expect(resolveHubToken("  ", { CQ_SERVE_TOKEN: "  " })).toBeNull();
+    expect(resolveHubToken(null, { CQ_SERVE_TOKEN: "" })).toBeNull();
+  });
+});
+
 describe("isLoopbackHost (Q273)", () => {
   it("treats 127.0.0.0/8, ::1, and localhost as loopback", () => {
     for (const h of ["127.0.0.1", "127.0.0.53", "127.255.255.255", "localhost", "::1"]) {
@@ -211,6 +232,22 @@ describe("cq serve — non-loopback bind requires --token (Q273, no live Postgre
     expect(stderr).toContain("--token");
     // The token gate runs before DSN resolution, so the DSN error never fires.
     expect(stderr).not.toContain("CQ_LEDGER_PG_URL");
+  });
+});
+
+describe("cq serve — CQ_SERVE_TOKEN satisfies the non-loopback gate (no live Postgres needed)", () => {
+  it("passes the --token gate via CQ_SERVE_TOKEN, then reaches (and fails) DSN resolution", async () => {
+    const { exitCode, stdout, stderr } = await runHub(["--host", "0.0.0.0", "--port", "0"], {
+      CQ_SERVE_TOKEN: "env-secret",
+      CQ_LEDGER_PG_URL: undefined,
+      DATABASE_URL: undefined,
+    });
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toBe("");
+    // The env token satisfied Q273, so the token error never fires and the
+    // process advances to DSN resolution (which fails here — no DSN set).
+    expect(stderr).not.toContain("is not loopback");
+    expect(stderr).toContain("CQ_LEDGER_PG_URL");
   });
 });
 
