@@ -129,6 +129,8 @@ interface PanelLayout {
   orientation: PanelOrientation;
   size: number;
 }
+
+
 const DEFAULT_PANEL: PanelLayout = { orientation: "right", size: 380 };
 
 function loadPanel(): PanelLayout {
@@ -1937,6 +1939,7 @@ function FinalizePreviewModal({
             ✕
           </button>
         </div>
+        <div className="lw-modal-body">
         {step.t === "loading" && (
           <p className="lw-empty" data-testid="finalize-loading">
             computing plan…
@@ -1978,21 +1981,6 @@ function FinalizePreviewModal({
                 </ul>
               </>
             )}
-            {step.plan.affected.length > 0 && (
-              <div className="lw-finalize-actions">
-                <HoldButton
-                  data-testid="finalize-execute"
-                  disabled={running}
-                  clock={holdClock}
-                  onConfirm={() => {
-                    setRunning(true);
-                    onExecute(step.plan);
-                  }}
-                >
-                  {running ? "executing…" : `hold to ${modeLabel}`}
-                </HoldButton>
-              </div>
-            )}
           </>
         )}
         {step.t === "results" && (
@@ -2014,6 +2002,22 @@ function FinalizePreviewModal({
                 : `all ${step.results.length} succeeded`}
             </p>
           </>
+        )}
+        </div>
+        {step.t === "preview" && step.plan.affected.length > 0 && (
+          <div className="lw-finalize-actions">
+            <HoldButton
+              data-testid="finalize-execute"
+              disabled={running}
+              clock={holdClock}
+              onConfirm={() => {
+                setRunning(true);
+                onExecute(step.plan);
+              }}
+            >
+              {running ? "executing…" : `hold to ${modeLabel}`}
+            </HoldButton>
+          </div>
         )}
       </div>
     </div>
@@ -4461,4 +4465,3 @@ function CreateMilestoneForm({
     </form>
   );
 }
-

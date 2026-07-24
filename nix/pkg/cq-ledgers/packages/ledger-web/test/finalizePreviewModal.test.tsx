@@ -351,6 +351,20 @@ describe("T620 — web finalize preview modal", () => {
     expect(testid("finalize-skipped-M3")?.textContent).toContain("already terminal");
     expect(testid("finalize-skipped-G2")?.textContent).toContain("incomplete work milestone");
     expect(testid("finalize-empty")).toBeNull();
+
+    // Regression: preview content scrolls independently from the execute footer.
+    const modal = testid("finalize-preview")!;
+    const body = Array.from(modal.children).find((child) =>
+      child.classList.contains("lw-modal-body"),
+    );
+    const execute = testid("finalize-execute")!;
+    const actions = execute.parentElement;
+    expect(body).not.toBeUndefined();
+    expect(body!.contains(testid("finalize-affected"))).toBe(true);
+    expect(body!.contains(testid("finalize-skipped"))).toBe(true);
+    expect(body!.contains(execute)).toBe(false);
+    expect(actions?.classList.contains("lw-finalize-actions")).toBe(true);
+    expect(actions?.parentElement).toBe(modal);
   });
 
   it("holding to HOLD_MS fires the sweep in plan order and shows one result line per id incl. the failing one", async () => {
