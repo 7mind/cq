@@ -39,7 +39,10 @@ import {
   projectFetchedMilestoneDto,
   projectFtsSearchResultsDto,
   projectItemDto,
+  projectItemMutationAckDto,
+  projectLedgerMutationAckDto,
   projectMilestoneItemGroupsDto,
+  projectMilestoneMutationAckDto,
   projectPaginatedLedgerDto,
   serializeWireDto,
   type ProducedWireDto,
@@ -60,14 +63,6 @@ import {
   ListProjectsNotImplementedError,
   type ListProjectsCapability,
 } from "./listProjects.js";
-import {
-  produceWireDto,
-  projectItemMutationAckDto,
-  projectLedgerMutationAckDto,
-  projectMilestoneMutationAckDto,
-  serializeWireDto,
-  type ProducedWireDto,
-} from "./wireResponseContract.js";
 
 /**
  * The SDK's `tools?:` field on createSdkMcpServer is typed as
