@@ -55,6 +55,50 @@ async function registeredNames(
   }
 }
 
+function decode<T>(result: unknown): T {
+  const response = result as {
+    isError?: boolean;
+    content: Array<{ type: string; text: string }>;
+  };
+  expect(response.isError ?? false).toBe(false);
+  const first = response.content[0];
+  if (first === undefined || first.type !== "text") {
+    throw new Error("expected single text content block");
+  }
+  return JSON.parse(first.text) as T;
+}
+
+async function withRegisteredClient(
+  toolPrefix: string,
+  run: (client: Client) => Promise<void>,
+): Promise<void> {
+  const store = await buildStore();
+  const server = new McpServer(
+    { name: "stdio-prefix-contract-test", version: "0.0.1" },
+    { capabilities: { tools: {} } },
+  );
+  registerLedgerStdioTools(
+    server,
+    store,
+    undefined,
+    undefined,
+    undefined,
+    toolPrefix,
+  );
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client(
+    { name: "stdio-prefix-contract-client", version: "0.0.1" },
+    { capabilities: {} },
+  );
+  await client.connect(clientTransport);
+  try {
+    await run(client);
+  } finally {
+    await client.close();
+  }
+}
+
 describe("registerLedgerStdioTools — trailing toolPrefix", () => {
   it("registers prefixedToolNames(prefix) for a non-empty prefix", async () => {
     const store = await buildStore();
@@ -75,6 +119,65 @@ describe("registerLedgerStdioTools — trailing toolPrefix", () => {
     const store = await buildStore();
     const names = await registeredNames(store);
     expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
+  });
+
+  it("preserves ack, compact, and full contracts with and without a prefix", async () => {
+    for (const prefix of ["", "myproj"]) {
+      await withRegisteredClient(prefix, async (client) => {
+        decode<{ milestone: { id: string } }>(
+          await client.callTool({
+            name: prefix === "" ? "create_milestone" : `${prefix}_create_milestone`,
+            arguments: { id: "M1", title: "projection contract" },
+          }),
+        );
+        const created = decode<{
+          item: { id: string; fields: Record<string, never> };
+        }>(
+          await client.callTool({
+            name: prefix === "" ? "create_item" : `${prefix}_create_item`,
+            arguments: {
+              ledger_id: "tasks",
+              milestone_id: "M1",
+              status: "planned",
+              fields: {
+                headline: "prefix contract",
+                description: "full-only narrative",
+              },
+            },
+          }),
+        );
+        expect(created.item.fields).toEqual({});
+
+        const compact = decode<{
+          item: { fields: Record<string, unknown> };
+        }>(
+          await client.callTool({
+            name: prefix === "" ? "fetch_item" : `${prefix}_fetch_item`,
+            arguments: {
+              ledger_id: "tasks",
+              item_id: created.item.id,
+              projection: "compact",
+            },
+          }),
+        );
+        expect(compact.item.fields["headline"]).toBe("prefix contract");
+        expect(compact.item.fields["description"]).toBeUndefined();
+
+        const full = decode<{
+          item: { fields: Record<string, unknown> };
+        }>(
+          await client.callTool({
+            name: prefix === "" ? "fetch_item" : `${prefix}_fetch_item`,
+            arguments: {
+              ledger_id: "tasks",
+              item_id: created.item.id,
+              projection: "full",
+            },
+          }),
+        );
+        expect(full.item.fields["description"]).toBe("full-only narrative");
+      });
+    }
   });
 
   it("rejects an invalid (non-alphanumeric) prefix at the boundary", async () => {

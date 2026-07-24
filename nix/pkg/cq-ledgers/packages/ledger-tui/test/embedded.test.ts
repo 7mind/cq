@@ -2,15 +2,18 @@
  * McpLedgerClient.embedded round-trip test.
  *
  * Runs the ledger MCP server IN-PROCESS over an in-memory transport (no
- * subprocess, no socket) against a seeded temp xdg store (T505), and exercises
- * every client method — the embedded counterpart to mcpClient.test.ts.
+ * subprocess, no socket) against a seeded temp xdg store (T505). Transport
+ * calls exercise the explicit read projections and fixed mutation acks.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createLedgerStore } from "@cq/ledger";
+import { buildServer } from "@cq/ledger-mcp";
 import { McpLedgerClient, LedgerToolError } from "../src/mcpClient.js";
 
 let tmpRoot: string;
@@ -20,6 +23,7 @@ let prevPromptRoot: string | undefined;
 let prevPromptSurface: string | undefined;
 let promptRoot: string;
 let client: McpLedgerClient;
+let rawClient: Client;
 const PROMPT_BYTES = "tui codex {{cq:literal}} and $ARGUMENTS\n";
 
 beforeAll(async () => {
@@ -76,9 +80,22 @@ beforeAll(async () => {
   await seed.dispose();
 
   client = await McpLedgerClient.embedded(tmpRoot);
+  const embedded = client.embedded;
+  if (embedded === null) {
+    throw new Error("expected embedded ledger context");
+  }
+  const server = buildServer(embedded.store, path.basename(tmpRoot));
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  rawClient = new Client(
+    { name: "ledger-tui-embedded-contract-test", version: "0.0.1" },
+    { capabilities: {} },
+  );
+  await rawClient.connect(clientTransport);
 });
 
 afterAll(async () => {
+  await rawClient.close();
   await client.close(); // disposes the in-process store
   if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
   else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
@@ -90,6 +107,19 @@ afterAll(async () => {
   await fs.rm(promptRoot, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
+
+function decode<T>(result: unknown): T {
+  const response = result as {
+    isError?: boolean;
+    content: Array<{ type: string; text: string }>;
+  };
+  expect(response.isError ?? false).toBe(false);
+  const first = response.content[0];
+  if (first === undefined || first.type !== "text") {
+    throw new Error("expected single text content block");
+  }
+  return JSON.parse(first.text) as T;
+}
 
 describe("McpLedgerClient.embedded (in-process, in-memory transport)", () => {
   it("exposes the embedded context (store + cwd + resolved backend descriptor)", () => {
@@ -115,34 +145,99 @@ describe("McpLedgerClient.embedded (in-process, in-memory transport)", () => {
     expect(result.requiredCapabilities).toEqual([]);
   });
 
-  it("creates, updates, fetches and searches an item — no subprocess", async () => {
-    await client.createMilestone({ id: "M30", title: "embedded coverage" });
-    const dependency = await client.createItem("tasks", "M30", {
-      status: "planned",
-      fields: { headline: "embedded dependency" },
-    });
-    const created = await client.createItem("bugs", "M30", {
-      status: "open",
-      fields: {
-        headline: "tachyon leak",
-        note: "in-process",
-        dependsOn: [dependency.id],
-      },
-    });
-    expect(created.fields).toEqual({
-      dependsOn: [`tasks:${dependency.id}`],
+  it("round-trips fixed acks plus compact and full reads — no subprocess", async () => {
+    decode<{ milestone: { id: string } }>(
+      await rawClient.callTool({
+        name: "create_milestone",
+        arguments: { id: "M30", title: "embedded coverage" },
+      }),
+    );
+    const dependency = decode<{
+      item: { id: string; status: string; fields: Record<string, never> };
+    }>(
+      await rawClient.callTool({
+        name: "create_item",
+        arguments: {
+          ledger_id: "tasks",
+          milestone_id: "M30",
+          status: "planned",
+          fields: { headline: "embedded dependency" },
+        },
+      }),
+    );
+    const created = decode<{
+      item: { id: string; status: string; fields: Record<string, unknown> };
+    }>(
+      await rawClient.callTool({
+        name: "create_item",
+        arguments: {
+          ledger_id: "bugs",
+          milestone_id: "M30",
+          status: "open",
+          fields: {
+            headline: "tachyon leak",
+            note: "in-process",
+            dependsOn: [dependency.item.id],
+          },
+        },
+      }),
+    );
+    expect(created.item.status).toBe("open");
+    expect(created.item.fields).toEqual({
+      dependsOn: [`tasks:${dependency.item.id}`],
     });
 
-    const updated = await client.updateItem("bugs", created.id, { status: "wip" });
-    expect(updated.status).toBe("wip");
+    const updated = decode<{
+      item: { status: string; fields: Record<string, never> };
+    }>(
+      await rawClient.callTool({
+        name: "update_item",
+        arguments: {
+          ledger_id: "bugs",
+          item_id: created.item.id,
+          status: "wip",
+        },
+      }),
+    );
+    expect(updated.item.status).toBe("wip");
+    expect(updated.item.fields).toEqual({
+      dependsOn: [`tasks:${dependency.item.id}`],
+    });
 
-    const fetched = await client.fetchItem("bugs", created.id, "full");
-    expect(fetched.status).toBe("wip");
-    expect(fetched.fields["headline"]).toBe("tachyon leak");
-    expect(fetched.fields["dependsOn"]).toEqual([`tasks:${dependency.id}`]);
+    const compact = decode<{
+      item: { fields: Record<string, unknown> };
+    }>(
+      await rawClient.callTool({
+        name: "fetch_item",
+        arguments: {
+          ledger_id: "bugs",
+          item_id: created.item.id,
+          projection: "compact",
+        },
+      }),
+    );
+    expect(compact.item.fields["headline"]).toBe("tachyon leak");
+    expect(compact.item.fields["note"]).toBeUndefined();
+    expect(compact.item.fields["dependsOn"]).toEqual([`tasks:${dependency.item.id}`]);
+
+    const full = decode<{
+      item: { status: string; fields: Record<string, unknown> };
+    }>(
+      await rawClient.callTool({
+        name: "fetch_item",
+        arguments: {
+          ledger_id: "bugs",
+          item_id: created.item.id,
+          projection: "full",
+        },
+      }),
+    );
+    expect(full.item.status).toBe("wip");
+    expect(full.item.fields["note"]).toBe("in-process");
+    expect(full.item.fields["dependsOn"]).toEqual([`tasks:${dependency.item.id}`]);
 
     const hits = await client.ftsSearch("tachyon", "compact");
-    expect(hits.some((h) => h.item.id === created.id)).toBe(true);
+    expect(hits.some((hit) => hit.item.id === created.item.id)).toBe(true);
   });
 
   it("surfaces server validation errors as LedgerToolError", async () => {

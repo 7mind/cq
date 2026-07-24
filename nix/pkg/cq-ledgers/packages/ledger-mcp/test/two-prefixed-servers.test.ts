@@ -10,8 +10,9 @@
  *  (2) the unprefixed set === `LEDGER_TOOL_NAMES` (27), the prefixed set ===
  *      `prefixedToolNames('myproj')`;
  *  (3) BOTH servers are functional end-to-end — a real `create_milestone` +
- *      `create_item` + `fetch_item` round-trip on EACH (the prefixed one via
- *      `myproj_*` names) returns a correct, non-error result, proving the
+ *      `create_item` ack plus compact and full `fetch_item` round-trips on
+ *      EACH (the prefixed one via `myproj_*` names) return correct, non-error
+ *      results, proving the
  *      prefixed server's handlers — not just its registrations — still work.
  *
  * Each server uses a DISTINCT in-memory store, so there is no shared state and
@@ -82,9 +83,9 @@ function toolName(prefix: string, bare: string): string {
 }
 
 /**
- * Drive a full create_milestone → create_item → fetch_item round-trip against
- * one server through its (possibly prefixed) tool names, asserting each step
- * returns a correct, non-error result. Proves the handlers are live.
+ * Drive mutation-ack, compact-read, and full-read round-trips against one
+ * server through its (possibly prefixed) tool names. Proves the handlers are
+ * live and their projection contract survives the name transform.
  */
 async function exerciseRoundTrip(client: Client, prefix: string): Promise<void> {
   const ms = decode<{ milestone: { id: string } }>(
@@ -95,21 +96,41 @@ async function exerciseRoundTrip(client: Client, prefix: string): Promise<void> 
   );
   expect(ms.milestone.id).toBe("M1");
 
-  const created = decode<{ item: { id: string; status: string } }>(
+  const created = decode<{
+    item: { id: string; status: string; fields: Record<string, never> };
+  }>(
     await client.callTool({
       name: toolName(prefix, "create_item"),
       arguments: {
         ledger_id: "tasks",
         milestone_id: "M1",
         status: "planned",
-        fields: { headline: "exercise the handlers" },
+        fields: {
+          headline: "exercise the handlers",
+          description: "full projection narrative",
+        },
       },
     }),
   );
   expect(created.item.status).toBe("planned");
+  expect(created.item.fields).toEqual({});
   const itemId = created.item.id;
 
-  const fetched = decode<{ item: { id: string; status: string } }>(
+  const compact = decode<{
+    item: { id: string; fields: Record<string, unknown> };
+  }>(
+    await client.callTool({
+      name: toolName(prefix, "fetch_item"),
+      arguments: { ledger_id: "tasks", item_id: itemId, projection: "compact" },
+    }),
+  );
+  expect(compact.item.id).toBe(itemId);
+  expect(compact.item.fields["headline"]).toBe("exercise the handlers");
+  expect(compact.item.fields["description"]).toBeUndefined();
+
+  const fetched = decode<{
+    item: { id: string; status: string; fields: Record<string, unknown> };
+  }>(
     await client.callTool({
       name: toolName(prefix, "fetch_item"),
       arguments: { ledger_id: "tasks", item_id: itemId, projection: "full" },
@@ -117,6 +138,7 @@ async function exerciseRoundTrip(client: Client, prefix: string): Promise<void> 
   );
   expect(fetched.item.id).toBe(itemId);
   expect(fetched.item.status).toBe("planned");
+  expect(fetched.item.fields["description"]).toBe("full projection narrative");
 }
 
 describe("two prefixed ledger-MCP servers in one process (T380 / Q211)", () => {

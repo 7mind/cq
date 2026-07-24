@@ -172,14 +172,25 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
       decode<{ milestone: { id: string } }>(
         await s1.callTool({ name: "create_milestone", arguments: { id: msId, title: "T587 isolation" } }),
       );
-      const created = decode<{ item: { id: string } }>(
+      const created = decode<{
+        item: { id: string; fields: Record<string, never> };
+      }>(
         await s1.callTool({
           name: "create_item",
-          arguments: { ledger_id: "tasks", milestone_id: msId, status: "planned", fields: { headline: "A only" } },
+          arguments: {
+            ledger_id: "tasks",
+            milestone_id: msId,
+            status: "planned",
+            fields: {
+              headline: "A only",
+              description: "hub full-only narrative",
+            },
+          },
         }),
       );
       itemId = created.item.id;
       expect(itemId).toMatch(/^T\d+$/);
+      expect(created.item.fields).toEqual({});
     } finally {
       await s1.close();
     }
@@ -187,7 +198,25 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
     // Second session on the SAME tenant sees the write (shared per-project store).
     const s2 = await connectMcp(base, keyA, "t587-a2");
     try {
-      const got = decode<{ item: { id: string; fields: { headline: string } } }>(
+      const compact = decode<{
+        item: { id: string; fields: Record<string, unknown> };
+      }>(
+        await s2.callTool({
+          name: "fetch_item",
+          arguments: {
+            ledger_id: "tasks",
+            item_id: itemId,
+            projection: "compact",
+          },
+        }),
+      );
+      expect(compact.item.id).toBe(itemId);
+      expect(compact.item.fields["headline"]).toBe("A only");
+      expect(compact.item.fields["description"]).toBeUndefined();
+
+      const got = decode<{
+        item: { id: string; fields: Record<string, unknown> };
+      }>(
         await s2.callTool({
           name: "fetch_item",
           arguments: {
@@ -198,7 +227,8 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
         }),
       );
       expect(got.item.id).toBe(itemId);
-      expect(got.item.fields.headline).toBe("A only");
+      expect(got.item.fields["headline"]).toBe("A only");
+      expect(got.item.fields["description"]).toBe("hub full-only narrative");
     } finally {
       await s2.close();
     }

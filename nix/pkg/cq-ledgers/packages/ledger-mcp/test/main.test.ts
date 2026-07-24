@@ -5,8 +5,8 @@
  * `@modelcontextprotocol/sdk` Client + StdioClientTransport pair, and asserts:
  *   1. tools/list returns exactly the 27-tool ledger surface.
  *   2. enumerate_ledgers reflects the bootstrapped + seeded ledgers.
- *   3. A full create → read → update → search round-trip works through the
- *      transport and persists to disk (verified with a fresh store).
+ *   3. Fixed mutation acks plus compact/full reads work through the transport
+ *      and persist to disk (verified with a fresh store).
  *
  * The runtime store is the out-of-tree xdg primary (T505): every root carries
  * a cq.toml pinning backend='xdg' with an explicit projectId (a plain temp dir
@@ -140,7 +140,7 @@ describe("ledger-mcp stdio binary", () => {
     });
   });
 
-  it("supports a full create → read → update → search round-trip that persists", async () => {
+  it("supports ack, compact, and full round-trips that persist", async () => {
     await withClient(async (client) => {
       const ms = decode<{ milestone: { id: string } }>(
         await client.callTool({
@@ -150,7 +150,9 @@ describe("ledger-mcp stdio binary", () => {
       );
       expect(ms.milestone.id).toBe("M9");
 
-      const created = decode<{ item: { id: string; status: string } }>(
+      const created = decode<{
+        item: { id: string; status: string; fields: Record<string, never> };
+      }>(
         await client.callTool({
           name: "create_item",
           arguments: {
@@ -163,16 +165,37 @@ describe("ledger-mcp stdio binary", () => {
       );
       const itemId = created.item.id;
       expect(created.item.status).toBe("open");
+      expect(created.item.fields).toEqual({});
 
-      const updated = decode<{ item: { status: string } }>(
+      const updated = decode<{
+        item: { status: string; fields: Record<string, never> };
+      }>(
         await client.callTool({
           name: "update_item",
           arguments: { ledger_id: "xenos", item_id: itemId, status: "done" },
         }),
       );
       expect(updated.item.status).toBe("done");
+      expect(updated.item.fields).toEqual({});
 
-      const fetched = decode<{ item: { id: string; status: string } }>(
+      const compact = decode<{
+        item: { id: string; status: string; fields: Record<string, unknown> };
+      }>(
+        await client.callTool({
+          name: "fetch_item",
+          arguments: {
+            ledger_id: "xenos",
+            item_id: itemId,
+            projection: "compact",
+          },
+        }),
+      );
+      expect(compact.item.id).toBe(itemId);
+      expect(compact.item.fields["note"]).toBeUndefined();
+
+      const fetched = decode<{
+        item: { id: string; status: string; fields: Record<string, unknown> };
+      }>(
         await client.callTool({
           name: "fetch_item",
           arguments: {
@@ -184,6 +207,7 @@ describe("ledger-mcp stdio binary", () => {
       );
       expect(fetched.item.id).toBe(itemId);
       expect(fetched.item.status).toBe("done");
+      expect(fetched.item.fields["note"]).toBe("hello hive fleet");
 
       const hits = decode<{ results: Array<{ ledgerId: string }> }>(
         await client.callTool({

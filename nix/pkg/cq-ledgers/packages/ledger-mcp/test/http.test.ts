@@ -4,8 +4,8 @@
  * Starts the server's `serveHttp` over Bun.serve on an ephemeral port,
  * connects a real `@modelcontextprotocol/sdk` Client through the
  * StreamableHTTPClientTransport, and asserts the 27-tool surface plus a
- * full create → update → fetch → search round-trip works over HTTP and
- * persists to disk.
+ * mutation-ack plus compact/full read round-trips work over HTTP and persist
+ * to disk.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
@@ -105,7 +105,7 @@ describe("ledger-mcp Streamable HTTP", () => {
     await res.text();
   });
 
-  it("supports a full create → update → fetch → search round-trip over HTTP", async () => {
+  it("supports ack, compact, and full round-trips over HTTP", async () => {
     let itemId = "";
     await withClient(async (client) => {
       const ms = decode<{ milestone: { id: string } }>(
@@ -116,7 +116,9 @@ describe("ledger-mcp Streamable HTTP", () => {
       );
       expect(ms.milestone.id).toBe("M11");
 
-      const created = decode<{ item: { id: string; status: string } }>(
+      const created = decode<{
+        item: { id: string; status: string; fields: Record<string, never> };
+      }>(
         await client.callTool({
           name: "create_item",
           arguments: {
@@ -128,14 +130,49 @@ describe("ledger-mcp Streamable HTTP", () => {
         }),
       );
       itemId = created.item.id;
+      expect(created.item.status).toBe("open");
+      expect(created.item.fields).toEqual({});
 
-      const updated = decode<{ item: { status: string } }>(
+      const updated = decode<{
+        item: { status: string; fields: Record<string, never> };
+      }>(
         await client.callTool({
           name: "update_item",
           arguments: { ledger_id: "xenos", item_id: itemId, status: "done" },
         }),
       );
       expect(updated.item.status).toBe("done");
+      expect(updated.item.fields).toEqual({});
+
+      const compact = decode<{
+        item: { id: string; fields: Record<string, unknown> };
+      }>(
+        await client.callTool({
+          name: "fetch_item",
+          arguments: {
+            ledger_id: "xenos",
+            item_id: itemId,
+            projection: "compact",
+          },
+        }),
+      );
+      expect(compact.item.id).toBe(itemId);
+      expect(compact.item.fields["note"]).toBeUndefined();
+
+      const full = decode<{
+        item: { id: string; fields: Record<string, unknown> };
+      }>(
+        await client.callTool({
+          name: "fetch_item",
+          arguments: {
+            ledger_id: "xenos",
+            item_id: itemId,
+            projection: "full",
+          },
+        }),
+      );
+      expect(full.item.id).toBe(itemId);
+      expect(full.item.fields["note"]).toBe("tyranid sighting");
 
       const hits = decode<{ results: Array<{ ledgerId: string }> }>(
         await client.callTool({

@@ -56,7 +56,7 @@ const ORIGINAL_SERVER_INSTRUCTIONS = [
   "  { pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate,",
   "  belowFloor } in one call; read these instead of hand-deriving",
   "  actionability from snapshot.",
-  "- fetch_ledger with compact:true — strips long narrative fields to avoid",
+  '- fetch_ledger with projection:"compact" — strips long narrative fields to avoid',
   "  token-overflow on large ledgers. Combine with offset/limit for pagination.",
 ].join("\n");
 
