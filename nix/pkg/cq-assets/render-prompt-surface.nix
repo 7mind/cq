@@ -54,6 +54,7 @@ in
 pkgs.runCommand "cq-${validatedSurface}-prompt-root"
   {
     nativeBuildInputs = [ pkgs.bun ];
+    passthru.promptCatalog = assets.catalog;
   }
   ''
     test "$(find ${rendererSource} -type f | wc -l)" -eq 3

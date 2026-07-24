@@ -21,7 +21,7 @@
 {
   imports = [
     (import ./tools.nix { inherit inputs self; })
-    ./claude.nix
+    (import ./claude.nix { inherit self; })
     ./codex.nix
     ./pi.nix
     (import ./yolo.nix { inherit inputs; })

@@ -63,6 +63,11 @@
           lib = pkgs.lib;
           surface = "claude";
         };
+        claudePromptHomeTest = import ./nix/lib/claude-prompt-home-test.nix {
+          lib = pkgs.lib;
+          inherit pkgs claudePromptRoot;
+          claudeModule = import ./nix/hm/claude.nix { inherit self; };
+        };
 
         # Fixed-output derivation: fetches all npm dependencies via
         # `bun install --frozen-lockfile`. Nix allows network access inside
@@ -544,6 +549,7 @@
               fi
               touch "$out"
             '';
+            claude-prompt-home = claudePromptHomeTest;
           }
           // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             # Boot a NixOS VM with services.cq-server enabled and prove the hub

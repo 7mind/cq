@@ -1,7 +1,8 @@
 # Claude Code configuration for the LLM coding-agent harness, split out of
 # dev-llm.nix. Configures the (downstream-provided) `programs.claude-code`
-# module; the shared asset bundles / MCP registry / merged views come from the
-# sibling tools.nix via `smind.hm.dev.llm.{enable,merged.*,…}`.
+# module; the shared skill/context bundles / MCP registry / merged views come
+# from the sibling tools.nix via `smind.hm.dev.llm.{enable,merged.*,…}`.
+{ self }:
 { config
 , lib
 , pkgs
@@ -9,6 +10,24 @@
 }:
 let
   cfg = config.smind.hm.dev.llm;
+  system = pkgs.stdenv.hostPlatform.system;
+  claudePromptRoot = self.packages.${system}.claude-prompt-root;
+  claudePromptCatalog = claudePromptRoot.promptCatalog;
+  claudePromptHomeFiles = lib.listToAttrs (
+    map (
+      role:
+      let
+        destination =
+          if role.roleKind == "dispatched-subagent" then
+            "${config.programs.claude-code.configDir}/agents/${role.roleId}.md"
+          else
+            "${config.programs.claude-code.configDir}/commands/cq/${role.roleId}.md";
+      in
+      lib.nameValuePair destination {
+        source = "${claudePromptRoot}/roles/${role.roleId}.md";
+      }
+    ) claudePromptCatalog
+  );
 
   codexPluginCc = pkgs.fetchFromGitHub {
     owner = "openai";
@@ -103,11 +122,6 @@ in
         '';
       };
       plugins = [ "${codexPluginCc}/plugins/codex" ];
-      # Bundle-contributed commands/agents via the native options: keys
-      # like "plan/advance" land at ~/.claude/commands/plan/advance.md
-      # (slash command /plan:advance); agents at ~/.claude/agents/<name>.md.
-      commands = cfg.merged.commands;
-      agents = cfg.merged.agents;
       settings = {
         alwaysThinkingEnabled = true;
         theme = "dark";
@@ -187,11 +201,17 @@ in
       };
     };
 
-    # Mirror the HM-managed Claude settings + memory to a `.claude-work` profile
-    # path so the yolo `--work`/`--profile work` namespace re-shares them.
-    home.file.".claude-work/settings.json".source =
-      config.home.file."${config.programs.claude-code.configDir}/settings.json".source;
-    home.file.".claude-work/CLAUDE.md".source =
-      config.home.file."${config.programs.claude-code.configDir}/CLAUDE.md".source;
+    home.file = lib.mkMerge [
+      claudePromptHomeFiles
+      {
+        # Mirror the HM-managed Claude settings + memory to a `.claude-work`
+        # profile path so yolo's `--work`/`--profile work` namespace re-shares
+        # them.
+        ".claude-work/settings.json".source =
+          config.home.file."${config.programs.claude-code.configDir}/settings.json".source;
+        ".claude-work/CLAUDE.md".source =
+          config.home.file."${config.programs.claude-code.configDir}/CLAUDE.md".source;
+      }
+    ];
   };
 }
