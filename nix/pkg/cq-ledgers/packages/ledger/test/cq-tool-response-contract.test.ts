@@ -108,6 +108,19 @@ interface InventoryCall {
   policy: InventoryPolicy;
 }
 
+type SourceReader = (source: string) => Promise<string>;
+
+interface CodeRegion {
+  code: string;
+  heading: string;
+}
+
+interface InlineCodeState {
+  delimiterLength: number | undefined;
+  code: string;
+  heading: string;
+}
+
 function isAffectedTool(value: string): value is AffectedTool {
   return (AFFECTED_TOOLS as readonly string[]).includes(value);
 }
@@ -119,15 +132,37 @@ function headingPath(headings: string[]): string {
   return visibleHeadings.length > 0 ? visibleHeadings.join(" / ") : "(document)";
 }
 
-function codeRegions(line: string, insideFence: boolean): string[] {
-  if (insideFence) return [line];
-  return Array.from(line.matchAll(/`([^`]+)`/g), (match) => {
-    const region = match[1];
-    if (region === undefined) {
-      throw new Error("Inline-code scanner matched without a capture");
+function inlineCodeRegions(
+  line: string,
+  headings: string[],
+  state: InlineCodeState,
+): CodeRegion[] {
+  const regions: CodeRegion[] = [];
+  let cursor = 0;
+  for (const match of line.matchAll(/`+/g)) {
+    const delimiter = match[0];
+    const index = match.index;
+    if (delimiter.length === 0 || index === undefined) {
+      throw new Error("Inline-code scanner matched an invalid delimiter");
     }
-    return region;
-  });
+    if (state.delimiterLength === undefined) {
+      state.delimiterLength = delimiter.length;
+      state.code = "";
+      state.heading = headingPath(headings);
+      cursor = index + delimiter.length;
+    } else if (delimiter.length === state.delimiterLength) {
+      state.code += line.slice(cursor, index);
+      regions.push({ code: state.code, heading: state.heading });
+      state.delimiterLength = undefined;
+      state.code = "";
+      state.heading = "";
+      cursor = index + delimiter.length;
+    }
+  }
+  if (state.delimiterLength !== undefined) {
+    state.code += `${line.slice(cursor)}\n`;
+  }
+  return regions;
 }
 
 function discoverCalls(
@@ -137,16 +172,24 @@ function discoverCalls(
   const headings: string[] = [];
   const ordinalByLocation = new Map<string, number>();
   const calls: DiscoveredCall[] = [];
+  const inlineState: InlineCodeState = {
+    delimiterLength: undefined,
+    code: "",
+    heading: "",
+  };
   let insideFence = false;
 
   for (const line of markdown.split("\n")) {
-    const fence = line.match(/^\s*```/);
+    const fence =
+      inlineState.delimiterLength === undefined
+        ? line.match(/^\s*```/)
+        : null;
     if (fence !== null) {
       insideFence = !insideFence;
       continue;
     }
 
-    if (!insideFence) {
+    if (!insideFence && inlineState.delimiterLength === undefined) {
       const heading = line.match(/^(#{1,6})\s+(.+?)\s*$/);
       if (heading !== null) {
         const marker = heading[1];
@@ -160,20 +203,23 @@ function discoverCalls(
       }
     }
 
-    for (const region of codeRegions(line, insideFence)) {
+    const regions = insideFence
+      ? [{ code: line, heading: headingPath(headings) }]
+      : inlineCodeRegions(line, headings, inlineState);
+    for (const region of regions) {
       const toolPattern = new RegExp(
         `\\b(${AFFECTED_TOOLS.join("|")})\\b`,
         "g",
       );
-      for (const match of region.matchAll(toolPattern)) {
+      for (const match of region.code.matchAll(toolPattern)) {
         const tool = match[1];
         if (tool === undefined || !isAffectedTool(tool)) {
           throw new Error(`Scanner produced unknown affected tool: ${tool}`);
         }
-        const location = `${source.source}::${headingPath(headings)}::${tool}`;
+        const location = `${source.source}::${region.heading}::${tool}`;
         const ordinal = (ordinalByLocation.get(location) ?? 0) + 1;
         ordinalByLocation.set(location, ordinal);
-        const suffix = region.slice(match.index + tool.length);
+        const suffix = region.code.slice(match.index + tool.length);
         const invocation = suffix.match(/^\s*\(([^)]*)\)/);
         const invocationArguments =
           invocation === null ? undefined : invocation[1];
@@ -240,6 +286,7 @@ function expandInventoryCalls(
 
 async function validateInventory(
   candidate: ResponsePolicyInventory,
+  readSource: SourceReader,
 ): Promise<string[]> {
   const errors: string[] = [];
   const sourceKeys = candidate.sources.map(
@@ -259,9 +306,7 @@ async function validateInventory(
   const discovered = (
     await Promise.all(
       candidate.sources.map(async (source) => {
-        const markdown = await Bun.file(
-          path.join(ASSETS_ROOT, source.source),
-        ).text();
+        const markdown = await readSource(source.source);
         return discoverCalls(source, markdown);
       }),
     )
@@ -304,6 +349,15 @@ async function validateInventory(
       call.policy !== "ack"
     ) {
       errors.push(`Mutation must use ack policy: ${call.callSite}`);
+    }
+    if (
+      (PROJECTION_TOOLS as readonly string[]).includes(call.tool) &&
+      call.policy !== "compact" &&
+      call.policy !== "full"
+    ) {
+      errors.push(
+        `Projection must use compact or full policy: ${call.callSite}`,
+      );
     }
     if (
       (FULL_CONTENT_TOOLS as readonly string[]).includes(call.tool) &&
@@ -380,6 +434,16 @@ async function validateInventory(
   return errors;
 }
 
+async function readCanonicalSource(source: string): Promise<string> {
+  return Bun.file(path.join(ASSETS_ROOT, source)).text();
+}
+
+async function validateCanonicalInventory(
+  candidate: ResponsePolicyInventory,
+): Promise<string[]> {
+  return validateInventory(candidate, readCanonicalSource);
+}
+
 function cloneInventory(
   candidate: ResponsePolicyInventory,
 ): ResponsePolicyInventory {
@@ -394,13 +458,13 @@ function requiredAt<T>(values: T[], index: number, context: string): T {
 
 describe("CQ tool response-policy inventory", () => {
   test("covers every canonical call site exactly once", async () => {
-    expect(await validateInventory(inventory)).toEqual([]);
+    expect(await validateCanonicalInventory(inventory)).toEqual([]);
   });
 
   test("rejects missing, duplicate, and stale call entries", async () => {
     const missing = cloneInventory(inventory);
     requiredAt(missing.sources, 0, "inventory source").calls.splice(0, 1);
-    expect((await validateInventory(missing)).join("\n")).toContain(
+    expect((await validateCanonicalInventory(missing)).join("\n")).toContain(
       "Missing calls:",
     );
 
@@ -413,7 +477,7 @@ describe("CQ tool response-policy inventory", () => {
     duplicateSource.calls.push(
       requiredAt(duplicateSource.calls, 0, "inventory call"),
     );
-    expect((await validateInventory(duplicate)).join("\n")).toContain(
+    expect((await validateCanonicalInventory(duplicate)).join("\n")).toContain(
       "Duplicate calls:",
     );
 
@@ -427,8 +491,28 @@ describe("CQ tool response-policy inventory", () => {
       "Boundaries",
       "Boundary",
     );
-    expect((await validateInventory(stale)).join("\n")).toContain(
+    expect((await validateCanonicalInventory(stale)).join("\n")).toContain(
       "Stale calls:",
+    );
+  });
+
+  test("rejects a wrapped inline-code invocation rename", async () => {
+    const planSource = "commands/cq/plan.md";
+    const canonical = await readCanonicalSource(planSource);
+    const changed = canonical.replace(
+      /`create_milestone\(title: "Plan: <short\n(\s+)goal>"\)`/,
+      '`create_item(title: "Plan: <short\n$1goal>")`',
+    );
+    expect(changed).not.toBe(canonical);
+    const errors = await validateInventory(inventory, async (source) =>
+      source === planSource ? changed : readCanonicalSource(source),
+    );
+    const report = errors.join("\n");
+    expect(report).toContain(
+      "Missing calls: commands/cq/plan.md::Steps::create_item#2",
+    );
+    expect(report).toContain(
+      "Stale calls: commands/cq/plan.md::Steps::create_milestone#1",
     );
   });
 
@@ -446,14 +530,14 @@ describe("CQ tool response-policy inventory", () => {
     full.allowlist.fullReads = full.allowlist.fullReads.filter(
       (entry) => entry.callSite !== fullCall.callSite,
     );
-    expect((await validateInventory(full)).join("\n")).toContain(
+    expect((await validateCanonicalInventory(full)).join("\n")).toContain(
       "Full read lacks allowlist entry:",
     );
 
     const unbounded = cloneInventory(inventory);
     expect(unbounded.allowlist.unboundedFetchLedger.length).toBeGreaterThan(0);
     unbounded.allowlist.unboundedFetchLedger.splice(0, 1);
-    expect((await validateInventory(unbounded)).join("\n")).toContain(
+    expect((await validateCanonicalInventory(unbounded)).join("\n")).toContain(
       "Unbounded fetch_ledger lacks allowlist entry:",
     );
   });
@@ -465,7 +549,7 @@ describe("CQ tool response-policy inventory", () => {
       0,
       "full-read allowlist entry",
     ).fields = [];
-    expect((await validateInventory(full)).join("\n")).toContain(
+    expect((await validateCanonicalInventory(full)).join("\n")).toContain(
       "Full-read allowlist lacks field justification:",
     );
 
@@ -475,7 +559,7 @@ describe("CQ tool response-policy inventory", () => {
       0,
       "unbounded-fetch allowlist entry",
     ).reason = "";
-    expect((await validateInventory(unbounded)).join("\n")).toContain(
+    expect((await validateCanonicalInventory(unbounded)).join("\n")).toContain(
       "Unbounded-fetch allowlist lacks pagination justification:",
     );
   });
@@ -494,8 +578,27 @@ describe("CQ tool response-policy inventory", () => {
     );
     const call = requiredAt(source.calls, index, "mutation call");
     source.calls[index] = `${call.slice(0, call.lastIndexOf("|"))}|full`;
-    expect((await validateInventory(mutation)).join("\n")).toContain(
+    expect((await validateCanonicalInventory(mutation)).join("\n")).toContain(
       "Mutation must use ack policy:",
+    );
+  });
+
+  test("rejects projections without compact or full policy", async () => {
+    const projection = cloneInventory(inventory);
+    const source = projection.sources.find((candidate) =>
+      candidate.calls.some((call) => call.includes("::fetch_item#")),
+    );
+    expect(source).toBeDefined();
+    if (source === undefined) {
+      throw new Error("Inventory has no projection to exercise");
+    }
+    const index = source.calls.findIndex((call) =>
+      call.includes("::fetch_item#"),
+    );
+    const call = requiredAt(source.calls, index, "projection call");
+    source.calls[index] = `${call.slice(0, call.lastIndexOf("|"))}|ack`;
+    expect((await validateCanonicalInventory(projection)).join("\n")).toContain(
+      "Projection must use compact or full policy:",
     );
   });
 });

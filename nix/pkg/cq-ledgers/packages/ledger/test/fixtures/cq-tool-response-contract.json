@@ -45,7 +45,18 @@
         "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_item#4|ack",
         "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_item#5|ack",
         "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_milestone#5|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_item#6|ack"
+        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_item#6|ack",
+        "Filing clarifying questions::create_item#1|ack",
+        "Filing clarifying questions / Triage each unknown FIRST — empirical unknown → a `researches` item, NOT a user question (Q267)::create_item#1|ack",
+        "Decide the single step (match the FIRST applicable rule)::create_item#1|ack",
+        "Decide the single step (match the FIRST applicable rule)::create_item#2|ack",
+        "Decide the single step (match the FIRST applicable rule)::create_item#3|ack",
+        "Decide the single step (match the FIRST applicable rule)::update_item#6|ack",
+        "Defect-aware planning (goal describes a fault to fix)::create_item#1|ack",
+        "Defect-aware planning (goal describes a fault to fix)::create_item#2|ack",
+        "Defect-aware planning (goal describes a fault to fix)::update_item#1|ack",
+        "Consuming the reviewer's `defects[]` bucket (file-only, K12 supersedes K8 pt3 / Q26)::create_item#1|ack",
+        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_milestone#6|ack"
       ]
     },
     {
@@ -59,7 +70,9 @@
         "Read everything::list_milestone_items#3|full",
         "Read everything::list_milestone_items#4|full",
         "Provenance::create_item#1|ack",
-        "Provenance::create_item#2|ack"
+        "Provenance::create_item#2|ack",
+        "Deliver the verdict (MODE-GATED — write the ledger, or return json) / A. UNCONFIGURED single-reviewer fallback → WRITE the reviews item directly::create_item#1|ack",
+        "Deliver the verdict (MODE-GATED — write the ledger, or return json) / A. UNCONFIGURED single-reviewer fallback → WRITE the reviews item directly::create_item#2|ack"
       ]
     },
     {
@@ -93,7 +106,9 @@
         "The cycle (Q56 — loop to quiescence, NO max-iteration cap) / Cycle order: investigate → seed → plan → research → implement, then RE-CHECK investigate::fts_search#1|compact",
         "The cycle (Q56 — loop to quiescence, NO max-iteration cap) / Cycle order: investigate → seed → plan → research → implement, then RE-CHECK investigate::create_milestone#1|ack",
         "Milestone auto-close + archive sweep (end-of-run — placeholder, T128)::update_milestone#1|ack",
-        "End-of-run report (Q59 — DRAINED / BLOCKED-ON-QUESTIONS / BLOCKED-ON-USER-ACTION / MIXED)::create_item#1|ack"
+        "End-of-run report (Q59 — DRAINED / BLOCKED-ON-QUESTIONS / BLOCKED-ON-USER-ACTION / MIXED)::create_item#1|ack",
+        "The cycle (Q56 — loop to quiescence, NO max-iteration cap) / Cycle order: investigate → seed → plan → research → implement, then RE-CHECK investigate::create_item#1|ack",
+        "The cycle (Q56 — loop to quiescence, NO max-iteration cap) / Cycle order: investigate → seed → plan → research → implement, then RE-CHECK investigate::update_item#1|ack"
       ]
     },
     {
@@ -105,7 +120,8 @@
         "Provenance (every ledger write)::update_item#1|ack",
         "Steps / 3. DEDUP + ambiguity triage (Q300)::fts_search#1|compact",
         "Steps / 3. DEDUP + ambiguity triage (Q300)::create_milestone#1|ack",
-        "Steps / 5. Chain ONE CQ::advance sequencer pass over the batch::read_log#1|full-content"
+        "Steps / 5. Chain ONE CQ::advance sequencer pass over the batch::read_log#1|full-content",
+        "Steps / 3. DEDUP + ambiguity triage (Q300)::create_item#1|ack"
       ]
     },
     {
@@ -142,7 +158,13 @@
         "Milestone completion / Milestone auto-close+archive sweep (factored predicate)::update_milestone#1|ack",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#1|ack",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#2|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack"
+        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack",
+        "The pass (repeat until no task is ready) / 3. Review each finished worker (multi-reviewer panel, reconciled)::create_item#1|ack",
+        "The pass (repeat until no task is ready) / 5. Register questions (reviewer questions OR ill-loop bailout)::create_item#1|ack",
+        "The pass (repeat until no task is ready) / 5. Register questions (reviewer questions OR ill-loop bailout)::update_item#1|ack",
+        "The pass (repeat until no task is ready) / 7. Merge-back (sequential, DAG order, rebase-before-merge)::update_item#2|ack",
+        "The pass (repeat until no task is ready) / 7. Merge-back (sequential, DAG order, rebase-before-merge)::update_item#3|ack",
+        "Record the terminal review (one per task)::create_item#2|ack"
       ]
     },
     {
@@ -184,7 +206,19 @@
         "The research round (the six steps) / 5. CONFIRMED root cause → FILE-AND-DEFER handoff (NOT an inline plan loop)::create_milestone#1|ack",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#1|ack",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#2|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack"
+        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack",
+        "The research round (the six steps) / 1. READ state (purely from the ledger)::fetch_item#2|full",
+        "The research round (the six steps) / 2. FORM hypotheses (extend the tree)::create_item#1|ack",
+        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#3|ack",
+        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#4|ack",
+        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#5|ack",
+        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#6|ack",
+        "The research round (the six steps) / 5. CONFIRMED root cause → FILE-AND-DEFER handoff (NOT an inline plan loop)::update_item#2|ack",
+        "The research round (the six steps) / 5. CONFIRMED root cause → FILE-AND-DEFER handoff (NOT an inline plan loop)::create_item#1|ack",
+        "The research round (the six steps) / 5. CONFIRMED root cause → FILE-AND-DEFER handoff (NOT an inline plan loop)::create_item#2|ack",
+        "The research round (the six steps) / 6. NEEDS user input → file an open question and STOP (resumable)::create_item#1|ack",
+        "Research escalation — EMPIRICAL unknown → file a `researches` item and PARK the branch (Q301)::create_item#1|ack",
+        "Research escalation — EMPIRICAL unknown → file a `researches` item and PARK the branch (Q301)::update_item#1|ack"
       ]
     },
     {
@@ -202,7 +236,10 @@
         "Before you start::fts_search#1|compact",
         "Steps::read_log#1|full-content",
         "Steps::fts_search#1|compact",
-        "Steps::search_items#1|compact"
+        "Steps::search_items#1|compact",
+        "Steps::create_milestone#1|ack",
+        "Steps::create_item#1|ack",
+        "Steps::update_item#1|ack"
       ]
     },
     {
@@ -228,7 +265,9 @@
         "Report to the user::fetch_item#1|full",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#1|ack",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#2|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack"
+        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack",
+        "The per-goal round (for one goal G)::create_item#1|ack",
+        "The per-goal round (for one goal G)::create_item#2|ack"
       ]
     },
     {
@@ -247,7 +286,8 @@
         "Steps::update_item#6|ack",
         "Steps::read_log#1|full-content",
         "Steps::fts_search#1|compact",
-        "Steps::search_items#1|compact"
+        "Steps::search_items#1|compact",
+        "Steps::update_item#7|ack"
       ]
     },
     {
@@ -289,7 +329,13 @@
         "The research round (the six steps) / 5. CONFIRMED answer → CONCLUDE (in-ledger; NO working-tree write — Q269)::update_item#3|ack",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#1|ack",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#2|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack"
+        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack",
+        "The research round (the six steps) / 2. FORM hypotheses (extend the tree)::create_item#1|ack",
+        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#4|ack",
+        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#5|ack",
+        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#6|ack",
+        "The research round (the six steps) / 5. CONFIRMED answer → CONCLUDE (in-ledger; NO working-tree write — Q269)::update_item#4|ack",
+        "The research round (the six steps) / 6. NEEDS user input → file an open question and STOP (resumable)::create_item#1|ack"
       ]
     }
   ],
@@ -472,6 +518,18 @@
           "actual",
           "status",
           "severity"
+        ]
+      },
+      {
+        "callSite": "commands/cq/investigate/advance.md::The research round (the six steps) / 1. READ state (purely from the ledger)::fetch_item#2",
+        "fields": [
+          "headline",
+          "question",
+          "scope",
+          "findings",
+          "conclusion",
+          "recommendation",
+          "status"
         ]
       },
       {
