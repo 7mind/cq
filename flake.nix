@@ -52,6 +52,9 @@
           commands = llmAssets.commands;
           inherit pkgs mkCodexCommandSkills;
         };
+        promptSurfacesTest = import ./nix/lib/prompt-surfaces-test.nix {
+          lib = pkgs.lib;
+        };
 
         # Fixed-output derivation: fetches all npm dependencies via
         # `bun install --frozen-lockfile`. Nix allows network access inside
@@ -515,6 +518,9 @@
                   exit 1
                 fi
               '';
+            prompt-surfaces =
+              assert promptSurfacesTest;
+              pkgs.runCommand "prompt-surfaces" { } "touch $out";
           };
 
         apps.default = {

@@ -71,10 +71,24 @@ export { AGENT_ROLE_TIERS } from "./agentRoster.js";
 export type {
   RoleKind,
   ModelTier,
+  PromptSurface,
+  IntentionalDifferenceKind,
+  IntentionalDifferenceDeclaration,
   JSONSchema,
   JSONSchemaType,
   PromptCatalogEntry,
   RoleSchemaSidecar,
+} from "./promptCatalog.js";
+export {
+  PROMPT_SURFACES,
+  isPromptSurface,
+  INTENTIONAL_DIFFERENCE_KINDS,
+  isIntentionalDifferenceKind,
+  INTENTIONAL_DIFFERENCE_DECLARATION_SCHEMA,
+  PromptCatalogSchemaError,
+  parseIntentionalDifferenceDeclaration,
+  parseIntentionalDifferenceDeclarationJSON,
+  serializeIntentionalDifferenceDeclaration,
 } from "./promptCatalog.js";
 export { planAdvanceSidecar, PLAN_ADVANCE_STATUS_TOKENS } from "./schemas/plan-advance.js";
 export { planReviewerSidecar, PLAN_REVIEW_VERDICTS } from "./schemas/plan-reviewer.js";

@@ -62,6 +62,52 @@ export type RoleKind = "dispatched-subagent" | "orchestrator-command";
 export type ModelTier = "frontier" | "standard" | "fast";
 
 /**
+ * The rendered prompt artifact a catalog entry targets. This domain remains
+ * distinct from {@link Harness}: `Harness` selects a dispatch transport,
+ * whereas a prompt surface selects a rendered prompt representation.
+ */
+export const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
+
+/** A closed rendered-prompt target vocabulary. */
+export type PromptSurface = (typeof PROMPT_SURFACES)[number];
+
+/** Type guard for values crossing the Nix-JSON boundary. */
+export function isPromptSurface(value: unknown): value is PromptSurface {
+  return typeof value === "string" && (PROMPT_SURFACES as readonly string[]).includes(value);
+}
+
+/**
+ * The semantic classes of cross-surface prompt differences identified by RS2.
+ * These classify declarations only; T657 compares declarations with rendered
+ * artifacts.
+ */
+export const INTENTIONAL_DIFFERENCE_KINDS = [
+  "invocation-syntax",
+  "dispatch-protocol",
+  "recursion-protocol",
+  "tool-vocabulary",
+] as const;
+
+/** A closed intentional-difference classification vocabulary. */
+export type IntentionalDifferenceKind = (typeof INTENTIONAL_DIFFERENCE_KINDS)[number];
+
+/** Type guard for intentional-difference kinds crossing an untyped boundary. */
+export function isIntentionalDifferenceKind(value: unknown): value is IntentionalDifferenceKind {
+  return (
+    typeof value === "string" && (INTENTIONAL_DIFFERENCE_KINDS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * A declared semantic difference between two or more rendered prompt surfaces.
+ */
+export interface IntentionalDifferenceDeclaration {
+  readonly kind: IntentionalDifferenceKind;
+  readonly reason: string;
+  readonly surfaces: readonly PromptSurface[];
+}
+
+/**
  * A JSON Schema document (draft 2020-12), kept as a structural object type
  * rather than `any`: the catalog stores schemas as data, and the validator
  * (Ajv) compiles them. We intentionally do not re-derive the full JSON-Schema
@@ -110,6 +156,141 @@ export type JSONSchemaType =
   | "integer"
   | "boolean"
   | "null";
+
+/** JSON Schema for the Nix-serialized intentional-difference boundary. */
+export const INTENTIONAL_DIFFERENCE_DECLARATION_SCHEMA: JSONSchema = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  type: "object",
+  properties: {
+    kind: {
+      type: "string",
+      enum: INTENTIONAL_DIFFERENCE_KINDS,
+    },
+    reason: {
+      type: "string",
+      minLength: 1,
+      pattern: "\\S",
+    },
+    surfaces: {
+      type: "array",
+      items: {
+        type: "string",
+        enum: PROMPT_SURFACES,
+      },
+      minItems: 2,
+      uniqueItems: true,
+    },
+  },
+  required: ["kind", "reason", "surfaces"],
+  additionalProperties: false,
+};
+
+/** Boundary-validation failure for prompt-catalog JSON data. */
+export class PromptCatalogSchemaError extends Error {
+  constructor(path: string, detail: string) {
+    super(`${path}: ${detail}`);
+    this.name = "PromptCatalogSchemaError";
+  }
+}
+
+function parsePromptSurface(value: unknown, path: string): PromptSurface {
+  if (!isPromptSurface(value)) {
+    throw new PromptCatalogSchemaError(path, `expected one of ${PROMPT_SURFACES.join(", ")}`);
+  }
+  return value;
+}
+
+function isUnknownRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Decode and validate one declaration received from Nix JSON or another
+ * untyped boundary.
+ */
+export function parseIntentionalDifferenceDeclaration(
+  value: unknown,
+): IntentionalDifferenceDeclaration {
+  const rootPath = "intentionalDifference";
+  if (!isUnknownRecord(value)) {
+    throw new PromptCatalogSchemaError(rootPath, "expected an object");
+  }
+
+  const expectedKeys = ["kind", "reason", "surfaces"] as const;
+  const unexpectedKey = Object.keys(value)
+    .sort()
+    .find((key) => !(expectedKeys as readonly string[]).includes(key));
+  if (unexpectedKey !== undefined) {
+    throw new PromptCatalogSchemaError(`${rootPath}.${unexpectedKey}`, "unexpected property");
+  }
+
+  const kind = value.kind;
+  if (!isIntentionalDifferenceKind(kind)) {
+    throw new PromptCatalogSchemaError(
+      `${rootPath}.kind`,
+      `expected one of ${INTENTIONAL_DIFFERENCE_KINDS.join(", ")}`,
+    );
+  }
+
+  const reason = value.reason;
+  if (typeof reason !== "string" || reason.trim().length === 0) {
+    throw new PromptCatalogSchemaError(`${rootPath}.reason`, "expected a non-empty string");
+  }
+
+  const rawSurfaces = value.surfaces;
+  if (!Array.isArray(rawSurfaces)) {
+    throw new PromptCatalogSchemaError(`${rootPath}.surfaces`, "expected an array");
+  }
+  if (rawSurfaces.length < 2) {
+    throw new PromptCatalogSchemaError(
+      `${rootPath}.surfaces`,
+      "expected at least two participating surfaces",
+    );
+  }
+
+  const surfaces = rawSurfaces.map((surface, index) =>
+    parsePromptSurface(surface, `${rootPath}.surfaces[${index}]`),
+  );
+  const seen = new Set<PromptSurface>();
+  for (const [index, surface] of surfaces.entries()) {
+    if (seen.has(surface)) {
+      throw new PromptCatalogSchemaError(
+        `${rootPath}.surfaces[${index}]`,
+        `duplicate prompt surface "${surface}"`,
+      );
+    }
+    seen.add(surface);
+  }
+
+  return { kind, reason, surfaces };
+}
+
+/** Decode a JSON document and validate it as one intentional difference. */
+export function parseIntentionalDifferenceDeclarationJSON(
+  json: string,
+): IntentionalDifferenceDeclaration {
+  let value: unknown;
+  try {
+    value = JSON.parse(json) as unknown;
+  } catch {
+    throw new PromptCatalogSchemaError("intentionalDifference", "expected valid JSON");
+  }
+  return parseIntentionalDifferenceDeclaration(value);
+}
+
+/**
+ * Validate and serialize one declaration with a deterministic field order.
+ */
+export function serializeIntentionalDifferenceDeclaration(
+  declaration: IntentionalDifferenceDeclaration,
+): string {
+  const validated = parseIntentionalDifferenceDeclaration(declaration);
+  return JSON.stringify({
+    kind: validated.kind,
+    reason: validated.reason,
+    surfaces: validated.surfaces,
+  });
+}
 
 /**
  * ONE entry in the typed prompt catalog — the single source of truth for a
