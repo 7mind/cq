@@ -776,3 +776,5 @@ export const LEDGER_TOOL_NAMES = [
   "validate_output",
   "list_projects",
 ] as const;
+
+export type LedgerToolName = (typeof LEDGER_TOOL_NAMES)[number];

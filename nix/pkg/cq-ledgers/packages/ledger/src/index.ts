@@ -148,6 +148,46 @@ export {
   prefixToolName,
   prefixedToolNames,
 } from "./mcp/ledgerTools.js";
+export type { LedgerToolName } from "./mcp/ledgerTools.js";
+export {
+  COMPACT_ITEM_FIELD_NAMES,
+  LEDGER_RESPONSE_CONTRACTS,
+  projectCompactItemDto,
+  projectFullItemDto,
+  projectItemDto,
+  projectFetchedLedgerDto,
+  projectPaginatedLedgerDto,
+  projectFtsSearchResultsDto,
+  projectFetchedMilestoneDto,
+  projectMilestoneItemGroupsDto,
+  projectItemMutationAckDto,
+  projectLedgerMutationAckDto,
+  projectMilestoneMutationAckDto,
+  serializeWireDto,
+} from "./mcp/wireResponseContract.js";
+export type {
+  ItemProjection,
+  CompactItemFieldName,
+  CompactItemFieldsDto,
+  CompactItemDto,
+  FullItemDto,
+  ItemDto,
+  FetchedLedgerDto,
+  PaginatedLedgerDto,
+  FtsSearchResultDto,
+  FetchedMilestoneDto,
+  MilestoneItemGroupsDto,
+  ItemReferenceFieldsDto,
+  MilestoneReferenceFieldsDto,
+  ItemMutationAckDto,
+  LedgerMutationAckDto,
+  MilestoneMutationAckDto,
+  MandatoryItemProjectionContract,
+  FixedAcknowledgementContract,
+  PurposeBuiltSmallContract,
+  RequestedFullContentContract,
+  LedgerResponseContract,
+} from "./mcp/wireResponseContract.js";
 export { registerLedgerStdioTools } from "./mcp/stdioLedgerTools.js";
 export {
   MAX_READ_LOG_BYTES,
