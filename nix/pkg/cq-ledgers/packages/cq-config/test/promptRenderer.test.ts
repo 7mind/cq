@@ -15,6 +15,9 @@ const SLOTS = [
   "host-tool-vocabulary",
 ] as const;
 
+const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
+const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
+const CONFIG_PACKAGE_ROOT = path.resolve(import.meta.dir, "..");
 const roots: string[] = [];
 
 interface Fixture {
@@ -25,6 +28,28 @@ interface Fixture {
   readonly fragmentPaths: PromptFragmentFileInput[];
 }
 
+interface NixCatalogFragmentBinding {
+  readonly fragment: string;
+  readonly forbiddenVocabulary: Readonly<
+    Record<(typeof PROMPT_SURFACES)[number], readonly string[]>
+  >;
+}
+
+interface NixCatalogRole {
+  readonly roleId: string;
+  readonly canonicalSource: string;
+  readonly fragmentBindings: readonly NixCatalogFragmentBinding[];
+}
+
+interface NixFixture {
+  readonly root: string;
+  readonly surface: (typeof PROMPT_SURFACES)[number];
+  readonly catalog: readonly NixCatalogRole[];
+  readonly catalogJson: string;
+  readonly sourcePaths: readonly PromptCatalogFileInput[];
+  readonly fragmentPaths: readonly PromptFragmentFileInput[];
+}
+
 function fragmentBinding(fragment: (typeof SLOTS)[number]): Record<string, unknown> {
   return {
     fragment,
@@ -32,7 +57,7 @@ function fragmentBinding(fragment: (typeof SLOTS)[number]): Record<string, unkno
     supportedSurfaces: ["claude", "codex", "pi"],
     forbiddenVocabulary: {
       claude: [],
-      codex: [],
+      codex: fragment === "subagent-dispatch" ? ["Agent(", "dispatch_agent("] : [],
       pi: [],
     },
     intentionalDifference: {
@@ -130,6 +155,76 @@ function makeFixture(): Fixture {
   };
 }
 
+function evaluateNixCatalogJson(): string {
+  const result = Bun.spawnSync(
+    ["nix", "eval", "--raw", ".#llmAssets.catalogJson"],
+    {
+      cwd: REPO_ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(new TextDecoder().decode(result.stderr));
+  }
+  return new TextDecoder().decode(result.stdout);
+}
+
+function makeNixFixture(surface: (typeof PROMPT_SURFACES)[number]): NixFixture {
+  const root = mkdtempSync(path.join(tmpdir(), `cq-prompt-renderer-nix-${surface}-`));
+  roots.push(root);
+  const catalogJson = evaluateNixCatalogJson();
+  const catalog = JSON.parse(catalogJson) as readonly NixCatalogRole[];
+  const sourcePaths: PromptCatalogFileInput[] = [];
+  const fragmentPaths: PromptFragmentFileInput[] = [];
+
+  for (const role of catalog) {
+    const sourcePath = path.join(root, "sources", role.canonicalSource);
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(
+      sourcePath,
+      [
+        "---",
+        `description: rendered ${role.roleId}`,
+        "---",
+        "",
+        `Shared ${role.roleId} prose preserves $ARGUMENTS and {{runtime_value}}.`,
+        ...role.fragmentBindings.map(
+          ({ fragment }) => `{{cq:fragment:${fragment}}}`,
+        ),
+        "",
+      ].join("\n"),
+    );
+    sourcePaths.push({ canonicalSource: role.canonicalSource, path: sourcePath });
+
+    for (const { fragment } of role.fragmentBindings) {
+      const fragmentPath = path.join(
+        root,
+        "fragments",
+        surface,
+        role.roleId,
+        `${fragment}.md`,
+      );
+      mkdirSync(path.dirname(fragmentPath), { recursive: true });
+      writeFileSync(
+        fragmentPath,
+        `${surface} ${fragment} adapter for ${role.roleId}; preserve <taskId>`,
+      );
+      fragmentPaths.push({ roleId: role.roleId, fragment, path: fragmentPath });
+    }
+  }
+  return { root, surface, catalog, catalogJson, sourcePaths, fragmentPaths };
+}
+
+function renderNixFixture(fixture: NixFixture) {
+  return renderPromptSurfaceTree({
+    surface: fixture.surface,
+    catalogJson: fixture.catalogJson,
+    sourcePaths: fixture.sourcePaths,
+    fragmentPaths: fixture.fragmentPaths,
+  });
+}
+
 function render(fixture: Fixture) {
   return renderPromptSurfaceTree({
     surface: "codex",
@@ -179,17 +274,107 @@ describe("deterministic prompt renderer core", () => {
     expect(render(fixture)).toEqual(render(fixture));
   });
 
-  test("uses only the direct catalog JSON and explicit source and fragment paths", () => {
-    const fixture = makeFixture();
-    const rendererSource = readFileSync(
-      path.resolve(import.meta.dir, "../src/promptRenderer.ts"),
-      "utf8",
+  for (const surface of PROMPT_SURFACES) {
+    test(`renders direct Nix catalog JSON through explicit absolute ${surface} inputs`, () => {
+      const fixture = makeNixFixture(surface);
+      const tree = renderNixFixture(fixture);
+
+      expect(fixture.sourcePaths.every((input) => path.isAbsolute(input.path))).toBe(true);
+      expect(fixture.fragmentPaths.every((input) => path.isAbsolute(input.path))).toBe(true);
+      expect(tree.surface).toBe(surface);
+      expect(tree.artifacts).toHaveLength(fixture.catalog.length + 1);
+      expect(tree.artifacts[0]).toEqual({
+        path: "catalog.json",
+        content: fixture.catalogJson,
+      });
+      expect(tree.artifacts[1]!.content).toContain("$ARGUMENTS");
+      expect(tree.artifacts[1]!.content).toContain("{{runtime_value}}");
+      expect(tree.artifacts.every((artifact) => !artifact.content.includes("{{cq:fragment:"))).toBe(
+        true,
+      );
+    });
+  }
+
+  test("builds and executes the isolated prompt-renderer package export", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "cq-prompt-renderer-isolated-"));
+    roots.push(root);
+    const packageRoot = path.join(root, "node_modules", "@cq", "config");
+    const packageSource = path.join(packageRoot, "src");
+    mkdirSync(packageSource, { recursive: true });
+    for (const relativePath of [
+      "package.json",
+      "src/promptCatalog.ts",
+      "src/promptRenderer.ts",
+    ]) {
+      const destination = path.join(packageRoot, relativePath);
+      mkdirSync(path.dirname(destination), { recursive: true });
+      writeFileSync(
+        destination,
+        readFileSync(path.join(CONFIG_PACKAGE_ROOT, relativePath), "utf8"),
+      );
+    }
+
+    const sourcePath = path.join(root, "inputs", "source.md");
+    const fragmentPath = path.join(root, "inputs", "fragment.md");
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(
+      sourcePath,
+      "---\ndescription: isolated\n---\nShared $ARGUMENTS.\n{{cq:fragment:host-tool-vocabulary}}\n",
+    );
+    writeFileSync(fragmentPath, "isolated codex adapter");
+    const catalogJson = JSON.stringify([
+      role("isolated", "commands/cq/isolated.md", ["host-tool-vocabulary"]),
+    ]);
+    const entryPath = path.join(root, "entry.ts");
+    const bundlePath = path.join(root, "bundle.mjs");
+    writeFileSync(
+      entryPath,
+      [
+        'import { renderPromptSurfaceTree } from "@cq/config/prompt-renderer";',
+        `const tree = renderPromptSurfaceTree(${JSON.stringify({
+          surface: "codex",
+          catalogJson,
+          sourcePaths: [
+            { canonicalSource: "commands/cq/isolated.md", path: sourcePath },
+          ],
+          fragmentPaths: [
+            {
+              roleId: "isolated",
+              fragment: "host-tool-vocabulary",
+              path: fragmentPath,
+            },
+          ],
+        })});`,
+        "process.stdout.write(JSON.stringify(tree));",
+      ].join("\n"),
     );
 
-    expect(rendererSource).not.toContain("promptCatalog.gen");
-    expect(rendererSource).not.toContain("PROMPT_CATALOG_PROJECTION");
-    expect(rendererSource).not.toContain("prompt-surfaces");
-    expect(render(fixture).artifacts).toHaveLength(3);
+    const build = Bun.spawnSync(
+      ["bun", "build", entryPath, "--target=bun", "--outfile", bundlePath],
+      { cwd: root, stdout: "pipe", stderr: "pipe" },
+    );
+    expect(new TextDecoder().decode(build.stderr)).toBe("");
+    expect(build.exitCode).toBe(0);
+    rmSync(path.join(root, "node_modules"), { recursive: true, force: true });
+
+    const executed = Bun.spawnSync(["bun", bundlePath], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(new TextDecoder().decode(executed.stderr)).toBe("");
+    expect(executed.exitCode).toBe(0);
+    const tree = JSON.parse(new TextDecoder().decode(executed.stdout)) as {
+      readonly artifacts: readonly { readonly path: string; readonly content: string }[];
+    };
+    expect(tree.artifacts).toEqual([
+      { path: "catalog.json", content: catalogJson },
+      {
+        path: "roles/isolated.md",
+        content:
+          "---\ndescription: isolated\n---\nShared $ARGUMENTS.\nisolated codex adapter\n",
+      },
+    ]);
   });
 });
 
@@ -283,6 +468,71 @@ describe("prompt renderer boundary failures", () => {
       "fragments.first.cq-command-invocation: forbidden harness branch CQ_HARNESS",
     );
   });
+
+  test("rejects catalog-declared forbidden vocabulary in a fragment", () => {
+    const fixture = makeFixture();
+    const input = fixture.fragmentPaths.find(
+      ({ roleId, fragment }) => roleId === "first" && fragment === "subagent-dispatch",
+    );
+    expect(input).toBeDefined();
+    writeFileSync(input!.path, "Agent(subagent_type: renderer-escape)");
+
+    expect(() => render(fixture)).toThrow(
+      'fragments.first.subagent-dispatch: forbidden vocabulary "Agent(" for surface "codex"',
+    );
+  });
+
+  test("rejects catalog-declared forbidden vocabulary in final shared output", () => {
+    const fixture = makeFixture();
+    const sourcePath = fixture.sourcePaths[0]!.path;
+    writeFileSync(
+      sourcePath,
+      readFileSync(sourcePath, "utf8").replace(
+        "Shared prose",
+        "Shared Agent( prose",
+      ),
+    );
+
+    expect(() => render(fixture)).toThrow(
+      'rendered.first: forbidden vocabulary "Agent(" for surface "codex"',
+    );
+  });
+
+  for (const surface of PROMPT_SURFACES) {
+    test(`rejects a ${surface} harness token declared by the direct Nix catalog`, () => {
+      const fixture = makeNixFixture(surface);
+      const roleWithToken = fixture.catalog.find((role) =>
+        role.fragmentBindings.some(
+          (binding) => binding.forbiddenVocabulary[surface].length > 0,
+        ),
+      );
+      if (roleWithToken === undefined) {
+        throw new Error(`Nix catalog declares no forbidden ${surface} vocabulary`);
+      }
+      const bindingWithToken = roleWithToken.fragmentBindings.find(
+        (binding) => binding.forbiddenVocabulary[surface].length > 0,
+      );
+      if (bindingWithToken === undefined) {
+        throw new Error(`Nix catalog role has no forbidden ${surface} vocabulary`);
+      }
+      const token = bindingWithToken.forbiddenVocabulary[surface][0];
+      if (token === undefined) {
+        throw new Error(`Nix catalog role has an empty forbidden ${surface} token list`);
+      }
+      const input = fixture.fragmentPaths.find(
+        ({ roleId, fragment }) =>
+          roleId === roleWithToken.roleId && fragment === bindingWithToken.fragment,
+      );
+      if (input === undefined) {
+        throw new Error(`fixture omitted ${roleWithToken.roleId}:${bindingWithToken.fragment}`);
+      }
+      writeFileSync(input.path, `adapter prefix ${token} adapter suffix`);
+
+      expect(() => renderNixFixture(fixture)).toThrow(
+        `fragments.${roleWithToken.roleId}.${bindingWithToken.fragment}: forbidden vocabulary "${token}" for surface "${surface}"`,
+      );
+    });
+  }
 
   test("rejects undeclared source and fragment inputs", () => {
     const fixture = makeFixture();

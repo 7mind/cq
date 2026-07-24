@@ -54,6 +54,7 @@ export class PromptRendererError extends Error {
 interface CatalogFragmentBinding {
   readonly fragment: string;
   readonly supportedSurfaces: readonly PromptSurface[];
+  readonly forbiddenVocabulary: Readonly<Record<PromptSurface, readonly string[]>>;
 }
 
 interface CatalogRole {
@@ -89,6 +90,40 @@ function parseSurfaceList(value: unknown, path: string): readonly PromptSurface[
     surfaces.push(surface);
   }
   return surfaces;
+}
+
+function parseForbiddenVocabulary(
+  value: unknown,
+  path: string,
+): Readonly<Record<PromptSurface, readonly string[]>> {
+  if (!isRecord(value)) {
+    throw new PromptRendererError(path, "expected one token array per prompt surface");
+  }
+  const unexpectedSurface = Object.keys(value).find(
+    (surface) => !(PROMPT_SURFACES as readonly string[]).includes(surface),
+  );
+  if (unexpectedSurface !== undefined) {
+    throw new PromptRendererError(`${path}.${unexpectedSurface}`, "unknown prompt surface");
+  }
+  const parsed = {} as Record<PromptSurface, readonly string[]>;
+  for (const surface of PROMPT_SURFACES) {
+    const candidate = value[surface];
+    if (
+      !Array.isArray(candidate) ||
+      candidate.some((token) => typeof token !== "string" || token.length === 0)
+    ) {
+      throw new PromptRendererError(
+        `${path}.${surface}`,
+        "expected an array of non-empty forbidden tokens",
+      );
+    }
+    const tokens = candidate as readonly string[];
+    if (new Set(tokens).size !== tokens.length) {
+      throw new PromptRendererError(`${path}.${surface}`, "duplicate forbidden token");
+    }
+    parsed[surface] = tokens;
+  }
+  return parsed;
 }
 
 function parseCatalog(catalogJson: string): readonly CatalogRole[] {
@@ -170,6 +205,10 @@ function parseCatalog(catalogJson: string): readonly CatalogRole[] {
           bindingCandidate.supportedSurfaces,
           `${bindingPath}.supportedSurfaces`,
         ),
+        forbiddenVocabulary: parseForbiddenVocabulary(
+          bindingCandidate.forbiddenVocabulary,
+          `${bindingPath}.forbiddenVocabulary`,
+        ),
       });
     }
     roles.push({ roleId, canonicalSource, surfaces, fragmentBindings: bindings });
@@ -198,6 +237,21 @@ function readExplicitFile(inputPath: string, label: string): string {
 function rejectHarnessBranch(content: string, label: string): void {
   if (FORBIDDEN_HARNESS_BRANCH_PATTERN.test(content)) {
     throw new PromptRendererError(label, "forbidden harness branch CQ_HARNESS");
+  }
+}
+
+function rejectForbiddenVocabulary(
+  content: string,
+  tokens: readonly string[],
+  surface: PromptSurface,
+  label: string,
+): void {
+  const forbidden = tokens.find((token) => content.includes(token));
+  if (forbidden !== undefined) {
+    throw new PromptRendererError(
+      label,
+      `forbidden vocabulary "${forbidden}" for surface "${surface}"`,
+    );
   }
 }
 
@@ -294,6 +348,7 @@ function indexFragmentPaths(
 
 function renderRole(
   role: CatalogRole,
+  surface: PromptSurface,
   sourcePath: string,
   fragmentPaths: ReadonlyMap<string, string>,
 ): string {
@@ -345,6 +400,12 @@ function renderRole(
     }
     const fragment = readExplicitFile(fragmentPath, fragmentLabel);
     rejectHarnessBranch(fragment, fragmentLabel);
+    rejectForbiddenVocabulary(
+      fragment,
+      binding.forbiddenVocabulary[surface],
+      surface,
+      fragmentLabel,
+    );
     if (fragment.includes(SLOT_MARKER_PREFIX)) {
       throw new PromptRendererError(fragmentLabel, "fragment content contains a slot marker");
     }
@@ -353,6 +414,15 @@ function renderRole(
   if (rendered.includes(SLOT_MARKER_PREFIX)) {
     throw new PromptRendererError(sourceLabel, "unresolved slot marker");
   }
+  const outputForbiddenTokens = role.fragmentBindings.flatMap(
+    (binding) => binding.forbiddenVocabulary[surface],
+  );
+  rejectForbiddenVocabulary(
+    rendered,
+    [...new Set(outputForbiddenTokens)],
+    surface,
+    `rendered.${role.roleId}`,
+  );
   return rendered;
 }
 
@@ -382,7 +452,7 @@ export function renderPromptSurfaceTree(
     }
     artifacts.push({
       path: nodePath.posix.join("roles", `${role.roleId}.md`),
-      content: renderRole(role, sourcePath, fragmentPaths),
+      content: renderRole(role, surface, sourcePath, fragmentPaths),
     });
   }
   return { surface, artifacts };
