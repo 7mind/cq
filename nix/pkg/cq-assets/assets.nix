@@ -531,6 +531,8 @@ let
         "fragments/${surface}/agents/${role.roleId}/${binding.fragment}.md"
       else
         "fragments/${surface}/commands/cq/${role.roleId}/${binding.fragment}.md"
+    else if surface == "pi" && role.roleKind == "dispatched-subagent" && binding.fragment == T then
+      "fragments/${surface}/agents/${role.roleId}/${binding.fragment}.md"
     else
       "fragments/${surface}/${binding.fragment}.md";
   rawPromptFragmentSources = lib.concatMap (

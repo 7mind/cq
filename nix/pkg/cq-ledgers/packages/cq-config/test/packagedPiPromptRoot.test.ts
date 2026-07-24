@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
@@ -152,8 +152,14 @@ describe("packaged Pi prompt root", () => {
     expect(roles.get("plan/advance")).toContain(
       'dispatch_agent(agent: "<role>", task: "<complete prompt>")',
     );
-    expect(roles.get("plan/advance")).toContain("derive_predicates({})");
-    expect(roles.get("implement/advance")).toContain("get_reviewers({})");
+    for (const call of [
+      "derive_predicates({})",
+      "get_config({})",
+      "get_reviewers({})",
+      'call `fetch_prompt` with `{ "roleId": "<roleId>" }`',
+    ]) {
+      expect(roles.get("advance")).toContain(call);
+    }
     expect(roles.get("begin")).toContain("$ARGUMENTS");
     expect(roles.get("begin")).not.toContain("You are the **top-level flow sequencer**.");
 
@@ -175,28 +181,34 @@ describe("packaged Pi prompt root", () => {
     ).toBe(true);
   }, 30_000);
 
-  test("has reproducible bytes and excludes generated catalog and nested prompt bodies", () => {
-    const first = buildPiPromptRoot();
-    const second = buildPiPromptRoot();
-    expect(first).toBe(second);
-
-    const firstFiles = [...new Bun.Glob("**/*").scanSync({ cwd: first, onlyFiles: true })].sort();
-    const secondFiles = [...new Bun.Glob("**/*").scanSync({ cwd: second, onlyFiles: true })].sort();
-    expect(secondFiles).toEqual(firstFiles);
-    for (const file of firstFiles) {
-      expect(readFileSync(path.join(first, file))).toEqual(readFileSync(path.join(second, file)));
-    }
-
-    const derivation = run(["nix", "derivation", "show", ".#pi-prompt-root"]);
-    expect(derivation).not.toContain("promptCatalog.gen.ts");
-    expect(derivation).not.toContain("PROMPT_CATALOG_PROJECTION");
+  test("has an exact renderer source closure and excludes nested prompt bodies", () => {
+    buildPiPromptRoot();
+    const derivationShow = JSON.parse(run(["nix", "derivation", "show", ".#pi-prompt-root"])) as {
+      readonly derivations: Readonly<
+        Record<string, { readonly inputs: { readonly srcs: readonly string[] } }>
+      >;
+    };
+    const inputSources = (Object.values(derivationShow.derivations)[0]?.inputs.srcs ?? []).map(
+      (source) => (path.isAbsolute(source) ? source : path.join("/nix/store", source)),
+    );
+    const rendererSource = inputSources.find((source) =>
+      existsSync(path.join(source, "scripts", "render-prompt-surface.ts")),
+    );
+    expect(rendererSource).toBeDefined();
+    expect(
+      [...new Bun.Glob("**/*").scanSync({ cwd: rendererSource!, onlyFiles: true })].sort(),
+    ).toEqual([
+      "scripts/render-prompt-surface.ts",
+      "src/promptCatalog.ts",
+      "src/promptRenderer.ts",
+    ]);
     const context = readFileSync(PI_CONTEXT, "utf8");
     expect(context).toContain('fetch_prompt("investigate/advance")');
     expect(context).toContain("Substitute any text following the invocation for `$ARGUMENTS`");
     expect(context).not.toContain("You are the **top-level flow sequencer**.");
   }, 30_000);
 
-  test("dispatches a rendered role with runtime arguments and excludes child re-dispatch", async () => {
+  test("dispatches rendered roles with exact Pi deny lists and no child re-dispatch", async () => {
     const output = buildPiPromptRoot();
     const directory = path.join(tmpdir(), `cq-pi-runtime-${process.pid}-${crypto.randomUUID()}`);
     tempDirectories.push(directory);
@@ -226,36 +238,43 @@ describe("packaged Pi prompt root", () => {
     } as never);
 
     expect(registered?.name).toBe("dispatch_agent");
-    const result = await registered!.execute(
-      "call-1",
-      {
-        agent: "plan-reviewer",
-        task: "review goal G91 with runtime argument",
-        isolation: "worktree",
-      },
-      undefined,
-      undefined,
-      {
-        cwd: REPO_ROOT,
-        model: { id: "gpt-5.6-sol", provider: "openai-codex" },
-      },
-    );
-    const capture = JSON.parse(readFileSync(capturePath, "utf8")) as {
-      readonly args: readonly string[];
-      readonly prompt: string;
+    const expectedExclusions: Readonly<Record<string, readonly string[]>> = {
+      "plan-advance": ["dispatch_agent", "write", "edit", "bash"],
+      "plan-reviewer": ["dispatch_agent", "write", "edit", "bash"],
+      "implement-worker": ["dispatch_agent"],
+      "implement-reviewer": ["dispatch_agent", "write", "edit"],
+      "implement-conflict-resolver": ["dispatch_agent"],
+      "investigate-explorer": ["dispatch_agent", "write", "edit", "bash"],
+      "investigate-prober": ["dispatch_agent"],
+      "research-explorer": ["dispatch_agent", "write", "edit", "bash"],
+      "research-experimenter": ["dispatch_agent"],
     };
-    const childArgs = capture.args;
-    const excludeIndex = childArgs.indexOf("--exclude-tools");
-    const promptIndex = childArgs.indexOf("--append-system-prompt");
 
-    expect(result.content[0]?.text).toBe("runtime-child-ok");
-    expect(result.details.isolation).toBe("worktree");
-    expect(childArgs.at(-1)).toBe("review goal G91 with runtime argument");
-    expect(excludeIndex).toBeGreaterThan(-1);
-    expect(childArgs[excludeIndex + 1]?.split(",")).toContain("dispatch_agent");
-    expect(promptIndex).toBeGreaterThan(-1);
-    expect(capture.prompt).toContain("plan-flow adversarial reviewer");
-    expect(capture.prompt).not.toContain("{{cq:fragment:");
-    expect(capture.prompt).not.toContain("dispatch_agent(");
+    for (const [agent, exclusions] of Object.entries(expectedExclusions)) {
+      const task = `runtime argument for ${agent}`;
+      const result = await registered!.execute(
+        `call-${agent}`,
+        { agent, task, isolation: "worktree" },
+        undefined,
+        undefined,
+        {
+          cwd: REPO_ROOT,
+          model: { id: "gpt-5.6-sol", provider: "openai-codex" },
+        },
+      );
+      const capture = JSON.parse(readFileSync(capturePath, "utf8")) as {
+        readonly args: readonly string[];
+        readonly prompt: string;
+      };
+      const excludeIndex = capture.args.indexOf("--exclude-tools");
+
+      expect(result.content[0]?.text).toBe("runtime-child-ok");
+      expect(result.details.isolation).toBe("worktree");
+      expect(capture.args.at(-1)).toBe(task);
+      expect(excludeIndex).toBeGreaterThan(-1);
+      expect(capture.args[excludeIndex + 1]?.split(",")).toEqual([...exclusions]);
+      expect(capture.prompt).not.toContain("{{cq:fragment:");
+      expect(capture.prompt).not.toContain("dispatch_agent(");
+    }
   }, 30_000);
 });

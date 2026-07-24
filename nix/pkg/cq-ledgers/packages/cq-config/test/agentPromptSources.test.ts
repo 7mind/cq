@@ -139,6 +139,9 @@ describe("dispatched-role prompt sources", () => {
         expect(content).not.toContain("CQ_HARNESS");
         if (surface === "claude") {
           expect(content).toMatch(/^(?:isolation|disallowedTools):/m);
+        } else if (surface === "pi") {
+          expect(content).toMatch(/^disallowedTools:/m);
+          expect(content).not.toMatch(/^isolation:/m);
         } else {
           expect(content).not.toMatch(/^(?:isolation|disallowedTools):/m);
         }

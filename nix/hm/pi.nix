@@ -172,7 +172,13 @@ let
         name: server:
           let
             directToolsEnabled =
-              if lib.isList piMcpDirectTools then lib.elem name piMcpDirectTools else piMcpDirectTools;
+              name == "ledger"
+              || (
+                if lib.isList piMcpDirectTools then
+                  lib.elem name piMcpDirectTools
+                else
+                  piMcpDirectTools
+              );
           in
           server // { lifecycle = "keep-alive"; } // lib.optionalAttrs directToolsEnabled { directTools = true; }
       )
@@ -284,14 +290,15 @@ in
       default = false;
       example = [ "codegraph" "ledger" ];
       description = ''
-        Register Pi MCP servers' tools individually instead of behind
-        pi-mcp-adapter's single `mcp({search, tool})` proxy. The proxy exists
-        for context-window economy (progressive disclosure), so this defaults
-        off. `true` sets `directTools = true` on every server in
-        {option}`programs.mcp.servers`; a list of server names enables it only
-        for the named servers (e.g. `[ "codegraph" "ledger" ]`), leaving the
-        rest proxied. Pi-only: applied in `piMcpJson`, not leaked into the
-        shared MCP registry used by claude/codex.
+        Register additional Pi MCP servers' tools individually instead of
+        behind pi-mcp-adapter's single `mcp({search, tool})` proxy. The ledger
+        server is always direct because rendered CQ prompts call its operational
+        tools by name. The proxy exists for context-window economy (progressive
+        disclosure), so other servers default to proxied. `true` sets
+        `directTools = true` on every server in
+        {option}`programs.mcp.servers`; a list of server names enables it for
+        those additional servers. Pi-only: applied in `piMcpJson`, not leaked
+        into the shared MCP registry used by claude/codex.
       '';
     };
   };

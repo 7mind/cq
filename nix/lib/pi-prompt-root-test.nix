@@ -56,7 +56,10 @@ let
           };
           config = {
             home.homeDirectory = "/home/test";
-            programs.mcp.servers = { };
+            programs.mcp.servers.ledger = {
+              command = "/nix/store/test-cq/bin/cq";
+              args = [ "mcp" ];
+            };
             smind.hm.dev.llm = {
               enable = true;
               merged = {
@@ -71,7 +74,6 @@ let
                 skills = { };
                 memoryText = "";
               };
-              pi.mcpDirectTools = false;
             };
           };
         }
@@ -85,14 +87,19 @@ let
   agent = files.".pi/agent/cq-agents/plan-reviewer.md";
   externalAgent = files.".pi/agent/cq-agents/external-agent.md";
   appendSystem = files."/home/test/.pi/agent/APPEND_SYSTEM.md";
+  mcpJson = files.".pi/agent/mcp.json".source;
 in
-assert command.source == "${piPromptRoot}/roles/begin.md";
-assert externalCommand.text == "external command";
-assert agent.source == "${piPromptRoot}/roles/plan-reviewer.md";
-assert externalAgent.text == "external agent";
-assert lib.hasInfix ''fetch_prompt("investigate/advance")'' appendSystem.text;
-assert lib.any (
-  extension: lib.hasSuffix "cq-subagent-dispatch.ts" extension
-) piSettings.extensions;
-assert lib.all (entry: entry.assertion) evaluatedPiModule.config.assertions;
-true
+{
+  inherit mcpJson;
+  passed =
+    assert command.source == "${piPromptRoot}/roles/begin.md";
+    assert externalCommand.text == "external command";
+    assert agent.source == "${piPromptRoot}/roles/plan-reviewer.md";
+    assert externalAgent.text == "external agent";
+    assert lib.hasInfix ''fetch_prompt("investigate/advance")'' appendSystem.text;
+    assert lib.any (
+      extension: lib.hasSuffix "cq-subagent-dispatch.ts" extension
+    ) piSettings.extensions;
+    assert lib.all (entry: entry.assertion) evaluatedPiModule.config.assertions;
+    true;
+}

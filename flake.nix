@@ -581,11 +581,15 @@
               touch "$out"
             '';
             pi-prompt-root = pkgs.runCommand "pi-prompt-root-check" { } ''
-              : ${if piPromptRootTest then "pi-home-manager-projection-ok" else "pi-home-manager-projection-failed"}
+              : ${if piPromptRootTest.passed then "pi-home-manager-projection-ok" else "pi-home-manager-projection-failed"}
               test "$(find ${piPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
               test -f ${piPromptRoot}/roles/begin.md
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
                 ${piPromptRoot}/catalog.json
+              ${pkgs.jq}/bin/jq -e '
+                .mcpServers.ledger.lifecycle == "keep-alive"
+                and .mcpServers.ledger.directTools == true
+              ' ${piPromptRootTest.mcpJson} >/dev/null
               if ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS|\$cq-|mcp__ledger__|Agent\(' ${piPromptRoot}/roles; then
                 echo "packaged Pi prompt root contains a foreign or unresolved renderer token" >&2
                 exit 1
