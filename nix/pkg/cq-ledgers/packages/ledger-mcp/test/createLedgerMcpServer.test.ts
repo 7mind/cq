@@ -20,7 +20,9 @@ import {
   prefixedToolNames,
   type LedgerStore,
 } from "@cq/ledger";
-import { createLedgerMcpServer } from "../src/main.js";
+import { createLedgerMcpServer, InMemoryPromptArtifactStore } from "../src/main.js";
+
+const encoder = new TextEncoder();
 
 async function buildStore(): Promise<LedgerStore> {
   const store = new InMemoryLedgerStore();
@@ -41,7 +43,10 @@ async function registeredNames(toolPrefix?: string): Promise<string[]> {
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "create-server-test-client", version: "0.0.1" }, { capabilities: {} });
+  const client = new Client(
+    { name: "create-server-test-client", version: "0.0.1" },
+    { capabilities: {} },
+  );
   await client.connect(clientTransport);
   try {
     const { tools } = await client.listTools();
@@ -63,5 +68,56 @@ describe("createLedgerMcpServer — public builder", () => {
     const names = await registeredNames();
     expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
     expect(names.length).toBe(LEDGER_TOOL_NAMES.length);
+  });
+
+  it("serves exact prompt bytes from the injected artifact store without a config root", async () => {
+    const promptTemplate = "Keep {{cq:literal}} and $ARGUMENTS unchanged.\n";
+    const promptArtifactStore = new InMemoryPromptArtifactStore(
+      encoder.encode(
+        JSON.stringify([
+          {
+            roleId: "plan-advance",
+            roleKind: "dispatched-subagent",
+            sidecar: { schemaRoleId: "plan-advance" },
+          },
+        ]),
+      ),
+      [{ roleId: "plan-advance", bytes: encoder.encode(promptTemplate) }],
+    );
+    const store = await buildStore();
+    const server = createLedgerMcpServer({
+      store,
+      displayName: "demo",
+      promptArtifactStore,
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client(
+      { name: "create-server-prompt-test-client", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    await client.connect(clientTransport);
+    try {
+      const result = (await client.callTool({
+        name: "fetch_prompt",
+        arguments: { roleId: "plan-advance" },
+      })) as {
+        isError?: boolean;
+        content: Array<{ type: string; text?: string }>;
+      };
+      expect(result.isError ?? false).toBe(false);
+      const text = result.content
+        .filter((entry) => entry.type === "text")
+        .map((entry) => entry.text ?? "")
+        .join("");
+      expect(JSON.parse(text)).toMatchObject({
+        roleId: "plan-advance",
+        kind: "dispatched-subagent",
+        promptTemplate,
+      });
+    } finally {
+      await client.close();
+      await store.dispose();
+    }
   });
 });

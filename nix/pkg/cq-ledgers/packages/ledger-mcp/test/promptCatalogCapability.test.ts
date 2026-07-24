@@ -5,12 +5,9 @@
  * ONE abstract suite ({@link runPromptCatalogSuite}) exercises the
  * `PromptCatalogCapability` contract, then runs against BOTH:
  *
- *  - the REAL adapter `createPromptCatalogCapability(repoRoot)` — reads the role
- *    prompt bodies from the committed `cq-assets/*.md` and joins the `@cq/config`
- *    typed-catalog schemas (the production wiring buildServer injects); and
- *  - a hand-written IN-MEMORY dummy that serves the prompt body from a literal
- *    map but reuses the SAME `@cq/config` sidecars + validator — so the contract
- *    is exercised with no filesystem dependency.
+ *  - the production filesystem PromptArtifactStore over an already-built
+ *    temporary surface root; and
+ *  - the strict hand-written in-memory PromptArtifactStore dummy.
  *
  * The suite asserts the acceptance: fetch_prompt('plan-advance') returns the
  * prompt + both schemas; validate_input accepts a valid plan-advance input and
@@ -21,82 +18,64 @@
  */
 
 import { describe, it, test, expect } from "bun:test";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
-import {
-  getRoleSidecar,
-  validateAgainstSchema,
-  AGENT_ROLE_TIERS,
-  type JSONSchema,
-} from "@cq/config";
-import {
-  UnknownRoleError,
-  NoSchemaForRoleError,
-  type PromptCatalogCapability,
-  type JSONSchemaDoc,
-} from "@cq/ledger";
+import { UnknownRoleError, NoSchemaForRoleError, type PromptCatalogCapability } from "@cq/ledger";
 import { createPromptCatalogCapability } from "../src/promptCatalogCapability.js";
+import {
+  FileSystemPromptArtifactStore,
+  InMemoryPromptArtifactStore,
+  type PromptArtifactStore,
+} from "../src/promptArtifactStore.js";
 
 /** A dispatched role with both schemas, and an orchestrator-command role with none. */
 const DISPATCHED_ROLE = "plan-advance";
 const COMMAND_ROLE = "advance";
 
-/**
- * Repo root, 6 levels up from this test dir
- * (`nix/pkg/cq-ledgers/packages/ledger-mcp/test`): test -> ledger-mcp ->
- * packages -> cq-ledgers -> pkg -> nix -> <root>. `createPromptCatalogCapability`
- * resolves `<root>/nix/pkg/cq-assets/` underneath this.
- */
-const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
+const DISPATCHED_PROMPT =
+  "---\ndescription: rendered\n---\n\nKeep {{cq:literal}} and $ARGUMENTS unchanged.\n";
+const COMMAND_PROMPT = "# /cq:advance\n\nRendered command prompt.\n";
+const MANIFEST_BYTES = new TextEncoder().encode(
+  JSON.stringify([
+    {
+      roleId: DISPATCHED_ROLE,
+      roleKind: "dispatched-subagent",
+      sidecar: { schemaRoleId: DISPATCHED_ROLE },
+    },
+    {
+      roleId: COMMAND_ROLE,
+      roleKind: "orchestrator-command",
+      sidecar: null,
+    },
+  ]),
+);
+const ROLE_ARTIFACTS = [
+  { roleId: DISPATCHED_ROLE, bytes: new TextEncoder().encode(DISPATCHED_PROMPT) },
+  { roleId: COMMAND_ROLE, bytes: new TextEncoder().encode(COMMAND_PROMPT) },
+] as const;
 
-/**
- * A hand-written in-memory dummy: serves the prompt body from a literal map and
- * reuses the SAME `@cq/config` schema source + Ajv validator the real adapter
- * uses. The body text is arbitrary — the suite checks only that fetch_prompt
- * returns a non-empty prompt for a known role, not its exact content.
- */
-function inMemoryCapability(): PromptCatalogCapability {
-  const bodies: Record<string, string> = {
-    [DISPATCHED_ROLE]: "# plan-advance\n\nDummy prompt body for the in-memory adapter.",
-    [COMMAND_ROLE]: "# /cq:advance\n\nDummy orchestrator-command prompt body.",
-  };
-  const entry = (roleId: string) => AGENT_ROLE_TIERS.find((r) => r.id === roleId);
-  const schemaFor = (roleId: string, side: "input" | "output"): JSONSchema => {
-    const e = entry(roleId);
-    if (e === undefined) throw new UnknownRoleError(roleId);
-    if (e.agentTierKey === null) throw new NoSchemaForRoleError(roleId, side);
-    const sidecar = getRoleSidecar(roleId);
-    if (sidecar === undefined) throw new Error(`no sidecar for ${roleId}`);
-    return side === "input" ? sidecar.inputSchema : sidecar.outputSchema;
-  };
-  return {
-    fetchPrompt: (roleId) => {
-      const e = entry(roleId);
-      if (e === undefined) throw new UnknownRoleError(roleId);
-      const body = bodies[roleId] ?? "dummy body";
-      if (e.agentTierKey === null) {
-        return { roleId, kind: "orchestrator-command", dispatched: false, promptTemplate: body };
-      }
-      const sidecar = getRoleSidecar(roleId);
-      if (sidecar === undefined) throw new Error(`no sidecar for ${roleId}`);
-      return {
-        roleId,
-        kind: "dispatched-subagent",
-        dispatched: true,
-        promptTemplate: body,
-        version: sidecar.version,
-        inputSchema: sidecar.inputSchema as JSONSchemaDoc,
-        outputSchema: sidecar.outputSchema as JSONSchemaDoc,
-      };
-    },
-    validateInput: (roleId, input) => {
-      const r = validateAgainstSchema(schemaFor(roleId, "input"), input);
-      return r.ok ? { ok: true } : { ok: false, errors: r.errors };
-    },
-    validateOutput: (roleId, output) => {
-      const r = validateAgainstSchema(schemaFor(roleId, "output"), output);
-      return r.ok ? { ok: true } : { ok: false, errors: r.errors };
-    },
-  };
+function inMemoryStore(): PromptArtifactStore {
+  return new InMemoryPromptArtifactStore(MANIFEST_BYTES, ROLE_ARTIFACTS);
+}
+
+function filesystemStore(): PromptArtifactStore {
+  const root = mkdtempSync(path.join(tmpdir(), "cq-prompt-capability-"));
+  try {
+    writeFileSync(path.join(root, "catalog.json"), MANIFEST_BYTES);
+    for (const artifact of ROLE_ARTIFACTS) {
+      const artifactPath = path.join(root, "roles", `${artifact.roleId}.md`);
+      mkdirSync(path.dirname(artifactPath), { recursive: true });
+      writeFileSync(artifactPath, artifact.bytes);
+    }
+    return new FileSystemPromptArtifactStore(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function makeCapability(): PromptCatalogCapability {
+  return createPromptCatalogCapability(inMemoryStore());
 }
 
 /** The shared contract suite, run against any {@link PromptCatalogCapability}. */
@@ -108,16 +87,12 @@ function runPromptCatalogSuite(label: string, make: () => PromptCatalogCapabilit
       expect(result.roleId).toBe(DISPATCHED_ROLE);
       expect(result.kind).toBe("dispatched-subagent");
       expect(result.dispatched).toBe(true);
-      expect(result.promptTemplate.length).toBeGreaterThan(0);
+      expect(result.promptTemplate).toBe(DISPATCHED_PROMPT);
       // Both schemas present, and they are the @cq/config draft-2020-12 documents.
       expect(result.inputSchema).toBeDefined();
       expect(result.outputSchema).toBeDefined();
-      expect(result.inputSchema?.["$schema"]).toBe(
-        "https://json-schema.org/draft/2020-12/schema",
-      );
-      expect(result.outputSchema?.["$schema"]).toBe(
-        "https://json-schema.org/draft/2020-12/schema",
-      );
+      expect(result.inputSchema?.["$schema"]).toBe("https://json-schema.org/draft/2020-12/schema");
+      expect(result.outputSchema?.["$schema"]).toBe("https://json-schema.org/draft/2020-12/schema");
     });
 
     it("validate_input accepts a valid plan-advance input", () => {
@@ -200,12 +175,13 @@ function runPromptCatalogSuite(label: string, make: () => PromptCatalogCapabilit
   });
 }
 
-// Run the SAME contract against the real (asset-backed) adapter and the
-// in-memory dummy.
-runPromptCatalogSuite("real asset-backed adapter", () =>
-  createPromptCatalogCapability(REPO_ROOT),
+// Run the SAME capability contract over both artifact-store implementations.
+runPromptCatalogSuite("production filesystem artifact store", () =>
+  createPromptCatalogCapability(filesystemStore()),
 );
-runPromptCatalogSuite("in-memory dummy", inMemoryCapability);
+runPromptCatalogSuite("strict in-memory artifact store", () =>
+  createPromptCatalogCapability(inMemoryStore()),
+);
 
 /**
  * D60 regression: validate_input/validateOutput are called with a JSON STRING
@@ -219,7 +195,7 @@ runPromptCatalogSuite("in-memory dummy", inMemoryCapability);
 describe("D60 regression — validate_input string-tolerance at MCP entrypoint", () => {
   // (i) Genuine object input — already passes today; stays a normal test.
   it("(i) genuine object {goalId:'G1'} → {ok:true}", () => {
-    const cap = createPromptCatalogCapability(REPO_ROOT);
+    const cap = makeCapability();
     const result = cap.validateInput(DISPATCHED_ROLE, { goalId: "G1" });
     expect(result.ok).toBe(true);
   });
@@ -228,43 +204,34 @@ describe("D60 regression — validate_input string-tolerance at MCP entrypoint",
   // {ok:false, errors:[{keyword:'type', message:'must be object'}]}).
   // The MCP wire serialises the nested `input` arg as a JSON string;
   // validateInput must parse it before validating.
-  test(
-    "(ii) JSON-string JSON.stringify({goalId:'G1'}) → {ok:true} [D60]",
-    () => {
-      const cap = createPromptCatalogCapability(REPO_ROOT);
-      const result = cap.validateInput(DISPATCHED_ROLE, JSON.stringify({ goalId: "G1" }));
-      expect(result.ok).toBe(true);
-    },
-  );
+  test("(ii) JSON-string JSON.stringify({goalId:'G1'}) → {ok:true} [D60]", () => {
+    const cap = makeCapability();
+    const result = cap.validateInput(DISPATCHED_ROLE, JSON.stringify({ goalId: "G1" }));
+    expect(result.ok).toBe(true);
+  });
 
   // (iii) Unparseable JSON string — FAILS today (no 'parse' keyword exists
   // yet; the code would either throw or return keyword:'type').
   // After the fix, an unparseable string should return
   // {ok:false, errors:[{keyword:'parse', ...}]}.
-  test(
-    "(iii) unparseable string '{not json' → {ok:false, errors[0].keyword==='parse'} [D60]",
-    () => {
-      const cap = createPromptCatalogCapability(REPO_ROOT);
-      const result = cap.validateInput(DISPATCHED_ROLE, "{not json");
-      expect(result.ok).toBe(false);
-      if (result.ok) throw new Error("expected validation failure");
-      expect(result.errors[0]?.keyword).toBe("parse");
-    },
-  );
+  test("(iii) unparseable string '{not json' → {ok:false, errors[0].keyword==='parse'} [D60]", () => {
+    const cap = makeCapability();
+    const result = cap.validateInput(DISPATCHED_ROLE, "{not json");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected validation failure");
+    expect(result.errors[0]?.keyword).toBe("parse");
+  });
 
   // (iv) Over-acceptance guard: a JSON-string of {} for a role requiring
   // goalId — FAILS today (returns keyword:'type' from the must-be-object
   // pre-check rather than keyword:'required' after parsing).
   // After the fix, the string is parsed to {}, the schema's 'required'
   // check fires, and errors[0].keyword === 'required'.
-  test(
-    "(iv) JSON.stringify({}) for plan-advance → {ok:false, errors[0].keyword==='required'} [D60]",
-    () => {
-      const cap = createPromptCatalogCapability(REPO_ROOT);
-      const result = cap.validateInput(DISPATCHED_ROLE, JSON.stringify({}));
-      expect(result.ok).toBe(false);
-      if (result.ok) throw new Error("expected validation failure");
-      expect(result.errors[0]?.keyword).toBe("required");
-    },
-  );
+  test("(iv) JSON.stringify({}) for plan-advance → {ok:false, errors[0].keyword==='required'} [D60]", () => {
+    const cap = makeCapability();
+    const result = cap.validateInput(DISPATCHED_ROLE, JSON.stringify({}));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected validation failure");
+    expect(result.errors[0]?.keyword).toBe("required");
+  });
 });

@@ -60,7 +60,11 @@ import {
   prefixToolName,
 } from "@cq/ledger";
 import { createConfigCapability } from "./configCapability.js";
-import { createPromptCatalogCapability } from "./promptCatalogCapability.js";
+import {
+  createLegacySourcePromptCatalogCapability,
+  createPromptCatalogCapability,
+} from "./promptCatalogCapability.js";
+import type { PromptArtifactStore } from "./promptArtifactStore.js";
 import { startLedgerWatcher, type LedgerWatcher } from "./watcher.js";
 import { startLedgerRefWatcher } from "./refWatcher.js";
 
@@ -68,6 +72,20 @@ import { startLedgerRefWatcher } from "./refWatcher.js";
 // wire live refresh against the same watcher the standalone binary uses.
 export { startLedgerWatcher, type LedgerWatcher } from "./watcher.js";
 export { startLedgerRefWatcher, type LedgerRefWatcher, REF_POLL_MS } from "./refWatcher.js";
+export {
+  FileSystemPromptArtifactStore,
+  InMemoryPromptArtifactStore,
+  PromptArtifactNotFoundError,
+  PromptArtifactStoreError,
+} from "./promptArtifactStore.js";
+export type {
+  InMemoryPromptRoleArtifact,
+  PromptArtifactManifest,
+  PromptArtifactRoleKind,
+  PromptArtifactRoleMetadata,
+  PromptArtifactStore,
+  PromptRoleArtifact,
+} from "./promptArtifactStore.js";
 
 const SERVER_INFO = { name: "ledger-mcp", version: "0.0.1" } as const;
 const DEFAULT_HTTP_HOST = "127.0.0.1";
@@ -192,7 +210,7 @@ export const TOP_LEVEL_USAGE = [
   "options:",
   "  --cwd <path>          Ledger root (default: $LEDGER_ROOT or current working directory)",
   "  --http [host:]port    Serve Streamable HTTP instead of stdio (default host: 127.0.0.1)",
-  "  --tool-prefix <p>     Prefix all tool names with \"<p>_\"",
+  '  --tool-prefix <p>     Prefix all tool names with "<p>_"',
   "  -h, --help            Print this usage and exit",
 ].join("\n");
 
@@ -217,7 +235,7 @@ const SERVER_INSTRUCTIONS_TEMPLATE = [
   "  reflects reality; record findings as hypothesis/decision/question items.",
   "- Before acting: fts_search / fetch_ledger to see what already exists; do not",
   "  duplicate an existing item. fts_search accepts filters, e.g.",
-  '  `status:wip ledger:tasks`, `(status:done OR status:wip)`, `author:user`.',
+  "  `status:wip ledger:tasks`, `(status:done OR status:wip)`, `author:user`.",
   "- On completion: mark items terminal and archive_milestone once all its items",
   "  are terminal.",
   "",
@@ -446,6 +464,11 @@ export interface CreateLedgerMcpServerOptions {
    */
   configRoot?: string;
   /**
+   * An already-built prompt surface. When supplied, prompt-catalog tools read
+   * this store directly and do not discover source assets beneath configRoot.
+   */
+  promptArtifactStore?: PromptArtifactStore;
+  /**
    * This server's resolved `projectKey` (T585 / Q284) — `ResolvedLedgerStore.
    * projectKey` from `createLedgerStore`. Feeds the single-project
    * `list_projects` fallback (`listProjectsOf`) when `store` is not itself
@@ -488,21 +511,21 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
   // `readLog` and supplies none; read_log then throws the documented
   // not-implemented error.
   const readLog: ReadLogCapability | undefined = readLogOf(store);
-  // cq.toml config + prompt-catalog capabilities (R193 / G18 / T2 / T343) are
-  // ROOT-BOUND and BACKEND-INDEPENDENT: they read cq.toml / the role asset
-  // markdown under the resolved config root. FsLedgerStore and the git-object
-  // backend expose that root via `rootDir`; the xdg `SqliteLedgerStore` does
-  // NOT (its data lives out-of-tree, D93), so callers with a
-  // `ResolvedLedgerStore` pass its `configRoot` explicitly via `opts.configRoot`
-  // — preferred over the duck-typed `rootDirOf(store)` fallback used by call
-  // sites (tests, mainly) that construct a store directly. An in-memory store
-  // with neither exposes no root; get_config / fetch_prompt then throw the
-  // documented not-implemented error.
+  // cq.toml config remains root-bound and backend-independent. Prompt-catalog
+  // tools prefer an injected, already-built artifact store; the source-backed
+  // root path remains the compatibility fallback until all launchers inject a
+  // packaged surface. An in-memory ledger store with neither dependency leaves
+  // those capabilities unwired and produces the documented not-implemented
+  // errors.
   const rootDir = configRoot ?? rootDirOf(store);
   const configCapability: ConfigCapability | undefined =
     rootDir !== undefined ? createConfigCapability(rootDir) : undefined;
   const promptCatalog: PromptCatalogCapability | undefined =
-    rootDir !== undefined ? createPromptCatalogCapability(rootDir) : undefined;
+    opts.promptArtifactStore !== undefined
+      ? createPromptCatalogCapability(opts.promptArtifactStore)
+      : rootDir !== undefined
+        ? createLegacySourcePromptCatalogCapability(rootDir)
+        : undefined;
   // list_projects (T585 / Q284): ALWAYS wired, never left undefined — see
   // listProjectsOf's doc. The single-project fallback key defaults to
   // `displayName` when the caller has no resolved `projectKey` at hand.
@@ -721,7 +744,9 @@ export function serveHttp(
 
 /** Build a `changed` notification frame for the WS topic. */
 export function changedFrame(ledgerId: string | null): string {
-  return JSON.stringify(ledgerId !== null ? { type: "changed", ledger: ledgerId } : { type: "changed" });
+  return JSON.stringify(
+    ledgerId !== null ? { type: "changed", ledger: ledgerId } : { type: "changed" },
+  );
 }
 
 export async function main(argv: readonly string[]): Promise<void> {
