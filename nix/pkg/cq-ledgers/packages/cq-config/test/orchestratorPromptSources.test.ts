@@ -11,32 +11,41 @@ import {
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
-const OPERATIONAL_TOOL_MAPPINGS = {
-  claude: [
-    "`ledger::derive_predicates` → `mcp__ledger__derive_predicates({})`",
-    "`ledger::get_config` → `mcp__ledger__get_config({})`",
-    "`ledger::get_reviewers` → `mcp__ledger__get_reviewers({})`",
-    '`prompt-catalog fetch ("<roleId>")` → call `mcp__ledger__fetch_prompt` with `{ "roleId": "<roleId>" }`',
-  ],
-  codex: [
-    "`ledger::derive_predicates` → `derive_predicates({})`",
-    "`ledger::get_config` → `get_config({})`",
-    "`ledger::get_reviewers` → `get_reviewers({})`",
-    '`prompt-catalog fetch ("<roleId>")` → call `fetch_prompt` with `{ "roleId": "<roleId>" }`',
-  ],
-  pi: [
-    "`ledger::derive_predicates` → `derive_predicates({})`",
-    "`ledger::get_config` → `get_config({})`",
-    "`ledger::get_reviewers` → `get_reviewers({})`",
-    '`prompt-catalog fetch ("<roleId>")` → call `fetch_prompt` with `{ "roleId": "<roleId>" }`',
-  ],
-} as const;
-const NEUTRAL_OPERATIONAL_TOKENS = [
-  "ledger::derive_predicates",
-  "ledger::get_config",
-  "ledger::get_reviewers",
-  "prompt-catalog fetch (",
+const LEDGER_TOOLS_MODULE = path.resolve(
+  import.meta.dir,
+  "../../ledger/src/mcp/ledgerTools.ts",
+);
+const { LEDGER_TOOL_NAMES } = (await import(LEDGER_TOOLS_MODULE)) as {
+  readonly LEDGER_TOOL_NAMES: readonly string[];
+};
+const OPERATIONAL_TOOL_SPECS = [
+  {
+    neutral: "ledger::derive_predicates",
+    source: "ledger::derive_predicates",
+    candidate: "derive_predicates",
+    roleIdArgument: false,
+  },
+  {
+    neutral: "ledger::get_config",
+    source: "ledger::get_config",
+    candidate: "get_config",
+    roleIdArgument: false,
+  },
+  {
+    neutral: "ledger::get_reviewers",
+    source: "ledger::get_reviewers",
+    candidate: "get_reviewers",
+    roleIdArgument: false,
+  },
+  {
+    neutral: 'prompt-catalog fetch ("<roleId>")',
+    source: "prompt-catalog fetch (",
+    candidate: "fetch_prompt",
+    roleIdArgument: true,
+  },
 ] as const;
+const CLAUDE_LEDGER_TOOL_PREFIX = "mcp__ledger__";
+const OPERATIONAL_TOOL_SECTION_HEADING = "## Operational tool vocabulary\n";
 
 interface CatalogRole {
   readonly roleId: string;
@@ -68,7 +77,66 @@ function evaluateNixJson(attribute: string): string {
   return new TextDecoder().decode(result.stdout);
 }
 
+function registeredToolName(candidate: string): string {
+  const registered = LEDGER_TOOL_NAMES.find((toolName) => toolName === candidate);
+  if (registered === undefined) {
+    throw new Error(`required operational tool "${candidate}" is absent from LEDGER_TOOL_NAMES`);
+  }
+  return registered;
+}
+
+function surfaceToolName(
+  surface: (typeof PROMPT_SURFACES)[number],
+  registeredName: string,
+): string {
+  return surface === "claude" ? `${CLAUDE_LEDGER_TOOL_PREFIX}${registeredName}` : registeredName;
+}
+
+function expectedOperationalToolMapping(
+  surface: (typeof PROMPT_SURFACES)[number],
+  spec: (typeof OPERATIONAL_TOOL_SPECS)[number],
+): string {
+  const target = surfaceToolName(surface, registeredToolName(spec.candidate));
+  if (!spec.roleIdArgument) {
+    return `- \`${spec.neutral}\` → \`${target}({})\``;
+  }
+  return `- \`${spec.neutral}\` → call \`${target}\` with \`{ "roleId": "<roleId>" }\``;
+}
+
+function assertOperationalToolMappings(
+  surface: (typeof PROMPT_SURFACES)[number],
+  content: string,
+): void {
+  const sectionTail = content.split(OPERATIONAL_TOOL_SECTION_HEADING)[1];
+  expect(sectionTail).toBeDefined();
+  const section = sectionTail!.split("\n## ")[0]!;
+  const mappedTargets = [...section.matchAll(/→ (?:`|call `)([A-Za-z0-9_]+)/g)].map(
+    (match) => match[1]!,
+  );
+
+  expect(mappedTargets).toHaveLength(OPERATIONAL_TOOL_SPECS.length);
+  for (const surfaceTarget of mappedTargets) {
+    if (surface === "claude") {
+      expect(surfaceTarget).toStartWith(CLAUDE_LEDGER_TOOL_PREFIX);
+    } else {
+      expect(surfaceTarget).not.toStartWith(CLAUDE_LEDGER_TOOL_PREFIX);
+    }
+    const baseToolName = surfaceTarget.replace(CLAUDE_LEDGER_TOOL_PREFIX, "");
+    expect(LEDGER_TOOL_NAMES).toContain(baseToolName);
+  }
+  for (const spec of OPERATIONAL_TOOL_SPECS) {
+    expect(section).toContain(expectedOperationalToolMapping(surface, spec));
+  }
+}
+
 describe("orchestrator command prompt sources", () => {
+  test("derives every operational mapping target from the registered ledger tool surface", () => {
+    for (const spec of OPERATIONAL_TOOL_SPECS) {
+      expect(LEDGER_TOOL_NAMES).toContain(spec.candidate);
+      expect(registeredToolName(spec.candidate)).toBe(spec.candidate);
+    }
+  });
+
   test("renders cq:begin from the canonical source and explicit typed fragments", () => {
     const catalog = JSON.parse(evaluateNixJson("catalogJson")) as readonly CatalogRole[];
     const fragmentSources = JSON.parse(
@@ -165,8 +233,8 @@ describe("orchestrator command prompt sources", () => {
         expect(content).toContain(description!);
         expect(content).not.toContain("{{cq:fragment:");
         expect(content).not.toContain("CQ_HARNESS");
-        const usesNeutralOperationalToken = NEUTRAL_OPERATIONAL_TOKENS.some((token) =>
-          source.includes(token),
+        const usesNeutralOperationalToken = OPERATIONAL_TOOL_SPECS.some((spec) =>
+          source.includes(spec.source),
         );
         expect(
           role.fragmentBindings.some(
@@ -174,9 +242,7 @@ describe("orchestrator command prompt sources", () => {
           ),
         ).toBe(usesNeutralOperationalToken);
         if (usesNeutralOperationalToken) {
-          for (const mapping of OPERATIONAL_TOOL_MAPPINGS[surface]) {
-            expect(content).toContain(mapping);
-          }
+          assertOperationalToolMappings(surface, content);
         }
         if (role.fragmentBindings.some(({ fragment }) => fragment === "host-tool-vocabulary")) {
           if (surface === "claude") {
