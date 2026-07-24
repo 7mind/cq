@@ -416,9 +416,33 @@ describe("ledger MCP tools", () => {
       status: "planned",
       fields: { headline: "No provenance" },
     });
-    const absent = decode<{ item: Record<string, unknown> }>(absentResult).item;
-    expect(Object.hasOwn(absent, "author")).toBe(false);
-    expect(Object.hasOwn(absent, "session")).toBe(false);
+    const absentResponse = decode<{ item: Record<string, unknown> }>(
+      absentResult,
+    );
+    const absentCreated = store.fetchItem(
+      "tasks",
+      absentResponse.item["id"] as string,
+    );
+    expect(absentResponse).toEqual({
+      item: expectedItemAcknowledgement(absentCreated),
+    });
+    expect(Object.hasOwn(absentResponse.item, "author")).toBe(false);
+    expect(Object.hasOwn(absentResponse.item, "session")).toBe(false);
+
+    const absentUpdateResult = await callTool(tools, "update_item", {
+      ledger_id: "tasks",
+      item_id: absentCreated.id,
+      status: "wip",
+    });
+    const absentUpdateResponse = decode<{ item: Record<string, unknown> }>(
+      absentUpdateResult,
+    );
+    const absentUpdated = store.fetchItem("tasks", absentCreated.id);
+    expect(absentUpdateResponse).toEqual({
+      item: expectedItemAcknowledgement(absentUpdated),
+    });
+    expect(Object.hasOwn(absentUpdateResponse.item, "author")).toBe(false);
+    expect(Object.hasOwn(absentUpdateResponse.item, "session")).toBe(false);
   });
 
   // BG, specified-origin: ledger and milestone writes expose fixed DTOs.
@@ -518,6 +542,36 @@ describe("ledger MCP tools", () => {
     });
     expect(reopenResponse.item["author"]).toBe("gpt-5.6");
     expect(reopenResponse.item["session"]).toBe("session-reopen");
+
+    const unattributedReopenCreate = decode<{ item: { id: string } }>(
+      await callTool(tools, "create_item", {
+        ledger_id: "tasks",
+        milestone_id: "M1",
+        status: "done",
+        fields: { headline: "Reopen without provenance" },
+      }),
+    );
+    const unattributedReopenResult = await callTool(tools, "reopen_item", {
+      ledger_id: "tasks",
+      item_id: unattributedReopenCreate.item.id,
+      to_status: "planned",
+    });
+    const unattributedReopenResponse = decode<{
+      item: Record<string, unknown>;
+    }>(unattributedReopenResult);
+    const unattributedReopened = store.fetchItem(
+      "tasks",
+      unattributedReopenCreate.item.id,
+    );
+    expect(unattributedReopenResponse).toEqual({
+      item: expectedItemAcknowledgement(unattributedReopened),
+    });
+    expect(Object.hasOwn(unattributedReopenResponse.item, "author")).toBe(
+      false,
+    );
+    expect(Object.hasOwn(unattributedReopenResponse.item, "session")).toBe(
+      false,
+    );
 
     await callTool(tools, "create_milestone", { title: "Unarchive" });
     const attributed = decode<{ item: { id: string } }>(
@@ -663,11 +717,31 @@ describe("ledger MCP tools", () => {
       status: "done",
     });
     await callTool(tools, "update_milestone", { milestone_id: "M1", status: "done" });
-    const ptr = decode<{ pointer: { id: string; path: string } }>(
-      await callTool(tools, "archive_milestone", { milestone_id: "M1", summary: "done!" }),
+    const archiveResult = await callTool(tools, "archive_milestone", {
+      milestone_id: "M1",
+      summary: "done!",
+    });
+    const ptr = decode<{
+      pointer: {
+        id: string;
+        path: string;
+        summary: string;
+        title: string;
+        status: string;
+      };
+    }>(
+      archiveResult,
     );
-    expect(ptr.pointer.id).toBe("M1");
-    expect(ptr.pointer.path).toBe("./archive/milestones/M1.md");
+    expect(ptr).toEqual({
+      pointer: {
+        id: "M1",
+        path: "./archive/milestones/M1.md",
+        summary: "done!",
+        title: "x",
+        status: "done",
+      },
+    });
+    expect(archiveResult.content[0]?.text).toBe(JSON.stringify(ptr));
   });
 
   // D-LED-02 — Zod-layer rejection of invalid schemas at create_ledger.
