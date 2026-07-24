@@ -14,12 +14,15 @@ import type {
   FtsHit,
   Item,
   ItemInit,
+  ItemMutationAckDto,
   ItemPatch,
+  ItemProjection,
   LedgerClient,
   LedgerSchema,
   LedgerSummary,
   ListProjectsResult,
   MilestonePatch,
+  MilestoneMutationAckDto,
   ProjectEntry,
   ReadLogResult,
 } from "../src/types.js";
@@ -40,6 +43,63 @@ function emptyPredicates(): DerivedPredicates {
 }
 
 const TS = "2026-01-01T00:00:00.000Z";
+const COMPACT_FIELDS = new Set([
+  "headline",
+  "title",
+  "question",
+  "summary",
+  "severity",
+  "suggestedModel",
+  "tags",
+  "sourceRefs",
+  "dependsOn",
+  "blockedBy",
+  "ledgerRefs",
+]);
+
+function projectItem(item: Item, projection: ItemProjection): Item {
+  if (projection === "full") return item;
+  return {
+    ...item,
+    fields: Object.fromEntries(
+      Object.entries(item.fields).filter(([name]) => COMPACT_FIELDS.has(name)),
+    ),
+  };
+}
+
+function itemAck(item: Item): ItemMutationAckDto {
+  const fields: ItemMutationAckDto["fields"] = {};
+  if (Array.isArray(item.fields["dependsOn"])) fields.dependsOn = item.fields["dependsOn"];
+  if (Array.isArray(item.fields["blockedBy"])) fields.blockedBy = item.fields["blockedBy"];
+  if (Array.isArray(item.fields["ledgerRefs"])) fields.ledgerRefs = item.fields["ledgerRefs"];
+  const ack: ItemMutationAckDto = {
+    id: item.id,
+    milestoneId: item.milestoneId,
+    status: item.status,
+    fields,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+  if (item.author !== undefined) ack.author = item.author;
+  if (item.session !== undefined) ack.session = item.session;
+  return ack;
+}
+
+function milestoneAck(item: Item): MilestoneMutationAckDto {
+  const fields: MilestoneMutationAckDto["fields"] = {};
+  if (Array.isArray(item.fields["dependsOn"])) fields.dependsOn = item.fields["dependsOn"];
+  if (Array.isArray(item.fields["blockedBy"])) fields.blockedBy = item.fields["blockedBy"];
+  const ack: MilestoneMutationAckDto = {
+    id: item.id,
+    status: item.status,
+    fields,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+  if (item.author !== undefined) ack.author = item.author;
+  if (item.session !== undefined) ack.session = item.session;
+  return ack;
+}
 
 interface Group {
   id: string;
@@ -210,6 +270,24 @@ const MODEL_CONFIGURABLE_ROLE_TIERS: Record<string, "frontier" | "standard" | "f
 
 export class FakeClient implements LedgerClient {
   closed = false;
+  readonly fetchLedgerCalls: Array<{
+    ledgerId: string;
+    projection: ItemProjection;
+  }> = [];
+  readonly fetchItemCalls: Array<{
+    ledgerId: string;
+    itemId: string;
+    projection: ItemProjection;
+  }> = [];
+  readonly ftsSearchCalls: Array<{
+    query: string;
+    projection: ItemProjection;
+    ledger?: string;
+  }> = [];
+  readonly createItemCalls: Array<{ ledgerId: string; milestoneId: string }> = [];
+  readonly updateItemCalls: Array<{ ledgerId: string; itemId: string }> = [];
+  readonly createMilestoneCalls: string[] = [];
+  readonly updateMilestoneCalls: string[] = [];
   /** Per-`<ledger>/<archiveId>` count of fetchLedgerArchive calls (lazy-fetch assertions). */
   readonly archiveFetches: Record<string, number> = {};
   /** `<ledger>/<archiveId>` keys whose fetchLedgerArchive must reject (error-path assertions). */
@@ -402,7 +480,8 @@ export class FakeClient implements LedgerClient {
         itemCount: this.data[name]!.groups.reduce((n, g) => n + g.items.length, 0),
       }));
   }
-  async fetchLedger(ledgerId: string): Promise<FetchedLedger> {
+  async fetchLedger(ledgerId: string, projection: ItemProjection): Promise<FetchedLedger> {
+    this.fetchLedgerCalls.push({ ledgerId, projection });
     const d = this.data[ledgerId];
     if (d === undefined) throw new Error(`Ledger not found: ${ledgerId}`);
     const entries = this.archives[ledgerId] ?? [];
@@ -418,7 +497,7 @@ export class FakeClient implements LedgerClient {
           title: g.id === "active" ? "" : g.id === "M2" ? "Phase Two" : "Bootstrap",
           description: "",
         },
-        items: g.items,
+        items: g.items.map((item) => projectItem(item, projection)),
       })),
       archivePointers: entries.map((e) => e.pointer),
     };
@@ -441,10 +520,12 @@ export class FakeClient implements LedgerClient {
     }
     throw new Error(`Item not found: ${itemId}`);
   }
-  async fetchItem(ledgerId: string, itemId: string): Promise<Item> {
-    return this.find(ledgerId, itemId);
+  async fetchItem(ledgerId: string, itemId: string, projection: ItemProjection): Promise<Item> {
+    this.fetchItemCalls.push({ ledgerId, itemId, projection });
+    return projectItem(this.find(ledgerId, itemId), projection);
   }
-  async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<Item> {
+  async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<ItemMutationAckDto> {
+    this.createItemCalls.push({ ledgerId, milestoneId });
     const d = this.data[ledgerId];
     if (d === undefined) throw new Error(`Ledger not found: ${ledgerId}`);
     if (!d.schema.statusValues.includes(init.status)) throw new Error(`Invalid status "${init.status}"`);
@@ -465,17 +546,29 @@ export class FakeClient implements LedgerClient {
       d.groups.push(group);
     }
     group.items.push(item);
-    return item;
+    return itemAck(item);
   }
-  async updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<Item> {
+  async updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<ItemMutationAckDto> {
+    this.updateItemCalls.push({ ledgerId, itemId });
     const it = this.find(ledgerId, itemId);
     if (patch.status !== undefined) it.status = patch.status;
     if (patch.fields !== undefined) for (const [k, v] of Object.entries(patch.fields)) it.fields[k] = v as FieldValue;
     if (patch.author !== undefined) it.author = patch.author;
     if (patch.session !== undefined) it.session = patch.session;
-    return it;
+    return itemAck(it);
   }
-  async ftsSearch(query: string, opts?: { ledger?: string }): Promise<FtsHit[]> {
+  async ftsSearch(
+    query: string,
+    projection: ItemProjection,
+    opts?: { ledger?: string },
+  ): Promise<FtsHit[]> {
+    const searchCall: {
+      query: string;
+      projection: ItemProjection;
+      ledger?: string;
+    } = { query, projection };
+    if (opts?.ledger !== undefined) searchCall.ledger = opts.ledger;
+    this.ftsSearchCalls.push(searchCall);
     const q = query.toLowerCase();
     const hits: FtsHit[] = [];
     for (const [ledgerId, d] of Object.entries(this.data)) {
@@ -483,12 +576,20 @@ export class FakeClient implements LedgerClient {
       for (const g of d.groups)
         for (const it of g.items) {
           const hay = (it.status + " " + Object.values(it.fields).flat().join(" ")).toLowerCase();
-          if (hay.includes(q)) hits.push({ ledgerId, item: it, score: 1, matchedFields: [] });
+          if (hay.includes(q)) {
+            hits.push({
+              ledgerId,
+              item: projectItem(it, projection),
+              score: 1,
+              matchedFields: [],
+            });
+          }
         }
     }
     return hits;
   }
-  async createMilestone(init: { title: string; description?: string; id?: string }): Promise<Item> {
+  async createMilestone(init: { title: string; description?: string; id?: string }): Promise<MilestoneMutationAckDto> {
+    this.createMilestoneCalls.push(init.title);
     this.msCounter += 1;
     const item: Item = {
       id: init.id ?? `M${this.msCounter}`,
@@ -499,14 +600,15 @@ export class FakeClient implements LedgerClient {
       updatedAt: TS,
     };
     this.data["milestones"]!.groups[0]!.items.push(item);
-    return item;
+    return milestoneAck(item);
   }
-  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
+  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<MilestoneMutationAckDto> {
+    this.updateMilestoneCalls.push(milestoneId);
     const it = this.find("milestones", milestoneId);
     if (patch.status !== undefined) it.status = patch.status;
     if (patch.title !== undefined) it.fields["title"] = patch.title;
     if (patch.description !== undefined) it.fields["description"] = patch.description;
-    return it;
+    return milestoneAck(it);
   }
   async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
     const it = this.find("milestones", milestoneId);

@@ -131,7 +131,7 @@ describe("per-suggestion pick button (T86)", () => {
     // Perform a completed hold on the pick button for the second suggestion ("opt b", index 1).
     await holdFull(testid("answer-pick-suggestion-1"));
 
-    const q2 = await fake.fetchItem("questions", "Q2");
+    const q2 = await fake.fetchItem("questions", "Q2", "full");
     expect(q2.status).toBe("answered");
     expect(q2.fields["answer"]).toBe("opt b");
   });
@@ -145,7 +145,7 @@ describe("per-suggestion pick button (T86)", () => {
 
     await holdFull(testid("answer-pick-suggestion-0"));
 
-    const q2 = await fake.fetchItem("questions", "Q2");
+    const q2 = await fake.fetchItem("questions", "Q2", "full");
     expect(q2.status).toBe("answered");
     expect(q2.fields["answer"]).toBe("opt a");
   });

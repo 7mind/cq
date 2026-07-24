@@ -16,6 +16,7 @@ import { App, clampPanelSize } from "../src/App";
 import { FakeClient } from "./fakeClient";
 import type { HoldClock } from "../src/HoldButton";
 import { HOLD_MS } from "../src/HoldButton";
+import type { ItemProjection } from "../src/types.js";
 
 /**
  * Deterministic fake clock for driving HoldButton in tests.
@@ -252,7 +253,7 @@ describe("ledger-web App", () => {
     expect(testid("answer-box")).not.toBeNull();
     setValue(testid("answer-input"), "ship it");
     await holdFull(testid("answer-submit"));
-    const q = await fake.fetchItem("questions", "Q1");
+    const q = await fake.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("ship it");
   });
@@ -264,7 +265,7 @@ describe("ledger-web App", () => {
     click(testid("item-Q1"));
     await flush();
     await holdFull(testid("answer-as-recommended"));
-    const q = await fake.fetchItem("questions", "Q1");
+    const q = await fake.fetchItem("questions", "Q1", "full");
     expect(q.status).toBe("answered");
     expect(q.fields["answer"]).toBe("as recommended");
   });
@@ -355,6 +356,10 @@ describe("ledger-web App", () => {
     await flush();
     click(testid("item-D1"));
     await flush();
+    expect(fake.fetchLedgerCalls.at(-1)).toEqual({
+      ledgerId: "bugs",
+      projection: "full",
+    });
     expect(testid("detail-id")?.textContent).toBe("D1");
     expect(testid("detail-status")?.textContent).toBe("open");
     // string field values render as markdown ("**intermittent** glitch")
@@ -375,7 +380,15 @@ describe("ledger-web App", () => {
     setValue(testid("edit-status"), "wip");
     setValue(testid("edit-field-headline"), "warp leak fixed");
     await holdFull(testid("save"));
-    const item = await fake.fetchItem("bugs", "D1");
+    expect(fake.updateItemCalls.at(-1)).toEqual({
+      ledgerId: "bugs",
+      itemId: "D1",
+    });
+    expect(fake.fetchLedgerCalls.at(-1)).toEqual({
+      ledgerId: "bugs",
+      projection: "full",
+    });
+    const item = await fake.fetchItem("bugs", "D1", "full");
     expect(item.status).toBe("wip");
     expect(item.fields["headline"]).toBe("warp leak fixed");
     // back in view mode, reflecting the saved values
@@ -399,7 +412,7 @@ describe("ledger-web App", () => {
     expect(testid("transition-open")).toBeNull();
     // Hold "wip": issues the update with the target status, preserving fields.
     await holdFull(testid("transition-wip"));
-    const item = await fake.fetchItem("bugs", "D1");
+    const item = await fake.fetchItem("bugs", "D1", "full");
     expect(item.status).toBe("wip");
     expect(item.fields["headline"]).toBe("warp leak"); // unchanged
     expect(item.author).toBe("user"); // stamped via the existing update path
@@ -441,7 +454,7 @@ describe("ledger-web App", () => {
     click(testid("cancel-edit"));
     await flush();
     expect(testid("edit-form")).toBeNull();
-    expect((await fake.fetchItem("bugs", "D1")).fields["headline"]).toBe("warp leak");
+    expect((await fake.fetchItem("bugs", "D1", "full")).fields["headline"]).toBe("warp leak");
   });
 
   it("creates a milestone in the milestones ledger", async () => {
@@ -453,7 +466,12 @@ describe("ledger-web App", () => {
     setValue(testid("ms-title"), "Phase Two");
     await holdFull(testid("ms-create"));
     expect(testid("flash")?.textContent).toContain("created M2");
-    const ms = await fake.fetchLedger("milestones");
+    expect(fake.createMilestoneCalls.at(-1)).toBe("Phase Two");
+    expect(fake.fetchLedgerCalls.at(-1)).toEqual({
+      ledgerId: "milestones",
+      projection: "full",
+    });
+    const ms = await fake.fetchLedger("milestones", "full");
     const titles = ms.milestones.flatMap((g) => g.items.map((i) => i.fields["title"]));
     expect(titles).toContain("Phase Two");
   });
@@ -470,7 +488,15 @@ describe("ledger-web App", () => {
     expect(testid("detail-id")?.textContent).toBe("new item");
     setValue(testid("edit-field-headline"), "ion drive misalignment");
     await holdFull(testid("save"));
-    const ledger = await fake.fetchLedger("bugs");
+    expect(fake.createItemCalls.at(-1)).toEqual({
+      ledgerId: "bugs",
+      milestoneId: "M1",
+    });
+    expect(fake.fetchLedgerCalls.at(-1)).toEqual({
+      ledgerId: "bugs",
+      projection: "full",
+    });
+    const ledger = await fake.fetchLedger("bugs", "full");
     const headlines = ledger.milestones.flatMap((g) => g.items.map((i) => i.fields["headline"]));
     expect(headlines).toContain("ion drive misalignment");
   });
@@ -485,9 +511,18 @@ describe("ledger-web App", () => {
     });
     expect(testid("search-results")).not.toBeNull();
     expect(testid("hit-D1")).not.toBeNull();
+    expect(fake.ftsSearchCalls.at(-1)).toEqual({
+      query: "warp",
+      projection: "compact",
+    });
     click(testid("hit-D1"));
     await flush();
+    expect(fake.fetchLedgerCalls.at(-1)).toEqual({
+      ledgerId: "bugs",
+      projection: "full",
+    });
     expect(testid("detail-id")?.textContent).toBe("D1");
+    expect(testid("detail-field-note")?.textContent).toContain("intermittent");
   });
 
   it("clears search results when the box is emptied", async () => {
@@ -956,7 +991,7 @@ describe("ledger-web App", () => {
     setValue(testid("edit-status"), "wip");
     setValue(testid("edit-field-headline"), "warp leak [T34 regression]");
     await holdFull(testid("save"));
-    const item = await fake.fetchItem("bugs", "D1");
+    const item = await fake.fetchItem("bugs", "D1", "full");
     expect(item.status).toBe("wip");
     expect(item.fields["headline"]).toBe("warp leak [T34 regression]");
     expect(testid("edit-form")).toBeNull(); // back to view mode
@@ -964,7 +999,7 @@ describe("ledger-web App", () => {
     // (6) Quick-transition from the new status still works (wip → closed/open).
     expect(testid("transitions")).not.toBeNull();
     await holdFull(testid("transition-closed"));
-    const closed = await fake.fetchItem("bugs", "D1");
+    const closed = await fake.fetchItem("bugs", "D1", "full");
     expect(closed.status).toBe("closed");
   });
 
@@ -1016,8 +1051,8 @@ describe("ledger-web App", () => {
     // The FakeClient's fetchLedger method constructs the resolved milestone with
     // status: "open". Inject a custom fetchLedger that returns "done" for M1.
     const origFetch = fake.fetchLedger.bind(fake);
-    fake.fetchLedger = async (id: string) => {
-      const v = await origFetch(id);
+    fake.fetchLedger = async (id: string, projection: ItemProjection) => {
+      const v = await origFetch(id, projection);
       if (id === "bugs") {
         return {
           ...v,
@@ -1110,8 +1145,8 @@ describe("ledger-web App", () => {
     // Inject an archive pointer with an empty status string to simulate a legacy
     // pointer (T91 added `""` as the backward-compat default for pre-T91 files).
     const origFetch = fake.fetchLedger.bind(fake);
-    fake.fetchLedger = async (id: string) => {
-      const v = await origFetch(id);
+    fake.fetchLedger = async (id: string, projection: ItemProjection) => {
+      const v = await origFetch(id, projection);
       if (id === "bugs") {
         return {
           ...v,
@@ -1350,7 +1385,7 @@ describe("ledger-web keyboard navigation", () => {
     await flush();
     setValue(testid("batch-answer-input"), "ship it");
     await holdFull(testid("batch-answer-submit"));
-    const q1 = await fake.fetchItem("questions", "Q1");
+    const q1 = await fake.fetchItem("questions", "Q1", "full");
     expect(q1.status).toBe("answered");
     expect(q1.fields["answer"]).toBe("ship it");
     // Advanced to the next open question.
@@ -1362,7 +1397,7 @@ describe("ledger-web keyboard navigation", () => {
     click(testid("batch-open"));
     await flush();
     await holdFull(testid("batch-answer-as-recommended"));
-    const q1 = await fake.fetchItem("questions", "Q1");
+    const q1 = await fake.fetchItem("questions", "Q1", "full");
     expect(q1.status).toBe("answered");
     expect(q1.fields["answer"]).toBe("as recommended");
   });

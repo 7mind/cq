@@ -22,12 +22,15 @@ import type {
   FetchedLedger,
   FtsHit,
   Item,
+  ItemMutationAckDto,
   ItemPatch,
+  ItemProjection,
   LedgerClient,
   LedgerSchema,
   LedgerSummary,
   ListProjectsResult,
   MilestonePatch,
+  MilestoneMutationAckDto,
   ReadLogResult,
 } from "../src/types.js";
 
@@ -98,7 +101,7 @@ class IdeasClient implements LedgerClient {
       { name: "goals", itemCount: 1 },
     ];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: ItemProjection): Promise<FetchedLedger> {
     if (id === "ideas") {
       return {
         id: "ideas",
@@ -158,22 +161,22 @@ class IdeasClient implements LedgerClient {
     throw new Error(`Ledger not found: ${id}`);
   }
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
-  async fetchItem(): Promise<Item> { throw new Error("not used"); }
-  async createItem(): Promise<Item> { throw new Error("not used"); }
-  async updateItem(ledger: string, id: string, patch: ItemPatch): Promise<Item> {
+  async fetchItem(_ledger: string, _id: string, _projection: ItemProjection): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<ItemMutationAckDto> { throw new Error("not used"); }
+  async updateItem(ledger: string, id: string, patch: ItemPatch): Promise<ItemMutationAckDto> {
     this.updateItemCalls.push({ ledger, id, patch });
     return {
       id,
       milestoneId: "M-AMBIENT",
       status: patch.status ?? "open",
-      fields: patch.fields ?? {},
+      fields: {},
       createdAt: TS,
       updatedAt: TS,
     };
   }
-  async ftsSearch(): Promise<FtsHit[]> { return []; }
-  async createMilestone(): Promise<Item> { throw new Error("not used"); }
-  async updateMilestone(_m: string, _p: MilestonePatch): Promise<Item> { throw new Error("not used"); }
+  async ftsSearch(_query: string, _projection: ItemProjection): Promise<FtsHit[]> { return []; }
+  async createMilestone(): Promise<MilestoneMutationAckDto> { throw new Error("not used"); }
+  async updateMilestone(_m: string, _p: MilestonePatch): Promise<MilestoneMutationAckDto> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
   async readLog(): Promise<ReadLogResult> { throw new Error("not used"); }
   async getAgentModels(): Promise<AgentModelsResult> { return { configured: false, agents: [] }; }

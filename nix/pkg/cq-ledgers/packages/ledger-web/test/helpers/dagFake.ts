@@ -12,10 +12,13 @@ import type {
   DerivedPredicates,
   FetchedLedger,
   Item,
+  ItemMutationAckDto,
+  ItemProjection,
   LedgerClient,
   LedgerSchema,
   LedgerSummary,
   ListProjectsResult,
+  MilestoneMutationAckDto,
   ReadLogResult,
 } from "../../src/types.js";
 
@@ -55,6 +58,10 @@ function bug(id: string, milestoneId: string): Item {
 
 export class DagFakeClient implements LedgerClient {
   updatedMilestones: Array<{ id: string; status: string | undefined }> = [];
+  readonly fetchLedgerCalls: Array<{
+    ledgerId: string;
+    projection: ItemProjection;
+  }> = [];
 
   /**
    * @param prefixed  When true, every `dependsOn`/`blockedBy` entry is
@@ -75,7 +82,8 @@ export class DagFakeClient implements LedgerClient {
     ];
   }
 
-  async fetchLedger(ledgerId: string): Promise<FetchedLedger> {
+  async fetchLedger(ledgerId: string, _projection: ItemProjection): Promise<FetchedLedger> {
+    this.fetchLedgerCalls.push({ ledgerId, projection: _projection });
     if (ledgerId === "milestones") {
       const ref = (id: string): string => (this.prefixed ? `milestones:${id}` : id);
       return {
@@ -124,29 +132,38 @@ export class DagFakeClient implements LedgerClient {
     throw new Error(`Ledger not found: ${ledgerId}`);
   }
 
-  async updateMilestone(milestoneId: string, patch: { status?: string }): Promise<Item> {
+  async updateMilestone(milestoneId: string, patch: { status?: string }): Promise<MilestoneMutationAckDto> {
     this.updatedMilestones.push({ id: milestoneId, status: patch.status });
-    const ms = await this.fetchLedger("milestones");
+    const ms = await this.fetchLedger("milestones", "compact");
     const it = ms.milestones[0]!.items.find((i) => i.id === milestoneId)!;
-    return { ...it, status: patch.status ?? it.status };
+    return {
+      id: it.id,
+      status: patch.status ?? it.status,
+      fields: {
+        ...(Array.isArray(it.fields["dependsOn"]) ? { dependsOn: it.fields["dependsOn"] } : {}),
+        ...(Array.isArray(it.fields["blockedBy"]) ? { blockedBy: it.fields["blockedBy"] } : {}),
+      },
+      createdAt: it.createdAt,
+      updatedAt: it.updatedAt,
+    };
   }
 
   async fetchLedgerArchive(): Promise<never> {
     throw new Error("not used in DAG tests");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledger: string, _id: string, _projection: ItemProjection): Promise<Item> {
     throw new Error("not used in DAG tests");
   }
-  async createItem(): Promise<Item> {
+  async createItem(): Promise<ItemMutationAckDto> {
     throw new Error("not used in DAG tests");
   }
-  async updateItem(): Promise<Item> {
+  async updateItem(): Promise<ItemMutationAckDto> {
     throw new Error("not used in DAG tests");
   }
-  async ftsSearch(): Promise<never[]> {
+  async ftsSearch(_query: string, _projection: ItemProjection): Promise<never[]> {
     return [];
   }
-  async createMilestone(): Promise<Item> {
+  async createMilestone(): Promise<MilestoneMutationAckDto> {
     throw new Error("not used in DAG tests");
   }
   async archiveMilestone(): Promise<ArchivePointer> {

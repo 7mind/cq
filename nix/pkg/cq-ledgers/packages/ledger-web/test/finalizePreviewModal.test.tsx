@@ -42,12 +42,15 @@ import type {
   FetchedLedger,
   FtsHit,
   Item,
+  ItemMutationAckDto,
   ItemPatch,
+  ItemProjection,
   LedgerClient,
   LedgerSchema,
   LedgerSummary,
   ListProjectsResult,
   MilestonePatch,
+  MilestoneMutationAckDto,
   ReadLogResult,
 } from "../src/types.js";
 
@@ -148,7 +151,7 @@ class FinalizeClient implements LedgerClient {
       { name: "tasks", itemCount: 3 },
     ];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: ItemProjection): Promise<FetchedLedger> {
     if (id === "milestones") {
       const items = this.longArchiveList
         ? [
@@ -230,22 +233,35 @@ class FinalizeClient implements LedgerClient {
     throw new Error(`Ledger not found: ${id}`);
   }
   async fetchLedgerArchive(): Promise<ArchiveContent> { throw new Error("not used"); }
-  async fetchItem(): Promise<Item> { throw new Error("not used"); }
-  async createItem(): Promise<Item> { throw new Error("not used"); }
-  async updateItem(ledger: string, id: string, patch: ItemPatch): Promise<Item> {
+  async fetchItem(_ledger: string, _id: string, _projection: ItemProjection): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<ItemMutationAckDto> { throw new Error("not used"); }
+  async updateItem(ledger: string, id: string, patch: ItemPatch): Promise<ItemMutationAckDto> {
     this.calls.push({ op: "updateItem", ledger, id, status: patch.status });
     if (this.failUpdateItemIds.has(id)) throw new Error(`${id} refused`);
-    return item(id, "active", patch.status ?? "open", patch.fields ?? {});
+    return {
+      id,
+      milestoneId: "active",
+      status: patch.status ?? "open",
+      fields: {},
+      createdAt: TS,
+      updatedAt: TS,
+    };
   }
-  async ftsSearch(): Promise<FtsHit[]> { return []; }
-  async createMilestone(): Promise<Item> { throw new Error("not used"); }
+  async ftsSearch(_query: string, _projection: ItemProjection): Promise<FtsHit[]> { return []; }
+  async createMilestone(): Promise<MilestoneMutationAckDto> { throw new Error("not used"); }
   async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
     this.calls.push({ op: "archiveMilestone", milestoneId, summary });
     return { id: milestoneId, path: `./archive/milestones/${milestoneId}.md`, summary, title: milestoneId, status: "done" };
   }
-  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
+  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<MilestoneMutationAckDto> {
     this.calls.push({ op: "updateMilestone", milestoneId, status: patch.status });
-    return item(milestoneId, "active", patch.status ?? "open", {});
+    return {
+      id: milestoneId,
+      status: patch.status ?? "open",
+      fields: {},
+      createdAt: TS,
+      updatedAt: TS,
+    };
   }
   async readLog(): Promise<ReadLogResult> { throw new Error("not used"); }
   async getAgentModels(): Promise<AgentModelsResult> { return { configured: false, agents: [] }; }
@@ -273,8 +289,8 @@ class DeferredFinalizeClient extends FinalizeClient {
       release();
     }
   }
-  override async fetchLedger(id: string): Promise<FetchedLedger> {
-    const base = await super.fetchLedger(id);
+  override async fetchLedger(id: string, projection: ItemProjection): Promise<FetchedLedger> {
+    const base = await super.fetchLedger(id, projection);
     const view =
       this.msId === "M1"
         ? base

@@ -147,7 +147,7 @@ describe("batch modal per-suggestion pick buttons (D18 / T114)", () => {
     await holdFull(testid("batch-pick-suggestion-1"));
 
     // batchSave calls updateItem with ANSWERED_STATUS and the suggestion as the answer.
-    const q2 = await fake.fetchItem("questions", "Q2");
+    const q2 = await fake.fetchItem("questions", "Q2", "full");
     expect(q2.status).toBe("answered");
     expect(q2.fields["answer"]).toBe("opt b");
   });
@@ -158,7 +158,7 @@ describe("batch modal per-suggestion pick buttons (D18 / T114)", () => {
 
     await holdFull(testid("batch-pick-suggestion-0"));
 
-    const q2 = await fake.fetchItem("questions", "Q2");
+    const q2 = await fake.fetchItem("questions", "Q2", "full");
     expect(q2.status).toBe("answered");
     expect(q2.fields["answer"]).toBe("opt a");
   });
@@ -251,7 +251,7 @@ describe("batch modal per-suggestion pick buttons (D18 / T114)", () => {
     // Pick suggestion at index 2 ('opt c').
     await holdFull(testid("batch-pick-suggestion-2"));
 
-    const q2 = await fake.fetchItem("questions", "Q2");
+    const q2 = await fake.fetchItem("questions", "Q2", "full");
     // batchSave sets status to answered (ANSWERED_STATUS) — confirms the batch save path was used.
     expect(q2.status).toBe("answered");
     expect(q2.fields["answer"]).toBe("opt c");

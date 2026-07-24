@@ -28,12 +28,15 @@ import type {
   FtsHit,
   Item,
   ItemInit,
+  ItemMutationAckDto,
   ItemPatch,
+  ItemProjection,
   LedgerClient,
   LedgerSchema,
   LedgerSummary,
   ListProjectsResult,
   MilestonePatch,
+  MilestoneMutationAckDto,
   ReadLogResult,
 } from "../src/types.js";
 
@@ -71,7 +74,7 @@ class GoalsClient implements LedgerClient {
       { name: "tasks", itemCount: 1 },
     ];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: ItemProjection): Promise<FetchedLedger> {
     if (id === "goals") {
       return {
         id: "goals",
@@ -118,22 +121,22 @@ class GoalsClient implements LedgerClient {
   async fetchLedgerArchive(): Promise<ArchiveContent> {
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> {
+  async fetchItem(_ledger: string, _id: string, _projection: ItemProjection): Promise<Item> {
     throw new Error("not used");
   }
-  async createItem(_l: string, _m: string, _i: ItemInit): Promise<Item> {
+  async createItem(_l: string, _m: string, _i: ItemInit): Promise<ItemMutationAckDto> {
     throw new Error("not used");
   }
-  async updateItem(_l: string, _i: string, _p: ItemPatch): Promise<Item> {
+  async updateItem(_l: string, _i: string, _p: ItemPatch): Promise<ItemMutationAckDto> {
     throw new Error("not used");
   }
-  async ftsSearch(): Promise<FtsHit[]> {
+  async ftsSearch(_query: string, _projection: ItemProjection): Promise<FtsHit[]> {
     return [];
   }
-  async createMilestone(): Promise<Item> {
+  async createMilestone(): Promise<MilestoneMutationAckDto> {
     throw new Error("not used");
   }
-  async updateMilestone(_m: string, _p: MilestonePatch): Promise<Item> {
+  async updateMilestone(_m: string, _p: MilestonePatch): Promise<MilestoneMutationAckDto> {
     throw new Error("not used");
   }
   async archiveMilestone(): Promise<ArchivePointer> {

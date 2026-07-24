@@ -18,13 +18,16 @@ import type {
   ListProjectsResult,
   ProjectEntry,
   ArchivePointer,
+  ItemMutationAckDto,
+  ItemProjection,
+  MilestoneMutationAckDto,
   DerivedPredicates,
   PredicateVerdict,
   FetchPromptResult,
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
 
-export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus, ListProjectsResult, ProjectEntry, ArchivePointer, DerivedPredicates, PredicateVerdict, FetchPromptResult };
+export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus, ListProjectsResult, ProjectEntry, ArchivePointer, ItemMutationAckDto, ItemProjection, MilestoneMutationAckDto, DerivedPredicates, PredicateVerdict, FetchPromptResult };
 
 export interface FtsHit {
   ledgerId: string;
@@ -83,16 +86,16 @@ export interface LedgerClient {
    */
   displayName(): string;
   enumerateLedgers(): Promise<LedgerSummary[]>;
-  fetchLedger(ledgerId: string): Promise<FetchedLedger>;
+  fetchLedger(ledgerId: string, projection: ItemProjection): Promise<FetchedLedger>;
   fetchLedgerArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent>;
-  fetchItem(ledgerId: string, itemId: string): Promise<Item>;
+  fetchItem(ledgerId: string, itemId: string, projection: ItemProjection): Promise<Item>;
   /** Additive typed prompt metadata; optional so pre-catalog UI test fakes remain valid. */
   fetchPromptResult?(roleId: string): Promise<FetchPromptResult>;
-  createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<Item>;
-  updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<Item>;
-  ftsSearch(query: string, opts?: { ledger?: string }): Promise<FtsHit[]>;
-  createMilestone(init: { title: string; description?: string; id?: string }): Promise<Item>;
-  updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item>;
+  createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<ItemMutationAckDto>;
+  updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<ItemMutationAckDto>;
+  ftsSearch(query: string, projection: ItemProjection, opts?: { ledger?: string }): Promise<FtsHit[]>;
+  createMilestone(init: { title: string; description?: string; id?: string }): Promise<MilestoneMutationAckDto>;
+  updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<MilestoneMutationAckDto>;
   /**
    * Archive a milestone globally (archive_milestone MCP tool): sweeps every
    * ledger's group with this id, then the milestone-item itself, into

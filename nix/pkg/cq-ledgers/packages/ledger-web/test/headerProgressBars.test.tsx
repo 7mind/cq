@@ -23,11 +23,14 @@ import type {
   FtsHit,
   Item,
   ItemInit,
+  ItemMutationAckDto,
   ItemPatch,
+  ItemProjection,
   LedgerClient,
   LedgerSummary,
   ListProjectsResult,
   MilestonePatch,
+  MilestoneMutationAckDto,
   ReadLogResult,
 } from "../src/types.js";
 
@@ -144,28 +147,32 @@ class ProgressFakeClient implements LedgerClient {
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  async fetchLedger(id: string): Promise<FetchedLedger> {
-    return this.base.fetchLedger(id);
+  async fetchLedger(id: string, projection: ItemProjection): Promise<FetchedLedger> {
+    return this.base.fetchLedger(id, projection);
   }
   async fetchLedgerArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
     return this.base.fetchLedgerArchive(ledgerId, archiveId);
   }
-  async fetchItem(ledgerId: string, itemId: string): Promise<Item> {
-    return this.base.fetchItem(ledgerId, itemId);
+  async fetchItem(ledgerId: string, itemId: string, projection: ItemProjection): Promise<Item> {
+    return this.base.fetchItem(ledgerId, itemId, projection);
   }
-  async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<Item> {
+  async createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<ItemMutationAckDto> {
     return this.base.createItem(ledgerId, milestoneId, init);
   }
-  async updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<Item> {
+  async updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<ItemMutationAckDto> {
     return this.base.updateItem(ledgerId, itemId, patch);
   }
-  async ftsSearch(query: string, opts?: { ledger?: string }): Promise<FtsHit[]> {
-    return this.base.ftsSearch(query, opts);
+  async ftsSearch(
+    query: string,
+    projection: ItemProjection,
+    opts?: { ledger?: string },
+  ): Promise<FtsHit[]> {
+    return this.base.ftsSearch(query, projection, opts);
   }
-  async createMilestone(init: { title: string; description?: string; id?: string }): Promise<Item> {
+  async createMilestone(init: { title: string; description?: string; id?: string }): Promise<MilestoneMutationAckDto> {
     return this.base.createMilestone(init);
   }
-  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
+  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<MilestoneMutationAckDto> {
     return this.base.updateMilestone(milestoneId, patch);
   }
   async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {

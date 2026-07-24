@@ -666,7 +666,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         // ledger, re-select the saved item, and re-enter graph mode if it was
         // active. Silently skipped when the saved ledger/item no longer exists.
         if (saved.ledger !== null && ls.some((l) => l.name === saved.ledger)) {
-          const v = await c.fetchLedger(saved.ledger);
+          const v = await c.fetchLedger(saved.ledger, "full");
           if (!alive) {
             await c.close();
             return;
@@ -758,7 +758,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     async (name: string) => {
       if (client === null) return;
       try {
-        const v = await client.fetchLedger(name);
+        const v = await client.fetchLedger(name, "full");
         setLedger(name);
         setView(v);
         setSelected(null);
@@ -782,7 +782,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   const reload = useCallback(async () => {
     if (client === null || ledger === null) return;
     try {
-      const v = await client.fetchLedger(ledger);
+      const v = await client.fetchLedger(ledger, "full");
       setView(v);
       setSelected((cur) => {
         if (cur === null) return null;
@@ -811,7 +811,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
       try {
         const names = new Set<string>((await client.enumerateLedgers()).map((l) => l.name));
         names.add(MILESTONES);
-        const views = await Promise.all([...names].map((n) => client.fetchLedger(n)));
+        const views = await Promise.all([...names].map((n) => client.fetchLedger(n, "full")));
         const snapshot = buildFinalizeSnapshot(views);
         if (mode === "goals") {
           const plan = computeGoalsFinalizePlan(snapshot);
@@ -937,7 +937,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   const openBatch = useCallback(async () => {
     if (client === null) return;
     try {
-      const v = await client.fetchLedger(QUESTIONS_LEDGER);
+      const v = await client.fetchLedger(QUESTIONS_LEDGER, "full");
       const open: Row[] = [];
       for (const g of v.milestones)
         for (const it of g.items)
@@ -995,7 +995,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         return;
       }
       try {
-        const r = await client.ftsSearch(query);
+        const r = await client.ftsSearch(query, "compact");
         setHits(r);
         setSelected(null);
         setFlash(`${r.length} hit(s) for "${query}"`);
@@ -1010,11 +1010,16 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     async (hit: FtsHit) => {
       if (client === null) return;
       try {
-        const v = await client.fetchLedger(hit.ledgerId);
+        const v = await client.fetchLedger(hit.ledgerId, "full");
         setLedger(hit.ledgerId);
         setView(v);
         setHits(null);
-        setSelected({ item: hit.item, milestoneId: hit.item.milestoneId });
+        setSelected(null);
+        for (const group of v.milestones)
+          for (const item of group.items)
+            if (item.id === hit.item.id) {
+              setSelected({ item, milestoneId: group.id });
+            }
         setNavZone("main"); // opening a hit lands in the item/detail zone
 
       } catch (e) {
@@ -1029,7 +1034,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     if (client === null) return;
     const target = ledger ?? MILESTONES;
     try {
-      const v = await client.fetchLedger(target);
+      const v = await client.fetchLedger(target, "full");
       setLedger(target);
       setView(v);
       setSelected(null);
@@ -1062,7 +1067,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     async (targetLedger: string, itemId: string) => {
       if (client === null) return;
       try {
-        const v = await client.fetchLedger(targetLedger);
+        const v = await client.fetchLedger(targetLedger, "full");
         setLedger(targetLedger);
         setView(v);
         setHits(null);
@@ -1158,7 +1163,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   useEffect(() => {
     if (creating !== "item" || client === null) return;
     let alive = true;
-    void client.fetchLedger(MILESTONES).then((ms) => {
+    void client.fetchLedger(MILESTONES, "compact").then((ms) => {
       if (alive) setDraftMilestones(ms.milestones.flatMap((g) => g.items));
     });
     return () => {
@@ -1172,7 +1177,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     if (client === null || ledger !== DEFECTS_LEDGER || selected === null) return;
     if (auxItems[TASKS_LEDGER] !== undefined) return; // already cached
     let alive = true;
-    void client.fetchLedger(TASKS_LEDGER).then((v) => {
+    void client.fetchLedger(TASKS_LEDGER, "full").then((v) => {
       if (alive) {
         const items = v.milestones.flatMap((g) => g.items);
         setAuxItems((prev) => ({ ...prev, [TASKS_LEDGER]: items }));
@@ -1189,7 +1194,7 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
     if (client === null || ledger !== RESEARCHES_LEDGER || selected === null) return;
     if (auxItems[HYPOTHESIS_LEDGER] !== undefined) return; // already cached
     let alive = true;
-    void client.fetchLedger(HYPOTHESIS_LEDGER).then((v) => {
+    void client.fetchLedger(HYPOTHESIS_LEDGER, "full").then((v) => {
       if (alive) {
         const items = v.milestones.flatMap((g) => g.items);
         setAuxItems((prev) => ({ ...prev, [HYPOTHESIS_LEDGER]: items }));
@@ -2508,7 +2513,10 @@ function HelpOverlay({
       try {
         const summaries = await client.enumerateLedgers();
         const fetched = await Promise.all(
-          summaries.map(async (s) => ({ ledger: s.name, schema: (await client.fetchLedger(s.name)).schema })),
+          summaries.map(async (s) => ({
+            ledger: s.name,
+            schema: (await client.fetchLedger(s.name, "compact")).schema,
+          })),
         );
         if (!cancelled) setSchemas(fetched);
       } catch (e) {

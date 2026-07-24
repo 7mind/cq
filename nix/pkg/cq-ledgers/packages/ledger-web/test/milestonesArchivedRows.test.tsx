@@ -15,6 +15,7 @@ import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "../src/App";
 import { FakeClient } from "./fakeClient";
+import type { ItemProjection } from "../src/types.js";
 
 let container: HTMLElement;
 let root: Root;
@@ -146,8 +147,8 @@ describe("D12: archived milestones as rows in milestones-ledger ItemTable", () =
     await mount();
 
     const origFetch = fake.fetchLedger.bind(fake);
-    fake.fetchLedger = async (id: string) => {
-      const v = await origFetch(id);
+    fake.fetchLedger = async (id: string, projection: ItemProjection) => {
+      const v = await origFetch(id, projection);
       if (id === "milestones") {
         return {
           ...v,

@@ -104,7 +104,7 @@ describe("State-machines tab (elk migration, T203)", () => {
       expect(svgs).toHaveLength(1);
 
       // Every status of the schema renders a node + rect under the scheme.
-      const { schema } = await fake.fetchLedger(name);
+      const { schema } = await fake.fetchLedger(name, "compact");
       for (const status of schema.statusValues) {
         expect(testid(`help-item-state-${name}-node-${status}`)).not.toBeNull();
         expect(testid(`help-item-state-${name}-rect-${status}`)).not.toBeNull();

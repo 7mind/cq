@@ -34,10 +34,13 @@ import type {
   FetchedLedger,
   FtsHit,
   Item,
+  ItemMutationAckDto,
   ItemPatch,
+  ItemProjection,
   LedgerClient,
   ListProjectsResult,
   MilestonePatch,
+  MilestoneMutationAckDto,
   ReadLogResult,
 } from "../src/types.js";
 
@@ -91,7 +94,7 @@ class MilestonesClient implements LedgerClient {
   async enumerateLedgers(): Promise<Array<{ name: string; itemCount: number }>> {
     return [{ name: "milestones", itemCount: 2 }];
   }
-  async fetchLedger(id: string): Promise<FetchedLedger> {
+  async fetchLedger(id: string, _projection: ItemProjection): Promise<FetchedLedger> {
     if (id !== "milestones") throw new Error(`Ledger not found: ${id}`);
     return {
       id: "milestones",
@@ -149,20 +152,19 @@ class MilestonesClient implements LedgerClient {
     }
     throw new Error("not used");
   }
-  async fetchItem(): Promise<Item> { throw new Error("not used"); }
-  async createItem(): Promise<Item> { throw new Error("not used"); }
-  async updateItem(ledger: string, id: string, patch: ItemPatch): Promise<Item> {
+  async fetchItem(_ledger: string, _id: string, _projection: ItemProjection): Promise<Item> { throw new Error("not used"); }
+  async createItem(): Promise<ItemMutationAckDto> { throw new Error("not used"); }
+  async updateItem(ledger: string, id: string, patch: ItemPatch): Promise<ItemMutationAckDto> {
     this.updateItemCalls.push({ ledger, id, patch });
-    return { id, milestoneId: "active", status: patch.status ?? "open", fields: patch.fields ?? {}, createdAt: TS, updatedAt: TS };
+    return { id, milestoneId: "active", status: patch.status ?? "open", fields: {}, createdAt: TS, updatedAt: TS };
   }
-  async ftsSearch(): Promise<FtsHit[]> { return []; }
-  async createMilestone(): Promise<Item> { throw new Error("not used"); }
+  async ftsSearch(_query: string, _projection: ItemProjection): Promise<FtsHit[]> { return []; }
+  async createMilestone(): Promise<MilestoneMutationAckDto> { throw new Error("not used"); }
   async archiveMilestone(): Promise<ArchivePointer> { throw new Error("not used"); }
-  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<Item> {
+  async updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<MilestoneMutationAckDto> {
     this.updateMilestoneCalls.push({ milestoneId, patch });
     return {
       id: milestoneId,
-      milestoneId: "active",
       status: patch.status ?? "open",
       fields: {},
       createdAt: TS,

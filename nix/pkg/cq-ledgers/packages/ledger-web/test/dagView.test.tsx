@@ -112,18 +112,29 @@ describe("DagView", () => {
 });
 
 describe("App DAG integration", () => {
-  async function mount(): Promise<void> {
+  async function mount(): Promise<DagFakeClient> {
     const fake = new DagFakeClient();
     await act(async () => {
       root.render(createElement(App, { connect: async () => fake, initialUrl: "http://x/mcp" }));
     });
     await flush();
+    return fake;
   }
 
   it("toggles to the graph (milestones by default) and opens a node into detail", async () => {
-    await mount();
+    const fake = await mount();
     click(testid("toggle-dag"));
     await flush();
+    expect(
+      fake.fetchLedgerCalls.filter(({ ledgerId }) => ledgerId === "milestones"),
+    ).toEqual([
+      { ledgerId: "milestones", projection: "full" },
+      { ledgerId: "milestones", projection: "compact" },
+    ]);
+    expect(fake.fetchLedgerCalls).toContainEqual({
+      ledgerId: "bugs",
+      projection: "compact",
+    });
     expect(testid("dag-svg")).not.toBeNull();
     expect(testid("dag-node-M3")).not.toBeNull();
 
@@ -134,12 +145,18 @@ describe("App DAG integration", () => {
   });
 
   it("scopes the graph to the selected ledger", async () => {
-    await mount();
+    const fake = await mount();
     // select the bugs ledger, then switch to the graph
     click(testid("ledger-bugs"));
     await flush();
     click(testid("toggle-dag"));
     await flush();
+    expect(
+      fake.fetchLedgerCalls.filter(({ ledgerId }) => ledgerId === "bugs").slice(-2),
+    ).toEqual([
+      { ledgerId: "bugs", projection: "full" },
+      { ledgerId: "bugs", projection: "compact" },
+    ]);
     // bugs items are the nodes now — not milestones
     expect(testid("dag-node-D1")).not.toBeNull();
     expect(testid("dag-node-D2")).not.toBeNull();

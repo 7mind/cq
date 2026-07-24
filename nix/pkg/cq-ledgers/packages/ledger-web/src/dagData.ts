@@ -71,7 +71,7 @@ function titleOf(fields: Record<string, FieldValue>): string {
 }
 
 export async function loadDagData(client: LedgerClient, ledgerId: string): Promise<DagData> {
-  const view = await client.fetchLedger(ledgerId);
+  const view = await client.fetchLedger(ledgerId, "compact");
   const rows = view.milestones.flatMap((g) => g.items.map((item) => ({ item, milestoneId: g.id })));
   const ids = new Set(rows.map((r) => r.item.id));
 
@@ -91,7 +91,7 @@ export async function loadDagData(client: LedgerClient, ledgerId: string): Promi
     const others = (await client.enumerateLedgers())
       .map((l) => l.name)
       .filter((n) => n !== MILESTONES);
-    const views = await Promise.all(others.map((n) => client.fetchLedger(n)));
+    const views = await Promise.all(others.map((n) => client.fetchLedger(n, "compact")));
     for (const v of views) {
       for (const g of v.milestones) refCounts.set(g.id, (refCounts.get(g.id) ?? 0) + g.items.length);
     }

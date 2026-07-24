@@ -28,7 +28,7 @@ import { createElement, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "../src/App";
 import { FakeClient } from "./fakeClient";
-import type { FetchedLedger, LedgerSummary } from "../src/types.js";
+import type { FetchedLedger, ItemProjection, LedgerSummary } from "../src/types.js";
 
 const GOALS_TS = "2026-01-01T00:00:00.000Z";
 
@@ -43,8 +43,8 @@ class FakeClientWithGoals extends FakeClient {
     const base = await super.enumerateLedgers();
     return [...base, { name: "goals", itemCount: 1 }].sort((a, b) => a.name.localeCompare(b.name));
   }
-  override async fetchLedger(ledgerId: string): Promise<FetchedLedger> {
-    if (ledgerId !== "goals") return super.fetchLedger(ledgerId);
+  override async fetchLedger(ledgerId: string, projection: ItemProjection): Promise<FetchedLedger> {
+    if (ledgerId !== "goals") return super.fetchLedger(ledgerId, projection);
     return {
       id: "goals",
       schema: {
