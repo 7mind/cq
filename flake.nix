@@ -58,6 +58,11 @@
         promptCatalogTest = import ./nix/lib/prompt-catalog-test.nix {
           lib = pkgs.lib;
         };
+        claudePromptRoot = import ./nix/pkg/cq-assets/render-prompt-surface.nix {
+          inherit pkgs;
+          lib = pkgs.lib;
+          surface = "claude";
+        };
 
         # Fixed-output derivation: fetches all npm dependencies via
         # `bun install --frozen-lockfile`. Nix allows network access inside
@@ -434,6 +439,7 @@
           claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
           codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
+          claude-prompt-root = claudePromptRoot;
           # CodeGraph — vendored from its `main` source (flake = false input),
           # built with our nixpkgs. platforms.unix -> builds on linux + darwin.
           codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix {
@@ -527,6 +533,17 @@
             prompt-catalog =
               assert promptCatalogTest;
               pkgs.runCommand "prompt-catalog" { } "touch $out";
+            claude-prompt-root = pkgs.runCommand "claude-prompt-root-check" { } ''
+              test "$(find ${claudePromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
+              test -f ${claudePromptRoot}/roles/begin.md
+              cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
+                ${claudePromptRoot}/catalog.json
+              if ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS' ${claudePromptRoot}; then
+                echo "packaged Claude prompt root contains an unresolved renderer token" >&2
+                exit 1
+              fi
+              touch "$out"
+            '';
           }
           // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             # Boot a NixOS VM with services.cq-server enabled and prove the hub
