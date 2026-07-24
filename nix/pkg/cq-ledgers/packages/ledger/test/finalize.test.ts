@@ -27,8 +27,10 @@ import {
   buildFinalizeSnapshot,
   computeApplyDonePlan,
   computeArchivePlan,
+  computeGoalsFinalizePlan,
   runApplyDone,
   runArchive,
+  runGoalsFinalize,
   SKIP_AMBIENT_GROUP,
   SKIP_EMPTY_MILESTONE,
   SKIP_INCOMPLETE_MILESTONE,
@@ -127,6 +129,55 @@ function fixture(): FinalizeSnapshot {
     ],
   });
   return buildFinalizeSnapshot([milestones, tasks, defects, questions, goals]);
+}
+
+/**
+ * Goals-scope parity fixture (T648). It deliberately combines every edge the
+ * TUI and web dummies must present identically: planned/building goals,
+ * archived and shared work, shared coordination, an explicit opt-out, an
+ * incomplete goal, and an independent branch.
+ */
+function goalsScopeFixture(): FinalizeSnapshot {
+  const milestones = makeView(MILESTONES_LEDGER, MILESTONES_SCHEMA, {
+    active: [
+      makeItem("W-PLAN", "open", { title: "Planned work" }),
+      makeItem("W-SHARED", "open", { title: "Shared work" }),
+      makeItem("W-BUILD", "done", { title: "Built work" }),
+      makeItem("W-INCOMPLETE", "open", { title: "Incomplete work" }),
+      makeItem("C-SHARED", "open", { title: "Shared coordination" }),
+      makeItem("C-DESELECT", "open", { title: "Deselected coordination" }),
+      makeItem("C-INDEPENDENT", "open", { title: "Independent coordination" }),
+    ],
+  });
+  milestones.archivePointers.push({
+    id: "W-ARCHIVED",
+    path: "./archive/milestones/W-ARCHIVED.md",
+    summary: "finalized: Archived work",
+    title: "Archived work",
+    status: "done",
+  });
+  const tasks = makeView(TASKS_LEDGER, TASKS_SCHEMA, {
+    "W-PLAN": [makeItem("T-PLAN", "done")],
+    "W-SHARED": [makeItem("T-SHARED", "done")],
+    "W-BUILD": [makeItem("T-BUILD", "done")],
+    "W-INCOMPLETE": [makeItem("T-INCOMPLETE", "wip")],
+  });
+  const goals = makeView(GOALS_LEDGER, GOALS_SCHEMA, {
+    "C-SHARED": [
+      makeItem("G-PLAN", "planned", { title: "Planned goal", description: "", milestones: ["W-PLAN", "W-SHARED"] }),
+      makeItem("G-BUILD", "building", { title: "Building goal", description: "", milestones: ["W-BUILD", "W-SHARED"] }),
+    ],
+    "C-DESELECT": [
+      makeItem("G-DESELECT", "planned", { title: "Deselected goal", description: "", milestones: ["W-ARCHIVED"] }),
+    ],
+    "C-INDEPENDENT": [
+      makeItem("G-INDEPENDENT", "building", { title: "Independent goal", description: "", milestones: ["W-ARCHIVED"] }),
+    ],
+    "C-INCOMPLETE": [
+      makeItem("G-INCOMPLETE", "building", { title: "Incomplete goal", description: "", milestones: ["W-INCOMPLETE"] }),
+    ],
+  });
+  return buildFinalizeSnapshot([milestones, tasks, goals]);
 }
 
 describe("computeApplyDonePlan (Q288/Q289 + R722)", () => {
@@ -404,5 +455,99 @@ describe("(e) SKIP_MILESTONE_NOT_TERMINAL is exposed for archive-plan callers", 
     const plan = computeArchivePlan(fixture());
     const m3 = plan.skipped.find((s) => s.id === "M3");
     expect(m3).toEqual({ id: "M3", reason: SKIP_MILESTONE_NOT_TERMINAL, detail: "open" });
+  });
+});
+
+describe("goals-scope planner and executor parity (T648)", () => {
+  it("selects the same eligible goals and emits one ordered graph across shared, archived, deselected, and independent cases", () => {
+    const plan = computeGoalsFinalizePlan(goalsScopeFixture(), {
+      deselectedGoalIds: ["G-DESELECT"],
+    });
+
+    expect(plan.eligibleGoals.map(({ id, selected }) => ({ id, selected }))).toEqual([
+      { id: "G-PLAN", selected: true },
+      { id: "G-BUILD", selected: true },
+      { id: "G-DESELECT", selected: false },
+      { id: "G-INDEPENDENT", selected: true },
+    ]);
+    expect(plan.skipped).toContainEqual({
+      id: "G-INCOMPLETE",
+      reason: SKIP_INCOMPLETE_MILESTONE,
+      detail: "W-INCOMPLETE",
+    });
+    expect(plan.operations.map((operation) => operation.id)).toEqual([
+      "milestone:W-PLAN:close",
+      "milestone:W-SHARED:close",
+      "goal:G-PLAN:to-building",
+      "goal:G-PLAN:to-done",
+      "goal:G-BUILD:to-done",
+      "goal:G-INDEPENDENT:to-done",
+      "milestone:C-SHARED:close",
+      "milestone:C-INDEPENDENT:close",
+      "milestone:W-PLAN:archive",
+      "milestone:W-SHARED:archive",
+      "milestone:C-SHARED:archive",
+      "milestone:W-BUILD:archive",
+      "milestone:C-INDEPENDENT:archive",
+    ]);
+    expect(
+      plan.operations.find((operation) => operation.id === "milestone:C-SHARED:close"),
+    ).toMatchObject({
+      requiresSuccessOf: ["goal:G-PLAN:to-done", "goal:G-BUILD:to-done"],
+    });
+    expect(plan.operations.map((operation) => operation.id)).not.toContain("goal:G-DESELECT:to-done");
+    expect(plan.operations.map((operation) => operation.id)).not.toContain("milestone:C-DESELECT:archive");
+    if (GOALS_SCHEMA.transitions === undefined) throw new Error("goals schema must define transitions");
+    expect(GOALS_SCHEMA.transitions.planned).not.toContain("done");
+  });
+
+  it("records the graph in stable order, suppressing only the failed-prerequisite branch", async () => {
+    const plan = computeGoalsFinalizePlan(goalsScopeFixture(), {
+      deselectedGoalIds: ["G-DESELECT"],
+    });
+    const calls: string[] = [];
+    const results = await runGoalsFinalize({
+      async updateItem(_ledger, id, patch) {
+        calls.push(`goal:${id}:${patch.status}`);
+        if (id === "G-PLAN" && patch.status === "building") throw new Error("planned transition refused");
+      },
+      async updateMilestone(id, patch) {
+        calls.push(`milestone:${id}:${patch.status}`);
+      },
+      async archiveMilestone(id, summary) {
+        calls.push(`archive:${id}:${summary}`);
+      },
+    }, plan);
+
+    expect(results.map((result) => result.id)).toEqual(plan.operations.map((operation) => operation.id));
+    expect(results.find((result) => result.id === "goal:G-PLAN:to-building")).toMatchObject({
+      attempted: true,
+      ok: false,
+      error: "planned transition refused",
+    });
+    expect(results.find((result) => result.id === "goal:G-PLAN:to-done")).toMatchObject({
+      attempted: false,
+      failedPrerequisite: "goal:G-PLAN:to-building",
+    });
+    expect(results.find((result) => result.id === "milestone:C-SHARED:close")).toMatchObject({
+      attempted: false,
+      failedPrerequisite: "goal:G-PLAN:to-done",
+    });
+    expect(results.find((result) => result.id === "milestone:C-SHARED:archive")).toMatchObject({
+      attempted: false,
+      failedPrerequisite: "goal:G-PLAN:to-done",
+    });
+    expect(calls).toEqual([
+      "milestone:W-PLAN:done",
+      "milestone:W-SHARED:done",
+      "goal:G-PLAN:building",
+      "goal:G-BUILD:done",
+      "goal:G-INDEPENDENT:done",
+      "milestone:C-INDEPENDENT:done",
+      "archive:W-PLAN:finalized: Planned work",
+      "archive:W-SHARED:finalized: Shared work",
+      "archive:W-BUILD:finalized: Built work",
+      "archive:C-INDEPENDENT:finalized: Independent coordination",
+    ]);
   });
 });

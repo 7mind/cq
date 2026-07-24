@@ -870,6 +870,26 @@ describe("TUI finalize overlay (T621)", () => {
     expect(h.frame()).toContain("milestone:MW2:archive");
     expect(h.frame()).toContain("milestone:MC2:archive");
 
+    // The TUI consumes the same ordered graph as the browser client. The
+    // confirmation gesture differs, but selected ids and operation order do
+    // not: planned G2 needs its intermediate building write; building G1 does
+    // not, and work/coordination archives remain distinct Q290 operations.
+    const frame = h.frame();
+    const operationIds = [
+      "milestone:MW1:close",
+      "goal:G2:to-building",
+      "goal:G1:to-done",
+      "goal:G2:to-done",
+      "milestone:MC1:close",
+      "milestone:MW1:archive",
+      "milestone:MC1:archive",
+      "milestone:MW2:archive",
+      "milestone:MC2:archive",
+    ];
+    for (const [index, operationId] of operationIds.entries()) {
+      expect(frame.indexOf(operationId)).toBeGreaterThan(index === 0 ? -1 : frame.indexOf(operationIds[index - 1]!));
+    }
+
     await h.key(DOWN);
     expect(h.frame()).toContain("› [x] G2");
     await h.key(SPACE);
