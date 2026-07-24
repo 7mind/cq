@@ -1,8 +1,11 @@
 ---
 description: Session-only planner-set override — parse a natural-language planner instruction (e.g. "use grok and opus only") into canonical harness:model tokens via the cq.toml [aliases] table (from the ledger MCP get_planners/get_config) plus a documented fallback map; echo the resolved active set; confirm the override is SESSION-ONLY and reverts on the next fresh run.
 argument-hint: <natural-language planner instruction>  # e.g. "use grok and opus only"
-allowed-tools: mcp__ledger__get_planners, mcp__ledger__get_config, Read
+# {{cq:fragment:host-tool-vocabulary}}
 ---
+
+{{cq:fragment:cq-command-invocation}}
+
 
 ## Catalogue
 ```yaml
@@ -31,7 +34,7 @@ Your job:
 3. **Echo** the resolved active planner set in human-readable and token form.
 4. **State** clearly that the override is SESSION-ONLY — it applies ONLY to the
    current chained run (the conversation context in which you issue this command)
-   and reverts to the cq.toml default on the next fresh `/cq:plan:advance`
+   and reverts to the cq.toml default on the next fresh `CQ::plan/advance`
    invocation.
 
 You write **NOTHING durable** — no file, no ledger item, no gitignored state.
@@ -117,7 +120,7 @@ Canonical tokens: <harness1>:<model1>, <harness2>:<model2>, ...
 
 SESSION-ONLY: this override lives in the conversation context of the current
 chained run. It is NOT written to any file or ledger. The next fresh
-/cq:plan:advance invocation (in a new session) will revert to the planner set
+CQ::plan/advance invocation (in a new session) will revert to the planner set
 declared in cq.toml (or the single native Claude planner if cq.toml is
 absent / unconfigured).
 
@@ -126,10 +129,10 @@ To make this permanent, edit cq.toml [planners] in the repo root.
 
 ## How the override is carried
 
-Because each `/cq:plan:advance` orchestrator invocation is a fresh session, the
+Because each `CQ::plan/advance` orchestrator invocation is a fresh session, the
 override lives **in the conversation context of the current chained run**:
-- The user states `/cq:planners use grok and opus only` in the same session
-  BEFORE or WHILE running `/cq:plan:advance`.
+- The user states `CQ::planners use grok and opus only` in the same session
+  BEFORE or WHILE running `CQ::plan/advance`.
 - The orchestrator READS the stated active set from the run context when
   deciding which planners to dispatch.
 - When NO override has been stated in the current run context, the orchestrator
@@ -137,7 +140,7 @@ override lives **in the conversation context of the current chained run**:
   Claude planner if unconfigured).
 
 This means:
-- **Override applies now**: the current `/cq:plan:advance` chained in this same
+- **Override applies now**: the current `CQ::plan/advance` chained in this same
   session will use the stated planner set.
 - **Override does NOT persist**: a brand-new session (user opens a fresh Claude
   Code window, or runs the slash command cold) has no memory of this override
@@ -145,18 +148,18 @@ This means:
 - **No file is written**: there is no `.cq-planners-override`, no gitignored
   state, no ledger item recording the override.
 
-## Consistency with /cq:plan:advance
+## Consistency with CQ::plan/advance
 
 The orchestrator (`commands/cq/plan/advance.md`) selects planners as follows when
 the planner-set override is live:
 
 > **Session override present?** If the user stated a planner set in this run
-> (via `/cq:planners …`), use the canonical tokens the user confirmed. The
+> (via `CQ::planners …`), use the canonical tokens the user confirmed. The
 > stated tokens take precedence over `get_planners`.
 >
 > **No session override?** Call `get_planners` (ledger MCP). If
 > `configured: true`, use the returned resolved set. If `configured: false`,
 > fall back to the single native Claude planner.
 
-Stating `/cq:planners` in the session is therefore the correct and ONLY way to
+Stating `CQ::planners` in the session is therefore the correct and ONLY way to
 override the planner set for a single chained run without editing `cq.toml`.

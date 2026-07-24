@@ -1,8 +1,11 @@
 ---
 description: Advance an investigate-flow run one research round — read defect state, form/extend the hypothesis tree, dispatch read-only explorers, validate every citation against source, adjudicate node status, and on a confirmed root cause file-and-defer the fix to plan-flow.
 argument-hint: <defectId>   # the defect D under investigation
-allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob
+# {{cq:fragment:host-tool-vocabulary}}
 ---
+
+{{cq:fragment:cq-command-invocation}}
+
 
 ## Catalogue
 ```yaml
@@ -32,14 +35,7 @@ own hypothesis formation, explorer dispatch, citation validation, and node
 adjudication; subagents CANNOT spawn subagents, so the whole loop lives HERE in
 the main session.
 
-> **DISPATCHING A SUBAGENT IS HARNESS-NEUTRAL.** Wherever this command says
-> "dispatch an explorer/prober" or "use the `Agent` tool with
-> `subagent_type: <name>`", use the tool your harness (`CQ_HARNESS`) provides:
-> **claude** → `Agent(subagent_type: "<name>", …)`; **pi** →
-> `dispatch_agent(agent: "<name>", task: "<the full prompt>")` (the
-> cq-subagent-dispatch extension runs the same cq agent as an isolated child
-> turn). **Do NOT hand-simulate a subagent's job inline** by reading/mutating the
-> ledger yourself in its place — if a step calls for a dispatch, DISPATCH.
+{{cq:fragment:subagent-dispatch}}
 
 > **FORWARD-PROGRESS INVARIANT — each round must dispatch or WRITE, else STOP.**
 > Re-reading ledger/repo state is not progress. A research round must dispatch
@@ -78,28 +74,27 @@ durable ledger state left off. **ONE invocation = ONE research round.**
   The prober is **LOCAL-ONLY, NO network**, makes **NO persisted edits to the main
   checkout** (all writes confined to the discardable worktree), writes NOTHING to the
   ledger, and does NOT adjudicate — this command validates its citations and sets the
-  hypothesis status, exactly as for an explorer. **Agent worktree isolation**
-  (consistent with implement/advance.md): Claude → dispatch via `Agent` with
-  `isolation: "worktree"` (native throwaway worktree, auto-removed); Codex → the
-  orchestrator does `git worktree add ../wt-probe-<H> <branch>` before dispatch and
-  `git worktree remove` after harvest. The worktree is ALWAYS removed after the
-  evidence is harvested — harvest-then-discard.
+  hypothesis status, exactly as for an explorer. Dispatch through `CQ_SUBAGENT`
+  with worktree isolation; the surface adapter owns whether that isolation is
+  native or prepared manually. The worktree is ALWAYS removed after the evidence
+  is harvested — harvest-then-discard.
 - **Explorer & prober always run at the FRONTIER tier resolved from CONFIG,
-  never a hardcoded model.** ONCE per round, call the `mcp__ledger__get_config`
+  never a hardcoded model.** ONCE per round, call the `ledger::get_config`
   MCP tool (an MCP-tool call, NOT a `Bash` shellout — same server as
   `get_reviewers`) and read `tiers.frontier` — a resolved token `{ harness,
   model, provider, effort }` from the ACTIVE harness's `[harness.<h>.tiers]`
   map in `cq.toml` (most-capable == frontier, Q253). Dispatch every
-  `investigate-explorer`/`investigate-prober` `Agent` with `model:
+  `investigate-explorer`/`investigate-prober` `CQ_SUBAGENT` with `model:
   <token.model VERBATIM>` — the resolved token's `model` is a BARE alias
-  (`opus`/`sonnet`/`haiku`/`fable` — T509: the Agent tool's `model` param is a
+  (`opus`/`sonnet`/`haiku`/`fable` — T509: the CQ_SUBAGENT tool's `model` param is a
   CLOSED enum that rejects full `claude-*` ids, and config tokens are already
   bare aliases), so pass it with NO mangling. The token's `effort` is **N/A at
-  `Agent` dispatch** — the Agent tool exposes no per-dispatch effort/reasoning
+  `CQ_SUBAGENT` dispatch** — the CQ_SUBAGENT tool exposes no per-dispatch effort/reasoning
   param (T510; `effort` exists only as subagent-definition frontmatter) —
-  record it for provenance/display only, never as an Agent argument. **Degrade
+  record it for provenance/display only, never as an CQ_SUBAGENT argument. **Degrade
   gracefully** when the `get_config` tool is ABSENT, or `tiers: null`, or the
-  `frontier` slot is missing: fall back to your OWN class (Claude: `inherit`)
+  `frontier` slot is missing: fall back to your OWN class using the surface's
+  native inheritance mechanism
   — never invent a model literal. Do NOT key this degrade on `configured`:
   get_config's `configured` means only 'a parseable cq.toml is present' (D81)
   — it is INDEPENDENT of whether `tiers` itself is populated, so a valid
@@ -129,13 +124,13 @@ durable ledger state left off. **ONE invocation = ONE research round.**
   `defects.rootCause`/`suggestedFix`, seed/extend a plan-flow goal, and STOP. You
   MUST NOT re-implement or invoke the planner↔plan-reviewer loop yourself. **Two
   contexts (K12):**
-  - *Standalone* (`/cq:investigate` run directly by the user): file the
-    open question pointing at `/cq:plan:advance <G>` and STOP — the user resumes
+  - *Standalone* (`CQ::investigate` run directly by the user): file the
+    open question pointing at `CQ::plan/advance <G>` and STOP — the user resumes
     manually.
   - *Auto-launched inside plan:*\*: this investigation was triggered by
-    `/cq:plan:advance` (K12 auto-investigate). File the goal and STOP; the parent
+    `CQ::plan/advance` (K12 auto-investigate). File the goal and STOP; the parent
     plan-flow session automatically resumes `G` without requiring a fresh
-    user-run `/cq:plan:advance`.
+    user-run `CQ::plan/advance`.
 
 ## Provenance (every ledger write)
 On every `create_item` / `update_item`, pass `author` = your OWN model class
@@ -154,7 +149,7 @@ returned subagent. **One log pair per dispatched subagent**, so a hypothesis
 whose explorer raised a `probeRequest` produces TWO log pairs this round (the
 explorer's, then the prober's). Subagents write no file; you do.
 
-**Native `Agent` subagent (explorer / prober).** Take `<agent-id>` from the tool
+**Native `CQ_SUBAGENT` subagent (explorer / prober).** Take `<agent-id>` from the tool
 result, then:
 1. **Locate its native transcript** at
    `~/.claude/projects/<slug>/<session>/subagents/agent-<agent-id>.jsonl` — the
@@ -181,7 +176,7 @@ explicit `raw transcript unavailable: <reason>` line in the summary-log HEADER
 add ONLY the `.md` to `sessionLogs`, leave `rawLogs` un-extended for that subagent.
 
 **`pi:*` shellout (if any).** Should a round delegate to a `pi:*` shellout (no
-native `Agent` id and no `.jsonl` transcript), the verbatim shellout **stdout IS
+native `CQ_SUBAGENT` id and no `.jsonl` transcript), the verbatim shellout **stdout IS
 the raw log**. Route it through `cq log put` to a PLAIN/markdown dest (NOT
 `.jsonl`): `… | cq log put --stdin --dest logs/raw/<timestamp>-pi-<alias>.md` —
 the verbatim stdout (including the raw, pre-fence-strip text). Capture this even
@@ -204,7 +199,7 @@ existing `rootCause`/`suggestedFix`. Then derive the current tree:
 - read the linked `questions` (items whose `ledgerRefs` contain `defects:<D>`):
   if an `open` question is still unanswered, the loop is parked on the user —
   skip to **Report** (resumable: the user answers in the TUI/web, then re-runs
-  `/cq:investigate:advance D`). If a previously-open question is now `answered`
+  `CQ::investigate/advance D`). If a previously-open question is now `answered`
   (non-empty `answer`), fold its answer into this round's framing and continue.
 - check parked-on-research branches (§Research escalation): for each `uncertain`
   hypothesis node carrying a `researches:<RS>` ledgerRef, `fetch_item("researches",
@@ -214,7 +209,7 @@ existing `rootCause`/`suggestedFix`. Then derive the current tree:
   from the remaining evidence; `open`/`wip` → the branch STAYS parked, skip it
   this round. If EVERY unresolved branch is parked on a live research and nothing
   else is adjudicable, skip to **Report** (the "parked on research" line) —
-  resumable once the `/cq:advance` research stage concludes the research.
+  resumable once the `CQ::advance` research stage concludes the research.
 
 **Move the defect to `wip` the moment investigation begins.** If the defect's
 status is still `open` and you are about to do real research this round (form
@@ -247,15 +242,15 @@ parallel).
 
 ### 3. DISPATCH read-only explorers
 For each frontier hypothesis H to advance this round, dispatch an
-`investigate-explorer` via `Agent` (`subagent_type: "investigate-explorer"`,
+`investigate-explorer` via `CQ_SUBAGENT` (`role: "investigate-explorer"`,
 `model` = the §K8 FRONTIER token's bare-alias `model` (resolved from
-`get_config`), verbatim — the token's `effort` is N/A at `Agent` dispatch per
+`get_config`), verbatim — the token's `effort` is N/A at `CQ_SUBAGENT` dispatch per
 T510, provenance/display only; NO worktree, it changes nothing). The prompt MUST
 carry: H's id + statement (verbatim), the branch context (the defect, parent
 hypothesis, sibling findings already validated, what to confirm or rule out), and
 any specific leads (files/symbols/error strings/URLs).
 
-**Parallelism rule (Q27):** issue the `Agent` calls for DISJOINT top-level
+**Parallelism rule (Q27):** issue the `CQ_SUBAGENT` calls for DISJOINT top-level
 hypotheses being SEEDED in ONE message so they run concurrently. While DRILLING a
 single branch, dispatch its children SERIALLY — wait for each explorer's
 validated findings before framing the next child. Write each explorer's session
@@ -266,20 +261,20 @@ log on return (§Session logs).
 ledger-mcp server added in T343 (`fetch_prompt` / `validate_input` /
 `validate_output`), MIRRORING the a–g sequence `commands/cq/plan/advance.md`
 sub-step 1a established for `plan-advance`: **(a)**
-`fetch_prompt("investigate-explorer")` for its `promptTemplate` + typed
+`prompt-catalog fetch ("investigate-explorer")` for its `promptTemplate` + typed
 `inputSchema`/`outputSchema` (present — a dispatched subagent); **(b–c)** compose
 the input against that `inputSchema` (`{ hypothesisId, statement, branchContext,
 leads? }`); **(d)** `validate_input("investigate-explorer", input)`, fix and
-re-validate on `{ ok: false, errors }`; **(e)** dispatch the `Agent`
-(`subagent_type: "investigate-explorer"`, `model` = the §K8 FRONTIER token's
-`model`, verbatim — its `effort` is N/A at `Agent` dispatch per T510,
+re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
+(`role: "investigate-explorer"`, `model` = the §K8 FRONTIER token's
+`model`, verbatim — its `effort` is N/A at `CQ_SUBAGENT` dispatch per T510,
 provenance/display only, NO worktree);
 **(f–g)** await its evidence-json and `validate_output("investigate-explorer",
 output)` against the role's `outputSchema` — the shared `investigate-evidence`
 shape (`{ hypothesisId, evidence[], lean, notes?, probeRequest? }`); a validation
 failure is a contract breach to surface (§Session logs). **Degrade gracefully
 when the catalog tools are absent** — skip (a)–(d) and (g) and fall straight
-through to the bare `Agent` dispatch (e). The validate steps are an ADDITIVE
+through to the bare `CQ_SUBAGENT` dispatch (e). The validate steps are an ADDITIVE
 contract check, never a hard dependency.
 
 **An explorer may return a `probeRequest` instead of (or alongside) settling H**
@@ -296,13 +291,12 @@ citation yourself:
 - **If the explorer returned a `probeRequest` `{what, why}`** (it could not settle
   H by reading alone — it needs the repro / `bun test` / a build / `git
   show`/`git blame` RUN) **and you judge running it warranted for adjudicating H**,
-  dispatch an `investigate-prober` via `Agent` (`subagent_type:
+  dispatch an `investigate-prober` via `CQ_SUBAGENT` (`role:
   "investigate-prober"`, `isolation: "worktree"`, `model` = the §K8 FRONTIER
   token's bare-alias `model` (resolved from `get_config`), verbatim — the
-  token's `effort` is N/A at `Agent` dispatch per T510, provenance/display
-  only). Under Claude the `isolation: "worktree"` gives a native throwaway worktree; under
-  Codex the orchestrator `git worktree add ../wt-probe-<H> <branch>` before dispatch
-  and `git worktree remove` after harvest. The prompt MUST carry: the `probeRequest
+  token's `effort` is N/A at `CQ_SUBAGENT` dispatch per T510, provenance/display
+  only). The surface adapter prepares the required throwaway worktree before
+  dispatch and removes it after harvest. The prompt MUST carry: the `probeRequest
   {what, why}` verbatim, H's id + statement (verbatim), and the branch context (the
   defect, the base commit / branch the worktree was cut from, parent hypothesis,
   sibling findings already validated, what to confirm or rule out). The prober runs
@@ -311,21 +305,21 @@ citation yourself:
   **Catalog-driven dispatch (G41 — investigate-prober).** Drive this dispatch
   through the typed prompt-catalog MCP tools, MIRRORING the a–g sequence
   `commands/cq/plan/advance.md` sub-step 1a established for `plan-advance`:
-  **(a)** `fetch_prompt("investigate-prober")` for its `promptTemplate` + typed
+  **(a)** `prompt-catalog fetch ("investigate-prober")` for its `promptTemplate` + typed
   `inputSchema`/`outputSchema` (present — a dispatched subagent); **(b–c)** compose
   the input against that `inputSchema` (`{ hypothesisId, statement, probeRequest:
   { what, why }, branchContext, leads? }`); **(d)**
   `validate_input("investigate-prober", input)`, fix and re-validate on
-  `{ ok: false, errors }`; **(e)** dispatch the `Agent` (`subagent_type:
+  `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT` (`role:
   "investigate-prober"`, `isolation: "worktree"`, `model` = the §K8 FRONTIER
-  token's `model`, verbatim — its `effort` is N/A at `Agent` dispatch per
+  token's `model`, verbatim — its `effort` is N/A at `CQ_SUBAGENT` dispatch per
   T510, provenance/display only); **(f–g)**
   await its evidence-json and `validate_output("investigate-prober", output)`
   against the role's `outputSchema` — the shared `investigate-evidence` shape
   (`{ hypothesisId, evidence[], lean, notes? }`, no `probeRequest`); a validation
   failure is a contract breach to surface (§Session logs). **Degrade gracefully
   when the catalog tools are absent** — skip (a)–(d) and (g) and fall straight
-  through to the bare `Agent` dispatch (e). The validate steps are an ADDITIVE
+  through to the bare `CQ_SUBAGENT` dispatch (e). The validate steps are an ADDITIVE
   contract check, never a hard dependency.
   **Scope guard (Q89):** probes are **LOCAL-ONLY, NO network**,
   and make **NO persisted edits to the main checkout** — every write stays confined
@@ -333,8 +327,8 @@ citation yourself:
   logs). **Harvest-then-discard:** harvest the prober's returned evidence through the
   EXISTING citation-revalidation path below (re-open each cited `file:line`, or
   re-run the cited command and compare its output), exactly as for an explorer; then
-  the throwaway worktree is **always removed** after harvest (Claude: auto on Agent
-  return; Codex: `git worktree remove ../wt-probe-<H>`). Treat the prober's evidence
+  the throwaway worktree is **always removed** after harvest through the
+  surface adapter. Treat the prober's evidence
   items identically to an explorer's in the bullets below. If you judge the probe
   NOT warranted (e.g. the request is out of scope, needs network, or H is already
   adjudicable), skip the dispatch and proceed with the explorer's evidence.
@@ -392,7 +386,7 @@ The **seed gate** for file-and-defer is the defect STATUS: perform this handoff
 more. You MUST NOT run, re-implement, or invoke the planner↔plan-reviewer loop
 inline; a command cannot run another command's loop, and inline duplication
 contradicts the file-and-defer principle (K8 point 3 / Q26). The subsequent
-USER-run `/cq:plan:advance` round is what produces the reviewed fix tasks that
+USER-run `CQ::plan/advance` round is what produces the reviewed fix tasks that
 ledgerRef `defects:<D>` (Q25/Q26). Do this and STOP:
 
 (a) **Set the defect STATUS to `root-caused` and write its fields.**
@@ -429,14 +423,14 @@ prompt (T41) explicitly permits skipping clarification when a goal is
 (c) **Hand back to the planner, and STOP.** File an `open` question linked to
 the defect. Then STOP — this command does not advance G. The action depends on
 context (K12):
-- *Standalone* (`/cq:investigate` run directly): the question text instructs
-  the user to run **`/cq:plan:advance <G>`**: `create_item("questions",
+- *Standalone* (`CQ::investigate` run directly): the question text instructs
+  the user to run **`CQ::plan/advance <G>`**: `create_item("questions",
   <defectMilestone>, status: "open", fields: { question: "Root cause of <D>
-  confirmed and a defect-seeded goal G is ready — run `/cq:plan:advance G` to
+  confirmed and a defect-seeded goal G is ready — run `CQ::plan/advance G` to
   produce the reviewed fix tasks.", context: "<root cause + suggestedFix
   summary>", ledgerRefs: ["defects:<D>", "goals:<G>"] })`.
 - *Auto-launched inside plan:*\* (K12): the parent plan session detects the
-  confirmed goal and resumes it automatically — a manual `/cq:plan:advance G` is
+  confirmed goal and resumes it automatically — a manual `CQ::plan/advance G` is
   NOT needed. File the same question for traceability, but note in its `context`
   that this investigation was auto-launched and the goal will be auto-resumed.
 
@@ -475,7 +469,7 @@ status: "open", fields: { question: "<the blocking requirements/repro/access
 question>", context: "<the tree state, what evidence is missing, what you
 tried>", ledgerRefs: ["defects:<D>"] })` and STOP. Leave the `hypothesis` tree
 INTACT (durable). The user answers in the TUI/web, then re-runs
-`/cq:investigate:advance D` — step 1 folds the answer back in and the loop resumes
+`CQ::investigate/advance D` — step 1 folds the answer back in and the loop resumes
 exactly where it left off.
 
 ## Research escalation — EMPIRICAL unknown → file a `researches` item and PARK the branch (Q301)
@@ -513,12 +507,12 @@ sibling of the step-5 plan handoff:
     `ledgerRefs`, preserving every existing entry (`defects:<D>` included).
     The `researches:<RS>` entry IS the park marker: step 1 recognises a
     parked-on-research branch by it.
-(c) **NEVER run the research inline.** You MUST NOT invoke `/cq:research` or
-    `/cq:research:advance` inline — one flow per invocation; the **`/cq:advance`
+(c) **NEVER run the research inline.** You MUST NOT invoke `CQ::research` or
+    `CQ::research/advance` inline — one flow per invocation; the **`CQ::advance`
     research stage** drives filed researches to a conclusion (exactly as
     plan-flow defers its Q267-filed researches — see
     `commands/cq/plan/advance.md` §"Research items the planner filed are driven
-    by `/cq:advance`, NOT here"). A parked branch is NOT a stop: keep advancing
+    by `CQ::advance`, NOT here"). A parked branch is NOT a stop: keep advancing
     the OTHER adjudicable branches this round, and park the round only when
     nothing else is adjudicable (§Report, the "parked on research" line).
 (d) **Resume on a later round** (step 1 performs this check). For each parked
@@ -551,19 +545,19 @@ Summarize the round concisely:
 - any node **confirmed** → the defect now `status == root-caused`, its
   `rootCause`/`suggestedFix`, the defect-seeded goal **G**, and the next action
   (K12):
-  - *Standalone*: **"run `/cq:plan:advance G`"** (file-and-defer; this command does
+  - *Standalone*: **"run `CQ::plan/advance G`"** (file-and-defer; this command does
     NOT run it);
   - *Auto-launched inside plan:*\*: the parent plan session resumes G
     automatically — no user action needed;
 - whether the loop is **parked on a question** (id to answer) — if so, "answer it
-  in the TUI/web, then run `/cq:investigate:advance D` to resume";
+  in the TUI/web, then run `CQ::investigate/advance D` to resume";
 - whether any branch is **parked on research** (§Research escalation) — enumerate
   the `researches:<RS>` ids with their parked hypothesis node ids (e.g. "parked
-  on research: researches:RS12 (H34), researches:RS13 (H35)"); the `/cq:advance`
-  research stage drives them — re-run `/cq:investigate:advance D` once a research
+  on research: researches:RS12 (H34), researches:RS13 (H35)"); the `CQ::advance`
+  research stage drives them — re-run `CQ::investigate/advance D` once a research
   reaches a terminal status to un-park and re-adjudicate;
 - if the tree still has `uncertain`/`open` leaves and no question is pending, say
-  another round is warranted: "run `/cq:investigate:advance D` again".
+  another round is warranted: "run `CQ::investigate/advance D` again".
 
 ---
 
@@ -587,7 +581,7 @@ invocation context — there is **no env var or process signal** to read. You,
 the executing agent, run both this command and (when chained) the wrapping flow
 command in the SAME inline session, so you already KNOW which context you are in.
 
-- **Run STANDALONE** (the user invoked `/cq:investigate:advance` directly, with no
+- **Run STANDALONE** (the user invoked `CQ::investigate/advance` directly, with no
   wrapping flow command): after the §Report, write ONE `handoffs` record for
   this stop —
   `create_item("handoffs", <defectMilestone>, <status>, <fields>)` — mapping
@@ -639,12 +633,12 @@ command in the SAME inline session, so you already KNOW which context you are in
 
   **TURN-vs-RUN clause (D39).** A RUN and a TURN are distinct scopes. A **RUN**
   spans as many turns as needed and is durably resumable from ledger state on the
-  next `/cq:investigate:advance` invocation — the ledger IS the durable resume
+  next `CQ::investigate/advance` invocation — the ledger IS the durable resume
   point. A **TURN** is a single context window; exhausting the turn/context
   budget is **NOT a run-stop**. When a turn/context budget is exhausted
   mid-stride, the agent **STOPS WITHOUT writing a handoff** — no `handoffs`
   record, no `mixed`/effort terminal artifact — because the ledger already
-  captures every durable state change. The next `/cq:investigate:advance` reads
+  captures every durable state change. The next `CQ::investigate/advance` reads
   ledger state and continues from where the previous turn left off. Contrast: a
   **RUN-stop** = one of the five predicate-gated handoff statuses; a
   **TURN-pause** = no artifact, just resume next invocation. Fabricating a
@@ -704,12 +698,12 @@ command in the SAME inline session, so you already KNOW which context you are in
   — which the predicates will ONLY supply if the stop is legitimate — or to
   **not stop and CONTINUE** the research round instead.
 
-- **Run CHAINED INLINE by any wrapping flow command** (`/cq:advance`,
-  `/cq:plan:advance`, or a `/<flow>:start` / `/<flow>:follow-up` that runs this
+- **Run CHAINED INLINE by any wrapping flow command** (`CQ::advance`,
+  `CQ::plan/advance`, or a `/<flow>:start` / `/<flow>:follow-up` that runs this
   pass inline): **SUPPRESS this handoff write**. The outermost wrapper owns the
   single authoritative run-level handoff and writes it once at its stop —
-  `/cq:advance` per its §Provenance (it is the sole `handoffs` writer for the whole
-  run); `/cq:plan:advance` writes its own standalone record covering the whole pass
+  `CQ::advance` per its §Provenance (it is the sole `handoffs` writer for the whole
+  run); `CQ::plan/advance` writes its own standalone record covering the whole pass
   including the chained investigate sub-round; a `/<flow>:start` or
   `/<flow>:follow-up` writes it directly in its own §Handoff record step. You
   can tell you are in this context because the wrapping command explicitly chains

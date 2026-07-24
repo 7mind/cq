@@ -1,7 +1,7 @@
 ---
 description: Shared adversarial plan-review rubric — judge an emitted plan for a goal against the fine-grained / sequenced / testable / grounded / complete rubric, classify findings into new_questions / criticism / defects, and emit a single fenced-json verdict on stdout. The CANONICAL rubric source; Claude's plan-reviewer agent and every non-Claude (Codex/Pi) reviewer judge the same way and emit the same JSON.
 argument-hint: <goalId> + the plan context (goal Q&A history, work milestones, prior reviews)
-allowed-tools: Read, Grep, Glob, WebSearch, WebFetch
+# {{cq:fragment:host-tool-vocabulary}}
 ---
 
 ## Catalogue

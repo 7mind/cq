@@ -1575,7 +1575,7 @@ describe("T342: /cq:plan:follow-up idea-ids grammar — structural grep invarian
   it("follow-up.md references plan.md's shared consume-an-idea sub-procedure for the link + idea→planned transition (DRY, not re-derived)", async () => {
     const text = await readFile(followUpMd, "utf8");
     // cross-reference by name/anchor to plan.md's canonical sub-procedure
-    expect(text).toContain("§Consume-an-idea sub-procedure defined in `/cq:plan` (`plan.md`)");
+    expect(text).toContain("§Consume-an-idea sub-procedure defined in `CQ::plan` (`plan.md`)");
     // the bidirectional link refs + the idea→planned flip are mentioned as the
     // reused (not re-derived) steps
     expect(text).toContain("goals:<G>");
@@ -1712,7 +1712,7 @@ describe("T345: dispatched roles wired through the typed prompt catalog — grep
             (role === "plan-advance" && text.includes("Catalog-driven dispatch (G41, Q185 steps a–g)")),
         ).toBe(true);
         // and the validate-in / run / validate-out tool calls for that role.
-        expect(text).toContain(`fetch_prompt("${role}")`);
+        expect(text).toContain(`prompt-catalog fetch ("${role}")`);
         expect(text).toContain(`validate_input("${role}", input)`);
         expect(text).toContain(`validate_output("${role}",`);
       });
@@ -1734,7 +1734,7 @@ describe("T345: dispatched roles wired through the typed prompt catalog — grep
 //   (4) §Stop-condition gate Stop-hook cross-reference: `claudeStopGateHook`
 //       (the hook name that mechanically enforces the gate for Claude Code runs).
 //   (5) §Bootstrap derive_predicates detection instruction:
-//       `mcp__ledger__derive_predicates` (the authoritative predicate-source tool).
+//       `ledger::derive_predicates` (the canonical authoritative predicate-source tool).
 //
 // 5 tokens × 1 file = 5 cells; all must be present.
 // Path resolution mirrors T255/T264/D43/T340/T345: cq-assets is four levels up.
@@ -1762,7 +1762,7 @@ describe("T365: G44 advance.md grep-invariant — marker-lifecycle + external-si
       description: "§Stop-condition gate Stop-hook cross-reference",
     },
     {
-      token: "mcp__ledger__derive_predicates",
+      token: "ledger::derive_predicates",
       description: "§Bootstrap derive_predicates detection instruction",
     },
   ];

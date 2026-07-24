@@ -51,20 +51,29 @@ describe("prompt fragment inventory closure", () => {
         .filter((block) => block.classification === "surface-fragment")
         .map((block) => block.targetFragment);
 
-      expect(slots.includes("cq-command-invocation")).toBe(source.includes("/cq:"));
-      expect(slots.includes("host-tool-vocabulary")).toBe(
-        /^(?:allowed-tools|disallowedTools):/m.test(source),
-      );
-      if (source.includes("CQ_HARNESS")) {
-        expect(slots).toContain("subagent-dispatch");
-      }
-      if (slots.includes("subagent-dispatch")) {
-        expect(source).toMatch(/CQ_HARNESS|subagent_type:/);
-      }
-      if (slots.includes("inline-command-recursion")) {
-        expect(source).toContain("/cq:");
-        expect(source).toMatch(/\b(?:INLINE|inline)\b/);
-        expect(entry.dispatchEdges.some((edge) => edge.kind === "recursion")).toBe(true);
+      if (entry.roleKind === "orchestrator-command") {
+        for (const slot of slots) {
+          expect(source.match(new RegExp(`\\{\\{cq:fragment:${slot}\\}\\}`, "g"))).toHaveLength(
+            1,
+          );
+        }
+        expect(source).not.toContain("CQ_HARNESS");
+        if (slots.includes("cq-command-invocation")) {
+          expect(source).toContain("CQ::");
+        }
+        if (slots.includes("subagent-dispatch")) {
+          expect(source).toContain("{{cq:fragment:subagent-dispatch}}");
+        }
+        if (slots.includes("inline-command-recursion")) {
+          expect(source).toContain("{{cq:fragment:inline-command-recursion}}");
+          expect(source).toMatch(/\b(?:INLINE|inline)\b/);
+          expect(entry.dispatchEdges.some((edge) => edge.kind === "recursion")).toBe(true);
+        }
+      } else {
+        expect(slots.includes("cq-command-invocation")).toBe(source.includes("/cq:"));
+        expect(slots.includes("host-tool-vocabulary")).toBe(
+          /^(?:allowed-tools|disallowedTools):/m.test(source),
+        );
       }
       for (const edge of entry.dispatchEdges) {
         expect(AGENT_ROLE_TIERS.some((role) => role.id === edge.targetRoleId)).toBe(true);
@@ -74,12 +83,7 @@ describe("prompt fragment inventory closure", () => {
     const harnessBranchSources = PROMPT_ROLE_SOURCE_INVENTORY.filter((entry) =>
       readFileSync(path.join(ASSETS_ROOT, entry.source), "utf8").includes("CQ_HARNESS"),
     ).map((entry) => entry.roleId);
-    expect(harnessBranchSources).toEqual([
-      "plan/advance",
-      "investigate/advance",
-      "research/advance",
-      "implement/advance",
-    ]);
+    expect(harnessBranchSources).toEqual([]);
   });
 
   test("joins each classified block to one complete typed slot contract", () => {

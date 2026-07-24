@@ -1,8 +1,11 @@
 ---
 description: Advance an implement-flow run one full pass — pick DAG-ready tasks, implement each in an isolated worktree, adversarially review, autonomously fix criticism, register user questions, and merge back in dependency order.
 argument-hint: [milestoneId ...]   # optional; omit to resume the in-progress run
-allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob
+# {{cq:fragment:host-tool-vocabulary}}
 ---
+
+{{cq:fragment:cq-command-invocation}}
+
 
 ## Catalogue
 ```yaml
@@ -29,14 +32,7 @@ driving worker/reviewer/conflict-resolver subagents. Subagents CANNOT spawn
 subagents, so the whole loop — concurrent dispatch, the criticism loop, and
 merge-back — lives HERE in the main session.
 
-> **DISPATCHING A SUBAGENT IS HARNESS-NEUTRAL.** Wherever this command says
-> "dispatch the worker/reviewer/conflict-resolver" or "use the `Agent` tool with
-> `subagent_type: <name>`", use the tool your harness (`CQ_HARNESS`) provides:
-> **claude** → `Agent(subagent_type: "<name>", …, isolation: "worktree")`;
-> **pi** → `dispatch_agent(agent: "<name>", task: "<the full prompt>")` (the
-> cq-subagent-dispatch extension runs the same cq agent as an isolated child
-> turn). **Do NOT hand-implement a task inline** in place of dispatching a
-> worker — if a step calls for a dispatch, DISPATCH.
+{{cq:fragment:subagent-dispatch}}
 
 > **FORWARD-PROGRESS INVARIANT — each pass must dispatch or WRITE, else STOP.**
 > Re-reading the ledger or the worktrees is not progress. A pass must dispatch a
@@ -55,14 +51,14 @@ exactly where it left off.
 
 ## Conventions this command obeys (decision K4)
 - **Model tiers** (`tasks.suggestedModel`): tier→model comes from CONFIG, never
-  a hardcoded table. ONCE per pass, call the `mcp__ledger__get_config` MCP tool
+  a hardcoded table. ONCE per pass, call the `ledger::get_config` MCP tool
   (an MCP-tool call, NOT a `Bash` shellout — same server as `get_reviewers`)
   and read its `tiers` slots: `tiers.{fast,standard,frontier}`, each a resolved
   token `{ harness, model, provider, effort }` from the ACTIVE harness's
-  `[harness.<h>.tiers]` map in `cq.toml` — the tool serves BOTH harnesses
-  (under claude it returns the claude map, under pi the pi map). Resolve a
+  `[harness.<h>.tiers]` map in `cq.toml` for the active surface. Resolve a
   task's `suggestedModel` tier to that slot's token just before dispatch. If
-  `suggestedModel` is unset → default to your OWN class (Claude: `inherit`) AND
+  `suggestedModel` is unset → default to your OWN class through the surface's
+  native inheritance mechanism AND
   print a `WARNING: task <id> has no suggestedModel` line. **Degrade
   gracefully** when the `get_config` tool is ABSENT, or `tiers: null`, or the
   task's tier slot is missing: same inherit-your-own-class default + the
@@ -77,18 +73,17 @@ exactly where it left off.
 - **Reviewer & conflict-resolver** always run at the FRONTIER tier resolved
   from `get_config` (`tiers.frontier` — most-capable == frontier, Q253),
   regardless of the task's tier.
-- **Worktrees**: Claude → dispatch the worker via `Agent` with
-  `isolation: "worktree"` (native; auto-removed if unchanged, never
-  auto-merged). Codex → `git worktree add ../wt-<taskId> -b implement/<taskId>
-  <base>` before dispatch and `git worktree remove` after merge-back. Branch:
-  `implement/<taskId>`. A fresh worktree has NO `node_modules`; do NOT symlink
+- **Worktrees**: dispatch the worker through `CQ_SUBAGENT` with worktree
+  isolation. The surface adapter owns whether it prepares the worktree natively
+  or manually and removes it after merge-back. Branch: `implement/<taskId>`. A
+  fresh worktree has NO `node_modules`; do NOT symlink
   the parent checkout's `node_modules` (a single root symlink does not reproduce
   a bun workspace's per-package layout and makes a later `bun install` a no-op —
   see defect D2). Let the worker run a real `bun install` in the worktree
   (cheap with a warm global cache, offline-capable).
 - **Concurrency**: at most **N = 8** workers in flight at once (configurable —
   treat 8 as the default ready-batch size). Dispatch a batch in a single
-  message (parallel `Agent` calls), then process returns.
+  message (parallel `CQ_SUBAGENT` calls), then process returns.
 
 ## Provenance (every ledger write)
 On every `create_item` / `update_item`, pass `author` = your OWN model class
@@ -105,7 +100,7 @@ paths `.cq/logs/…` are recorded in sessionLogs/rawLogs and read back via
 `read_log`). Stamp `<timestamp>` (`Bash`: `date
 -u +%Y%m%d-%H%M%S`) once per returned subagent.
 
-**Native `Agent` subagent (worker / reviewer / conflict-resolver).** Take
+**Native `CQ_SUBAGENT` subagent (worker / reviewer / conflict-resolver).** Take
 `<agent-id>` from the tool result, then:
 1. **Locate its native transcript** at
    `~/.claude/projects/<slug>/<session>/subagents/agent-<agent-id>.jsonl` — the
@@ -129,7 +124,7 @@ explicit `raw transcript unavailable: <reason>` line in the summary-log HEADER
 (via `cq log put` to `logs/<timestamp>-<agent-id>.md`) and proceed summary-only —
 add ONLY the `.md` to `sessionLogs`, leave `rawLogs` un-extended for that subagent.
 
-**`pi:*` shellout reviewer (§3b).** There is no native `Agent` id and no
+**`pi:*` shellout reviewer (§3b).** There is no native `CQ_SUBAGENT` id and no
 `.jsonl` transcript — the verbatim shellout **stdout IS the raw log**. Route it
 through `cq log put` to a PLAIN/markdown dest (NOT `.jsonl`):
 `… | cq log put --stdin --dest logs/raw/<timestamp>-pi-<alias>.md` — the
@@ -151,7 +146,7 @@ read the `questions` ledger items linked `tasks:<id>` and the milestones' own
 `dependsOn`/`blockedBy`.
 
 **Start-of-pass worktree prune sweep (G38-1a-start-sweep).** <!-- G38-1a-start-sweep -->
-This is the SAME generalized cleanup recipe `/cq:advance` runs at run-stop
+This is the SAME generalized cleanup recipe `CQ::advance` runs at run-stop
 (`commands/cq/advance.md` §End-of-run worktree/branch cleanup sweep, marker
 `G38-1a-end-sweep`) — keep the two in sync, do not let them diverge.
 Before deriving the ready-set, prune orphaned and locked worktrees left by prior
@@ -237,42 +232,40 @@ this instruction): this write NEVER performs, and must never be conflated
 with, that terminal edge.
 
 Take up to N ready tasks. For each, resolve its model via `get_config` (§K4), set
-`update_item("tasks", <id>, status: "wip")`, prepare its worktree (Claude:
-`isolation: "worktree"`; Codex: manual `git worktree add`), and dispatch an
-`implement-worker` via `Agent` (`subagent_type: "implement-worker"`,
-`model: <token.model VERBATIM>`, `isolation: "worktree"` under Claude). The
+`update_item("tasks", <id>, status: "wip")`, prepare its worktree through the
+surface adapter, and dispatch an `implement-worker` via `CQ_SUBAGENT` (`role:
+"implement-worker"`, `model: <token.model VERBATIM>`, worktree isolation). The
 resolved token's `model` is a BARE alias (`opus`/`sonnet`/`haiku`/`fable` —
-T509: the Agent tool's `model` param is a CLOSED enum that rejects full
+T509: the CQ_SUBAGENT tool's `model` param is a CLOSED enum that rejects full
 `claude-*` ids, and the config tokens are already bare aliases), so pass it
-verbatim with NO mangling. The token's `effort` is **N/A at `Agent` dispatch**
-— the Agent tool exposes no per-dispatch effort/reasoning param (T510; `effort`
+verbatim with NO mangling. The token's `effort` is **N/A at `CQ_SUBAGENT` dispatch**
+— the CQ_SUBAGENT tool exposes no per-dispatch effort/reasoning param (T510; `effort`
 exists only as subagent-definition frontmatter) — record it for
-provenance/display only. (For a `pi:*` tier token dispatched via
-`dispatch_agent`, the cq-subagent-dispatch extension already emits the effort —
-R342.) The prompt MUST carry:
+provenance/display only. A configured external shellout transport emits the
+effort according to its adapter (R342). The prompt MUST carry:
 the task id + verbatim `headline`/`description`/`acceptance`, the branch
 `implement/<taskId>` and base commit, and (on a re-dispatch) the prior round's
-`criticism[]`. Issue the batch's `Agent` calls in ONE message so they run
+`criticism[]`. Issue the batch's `CQ_SUBAGENT` calls in ONE message so they run
 concurrently. Record each worker's session log on return via `cq log put` (§Session logs).
 
 **Catalog-driven dispatch (G41 — implement-worker).** Drive each
 `implement-worker` dispatch through the typed prompt-catalog MCP tools the
 ledger-mcp server added in T343 (`fetch_prompt` / `validate_input` /
 `validate_output`), MIRRORING the a–g sequence `commands/cq/plan/advance.md`
-sub-step 1a established for `plan-advance`: **(a)** `fetch_prompt("implement-worker")`
+sub-step 1a established for `plan-advance`: **(a)** `prompt-catalog fetch ("implement-worker")`
 for its `promptTemplate` + typed `inputSchema`/`outputSchema` (present — a
 dispatched subagent); **(b–c)** compose the input against that `inputSchema`
 (`{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit,
 priorCriticism? }`); **(d)** `validate_input("implement-worker", input)`, fix and
-re-validate on `{ ok: false, errors }`; **(e)** dispatch the `Agent`
-(`subagent_type: "implement-worker"`, `model` = the §K4 `get_config`-resolved
+re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
+(`role: "implement-worker"`, `model` = the §K4 `get_config`-resolved
 token's bare-alias `model` verbatim, `isolation: "worktree"`)
 with the validated input rendered into the prompt; **(f–g)** await its result and
 `validate_output("implement-worker", output)` against the role's `outputSchema`
 (a validation failure is a contract breach to surface, §Session logs). **Degrade
 gracefully when the catalog tools are absent** (an older / embedded ledger-mcp
 that predates T343) — skip (a)–(d) and (g) and fall straight through to the bare
-`Agent` dispatch (e). The validate steps are an ADDITIVE contract check, never a
+`CQ_SUBAGENT` dispatch (e). The validate steps are an ADDITIVE contract check, never a
 hard dependency — their absence never blocks the pass.
 
 ### 3. Review each finished worker (multi-reviewer panel, reconciled)
@@ -284,13 +277,13 @@ goes straight to the criticism loop (its `blockedReason` is treated as round-0
 criticism).
 
 **3a. Resolve the reviewer panel (T172).** ONCE per pass, query
-the ledger's reviewer list by calling the `mcp__ledger__get_reviewers` MCP
+the ledger's reviewer list by calling the `ledger::get_reviewers` MCP
 tool (the ledger MCP server is registered in `.mcp.json` as `ledger`;
 it has no stdout-printing CLI, so this is an MCP-tool call, NOT a `Bash`
 shellout). It returns `{ configured, reviewers: [{ harness, model, alias }] }`.
 Apply any session-only override already in effect. Then:
 - **`configured` is false (absent / unconfigured)** → the panel is the SINGLE
-  native `implement-reviewer` Agent, exactly as before (`subagent_type:
+  native `implement-reviewer` CQ_SUBAGENT, exactly as before (`role:
   "implement-reviewer"`, `model` = the §K4 FRONTIER token's bare-alias `model`,
   verbatim; §K4's graceful degradation applies when `get_config` too is
   absent). It already returns the
@@ -301,10 +294,10 @@ Apply any session-only override already in effect. Then:
 **3b. Launch the panel in PARALLEL (one batch per task).** For each active
 reviewer in the resolved list, dispatch in a SINGLE message so they run
 concurrently, keyed by `harness`:
-- **`claude:*`** → native `implement-reviewer` Agent (`subagent_type:
+- **`claude:*`** → native `implement-reviewer` CQ_SUBAGENT (`role:
   "implement-reviewer"`, model from the reviewer's `model` — a bare alias,
   verbatim — else the §K4 FRONTIER token's `model`). The reviewer token's
-  `effort` is N/A at `Agent` dispatch (T510, §2) — provenance/display only.
+  `effort` is N/A at `CQ_SUBAGENT` dispatch (T510, §2) — provenance/display only.
   It returns its structured json (the contract below) and writes
   nothing to the ledger.
 - **`pi:*`** → `Bash` shellout to the `pi` CLI (T169 invocation, decision K30):
@@ -322,34 +315,34 @@ concurrently, keyed by `harness`:
   run standalone and FAST-FAIL on real errors instead — a quota-exhausted /
   unauthorized provider then exits non-zero with the error on stderr and empty
   stdout (e.g. openrouter `402 Insufficient credits`, exit 1, ~2s), which the
-  abstention rule (3c) catches. The `<prompt>` feeds the SHARED `/cq:implement-review`
+  abstention rule (3c) catches. The `<prompt>` feeds the SHARED `CQ::implement-review`
   rubric (`commands/cq/implement-review.md`, T174) PLUS the task acceptance, the
   worktree diff (`base..HEAD`), and the latest `bun run check` output. `pi` runs
   in default text mode; parse the (possibly fence-wrapped) json from its stdout.
 
 **Catalog-driven dispatch (G41 — implement-reviewer).** Drive each NATIVE
-`claude:*` `implement-reviewer` `Agent` dispatch (3a single-native fallback and
+`claude:*` `implement-reviewer` `CQ_SUBAGENT` dispatch (3a single-native fallback and
 each `claude:*` panel member in 3b) through the typed prompt-catalog MCP tools,
 MIRRORING the a–g sequence `commands/cq/plan/advance.md` sub-step 1a established
-for `plan-advance`: **(a)** `fetch_prompt("implement-reviewer")` for its
+for `plan-advance`: **(a)** `prompt-catalog fetch ("implement-reviewer")` for its
 `promptTemplate` + typed `inputSchema`/`outputSchema` (present — a dispatched
 subagent); **(b–c)** compose the input against that `inputSchema` (`{ taskId,
 acceptance, worktreePath, branch, baseCommit, workerResult, round,
 priorCriticism? }`); **(d)** `validate_input("implement-reviewer", input)`, fix
-and re-validate on `{ ok: false, errors }`; **(e)** dispatch the `Agent`
-(`subagent_type: "implement-reviewer"`, `model` = the reviewer's resolved
+and re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
+(`role: "implement-reviewer"`, `model` = the reviewer's resolved
 `model`, else the §K4 FRONTIER token's `model`, verbatim); **(f–g)** await its
 verdict and `validate_output("implement-reviewer", output)` against the role's
 `outputSchema` (a validation failure is a contract breach to surface, §Session
 logs). **Degrade gracefully when the catalog tools are absent** — skip (a)–(d)
-and (g) and fall straight through to the bare `Agent` dispatch (e). The validate
+and (g) and fall straight through to the bare `CQ_SUBAGENT` dispatch (e). The validate
 steps are an ADDITIVE contract check, never a hard dependency. (The `pi:*` panel
-members are EXTERNAL shellouts driving the shared `/cq:implement-review` rubric,
-not `Agent` dispatches of this catalog role — they are out of this catalog
+members are EXTERNAL shellouts driving the shared `CQ::implement-review` rubric,
+not `CQ_SUBAGENT` dispatches of this catalog role — they are out of this catalog
 validate-in/out path; their stdout-json is parsed and reconciled as 3b/3c
 describe.)
 
-Every reviewer — native `implement-reviewer` and the shared `/cq:implement-review`
+Every reviewer — native `implement-reviewer` and the shared `CQ::implement-review`
 rubric driving `pi` — returns the SAME byte-identical contract: `{ taskId,
 verdict: "approve" | "disapprove", criticism: [], questions: [], defects: [...],
 rationale, summary }`. Tag each parsed result with its source reviewer
@@ -377,9 +370,9 @@ per-reviewer json into ONE reconciled verdict that drives the criticism loop
   the union — it is not a vote.
 - **Quorum floor (all-abstain fallback).** If EVERY configured reviewer
   abstained (zero usable verdicts), fall back to the SINGLE native
-  `implement-reviewer` Agent (`subagent_type: "implement-reviewer"`, `model` =
-  the §K4 FRONTIER token's `model`, verbatim; its `effort` is N/A at `Agent`
-  dispatch per T510 — provenance/display only, never an Agent argument) —
+  `implement-reviewer` CQ_SUBAGENT (`role: "implement-reviewer"`, `model` =
+  the §K4 FRONTIER token's `model`, verbatim; its `effort` is N/A at `CQ_SUBAGENT`
+  dispatch per T510 — provenance/display only, never an CQ_SUBAGENT argument) —
   the always-available default — and use its verdict as the reconciled result;
   REPORT that the configured panel was unavailable this pass (which aliases
   abstained + why). The flow NEVER blocks on an unavailable panel and NEVER
@@ -431,18 +424,18 @@ reviewer rationale) in the defect's OWN `fields` (e.g. `description` or
 `suggestedFix`). A filed defect is a fault **to be fixed in a separate task** —
 its default disposition is FIX; it is NEVER a "candidate for fix or wontfix"
 choice the flow puts to the user. **Do NOT file a `questions` item routing the
-user to `/cq:investigate <D>`, AND do NOT file a `questions` item asking
+user to `CQ::investigate <D>`, AND do NOT file a `questions` item asking
 whether/how/when to fix it (fix-vs-wontfix, out-of-scope/pre-existing,
 external-API or blast-radius disposition) (K13 — `questions` are reserved for
 genuine user *requirements* decisions, not routing pointers and not
 fix-disposition prompts; `wontfix` is user-initiated only).** The defect is self-contained: its
-`ledgerRefs` link it to the task and goal, and `/cq:investigate` accepts a
+`ledgerRefs` link it to the task and goal, and `CQ::investigate` accepts a
 bare defect id (`^D\d+$` resume path) so any open defect is directly actionable
 via ledger query without a pointer question. **Implement:* does NOT auto-launch
 investigate inline (Q43) — that is plan:*'s responsibility, since implement:* is
 an execution flow, not a planning flow. The filed defect will be triaged by the
-next /cq:plan:advance cycle's auto-investigate phase, or by a direct user
-/cq:investigate <D>.** Do NOT block, fail, or re-dispatch the current task on
+next CQ::plan/advance cycle's auto-investigate phase, or by a direct user
+CQ::investigate <D>.** Do NOT block, fail, or re-dispatch the current task on
 a filed defect, and do NOT add it to the criticism loop — it is tracked
 separately. Filing a defect is idempotent: on a re-run, skip entries already
 filed for this task (match by headline + task ledgerRef).
@@ -472,7 +465,7 @@ an ill loop: for each open issue create
 history, last criticism, last check failure>", ledgerRefs: ["tasks:<id>",
 "goals:<G>"] })`, then `update_item("tasks", <id>, status: "blocked")`. Leave
 the worktree INTACT (do not remove it) so the work survives until the user
-answers. The user answers in the TUI/web, then re-runs `/cq:implement:advance` to
+answers. The user answers in the TUI/web, then re-runs `CQ::implement/advance` to
 resume (step 1 re-opens the task).
 
 ### 6. Success gate
@@ -491,8 +484,8 @@ after every task in its `dependsOn` has merged). For each:
    its worktree, or fetch the branch into the main checkout).
 2. **On conflict** → dispatch `implement-conflict-resolver` (the §K4 FRONTIER
    tier resolved from `get_config` — most-capable == frontier, Q253; the token's
-   `effort` is N/A at `Agent` dispatch per T510 — provenance/display only, never
-   an Agent argument)
+   `effort` is N/A at `CQ_SUBAGENT` dispatch per T510 — provenance/display only, never
+   an CQ_SUBAGENT argument)
    with the worktree, branch, base, and conflicting files. On its `pass`,
    continue; on its `fail`, treat like a question bailout (§5: register a
    `questions` item, set the task `blocked`, leave the worktree) and SKIP merging
@@ -500,20 +493,20 @@ after every task in its `dependsOn` has merged). For each:
    **Catalog-driven dispatch (G41 — implement-conflict-resolver).** Drive this
    dispatch through the typed prompt-catalog MCP tools, MIRRORING the a–g sequence
    `commands/cq/plan/advance.md` sub-step 1a established for `plan-advance`:
-   **(a)** `fetch_prompt("implement-conflict-resolver")` for its `promptTemplate`
+   **(a)** `prompt-catalog fetch ("implement-conflict-resolver")` for its `promptTemplate`
    + typed `inputSchema`/`outputSchema` (present — a dispatched subagent);
    **(b–c)** compose the input against that `inputSchema` (`{ taskId, headline?,
    description?, worktreePath, branch, baseCommit, conflictingFiles, baseSideNote?
    }`); **(d)** `validate_input("implement-conflict-resolver", input)`, fix and
-   re-validate on `{ ok: false, errors }`; **(e)** dispatch the `Agent`
-   (`subagent_type: "implement-conflict-resolver"`, `model` = the §K4 FRONTIER
-   token's `model`, verbatim — the token's `effort` is N/A at `Agent` dispatch
+   re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
+   (`role: "implement-conflict-resolver"`, `model` = the §K4 FRONTIER
+   token's `model`, verbatim — the token's `effort` is N/A at `CQ_SUBAGENT` dispatch
    per T510, provenance/display only,
    `isolation: "worktree"`); **(f–g)** await its result and
    `validate_output("implement-conflict-resolver", output)` against the role's
    `outputSchema` (a validation failure is a contract breach to surface, §Session
    logs). **Degrade gracefully when the catalog tools are absent** — skip (a)–(d)
-   and (g) and fall straight through to the bare `Agent` dispatch (e). The
+   and (g) and fall straight through to the bare `CQ_SUBAGENT` dispatch (e). The
    validate steps are an ADDITIVE contract check, never a hard dependency.
 3. On a clean rebase (or resolved conflict) → fast-forward merge into the base,
    set `update_item("tasks", <id>, status: "done", fields: { resultCommit:
@@ -525,8 +518,8 @@ after every task in its `dependsOn` has merged). For each:
    `update_item` call that marks the task `done`; do NOT defer `sessionLogs` /
    `rawLogs` to a separate update. (Omit a `rawLogs` entry for any subagent whose
    transcript was absent — that subagent is summary-only per §Session logs.) Then tear down the worktree <!-- G38-1a-post-done-cleanup -->
-   (both Claude and Codex paths — run explicitly immediately after the `done`
-   ledger write above):
+   through the surface adapter — run explicitly immediately after the `done`
+   ledger write above:
    ```
    branch=$(git -C <wt> rev-parse --abbrev-ref HEAD); git worktree unlock <wt> 2>/dev/null; git worktree remove --force <wt>; git branch -D "$branch"; git worktree prune
    ```
@@ -574,7 +567,7 @@ The `criticism`/`new_questions` are the source-tagged UNION across the panel
 (§3c); the `status` follows the reconciled verdict (`go-ahead` only when ALL
 reviewers approved + green check, else `revise`). Include EVERY reviewer's
 summary-log path (`sessionLogs`) AND raw-log path (`rawLogs`) written for this
-task (the native-Agent `.md`+`.jsonl` pairs and the `pi` summary `.md` + raw
+task (the native-CQ_SUBAGENT `.md`+`.jsonl` pairs and the `pi` summary `.md` + raw
 `.md` stdout logs, §Session logs) in the SAME `create_item` — do NOT defer them
 to a separate update. (Omit a `rawLogs` entry for any reviewer whose transcript
 was absent.) With a single configured/unconfigured reviewer this collapses
@@ -597,8 +590,8 @@ defer — tasks merge regardless), but it DOES gate milestone archival.
 
 ### Milestone auto-close+archive sweep (factored predicate)
 After merge-back, run the **auto-close+archive sweep** over every milestone the
-pass touched (and, in `/cq:advance`, over the whole `milestones` ledger). This is
-the single authoritative predicate — `/cq:advance` (llm/commands/cq/advance.md) states
+pass touched (and, in `CQ::advance`, over the whole `milestones` ledger). This is
+the single authoritative predicate — `CQ::advance` (llm/commands/cq/advance.md) states
 the same rule and is the catch-all that also sweeps milestones whose goal the
 user closed between runs.
 
@@ -641,7 +634,7 @@ Summarize the pass concisely:
 - tasks **failed**/skipped and why;
 - whether any milestone was archived;
 - the next action: if anything is `blocked`, "answer the listed questions in the
-  TUI/web, then run `/cq:implement:advance` to resume"; if all done, say so.
+  TUI/web, then run `CQ::implement/advance` to resume"; if all done, say so.
 
 ### Ready to close (user action)
 When all work milestones under a goal `G` are archived, list each ready-to-close goal with explicit instruction:
@@ -665,10 +658,10 @@ When all work milestones under a goal `G` are archived, list each ready-to-close
 Whether you write a `handoffs` record at your stop depends ENTIRELY on your
 invocation context — there is **no env var or process signal** to read. You,
 the executing agent, run both this command and (when chained) the wrapping
-`/cq:advance` command in the SAME inline session, so you already KNOW which
+`CQ::advance` command in the SAME inline session, so you already KNOW which
 context you are in.
 
-- **Run STANDALONE** (the user invoked `/cq:implement:advance` directly, with no
+- **Run STANDALONE** (the user invoked `CQ::implement/advance` directly, with no
   wrapping flow command): after the §Report, write ONE `handoffs` record for
   this stop — `create_item("handoffs", <milestone>, <status>, <fields>)` —
   mapping your end-of-pass classification to the handoff `status`:
@@ -701,12 +694,12 @@ context you are in.
 
   **TURN-vs-RUN clause (D39).** A RUN and a TURN are distinct scopes. A **RUN**
   spans as many turns as needed and is durably resumable from ledger state on the
-  next `/cq:implement:advance` invocation — the ledger IS the durable resume
+  next `CQ::implement/advance` invocation — the ledger IS the durable resume
   point. A **TURN** is a single context window; exhausting the turn/context
   budget is **NOT a run-stop**. When a turn/context budget is exhausted
   mid-stride, the agent **STOPS WITHOUT writing a handoff** — no `handoffs`
   record, no `mixed`/effort terminal artifact — because the ledger already
-  captures every durable state change. The next `/cq:implement:advance` reads
+  captures every durable state change. The next `CQ::implement/advance` reads
   ledger state and continues from where the previous turn left off. Contrast: a
   **RUN-stop** = one of the five predicate-gated handoff statuses; a
   **TURN-pause** = no artifact, just resume next invocation. Fabricating a
@@ -766,10 +759,10 @@ context you are in.
   — which the predicates will ONLY supply if the stop is legitimate — or to
   **not stop and CONTINUE** the pass instead.
 
-- **Run CHAINED INLINE by any wrapping flow command** (`/cq:advance`, or a
+- **Run CHAINED INLINE by any wrapping flow command** (`CQ::advance`, or a
   `/<flow>:start` that runs this pass inline):
   **SUPPRESS this handoff write**. The outermost wrapper owns the single
-  authoritative run-level handoff and writes it once at its stop — `/cq:advance`
+  authoritative run-level handoff and writes it once at its stop — `CQ::advance`
   per its §Provenance (it is the sole `handoffs` writer for the whole run);
   a `/<flow>:start` writes it directly in its own §Handoff record step. You can
   tell you are in this context because the wrapping command explicitly chains you

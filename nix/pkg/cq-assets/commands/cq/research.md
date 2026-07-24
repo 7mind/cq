@@ -1,8 +1,12 @@
 ---
-description: Start a research-flow run — intake a research question (or resume an existing one), then run the /cq:research:advance round inline.
+description: Start a research-flow run — intake a research question (or resume an existing one), then run the CQ::research/advance round inline.
 argument-hint: <research question | RS id>
-allowed-tools: mcp__ledger__*, Agent, WebFetch, Write, Bash, Read, Grep, Glob
+# {{cq:fragment:host-tool-vocabulary}}
 ---
+
+{{cq:fragment:cq-command-invocation}}
+{{cq:fragment:inline-command-recursion}}
+
 
 ## Catalogue
 ```yaml
@@ -11,13 +15,13 @@ inputs:
 outputs:
   - "intake path: coordination milestone M + research item RS on the researches ledger"
   - "resume path: validates existing research RS (aborts if terminal)"
-  - "research-flow advance round run inline (full /cq:research:advance output)"
+  - "research-flow advance round run inline (full CQ::research/advance output)"
   - "handoffs item (this command is the outermost wrapper)"
 ioSchema:
   - "intake path: creates a researches item with fields question (required), scope (optional)"
   - "researches lifecycle: open -> wip -> {concluded | inconclusive}; abandoned is user-initiated only"
   - "advance round output: hypothesis tree mutations, validated evidence, adjudication, and on a confirmed answer the findings/conclusion/recommendation"
-  - "handoffs item: flow=research, ledgerRefs=researches:<RS>; /cq:research:advance suppresses its own handoff"
+  - "handoffs item: flow=research, ledgerRefs=researches:<RS>; CQ::research/advance suppresses its own handoff"
 ```
 
 You are **bootstrapping a research-flow run**. The argument is:
@@ -25,9 +29,9 @@ You are **bootstrapping a research-flow run**. The argument is:
 > $ARGUMENTS
 
 This command does the one-time **intake and bootstrap** only, then hands off to the
-`/cq:research:advance` round inline. It owns NO research or loop logic of its own — the
+`CQ::research/advance` round inline. It owns NO research or loop logic of its own — the
 entire round (hypothesis formation, explorer/experimenter dispatch, citation validation,
-adjudication, conclusion, handoff) lives in `/cq:research:advance`, so that logic exists
+adjudication, conclusion, handoff) lives in `CQ::research/advance`, so that logic exists
 in exactly ONE place.
 
 ## No confirmation checkpoints — just run (hard rule)
@@ -129,23 +133,23 @@ Save the returned id as **RS**.
 
 ### 3. Hand off to the advance round
 
-Now execute the `/cq:research:advance` round for research **RS** — follow the full loop
-spec in `/cq:research:advance` (READ state → FORM hypotheses → DISPATCH
+Now execute the `CQ::research/advance` round for research **RS** — follow the full loop
+spec in `CQ::research/advance` (READ state → FORM hypotheses → DISPATCH
 explorers/experimenters → VALIDATE citations → adjudicate → CONCLUDE or NEEDS-user-input
 park, plus its session-log writing and provenance rules). Do NOT restate or duplicate
-that logic here; run it. Then produce `/cq:research:advance`'s end-of-round report.
+that logic here; run it. Then produce `CQ::research/advance`'s end-of-round report.
 
 This command is the outermost wrapper for this invocation (the user ran
-`/cq:research`), so the inline `/cq:research:advance` round **SUPPRESSES its own
-handoff write** (per `/cq:research:advance`'s §Handoff record — `/cq:research` is listed
+`CQ::research`), so the inline `CQ::research/advance` round **SUPPRESSES its own
+handoff write** (per `CQ::research/advance`'s §Handoff record — `CQ::research` is listed
 as a suppress-context), and **this command** writes the ONE `handoffs` record at the
-stop. Use the field schema from `/cq:research:advance`'s §Handoff record, STANDALONE
+stop. Use the field schema from `CQ::research/advance`'s §Handoff record, STANDALONE
 branch (do not restate the mapping here). Persistence is the store's job — no git
 action here; when the optional `[ledger].backup` mode (in-tree / orphan-branch) is
 enabled, the debounced exporter mirrors the ledger + logs to git.
 
 The run is resumable: after the user answers any registered questions, they re-run
-**`/cq:research:advance RS`** (no need to re-run `/cq:research`).
+**`CQ::research/advance RS`** (no need to re-run `CQ::research`).
 
 ---
 
@@ -154,4 +158,4 @@ After the advance round completes, prepend a brief intake summary:
 - **Research:** `<RS>` — `<question>` (scope: `<scope, if any>`, milestone: `<M>`)
 - **Action:** created new research item (intake path) **or** resumed existing research
   item (resume path)
-- Then the full `/cq:research:advance` round report.
+- Then the full `CQ::research/advance` round report.

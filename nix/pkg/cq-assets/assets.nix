@@ -494,7 +494,44 @@ let
 
   catalog = validatePromptCatalog authoredCatalog;
   catalogJson = builtins.toJSON catalog;
+  orchestratorCatalogJson = builtins.toJSON (
+    lib.filter (role: role.roleKind == "orchestrator-command") catalog
+  );
   catalogMetadataHash = builtins.hashString "sha256" catalogJson;
+  promptFragmentSource =
+    surface: role: binding:
+    if surface == "claude" && binding.fragment == T then
+      "fragments/${surface}/commands/cq/${role.roleId}/${binding.fragment}.md"
+    else
+      "fragments/${surface}/${binding.fragment}.md";
+  rawPromptFragmentSources = lib.concatMap (
+    surface:
+    lib.concatMap (
+      role:
+      map (binding: {
+        inherit surface;
+        inherit (role) roleId;
+        inherit (binding) fragment;
+        source = promptFragmentSource surface role binding;
+      }) role.fragmentBindings
+    ) (lib.filter (role: role.roleKind == "orchestrator-command") catalog)
+  ) promptSurfaces;
+  promptFragmentSourceKeys = map (
+    entry: "${entry.surface}:${entry.roleId}:${entry.fragment}"
+  ) rawPromptFragmentSources;
+  promptFragmentSources =
+    if builtins.length promptFragmentSourceKeys != builtins.length (unique promptFragmentSourceKeys) then
+      fail "promptFragmentSources" "duplicate surface, role, and fragment identity"
+    else
+      map (
+        entry:
+        if builtins.pathExists (./. + "/${entry.source}") then
+          entry
+        else
+          fail "promptFragmentSources.${entry.surface}.${entry.roleId}.${entry.fragment}"
+            "missing fragment source \"${entry.source}\""
+      ) rawPromptFragmentSources;
+  promptFragmentSourcesJson = builtins.toJSON promptFragmentSources;
   promptCatalogProjection = {
     schemaVersion = 1;
     inherit catalog catalogMetadataHash fragmentContracts;
@@ -525,9 +562,12 @@ assert lib.sort builtins.lessThan fragmentContractIds
     agents
     catalog
     catalogJson
+    orchestratorCatalogJson
     catalogMetadataHash
     fragmentContracts
     promptCatalogProjection
+    promptFragmentSources
+    promptFragmentSourcesJson
     promptSurfaceLayout
     promptSurfaces
     validatePromptCatalog

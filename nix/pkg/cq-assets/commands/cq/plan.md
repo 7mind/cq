@@ -1,8 +1,13 @@
 ---
 description: Start a plan-flow goal — create the goal (from free text OR one-or-more idea-ids, one goal per idea), then hand off to the planner for the first clarifying questions.
 argument-hint: <goal description> | <I-id> [<I-id> ...]
-allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob
+# {{cq:fragment:host-tool-vocabulary}}
 ---
+
+{{cq:fragment:cq-command-invocation}}
+{{cq:fragment:inline-command-recursion}}
+{{cq:fragment:subagent-dispatch}}
+
 
 ## Catalogue
 ```yaml
@@ -29,7 +34,7 @@ You are starting a **plan-flow goal**. The user's goal is:
 This command does the one-time **bootstrap** only — create the coordination
 milestone and the goal(s) — then hands off to the `plan-advance` planner for the
 first clarifying questions. It owns NO question or plan logic of its own: that
-all lives in the `plan-advance` subagent (the same planner `/cq:plan:advance`
+all lives in the `plan-advance` subagent (the same planner `CQ::plan/advance`
 drives), so the question-generation logic exists in exactly one place.
 
 The argument is EITHER a **free-text goal description** (today's path) OR
@@ -48,14 +53,14 @@ On every `create_item` / `create_milestone`, pass:
 ## Defect vs goal — intake the right ledger
 Plan-flow goals are for **greenfield work** (build/change something). A
 user-reported **DEFECT** — an existing fault to fix — should NOT be intaked as a
-goal: file it on the `defects` ledger via **`/cq:investigate <defect
+goal: file it on the `defects` ledger via **`CQ::investigate <defect
 description>`** instead. That flow investigates the fault, confirms a root cause,
 and (per the file-and-defer handoff, K8) seeds a *defect-seeded* plan-flow goal —
 linked `defects:<D>` with the confirmed root cause embedded — which
-`/cq:plan:advance` then turns into reviewed FIX TASKS (tasks remain the only
+`CQ::plan/advance` then turns into reviewed FIX TASKS (tasks remain the only
 executable unit; the defect itself stays a problem record). So: fix request →
-`/cq:investigate`; new capability → `/cq:plan` (here). If `$ARGUMENTS`
-plainly describes a fault to repair, tell the user to use `/cq:investigate`
+`CQ::investigate`; new capability → `CQ::plan` (here). If `$ARGUMENTS`
+plainly describes a fault to repair, tell the user to use `CQ::investigate`
 and stop instead of creating a goal.
 
 ## Argument grammar — idea-ids OR free text (Q188, no interleave)
@@ -65,7 +70,7 @@ NO 'mixed' interleaving:
 - **Idea-ids mode.** If the argument is one or more whitespace-separated tokens
   and **every** token matches the idea-id pattern **`/^I\d+$/`** (an `I`
   followed by one-or-more digits, e.g. `I01`, `I2`, `I137`), treat the argument
-  as a list of idea-ids. `/cq:plan I01 I02 I03` creates **ONE goal PER idea** —
+  as a list of idea-ids. `CQ::plan I01 I02 I03` creates **ONE goal PER idea** —
   iterate the ids in order, running the §Consume-an-idea sub-procedure once per
   id. Each idea yields its own coordination milestone + goal + clarifying round.
 - **Free-text mode.** Otherwise (any token does NOT match `/^I\d+$/`), treat the
@@ -77,7 +82,7 @@ single invocation. If the argument is empty, ask the user what to plan and stop.
 
 ## Consume-an-idea sub-procedure
 Run this ONCE per idea-id when in idea-ids mode. It is the single definition of
-"turn an idea into a seeded plan-flow goal"; `/cq:plan:follow-up` references this
+"turn an idea into a seeded plan-flow goal"; `CQ::plan/follow-up` references this
 same sub-procedure (DRY — do not re-derive it there). For idea-id **I**:
 
 1. **Fetch the idea.** `fetch_item("ideas", I)` from the `ideas` ledger. If `I`
@@ -122,8 +127,8 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
    text, verbatim or lightly cleaned>" })`. Capture the returned id as **G**.
    (The `goals` schema requires both `title` and `description`.)
 
-3. **Hand off to the planner.** Spawn the `plan-advance` subagent — `Agent` tool,
-   `subagent_type: "plan-advance"`, passing the goal id **G** in the prompt. On a
+3. **Hand off to the planner.** Spawn the `plan-advance` subagent — `CQ_SUBAGENT` tool,
+   `role: "plan-advance"`, passing the goal id **G** in the prompt. On a
    fresh goal (in `clarifying` with no questions yet) it files the FIRST batch of
    clarifying questions and returns `awaiting-answers`. You drive it exactly once
    here — there is nothing to review yet, so no loop is needed.
@@ -136,7 +141,7 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
    and writes into the primary store's out-of-tree logs area; the logical paths
    `.cq/logs/…` are recorded in sessionLogs/rawLogs and read back via
    `read_log`). Take
-   `<agent-id>` from the `Agent` tool result and stamp `<timestamp>` via `Bash`
+   `<agent-id>` from the `CQ_SUBAGENT` tool result and stamp `<timestamp>` via `Bash`
    (`date -u +%Y%m%d-%H%M%S`), then:
    - **Raw transcript.** Locate the native transcript at
      `~/.claude/projects/<slug>/<session>/subagents/agent-<agent-id>.jsonl` (the
@@ -157,7 +162,7 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
    do NOT defer this to a separate pass.
 
 5. **Auto-investigate filed defects (conditional — K12).** This mirrors the
-   same phase in `/cq:plan:advance` (see that command's §Auto-investigate filed
+   same phase in `CQ::plan/advance` (see that command's §Auto-investigate filed
    defects for the full logic) — this step is a pointer to it, not a
    re-derivation.
 
@@ -173,10 +178,10 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
    `clarifying` with open questions and no filed defects; the
    defect-seeded-goal path (investigate→plan) is the main case.
 
-   For each defect **D** in the worklist, run **`/cq:investigate:advance D`
+   For each defect **D** in the worklist, run **`CQ::investigate/advance D`
    inline** in this same main session, exactly per
-   `/cq:investigate:advance` — do NOT duplicate or re-implement
-   that logic; run it. Inherit the stop predicates from `/cq:plan:advance`'s
+   `CQ::investigate/advance` — do NOT duplicate or re-implement
+   that logic; run it. Inherit the stop predicates from `CQ::plan/advance`'s
    auto-investigate phase (predicates a–f, per K12). A command chaining
    another command's loop is legal under **K12**; the
    subagents-cannot-spawn-subagents rule is preserved because only this
@@ -188,23 +193,23 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
      `I` was flipped to `planned`);
    - the questions the planner filed (from its returned summary);
    - that they should answer the questions in the TUI or web client (set each to
-     `answered` with a non-empty `answer`), then run **`/cq:plan:advance G`** to
+     `answered` with a non-empty `answer`), then run **`CQ::plan/advance G`** to
      continue;
    - if step 5 ran: for each defect D in the worklist, one line covering its
      auto-investigate outcome (confirmed→seeded goal, parked on a question, or
-     stopped by a K12 predicate) — same format as `/cq:plan:advance`'s §Report
+     stopped by a K12 predicate) — same format as `CQ::plan/advance`'s §Report
      auto-investigate lines.
 
 7. **Handoff record.** This command is the outermost wrapper for this
-   invocation (the user ran `/cq:plan`), so **this command** writes the ONE
-   `handoffs` record at this step. Use the field schema from `/cq:plan:advance`'s
+   invocation (the user ran `CQ::plan`), so **this command** writes the ONE
+   `handoffs` record at this step. Use the field schema from `CQ::plan/advance`'s
    §Handoff record, STANDALONE branch — the goal is left in
    `clarifying`/`awaiting-answers` with the first questions filed, so the stop
    classification is `answers-required` (`flow` = `plan`; `ledgerRefs`
    `goals:<G>`; `blockingQuestions` the filed question ids; `sessionLogs` +
    `rawLogs` the step-4 summary + raw paths). Do not restate the field mapping
    here. The conditional step-5
-   auto-investigate sub-round writes NO handoff of its own — `/cq:investigate:advance`
+   auto-investigate sub-round writes NO handoff of its own — `CQ::investigate/advance`
    suppresses its handoff when chained by this command (per its CHAINED section:
    `/<flow>:start` is listed as a suppress-context; this command owns the single
    authoritative write).
@@ -214,5 +219,5 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
    enabled, the debounced exporter mirrors the ledger + logs to git.
 
 Do not file questions, transition the goal, or emit any plan yourself — the
-`plan-advance` planner and `/cq:plan:advance` own everything after the goal is
+`plan-advance` planner and `CQ::plan/advance` own everything after the goal is
 created.

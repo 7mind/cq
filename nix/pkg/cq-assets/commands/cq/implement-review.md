@@ -2,6 +2,9 @@
 description: Implement-flow adversarial per-task review rubric + stdout-JSON contract, as a portable promptTemplate for non-Claude harnesses (pi/Codex). Symmetric to cq:plan-review. Judges ONE task's implementation, splits findings into autonomously-fixable criticism[], user-only questions[], and out-of-scope defects[], and emits the verdict as JSON on stdout. Writes NOTHING to the ledger — the orchestrator records the terminal review.
 ---
 
+{{cq:fragment:cq-command-invocation}}
+
+
 ## Catalogue
 ```yaml
 inputs:
@@ -82,7 +85,7 @@ Verify with evidence, against the actual diff and repo — not the worker's clai
   separate task** — a fix intent, NEVER a "candidate for fix or wontfix"
   disposition for the flow to solicit; the default disposition of every filed
   defect is FIX, and `wontfix` is a user-initiated decision the flow never asks
-  for. You still write NOTHING to the ledger; the /cq:implement:advance orchestrator
+  for. You still write NOTHING to the ledger; the CQ::implement/advance orchestrator
   files each as a `defects` ledger item. Each entry is an object — `{ headline,
   description, severity, suggestedFix? }` — where `severity` is REQUIRED.
 

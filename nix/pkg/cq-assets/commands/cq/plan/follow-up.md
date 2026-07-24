@@ -1,8 +1,13 @@
 ---
 description: Add new scope to an EXISTING plan-flow goal — append the follow-up request, re-open the goal, and hand to the planner for a fresh clarifying round.
 argument-hint: <goalId> <follow-up request> | <goalId> <I-id> [<I-id> ...]
-allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob
+# {{cq:fragment:host-tool-vocabulary}}
 ---
+
+{{cq:fragment:cq-command-invocation}}
+{{cq:fragment:inline-command-recursion}}
+{{cq:fragment:subagent-dispatch}}
+
 
 ## Catalogue
 ```yaml
@@ -33,7 +38,7 @@ is the follow-up scope — EITHER a free-text request OR one-or-more idea-ids (s
 
 Use this when a goal's plan is already done (`planned`) — or its build is under
 way (`building`) — and the user wants to add MORE scope to the SAME goal. Like
-`/cq:plan`, this command does the one-time **bootstrap** only — record the
+`CQ::plan`, this command does the one-time **bootstrap** only — record the
 request and re-open the goal — then hands off to the `plan-advance` planner for a
 fresh clarifying round (clarify-first). It owns NO question or plan logic itself.
 
@@ -45,10 +50,10 @@ mutually-exclusive modes — there is NO 'mixed' interleaving (mirrors `plan.md`
 
 - **Idea-ids mode.** If every remaining token matches the idea-id pattern
   **`/^I\d+$/`** (an `I` followed by one-or-more digits, e.g. `I01`, `I2`,
-  `I137`), treat them as a list of idea-ids. `/cq:plan:follow-up G35 I01 I02`
+  `I137`), treat them as a list of idea-ids. `CQ::plan/follow-up G35 I01 I02`
   appends EACH idea as new scope onto the SAME existing goal G35 — iterate the
   ids in order, running the §Consume-an-idea-into-this-goal steps below once per
-  id. (Unlike `/cq:plan`, which creates one NEW goal per idea, here every idea
+  id. (Unlike `CQ::plan`, which creates one NEW goal per idea, here every idea
   folds into the one pre-existing target goal G.)
 - **Free-text mode.** Otherwise (any remaining token does NOT match `/^I\d+$/`),
   treat the WHOLE remainder as a single free-text follow-up request — the
@@ -71,7 +76,7 @@ Run this ONCE per idea-id, for the SAME target goal **G**. For each idea-id **I*
    re-open semantics are introduced.
 3. **Link + transition via the shared sub-procedure.** For the goal↔idea
    `ledgerRefs` link and the idea→`planned` flip, reuse the
-   **§Consume-an-idea sub-procedure defined in `/cq:plan` (`plan.md`)** — add
+   **§Consume-an-idea sub-procedure defined in `CQ::plan` (`plan.md`)** — add
    `goals:<G>` to the idea's `ledgerRefs` AND `ideas:<I>` to the goal's
    `ledgerRefs` (bidirectional, preserving pre-existing refs), then
    `update_item("ideas", I, status: "planned")`. Do NOT re-derive that
@@ -83,12 +88,12 @@ Run this ONCE per idea-id, for the SAME target goal **G**. For each idea-id **I*
 > **Follow-up scope vs a defect.** Use this for MORE greenfield scope on an
 > existing goal. If the follow-up is really a **DEFECT report** — an existing
 > fault to fix, not new capability — intake it on the `defects` ledger via
-> **`/cq:investigate <defect description>`** instead of folding it into this
+> **`CQ::investigate <defect description>`** instead of folding it into this
 > goal. Investigation confirms the root cause and seeds a *defect-seeded*
-> plan-flow goal (linked `defects:<D>`) that `/cq:plan:advance` turns into reviewed
+> plan-flow goal (linked `defects:<D>`) that `CQ::plan/advance` turns into reviewed
 > FIX TASKS — tasks remain the only executable unit; the defect stays a problem
 > record. If the request plainly describes a fault to repair, point the user at
-> `/cq:investigate` rather than re-opening this goal.
+> `CQ::investigate` rather than re-opening this goal.
 
 ## Provenance (every ledger write)
 On every `update_item`, pass `author` = your OWN model class (derived from
@@ -110,7 +115,7 @@ the Codex equivalent; omit if unavailable).
    - **`done` / `abandoned`** (terminal): a finished goal canNOT be re-opened —
      the goals state machine keeps terminal statuses outgoing-edge-free by
      design. STOP and tell the user to start a fresh goal for the new scope with
-     `/cq:plan` (it can reference G in its description). Do not mutate G.
+     `CQ::plan` (it can reference G in its description). Do not mutate G.
    - **`clarifying`**: already taking input — skip the re-open in step 4, just
      append (step 3) and hand off (step 5).
    - **`planning` / `planned` / `building`**: proceed.
@@ -138,8 +143,8 @@ the Codex equivalent; omit if unavailable).
    (Re-open edges `planned→planning` and `building→planning` exist specifically
    for this command; `planning→clarifying` is the standard loop-back.)
 
-5. **Hand off to the planner.** Spawn the `plan-advance` subagent — `Agent` tool,
-   `subagent_type: "plan-advance"`, passing the goal id **G** in the prompt. With
+5. **Hand off to the planner.** Spawn the `plan-advance` subagent — `CQ_SUBAGENT` tool,
+   `role: "plan-advance"`, passing the goal id **G** in the prompt. With
    G now in `clarifying` and the new scope folded into its description, the
    planner files the next batch of clarifying questions (scoped to the follow-up)
    and returns `awaiting-answers`. Drive it exactly once here — there is nothing
@@ -153,7 +158,7 @@ the Codex equivalent; omit if unavailable).
    and writes into the primary store's out-of-tree logs area; the logical paths
    `.cq/logs/…` are recorded in sessionLogs/rawLogs and read back via
    `read_log`). Take
-   `<agent-id>` from the `Agent` tool result and stamp `<timestamp>` via `Bash`
+   `<agent-id>` from the `CQ_SUBAGENT` tool result and stamp `<timestamp>` via `Bash`
    (`date -u +%Y%m%d-%H%M%S`), then:
    - **Raw transcript.** Locate the native transcript at
      `~/.claude/projects/<slug>/<session>/subagents/agent-<agent-id>.jsonl` (the
@@ -190,7 +195,7 @@ the Codex equivalent; omit if unavailable).
    `clarifying` with new questions and no filed defects on this round; the
    defect-seeded-goal path (investigate→plan) is the main case.
 
-   For each defect **D** in the worklist, run **`/cq:investigate:advance D`
+   For each defect **D** in the worklist, run **`CQ::investigate/advance D`
    inline** in this same main session, exactly per
    llm/commands/cq/investigate/advance.md — do NOT duplicate or re-implement
    that logic; run it. Inherit the stop predicates from plan/advance.md's
@@ -201,14 +206,14 @@ the Codex equivalent; omit if unavailable).
 
 8. **Report.** Tell the user: the goal id **G** and its new phase (`clarifying`);
    the questions the planner filed; and that they should answer them in the
-   TUI/web, then run **`/cq:plan:advance G`** to plan the added scope;
+   TUI/web, then run **`CQ::plan/advance G`** to plan the added scope;
    if step 7 ran: for each defect D in the worklist, one line covering its
    auto-investigate outcome (confirmed→seeded goal, parked on a question, or
    stopped by a K12 predicate) — same format as plan/advance.md's §Report
    auto-investigate lines.
 
 9. **Handoff record.** This command is the outermost wrapper for this
-   invocation (the user ran `/cq:plan:follow-up`), so **this command** writes the
+   invocation (the user ran `CQ::plan/follow-up`), so **this command** writes the
    ONE `handoffs` record at this step. Use the field schema from
    plan/advance.md's §Handoff record, STANDALONE branch — the re-opened goal
    lands in `clarifying` with new questions filed, so the stop classification is
@@ -225,4 +230,4 @@ the Codex equivalent; omit if unavailable).
     enabled, the debounced exporter mirrors the ledger + logs to git.
 
 Do not file questions, emit a plan, or lock decisions yourself — the
-`plan-advance` planner and `/cq:plan:advance` own everything after the re-open.
+`plan-advance` planner and `CQ::plan/advance` own everything after the re-open.

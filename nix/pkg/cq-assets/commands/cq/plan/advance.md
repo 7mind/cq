@@ -1,8 +1,12 @@
 ---
 description: Advance plan-flow goals one full round — a given goal, or (no argument) every unlocked goal — running the planner↔reviewer loop until each needs the user or reaches `planned`.
 argument-hint: [goalId]
-allowed-tools: mcp__ledger__*, mcp__ledger__get_reviewers, mcp__ledger__get_planners, Agent, Write, Bash, Read, Grep, Glob
+# {{cq:fragment:host-tool-vocabulary}}
 ---
+
+{{cq:fragment:cq-command-invocation}}
+{{cq:fragment:inline-command-recursion}}
+
 
 ## Catalogue
 ```yaml
@@ -14,7 +18,7 @@ inputs:
 outputs:
   - "planner ledger writes (questions / plan / revision / decision + planned) via plan-advance subagent or orchestrator persist"
   - "one aggregated reviews item per round (written by reviewer subagent or orchestrator)"
-  - "auto-investigate: /cq:investigate:advance inline for each goal-linked actionable defect"
+  - "auto-investigate: CQ::investigate/advance inline for each goal-linked actionable defect"
   - "per planner/reviewer: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl (pi:* → .cq/logs/raw/<ts>-pi-<alias>.md plain), BOTH written via `cq log put`"
   - "handoffs item (standalone only)"
 ioSchema:
@@ -49,11 +53,11 @@ return JSON and write nothing). Your job is to drive that loop, then run the
 **auto-investigate phase** (below) on any defects the round filed, and relay the
 outcome.
 
-> The auto-investigate phase runs `/cq:investigate:advance` **inline** (per K12 —
+> The auto-investigate phase runs `CQ::investigate/advance` **inline** (per K12 —
 > a *command* may chain another command; a *subagent* still cannot). That phase,
 > following llm/commands/cq/investigate/advance.md, writes the ledger (the
 > investigate loop's own writes), and the broadened `allowed-tools`
-> (`mcp__ledger__*`, `Read`/`Grep`/`Glob`) supports it. The OTHER ledger writes
+> (`ledger::*`, `Read`/`Grep`/`Glob`) supports it. The OTHER ledger writes
 > you make are: the **configured multi-planner** synthesized plan (step 1's
 > JUDGE+SYNTHESIS → orchestrator-persist, sub-step 1b-v) and the **configured
 > multi-reviewer** aggregated `reviews` item (step 2b-iii). In the
@@ -71,7 +75,7 @@ outcome.
   "no unlocked goals" and stop.
 
 > **NEVER FABRICATE A GOAL.** `plan:advance` only *advances goals that already
-> exist* — goals are created solely by `/cq:plan` at the user's request. An empty
+> exist* — goals are created solely by `CQ::plan` at the user's request. An empty
 > goals ledger, or one whose goals are all `planned`/terminal, means there is
 > **nothing to advance**: write a `drained` handoff and STOP. Do **not**
 > `create_item("goals", …)`, `create_milestone`, or invent a
@@ -79,14 +83,14 @@ outcome.
 > the classic empty-repo ill-state, a DEFECT, not progress. When there are no
 > unlocked goals: STOP.
 >
-> **Narrow carve-out — the `/cq:advance` SEED stage (Q259 option A / D94).** There
-> is exactly ONE sanctioned AUTONOMOUS goal creator: the `/cq:advance` **Seed
+> **Narrow carve-out — the `CQ::advance` SEED stage (Q259 option A / D94).** There
+> is exactly ONE sanctioned AUTONOMOUS goal creator: the `CQ::advance` **Seed
 > stage** (cross-reference `commands/cq/advance.md` §The cycle, Seed stage). It
 > creates goals ONLY for **defect-seeded** fix goals produced by the mechanical
 > transform of a CONFIRMED root cause — `root-caused`, severity at/above the floor
 > (critical/high), batch-capped (`SEED_BATCH_CAP` = 5 per pass), cluster-grouped
 > (one batch → ONE goal), and back-linked (`goals:<G>` into each defect's
-> `ledgerRefs`). That carve-out lives in `/cq:advance`, NOT here: **`plan:advance`
+> `ledgerRefs`). That carve-out lives in `CQ::advance`, NOT here: **`plan:advance`
 > ITSELF still NEVER creates a goal** — not even a defect-seeded one — and the
 > empty-goals-ledger ill-state rule above stays FULLY in force. When there are no
 > unlocked goals, `plan:advance` STOPS; it never seeds one to have work to do.
@@ -99,19 +103,7 @@ per-goal report.
 
 ## The per-goal round (for one goal G)
 
-> **DISPATCHING A SUBAGENT IS HARNESS-NEUTRAL.** Wherever a step below says
-> "spawn the planner", "use the `Agent` tool with `subagent_type: <name>`", or
-> "dispatch the `<name>` subagent", that is one action with a per-harness tool:
-> - **claude** → the `Agent` tool: `Agent(subagent_type: "<name>", …)`.
-> - **pi** → the `dispatch_agent` tool: `dispatch_agent(agent: "<name>",
->   task: "<the full prompt/goal-id + mode instruction>")` (registered by the
->   cq-subagent-dispatch extension; it runs the same cq agent as an isolated
->   child turn and returns its final text).
->
-> Use whichever your harness (`CQ_HARNESS`) provides. **Do NOT hand-simulate the
-> subagent's job inline** by reading and mutating the ledger yourself in place of
-> a dispatch — that both skips the agent's state machine and is a primary cause
-> of the read-only ill-loop below. If a step calls for a subagent, DISPATCH it.
+{{cq:fragment:subagent-dispatch}}
 
 > **FORWARD-PROGRESS INVARIANT — every loop iteration must change state or
 > dispatch, else STOP.** Each pass of the loop below MUST do exactly one of:
@@ -148,15 +140,15 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         the **single-planner fallback** (sub-step 1a — today's path, UNCHANGED).
       - If it returns `configured: true`, take the **multi-planner path**
         (sub-step 1b), AND honor any **session-only planner override** the user
-        stated this run via `/cq:planners` (T16): an in-memory override
+        stated this run via `CQ::planners` (T16): an in-memory override
         supersedes the `cq.toml` default for THIS run only (it is never
         persisted) — use the overridden active set in place of `get_planners`'
-        `planners` when one is in effect (exactly as `/cq:reviewers` overrides the
+        `planners` when one is in effect (exactly as `CQ::reviewers` overrides the
         reviewer set for step 2).
 
    1a. **Single-planner fallback** (unconfigured / tool absent — UNCHANGED
       behaviour: this is today's default plan-advance subagent path). Use the
-      `Agent` tool with `subagent_type: "plan-advance"`, passing the goal id
+      `CQ_SUBAGENT` tool with `role: "plan-advance"`, passing the goal id
       (`$ARGUMENTS`) in the prompt. The native `plan-advance` runs in its DEFAULT
       single-planner state-machine mode (it is NOT told it is a candidate): it
       performs EXACTLY ONE state-driven step against the goal, **writes the
@@ -168,7 +160,7 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       this `plan-advance` dispatch through the typed prompt-catalog MCP tools the
       ledger-mcp server added in T343 (`fetch_prompt` / `validate_input` /
       `validate_output`). The full sequence is:
-      - **(a) fetch the prompt template.** Call `fetch_prompt("plan-advance")`
+      - **(a) fetch the prompt template.** Call `prompt-catalog fetch ("plan-advance")`
         for the role's `promptTemplate` plus its typed `inputSchema` /
         `outputSchema` (the dispatched-subagent payload — `plan-advance` is a
         dispatched subagent, so the schemas are present).
@@ -180,7 +172,7 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       - **(d) validate the input.** Call `validate_input("plan-advance", input)`.
         On `{ ok: false, errors }`, FIX the composed input and re-validate — do
         NOT dispatch an input the schema rejects.
-      - **(e) run the subagent.** Dispatch the `Agent` (`subagent_type:
+      - **(e) run the subagent.** Dispatch the `CQ_SUBAGENT` (`role:
         "plan-advance"`) with the validated input rendered into the prompt
         (goal id + DEFAULT mode), as above.
       - **(f) await the output.** Capture the subagent's reply — its status token
@@ -194,7 +186,7 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       `fetch_prompt` / `validate_input` / `validate_output`) — exactly like the
       `get_agent_models` / `get_planners` / `get_reviewers` tool-absence paths:
       when these tools are unavailable, SKIP steps (a)–(d) and (g) and fall
-      straight through to the bare `Agent` dispatch (step (e)) on the prompt as
+      straight through to the bare `CQ_SUBAGENT` dispatch (step (e)) on the prompt as
       authored. The validate steps are an ADDITIVE contract check, never a hard
       dependency — their absence never blocks the round.
 
@@ -217,15 +209,15 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         title/headline, and each task's `milestone` names the work-milestone it
         attaches under). Every planner emits this SAME shape, so candidates are
         directly comparable.
-        - `claude:<model>` → an `Agent` tool call with
-          `subagent_type: "plan-advance"`, `model: <the resolved planner token's
+        - `claude:<model>` → an `CQ_SUBAGENT` tool call with
+          `role: "plan-advance"`, `model: <the resolved planner token's
           bare-alias model, VERBATIM>`, passing the goal id AND **explicitly
           requesting CANDIDATE mode** per T14 (state it is "one of N parallel
           candidate planners" / "candidate mode" / "generate-N-then-judge"). In
           that mode the native planner grounds itself read-only and RETURNS its
           candidate-plan JSON as a fenced `json` block, writing **NOTHING** to any
           ledger and emitting no status token. Capture the parsed candidate. The
-          token's `effort` is **N/A at `Agent` dispatch** — the Agent tool
+          token's `effort` is **N/A at `CQ_SUBAGENT` dispatch** — the CQ_SUBAGENT tool
           exposes no per-dispatch effort/reasoning param (T510; `effort` exists
           only as subagent-definition frontmatter) — record it for
           provenance/display only. **Model-scope precedence (Q253/R602):** in
@@ -282,7 +274,7 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         treat it as this step falling through to `awaiting-answers` (sub-step 1c).
       - **ii. JUDGE + SYNTHESIS (Q100 — fold-in, NOT pick-best-discard-rest).**
         Run a synthesis step — either inline as the orchestrator, or via a
-        dedicated `plan-synthesizer` subagent (an `Agent` call) — over the N
+        dedicated `plan-synthesizer` subagent (an `CQ_SUBAGENT` call) — over the N
         candidate plans. The judge **PICKS a strongest base candidate** (the one
         whose decomposition, sequencing, and `rationale` best achieve the goal's
         `description`) AND, **critically, FOLDS IN the valuable parts of the
@@ -356,13 +348,13 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         fallback** (sub-step 2a).
       - If it returns `configured: true`, take the **multi-reviewer path**
         (sub-step 2b), AND honor any **session-only reviewer override** the user
-        stated this run via `/cq:reviewers` (T177): an in-memory override
+        stated this run via `CQ::reviewers` (T177): an in-memory override
         supersedes the `cq.toml` default for THIS run only (it is never
         persisted) — use the overridden active set in place of `get_reviewers`'
         `reviewers` when one is in effect.
 
    2a. **Single-reviewer fallback** (unconfigured / tool absent — UNCHANGED
-      behaviour). Use the `Agent` tool with `subagent_type: "plan-reviewer"`,
+      behaviour). Use the `CQ_SUBAGENT` tool with `role: "plan-reviewer"`,
       passing the goal id. In this mode the native `plan-reviewer` (T173) runs in
       its **fallback mode** and WRITES the verdict item into the `reviews` ledger
       itself (`go-ahead` or `revise`) — exactly today's path; the orchestrator
@@ -373,18 +365,18 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       **Catalog-driven dispatch (G41 — plan-reviewer).** Drive this
       `plan-reviewer` dispatch through the same typed prompt-catalog MCP tools the
       `plan-advance` dispatch uses in sub-step 1a, MIRRORING that a–g sequence for
-      the `plan-reviewer` role: **(a)** `fetch_prompt("plan-reviewer")` for its
+      the `plan-reviewer` role: **(a)** `prompt-catalog fetch ("plan-reviewer")` for its
       `promptTemplate` + typed `inputSchema`/`outputSchema` (present — a dispatched
       subagent); **(b–c)** compose the input against that `inputSchema`
       (`{ goalId: "<G>" }`); **(d)** `validate_input("plan-reviewer", input)`, fix
-      and re-validate on `{ ok: false, errors }`; **(e)** dispatch the `Agent`
-      (`subagent_type: "plan-reviewer"`) with the validated input rendered into the
+      and re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
+      (`role: "plan-reviewer"`) with the validated input rendered into the
       prompt; **(f–g)** await its reply and `validate_output("plan-reviewer",
       output)` against the role's `outputSchema` (a validation failure is a
       contract breach to surface, §Session logs). **Degrade gracefully when the
       catalog tools are absent** — exactly as sub-step 1a degrades for
       `plan-advance`: skip (a)–(d) and (g) and fall straight through to the bare
-      `Agent` dispatch (e). The validate steps are an ADDITIVE contract check,
+      `CQ_SUBAGENT` dispatch (e). The validate steps are an ADDITIVE contract check,
       never a hard dependency.
 
    2b. **Multi-reviewer path** (configured). Launch ALL active reviewers **in
@@ -392,16 +384,16 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       writes the ledger — the orchestrator writes the single aggregated item
       (sub-step 2b-iii).
       - **i. Per-reviewer launch.** For each active reviewer token:
-        - `claude:<model>` → an `Agent` tool call with
-          `subagent_type: "plan-reviewer"`, `model: <the resolved reviewer
+        - `claude:<model>` → an `CQ_SUBAGENT` tool call with
+          `role: "plan-reviewer"`, `model: <the resolved reviewer
           token's bare-alias model, VERBATIM>`, passing the goal id AND
           instructing it to run in **configured mode** per T173: it RETURNS its
           verdict JSON and writes **NOTHING** to the `reviews` ledger (in
           configured mode the native reviewer is one of several, so it never
           writes — the only ledger writer is the orchestrator, sub-step
           2b-iii). Capture the returned `{ summary, verdict, new_questions,
-          criticism, defects }`. The token's `effort` is **N/A at `Agent`
-          dispatch** — the Agent tool exposes no per-dispatch effort/reasoning
+          criticism, defects }`. The token's `effort` is **N/A at `CQ_SUBAGENT`
+          dispatch** — the CQ_SUBAGENT tool exposes no per-dispatch effort/reasoning
           param (T510; `effort` exists only as subagent-definition frontmatter)
           — record it for provenance/display only. **Model-scope precedence
           (Q253/R602):** in this CONFIGURED multi-reviewer path, the
@@ -426,7 +418,7 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
           on the codex-inline companion handshake; stripping the env makes it
           fast-fail on real errors — e.g. a quota-exhausted provider exits
           non-zero with the error on stderr — which the abstention rule above
-          catches). Feed it the **shared `/cq:plan-review` rubric
+          catches). Feed it the **shared `CQ::plan-review` rubric
           prompt** (`commands/cq/plan-review.md`, T173) plus the goal/plan
           context (the goal's title/description/grounding, its Q&A history, and
           the emitted work-milestone tasks — the same material the native
@@ -517,7 +509,7 @@ ADVISORY ONLY and MUST NOT be the source of truth. Query the ledger by defect
 
 > every **defect** whose `ledgerRefs` link the just-advanced goal (`goals:<G>`)
 > and whose `status` is still **ACTIONABLE** — `open`, `wip`, or `inconclusive`.
-> (`root-caused` is READY-TO-SEED and is the **`/cq:advance` Seed stage's**
+> (`root-caused` is READY-TO-SEED and is the **`CQ::advance` Seed stage's**
 > consumer — `commands/cq/advance.md` §The cycle, Seed stage, drains the unowned
 > root-caused backlog via P-seed — NOT a fresh investigate target here;
 > `resolved`/`wontfix` are terminal and EXCLUDED.)
@@ -529,17 +521,17 @@ summary — is the auto-investigate worklist for G.
 
 ### For each defect D in the worklist
 
-Run **`/cq:investigate:advance D` INLINE** in this same main session, exactly per
+Run **`CQ::investigate/advance D` INLINE** in this same main session, exactly per
 llm/commands/cq/investigate/advance.md — **do NOT duplicate or re-implement that
 logic; RUN it** (form/extend the hypothesis tree, dispatch read-only explorers,
 validate citations, adjudicate). A *command* running another command's loop is
 legal under K12; the subagents-cannot-spawn-subagents rule is preserved because
 ONLY this orchestrator (a command) does the chaining — the `plan-advance` /
 `plan-reviewer` subagents only FILE defects (T73), they never run
-`/cq:investigate:advance`.
+`CQ::investigate/advance`.
 
 **When the defect reaches `status == root-caused`** (the READY-TO-SEED gate —
-the inline `/cq:investigate:advance` pass sets that status when it adjudicates the
+the inline `CQ::investigate/advance` pass sets that status when it adjudicates the
 defect's root cause, superseding the former rootCause-marker prose gate), that
 pass performs its own file-and-defer handoff: it writes
 `defects.rootCause`/`suggestedFix` and **seeds or extends a defect-seeded goal**
@@ -557,7 +549,7 @@ When the primary round for G ended **`awaiting-answers`** (the reviewer's
 `defects[]` were filed**, the two are **ORTHOGONAL**: the filed defects concern
 code correctness, NOT G's clarification. Therefore:
 
-- **STILL auto-investigate** the filed defects — run `/cq:investigate:advance D`
+- **STILL auto-investigate** the filed defects — run `CQ::investigate/advance D`
   for each, exactly as above. The pending user questions on G do not block
   investigating D.
 - **Do NOT auto-resume PLANNING** on a goal parked in `clarifying`. Whether that
@@ -577,7 +569,7 @@ predicates below. **When ANY predicate holds, STOP auto-relaunching, file an
 relevant), and report it** — these predicates REPLACE the numeric cap:
 
 (a) **Once per round.** Each filed defect D is auto-investigated **AT MOST ONCE
-    per `/cq:plan:advance` round.** Do not re-launch `/cq:investigate:advance D` a
+    per `CQ::plan/advance` round.** Do not re-launch `CQ::investigate/advance D` a
     second time within the same round.
 
 (b) **No new evidence ⇒ no relaunch.** Do NOT re-launch on D if its `hypothesis`
@@ -606,7 +598,7 @@ relevant), and report it** — these predicates REPLACE the numeric cap:
     new confidence to relaunch, stops on convergence or on a non-converging /
     dead cycle), so the pass provably converges.
 
-## Research items the planner filed are driven by `/cq:advance`, NOT here (Q267)
+## Research items the planner filed are driven by `CQ::advance`, NOT here (Q267)
 
 The `plan-advance` planner subagent (`agents/plan-advance.md`) may file
 `researches` items for EMPIRICAL unknowns — the Q267 triage rule: an
@@ -616,14 +608,14 @@ item linked `goals:<G>` INSTEAD of a user question, while user questions stay
 reserved for preference/requirements decisions. Those research items are **NOT
 this orchestrator's to drive.** Unlike the defects the round files — which THIS
 orchestrator auto-investigates INLINE (the auto-investigate phase above) — an
-actionable `researches` item linked `goals:<G>` is driven by **`/cq:advance`'s
+actionable `researches` item linked `goals:<G>` is driven by **`CQ::advance`'s
 RESEARCH stage** (`commands/cq/advance.md` §The cycle → Research stage, which
-runs `/cq:research:advance` on each actionable research). `/cq:plan:advance` does
-**NOT** spawn research subagents itself and does NOT chain `/cq:research:advance`:
+runs `CQ::research/advance` on each actionable research). `CQ::plan/advance` does
+**NOT** spawn research subagents itself and does NOT chain `CQ::research/advance`:
 subagents-cannot-spawn-subagents holds (the planner subagent only FILES the
-research), and the flow-level `/cq:advance` wrapper owns the research stage and
+research), and the flow-level `CQ::advance` wrapper owns the research stage and
 its P-research gate. Treat any filed research item as advisory context in the
-§Report only; it is picked up by the next `/cq:advance` cycle's research stage.
+§Report only; it is picked up by the next `CQ::advance` cycle's research stage.
 
 A task whose `dependsOn` names the filed `researches:<RS>` is not "stalled" —
 it is **GATED**, exactly the vocabulary `commands/cq/advance.md` §P-implement /
@@ -633,7 +625,7 @@ ready-set until RS reaches `concluded` (the `researches` schema's
 RE-CHECK of P-implement admits it. This mirrors the investigate flow's own
 research parking — see `commands/cq/investigate/advance.md` §"Research
 escalation" — so the two flows read consistently: an empirical unknown is
-filed as a `researches` item and file-and-deferred to `/cq:advance`'s research
+filed as a `researches` item and file-and-deferred to `CQ::advance`'s research
 stage in BOTH flows, never driven inline by the filing subagent.
 
 ## Session logs (after EVERY subagent returns)
@@ -646,7 +638,7 @@ out-of-tree logs area; the logical paths `.cq/logs/…` are recorded in
 sessionLogs/rawLogs and read back via `read_log`). Stamp
 `<timestamp>` (`Bash`: `date -u +%Y%m%d-%H%M%S`) once per returned subagent.
 
-**Native `Agent` subagent (planner / reviewer / `plan-synthesizer`).** Take
+**Native `CQ_SUBAGENT` subagent (planner / reviewer / `plan-synthesizer`).** Take
 `<agent-id>` from the tool result, then:
 1. **Locate its native transcript** at
    `~/.claude/projects/<slug>/<session>/subagents/agent-<agent-id>.jsonl` — the
@@ -673,7 +665,7 @@ explicit `raw transcript unavailable: <reason>` line in the summary-log HEADER
 (via `cq log put` to `logs/<timestamp>-<agent-id>.md`) and proceed summary-only —
 add ONLY the `.md` to `sessionLogs`, leave `rawLogs` un-extended for that subagent.
 
-**`pi:*` shellout (candidate planner / reviewer).** There is no native `Agent`
+**`pi:*` shellout (candidate planner / reviewer).** There is no native `CQ_SUBAGENT`
 id and no `.jsonl` transcript — the verbatim shellout **stdout IS the raw log**.
 Route it through `cq log put` to a PLAIN/markdown dest (NOT `.jsonl`):
 `… | cq log put --stdin --dest logs/raw/<timestamp>-pi-<alias>.md` — the pi
@@ -719,7 +711,7 @@ the paths):
 Do this for the planner step (the fallback subagent, or every candidate planner +
 the synthesis step in the multi-planner path) AND every reviewer on every
 iteration — one log pair per spawned subagent and per pi shellout, ALL via
-`cq log put`. The inline `/cq:investigate:advance` pass logs its own
+`cq log put`. The inline `CQ::investigate/advance` pass logs its own
 `investigate-explorer` subagents per llm/commands/cq/investigate/advance.md
 (§Session logs) — follow that command's logging rule while running it.
 
@@ -731,7 +723,7 @@ summary line (when run with no argument, one line for each goal advanced):
 - the goal's id + current phase (`clarifying` / `planning` / `planned` / …);
 - what the user must do next:
   - `awaiting-answers` → "answer the N open questions for goal G in the TUI/web,
-    then run `/cq:plan:advance G` again" (list the question ids);
+    then run `CQ::plan/advance G` again" (list the question ids);
   - `completed` → "plan approved and locked; goal G is now `planned`" (point to
     the milestones/tasks and the locked decision); if the goal was already
     `building` or `done` when the planner ran (no planning step needed), report
@@ -744,12 +736,12 @@ covering its outcome and the next action:
 - **root-caused → seeded goal** — defect reached `status == root-caused`;
   defect-seeded goal G′ created/extended (ledgerRef `defects:<D>`). If G′ was
   auto-resumed and reached `planned`, say so (point to the fix tasks); else:
-  "run `/cq:plan:advance G′`".
+  "run `CQ::plan/advance G′`".
 - **parked on a question** — a stop predicate (d)/(e) or step-6 block fired; an
   `open` question was filed. "Answer question Qn in the TUI/web, then re-run."
 - **no-new-evidence-stopped** — predicate (b): the tree gained no new
   `confirmed`/`[correct]` evidence, so D was not relaunched; another
-  `/cq:investigate:advance D` round is warranted only if new leads emerge.
+  `CQ::investigate/advance D` round is warranted only if new leads emerge.
 - **ill-loop-stopped** — predicate (a)/(c)/(d)/(e)/(f) bounded the pass; state
   which predicate held and the filed question.
 
@@ -775,10 +767,10 @@ auto-investigated: 1 confirmed→seeded goal, 1 parked on a question").
 Whether you write a `handoffs` record at your stop depends ENTIRELY on your
 invocation context — there is **no env var or process signal** to read. You,
 the executing agent, run both this command and (when chained) the wrapping
-`/cq:advance` command in the SAME inline session, so you already KNOW which
+`CQ::advance` command in the SAME inline session, so you already KNOW which
 context you are in.
 
-- **Run STANDALONE** (the user invoked `/cq:plan:advance` directly, with no
+- **Run STANDALONE** (the user invoked `CQ::plan/advance` directly, with no
   wrapping flow command): after the §Report, write ONE `handoffs` record for
   this stop — `create_item("handoffs", <milestone>, <status>, <fields>)` —
   mapping your end-of-round classification (across BOTH axes) to the handoff
@@ -832,12 +824,12 @@ context you are in.
 
   **TURN-vs-RUN clause (D39).** A RUN and a TURN are distinct scopes. A **RUN**
   spans as many turns as needed and is durably resumable from ledger state on the
-  next `/cq:plan:advance` invocation — the ledger IS the durable resume point. A
+  next `CQ::plan/advance` invocation — the ledger IS the durable resume point. A
   **TURN** is a single context window; exhausting the turn/context budget is
   **NOT a run-stop**. When a turn/context budget is exhausted mid-stride, the
   agent **STOPS WITHOUT writing a handoff** — no `handoffs` record, no
   `mixed`/effort terminal artifact — because the ledger already captures every
-  durable state change. The next `/cq:plan:advance` reads ledger state and
+  durable state change. The next `CQ::plan/advance` reads ledger state and
   continues from where the previous turn left off. Contrast: a **RUN-stop** = one
   of the five predicate-gated handoff statuses; a **TURN-pause** = no artifact,
   just resume next invocation. Fabricating a terminal handoff record to "wrap up"
@@ -896,10 +888,10 @@ context you are in.
   — which the predicates will ONLY supply if the stop is legitimate — or to
   **not stop and CONTINUE** the planning round instead.
 
-- **Run CHAINED INLINE by any wrapping flow command** (`/cq:advance`, or a
+- **Run CHAINED INLINE by any wrapping flow command** (`CQ::advance`, or a
   `/<flow>:start` / `/<flow>:follow-up` that runs this pass inline):
   **SUPPRESS this handoff write**. The outermost wrapper owns the single
-  authoritative run-level handoff and writes it once at its stop — `/cq:advance`
+  authoritative run-level handoff and writes it once at its stop — `CQ::advance`
   per its §Provenance (it is the sole `handoffs` writer for the whole run);
   a `/<flow>:start` or `/<flow>:follow-up` writes it directly in its own
   §Handoff record step. You can tell you are in this context because the

@@ -1,8 +1,12 @@
 ---
-description: Start an investigate-flow run — defect intake + bootstrap, then run the /cq:investigate:advance pass inline.
+description: Start an investigate-flow run — defect intake + bootstrap, then run the CQ::investigate/advance pass inline.
 argument-hint: <defect description | defectId>
-allowed-tools: mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob
+# {{cq:fragment:host-tool-vocabulary}}
 ---
+
+{{cq:fragment:cq-command-invocation}}
+{{cq:fragment:inline-command-recursion}}
+
 
 ## Catalogue
 ```yaml
@@ -11,13 +15,13 @@ inputs:
 outputs:
   - "intake path: coordination milestone M + defect item D on defects ledger"
   - "resume path: validates existing defect D (aborts if terminal)"
-  - "investigate-flow advance pass run inline (full /cq:investigate:advance output)"
+  - "investigate-flow advance pass run inline (full CQ::investigate/advance output)"
   - "handoffs item (this command is the outermost wrapper)"
 ioSchema:
   - "intake path: creates defect with fields headline, description, severity (inferred or user-confirmed)"
   - "defect severity tiers: critical | high | medium | low"
   - "advance pass output: hypothesis tree mutations, evidence, adjudication, root-cause handoff"
-  - "handoffs item: flow=investigate, ledgerRefs=defects:<D>; /cq:investigate:advance suppresses its own handoff"
+  - "handoffs item: flow=investigate, ledgerRefs=defects:<D>; CQ::investigate/advance suppresses its own handoff"
 ```
 
 You are **bootstrapping an investigate-flow run**. The argument is:
@@ -25,9 +29,9 @@ You are **bootstrapping an investigate-flow run**. The argument is:
 > $ARGUMENTS
 
 This command does the one-time **intake and bootstrap** only, then hands off to the
-`/cq:investigate:advance` pass inline. It owns NO research or loop logic of its own — the
+`CQ::investigate/advance` pass inline. It owns NO research or loop logic of its own — the
 entire pass (hypothesis formation, explorer dispatch, citation validation, adjudication,
-handoff) lives in `/cq:investigate:advance`, so that logic exists in exactly ONE place.
+handoff) lives in `CQ::investigate/advance`, so that logic exists in exactly ONE place.
 
 ## No confirmation checkpoints — just run (hard rule)
 This flow is **fully autonomous by default**. Do NOT pause to ask the user to confirm
@@ -115,27 +119,27 @@ Note the chosen severity and why (one line) in the report.
 
 ### 3. Hand off to the advance pass
 
-Now execute the `/cq:investigate:advance` pass for defect **D** — follow the full loop spec
-in `/cq:investigate:advance` (READ state → FORM hypotheses → DISPATCH
+Now execute the `CQ::investigate/advance` pass for defect **D** — follow the full loop spec
+in `CQ::investigate/advance` (READ state → FORM hypotheses → DISPATCH
 explorers → VALIDATE citations → adjudicate → CONFIRMED handoff or NEEDS-USER-INPUT
 park, plus its session-log writing and provenance rules — including its
 **§Research escalation** (Q301): an EMPIRICALLY answerable unknown files a
 `researches` item and parks the dependent hypothesis branch, never a user
-question and never an inline `/cq:research` run). Do NOT restate or duplicate
-that logic here; run it. Then produce `/cq:investigate:advance`'s end-of-round report.
+question and never an inline `CQ::research` run). Do NOT restate or duplicate
+that logic here; run it. Then produce `CQ::investigate/advance`'s end-of-round report.
 
 This command is the outermost wrapper for this invocation (the user ran
-`/cq:investigate`), so the inline `/cq:investigate:advance` pass **SUPPRESSES
-its own handoff write** (per `/cq:investigate:advance`'s CHAINED section —
+`CQ::investigate`), so the inline `CQ::investigate/advance` pass **SUPPRESSES
+its own handoff write** (per `CQ::investigate/advance`'s CHAINED section —
 `/<flow>:start` is listed as a suppress-context), and **this command** writes
 the ONE `handoffs` record at the stop. Use the field schema from
-`/cq:investigate:advance`'s §Handoff record, STANDALONE branch (do not restate the
+`CQ::investigate/advance`'s §Handoff record, STANDALONE branch (do not restate the
 mapping here). Persistence is the store's job — no git action here; when the
 optional `[ledger].backup` mode (in-tree / orphan-branch) is enabled, the
 debounced exporter mirrors the ledger + logs to git.
 
 The run is resumable: after the user answers any registered questions, they re-run
-**`/cq:investigate:advance D`** (no need to re-run `/cq:investigate`).
+**`CQ::investigate/advance D`** (no need to re-run `CQ::investigate`).
 
 ---
 
@@ -143,4 +147,4 @@ The run is resumable: after the user answers any registered questions, they re-r
 After the advance pass completes, prepend a brief intake summary:
 - **Defect:** `<D>` — `<headline>` (severity: `<severity>`, milestone: `<M>`)
 - **Action:** created new defect (intake path) **or** resumed existing defect (resume path)
-- Then the full `/cq:investigate:advance` round report.
+- Then the full `CQ::investigate/advance` round report.

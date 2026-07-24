@@ -7,9 +7,9 @@ const CQ_COMMANDS_ROOT = path.resolve(import.meta.dir, "../../../../cq-assets/co
 const FRONTMATTER = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 const BEGIN_ARGUMENT_HINT = "<mixed request: features, bug reports, research questions>";
 const BEGIN_DESCRIPTION =
-  "Universal intake splitter — segment a mixed request into plan-flow, investigate-flow, and research-flow intakes, then chain ONE /cq:advance sequencer pass over the whole batch.";
+  "Universal intake splitter — segment a mixed request into plan-flow, investigate-flow, and research-flow intakes, then chain ONE CQ::advance sequencer pass over the whole batch.";
 const IMPLEMENT_START_DESCRIPTION =
-  "Start an implement-flow run — resolve the target milestones (default: all open ones), validate their task DAG, then hand off to the /cq:implement:advance loop.";
+  "Start an implement-flow run — resolve the target milestones (default: all open ones), validate their task DAG, then hand off to the CQ::implement/advance loop.";
 
 interface DiscoveredCommand {
   readonly id: string;
@@ -75,12 +75,10 @@ describe("Pi-compatible cq command frontmatter discovery", () => {
     expect(discovery.commands.get("cq:begin")?.frontmatter).toEqual({
       description: BEGIN_DESCRIPTION,
       "argument-hint": BEGIN_ARGUMENT_HINT,
-      "allowed-tools": "mcp__ledger__*, Agent, Bash, Read, Grep, Glob",
     });
     expect(discovery.commands.get("cq:implement:start")?.frontmatter).toEqual({
       description: IMPLEMENT_START_DESCRIPTION,
       "argument-hint": ["milestoneId ..."],
-      "allowed-tools": "mcp__ledger__*, Agent, Write, Bash, Read, Grep, Glob",
     });
   });
 });
