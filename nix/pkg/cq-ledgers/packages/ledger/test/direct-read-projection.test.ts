@@ -4,11 +4,14 @@ import {
   InMemoryLedgerStore,
   createLedgerMcpTools,
   type FieldValue,
+  type FetchedMilestoneItem,
   type Item,
   type ItemProjection,
   type LedgerSchema,
   type PromptCatalogCapability,
 } from "../src/index.js";
+
+const MILESTONE_NOTE = "Valid milestone field outside the compact allowlist";
 
 const schema: LedgerSchema = {
   statusValues: ["open", "done"],
@@ -24,8 +27,24 @@ const schema: LedgerSchema = {
 type Tools = ReturnType<typeof createLedgerMcpTools>;
 type ToolResult = { content: Array<{ type: string; text: string }> };
 
+class ProjectionFixtureStore extends InMemoryLedgerStore {
+  override fetchMilestone(milestoneId: string): FetchedMilestoneItem {
+    const fetched = super.fetchMilestone(milestoneId);
+    return {
+      ...fetched,
+      milestone: {
+        ...fetched.milestone,
+        fields: {
+          ...fetched.milestone.fields,
+          note: MILESTONE_NOTE,
+        },
+      },
+    };
+  }
+}
+
 interface Fixture {
-  store: InMemoryLedgerStore;
+  store: ProjectionFixtureStore;
   tools: Tools;
   milestone: Item;
   first: Item;
@@ -40,7 +59,7 @@ async function buildFixture(
   }>,
   promptCatalog?: PromptCatalogCapability,
 ): Promise<Fixture> {
-  const store = new InMemoryLedgerStore({
+  const store = new ProjectionFixtureStore({
     seed: [{ name: "xenos", schema }],
   });
   await store.init();
@@ -246,6 +265,10 @@ describe("createLedgerMcpTools mandatory read projections", () => {
       });
 
       const fetchedMilestone = store.fetchMilestone(milestone.id);
+      expect(
+        fetchedMilestone.milestone.fields["note"],
+        "fetch_milestone source precondition",
+      ).toBe(MILESTONE_NOTE);
       const milestoneResponse = decode<{ milestone: Item }>(
         await callTool(tools, "fetch_milestone", {
           milestone_id: milestone.id,
