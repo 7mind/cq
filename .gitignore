@@ -1,6 +1,7 @@
 cq.toml
 
 .claude/
+nix/pkg/cq-assets/.generated/
 # direnv
 .direnv/
 
