@@ -5,6 +5,7 @@ argument-hint: <defectId>   # the defect D under investigation
 ---
 
 {{cq:fragment:cq-command-invocation}}
+{{cq:fragment:operational-tool-vocabulary}}
 
 
 ## Catalogue

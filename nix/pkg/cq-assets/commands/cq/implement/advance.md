@@ -5,6 +5,7 @@ argument-hint: [milestoneId ...]   # optional; omit to resume the in-progress ru
 ---
 
 {{cq:fragment:cq-command-invocation}}
+{{cq:fragment:operational-tool-vocabulary}}
 
 
 ## Catalogue

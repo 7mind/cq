@@ -1623,6 +1623,12 @@ describe("T342: /cq:plan:follow-up idea-ids grammar — structural grep invarian
 describe("T345: dispatched roles wired through the typed prompt catalog — grep invariants", () => {
   const cqAgentsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/agents");
   const cqCommandsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
+  const operationalToolFragments = ["claude", "codex", "pi"].map((surface) =>
+    path.resolve(
+      import.meta.dir,
+      `../../../../cq-assets/fragments/${surface}/operational-tool-vocabulary.md`,
+    ),
+  );
 
   /** The 7 dispatched-subagent role asset basenames (non-null agentTierKey). */
   const dispatchedRoles = [
@@ -1715,6 +1721,11 @@ describe("T345: dispatched roles wired through the typed prompt catalog — grep
         expect(text).toContain(`prompt-catalog fetch ("${role}")`);
         expect(text).toContain(`validate_input("${role}", input)`);
         expect(text).toContain(`validate_output("${role}",`);
+        for (const fragmentPath of operationalToolFragments) {
+          const fragment = await readFile(fragmentPath, "utf8");
+          expect(fragment).toContain('`prompt-catalog fetch ("<roleId>")` → call `');
+          expect(fragment).toContain("fetch_prompt` with");
+        }
       });
     }
   }
@@ -1733,8 +1744,9 @@ describe("T345: dispatched roles wired through the typed prompt catalog — grep
 //       (the prefix the gate greps for to allow a genuine context-exhaustion stop).
 //   (4) §Stop-condition gate Stop-hook cross-reference: `claudeStopGateHook`
 //       (the hook name that mechanically enforces the gate for Claude Code runs).
-//   (5) §Bootstrap derive_predicates detection instruction:
-//       `ledger::derive_predicates` (the canonical authoritative predicate-source tool).
+//   (5) §Bootstrap derive_predicates detection instruction: the canonical
+//       `ledger::derive_predicates` token maps to the executable Claude tool
+//       `mcp__ledger__derive_predicates` in the typed operational vocabulary.
 //
 // 5 tokens × 1 file = 5 cells; all must be present.
 // Path resolution mirrors T255/T264/D43/T340/T345: cq-assets is four levels up.
@@ -1743,33 +1755,42 @@ describe("T345: dispatched roles wired through the typed prompt catalog — grep
 describe("T365: G44 advance.md grep-invariant — marker-lifecycle + external-signal + derive_predicates", () => {
   const cqCommandsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
   const advanceMd = path.join(cqCommandsRoot, "advance.md");
+  const claudeOperationalToolsMd = path.resolve(
+    import.meta.dir,
+    "../../../../cq-assets/fragments/claude/operational-tool-vocabulary.md",
+  );
 
-  const markers: Array<{ token: string; description: string }> = [
+  const markers: Array<{ file: string; token: string; description: string }> = [
     {
+      file: advanceMd,
       token: 'touch "${XDG_RUNTIME_DIR:-/tmp}/cq-advance-active-$CLAUDE_CODE_SESSION_ID"',
       description: "§Bootstrap marker-drop (touch sentinel at run start)",
     },
     {
+      file: advanceMd,
       token: 'rm -f "${XDG_RUNTIME_DIR:-/tmp}/cq-advance-active-$CLAUDE_CODE_SESSION_ID"',
       description: "§The one write marker-unlink (rm -f sentinel after terminal handoff)",
     },
     {
+      file: advanceMd,
       token: "external-signal:",
       description: "§Stop-condition gate external-signal escape format",
     },
     {
+      file: advanceMd,
       token: "claudeStopGateHook",
       description: "§Stop-condition gate Stop-hook cross-reference",
     },
     {
-      token: "ledger::derive_predicates",
-      description: "§Bootstrap derive_predicates detection instruction",
+      file: claudeOperationalToolsMd,
+      token: "`ledger::derive_predicates` → `mcp__ledger__derive_predicates({})`",
+      description: "§Bootstrap derive_predicates executable Claude mapping",
     },
   ];
 
-  for (const { token, description } of markers) {
-    it(`cq/advance.md contains ${description}: "${token}"`, async () => {
-      const text = await readFile(advanceMd, "utf8");
+  for (const { file, token, description } of markers) {
+    it(`the advance source contract contains ${description}: "${token}"`, async () => {
+      const text = await readFile(file, "utf8");
       expect(text).toContain(token);
     });
   }

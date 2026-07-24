@@ -5,6 +5,7 @@ argument-hint: <researchId>   # the research RS under study
 ---
 
 {{cq:fragment:cq-command-invocation}}
+{{cq:fragment:operational-tool-vocabulary}}
 
 
 ## Catalogue

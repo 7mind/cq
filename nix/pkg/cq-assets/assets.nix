@@ -140,6 +140,26 @@ let
         surfaces = promptSurfaces;
       };
     }
+    {
+      fragment = "operational-tool-vocabulary";
+      supportedSurfaces = promptSurfaces;
+      forbiddenVocabulary = {
+        claude = [ "dispatch_agent(" ];
+        codex = [
+          "mcp__ledger__"
+          "Agent("
+        ];
+        pi = [
+          "mcp__ledger__"
+          "Agent("
+        ];
+      };
+      intentionalDifference = {
+        kind = "tool-vocabulary";
+        reason = "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.";
+        surfaces = promptSurfaces;
+      };
+    }
   ];
 
   sourceBlockByFragment = {
@@ -147,6 +167,7 @@ let
     subagent-dispatch = "subagent dispatch instructions and host transport branch";
     inline-command-recursion = "inline chained-command execution instructions";
     host-tool-vocabulary = "frontmatter host tool and isolation capabilities";
+    operational-tool-vocabulary = "body-level mapping from canonical operational tokens to callable host tools";
   };
   sharedSourceBlock = {
     sourceBlock = "all prose outside the classified surface-sensitive blocks";
@@ -280,6 +301,7 @@ let
   D = "subagent-dispatch";
   R = "inline-command-recursion";
   T = "host-tool-vocabulary";
+  O = "operational-tool-vocabulary";
 
   authoredCatalog = [
     (mkAgent "plan-advance" [ I T ])
@@ -298,7 +320,7 @@ let
       (recursion "research")
       (recursion "advance")
     ])
-    (mkCommand "advance" [ I T R ] [
+    (mkCommand "advance" [ I T O R ] [
       (recursion "investigate/advance")
       (recursion "plan/advance")
       (recursion "research/advance")
@@ -308,7 +330,7 @@ let
       (dispatch "plan-advance")
       (recursion "investigate/advance")
     ])
-    (mkCommand "plan/advance" [ I T D R ] [
+    (mkCommand "plan/advance" [ I T O D R ] [
       (dispatch "plan-advance")
       (dispatch "plan-reviewer")
       (recursion "investigate/advance")
@@ -320,21 +342,21 @@ let
     (mkCommand "investigate" [ I T R ] [
       (recursion "investigate/advance")
     ])
-    (mkCommand "investigate/advance" [ I T D ] [
+    (mkCommand "investigate/advance" [ I T O D ] [
       (dispatch "investigate-explorer")
       (dispatch "investigate-prober")
     ])
     (mkCommand "research" [ I T R ] [
       (recursion "research/advance")
     ])
-    (mkCommand "research/advance" [ I T D ] [
+    (mkCommand "research/advance" [ I T O D ] [
       (dispatch "research-explorer")
       (dispatch "research-experimenter")
     ])
     (mkCommand "implement/start" [ I T R ] [
       (recursion "implement/advance")
     ])
-    (mkCommand "implement/advance" [ I T D ] [
+    (mkCommand "implement/advance" [ I T O D ] [
       (dispatch "implement-worker")
       (dispatch "implement-reviewer")
       (dispatch "implement-conflict-resolver")

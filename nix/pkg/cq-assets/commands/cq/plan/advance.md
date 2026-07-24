@@ -5,6 +5,7 @@ argument-hint: [goalId]
 ---
 
 {{cq:fragment:cq-command-invocation}}
+{{cq:fragment:operational-tool-vocabulary}}
 {{cq:fragment:inline-command-recursion}}
 
 

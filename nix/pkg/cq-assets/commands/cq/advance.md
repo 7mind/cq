@@ -5,6 +5,7 @@ argument-hint:   # no argument; operates on the entire ledger
 ---
 
 {{cq:fragment:cq-command-invocation}}
+{{cq:fragment:operational-tool-vocabulary}}
 {{cq:fragment:inline-command-recursion}}
 
 

@@ -11,6 +11,32 @@ import {
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
+const OPERATIONAL_TOOL_MAPPINGS = {
+  claude: [
+    "`ledger::derive_predicates` → `mcp__ledger__derive_predicates({})`",
+    "`ledger::get_config` → `mcp__ledger__get_config({})`",
+    "`ledger::get_reviewers` → `mcp__ledger__get_reviewers({})`",
+    '`prompt-catalog fetch ("<roleId>")` → call `mcp__ledger__fetch_prompt` with `{ "roleId": "<roleId>" }`',
+  ],
+  codex: [
+    "`ledger::derive_predicates` → `derive_predicates({})`",
+    "`ledger::get_config` → `get_config({})`",
+    "`ledger::get_reviewers` → `get_reviewers({})`",
+    '`prompt-catalog fetch ("<roleId>")` → call `fetch_prompt` with `{ "roleId": "<roleId>" }`',
+  ],
+  pi: [
+    "`ledger::derive_predicates` → `derive_predicates({})`",
+    "`ledger::get_config` → `get_config({})`",
+    "`ledger::get_reviewers` → `get_reviewers({})`",
+    '`prompt-catalog fetch ("<roleId>")` → call `fetch_prompt` with `{ "roleId": "<roleId>" }`',
+  ],
+} as const;
+const NEUTRAL_OPERATIONAL_TOKENS = [
+  "ledger::derive_predicates",
+  "ledger::get_config",
+  "ledger::get_reviewers",
+  "prompt-catalog fetch (",
+] as const;
 
 interface CatalogRole {
   readonly roleId: string;
@@ -139,6 +165,19 @@ describe("orchestrator command prompt sources", () => {
         expect(content).toContain(description!);
         expect(content).not.toContain("{{cq:fragment:");
         expect(content).not.toContain("CQ_HARNESS");
+        const usesNeutralOperationalToken = NEUTRAL_OPERATIONAL_TOKENS.some((token) =>
+          source.includes(token),
+        );
+        expect(
+          role.fragmentBindings.some(
+            ({ fragment }) => fragment === "operational-tool-vocabulary",
+          ),
+        ).toBe(usesNeutralOperationalToken);
+        if (usesNeutralOperationalToken) {
+          for (const mapping of OPERATIONAL_TOOL_MAPPINGS[surface]) {
+            expect(content).toContain(mapping);
+          }
+        }
         if (role.fragmentBindings.some(({ fragment }) => fragment === "host-tool-vocabulary")) {
           if (surface === "claude") {
             expect(content).toMatch(/^allowed-tools:/m);

@@ -1165,6 +1165,37 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "forbiddenVocabulary": {
             "claude": [
+              "dispatch_agent("
+            ],
+            "codex": [
+              "mcp__ledger__",
+              "Agent("
+            ],
+            "pi": [
+              "mcp__ledger__",
+              "Agent("
+            ]
+          },
+          "fragment": "operational-tool-vocabulary",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "body-level mapping from canonical operational tokens to callable host tools",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
               "fetch_prompt(",
               "$cq-"
             ],
@@ -1207,6 +1238,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "tool-vocabulary",
+          "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
           "surfaces": [
             "claude",
             "codex",
@@ -1515,6 +1555,37 @@ export const PROMPT_CATALOG_PROJECTION = {
               "dispatch_agent("
             ],
             "codex": [
+              "mcp__ledger__",
+              "Agent("
+            ],
+            "pi": [
+              "mcp__ledger__",
+              "Agent("
+            ]
+          },
+          "fragment": "operational-tool-vocabulary",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "body-level mapping from canonical operational tokens to callable host tools",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "dispatch_agent("
+            ],
+            "codex": [
               "Agent(",
               "dispatch_agent("
             ],
@@ -1584,6 +1655,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "tool-vocabulary",
+          "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
           "surfaces": [
             "claude",
             "codex",
@@ -2045,6 +2125,37 @@ export const PROMPT_CATALOG_PROJECTION = {
               "dispatch_agent("
             ],
             "codex": [
+              "mcp__ledger__",
+              "Agent("
+            ],
+            "pi": [
+              "mcp__ledger__",
+              "Agent("
+            ]
+          },
+          "fragment": "operational-tool-vocabulary",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "body-level mapping from canonical operational tokens to callable host tools",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "dispatch_agent("
+            ],
+            "codex": [
               "Agent(",
               "dispatch_agent("
             ],
@@ -2083,6 +2194,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "tool-vocabulary",
+          "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
           "surfaces": [
             "claude",
             "codex",
@@ -2344,6 +2464,37 @@ export const PROMPT_CATALOG_PROJECTION = {
               "dispatch_agent("
             ],
             "codex": [
+              "mcp__ledger__",
+              "Agent("
+            ],
+            "pi": [
+              "mcp__ledger__",
+              "Agent("
+            ]
+          },
+          "fragment": "operational-tool-vocabulary",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "body-level mapping from canonical operational tokens to callable host tools",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "dispatch_agent("
+            ],
+            "codex": [
               "Agent(",
               "dispatch_agent("
             ],
@@ -2382,6 +2533,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "tool-vocabulary",
+          "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
           "surfaces": [
             "claude",
             "codex",
@@ -2647,6 +2807,37 @@ export const PROMPT_CATALOG_PROJECTION = {
               "dispatch_agent("
             ],
             "codex": [
+              "mcp__ledger__",
+              "Agent("
+            ],
+            "pi": [
+              "mcp__ledger__",
+              "Agent("
+            ]
+          },
+          "fragment": "operational-tool-vocabulary",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "body-level mapping from canonical operational tokens to callable host tools",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "dispatch_agent("
+            ],
+            "codex": [
               "Agent(",
               "dispatch_agent("
             ],
@@ -2685,6 +2876,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "tool-vocabulary",
+          "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
           "surfaces": [
             "claude",
             "codex",
@@ -3048,7 +3248,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "895415b3928fa9680255d669bf4327deff1bbf02f956b3bf147b0f562ba62f4c",
+  "catalogMetadataHash": "fe55989b39c071a2f7e419defafe669fa73ab1503b2be9773a7ab7f3aba8668a",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -3158,6 +3358,36 @@ export const PROMPT_CATALOG_PROJECTION = {
       "intentionalDifference": {
         "kind": "tool-vocabulary",
         "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+        "surfaces": [
+          "claude",
+          "codex",
+          "pi"
+        ]
+      },
+      "supportedSurfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    {
+      "forbiddenVocabulary": {
+        "claude": [
+          "dispatch_agent("
+        ],
+        "codex": [
+          "mcp__ledger__",
+          "Agent("
+        ],
+        "pi": [
+          "mcp__ledger__",
+          "Agent("
+        ]
+      },
+      "fragment": "operational-tool-vocabulary",
+      "intentionalDifference": {
+        "kind": "tool-vocabulary",
+        "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
         "surfaces": [
           "claude",
           "codex",
