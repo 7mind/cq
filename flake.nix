@@ -46,12 +46,6 @@
         };
 
         mkCodexCommandSkills = import ./nix/lib/codex-command-skills.nix { lib = pkgs.lib; };
-        codexCqSkillSpecs = mkCodexCommandSkills llmAssets.commands;
-        codexCommandSkillsTest = import ./nix/lib/codex-command-skills-test.nix {
-          lib = pkgs.lib;
-          commands = llmAssets.commands;
-          inherit pkgs mkCodexCommandSkills;
-        };
         promptSurfacesTest = import ./nix/lib/prompt-surfaces-test.nix {
           lib = pkgs.lib;
         };
@@ -62,6 +56,25 @@
           inherit pkgs;
           lib = pkgs.lib;
           surface = "claude";
+        };
+        codexPromptRoot = import ./nix/pkg/cq-assets/render-prompt-surface.nix {
+          inherit pkgs;
+          lib = pkgs.lib;
+          surface = "codex";
+        };
+        codexProjection = mkCodexCommandSkills {
+          catalog = llmAssets.catalog;
+          promptRoot = codexPromptRoot;
+        };
+        codexCqSkillSpecs = codexProjection.skills;
+        codexCommandSkillsTest = import ./nix/lib/codex-command-skills-test.nix {
+          lib = pkgs.lib;
+          inherit
+            pkgs
+            mkCodexCommandSkills
+            ;
+          catalog = llmAssets.catalog;
+          promptRoot = codexPromptRoot;
         };
         claudePromptHomeTest = import ./nix/lib/claude-prompt-home-test.nix {
           lib = pkgs.lib;
@@ -445,6 +458,7 @@
           codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
           claude-prompt-root = claudePromptRoot;
+          codex-prompt-root = codexPromptRoot;
           # CodeGraph — vendored from its `main` source (flake = false input),
           # built with our nixpkgs. platforms.unix -> builds on linux + darwin.
           codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix {
@@ -509,17 +523,13 @@
                 ${pkgs.lib.concatMapStringsSep "\n"
                   (name: ''
                     mkdir -p "$out/${name}"
-                    cp ${
-                      builtins.toFile "${name}-SKILL.md" codexCqSkillSpecs.${name}.skillMd
-                    } "$out/${name}/SKILL.md"
+                    cp ${builtins.toFile "${name}-SKILL.md" codexCqSkillSpecs.${name}.skillMd} \
+                      "$out/${name}/SKILL.md"
                     mkdir -p "$out/${name}/references"
                     ${pkgs.lib.concatMapStringsSep "\n"
                       (referenceName: ''
-                        cp ${
-                          builtins.toFile
-                            "${name}-${referenceName}"
-                            codexCqSkillSpecs.${name}.references.${referenceName}
-                        } "$out/${name}/references/${referenceName}"
+                        cp ${codexCqSkillSpecs.${name}.references.${referenceName}} \
+                          "$out/${name}/references/${referenceName}"
                       '')
                       (builtins.attrNames codexCqSkillSpecs.${name}.references)}
                   '')
@@ -527,8 +537,18 @@
                 test "$(
                   find "$out" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l
                 )" -eq "${toString (builtins.length (builtins.attrNames codexCqSkillSpecs))}"
-                if ${pkgs.ripgrep}/bin/rg -n '/cq:' "$out"; then
-                  echo "generated Codex skills contain unresolved Claude command names" >&2
+                test "$(find ${codexPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
+                if ${pkgs.ripgrep}/bin/rg -n \
+                  'Agent\\(|Task\\(|dispatch_agent\\(|/cq:|\\{\\{cq:fragment:' \
+                  ${codexPromptRoot}/roles; then
+                  echo "Codex prompt roles contain foreign or unresolved vocabulary" >&2
+                  exit 1
+                fi
+                cmp ${builtins.toFile "cq-expected-codex-catalog.json" llmAssets.catalogJson} \
+                  ${codexProjection.catalog}
+                if ${pkgs.ripgrep}/bin/rg -n \
+                  'Agent\\(|Task\\(|dispatch_agent\\(|/cq:|\\{\\{cq:fragment:' "$out"; then
+                  echo "generated Codex skills contain foreign or unresolved vocabulary" >&2
                   exit 1
                 fi
               '';

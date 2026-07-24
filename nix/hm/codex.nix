@@ -15,8 +15,17 @@ let
   # `pkgs.codex` via an overlay.
   codexPkg = pkgs.callPackage ../pkg/codex/package.nix { };
 
+  assets = import ../pkg/cq-assets/assets.nix { inherit lib; };
+  codexPromptRoot = import ../pkg/cq-assets/render-prompt-surface.nix {
+    inherit pkgs lib;
+    surface = "codex";
+  };
   mkCodexCommandSkills = import ../lib/codex-command-skills.nix { inherit lib; };
-  cqCommandSkillSpecs = mkCodexCommandSkills cfg.merged.commands;
+  codexProjection = mkCodexCommandSkills {
+    catalog = assets.catalog;
+    promptRoot = codexPromptRoot;
+  };
+  cqCommandSkillSpecs = codexProjection.skills;
   skillNameCollisions =
     lib.intersectLists
       (builtins.attrNames cfg.merged.skills)
@@ -32,9 +41,7 @@ let
       ''
       + lib.concatMapStringsSep "\n" (
         referenceName: ''
-          cp ${
-            builtins.toFile "${skillName}-${referenceName}" spec.references.${referenceName}
-          } "$out/references/${referenceName}"
+          cp ${spec.references.${referenceName}} "$out/references/${referenceName}"
         ''
       ) (builtins.attrNames spec.references)
     );
@@ -87,17 +94,18 @@ in
       ];
     }
     {
-      # Materialize each Codex-specific cq skill package as one directory
-      # symlink. Codex follows symlinked skill directories but ignores a real
-      # directory whose SKILL.md is itself a symlink. Retain legacy prompts.
+      # Materialize each catalog-projected Codex cq skill package as one
+      # directory symlink. Codex follows symlinked skill directories but ignores
+      # a real directory whose SKILL.md is itself a symlink. Retain legacy
+      # prompts from every merged bundle separately.
       # Separate mkMerge element because the block above sets attrpath
       # `home.file."<path>"`, which can't coexist with a dynamic `home.file =
       # <attrs>` in one attribute set.
       # commandKeyToStem turns "plan/advance" into plan:advance.md; Codex
       # namespaces ~/.codex/prompts/*.md under its own "prompts:" prefix (stem
       # verbatim, no char filtering), so this surfaces as /prompts:plan:advance.
-      # Codex agents have no canonical markdown home and are intentionally not
-      # materialized (Claude receives them via its agents option).
+      # Dispatched roles stay in the immutable Codex prompt root and enter a
+      # command skill only when that command's manifest closure declares them.
       home.file =
         cqCommandSkillFiles
         // lib.mapAttrs'
