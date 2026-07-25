@@ -211,6 +211,23 @@ let
   # runtime, so the whole directory is copied to the store).
   ledgerStatusDir = ../pkg/pi-extensions/ledger-status;
 
+  # Inference-provider extension packages, each gated by a
+  # `smind.hm.dev.llm.pi.providers.<name>.enable` flag (declared in `options`
+  # below). Only z.ai is enabled by default; the rest are opt-in. This covers
+  # ONLY inference providers — pi-search-hub (web search) and pi-mcp-adapter are
+  # not providers and stay unconditionally installed (search-hub in the static
+  # packages list; the adapter via enableMcpIntegration).
+  inferenceProviderPackages = {
+    zai = "npm:@estebanforge/pi-glm-tweaks";
+    xai = "npm:pi-xai";
+    ollama = "npm:pi-ollama-cloud";
+    minimax = "npm:@sinamtz/pi-minimax-provider";
+  };
+  defaultEnabledProviders = [ "zai" ];
+  enabledProviderPackages = lib.attrValues (
+    lib.filterAttrs (name: _: cfg.pi.providers.${name}.enable) inferenceProviderPackages
+  );
+
   # Wiring common to every skill-aware harness (see claude.nix); spread with
   # `//` into the programs.pi block (no key overlap).
   sharedAgentWiring = {
@@ -307,6 +324,23 @@ in
         into the shared MCP registry used by claude/codex.
       '';
     };
+
+    # One enable flag per inference-provider extension package (see
+    # `inferenceProviderPackages` in the let block). Generated from that mapping
+    # so the option set and the install list cannot drift. z.ai is the only
+    # default; every other provider is opt-in. Search-hub / mcp-adapter are NOT
+    # here — they are not inference providers.
+    smind.hm.dev.llm.pi.providers = lib.mapAttrs (name: pkgSpec: {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = lib.elem name defaultEnabledProviders;
+        description = ''
+          Install the Pi inference-provider extension package
+          {command}`${pkgSpec}` (registers the `${name}` provider). Only
+          z.ai (`zai`) is enabled by default; the others are opt-in.
+        '';
+      };
+    }) inferenceProviderPackages;
   };
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
@@ -398,13 +432,15 @@ in
           #   API key); no provider package needed, `zai` is built into pi-ai.
           #   Self-contained (no runtime deps; host API via peer/alias).
           # (pi-mcp-adapter is added separately by enableMcpIntegration.)
+          #
+          # pi-search-hub is unconditional (web search, not an inference
+          # provider). The inference-provider packages (pi-xai, pi-ollama-cloud,
+          # @sinamtz/pi-minimax-provider, @estebanforge/pi-glm-tweaks) are each
+          # gated by `smind.hm.dev.llm.pi.providers.<name>.enable` — only z.ai
+          # (glm-tweaks) is on by default; see `inferenceProviderPackages`.
           packages = [
             "npm:pi-search-hub@2.8.0"
-            "npm:pi-ollama-cloud"
-            "npm:@sinamtz/pi-minimax-provider"
-            "npm:pi-xai"
-            "npm:@estebanforge/pi-glm-tweaks"
-          ];
+          ] ++ enabledProviderPackages;
           extensions = [
             # pi-search-hub advertises a static all-backends list (19 in
             # 2.8.0) in the web_search description + `backend` enum regardless
