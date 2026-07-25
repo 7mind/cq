@@ -67,7 +67,10 @@ import {
   type McpHttpHandlers,
   type PromptArtifactStore,
 } from "@cq/ledger-mcp";
+import { hubTopic, matchProjectRoute } from "./projectRoutes.js";
 import { prepare, serveStatic, scanForPort, DEFAULT_OUTDIR } from "./serve.js";
+
+export { hubTopic, matchProjectRoute } from "./projectRoutes.js";
 
 /** Default bind host for `cq serve` (mirrors ledger-web's DEFAULT_HOST). */
 export const HUB_DEFAULT_HOST = "127.0.0.1";
@@ -305,30 +308,6 @@ export function projectDisplayNameFromRequest(req: Request, projectKey: string):
     );
   }
   return displayName;
-}
-
-/**
- * Match a per-project route pathname `/p/<projectKey>/<leaf>` where `<leaf>` is
- * `mcp` or `ws`. Returns the decoded `projectKey` + `leaf`, or `null` when the
- * pathname is not a per-project route. `<projectKey>` is a single path segment
- * (no embedded `/`), URL-decoded so a key with reserved characters round-trips.
- */
-export function matchProjectRoute(
-  pathname: string,
-): { projectKey: string; leaf: "mcp" | "ws" } | null {
-  const m = /^\/p\/([^/]+)\/(mcp|ws)$/.exec(pathname);
-  if (m === null) return null;
-  return { projectKey: decodeURIComponent(m[1]!), leaf: m[2] as "mcp" | "ws" };
-}
-
-/**
- * The Bun pub/sub topic a project's live-change frames are published to — one
- * topic PER TENANT (`ledger:<projectKey>`), so a `/p/A/ws` socket subscribed to
- * A's topic never sees B's writes. Distinct from ledger-mcp's single-project
- * {@link import("@cq/ledger-mcp").LEDGER_TOPIC} (`"ledger"`).
- */
-export function hubTopic(projectKey: string): string {
-  return `ledger:${projectKey}`;
 }
 
 /** Bun.serve per-socket data for the hub's WebSocket: which tenant it belongs to. */
