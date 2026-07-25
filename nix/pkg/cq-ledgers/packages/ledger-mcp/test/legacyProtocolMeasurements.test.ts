@@ -17,6 +17,40 @@ const DISPATCHED_ROLES = [
   "research-experimenter",
 ] as const;
 const SURFACES = ["claude", "codex", "pi"] as const;
+const PROMPT_RECORDS_SHA256 = "d38c7c846374b0a55f4fb942da8dcbf8c1471b40712486e2e8c2c539db7e4889";
+const PROMPT_TYPED_INPUTS_SHA256 =
+  "c45b977797cc8709aad2c8adee6fba57d1ba1a675e5f6e7d349562e5224cec07";
+const RS4_ROLE_MEASUREMENTS = [
+  { roleId: "plan-advance", bytes: 32939, words: 4551 },
+  { roleId: "plan-reviewer", bytes: 11831, words: 1691 },
+  { roleId: "implement-worker", bytes: 6902, words: 1022 },
+  { roleId: "implement-reviewer", bytes: 6847, words: 993 },
+  { roleId: "implement-conflict-resolver", bytes: 4276, words: 628 },
+  { roleId: "investigate-explorer", bytes: 8170, words: 1169 },
+  { roleId: "investigate-prober", bytes: 10164, words: 1491 },
+  { roleId: "research-explorer", bytes: 10092, words: 1453 },
+  { roleId: "research-experimenter", bytes: 12466, words: 1789 },
+] as const;
+const RS4_REPRESENTATIVE = {
+  sha256: "1ffcc02930c646322eaf26ea89a54439b444a17192da7e407cf10b7dea4722d0",
+  reference: '{"roleId":"research-explorer","version":1}',
+  input:
+    '{"hypothesisId":"H104","statement":"Resolve catalog prompts inside dispatch_subagent","branchContext":"RS4 root; test dispatcher-side catalog resolution."}',
+} as const;
+const RS5_PAYLOAD_SHA256 = {
+  childPayload: "20d678c75b495cdada4a8f1dbdde00c1b319b442a3d82122672777c5e60465e3",
+  validateOutputArguments: "69bc1b6fafd62607239d3b711665d474a4c325db50fd00ccfc50bd3c0b3d0f2d",
+  validationResult: "8c74aec4f14647ccffe18e37649d2ec52ea39445151419c9a92c94f6eb9e1195",
+  legacySerializedParentVisible: "3f105d14311aef59199e197c79c1a4baa50dda0cd20d7010c8c114b59cde35ad",
+  refFirstAcknowledgement: "c8f70520f9f9cc574b54d197e4f109dccfcaace1b270c9264dcffffe0c3bc206",
+  refFirstFetchArguments: "c8f70520f9f9cc574b54d197e4f109dccfcaace1b270c9264dcffffe0c3bc206",
+  refFirstTerminalEnvelope: "73cdc77e939a28cfcef4b93735999a66ebfbee1dfd509f8830ffa31cdb55ac52",
+  refFirstSerializedParentVisible:
+    "780bbff49409dd31485e0ee04b6a53a5ab1e3ce4453600d0a7b433bb4634e7d5",
+  dispatcherTerminalEnvelope: "73cdc77e939a28cfcef4b93735999a66ebfbee1dfd509f8830ffa31cdb55ac52",
+  dispatcherSerializedParentVisible:
+    "73cdc77e939a28cfcef4b93735999a66ebfbee1dfd509f8830ffa31cdb55ac52",
+} as const;
 
 interface PromptRecord {
   readonly surface: string;
@@ -34,6 +68,7 @@ interface PromptRecord {
 
 interface PromptFixture {
   readonly fixtureVersion: number;
+  readonly frozenAtCommit: string;
   readonly scope: {
     readonly sampleSizePerRoleSurface: number;
     readonly roles: readonly string[];
@@ -52,7 +87,9 @@ interface PromptFixture {
   readonly typedInputs: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   readonly records: readonly PromptRecord[];
   readonly rs4: {
+    readonly researchId: string;
     readonly sampleSize: number;
+    readonly frozenAtCommit: string;
     readonly allRoleMeasurements: readonly {
       readonly roleId: string;
       readonly bytes: number;
@@ -61,6 +98,7 @@ interface PromptFixture {
     readonly allRoleBytes: number;
     readonly allRoleWords: number;
     readonly representative: {
+      readonly roleId: string;
       readonly fixturePath: string;
       readonly fullPromptBytes: number;
       readonly fullPromptWords: number;
@@ -105,10 +143,18 @@ interface Rs5Strategy {
 }
 
 interface Rs5Fixture {
+  readonly fixtureVersion: number;
+  readonly researchId: string;
+  readonly hypothesisId: string;
+  readonly harness: string;
+  readonly frozenAtCommit: string;
   readonly sampleSize: number;
   readonly aggregateClaim: boolean;
   readonly crossHarnessClaim: boolean;
   readonly source: {
+    readonly baseCommit: string;
+    readonly corpusCutoff: string;
+    readonly corpusManifestSha256: string;
     readonly roleId: string;
     readonly resultSemanticValue: Readonly<Record<string, unknown>>;
   };
@@ -191,6 +237,7 @@ const rs5Fixture = readJson<Rs5Fixture>("rs5-codex-n1.json");
 describe("T681 immutable legacy protocol measurements", () => {
   test("freezes one schema-bearing fetch response and compact input per role and surface", () => {
     expect(promptFixture.fixtureVersion).toBe(1);
+    expect(promptFixture.frozenAtCommit).toBe("1f0af11883b94ea95b1a7ead4f2013231aa5944f");
     expect(promptFixture.scope).toEqual({
       sampleSizePerRoleSurface: 1,
       roles: DISPATCHED_ROLES,
@@ -199,6 +246,8 @@ describe("T681 immutable legacy protocol measurements", () => {
       crossHarnessClaim: false,
     });
     expect(promptFixture.records).toHaveLength(DISPATCHED_ROLES.length * SURFACES.length);
+    expect(sha256(JSON.stringify(promptFixture.records))).toBe(PROMPT_RECORDS_SHA256);
+    expect(sha256(JSON.stringify(promptFixture.typedInputs))).toBe(PROMPT_TYPED_INPUTS_SHA256);
 
     const combinations = new Set<string>();
     for (const record of promptFixture.records) {
@@ -244,11 +293,19 @@ describe("T681 immutable legacy protocol measurements", () => {
     const representative = rs4.representative;
     const prompt = readFileSync(path.join(FIXTURE_ROOT, representative.fixturePath), "utf8");
 
+    expect(rs4.researchId).toBe("RS4");
     expect(rs4.sampleSize).toBe(1);
+    expect(rs4.frozenAtCommit).toBe("96823788f5b47440b5f74d4ba5ff7ccfe95cccb8");
+    expect(rs4.allRoleMeasurements).toEqual(RS4_ROLE_MEASUREMENTS);
+    expect(representative.roleId).toBe("research-explorer");
+    expect(representative.fixturePath).toBe("rs4-research-explorer.md");
+    expect(sha256(prompt)).toBe(RS4_REPRESENTATIVE.sha256);
     expect(utf8Bytes(prompt)).toBe(representative.fullPromptBytes);
     expect(whitespaceWords(prompt)).toBe(representative.fullPromptWords);
     expect(representative.fullPromptBytes).toBe(10092);
     expect(representative.fullPromptWords).toBe(1453);
+    expect(representative.reference).toBe(RS4_REPRESENTATIVE.reference);
+    expect(representative.input).toBe(RS4_REPRESENTATIVE.input);
     expect(utf8Bytes(representative.reference)).toBe(representative.referenceBytes);
     expect(whitespaceWords(representative.reference)).toBe(representative.referenceWords);
     expect(utf8Bytes(representative.input)).toBe(representative.inputBytes);
@@ -278,12 +335,36 @@ describe("T681 immutable legacy protocol measurements", () => {
     const refFirst = rs5Fixture.strategies.refFirstSingleFetch;
     const dispatcher = rs5Fixture.strategies.dispatcherFinalization;
 
+    expect(rs5Fixture.fixtureVersion).toBe(1);
+    expect(rs5Fixture.researchId).toBe("RS5");
+    expect(rs5Fixture.hypothesisId).toBe("H108");
+    expect(rs5Fixture.harness).toBe("codex");
+    expect(rs5Fixture.frozenAtCommit).toBe("104d1c2f8fb962a852152bafdf26c7f0a0d27859");
+    expect(rs5Fixture.source).toEqual({
+      baseCommit: "104d1c2f8fb962a852152bafdf26c7f0a0d27859",
+      corpusCutoff: "2026-07-24T17:52:41.427Z",
+      corpusManifestSha256: "2b3c136fe963ea1fb72e07f1ab0f01d5b2244f36e051502f10f352497ddcfb46",
+      roleId: "implement-reviewer",
+      resultSemanticValue: { ok: true },
+    });
     expect(rs5Fixture.sampleSize).toBe(1);
     expect(rs5Fixture.aggregateClaim).toBe(false);
     expect(rs5Fixture.crossHarnessClaim).toBe(false);
     expect(utf8Bytes(exact.childPayload)).toBe(exact.childBytes);
     expect(utf8Bytes(exact.validateOutputArguments)).toBe(exact.validationArgumentBytes);
     expect(utf8Bytes(exact.validationResult)).toBe(exact.validationResultBytes);
+    expect({
+      childPayload: sha256(exact.childPayload),
+      validateOutputArguments: sha256(exact.validateOutputArguments),
+      validationResult: sha256(exact.validationResult),
+      legacySerializedParentVisible: sha256(legacy.serializedParentVisible),
+      refFirstAcknowledgement: sha256(refFirst.acknowledgement),
+      refFirstFetchArguments: sha256(refFirst.fetchArguments),
+      refFirstTerminalEnvelope: sha256(refFirst.terminalEnvelope),
+      refFirstSerializedParentVisible: sha256(refFirst.serializedParentVisible),
+      dispatcherTerminalEnvelope: sha256(dispatcher.terminalEnvelope),
+      dispatcherSerializedParentVisible: sha256(dispatcher.serializedParentVisible),
+    }).toEqual(RS5_PAYLOAD_SHA256);
     expect(exact).toMatchObject({
       childBytes: 1131,
       childO200kTokens: 273,

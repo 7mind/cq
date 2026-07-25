@@ -25,6 +25,11 @@ deterministic assertions reside in
 `fetch_prompt` or `validate_output` production call. T698 and T708 therefore
 retain ownership of removing the production legacy paths.
 
+The test contains independent SHA-256 oracles for the complete 27-record
+inventory, its typed inputs, the historical RS4 representative, and every RS5
+exact-pair and strategy serialization. Fixture-carried lengths, totals, and
+hashes therefore cannot authorize a self-consistent payload substitution.
+
 ## Reproduction before the fixture
 
 From `nix/pkg/cq-ledgers`, before adding the files:
@@ -36,6 +41,14 @@ test -f packages/ledger-mcp/test/fixtures/t681/prompt-dispatch.json \
 ```
 
 Result: exit 1. No durable oracle covered either legacy serialization path.
+
+The follow-up immutability reproduction changed one ASCII byte in the retained
+RS4 prompt (`Research` to `Researcg`). Its byte count, word count, and all
+derived totals remained unchanged, and the original five tests incorrectly
+passed. With the independent historical SHA-256 assertion added while the
+substitution remained, the focused test failed with expected hash
+`1ffcc029…` and received hash `80edd72b…`. Restoring the historical byte made
+the regression pass.
 
 ## Measurement definitions
 
@@ -114,9 +127,11 @@ the current artifact:
 - reduction: 98.047959% bytes / 99.242946% words.
 
 The historical nine-role inventory remains recorded as 103,687 bytes / 14,787
-words. These are deterministic file measurements. RS4 did not measure tokenizer
-tokens, provider usage, cache behavior, billing, or latency; those fields remain
-unavailable rather than estimated.
+words. The test pins `researchId=RS4`, the historical commit, every role's exact
+byte/word tuple, and the representative's SHA-256, role, fixture path, compact
+reference, and typed input. These are deterministic file measurements. RS4 did
+not measure tokenizer tokens, provider usage, cache behavior, billing, or
+latency; those fields remain unavailable rather than estimated.
 
 The current 27-row compact encoding uses one
 `{ roleId, input }` object, while the retained RS4 calculation concatenates its
@@ -129,6 +144,11 @@ interchangeable.
 RS5's only exact child-output-to-validation pair came from Codex
 `implement-reviewer`. The corpus contained no exact Claude or Pi pair, so the
 following table is Codex N=1 only:
+
+The fixture pins `researchId=RS5`, `hypothesisId=H108`, `harness=codex`, frozen commit
+`104d1c2f8fb962a852152bafdf26c7f0a0d27859`, corpus cutoff
+`2026-07-24T17:52:41.427Z`, and corpus-manifest SHA-256
+`2b3c136fe963ea1fb72e07f1ab0f01d5b2244f36e051502f10f352497ddcfb46`.
 
 | Strategy                              | Parent-visible bytes | Parent-visible o200k tokens | Child bytes | Full-output model-visible copies | Typed fetches | Validation calls | Parent round trips |
 | ------------------------------------- | -------------------: | --------------------------: | ----------: | -------------------------------: | ------------: | ---------------: | -----------------: |
@@ -180,7 +200,8 @@ From `nix/pkg/cq-ledgers`:
 bun test packages/ledger-mcp/test/legacyProtocolMeasurements.test.ts
 ```
 
-Result at fixture creation: 5 passed, 0 failed, with 516 assertions.
+Result after the immutability regression: 5 passed, 0 failed, with 534
+assertions.
 
 `bun run typecheck` and `bun run lint` also passed. The repository-wide
 `bun run check` reached 2,970 passes and 131 environment-dependent skips, then

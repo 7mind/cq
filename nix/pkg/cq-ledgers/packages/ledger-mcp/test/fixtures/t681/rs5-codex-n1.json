@@ -1,6 +1,7 @@
 {
   "fixtureVersion": 1,
   "researchId": "RS5",
+  "frozenAtCommit": "104d1c2f8fb962a852152bafdf26c7f0a0d27859",
   "hypothesisId": "H108",
   "harness": "codex",
   "sampleSize": 1,
