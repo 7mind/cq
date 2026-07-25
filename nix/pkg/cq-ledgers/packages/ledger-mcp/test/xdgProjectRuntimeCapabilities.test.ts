@@ -104,6 +104,34 @@ async function createRepository(
   return realpath(repository);
 }
 
+async function createMatchingNonRepository(
+  directory: string,
+  gitMarker: "file" | "directory" | null,
+): Promise<string> {
+  await writeFile(
+    path.join(directory, "cq.toml"),
+    `[ledger]\nprojectId = "${PROJECT_KEY}"\n`,
+  );
+  if (gitMarker === "file") {
+    await writeFile(path.join(directory, ".git"), "arbitrary marker text\n");
+  }
+  if (gitMarker === "directory") {
+    await mkdir(path.join(directory, ".git"));
+  }
+  return directory;
+}
+
+async function createLinkedWorktree(repository: string): Promise<string> {
+  const parent = await temporaryDirectory("t833-linked-parent-");
+  const linkedWorktree = path.join(parent, "checkout");
+  await exec(
+    "git",
+    ["worktree", "add", "--detach", "-q", linkedWorktree, "HEAD"],
+    { cwd: repository },
+  );
+  return realpath(linkedWorktree);
+}
+
 async function prepareProject(
   projectsRoot: string,
   repositoryPath: string | null,
@@ -297,6 +325,35 @@ describe("explicit XDG runtime repository provenance capabilities", () => {
     );
   });
 
+  test("canonical matching linked-worktree provenance remains available", async () => {
+    const projectsRoot = await temporaryDirectory("t833-projects-linked-");
+    const repository = await createRepository("linked", PROJECT_KEY);
+    const linkedWorktree = await createLinkedWorktree(repository);
+    await prepareProject(projectsRoot, linkedWorktree);
+    const runtime = await openXdgProjectRuntime({
+      projectsRoot,
+      projectKey: PROJECT_KEY,
+    });
+    try {
+      expect(runtime.configRoot).toBe(linkedWorktree);
+      await withRuntimeClient(runtime, async (client) => {
+        const result = (await client.callTool({
+          name: "get_config",
+          arguments: {},
+        })) as ToolResult;
+        expect(result.isError ?? false).toBe(false);
+        const config = JSON.parse(textOf(result)) as {
+          configured: boolean;
+          reviewers: string[];
+        };
+        expect(config.configured).toBe(true);
+        expect(config.reviewers).toEqual(["linked"]);
+      });
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   const invalidCases: ReadonlyArray<{
     readonly name: string;
     repositoryPath(
@@ -324,13 +381,18 @@ describe("explicit XDG runtime repository provenance capabilities", () => {
     },
     {
       name: "matching non-repository",
-      repositoryPath: async (projectsRoot) => {
-        await writeFile(
-          path.join(projectsRoot, "cq.toml"),
-          `[ledger]\nprojectId = "${PROJECT_KEY}"\n`,
-        );
-        return projectsRoot;
-      },
+      repositoryPath: (projectsRoot) =>
+        createMatchingNonRepository(projectsRoot, null),
+    },
+    {
+      name: "matching arbitrary .git file",
+      repositoryPath: (projectsRoot) =>
+        createMatchingNonRepository(projectsRoot, "file"),
+    },
+    {
+      name: "matching empty .git directory",
+      repositoryPath: (projectsRoot) =>
+        createMatchingNonRepository(projectsRoot, "directory"),
     },
   ];
 

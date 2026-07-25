@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import {
   access,
@@ -7,6 +8,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import { loadConfig } from "@cq/config";
 
 import { resolveProjectKey } from "../../projectKey.js";
@@ -19,6 +21,7 @@ import {
 } from "./xdgProjectCatalog.js";
 
 const XDG_DB_FILENAME = "ledger.db";
+const execFileAsync = promisify(execFile);
 
 export interface OpenXdgProjectRuntimeOptions {
   readonly projectsRoot: string;
@@ -132,6 +135,19 @@ async function recoverConfigRoot(
     ) {
       return undefined;
     }
+    const insideWorkTree = await execFileAsync(
+      "git",
+      ["rev-parse", "--is-inside-work-tree"],
+      { cwd: canonicalRoot, encoding: "utf8" },
+    );
+    if (insideWorkTree.stdout.trim() !== "true") return undefined;
+    const workTree = await execFileAsync(
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      { cwd: canonicalRoot, encoding: "utf8" },
+    );
+    const canonicalWorkTree = await realpath(workTree.stdout.trim());
+    if (canonicalWorkTree !== canonicalRoot) return undefined;
     const config = loadConfig(canonicalRoot);
     const resolvedProjectKey = await resolveProjectKey({
       repoRoot: canonicalRoot,
