@@ -32,7 +32,8 @@ describe("parseRef", () => {
     expect(parseRef("tasks:T5")).toEqual({ kind: "prefixed", ledger: "tasks", id: "T5" });
   });
 
-  it("parses an upstream prefixed ref", () => {
+  it("parses bare and prefixed upstream refs", () => {
+    expect(parseRef("U7")).toEqual({ kind: "bare", bare: "U7" });
     expect(parseRef("upstream:U7")).toEqual({
       kind: "prefixed",
       ledger: "upstream",
@@ -80,6 +81,10 @@ describe("buildPrefixRegistry", () => {
       ["U", "upstream"],
     ]);
   });
+
+  it("retains one registry entry per canonical ledger without silent prefix overwrite", () => {
+    expect(canonicalRegistry.size).toBe(CANONICAL_LEDGERS.length);
+  });
 });
 
 describe("canonicalizeRef", () => {
@@ -95,8 +100,9 @@ describe("canonicalizeRef", () => {
     expect(canonicalizeRef("HO4", canonicalRegistry)).toBe("handoffs:HO4");
   });
 
-  it("resolves a bare upstream id", () => {
+  it("resolves bare and prefixed upstream refs to the canonical form", () => {
     expect(canonicalizeRef("U7", canonicalRegistry)).toBe("upstream:U7");
+    expect(canonicalizeRef("upstream:U7", canonicalRegistry)).toBe("upstream:U7");
   });
 
   it("is idempotent on an already-prefixed ref", () => {

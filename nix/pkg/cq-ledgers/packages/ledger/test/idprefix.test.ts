@@ -15,9 +15,11 @@ import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
+  CrossPrefixIdError,
   FsLedgerStore,
   InMemoryLedgerStore,
   serializeRegistry,
+  UPSTREAM_LEDGER,
   validateSchema,
   type LedgerSchema,
   type LedgerStore,
@@ -122,6 +124,21 @@ for (const factory of [inMem, fs_]) {
         id: "W42",
       });
       expect(ok.id).toBe("W42");
+      await store.dispose();
+    });
+
+    it("upstream refuses a D-prefixed caller-supplied id with CrossPrefixIdError", async () => {
+      const store = await factory.build([]);
+      const m = await store.createMilestone({ title: "upstream cross-prefix" });
+      const create = store.createItem(UPSTREAM_LEDGER, m.id, {
+        id: "D7",
+        status: "open",
+        fields: { headline: "upstream defect", package: "dependency" },
+      });
+      await expect(create).rejects.toBeInstanceOf(CrossPrefixIdError);
+      await expect(create).rejects.toThrow(
+        'item id "D7" does not match ledger "upstream" prefix "U"',
+      );
       await store.dispose();
     });
 
