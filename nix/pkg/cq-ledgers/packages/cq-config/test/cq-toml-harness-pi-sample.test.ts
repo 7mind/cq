@@ -1,10 +1,24 @@
 /**
- * T484: Regression guard — the documented [harness.pi] sample in cq.toml.example
- * (the commented block at the end of that file) must parse correctly when
- * uncommented and loaded with harness='pi'.
+ * T484: Regression guard for [harness.<name>] override MECHANICS in parseConfig
+ * — per-harness reviewers/planners/tiers REPLACE (not merge with) the shared
+ * top-level ones, and a selector with no override falls through unaffected.
  *
- * This test inlines the documented sample verbatim (uncommented), so any drift
- * between the documented example and the actual parseConfig semantics is caught.
+ * SUPERSEDED as a documentation-mirror guard (T864 round-1 review): this test
+ * used to claim its inlined HARNESS_PI_SAMPLE "must match the documented
+ * commented block in cq.toml.example" — but nothing enforced that claim
+ * mechanically, and T864's edit to the documented block (cq.toml.example's
+ * [harness.pi] moved from grok/minimax to the codex/terra/luna GPT-5.6 ladder)
+ * proved the mirror could silently drift while this test kept passing.
+ * `cq-toml-example.test.ts`'s "T864: the codex CONFIGURATION SELECTOR is
+ * documented and schema-valid" describe block now owns doc-conformance for
+ * real: it reads cq.toml.example from disk, extracts the LIVE documented
+ * `[harness.pi]`/`[harness.codex]` commented block, uncomments it, and parses
+ * it — so it fails the instant the documented block and its own assertions
+ * diverge. That test supersedes this one for mirror/drift detection.
+ *
+ * HARNESS_PI_SAMPLE below is now an INDEPENDENT, self-contained fixture (no
+ * longer claimed to mirror cq.toml.example) that exists solely to exercise the
+ * override mechanics in isolation, with fixed, easy-to-reason-about tokens:
  *
  * Acceptance:
  *  - parseConfig(sample, 'pi') yields reviewers=["grok","minimax"],
@@ -13,8 +27,6 @@
  *    grok classifies to "frontier", minimax classifies to "fast".
  *  - parseConfig(sample, 'claude') is unaffected: yields the shared
  *    reviewers=["opus"], planners=["opus"], and opus classifies to "frontier".
- *
- * The inlined SAMPLE must match the documented commented block in cq.toml.example.
  */
 
 import { describe, it, expect } from "bun:test";
@@ -28,8 +40,9 @@ import {
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
-// Inlined sample — MUST match the commented [harness.pi] block in
-// cq.toml.example (the documented example near the end of that file).
+// Inlined sample — an INDEPENDENT fixture for override mechanics, not a
+// mirror of cq.toml.example (see file header: doc-conformance now lives in
+// cq-toml-example.test.ts's T864 describe block).
 // The aliases (grok, minimax) are shared-only and remain in [aliases].
 // ---------------------------------------------------------------------------
 const HARNESS_PI_SAMPLE = `
@@ -57,7 +70,7 @@ frontier = "grok"
 fast     = "minimax"
 `;
 
-describe("cq-toml-harness-pi-sample — T484 documented example guard", () => {
+describe("cq-toml-harness-pi-sample — T484 [harness.<name>] override mechanics (independent fixture; superseded as a doc-mirror by cq-toml-example.test.ts's T864 block)", () => {
   it("parseConfig(sample, 'pi') yields per-harness reviewers=[grok, minimax]", () => {
     const config = parseConfig(HARNESS_PI_SAMPLE, "pi");
     expect(config.reviewers).toEqual(["grok", "minimax"]);
