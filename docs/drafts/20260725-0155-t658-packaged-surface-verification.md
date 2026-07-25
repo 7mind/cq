@@ -13,7 +13,28 @@ serialization. The three prompt bodies differ by surface as required.
 No projection fallout, unresolved renderer slot, canonical-source link,
 temporary rendered root, or stale full-mutation-result assumption was observed.
 
+The complete acceptance matrix is reproducible from a dependency-free checkout:
+
+```sh
+cd nix/pkg/cq-ledgers
+bun run verify-packaged-prompt-surfaces
+```
+
+The committed harness at
+`packages/ledger-mcp/scripts/verify-packaged-prompt-surfaces.ts` begins with
+`bun install --frozen-lockfile`, so this invocation does not depend on
+worktree-specific package links.
+
 ## Reproductions before verification
+
+Before the round-2 correction, the reusable-harness precondition failed:
+
+```sh
+test -f packages/ledger-mcp/scripts/verify-packaged-prompt-surfaces.ts
+```
+
+Result: exit 1. The six packaged transports and three-root hygiene scan recorded
+below therefore could not be rerun from the round-1 commit.
 
 The first `gen-agents` run in the isolated worktree failed with
 `Cannot find module '@cq/config/prompt-renderer'`. The root dependency link alone
@@ -57,6 +78,16 @@ git diff --exit-code -- \
 Result: both second generations matched the first byte-for-byte, and neither
 committed generated path changed. The explicit `cmp` operands identify the
 changed path if freshness fails.
+
+The committed harness performs the same comparisons in memory and fails with
+`changed path: <repository-relative path>` for either committed-output drift or
+non-determinism between the first and second runs. It also refuses to start when
+either generated path already differs in the index or worktree, naming that
+path. A controlled one-line probe against
+`packages/cq-config/src/promptCatalog.gen.ts` produced
+`freshness precondition failed: generated path already differs:
+packages/cq-config/src/promptCatalog.gen.ts` and left the probe unmodified,
+confirming that diagnostics precede generator writes.
 
 ## Focused behavioral gates
 
@@ -106,10 +137,10 @@ nix build .#cq --no-link --print-out-paths
 
 Both commands passed. Nix reported an unavailable configured SSH builder and
 then completed the affected derivations on an available builder. The packaged
-binary output was:
+binary output from the committed harness run was:
 
 ```text
-/nix/store/rwryjiy3c5qsn69bq5ig6lsrlqls6dhx-cq-0.0.1
+/nix/store/yap1dixlg0k1ygp7nis4icy0xkvjg91y-cq-0.0.1
 ```
 
 From `nix/pkg/cq-ledgers`:
@@ -124,10 +155,12 @@ prompt-surface matrix.
 
 ## Packaged transport smoke
 
-The smoke started the built `cq` binary over stdio and HTTP for each Nix-built
-surface root, called `fetch_prompt({ roleId: "plan-advance" })`, compared
-`promptTemplate` with that root's `roles/plan-advance.md`, and compared
-`version`, `inputSchema`, and `outputSchema` across all responses.
+The committed harness discovers the binary and roots with four independent
+`nix build <attribute> --no-link --print-out-paths` calls. It starts the built
+`cq` binary over stdio and HTTP for each Nix-built surface root, calls
+`fetch_prompt({ roleId: "plan-advance" })`, compares `promptTemplate` with that
+root's `roles/plan-advance.md`, and compares `version`, `inputSchema`, and
+`outputSchema` across all responses.
 
 ```text
 claude: stdio+http bytes=33427 schemas=identical
@@ -136,7 +169,7 @@ pi: stdio+http bytes=33409 schemas=identical
 packaged prompt smoke: 6/6 transports passed; 3 surface bytes distinct
 ```
 
-An additional path-scoped scan checked all three packaged roots:
+The same harness checks all three packaged roots:
 
 ```text
 all 3 packaged roots: 24 roles, nested projections+acks present, no unresolved slots or stale mutation prose
@@ -147,4 +180,7 @@ The scanned nested artifacts were `begin.md`, `plan.md`,
 explicit `projection: "compact"` or `projection: "full"` call and the fixed
 mutation-acknowledgement rule. The scan rejected unresolved
 `{{cq:fragment:...}}`/`CQ_HARNESS` tokens and legacy prose claiming that a
-mutation returns a full item or entity.
+mutation returns a full item or entity. It rejects packaged symlinks as possible
+raw-source authority, rejects `.tmp-*`/`.publication.lock` artifacts, and runs
+the `link-prompts` contract against both its strict in-memory dummy and the real
+temporary-filesystem adapter to verify current-root link targets and cleanup.
