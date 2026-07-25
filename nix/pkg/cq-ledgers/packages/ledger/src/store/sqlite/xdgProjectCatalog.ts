@@ -207,7 +207,7 @@ export class ReadOnlyXdgProjectCatalog implements XdgProjectCatalog {
         continue;
       }
 
-      const validationError = validateSnapshot(candidate.key, probe.snapshot);
+      const validationError = validateXdgProjectStoreSnapshot(candidate.key, probe.snapshot);
       if (validationError !== null) {
         diagnostics.push(validationError);
         continue;
@@ -615,7 +615,7 @@ function readSnapshot(db: Database): XdgProjectStoreSnapshot {
   };
 }
 
-function validateSnapshot(
+export function validateXdgProjectStoreSnapshot(
   key: string,
   snapshot: XdgProjectStoreSnapshot,
 ): XdgProjectCatalogDiagnostic | null {
