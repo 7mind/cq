@@ -540,6 +540,13 @@ export interface CreateLedgerMcpServerOptions {
    * test constructing a server directly over an in-memory store).
    */
   projectKey?: string;
+  /**
+   * Optional shared project-registry capability. Multi-project hosts inject
+   * this so every project-bound session sees the same whole-host registry.
+   * Omitted, {@link listProjectsOf} preserves the store-native or synthesized
+   * single-project fallback.
+   */
+  listProjects?: ListProjectsCapability;
 }
 
 /**
@@ -592,10 +599,12 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
   // list_projects (T585 / Q284): ALWAYS wired, never left undefined — see
   // listProjectsOf's doc. The single-project fallback key defaults to
   // `displayName` when the caller has no resolved `projectKey` at hand.
-  const listProjects: ListProjectsCapability = listProjectsOf(store, {
-    key: opts.projectKey ?? displayName,
-    displayName,
-  });
+  const listProjects: ListProjectsCapability =
+    opts.listProjects ??
+    listProjectsOf(store, {
+      key: opts.projectKey ?? displayName,
+      displayName,
+    });
   registerLedgerStdioTools(
     server,
     store,
@@ -674,6 +683,7 @@ export function attachMcpHttp(
   configRoot?: string,
   projectKey?: string,
   promptArtifactStore?: PromptArtifactStore,
+  listProjects?: ListProjectsCapability,
 ): McpHttpHandlers {
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
@@ -719,6 +729,7 @@ export function attachMcpHttp(
       ...(configRoot !== undefined ? { configRoot } : {}),
       ...(projectKey !== undefined ? { projectKey } : {}),
       ...(promptArtifactStore !== undefined ? { promptArtifactStore } : {}),
+      ...(listProjects !== undefined ? { listProjects } : {}),
     });
     await server.connect(transport);
     // Body already consumed above; hand it back so the transport doesn't
