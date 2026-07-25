@@ -12,8 +12,8 @@
  *     project_key only — a second tenant on the SAME database is untouched.
  *  2. re-connecting with a CHANGED displayName updates projects.display_name.
  *  3. a divergent canonical schema triggers the configured
- *     onSchemaDivergence policy (default 'backup-reinit' tenant-scoped shadow
- *     copy, opt-out 'abort').
+ *     onSchemaDivergence policy (default 'abort'; opt-in 'backup-reinit' takes a
+ *     tenant-scoped shadow copy).
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -234,7 +234,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
     });
   });
 
-  describe("divergent canonical schema — 'backup-reinit' (default) policy", () => {
+  describe("divergent canonical schema — 'backup-reinit' (explicit opt-in) policy", () => {
     it("init() resolves, tenant-scoped shadow holds the prior divergent + logs rows, live tenant is fresh-canonical", async () => {
       await schemaReady;
       const projectKey = freshProjectKey();
@@ -257,6 +257,7 @@ if (PG_URL === undefined || PG_URL.length === 0) {
         pool: openPgPool(PG_URL),
         projectKey,
         displayName: projectKey,
+        onSchemaDivergence: "backup-reinit",
       });
       await expect(store.init()).resolves.toBeUndefined();
       try {
