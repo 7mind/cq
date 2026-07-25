@@ -90,6 +90,16 @@ export class FsPersistence implements LedgerPersistence {
     this.planPendingPath = path.join(this.docsDir, PLAN_LIFECYCLE_PENDING_FILENAME);
   }
 
+  async hasPendingPlanLifecycleCommit(): Promise<boolean> {
+    try {
+      await fs.stat(this.planPendingPath);
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw e;
+    }
+  }
+
   async recoverPlanLifecycleCommit(): Promise<void> {
     const pending = await readMaybe(this.planPendingPath);
     if (pending === null) return;
@@ -231,7 +241,15 @@ export class FsPersistence implements LedgerPersistence {
 }
 
 function parsePlanLifecycleCommit(text: string): PlanLifecyclePersistenceCommit {
-  const value: unknown = JSON.parse(text);
+  // A truncated pending marker (the exact artifact an interrupted writer can
+  // leave) must surface as a LedgerError like every malformed-shape branch
+  // below, not a raw SyntaxError out of init().
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new LedgerError("invalid pending plan lifecycle commit");
+  }
   if (typeof value !== "object" || value === null) {
     throw new LedgerError("invalid pending plan lifecycle commit");
   }

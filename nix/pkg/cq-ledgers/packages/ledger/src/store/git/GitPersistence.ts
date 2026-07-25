@@ -223,6 +223,12 @@ export class GitPersistence implements LedgerPersistence {
     await this.git.updateRef(this.ref, commit, expectedOld);
   }
 
+  // A lifecycle commit lands as ONE atomic CAS ref advance, so there is no
+  // pending stage to replay and never anything for init() to lock for.
+  async hasPendingPlanLifecycleCommit(): Promise<boolean> {
+    return false;
+  }
+
   async recoverPlanLifecycleCommit(): Promise<void> {}
 
   async readPlanLifecycleState(): Promise<string | null> {

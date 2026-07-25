@@ -919,6 +919,16 @@ export function runPlanLifecycleStoreContract(
           await expect(
             fixture.startTask(firstTasks["contract"]!, PROVENANCE_B),
           ).rejects.toThrow(/draft|superseded/);
+          // A superseded task is TERMINAL (abandoned), so the raw reopen path —
+          // a write path distinct from updateItem — must carry the same fence.
+          expect(
+            finalizedState.tasks.find(({ id }) => id === firstTasks["contract"])
+              ?.status,
+          ).toBe("abandoned");
+          await expect(
+            fixture.rawReopenTask(firstTasks["contract"]!, "planned"),
+          ).rejects.toThrow(/draft|superseded/);
+          expect(await fixture.observe(GOAL_ID)).toEqual(finalizedState);
         } finally {
           await fixture.dispose();
         }

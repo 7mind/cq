@@ -117,9 +117,6 @@ import { schemaCompatible, schemasEqual } from "./schemaCompat.js";
 import {
   PlanPrivateClaimRecordSchema,
   PlanOperationReplayRecordSchema,
-  PLAN_ACTIVE_CLAIM_FIELD,
-  PLAN_GENERATION_FIELD,
-  PLAN_MANAGED_GOAL_FIELD_NAMES,
   type PlanClaimInput,
   type PlanClaimResult,
   type PlanFinalizeInput,
@@ -138,9 +135,13 @@ import {
   releaseInMemoryPlanClaim,
   type InMemoryPlanLifecycleState,
   type InMemoryPlanOperationRecord,
-  readInMemoryPlanState,
 } from "./inMemoryPlanLifecycle.js";
-import { taskDependenciesSatisfied } from "./predicates.js";
+import {
+  assertManagedGoalTransitionAllowed,
+  assertManagedTaskTransitionAllowed,
+  assertRawPlanCreateAllowed,
+  assertRawPlanUpdateAllowed,
+} from "./planLifecycleGuards.js";
 
 // Moved to schemaCompat.ts (T527) so the sqlite backend's module graph stays
 // free of this file's parser/serialize funnel; re-exported for compatibility.
@@ -362,7 +363,6 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
 
   async init(): Promise<void> {
     if (this.initialised) return;
-    await this.persistence.recoverPlanLifecycleCommit();
 
     // Load registry.
     const registryText = await this.persistence.readRegistrySource();
@@ -446,13 +446,19 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       }
       if (needsWrite) await this.writeLedgerFile(ledger);
       this.ledgers.set(entry.name, ledger);
-      // Backfill title+status on legacy ArchivePointers (pre-T91). NOTE:
-      // milestones ledger must be processed FIRST (it appears first in
-      // CANONICAL_LEDGERS) so its in-memory archivePointers are populated
-      // before the non-milestones ledgers' backfill runs.
+    }
+    // Replay an interrupted lifecycle commit BEFORE the legacy backfill: the
+    // replay re-reads every ledger from the recovered durable bytes, which
+    // would otherwise discard the backfill's in-memory pointer edits.
+    await this.recoverPlanLifecycleUnderLocks();
+    // Backfill title+status on legacy ArchivePointers (pre-T91). NOTE: the
+    // milestones ledger must be processed FIRST (it appears first in
+    // CANONICAL_LEDGERS, and `this.ledgers` preserves that insertion order
+    // across the reload above) so its in-memory archivePointers are populated
+    // before the non-milestones ledgers' backfill runs.
+    for (const ledger of this.ledgers.values()) {
       await this.backfillLegacyArchivePointers(ledger);
     }
-    await this.loadPlanLifecycleState();
     this.initialised = true;
     // Build the FTS index for every loaded ledger (active + archived).
     for (const name of this.ledgers.keys()) {
@@ -663,23 +669,37 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     itemId: string,
     patch: UpdateItemPatch,
   ): Promise<Item> {
-    const it = await this.withLock(ledgerId, async () => {
-      // H41/D61: reload from the ref tip under the lock before reading/mutating.
-      await this.reloadLedgerFromDisk(ledgerId);
-      const ledger = this.getLedger(ledgerId);
-      this.assertRawPlanUpdateAllowed(ledgerId, ledger, itemId, patch);
-      const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
-      const x = applyUpdateItem(
-        ledger,
-        itemId,
-        patch,
-        this.now(),
-        precondition,
-        this.buildRefValidationContext(),
-      );
-      await this.writeLedgerFile(ledger);
-      return cloneItem(x);
-    });
+    const it = await this.withFreshGoalsForPlanGuard(ledgerId, () =>
+      this.withLock(ledgerId, async () => {
+        // H41/D61: reload from the ref tip under the lock before reading/mutating.
+        await this.reloadLedgerFromDisk(ledgerId);
+        const ledger = this.getLedger(ledgerId);
+        assertRawPlanUpdateAllowed(
+          this,
+          (id) => this.planGuardLedger(id),
+          ledgerId,
+          ledger,
+          itemId,
+          patch,
+        );
+        const precondition = this.statusChangePrecondition(
+          ledgerId,
+          ledger,
+          itemId,
+          patch,
+        );
+        const x = applyUpdateItem(
+          ledger,
+          itemId,
+          patch,
+          this.now(),
+          precondition,
+          this.buildRefValidationContext(),
+        );
+        await this.writeLedgerFile(ledger);
+        return cloneItem(x);
+      }),
+    );
     this.fireMutation(ledgerId, "update");
     return it;
   }
@@ -699,22 +719,28 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       // active-group check so it reflects peer commits.
       await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
       assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
-      return this.withLock(ledgerId, async () => {
-        // H41/D61: reload the target ledger from the ref tip before id
-        // allocation + mutation so fresh counters/items are used.
-        await this.reloadLedgerFromDisk(ledgerId);
-        const ledger = this.getLedger(ledgerId);
-        this.assertRawPlanCreateAllowed(ledgerId, init.fields);
-        const x = applyCreateItem(
-          ledger,
-          milestoneId,
-          init,
-          this.now(),
-          this.buildRefValidationContext(),
-        );
-        await this.writeLedgerFile(ledger);
-        return cloneItem(x);
-      });
+      return this.withFreshGoalsForPlanGuard(ledgerId, () =>
+        this.withLock(ledgerId, async () => {
+          // H41/D61: reload the target ledger from the ref tip before id
+          // allocation + mutation so fresh counters/items are used.
+          await this.reloadLedgerFromDisk(ledgerId);
+          const ledger = this.getLedger(ledgerId);
+          assertRawPlanCreateAllowed(
+            (id) => this.planGuardLedger(id),
+            ledgerId,
+            init.fields,
+          );
+          const x = applyCreateItem(
+            ledger,
+            milestoneId,
+            init,
+            this.now(),
+            this.buildRefValidationContext(),
+          );
+          await this.writeLedgerFile(ledger);
+          return cloneItem(x);
+        }),
+      );
     });
     this.fireMutation(ledgerId, "create");
     return item;
@@ -789,14 +815,32 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     itemId: string,
     toStatus: string,
   ): Promise<Item> {
-    const it = await this.withLock(ledgerId, async () => {
-      // H41/D61: reload from the ref tip under the lock before reading/mutating.
-      await this.reloadLedgerFromDisk(ledgerId);
-      const ledger = this.getLedger(ledgerId);
-      const x = applyReopenItem(ledger, itemId, toStatus, this.now());
-      await this.writeLedgerFile(ledger);
-      return cloneItem(x);
-    });
+    const it = await this.withFreshGoalsForPlanGuard(ledgerId, () =>
+      this.withLock(ledgerId, async () => {
+        // H41/D61: reload from the ref tip under the lock before reading/mutating.
+        await this.reloadLedgerFromDisk(ledgerId);
+        const ledger = this.getLedger(ledgerId);
+        // Raw reopen is a write path distinct from updateItem and carries the
+        // SAME managed-plan fence (parity with SqliteLedgerStore.reopenItem):
+        // without it a managed goal or a superseded task can be reopened
+        // outside PlanLifecycleStore.
+        const source = findItem(ledger, itemId).item;
+        if (ledgerId === GOALS_LEDGER) {
+          assertManagedGoalTransitionAllowed(source, toStatus);
+        }
+        if (ledgerId === TASKS_LEDGER) {
+          assertManagedTaskTransitionAllowed(
+            this,
+            (id) => this.planGuardLedger(id),
+            source,
+            toStatus,
+          );
+        }
+        const x = applyReopenItem(ledger, itemId, toStatus, this.now());
+        await this.writeLedgerFile(ledger);
+        return cloneItem(x);
+      }),
+    );
     this.fireMutation(ledgerId, "update");
     return it;
   }
@@ -1031,147 +1075,95 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     };
   }
 
-  private assertRawPlanCreateAllowed(
+  /**
+   * The {@link LoadPlanGuardLedger} seam the shared {@link planLifecycleGuards}
+   * read a referenced goal through. Serves the in-memory map, which
+   * {@link withFreshGoalsForPlanGuard} has just refreshed from the persistence
+   * seam under the goals lock on every path that consults it.
+   */
+  private planGuardLedger(ledgerId: string): Ledger {
+    return this.getLedger(ledgerId);
+  }
+
+  /**
+   * Run `fn` with the goals ledger RELOADED from the persistence seam under the
+   * goals lock, whenever the raw plan-lifecycle fence for a write to `ledgerId`
+   * consults it. Only a TASKS write does: the guards read the goals ledger to
+   * decide whether a referenced goal is lifecycle-managed, while a GOALS write
+   * already reloads its own ledger under its own lock.
+   *
+   * Reading that snapshot WITHOUT the lock breaks the H41/D61
+   * reload-under-lock discipline every other mutation path here follows: a
+   * peer's committed claim/finalize stays invisible, the fence decides on a
+   * stale cache, and a raw task-start or follow-up write slips past a managed
+   * plan.
+   *
+   * Lock order is the documented one — `__milestones__` first (already held by
+   * `createItem` when it reaches here), then per-ledger locks in ALPHABETIC
+   * order. `goals` sorts before `tasks`, so taking goals here and the target
+   * ledger inside `fn` preserves the global order; do NOT invert them.
+   */
+  private async withFreshGoalsForPlanGuard<T>(
     ledgerId: string,
-    fields: Record<string, import("../types.js").FieldValue>,
-  ): void {
-    if (
-      ledgerId === GOALS_LEDGER &&
-      PLAN_MANAGED_GOAL_FIELD_NAMES.some((name) => fields[name] !== undefined)
-    ) {
-      throw new LedgerError("managed plan state may mutate only through PlanLifecycleStore");
-    }
-    if (ledgerId === TASKS_LEDGER) {
-      this.assertNoManagedGoalReference(fields["ledgerRefs"]);
-    }
-  }
-
-  private assertRawPlanUpdateAllowed(
-    ledgerId: string,
-    source: Ledger,
-    itemId: string,
-    patch: UpdateItemPatch,
-  ): void {
-    if (ledgerId === GOALS_LEDGER) {
-      const goal = findItem(source, itemId).item;
-      if (
-        PLAN_MANAGED_GOAL_FIELD_NAMES.some(
-          (name) => patch.fields?.[name] !== undefined,
-        ) ||
-        (fieldIsPresent(goal, PLAN_GENERATION_FIELD) &&
-          patch.fields?.["milestones"] !== undefined)
-      ) {
-        throw new LedgerError(
-          "managed plan state may mutate only through PlanLifecycleStore",
-        );
-      }
-      if (patch.status !== undefined && patch.status !== goal.status) {
-        this.assertManagedGoalTransitionAllowed(goal, patch.status);
-      }
-    }
-    if (ledgerId === TASKS_LEDGER) {
-      const task = findItem(source, itemId).item;
-      if (patch.fields?.["ledgerRefs"] !== undefined) {
-        this.assertManagedTaskOwnershipRefsPreserved(
-          task,
-          patch.fields["ledgerRefs"],
-        );
-      }
-      if (patch.status !== undefined && patch.status !== task.status) {
-        this.assertManagedTaskTransitionAllowed(task, patch.status);
-      }
-    }
-  }
-
-  private assertNoManagedGoalReference(value: unknown): void {
-    if (this.managedGoalReferences(value).length > 0) {
-      throw new LedgerError(
-        "managed plan work may mutate only through PlanLifecycleStore",
-      );
-    }
-  }
-
-  private managedGoalReferences(value: unknown): string[] {
-    if (!Array.isArray(value)) return [];
-    return value.filter((ref): ref is string => {
-      if (typeof ref !== "string" || !ref.startsWith(`${GOALS_LEDGER}:`)) {
-        return false;
-      }
-      const goal = findOptionalItem(
-        this.getLedger(GOALS_LEDGER),
-        ref.slice(GOALS_LEDGER.length + 1),
-      );
-      return goal !== undefined && fieldIsPresent(goal, PLAN_GENERATION_FIELD);
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    if (ledgerId !== TASKS_LEDGER || !this.ledgers.has(GOALS_LEDGER)) return fn();
+    return this.withLock(GOALS_LEDGER, async () => {
+      await this.reloadLedgerFromDisk(GOALS_LEDGER);
+      return fn();
     });
   }
 
-  private assertManagedTaskOwnershipRefsPreserved(
-    task: Item,
-    value: unknown,
-  ): void {
-    const current = new Set(
-      this.managedGoalReferences(task.fields["ledgerRefs"]),
-    );
-    const proposed = Array.isArray(value)
-      ? new Set(value.filter((ref): ref is string => typeof ref === "string"))
-      : new Set<string>();
-    const proposedManaged = this.managedGoalReferences(value);
-    if (
-      [...current].some((ref) => !proposed.has(ref)) ||
-      proposedManaged.some((ref) => !current.has(ref))
-    ) {
-      throw new LedgerError(
-        "managed plan work may mutate only through PlanLifecycleStore",
-      );
-    }
+  /**
+   * The per-ledger locks the plan-lifecycle critical section covers, in the
+   * documented ALPHABETIC acquisition order. The `__milestones__` lock is taken
+   * separately and FIRST by every caller.
+   */
+  private lockableLedgerIds(): string[] {
+    return [...this.ledgers.keys()].filter((id) => id !== MILESTONES_LEDGER).sort();
   }
 
-  private assertManagedGoalTransitionAllowed(
-    goal: Item,
-    targetStatus: string,
-  ): void {
-    if (!fieldIsPresent(goal, PLAN_GENERATION_FIELD)) return;
-    const lifecycleOwned =
-      goal.status === "done" ||
-      goal.status === "abandoned" ||
-      (goal.status === "building" && targetStatus === "planning") ||
-      (fieldIsPresent(goal, PLAN_ACTIVE_CLAIM_FIELD) &&
-        (targetStatus === "done" || targetStatus === "abandoned")) ||
-      (goal.status === "clarifying" && targetStatus === "planning") ||
-      (goal.status === "planning" &&
-        (targetStatus === "clarifying" || targetStatus === "planned")) ||
-      (goal.status === "planned" && targetStatus === "planning");
-    if (lifecycleOwned) {
-      throw new LedgerError(
-        "managed plan transition may mutate only through PlanLifecycleStore",
-      );
-    }
+  /**
+   * Replay an interrupted plan-lifecycle commit, then reload every ledger and
+   * the private lifecycle state from the recovered durable bytes. The CALLER
+   * MUST already hold the milestones lock plus every per-ledger lock in
+   * `ledgerIds`, acquired in the documented order.
+   */
+  private async replayPlanLifecycleCommitUnderHeldLocks(
+    ledgerIds: readonly string[],
+  ): Promise<void> {
+    await this.persistence.recoverPlanLifecycleCommit();
+    await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
+    for (const ledgerId of ledgerIds) await this.reloadLedgerFromDisk(ledgerId);
+    await this.loadPlanLifecycleState();
   }
 
-  private assertManagedTaskTransitionAllowed(
-    task: Item,
-    targetStatus: string,
-  ): void {
-    const goalRefs = fieldArray(task, "ledgerRefs").filter((ref) =>
-      ref.startsWith(`${GOALS_LEDGER}:`),
-    );
-    for (const ref of goalRefs) {
-      const goal = findOptionalItem(
-        this.getLedger(GOALS_LEDGER),
-        ref.slice(GOALS_LEDGER.length + 1),
-      );
-      if (goal === undefined || !fieldIsPresent(goal, PLAN_GENERATION_FIELD)) continue;
-      const manifest = readInMemoryPlanState(goal).finalizedManifest;
-      if (
-        manifest === null ||
-        !manifest.tasks.some(({ id }) => id === task.id)
-      ) {
-        throw new LedgerError("task belongs to a draft or superseded manifest");
-      }
-      if (targetStatus === "wip" && !taskDependenciesSatisfied(this, task)) {
-        throw new LedgerError("task dependencies are not satisfied");
-      }
+  /**
+   * init()-time recovery. `recoverPlanLifecycleCommit` REWRITES every ledger a
+   * pending commit names, so it is a mutation and must run inside the SAME
+   * ordered lock set {@link runPlanLifecycleMutation} holds. Unlocked, an
+   * initialising peer can read the pending marker for commit N, be descheduled
+   * while a writer completes commits N and N+1, and then apply the superseded
+   * payload — regressing every ledger the marker names.
+   *
+   * Runs AFTER the init() load loop so `withLock` sees the ledgers it guards,
+   * and reloads them from whatever the replay left durable.
+   */
+  private async recoverPlanLifecycleUnderLocks(): Promise<void> {
+    if (!(await this.persistence.hasPendingPlanLifecycleCommit())) {
+      // Nothing to replay, so no ledger is about to be rewritten and a plain
+      // open pays for no lock I/O at all (the git-object backend must not
+      // materialise its real-filesystem `.cq/.locks` root just to open — K117).
+      // Reading the durable state stays an unlocked read, as it always was.
+      await this.loadPlanLifecycleState();
+      return;
     }
+    const ledgerIds = this.lockableLedgerIds();
+    await this.withMilestonesLock(() =>
+      this.withLocksInOrder(ledgerIds, () =>
+        this.replayPlanLifecycleCommitUnderHeldLocks(ledgerIds),
+      ),
+    );
   }
 
   private async loadPlanLifecycleState(): Promise<void> {
@@ -1179,7 +1171,15 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     this.planOperations.clear();
     const text = await this.persistence.readPlanLifecycleState();
     if (text === null) return;
-    const value: unknown = JSON.parse(text);
+    // A truncated/hand-edited state file must surface as a LedgerError like
+    // every other malformed-shape branch below, not a raw SyntaxError that
+    // makes the store unopenable with an unrecognisable failure.
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      throw new LedgerError("invalid persisted plan lifecycle state");
+    }
     if (typeof value !== "object" || value === null) {
       throw new LedgerError("invalid persisted plan lifecycle state");
     }
@@ -1224,15 +1224,10 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     ) => { result: T; dirtyLedgers: readonly string[] },
   ): Promise<T> {
     this.assertInit();
-    const ledgerIds = [...this.ledgers.keys()]
-      .filter((id) => id !== MILESTONES_LEDGER)
-      .sort();
+    const ledgerIds = this.lockableLedgerIds();
     const mutation = await this.withMilestonesLock(() =>
       this.withLocksInOrder(ledgerIds, async () => {
-        await this.persistence.recoverPlanLifecycleCommit();
-        await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
-        for (const ledgerId of ledgerIds) await this.reloadLedgerFromDisk(ledgerId);
-        await this.loadPlanLifecycleState();
+        await this.replayPlanLifecycleCommitUnderHeldLocks(ledgerIds);
         const beforeLedgers = cloneMap(this.ledgers);
         const beforeClaims = cloneMap(this.planClaims);
         const beforeOperations = cloneMap(this.planOperations);
@@ -1550,23 +1545,6 @@ function cloneMap<K, V>(source: ReadonlyMap<K, V>): Map<K, V> {
 function replaceMap<K, V>(target: Map<K, V>, source: ReadonlyMap<K, V>): void {
   target.clear();
   for (const [key, value] of source) target.set(key, value);
-}
-
-function fieldArray(item: Item, name: string): string[] {
-  const value = item.fields[name];
-  return Array.isArray(value) ? value : [];
-}
-
-function fieldIsPresent(item: Item, name: string): boolean {
-  return item.fields[name] !== undefined;
-}
-
-function findOptionalItem(source: Ledger, itemId: string): Item | undefined {
-  for (const milestone of source.milestones) {
-    const item = milestone.items.find((candidate) => candidate.id === itemId);
-    if (item !== undefined) return item;
-  }
-  return undefined;
 }
 
 // Suppress unused-import diagnostic: `Milestone` is referenced via the

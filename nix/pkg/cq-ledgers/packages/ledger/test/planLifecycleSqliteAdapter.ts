@@ -53,6 +53,13 @@ class AlternatingSqliteLifecycle implements PlanLifecycleStore {
 }
 
 class SqlitePlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<SqliteLifecycleStore> {
+  /**
+   * Fixtures spawned by {@link restart}. Each owns its OWN mkdtemp root (a
+   * VACUUM copy of this fixture's database), and the contract disposes only
+   * the fixture it built — so this fixture releases its descendants too.
+   */
+  private readonly spawned: SqlitePlanLifecycleFixture[] = [];
+
   private constructor(
     readonly root: string,
     readonly dbPath: string,
@@ -114,10 +121,13 @@ class SqlitePlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<SqliteL
     } finally {
       source.close();
     }
-    return SqlitePlanLifecycleFixture.createFromPath(root, dbPath);
+    const restarted = await SqlitePlanLifecycleFixture.createFromPath(root, dbPath);
+    this.spawned.push(restarted);
+    return restarted;
   }
 
   override async dispose(): Promise<void> {
+    for (const fixture of this.spawned.splice(0)) await fixture.dispose();
     for (const store of this.stores) await store.dispose();
     await rm(this.root, { recursive: true, force: true });
   }

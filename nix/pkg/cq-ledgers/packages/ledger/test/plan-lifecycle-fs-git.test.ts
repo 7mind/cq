@@ -8,14 +8,72 @@ import {
   FsLedgerStore,
   GOALS_LEDGER,
   GitObjectLedgerBackend,
+  Lockfile,
   ledgerTreePaths,
   MILESTONES_AMBIENT_ID,
   RESEARCHES_LEDGER,
   REVIEWS_LEDGER,
+  TASKS_LEDGER,
   removeLedgerArtifacts,
   type PlanLifecycleStore,
   type PlanReleaseInput,
 } from "../src/index.js";
+
+/** A store instance bound to a persistent location shared with its peers. */
+type PersistentLifecycleStore = FsLedgerStore | GitObjectLedgerBackend;
+
+/**
+ * One persistent storage location that can be opened by SEVERAL store
+ * instances — the in-process stand-in for the multi-process topology both
+ * persistent backends serve (Q246: one location, many writers). A raw-mutation
+ * fence that decides on a store's own cached snapshot instead of the committed
+ * state is only observable across two such instances.
+ */
+interface PersistentLocation {
+  open(): Promise<PersistentLifecycleStore>;
+  cleanup(): Promise<void>;
+}
+
+interface PersistentBackend {
+  readonly name: string;
+  create(): Promise<PersistentLocation>;
+}
+
+const PERSISTENT_BACKENDS: readonly PersistentBackend[] = [
+  {
+    name: "FsLedgerStore",
+    async create() {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-peers-"));
+      return {
+        async open() {
+          const store = new FsLedgerStore({ root });
+          await store.init();
+          return store;
+        },
+        async cleanup() {
+          await fs.rm(root, { recursive: true, force: true });
+        },
+      };
+    },
+  },
+  {
+    name: "GitObjectLedgerBackend",
+    async create() {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-git-peers-"));
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      return {
+        async open() {
+          const store = new GitObjectLedgerBackend({ repoRoot: root });
+          await store.init();
+          return store;
+        },
+        async cleanup() {
+          await fs.rm(root, { recursive: true, force: true });
+        },
+      };
+    },
+  },
+];
 
 const METHODS = [
   "claimPlan",
@@ -349,6 +407,142 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     await store.dispose();
     await fs.rm(root, { recursive: true, force: true });
   });
+
+  it("replays an interrupted commit at init inside the ordered lock set", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-locked-recovery-"));
+    const docs = path.join(root, ".cq");
+    const goalsPath = path.join(docs, "goals.md");
+    const statePath = path.join(docs, "plan-lifecycle.json");
+    const pendingPath = path.join(docs, "plan-lifecycle.pending.json");
+    const store = new FsLedgerStore({ root });
+    await store.init();
+    await seedGoal(store);
+    const beforeGoals = await fs.readFile(goalsPath, "utf8");
+    const input = claimInput("locked-recovery", "L".repeat(22));
+    expect((await store.claimPlan(input)).ok).toBe(true);
+    const finalGoals = await fs.readFile(goalsPath, "utf8");
+    const state = await fs.readFile(statePath, "utf8");
+    await store.dispose();
+
+    // Roll the durable bytes back to the pre-commit state and leave the pending
+    // marker an interrupted writer would have left behind.
+    await fs.writeFile(goalsPath, beforeGoals, "utf8");
+    await fs.rm(statePath);
+    await fs.writeFile(
+      pendingPath,
+      JSON.stringify({ state, ledgers: { [GOALS_LEDGER]: finalGoals } }),
+      "utf8",
+    );
+
+    // A peer holds the goals lock. Init-time recovery replays a commit that
+    // rewrites goals.md, so it MUST wait for that lock exactly as
+    // runPlanLifecycleMutation does — otherwise it can overwrite a newer
+    // committed state with the superseded pending payload.
+    const release = await new Lockfile({}).acquire(
+      path.join(docs, ".locks"),
+      GOALS_LEDGER,
+    );
+    const recovered = new FsLedgerStore({ root });
+    let settled = false;
+    const initialising = recovered.init().then(() => {
+      settled = true;
+    });
+    await Bun.sleep(250);
+    expect(settled).toBe(false);
+    expect(await fs.readFile(pendingPath, "utf8")).toContain(GOALS_LEDGER);
+    expect(await fs.readFile(goalsPath, "utf8")).toBe(beforeGoals);
+
+    await release();
+    await initialising;
+    expect(settled).toBe(true);
+    await expect(fs.stat(pendingPath)).rejects.toThrow();
+    expect(await fs.readFile(goalsPath, "utf8")).toBe(finalGoals);
+    const replay = await recovered.claimPlan(input);
+    expect(replay.ok).toBe(true);
+    if (!replay.ok) throw new Error("expected claim success");
+    expect(replay.replayed).toBe(true);
+    await recovered.dispose();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("surfaces malformed durable and pending lifecycle state as a LedgerError", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-malformed-"));
+    const docs = path.join(root, ".cq");
+    const statePath = path.join(docs, "plan-lifecycle.json");
+    const pendingPath = path.join(docs, "plan-lifecycle.pending.json");
+    const store = new FsLedgerStore({ root });
+    await store.init();
+    await seedGoal(store);
+    expect((await store.claimPlan(claimInput("malformed", "M".repeat(22)))).ok).toBe(
+      true,
+    );
+    await store.dispose();
+
+    // A truncated durable state file must not escape as a raw SyntaxError.
+    const durable = await fs.readFile(statePath, "utf8");
+    await fs.writeFile(statePath, durable.slice(0, durable.length - 5), "utf8");
+    await expect(new FsLedgerStore({ root }).init()).rejects.toThrow(
+      /invalid persisted plan lifecycle state/,
+    );
+
+    await fs.writeFile(statePath, durable, "utf8");
+    await fs.writeFile(pendingPath, '{"state":"truncated"', "utf8");
+    await expect(new FsLedgerStore({ root }).init()).rejects.toThrow(
+      /invalid pending plan lifecycle commit/,
+    );
+    await fs.rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("T849 raw plan fence across peers on one persistent location", () => {
+  for (const backend of PERSISTENT_BACKENDS) {
+    it(`${backend.name} fences raw managed-task writes on the committed goal state`, async () => {
+      const location = await backend.create();
+      const first = await location.open();
+      const second = await location.open();
+      try {
+        await seedGoal(first);
+        const task = await first.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+          status: "done",
+          fields: {
+            headline: "raw managed work",
+            ledgerRefs: [`${GOALS_LEDGER}:G1`],
+          },
+          author: "seed",
+          session: "seed-session",
+        });
+
+        // The peer promotes G1 into a MANAGED plan goal through the lifecycle
+        // API. `first` never re-reads goals on its own, so its cached snapshot
+        // still shows an unmanaged goal.
+        expect(
+          (await second.claimPlan(claimInput("peer-claim", "C".repeat(22)))).ok,
+        ).toBe(true);
+
+        await expect(
+          first.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+            status: "planned",
+            fields: {
+              headline: "raw follow-up",
+              ledgerRefs: [`${GOALS_LEDGER}:G1`],
+            },
+            author: "raw",
+            session: "raw-session",
+          }),
+        ).rejects.toThrow(/only through PlanLifecycleStore/);
+        await expect(
+          first.updateItem(TASKS_LEDGER, task.id, { fields: { ledgerRefs: [] } }),
+        ).rejects.toThrow(/only through PlanLifecycleStore/);
+        await expect(
+          first.reopenItem(TASKS_LEDGER, task.id, "planned"),
+        ).rejects.toThrow(/draft or superseded/);
+      } finally {
+        await first.dispose();
+        await second.dispose();
+        await location.cleanup();
+      }
+    });
+  }
 });
 
 async function seedGoal(

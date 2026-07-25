@@ -426,6 +426,10 @@ export abstract class LedgerStorePlanLifecycleFixture<
     });
   }
 
+  async rawReopenTask(taskId: string, toStatus: string): Promise<void> {
+    await this.store.reopenItem(TASKS_LEDGER, taskId, toStatus);
+  }
+
   async dispose(): Promise<void> {
     await this.store.dispose();
   }

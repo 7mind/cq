@@ -109,6 +109,21 @@ export interface PlanLifecyclePersistenceCommit {
 }
 
 export interface LedgerPersistence {
+  /**
+   * True when an interrupted lifecycle commit is pending replay. A CHEAP probe
+   * (a `stat`, not a read+parse) the base uses to decide whether init() must
+   * pay for the ordered lock set at all: {@link recoverPlanLifecycleCommit}
+   * REWRITES ledgers, so it may only run under those locks, but a store that
+   * has nothing to replay must open without any lock I/O — the git-object
+   * backend keeps state in its ref and must not materialise its real-filesystem
+   * `.cq/.locks` root merely to open (K117).
+   *
+   * The probe is advisory: a marker that appears right after it returns `false`
+   * belongs to a writer still holding the locks, and is replayed by the next
+   * mutation's recovery — still under the full ordered set. Atomic backends
+   * with no pending stage return `false` unconditionally.
+   */
+  hasPendingPlanLifecycleCommit(): Promise<boolean>;
   /** Recover an interrupted filesystem lifecycle commit; atomic backends no-op. */
   recoverPlanLifecycleCommit(): Promise<void>;
   /** Read verifier/replay state, never exposed through ledger items. */

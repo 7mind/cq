@@ -171,6 +171,12 @@ export interface PlanLifecycleContractFixture {
   restart(): Promise<PlanLifecycleContractFixture>;
   rawMutateManagedState(goalId: string): Promise<void>;
   startTask(taskId: string, provenance: PlanWriteProvenance): Promise<void>;
+  /**
+   * Raw reopen of a TERMINAL managed task, bypassing the lifecycle API. A
+   * separate hook from {@link startTask} because `reopenItem` is a distinct
+   * write path a backend can leave unfenced while `updateItem` is guarded.
+   */
+  rawReopenTask(taskId: string, toStatus: string): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -711,6 +717,22 @@ export class ReferencePlanLifecycleAdapter
       }
       task.status = "wip";
       task.provenance = clone(provenance);
+    });
+  }
+
+  async rawReopenTask(taskId: string, toStatus: string): Promise<void> {
+    await this.backend.mutex.run(() => {
+      const task = this.backend.tasks.get(taskId);
+      if (task === undefined) throw new Error(`task not found: ${taskId}`);
+      if (task.status !== "done" && task.status !== "abandoned") {
+        throw new Error(
+          `cannot reopen task ${taskId} in non-terminal status ${task.status}`,
+        );
+      }
+      if (!task.executable) {
+        throw new Error("task belongs to a draft or superseded manifest");
+      }
+      task.status = toStatus as MutableTask["status"];
     });
   }
 
