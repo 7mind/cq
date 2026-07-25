@@ -380,6 +380,24 @@ ledgers:
         milestones:
           type: id[]
           required: false
+        planGeneration:
+          type: string
+          required: false
+        planActiveClaim:
+          type: string
+          required: false
+        planCurrentDraft:
+          type: string
+          required: false
+        planFinalizedDraft:
+          type: string
+          required: false
+        planFinalizedManifest:
+          type: string
+          required: false
+        waitingResearches:
+          type: id[]
+          required: false
         grounding:
           type: string
           required: false
@@ -426,6 +444,9 @@ ledgers:
         - revise
       fields:
         summary:
+          type: string
+          required: false
+        planDraft:
           type: string
           required: false
         new_questions:

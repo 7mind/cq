@@ -13,7 +13,13 @@
  */
 
 import type { LedgerSchema } from "./types.js";
-import { TASKS_LEDGER, UPSTREAM_LEDGER, UPSTREAM_SCHEMA } from "./constants.js";
+import {
+  PLAN_REVIEW_DRAFT_FIELD,
+  TASKS_LEDGER,
+  UPSTREAM_LEDGER,
+  UPSTREAM_SCHEMA,
+} from "./constants.js";
+import { PLAN_MANAGED_GOAL_FIELD_NAMES } from "./planLifecycle.js";
 
 /**
  * Schema field names that are long/narrative free-text and therefore never
@@ -42,6 +48,11 @@ const UPSTREAM_LONG_FIELD_DENYLIST: ReadonlySet<string> = new Set([
   "observed",
   "expected",
   "workaround",
+]);
+
+const INTERNAL_FIELD_DENYLIST: ReadonlySet<string> = new Set([
+  ...PLAN_MANAGED_GOAL_FIELD_NAMES,
+  PLAN_REVIEW_DRAFT_FIELD,
 ]);
 
 /**
@@ -82,6 +93,7 @@ export function eligibleColumnFields(schema: LedgerSchema): string[] {
     .filter(
       ([name, spec]) =>
         !LONG_FIELD_DENYLIST.has(name) &&
+        !INTERNAL_FIELD_DENYLIST.has(name) &&
         (schemaDenylist === undefined || !schemaDenylist.has(name)) &&
         (!isUpstreamSchema || (spec.type !== "string[]" && spec.type !== "id[]")) &&
         !ALWAYS_SHOWN_COLUMNS.has(name) &&

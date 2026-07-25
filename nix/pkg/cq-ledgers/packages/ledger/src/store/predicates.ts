@@ -87,6 +87,7 @@ import {
   RESEARCHES_LEDGER,
   TASKS_LEDGER,
 } from "../constants.js";
+import { PLAN_WAITING_RESEARCHES_FIELD } from "../planLifecycle.js";
 import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
 import type { LedgerStore } from "./LedgerStore.js";
 
@@ -200,6 +201,31 @@ function refList(item: Item, name: string): string[] {
 function stringField(item: Item, name: string): string {
   const value = item.fields[name];
   return typeof value === "string" ? value : "";
+}
+
+/**
+ * The single owner of research-wait status interpretation. Missing and
+ * archived researches are absent from `activeResearches`, so they resume
+ * planning along with the explicit concluded/abandoned terminal statuses.
+ */
+export function activePlanResearchWaits(
+  goal: Item,
+  activeResearches: readonly Item[],
+): string[] {
+  const raw = goal.fields[PLAN_WAITING_RESEARCHES_FIELD];
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const byId = new Map(activeResearches.map((research) => [research.id, research]));
+  const activeStatuses = new Set(["open", "wip", "inconclusive"]);
+  return raw
+    .map((ref) =>
+      ref.startsWith(`${RESEARCHES_LEDGER}:`)
+        ? ref.slice(RESEARCHES_LEDGER.length + 1)
+        : ref,
+    )
+    .filter((id) => {
+      const research = byId.get(id);
+      return research !== undefined && activeStatuses.has(research.status);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +391,7 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
   // --- P-plan --------------------------------------------------------------
   const planItems: string[] = [];
   for (const g of goals) {
+    if (activePlanResearchWaits(g, researches).length > 0) continue;
     if (g.status === GOAL_PLANNING_STATUS) {
       planItems.push(g.id);
       continue;

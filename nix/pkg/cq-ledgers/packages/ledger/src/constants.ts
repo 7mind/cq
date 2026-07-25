@@ -86,6 +86,7 @@ export const GOALS_LEDGER = "goals" as const;
 /** The `questions` field whose content gates the `answered` transition (D29). */
 export const QUESTIONS_ANSWER_FIELD = "answer" as const;
 export const REVIEWS_LEDGER = "reviews" as const;
+export const PLAN_REVIEW_DRAFT_FIELD = "planDraft" as const;
 export const HANDOFFS_LEDGER = "handoffs" as const;
 export const IDEAS_LEDGER = "ideas" as const;
 
@@ -299,6 +300,14 @@ export const GOALS_SCHEMA: LedgerSchema = {
     title: { type: "string", required: true },
     description: { type: "string", required: true },
     milestones: { type: "id[]", required: false },
+    // G99 guarded plan lifecycle metadata. All fields remain optional so
+    // pre-lifecycle stores and restored backups retain additive compatibility.
+    planGeneration: { type: "string", required: false },
+    planActiveClaim: { type: "string", required: false },
+    planCurrentDraft: { type: "string", required: false },
+    planFinalizedDraft: { type: "string", required: false },
+    planFinalizedManifest: { type: "string", required: false },
+    waitingResearches: { type: "id[]", required: false },
     // Project-grounding summary the producer captures after exploring the repo
     // ONCE (PLAN-EXPLORE-01). Persisted here so it survives a restart and every
     // later phase re-reads it from the durable goal instead of re-exploring.
@@ -335,6 +344,8 @@ export const REVIEWS_SCHEMA: LedgerSchema = {
   },
   fields: {
     summary: { type: "string", required: false },
+    /** Exact guarded-plan draft identity reviewed by this immutable verdict. */
+    [PLAN_REVIEW_DRAFT_FIELD]: { type: "string", required: false },
     new_questions: { type: "string[]", required: false },
     criticism: { type: "string[]", required: false },
     defects: { type: "string[]", required: false },

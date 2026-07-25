@@ -1,0 +1,364 @@
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { describe, expect, it } from "bun:test";
+import {
+  GOALS_LEDGER,
+  GOALS_SCHEMA,
+  InMemoryLedgerStore,
+  MILESTONES_AMBIENT_ID,
+  PLAN_GENERATION_FIELD,
+  RESEARCHES_LEDGER,
+  derivePredicates,
+  schemaCompatible,
+  type Item,
+  type Ledger,
+  type PlanClaimAcknowledgement,
+  type PlanLifecycleStore,
+  type PlanPrivateClaimRecord,
+} from "../src/index.js";
+import type { InMemoryPlanOperationRecord } from "../src/store/inMemoryPlanLifecycle.js";
+import { inMemoryPlanLifecycleFactory } from "./planLifecycleInMemoryAdapter.js";
+import type {
+  PlanLifecycleContractFixture,
+  ReferencePublicTask,
+} from "./planLifecycleReferenceAdapter.js";
+
+const OWNER_A = "aaaaaaaaaaaaaaaaaaaaaa";
+const OWNER_B = "bbbbbbbbbbbbbbbbbbbbbb";
+const PROVENANCE = { author: "t848", session: "t848-session" } as const;
+
+interface FixtureWithStore extends PlanLifecycleContractFixture {
+  readonly store: InMemoryLedgerStore;
+}
+
+interface StoreInternals {
+  ledgers: Map<string, Ledger>;
+  archives: Map<string, { id: string; title: string; description: string; items: Item[] }>;
+  planClaims: Map<string, PlanPrivateClaimRecord>;
+  planOperations: Map<string, InMemoryPlanOperationRecord>;
+}
+
+function internals(store: InMemoryLedgerStore): StoreInternals {
+  return store as unknown as StoreInternals;
+}
+
+async function buildFixture(
+  phase: "clarifying" | "planned" = "clarifying",
+  generation: number | null = null,
+): Promise<FixtureWithStore> {
+  const fixture = (await inMemoryPlanLifecycleFactory.build()) as FixtureWithStore;
+  await fixture.seedGoal({ goalId: "G1", phase, generation });
+  return fixture;
+}
+
+function requireClaim(
+  result: Awaited<ReturnType<PlanLifecycleStore["claimPlan"]>>,
+): PlanClaimAcknowledgement {
+  if (!result.ok) throw new Error(`claim failed: ${result.conflict.code}`);
+  return result.acknowledgement;
+}
+
+async function claimInitial(
+  fixture: PlanLifecycleContractFixture,
+  requestId: string,
+  token: string,
+  expectedGeneration: number | null,
+): Promise<PlanClaimAcknowledgement> {
+  return requireClaim(
+    await fixture.lifecycle.claimPlan({
+      goalId: "G1",
+      purpose: "initial",
+      claimRequestId: requestId,
+      ownerFenceToken: token,
+      expectedGeneration,
+      ...PROVENANCE,
+    }),
+  );
+}
+
+async function pauseForResearches(
+  fixture: PlanLifecycleContractFixture,
+  claim: PlanClaimAcknowledgement,
+  operationId: string,
+  keys: string[] = ["probe"],
+): Promise<string[]> {
+  const result = await fixture.lifecycle.releasePlanClaim({
+    kind: "pause",
+    goalId: "G1",
+    claimId: claim.claimId,
+    generation: claim.generation,
+    operationId,
+    ownerFenceToken: claim.ownerFenceToken,
+    ...PROVENANCE,
+    effect: {
+      kind: "researches",
+      researches: keys.map((key) => ({ key, question: `${key}?` })),
+    },
+  });
+  if (!result.ok || result.acknowledgement.kind !== "researches") {
+    throw new Error("research pause failed");
+  }
+  return result.acknowledgement.waitingResearches;
+}
+
+describe("T848 InMemory plan lifecycle semantics", () => {
+  for (const [status, suppressed] of [
+    ["open", true],
+    ["wip", true],
+    ["inconclusive", true],
+    ["concluded", false],
+    ["abandoned", false],
+  ] as const) {
+    it(`owns ${status} research-wait disposition in derivePredicates`, async () => {
+      const fixture = await buildFixture();
+      try {
+        const claim = await claimInitial(fixture, `wait-${status}`, OWNER_A, null);
+        const [researchId] = await pauseForResearches(
+          fixture,
+          claim,
+          `pause-${status}`,
+        );
+        if (researchId === undefined) throw new Error("research allocation missing");
+        await fixture.setResearchStatus(researchId, status);
+        const predicates = derivePredicates(fixture.store);
+        expect(predicates.pPlan.items.includes("G1")).toBe(!suppressed);
+        const resumed = await fixture.lifecycle.claimPlan({
+          goalId: "G1",
+          purpose: "initial",
+          claimRequestId: `resume-${status}`,
+          ownerFenceToken: OWNER_B,
+          expectedGeneration: 1,
+          ...PROVENANCE,
+        });
+        if (suppressed) {
+          expect(resumed).toEqual({
+            ok: false,
+            conflict: {
+              code: "research-wait-active",
+              goalId: "G1",
+              researchIds: [researchId],
+            },
+          });
+        } else {
+          expect(resumed.ok).toBe(true);
+          expect((await fixture.observe("G1")).waitingResearches).toEqual([]);
+        }
+      } finally {
+        await fixture.dispose();
+      }
+    });
+  }
+
+  for (const disposition of ["missing", "archived"] as const) {
+    it(`re-enables planning for a ${disposition} waited research`, async () => {
+      const fixture = await buildFixture();
+      try {
+        const claim = await claimInitial(
+          fixture,
+          `${disposition}-claim`,
+          OWNER_A,
+          null,
+        );
+        const [researchId] = await pauseForResearches(
+          fixture,
+          claim,
+          `${disposition}-pause`,
+        );
+        if (researchId === undefined) throw new Error("research allocation missing");
+        const state = internals(fixture.store);
+        const researches = state.ledgers.get(RESEARCHES_LEDGER);
+        if (researches === undefined) throw new Error("researches ledger missing");
+        let removed: Item | undefined;
+        for (const milestone of researches.milestones) {
+          const index = milestone.items.findIndex(({ id }) => id === researchId);
+          if (index >= 0) [removed] = milestone.items.splice(index, 1);
+        }
+        if (removed === undefined) throw new Error("research removal failed");
+        if (disposition === "archived") {
+          state.archives.set(`${RESEARCHES_LEDGER}/M999`, {
+            id: "M999",
+            title: "",
+            description: "",
+            items: [removed],
+          });
+          expect(
+            await fixture.store.fetchArchive(RESEARCHES_LEDGER, "M999"),
+          ).toMatchObject({ kind: "group" });
+        }
+        expect(derivePredicates(fixture.store).pPlan.items).toContain("G1");
+        expect(
+          (
+            await fixture.lifecycle.claimPlan({
+              goalId: "G1",
+              purpose: "initial",
+              claimRequestId: `${disposition}-resume`,
+              ownerFenceToken: OWNER_B,
+              expectedGeneration: 1,
+              ...PROVENANCE,
+            })
+          ).ok,
+        ).toBe(true);
+      } finally {
+        await fixture.dispose();
+      }
+    });
+  }
+
+  it("clears waits on claim and replaces them on the next research pause", async () => {
+    const fixture = await buildFixture();
+    try {
+      const first = await claimInitial(fixture, "replace-1", OWNER_A, null);
+      const [firstResearch] = await pauseForResearches(fixture, first, "replace-pause-1");
+      if (firstResearch === undefined) throw new Error("first research missing");
+      await fixture.setResearchStatus(firstResearch, "concluded");
+      const second = await claimInitial(fixture, "replace-2", OWNER_B, 1);
+      expect((await fixture.observe("G1")).waitingResearches).toEqual([]);
+      const replacements = await pauseForResearches(
+        fixture,
+        second,
+        "replace-pause-2",
+        ["first", "second"],
+      );
+      expect(replacements).toHaveLength(2);
+      expect(replacements).not.toContain(firstResearch);
+      expect((await fixture.observe("G1")).waitingResearches).toEqual(replacements);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("persists only the claim request and SHA-256 verifier outside the live acknowledgement", async () => {
+    const fixture = await buildFixture();
+    try {
+      const claim = await claimInitial(fixture, "redaction", OWNER_A, null);
+      expect(claim.ownerFenceToken).toBe(OWNER_A);
+      const publicState = JSON.stringify({
+        goal: fixture.store.fetchItem(GOALS_LEDGER, "G1"),
+        snapshot: fixture.store.snapshot(),
+      });
+      expect(publicState).not.toContain(OWNER_A);
+      expect(publicState).not.toContain("ownerFenceTokenVerifier");
+      const privateState = JSON.stringify([...internals(fixture.store).planClaims.values()]);
+      expect(privateState).not.toContain(OWNER_A);
+      expect(privateState).toContain(
+        createHash("sha256").update(OWNER_A, "utf8").digest("hex"),
+      );
+      expect(privateState).toContain("redaction");
+      const restarted = await fixture.restart();
+      expect(
+        await restarted.lifecycle.claimPlan({
+          goalId: "G1",
+          purpose: "initial",
+          claimRequestId: "redaction",
+          ownerFenceToken: OWNER_A,
+          expectedGeneration: null,
+          ...PROVENANCE,
+        }),
+      ).toMatchObject({ ok: true, replayed: true });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  for (const [status, expected] of [
+    ["planned", { outcome: "replace", status: "abandoned" }],
+    ["wip", { outcome: "reject", status: "wip" }],
+    ["blocked", { outcome: "reject", status: "blocked" }],
+    ["done", { outcome: "drained", status: "done" }],
+    ["abandoned", { outcome: "drained", status: "abandoned" }],
+  ] as const) {
+    it(`handles the total follow-up task state ${status}`, async () => {
+      const fixture = await buildFixture("planned", 1);
+      try {
+        await fixture.seedWork("G1", {
+          taskStatuses: [status as ReferencePublicTask["status"]],
+          openQuestionCount: 0,
+          legacy: false,
+        });
+        const result = await fixture.lifecycle.claimPlan({
+          goalId: "G1",
+          purpose: "follow-up",
+          claimRequestId: `task-${status}`,
+          ownerFenceToken: OWNER_A,
+          expectedGeneration: 1,
+          ...PROVENANCE,
+        });
+        if (expected.outcome === "reject") {
+          expect(result).toMatchObject({
+            ok: false,
+            conflict: { code: "implementation-active" },
+          });
+        } else {
+          expect(result.ok).toBe(true);
+        }
+        expect((await fixture.observe("G1")).tasks[0]?.status).toBe(expected.status);
+      } finally {
+        await fixture.dispose();
+      }
+    });
+  }
+
+  it("keeps old schemas/restored state additive and guards raw managed writes", async () => {
+    const managedFields = [
+      "planGeneration",
+      "planActiveClaim",
+      "planCurrentDraft",
+      "planFinalizedDraft",
+      "planFinalizedManifest",
+      "waitingResearches",
+    ];
+    const oldSchema = {
+      ...GOALS_SCHEMA,
+      fields: Object.fromEntries(
+        Object.entries(GOALS_SCHEMA.fields).filter(
+          ([name]) => !managedFields.includes(name),
+        ),
+      ),
+    };
+    expect(schemaCompatible(oldSchema, GOALS_SCHEMA)).toBe(true);
+
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    try {
+      await expect(
+        store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+          id: "G1",
+          status: "clarifying",
+          fields: {
+            title: "forbidden",
+            description: "raw managed create",
+            [PLAN_GENERATION_FIELD]: "1",
+          },
+        }),
+      ).rejects.toThrow(/only through PlanLifecycleStore/);
+      await store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+        id: "G2",
+        status: "clarifying",
+        fields: { title: "legacy", description: "unmanaged goal" },
+      });
+      expect((await store.updateItem(GOALS_LEDGER, "G2", { status: "abandoned" })).status)
+        .toBe("abandoned");
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  it("keeps research-wait status interpretation structurally single-owned", async () => {
+    const [predicateSource, lifecycleSource] = await Promise.all([
+      readFile(new URL("../src/store/predicates.ts", import.meta.url), "utf8"),
+      readFile(
+        new URL("../src/store/inMemoryPlanLifecycle.ts", import.meta.url),
+        "utf8",
+      ),
+    ]);
+    expect(
+      predicateSource.match(
+        /const activeStatuses = new Set\(\["open", "wip", "inconclusive"\]\)/g,
+      ),
+    )
+      .toHaveLength(1);
+    expect(lifecycleSource).toContain("activePlanResearchWaits");
+    expect(lifecycleSource).not.toMatch(/status === "inconclusive"/);
+    expect(lifecycleSource).not.toMatch(/status === "concluded"/);
+  });
+});

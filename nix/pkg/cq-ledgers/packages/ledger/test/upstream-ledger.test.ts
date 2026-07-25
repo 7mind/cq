@@ -7,7 +7,11 @@ import {
   CANONICAL_LEDGERS,
   createLedgerMcpTools,
   FsLedgerStore,
+  GOALS_LEDGER,
   InMemoryLedgerStore,
+  PLAN_MANAGED_GOAL_FIELD_NAMES,
+  PLAN_REVIEW_DRAFT_FIELD,
+  REVIEWS_LEDGER,
   TASKS_LEDGER,
   UPSTREAM_LEDGER,
   UPSTREAM_SCHEMA,
@@ -155,6 +159,15 @@ function schemaSha256(schema: LedgerSchema): string {
   return createHash("sha256").update(JSON.stringify(schema)).digest("hex");
 }
 
+function prePlanLifecycleSchema(ledgerName: string, schema: LedgerSchema): LedgerSchema {
+  const compatible = structuredClone(schema);
+  if (ledgerName === GOALS_LEDGER) {
+    for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete compatible.fields[field];
+  }
+  if (ledgerName === REVIEWS_LEDGER) delete compatible.fields[PLAN_REVIEW_DRAFT_FIELD];
+  return compatible;
+}
+
 describe("frozen pre-upstream MCP client compatibility", () => {
   it("ignores additive response fields and continues to fetch every known ledger", async () => {
     const fixture = JSON.parse(
@@ -184,7 +197,9 @@ describe("frozen pre-upstream MCP client compatibility", () => {
           }),
         ) as { ledger: { id: string; schema: LedgerSchema } };
         expect(response.ledger.id).toBe(known.name);
-        expect(schemaSha256(response.ledger.schema)).toBe(known.schemaSha256);
+        expect(schemaSha256(prePlanLifecycleSchema(known.name, response.ledger.schema))).toBe(
+          known.schemaSha256,
+        );
       }
 
       const milestoneResponse = decode(
