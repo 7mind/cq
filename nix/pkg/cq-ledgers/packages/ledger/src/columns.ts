@@ -5,15 +5,15 @@
  * web (T61) and TUI (T62) clients.
  *
  * Per Q29/Q30:
- *  - `eligibleColumnFields(schema)` — every schema field name EXCEPT the
- *    long/narrative denylist and EXCEPT the always-shown intrinsic
- *    `id`/`status`/`summary` columns.
- *  - `defaultColumns(ledgerName)` — per-ledger default extra columns: `tasks`
- *    defaults to `suggestedModel`; every other ledger to none.
+ *  - `eligibleColumnFields(schema)` — every schema field name except the
+ *    shared long/narrative denylist, always-shown intrinsic columns, and
+ *    summary-source fields. Upstream additionally excludes its scalar
+ *    narrative/evidence denylist and every `string[]`/`id[]` field.
+ *  - `defaultColumns(ledgerName)` — per-ledger default extra columns.
  */
 
 import type { LedgerSchema } from "./types.js";
-import { TASKS_LEDGER } from "./constants.js";
+import { TASKS_LEDGER, UPSTREAM_LEDGER, UPSTREAM_SCHEMA } from "./constants.js";
 
 /**
  * Schema field names that are long/narrative free-text and therefore never
@@ -32,6 +32,16 @@ export const LONG_FIELD_DENYLIST: ReadonlySet<string> = new Set([
   "rootCause",
   "suggestedFix",
   "fix",
+]);
+
+// Upstream-specific scalar names stay scoped to U so shared fields retain
+// their established eligibility in every pre-existing ledger.
+const UPSTREAM_LONG_FIELD_DENYLIST: ReadonlySet<string> = new Set([
+  "environment",
+  "reproduction",
+  "observed",
+  "expected",
+  "workaround",
 ]);
 
 /**
@@ -59,26 +69,34 @@ export const SUMMARY_SOURCE_FIELDS: ReadonlySet<string> = new Set([
 
 /**
  * Returns the schema field names that may be offered as toggleable table
- * columns: every declared field name, minus the long/narrative denylist,
- * minus the always-shown intrinsic columns, and minus the summary-source fields
- * that would duplicate the summary cell. Order follows the schema's field
- * declaration order.
+ * columns: every declared field name minus the shared long/narrative,
+ * always-shown, and summary-source exclusions. Upstream also excludes its
+ * scalar narrative/evidence denylist and every field declared as `string[]`
+ * or `id[]`. Order follows the schema's field declaration order.
  */
 export function eligibleColumnFields(schema: LedgerSchema): string[] {
-  return Object.keys(schema.fields).filter(
-    (name) =>
-      !LONG_FIELD_DENYLIST.has(name) &&
-      !ALWAYS_SHOWN_COLUMNS.has(name) &&
-      !SUMMARY_SOURCE_FIELDS.has(name),
-  );
+  const isUpstreamSchema =
+    UPSTREAM_SCHEMA.idPrefix !== undefined && schema.idPrefix === UPSTREAM_SCHEMA.idPrefix;
+  const schemaDenylist = isUpstreamSchema ? UPSTREAM_LONG_FIELD_DENYLIST : undefined;
+  return Object.entries(schema.fields)
+    .filter(
+      ([name, spec]) =>
+        !LONG_FIELD_DENYLIST.has(name) &&
+        (schemaDenylist === undefined || !schemaDenylist.has(name)) &&
+        (!isUpstreamSchema || (spec.type !== "string[]" && spec.type !== "id[]")) &&
+        !ALWAYS_SHOWN_COLUMNS.has(name) &&
+        !SUMMARY_SOURCE_FIELDS.has(name),
+    )
+    .map(([name]) => name);
 }
 
 /**
  * Per-ledger default extra columns (beyond the always-shown intrinsic ones).
- * `tasks` defaults to showing `suggestedModel`; every other ledger defaults
- * to no extra columns.
+ * `tasks` defaults to `suggestedModel`; `upstream` defaults to `package` and
+ * `severity`; every other ledger defaults to no extra columns.
  */
 export function defaultColumns(ledgerName: string): string[] {
   if (ledgerName === TASKS_LEDGER) return ["suggestedModel"];
+  if (ledgerName === UPSTREAM_LEDGER) return ["package", "severity"];
   return [];
 }
