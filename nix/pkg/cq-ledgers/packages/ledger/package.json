@@ -37,6 +37,10 @@
     "./finalizePresentation": {
       "import": "./src/finalizePresentation.ts",
       "types": "./src/finalizePresentation.ts"
+    },
+    "./projectKeySafety": {
+      "import": "./src/projectKeySafety.ts",
+      "types": "./src/projectKeySafety.ts"
     }
   },
   "dependencies": {

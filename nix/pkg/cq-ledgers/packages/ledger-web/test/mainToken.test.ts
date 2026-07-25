@@ -25,16 +25,20 @@ describe("resolveToken", () => {
 
 describe("liveWsUrl", () => {
   it("appends ?token= when a token is known", () => {
-    expect(liveWsUrl("abc 123", { protocol: "http:", host: "h:5190" })).toBe(
+    expect(liveWsUrl("abc 123", { protocol: "http:", host: "h:5190", search: "" })).toBe(
       "ws://h:5190/ws?token=abc%20123",
     );
   });
 
   it("omits the query param when no token is known", () => {
-    expect(liveWsUrl(null, { protocol: "http:", host: "h:5190" })).toBe("ws://h:5190/ws");
+    expect(liveWsUrl(null, { protocol: "http:", host: "h:5190", search: "" })).toBe(
+      "ws://h:5190/ws",
+    );
   });
 
   it("uses wss: on an https page", () => {
-    expect(liveWsUrl(null, { protocol: "https:", host: "h:443" })).toBe("wss://h:443/ws");
+    expect(liveWsUrl(null, { protocol: "https:", host: "h:443", search: "" })).toBe(
+      "wss://h:443/ws",
+    );
   });
 });

@@ -3,9 +3,12 @@
  * project at the shared initial-connection seam (main.tsx). A valid
  * `?project=<key>` must resolve to `/p/<key>/mcp` + `/p/<key>/ws` BEFORE any
  * connection is attempted — the alias route (`/mcp`/`/ws`) must never be hit
- * first — while an absent or unsafe key falls back to the alias deterministically,
- * `?url=` keeps full precedence (T588 Q273 contract untouched), and the
- * always-visible selector (T589) still reconnects + persists on switch.
+ * first — while an absent or syntactically unsafe key falls back to the
+ * alias deterministically (before any connect), a syntactically SAFE key
+ * that names no REGISTERED project falls back ONCE post-connect-failure
+ * (T837 round-1 fix / D143 criticism 1), `?url=` keeps full precedence (T588
+ * Q273 contract untouched), and the always-visible selector (T589) still
+ * reconnects + persists on switch.
  *
  * Pure-unit coverage (no DOM) mirrors mainToken.test.ts's established pattern
  * for `resolveToken`/`liveWsUrl`: every resolver here takes an injectable
@@ -25,7 +28,8 @@ import { FakeClient } from "./fakeClient.js";
 import type { LedgerClient } from "../src/types.js";
 import { isSafeProjectKeySegment } from "../src/projectRoutes.js";
 
-const { resolveDeepLinkedProjectKey, resolveInitialUrl, liveWsUrl } = await import("../src/main.js");
+const { resolveDeepLinkedProjectKey, resolveInitialUrl, liveWsUrl, resolveDeepLinkFallback } =
+  await import("../src/main.js");
 
 describe("isSafeProjectKeySegment", () => {
   it("accepts an ordinary single-segment key", () => {
@@ -102,14 +106,6 @@ describe("liveWsUrl (T837 project-aware)", () => {
   it("falls back to /ws when ?project= is absent or unsafe", () => {
     expect(liveWsUrl(null, { protocol: "http:", host: "x", search: "" })).toBe("ws://x/ws");
     expect(liveWsUrl(null, { protocol: "http:", host: "x", search: "?project=.." })).toBe("ws://x/ws");
-  });
-
-  it("pre-T837 call sites (no `search` field) keep compiling and behaving unchanged", () => {
-    // Exercises the exact 2-field loc shape mainToken.test.ts already passes.
-    expect(liveWsUrl("abc 123", { protocol: "http:", host: "h:5190" })).toBe(
-      "ws://h:5190/ws?token=abc%20123",
-    );
-    expect(liveWsUrl(null, { protocol: "https:", host: "h:443" })).toBe("wss://h:443/ws");
   });
 });
 
@@ -287,6 +283,56 @@ describe("T837 Behavioral-Active: deep-link bootstrap makes zero wrong-project r
     expect(connectedUrls).toEqual([`${ORIGIN}/mcp`]);
     expect(FakeWS.instances).toHaveLength(1);
     expect(FakeWS.instances[0]!.url).toBe(`ws://${HOST}/ws`);
+  });
+
+  it("a SAFE but UNREGISTERED ?project=stale falls back ONCE to the alias, post-connect-failure, instead of bricking the page (T837 round-1 fix / D143 criticism 1)", async () => {
+    FakeWS.instances = [];
+    // `stale` is syntactically safe (isSafeProjectKeySegment("stale") === true)
+    // but not a registered project — the real serveXdgCatalog answers 404
+    // "unknown project" for exactly this case (xdgCatalogServe.ts:200-203).
+    const alias = new FakeClient("cq1");
+    const connectedUrls: string[] = [];
+    const connect = async (url: string): Promise<LedgerClient> => {
+      connectedUrls.push(url);
+      if (url === `${ORIGIN}/p/stale/mcp`) throw new Error("404: unknown project");
+      if (url === `${ORIGIN}/mcp`) return alias;
+      throw new Error(`unexpected connect: ${url}`);
+    };
+
+    const search = "?project=stale";
+    setLocationSearch(search);
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect,
+          initialUrl: resolveInitialUrl({ search, origin: ORIGIN }),
+          liveUrl: liveWsUrl(null, { protocol: "http:", host: HOST, search }),
+          deepLinkFallback: resolveDeepLinkFallback(null, {
+            search,
+            origin: ORIGIN,
+            protocol: "http:",
+            host: HOST,
+          }),
+          liveWsCtor: FakeWS as unknown as { new (url: string): WebSocket },
+        }),
+      );
+    });
+    await flush();
+
+    // Exactly TWO connect calls, in order: the deep-linked stale project
+    // first (which fails with the catalog-miss), then the alias — the
+    // fallback is ONE-SHOT, not a blanket retry loop.
+    expect(connectedUrls).toEqual([`${ORIGIN}/p/stale/mcp`, `${ORIGIN}/mcp`]);
+    expect(FakeWS.instances).toHaveLength(1);
+    expect(FakeWS.instances[0]!.url).toBe(`ws://${HOST}/ws`);
+
+    // The page recovers instead of bricking: conn is "connected" and the
+    // selector is enabled over the real (alias) catalog, not disabled over
+    // an empty one.
+    const select = testid("project-selector") as HTMLSelectElement | null;
+    expect(select).not.toBeNull();
+    expect(select!.disabled).toBe(false);
+    expect(select!.value).toBe("cq1");
   });
 });
 

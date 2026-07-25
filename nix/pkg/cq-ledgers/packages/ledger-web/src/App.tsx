@@ -356,6 +356,22 @@ export interface AppProps {
   initialUrl: string;
   /** Same-origin /ws URL for live updates; null disables live. */
   liveUrl?: string | null;
+  /**
+   * One-shot alias `/mcp` + `/ws` fallback for a deep-linked `?project=<key>`
+   * boot connection (T837 round-1 fix / D143 criticism 1): when the INITIAL
+   * connect (using `initialUrl`) fails — e.g. a syntactically SAFE key that
+   * names no REGISTERED project (a catalog-miss 404 "unknown project", not a
+   * 400 "invalid") — the connect effect falls back to this alias exactly
+   * ONCE so the user lands on a working project (with its real catalog, via
+   * the always-visible selector) instead of a bricked page with an empty,
+   * disabled selector. `null`/absent when `initialUrl` was NOT derived from a
+   * `?project=` deep link — no `?project=`, a syntactically unsafe key
+   * (already deterministically falls back to the alias before any connect is
+   * attempted — see main.tsx's `resolveInitialUrl`), or a `?url=` override
+   * (which keeps full precedence and must never be masked by a fallback) —
+   * in all of those cases a connect failure is a genuine error, no fallback.
+   */
+  deepLinkFallback?: { url: string; liveUrl: string | null } | null;
   /** Injectable WebSocket ctor (tests); defaults to the global. */
   liveWsCtor?: { new (url: string): WebSocket };
   /** Injectable HoldClock for tests; defaults to the real browser clock. */
@@ -389,7 +405,14 @@ export type FinalizePreviewState =
       step: GoalsFinalizeStep;
     };
 
-export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock }: AppProps): React.ReactElement {
+export function App({
+  connect,
+  initialUrl,
+  liveUrl = null,
+  deepLinkFallback = null,
+  liveWsCtor,
+  holdClock,
+}: AppProps): React.ReactElement {
   const [url, setUrl] = useState(initialUrl);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -475,6 +498,12 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
   // `activeLiveUrl` jumping ahead while `client` still points at the OLD
   // project (which would open, then immediately tear down, a throwaway ws).
   const pendingLiveUrlRef = useRef<{ url: string | null } | null>(null);
+  // One-shot alias fallback for a deep-linked `?project=<key>` boot
+  // connection that fails (T837 round-1 fix / D143 criticism 1). The connect
+  // effect's catch handler consumes this (sets it to `null`) the FIRST time
+  // it falls back, so a SECOND failure — the alias itself unreachable —
+  // surfaces as a genuine error instead of looping forever.
+  const deepLinkFallbackRef = useRef(deepLinkFallback ?? null);
   // Batch-answer modal (Q33). `batchRows` is the snapshot of open items
   // captured when the modal opens; `batchIndex` is the current step;
   // `batchSchema` is the (questions) ledger schema those rows belong to.
@@ -690,10 +719,20 @@ export function App({ connect, initialUrl, liveUrl = null, liveWsCtor, holdClock
         }
       })
       .catch((e: unknown) => {
-        if (alive) {
-          setConn("error");
-          setConnErr(errMsg(e));
+        if (!alive) return;
+        // Deep-link boot fallback (T837 round-1 fix / D143 criticism 1): the
+        // FIRST connect failure, when it was for a `?project=<key>`-derived
+        // initial URL, retries ONCE against the alias `/mcp` + `/ws` instead
+        // of surfacing an error — see `deepLinkFallbackRef`'s doc above.
+        const fallback = deepLinkFallbackRef.current;
+        if (fallback !== null) {
+          deepLinkFallbackRef.current = null;
+          pendingLiveUrlRef.current = { url: fallback.liveUrl };
+          setUrl(fallback.url);
+          return;
         }
+        setConn("error");
+        setConnErr(errMsg(e));
       });
     return () => {
       alive = false;

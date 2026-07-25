@@ -1,3 +1,5 @@
+import { isSafeProjectKey } from "@cq/ledger/projectKeySafety";
+
 /**
  * Match a per-project route pathname `/p/<projectKey>/<leaf>` where `<leaf>` is
  * `mcp` or `ws`. Returns the decoded `projectKey` + `leaf`, or `null` when the
@@ -21,23 +23,15 @@ export function hubTopic(projectKey: string): string {
 
 /**
  * True when `key` is safe to route into `/p/<key>/{mcp,ws}` — non-blank, not
- * a `.`/`..` dot-segment, and free of path separators or NUL. Mirrors
- * `@cq/ledger`'s `isSafeProjectKey` (packages/ledger/src/store/sqlite/xdgProjectRuntime.ts,
- * the server-side route/runtime guard), REIMPLEMENTED here without
- * `node:path` so this module stays importable from the browser bundle (T837
- * initial-connection seam, main.tsx) — this file has no node built-ins,
- * unlike the full `@cq/ledger` index. The two predicates must be kept in
- * sync; `path.isAbsolute` adds no case beyond the slash/backslash checks
- * already here (an absolute POSIX/win32 path always contains one).
+ * a `.`/`..` dot-segment, and free of path separators or NUL. Delegates to
+ * `@cq/ledger`'s single canonical predicate (`isSafeProjectKey`,
+ * packages/ledger/src/projectKeySafety.ts, node-free) shared with the
+ * server-side route/runtime guards (xdgProjectRuntime.ts, xdgCatalogServe.ts)
+ * — imported via the `@cq/ledger/projectKeySafety` leaf export so this module
+ * stays importable from the browser bundle (T837 initial-connection seam,
+ * main.tsx) without pulling `node:path` (or any other node built-in) into it
+ * (T837 round-1 fix / D143 criticism 2: one source of truth, not three).
  */
 export function isSafeProjectKeySegment(key: string): boolean {
-  return !(
-    key.length === 0 ||
-    key.trim().length === 0 ||
-    key === "." ||
-    key === ".." ||
-    key.includes("/") ||
-    key.includes("\\") ||
-    key.includes("\0")
-  );
+  return isSafeProjectKey(key);
 }

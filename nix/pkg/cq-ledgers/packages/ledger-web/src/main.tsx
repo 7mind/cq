@@ -11,12 +11,17 @@
  * initial `/mcp` + `/ws` endpoints to that project's own `/p/<key>/{mcp,ws}`
  * routes BEFORE any connection is attempted — the browser never opens a
  * socket or sends a request to the wrong (alias) project first. An absent or
- * unsafe key falls back to the deterministic alias routes (`/mcp`, `/ws`),
- * exactly as with no `?project=` at all. `?url=` keeps full precedence over
- * `?project=` (unaffected — advanced/direct use). This is the SAME shared
- * seam App.tsx's `switchProject` (T589) reconnects through post-boot, and
- * that future T733 (remote-client bootstrap) must extend rather than
- * duplicate.
+ * syntactically unsafe key falls back to the deterministic alias routes
+ * (`/mcp`, `/ws`), exactly as with no `?project=` at all — BEFORE any connect
+ * is attempted. A SAFE key that names no REGISTERED project (a catalog-miss
+ * 404 "unknown project") instead falls back ONCE, POST-connect-failure, via
+ * {@link resolveDeepLinkFallback} + App's connect effect (T837 round-1 fix /
+ * D143 criticism 1) — the selector then shows the real catalog instead of
+ * bricking the page. `?url=` keeps full precedence over `?project=`
+ * (unaffected — advanced/direct use, and never masked by the fallback). This
+ * is the SAME shared seam App.tsx's `switchProject` (T589) reconnects through
+ * post-boot, and that future T733 (remote-client bootstrap) must extend
+ * rather than duplicate.
  *
  * `?token=` (T588 / Q273): this SAME bundle is also served by the `cq serve`
  * hub, which — when bound with `--token` — requires that bearer secret on
@@ -101,18 +106,44 @@ export function resolveToken(loc?: Pick<Location, "search">): string | null {
  * not attempt wss. Appends `?token=` (T588 / Q273) when one was resolved from
  * the page URL — via the SHARED {@link appendWsToken} helper, so the
  * project-switch path (App.tsx, T589-r2) uses the identical encoding. `loc`
- * is injectable for tests; `search` is optional there (defaults to `""`, i.e.
- * no deep-linked project) so pre-T837 call sites keep compiling unchanged.
+ * is injectable for tests; `search` is REQUIRED there (T837 round-1 fix /
+ * D143 criticism 3) — it drives the project-vs-alias routing decision, so an
+ * omitted `search` must not silently default to alias routing for a caller
+ * that forgot it.
  */
 export function liveWsUrl(
   token: string | null,
-  loc?: Pick<Location, "protocol" | "host"> & Partial<Pick<Location, "search">>,
+  loc?: Pick<Location, "protocol" | "host" | "search">,
 ): string {
   const l = loc ?? window.location;
   const proto = l.protocol === "https:" ? "wss:" : "ws:";
-  const projectKey = resolveDeepLinkedProjectKey({ search: l.search ?? "" });
+  const projectKey = resolveDeepLinkedProjectKey({ search: l.search });
   const path = projectKey !== null ? `/p/${encodeURIComponent(projectKey)}/ws` : "/ws";
   return appendWsToken(`${proto}//${l.host}${path}`, token);
+}
+
+/**
+ * Resolve the ONE-SHOT alias `/mcp` + `/ws` fallback (T837 round-1 fix / D143
+ * criticism 1) for a boot connection whose `?project=<key>` deep link fails —
+ * `null` when `resolveInitialUrl`'s result was NOT derived from a
+ * `?project=` deep link: no `?project=`, a syntactically unsafe key (already
+ * deterministically alias-routed before any connect — no fallback needed),
+ * or a `?url=` override (which keeps full precedence over `?project=` and
+ * must never be masked by a fallback). `loc` is injectable for tests; the
+ * real call site reads `window.location`.
+ */
+export function resolveDeepLinkFallback(
+  token: string | null,
+  loc?: Pick<Location, "search" | "origin" | "protocol" | "host">,
+): { url: string; liveUrl: string | null } | null {
+  const l = loc ?? window.location;
+  const fromQuery = new URLSearchParams(l.search).get("url");
+  if (fromQuery !== null && fromQuery.length > 0) return null;
+  if (resolveDeepLinkedProjectKey(l) === null) return null;
+  return {
+    url: resolveInitialUrl({ search: "", origin: l.origin }),
+    liveUrl: liveWsUrl(token, { protocol: l.protocol, host: l.host, search: "" }),
+  };
 }
 
 const rootEl = document.getElementById("root");
@@ -123,6 +154,7 @@ if (rootEl !== null) {
       connect: (url: string) => McpLedgerClient.connect(url, token ?? undefined),
       initialUrl: resolveInitialUrl(),
       liveUrl: liveWsUrl(token),
+      deepLinkFallback: resolveDeepLinkFallback(token),
     }),
   );
 }

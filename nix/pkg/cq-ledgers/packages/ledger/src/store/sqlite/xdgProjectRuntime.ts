@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import { loadConfig } from "@cq/config";
 
 import { resolveProjectKey } from "../../projectKey.js";
+import { isSafeProjectKey } from "../../projectKeySafety.js";
 import { STORE_LAYOUT } from "../../stateDir.js";
 import type { OnMutation } from "../LedgerStore.js";
 import { SqliteLedgerStore } from "./SqliteLedgerStore.js";
@@ -254,23 +255,13 @@ function validateProjectsRoot(projectsRoot: string): void {
  * this filesystem-level runtime (second defense, T832) and the route-level
  * decoded-key guard ahead of catalog lookup (first defense, T836's
  * `matchSafeXdgProjectRoute` and `createStaticXdgHostCatalog` in
- * `@cq/ledger-web`, which call this predicate directly). Keeping one copy
- * prevents the two layers from silently drifting apart on what counts as
- * unsafe.
+ * `@cq/ledger-web`, which call this predicate directly) — re-exported here
+ * (T837 round-1 fix / D143 criticism 2) from the node-free canonical copy in
+ * `../../projectKeySafety.js`, which the browser-bundle-safe `main.tsx` seam
+ * also imports (via `@cq/ledger/projectKeySafety`), so all three layers share
+ * ONE implementation instead of three that could silently drift apart.
  */
-export function isSafeProjectKey(projectKey: string): boolean {
-  return !(
-    projectKey.length === 0 ||
-    projectKey.trim().length === 0 ||
-    projectKey === "." ||
-    projectKey === ".." ||
-    path.posix.isAbsolute(projectKey) ||
-    path.win32.isAbsolute(projectKey) ||
-    projectKey.includes("/") ||
-    projectKey.includes("\\") ||
-    projectKey.includes("\0")
-  );
-}
+export { isSafeProjectKey };
 
 function validateProjectKey(projectKey: string): void {
   if (!isSafeProjectKey(projectKey)) {
