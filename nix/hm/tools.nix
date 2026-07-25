@@ -114,6 +114,16 @@ in
     smind.hm.dev.llm.assetBundles = lib.mkOption {
       type = lib.types.listOf (
         lib.types.submodule {
+          # The bundle is a CROSS-REPO contract (pkg/cq-assets/assets.nix):
+          # producers carry a richer payload than this materializer fans out —
+          # the validated prompt catalog, its JSON projections, the fragment
+          # contracts, the per-surface layout. Those are consumed directly off
+          # `self.llmAssets` by claude.nix/codex.nix/pi.nix, never through this
+          # option, but they still arrive inside the same attrset and must not
+          # abort evaluation. The four fanned-out fields below stay typed; the
+          # freeform type lets the producer contract grow without breaking every
+          # consumer pinned to an older revision of this module.
+          freeformType = lib.types.attrsOf lib.types.anything;
           options = {
             skills = lib.mkOption {
               type = lib.types.attrsOf lib.types.lines;
