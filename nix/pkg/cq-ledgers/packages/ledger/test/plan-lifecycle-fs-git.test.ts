@@ -4,13 +4,17 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  DEFECTS_LEDGER,
   FsLedgerStore,
   GOALS_LEDGER,
   GitObjectLedgerBackend,
   ledgerTreePaths,
   MILESTONES_AMBIENT_ID,
+  RESEARCHES_LEDGER,
+  REVIEWS_LEDGER,
   removeLedgerArtifacts,
   type PlanLifecycleStore,
+  type PlanReleaseInput,
 } from "../src/index.js";
 
 const METHODS = [
@@ -67,6 +71,150 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     if (!first.ok || !replay.ok) throw new Error("expected claim success");
     expect(replay.replayed).toBe(true);
     expect(replay.acknowledgement).toEqual(first.acknowledgement);
+    await expect(
+      fs.stat(path.join(docs, "plan-lifecycle.pending.json")),
+    ).rejects.toThrow();
+    await recovered.dispose();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("recovers one research pause and review-defect batch after partial multi-ledger apply", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-pause-recovery-"));
+    const docs = path.join(root, ".cq");
+    const ledgerIds = [
+      DEFECTS_LEDGER,
+      GOALS_LEDGER,
+      RESEARCHES_LEDGER,
+      REVIEWS_LEDGER,
+    ] as const;
+    const store = new FsLedgerStore({ root });
+    await store.init();
+    await seedGoal(store);
+    const claim = await store.claimPlan(
+      claimInput("recover-pause-claim", "P".repeat(22)),
+    );
+    if (!claim.ok) throw new Error("expected claim success");
+    const beforeState = await fs.readFile(
+      path.join(docs, "plan-lifecycle.json"),
+      "utf8",
+    );
+    const beforeLedgers = Object.fromEntries(
+      await Promise.all(
+        ledgerIds.map(async (ledgerId) => [
+          ledgerId,
+          await fs.readFile(path.join(docs, `${ledgerId}.md`), "utf8"),
+        ]),
+      ),
+    ) as Record<(typeof ledgerIds)[number], string>;
+    const input: Extract<PlanReleaseInput, { kind: "pause" }> = {
+      kind: "pause",
+      goalId: "G1",
+      claimId: claim.acknowledgement.claimId,
+      generation: claim.acknowledgement.generation,
+      operationId: "recover-pause",
+      ownerFenceToken: "P".repeat(22),
+      author: "planner",
+      session: "planner-session",
+      effect: {
+        kind: "researches",
+        researches: [
+          {
+            key: "recovery-probe",
+            question: "Does recovery preserve the complete pause?",
+            scope: "Exercise a partial multi-ledger filesystem apply",
+          },
+        ],
+      },
+      reviewDefects: {
+        reviewId: "R1",
+        defects: [
+          {
+            key: "recovery-defect",
+            headline: "Recover the complete pause batch",
+            severity: "high",
+          },
+        ],
+      },
+    };
+    const first = await store.releasePlanClaim(input);
+    if (!first.ok || first.acknowledgement.kind !== "researches") {
+      throw new Error("expected research pause success");
+    }
+    const finalState = await fs.readFile(
+      path.join(docs, "plan-lifecycle.json"),
+      "utf8",
+    );
+    const finalLedgers = Object.fromEntries(
+      await Promise.all(
+        ledgerIds.map(async (ledgerId) => [
+          ledgerId,
+          await fs.readFile(path.join(docs, `${ledgerId}.md`), "utf8"),
+        ]),
+      ),
+    ) as Record<(typeof ledgerIds)[number], string>;
+    await store.dispose();
+
+    for (const ledgerId of ledgerIds) {
+      await fs.writeFile(
+        path.join(docs, `${ledgerId}.md`),
+        beforeLedgers[ledgerId],
+        "utf8",
+      );
+    }
+    await fs.writeFile(path.join(docs, "plan-lifecycle.json"), beforeState, "utf8");
+    for (const partiallyApplied of [RESEARCHES_LEDGER, DEFECTS_LEDGER]) {
+      await fs.writeFile(
+        path.join(docs, `${partiallyApplied}.md`),
+        finalLedgers[partiallyApplied],
+        "utf8",
+      );
+    }
+    await fs.writeFile(
+      path.join(docs, "plan-lifecycle.pending.json"),
+      JSON.stringify({ state: finalState, ledgers: finalLedgers }),
+      "utf8",
+    );
+
+    const recovered = new FsLedgerStore({ root });
+    await recovered.init();
+    const replay = await recovered.releasePlanClaim(input);
+    expect(replay).toEqual({ ...first, replayed: true });
+    if (!replay.ok || replay.acknowledgement.kind !== "researches") {
+      throw new Error("expected exact research pause replay");
+    }
+    expect(replay.acknowledgement.researches).toEqual(
+      first.acknowledgement.researches,
+    );
+    expect(replay.acknowledgement.reviewDefects).toEqual(
+      first.acknowledgement.reviewDefects,
+    );
+    expect(replay.acknowledgement.goalPhase).toBe("planning");
+    expect(replay.acknowledgement.waitingResearches).toEqual(
+      replay.acknowledgement.researches.map(({ id }) => id),
+    );
+    const goal = recovered.fetchItem(GOALS_LEDGER, "G1");
+    expect(goal.status).toBe("planning");
+    expect(goal.fields["waitingResearches"]).toEqual(
+      replay.acknowledgement.waitingResearches,
+    );
+    const researches = recovered
+      .fetch(RESEARCHES_LEDGER)
+      .milestones.flatMap(({ items }) => items);
+    const defects = recovered
+      .fetch(DEFECTS_LEDGER)
+      .milestones.flatMap(({ items }) => items);
+    expect(researches.map(({ id }) => id)).toEqual([
+      replay.acknowledgement.researches[0]!.id,
+    ]);
+    expect(defects.map(({ id }) => id)).toEqual([
+      replay.acknowledgement.reviewDefects[0]!.id,
+    ]);
+    expect(
+      JSON.stringify(await recovered.releasePlanClaim(input)),
+    ).toBe(JSON.stringify(replay));
+    expect(
+      await fs.readFile(path.join(docs, "plan-lifecycle.json"), "utf8"),
+    ).not.toContain(input.ownerFenceToken);
     await expect(
       fs.stat(path.join(docs, "plan-lifecycle.pending.json")),
     ).rejects.toThrow();
