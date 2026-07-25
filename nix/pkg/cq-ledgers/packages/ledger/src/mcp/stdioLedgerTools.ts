@@ -22,10 +22,12 @@ import { paginate } from "../projection.js";
 import { derivePredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
 import {
+  appendLedgerResponseDescription,
   GET_PLANNERS_RESPONSE_DESCRIPTION,
   GET_REVIEWERS_RESPONSE_DESCRIPTION,
   ITEM_MUTATION_ACK_DESCRIPTION,
   ITEM_PROJECTION_DESCRIPTION,
+  LEDGER_RESPONSE_CONTRACTS,
   LEDGER_MUTATION_ACK_DESCRIPTION,
   MILESTONE_MUTATION_ACK_DESCRIPTION,
   produceWireDto,
@@ -57,7 +59,11 @@ import {
   ListProjectsNotImplementedError,
   type ListProjectsCapability,
 } from "./listProjects.js";
-import { assertToolPrefix, prefixToolName } from "./ledgerTools.js";
+import {
+  assertToolPrefix,
+  prefixToolName,
+  type LedgerToolName,
+} from "./ledgerTools.js";
 
 // ---------------------------------------------------------------------------
 // Shared Zod fragments (mirror ./ledgerTools.ts)
@@ -199,8 +205,26 @@ export function registerLedgerStdioTools(
   // Register a tool under its prefixed name. The prefix is derived ONCE per
   // name (via prefixToolName) so the stdio names never drift from the Claude
   // factory (T374); config + handler pass through unchanged.
-  const reg: McpServer["registerTool"] = (name, config, handler) =>
-    server.registerTool(prefixToolName(toolPrefix, name), config, handler);
+  const reg: McpServer["registerTool"] = (name, config, handler) => {
+    if (!Object.hasOwn(LEDGER_RESPONSE_CONTRACTS, name)) {
+      throw new Error(`Unknown ledger tool response contract: ${name}`);
+    }
+    if (config.description === undefined) {
+      throw new Error(`Ledger tool ${name} lacks a description`);
+    }
+    const toolName = name as LedgerToolName;
+    return server.registerTool(
+      prefixToolName(toolPrefix, toolName),
+      {
+        ...config,
+        description: appendLedgerResponseDescription(
+          toolName,
+          config.description,
+        ),
+      },
+      handler,
+    );
+  };
 
   // ---- Item / ledger surface (9) -----------------------------------------
 

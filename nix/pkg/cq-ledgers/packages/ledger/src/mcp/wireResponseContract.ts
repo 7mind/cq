@@ -136,21 +136,29 @@ export interface MilestoneMutationAckDto {
 }
 
 export interface MandatoryItemProjectionContract {
-  kind: "mandatory-item-projection";
-  projections: readonly ["compact", "full"];
+  readonly kind: "mandatory-item-projection";
+  readonly projections: readonly ["compact", "full"];
+  readonly responseDescription: string;
+  readonly responseCell: string;
 }
 
 export interface FixedAcknowledgementContract {
-  kind: "fixed-acknowledgement";
-  acknowledgement: "item" | "ledger" | "milestone";
+  readonly kind: "fixed-acknowledgement";
+  readonly acknowledgement: "item" | "ledger" | "milestone";
+  readonly responseDescription: string;
+  readonly responseCell: string;
 }
 
 export interface PurposeBuiltSmallContract {
-  kind: "purpose-built-small";
+  readonly kind: "purpose-built-small";
+  readonly responseDescription: string;
+  readonly responseCell: string;
 }
 
 export interface RequestedFullContentContract {
-  kind: "requested-full-content";
+  readonly kind: "requested-full-content";
+  readonly responseDescription: string;
+  readonly responseCell: string;
 }
 
 export type LedgerResponseContract =
@@ -159,61 +167,152 @@ export type LedgerResponseContract =
   | PurposeBuiltSmallContract
   | RequestedFullContentContract;
 
-const MANDATORY_ITEM_PROJECTION = {
-  kind: "mandatory-item-projection",
-  projections: ["compact", "full"],
-} as const satisfies MandatoryItemProjectionContract;
+function mandatoryItemProjection(
+  responseCell: string,
+): MandatoryItemProjectionContract {
+  return {
+    kind: "mandatory-item-projection",
+    projections: ["compact", "full"],
+    responseDescription: `${responseCell} ${ITEM_PROJECTION_DESCRIPTION}.`,
+    responseCell,
+  };
+}
+
+function fixedAcknowledgement(
+  acknowledgement: FixedAcknowledgementContract["acknowledgement"],
+  responseDescription: string,
+  responseCell: string,
+): FixedAcknowledgementContract {
+  return {
+    kind: "fixed-acknowledgement",
+    acknowledgement,
+    responseDescription,
+    responseCell,
+  };
+}
+
+function purposeBuiltSmall(
+  responseCell: string,
+): PurposeBuiltSmallContract {
+  return {
+    kind: "purpose-built-small",
+    responseDescription: responseCell,
+    responseCell,
+  };
+}
+
+function requestedFullContent(
+  responseCell: string,
+): RequestedFullContentContract {
+  return {
+    kind: "requested-full-content",
+    responseDescription: responseCell,
+    responseCell,
+  };
+}
 
 export const LEDGER_RESPONSE_CONTRACTS = {
-  enumerate_ledgers: { kind: "purpose-built-small" },
-  fetch_ledger: MANDATORY_ITEM_PROJECTION,
-  fetch_ledger_archive: { kind: "requested-full-content" },
-  fetch_item: MANDATORY_ITEM_PROJECTION,
-  update_item: {
-    kind: "fixed-acknowledgement",
-    acknowledgement: "item",
-  },
-  create_item: {
-    kind: "fixed-acknowledgement",
-    acknowledgement: "item",
-  },
-  create_ledger: {
-    kind: "fixed-acknowledgement",
-    acknowledgement: "ledger",
-  },
-  search_items: MANDATORY_ITEM_PROJECTION,
-  fts_search: MANDATORY_ITEM_PROJECTION,
-  create_milestone: {
-    kind: "fixed-acknowledgement",
-    acknowledgement: "milestone",
-  },
-  update_milestone: {
-    kind: "fixed-acknowledgement",
-    acknowledgement: "milestone",
-  },
-  fetch_milestone: MANDATORY_ITEM_PROJECTION,
-  archive_milestone: { kind: "purpose-built-small" },
-  list_milestone_items: MANDATORY_ITEM_PROJECTION,
-  snapshot: { kind: "purpose-built-small" },
-  derive_predicates: { kind: "purpose-built-small" },
-  reopen_item: {
-    kind: "fixed-acknowledgement",
-    acknowledgement: "item",
-  },
-  unarchive_item: {
-    kind: "fixed-acknowledgement",
-    acknowledgement: "item",
-  },
-  read_log: { kind: "requested-full-content" },
-  get_reviewers: { kind: "purpose-built-small" },
-  get_planners: { kind: "purpose-built-small" },
-  get_config: { kind: "requested-full-content" },
-  get_agent_models: { kind: "purpose-built-small" },
-  fetch_prompt: { kind: "requested-full-content" },
-  validate_input: { kind: "purpose-built-small" },
-  validate_output: { kind: "purpose-built-small" },
-  list_projects: { kind: "purpose-built-small" },
+  enumerate_ledgers: purposeBuiltSmall(
+    "`{ ledgers, counts, ledgerSummaries: [{ name, itemCount, statusCounts, completedCount, progressTotal }] }`",
+  ),
+  fetch_ledger: mandatoryItemProjection(
+    "Grouped `{ ledger }`, or paginated `{ ledger, items, total, offset, limit, nextOffset }`; every item uses the requested projection.",
+  ),
+  fetch_ledger_archive: requestedFullContent(
+    "`{ archive }` with the requested archived item or milestone group in full.",
+  ),
+  fetch_item: mandatoryItemProjection(
+    "`{ item }` using the requested projection.",
+  ),
+  update_item: fixedAcknowledgement(
+    "item",
+    ITEM_MUTATION_ACK_DESCRIPTION,
+    "`{ item: ItemAcknowledgement }`.",
+  ),
+  create_item: fixedAcknowledgement(
+    "item",
+    ITEM_MUTATION_ACK_DESCRIPTION,
+    "`{ item: ItemAcknowledgement }`.",
+  ),
+  create_ledger: fixedAcknowledgement(
+    "ledger",
+    LEDGER_MUTATION_ACK_DESCRIPTION,
+    "`{ ledger: { id } }`.",
+  ),
+  search_items: mandatoryItemProjection(
+    "`{ items }` using the requested projection.",
+  ),
+  fts_search: mandatoryItemProjection(
+    "`{ results: [{ ledgerId, item, score, matchedFields }] }`; each item uses the requested projection.",
+  ),
+  create_milestone: fixedAcknowledgement(
+    "milestone",
+    MILESTONE_MUTATION_ACK_DESCRIPTION,
+    "`{ milestone: MilestoneAcknowledgement }`.",
+  ),
+  update_milestone: fixedAcknowledgement(
+    "milestone",
+    MILESTONE_MUTATION_ACK_DESCRIPTION,
+    "`{ milestone: MilestoneAcknowledgement }`.",
+  ),
+  fetch_milestone: mandatoryItemProjection(
+    "`{ milestone, resolved, references }`; milestone uses the requested projection.",
+  ),
+  archive_milestone: purposeBuiltSmall(
+    "`{ pointer }` for the archived milestone.",
+  ),
+  list_milestone_items: mandatoryItemProjection(
+    "`{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection.",
+  ),
+  snapshot: purposeBuiltSmall(
+    "`{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`.",
+  ),
+  derive_predicates: purposeBuiltSmall(
+    "Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `openQuestionGate`, `belowFloor`, and `goalDrift`.",
+  ),
+  reopen_item: fixedAcknowledgement(
+    "item",
+    ITEM_MUTATION_ACK_DESCRIPTION,
+    "`{ item: ItemAcknowledgement }`.",
+  ),
+  unarchive_item: fixedAcknowledgement(
+    "item",
+    ITEM_MUTATION_ACK_DESCRIPTION,
+    "`{ item: ItemAcknowledgement }`.",
+  ),
+  read_log: requestedFullContent("`{ path, content, truncated? }`."),
+  get_reviewers: purposeBuiltSmall(
+    `\`${GET_REVIEWERS_RESPONSE_DESCRIPTION}\`.`,
+  ),
+  get_planners: purposeBuiltSmall(
+    `\`${GET_PLANNERS_RESPONSE_DESCRIPTION}\`.`,
+  ),
+  get_config: requestedFullContent(
+    "`{ configured, aliases, reviewers, planners, tiers, agentTiers, agentEfforts }`.",
+  ),
+  get_agent_models: purposeBuiltSmall(
+    "`{ configured, agents: [{ id, status, modelClass, modelMappings }] }`.",
+  ),
+  fetch_prompt: requestedFullContent(
+    "Full typed prompt entry, including prompt text and schemas when available.",
+  ),
+  validate_input: purposeBuiltSmall(
+    "`{ ok: true }` or `{ ok: false, errors }`.",
+  ),
+  validate_output: purposeBuiltSmall(
+    "`{ ok: true }` or `{ ok: false, errors }`.",
+  ),
+  list_projects: purposeBuiltSmall(
+    "`{ projects: [{ key, displayName, createdAt? }] }`.",
+  ),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
+
+export function appendLedgerResponseDescription(
+  toolName: LedgerToolName,
+  description: string,
+): string {
+  return `${description}\n\nAuthoritative response: ${LEDGER_RESPONSE_CONTRACTS[toolName].responseDescription}`;
+}
 
 const ITEM_REFERENCE_FIELD_NAMES = [
   "dependsOn",

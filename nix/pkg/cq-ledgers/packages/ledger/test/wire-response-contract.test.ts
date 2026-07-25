@@ -108,7 +108,7 @@ describe("ledger response contract matrix", () => {
     expect(Object.keys(LEDGER_RESPONSE_CONTRACTS)).toEqual([
       ...LEDGER_TOOL_NAMES,
     ]);
-    expect(LEDGER_RESPONSE_CONTRACTS).toEqual({
+    expect(LEDGER_RESPONSE_CONTRACTS).toMatchObject({
       enumerate_ledgers: { kind: "purpose-built-small" },
       fetch_ledger: {
         kind: "mandatory-item-projection",

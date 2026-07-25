@@ -5,8 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   COMPACT_ITEM_FIELD_NAMES,
-  GET_PLANNERS_RESPONSE_DESCRIPTION,
-  GET_REVIEWERS_RESPONSE_DESCRIPTION,
+  createLedgerMcpTools,
   InMemoryLedgerStore,
   LEDGER_RESPONSE_CONTRACTS,
   LEDGER_TOOL_NAMES,
@@ -44,6 +43,62 @@ function documentedExamples(markdown: string): DocumentedExample[] {
   return JSON.parse(json) as DocumentedExample[];
 }
 
+interface ResponseMatrixRow {
+  readonly tool: string;
+  readonly kind: string;
+  readonly response: string;
+}
+
+function responseMatrixRows(markdown: string): ResponseMatrixRow[] {
+  const matrix = section(markdown, "ledger-response-contract");
+  return [...matrix.matchAll(/^\| `([^`]+)` \| `([^`]+)` \| (.+) \|$/gm)].map(
+    ([, tool, kind, response]) => ({ tool: tool!, kind: kind!, response: response! }),
+  );
+}
+
+function assertCanonicalResponseMatrix(markdown: string): void {
+  expect(responseMatrixRows(markdown)).toEqual(
+    LEDGER_TOOL_NAMES.map((tool) => ({
+      tool,
+      kind: LEDGER_RESPONSE_CONTRACTS[tool].kind,
+      response: LEDGER_RESPONSE_CONTRACTS[tool].responseCell,
+    })),
+  );
+}
+
+function mutateResponseCell(
+  markdown: string,
+  tool: keyof typeof LEDGER_RESPONSE_CONTRACTS,
+  remove: string,
+): string {
+  const contract = LEDGER_RESPONSE_CONTRACTS[tool];
+  const mutatedResponse = contract.responseCell.replace(remove, "");
+  if (mutatedResponse === contract.responseCell) {
+    throw new Error(`response mutation token is absent for ${tool}: ${remove}`);
+  }
+  return markdown.replace(
+    `| \`${tool}\` | \`${contract.kind}\` | ${contract.responseCell} |`,
+    `| \`${tool}\` | \`${contract.kind}\` | ${mutatedResponse} |`,
+  );
+}
+
+const RESPONSE_DESCRIPTION_MARKER = "\n\nAuthoritative response: ";
+
+function authoritativeResponseDescription(description: string): string {
+  const markerIndex = description.lastIndexOf(RESPONSE_DESCRIPTION_MARKER);
+  if (markerIndex === -1) {
+    throw new Error("tool description lacks its authoritative response description");
+  }
+  return description.slice(markerIndex + RESPONSE_DESCRIPTION_MARKER.length);
+}
+
+function assertAuthoritativeResponseDescription(
+  description: string,
+  expected: string,
+): void {
+  expect(authoritativeResponseDescription(description)).toBe(expected);
+}
+
 function textJson(result: {
   content: Array<{ type: string; text?: string }>;
 }): Record<string, unknown> {
@@ -66,24 +121,35 @@ function valueAtPath(value: Record<string, unknown>, dottedPath: string): unknow
 describe("public MCP response-contract documentation", () => {
   it("publishes the exhaustive live tool-category matrix and compact field allowlist", async () => {
     const readme = await packageReadme();
-    const matrix = section(readme, "ledger-response-contract");
-    const rows = [...matrix.matchAll(/^\| `([^`]+)` \| `([^`]+)` \| (.+) \|$/gm)].map(
-      ([, tool, kind, response]) => ({ tool, kind, response }),
-    );
-
-    expect(rows.map(({ tool, kind }) => [tool, kind])).toEqual(
-      LEDGER_TOOL_NAMES.map((tool) => [tool, LEDGER_RESPONSE_CONTRACTS[tool].kind]),
-    );
-    expect(rows.find((row) => row.tool === "get_reviewers")?.response).toBe(
-      `\`${GET_REVIEWERS_RESPONSE_DESCRIPTION}\`.`,
-    );
-    expect(rows.find((row) => row.tool === "get_planners")?.response).toBe(
-      `\`${GET_PLANNERS_RESPONSE_DESCRIPTION}\`.`,
-    );
+    assertCanonicalResponseMatrix(readme);
 
     const compactFields = [...section(readme, "compact-item-fields").matchAll(/`([^`]+)`/g)]
       .map((match) => match[1]);
     expect(compactFields).toEqual([...COMPACT_ITEM_FIELD_NAMES]);
+  });
+
+  // Regression: T678 review round 2 — field-level documentation drift must fail.
+  it("rejects retained-field mutations in matrix cells and live descriptions", async () => {
+    const readme = await packageReadme();
+    const matrixMutation = mutateResponseCell(
+      readme,
+      "enumerate_ledgers",
+      ", progressTotal",
+    );
+    expect(matrixMutation).not.toBe(readme);
+    expect(() => assertCanonicalResponseMatrix(matrixMutation)).toThrow();
+
+    const acknowledgement = LEDGER_RESPONSE_CONTRACTS.update_item;
+    const liveDescription =
+      `${RESPONSE_DESCRIPTION_MARKER}${acknowledgement.responseDescription}`;
+    const descriptionMutation = liveDescription.replace(", updatedAt", "");
+    expect(descriptionMutation).not.toBe(liveDescription);
+    expect(() =>
+      assertAuthoritativeResponseDescription(
+        descriptionMutation,
+        acknowledgement.responseDescription,
+      )
+    ).toThrow();
   });
 
   it("states the breaking cutover, selection, pagination, acknowledgement, and rejected alternatives", async () => {
@@ -132,26 +198,27 @@ describe("public MCP response-contract documentation", () => {
     try {
       const tools = await client.listTools();
       const toolByName = new Map(tools.tools.map((tool) => [tool.name, tool]));
+      const directToolByName = new Map(
+        createLedgerMcpTools(store).map((tool) => [tool.name, tool]),
+      );
       for (const toolName of LEDGER_TOOL_NAMES) {
         const tool = toolByName.get(toolName);
+        const directTool = directToolByName.get(toolName);
         expect(tool).toBeDefined();
+        expect(directTool).toBeDefined();
         const contract = LEDGER_RESPONSE_CONTRACTS[toolName];
+        assertAuthoritativeResponseDescription(
+          tool?.description ?? "",
+          contract.responseDescription,
+        );
+        assertAuthoritativeResponseDescription(
+          directTool?.description ?? "",
+          contract.responseDescription,
+        );
         if (contract.kind === "mandatory-item-projection") {
           expect(tool?.inputSchema.required).toContain("projection");
-          expect(tool?.description).toContain("required");
-          expect(tool?.description).toContain("compact");
-          expect(tool?.description).toContain("full");
-        }
-        if (contract.kind === "fixed-acknowledgement") {
-          expect(tool?.description).toContain("acknowledgement");
         }
       }
-      expect(toolByName.get("get_reviewers")?.description).toContain(
-        GET_REVIEWERS_RESPONSE_DESCRIPTION,
-      );
-      expect(toolByName.get("get_planners")?.description).toContain(
-        GET_PLANNERS_RESPONSE_DESCRIPTION,
-      );
 
       for (const example of documentedExamples(await packageReadme())) {
         if (!Object.hasOwn(LEDGER_RESPONSE_CONTRACTS, example.tool)) {

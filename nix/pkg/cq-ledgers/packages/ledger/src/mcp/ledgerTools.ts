@@ -34,6 +34,7 @@ import { paginate } from "../projection.js";
 import { derivePredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
 import {
+  appendLedgerResponseDescription,
   GET_PLANNERS_RESPONSE_DESCRIPTION,
   GET_REVIEWERS_RESPONSE_DESCRIPTION,
   ITEM_MUTATION_ACK_DESCRIPTION,
@@ -780,11 +781,30 @@ ${QUERY_LANGUAGE_HELP}`,
     listProjectsTool,
   ] as unknown as AnyTool[];
 
+  const describedTools = tools.map((ledgerTool, index) => {
+    const toolName = LEDGER_TOOL_NAMES[index];
+    if (toolName === undefined || ledgerTool.name !== toolName) {
+      throw new Error(
+        `Ledger tool response-description order drift at ${ledgerTool.name}`,
+      );
+    }
+    return {
+      ...ledgerTool,
+      description: appendLedgerResponseDescription(
+        toolName,
+        ledgerTool.description,
+      ),
+    };
+  });
+
   // Pure name transform (Q208): register each tool under its prefixed name.
   // Default `''` leaves every name byte-identical; handler bodies and Zod input
   // schemas are untouched. Derived ONCE here rather than at each tool() literal.
-  if (toolPrefix === "") return tools;
-  return tools.map((t) => ({ ...t, name: prefixToolName(toolPrefix, t.name) }));
+  if (toolPrefix === "") return describedTools;
+  return describedTools.map((ledgerTool) => ({
+    ...ledgerTool,
+    name: prefixToolName(toolPrefix, ledgerTool.name),
+  }));
 }
 
 // ---------------------------------------------------------------------------
