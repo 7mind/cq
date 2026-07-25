@@ -109,6 +109,29 @@ describe("liveWsUrl (T837 project-aware)", () => {
   });
 });
 
+describe("resolveDeepLinkFallback", () => {
+  const loc = { search: "?project=p2", origin: "http://x", protocol: "http:", host: "x" };
+
+  it("arms the fallback for a valid ?project=<key> deep link", () => {
+    expect(resolveDeepLinkFallback(null, loc)).toEqual({
+      url: "http://x/mcp",
+      liveUrl: "ws://x/ws",
+    });
+  });
+
+  it("null branch 1: no ?project= at all — nothing to fall back FROM", () => {
+    expect(resolveDeepLinkFallback(null, { ...loc, search: "" })).toBeNull();
+  });
+
+  it("null branch 2: a syntactically unsafe ?project= key — already deterministically alias-routed before any connect, so no post-connect fallback is needed", () => {
+    expect(resolveDeepLinkFallback(null, { ...loc, search: "?project=.." })).toBeNull();
+  });
+
+  it("null branch 3: a ?url= override is present — it keeps full precedence and must never be masked by a fallback", () => {
+    expect(resolveDeepLinkFallback(null, { ...loc, search: "?url=http://elsewhere/mcp&project=p2" })).toBeNull();
+  });
+});
+
 // --- Behavioral-Active: prove the seam end-to-end through App -------------
 
 let container: HTMLElement;
@@ -334,7 +357,153 @@ describe("T837 Behavioral-Active: deep-link bootstrap makes zero wrong-project r
     expect(select!.disabled).toBe(false);
     expect(select!.value).toBe("cq1");
   });
+
+  it("a ?url= override failure surfaces as a genuine error — no fallback, exactly one connect (pinning an already-correct scoping)", async () => {
+    FakeWS.instances = [];
+    const connectedUrls: string[] = [];
+    const connect = async (url: string): Promise<LedgerClient> => {
+      connectedUrls.push(url);
+      throw new Error("500: elsewhere unreachable");
+    };
+
+    // `?url=` wins full precedence over `?project=` — resolveDeepLinkFallback
+    // must return null here, so a failure is never masked.
+    const search = "?url=http://elsewhere/mcp&project=p2";
+    setLocationSearch(search);
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect,
+          initialUrl: resolveInitialUrl({ search, origin: ORIGIN }),
+          liveUrl: liveWsUrl(null, { protocol: "http:", host: HOST, search }),
+          deepLinkFallback: resolveDeepLinkFallback(null, {
+            search,
+            origin: ORIGIN,
+            protocol: "http:",
+            host: HOST,
+          }),
+          liveWsCtor: FakeWS as unknown as { new (url: string): WebSocket },
+        }),
+      );
+    });
+    await flush();
+
+    expect(connectedUrls).toEqual(["http://elsewhere/mcp"]);
+    expect(testid("conn-status")?.textContent).toBe("✕ error");
+    expect(testid("conn-error")?.textContent ?? "").toContain("500: elsewhere unreachable");
+  });
+
+  it("both the deep-linked project AND the alias being down surfaces the SECOND failure — exactly two connects, no retry loop (pinning an already-correct scoping)", async () => {
+    FakeWS.instances = [];
+    const connectedUrls: string[] = [];
+    const connect = async (url: string): Promise<LedgerClient> => {
+      connectedUrls.push(url);
+      if (url === `${ORIGIN}/p/stale/mcp`) throw new Error("404: unknown project");
+      if (url === `${ORIGIN}/mcp`) throw new Error("503: alias unreachable");
+      throw new Error(`unexpected connect: ${url}`);
+    };
+
+    const search = "?project=stale";
+    setLocationSearch(search);
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect,
+          initialUrl: resolveInitialUrl({ search, origin: ORIGIN }),
+          liveUrl: liveWsUrl(null, { protocol: "http:", host: HOST, search }),
+          deepLinkFallback: resolveDeepLinkFallback(null, {
+            search,
+            origin: ORIGIN,
+            protocol: "http:",
+            host: HOST,
+          }),
+          liveWsCtor: FakeWS as unknown as { new (url: string): WebSocket },
+        }),
+      );
+    });
+    await flush();
+
+    // Exactly the two attempts: the deep-linked project, then the one-shot
+    // alias fallback — its own failure surfaces as the genuine error rather
+    // than looping.
+    expect(connectedUrls).toEqual([`${ORIGIN}/p/stale/mcp`, `${ORIGIN}/mcp`]);
+    expect(testid("conn-status")?.textContent).toBe("✕ error");
+    expect(testid("conn-error")?.textContent ?? "").toContain("503: alias unreachable");
+  });
+
+  it("a SUCCESSFUL ?project=p2 boot must not leave the one-shot fallback armed for a later switch's failure (T837 round-2 fix / D143 criticism 3)", async () => {
+    FakeWS.instances = [];
+    const p2 = new FakeClient("Project Two");
+    p2.projects = [
+      { key: "p1", displayName: "Project One" },
+      { key: "p2", displayName: "Project Two" },
+    ];
+
+    const connectedUrls: string[] = [];
+    const connect = async (url: string): Promise<LedgerClient> => {
+      connectedUrls.push(url);
+      if (url === `${ORIGIN}/p/p2/mcp`) return p2;
+      if (url === `${ORIGIN}/p/p1/mcp`) throw new Error("503: p1 runtime unavailable");
+      // The alias must NEVER be dialed — a stray fallback consumption is
+      // exactly the reported defect.
+      throw new Error(`unexpected connect (stray alias fallback?): ${url}`);
+    };
+
+    const search = "?project=p2";
+    setLocationSearch(search);
+    await act(async () => {
+      root.render(
+        createElement(App, {
+          connect,
+          initialUrl: resolveInitialUrl({ search, origin: ORIGIN }),
+          liveUrl: liveWsUrl(null, { protocol: "http:", host: HOST, search }),
+          deepLinkFallback: resolveDeepLinkFallback(null, {
+            search,
+            origin: ORIGIN,
+            protocol: "http:",
+            host: HOST,
+          }),
+          liveWsCtor: FakeWS as unknown as { new (url: string): WebSocket },
+        }),
+      );
+    });
+    await flush();
+
+    // Boots successfully against p2, straight through — no fallback needed.
+    expect(connectedUrls).toEqual([`${ORIGIN}/p/p2/mcp`]);
+    expect(testid("conn-status")?.textContent).toBe("● connected");
+
+    // A later, user-initiated switch to p1 fails. Before the fix, the
+    // still-armed fallback silently consumed this failure and reconnected to
+    // the alias — leaving the page reporting "connected" while actually
+    // serving p2's stale data under a `p1` label. After the fix this must
+    // render a genuine conn-error with exactly ONE additional connect (to
+    // p1) — no third connect to the alias.
+    const select = testid("project-selector") as HTMLSelectElement | null;
+    expect(select).not.toBeNull();
+    setValue(select, "p1");
+    await flush();
+
+    expect(connectedUrls).toEqual([`${ORIGIN}/p/p2/mcp`, `${ORIGIN}/p/p1/mcp`]);
+    expect(testid("conn-status")?.textContent).toBe("✕ error");
+    expect(testid("conn-error")?.textContent ?? "").toContain("503: p1 runtime unavailable");
+    expect(select!.value).toBe("p1");
+    expect(window.location.search).toContain("project=p1");
+  });
 });
+
+/** Drive a controlled <select> the same way projectSelector.test.tsx does. */
+function setValue(el: Element | null, value: string): void {
+  if (el === null) throw new Error("setValue: element not found");
+  act(() => {
+    const node = el as HTMLSelectElement;
+    node.focus();
+    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), "value");
+    desc?.set?.call(node, value);
+    node.dispatchEvent(new Event("input", { bubbles: true }));
+    node.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
 
 function click(el: Element | null): void {
   if (el === null) throw new Error("click: element not found");

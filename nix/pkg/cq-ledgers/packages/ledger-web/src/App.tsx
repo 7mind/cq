@@ -502,7 +502,11 @@ export function App({
   // connection that fails (T837 round-1 fix / D143 criticism 1). The connect
   // effect's catch handler consumes this (sets it to `null`) the FIRST time
   // it falls back, so a SECOND failure — the alias itself unreachable —
-  // surfaces as a genuine error instead of looping forever.
+  // surfaces as a genuine error instead of looping forever. The effect's
+  // SUCCESS path also nulls it out (T837 round-2 fix / D143 criticism 3): the
+  // fallback must scope to the INITIAL boot connect only, never to a later
+  // user-initiated project switch, so it cannot outlive a successful boot and
+  // silently swallow an unrelated later failure.
   const deepLinkFallbackRef = useRef(deepLinkFallback ?? null);
   // Batch-answer modal (Q33). `batchRows` is the snapshot of open items
   // captured when the modal opens; `batchIndex` is the current step;
@@ -621,6 +625,15 @@ export function App({
     setDag(null);
     connect(url)
       .then(async (c) => {
+        // Disarm the one-shot deep-link fallback on ANY successful connect
+        // (T837 round-2 fix / D143 criticism 3): it exists solely to rescue
+        // the very first `?project=` boot attempt, not a later user-initiated
+        // switch. Previously it was cleared ONLY in the catch below, so a
+        // successful initial boot left it armed for the rest of the session —
+        // the next unrelated switch failure (a different project going down)
+        // silently consumed it and reconnected to the alias instead of
+        // surfacing the real error.
+        deepLinkFallbackRef.current = null;
         if (!alive) {
           await c.close();
           return;
