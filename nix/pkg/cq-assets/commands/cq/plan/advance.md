@@ -47,10 +47,11 @@ step that folds the strongest candidate together with the valuable parts of the
 others into ONE synthesized plan, and then YOU — the orchestrator — are the ONLY
 writer that persists that one plan to the ledger. The **review** step is likewise
 pluggable (step 2): in the **single-reviewer fallback** the native `plan-reviewer`
-subagent writes the one review itself (you write nothing); in the **configured
-multi-reviewer** path you, the orchestrator, write the SINGLE aggregated
-`reviews` item that reconciles all reviewers' verdicts (the native reviewers
-return JSON and write nothing). Your job is to drive that loop, then run the
+subagent writes the one review itself and returns the same structured verdict
+(you write nothing); in the **configured multi-reviewer** path you, the
+orchestrator, write the SINGLE aggregated `reviews` item that reconciles all
+reviewers' structured verdicts (the reviewers return JSON and write nothing).
+Your job is to drive that loop, then run the
 **auto-investigate phase** (below) on any defects the round filed, and relay the
 outcome.
 
@@ -367,9 +368,16 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       passing the goal id. In this mode the native `plan-reviewer` (T173) runs in
       its **fallback mode** and WRITES the verdict item into the `reviews` ledger
       itself (`go-ahead` or `revise`) — exactly today's path; the orchestrator
-      writes NO reviews item. It returns a one-line pointer to the review id.
-      Then go to **sub-step 2c** (continue the loop). EXACTLY ONE `reviews` item
-      is written this round (by the reviewer).
+      writes NO reviews item. It also RETURNS the same structured
+      `{ summary, verdict, new_questions, criticism, defects }` object required
+      by the prompt-catalog sidecar; a review-id pointer is not a valid return.
+
+      **Snapshot the review frontier BEFORE dispatch.** Read
+      `list_milestone_items({ milestone_id: M, projection: "compact" })`, retain
+      only `reviews` items whose `fields.ledgerRefs` contains exactly
+      `"goals:<G>"`, parse each `R<n>` id's numeric suffix, and record the
+      highest suffix as the snapshot frontier (use `0` when none exist). This
+      snapshot MUST precede the reviewer dispatch.
 
       **Catalog-driven dispatch (G41 — plan-reviewer).** Drive this
       `plan-reviewer` dispatch through the same typed prompt-catalog MCP tools the
@@ -385,8 +393,53 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       contract breach to surface, §Session logs). **Degrade gracefully when the
       catalog tools are absent** — exactly as sub-step 1a degrades for
       `plan-advance`: skip (a)–(d) and (g) and fall straight through to the bare
-      `CQ_SUBAGENT` dispatch (e). The validate steps are an ADDITIVE contract check,
-      never a hard dependency.
+      `CQ_SUBAGENT` dispatch (e). When the catalog tools are absent, manually
+      apply the identical closed contract: an object with exactly `summary:
+      string`, `verdict: "go-ahead"|"revise"`, `new_questions: string[]`,
+      `criticism: string[]`, and `defects: object[]`; every defect has exactly
+      `headline: non-empty string`, `severity:
+      "low"|"medium"|"high"|"critical"`, optional string `rootCause`, and
+      optional string `suggestedFix`. Also enforce the verdict/bucket invariant.
+      An invalid return is a contract failure, never a pointer fallback.
+
+      **Recover and reconcile the direct write AFTER dispatch.**
+
+      1. Re-read
+         `list_milestone_items({ milestone_id: M, projection: "full" })`.
+         Retain goal-linked `reviews` items as above whose numeric `R<n>` suffix
+         is greater than the snapshot frontier. Require exactly ONE new goal-linked review above the snapshot frontier.
+         Zero means the
+         reviewer returned without its required write; multiple means it
+         violated single-review-per-round. Either condition is an invariant
+         failure. Do NOT identify the new review by summary, status, timestamps,
+         or prose, and do not search for it: an older stale review may carry the
+         same summary.
+      2. Validate the returned structured verdict in full. Reconstruct EVERY
+         returned defect object in exact T843 property order — `headline`,
+         `severity`, optional `rootCause`, optional `suggestedFix` — so any
+         sidecar-valid input key order normalizes to the same structured value.
+         Then decode the recovered review's ENTIRE persisted
+         `fields.defects: string[]` batch. Every entry must parse to an object
+         matching the structured sidecar. Reconstruct each persisted object in
+         the same T843 property order and require compact `JSON.stringify` to
+         reproduce the persisted string byte-for-byte.
+      3. Construct canonical returned and persisted verdict objects in exact
+         property order `{ summary, verdict, new_questions, criticism, defects }`;
+         the persisted object's `verdict` comes from the review status and its
+         defects are the decoded-and-normalized structured objects; the returned
+         object's defects are the normalized returned objects from step 2.
+         Compact-`JSON.stringify` both. The persisted verdict bytes MUST equal the
+         returned verdict bytes.
+         This comparison covers status/verdict, summary, array order,
+         `new_questions`, `criticism`, and every defect field; comparing only the
+         summary is forbidden.
+      4. On zero/multiple reviews, invalid output, malformed or non-canonical
+         persisted JSON, schema/severity failure, or ANY byte mismatch, hard-fail
+         the round and **FAIL before attaching any sessionLogs/rawLogs**, before
+         continuing the planner loop, and before any review defect can be filed.
+         On success, retain this exact recovered review id for log attachment and
+         continue to sub-step 2c. EXACTLY ONE `reviews` item was written by the
+         reviewer.
 
    2b. **Multi-reviewer path** (configured). Launch ALL active reviewers **in
       parallel** and collect each one's verdict JSON. In this mode NO reviewer
@@ -436,6 +489,13 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
           criticism: [], defects: [...] }`. **Strip any code fence** before
           parsing — `pi` may wrap the JSON in a triple-backtick ` ```json `
           block. Capture the parsed object.
+        - **Full-object validation before abstention/reconcile.** A usable
+          configured verdict must validate against the SAME complete structured
+          sidecar as fallback: exact top-level fields and types, closed verdict
+          enum, string buckets, and structured defect objects with a non-empty
+          headline, closed severity enum, optional string fields, and no extra
+          fields. Enforce the verdict/bucket invariant. Never admit a
+          partially-validated object to reconciliation.
         - **Abstention (no timeout).** A reviewer that fails to return a usable
           verdict ABSTAINS — a `pi` shellout that exits non-zero / emits empty
           stdout / yields stdout that does not parse (after fence-strip) into the
@@ -460,7 +520,8 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
           reconcile.
       - **ii. Reconcile (Q91) — STRICTEST-WINS + tagged UNION, over SURVIVORS.**
         Combine the SURVIVING reviewers' verdicts (abstainers excluded from BOTH
-        the verdict and the union) into one:
+        the verdict and the union) in the **configured active-reviewer alias
+        order**, never parallel completion order:
         - **Quorum floor (all-abstain fallback):** if EVERY configured reviewer
           abstained (zero usable verdicts), fall back to the **single-reviewer
           path (sub-step 2a)** — the native `plan-reviewer` in its fallback mode
@@ -470,24 +531,58 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
           from zero usable reviews.
         - **Verdict:** `revise` if ANY surviving reviewer returned `revise`;
           `go-ahead` ONLY if ALL surviving reviewers returned `go-ahead`.
-        - **Findings:** UNION every surviving reviewer's `new_questions`, `criticism`, and
-          `defects`. **Prefix each finding with its source reviewer's alias**
-          (e.g. `[grok] …`, `[opus] …`) so provenance survives the merge.
-          De-duplicate obvious near-identical findings across reviewers, but bias
-          to KEEP — when in doubt, retain both. (For `defects` objects, tag the
-          `headline`.)
+        - **Findings:** UNION every surviving reviewer's `new_questions`,
+          `criticism`, and `defects` in that alias order. **Prefix each finding
+          with its source reviewer's alias** (e.g. `[grok] …`, `[opus] …`) so
+          provenance survives the merge. For a defect, prefix its structured
+          `headline` first — **prefix the alias BEFORE T843 serialization** —
+          then construct the canonical object in order: headline, severity, optional rootCause, optional suggestedFix,
+          and compact-`JSON.stringify`
+          it for persistence. De-duplicate only entries judged equivalent; keep
+          the first occurrence in configured alias order, and bias to KEEP when
+          equivalence is uncertain.
       - **iii. Orchestrator writes the ONE aggregated `reviews` item.** YOU (the
         orchestrator), not any reviewer, write the single reconciled verdict:
         `create_item("reviews", M, status: <reconciled verdict>, fields: {
         summary: "<one-line reconciled verdict>", new_questions: [<tagged
-        union>], criticism: [<tagged union>], defects: [<tagged union>],
-        ledgerRefs: ["goals:<G>"] })` (M = the goal's coordination milestone).
+        union>], criticism: [<tagged union>], defects: [<T843 serialized tagged
+        defect strings>], ledgerRefs: ["goals:<G>"] })` (M = the goal's
+        coordination milestone). Validate the complete reconciled structured
+        object and the entire serialized defect batch before this single write.
         **Preserve the invariant:** a `revise` must carry non-empty
         `new_questions` and/or `criticism` (those are what `revise` acts on);
         STRICTEST-WINS guarantees this because any reviewer that voted `revise`
         contributed at least one such finding. Stamp `author`/`session`. This is
         the SINGLE `reviews` item for the round. Capture its id from the fixed
         acknowledgement for the session-log attachment below.
+
+      **Normative translation/reconciliation fixtures.** These labels make the
+      four valid paths and the fail-loud boundary cases explicit:
+
+      - `direct-empty`: fallback returns structured `defects: []`; it persists
+        `fields.defects: []`; post-frontier bytes match.
+      - `direct-non-empty`: fallback returns structured defect objects; each
+        persists as compact
+        `{"headline":"…","severity":"…","rootCause":"…","suggestedFix":"…"}`
+        with absent optionals omitted; decoded post-frontier bytes match.
+      - `configured-empty`: every survivor returns structured `defects: []`;
+        aggregation persists `fields.defects: []`.
+      - `configured-non-empty`: process survivors in configured alias order,
+        prefix each alias on the structured headline, then serialize; e.g.
+        `{"headline":"[opus] …","severity":"high"}`.
+      - `zero-new-review`: hard-fail; no log attachment or defect filing.
+      - `multiple-new-reviews`: hard-fail; no arbitrary id selection.
+      - `stale-same-summary`: the pre-frontier item is never eligible.
+      - `bucket-divergence`: any summary/verdict/new_questions/criticism/defects
+        byte difference hard-fails.
+      - `invalid-output`: pointer, prose, missing/extra field, invalid verdict,
+        or wrong bucket type fails structured validation.
+      - `malformed-defect-json`: persisted decode fails the whole review.
+      - `invalid-defect-schema`: missing/extra/wrong-typed defect field fails.
+      - `invalid-severity`: any value outside
+        `low|medium|high|critical` fails.
+      - `reordered-returned-defect`: a sidecar-valid returned defect whose keys
+        arrive in a different order normalizes to T843 order and reconciles.
 
    2c. **Continue the loop.** Either way — fallback (2a) or reconciled (2b) —
       EXACTLY ONE `reviews` item now exists for this round (no double-write).
@@ -713,10 +808,9 @@ the paths):
   `reviews` item the round produced:
   `update_item("reviews", <reviewId>, fields: { sessionLogs: [<summary path(s)>], rawLogs: [<raw path(s)>] })`.
   - In the **fallback (2a)** the native reviewer subagent created the review
-    item; use the acknowledgement id it reported (or look it up via
-    `fts_search({ query: "<just-created verdict>", ledger: "reviews",
-    projection: "compact", limit: 10 })`), with the one `claude`-subagent
-    `.md`+`.jsonl` pair.
+    item; use ONLY the exact post-frontier id recovered and byte-reconciled in
+    sub-step 2a, with the one `claude`-subagent `.md`+`.jsonl` pair. A pointer,
+    summary/status search, or pre-frontier review is never an id source.
   - In the **configured (2b)** path YOU created the aggregated review item
     (sub-step 2b-iii), so you already have its id; attach the log paths for
     **every** reviewer that ran this round (one `claude`-subagent `.md`+`.jsonl`

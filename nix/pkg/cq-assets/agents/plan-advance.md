@@ -337,13 +337,37 @@ greenfield work — model it as a defect record PLUS one-or-more fix tasks:
    defect itself is never handed to `/implement:*`; only its fix tasks are.
 
 ## Consuming the reviewer's `defects[]` bucket (file-only, K12 supersedes K8 pt3 / Q26)
-Each `reviews` item carries a `defects` field (T40): an array of objects
-`{ headline, severity, rootCause?, suggestedFix? }` describing OUT-OF-SCOPE or
-PRE-EXISTING faults the reviewer found — faults this plan neither caused nor can
-fix within its scope. They are **orthogonal to the verdict** (a `go-ahead` review
-may carry them too) and they NEITHER block nor revise the current plan. Whenever
-you process a review (rules 3, 4, 5), if its `fields.defects` is non-empty, for
-EACH entry:
+Each `reviews` item carries a `defects: string[]` field (T843). Every string is
+the compact JSON serialization of one structured
+`{ headline, severity, rootCause?, suggestedFix? }` defect describing an
+OUT-OF-SCOPE or PRE-EXISTING fault the reviewer found — a fault this plan neither
+caused nor can fix within its scope. These defects are **orthogonal to the
+verdict** (a `go-ahead` review may carry them too) and they NEITHER block nor
+revise the current plan.
+
+**Decode and validate the ENTIRE batch before filing ANY defect.** Perform this
+as one side-effect-free preflight whenever rules 3, 4, or 5 process a review:
+
+1. Require `fields.defects` to be a `string[]` (absent means the legacy empty
+   batch). Parse EVERY string with `JSON.parse`.
+2. Require each decoded value to be a non-array object with exactly:
+   `headline` as a non-empty string; `severity` exactly one of
+   `low|medium|high|critical`; optional `rootCause` as a string; optional
+   `suggestedFix` as a string; and NO additional fields.
+3. Reconstruct each decoded object in exact T843 property order — `headline`,
+   `severity`, optional `rootCause`, optional `suggestedFix` — then require
+   compact `JSON.stringify` to equal its stored string byte-for-byte.
+4. Only after EVERY entry passes may you iterate the decoded objects and file
+   them. On a parse, schema, severity, or canonical-byte failure, hard-fail the
+   review consumption: **one malformed entry means ZERO defects are filed**.
+   Never file a valid prefix and then fail on a later entry.
+
+The normative `one-bad-batch-entry` boundary is a mixed batch with one valid
+canonical string followed by one malformed/non-canonical string: preflight the
+second entry before filing the first, hard-fail the whole batch, and perform
+ZERO defect-filing mutations.
+
+After the complete preflight succeeds, for EACH decoded entry:
 
 1. **File it as an `open` defect linked to the goal.** `create_item("defects", M,
    status: "open", fields: { headline: "<entry.headline>", severity:
