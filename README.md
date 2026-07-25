@@ -49,7 +49,7 @@ diffable and git-friendly. Milestones form a dependency DAG via their
 | Package | What it is |
 |---|---|
 | `@cq/ledger` | The library: parser, `FsLedgerStore`, schema/registry, FTS index, and the MCP tool definitions. |
-| `@cq/ledger-mcp` | Standalone MCP server exposing the 18-tool ledger surface over **stdio** or **Streamable HTTP**. |
+| `@cq/ledger-mcp` | Standalone MCP server exposing the 27-tool ledger surface over **stdio** or **Streamable HTTP**. |
 | `@cq/ledger-tui` | Ink terminal UI — a pure MCP client. Runs against a remote `cq mcp --http` (`--mcp-url`) or, by default, with the MCP server **embedded in-process** (`--cwd`). |
 | `@cq/ledger-web` | Browser explorer/editor + milestone **DAG view** — a pure MCP client served as a static bundle. Reverse-proxies to a remote `cq mcp` (`--mcp-url`) or, by default, **embeds the MCP server in-process** (`--cwd`). |
 
@@ -59,13 +59,21 @@ MCP protocol. Embedded mode does not change that invariant: it merely
 transport for the TUI; a co-hosted `/mcp` + `/ws` for the web server), so a
 single command needs no separately-running server.
 
-## Tool surface (18)
+## Tool surface (27)
 
 `enumerate_ledgers`, `create_ledger`, `fetch_ledger`, `fetch_ledger_archive`,
 `create_item`, `fetch_item`, `update_item`, `search_items`, `fts_search`,
 `create_milestone`, `update_milestone`, `fetch_milestone`,
 `list_milestone_items`, `archive_milestone`, `snapshot`, `reopen_item`,
-`unarchive_item`, `read_log`.
+`unarchive_item`, `read_log`, `derive_predicates`, `get_reviewers`,
+`get_planners`, `get_config`, `get_agent_models`, `fetch_prompt`,
+`validate_input`, `validate_output`, `list_projects`.
+
+The 27-tool ledger surface uses a single breaking wire-response contract:
+item-bearing reads require an explicit compact/full projection and eligible
+mutations return acknowledgements rather than full entities. See the
+[`@cq/ledger-mcp` response matrix](nix/pkg/cq-ledgers/packages/ledger-mcp/README.md#wire-response-contract)
+for every tool, retained field, pagination rule, and schema-checked example.
 
 ## Quick start (Nix)
 

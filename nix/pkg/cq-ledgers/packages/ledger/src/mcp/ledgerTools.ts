@@ -34,6 +34,13 @@ import { paginate } from "../projection.js";
 import { derivePredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
 import {
+  appendLedgerResponseDescription,
+  GET_PLANNERS_RESPONSE_DESCRIPTION,
+  GET_REVIEWERS_RESPONSE_DESCRIPTION,
+  ITEM_MUTATION_ACK_DESCRIPTION,
+  ITEM_PROJECTION_DESCRIPTION,
+  LEDGER_MUTATION_ACK_DESCRIPTION,
+  MILESTONE_MUTATION_ACK_DESCRIPTION,
   produceWireDto,
   projectFetchedLedgerDto,
   projectFetchedMilestoneDto,
@@ -165,7 +172,7 @@ const fieldsSchema = z.record(z.string(), fieldValueSchema);
 
 const projectionSchema = z
   .enum(["compact", "full"])
-  .describe("required item projection: compact or full");
+  .describe(ITEM_PROJECTION_DESCRIPTION);
 
 /**
  * D-LED-01: caller-supplied milestone/item ids cannot contain `/`, `.`, or
@@ -204,7 +211,7 @@ export function createLedgerMcpTools(
     `Fetch a ledger: schema, active milestone groups (each expanded with resolved milestone metadata { id, status, title, description }), and archive pointers.
 
 Required params:
-- projection ("compact" | "full"): compact returns intrinsic item metadata plus approved discovery/reference fields; full returns every item field.
+- projection ("compact" | "full"): ${ITEM_PROJECTION_DESCRIPTION}.
 
 Optional pagination params:
 - offset (integer, ≥0): zero-based index of the first item to return across the flattened item list. Enables pagination.
@@ -269,7 +276,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
 
   const fetchItem = tool(
     "fetch_item",
-    "Fetch a single item by id from a specific ledger using the required compact or full projection.",
+    `Fetch a single item by id from a specific ledger using the ${ITEM_PROJECTION_DESCRIPTION}.`,
     {
       ledger_id: z.string(),
       item_id: z.string(),
@@ -288,7 +295,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
 
   const updateItem = tool(
     "update_item",
-    "Update an item's status and/or fields. Provided fields replace existing values; omitted fields are preserved. Pass author/session to record who made this edit.",
+    `Update an item's status and/or fields. Provided fields replace existing values; omitted fields are preserved. Pass author/session to record who made this edit. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
     {
       ledger_id: z.string(),
       item_id: z.string(),
@@ -312,7 +319,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
 
   const createItem = tool(
     "create_item",
-    "Create a new item under a milestone in a ledger. milestone_id must resolve to an active (non-archived, non-terminal) milestone in the milestones ledger. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match). Auto-creates the depth-2 group on first reference. Pass author/session to record who created the item.",
+    `Create a new item under a milestone in a ledger. milestone_id must resolve to an active (non-archived, non-terminal) milestone in the milestones ledger. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match). Auto-creates the depth-2 group on first reference. Pass author/session to record who created the item. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
     {
       ledger_id: z.string(),
       milestone_id: safeIdSchema,
@@ -339,7 +346,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
 
   const createLedger = tool(
     "create_ledger",
-    "Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries. The name `milestones` is reserved.",
+    `Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries. The name \`milestones\` is reserved. ${LEDGER_MUTATION_ACK_DESCRIPTION}`,
     {
       name: z.string(),
       schema: schemaSchema,
@@ -355,7 +362,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
 
   const searchItems = tool(
     "search_items",
-    "Substring search across status and field values within a single ledger using the required compact or full item projection.",
+    `Substring search across status and field values within a single ledger using the ${ITEM_PROJECTION_DESCRIPTION}.`,
     {
       ledger_id: z.string(),
       query: z.string(),
@@ -376,7 +383,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
     `Ranked full-text search across ledger items, with a filter query language. Cross-ledger by default (pass \`ledger\` to restrict to one). Results are ranked by relevance (descending); field boosts favour headline/title/question over description/rationale over status. Each result carries the requested item projection, its score, and the fields that matched. Use this for discovery; use search_items for precise single-ledger substring matching.
 
 Params:
-- projection ("compact" | "full"): required item projection for every ranked result.
+- projection ("compact" | "full"): ${ITEM_PROJECTION_DESCRIPTION}.
 - status (string): dedicated pre-filter — applied before text ranking, accepts a single exact status value. Combine with inline status: qualifiers in query for multi-status OR: use query='(status:open OR status:wip)' (qualifier-only OR uses the structured evaluator, works correctly).
 - include_archived (boolean): when false (default) covers only active (non-archived) items; set true to also search items in milestone-group archives.
 - fuzzy / prefix (boolean): enable fuzzy matching or prefix matching on free-text terms.
@@ -432,7 +439,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const createMilestone = tool(
     "create_milestone",
-    "Create a new milestone in the milestones ledger. Allocates an M<n> id from the milestones ledger's own item counter. The blockedBy/dependsOn arrays are advisory cross-references (no FK enforcement).",
+    `Create a new milestone in the milestones ledger. Allocates an M<n> id from the milestones ledger's own item counter. The blockedBy/dependsOn arrays are advisory cross-references (no FK enforcement). ${MILESTONE_MUTATION_ACK_DESCRIPTION}`,
     {
       title: z.string(),
       description: z.string().optional(),
@@ -463,7 +470,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const updateMilestone = tool(
     "update_milestone",
-    "Update a milestone in the milestones ledger. status must be one of open/done/postponed/blocked.",
+    `Update a milestone in the milestones ledger. status must be one of open/done/postponed/blocked. ${MILESTONE_MUTATION_ACK_DESCRIPTION}`,
     {
       milestone_id: safeIdSchema,
       status: z.string().optional(),
@@ -496,7 +503,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const fetchMilestone = tool(
     "fetch_milestone",
-    "Fetch a compact or full milestone item from the milestones ledger, plus resolved metadata and per-ledger active reference counts.",
+    `Fetch a milestone item from the milestones ledger using the ${ITEM_PROJECTION_DESCRIPTION}, plus resolved metadata and per-ledger active reference counts.`,
     {
       milestone_id: safeIdSchema,
       projection: projectionSchema,
@@ -525,7 +532,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const listMilestoneItems = tool(
     "list_milestone_items",
-    "Return all active items grouped by ledger that reference this milestone using the required compact or full projection.",
+    `Return all active items grouped by ledger that reference this milestone using the ${ITEM_PROJECTION_DESCRIPTION}.`,
     {
       milestone_id: safeIdSchema,
       projection: projectionSchema,
@@ -545,7 +552,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const reopenItem = tool(
     "reopen_item",
-    "Recover an item accidentally set to a terminal status by moving it to a chosen non-terminal status.",
+    `Recover an item accidentally set to a terminal status by moving it to a chosen non-terminal status. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
     {
       ledger_id: z.string(),
       item_id: z.string(),
@@ -561,7 +568,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const unarchiveItem = tool(
     "unarchive_item",
-    "Restore a single item that was swept into its milestone-group archive (./.cq/archive/<ledger>/<milestoneId>.md) back to the active ledger; pass the archived item's milestone id.",
+    `Restore a single item that was swept into its milestone-group archive (./.cq/archive/<ledger>/<milestoneId>.md) back to the active ledger; pass the archived item's milestone id. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
     {
       ledger_id: z.string(),
       milestone_id: safeIdSchema,
@@ -591,7 +598,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const derivePredicatesTool = tool(
     "derive_predicates",
-    "Derive the /cq:advance flow-detection predicates from the current ledger state in one call (the SINGLE SOURCE OF TRUTH shared with @cq/cli — read these instead of hand-deriving them). Returns { pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate, belowFloor }, each a verdict { value: boolean, items: string[] } where items names the ids that make the predicate TRUE-and-unblocked (pSeed = a root-caused defect at/above the critical/high severity floor owned by no live goal and un-gated; pResearch = an actionable item in the researches ledger; openQuestionGate.items lists the open questions gating the others; belowFloor is the INFORMATIONAL sub-floor companion to pSeed and gates nothing). Pure over active-ledger reads; no params.",
+    "Derive the /cq:advance flow-detection predicates from the current ledger state in one call (the SINGLE SOURCE OF TRUTH shared with @cq/cli — read these instead of hand-deriving them). Returns { pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate, belowFloor, goalDrift }, each a verdict { value: boolean, items: string[] } where items names the ids that make the predicate TRUE-and-unblocked (pSeed = a root-caused defect at/above the critical/high severity floor owned by no live goal and un-gated; pResearch = an actionable item in the researches ledger; openQuestionGate.items lists the open questions gating the others; belowFloor and goalDrift are INFORMATIONAL companions and gate nothing). Pure over active-ledger reads; no params.",
     {} as Record<string, never>,
     async () => jsonResult(derivePredicates(store)),
   );
@@ -615,7 +622,7 @@ ${QUERY_LANGUAGE_HELP}`,
   const getReviewers = tool(
     "get_reviewers",
     "Resolve the reviewer set from the repo's cq.toml. Returns " +
-      "{ configured, reviewers: [{ harness, model, alias }] }. " +
+      `${GET_REVIEWERS_RESPONSE_DESCRIPTION}. ` +
       "configured=false (no cq.toml or empty list) => use the single native " +
       "Claude reviewer. Only available when the server has a cq.toml-capable " +
       "config root; otherwise returns a not-implemented error.",
@@ -629,7 +636,7 @@ ${QUERY_LANGUAGE_HELP}`,
   const getPlanners = tool(
     "get_planners",
     "Resolve the planner set from the repo's cq.toml. Returns " +
-      "{ configured, planners: [{ harness, model, alias }] }. " +
+      `${GET_PLANNERS_RESPONSE_DESCRIPTION}. ` +
       "configured=false (no cq.toml or empty list) => use the single native " +
       "Claude planner. Only available when the server has a cq.toml-capable " +
       "config root; otherwise returns a not-implemented error.",
@@ -774,11 +781,30 @@ ${QUERY_LANGUAGE_HELP}`,
     listProjectsTool,
   ] as unknown as AnyTool[];
 
+  const describedTools = tools.map((ledgerTool, index) => {
+    const toolName = LEDGER_TOOL_NAMES[index];
+    if (toolName === undefined || ledgerTool.name !== toolName) {
+      throw new Error(
+        `Ledger tool response-description order drift at ${ledgerTool.name}`,
+      );
+    }
+    return {
+      ...ledgerTool,
+      description: appendLedgerResponseDescription(
+        toolName,
+        ledgerTool.description,
+      ),
+    };
+  });
+
   // Pure name transform (Q208): register each tool under its prefixed name.
   // Default `''` leaves every name byte-identical; handler bodies and Zod input
   // schemas are untouched. Derived ONCE here rather than at each tool() literal.
-  if (toolPrefix === "") return tools;
-  return tools.map((t) => ({ ...t, name: prefixToolName(toolPrefix, t.name) }));
+  if (toolPrefix === "") return describedTools;
+  return describedTools.map((ledgerTool) => ({
+    ...ledgerTool,
+    name: prefixToolName(toolPrefix, ledgerTool.name),
+  }));
 }
 
 // ---------------------------------------------------------------------------
