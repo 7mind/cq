@@ -159,3 +159,40 @@ export {
 } from "./promptCatalogStore.js";
 export type { ValidationError, ValidationResult } from "./validation.js";
 export { validateAgainstSchema } from "./validation.js";
+export type {
+  DispatchedRoleId,
+  DispatchJSONValue,
+  DispatchOverlayApplication,
+  CompactDispatchLaunch,
+  DispatchHandle,
+  ResultCapability,
+  DispatchPromptProvenance,
+  DispatchDeadlines,
+  DispatchPrepared,
+  StoreDispatchResult,
+  NativeCompletionProof,
+  ConfirmDispatchCompletion,
+  DispatchAbortReason,
+  AbortDispatch,
+  DispatchLifecycleState,
+  PreparedDispatchResult,
+  ResultStoredDispatchResult,
+  ConsumedDispatchResult,
+  AbortedDispatchResult,
+  TerminalEnvelopeExpiredDispatchResult,
+  AttestationNotFoundDispatchResult,
+  FetchDispatchResult,
+  DispatchProtocolOperation,
+} from "./compactDispatchProtocol.js";
+export {
+  DISPATCH_ABORT_REASONS,
+  DISPATCH_LIFECYCLE_STATES,
+  DISPATCH_PROTOCOL_OPERATIONS,
+  COMPACT_DISPATCH_LAUNCH_SCHEMA,
+  DISPATCH_HANDLE_SCHEMA,
+  DISPATCH_PREPARED_SCHEMA,
+  STORE_DISPATCH_RESULT_SCHEMA,
+  CONFIRM_DISPATCH_COMPLETION_SCHEMA,
+  ABORT_DISPATCH_SCHEMA,
+  FETCH_DISPATCH_RESULT_SCHEMA,
+} from "./compactDispatchProtocol.js";

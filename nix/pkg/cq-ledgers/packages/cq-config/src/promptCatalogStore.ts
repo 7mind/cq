@@ -36,7 +36,7 @@ import { researchExperimenterSidecar } from "./schemas/research-experimenter.js"
  * id. Insertion order follows the {@link AGENT_ROLE_TIERS} subagent order for
  * deterministic iteration. Orchestrator-command roles are absent by design.
  */
-export const DISPATCHED_ROLE_SIDECARS: Readonly<Record<string, RoleSchemaSidecar>> = {
+export const DISPATCHED_ROLE_SIDECARS = {
   "plan-advance": planAdvanceSidecar,
   "plan-reviewer": planReviewerSidecar,
   "implement-worker": implementWorkerSidecar,
@@ -46,7 +46,7 @@ export const DISPATCHED_ROLE_SIDECARS: Readonly<Record<string, RoleSchemaSidecar
   "investigate-prober": investigateProberSidecar,
   "research-explorer": researchExplorerSidecar,
   "research-experimenter": researchExperimenterSidecar,
-};
+} satisfies Readonly<Record<string, RoleSchemaSidecar>>;
 
 /** The dispatched-subagent role ids (non-null agentTierKey) from the shared roster. */
 export const DISPATCHED_ROLE_IDS: readonly string[] = AGENT_ROLE_TIERS.filter(
@@ -58,5 +58,5 @@ export const DISPATCHED_ROLE_IDS: readonly string[] = AGENT_ROLE_TIERS.filter(
  * orchestrator-command id (which has no parent-validated contract).
  */
 export function getRoleSidecar(roleId: string): RoleSchemaSidecar | undefined {
-  return DISPATCHED_ROLE_SIDECARS[roleId];
+  return (DISPATCHED_ROLE_SIDECARS as Readonly<Record<string, RoleSchemaSidecar>>)[roleId];
 }
