@@ -1509,7 +1509,9 @@ describe("T340: /cq:plan idea-id grammar — structural grep invariants", () => 
     const text = await readFile(planMd, "utf8");
     expect(text).toContain("## Consume-an-idea sub-procedure");
     // (i) fetch the idea
-    expect(text).toContain('fetch_item("ideas", I)');
+    expect(text).toContain(
+      'fetch_item({ ledger_id: "ideas", item_id: I, projection: "full" })',
+    );
     // (ii) seed description VERBATIM from the idea
     expect(text).toContain("VERBATIM from the idea");
     // (iii) bidirectional ledgerRefs link (goal↔idea)
