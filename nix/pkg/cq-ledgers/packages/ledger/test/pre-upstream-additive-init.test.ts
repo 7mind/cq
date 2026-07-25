@@ -269,6 +269,17 @@ async function initGitRepository(): Promise<string> {
   return root;
 }
 
+async function divergenceBackupTags(root: string): Promise<string[]> {
+  const { stdout } = await exec("git", ["for-each-ref", "--format=%(refname)", "refs/tags"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  return stdout
+    .split("\n")
+    .filter((ref) => ref.startsWith("refs/tags/cq-ledger-backup-"))
+    .sort();
+}
+
 async function captureGitState(
   git: GitPlumbing,
   legacyPaths: readonly string[],
@@ -308,12 +319,7 @@ async function prepareGitFixture(): Promise<PersistentFixture> {
     capturePriorRawState: () => captureGitState(git, legacyPaths, false),
     captureCompleteRawState: () => captureGitState(git, legacyPaths, true),
     async assertNoDivergenceBackup() {
-      const { stdout } = await exec(
-        "git",
-        ["for-each-ref", "--format=%(refname)", "refs/tags/cq-ledger-backup-"],
-        { cwd: root, encoding: "utf8" },
-      );
-      expect(stdout.trim()).toBe("");
+      expect(await divergenceBackupTags(root)).toEqual([]);
     },
   };
 }
@@ -514,6 +520,19 @@ describe("pre-upstream immutable fixture provenance", () => {
     expect(await captureLogFiles(path.join(FS_FIXTURE_ROOT, ".cq", "logs"))).toBe(
       await expectedLogState,
     );
+  });
+
+  test("git divergence-tag oracle detects and can isolate a matching sentinel", async () => {
+    const root = await initGitRepository();
+    const sentinel = "cq-ledger-backup-sentinel";
+    const sentinelRef = `refs/tags/${sentinel}`;
+    await exec("git", ["tag", sentinel], { cwd: root });
+    try {
+      expect(await divergenceBackupTags(root)).toEqual([sentinelRef]);
+    } finally {
+      await exec("git", ["tag", "--delete", sentinel], { cwd: root });
+    }
+    expect(await divergenceBackupTags(root)).toEqual([]);
   });
 });
 
