@@ -1,6 +1,9 @@
 /**
  * T479: Regression guard — a flat cq.toml with no [harness.*] blocks must
- * parse identically under any active harness argument.
+ * parse identically under the claude, pi, and default selectors. (Since T861 a
+ * flat document is never a valid `codex` configuration: that selector is
+ * fail-closed and demands its own [harness.codex] block, so it is deliberately
+ * outside this guard.)
  *
  * Acceptance (Q239): a cq.toml with no [harness.*] keeps working unchanged.
  * A future change to the layered-merge logic in parseConfig must not silently

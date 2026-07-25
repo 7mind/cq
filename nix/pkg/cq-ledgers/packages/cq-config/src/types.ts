@@ -46,7 +46,9 @@ export type Harness = (typeof HARNESSES)[number];
  * `codex` is a selector-only member: a Codex-hosted invocation picks
  * `[harness.codex]`, but the reviewers/planners/tiers that block names must
  * still resolve to {@link Harness} tokens, because cq has no Codex dispatch
- * transport. `parseConfig` enforces that fail-closed (see its docstring).
+ * transport. That is enforced fail-closed: `parseConfig` records the verdict as
+ * `CqConfig.dispatchViolation` and every dispatch-panel resolver raises it
+ * before handing out a panel (see `parseConfig`'s docstring).
  */
 export const ACTIVE_HARNESSES = ["claude", "pi", "codex"] as const;
 
@@ -378,6 +380,13 @@ export interface ProjectConfig {
  *   projectId + url + serverUrl), or null if absent. When null, `backend`
  *   defaults to 'xdg' (K117) and `backup` defaults to 'none'.
  * - `project`: the `[project]` table (name), or null if absent (T570).
+ * - `dispatchViolation`: the ACTIVE selector's recorded fail-closed violation
+ *   message, or null when the selector imposes none (T861). Only the `codex`
+ *   selector currently records one. It is NOT raised at parse time: the rule
+ *   governs the DISPATCH-PANEL domain, so `resolveReviewers` /
+ *   `resolvePlanners` / `tierModel` throw it (via `assertDispatchable`) before
+ *   handing out a reviewer, planner, or tier model, while a SHARED-only reader
+ *   of `[ledger]` / `[project]` / `[webui]` stays unaffected.
  */
 export interface CqConfig {
   readonly aliases: Record<string, ReviewerToken>;
@@ -394,4 +403,9 @@ export interface CqConfig {
   readonly ledger: LedgerConfig | null;
   /** The `[project]` table (name), or null if absent. */
   readonly project: ProjectConfig | null;
+  /**
+   * The ACTIVE selector's fail-closed violation message, or null when there is
+   * none (T861). Raised at dispatch-panel resolution, never at parse time.
+   */
+  readonly dispatchViolation: string | null;
 }

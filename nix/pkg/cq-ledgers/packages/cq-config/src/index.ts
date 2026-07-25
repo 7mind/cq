@@ -50,6 +50,7 @@ export {
   formatReviewerToken,
   reviewerTokensEqual,
   parseConfig,
+  assertDispatchable,
   resolveReviewers,
   resolvePlanners,
   resolveAgentTier,

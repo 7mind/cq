@@ -19,6 +19,14 @@
  * no silent fall-through to the shared top-level defaults — and every alias the
  * active panels reference must resolve to a NON-CLAUDE executable token. Shared
  * Claude aliases remain perfectly legal as INACTIVE definitions.
+ *
+ * SCOPE OF THE RULE: it gates the DISPATCH-PANEL domain, not parsing. A
+ * violation is RECORDED by `parseConfig` as `dispatchViolation` and RAISED by
+ * every dispatch-panel resolver — `resolveReviewers`, `resolvePlanners`,
+ * `tierModel`, and hence `resolveAgentModel` — so nothing can be dispatched
+ * from a non-compliant codex configuration, while a SHARED-only read of
+ * `[ledger]` / `[project]` / `[webui]` (never per-harness overridden) still
+ * works under `CQ_HARNESS=codex`.
  */
 
 import { describe, it, expect } from "bun:test";
@@ -37,10 +45,12 @@ import {
   parseConfig,
   parseReviewerToken,
   resolveActiveHarness,
+  resolveAgentModel,
   resolvePlanners,
   resolveReviewers,
   tierModel,
   type ActiveHarness,
+  type CqConfig,
   type Harness,
   type ReviewerToken,
   type TierEntry,
@@ -103,6 +113,34 @@ function writeCqToml(contents: string): string {
   const root = mkdtempSync(path.join(tmpdir(), "cq-config-codex-"));
   writeFileSync(path.join(root, "cq.toml"), contents, "utf8");
   return root;
+}
+
+/**
+ * Every DISPATCH-PANEL read of `config`: each hands out a reviewer, planner, or
+ * tier model, so each must fail closed under a non-compliant codex selector.
+ */
+function dispatchPanelReads(config: CqConfig): Array<() => unknown> {
+  return [
+    () => resolveReviewers(config),
+    () => resolvePlanners(config),
+    () => tierModel(config, "frontier"),
+    () => resolveAgentModel(config, "plan-advance"),
+  ];
+}
+
+/**
+ * Assert the T861 fail-closed rule for `src` under the codex selector: PARSING
+ * itself succeeds (the rule must not gate shared-section reads — see D143's
+ * blast-radius criticism), and EVERY dispatch-panel read throws a
+ * `CqConfigError` matching `pattern` before any dispatch can occur.
+ */
+function expectCodexFailClosed(src: string, pattern: RegExp): void {
+  const config = parseConfig(src, "codex");
+  expect(config.dispatchViolation).toMatch(pattern);
+  for (const read of dispatchPanelReads(config)) {
+    expect(read).toThrow(CqConfigError);
+    expect(read).toThrow(pattern);
+  }
 }
 
 describe("T861: the active configuration-selector vocabulary admits codex", () => {
@@ -219,9 +257,10 @@ standard = "grok"
     expect(parseConfig(flat, "pi")).toEqual(underClaude);
     expect(parseConfig(flat)).toEqual(underClaude);
     expect(underClaude.reviewers).toEqual(["opus", "grok"]);
+    expect(underClaude.dispatchViolation).toBeNull();
     // ...but a flat document is NOT a valid codex configuration: the codex
     // selector narrows Q239's fallback and demands its own block.
-    expect(() => parseConfig(flat, "codex")).toThrow(/\[harness\.codex\]/);
+    expectCodexFailClosed(flat, /\[harness\.codex\]/);
   });
 });
 
@@ -237,11 +276,10 @@ opus = "claude:opus-4.8[1m]"
 [tiers]
 frontier = "opus"
 `;
-    expect(() => parseConfig(noCodex, "codex")).toThrow(CqConfigError);
-    expect(() => parseConfig(noCodex, "codex")).toThrow(/\[harness\.codex\]/);
+    expectCodexFailClosed(noCodex, /\[harness\.codex\]/);
     // The very same document is fine under claude / pi.
-    expect(() => parseConfig(noCodex, "claude")).not.toThrow();
-    expect(() => parseConfig(noCodex, "pi")).not.toThrow();
+    expect(() => resolveReviewers(parseConfig(noCodex, "claude"))).not.toThrow();
+    expect(() => resolveReviewers(parseConfig(noCodex, "pi"))).not.toThrow();
   });
 
   it("rejects an omitted reviewers section instead of falling back to the shared list", () => {
@@ -258,7 +296,7 @@ planners = ["grok"]
 [harness.codex.tiers]
 frontier = "grok"
 `;
-    expect(() => parseConfig(src, "codex")).toThrow(/reviewers/);
+    expectCodexFailClosed(src, /reviewers/);
   });
 
   it("rejects an omitted planners section", () => {
@@ -272,7 +310,7 @@ reviewers = ["grok"]
 [harness.codex.tiers]
 frontier = "grok"
 `;
-    expect(() => parseConfig(src, "codex")).toThrow(/planners/);
+    expectCodexFailClosed(src, /planners/);
   });
 
   it("rejects an omitted tiers section", () => {
@@ -287,7 +325,7 @@ grok = "pi:grok-build/grok-build"
 reviewers = ["grok"]
 planners = ["grok"]
 `;
-    expect(() => parseConfig(src, "codex")).toThrow(/tiers/);
+    expectCodexFailClosed(src, /tiers/);
   });
 
   it("rejects an ACTIVE reviewer alias that resolves to a claude token", () => {
@@ -303,8 +341,7 @@ planners = ["grok"]
 [harness.codex.tiers]
 frontier = "grok"
 `;
-    expect(() => parseConfig(src, "codex")).toThrow(CqConfigError);
-    expect(() => parseConfig(src, "codex")).toThrow(/claude/);
+    expectCodexFailClosed(src, /claude/);
   });
 
   it("rejects an ACTIVE planner alias that resolves to a claude token", () => {
@@ -320,7 +357,7 @@ planners = ["opus"]
 [harness.codex.tiers]
 frontier = "grok"
 `;
-    expect(() => parseConfig(src, "codex")).toThrow(/claude/);
+    expectCodexFailClosed(src, /claude/);
   });
 
   it("rejects an ACTIVE tier that resolves to a claude token (alias or bare)", () => {
@@ -336,7 +373,7 @@ planners = ["grok"]
 [harness.codex.tiers]
 frontier = "opus"
 `;
-    expect(() => parseConfig(viaAlias, "codex")).toThrow(/claude/);
+    expectCodexFailClosed(viaAlias, /claude/);
 
     const viaBareToken = `
 [aliases]
@@ -349,7 +386,7 @@ planners = ["grok"]
 [harness.codex.tiers]
 frontier = "claude:opus-4.8[1m]"
 `;
-    expect(() => parseConfig(viaBareToken, "codex")).toThrow(/claude/);
+    expectCodexFailClosed(viaBareToken, /claude/);
   });
 
   it("keeps shared Claude aliases legal as INACTIVE definitions", () => {
@@ -384,13 +421,14 @@ frontier = "grok"
 `;
     const codex = parseConfig(src, "codex");
     expect(codex.reviewers).toEqual(["grok"]);
+    expect(codex.dispatchViolation).toBeNull();
     expect(Object.keys(codex.aliases).sort()).toEqual(["grok", "opus", "sonnet"]);
     // ...and the claude selector still works off its own block.
     const claude = parseConfig(src, "claude");
     expect(claude.reviewers).toEqual(["sonnet"]);
   });
 
-  it("fails eagerly on an ACTIVE dangling alias", () => {
+  it("fails on an ACTIVE dangling alias", () => {
     const src = `
 [aliases]
 grok = "pi:grok-build/grok-build"
@@ -402,14 +440,90 @@ planners = ["grok"]
 [harness.codex.tiers]
 frontier = "grok"
 `;
-    expect(() => parseConfig(src, "codex")).toThrow(CqConfigError);
-    expect(() => parseConfig(src, "codex")).toThrow(/nonexistent/);
+    expectCodexFailClosed(src, /nonexistent/);
 
+    // The dangling alias is ALSO caught by loadConfig's generic eager
+    // resolution — that check is harness-agnostic and predates T861.
     const root = writeCqToml(src);
     try {
       expect(() => loadConfig(root, "codex")).toThrow(CqConfigError);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("T861: the codex fail-closed rule gates DISPATCH only, not shared sections", () => {
+  /**
+   * `[ledger]` / `[project]` / `[webui]` are SHARED sections that are never
+   * per-harness overridden. A non-compliant codex configuration must not stop a
+   * reader of those sections (the store factory, `cq log put`, `cq migrate`,
+   * `cq mcp`) from working — the rule belongs to the dispatch-panel domain.
+   */
+  const SHARED_ONLY = `
+reviewers = ["opus"]
+planners = ["opus"]
+
+[aliases]
+opus = "claude:opus-4.8[1m]"
+
+[tiers]
+frontier = "opus"
+
+[ledger]
+backend = "xdg"
+branch = "cq-ledger"
+
+[project]
+name = "cq"
+
+[webui]
+port = 4321
+`;
+
+  it("parses and exposes the shared sections under codex with no [harness.codex] block", () => {
+    const codex = parseConfig(SHARED_ONLY, "codex");
+    expect(codex.ledger?.backend).toBe("xdg");
+    expect(codex.ledger?.branch).toBe("cq-ledger");
+    expect(codex.project?.name).toBe("cq");
+    expect(codex.webui?.port).toBe(4321);
+    // The shared sections are byte-identical to the claude selector's.
+    const claude = parseConfig(SHARED_ONLY, "claude");
+    expect(codex.ledger).toEqual(claude.ledger);
+    expect(codex.project).toEqual(claude.project);
+    expect(codex.webui).toEqual(claude.webui);
+    // ...while the dispatch verdict differs: codex is fail-closed.
+    expect(claude.dispatchViolation).toBeNull();
+    expect(codex.dispatchViolation).toMatch(/\[harness\.codex\]/);
+  });
+
+  it("loads the same document from disk under codex without throwing", () => {
+    const root = writeCqToml(SHARED_ONLY);
+    try {
+      const codex = loadConfig(root, "codex");
+      expect(codex).not.toBeNull();
+      expect(codex!.ledger?.backend).toBe("xdg");
+      // ...but every dispatch-panel read still fails closed.
+      for (const read of dispatchPanelReads(codex!)) {
+        expect(read).toThrow(CqConfigError);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("still fails closed on every dispatch-panel resolver, including resolveAgentModel", () => {
+    const codex = parseConfig(SHARED_ONLY, "codex");
+    expect(() => resolveReviewers(codex)).toThrow(/\[harness\.codex\]/);
+    expect(() => resolvePlanners(codex)).toThrow(/\[harness\.codex\]/);
+    expect(() => tierModel(codex, "frontier")).toThrow(/\[harness\.codex\]/);
+    expect(() => resolveAgentModel(codex, "plan-advance")).toThrow(
+      /\[harness\.codex\]/,
+    );
+    // The gate fires BEFORE the shared claude frontier model could leak out:
+    // under the claude selector that very tier resolves to a claude token.
+    expect(tierModel(parseConfig(SHARED_ONLY, "claude"), "frontier")).toEqual(
+      parseReviewerToken("claude:opus-4.8[1m]"),
+    );
   });
 });

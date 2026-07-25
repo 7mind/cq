@@ -13,6 +13,7 @@
  */
 
 import {
+  assertDispatchable,
   loadConfig,
   resolveReviewers,
   resolvePlanners,
@@ -86,7 +87,14 @@ export function computePlanners(repoRoot: string): GetPlannersResult {
   return { configured: planners.length > 0, planners };
 }
 
-/** Compute the `get_config` payload for `repoRoot`. */
+/**
+ * Compute the `get_config` payload for `repoRoot`.
+ *
+ * Projects the DISPATCH PANELS (`reviewers` / `planners` / `[tiers]`), so it
+ * fails closed on the active selector's recorded violation (T861) exactly like
+ * `get_reviewers` / `get_planners` / `get_agent_models` — a Codex host must
+ * never be handed a Claude panel it cannot invoke.
+ */
 export function computeConfig(repoRoot: string): GetConfigResult {
   const config = loadConfig(repoRoot);
   if (config === null) {
@@ -100,6 +108,7 @@ export function computeConfig(repoRoot: string): GetConfigResult {
       agentEfforts: {},
     };
   }
+  assertDispatchable(config);
   return projectConfig(config);
 }
 

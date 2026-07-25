@@ -398,11 +398,14 @@ function parseProject(raw: RawProject): ProjectConfig {
  * (`claude | pi | codex`), NOT an executable {@link Harness} dispatch token
  * (T861). It defaults to {@link DEFAULT_HARNESS}, so an omitted argument
  * reproduces the pre-override behaviour exactly. A flat cq.toml with no
- * `[harness.*]` table parses identically under any selector.
+ * `[harness.*]` table parses identically under the `claude`, `pi`, and default
+ * selectors; it is NEVER a valid `codex` configuration (see the fail-closed
+ * rule below, which requires an explicit `[harness.codex]` block).
  *
  * CODEX FAIL-CLOSED RULE (T861) — deliberately NARROWER than the Q239 layered
- * fallback above. When `activeHarness === "codex"`, {@link assertCodexPanels}
- * runs after the merge and rejects, BEFORE any dispatch can occur:
+ * fallback above. When `activeHarness === "codex"`, {@link codexPanelViolation}
+ * runs after the merge and RECORDS, as the returned config's
+ * `dispatchViolation`:
  *  - a document with no `[harness.codex]` block;
  *  - a `[harness.codex]` block omitting any of `reviewers` / `planners` /
  *    `tiers` (no fall-through to the shared top-level defaults);
@@ -411,8 +414,16 @@ function parseProject(raw: RawProject): ProjectConfig {
  * Shared Claude aliases remain legal INACTIVE definitions: only the merged,
  * ACTIVE panels are checked.
  *
+ * The rule is a DISPATCH-PANEL rule, so parsing itself does NOT throw on it:
+ * the violation is raised by {@link assertDispatchable} from every
+ * dispatch-panel resolver ({@link resolveReviewers}, {@link resolvePlanners},
+ * {@link tierModel}, and hence {@link resolveAgentModel}) — i.e. before any
+ * dispatch can occur — while a SHARED-only reader of `[ledger]` / `[project]` /
+ * `[webui]` (sections this docstring declares shared and never per-harness
+ * overridden) keeps working under a codex selector.
+ *
  * Throws on malformed TOML (via the parser), an unknown harness in an alias
- * token, a non-array `reviewers`, or a codex fail-closed violation.
+ * token, or a non-array `reviewers`.
  */
 export function parseConfig(
   source: string,
@@ -447,10 +458,11 @@ export function parseConfig(
     }
   }
 
-  // T861: the codex selector narrows the Q239 fallback to fail-closed.
-  if (activeHarness === "codex") {
-    assertCodexPanels(override, aliases, tiers);
-  }
+  // T861: the codex selector narrows the Q239 fallback to fail-closed. The
+  // verdict is RECORDED here and raised by assertDispatchable at dispatch-panel
+  // resolution, so it never gates a shared-section read.
+  const dispatchViolation =
+    activeHarness === "codex" ? codexPanelViolation(override, aliases, tiers) : null;
 
   const webui = raw.webui === null ? null : parseWebui(raw.webui);
   const agentTiers =
@@ -469,11 +481,13 @@ export function parseConfig(
     agentEfforts,
     ledger,
     project,
+    dispatchViolation,
   };
 }
 
 /**
- * Enforce the FAIL-CLOSED rule for an ACTIVE `codex` selector (T861).
+ * Judge the FAIL-CLOSED rule for an ACTIVE `codex` selector (T861), returning
+ * the violation message (unprefixed) or `null` when the panels are compliant.
  *
  * `codex` is a CONFIGURATION SELECTOR with no dispatch transport of its own, so
  * a Codex-hosted run must state its executable panels explicitly. This
@@ -485,79 +499,93 @@ export function parseConfig(
  *     Claude reviewers it cannot invoke.
  *  2. NO CLAUDE TOKENS. Every alias the ACTIVE panels reference — and every
  *     `[harness.codex.tiers]` model — must resolve to a non-claude executable
- *     {@link Harness} token. A dangling alias fails here too, eagerly.
+ *     {@link Harness} token. A dangling alias is a violation here too.
  *
  * Only the MERGED, ACTIVE panels are inspected: shared Claude aliases (and a
  * `[harness.claude]` block referencing them) remain legal INACTIVE definitions.
  *
+ * This RETURNS rather than throws because the rule belongs to the DISPATCH-PANEL
+ * domain: {@link parseConfig} records the verdict and
+ * {@link assertDispatchable} raises it at every dispatch-panel resolution,
+ * leaving shared-section reads unaffected.
+ *
  * `override` is the raw `[harness.codex]` block (undefined when the document
  * declares none); `tiers` is the already-merged tier map.
  */
-function assertCodexPanels(
+function codexPanelViolation(
   override: RawHarnessOverride | undefined,
   aliases: Record<string, ReviewerToken>,
   tiers: TiersConfig | null,
-): void {
+): string | null {
   if (override === undefined) {
-    throw new CqConfigError(
-      'active harness "codex" requires a [harness.codex] block: the codex selector is fail-closed and never falls back to the shared reviewers/planners/[tiers]',
-    );
+    return 'active harness "codex" requires a [harness.codex] block: the codex selector is fail-closed and never falls back to the shared reviewers/planners/[tiers]';
   }
 
-  const reviewers = requireCodexSection(override.reviewers, "reviewers");
-  const planners = requireCodexSection(override.planners, "planners");
-  requireCodexSection(override.tiers, "tiers");
+  const reviewers = override.reviewers;
+  if (reviewers === null) {
+    return missingCodexSection("reviewers");
+  }
+  const planners = override.planners;
+  if (planners === null) {
+    return missingCodexSection("planners");
+  }
+  if (override.tiers === null) {
+    return missingCodexSection("tiers");
+  }
   if (tiers === null) {
     // Unreachable while `override.tiers` is non-null (parseConfig assigns the
     // merged tiers from it), but keeps the narrowing honest.
-    throw new CqConfigError(
-      "[harness.codex] must define its own [harness.codex.tiers] table",
-    );
+    return "[harness.codex] must define its own [harness.codex.tiers] table";
   }
 
   for (const alias of reviewers) {
-    assertCodexPanelAlias(aliases, alias, "reviewers");
+    const violation = codexPanelAliasViolation(aliases, alias, "reviewers");
+    if (violation !== null) {
+      return violation;
+    }
   }
   for (const alias of planners) {
-    assertCodexPanelAlias(aliases, alias, "planners");
+    const violation = codexPanelAliasViolation(aliases, alias, "planners");
+    if (violation !== null) {
+      return violation;
+    }
   }
   for (const entry of tiers.entries) {
-    assertCodexDispatchable(
+    const violation = codexDispatchViolation(
       entry.token,
       `[harness.codex.tiers] ${entry.class} = "${entry.raw}"`,
     );
+    if (violation !== null) {
+      return violation;
+    }
   }
+  return null;
 }
 
-/** Require one `[harness.codex]` section to be PRESENT (T861 fail-closed). */
-function requireCodexSection<Section>(
-  value: Section | null,
+/** The message for an ABSENT `[harness.codex]` section (T861 fail-closed). */
+function missingCodexSection(
   section: "reviewers" | "planners" | "tiers",
-): Section {
-  if (value === null) {
-    throw new CqConfigError(
-      `[harness.codex] must define its own ${section}: the codex selector is fail-closed and never falls back to the shared ${section}`,
-    );
-  }
-  return value;
+): string {
+  return `[harness.codex] must define its own ${section}: the codex selector is fail-closed and never falls back to the shared ${section}`;
 }
 
 /**
- * Resolve one ACTIVE `[harness.codex]` reviewer/planner alias and assert it is
- * dispatchable from a Codex host. A dangling alias fails eagerly (T861).
+ * Resolve one ACTIVE `[harness.codex]` reviewer/planner alias and judge whether
+ * it is dispatchable from a Codex host. A dangling alias is a violation (T861).
  */
-function assertCodexPanelAlias(
+function codexPanelAliasViolation(
   aliases: Record<string, ReviewerToken>,
   alias: string,
   section: "reviewers" | "planners",
-): void {
+): string | null {
   const token = aliases[alias];
   if (token === undefined) {
-    throw new CqConfigError(
-      `[harness.codex] ${section} references undefined alias "${alias}" (not declared in [aliases])`,
-    );
+    return `[harness.codex] ${section} references undefined alias "${alias}" (not declared in [aliases])`;
   }
-  assertCodexDispatchable(token, `[harness.codex] ${section} alias "${alias}"`);
+  return codexDispatchViolation(
+    token,
+    `[harness.codex] ${section} alias "${alias}"`,
+  );
 }
 
 /**
@@ -568,12 +596,31 @@ function assertCodexPanelAlias(
  */
 const CODEX_FORBIDDEN_HARNESS: Harness = "claude";
 
-/** Reject a claude-resolving token in an ACTIVE codex panel (T861). */
-function assertCodexDispatchable(token: ReviewerToken, what: string): void {
+/** Judge a claude-resolving token in an ACTIVE codex panel (T861). */
+function codexDispatchViolation(
+  token: ReviewerToken,
+  what: string,
+): string | null {
   if (token.harness === CODEX_FORBIDDEN_HARNESS) {
-    throw new CqConfigError(
-      `${what} resolves to "${formatReviewerToken(token)}", but the active codex selector forbids ${CODEX_FORBIDDEN_HARNESS} dispatch tokens (a Codex host cannot invoke the ${CODEX_FORBIDDEN_HARNESS} transport)`,
-    );
+    return `${what} resolves to "${formatReviewerToken(token)}", but the active codex selector forbids ${CODEX_FORBIDDEN_HARNESS} dispatch tokens (a Codex host cannot invoke the ${CODEX_FORBIDDEN_HARNESS} transport)`;
+  }
+  return null;
+}
+
+/**
+ * Raise the recorded fail-closed violation, if any, BEFORE a dispatch panel is
+ * handed out (T861).
+ *
+ * The one enforcement point for `CqConfig.dispatchViolation`: every
+ * dispatch-panel resolver ({@link resolveReviewers}, {@link resolvePlanners},
+ * {@link tierModel}) calls it first, so no reviewer, planner, or tier model can
+ * be obtained from a config whose ACTIVE selector forbids it. Shared-section
+ * readers (`[ledger]`, `[project]`, `[webui]`) never call it and are therefore
+ * never gated by a dispatch-panel rule.
+ */
+export function assertDispatchable(config: CqConfig): void {
+  if (config.dispatchViolation !== null) {
+    throw new CqConfigError(config.dispatchViolation);
   }
 }
 
@@ -696,15 +743,20 @@ function parseWebui(raw: RawWebui): WebuiConfig {
 }
 
 /**
- * Resolve each `reviewers` alias name through `[aliases]` into a
- * ReviewerToken. Throws a precise `CqConfigError` on a dangling alias.
+ * Resolve a list of alias names through `[aliases]`, naming `section` in the
+ * error. The shared body of {@link resolveReviewers} / {@link resolvePlanners}
+ * and of {@link loadConfig}'s eager dangling-alias check.
  */
-export function resolveReviewers(config: CqConfig): ReviewerToken[] {
-  return config.reviewers.map((alias) => {
+function resolveAliasList(
+  config: CqConfig,
+  names: readonly string[],
+  section: "reviewers" | "planners",
+): ReviewerToken[] {
+  return names.map((alias) => {
     const token = config.aliases[alias];
     if (token === undefined) {
       throw new CqConfigError(
-        `reviewers references undefined alias "${alias}" (not declared in [aliases])`,
+        `${section} references undefined alias "${alias}" (not declared in [aliases])`,
       );
     }
     return token;
@@ -712,19 +764,25 @@ export function resolveReviewers(config: CqConfig): ReviewerToken[] {
 }
 
 /**
+ * Resolve each `reviewers` alias name through `[aliases]` into a
+ * ReviewerToken. Throws a precise `CqConfigError` on a dangling alias, or on
+ * the ACTIVE selector's recorded fail-closed violation (T861) — this is a
+ * DISPATCH-PANEL read, so it fails closed before any dispatch.
+ */
+export function resolveReviewers(config: CqConfig): ReviewerToken[] {
+  assertDispatchable(config);
+  return resolveAliasList(config, config.reviewers, "reviewers");
+}
+
+/**
  * Resolve each `planners` alias name through `[aliases]` into a
- * ReviewerToken. Throws a precise `CqConfigError` on a dangling alias.
+ * ReviewerToken. Throws a precise `CqConfigError` on a dangling alias, or on
+ * the ACTIVE selector's recorded fail-closed violation (T861) — this is a
+ * DISPATCH-PANEL read, so it fails closed before any dispatch.
  */
 export function resolvePlanners(config: CqConfig): ReviewerToken[] {
-  return config.planners.map((alias) => {
-    const token = config.aliases[alias];
-    if (token === undefined) {
-      throw new CqConfigError(
-        `planners references undefined alias "${alias}" (not declared in [aliases])`,
-      );
-    }
-    return token;
-  });
+  assertDispatchable(config);
+  return resolveAliasList(config, config.planners, "planners");
 }
 
 /**
@@ -778,11 +836,16 @@ export function reviewerTokensEqual(
  * the entry whose class equals `tier`, or `undefined` when `[tiers]` is absent
  * or does not name that tier. (A model may serve several tiers, but a tier
  * names one model — TOML key uniqueness guarantees it.)
+ *
+ * A DISPATCH-PANEL read: it hands out the model a role will be dispatched at,
+ * so it throws the ACTIVE selector's recorded fail-closed violation first
+ * (T861) rather than returning a model a Codex host cannot invoke.
  */
 export function tierModel(
   config: CqConfig,
   tier: Tier,
 ): ReviewerToken | undefined {
+  assertDispatchable(config);
   return config.tiers?.entries.find((e) => e.class === tier)?.token;
 }
 
@@ -873,10 +936,16 @@ export function formatReviewerToken(token: ReviewerToken): string {
  *
  * Returns `null` when no cq.toml exists (feature OFF => caller falls back to
  * a single native Claude reviewer). Otherwise parses with the active selector's
- * layered override (see {@link parseConfig}, including its codex fail-closed
- * rule), validates, and eagerly resolves the reviewers/planners lists — so a
- * dangling alias in the ALREADY-MERGED active panels throws at load time, not
- * later.
+ * layered override (see {@link parseConfig}), validates, and eagerly resolves
+ * the reviewers/planners alias lists — so a dangling alias in the
+ * ALREADY-MERGED active panels throws at load time, not later.
+ *
+ * That eager pass deliberately does NOT apply the codex fail-closed rule: the
+ * rule gates dispatch panels, and `loadConfig` is also the entry point for
+ * SHARED-only readers of `[ledger]` / `[project]` / `[webui]`. The recorded
+ * violation is raised by {@link assertDispatchable} inside
+ * {@link resolveReviewers} / {@link resolvePlanners} / {@link tierModel}
+ * instead — still before any dispatch (T861).
  *
  * `harness` is an {@link ActiveHarness} selector (`claude | pi | codex`), not
  * an executable dispatch token (T861). It defaults to
@@ -894,7 +963,9 @@ export function loadConfig(
   const source = readFileSync(file, "utf8");
   const config = parseConfig(source, harness);
   // Eagerly resolve so a dangling alias is reported at load time, not later.
-  resolveReviewers(config);
-  resolvePlanners(config);
+  // Via resolveAliasList, NOT resolveReviewers/resolvePlanners: the codex
+  // fail-closed gate must not fire for a shared-only reader (see above).
+  resolveAliasList(config, config.reviewers, "reviewers");
+  resolveAliasList(config, config.planners, "planners");
   return config;
 }

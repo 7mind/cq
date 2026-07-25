@@ -193,6 +193,50 @@ describe("resolveLedgerBackend", () => {
       }
     }
   });
+
+  it("T861: a SHARED-only read stays readable under CQ_HARNESS=codex with no [harness.codex] block", async () => {
+    // The codex fail-closed rule (T861) governs the DISPATCH-PANEL domain
+    // (reviewers / planners / [tiers]). `[ledger]` is a SHARED section that is
+    // never per-harness overridden, so resolving the backend must NOT be gated
+    // by it: `cq mcp`, `cq log put`, `cq migrate` and the store factory all read
+    // this path while a codex-hosted invocation exports CQ_HARNESS=codex.
+    const dir = await plainDir();
+    await writeCqToml(
+      dir,
+      [
+        'reviewers = ["opus"]',
+        'planners  = ["opus"]',
+        "",
+        "[aliases]",
+        'opus = "claude:opus-4.8[1m]"',
+        "",
+        "[tiers]",
+        'frontier = "opus"',
+        "",
+        "[ledger]",
+        'backend = "xdg"',
+        'branch  = "cq-ledger"',
+      ].join("\n") + "\n",
+    );
+
+    const prev = process.env["CQ_HARNESS"];
+    try {
+      process.env["CQ_HARNESS"] = "codex";
+      const underCodex = resolveLedgerBackend(dir);
+
+      process.env["CQ_HARNESS"] = "claude";
+      const underClaude = resolveLedgerBackend(dir);
+
+      expect(underCodex).toEqual({ backend: "xdg", branch: "cq-ledger", explicit: true });
+      expect(underCodex).toEqual(underClaude);
+    } finally {
+      if (prev === undefined) {
+        delete process.env["CQ_HARNESS"];
+      } else {
+        process.env["CQ_HARNESS"] = prev;
+      }
+    }
+  });
 });
 
 describe("createLedgerStore — legacy backends warn and open (K117, was T505's hard refusal)", () => {

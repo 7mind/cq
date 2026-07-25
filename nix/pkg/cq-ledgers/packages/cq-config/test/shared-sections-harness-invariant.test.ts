@@ -87,6 +87,17 @@ describe("[ledger] and [webui] are harness-invariant (T483)", () => {
     expect(underClaude.reviewers).toEqual(["opus"]);
   });
 
+  it("T861: [ledger]/[webui] stay identical under the codex selector too", () => {
+    // The document declares no [harness.codex], so the codex selector records a
+    // fail-closed DISPATCH violation — which must not gate these SHARED reads.
+    const underCodex = parseConfig(TOML_WITH_HARNESS_PI, "codex");
+    const underClaude = parseConfig(TOML_WITH_HARNESS_PI, "claude");
+
+    expect(underCodex.ledger).toEqual(underClaude.ledger);
+    expect(underCodex.webui).toEqual(underClaude.webui);
+    expect(underCodex.dispatchViolation).toMatch(/\[harness\.codex\]/);
+  });
+
   it("a flat cq.toml (no [harness.*]) yields equal [ledger]/[webui] under any harness", () => {
     const flat = `
 [ledger]
