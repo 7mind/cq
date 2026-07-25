@@ -6,9 +6,12 @@ import * as path from "node:path";
 import {
   GOALS_LEDGER,
   GOALS_SCHEMA,
+  InMemoryLedgerStore,
   MILESTONES_AMBIENT_ID,
   SqliteLedgerStore,
+  buildBackupDump,
   replayPlanClaim,
+  restoreDumpToXdg,
   type PlanClaimInput,
   type PlanLifecycleStore,
   type PlanReleaseInput,
@@ -212,6 +215,75 @@ describe("T850 SQLite lifecycle persistence", () => {
       }
     } finally {
       await reset.dispose();
+    }
+  });
+
+  test("restore replaces stale private replay authority with the dump state", async () => {
+    const file = await dbPath();
+    const target = new SqliteLedgerStore({ dbPath: file });
+    await target.init();
+    await target.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+      id: "G1",
+      status: "clarifying",
+      fields: { title: "stale restore goal", description: "must be replaced" },
+      ...PROVENANCE,
+    });
+    const lifecycle = target as SqliteLifecycleStore;
+    const input = claimInput("restore-claim", OWNER_A);
+    const claimed = await lifecycle.claimPlan(input);
+    if (!claimed.ok) throw new Error("claim failed");
+    const releaseInput: PlanReleaseInput = {
+      kind: "pause",
+      goalId: "G1",
+      claimId: claimed.acknowledgement.claimId,
+      generation: claimed.acknowledgement.generation,
+      operationId: "restore-release",
+      ownerFenceToken: OWNER_A,
+      ...PROVENANCE,
+      effect: {
+        kind: "questions",
+        questions: [{ key: "restore", question: "Does restore replace stale authority?" }],
+      },
+    };
+    const released = await lifecycle.releasePlanClaim(releaseInput);
+    if (!released.ok) throw new Error("release failed");
+    await target.dispose();
+
+    const source = new InMemoryLedgerStore();
+    await source.init();
+    const dump = await buildBackupDump(source, null);
+    await source.dispose();
+    await restoreDumpToXdg({ dbPath: file, logsDir: null, dump });
+
+    const restored = new SqliteLedgerStore({ dbPath: file });
+    await restored.init();
+    try {
+      const restoredLifecycle = restored as SqliteLifecycleStore;
+      expect(await restoredLifecycle.claimPlan(input)).toEqual({
+        ok: false,
+        conflict: { code: "goal-not-found", goalId: "G1" },
+      });
+      expect(await restoredLifecycle.releasePlanClaim(releaseInput)).toEqual({
+        ok: false,
+        conflict: { code: "goal-not-found", goalId: "G1" },
+      });
+
+      const inspect = openLedgerDb(file);
+      try {
+        expect(
+          inspect
+            .query(
+              `SELECT
+                 (SELECT COUNT(*) FROM plan_claims) AS claims,
+                 (SELECT COUNT(*) FROM plan_operations) AS operations`,
+            )
+            .get(),
+        ).toEqual({ claims: 0, operations: 0 });
+      } finally {
+        inspect.close();
+      }
+    } finally {
+      await restored.dispose();
     }
   });
 
