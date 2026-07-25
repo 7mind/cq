@@ -8,6 +8,7 @@ import {
 import {
   inMemoryPlanLifecycleFactory,
 } from "./planLifecycleInMemoryAdapter.js";
+import { sqlitePlanLifecycleFactory } from "./planLifecycleSqliteAdapter.js";
 import {
   referencePlanLifecycleFactory,
   type PlanLifecycleContractFactory,
@@ -63,7 +64,10 @@ function progressionFactory(
 
 runPlanLifecycleStoreContract(referencePlanLifecycleFactory);
 runPlanLifecycleStoreContract(inMemoryPlanLifecycleFactory);
-for (const registration of PRODUCTION_REGISTRATIONS) {
+runPlanLifecycleStoreContract(sqlitePlanLifecycleFactory);
+for (const registration of PRODUCTION_REGISTRATIONS.filter(
+  ({ name }) => name !== "SqliteLedgerStore",
+)) {
   runPlanLifecycleStoreContract(progressionFactory(registration));
 }
 
@@ -92,7 +96,7 @@ describe("T847 production capability registry", () => {
     ).toEqual([
       { name: "FsLedgerStore", available: false },
       { name: "GitObjectLedgerBackend", available: false },
-      { name: "SqliteLedgerStore", available: false },
+      { name: "SqliteLedgerStore", available: true },
       { name: "PostgresLedgerStore", available: false },
     ]);
   });

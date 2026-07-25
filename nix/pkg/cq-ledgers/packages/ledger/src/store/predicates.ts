@@ -177,7 +177,9 @@ const TASK_BLOCKED_STATUS = "blocked";
  * "undefined ledger → no linking items" precedent in core.ts), so a partial
  * store never throws here.
  */
-function activeItems(store: LedgerStore, ledgerId: string): Item[] {
+type PredicateStoreReader = Pick<LedgerStore, "enumerate" | "fetch">;
+
+function activeItems(store: PredicateStoreReader, ledgerId: string): Item[] {
   let fetched;
   try {
     fetched = store.fetch(ledgerId);
@@ -229,7 +231,7 @@ export function activePlanResearchWaits(
 }
 
 function buildTaskDependencyReadiness(
-  store: LedgerStore,
+  store: PredicateStoreReader,
   tasks: readonly Item[],
   milestones: readonly Item[],
 ): (task: Item) => boolean {
@@ -302,7 +304,7 @@ function buildTaskDependencyReadiness(
 }
 
 export function taskDependenciesSatisfied(
-  store: LedgerStore,
+  store: PredicateStoreReader,
   task: Item,
 ): boolean {
   return buildTaskDependencyReadiness(

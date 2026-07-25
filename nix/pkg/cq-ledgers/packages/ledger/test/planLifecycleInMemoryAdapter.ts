@@ -18,6 +18,7 @@ import {
   TASKS_LEDGER,
   type Item,
   type Ledger,
+  type LedgerStore,
   type PlanLifecycleStore,
   type PlanPrivateClaimRecord,
 } from "../src/index.js";
@@ -91,7 +92,7 @@ function goalOwned(items: readonly Item[], goalId: string): Item[] {
   return items.filter((item) => refValues(item, "ledgerRefs").includes(ref));
 }
 
-function allItems(store: InMemoryLedgerStore, ledgerId: string): Item[] {
+function allItems(store: LedgerStore, ledgerId: string): Item[] {
   return store.fetch(ledgerId).milestones.flatMap(({ items }) => items);
 }
 
@@ -111,18 +112,19 @@ function reviewId(item: Item): string {
   return ref.slice(REVIEWS_LEDGER.length + 1);
 }
 
-class InMemoryPlanLifecycleFixture implements PlanLifecycleContractFixture {
-  readonly lifecycle: PlanLifecycleStore;
+export abstract class LedgerStorePlanLifecycleFixture<
+  Store extends LedgerStore & PlanLifecycleStore,
+> implements PlanLifecycleContractFixture {
+  constructor(
+    readonly store: Store,
+    readonly lifecycle: PlanLifecycleStore = store,
+  ) {}
 
-  constructor(readonly store: InMemoryLedgerStore) {
-    this.lifecycle = store;
-  }
-
-  static async create(): Promise<InMemoryPlanLifecycleFixture> {
-    const store = new InMemoryLedgerStore();
-    await store.init();
-    return new InMemoryPlanLifecycleFixture(store);
-  }
+  protected abstract seedUpdate(
+    ledgerId: string,
+    itemId: string,
+    mutate: (item: Item) => void,
+  ): Promise<void>;
 
   async seedGoal(options: SeedGoalOptions): Promise<void> {
     await this.store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
@@ -135,9 +137,10 @@ class InMemoryPlanLifecycleFixture implements PlanLifecycleContractFixture {
       ...SEED_PROVENANCE,
     });
     if (options.generation !== null) {
-      const goal = findMutableItem(this.store, GOALS_LEDGER, options.goalId);
-      goal.fields[PLAN_GENERATION_FIELD] = String(options.generation);
-      goal.fields[PLAN_WAITING_RESEARCHES_FIELD] = [];
+      await this.seedUpdate(GOALS_LEDGER, options.goalId, (goal) => {
+        goal.fields[PLAN_GENERATION_FIELD] = String(options.generation);
+        goal.fields[PLAN_WAITING_RESEARCHES_FIELD] = [];
+      });
     }
   }
 
@@ -146,13 +149,10 @@ class InMemoryPlanLifecycleFixture implements PlanLifecycleContractFixture {
       title: "seeded work",
       ...SEED_PROVENANCE,
     });
-    const mutableMilestone = findMutableItem(
-      this.store,
-      MILESTONES_LEDGER,
-      milestone.id,
-    );
-    mutableMilestone.author = SEED_PROVENANCE.author;
-    mutableMilestone.session = SEED_PROVENANCE.session;
+    await this.seedUpdate(MILESTONES_LEDGER, milestone.id, (mutableMilestone) => {
+      mutableMilestone.author = SEED_PROVENANCE.author;
+      mutableMilestone.session = SEED_PROVENANCE.session;
+    });
     const taskIds: string[] = [];
     for (const [index, status] of options.taskStatuses.entries()) {
       const task = await this.store.createItem(TASKS_LEDGER, milestone.id, {
@@ -163,38 +163,39 @@ class InMemoryPlanLifecycleFixture implements PlanLifecycleContractFixture {
         },
         ...SEED_PROVENANCE,
       });
-      findMutableItem(this.store, TASKS_LEDGER, task.id).fields["ledgerRefs"] = [
-        `${GOALS_LEDGER}:${goalId}`,
-      ];
+      await this.seedUpdate(TASKS_LEDGER, task.id, (mutableTask) => {
+        mutableTask.fields["ledgerRefs"] = [`${GOALS_LEDGER}:${goalId}`];
+      });
       taskIds.push(task.id);
     }
-    const goal = findMutableItem(this.store, GOALS_LEDGER, goalId);
-    goal.fields["milestones"] = [milestone.id];
-    const currentGeneration = Number(goal.fields[PLAN_GENERATION_FIELD] ?? "1");
-    const manifest = {
-      revision: 1,
-      milestones: [{ key: "seeded_milestone", id: milestone.id }],
-      tasks: taskIds.map((id, index) => ({ key: `seeded_task_${index + 1}`, id })),
-    };
-    const identity = {
-      goalId,
-      claimId: "seeded_claim",
-      generation: currentGeneration,
-      revision: 1,
-    };
-    if (options.legacy) {
-      delete goal.fields[PLAN_GENERATION_FIELD];
-      delete goal.fields[PLAN_ACTIVE_CLAIM_FIELD];
-      delete goal.fields[PLAN_CURRENT_DRAFT_FIELD];
-      delete goal.fields[PLAN_FINALIZED_DRAFT_FIELD];
-      delete goal.fields[PLAN_FINALIZED_MANIFEST_FIELD];
-      delete goal.fields[PLAN_WAITING_RESEARCHES_FIELD];
-    } else {
-      goal.fields[PLAN_CURRENT_DRAFT_FIELD] = JSON.stringify({ identity, manifest });
-      goal.fields[PLAN_FINALIZED_DRAFT_FIELD] = JSON.stringify(identity);
-      goal.fields[PLAN_FINALIZED_MANIFEST_FIELD] = JSON.stringify(manifest);
-      goal.fields[PLAN_WAITING_RESEARCHES_FIELD] = [];
-    }
+    await this.seedUpdate(GOALS_LEDGER, goalId, (goal) => {
+      goal.fields["milestones"] = [milestone.id];
+      const currentGeneration = Number(goal.fields[PLAN_GENERATION_FIELD] ?? "1");
+      const manifest = {
+        revision: 1,
+        milestones: [{ key: "seeded_milestone", id: milestone.id }],
+        tasks: taskIds.map((id, index) => ({ key: `seeded_task_${index + 1}`, id })),
+      };
+      const identity = {
+        goalId,
+        claimId: "seeded_claim",
+        generation: currentGeneration,
+        revision: 1,
+      };
+      if (options.legacy) {
+        delete goal.fields[PLAN_GENERATION_FIELD];
+        delete goal.fields[PLAN_ACTIVE_CLAIM_FIELD];
+        delete goal.fields[PLAN_CURRENT_DRAFT_FIELD];
+        delete goal.fields[PLAN_FINALIZED_DRAFT_FIELD];
+        delete goal.fields[PLAN_FINALIZED_MANIFEST_FIELD];
+        delete goal.fields[PLAN_WAITING_RESEARCHES_FIELD];
+      } else {
+        goal.fields[PLAN_CURRENT_DRAFT_FIELD] = JSON.stringify({ identity, manifest });
+        goal.fields[PLAN_FINALIZED_DRAFT_FIELD] = JSON.stringify(identity);
+        goal.fields[PLAN_FINALIZED_MANIFEST_FIELD] = JSON.stringify(manifest);
+        goal.fields[PLAN_WAITING_RESEARCHES_FIELD] = [];
+      }
+    });
     for (let index = 0; index < options.openQuestionCount; index += 1) {
       await this.store.createItem(QUESTIONS_LEDGER, MILESTONES_AMBIENT_ID, {
         status: "open",
@@ -395,23 +396,7 @@ class InMemoryPlanLifecycleFixture implements PlanLifecycleContractFixture {
     };
   }
 
-  async restart(): Promise<PlanLifecycleContractFixture> {
-    const next = new InMemoryLedgerStore();
-    await next.init();
-    const source = internals(this.store);
-    const target = internals(next);
-    target.ledgers.clear();
-    for (const [key, value] of source.ledgers) target.ledgers.set(key, cloneLedger(value));
-    target.planClaims.clear();
-    for (const [key, value] of source.planClaims) {
-      target.planClaims.set(key, clone(value));
-    }
-    target.planOperations.clear();
-    for (const [key, value] of source.planOperations) {
-      target.planOperations.set(key, clone(value));
-    }
-    return new InMemoryPlanLifecycleFixture(next);
-  }
+  abstract restart(): Promise<PlanLifecycleContractFixture>;
 
   async rawMutateManagedState(goalId: string): Promise<void> {
     await this.store.updateItem(GOALS_LEDGER, goalId, {
@@ -431,6 +416,40 @@ class InMemoryPlanLifecycleFixture implements PlanLifecycleContractFixture {
 
   async dispose(): Promise<void> {
     await this.store.dispose();
+  }
+}
+
+class InMemoryPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<InMemoryLedgerStore> {
+  static async create(): Promise<InMemoryPlanLifecycleFixture> {
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    return new InMemoryPlanLifecycleFixture(store);
+  }
+
+  protected async seedUpdate(
+    ledgerId: string,
+    itemId: string,
+    mutate: (item: Item) => void,
+  ): Promise<void> {
+    mutate(findMutableItem(this.store, ledgerId, itemId));
+  }
+
+  async restart(): Promise<PlanLifecycleContractFixture> {
+    const next = new InMemoryLedgerStore();
+    await next.init();
+    const source = internals(this.store);
+    const target = internals(next);
+    target.ledgers.clear();
+    for (const [key, value] of source.ledgers) target.ledgers.set(key, cloneLedger(value));
+    target.planClaims.clear();
+    for (const [key, value] of source.planClaims) {
+      target.planClaims.set(key, clone(value));
+    }
+    target.planOperations.clear();
+    for (const [key, value] of source.planOperations) {
+      target.planOperations.set(key, clone(value));
+    }
+    return new InMemoryPlanLifecycleFixture(next);
   }
 }
 

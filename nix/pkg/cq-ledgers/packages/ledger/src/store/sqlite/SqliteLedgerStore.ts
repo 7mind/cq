@@ -57,6 +57,19 @@ import type {
   LedgerSchema,
   Milestone,
 } from "../../types.js";
+import type {
+  PlanClaimInput,
+  PlanClaimResult,
+  PlanFinalizeInput,
+  PlanFinalizeResult,
+  PlanLifecycleStore,
+  PlanPrivateClaimRecord,
+  PlanPublishDraftInput,
+  PlanPublishDraftResult,
+  PlanReleaseInput,
+  PlanReleaseResult,
+} from "../../planLifecycle.js";
+import { PlanPrivateClaimRecordSchema } from "../../planLifecycle.js";
 import {
   BootstrapViolationError,
   DuplicateIdError,
@@ -113,11 +126,27 @@ import {
   MILESTONES_LEDGER,
   QUESTIONS_ANSWER_FIELD,
   QUESTIONS_LEDGER,
+  TASKS_LEDGER,
   LEDGER_LOGS_STRIP_RE,
   LEDGER_LOGS_RELATIVE_PREFIX,
 } from "../../constants.js";
 import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
 import { ensureSchema, SCHEMA_VERSION } from "./schema.js";
+import {
+  claimInMemoryPlan,
+  finalizeInMemoryPlan,
+  publishInMemoryPlanDraft,
+  releaseInMemoryPlanClaim,
+  type InMemoryPlanLifecycleState,
+  type InMemoryPlanMutation,
+  type InMemoryPlanOperationRecord,
+} from "../inMemoryPlanLifecycle.js";
+import {
+  assertManagedGoalTransitionAllowed,
+  assertManagedTaskTransitionAllowed,
+  assertRawPlanCreateAllowed,
+  assertRawPlanUpdateAllowed,
+} from "../planLifecycleGuards.js";
 import {
   MAX_READ_LOG_BYTES,
   ReadLogNotImplementedError,
@@ -193,6 +222,11 @@ interface PointerRow {
   status: string;
 }
 
+interface PlanRecordRow {
+  scope: string;
+  record_json: string;
+}
+
 function rowToItem(row: ItemRow): Item {
   const item: Item = {
     id: row.id,
@@ -213,7 +247,7 @@ function rowToItem(row: ItemRow): Item {
  */
 const LEDGER_NAME_RE = /^[A-Za-z0-9_-]+$/;
 
-export class SqliteLedgerStore implements LedgerStore {
+export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly dbPath: string;
   private readonly logsDir: string | undefined;
   private readonly now: () => string;
@@ -302,6 +336,8 @@ export class SqliteLedgerStore implements LedgerStore {
         `WARNING: LedgerStore divergence detected — prior state backed up to ${backupPath}\n`,
       );
       db.transaction(() => {
+        db.exec("DELETE FROM plan_operations");
+        db.exec("DELETE FROM plan_claims");
         db.exec("DELETE FROM archived_items");
         db.exec("DELETE FROM archive_pointers");
         db.exec("DELETE FROM items");
@@ -757,6 +793,14 @@ export class SqliteLedgerStore implements LedgerStore {
   ): Promise<Item> {
     const item = immediateWriteTransaction(this.db(), () => {
       const shim = this.singleItemShim(ledgerId, itemId);
+      assertRawPlanUpdateAllowed(
+        this.planGuardStore(),
+        (id) => this.loadLedger(id),
+        ledgerId,
+        shim,
+        itemId,
+        patch,
+      );
       const precondition = this.statusChangePrecondition(ledgerId, shim, itemId, patch);
       const x = applyUpdateItem(
         shim,
@@ -789,6 +833,11 @@ export class SqliteLedgerStore implements LedgerStore {
       // parity with AbstractLedgerStore.createItem: this check runs BEFORE
       // the target-ledger existence check (createItemShim below).
       assertMilestoneActive(this.loadLedger(MILESTONES_LEDGER), milestoneId);
+      assertRawPlanCreateAllowed(
+        (id) => this.loadLedger(id),
+        ledgerId,
+        init.fields,
+      );
       // T538 (D87): a MINIMAL shim of the target ledger (targeted row
       // queries) instead of materialising all N rows via loadLedger.
       const shim = this.createItemShim(ledgerId, milestoneId, init.id);
@@ -856,6 +905,18 @@ export class SqliteLedgerStore implements LedgerStore {
   async reopenItem(ledgerId: string, itemId: string, toStatus: string): Promise<Item> {
     const item = immediateWriteTransaction(this.db(), () => {
       const shim = this.singleItemShim(ledgerId, itemId);
+      const source = findItem(shim, itemId).item;
+      if (ledgerId === GOALS_LEDGER) {
+        assertManagedGoalTransitionAllowed(source, toStatus);
+      }
+      if (ledgerId === TASKS_LEDGER) {
+        assertManagedTaskTransitionAllowed(
+          this.planGuardStore(),
+          (id) => this.loadLedger(id),
+          source,
+          toStatus,
+        );
+      }
       const x = applyReopenItem(shim, itemId, toStatus, this.now());
       this.persistItemRow(ledgerId, x);
       return x;
@@ -1091,6 +1152,26 @@ export class SqliteLedgerStore implements LedgerStore {
     return pointer;
   }
 
+  async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
+    return this.runPlanLifecycleMutation((state) => claimInMemoryPlan(state, input));
+  }
+
+  async publishPlanDraft(input: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
+    return this.runPlanLifecycleMutation((state) =>
+      publishInMemoryPlanDraft(state, input),
+    );
+  }
+
+  async releasePlanClaim(input: PlanReleaseInput): Promise<PlanReleaseResult> {
+    return this.runPlanLifecycleMutation((state) =>
+      releaseInMemoryPlanClaim(state, input),
+    );
+  }
+
+  async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
+    return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input));
+  }
+
   // ---------------------------------------------------------------------------
   // Internals — write path (T527)
   // ---------------------------------------------------------------------------
@@ -1114,6 +1195,113 @@ export class SqliteLedgerStore implements LedgerStore {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(
           `LedgerStore: onMutation hook threw for ${ledgerId} (${op}): ${msg}\n`,
+        );
+      }
+    }
+  }
+
+  private planGuardStore(): Pick<LedgerStore, "enumerate" | "fetch"> {
+    return {
+      enumerate: () => this.enumerate(),
+      fetch: (ledgerId) => this.fetchView(ledgerId),
+    };
+  }
+
+  private runPlanLifecycleMutation<T>(
+    mutate: (state: InMemoryPlanLifecycleState) => InMemoryPlanMutation<T>,
+  ): T {
+    const mutation = immediateWriteTransaction(this.db(), () => {
+      const state = this.loadPlanLifecycleState();
+      const result = mutate(state);
+      for (const ledgerId of new Set(result.dirtyLedgers)) {
+        const ledger = state.ledgers.get(ledgerId);
+        if (ledger === undefined) {
+          throw new LedgerError(`ledger not found: ${ledgerId}`);
+        }
+        this.replaceActiveLedger(ledger);
+      }
+      this.persistPlanRecords("plan_claims", state.claims);
+      this.persistPlanRecords("plan_operations", state.operations);
+      return result;
+    });
+    for (const ledgerId of this.enumerate()) {
+      this.rebuildLedgerIndexActive(ledgerId);
+    }
+    for (const ledgerId of new Set(mutation.dirtyLedgers)) {
+      this.fireMutation(ledgerId, "update");
+    }
+    return mutation.result;
+  }
+
+  private loadPlanLifecycleState(): InMemoryPlanLifecycleState {
+    const ledgers = new Map(
+      this.enumerate().map((ledgerId) => [ledgerId, this.loadLedger(ledgerId)]),
+    );
+    const claims = new Map<string, PlanPrivateClaimRecord>();
+    for (const row of this.db()
+      .query("SELECT scope, record_json FROM plan_claims")
+      .all() as PlanRecordRow[]) {
+      claims.set(row.scope, PlanPrivateClaimRecordSchema.parse(JSON.parse(row.record_json)));
+    }
+    const operations = new Map<string, InMemoryPlanOperationRecord>();
+    for (const row of this.db()
+      .query("SELECT scope, record_json FROM plan_operations")
+      .all() as PlanRecordRow[]) {
+      operations.set(
+        row.scope,
+        JSON.parse(row.record_json) as InMemoryPlanOperationRecord,
+      );
+    }
+    return { ledgers, claims, operations, now: this.now };
+  }
+
+  private persistPlanRecords<T>(
+    table: "plan_claims" | "plan_operations",
+    records: ReadonlyMap<string, T>,
+  ): void {
+    const statement = this.db().query(
+      `INSERT INTO ${table} (scope, record_json) VALUES (?, ?)
+       ON CONFLICT(scope) DO UPDATE SET record_json = excluded.record_json`,
+    );
+    for (const [scope, record] of records) {
+      statement.run(scope, JSON.stringify(record));
+    }
+  }
+
+  private replaceActiveLedger(ledger: Ledger): void {
+    const db = this.db();
+    db.query("DELETE FROM items WHERE ledger = ?").run(ledger.id);
+    db.query("DELETE FROM groups WHERE ledger = ?").run(ledger.id);
+    db.query(
+      "UPDATE ledgers SET milestone_counter = ?, item_counter = ? WHERE name = ?",
+    ).run(ledger.counters.milestone, ledger.counters.item, ledger.id);
+    const insertGroup = db.query(
+      "INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, ?, ?)",
+    );
+    const insertItem = db.query(
+      `INSERT INTO items (
+         ledger, id, milestone_id, status, fields_json,
+         created_at, updated_at, author, session
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const milestone of ledger.milestones) {
+      insertGroup.run(
+        ledger.id,
+        milestone.id,
+        milestone.title,
+        milestone.description,
+      );
+      for (const item of milestone.items) {
+        insertItem.run(
+          ledger.id,
+          item.id,
+          item.milestoneId,
+          item.status,
+          JSON.stringify(item.fields),
+          item.createdAt,
+          item.updatedAt,
+          item.author ?? null,
+          item.session ?? null,
         );
       }
     }
