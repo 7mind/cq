@@ -26,11 +26,13 @@ import {
   resolvePromptSurface,
   startLedgerCoherenceWatcher,
 } from "@cq/ledger-mcp";
+import { resolveProjectKey, resolveStateDirBase } from "@cq/ledger";
 import type { WebuiConfig } from "@cq/config";
 import { loadConfig } from "@cq/config";
 
 const DEFAULT_PORT = 5180;
 const DEFAULT_HOST = "127.0.0.1";
+export const WHOLE_STORE_DEFAULT_PORT = 5191;
 
 /**
  * Maximum number of consecutive ports the bind scan will try (Q107). Starting
@@ -63,6 +65,31 @@ export interface ServeOpts {
   cwd: string;
   outdir: string;
 }
+
+export interface ParsedWebArgs extends ServeOpts {
+  /** Explicit whole-store selector. `null` preserves automatic mode selection. */
+  backend: "xdg" | null;
+  /** Explicit XDG projects root, valid only with `backend === "xdg"`. */
+  store: string | null;
+}
+
+export interface XdgWholeStoreOpts {
+  host: string;
+  port: number;
+  projectsRoot: string;
+  /** Bounded checkout hint used later for identity backfill and preselection. */
+  cwdHint: string;
+  outdir: string;
+}
+
+export type WebModeSelection =
+  | { kind: "proxy"; opts: ServeOpts }
+  | { kind: "embedded"; opts: ServeOpts }
+  | {
+      kind: "xdg";
+      source: "explicit" | "implicit";
+      opts: XdgWholeStoreOpts;
+    };
 
 export interface BundleBuild {
   outdir: string;
@@ -350,42 +377,224 @@ async function serveEmbedded(
   return server;
 }
 
-export function parseArgs(argv: readonly string[]): ServeOpts {
+export function parseArgs(argv: readonly string[]): ParsedWebArgs {
   let host = DEFAULT_HOST;
   let port = DEFAULT_PORT;
   let hostExplicit = false;
   let portExplicit = false;
-  let mcpUrl: string | null = null; // omitted ⇒ embedded
+  let mcpUrl: string | null = null;
   let cwd: string | undefined;
+  let backend: "xdg" | null = null;
+  let store: string | null = null;
+  const seen = new Set<string>();
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--port") {
-      port = Number(argv[++i]);
+      assertFlagNotRepeated(seen, "--port");
+      const consumed = requireFlagValue(argv, i, "--port");
+      i = consumed.index;
+      port = Number(consumed.value);
       portExplicit = true;
     } else if (a?.startsWith("--port=")) {
-      port = Number(a.slice("--port=".length));
+      assertFlagNotRepeated(seen, "--port");
+      port = Number(requireEqualsValue(a, "--port"));
       portExplicit = true;
     } else if (a === "--host") {
-      host = argv[++i] ?? host;
+      assertFlagNotRepeated(seen, "--host");
+      const consumed = requireFlagValue(argv, i, "--host");
+      i = consumed.index;
+      host = consumed.value;
       hostExplicit = true;
     } else if (a?.startsWith("--host=")) {
-      host = a.slice("--host=".length);
+      assertFlagNotRepeated(seen, "--host");
+      host = requireEqualsValue(a, "--host");
       hostExplicit = true;
-    } else if (a === "--mcp-url") mcpUrl = argv[++i] ?? mcpUrl;
-    else if (a?.startsWith("--mcp-url=")) mcpUrl = a.slice("--mcp-url=".length);
-    else if (a === "--cwd") cwd = argv[++i];
-    else if (a?.startsWith("--cwd=")) cwd = a.slice("--cwd=".length);
+    } else if (a === "--mcp-url") {
+      assertFlagNotRepeated(seen, "--mcp-url");
+      const consumed = requireFlagValue(argv, i, "--mcp-url");
+      i = consumed.index;
+      mcpUrl = consumed.value;
+    } else if (a?.startsWith("--mcp-url=")) {
+      assertFlagNotRepeated(seen, "--mcp-url");
+      mcpUrl = requireEqualsValue(a, "--mcp-url");
+    } else if (a === "--cwd") {
+      assertFlagNotRepeated(seen, "--cwd");
+      const consumed = requireFlagValue(argv, i, "--cwd");
+      i = consumed.index;
+      cwd = consumed.value;
+    } else if (a?.startsWith("--cwd=")) {
+      assertFlagNotRepeated(seen, "--cwd");
+      cwd = requireEqualsValue(a, "--cwd");
+    } else if (a === "--backend") {
+      assertFlagNotRepeated(seen, "--backend");
+      const consumed = requireFlagValue(argv, i, "--backend");
+      i = consumed.index;
+      backend = parseBackend(consumed.value);
+    } else if (a?.startsWith("--backend=")) {
+      assertFlagNotRepeated(seen, "--backend");
+      backend = parseBackend(requireEqualsValue(a, "--backend"));
+    } else if (a === "--store") {
+      assertFlagNotRepeated(seen, "--store");
+      const consumed = requireFlagValue(argv, i, "--store");
+      i = consumed.index;
+      store = consumed.value;
+    } else if (a?.startsWith("--store=")) {
+      assertFlagNotRepeated(seen, "--store");
+      store = requireEqualsValue(a, "--store");
+    } else if (a !== undefined && a.startsWith("-")) {
+      throw new Error(`ledger-web: unrecognized option: ${a}`);
+    } else {
+      throw new Error(`ledger-web: positional arguments are not accepted: ${JSON.stringify(a)}`);
+    }
   }
   if (!Number.isInteger(port) || port <= 0 || port > 65535) {
     throw new Error(`ledger-web: --port must be 1..65535; got: ${port}`);
   }
-  // Embedded ledger root: --cwd > $LEDGER_ROOT > process CWD (mirrors ledger-mcp).
+  if (mcpUrl !== null && backend !== null) {
+    throw new Error("ledger-web: --mcp-url conflicts with --backend=xdg");
+  }
+  if (store !== null && backend === null) {
+    throw new Error("ledger-web: --store requires --backend=xdg");
+  }
+  // Repository root / whole-store checkout hint, mirroring ledger-mcp precedence.
   const fromArg = cwd !== undefined && cwd !== "" ? cwd : undefined;
   const fromEnv = process.env["LEDGER_ROOT"];
   const chosen = fromArg ?? (fromEnv !== undefined && fromEnv !== "" ? fromEnv : undefined);
   const resolvedCwd = chosen !== undefined ? path.resolve(chosen) : process.cwd();
+  const resolvedStore = store === null ? null : path.resolve(store);
   const outdir = process.env["LEDGER_WEB_OUTDIR"] ?? DEFAULT_OUTDIR;
-  return { host, port, hostExplicit, portExplicit, mcpUrl, cwd: resolvedCwd, outdir };
+  return {
+    host,
+    port,
+    hostExplicit,
+    portExplicit,
+    mcpUrl,
+    cwd: resolvedCwd,
+    outdir,
+    backend,
+    store: resolvedStore,
+  };
+}
+
+function assertFlagNotRepeated(seen: Set<string>, flag: string): void {
+  if (seen.has(flag)) {
+    throw new Error(`ledger-web: ${flag} may be passed only once`);
+  }
+  seen.add(flag);
+}
+
+function requireFlagValue(
+  argv: readonly string[],
+  flagIndex: number,
+  flag: string,
+): { value: string; index: number } {
+  const index = flagIndex + 1;
+  const value = argv[index];
+  if (value === undefined || value === "" || value.startsWith("--")) {
+    throw new Error(`ledger-web: ${flag} requires a value`);
+  }
+  return { value, index };
+}
+
+function requireEqualsValue(argument: string, flag: string): string {
+  const value = argument.slice(`${flag}=`.length);
+  if (value === "") {
+    throw new Error(`ledger-web: ${flag} requires a value`);
+  }
+  return value;
+}
+
+function parseBackend(value: string): "xdg" {
+  if (value !== "xdg") {
+    throw new Error(`ledger-web: --backend supports only "xdg"; got: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+/**
+ * Resolve the strict launch mode without starting a server.
+ *
+ * Proxy mode always wins when selected explicitly. Explicit XDG mode never
+ * reads webui/backend/PostgreSQL settings from the cwd; that root remains only
+ * a bounded identity-backfill/preselection hint. With neither flag, a
+ * repository whose stable project key can be resolved keeps the historical
+ * embedded mode; every other cwd selects the independent whole-store mode.
+ */
+export async function resolveWebMode(args: ParsedWebArgs): Promise<WebModeSelection> {
+  if (args.mcpUrl !== null) {
+    return {
+      kind: "proxy",
+      opts: resolveRepositoryLocalServeOpts(args, args.cwd),
+    };
+  }
+
+  if (args.backend === "xdg") {
+    return {
+      kind: "xdg",
+      source: "explicit",
+      opts: resolveWholeStoreOpts(args),
+    };
+  }
+
+  const repositoryRoot = await resolveRepositoryRoot(args.cwd);
+  if (repositoryRoot === null) {
+    return {
+      kind: "xdg",
+      source: "implicit",
+      opts: resolveWholeStoreOpts(args),
+    };
+  }
+  return {
+    kind: "embedded",
+    opts: resolveRepositoryLocalServeOpts(args, repositoryRoot),
+  };
+}
+
+function resolveRepositoryLocalServeOpts(args: ParsedWebArgs, configRoot: string): ServeOpts {
+  const config = loadConfig(configRoot);
+  const { host, port } = resolveWebOpts(args, config?.webui ?? null);
+  return {
+    host,
+    port,
+    hostExplicit: args.hostExplicit,
+    portExplicit: args.portExplicit,
+    mcpUrl: args.mcpUrl,
+    cwd: args.cwd,
+    outdir: args.outdir,
+  };
+}
+
+function resolveWholeStoreOpts(args: ParsedWebArgs): XdgWholeStoreOpts {
+  return {
+    host: args.hostExplicit ? args.host : DEFAULT_HOST,
+    port: args.portExplicit ? args.port : WHOLE_STORE_DEFAULT_PORT,
+    projectsRoot: args.store ?? path.dirname(resolveStateDirBase("cq-web-project-root")),
+    cwdHint: args.cwd,
+    outdir: args.outdir,
+  };
+}
+
+async function resolveRepositoryRoot(cwd: string): Promise<string | null> {
+  try {
+    const root = await fs.realpath(cwd);
+    const rootInfo = await fs.lstat(root);
+    if (!rootInfo.isDirectory()) return null;
+    const gitInfo = await fs.lstat(path.join(root, ".git"));
+    if (
+      gitInfo.isSymbolicLink() ||
+      (!gitInfo.isDirectory() && !gitInfo.isFile())
+    ) {
+      return null;
+    }
+    const config = loadConfig(root);
+    await resolveProjectKey({
+      repoRoot: root,
+      projectId: config?.ledger?.projectId ?? null,
+    });
+    return root;
+  } catch {
+    return null;
+  }
 }
 
 /**
