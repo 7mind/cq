@@ -92,7 +92,11 @@ No → `defects` (file-and-defer; the plan proceeds regardless).
 ## STDOUT JSON contract
 Emit a single fenced `json` block as the LAST content of your reply. A non-Claude
 harness (Codex / Pi) emits exactly this on stdout and writes NOTHING to any
-ledger — the orchestrator reads the stdout JSON and reconciles it.
+ledger — the orchestrator reads the stdout JSON and reconciles it. The native
+Claude reviewer returns this SAME structured object in both of its modes: its
+unconfigured fallback additionally writes one review item, while its configured
+mode writes nothing. A review id or prose pointer never substitutes for this
+structured return.
 
 ```json
 {
@@ -114,6 +118,27 @@ ledger — the orchestrator reads the stdout JSON and reconciles it.
 Rules: `go-ahead` REQUIRES empty `new_questions` AND empty `criticism`. `revise`
 REQUIRES at least one of `new_questions` / `criticism` non-empty. `defects` is
 INDEPENDENT of the verdict; leave it `[]` when there are none.
+
+## Review-ledger translation (T843)
+
+The returned/output contract above ALWAYS keeps `defects` as structured
+objects. The prompt-catalog output sidecar therefore remains unchanged. Only a
+writer of a `reviews` ledger item translates that bucket to the ledger's
+`string[]` persistence representation:
+
+1. Validate every structured defect against the contract above.
+2. Construct a fresh object in this exact property order: `headline`,
+   `severity`, optional `rootCause`, optional `suggestedFix`.
+3. Serialize it with compact `JSON.stringify` and store the resulting string.
+   Do not stringify an alias-free object and then edit the JSON string; configured
+   aggregation prefixes the alias on `headline` BEFORE constructing and
+   serializing the canonical object.
+
+Consumers perform the inverse operation for the ENTIRE batch before causing any
+side effect: parse every string, validate the structured object, reconstruct it
+in the same property order, and require compact `JSON.stringify` to reproduce
+the stored bytes exactly. One malformed or non-canonical entry invalidates the
+whole batch.
 
 ## Pi / non-Claude path — ALWAYS return json on stdout
 When this prompt runs under Pi or any non-Claude harness, there is **no MCP

@@ -71,8 +71,8 @@
         "Read everything::list_milestone_items#4|full",
         "Provenance::create_item#1|ack",
         "Provenance::create_item#2|ack",
-        "Deliver the verdict (MODE-GATED — write the ledger, or return json) / A. UNCONFIGURED single-reviewer fallback → WRITE the reviews item directly::create_item#1|ack",
-        "Deliver the verdict (MODE-GATED — write the ledger, or return json) / A. UNCONFIGURED single-reviewer fallback → WRITE the reviews item directly::create_item#2|ack"
+        "Deliver the verdict (MODE-GATED write, invariant structured return) / A. UNCONFIGURED single-reviewer fallback → WRITE once AND return the object::create_item#1|ack",
+        "Deliver the verdict (MODE-GATED write, invariant structured return) / A. UNCONFIGURED single-reviewer fallback → WRITE once AND return the object::create_item#2|ack"
       ]
     },
     {
@@ -252,6 +252,8 @@
         "The per-goal round (for one goal G)::fetch_prompt#1|full-content",
         "The per-goal round (for one goal G)::fetch_prompt#2|full-content",
         "The per-goal round (for one goal G)::fetch_prompt#3|full-content",
+        "The per-goal round (for one goal G)::list_milestone_items#1|compact",
+        "The per-goal round (for one goal G)::list_milestone_items#2|full",
         "The per-goal round (for one goal G)::create_milestone#1|ack",
         "The per-goal round (for one goal G)::update_item#1|ack",
         "The per-goal round (for one goal G)::update_item#2|ack",
@@ -261,7 +263,6 @@
         "Session logs (after EVERY subagent returns)::read_log#1|full-content",
         "Session logs (after EVERY subagent returns)::update_item#1|ack",
         "Session logs (after EVERY subagent returns)::update_item#2|ack",
-        "Session logs (after EVERY subagent returns)::fts_search#1|compact",
         "Report to the user::fetch_item#1|full",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#1|ack",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#2|ack",
@@ -560,6 +561,17 @@
           "grounding",
           "status",
           "milestones"
+        ]
+      },
+      {
+        "callSite": "commands/cq/plan/advance.md::The per-goal round (for one goal G)::list_milestone_items#2",
+        "fields": [
+          "summary",
+          "new_questions",
+          "criticism",
+          "defects",
+          "ledgerRefs",
+          "status"
         ]
       },
       {
