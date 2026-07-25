@@ -371,6 +371,163 @@ describe("T848 InMemory plan lifecycle semantics", () => {
     });
   }
 
+  it("keeps a building goal with wip work out of initial planning claims", async () => {
+    const fixture = await buildFixture("planned", 1);
+    try {
+      await fixture.seedWork("G1", {
+        taskStatuses: ["wip"],
+        openQuestionCount: 0,
+        legacy: false,
+      });
+      await fixture.store.updateItem(GOALS_LEDGER, "G1", {
+        status: "building",
+      });
+      let rawTransitionRejected = false;
+      try {
+        await fixture.store.updateItem(GOALS_LEDGER, "G1", {
+          status: "planning",
+        });
+      } catch {
+        rawTransitionRejected = true;
+      }
+      const claim = await fixture.lifecycle.claimPlan({
+        goalId: "G1",
+        purpose: "initial",
+        claimRequestId: "building-bypass",
+        ownerFenceToken: OWNER_A,
+        expectedGeneration: 1,
+        ...PROVENANCE,
+      });
+
+      expect({
+        rawTransitionRejected,
+        phase: (await fixture.observe("G1")).phase,
+        taskStatus: (await fixture.observe("G1")).tasks[0]?.status,
+        claim: claim.ok ? "claimed" : claim.conflict.code,
+      }).toEqual({
+        rawTransitionRejected: true,
+        phase: "building",
+        taskStatus: "wip",
+        claim: "goal-phase-conflict",
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("rejects raw abandonment while the active owner can finalize", async () => {
+    const fixture = await buildFixture();
+    try {
+      const claim = await claimInitial(fixture, "abandon-finalize", OWNER_A, null);
+      const published = await fixture.lifecycle.publishPlanDraft({
+        goalId: "G1",
+        claimId: claim.claimId,
+        generation: claim.generation,
+        operationId: "abandon-finalize-publish",
+        ownerFenceToken: claim.ownerFenceToken,
+        ...PROVENANCE,
+        manifest: {
+          milestones: [{ key: "delivery", title: "Delivery" }],
+          tasks: [
+            {
+              key: "implementation",
+              milestoneKey: "delivery",
+              headline: "Implementation",
+            },
+          ],
+        },
+      });
+      if (!published.ok) throw new Error("draft publication failed");
+      const draft = {
+        goalId: "G1",
+        claimId: claim.claimId,
+        generation: claim.generation,
+        revision: published.acknowledgement.manifest.revision,
+      };
+      await fixture.seedReview({
+        reviewId: "R1",
+        goalId: "G1",
+        status: "go-ahead",
+        draft,
+        provenance: PROVENANCE,
+      });
+
+      let rawAbandonmentRejected = false;
+      try {
+        await fixture.store.updateItem(GOALS_LEDGER, "G1", {
+          status: "abandoned",
+        });
+      } catch {
+        rawAbandonmentRejected = true;
+      }
+      const phaseBeforeFinalize = (await fixture.observe("G1")).phase;
+      const finalized = await fixture.lifecycle.finalizePlan({
+        goalId: "G1",
+        claimId: claim.claimId,
+        generation: claim.generation,
+        operationId: "abandon-finalize",
+        ownerFenceToken: claim.ownerFenceToken,
+        ...PROVENANCE,
+        reviewId: "R1",
+        draftRevision: draft.revision,
+        decision: { headline: "Approve delivery" },
+      });
+
+      expect({
+        rawAbandonmentRejected,
+        phaseBeforeFinalize,
+        finalized: finalized.ok,
+        finalPhase: (await fixture.observe("G1")).phase,
+      }).toEqual({
+        rawAbandonmentRejected: true,
+        phaseBeforeFinalize: "planning",
+        finalized: true,
+        finalPhase: "planned",
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("rejects raw abandonment while the active claim can release", async () => {
+    const fixture = await buildFixture();
+    try {
+      const claim = await claimInitial(fixture, "abandon-release", OWNER_A, null);
+      let rawAbandonmentRejected = false;
+      try {
+        await fixture.store.updateItem(GOALS_LEDGER, "G1", {
+          status: "abandoned",
+        });
+      } catch {
+        rawAbandonmentRejected = true;
+      }
+      const phaseBeforeRelease = (await fixture.observe("G1")).phase;
+      const released = await fixture.lifecycle.releasePlanClaim({
+        kind: "abandon",
+        goalId: "G1",
+        claimId: claim.claimId,
+        generation: claim.generation,
+        operationId: "abandon-release",
+        reason: "Stop this planning attempt",
+        ...PROVENANCE,
+      });
+
+      expect({
+        rawAbandonmentRejected,
+        phaseBeforeRelease,
+        released: released.ok,
+        finalPhase: (await fixture.observe("G1")).phase,
+      }).toEqual({
+        rawAbandonmentRejected: true,
+        phaseBeforeRelease: "planning",
+        released: true,
+        finalPhase: "planning",
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it("rejects starting a managed task while an active research dependency gates it", async () => {
     const fixture = await buildFixture("planned", 1);
     try {

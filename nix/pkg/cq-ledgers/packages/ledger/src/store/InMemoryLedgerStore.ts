@@ -66,7 +66,11 @@ import type {
   PlanReleaseInput,
   PlanReleaseResult,
 } from "../planLifecycle.js";
-import { PLAN_GENERATION_FIELD, PLAN_MANAGED_GOAL_FIELD_NAMES } from "../planLifecycle.js";
+import {
+  PLAN_ACTIVE_CLAIM_FIELD,
+  PLAN_GENERATION_FIELD,
+  PLAN_MANAGED_GOAL_FIELD_NAMES,
+} from "../planLifecycle.js";
 import {
   claimInMemoryPlan,
   finalizeInMemoryPlan,
@@ -802,6 +806,9 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     const lifecycleOwned =
       goal.status === "done" ||
       goal.status === "abandoned" ||
+      (goal.status === "building" && targetStatus === "planning") ||
+      (fieldIsPresent(goal, PLAN_ACTIVE_CLAIM_FIELD) &&
+        (targetStatus === "done" || targetStatus === "abandoned")) ||
       (goal.status === "clarifying" && targetStatus === "planning") ||
       (goal.status === "planning" &&
         (targetStatus === "clarifying" || targetStatus === "planned")) ||
