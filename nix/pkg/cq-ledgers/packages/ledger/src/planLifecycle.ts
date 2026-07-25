@@ -6,6 +6,7 @@
  * production adapters implement the same contract in later tasks.
  */
 
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const GOAL_ID_RE = /^G\d+$/;
@@ -39,6 +40,17 @@ export const PLAN_LIFECYCLE_CONTRACT_VERSION = 1 as const;
 export const PlanClaimPurposeSchema = z.enum(["initial", "follow-up"]);
 export type PlanClaimPurpose = z.infer<typeof PlanClaimPurposeSchema>;
 
+export const PlanClaimGoalPhaseSchema = z.enum(["clarifying", "planning", "planned"]);
+export type PlanClaimGoalPhase = z.infer<typeof PlanClaimGoalPhaseSchema>;
+
+export const PlanReviewDefectSeveritySchema = z.enum([
+  "low",
+  "medium",
+  "high",
+  "critical",
+]);
+export type PlanReviewDefectSeverity = z.infer<typeof PlanReviewDefectSeveritySchema>;
+
 export const PlanOperationSchema = z.enum(["claim", "publish-draft", "release", "finalize"]);
 export type PlanOperation = z.infer<typeof PlanOperationSchema>;
 
@@ -50,6 +62,105 @@ export const PlanWriteProvenanceSchema = z
   .strict();
 export type PlanWriteProvenance = z.infer<typeof PlanWriteProvenanceSchema>;
 
+const provenanceShape = {
+  author: nonEmptyStringSchema,
+  session: nonEmptyStringSchema.optional(),
+} as const;
+
+export const PLAN_CLAIM_PHASE_TRANSITIONS = {
+  initial: {
+    allowed: ["clarifying", "planning"],
+    resulting: "planning",
+  },
+  "follow-up": {
+    allowed: ["planned"],
+    resulting: "planning",
+  },
+} as const satisfies Record<
+  PlanClaimPurpose,
+  {
+    readonly allowed: readonly PlanClaimGoalPhase[];
+    readonly resulting: "planning";
+  }
+>;
+
+export type PlanClaimPhaseResolution =
+  | {
+      readonly ok: true;
+      readonly previousGoalPhase: PlanClaimGoalPhase;
+      readonly goalPhase: "planning";
+    }
+  | {
+      readonly ok: false;
+      readonly conflict:
+        | {
+            readonly code: "goal-terminal";
+            readonly goalId: string;
+            readonly status: "done" | "abandoned";
+          }
+        | {
+            readonly code: "goal-phase-conflict";
+            readonly goalId: string;
+            readonly status: string;
+            readonly allowed: readonly PlanClaimGoalPhase[];
+          };
+    };
+
+export function resolvePlanClaimPhase(
+  goalId: string,
+  purpose: PlanClaimPurpose,
+  currentPhase: string,
+): PlanClaimPhaseResolution {
+  if (currentPhase === "done" || currentPhase === "abandoned") {
+    return {
+      ok: false,
+      conflict: { code: "goal-terminal", goalId, status: currentPhase },
+    };
+  }
+  const transition = PLAN_CLAIM_PHASE_TRANSITIONS[purpose];
+  if (!(transition.allowed as readonly string[]).includes(currentPhase)) {
+    return {
+      ok: false,
+      conflict: {
+        code: "goal-phase-conflict",
+        goalId,
+        status: currentPhase,
+        allowed: transition.allowed,
+      },
+    };
+  }
+  return {
+    ok: true,
+    previousGoalPhase: currentPhase as PlanClaimGoalPhase,
+    goalPhase: transition.resulting,
+  };
+}
+
+function validateClaimPhaseTransition(
+  value: {
+    purpose: PlanClaimPurpose;
+    previousGoalPhase: PlanClaimGoalPhase;
+    goalPhase: "planning";
+  },
+  context: z.RefinementCtx,
+): void {
+  const transition = PLAN_CLAIM_PHASE_TRANSITIONS[value.purpose];
+  if (!(transition.allowed as readonly PlanClaimGoalPhase[]).includes(value.previousGoalPhase)) {
+    context.addIssue({
+      code: "custom",
+      message: `${value.purpose} claim does not allow phase ${value.previousGoalPhase}`,
+      path: ["previousGoalPhase"],
+    });
+  }
+  if (value.goalPhase !== transition.resulting) {
+    context.addIssue({
+      code: "custom",
+      message: `${value.purpose} claim must result in phase ${transition.resulting}`,
+      path: ["goalPhase"],
+    });
+  }
+}
+
 export const PlanPublicClaimSchema = z
   .object({
     goalId: goalIdSchema,
@@ -60,16 +171,44 @@ export const PlanPublicClaimSchema = z
   .strict();
 export type PlanPublicClaim = z.infer<typeof PlanPublicClaimSchema>;
 
+export const PlanAdoptedManifestSchema = z
+  .object({
+    milestoneIds: z.array(milestoneIdSchema),
+    taskIds: z.array(taskIdSchema),
+  })
+  .strict();
+export type PlanAdoptedManifest = z.infer<typeof PlanAdoptedManifestSchema>;
+
 /**
  * Durable private claim authority. The plaintext token never belongs in
- * persistence: adapters store only its lowercase SHA-256 verifier.
+ * persistence: adapters store only its lowercase SHA-256 verifier. The
+ * remaining fields are the complete redacted claim request and acknowledgement
+ * projection needed to reconstruct an exact retry after process restart.
  */
 export const PlanPrivateClaimRecordSchema = PlanPublicClaimSchema.extend({
   claimRequestId: opaqueIdSchema,
   ownerFenceTokenVerifier: z.string().regex(SHA256_HEX_RE),
+  expectedGeneration: generationSchema.nullable(),
   priorGeneration: generationSchema.nullable(),
+  previousGoalPhase: PlanClaimGoalPhaseSchema,
+  goalPhase: z.literal("planning"),
+  legacyAdopted: z.boolean(),
+  adoptedManifest: PlanAdoptedManifestSchema,
+  waitingResearches: z.array(researchIdSchema).length(0),
+  ...provenanceShape,
   state: z.enum(["active", "released", "finalized"]),
-}).strict();
+})
+  .strict()
+  .superRefine((record, context) => {
+    if (record.expectedGeneration !== record.priorGeneration) {
+      context.addIssue({
+        code: "custom",
+        message: "expectedGeneration must equal priorGeneration",
+        path: ["expectedGeneration"],
+      });
+    }
+    validateClaimPhaseTransition(record, context);
+  });
 export type PlanPrivateClaimRecord = z.infer<typeof PlanPrivateClaimRecordSchema>;
 
 export const PLAN_SECRET_FIELD_NAMES = ["ownerFenceToken", "ownerFenceTokenVerifier"] as const;
@@ -84,10 +223,23 @@ export const PlanOperationKeySchema = z
   .strict();
 export type PlanOperationKey = z.infer<typeof PlanOperationKeySchema>;
 
-const provenanceShape = {
-  author: nonEmptyStringSchema,
-  session: nonEmptyStringSchema.optional(),
-} as const;
+export const PlanDraftIdentitySchema = z
+  .object({
+    goalId: goalIdSchema,
+    claimId: opaqueIdSchema,
+    generation: generationSchema,
+    revision: generationSchema,
+  })
+  .strict();
+export type PlanDraftIdentity = z.infer<typeof PlanDraftIdentitySchema>;
+
+export const PlanReviewDraftBindingSchema = z
+  .object({
+    reviewId: reviewIdSchema,
+    draft: PlanDraftIdentitySchema,
+  })
+  .strict();
+export type PlanReviewDraftBinding = z.infer<typeof PlanReviewDraftBindingSchema>;
 
 const operationKeyShape = {
   goalId: goalIdSchema,
@@ -238,7 +390,7 @@ export const PlanReviewDefectDraftSchema = z
   .object({
     key: clientKeySchema,
     headline: nonEmptyStringSchema,
-    severity: nonEmptyStringSchema,
+    severity: PlanReviewDefectSeveritySchema,
     description: z.string().optional(),
     rootCause: z.string().optional(),
     suggestedFix: z.string().optional(),
@@ -294,20 +446,31 @@ export const PlanResearchDraftSchema = z
   .strict();
 export type PlanResearchDraft = z.infer<typeof PlanResearchDraftSchema>;
 
-export const PlanPauseEffectSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("questions"),
-      questions: z.array(PlanQuestionDraftSchema).min(1),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("researches"),
-      researches: z.array(PlanResearchDraftSchema).min(1),
-    })
-    .strict(),
-]);
+export const PlanPauseEffectSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("questions"),
+        questions: z.array(PlanQuestionDraftSchema).min(1),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("researches"),
+        researches: z.array(PlanResearchDraftSchema).min(1),
+      })
+      .strict(),
+  ])
+  .superRefine((effect, context) => {
+    const entries = effect.kind === "questions" ? effect.questions : effect.researches;
+    for (const duplicate of duplicateValues(entries.map(({ key }) => key))) {
+      context.addIssue({
+        code: "custom",
+        message: `duplicate ${effect.kind} key "${duplicate}"`,
+        path: [effect.kind],
+      });
+    }
+  });
 export type PlanPauseEffect = z.infer<typeof PlanPauseEffectSchema>;
 
 const ownerReleaseInputSchema = z
@@ -324,6 +487,7 @@ const publicAbandonInputSchema = z
     kind: z.literal("abandon"),
     ...operationKeyShape,
     reason: nonEmptyStringSchema,
+    reviewDefects: PlanReviewDefectBatchSchema.optional(),
     ...provenanceShape,
   })
   .strict();
@@ -342,6 +506,7 @@ export const PlanFinalizeInputSchema = z
   .object({
     ...ownerOperationShape,
     reviewId: reviewIdSchema,
+    draftRevision: generationSchema,
     decision: z
       .object({
         headline: nonEmptyStringSchema,
@@ -439,6 +604,16 @@ const idempotencyKeyReusedConflictSchema = z
     operationId: opaqueIdSchema,
   })
   .strict();
+const publishDraftIdempotencyKeyReusedConflictSchema =
+  idempotencyKeyReusedConflictSchema.extend({
+    operation: z.literal("publish-draft"),
+  });
+const releaseIdempotencyKeyReusedConflictSchema = idempotencyKeyReusedConflictSchema.extend({
+  operation: z.literal("release"),
+});
+const finalizeIdempotencyKeyReusedConflictSchema = idempotencyKeyReusedConflictSchema.extend({
+  operation: z.literal("finalize"),
+});
 const implementationActiveConflictSchema = z
   .object({
     code: z.literal("implementation-active"),
@@ -491,6 +666,16 @@ const reviewGenerationMismatchConflictSchema = z
     reviewGeneration: generationSchema.nullable(),
   })
   .strict();
+const reviewDraftMismatchConflictSchema = z
+  .object({
+    code: z.literal("review-draft-mismatch"),
+    ...publicClaimShape,
+    reviewId: reviewIdSchema,
+    requestedDraftRevision: generationSchema,
+    currentDraftRevision: generationSchema,
+    reviewDraftRevision: generationSchema.nullable(),
+  })
+  .strict();
 
 const conflictSchemas = [
   goalNotFoundConflictSchema,
@@ -509,6 +694,7 @@ const conflictSchemas = [
   reviewNotFoundConflictSchema,
   reviewNotApprovedConflictSchema,
   reviewGenerationMismatchConflictSchema,
+  reviewDraftMismatchConflictSchema,
 ] as const;
 
 export const PlanConflictSchema = z.discriminatedUnion("code", conflictSchemas);
@@ -534,9 +720,29 @@ export const PlanPublishDraftConflictSchema = z.discriminatedUnion("code", [
   staleGenerationConflictSchema,
   ownerFenceMismatchConflictSchema,
   goalPhaseConflictSchema,
-  idempotencyKeyReusedConflictSchema,
+  publishDraftIdempotencyKeyReusedConflictSchema,
 ]);
 export type PlanPublishDraftConflict = z.infer<typeof PlanPublishDraftConflictSchema>;
+
+export const PlanPauseConflictSchema = z.discriminatedUnion("code", [
+  goalNotFoundConflictSchema,
+  claimNotActiveConflictSchema,
+  staleClaimConflictSchema,
+  staleGenerationConflictSchema,
+  ownerFenceMismatchConflictSchema,
+  goalPhaseConflictSchema,
+  releaseIdempotencyKeyReusedConflictSchema,
+]);
+export type PlanPauseConflict = z.infer<typeof PlanPauseConflictSchema>;
+
+export const PlanAbandonConflictSchema = z.discriminatedUnion("code", [
+  goalNotFoundConflictSchema,
+  claimNotActiveConflictSchema,
+  staleClaimConflictSchema,
+  staleGenerationConflictSchema,
+  releaseIdempotencyKeyReusedConflictSchema,
+]);
+export type PlanAbandonConflict = z.infer<typeof PlanAbandonConflictSchema>;
 
 export const PlanReleaseConflictSchema = z.discriminatedUnion("code", [
   goalNotFoundConflictSchema,
@@ -545,7 +751,7 @@ export const PlanReleaseConflictSchema = z.discriminatedUnion("code", [
   staleGenerationConflictSchema,
   ownerFenceMismatchConflictSchema,
   goalPhaseConflictSchema,
-  idempotencyKeyReusedConflictSchema,
+  releaseIdempotencyKeyReusedConflictSchema,
 ]);
 export type PlanReleaseConflict = z.infer<typeof PlanReleaseConflictSchema>;
 
@@ -559,9 +765,84 @@ export const PlanFinalizeConflictSchema = z.discriminatedUnion("code", [
   reviewNotFoundConflictSchema,
   reviewNotApprovedConflictSchema,
   reviewGenerationMismatchConflictSchema,
-  idempotencyKeyReusedConflictSchema,
+  reviewDraftMismatchConflictSchema,
+  finalizeIdempotencyKeyReusedConflictSchema,
 ]);
 export type PlanFinalizeConflict = z.infer<typeof PlanFinalizeConflictSchema>;
+
+export type PlanFinalizeDraftBindingResolution =
+  | { readonly ok: true; readonly draft: PlanDraftIdentity }
+  | { readonly ok: false; readonly conflict: PlanFinalizeConflict };
+
+/**
+ * Check the persisted review binding against both the requested and current
+ * draft identity. The caller supplies the current draft from the exact
+ * goal/claim/generation lookup; a different scope indicates adapter misuse.
+ */
+export function resolvePlanFinalizeDraftBinding(
+  finalizeInput: unknown,
+  currentDraftIdentity: unknown,
+  reviewBinding: unknown,
+): PlanFinalizeDraftBindingResolution {
+  const input = PlanFinalizeInputSchema.parse(finalizeInput);
+  const currentDraft = PlanDraftIdentitySchema.parse(currentDraftIdentity);
+  const binding = PlanReviewDraftBindingSchema.nullable().parse(reviewBinding);
+  if (
+    currentDraft.goalId !== input.goalId ||
+    currentDraft.claimId !== input.claimId ||
+    currentDraft.generation !== input.generation
+  ) {
+    throw new Error("current draft lookup must use the finalize goal, claim, and generation");
+  }
+  if (binding !== null && binding.reviewId !== input.reviewId) {
+    return {
+      ok: false,
+      conflict: {
+        code: "review-not-found",
+        goalId: input.goalId,
+        claimId: input.claimId,
+        generation: input.generation,
+        reviewId: input.reviewId,
+      },
+    };
+  }
+  if (binding !== null && binding.draft.generation !== input.generation) {
+    return {
+      ok: false,
+      conflict: {
+        code: "review-generation-mismatch",
+        goalId: input.goalId,
+        claimId: input.claimId,
+        generation: input.generation,
+        reviewId: input.reviewId,
+        reviewGeneration: binding.draft.generation,
+      },
+    };
+  }
+
+  if (
+    currentDraft.revision !== input.draftRevision ||
+    binding === null ||
+    binding.draft.goalId !== input.goalId ||
+    binding.draft.claimId !== input.claimId ||
+    binding.draft.revision !== input.draftRevision
+  ) {
+    return {
+      ok: false,
+      conflict: {
+        code: "review-draft-mismatch",
+        goalId: input.goalId,
+        claimId: input.claimId,
+        generation: input.generation,
+        reviewId: input.reviewId,
+        requestedDraftRevision: input.draftRevision,
+        currentDraftRevision: currentDraft.revision,
+        reviewDraftRevision: binding?.draft.revision ?? null,
+      },
+    };
+  }
+  return { ok: true, draft: currentDraft };
+}
 
 export const PlanIdAllocationSchema = z
   .object({
@@ -603,16 +884,14 @@ export const PlanClaimAcknowledgementSchema = z
     purpose: PlanClaimPurposeSchema,
     claimRequestId: opaqueIdSchema,
     ownerFenceToken: z.string().regex(OWNER_FENCE_TOKEN_RE),
+    previousGoalPhase: PlanClaimGoalPhaseSchema,
+    goalPhase: z.literal("planning"),
     legacyAdopted: z.boolean(),
-    adoptedManifest: z
-      .object({
-        milestoneIds: z.array(milestoneIdSchema),
-        taskIds: z.array(taskIdSchema),
-      })
-      .strict(),
+    adoptedManifest: PlanAdoptedManifestSchema,
     waitingResearches: z.array(researchIdSchema).length(0),
   })
-  .strict();
+  .strict()
+  .superRefine(validateClaimPhaseTransition);
 export type PlanClaimAcknowledgement = z.infer<typeof PlanClaimAcknowledgementSchema>;
 
 export const PlanClaimResultSchema = z.discriminatedUnion("ok", [
@@ -620,6 +899,79 @@ export const PlanClaimResultSchema = z.discriminatedUnion("ok", [
   mutationConflict(PlanClaimConflictSchema),
 ]);
 export type PlanClaimResult = z.infer<typeof PlanClaimResultSchema>;
+
+function claimRequestChanged(
+  record: PlanPrivateClaimRecord,
+  input: PlanClaimInput,
+): boolean {
+  return (
+    record.purpose !== input.purpose ||
+    record.expectedGeneration !== input.expectedGeneration ||
+    record.author !== input.author ||
+    record.session !== input.session
+  );
+}
+
+/**
+ * Reconstruct the live claim winner acknowledgement from verifier-only durable
+ * state. Exact replay echoes the caller-supplied token only after its SHA-256
+ * digest matches; the durable record itself never contains plaintext authority.
+ */
+export function replayPlanClaim(
+  durableRecord: unknown,
+  retryInput: unknown,
+): PlanClaimResult {
+  const record = PlanPrivateClaimRecordSchema.parse(durableRecord);
+  const input = PlanClaimInputSchema.parse(retryInput);
+  if (record.goalId !== input.goalId || record.claimRequestId !== input.claimRequestId) {
+    throw new Error("claim replay lookup must use the recorded goalId and claimRequestId scope");
+  }
+  if (claimRequestChanged(record, input)) {
+    return {
+      ok: false,
+      conflict: {
+        code: "claim-request-reused",
+        goalId: record.goalId,
+        claimId: record.claimId,
+        generation: record.generation,
+        claimRequestId: record.claimRequestId,
+      },
+    };
+  }
+
+  const suppliedVerifier = createHash("sha256")
+    .update(input.ownerFenceToken, "utf8")
+    .digest("hex");
+  if (suppliedVerifier !== record.ownerFenceTokenVerifier) {
+    return {
+      ok: false,
+      conflict: {
+        code: "owner-fence-mismatch",
+        goalId: record.goalId,
+        claimId: record.claimId,
+        generation: record.generation,
+      },
+    };
+  }
+
+  return PlanClaimResultSchema.parse({
+    ok: true,
+    replayed: true,
+    acknowledgement: {
+      goalId: record.goalId,
+      claimId: record.claimId,
+      generation: record.generation,
+      purpose: record.purpose,
+      claimRequestId: record.claimRequestId,
+      ownerFenceToken: input.ownerFenceToken,
+      previousGoalPhase: record.previousGoalPhase,
+      goalPhase: record.goalPhase,
+      legacyAdopted: record.legacyAdopted,
+      adoptedManifest: record.adoptedManifest,
+      waitingResearches: record.waitingResearches,
+    },
+  });
+}
 
 export const PlanPublishDraftAcknowledgementSchema = z
   .object({
@@ -685,9 +1037,6 @@ export const PlanReleaseAcknowledgementSchema = z.discriminatedUnion("kind", [
     .object({
       kind: z.literal("abandon"),
       ...releaseAcknowledgementBase,
-      reviewDefects: z
-        .array(PlanIdAllocationSchema.extend({ id: defectIdSchema }).strict())
-        .length(0),
       questions: z
         .array(PlanIdAllocationSchema.extend({ id: questionIdSchema }).strict())
         .length(0),
@@ -711,12 +1060,27 @@ export const PlanFinalizeAcknowledgementSchema = z
   .object({
     ...operationKeyShape,
     reviewId: reviewIdSchema,
+    draft: PlanDraftIdentitySchema,
     decisionId: decisionIdSchema,
     manifest: PlanPublishedManifestSchema,
     reviewDefects: z.array(PlanIdAllocationSchema.extend({ id: defectIdSchema }).strict()),
     goalPhase: z.literal("planned"),
   })
-  .strict();
+  .strict()
+  .superRefine((acknowledgement, context) => {
+    if (
+      acknowledgement.draft.goalId !== acknowledgement.goalId ||
+      acknowledgement.draft.claimId !== acknowledgement.claimId ||
+      acknowledgement.draft.generation !== acknowledgement.generation ||
+      acknowledgement.draft.revision !== acknowledgement.manifest.revision
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "finalized draft identity must equal the operation claim and manifest revision",
+        path: ["draft"],
+      });
+    }
+  });
 export type PlanFinalizeAcknowledgement = z.infer<typeof PlanFinalizeAcknowledgementSchema>;
 
 export const PlanFinalizeResultSchema = z.discriminatedUnion("ok", [
@@ -724,6 +1088,56 @@ export const PlanFinalizeResultSchema = z.discriminatedUnion("ok", [
   mutationConflict(PlanFinalizeConflictSchema),
 ]);
 export type PlanFinalizeResult = z.infer<typeof PlanFinalizeResultSchema>;
+
+export const PlanReplayableOperationSchema = z.enum(["publish-draft", "release", "finalize"]);
+export type PlanReplayableOperation = z.infer<typeof PlanReplayableOperationSchema>;
+
+export const PlanOperationReplayRecordSchema = PlanOperationKeySchema.extend({
+  operation: PlanReplayableOperationSchema,
+  requestPayloadVerifier: z.string().regex(SHA256_HEX_RE),
+}).strict();
+export type PlanOperationReplayRecord = z.infer<typeof PlanOperationReplayRecordSchema>;
+
+export type PlanOperationReplayResolution =
+  | { readonly kind: "independent-operation" }
+  | { readonly kind: "exact-replay" }
+  | {
+      readonly kind: "conflict";
+      readonly conflict: Extract<PlanConflict, { code: "idempotency-key-reused" }>;
+    };
+
+/**
+ * Compare one durable non-claim operation record with an attempted operation.
+ * The payload verifier detects changed retries but never grants authority:
+ * claim/generation and owner-token verification remain separate preconditions.
+ */
+export function resolvePlanOperationReplay(
+  durableRecord: unknown,
+  attemptedRecord: unknown,
+): PlanOperationReplayResolution {
+  const recorded = PlanOperationReplayRecordSchema.parse(durableRecord);
+  const attempted = PlanOperationReplayRecordSchema.parse(attemptedRecord);
+  const sameScope =
+    recorded.claimId === attempted.claimId &&
+    recorded.generation === attempted.generation &&
+    recorded.operation === attempted.operation &&
+    recorded.operationId === attempted.operationId;
+  if (!sameScope) return { kind: "independent-operation" };
+  if (recorded.requestPayloadVerifier === attempted.requestPayloadVerifier) {
+    return { kind: "exact-replay" };
+  }
+  return {
+    kind: "conflict",
+    conflict: {
+      code: "idempotency-key-reused",
+      goalId: recorded.goalId,
+      claimId: recorded.claimId,
+      generation: recorded.generation,
+      operation: recorded.operation,
+      operationId: recorded.operationId,
+    },
+  };
+}
 
 /**
  * Capability implemented by guarded stores. Keeping it separate from
@@ -792,14 +1206,20 @@ export const PLAN_AUTHORITY_RULES = {
   observerExposure: "never",
   claimRequestScope: ["goalId", "claimRequestId"],
   operationScope: ["claimId", "generation", "operation", "operationId"],
-  exactReplay: "return-recorded-acknowledgement-and-side-effect-ids",
+  exactReplay:
+    "reconstruct-live-acknowledgement-from-redacted-durable-state-and-caller-token",
+  claimReplayPersistence:
+    "request-fields-token-verifier-phase-and-legacy-adoption-without-plaintext-token",
+  operationReplayPersistence:
+    "payload-verifier-is-idempotency-only-never-authority",
   changedClaimReplayPayload: "claim-request-reused",
   changedOperationReplayPayload: "idempotency-key-reused",
   expiry: "none",
   heartbeat: "none",
   digestAuthority: "none",
   coordinator: "none",
-  abandonmentAuthority: "exact-public-claim-id-and-generation",
+  abandonmentAuthority:
+    "exact-public-claim-id-generation-and-release-operation-id-without-owner-token",
 } as const;
 
 export const PLAN_MANAGED_MUTATION_OWNERS = {
@@ -810,14 +1230,38 @@ export const PLAN_MANAGED_MUTATION_OWNERS = {
   goalPhase: ["claim", "release", "finalize"],
   finalizedManifest: ["finalize"],
   followUpCleanup: ["claim"],
-  reviewDefects: ["publish-draft", "release-pause", "finalize"],
+  reviewDefects: ["publish-draft", "release", "finalize"],
   rawCrud: "reject-managed-plan-fields-and-transitions",
 } as const;
+
+export const PLAN_RELEASE_VARIANT_CONFLICTS = {
+  pause: [
+    "goal-not-found",
+    "claim-not-active",
+    "stale-claim",
+    "stale-generation",
+    "owner-fence-mismatch",
+    "goal-phase-conflict",
+    "idempotency-key-reused",
+  ],
+  abandon: [
+    "goal-not-found",
+    "claim-not-active",
+    "stale-claim",
+    "stale-generation",
+    "idempotency-key-reused",
+  ],
+} as const satisfies Record<
+  PlanReleaseInput["kind"],
+  readonly PlanReleaseConflict["code"][]
+>;
 
 export const PLAN_OPERATION_CONTRACTS = {
   claim: {
     preconditions: [
       "goal-exists-and-is-nonterminal",
+      "initial-goal-phase-is-clarifying-or-planning",
+      "follow-up-goal-phase-is-planned",
       "expected-generation-matches",
       "no-different-active-claim",
       "no-active-research-wait",
@@ -826,6 +1270,8 @@ export const PLAN_OPERATION_CONTRACTS = {
     postconditions: [
       "claim-and-generation-allocated-once",
       "request-id-and-sha256-token-verifier-persisted-atomically",
+      "claim-replay-state-is-durable-redacted-and-complete",
+      "claim-transitions-goal-to-planning-and-acknowledges-prior-and-resulting-phase",
       "follow-up-replacement-cleanup-is-atomic",
       "waiting-researches-cleared",
       "legacy-manifest-adopted-from-declared-milestones-only",
@@ -868,13 +1314,14 @@ export const PLAN_OPERATION_CONTRACTS = {
     preconditions: [
       "pause-has-exact-active-owner-authority",
       "abandon-has-exact-public-claim-and-generation",
+      "abandon-never-accepts-or-checks-owner-token",
       "entire-effect-and-review-defect-batch-validates-before-write",
     ],
     postconditions: [
       "questions-create-exact-items-and-transition-planning-to-clarifying",
       "researches-create-exact-items-and-replace-waiting-researches",
       "abandon-releases-only-the-exact-claim",
-      "pause-effect-defects-release-and-acknowledgement-commit-atomically",
+      "effect-defects-release-and-acknowledgement-commit-atomically",
     ],
     conflicts: [
       "goal-not-found",
@@ -890,7 +1337,7 @@ export const PLAN_OPERATION_CONTRACTS = {
     preconditions: [
       "exact-active-owner-authority",
       "complete-current-draft-exists",
-      "review-exists-is-go-ahead-and-matches-claim-generation",
+      "review-exists-is-go-ahead-and-matches-exact-draft-identity",
     ],
     postconditions: [
       "decision-created-or-reused-before-finalized-marker",
@@ -909,6 +1356,7 @@ export const PLAN_OPERATION_CONTRACTS = {
       "review-not-found",
       "review-not-approved",
       "review-generation-mismatch",
+      "review-draft-mismatch",
       "idempotency-key-reused",
     ],
   },

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   PLAN_AUTHORITY_RULES,
+  PLAN_CLAIM_PHASE_TRANSITIONS,
   PLAN_FOLLOW_UP_AGGREGATE_PRECEDENCE,
   PLAN_FOLLOW_UP_CLEANUP,
   PLAN_FOLLOW_UP_TASK_DISPOSITION,
@@ -9,7 +11,9 @@ import {
   PLAN_MANAGED_MUTATION_OWNERS,
   PLAN_OPERATION_CONTRACTS,
   PLAN_RESEARCH_WAIT_DISPOSITION,
+  PLAN_RELEASE_VARIANT_CONFLICTS,
   PLAN_SECRET_FIELD_NAMES,
+  PlanAbandonConflictSchema,
   PlanClaimInputSchema,
   PlanClaimResultSchema,
   PlanConflictSchema,
@@ -17,6 +21,7 @@ import {
   PlanFinalizeAcknowledgementSchema,
   PlanFinalizeInputSchema,
   PlanFinalizeResultSchema,
+  PlanPauseConflictSchema,
   PlanPrivateClaimRecordSchema,
   PlanPublicClaimSchema,
   PlanPublishDraftAcknowledgementSchema,
@@ -25,11 +30,19 @@ import {
   PlanReleaseAcknowledgementSchema,
   PlanReleaseInputSchema,
   PlanReleaseResultSchema,
+  PlanReviewDefectBatchSchema,
+  PlanReviewDraftBindingSchema,
+  replayPlanClaim,
+  resolvePlanClaimPhase,
+  resolvePlanFinalizeDraftBinding,
+  resolvePlanOperationReplay,
   type PlanLifecycleStore,
 } from "../src/index.js";
 
 const ownerFenceToken = "A".repeat(22);
-const verifier = "b".repeat(64);
+const verifier = createHash("sha256").update(ownerFenceToken, "utf8").digest("hex");
+const requestPayloadVerifier = (payload: unknown) =>
+  createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
 
 const provenance = {
   author: "gpt-5.6",
@@ -94,6 +107,13 @@ const publishedManifest = {
     { key: "contract", id: "T846" },
     { key: "implementation", id: "T848" },
   ],
+} as const;
+
+const draftIdentity = {
+  goalId: "G99",
+  claimId: "claim_1",
+  generation: 3,
+  revision: 1,
 } as const;
 
 const reviewDefectAllocations = [
@@ -261,10 +281,30 @@ describe("guarded plan lifecycle inputs", () => {
     ).toBe(false);
     expect(
       PlanReleaseInputSchema.safeParse({
+        kind: "pause",
+        ...ownerOperation,
+        effect: {
+          kind: "questions",
+          questions: [],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReleaseInputSchema.safeParse({
+        kind: "pause",
+        ...ownerOperation,
+        effect: {
+          kind: "researches",
+          researches: [],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReleaseInputSchema.safeParse({
         ...abandon,
         reviewDefects,
       }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("requires exact owner authority and review identity for finalization", () => {
@@ -272,6 +312,7 @@ describe("guarded plan lifecycle inputs", () => {
       PlanFinalizeInputSchema.safeParse({
         ...ownerOperation,
         reviewId: "R852",
+        draftRevision: 1,
         decision: {
           headline: "Approve generation 3",
           rationale: "The exact published manifest passed review.",
@@ -284,6 +325,7 @@ describe("guarded plan lifecycle inputs", () => {
       PlanFinalizeInputSchema.safeParse({
         ...operationKey,
         reviewId: "R852",
+        draftRevision: 1,
         decision: { headline: "Missing owner token" },
         ...provenance,
       }).success,
@@ -292,10 +334,454 @@ describe("guarded plan lifecycle inputs", () => {
       PlanFinalizeInputSchema.safeParse({
         ...ownerOperation,
         reviewId: "R900",
+        draftRevision: 1,
         decision: { headline: "Mismatched review batch" },
         reviewDefects,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("T846 r1 contract reproductions", () => {
+  it("enforces initial and follow-up phase transitions and exposes the result", () => {
+    expect(PLAN_CLAIM_PHASE_TRANSITIONS).toEqual({
+      initial: { allowed: ["clarifying", "planning"], resulting: "planning" },
+      "follow-up": { allowed: ["planned"], resulting: "planning" },
+    });
+    expect(resolvePlanClaimPhase("G99", "initial", "clarifying")).toEqual({
+      ok: true,
+      previousGoalPhase: "clarifying",
+      goalPhase: "planning",
+    });
+    expect(resolvePlanClaimPhase("G99", "initial", "planning")).toEqual({
+      ok: true,
+      previousGoalPhase: "planning",
+      goalPhase: "planning",
+    });
+    expect(resolvePlanClaimPhase("G99", "follow-up", "planned")).toEqual({
+      ok: true,
+      previousGoalPhase: "planned",
+      goalPhase: "planning",
+    });
+    expect(resolvePlanClaimPhase("G99", "follow-up", "clarifying")).toEqual({
+      ok: false,
+      conflict: {
+        code: "goal-phase-conflict",
+        goalId: "G99",
+        status: "clarifying",
+        allowed: ["planned"],
+      },
+    });
+    expect(resolvePlanClaimPhase("G99", "initial", "done")).toEqual({
+      ok: false,
+      conflict: { code: "goal-terminal", goalId: "G99", status: "done" },
+    });
+
+    const followUpAcknowledgement = {
+      goalId: "G99",
+      claimId: "claim_1",
+      generation: 3,
+      purpose: "follow-up",
+      claimRequestId: "request_1",
+      ownerFenceToken,
+      previousGoalPhase: "planned",
+      goalPhase: "planning",
+      legacyAdopted: false,
+      adoptedManifest: {
+        milestoneIds: [],
+        taskIds: [],
+      },
+      waitingResearches: [],
+    } as const;
+    expect(
+      PlanClaimResultSchema.safeParse({
+        ok: true,
+        replayed: false,
+        acknowledgement: followUpAcknowledgement,
+      }).success,
+    ).toBe(true);
+    expect(
+      PlanClaimResultSchema.safeParse({
+        ok: true,
+        replayed: false,
+        acknowledgement: {
+          ...followUpAcknowledgement,
+          previousGoalPhase: "clarifying",
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("binds finalization to the exact reviewed draft identity", () => {
+    const input = {
+      ...ownerOperation,
+      reviewId: "R852",
+      draftRevision: 1,
+      decision: { headline: "Finalize the reviewed draft" },
+    } as const;
+    expect(PlanFinalizeInputSchema.safeParse(input).success).toBe(true);
+    expect(
+      PlanFinalizeInputSchema.safeParse({
+        ...ownerOperation,
+        reviewId: "R852",
+        decision: { headline: "Revision omitted" },
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReviewDraftBindingSchema.parse({
+        reviewId: "R852",
+        draft: draftIdentity,
+      }),
+    ).toEqual({
+      reviewId: "R852",
+      draft: draftIdentity,
+    });
+    expect(
+      resolvePlanFinalizeDraftBinding(input, draftIdentity, {
+        reviewId: "R852",
+        draft: draftIdentity,
+      }),
+    ).toEqual({
+      ok: true,
+      draft: draftIdentity,
+    });
+    expect(
+      resolvePlanFinalizeDraftBinding(
+        input,
+        { ...draftIdentity, revision: 2 },
+        { reviewId: "R852", draft: draftIdentity },
+      ),
+    ).toEqual({
+      ok: false,
+      conflict: {
+        code: "review-draft-mismatch",
+        goalId: "G99",
+        claimId: "claim_1",
+        generation: 3,
+        reviewId: "R852",
+        requestedDraftRevision: 1,
+        currentDraftRevision: 2,
+        reviewDraftRevision: 1,
+      },
+    });
+    expect(resolvePlanFinalizeDraftBinding(input, draftIdentity, null)).toEqual({
+      ok: false,
+      conflict: {
+        code: "review-draft-mismatch",
+        goalId: "G99",
+        claimId: "claim_1",
+        generation: 3,
+        reviewId: "R852",
+        requestedDraftRevision: 1,
+        currentDraftRevision: 1,
+        reviewDraftRevision: null,
+      },
+    });
+  });
+
+  it("reconstructs the live legacy-adoption acknowledgement from verifier-only durable state", () => {
+    const durableRecord = {
+      goalId: "G99",
+      claimId: "claim_1",
+      generation: 3,
+      purpose: "follow-up",
+      claimRequestId: "request_1",
+      ownerFenceTokenVerifier: verifier,
+      expectedGeneration: 2,
+      priorGeneration: 2,
+      previousGoalPhase: "planned",
+      goalPhase: "planning",
+      legacyAdopted: true,
+      adoptedManifest: {
+        milestoneIds: ["M360"],
+        taskIds: ["T846"],
+      },
+      waitingResearches: [],
+      ...provenance,
+      state: "active",
+    } as const;
+    const retryInput = {
+      goalId: "G99",
+      purpose: "follow-up",
+      claimRequestId: "request_1",
+      ownerFenceToken,
+      expectedGeneration: 2,
+      ...provenance,
+    } as const;
+
+    expect(PlanPrivateClaimRecordSchema.safeParse(durableRecord).success).toBe(true);
+    expect(JSON.stringify(durableRecord)).not.toContain(ownerFenceToken);
+    expect(replayPlanClaim(durableRecord, retryInput)).toEqual({
+      ok: true,
+      replayed: true,
+      acknowledgement: {
+        goalId: "G99",
+        claimId: "claim_1",
+        generation: 3,
+        purpose: "follow-up",
+        claimRequestId: "request_1",
+        ownerFenceToken,
+        previousGoalPhase: "planned",
+        goalPhase: "planning",
+        legacyAdopted: true,
+        adoptedManifest: {
+          milestoneIds: ["M360"],
+          taskIds: ["T846"],
+        },
+        waitingResearches: [],
+      },
+    });
+    expect(
+      replayPlanClaim(durableRecord, {
+        ...retryInput,
+        expectedGeneration: 1,
+      }),
+    ).toEqual({
+      ok: false,
+      conflict: {
+        code: "claim-request-reused",
+        goalId: "G99",
+        claimId: "claim_1",
+        generation: 3,
+        claimRequestId: "request_1",
+      },
+    });
+    expect(
+      replayPlanClaim(durableRecord, {
+        ...retryInput,
+        ownerFenceToken: "B".repeat(22),
+      }),
+    ).toEqual({
+      ok: false,
+      conflict: {
+        code: "owner-fence-mismatch",
+        goalId: "G99",
+        claimId: "claim_1",
+        generation: 3,
+      },
+    });
+  });
+
+  it("allows an atomic defect batch on tokenless exact abandonment", () => {
+    const input = {
+      kind: "abandon",
+      ...operationKey,
+      reason: "release the exact public claim",
+      reviewDefects,
+      ...provenance,
+    } as const;
+    expect(PlanReleaseInputSchema.safeParse(input).success).toBe(true);
+    expect(
+      PlanReleaseInputSchema.safeParse({
+        ...input,
+        ownerFenceToken,
+      }).success,
+    ).toBe(false);
+
+    const acknowledgement = {
+      kind: "abandon",
+      ...operationKey,
+      reviewDefects: reviewDefectAllocations,
+      questions: [],
+      researches: [],
+      waitingResearches: [],
+      goalPhase: "planning",
+    } as const;
+    expect(PlanReleaseAcknowledgementSchema.safeParse(acknowledgement).success).toBe(true);
+    const replayed = PlanReleaseResultSchema.parse({
+      ok: true,
+      replayed: true,
+      acknowledgement,
+    });
+    if (!replayed.ok) throw new Error("expected successful abandonment replay");
+    expect(replayed.acknowledgement.reviewDefects).toEqual([...reviewDefectAllocations]);
+  });
+
+  it("rejects duplicate client keys and invalid defect-batch boundaries", () => {
+    expect(
+      PlanReleaseInputSchema.safeParse({
+        kind: "pause",
+        ...ownerOperation,
+        effect: {
+          kind: "questions",
+          questions: [
+            { key: "same", question: "First?" },
+            { key: "same", question: "Second?" },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReleaseInputSchema.safeParse({
+        kind: "pause",
+        ...ownerOperation,
+        effect: {
+          kind: "researches",
+          researches: [
+            { key: "same", question: "First?" },
+            { key: "same", question: "Second?" },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReviewDefectBatchSchema.safeParse({
+        reviewId: "R852",
+        defects: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReviewDefectBatchSchema.safeParse({
+        reviewId: "R852",
+        defects: [
+          { key: "same", headline: "First", severity: "low" },
+          { key: "same", headline: "Second", severity: "critical" },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      PlanReviewDefectBatchSchema.safeParse({
+        reviewId: "R852",
+        defects: [
+          { key: "valid", headline: "Valid", severity: "high" },
+          { key: "invalid", headline: "Invalid severity", severity: "urgent" },
+        ],
+      }).success,
+    ).toBe(false);
+    for (const severity of ["low", "medium", "high", "critical"] as const) {
+      expect(
+        PlanReviewDefectBatchSchema.safeParse({
+          reviewId: "R852",
+          defects: [{ key: severity, headline: severity, severity }],
+        }).success,
+      ).toBe(true);
+    }
+  });
+});
+
+describe("operation replay and conflict partitioning", () => {
+  it("distinguishes exact replay, changed payload, and independent operation scopes", () => {
+    for (const operation of ["publish-draft", "release", "finalize"] as const) {
+      const recorded = {
+        ...operationKey,
+        operation,
+        requestPayloadVerifier: requestPayloadVerifier({ operation, revision: 1 }),
+      };
+
+      expect(resolvePlanOperationReplay(recorded, recorded)).toEqual({
+        kind: "exact-replay",
+      });
+      expect(
+        resolvePlanOperationReplay(recorded, {
+          ...recorded,
+          requestPayloadVerifier: requestPayloadVerifier({ operation, revision: 2 }),
+        }),
+      ).toEqual({
+        kind: "conflict",
+        conflict: {
+          code: "idempotency-key-reused",
+          goalId: "G99",
+          claimId: "claim_1",
+          generation: 3,
+          operation,
+          operationId: "operation_1",
+        },
+      });
+      expect(
+        resolvePlanOperationReplay(recorded, {
+          ...recorded,
+          operationId: "operation_2",
+          requestPayloadVerifier: requestPayloadVerifier({ operation, revision: 2 }),
+        }),
+      ).toEqual({ kind: "independent-operation" });
+    }
+  });
+
+  it("accepts conflicts only for the operation that can produce them", () => {
+    const publishConflict = {
+      ok: false,
+      conflict: {
+        code: "idempotency-key-reused",
+        goalId: "G99",
+        claimId: "claim_1",
+        generation: 3,
+        operation: "publish-draft",
+        operationId: "operation_1",
+      },
+    } as const;
+    expect(PlanPublishDraftResultSchema.safeParse(publishConflict).success).toBe(true);
+    expect(PlanClaimResultSchema.safeParse(publishConflict).success).toBe(false);
+    expect(PlanReleaseResultSchema.safeParse(publishConflict).success).toBe(false);
+    expect(PlanFinalizeResultSchema.safeParse(publishConflict).success).toBe(false);
+
+    const releaseConflict = {
+      ...publishConflict,
+      conflict: {
+        ...publishConflict.conflict,
+        operation: "release",
+      },
+    } as const;
+    expect(PlanReleaseResultSchema.safeParse(releaseConflict).success).toBe(true);
+    expect(PlanPauseConflictSchema.safeParse(releaseConflict.conflict).success).toBe(true);
+    expect(PlanAbandonConflictSchema.safeParse(releaseConflict.conflict).success).toBe(true);
+    expect(PlanPublishDraftResultSchema.safeParse(releaseConflict).success).toBe(false);
+    expect(PlanFinalizeResultSchema.safeParse(releaseConflict).success).toBe(false);
+
+    const finalizeReplayConflict = {
+      ...publishConflict,
+      conflict: {
+        ...publishConflict.conflict,
+        operation: "finalize",
+      },
+    } as const;
+    expect(PlanFinalizeResultSchema.safeParse(finalizeReplayConflict).success).toBe(true);
+    expect(PlanPublishDraftResultSchema.safeParse(finalizeReplayConflict).success).toBe(false);
+    expect(PlanReleaseResultSchema.safeParse(finalizeReplayConflict).success).toBe(false);
+
+    const finalizeConflict = {
+      ok: false,
+      conflict: {
+        code: "review-draft-mismatch",
+        goalId: "G99",
+        claimId: "claim_1",
+        generation: 3,
+        reviewId: "R852",
+        requestedDraftRevision: 1,
+        currentDraftRevision: 2,
+        reviewDraftRevision: 1,
+      },
+    } as const;
+    expect(PlanFinalizeResultSchema.safeParse(finalizeConflict).success).toBe(true);
+    expect(PlanClaimResultSchema.safeParse(finalizeConflict).success).toBe(false);
+    expect(PlanPublishDraftResultSchema.safeParse(finalizeConflict).success).toBe(false);
+    expect(PlanReleaseResultSchema.safeParse(finalizeConflict).success).toBe(false);
+
+    const ownerConflict = {
+      code: "owner-fence-mismatch",
+      goalId: "G99",
+      claimId: "claim_1",
+      generation: 3,
+    } as const;
+    expect(PlanPauseConflictSchema.safeParse(ownerConflict).success).toBe(true);
+    expect(PlanAbandonConflictSchema.safeParse(ownerConflict).success).toBe(false);
+    expect(PLAN_RELEASE_VARIANT_CONFLICTS).toEqual({
+      pause: [
+        "goal-not-found",
+        "claim-not-active",
+        "stale-claim",
+        "stale-generation",
+        "owner-fence-mismatch",
+        "goal-phase-conflict",
+        "idempotency-key-reused",
+      ],
+      abandon: [
+        "goal-not-found",
+        "claim-not-active",
+        "stale-claim",
+        "stale-generation",
+        "idempotency-key-reused",
+      ],
+    });
   });
 });
 
@@ -308,7 +794,17 @@ describe("authority persistence and observer redaction", () => {
       purpose: "initial",
       claimRequestId: "request_1",
       ownerFenceTokenVerifier: verifier,
+      expectedGeneration: 2,
       priorGeneration: 2,
+      previousGoalPhase: "clarifying",
+      goalPhase: "planning",
+      legacyAdopted: false,
+      adoptedManifest: {
+        milestoneIds: [],
+        taskIds: [],
+      },
+      waitingResearches: [],
+      ...provenance,
       state: "active",
     } as const;
 
@@ -369,6 +865,8 @@ describe("authority persistence and observer redaction", () => {
         purpose: "initial",
         claimRequestId: "request_1",
         ownerFenceToken,
+        previousGoalPhase: "clarifying",
+        goalPhase: "planning",
         legacyAdopted: false,
         adoptedManifest: {
           milestoneIds: [],
@@ -394,6 +892,7 @@ describe("authority persistence and observer redaction", () => {
       PlanFinalizeAcknowledgementSchema.safeParse({
         ...operationKey,
         reviewId: "R852",
+        draft: draftIdentity,
         decisionId: "K143",
         manifest: publishedManifest,
         reviewDefects: reviewDefectAllocations,
@@ -481,6 +980,7 @@ describe("atomic acknowledgements and exact replay", () => {
     const acknowledgement = {
       ...operationKey,
       reviewId: "R852",
+      draft: draftIdentity,
       decisionId: "K143",
       manifest: publishedManifest,
       reviewDefects: reviewDefectAllocations,
@@ -493,6 +993,15 @@ describe("atomic acknowledgements and exact replay", () => {
     } as const;
 
     expect(JSON.stringify(PlanFinalizeResultSchema.parse(result))).toBe(JSON.stringify(result));
+    expect(
+      PlanFinalizeAcknowledgementSchema.safeParse({
+        ...acknowledgement,
+        draft: {
+          ...draftIdentity,
+          revision: 2,
+        },
+      }).success,
+    ).toBe(false);
     const replayed = PlanFinalizeResultSchema.parse({
       ...result,
       replayed: true,
@@ -589,14 +1098,19 @@ describe("executable lifecycle semantics", () => {
       observerExposure: "never",
       claimRequestScope: ["goalId", "claimRequestId"],
       operationScope: ["claimId", "generation", "operation", "operationId"],
-      exactReplay: "return-recorded-acknowledgement-and-side-effect-ids",
+      exactReplay:
+        "reconstruct-live-acknowledgement-from-redacted-durable-state-and-caller-token",
+      claimReplayPersistence:
+        "request-fields-token-verifier-phase-and-legacy-adoption-without-plaintext-token",
+      operationReplayPersistence: "payload-verifier-is-idempotency-only-never-authority",
       changedClaimReplayPayload: "claim-request-reused",
       changedOperationReplayPayload: "idempotency-key-reused",
       expiry: "none",
       heartbeat: "none",
       digestAuthority: "none",
       coordinator: "none",
-      abandonmentAuthority: "exact-public-claim-id-and-generation",
+      abandonmentAuthority:
+        "exact-public-claim-id-generation-and-release-operation-id-without-owner-token",
     });
   });
 
@@ -609,7 +1123,7 @@ describe("executable lifecycle semantics", () => {
       goalPhase: ["claim", "release", "finalize"],
       finalizedManifest: ["finalize"],
       followUpCleanup: ["claim"],
-      reviewDefects: ["publish-draft", "release-pause", "finalize"],
+      reviewDefects: ["publish-draft", "release", "finalize"],
       rawCrud: "reject-managed-plan-fields-and-transitions",
     });
   });
@@ -625,7 +1139,7 @@ describe("executable lifecycle semantics", () => {
     expect(PLAN_OPERATION_CONTRACTS.finalize.preconditions).toEqual([
       "exact-active-owner-authority",
       "complete-current-draft-exists",
-      "review-exists-is-go-ahead-and-matches-claim-generation",
+      "review-exists-is-go-ahead-and-matches-exact-draft-identity",
     ]);
     expect(PLAN_OPERATION_CONTRACTS.finalize.postconditions).toContain(
       "only-finalized-current-manifest-is-executable",
@@ -648,6 +1162,7 @@ describe("executable lifecycle semantics", () => {
         "owner-fence-mismatch",
         "research-wait-active",
         "review-generation-mismatch",
+        "review-draft-mismatch",
         "review-not-approved",
         "review-not-found",
         "stale-claim",
