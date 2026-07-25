@@ -150,8 +150,6 @@ async function validateWritableLocations(
     fsConstants.R_OK | fsConstants.W_OK | fsConstants.X_OK,
     "state directory",
   );
-  await requiredAccess(dbPath, fsConstants.R_OK | fsConstants.W_OK, "ledger database");
-
   const logsStat = await optionalLstat(logsDir, "logs directory");
   if (logsStat !== null) {
     await requiredAccess(

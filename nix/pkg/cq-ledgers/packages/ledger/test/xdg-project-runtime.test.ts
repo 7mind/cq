@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -56,16 +57,26 @@ interface ContractRuntime {
 
 interface RuntimeFixture {
   readonly root: string;
+  readonly repositoryRoot: string;
   prepare(
     key: string,
     seed: ReadonlyArray<{ name: string; schema: LedgerSchema }>,
   ): Promise<void>;
   seedLog(key: string, relPath: string, content: string): Promise<void>;
-  makeUnreadable(key: string): Promise<void>;
+  makeCorrupt(key: string): Promise<void>;
   makeProjectSymlink(key: string): Promise<void>;
-  installRedirectingConfig(key: string, redirectKey: string): Promise<void>;
-  backendArtifactExists(key: string): Promise<boolean>;
+  installRedirectingConfig(redirectKey: string): Promise<string>;
+  repositoryBackendArtifactExists(): Promise<boolean>;
   open(key: string, onMutation?: OnMutation): Promise<ContractRuntime>;
+  openAt(
+    projectsRoot: string,
+    key: string,
+    onMutation?: OnMutation,
+  ): Promise<ContractRuntime>;
+  openFromRepository(
+    key: string,
+    onMutation?: OnMutation,
+  ): Promise<ContractRuntime>;
 }
 
 interface RuntimeContractFactory {
@@ -76,7 +87,8 @@ interface RuntimeContractFactory {
 type DummyProject = {
   readonly seed: ReadonlyArray<{ name: string; schema: LedgerSchema }>;
   readonly logs: Map<string, string>;
-  state: "valid" | "unreadable" | "symlink";
+  state: "valid" | "corrupt" | "symlink";
+  store: StrictRuntimeDummyStore | null;
 };
 
 class StrictRuntimeDummyStore extends InMemoryLedgerStore implements RuntimeStore {
@@ -106,13 +118,19 @@ class StrictRuntimeDummyStore extends InMemoryLedgerStore implements RuntimeStor
 
 class StrictInMemoryRuntimeFactory {
   readonly root = "/strict-dummy/projects";
+  readonly repositoryRoot = "/strict-dummy/repository";
   private readonly projects = new Map<string, DummyProject>();
 
   async prepare(
     key: string,
     seed: ReadonlyArray<{ name: string; schema: LedgerSchema }>,
   ): Promise<void> {
-    this.projects.set(key, { seed, logs: new Map(), state: "valid" });
+    this.projects.set(key, {
+      seed,
+      logs: new Map(),
+      state: "valid",
+      store: null,
+    });
   }
 
   async seedLog(key: string, relPath: string, content: string): Promise<void> {
@@ -120,22 +138,47 @@ class StrictInMemoryRuntimeFactory {
     project.logs.set(relPath, content);
   }
 
-  async makeUnreadable(key: string): Promise<void> {
-    this.requireProject(key).state = "unreadable";
+  async makeCorrupt(key: string): Promise<void> {
+    this.requireProject(key).state = "corrupt";
   }
 
   async makeProjectSymlink(key: string): Promise<void> {
-    this.projects.set(key, { seed: [], logs: new Map(), state: "symlink" });
+    this.projects.set(key, {
+      seed: [],
+      logs: new Map(),
+      state: "symlink",
+      store: null,
+    });
   }
 
-  async installRedirectingConfig(_key: string, _redirectKey: string): Promise<void> {}
+  async installRedirectingConfig(_redirectKey: string): Promise<string> {
+    return path.join(this.repositoryRoot, "cq.toml");
+  }
 
-  async backendArtifactExists(_key: string): Promise<boolean> {
+  async repositoryBackendArtifactExists(): Promise<boolean> {
     return false;
   }
 
   async open(key: string, onMutation?: OnMutation): Promise<ContractRuntime> {
+    return this.openAt(this.root, key, onMutation);
+  }
+
+  async openAt(
+    projectsRoot: string,
+    key: string,
+    onMutation?: OnMutation,
+  ): Promise<ContractRuntime> {
+    if (!path.isAbsolute(projectsRoot)) {
+      throw new XdgProjectRuntimeLocationError(
+        `projectsRoot must be absolute: ${projectsRoot}`,
+      );
+    }
     this.assertSafeKey(key);
+    if (projectsRoot !== this.root) {
+      throw new XdgProjectRuntimeLocationError(
+        `projects root does not exist: ${projectsRoot}`,
+      );
+    }
     const project = this.projects.get(key);
     if (project === undefined) {
       throw new XdgProjectRuntimeLocationError(`project does not exist: ${key}`);
@@ -143,19 +186,33 @@ class StrictInMemoryRuntimeFactory {
     if (project.state !== "valid") {
       throw new XdgProjectRuntimeLocationError(`project cannot be opened: ${key}`);
     }
-    const store = new StrictRuntimeDummyStore(project.seed, onMutation, project.logs);
-    await store.init();
+    if (project.store === null) {
+      project.store = new StrictRuntimeDummyStore(
+        project.seed,
+        onMutation,
+        project.logs,
+      );
+      await project.store.init();
+    }
+    const store = runtimeStoreSession(project.store);
     let disposal: Promise<void> | null = null;
     return {
       projectKey: key,
-      dbPath: path.join(this.root, key, "state", "ledger.db"),
-      logsDir: path.join(this.root, key, "logs"),
+      dbPath: path.join(projectsRoot, key, "state", "ledger.db"),
+      logsDir: path.join(projectsRoot, key, "logs"),
       store,
       dispose() {
         disposal ??= store.dispose();
         return disposal;
       },
     };
+  }
+
+  async openFromRepository(
+    key: string,
+    onMutation?: OnMutation,
+  ): Promise<ContractRuntime> {
+    return this.open(key, onMutation);
   }
 
   private requireProject(key: string): DummyProject {
@@ -179,6 +236,27 @@ class StrictInMemoryRuntimeFactory {
   }
 }
 
+function runtimeStoreSession(store: StrictRuntimeDummyStore): RuntimeStore {
+  let disposed = false;
+  return new Proxy(store, {
+    get(target, property) {
+      if (property === "dispose") {
+        return async () => {
+          disposed = true;
+        };
+      }
+      const value = Reflect.get(target, property, target) as unknown;
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        if (disposed) {
+          throw new Error("InMemoryLedgerStore is not initialized");
+        }
+        return Reflect.apply(value, target, args);
+      };
+    },
+  });
+}
+
 async function freshProjectsRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), prefix));
   cleanupPaths.push(root);
@@ -186,7 +264,10 @@ async function freshProjectsRoot(prefix: string): Promise<string> {
 }
 
 class RealRuntimeFixture implements RuntimeFixture {
-  constructor(readonly root: string) {}
+  constructor(
+    readonly root: string,
+    readonly repositoryRoot: string,
+  ) {}
 
   async prepare(
     key: string,
@@ -214,27 +295,29 @@ class RealRuntimeFixture implements RuntimeFixture {
     await writeFile(path.join(logsDir, relPath), content);
   }
 
-  async makeUnreadable(key: string): Promise<void> {
+  async makeCorrupt(key: string): Promise<void> {
     await writeFile(path.join(this.root, key, "state", "ledger.db"), "not sqlite");
   }
 
   async makeProjectSymlink(key: string): Promise<void> {
     const outsideRoot = await freshProjectsRoot("t832-symlink-target-");
-    const outside = new RealRuntimeFixture(outsideRoot);
+    const outside = new RealRuntimeFixture(outsideRoot, this.repositoryRoot);
     await outside.prepare("target", []);
     await symlink(path.join(outsideRoot, "target"), path.join(this.root, key), "dir");
   }
 
-  async installRedirectingConfig(key: string, redirectKey: string): Promise<void> {
+  async installRedirectingConfig(redirectKey: string): Promise<string> {
+    const configPath = path.join(this.repositoryRoot, "cq.toml");
     await writeFile(
-      path.join(this.root, key, "cq.toml"),
+      configPath,
       `[ledger]\nbackend = "fs"\nprojectId = "${redirectKey}"\n`,
     );
+    return configPath;
   }
 
-  async backendArtifactExists(key: string): Promise<boolean> {
+  async repositoryBackendArtifactExists(): Promise<boolean> {
     try {
-      await lstat(path.join(this.root, key, ".cq"));
+      await lstat(path.join(this.repositoryRoot, ".cq"));
       return true;
     } catch {
       return false;
@@ -242,12 +325,33 @@ class RealRuntimeFixture implements RuntimeFixture {
   }
 
   async open(key: string, onMutation?: OnMutation): Promise<ContractRuntime> {
+    return this.openAt(this.root, key, onMutation);
+  }
+
+  async openAt(
+    projectsRoot: string,
+    key: string,
+    onMutation?: OnMutation,
+  ): Promise<ContractRuntime> {
     const runtime = await openXdgProjectRuntime({
-      projectsRoot: this.root,
+      projectsRoot,
       projectKey: key,
       ...(onMutation === undefined ? {} : { onMutation }),
     });
     return runtime;
+  }
+
+  async openFromRepository(
+    key: string,
+    onMutation?: OnMutation,
+  ): Promise<ContractRuntime> {
+    const previousCwd = process.cwd();
+    process.chdir(this.repositoryRoot);
+    try {
+      return await this.open(key, onMutation);
+    } finally {
+      process.chdir(previousCwd);
+    }
   }
 }
 
@@ -257,22 +361,31 @@ const dummyFactory: RuntimeContractFactory = {
     const dummy = new StrictInMemoryRuntimeFactory();
     return {
       root: dummy.root,
+      repositoryRoot: dummy.repositoryRoot,
       prepare: (key, seed) => dummy.prepare(key, seed),
       seedLog: (key, relPath, content) => dummy.seedLog(key, relPath, content),
-      makeUnreadable: (key) => dummy.makeUnreadable(key),
+      makeCorrupt: (key) => dummy.makeCorrupt(key),
       makeProjectSymlink: (key) => dummy.makeProjectSymlink(key),
-      installRedirectingConfig: (key, redirectKey) =>
-        dummy.installRedirectingConfig(key, redirectKey),
-      backendArtifactExists: (key) => dummy.backendArtifactExists(key),
+      installRedirectingConfig: (redirectKey) =>
+        dummy.installRedirectingConfig(redirectKey),
+      repositoryBackendArtifactExists: () =>
+        dummy.repositoryBackendArtifactExists(),
       open: (key, onMutation) => dummy.open(key, onMutation),
+      openAt: (projectsRoot, key, onMutation) =>
+        dummy.openAt(projectsRoot, key, onMutation),
+      openFromRepository: (key, onMutation) =>
+        dummy.openFromRepository(key, onMutation),
     };
   },
 };
 
 const realFactory: RuntimeContractFactory = {
   name: "real temporary XDG/SQLite adapter (Behavioral-Active Blackbox-GoodCommunication)",
-  async build() {
-    return new RealRuntimeFixture(await freshProjectsRoot("t832-projects-"));
+  async build(): Promise<RealRuntimeFixture> {
+    return new RealRuntimeFixture(
+      await freshProjectsRoot("t832-projects-"),
+      await freshProjectsRoot("t832-repository-"),
+    );
   },
 };
 
@@ -321,6 +434,44 @@ function runRuntimeContract(factory: RuntimeContractFactory): void {
       expect(() => runtime.store.enumerate()).toThrow(/initiali[sz]ed/);
     });
 
+    test("persists mutations and counters across disposal and reopen", async () => {
+      const fixture = await factory.build();
+      await fixture.prepare("alpha", []);
+      const first = await fixture.open("alpha");
+      const milestone = await first.store.createMilestone({
+        title: "durable milestone",
+      });
+      const firstItem = await first.store.createItem(TASKS_LEDGER, milestone.id, {
+        status: "planned",
+        fields: { headline: "durable searchable item" },
+      });
+      expect(firstItem.id).toBe("T1");
+      await first.dispose();
+
+      const reopened = await fixture.open("alpha");
+      try {
+        expect(reopened.store.fetchItem("milestones", milestone.id).fields.title).toBe(
+          "durable milestone",
+        );
+        expect(reopened.store.search(TASKS_LEDGER, "durable searchable")).toHaveLength(
+          1,
+        );
+        const secondItem = await reopened.store.createItem(
+          TASKS_LEDGER,
+          milestone.id,
+          {
+            status: "planned",
+            fields: { headline: "second durable item" },
+          },
+        );
+        expect(secondItem.id).toBe("T2");
+        expect(reopened.store.fetch(TASKS_LEDGER).counters.item).toBe(2);
+        expect(() => first.store.enumerate()).toThrow(/initiali[sz]ed/);
+      } finally {
+        await reopened.dispose();
+      }
+    });
+
     test("keeps mutations, counters, search, and logs isolated between two keys", async () => {
       const fixture = await factory.build();
       await fixture.prepare("alpha", []);
@@ -355,6 +506,9 @@ function runRuntimeContract(factory: RuntimeContractFactory): void {
 
     test("rejects missing, unreadable, symlinked, and path-escaping selections", async () => {
       const fixture = await factory.build();
+      await expect(fixture.openAt("relative/projects", "missing")).rejects.toThrow(
+        /projectsRoot must be absolute/,
+      );
       await expect(fixture.open("missing")).rejects.toThrow(
         XdgProjectRuntimeLocationError,
       );
@@ -365,7 +519,7 @@ function runRuntimeContract(factory: RuntimeContractFactory): void {
       }
 
       await fixture.prepare("unreadable", []);
-      await fixture.makeUnreadable("unreadable");
+      await fixture.makeCorrupt("unreadable");
       await expect(fixture.open("unreadable")).rejects.toThrow(
         XdgProjectRuntimeLocationError,
       );
@@ -380,14 +534,16 @@ function runRuntimeContract(factory: RuntimeContractFactory): void {
       const fixture = await factory.build();
       await fixture.prepare("selected", []);
       await fixture.prepare("redirect-target", []);
-      await fixture.installRedirectingConfig("selected", "redirect-target");
-      const selected = await fixture.open("selected");
+      const configPath = await fixture.installRedirectingConfig("redirect-target");
+      expect(configPath).toBe(path.join(fixture.repositoryRoot, "cq.toml"));
+      expect(path.relative(fixture.root, configPath).startsWith("..")).toBe(true);
+      const selected = await fixture.openFromRepository("selected");
       const redirectTarget = await fixture.open("redirect-target");
       try {
         const created = await selected.store.createMilestone({ title: "selected only" });
         expect(created.id).toBe("M1");
         expect(() => redirectTarget.store.fetchItem("milestones", "M1")).toThrow();
-        expect(await fixture.backendArtifactExists("selected")).toBe(false);
+        expect(await fixture.repositoryBackendArtifactExists()).toBe(false);
       } finally {
         await selected.dispose();
         await redirectTarget.dispose();
@@ -403,9 +559,9 @@ runRuntimeContract(realFactory);
 
 describe("explicit XDG runtime filesystem boundaries", () => {
   test("corrupt DB rejection preserves bytes and creates no SQLite sidecars", async () => {
-    const fixture = new RealRuntimeFixture(await freshProjectsRoot("t832-corrupt-"));
+    const fixture = await realRuntimeFixture("t832-corrupt-");
     await fixture.prepare("corrupt", []);
-    await fixture.makeUnreadable("corrupt");
+    await fixture.makeCorrupt("corrupt");
     const stateDir = path.join(fixture.root, "corrupt", "state");
     const dbPath = path.join(stateDir, "ledger.db");
     const before = await readFile(dbPath);
@@ -419,7 +575,7 @@ describe("explicit XDG runtime filesystem boundaries", () => {
   });
 
   test("traversal and project symlinks do not mutate their outside targets", async () => {
-    const fixture = new RealRuntimeFixture(await freshProjectsRoot("t832-escape-"));
+    const fixture = await realRuntimeFixture("t832-escape-");
     const outsideDir = await freshProjectsRoot("t832-outside-");
     const sentinel = path.join(outsideDir, "sentinel");
     await writeFile(sentinel, "unchanged");
@@ -438,7 +594,7 @@ describe("explicit XDG runtime filesystem boundaries", () => {
   });
 
   test("rejects state, database, and logs symlink escapes before opening", async () => {
-    const fixture = new RealRuntimeFixture(await freshProjectsRoot("t832-sidecars-"));
+    const fixture = await realRuntimeFixture("t832-sidecars-");
     const outside = await freshProjectsRoot("t832-sidecars-outside-");
 
     await mkdir(path.join(fixture.root, "state-link"), { recursive: true });
@@ -474,5 +630,70 @@ describe("explicit XDG runtime filesystem boundaries", () => {
     await expect(fixture.open("logs-link")).rejects.toThrow(
       XdgProjectRuntimeLocationError,
     );
+  });
+});
+
+async function realRuntimeFixture(prefix: string): Promise<RealRuntimeFixture> {
+  return new RealRuntimeFixture(
+    await freshProjectsRoot(`${prefix}projects-`),
+    await freshProjectsRoot(`${prefix}repository-`),
+  );
+}
+
+const getuid = process.getuid;
+const permissionTest =
+  process.platform !== "win32" &&
+  typeof getuid === "function" &&
+  getuid() !== 0
+    ? test
+    : test.skip;
+
+describe("explicit XDG runtime access preflight", () => {
+  permissionTest("rejects a state directory without write permission", async () => {
+    const fixture = await realRuntimeFixture("t832-state-access-");
+    await fixture.prepare("inaccessible-state", []);
+    const stateDir = path.join(fixture.root, "inaccessible-state", "state");
+    await chmod(stateDir, 0o500);
+    try {
+      await expect(fixture.open("inaccessible-state")).rejects.toThrow(
+        /state directory is not readable and writable/,
+      );
+    } finally {
+      await chmod(stateDir, 0o700);
+    }
+  });
+
+  permissionTest("rejects a database that cannot be opened read-write", async () => {
+    const fixture = await realRuntimeFixture("t832-db-access-");
+    await fixture.prepare("inaccessible-db", []);
+    const dbPath = path.join(
+      fixture.root,
+      "inaccessible-db",
+      "state",
+      "ledger.db",
+    );
+    await chmod(dbPath, 0o400);
+    try {
+      await expect(fixture.open("inaccessible-db")).rejects.toThrow(
+        /ledger database is not writable/,
+      );
+    } finally {
+      await chmod(dbPath, 0o600);
+    }
+  });
+
+  permissionTest("rejects a logs directory without write permission", async () => {
+    const fixture = await realRuntimeFixture("t832-logs-access-");
+    await fixture.prepare("inaccessible-logs", []);
+    await fixture.seedLog("inaccessible-logs", "session.md", "log");
+    const logsDir = path.join(fixture.root, "inaccessible-logs", "logs");
+    await chmod(logsDir, 0o500);
+    try {
+      await expect(fixture.open("inaccessible-logs")).rejects.toThrow(
+        /logs directory is not readable and writable/,
+      );
+    } finally {
+      await chmod(logsDir, 0o700);
+    }
   });
 });
