@@ -103,6 +103,24 @@ export type {
   XdgProjectIdentityAccess,
 } from "./store/sqlite/projectIdentity.js";
 export {
+  backfillXdgProjectIdentities,
+  FilesystemXdgProjectIdentityBackfillAccess,
+  XdgProjectIdentityBackfill,
+  XdgProjectIdentityBackfillBoundaryError,
+} from "./store/sqlite/xdgProjectIdentityBackfill.js";
+export type {
+  ResolvedXdgCheckout,
+  XdgCheckoutResolution,
+  XdgProjectIdentityBackfillAccess,
+  XdgProjectIdentityBackfillAccessEvent,
+  XdgProjectIdentityBackfillAccessObserver,
+  XdgProjectIdentityBackfillDiagnostic,
+  XdgProjectIdentityBackfillDiagnosticCode,
+  XdgProjectIdentityBackfillProject,
+  XdgProjectIdentityBackfillRequest,
+  XdgProjectIdentityBackfillResult,
+} from "./store/sqlite/xdgProjectIdentityBackfill.js";
+export {
   FilesystemXdgProjectCatalogSource,
   ReadOnlyXdgProjectCatalog,
   XdgProjectCatalogRootError,

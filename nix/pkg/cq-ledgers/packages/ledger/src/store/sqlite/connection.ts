@@ -25,11 +25,25 @@ export const BUSY_TIMEOUT_MS = 5_000;
  */
 export function openLedgerDb(dbPath: string): Database {
   const db = new Database(dbPath, { create: true });
+  configureLedgerDb(db);
+  return db;
+}
+
+/**
+ * Open an existing ledger database without creating a replacement when the
+ * path disappeared between discovery and a subsequent operation.
+ */
+export function openExistingLedgerDb(dbPath: string): Database {
+  const db = new Database(dbPath, { readwrite: true, create: false });
+  configureLedgerDb(db);
+  return db;
+}
+
+function configureLedgerDb(db: Database): void {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA synchronous = NORMAL");
-  return db;
 }
 
 /**
