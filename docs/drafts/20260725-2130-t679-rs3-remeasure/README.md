@@ -11,7 +11,7 @@ Report: `docs/drafts/20260725-2130-t679-rs3-remeasurement.md`.
 | Script | Question it answers |
 |---|---|
 | `pin-corpus.ts` | Which 357 transcripts are the RS3 corpus? Writes `corpus-manifest.json` (name/size/sha256) and fails unless the set is exactly 357 files / 95,152,796 bytes. |
-| `remeasure.ts` | For every captured ledger tool result in that corpus: bytes + `o200k_base` tokens before, and after passing the captured payload through the SHIPPED `wireResponseContract.ts` transforms in the SHIPPED envelopes. Also request-side arg cost, `projection:"full"` control, per-call regression counts, compact/ack correctness assertions, and per-transcript amortization scenarios. |
+| `remeasure.ts` | For every captured ledger tool result in that corpus: bytes + `o200k_base` tokens before, and after passing the captured payload through the SHIPPED `wireResponseContract.ts` transforms in the SHIPPED envelopes. Also request-side arg cost, `projection:"full"` control, per-call regression counts, paired per-call deltas, compact/ack correctness assertions, per-transcript amortization scenarios, an `mcpToolNameAudit` (ledger calls by MCP server namespace + unmatched `mcp__*` names), and an `unmeasuredBeforeVolume` bound over the host-elided payloads. |
 | `schema-overhead.ts` | What does `tools/list` cost, and how much of the growth is the response contract? Boots the real stdio MCP server over an in-memory transport and tokenizes the returned tool definitions. Run it against BOTH trees. |
 | `twin-server-probe.ts` | For tools the corpus never exercised (`search_items`, `update_milestone`, `create_ledger`, `reopen_item`, `unarchive_item`): drives the RS3-era server and the cutover server with an identical operation script and compares the actual responses. |
 
@@ -44,7 +44,20 @@ bun run twin-server-probe.ts \
 ```
 
 `remeasure.ts` exits non-zero if the corpus drifts from the manifest, if any
-JSONL line fails to parse, or if any compact/ack correctness assertion fails.
+JSONL line fails to parse, if any `mcp__*` tool name fails to split into
+server/tool (a namespace change must never silently remove calls from the
+measurement), or if any compact/ack correctness assertion fails.
+
+## What is NOT measured
+
+Eight captured results (6 `fetch_ledger`, 2 `fts_search`) had their payload
+elided by the host before it reached the transcript, so ~31% of the true
+before-volume cannot be measured. Both notice forms state the size they
+replaced, and `remeasure.ts` parses them into `unmeasuredBeforeVolume`
+(285,015–285,684 `o200k_base` tokens). The omission is **one-directional in the
+response contract's favour**: every elided call is a large mandatory-projection
+response that overflowed on the RS3-era default-full path, so replaying it could
+only increase the measured saving.
 
 ## What the numbers are and are not
 

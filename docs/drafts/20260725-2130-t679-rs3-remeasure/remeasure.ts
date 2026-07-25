@@ -32,16 +32,54 @@ const CONTRACT = `${WORKSPACE}/packages/ledger/src/mcp/wireResponseContract.ts`;
 const {
   COMPACT_ITEM_FIELD_NAMES,
   LEDGER_RESPONSE_CONTRACTS,
+  projectFetchedLedgerDto,
   projectFetchedMilestoneDto,
   projectFtsSearchResultsDto,
   projectItemDto,
   projectItemMutationAckDto,
   projectMilestoneItemGroupsDto,
   projectMilestoneMutationAckDto,
+  projectPaginatedLedgerDto,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 } = (await import(CONTRACT)) as any;
 
-const TOOL_NAME_RE = /^mcp__[A-Za-z0-9-]+__(.+)$/;
+/**
+ * Host tool names are `mcp__<server>__<tool>`. The server segment is NOT
+ * restricted to `[A-Za-z0-9-]`: plugin-provided servers carry underscores
+ * (`mcp__plugin_claude-code-home-manager_ledger__fetch_item`). A pattern that
+ * excludes `_` from the server segment silently drops an entire namespace, so
+ * the server segment is matched non-greedily up to the first `__` separator and
+ * every `mcp__*` name that still fails to split is COUNTED, never skipped
+ * silently (see `mcpToolNameAudit`).
+ */
+const TOOL_NAME_RE = /^mcp__(.+?)__(.+)$/;
+
+/**
+ * Accounting for every `mcp__*` tool name seen in the corpus, so that a change
+ * of MCP server namespace can never again remove calls from the measurement
+ * without leaving a trace in the artifact.
+ */
+const mcpToolNameAudit = {
+  /** `mcp__*` names that do not split into server/tool at all — must stay empty */
+  unmatchedMcpToolNames: {} as Record<string, number>,
+  /** ledger-tool calls, by the MCP server namespace that served them */
+  ledgerCallsByServer: {} as Record<string, number>,
+  /** matched names whose tool segment is not a ledger tool (correctly ignored) */
+  nonLedgerToolsIgnored: {} as Record<string, number>,
+};
+
+function bump(counter: Record<string, number>, key: string): void {
+  counter[key] = (counter[key] ?? 0) + 1;
+}
+
+/**
+ * Host notices that REPLACE an oversized tool result with a pointer. The
+ * payload never reached the transcript, so it can be neither measured nor
+ * replayed — but both notice forms state the size of what they elided, which
+ * bounds the unmeasured part of the before-volume.
+ */
+const ELIDED_CHARACTERS_RE = /^Error: result \(([\d,]+) characters/;
+const ELIDED_KILOBYTES_RE = /^<persisted-output>\s*\n\s*Output too large \(([\d.]+)KB\)/;
 
 // ---------------------------------------------------------------------------
 // measurement primitives
@@ -234,9 +272,24 @@ const REPLAYS: Record<string, Replay> = {
     kind: "ack",
     after: (p) => ({ ledger: { id: (p.ledger as AnyItem).id } }),
   },
-  // fetch_ledger's captured results are all host oversize notices, so its
-  // payload cannot be replayed from this corpus; see `unreplayable` below.
+  // `fetch_ledger` has two envelopes in the shipped handler: the paginated one
+  // (offset/limit given) and the whole-ledger one. Both are replayable in
+  // principle; on THIS corpus every captured fetch_ledger result is a host
+  // oversize notice with the payload elided, so the recorded exclusion reason
+  // is the elision, not a missing transform.
+  fetch_ledger: {
+    kind: "projection",
+    after: (p) => fetchLedgerAfter(p, "compact"),
+    fullControl: (p) => fetchLedgerAfter(p, "full"),
+  },
 };
+
+function fetchLedgerAfter(parsed: Envelope, projection: "compact" | "full"): Envelope {
+  if (Array.isArray((parsed as AnyItem).items)) {
+    return projectPaginatedLedgerDto(parsed as AnyItem, projection);
+  }
+  return { ledger: projectFetchedLedgerDto((parsed as AnyItem).ledger, projection) };
+}
 
 // ---------------------------------------------------------------------------
 // corpus walk
@@ -248,6 +301,8 @@ interface ToolStats {
   calls: number;
   resultsCaptured: number;
   errors: number;
+  /** tokens of the captured error results, excluded from every before-total */
+  errorTokens: number;
   replayed: number;
   unreplayable: number;
   unreplayableReasons: Record<string, number>;
@@ -263,8 +318,18 @@ interface ToolStats {
   /** calls whose after-shape is not smaller than the before-shape */
   nonImprovingCalls: number;
   worstRegressionTokens: number;
+  /** before-tokens of EVERY non-error captured result, replayable or not */
   perCallBeforeTokens: number[];
+  /**
+   * Paired per-call arrays over exactly the replayed calls: index i of all
+   * three describes the same call. `perCallBeforeTokens` is NOT aligned with
+   * them (it also holds unreplayable calls), so a per-call delta must be taken
+   * from `perCallDeltaTokens` — a difference of medians is not a median of
+   * differences.
+   */
+  perCallReplayedBeforeTokens: number[];
   perCallAfterTokens: number[];
+  perCallDeltaTokens: number[];
   argsTokens: number;
   argsTokensWithCompact: number;
   argsTokensWithFull: number;
@@ -279,6 +344,7 @@ function emptyStats(tool: string): ToolStats {
     calls: 0,
     resultsCaptured: 0,
     errors: 0,
+    errorTokens: 0,
     replayed: 0,
     unreplayable: 0,
     unreplayableReasons: {},
@@ -293,7 +359,9 @@ function emptyStats(tool: string): ToolStats {
     nonImprovingCalls: 0,
     worstRegressionTokens: 0,
     perCallBeforeTokens: [],
+    perCallReplayedBeforeTokens: [],
     perCallAfterTokens: [],
+    perCallDeltaTokens: [],
     argsTokens: 0,
     argsTokensWithCompact: 0,
     argsTokensWithFull: 0,
@@ -353,6 +421,24 @@ interface TranscriptStats {
 }
 const perTranscript: TranscriptStats[] = [];
 
+/**
+ * One captured result whose payload the HOST elided before it reached the
+ * transcript. The notice states the size of what it replaced, which is the
+ * only evidence available about the unmeasured part of the before-volume.
+ */
+interface ElidedResult {
+  tool: string;
+  transcript: string;
+  noticeKind: "oversize-error-notice" | "persisted-output-preview";
+  /** size of the NOTICE that reached the transcript (this is what got measured) */
+  noticeCharacters: number;
+  /** payload size the notice states verbatim, in characters */
+  statedPayloadCharacters: number | null;
+  /** payload size the notice states as a rounded KB figure */
+  statedPayloadKilobytes: number | null;
+}
+const elidedResults: ElidedResult[] = [];
+
 for (const entry of manifest.files) {
   const text = readFileSync(join(manifest.corpusRoot, entry.name), "utf8");
   const transcript: TranscriptStats = {
@@ -379,10 +465,19 @@ for (const entry of manifest.files) {
     if (!Array.isArray(content)) continue;
     for (const block of content) {
       if (block?.type === "tool_use" && typeof block.name === "string") {
+        if (!block.name.startsWith("mcp__")) continue;
         const match = TOOL_NAME_RE.exec(block.name);
-        if (match === null) continue;
-        const tool = match[1]!;
-        if (LEDGER_RESPONSE_CONTRACTS[tool] === undefined) continue;
+        if (match === null) {
+          bump(mcpToolNameAudit.unmatchedMcpToolNames, block.name);
+          continue;
+        }
+        const server = match[1]!;
+        const tool = match[2]!;
+        if (LEDGER_RESPONSE_CONTRACTS[tool] === undefined) {
+          bump(mcpToolNameAudit.nonLedgerToolsIgnored, block.name);
+          continue;
+        }
+        bump(mcpToolNameAudit.ledgerCallsByServer, server);
         pendingUse.set(block.id, { tool, input: block.input });
         const stat = stats.get(tool) ?? emptyStats(tool);
         stat.calls++;
@@ -407,8 +502,22 @@ for (const entry of manifest.files) {
       if (resultText === null) continue;
       stat.resultsCaptured++;
       const before = measureText(resultText);
+      const charNotice = ELIDED_CHARACTERS_RE.exec(resultText);
+      const kbNotice = ELIDED_KILOBYTES_RE.exec(resultText);
+      if (charNotice !== null || kbNotice !== null) {
+        elidedResults.push({
+          tool: use.tool,
+          transcript: entry.name,
+          noticeKind: charNotice !== null ? "oversize-error-notice" : "persisted-output-preview",
+          noticeCharacters: resultText.length,
+          statedPayloadCharacters:
+            charNotice === null ? null : Number(charNotice[1]!.replaceAll(",", "")),
+          statedPayloadKilobytes: kbNotice === null ? null : Number(kbNotice[1]!),
+        });
+      }
       if (block.is_error === true) {
         stat.errors++;
+        stat.errorTokens += before.tokens;
         continue;
       }
       stat.beforeBytes += before.bytes;
@@ -435,7 +544,9 @@ for (const entry of manifest.files) {
           stat.afterTokens += before.tokens;
           stat.fullControlBytes += before.bytes;
           stat.fullControlTokens += before.tokens;
+          stat.perCallReplayedBeforeTokens.push(before.tokens);
           stat.perCallAfterTokens.push(before.tokens);
+          stat.perCallDeltaTokens.push(0);
         }
         continue;
       }
@@ -471,7 +582,9 @@ for (const entry of manifest.files) {
       stat.replayedBeforeTokens += before.tokens;
       stat.afterBytes += afterSize.bytes;
       stat.afterTokens += afterSize.tokens;
+      stat.perCallReplayedBeforeTokens.push(before.tokens);
       stat.perCallAfterTokens.push(afterSize.tokens);
+      stat.perCallDeltaTokens.push(before.tokens - afterSize.tokens);
       if (afterSize.tokens >= before.tokens) {
         stat.nonImprovingCalls++;
         stat.worstRegressionTokens = Math.max(
@@ -510,6 +623,7 @@ const totals = perTool.reduce(
     calls: acc.calls + s.calls,
     resultsCaptured: acc.resultsCaptured + s.resultsCaptured,
     errors: acc.errors + s.errors,
+    errorResultTokens: acc.errorResultTokens + s.errorTokens,
     replayed: acc.replayed + s.replayed,
     unreplayable: acc.unreplayable + s.unreplayable,
     beforeBytes: acc.beforeBytes + s.beforeBytes,
@@ -527,6 +641,7 @@ const totals = perTool.reduce(
     calls: 0,
     resultsCaptured: 0,
     errors: 0,
+    errorResultTokens: 0,
     replayed: 0,
     unreplayable: 0,
     beforeBytes: 0,
@@ -559,6 +674,61 @@ const replayedTotals = perTool.reduce(
     fullControlTokens: 0,
   },
 );
+
+// --- how much of the true before-volume was NOT measured -------------------
+// Every excluded call is one the probe could not measure, and the exclusions
+// are NOT symmetric: `fetch_ledger` is a mandatory-projection tool whose six
+// captured calls all used the RS3-era default-full path and overflowed the host
+// limit, so replaying them could only INCREASE the measured saving. The notices
+// state the elided sizes verbatim, which bounds what was missed. `KB` is not
+// disambiguated by the host, so both readings are carried.
+const BYTES_PER_KB_DECIMAL = 1000;
+const BYTES_PER_KB_BINARY = 1024;
+const bytesPerToken = replayedTotals.beforeBytes / replayedTotals.beforeTokens;
+const elidedExactCharacters = elidedResults.reduce(
+  (a, e) => a + (e.statedPayloadCharacters ?? 0),
+  0,
+);
+const elidedStatedKilobytes = elidedResults.reduce(
+  (a, e) => a + (e.statedPayloadKilobytes ?? 0),
+  0,
+);
+const elidedLowerBytes =
+  elidedExactCharacters + elidedStatedKilobytes * BYTES_PER_KB_DECIMAL;
+const elidedUpperBytes =
+  elidedExactCharacters + elidedStatedKilobytes * BYTES_PER_KB_BINARY;
+const unmeasuredBeforeVolume = {
+  note:
+    "Payloads the HOST elided before they reached the transcript. Not measurable, " +
+    "but self-describing: each notice states the size it replaced. The omission is " +
+    "one-directional in the contract's favour — every elided call is a large " +
+    "mandatory-projection response that overflowed on the RS3-era default-full " +
+    "path, so replaying it could only increase the measured saving.",
+  elidedResults,
+  elidedCalls: elidedResults.length,
+  statedCharactersExact: elidedExactCharacters,
+  statedKilobytesRounded: Number(elidedStatedKilobytes.toFixed(1)),
+  elidedBytesLowerBound: elidedLowerBytes,
+  elidedBytesUpperBound: elidedUpperBytes,
+  corpusBytesPerToken: Number(bytesPerToken.toFixed(4)),
+  elidedTokensLowerBound: Math.round(elidedLowerBytes / bytesPerToken),
+  elidedTokensUpperBound: Math.round(elidedUpperBytes / bytesPerToken),
+  measuredBeforeTokens: replayedTotals.beforeTokens,
+  measuredShareOfTrueBeforeVolumePercentLowerBound: Number(
+    (
+      (replayedTotals.beforeTokens /
+        (replayedTotals.beforeTokens + elidedUpperBytes / bytesPerToken)) *
+      100
+    ).toFixed(2),
+  ),
+  measuredShareOfTrueBeforeVolumePercentUpperBound: Number(
+    (
+      (replayedTotals.beforeTokens /
+        (replayedTotals.beforeTokens + elidedLowerBytes / bytesPerToken)) *
+      100
+    ).toFixed(2),
+  ),
+};
 
 // Input-side cost of the mandatory projection parameter, over the calls that
 // the cutover made projection-bearing.
@@ -643,7 +813,11 @@ const report = {
     fullControlTokens: replayedTotals.fullControlTokens,
     fullControlDeltaTokens:
       replayedTotals.fullControlTokens - replayedTotals.beforeTokens,
+    /** median of per-call DELTAS (not a difference of medians) */
+    medianPerCallDeltaTokens: median(perTool.flatMap((s) => s.perCallDeltaTokens)),
   },
+  mcpToolNameAudit,
+  unmeasuredBeforeVolume,
   inputSideCost,
   sessionAmortization,
   perTranscript: perTranscript.filter((t) => t.ledgerCalls > 0),
@@ -653,6 +827,7 @@ const report = {
     calls: s.calls,
     resultsCaptured: s.resultsCaptured,
     errors: s.errors,
+    errorResultTokens: s.errorTokens,
     replayed: s.replayed,
     unreplayable: s.unreplayable,
     unreplayableReasons: s.unreplayableReasons,
@@ -678,8 +853,14 @@ const report = {
     fullControlDeltaTokens: s.fullControlTokens - s.replayedBeforeTokens,
     nonImprovingCalls: s.nonImprovingCalls,
     worstRegressionTokens: s.worstRegressionTokens,
-    medianBeforeTokens: median(s.perCallBeforeTokens),
+    /** over every non-error captured call, replayable or not */
+    medianCapturedBeforeTokens: median(s.perCallBeforeTokens),
+    /** the three below are paired over exactly the replayed calls */
+    medianBeforeTokens: median(s.perCallReplayedBeforeTokens),
     medianAfterTokens: median(s.perCallAfterTokens),
+    medianDeltaTokens: median(s.perCallDeltaTokens),
+    differenceOfMediansTokens:
+      median(s.perCallReplayedBeforeTokens) - median(s.perCallAfterTokens),
     argsTokens: s.argsTokens,
     argsProjectionCompactDeltaTokens: s.argsTokensWithCompact - s.argsTokens,
     argsProjectionFullDeltaTokens: s.argsTokensWithFull - s.argsTokens,
@@ -704,6 +885,12 @@ const assertions: string[] = [];
 if (manifest.fileCount !== 357) assertions.push("corpus file count is not 357");
 if (manifest.totalBytes !== 95_152_796) assertions.push("corpus byte count is not 95,152,796");
 if (jsonlParseFailures !== 0) assertions.push(`${jsonlParseFailures} JSONL lines failed to parse`);
+const unmatchedNames = Object.keys(mcpToolNameAudit.unmatchedMcpToolNames);
+if (unmatchedNames.length !== 0) {
+  assertions.push(
+    `${unmatchedNames.length} mcp__ tool name(s) did not split into server/tool: ${unmatchedNames.join(", ")}`,
+  );
+}
 if (problems.length !== 0) assertions.push(`${problems.length} compact/ack correctness problems`);
 if (assertions.length > 0) {
   console.error("ASSERTION FAILURES:");
@@ -717,6 +904,16 @@ console.log(
       corpus: report.corpus,
       totals: report.totals,
       replayedSubset: report.replayedSubset,
+      mcpToolNameAudit: {
+        unmatchedMcpToolNames: report.mcpToolNameAudit.unmatchedMcpToolNames,
+        ledgerCallsByServer: report.mcpToolNameAudit.ledgerCallsByServer,
+      },
+      unmeasuredBeforeVolume: {
+        elidedCalls: report.unmeasuredBeforeVolume.elidedCalls,
+        statedCharactersExact: report.unmeasuredBeforeVolume.statedCharactersExact,
+        elidedTokensLowerBound: report.unmeasuredBeforeVolume.elidedTokensLowerBound,
+        elidedTokensUpperBound: report.unmeasuredBeforeVolume.elidedTokensUpperBound,
+      },
       inputSideCost: report.inputSideCost,
       sessionAmortization: report.sessionAmortization,
       correctnessProblemCount: report.correctnessProblemCount,

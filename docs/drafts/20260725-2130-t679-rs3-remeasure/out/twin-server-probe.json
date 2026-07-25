@@ -1,9 +1,9 @@
 {
   "probe": "T679 twin-server differential (RS3-era server vs cutover server, identical operations)",
-  "generatedAt": "2026-07-25T20:39:20.596Z",
+  "generatedAt": "2026-07-25T21:09:15.873Z",
   "tokenizer": "gpt-tokenizer@3.4.0 / o200k_base",
-  "beforeWorkspace": "/tmp/claude-1000/-home-pavel-work-safe-flakes-cq/f35107f7-b0ee-46e5-92b2-d0254799aa6c/scratchpad/t679-rs3-tree/nix/pkg/cq-ledgers",
-  "afterWorkspace": "/home/pavel/work/safe/flakes/cq/.claude/worktrees/agent-adbca74e1db65827f/nix/pkg/cq-ledgers",
+  "beforeWorkspace": "/tmp/claude-1000/-home-pavel-work-safe-flakes-cq/f35107f7-b0ee-46e5-92b2-d0254799aa6c/scratchpad/t679r2-rs3-tree/nix/pkg/cq-ledgers",
+  "afterWorkspace": "/home/pavel/work/safe/flakes/cq/.claude/worktrees/agent-ae752c0fdc175a54d/nix/pkg/cq-ledgers",
   "beforeProjectionTools": [],
   "afterProjectionTools": [
     "fetch_item",
