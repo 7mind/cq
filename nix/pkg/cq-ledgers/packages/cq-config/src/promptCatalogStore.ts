@@ -9,7 +9,7 @@
  *  - ledger-mcp can import it DIRECTLY (it already depends on `@cq/config`) — no
  *    duplicate copy of the schemas anywhere.
  *
- * Only the seven DISPATCHED-SUBAGENT roles (non-null `agentTierKey` in
+ * Only the DISPATCHED-SUBAGENT roles (non-null `agentTierKey` in
  * {@link AGENT_ROLE_TIERS}) have a sidecar here; orchestrator-command roles carry
  * prompt + metadata only and intentionally have no entry (role-scope decision 1).
  *
