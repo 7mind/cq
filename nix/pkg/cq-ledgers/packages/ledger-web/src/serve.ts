@@ -18,6 +18,8 @@
 
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   attachMcpHttp,
   changedFrame,
@@ -30,6 +32,7 @@ import { resolveProjectKey, resolveStateDirBase } from "@cq/ledger";
 import type { WebuiConfig } from "@cq/config";
 import { loadConfig } from "@cq/config";
 
+const execFileAsync = promisify(execFile);
 const DEFAULT_PORT = 5180;
 const DEFAULT_HOST = "127.0.0.1";
 export const WHOLE_STORE_DEFAULT_PORT = 5191;
@@ -559,7 +562,7 @@ function resolveRepositoryLocalServeOpts(args: ParsedWebArgs, configRoot: string
     hostExplicit: args.hostExplicit,
     portExplicit: args.portExplicit,
     mcpUrl: args.mcpUrl,
-    cwd: args.cwd,
+    cwd: configRoot,
     outdir: args.outdir,
   };
 }
@@ -576,16 +579,21 @@ function resolveWholeStoreOpts(args: ParsedWebArgs): XdgWholeStoreOpts {
 
 async function resolveRepositoryRoot(cwd: string): Promise<string | null> {
   try {
-    const root = await fs.realpath(cwd);
-    const rootInfo = await fs.lstat(root);
-    if (!rootInfo.isDirectory()) return null;
-    const gitInfo = await fs.lstat(path.join(root, ".git"));
-    if (
-      gitInfo.isSymbolicLink() ||
-      (!gitInfo.isDirectory() && !gitInfo.isFile())
-    ) {
-      return null;
-    }
+    const resolvedCwd = await fs.realpath(cwd);
+    const cwdInfo = await fs.lstat(resolvedCwd);
+    if (!cwdInfo.isDirectory()) return null;
+    const { stdout: insideWorkTree } = await execFileAsync(
+      "git",
+      ["rev-parse", "--is-inside-work-tree"],
+      { cwd: resolvedCwd, encoding: "utf8" },
+    );
+    if (insideWorkTree.trim() !== "true") return null;
+    const { stdout: topLevel } = await execFileAsync(
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      { cwd: resolvedCwd, encoding: "utf8" },
+    );
+    const root = await fs.realpath(topLevel.trim());
     const config = loadConfig(root);
     await resolveProjectKey({
       repoRoot: root,

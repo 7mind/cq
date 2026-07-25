@@ -149,6 +149,59 @@ describe("cq web whole-store mode selection", () => {
     }
   });
 
+  it("rejects fabricated directory and file .git markers even with projectId", async () => {
+    for (const marker of ["directory", "file"] as const) {
+      const root = await makeDirectory(`ledger-web-mode-fake-${marker}-`);
+      await fs.writeFile(
+        path.join(root, "cq.toml"),
+        '[ledger]\nbackend = "xdg"\nprojectId = "fabricated"\n',
+        "utf8",
+      );
+      if (marker === "directory") {
+        await fs.mkdir(path.join(root, ".git"));
+      } else {
+        await fs.writeFile(path.join(root, ".git"), "arbitrary marker\n", "utf8");
+      }
+
+      const mode = await resolveWebMode(parseArgs(["--cwd", root]));
+      expect(mode.kind, marker).toBe("xdg");
+      if (mode.kind !== "xdg") throw new Error(`expected ${marker} marker rejection`);
+      expect(mode.source).toBe("implicit");
+    }
+  });
+
+  it("resolves nested normal and linked checkout paths to the canonical top-level", async () => {
+    const repository = await makeRepository({
+      commit: true,
+      projectId: "canonical-root",
+      webPort: 6211,
+      ledgerBackend: "xdg",
+    });
+    const normalNested = path.join(repository, "nested", "cwd");
+    await fs.mkdir(normalNested, { recursive: true });
+
+    const linkedParent = await makeDirectory("ledger-web-mode-linked-parent-");
+    const linkedRoot = path.join(linkedParent, "checkout");
+    execFileSync(
+      "git",
+      ["worktree", "add", "--quiet", "--detach", linkedRoot, "HEAD"],
+      { cwd: repository },
+    );
+    const linkedNested = path.join(linkedRoot, "nested", "cwd");
+    await fs.mkdir(linkedNested, { recursive: true });
+
+    for (const [label, cwd, expectedRoot] of [
+      ["normal", normalNested, repository],
+      ["linked", linkedNested, linkedRoot],
+    ] as const) {
+      const mode = await resolveWebMode(parseArgs(["--cwd", cwd]));
+      expect(mode.kind, label).toBe("embedded");
+      if (mode.kind !== "embedded") throw new Error(`expected ${label} embedded mode`);
+      expect(mode.opts.cwd, label).toBe(await fs.realpath(expectedRoot));
+      expect(mode.opts.port, label).toBe(6211);
+    }
+  });
+
   it("applies --cwd > LEDGER_ROOT > process cwd before implicit selection", async () => {
     const envRepo = await makeRepository({
       commit: false,
