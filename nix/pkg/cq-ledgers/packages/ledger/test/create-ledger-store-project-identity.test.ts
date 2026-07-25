@@ -308,6 +308,7 @@ describe("createLedgerStore — repository-backed XDG identity (T829)", () => {
     it("does not write XDG identity metadata for a successful PostgreSQL open", async () => {
       const repo = await gitRepo();
       await writeCqToml(repo, '[ledger]\nbackend = "postgres"\n');
+      const previousPgUrl = process.env.CQ_LEDGER_PG_URL;
       process.env.CQ_LEDGER_PG_URL = PG_URL;
       const upsertSpy = spyOn(
         SqliteXdgProjectIdentityAccess.prototype,
@@ -322,6 +323,8 @@ describe("createLedgerStore — repository-backed XDG identity (T829)", () => {
           await resolved.store.dispose();
         }
       } finally {
+        if (previousPgUrl === undefined) delete process.env.CQ_LEDGER_PG_URL;
+        else process.env.CQ_LEDGER_PG_URL = previousPgUrl;
         upsertSpy.mockRestore();
       }
     });
