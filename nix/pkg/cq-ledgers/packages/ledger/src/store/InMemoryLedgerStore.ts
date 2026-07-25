@@ -521,6 +521,12 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   ): Promise<Item> {
     const item = await this.withLock(ledgerId, async () => {
       const ledger = this.getLedger(ledgerId);
+      if (ledgerId === TASKS_LEDGER) {
+        this.assertManagedTaskTransitionAllowed(
+          findItem(ledger, itemId).item,
+          toStatus,
+        );
+      }
       return cloneItem(applyReopenItem(ledger, itemId, toStatus, this.now()));
     });
     this.fireMutation(ledgerId, "update");

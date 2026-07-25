@@ -15,6 +15,7 @@ import {
   type Item,
   type Ledger,
   type PlanClaimAcknowledgement,
+  type PlanDraftManifest,
   type PlanLifecycleStore,
   type PlanPrivateClaimRecord,
 } from "../src/index.js";
@@ -272,6 +273,77 @@ describe("T848 InMemory plan lifecycle semantics", () => {
       }
     });
   }
+
+  it("rejects reopening a superseded managed draft task", async () => {
+    const fixture = await buildFixture();
+    try {
+      const claim = await claimInitial(fixture, "reopen-superseded", OWNER_A, null);
+      const manifest: PlanDraftManifest = {
+        milestones: [{ key: "delivery", title: "Delivery" }],
+        tasks: [
+          {
+            key: "implementation",
+            milestoneKey: "delivery",
+            headline: "Implementation",
+          },
+        ],
+      };
+      const first = await fixture.lifecycle.publishPlanDraft({
+        goalId: "G1",
+        claimId: claim.claimId,
+        generation: claim.generation,
+        operationId: "reopen-superseded-first",
+        ownerFenceToken: claim.ownerFenceToken,
+        ...PROVENANCE,
+        manifest,
+      });
+      if (!first.ok) throw new Error("first draft publication failed");
+      const oldTaskId = first.acknowledgement.manifest.tasks[0]?.id;
+      if (oldTaskId === undefined) throw new Error("first task allocation missing");
+      const replacement = await fixture.lifecycle.publishPlanDraft({
+        goalId: "G1",
+        claimId: claim.claimId,
+        generation: claim.generation,
+        operationId: "reopen-superseded-replacement",
+        ownerFenceToken: claim.ownerFenceToken,
+        ...PROVENANCE,
+        manifest,
+      });
+      if (!replacement.ok) throw new Error("replacement draft publication failed");
+      expect(fixture.store.fetchItem(TASKS_LEDGER, oldTaskId).status).toBe("abandoned");
+
+      await expect(
+        fixture.store.reopenItem(TASKS_LEDGER, oldTaskId, "wip"),
+      ).rejects.toThrow(/draft|superseded/);
+      expect(fixture.store.fetchItem(TASKS_LEDGER, oldTaskId).status).toBe("abandoned");
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("rejects reopening a finalized managed task to wip with unfinished dependencies", async () => {
+    const fixture = await buildFixture("planned", 1);
+    try {
+      await fixture.seedWork("G1", {
+        taskStatuses: ["planned", "abandoned"],
+        openQuestionCount: 0,
+        legacy: false,
+      });
+      const state = await fixture.observe("G1");
+      const dependent = state.tasks.find(({ dependsOn }) => dependsOn.length > 0);
+      if (dependent === undefined) throw new Error("dependent task missing");
+      expect(dependent.status).toBe("abandoned");
+
+      await expect(
+        fixture.store.reopenItem(TASKS_LEDGER, dependent.id, "wip"),
+      ).rejects.toThrow(/dependencies/);
+      expect(fixture.store.fetchItem(TASKS_LEDGER, dependent.id).status).toBe(
+        "abandoned",
+      );
+    } finally {
+      await fixture.dispose();
+    }
+  });
 
   it("persists canonical ledger prefixes for materialized internal draft references", async () => {
     const fixture = await buildFixture();
