@@ -8,12 +8,11 @@
  *  - `eligibleColumnFields(schema)` — every schema field name EXCEPT the
  *    long/narrative denylist and EXCEPT the always-shown intrinsic
  *    `id`/`status`/`summary` columns.
- *  - `defaultColumns(ledgerName)` — per-ledger default extra columns: `tasks`
- *    defaults to `suggestedModel`; every other ledger to none.
+ *  - `defaultColumns(ledgerName)` — per-ledger default extra columns.
  */
 
 import type { LedgerSchema } from "./types.js";
-import { TASKS_LEDGER } from "./constants.js";
+import { TASKS_LEDGER, UPSTREAM_LEDGER, UPSTREAM_SCHEMA } from "./constants.js";
 
 /**
  * Schema field names that are long/narrative free-text and therefore never
@@ -32,6 +31,20 @@ export const LONG_FIELD_DENYLIST: ReadonlySet<string> = new Set([
   "rootCause",
   "suggestedFix",
   "fix",
+]);
+
+// Upstream-specific names stay scoped to U so shared log fields retain their
+// established eligibility in every pre-existing ledger.
+const UPSTREAM_LONG_FIELD_DENYLIST: ReadonlySet<string> = new Set([
+  "environment",
+  "reproduction",
+  "observed",
+  "expected",
+  "priorArt",
+  "reportUrls",
+  "workaround",
+  "sessionLogs",
+  "rawLogs",
 ]);
 
 /**
@@ -65,9 +78,14 @@ export const SUMMARY_SOURCE_FIELDS: ReadonlySet<string> = new Set([
  * declaration order.
  */
 export function eligibleColumnFields(schema: LedgerSchema): string[] {
+  const schemaDenylist =
+    UPSTREAM_SCHEMA.idPrefix !== undefined && schema.idPrefix === UPSTREAM_SCHEMA.idPrefix
+      ? UPSTREAM_LONG_FIELD_DENYLIST
+      : undefined;
   return Object.keys(schema.fields).filter(
     (name) =>
       !LONG_FIELD_DENYLIST.has(name) &&
+      (schemaDenylist === undefined || !schemaDenylist.has(name)) &&
       !ALWAYS_SHOWN_COLUMNS.has(name) &&
       !SUMMARY_SOURCE_FIELDS.has(name),
   );
@@ -75,10 +93,11 @@ export function eligibleColumnFields(schema: LedgerSchema): string[] {
 
 /**
  * Per-ledger default extra columns (beyond the always-shown intrinsic ones).
- * `tasks` defaults to showing `suggestedModel`; every other ledger defaults
- * to no extra columns.
+ * `tasks` defaults to `suggestedModel`; `upstream` defaults to `package` and
+ * `severity`; every other ledger defaults to no extra columns.
  */
 export function defaultColumns(ledgerName: string): string[] {
   if (ledgerName === TASKS_LEDGER) return ["suggestedModel"];
+  if (ledgerName === UPSTREAM_LEDGER) return ["package", "severity"];
   return [];
 }

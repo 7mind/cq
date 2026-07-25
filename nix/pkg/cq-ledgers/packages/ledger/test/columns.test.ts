@@ -8,6 +8,7 @@ import { describe, it, expect } from "bun:test";
 import {
   eligibleColumnFields,
   defaultColumns,
+  CANONICAL_LEDGERS,
   TASKS_SCHEMA,
   GOALS_SCHEMA,
   REVIEWS_SCHEMA,
@@ -15,6 +16,7 @@ import {
   HYPOTHESIS_SCHEMA,
   QUESTIONS_SCHEMA,
   DECISIONS_SCHEMA,
+  UPSTREAM_SCHEMA,
 } from "../src/index.js";
 
 describe("eligibleColumnFields", () => {
@@ -66,6 +68,135 @@ describe("eligibleColumnFields", () => {
     expect(eligibleColumnFields(DEFECTS_SCHEMA)).toContain("severity");
     expect(eligibleColumnFields(HYPOTHESIS_SCHEMA)).toContain("parentHypothesis");
   });
+
+  it("keeps compact upstream fields eligible and excludes narrative, evidence, and log fields", () => {
+    expect(eligibleColumnFields(UPSTREAM_SCHEMA)).toEqual([
+      "package",
+      "affectedVersions",
+      "fixedVersion",
+      "trackingUrl",
+      "trackerKind",
+      "reportingClassification",
+      "severity",
+      "lastCheckedAt",
+      "lastCheckOutcome",
+      "filingOperationId",
+      "filingState",
+      "filingClaimedAt",
+      "sourceRefs",
+      "blockedBy",
+      "dependsOn",
+      "ledgerRefs",
+      "tags",
+      "suggestedModel",
+    ]);
+  });
+
+  it("preserves the exact eligible-column policy of every pre-upstream canonical ledger", () => {
+    const expected = {
+      milestones: ["blockedBy", "dependsOn"],
+      defects: [
+        "severity",
+        "sessionLogs",
+        "rawLogs",
+        "sourceRefs",
+        "blockedBy",
+        "dependsOn",
+        "ledgerRefs",
+        "tags",
+        "suggestedModel",
+      ],
+      tasks: [
+        "acceptance",
+        "planDoc",
+        "resultCommit",
+        "severity",
+        "sessionLogs",
+        "rawLogs",
+        "sourceRefs",
+        "blockedBy",
+        "dependsOn",
+        "ledgerRefs",
+        "tags",
+        "suggestedModel",
+      ],
+      hypothesis: [
+        "parentHypothesis",
+        "sessionLogs",
+        "rawLogs",
+        "sourceRefs",
+        "blockedBy",
+        "dependsOn",
+        "ledgerRefs",
+        "tags",
+        "suggestedModel",
+      ],
+      questions: [
+        "suggestions",
+        "recommendation",
+        "sourceRefs",
+        "blockedBy",
+        "dependsOn",
+        "ledgerRefs",
+        "tags",
+        "suggestedModel",
+      ],
+      decisions: [
+        "supersedes",
+        "landsIn",
+        "sourceRefs",
+        "blockedBy",
+        "dependsOn",
+        "ledgerRefs",
+        "tags",
+        "suggestedModel",
+      ],
+      goals: ["milestones", "grounding", "tags", "sourceRefs", "sessionLogs", "rawLogs"],
+      reviews: [
+        "new_questions",
+        "defects",
+        "ledgerRefs",
+        "tags",
+        "sourceRefs",
+        "sessionLogs",
+        "rawLogs",
+      ],
+      handoffs: [
+        "flow",
+        "ledgerRefs",
+        "blockingQuestions",
+        "handoffReasons",
+        "sessionLogs",
+        "rawLogs",
+        "tags",
+        "sourceRefs",
+      ],
+      ideas: [],
+      researches: [
+        "scope",
+        "findings",
+        "conclusion",
+        "recommendation",
+        "sessionLogs",
+        "rawLogs",
+        "sourceRefs",
+        "blockedBy",
+        "dependsOn",
+        "ledgerRefs",
+        "tags",
+        "suggestedModel",
+      ],
+    };
+
+    expect(
+      Object.fromEntries(
+        CANONICAL_LEDGERS.filter(({ name }) => name !== "upstream").map(({ name, schema }) => [
+          name,
+          eligibleColumnFields(schema),
+        ]),
+      ),
+    ).toEqual(expected);
+  });
 });
 
 describe("defaultColumns", () => {
@@ -73,18 +204,23 @@ describe("defaultColumns", () => {
     expect(defaultColumns("tasks")).toEqual(["suggestedModel"]);
   });
 
-  it("defaults other ledgers to no extra columns", () => {
-    expect(defaultColumns("goals")).toEqual([]);
-    expect(defaultColumns("defects")).toEqual([]);
-    expect(defaultColumns("reviews")).toEqual([]);
+  it("defaults upstream to package and severity", () => {
+    expect(defaultColumns("upstream")).toEqual(["package", "severity"]);
   });
 
-  it("only-extra default for tasks is itself an eligible column", () => {
+  it("preserves the exact default-column policy of every pre-upstream canonical ledger", () => {
+    for (const { name } of CANONICAL_LEDGERS.filter(({ name }) => name !== "upstream")) {
+      expect(defaultColumns(name)).toEqual(name === "tasks" ? ["suggestedModel"] : []);
+    }
+  });
+
+  it("every canonical default is itself an eligible column", () => {
     // a default extra column must be a field a UI is allowed to show
-    for (const col of defaultColumns("tasks")) {
-      expect(eligibleColumnFields(TASKS_SCHEMA)).toContain(col);
+    for (const { name, schema } of CANONICAL_LEDGERS) {
+      for (const column of defaultColumns(name)) {
+        expect(eligibleColumnFields(schema)).toContain(column);
+      }
     }
     expect(defaultColumns("goals")).toEqual([]);
-    void GOALS_SCHEMA;
   });
 });
