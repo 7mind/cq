@@ -49,6 +49,54 @@ const COMPLETE_MANIFEST = {
   ],
 } as const satisfies PlanDraftManifest;
 
+const RICH_MANIFEST = {
+  milestones: [
+    {
+      key: "design",
+      title: "Design guarded planning",
+      description: "Preserve every milestone field",
+      dependsOn: [{ kind: "ledger", ref: "researches:RS8" }],
+      blockedBy: [{ kind: "draft-milestone", key: "delivery" }],
+    },
+    {
+      key: "delivery",
+      title: "Deliver guarded planning",
+      description: "Own the implementation tasks",
+      dependsOn: [{ kind: "draft-milestone", key: "design" }],
+      blockedBy: [{ kind: "ledger", ref: "questions:Q1" }],
+    },
+  ],
+  tasks: [
+    {
+      key: "contract",
+      milestoneKey: "design",
+      headline: "Publish the lifecycle contract",
+      description: "Retain the task description",
+      acceptance: "The contract remains unchanged across adapters",
+      suggestedModel: "frontier",
+      sourceRefs: ["nix/pkg/cq-ledgers/packages/ledger/src/planLifecycle.ts"],
+      tags: ["contract", "guarded"],
+      dependsOn: [
+        { kind: "draft-milestone", key: "design" },
+        { kind: "ledger", ref: "researches:RS8" },
+      ],
+      blockedBy: [{ kind: "draft-task", key: "implementation" }],
+    },
+    {
+      key: "implementation",
+      milestoneKey: "delivery",
+      headline: "Implement the lifecycle contract",
+      description: "Retain implementation metadata",
+      acceptance: "Only the finalized current draft becomes executable",
+      suggestedModel: "frontier",
+      sourceRefs: ["tasks:T846"],
+      tags: ["implementation"],
+      dependsOn: [{ kind: "draft-task", key: "contract" }],
+      blockedBy: [{ kind: "ledger", ref: "questions:Q2" }],
+    },
+  ],
+} as const satisfies PlanDraftManifest;
+
 function claimInput(
   purpose: "initial" | "follow-up",
   claimRequestId: string,
@@ -118,6 +166,165 @@ export function runPlanLifecycleStoreContract(
   contractDescribe(
     `PlanLifecycleStore contract — ${factory.name} (${factory.classification})`,
     () => {
+      it("returns every boundary conflict omitted from the initial conformance pass", async () => {
+        const fixture = await buildGoal(factory, "clarifying", null);
+        try {
+          await fixture.seedGoal({ goalId: "G2", phase: "done", generation: 4 });
+          await fixture.seedGoal({ goalId: "G3", phase: "building", generation: 2 });
+          await fixture.seedGoal({ goalId: "G4", phase: "planning", generation: 2 });
+          await fixture.seedGoal({ goalId: "G5", phase: "planning", generation: 1 });
+
+          expect(
+            await fixture.lifecycle.claimPlan({
+              ...claimInput("initial", "missing-goal", OWNER_TOKEN_A, null, PROVENANCE_A),
+              goalId: "G404",
+            }),
+          ).toEqual({
+            ok: false,
+            conflict: { code: "goal-not-found", goalId: "G404" },
+          });
+          expect(
+            await fixture.lifecycle.claimPlan({
+              ...claimInput("initial", "terminal-goal", OWNER_TOKEN_A, 4, PROVENANCE_A),
+              goalId: "G2",
+            }),
+          ).toEqual({
+            ok: false,
+            conflict: { code: "goal-terminal", goalId: "G2", status: "done" },
+          });
+          expect(
+            await fixture.lifecycle.claimPlan({
+              ...claimInput("initial", "wrong-phase", OWNER_TOKEN_A, 2, PROVENANCE_A),
+              goalId: "G3",
+            }),
+          ).toEqual({
+            ok: false,
+            conflict: {
+              code: "goal-phase-conflict",
+              goalId: "G3",
+              status: "building",
+              allowed: ["clarifying", "planning"],
+            },
+          });
+          expect(
+            await fixture.lifecycle.claimPlan({
+              ...claimInput("initial", "stale-generation", OWNER_TOKEN_A, 1, PROVENANCE_A),
+              goalId: "G4",
+            }),
+          ).toEqual({
+            ok: false,
+            conflict: {
+              code: "stale-generation",
+              goalId: "G4",
+              expectedGeneration: 1,
+              currentGeneration: 2,
+            },
+          });
+          expect(
+            await fixture.lifecycle.publishPlanDraft({
+              goalId: "G5",
+              claimId: "inactive_claim",
+              generation: 1,
+              operationId: "inactive-publish",
+              ownerFenceToken: OWNER_TOKEN_A,
+              ...PROVENANCE_A,
+              manifest: COMPLETE_MANIFEST,
+            }),
+          ).toEqual({
+            ok: false,
+            conflict: {
+              code: "claim-not-active",
+              goalId: "G5",
+              claimId: "inactive_claim",
+              generation: 1,
+            },
+          });
+
+          const claim = requireClaimWinner(
+            await fixture.lifecycle.claimPlan(
+              claimInput("initial", "finalize-conflicts", OWNER_TOKEN_A, null, PROVENANCE_A),
+            ),
+          );
+          const baseFinalize = {
+            goalId: GOAL_ID,
+            claimId: claim.claimId,
+            generation: claim.generation,
+            ownerFenceToken: claim.ownerFenceToken,
+            ...PROVENANCE_A,
+            draftRevision: 1,
+            decision: { headline: "Must not commit a rejected finalize" },
+          } as const;
+          expect(
+            await fixture.lifecycle.finalizePlan({
+              ...baseFinalize,
+              operationId: "draft-missing",
+              reviewId: "R404",
+            }),
+          ).toEqual({
+            ok: false,
+            conflict: {
+              code: "draft-not-found",
+              goalId: GOAL_ID,
+              claimId: claim.claimId,
+              generation: claim.generation,
+            },
+          });
+
+          const published = await fixture.lifecycle.publishPlanDraft(
+            publishInput(claim, "publish-for-review-conflicts"),
+          );
+          if (!published.ok) throw new Error("conflict fixture draft publication failed");
+          const draft = {
+            goalId: GOAL_ID,
+            claimId: claim.claimId,
+            generation: claim.generation,
+            revision: published.acknowledgement.manifest.revision,
+          };
+          expect(
+            await fixture.lifecycle.finalizePlan({
+              ...baseFinalize,
+              operationId: "review-missing",
+              reviewId: "R404",
+            }),
+          ).toEqual({
+            ok: false,
+            conflict: {
+              code: "review-not-found",
+              goalId: GOAL_ID,
+              claimId: claim.claimId,
+              generation: claim.generation,
+              reviewId: "R404",
+            },
+          });
+          await fixture.seedReview({
+            reviewId: "R6",
+            goalId: GOAL_ID,
+            status: "revise",
+            draft,
+            provenance: PROVENANCE_B,
+          });
+          expect(
+            await fixture.lifecycle.finalizePlan({
+              ...baseFinalize,
+              operationId: "review-not-approved",
+              reviewId: "R6",
+            }),
+          ).toEqual({
+            ok: false,
+            conflict: {
+              code: "review-not-approved",
+              goalId: GOAL_ID,
+              claimId: claim.claimId,
+              generation: claim.generation,
+              reviewId: "R6",
+              status: "revise",
+            },
+          });
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
       it("serializes simultaneous fresh claims and exposes only the winning public fence", async () => {
         const fixture = await buildGoal(factory, "clarifying", null);
         try {
@@ -180,6 +387,14 @@ export function runPlanLifecycleStoreContract(
           expect(await restarted.observe(GOAL_ID)).toEqual(
             await fixture.observe(GOAL_ID),
           );
+          await fixture.seedGoal({
+            goalId: OTHER_GOAL_ID,
+            phase: "clarifying",
+            generation: null,
+          });
+          await expect(restarted.observe(OTHER_GOAL_ID)).rejects.toThrow(
+            /goal not found/,
+          );
           const replay = await restarted.lifecycle.claimPlan(input);
           expect(replay).toEqual({ ...first, replayed: true });
           expect(
@@ -217,6 +432,20 @@ export function runPlanLifecycleStoreContract(
               OWNER_TOKEN_B,
             ]),
           ).toBe(false);
+          const released = await restarted.lifecycle.releasePlanClaim({
+            kind: "abandon",
+            goalId: GOAL_ID,
+            claimId: first.acknowledgement.claimId,
+            generation: first.acknowledgement.generation,
+            operationId: "restart-isolation-release",
+            reason: "prove the restarted handle owns deserialized state",
+            ...PROVENANCE_B,
+          });
+          expect(released.ok).toBe(true);
+          expect((await restarted.observe(GOAL_ID)).activeClaim).toBeNull();
+          expect((await fixture.observe(GOAL_ID)).activeClaim?.claimId).toBe(
+            first.acknowledgement.claimId,
+          );
         } finally {
           await fixture.dispose();
         }
@@ -419,6 +648,170 @@ export function runPlanLifecycleStoreContract(
         }
       }, timeout);
 
+      it("preserves complete manifest fields and supersedes an independent prior draft", async () => {
+        const fixture = await buildGoal(factory, "clarifying", null);
+        try {
+          const claim = requireClaimWinner(
+            await fixture.lifecycle.claimPlan(
+              claimInput("initial", "rich-replacement", OWNER_TOKEN_A, null, PROVENANCE_A),
+            ),
+          );
+          const first = await fixture.lifecycle.publishPlanDraft(
+            publishInput(claim, "rich-draft", RICH_MANIFEST),
+          );
+          if (!first.ok) throw new Error("rich draft publication unexpectedly conflicted");
+          const firstMilestones = Object.fromEntries(
+            first.acknowledgement.manifest.milestones.map(({ key, id }) => [key, id]),
+          );
+          const firstTasks = Object.fromEntries(
+            first.acknowledgement.manifest.tasks.map(({ key, id }) => [key, id]),
+          );
+          const firstState = await fixture.observe(GOAL_ID);
+          expect(firstState.currentDraft?.revision).toBe(1);
+          expect(firstState.milestones).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                id: firstMilestones["design"],
+                goalId: GOAL_ID,
+                title: "Design guarded planning",
+                description: "Preserve every milestone field",
+                dependsOn: ["researches:RS8"],
+                blockedBy: [firstMilestones["delivery"]],
+                taskIds: [firstTasks["contract"]],
+                provenance: PROVENANCE_A,
+              }),
+              expect.objectContaining({
+                id: firstMilestones["delivery"],
+                goalId: GOAL_ID,
+                description: "Own the implementation tasks",
+                dependsOn: [firstMilestones["design"]],
+                blockedBy: ["questions:Q1"],
+                taskIds: [firstTasks["implementation"]],
+                provenance: PROVENANCE_A,
+              }),
+            ]),
+          );
+          expect(firstState.tasks).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                id: firstTasks["contract"],
+                goalId: GOAL_ID,
+                milestoneId: firstMilestones["design"],
+                description: "Retain the task description",
+                acceptance: "The contract remains unchanged across adapters",
+                suggestedModel: "frontier",
+                sourceRefs: [
+                  "nix/pkg/cq-ledgers/packages/ledger/src/planLifecycle.ts",
+                ],
+                tags: ["contract", "guarded"],
+                dependsOn: [firstMilestones["design"], "researches:RS8"],
+                blockedBy: [firstTasks["implementation"]],
+                executable: false,
+                provenance: PROVENANCE_A,
+              }),
+              expect.objectContaining({
+                id: firstTasks["implementation"],
+                goalId: GOAL_ID,
+                milestoneId: firstMilestones["delivery"],
+                description: "Retain implementation metadata",
+                acceptance: "Only the finalized current draft becomes executable",
+                suggestedModel: "frontier",
+                sourceRefs: ["tasks:T846"],
+                tags: ["implementation"],
+                dependsOn: [firstTasks["contract"]],
+                blockedBy: ["questions:Q2"],
+                executable: false,
+                provenance: PROVENANCE_A,
+              }),
+            ]),
+          );
+
+          const replacement = await fixture.lifecycle.publishPlanDraft(
+            publishInput(claim, "replacement-draft", COMPLETE_MANIFEST),
+          );
+          if (!replacement.ok) {
+            throw new Error("replacement draft publication unexpectedly conflicted");
+          }
+          expect(replacement.acknowledgement.manifest.revision).toBe(2);
+          expect(replacement.acknowledgement.replacedManifest).toEqual(
+            first.acknowledgement.manifest,
+          );
+          const replacementTaskIds = replacement.acknowledgement.manifest.tasks.map(
+            ({ id }) => id,
+          );
+          const replacedState = await fixture.observe(GOAL_ID);
+          expect(replacedState.currentDraft?.revision).toBe(2);
+          expect(
+            replacedState.tasks
+              .filter(({ id }) => Object.values(firstTasks).includes(id))
+              .map(({ status, executable }) => ({ status, executable })),
+          ).toEqual([
+            { status: "abandoned", executable: false },
+            { status: "abandoned", executable: false },
+          ]);
+          expect(
+            replacedState.milestones
+              .filter(({ id }) => Object.values(firstMilestones).includes(id))
+              .map(({ status }) => status),
+          ).toEqual(["postponed", "postponed"]);
+          const supersededIds = new Set([
+            ...Object.values(firstMilestones),
+            ...Object.values(firstTasks),
+          ]);
+          for (const item of [...replacedState.milestones, ...replacedState.tasks]) {
+            expect(
+              [...item.dependsOn, ...item.blockedBy].some((id) => supersededIds.has(id)),
+            ).toBe(false);
+          }
+          expect(
+            replacedState.tasks
+              .filter(({ id }) => replacementTaskIds.includes(id))
+              .map(({ executable }) => executable),
+          ).toEqual([false, false]);
+
+          const draft = {
+            goalId: GOAL_ID,
+            claimId: claim.claimId,
+            generation: claim.generation,
+            revision: replacement.acknowledgement.manifest.revision,
+          };
+          await fixture.seedReview({
+            reviewId: "R4",
+            goalId: GOAL_ID,
+            status: "go-ahead",
+            draft,
+            provenance: PROVENANCE_B,
+          });
+          const finalized = await fixture.lifecycle.finalizePlan({
+            goalId: GOAL_ID,
+            claimId: claim.claimId,
+            generation: claim.generation,
+            operationId: "finalize-replacement",
+            ownerFenceToken: claim.ownerFenceToken,
+            ...PROVENANCE_A,
+            reviewId: "R4",
+            draftRevision: draft.revision,
+            decision: { headline: "Finalize only the replacement" },
+          });
+          if (!finalized.ok) throw new Error("replacement finalize unexpectedly conflicted");
+          const finalizedState = await fixture.observe(GOAL_ID);
+          expect(finalizedState.milestoneIds).toEqual(
+            replacement.acknowledgement.manifest.milestones.map(({ id }) => id),
+          );
+          expect(
+            finalizedState.tasks
+              .filter(({ id }) => Object.values(firstTasks).includes(id))
+              .map(({ executable }) => executable),
+          ).toEqual([false, false]);
+          expect(finalizedState.readyTaskIds).toEqual([replacementTaskIds[0]!]);
+          await expect(
+            fixture.startTask(firstTasks["contract"]!, PROVENANCE_B),
+          ).rejects.toThrow(/draft|superseded/);
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
       it("partitions operation idempotency scopes and rejects stale or raw bypass writes", async () => {
         const fixture = await buildGoal(factory, "clarifying", null);
         try {
@@ -506,7 +899,15 @@ export function runPlanLifecycleStoreContract(
             ...PROVENANCE_A,
             effect: {
               kind: "questions",
-              questions: [{ key: "policy", question: "Which policy?" }],
+              questions: [
+                {
+                  key: "policy",
+                  question: "Which policy?",
+                  context: "Only the user can select this requirement",
+                  suggestions: ["strict", "permissive"],
+                  recommendation: "strict",
+                },
+              ],
             },
             reviewDefects: {
               reviewId: "R2",
@@ -515,20 +916,42 @@ export function runPlanLifecycleStoreContract(
                   key: "ambiguity",
                   headline: "Policy is ambiguous",
                   severity: "medium",
+                  description: "The requirements permit two policies",
+                  rootCause: "No preference was recorded",
+                  suggestedFix: "Ask the user",
+                  sourceRefs: ["goals:G1"],
+                  tags: ["requirements"],
                 },
               ],
             },
           };
           const first = await fixture.lifecycle.releasePlanClaim(input);
-          if (!first.ok) throw new Error("question pause unexpectedly conflicted");
+          if (!first.ok || first.acknowledgement.kind !== "questions") {
+            throw new Error("question pause unexpectedly conflicted");
+          }
           const state = await fixture.observe(GOAL_ID);
           expect(state.phase).toBe("clarifying");
           expect(state.activeClaim).toBeNull();
           expect(state.questions).toHaveLength(1);
-          expect(state.questions[0]).toMatchObject({ provenance: PROVENANCE_A });
+          expect(state.questions[0]).toMatchObject({
+            id: first.acknowledgement.questions[0]!.id,
+            goalId: GOAL_ID,
+            text: "Which policy?",
+            context: "Only the user can select this requirement",
+            suggestions: ["strict", "permissive"],
+            recommendation: "strict",
+            provenance: PROVENANCE_A,
+          });
           expect(state.defects).toHaveLength(1);
           expect(state.defects[0]).toMatchObject({
+            id: first.acknowledgement.reviewDefects[0]!.id,
+            goalId: GOAL_ID,
             reviewId: "R2",
+            description: "The requirements permit two policies",
+            rootCause: "No preference was recorded",
+            suggestedFix: "Ask the user",
+            sourceRefs: ["goals:G1"],
+            tags: ["requirements"],
             provenance: PROVENANCE_A,
           });
           const restarted = await fixture.restart();
@@ -578,15 +1001,29 @@ export function runPlanLifecycleStoreContract(
             ...PROVENANCE_A,
             effect: {
               kind: "researches",
-              researches: [{ key: "probe", question: "Does it work?" }],
+              researches: [
+                {
+                  key: "probe",
+                  question: "Does it work?",
+                  scope: "Exercise the public lifecycle boundary",
+                },
+              ],
             },
           });
           if (!release.ok || release.acknowledgement.kind !== "researches") {
             throw new Error("research pause unexpectedly conflicted");
           }
           const researchId = release.acknowledgement.researches[0]!.id;
-          expect((await fixture.observe(GOAL_ID)).waitingResearches).toEqual([
-            researchId,
+          const waiting = await fixture.observe(GOAL_ID);
+          expect(waiting.waitingResearches).toEqual([researchId]);
+          expect(waiting.researches).toEqual([
+            expect.objectContaining({
+              id: researchId,
+              goalId: GOAL_ID,
+              text: "Does it work?",
+              scope: "Exercise the public lifecycle boundary",
+              provenance: PROVENANCE_A,
+            }),
           ]);
           const suppressed = await fixture.lifecycle.claimPlan(
             claimInput("initial", "resume", OWNER_TOKEN_B, 1, PROVENANCE_B),
@@ -828,7 +1265,11 @@ export function runPlanLifecycleStoreContract(
             ...PROVENANCE_A,
             reviewId: "R10",
             draftRevision: draft.revision,
-            decision: { headline: "Lock the exact reviewed draft" },
+            decision: {
+              headline: "Lock the exact reviewed draft",
+              rationale: "The reviewer approved this exact identity",
+              alternatives: "Re-plan and publish a later revision",
+            },
             reviewDefects: {
               reviewId: "R10",
               defects: [
@@ -836,6 +1277,11 @@ export function runPlanLifecycleStoreContract(
                   key: "follow-up",
                   headline: "Track a follow-up",
                   severity: "low",
+                  description: "The follow-up remains outside this finalized manifest",
+                  rootCause: "The review identified deferred work",
+                  suggestedFix: "Open a later planning generation",
+                  sourceRefs: ["reviews:R10"],
+                  tags: ["follow-up"],
                 },
               ],
             },
@@ -856,6 +1302,9 @@ export function runPlanLifecycleStoreContract(
             id: first.acknowledgement.decisionId,
             goalId: GOAL_ID,
             reviewId: "R10",
+            text: "Lock the exact reviewed draft",
+            rationale: "The reviewer approved this exact identity",
+            alternatives: "Re-plan and publish a later revision",
             provenance: PROVENANCE_A,
           });
           expect(state.reviews[0]).toMatchObject({
@@ -865,6 +1314,11 @@ export function runPlanLifecycleStoreContract(
           });
           expect(state.defects[0]).toMatchObject({
             reviewId: "R10",
+            description: "The follow-up remains outside this finalized manifest",
+            rootCause: "The review identified deferred work",
+            suggestedFix: "Open a later planning generation",
+            sourceRefs: ["reviews:R10"],
+            tags: ["follow-up"],
             provenance: PROVENANCE_A,
           });
           await fixture.startTask(state.readyTaskIds[0]!, PROVENANCE_B);
@@ -898,6 +1352,132 @@ export function runPlanLifecycleStoreContract(
           });
         } finally {
           await fixture.dispose();
+        }
+      }, timeout);
+
+      it("serializes concurrent publish, release, and finalize exact replays", async () => {
+        const publishFixture = await buildGoal(factory, "clarifying", null);
+        const releaseFixture = await buildGoal(factory, "clarifying", null);
+        const finalizeFixture = await buildGoal(factory, "clarifying", null);
+        try {
+          const publishClaim = requireClaimWinner(
+            await publishFixture.lifecycle.claimPlan(
+              claimInput("initial", "concurrent-publish", OWNER_TOKEN_A, null, PROVENANCE_A),
+            ),
+          );
+          const publish = publishInput(publishClaim, "concurrent-publish");
+          const publishResults = await Promise.all([
+            publishFixture.lifecycle.publishPlanDraft(publish),
+            publishFixture.lifecycle.publishPlanDraft(publish),
+          ]);
+          const firstPublish = publishResults[0]!;
+          const replayedPublish = publishResults[1]!;
+          if (!firstPublish.ok || !replayedPublish.ok) {
+            throw new Error("concurrent exact publish unexpectedly conflicted");
+          }
+          expect([firstPublish.replayed, replayedPublish.replayed].sort()).toEqual([
+            false,
+            true,
+          ]);
+          expect(firstPublish.acknowledgement).toEqual(
+            replayedPublish.acknowledgement,
+          );
+          expect((await publishFixture.observe(GOAL_ID)).tasks).toHaveLength(2);
+
+          const releaseClaim = requireClaimWinner(
+            await releaseFixture.lifecycle.claimPlan(
+              claimInput("initial", "concurrent-release", OWNER_TOKEN_A, null, PROVENANCE_A),
+            ),
+          );
+          const release: Extract<PlanReleaseInput, { kind: "pause" }> = {
+            kind: "pause",
+            goalId: GOAL_ID,
+            claimId: releaseClaim.claimId,
+            generation: releaseClaim.generation,
+            operationId: "concurrent-release",
+            ownerFenceToken: releaseClaim.ownerFenceToken,
+            ...PROVENANCE_A,
+            effect: {
+              kind: "questions",
+              questions: [{ key: "choice", question: "Which choice?" }],
+            },
+          };
+          const releaseResults = await Promise.all([
+            releaseFixture.lifecycle.releasePlanClaim(release),
+            releaseFixture.lifecycle.releasePlanClaim(release),
+          ]);
+          const firstRelease = releaseResults[0]!;
+          const replayedRelease = releaseResults[1]!;
+          if (!firstRelease.ok || !replayedRelease.ok) {
+            throw new Error("concurrent exact release unexpectedly conflicted");
+          }
+          expect([firstRelease.replayed, replayedRelease.replayed].sort()).toEqual([
+            false,
+            true,
+          ]);
+          expect(firstRelease.acknowledgement).toEqual(
+            replayedRelease.acknowledgement,
+          );
+          expect((await releaseFixture.observe(GOAL_ID)).questions).toHaveLength(1);
+
+          const finalizeClaim = requireClaimWinner(
+            await finalizeFixture.lifecycle.claimPlan(
+              claimInput("initial", "concurrent-finalize", OWNER_TOKEN_A, null, PROVENANCE_A),
+            ),
+          );
+          const published = await finalizeFixture.lifecycle.publishPlanDraft(
+            publishInput(finalizeClaim, "publish-concurrent-finalize"),
+          );
+          if (!published.ok) {
+            throw new Error("concurrent finalize draft publication failed");
+          }
+          const draft = {
+            goalId: GOAL_ID,
+            claimId: finalizeClaim.claimId,
+            generation: finalizeClaim.generation,
+            revision: published.acknowledgement.manifest.revision,
+          };
+          await finalizeFixture.seedReview({
+            reviewId: "R11",
+            goalId: GOAL_ID,
+            status: "go-ahead",
+            draft,
+            provenance: PROVENANCE_B,
+          });
+          const finalize: PlanFinalizeInput = {
+            goalId: GOAL_ID,
+            claimId: finalizeClaim.claimId,
+            generation: finalizeClaim.generation,
+            operationId: "concurrent-finalize",
+            ownerFenceToken: finalizeClaim.ownerFenceToken,
+            ...PROVENANCE_A,
+            reviewId: "R11",
+            draftRevision: draft.revision,
+            decision: { headline: "Commit once" },
+          };
+          const finalizeResults = await Promise.all([
+            finalizeFixture.lifecycle.finalizePlan(finalize),
+            finalizeFixture.lifecycle.finalizePlan(finalize),
+          ]);
+          const firstFinalize = finalizeResults[0]!;
+          const replayedFinalize = finalizeResults[1]!;
+          if (!firstFinalize.ok || !replayedFinalize.ok) {
+            throw new Error("concurrent exact finalize unexpectedly conflicted");
+          }
+          expect([firstFinalize.replayed, replayedFinalize.replayed].sort()).toEqual([
+            false,
+            true,
+          ]);
+          expect(firstFinalize.acknowledgement).toEqual(
+            replayedFinalize.acknowledgement,
+          );
+          expect((await finalizeFixture.observe(GOAL_ID)).decisions).toHaveLength(1);
+        } finally {
+          await Promise.all([
+            publishFixture.dispose(),
+            releaseFixture.dispose(),
+            finalizeFixture.dispose(),
+          ]);
         }
       }, timeout);
 

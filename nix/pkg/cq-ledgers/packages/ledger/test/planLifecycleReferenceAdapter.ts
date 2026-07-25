@@ -17,6 +17,7 @@ import {
   type PlanClaimResult,
   type PlanConflict,
   type PlanDraftIdentity,
+  type PlanDraftReference,
   type PlanFinalizeInput,
   type PlanFinalizeResult,
   type PlanIdAllocation,
@@ -52,6 +53,9 @@ export interface ReferencePublicMilestone {
   readonly goalId: string;
   readonly status: "open" | "postponed";
   readonly title: string;
+  readonly description: string | null;
+  readonly dependsOn: readonly string[];
+  readonly blockedBy: readonly string[];
   readonly taskIds: readonly string[];
   readonly provenance: PlanWriteProvenance;
 }
@@ -62,7 +66,13 @@ export interface ReferencePublicTask {
   readonly milestoneId: string;
   readonly status: "planned" | "wip" | "blocked" | "done" | "abandoned";
   readonly headline: string;
+  readonly description: string | null;
+  readonly acceptance: string | null;
+  readonly suggestedModel: string | null;
+  readonly sourceRefs: readonly string[];
+  readonly tags: readonly string[];
   readonly dependsOn: readonly string[];
+  readonly blockedBy: readonly string[];
   readonly executable: boolean;
   readonly provenance: PlanWriteProvenance;
 }
@@ -75,9 +85,24 @@ export interface ReferencePublicEffectItem {
   readonly provenance: PlanWriteProvenance;
 }
 
+export interface ReferencePublicQuestion extends ReferencePublicEffectItem {
+  readonly context: string | null;
+  readonly suggestions: readonly string[];
+  readonly recommendation: string | null;
+}
+
+export interface ReferencePublicResearch extends ReferencePublicEffectItem {
+  readonly scope: string | null;
+}
+
 export interface ReferencePublicDefect extends ReferencePublicEffectItem {
   readonly reviewId: string;
   readonly severity: "low" | "medium" | "high" | "critical";
+  readonly description: string | null;
+  readonly rootCause: string | null;
+  readonly suggestedFix: string | null;
+  readonly sourceRefs: readonly string[];
+  readonly tags: readonly string[];
 }
 
 export interface ReferencePublicReview {
@@ -90,6 +115,8 @@ export interface ReferencePublicReview {
 
 export interface ReferencePublicDecision extends ReferencePublicEffectItem {
   readonly reviewId: string;
+  readonly rationale: string | null;
+  readonly alternatives: string | null;
 }
 
 export interface ReferencePublicGoalState {
@@ -103,8 +130,8 @@ export interface ReferencePublicGoalState {
   readonly waitingResearches: readonly string[];
   readonly milestones: readonly ReferencePublicMilestone[];
   readonly tasks: readonly ReferencePublicTask[];
-  readonly questions: readonly ReferencePublicEffectItem[];
-  readonly researches: readonly ReferencePublicEffectItem[];
+  readonly questions: readonly ReferencePublicQuestion[];
+  readonly researches: readonly ReferencePublicResearch[];
   readonly defects: readonly ReferencePublicDefect[];
   readonly reviews: readonly ReferencePublicReview[];
   readonly decisions: readonly ReferencePublicDecision[];
@@ -162,6 +189,9 @@ interface MutableMilestone {
   goalId: string;
   status: "open" | "postponed";
   title: string;
+  description: string | null;
+  dependsOn: string[];
+  blockedBy: string[];
   taskIds: string[];
   provenance: PlanWriteProvenance;
 }
@@ -172,7 +202,13 @@ interface MutableTask {
   milestoneId: string;
   status: ReferencePublicTask["status"];
   headline: string;
+  description: string | null;
+  acceptance: string | null;
+  suggestedModel: string | null;
+  sourceRefs: string[];
+  tags: string[];
   dependsOn: string[];
+  blockedBy: string[];
   executable: boolean;
   provenance: PlanWriteProvenance;
 }
@@ -185,9 +221,24 @@ interface MutableEffectItem {
   provenance: PlanWriteProvenance;
 }
 
+interface MutableQuestion extends MutableEffectItem {
+  context: string | null;
+  suggestions: string[];
+  recommendation: string | null;
+}
+
+interface MutableResearch extends MutableEffectItem {
+  scope: string | null;
+}
+
 interface MutableDefect extends MutableEffectItem {
   reviewId: string;
   severity: ReferencePublicDefect["severity"];
+  description: string | null;
+  rootCause: string | null;
+  suggestedFix: string | null;
+  sourceRefs: string[];
+  tags: string[];
 }
 
 interface MutableReview {
@@ -200,6 +251,8 @@ interface MutableReview {
 
 interface MutableDecision extends MutableEffectItem {
   reviewId: string;
+  rationale: string | null;
+  alternatives: string | null;
 }
 
 interface MutableDraft {
@@ -249,8 +302,8 @@ class ReferencePlanLifecycleBackend {
   readonly operations = new Map<string, RecordedOperation>();
   readonly milestones = new Map<string, MutableMilestone>();
   readonly tasks = new Map<string, MutableTask>();
-  readonly questions = new Map<string, MutableEffectItem>();
-  readonly researches = new Map<string, MutableEffectItem>();
+  readonly questions = new Map<string, MutableQuestion>();
+  readonly researches = new Map<string, MutableResearch>();
   readonly defects = new Map<string, MutableDefect>();
   readonly reviews = new Map<string, MutableReview>();
   readonly decisions = new Map<string, MutableDecision>();
@@ -261,6 +314,76 @@ class ReferencePlanLifecycleBackend {
   researchCounter = 0;
   defectCounter = 0;
   decisionCounter = 0;
+}
+
+interface SerializedReferencePlanLifecycleBackend {
+  readonly goals: readonly (readonly [string, MutableGoal])[];
+  readonly claims: readonly (readonly [string, PlanPrivateClaimRecord])[];
+  readonly operations: readonly (readonly [string, RecordedOperation])[];
+  readonly milestones: readonly (readonly [string, MutableMilestone])[];
+  readonly tasks: readonly (readonly [string, MutableTask])[];
+  readonly questions: readonly (readonly [string, MutableQuestion])[];
+  readonly researches: readonly (readonly [string, MutableResearch])[];
+  readonly defects: readonly (readonly [string, MutableDefect])[];
+  readonly reviews: readonly (readonly [string, MutableReview])[];
+  readonly decisions: readonly (readonly [string, MutableDecision])[];
+  readonly counters: {
+    readonly claim: number;
+    readonly milestone: number;
+    readonly task: number;
+    readonly question: number;
+    readonly research: number;
+    readonly defect: number;
+    readonly decision: number;
+  };
+}
+
+function serializeBackend(backend: ReferencePlanLifecycleBackend): string {
+  const state: SerializedReferencePlanLifecycleBackend = {
+    goals: [...backend.goals.entries()],
+    claims: [...backend.claims.entries()],
+    operations: [...backend.operations.entries()],
+    milestones: [...backend.milestones.entries()],
+    tasks: [...backend.tasks.entries()],
+    questions: [...backend.questions.entries()],
+    researches: [...backend.researches.entries()],
+    defects: [...backend.defects.entries()],
+    reviews: [...backend.reviews.entries()],
+    decisions: [...backend.decisions.entries()],
+    counters: {
+      claim: backend.claimCounter,
+      milestone: backend.milestoneCounter,
+      task: backend.taskCounter,
+      question: backend.questionCounter,
+      research: backend.researchCounter,
+      defect: backend.defectCounter,
+      decision: backend.decisionCounter,
+    },
+  };
+  return JSON.stringify(state);
+}
+
+function deserializeBackend(serialized: string): ReferencePlanLifecycleBackend {
+  const state = JSON.parse(serialized) as SerializedReferencePlanLifecycleBackend;
+  const backend = new ReferencePlanLifecycleBackend();
+  for (const [key, value] of state.goals) backend.goals.set(key, value);
+  for (const [key, value] of state.claims) backend.claims.set(key, value);
+  for (const [key, value] of state.operations) backend.operations.set(key, value);
+  for (const [key, value] of state.milestones) backend.milestones.set(key, value);
+  for (const [key, value] of state.tasks) backend.tasks.set(key, value);
+  for (const [key, value] of state.questions) backend.questions.set(key, value);
+  for (const [key, value] of state.researches) backend.researches.set(key, value);
+  for (const [key, value] of state.defects) backend.defects.set(key, value);
+  for (const [key, value] of state.reviews) backend.reviews.set(key, value);
+  for (const [key, value] of state.decisions) backend.decisions.set(key, value);
+  backend.claimCounter = state.counters.claim;
+  backend.milestoneCounter = state.counters.milestone;
+  backend.taskCounter = state.counters.task;
+  backend.questionCounter = state.counters.question;
+  backend.researchCounter = state.counters.research;
+  backend.defectCounter = state.counters.defect;
+  backend.decisionCounter = state.counters.decision;
+  return backend;
 }
 
 const SEED_PROVENANCE = {
@@ -294,6 +417,24 @@ function operationScope(
   return [goalId, claimId, generation, operation, operationId].join("\u0000");
 }
 
+function materializeReferences(
+  references: readonly PlanDraftReference[] | undefined,
+  milestoneAllocations: ReadonlyMap<string, string>,
+  taskAllocations: ReadonlyMap<string, string>,
+): string[] {
+  return (references ?? []).map((reference) => {
+    if (reference.kind === "ledger") return reference.ref;
+    const allocation =
+      reference.kind === "draft-milestone"
+        ? milestoneAllocations.get(reference.key)
+        : taskAllocations.get(reference.key);
+    if (allocation === undefined) {
+      throw new Error(`reference allocation missing: ${reference.key}`);
+    }
+    return allocation;
+  });
+}
+
 function publicClaim(record: PlanPrivateClaimRecord): ReferencePublicClaim {
   return {
     goalId: record.goalId,
@@ -320,6 +461,11 @@ function idAllocations(
       status: "open",
       text: defect.headline,
       severity: defect.severity,
+      description: defect.description ?? null,
+      rootCause: defect.rootCause ?? null,
+      suggestedFix: defect.suggestedFix ?? null,
+      sourceRefs: [...(defect.sourceRefs ?? [])],
+      tags: [...(defect.tags ?? [])],
       provenance: clone(provenance),
     });
     allocations.push({ key: defect.key, id });
@@ -372,6 +518,9 @@ export class ReferencePlanLifecycleAdapter
         goalId,
         status: "open",
         title: "seeded work",
+        description: null,
+        dependsOn: [],
+        blockedBy: [],
         taskIds,
         provenance: SEED_PROVENANCE,
       });
@@ -385,7 +534,13 @@ export class ReferencePlanLifecycleAdapter
           milestoneId,
           status,
           headline: `seeded task ${index + 1}`,
+          description: null,
+          acceptance: null,
+          suggestedModel: null,
+          sourceRefs: [],
+          tags: [],
           dependsOn,
+          blockedBy: [],
           executable: true,
           provenance: SEED_PROVENANCE,
         });
@@ -416,6 +571,9 @@ export class ReferencePlanLifecycleAdapter
           goalId,
           status: "open",
           text: `seeded question ${index + 1}`,
+          context: null,
+          suggestions: [],
+          recommendation: null,
           provenance: SEED_PROVENANCE,
         });
       }
@@ -505,7 +663,9 @@ export class ReferencePlanLifecycleAdapter
   }
 
   async restart(): Promise<PlanLifecycleContractFixture> {
-    return new ReferencePlanLifecycleAdapter(this.backend);
+    return this.backend.mutex.run(
+      () => new ReferencePlanLifecycleAdapter(deserializeBackend(serializeBackend(this.backend))),
+    );
   }
 
   async rawMutateManagedState(goalId: string): Promise<void> {
@@ -767,6 +927,9 @@ export class ReferencePlanLifecycleAdapter
               goalId: input.goalId,
               status: "open",
               text: question.question,
+              context: question.context ?? null,
+              suggestions: [...(question.suggestions ?? [])],
+              recommendation: question.recommendation ?? null,
               provenance: { author: input.author, session: input.session },
             });
             return { key: question.key, id };
@@ -793,6 +956,7 @@ export class ReferencePlanLifecycleAdapter
               goalId: input.goalId,
               status: "open",
               text: research.question,
+              scope: research.scope ?? null,
               provenance: { author: input.author, session: input.session },
             });
             return { key: research.key, id };
@@ -902,6 +1066,8 @@ export class ReferencePlanLifecycleAdapter
         reviewId: input.reviewId,
         status: "locked",
         text: input.decision.headline,
+        rationale: input.decision.rationale ?? null,
+        alternatives: input.decision.alternatives ?? null,
         provenance: { author: input.author, session: input.session },
       });
       const reviewDefectAllocations = idAllocations(
@@ -956,17 +1122,15 @@ export class ReferencePlanLifecycleAdapter
   }
 
   private applyFollowUpCleanup(goal: MutableGoal): void {
-    const supersededTaskIds = new Set<string>();
+    const supersededIds = new Set<string>(goal.milestoneIds);
     for (const task of this.goalTasks(goal)) {
+      task.executable = false;
       if (task.status === "planned") {
         task.status = "abandoned";
-        task.executable = false;
-        supersededTaskIds.add(task.id);
+        supersededIds.add(task.id);
       }
     }
-    for (const task of this.backend.tasks.values()) {
-      task.dependsOn = task.dependsOn.filter((id) => !supersededTaskIds.has(id));
-    }
+    this.removeSupersededReferences(supersededIds);
     for (const milestoneId of goal.milestoneIds) {
       const milestone = this.backend.milestones.get(milestoneId);
       if (milestone !== undefined) milestone.status = "postponed";
@@ -982,16 +1146,32 @@ export class ReferencePlanLifecycleAdapter
   }
 
   private supersedeDraft(manifest: PlanPublishedManifest): void {
+    const supersededIds = new Set([
+      ...manifest.milestones.map(({ id }) => id),
+      ...manifest.tasks.map(({ id }) => id),
+    ]);
     for (const { id } of manifest.tasks) {
       const task = this.backend.tasks.get(id);
-      if (task !== undefined && task.status === "planned") {
-        task.status = "abandoned";
+      if (task !== undefined) {
         task.executable = false;
+        if (task.status === "planned") task.status = "abandoned";
       }
     }
     for (const { id } of manifest.milestones) {
       const milestone = this.backend.milestones.get(id);
       if (milestone !== undefined) milestone.status = "postponed";
+    }
+    this.removeSupersededReferences(supersededIds);
+  }
+
+  private removeSupersededReferences(supersededIds: ReadonlySet<string>): void {
+    for (const milestone of this.backend.milestones.values()) {
+      milestone.dependsOn = milestone.dependsOn.filter((id) => !supersededIds.has(id));
+      milestone.blockedBy = milestone.blockedBy.filter((id) => !supersededIds.has(id));
+    }
+    for (const task of this.backend.tasks.values()) {
+      task.dependsOn = task.dependsOn.filter((id) => !supersededIds.has(id));
+      task.blockedBy = task.blockedBy.filter((id) => !supersededIds.has(id));
     }
   }
 
@@ -1022,6 +1202,17 @@ export class ReferencePlanLifecycleAdapter
         goalId: input.goalId,
         status: "open",
         title: milestone.title,
+        description: milestone.description ?? null,
+        dependsOn: materializeReferences(
+          milestone.dependsOn,
+          milestoneAllocations,
+          taskAllocations,
+        ),
+        blockedBy: materializeReferences(
+          milestone.blockedBy,
+          milestoneAllocations,
+          taskAllocations,
+        ),
         taskIds,
         provenance: { author: input.author, session: input.session },
       });
@@ -1038,12 +1229,21 @@ export class ReferencePlanLifecycleAdapter
         milestoneId,
         status: "planned",
         headline: task.headline,
-        dependsOn: (task.dependsOn ?? []).flatMap((reference) => {
-          if (reference.kind !== "draft-task") return [];
-          const dependencyId = taskAllocations.get(reference.key);
-          if (dependencyId === undefined) throw new Error("dependency allocation missing");
-          return [dependencyId];
-        }),
+        description: task.description ?? null,
+        acceptance: task.acceptance ?? null,
+        suggestedModel: task.suggestedModel ?? null,
+        sourceRefs: [...(task.sourceRefs ?? [])],
+        tags: [...(task.tags ?? [])],
+        dependsOn: materializeReferences(
+          task.dependsOn,
+          milestoneAllocations,
+          taskAllocations,
+        ),
+        blockedBy: materializeReferences(
+          task.blockedBy,
+          milestoneAllocations,
+          taskAllocations,
+        ),
         executable: false,
         provenance: { author: input.author, session: input.session },
       });
