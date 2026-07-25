@@ -51,6 +51,7 @@ import {
   type XdgCoherenceWatcher,
   type PostgresCoherenceWatcher,
   createLedgerStore,
+  RemoteLedgerClientNotWiredError,
   startXdgCoherenceWatcher,
   startPostgresCoherenceWatcher,
   nodeGitRunner,
@@ -440,10 +441,11 @@ export function listProjectsOf(
  * backend, ref-sha-watch ({@link startLedgerRefWatcher}, T353) for git-object,
  * data_version-poll ({@link startXdgCoherenceWatcher}, T530) for xdg, and
  * LISTEN/NOTIFY push ({@link startPostgresCoherenceWatcher}, T578) for
- * postgres. All four return a handle with `.close()`, so the host wires
- * shutdown identically regardless of backend. The git-object path binds a
- * {@link nodeGitRunner} at the repo root so the watcher polls
- * `refs/heads/<branch>` for ledger advances by another process.
+ * postgres. Remote refuses before watcher construction until its downstream
+ * client adapter lands. All four local watchers return a handle with
+ * `.close()`, so the host wires shutdown identically regardless of backend.
+ * The git-object path binds a {@link nodeGitRunner} at the repo root so the
+ * watcher polls `refs/heads/<branch>` for ledger advances by another process.
  *
  * The xdg AND postgres watchers bulk-invalidate every known ledger off a
  * single coherence signal (a `data_version` bump / a NOTIFY on the tenant's
@@ -457,6 +459,12 @@ export function startLedgerCoherenceWatcher(
   root: string,
   onChange?: (ledgerId: string | null) => void,
 ): LedgerWatcher | XdgCoherenceWatcher | PostgresCoherenceWatcher {
+  if (resolved.backend === "remote") {
+    throw new RemoteLedgerClientNotWiredError(
+      "startLedgerCoherenceWatcher",
+      root,
+    );
+  }
   if (resolved.backend === "git-object") {
     return startLedgerRefWatcher(resolved.store, resolved.branch, nodeGitRunner(root), onChange);
   }

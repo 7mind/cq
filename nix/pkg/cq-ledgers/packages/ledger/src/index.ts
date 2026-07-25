@@ -109,6 +109,7 @@ export {
   assertGitWorkTree,
   hasLegacyFsLedger,
   GitEnvironmentError,
+  RemoteLedgerClientNotWiredError,
   PostgresBackupNotWiredError,
   startXdgCoherenceWatcher,
   XDG_DB_FILENAME,

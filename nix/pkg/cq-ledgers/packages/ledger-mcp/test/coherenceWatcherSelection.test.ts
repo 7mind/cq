@@ -21,6 +21,7 @@ import { promisify } from "node:util";
 import {
   FsLedgerStore,
   GitObjectLedgerBackend,
+  InMemoryLedgerStore,
   SqliteLedgerStore,
   type LedgerSchema,
   type ResolvedLedgerStore,
@@ -72,6 +73,25 @@ afterAll(async () => {
 });
 
 describe("startLedgerCoherenceWatcher — backend selection", () => {
+  it("refuses backend 'remote' instead of falling through to the fs watcher", async () => {
+    const root = await tmpDir("coherence-select-remote-");
+    const store = new InMemoryLedgerStore();
+    await store.init();
+    try {
+      const resolved = {
+        store,
+        configRoot: root,
+        backend: "remote",
+        branch: "cq-ledger",
+      } as ResolvedLedgerStore;
+      expect(() => startLedgerCoherenceWatcher(resolved, root)).toThrow(
+        /backend = 'remote'.*remote ledger client.*not wired.*local persistence/is,
+      );
+    } finally {
+      await store.dispose();
+    }
+  });
+
   it("selects the fs file-watcher for backend 'fs': a peer FsLedgerStore write becomes visible", async () => {
     const root = await tmpDir("coherence-select-fs-");
     const a = new FsLedgerStore({ root });

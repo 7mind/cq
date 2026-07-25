@@ -37,6 +37,7 @@ import {
   isXdgPrimaryEmpty,
   restoreDumpToPostgres,
   isPostgresTenantEmpty,
+  RemoteLedgerClientNotWiredError,
   PostgresBackupNotWiredError,
   type LedgerStore,
   type ResetSummary,
@@ -585,6 +586,10 @@ export async function runErase(args: SubcommandArgs, io: DispatchIo): Promise<Su
   if (configExists) {
     try {
       const { backend } = resolveLedgerBackend(args.cwd);
+      if (backend === "remote") {
+        io.err(new RemoteLedgerClientNotWiredError("cq erase", args.cwd).message);
+        return { exitCode: EXIT_USAGE };
+      }
       if (backend === "xdg") {
         const config = loadConfig(args.cwd);
         const projectId = config?.ledger?.projectId ?? null;

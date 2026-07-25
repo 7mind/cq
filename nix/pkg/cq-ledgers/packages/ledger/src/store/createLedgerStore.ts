@@ -204,6 +204,21 @@ function warnLegacyLedgerShadowedByXdgDefault(root: string): void {
 }
 
 /**
+ * Raised while the remote client adapter remains downstream of the additive
+ * config cutover. Every local dispatch boundary must reject this backend
+ * explicitly so it cannot fall through to filesystem, SQLite, or Postgres.
+ */
+export class RemoteLedgerClientNotWiredError extends Error {
+  constructor(operation: string, root: string) {
+    super(
+      `[ledger] backend = 'remote' at ${root} cannot run ${operation}: the remote ledger client ` +
+        `is not wired yet; refusing to fall through to local persistence.`,
+    );
+    this.name = "RemoteLedgerClientNotWiredError";
+  }
+}
+
+/**
  * Thrown by `cq reset`'s postgres branch (`runResetPostgres`, main.ts / T583)
  * when `[ledger].backup != 'none'`: unlike the fs backend's `reset()` (which
  * atomically snapshots-then-reinitialises), the postgres reset path does not
@@ -290,15 +305,21 @@ export function assertGitWorkTree(root: string): void {
  * backend at `root`. The ONE backend-selection site for the running products.
  *
  * `backend = 'xdg'` (the K117 default) and `'postgres'` are the runtime
- * primaries. An EXPLICIT legacy `fs` / `git-object` opens the in-tree store
- * with a deprecation warning; a DEFAULT-resolved xdg over a root that still
- * carries a legacy in-tree ledger warns that the in-tree ledger is shadowed
- * (both warnings name `cq migrate`; K117 relaxed T505's hard refusal).
+ * primaries. `backend = 'remote'` fails before local construction until its
+ * downstream client adapter lands. An EXPLICIT legacy `fs` / `git-object`
+ * opens the in-tree store with a deprecation warning; a DEFAULT-resolved xdg
+ * over a root that still carries a legacy in-tree ledger warns that the
+ * in-tree ledger is shadowed (both warnings name `cq migrate`; K117 relaxed
+ * T505's hard refusal).
  *
  * The store is `init()`-ed before return (mirrors every historical call site).
  */
 export async function createLedgerStore(root: string): Promise<ResolvedLedgerStore> {
   const { backend, branch, explicit } = resolveLedgerBackend(root);
+
+  if (backend === "remote") {
+    throw new RemoteLedgerClientNotWiredError("createLedgerStore", root);
+  }
 
   if (backend === "fs" || backend === "git-object") {
     warnLegacyBackendDeprecated(backend, root);

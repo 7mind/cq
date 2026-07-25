@@ -35,6 +35,7 @@ import {
   resolveLogsDir,
   createLedgerStore,
   PostgresLedgerStore,
+  RemoteLedgerClientNotWiredError,
   type TreeEntry,
 } from "@cq/ledger";
 
@@ -237,6 +238,10 @@ export async function runLogPut(
   gitFactory?: (root: string) => GitPlumbing,
 ): Promise<LogPutOutcome> {
   const { backend, branch } = resolveLedgerBackend(args.cwd);
+
+  if (backend === "remote") {
+    throw new RemoteLedgerClientNotWiredError("cq log put", args.cwd);
+  }
 
   // --- Read source ---
   let raw: string;
