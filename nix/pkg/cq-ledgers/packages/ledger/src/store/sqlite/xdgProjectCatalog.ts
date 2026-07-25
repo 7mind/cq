@@ -284,6 +284,26 @@ export class FilesystemXdgProjectCatalogSource implements XdgProjectCatalogSourc
   }
 
   async probeProject(projectsRoot: string, key: string): Promise<XdgProjectStoreProbe> {
+    return this.probeProjectWithIdentityPolicy(projectsRoot, key, false);
+  }
+
+  /**
+   * Probe the structural ledger contract while treating malformed optional
+   * identity metadata as absent. Explicit runtimes use this so provenance
+   * cannot disable ledger access; catalog discovery remains strict.
+   */
+  async probeProjectForRuntime(
+    projectsRoot: string,
+    key: string,
+  ): Promise<XdgProjectStoreProbe> {
+    return this.probeProjectWithIdentityPolicy(projectsRoot, key, true);
+  }
+
+  private async probeProjectWithIdentityPolicy(
+    projectsRoot: string,
+    key: string,
+    tolerateMalformedIdentity: boolean,
+  ): Promise<XdgProjectStoreProbe> {
     const projectDir = path.join(projectsRoot, key);
     const stateDir = path.join(projectDir, "state");
     const dbPath = path.join(stateDir, XDG_DB_FILENAME);
@@ -386,7 +406,7 @@ export class FilesystemXdgProjectCatalogSource implements XdgProjectCatalogSourc
         readonly: true,
       });
       db.exec("PRAGMA query_only = ON");
-      const snapshot = readSnapshot(db);
+      const snapshot = readSnapshot(db, tolerateMalformedIdentity);
       return { ok: true, snapshot };
     } catch (error) {
       if (error instanceof XdgProjectIdentityMetadataError) {
@@ -510,7 +530,10 @@ function errorHasCode(error: unknown, code: string): boolean {
   );
 }
 
-function readSnapshot(db: Database): XdgProjectStoreSnapshot {
+function readSnapshot(
+  db: Database,
+  tolerateMalformedIdentity: boolean,
+): XdgProjectStoreSnapshot {
   const integrityCheck = db
     .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
     .all()
@@ -580,7 +603,16 @@ function readSnapshot(db: Database): XdgProjectStoreSnapshot {
 
   let identity: XdgProjectIdentity | null = null;
   if (hasRequiredColumns(tableColumns, "meta")) {
-    identity = new SqliteXdgProjectIdentityAccess(db).readProjectIdentity();
+    try {
+      identity = new SqliteXdgProjectIdentityAccess(db).readProjectIdentity();
+    } catch (error) {
+      if (
+        !tolerateMalformedIdentity ||
+        !(error instanceof XdgProjectIdentityMetadataError)
+      ) {
+        throw error;
+      }
+    }
   }
 
   let substantiveRowCount = 0;
