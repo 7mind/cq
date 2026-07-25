@@ -29,6 +29,18 @@ export const COMPACT_ITEM_FIELD_NAMES = [
   "ledgerRefs",
 ] as const;
 
+export const ITEM_PROJECTION_DESCRIPTION =
+  "required projection: compact retains id, milestoneId, status, createdAt, updatedAt, optional author/session, and only headline/title/question/summary/severity/suggestedModel/tags/sourceRefs/dependsOn/blockedBy/ledgerRefs in fields; full retains every item field";
+
+export const ITEM_MUTATION_ACK_DESCRIPTION =
+  "Returns fixed acknowledgement { item: { id, milestoneId, status, fields: { dependsOn?, blockedBy?, ledgerRefs? }, createdAt, updatedAt, author?, session? } }; narrative fields are not returned.";
+
+export const MILESTONE_MUTATION_ACK_DESCRIPTION =
+  "Returns fixed acknowledgement { milestone: { id, status, fields: { dependsOn?, blockedBy? }, createdAt, updatedAt, author?, session? } }; title and description are not returned.";
+
+export const LEDGER_MUTATION_ACK_DESCRIPTION =
+  "Returns fixed acknowledgement { ledger: { id } }; the schema and items are not returned.";
+
 export type CompactItemFieldName =
   (typeof COMPACT_ITEM_FIELD_NAMES)[number];
 

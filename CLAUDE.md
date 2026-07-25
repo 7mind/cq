@@ -72,6 +72,27 @@ work, instead of inline TODOs or scratch files.
   so the ledger records who wrote each item.
 - Don't `create_ledger` unless asked; the canonical set is enough.
 
+### MCP response contract
+
+- Item-bearing reads (`fetch_ledger`, `fetch_item`, `search_items`,
+  `fts_search`, `fetch_milestone`, `list_milestone_items`) require an explicit
+  `projection: "compact"` or `projection: "full"`; there is no default.
+  Use compact for discovery/status/reference work. Use full only when the next
+  operation needs narrative or another field outside the compact allowlist.
+- Compact items retain `id`, `milestoneId`, `status`, `createdAt`, `updatedAt`,
+  optional `author`/`session`, and only `headline`, `title`, `question`,
+  `summary`, `severity`, `suggestedModel`, `tags`, `sourceRefs`, `dependsOn`,
+  `blockedBy`, and `ledgerRefs` from `fields`.
+- Every eligible mutation returns a fixed mutation acknowledgement, not the
+  full entity. Consume its allocated id, current status, canonicalized
+  reference fields, timestamps, and provenance. Issue an explicit full read
+  only if later reasoning needs narrative content.
+- Paginate `fetch_ledger` with `offset`/`limit`; preserve `total`, `limit`, and
+  `nextOffset`, following `nextOffset` until it is `null`.
+- This is one breaking cutover with no legacy-peer compatibility mode.
+  Minified JSON remains authoritative; Markdown responses and a general
+  `fetch_items` batching tool were rejected.
+
 ### Flows and research-driven investigation
 
 The ledger-suite harness runs four cooperating **flows**: *investigate*, *plan*, *research*,
