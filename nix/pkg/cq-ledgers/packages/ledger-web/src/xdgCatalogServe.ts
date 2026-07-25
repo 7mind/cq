@@ -1,6 +1,6 @@
-import * as path from "node:path";
 import type { ServerWebSocket } from "bun";
 import {
+  isSafeProjectKey,
   openXdgProjectRuntime,
   type ListProjectsCapability,
   type OpenXdgProjectRuntimeOptions,
@@ -67,7 +67,7 @@ export function createStaticXdgHostCatalog(
 ): XdgHostCatalog {
   const byKey = new Map<string, XdgHostProject>();
   const publicProjects = projects.map((project) => {
-    if (!isSafeDecodedProjectKey(project.key)) {
+    if (!isSafeProjectKey(project.key)) {
       throw new Error(`invalid XDG catalog project key: ${JSON.stringify(project.key)}`);
     }
     if (byKey.has(project.key)) {
@@ -103,26 +103,12 @@ export function matchSafeXdgProjectRoute(pathname: string): SafeXdgProjectRoute 
   } catch {
     return { kind: "invalid" };
   }
-  if (!isSafeDecodedProjectKey(decoded)) return { kind: "invalid" };
+  if (!isSafeProjectKey(decoded)) return { kind: "invalid" };
   const route = matchProjectRoute(pathname);
   if (route === null) {
     throw new Error("validated project route did not match");
   }
   return { kind: "project", ...route };
-}
-
-function isSafeDecodedProjectKey(projectKey: string): boolean {
-  return !(
-    projectKey.length === 0 ||
-    projectKey.trim().length === 0 ||
-    projectKey === "." ||
-    projectKey === ".." ||
-    path.posix.isAbsolute(projectKey) ||
-    path.win32.isAbsolute(projectKey) ||
-    projectKey.includes("/") ||
-    projectKey.includes("\\") ||
-    projectKey.includes("\0")
-  );
 }
 
 /**
@@ -233,10 +219,15 @@ export function serveXdgCatalog(
   );
 
   const originalStop = server.stop.bind(server);
-  let shutdown: Promise<void> | null = null;
-  server.stop = (closeActiveConnections?: boolean): Promise<void> => {
-    shutdown ??= (async () => {
-      await originalStop(closeActiveConnections);
+  let disposeRuntimes: Promise<void> | null = null;
+  server.stop = async (closeActiveConnections?: boolean): Promise<void> => {
+    // Always delegate to the native stop on every call — never memoize this
+    // step. A first `stop()` (no force) can stay pending while a connection
+    // is open; a later `stop(true)` must still reach `originalStop(true)` to
+    // force-close it. Only the runtime disposal below is memoized, so it
+    // still runs exactly once however many times `stop` is called.
+    await originalStop(closeActiveConnections);
+    disposeRuntimes ??= (async () => {
       const settled = await Promise.allSettled(runtimes.values());
       await Promise.all(
         settled.flatMap((result) =>
@@ -246,7 +237,7 @@ export function serveXdgCatalog(
         ),
       );
     })();
-    return shutdown;
+    await disposeRuntimes;
   };
   return server;
 }

@@ -87,6 +87,7 @@ export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 export type { SqliteLedgerStoreOpts } from "./store/sqlite/SqliteLedgerStore.js";
 export {
   openXdgProjectRuntime,
+  isSafeProjectKey,
   XdgProjectRuntimeLocationError,
 } from "./store/sqlite/xdgProjectRuntime.js";
 export type {

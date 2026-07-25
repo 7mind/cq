@@ -210,7 +210,6 @@ describe("explicit XDG catalog HTTP/WS host", () => {
       connectMcp(base, "/p/alpha/mcp", "alpha-two"),
     ]);
     expect(observed.opens.get("alpha")).toBe(1);
-    expect(observed.opens.has("beta")).toBe(false);
 
     const expectedListing = JSON.stringify({ projects });
     const listingOne = textOf(
@@ -221,6 +220,16 @@ describe("explicit XDG catalog HTTP/WS host", () => {
     );
     expect(listingOne).toBe(expectedListing);
     expect(listingTwo).toBe(listingOne);
+    // Discovery (list_projects) must not eagerly construct dormant runtimes —
+    // the real catalog key is "beta team", not "beta"; assert on the real key
+    // right after listing so an eager-construction regression here fails.
+    expect(observed.opens.has("beta team")).toBe(false);
+
+    const alias = await connectMcp(base, "/mcp", "alias");
+    expect(textOf(await alias.callTool({ name: "list_projects", arguments: {} })))
+      .toBe(expectedListing);
+    expect(observed.opens.get("alpha")).toBe(1);
+    expect(observed.opens.has("beta team")).toBe(false);
 
     decode(
       await alphaOne.callTool({
@@ -256,11 +265,6 @@ describe("explicit XDG catalog HTTP/WS host", () => {
     ).toBe(true);
     expect(textOf(await beta.callTool({ name: "list_projects", arguments: {} })))
       .toBe(expectedListing);
-
-    const alias = await connectMcp(base, "/mcp", "alias");
-    expect(textOf(await alias.callTool({ name: "list_projects", arguments: {} })))
-      .toBe(expectedListing);
-    expect(observed.opens.get("alpha")).toBe(1);
 
     const alphaWs = await openWs(base, "/p/alpha/ws");
     const betaWs = await openWs(base, "/p/beta%20team/ws");
@@ -298,6 +302,39 @@ describe("explicit XDG catalog HTTP/WS host", () => {
       ["alpha", 1],
       ["beta team", 1],
     ]));
+  });
+
+  test("a lingering stop() does not block a later stop(true) from disposing every runtime", async () => {
+    const fixture = await makeHostFixture();
+    await seedProject(fixture.projectsRoot, "alpha");
+    const catalog = createStaticXdgHostCatalog([
+      { key: "alpha", displayName: "Alpha" },
+    ]);
+    const observed = observeRuntimes();
+    const { server, base } = startHost(fixture, catalog, observed.opener);
+
+    const alpha = await connectMcp(base, "/p/alpha/mcp", "alpha");
+    expect(observed.opens.get("alpha")).toBe(1);
+    await alpha.close();
+    await openWs(base, "/p/alpha/ws");
+
+    // A graceful stop() with an open WebSocket stays pending on native Bun
+    // indefinitely (confirmed against native Bun.serve directly, independent
+    // of this wrapper) — it never resolves on its own here. The regression
+    // this guards is the wrapper swallowing `closeActiveConnections` for
+    // EVERY later call once the first is in flight, which left `stop(true)`
+    // returning that same never-resolving promise and never reaching
+    // `originalStop(true)` or runtime disposal. `stop(true)` must still
+    // resolve and dispose on its own, independently of the lingering call.
+    let firstStopSettled = false;
+    void server.stop().then(() => {
+      firstStopSettled = true;
+    });
+    await Bun.sleep(20);
+    expect(firstStopSettled).toBe(false);
+
+    await server.stop(true);
+    expect(observed.disposals.get("alpha")).toBe(1);
   });
 
   test("rejects malformed and unsafe encoded keys before catalog lookup or runtime construction", async () => {
@@ -381,14 +418,28 @@ describe("explicit XDG catalog HTTP/WS host", () => {
     expect(source).toContain("hubTopic");
     expect(source).toContain("attachMcpHttp");
     expect(source).toContain("openXdgProjectRuntime");
-    for (const forbidden of [
-      "Postgres",
-      "openPgPool",
-      "registerProject",
-      "/api/projects",
-      "Authorization",
-    ]) {
-      expect(source, forbidden).not.toContain(forbidden);
+
+    // Guard on the module's actual import specifiers rather than scanning for
+    // forbidden symbol names: a substring scan misses the real cq-serve
+    // ownership/auth surface (bootHub, tryAcquireDedicatedAdvisoryLock,
+    // fetchRegisteredProjects, checkBearerAuth, extractBearerToken, the
+    // lowercase "authorization" header read) entirely, since none of those
+    // tokens appear literally in this list. Requiring every import specifier
+    // to be a member of an explicit allowlist catches ANY such coupling,
+    // whatever it is named, because importing it at all fails the guard.
+    const importSpecifiers = [
+      ...source.matchAll(/\bfrom\s+["']([^"']+)["']/g),
+    ].map((match) => match[1]!);
+    expect(importSpecifiers.length).toBeGreaterThan(0);
+    const allowedImports = new Set([
+      "bun",
+      "@cq/ledger",
+      "@cq/ledger-mcp",
+      "./projectRoutes.js",
+      "./serve.js",
+    ]);
+    for (const specifier of importSpecifiers) {
+      expect(allowedImports.has(specifier), specifier).toBe(true);
     }
   });
 });

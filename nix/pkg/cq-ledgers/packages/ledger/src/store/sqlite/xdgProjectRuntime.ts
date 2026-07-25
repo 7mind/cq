@@ -249,17 +249,29 @@ function validateProjectsRoot(projectsRoot: string): void {
   }
 }
 
-function validateProjectKey(projectKey: string): void {
-  if (
+/**
+ * A single project-key safety predicate shared across both layered defenses:
+ * this filesystem-level runtime (second defense, T832) and the route-level
+ * decoded-key guard ahead of catalog lookup (first defense, T836's
+ * `isSafeDecodedProjectKey` in `@cq/ledger-web`). Keeping one copy prevents
+ * the two layers from silently drifting apart on what counts as unsafe.
+ */
+export function isSafeProjectKey(projectKey: string): boolean {
+  return !(
     projectKey.length === 0 ||
     projectKey.trim().length === 0 ||
     projectKey === "." ||
     projectKey === ".." ||
-    path.isAbsolute(projectKey) ||
+    path.posix.isAbsolute(projectKey) ||
+    path.win32.isAbsolute(projectKey) ||
     projectKey.includes("/") ||
     projectKey.includes("\\") ||
     projectKey.includes("\0")
-  ) {
+  );
+}
+
+function validateProjectKey(projectKey: string): void {
+  if (!isSafeProjectKey(projectKey)) {
     throw new XdgProjectRuntimeLocationError(
       `Invalid project key: ${JSON.stringify(projectKey)}`,
     );
