@@ -23,6 +23,9 @@ import {
   CANONICAL_LEDGERS,
   GOALS_LEDGER,
   GOALS_SCHEMA,
+  REVIEWS_LEDGER,
+  REVIEWS_SCHEMA,
+  type LedgerSchema,
 } from "../src/index.js";
 import { openPgPool } from "../src/store/postgres/connection.js";
 import { ensureSchema } from "../src/store/postgres/schema.js";
@@ -133,6 +136,60 @@ if (PG_URL === undefined || PG_URL.length === 0) {
       `;
       expect(rows).toHaveLength(1);
       expect(rows[0]?.display_name).toBe("Renamed Project");
+    });
+  });
+
+  describe("forward-compatible reviews.defects widening", () => {
+    it("upgrades schema_json in place and preserves the existing review row", async () => {
+      await schemaReady;
+      const projectKey = freshProjectKey();
+      const first = new PostgresLedgerStore({
+        pool: openPgPool(PG_URL),
+        projectKey,
+        displayName: projectKey,
+      });
+      await first.init();
+      const milestone = await first.createMilestone({ title: "pre-defects review" });
+      const review = await first.createItem(REVIEWS_LEDGER, milestone.id, {
+        status: "revise",
+        fields: { summary: "postgres row must survive" },
+      });
+      await first.dispose();
+
+      const narrowed = JSON.parse(JSON.stringify(REVIEWS_SCHEMA)) as LedgerSchema;
+      delete narrowed.fields["defects"];
+      await setupPool`
+        UPDATE ledgers
+        SET schema_json = ${JSON.stringify(narrowed)}
+        WHERE project_key = ${projectKey} AND name = ${REVIEWS_LEDGER}
+      `;
+
+      const reopened = new PostgresLedgerStore({
+        pool: openPgPool(PG_URL),
+        projectKey,
+        displayName: projectKey,
+      });
+      await reopened.init();
+      try {
+        expect(reopened.fetchItem(REVIEWS_LEDGER, review.id).fields["summary"]).toBe(
+          "postgres row must survive",
+        );
+        expect(reopened.fetch(REVIEWS_LEDGER).schema).toEqual(REVIEWS_SCHEMA);
+      } finally {
+        await reopened.dispose();
+      }
+
+      const schemaRows = await setupPool<Array<{ schema_json: string }>>`
+        SELECT schema_json FROM ledgers
+        WHERE project_key = ${projectKey} AND name = ${REVIEWS_LEDGER}
+      `;
+      expect(schemaRows).toHaveLength(1);
+      expect(JSON.parse(schemaRows[0]!.schema_json)).toEqual(REVIEWS_SCHEMA);
+      const shadowRows = await setupPool<Array<{ project_key: string }>>`
+        SELECT project_key FROM projects
+        WHERE project_key LIKE ${`${projectKey}__divergence-backup-%`}
+      `;
+      expect(shadowRows).toHaveLength(0);
     });
   });
 

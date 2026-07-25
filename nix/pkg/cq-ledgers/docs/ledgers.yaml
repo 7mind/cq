@@ -434,6 +434,9 @@ ledgers:
         criticism:
           type: string[]
           required: false
+        defects:
+          type: string[]
+          required: false
         ledgerRefs:
           type: id[]
           required: false

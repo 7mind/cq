@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import type { LedgerSchema } from "../src/index.js";
+import { REVIEWS_SCHEMA, type LedgerSchema } from "../src/index.js";
 import { classifyCanonicalLedgers } from "../src/store/postgres/divergence.js";
 
 const SCHEMA_A: LedgerSchema = {
@@ -41,6 +41,15 @@ describe("classifyCanonicalLedgers (T574)", () => {
     const persisted = new Map([["widgets", SCHEMA_A]]);
     const report = classifyCanonicalLedgers(persisted, [{ name: "widgets", schema: canonWithOptional }]);
     expect(report).toEqual({ missing: [], widened: ["widgets"], divergent: [] });
+  });
+
+  test("pre-defects reviews schema -> widened", () => {
+    const narrowed = JSON.parse(JSON.stringify(REVIEWS_SCHEMA)) as LedgerSchema;
+    delete narrowed.fields["defects"];
+    const report = classifyCanonicalLedgers(new Map([["reviews", narrowed]]), [
+      { name: "reviews", schema: REVIEWS_SCHEMA },
+    ]);
+    expect(report).toEqual({ missing: [], widened: ["reviews"], divergent: [] });
   });
 
   test("persisted schema with a different idPrefix -> divergent (not widened)", () => {

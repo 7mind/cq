@@ -27,6 +27,8 @@ import * as path from "node:path";
 import {
   FsLedgerStore,
   GOALS_LEDGER,
+  REVIEWS_LEDGER,
+  REVIEWS_SCHEMA,
   TASKS_LEDGER,
   CANONICAL_LEDGERS,
   serializeRegistry,
@@ -264,5 +266,52 @@ describe("added-optional-field init — init() preserves pre-rawLogs ledger", ()
     const goals = registry.ledgers.find((e) => e.name === GOALS_LEDGER);
     expect(goals).toBeDefined();
     expect(goals!.schema.fields[ADDED_OPTIONAL_FIELD]).toBeDefined();
+  });
+});
+
+describe("T843 reviews.defects widening — fs preservation", () => {
+  it("upgrades a pre-field registry in place without backup or item loss", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ledger-pre-review-defects-"));
+    dirs.push(root);
+    const seeded = new FsLedgerStore({ root });
+    await seeded.init();
+    const milestone = await seeded.createMilestone({ title: "pre-defects review" });
+    const review = await seeded.createItem(REVIEWS_LEDGER, milestone.id, {
+      status: "revise",
+      fields: { summary: "must survive defects widening" },
+    });
+    await seeded.dispose();
+
+    const docsDir = path.join(root, LEDGER_STORAGE_DIRNAME);
+    const registryPath = path.join(docsDir, "ledgers.yaml");
+    const registry = parseRegistry(await readFile(registryPath, "utf8"));
+    const narrowed = {
+      version: registry.version,
+      ledgers: registry.ledgers.map((entry) => {
+        if (entry.name !== REVIEWS_LEDGER) return entry;
+        const schema = JSON.parse(JSON.stringify(entry.schema)) as LedgerSchema;
+        delete schema.fields["defects"];
+        return { name: entry.name, schema };
+      }),
+    };
+    await writeFile(registryPath, serializeRegistry(narrowed), "utf8");
+
+    const reopened = new FsLedgerStore({ root });
+    await reopened.init();
+    try {
+      expect(reopened.fetchItem(REVIEWS_LEDGER, review.id).fields["summary"]).toBe(
+        "must survive defects widening",
+      );
+      expect(reopened.fetch(REVIEWS_LEDGER).schema).toEqual(REVIEWS_SCHEMA);
+      await expect(stat(path.join(docsDir, ".backup"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const upgraded = parseRegistry(await readFile(registryPath, "utf8"));
+      expect(upgraded.ledgers.find((entry) => entry.name === REVIEWS_LEDGER)?.schema).toEqual(
+        REVIEWS_SCHEMA,
+      );
+    } finally {
+      await reopened.dispose();
+    }
   });
 });

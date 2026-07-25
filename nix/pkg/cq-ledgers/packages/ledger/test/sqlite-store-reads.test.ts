@@ -20,6 +20,8 @@ import {
   CANONICAL_LEDGERS,
   MILESTONES_AMBIENT_ID,
   MILESTONES_LEDGER,
+  REVIEWS_LEDGER,
+  REVIEWS_SCHEMA,
   TASKS_SCHEMA,
 } from "../src/constants.js";
 import { FsLedgerStore } from "../src/store/FsLedgerStore.js";
@@ -171,6 +173,46 @@ describe("SqliteLedgerStore init/bootstrap (acceptance a)", () => {
     } finally {
       await sq.dispose();
     }
+  });
+
+  test("reviews.defects widening preserves existing sqlite rows and persists canon", async () => {
+    const dbPath = await freshDbPath();
+    const first = new SqliteLedgerStore({ dbPath, now });
+    await first.init();
+    const milestone = await first.createMilestone({ title: "pre-defects review" });
+    const review = await first.createItem(REVIEWS_LEDGER, milestone.id, {
+      status: "go-ahead",
+      fields: { summary: "sqlite row must survive" },
+    });
+    await first.dispose();
+
+    const narrowed = JSON.parse(JSON.stringify(REVIEWS_SCHEMA)) as LedgerSchema;
+    delete narrowed.fields["defects"];
+    const db = openLedgerDb(dbPath);
+    db.query("UPDATE ledgers SET schema_json = ? WHERE name = ?").run(
+      JSON.stringify(narrowed),
+      REVIEWS_LEDGER,
+    );
+    db.close();
+
+    const reopened = new SqliteLedgerStore({ dbPath, now });
+    await reopened.init();
+    try {
+      expect(reopened.fetchItem(REVIEWS_LEDGER, review.id).fields["summary"]).toBe(
+        "sqlite row must survive",
+      );
+      expect(reopened.fetch(REVIEWS_LEDGER).schema).toEqual(REVIEWS_SCHEMA);
+    } finally {
+      await reopened.dispose();
+    }
+
+    const upgradedDb = openLedgerDb(dbPath);
+    const row = upgradedDb
+      .query<{ schema_json: string }, [string]>("SELECT schema_json FROM ledgers WHERE name = ?")
+      .get(REVIEWS_LEDGER);
+    upgradedDb.close();
+    expect(row).not.toBeNull();
+    expect(JSON.parse(row!.schema_json)).toEqual(REVIEWS_SCHEMA);
   });
 
   test("schema divergence: 'abort' throws BootstrapViolationError; default policy throws the T529 backup stub", async () => {
