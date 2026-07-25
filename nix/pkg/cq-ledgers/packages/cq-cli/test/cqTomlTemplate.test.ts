@@ -49,6 +49,28 @@ const PI_INACTIVE_TOKENS = [
   "pi:ollama-cloud/minimax-m3",
 ];
 
+function parseRemoteExample(source: string) {
+  const lines = source.split("\n");
+  const backendLine = lines.findIndex((line) =>
+    /backend\s*=\s*"remote"/.test(line),
+  );
+  expect(backendLine).toBeGreaterThan(0);
+  let tableLine = backendLine;
+  while (tableLine >= 0 && !/^\s*#\s*\[ledger\]\s*$/.test(lines[tableLine]!)) {
+    tableLine -= 1;
+  }
+  expect(tableLine).toBeGreaterThanOrEqual(0);
+  let endLine = backendLine + 1;
+  while (endLine < lines.length && /^\s*#\s+\S/.test(lines[endLine]!)) {
+    endLine += 1;
+  }
+  const toml = lines
+    .slice(tableLine, endLine)
+    .map((line) => line.replace(/^\s*#\s?/, ""))
+    .join("\n");
+  return parseConfig(toml).ledger;
+}
+
 describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
   it("parses without throwing (schema-valid)", () => {
     expect(() => parseConfig(CQ_TOML_TEMPLATE)).not.toThrow();
@@ -203,6 +225,25 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     expect(CQ_TOML_TEMPLATE).toContain("DATABASE_URL");
   });
 
+  it("renders the remote backend schema without rendering its environment-only token (T723)", () => {
+    const secret = "must-not-render-in-cq-toml";
+    const originalToken = process.env.CQ_LEDGER_REMOTE_TOKEN;
+    process.env.CQ_LEDGER_REMOTE_TOKEN = secret;
+    try {
+      expect(CQ_TOML_TEMPLATE).toMatch(/backend\s*=\s*"remote"/);
+      expect(CQ_TOML_TEMPLATE).toMatch(/serverUrl\s*=\s*"https:\/\//);
+      expect(CQ_TOML_TEMPLATE).toContain("CQ_LEDGER_REMOTE_TOKEN");
+      expect(CQ_TOML_TEMPLATE).not.toContain(secret);
+      expect(CQ_TOML_TEMPLATE).not.toMatch(/^\s*#?\s*token\s*=/m);
+    } finally {
+      if (originalToken === undefined) {
+        delete process.env.CQ_LEDGER_REMOTE_TOKEN;
+      } else {
+        process.env.CQ_LEDGER_REMOTE_TOKEN = originalToken;
+      }
+    }
+  });
+
   it("documents the commented-out [project].name key (T570/T584)", () => {
     expect(CQ_TOML_TEMPLATE).toContain("[project]");
     expect(CQ_TOML_TEMPLATE).toContain('name = "my-project"');
@@ -253,6 +294,20 @@ describe("cq.toml.example active model set equals CQ_TOML_TEMPLATE (T331/T440)",
   it("cq.toml.example [agent_efforts] block is COMMENTED-OUT/inert — agentEfforts is {} (T518/Q254)", () => {
     const config = parseConfig(readFileSync(EXAMPLE_PATH, "utf8"));
     expect(config.agentEfforts).toEqual({});
+  });
+
+  it("cq.toml.example and init template expose the same remote ledger keys (T723)", () => {
+    const example = readFileSync(EXAMPLE_PATH, "utf8");
+    for (const source of [CQ_TOML_TEMPLATE, example]) {
+      expect(source).toMatch(/backend\s*=\s*"remote"/);
+      expect(source).toContain("serverUrl");
+      expect(source).toContain("projectId");
+      expect(source).toContain("CQ_LEDGER_REMOTE_TOKEN");
+      expect(source).not.toMatch(/^\s*#?\s*token\s*=/m);
+    }
+    expect(parseRemoteExample(example)).toEqual(
+      parseRemoteExample(CQ_TOML_TEMPLATE),
+    );
   });
 
   it("cq.toml.example [ledger] block is COMMENTED-OUT/inert — backend resolves to fs", () => {

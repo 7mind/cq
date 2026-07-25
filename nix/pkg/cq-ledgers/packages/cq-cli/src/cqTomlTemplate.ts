@@ -23,11 +23,10 @@
  *    primary is the default for a FRESH `cq init`. This ONLY affects fresh
  *    inits — an existing repo's cq.toml (untouched by `cq init` without
  *    `--force`) keeps whatever backend it already has. The backup mode
- *    defaults to `none` (T494; unaffected). A commented `backend = "postgres"`
- *    + `url` example documents the opt-in multi-tenant backend (G81/T584)
- *    right below the active `xdg` line, alongside the secret-hygiene warning:
- *    a real DSN belongs in `CQ_LEDGER_PG_URL`/`DATABASE_URL` (env), never in
- *    the committed `url` key.
+ *    defaults to `none` (T494; unaffected). A commented `backend = "remote"`
+ *    + required `serverUrl` example documents repository-backed operation;
+ *    its bearer secret belongs only in `CQ_LEDGER_REMOTE_TOKEN`. The existing
+ *    postgres example and DSN environment chain remain until T736.
  *  - `[project]` (T570/Q270) is documented, commented out: its one key
  *    (`name`) is a purely cosmetic display-name override — no credentials
  *    ever belong there either.
@@ -104,8 +103,10 @@ export const CQ_TOML_TEMPLATE: string = `\
 # off this repo's git identity (or [ledger].projectId below). "fs" (in-tree
 # .cq/) and "git-object" are LEGACY, deprecated — selecting one explicitly
 # still works but warns and points at \`cq migrate\`.
-# "postgres" is an opt-in, multi-tenant external backend (G81; full store
-# parity — init/reset/erase/backup/restore/migrate all wired, T577-T584).
+# "remote" selects a repository-backed cq serve endpoint; serverUrl is a
+# required, non-secret HTTP(S) URL. Its ordinary bearer secret comes only from
+# CQ_LEDGER_REMOTE_TOKEN and never from this file.
+# "postgres" remains an opt-in, direct multi-tenant backend until T736 (G81).
 # backup (default: "none") is OFF by default (Q244); projectId is an
 # optional committed project-identity key (Q246), needed only for a repo
 # with no stable git root commit (e.g. a shallow clone).
@@ -113,6 +114,15 @@ export const CQ_TOML_TEMPLATE: string = `\
   backend   = "xdg"
 # backup    = "none"
 # projectId = "my-project"
+
+# To use the repository-backed remote service, uncomment this block instead.
+# serverUrl must use HTTP(S) and contain no credentials, query, or fragment.
+# Set the bearer secret in CQ_LEDGER_REMOTE_TOKEN; never add it to cq.toml.
+# [ledger]
+#   backend   = "remote"
+#   serverUrl = "https://cq.example.com"
+#   backup    = "none"
+#   projectId = "my-project"
 
 # To opt into the postgres backend instead, uncomment the block below (and
 # comment out/remove the active [ledger] table above — cq.toml has exactly
@@ -127,6 +137,7 @@ export const CQ_TOML_TEMPLATE: string = `\
 #   url     = "postgres://host:5432/dbname"   # credential-less; see CQ_LEDGER_PG_URL above
 # backup    = "none"
 # projectId = "my-project"
+# T736 is the sole removal owner for this temporary direct-postgres surface.
 
 # [project] (T570) — optional project-level metadata; \`name\` is a cosmetic
 # display-name override (Q270's reconciled chain: [project].name >

@@ -12,7 +12,8 @@
 #   [agent_tiers]    — maps agent-name -> tier name (default: "standard")
 #   [agent_efforts]  — maps agent-name -> reasoning-effort override (optional)
 #   [ledger]         — ledger storage backend (backend, branch, remote, backup,
-#                      projectId; default: backend="xdg", backup="none")
+#                      projectId, serverUrl; default: backend="xdg",
+#                      backup="none")
 #
 # Panel vs per-role decoupling (T438/T440):
 #   reviewers/planners are the PANEL lists — used for multi-reviewer review
@@ -161,11 +162,14 @@ planners = ["opus"]
 # `cq migrate` (the one-shot legacy -> xdg importer). A root that still
 # carries a legacy in-tree .cq/ ledger while resolving to the xdg DEFAULT
 # gets a shadow warning — the in-tree data is not read until migrated.
-# "postgres" is an opt-in multi-tenant backend (G81, T570-T591) for shared
-# databases — all projects in ONE Postgres database, isolated by tenant key.
+# "remote" selects the repository-backed cq serve service. "postgres" remains
+# an opt-in direct multi-tenant backend until its sole removal owner T736.
 #
 # Keys:
-#   backend   — storage backend: "xdg" (default) | "postgres" | "fs" (legacy, deprecated) | "git-object" (legacy, deprecated)
+#   backend   — storage backend: "xdg" (default) | "remote" | "postgres" | "fs" (legacy, deprecated) | "git-object" (legacy, deprecated)
+#   serverUrl — required for remote: non-secret absolute HTTP(S) URL with no
+#               credentials, query, or fragment. The ordinary bearer secret
+#               comes only from CQ_LEDGER_REMOTE_TOKEN and never from cq.toml.
 #   url       — optional DSN for postgres backend (CREDENTIAL-LESS; env override required for credentials)
 #               Example: "postgres://localhost:5432/cq_ledger" (no user/password).
 #               Resolution precedence: CQ_LEDGER_PG_URL > DATABASE_URL > [ledger].url > PG* driver defaults.
@@ -189,6 +193,16 @@ planners = ["opus"]
 #   backup    = "none"         # "none" (default) | "in-tree" | "orphan-branch"
 #   projectId = "my-project"   # optional repo-identity key (Q246)
 #
+# To activate repository-backed remote operation, uncomment this block.
+# CQ_LEDGER_REMOTE_TOKEN supplies the bearer secret at runtime; never add a
+# token or Authorization value to cq.toml.
+#
+# [ledger]
+#   backend   = "remote"
+#   serverUrl = "https://cq.example.com"
+#   backup    = "none"
+#   projectId = "my-project"
+#
 # To activate the postgres backend (multi-tenant shared database), uncomment
 # and edit the block below. The `url` field is a COMMITTED, CREDENTIAL-LESS
 # DSN (no user/password). A real connection with credentials belongs in the
@@ -201,6 +215,7 @@ planners = ["opus"]
 #   url     = "postgres://localhost:5432/cq_ledger"   # credential-less; see CQ_LEDGER_PG_URL/DATABASE_URL
 #   backup  = "none"
 #   projectId = "my-project"
+# T736 is the sole removal owner for this temporary direct-postgres surface.
 
 # ---------------------------------------------------------------------------
 # PER-HARNESS LAYERED OVERRIDES (Q239 / Q240)

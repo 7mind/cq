@@ -20,6 +20,10 @@ export type {
   LedgerBackend,
   LedgerBackupMode,
   LedgerConfig,
+  RemoteLedgerConfig,
+  NonRemoteLedgerConfig,
+  RemoteServerUrl,
+  RemoteLedgerToken,
   ProjectConfig,
 } from "./types.js";
 export {
@@ -66,6 +70,12 @@ export type {
   RawHarnessOverride,
 } from "./toml.js";
 export { parseToml } from "./toml.js";
+export {
+  CQ_LEDGER_REMOTE_TOKEN_ENV,
+  RemoteLedgerTokenError,
+  resolveRemoteLedgerToken,
+  resolveRemoteLedgerTokenFromProcess,
+} from "./remoteToken.js";
 export type { AgentRoleTier } from "./agentRoster.js";
 export { AGENT_ROLE_TIERS } from "./agentRoster.js";
 export type {

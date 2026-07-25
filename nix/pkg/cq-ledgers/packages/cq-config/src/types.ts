@@ -184,7 +184,7 @@ export interface TiersConfig {
 }
 
 /**
- * The supported ledger storage backends (T349, T494, T570).
+ * The supported ledger storage backends (T349, T494, T570, T723).
  *
  * - `fs` / `git-object`: the LEGACY in-tree backends. They remain PARSEABLE
  *   (never removed from this union) so `cq migrate` can read a `cq.toml`
@@ -192,10 +192,19 @@ export interface TiersConfig {
  *   cutover neither selects a runtime primary store.
  * - `xdg`: the out-of-tree bun:sqlite primary at the XDG location (K102) —
  *   the DEFAULT runtime primary.
- * - `postgres`: an OPT-IN external Postgres primary (G81). Config-surface
- *   only here — see `url` below; the store-side wiring lands in T577.
+ * - `postgres`: an OPT-IN external Postgres primary (G81), retained through
+ *   the remote-client cutover. T736 exclusively owns its removal.
+ * - `remote`: the repository-backed remote-service client. Its required,
+ *   non-secret endpoint is carried by `serverUrl`; the bearer token never
+ *   enters this model and resolves only from `CQ_LEDGER_REMOTE_TOKEN`.
  */
-export const LEDGER_BACKENDS = ["fs", "git-object", "xdg", "postgres"] as const;
+export const LEDGER_BACKENDS = [
+  "fs",
+  "git-object",
+  "xdg",
+  "postgres",
+  "remote",
+] as const;
 
 /** A ledger backend identifier. */
 export type LedgerBackend = (typeof LEDGER_BACKENDS)[number];
@@ -204,6 +213,25 @@ export type LedgerBackend = (typeof LEDGER_BACKENDS)[number];
 export function isLedgerBackend(value: string): value is LedgerBackend {
   return (LEDGER_BACKENDS as readonly string[]).includes(value);
 }
+
+declare const remoteServerUrlBrand: unique symbol;
+
+/**
+ * A validated absolute HTTP(S) endpoint for the remote ledger service.
+ *
+ * Values contain no credentials, query, or fragment. The brand prevents an
+ * arbitrary string from crossing a client boundary without config validation.
+ */
+export type RemoteServerUrl = string & {
+  readonly [remoteServerUrlBrand]: true;
+};
+
+declare const remoteLedgerTokenBrand: unique symbol;
+
+/** An environment-resolved bearer token that never belongs in cq.toml. */
+export type RemoteLedgerToken = string & {
+  readonly [remoteLedgerTokenBrand]: true;
+};
 
 /** The supported ledger backup modes (Q244, T494). */
 export const LEDGER_BACKUP_MODES = ["none", "in-tree", "orphan-branch"] as const;
@@ -223,7 +251,8 @@ export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
  *   primary (K102) — is the default (K117). 'fs' and 'git-object' are the
  *   LEGACY in-repo backends: still selectable explicitly, but construction
  *   emits a deprecation warning pointing at `cq migrate`. 'postgres' is the
- *   opt-in multi-tenant backend (G81).
+ *   opt-in multi-tenant backend (G81), retained until T736. 'remote' selects
+ *   the repository-backed remote service.
  * - `backendExplicit`: whether cq.toml carried an explicit `backend` key
  *   (K117) — lets callers distinguish a deliberate backend choice from the
  *   'xdg' default (the legacy-shadow warning and `cq migrate`'s source
@@ -240,13 +269,17 @@ export function isLedgerBackupMode(value: string): value is LedgerBackupMode {
  *   `null` when absent. A `CQ_LEDGER_PG_URL` / `DATABASE_URL` environment
  *   variable takes precedence over this value at resolution time (the
  *   resolver itself is T571, not this config layer). `null` when absent.
+ * - `serverUrl`: the required non-secret remote-service endpoint when
+ *   `backend='remote'`; `null` for every other backend. It has no default.
+ *   Ordinary bearer authentication resolves only from
+ *   `CQ_LEDGER_REMOTE_TOKEN`, never from cq.toml.
  *
  * `branch` and `remote` are consumed by the git-object backend (W5/T355);
  * they are parsed and stored for any backend, but only meaningful for
- * 'git-object'. `url` is only meaningful for 'postgres'.
+ * 'git-object'. `url` is only meaningful for 'postgres'; `serverUrl` is only
+ * meaningful for 'remote'.
  */
-export interface LedgerConfig {
-  readonly backend: LedgerBackend;
+interface LedgerConfigCommon {
   readonly backendExplicit: boolean;
   readonly branch: string;
   readonly remote: string;
@@ -254,6 +287,21 @@ export interface LedgerConfig {
   readonly projectId: string | null;
   readonly url: string | null;
 }
+
+/** Remote ledger config: `serverUrl` is required and has no default. */
+export interface RemoteLedgerConfig extends LedgerConfigCommon {
+  readonly backend: "remote";
+  readonly serverUrl: RemoteServerUrl;
+}
+
+/** Every non-remote ledger config carries no remote-service endpoint. */
+export interface NonRemoteLedgerConfig extends LedgerConfigCommon {
+  readonly backend: Exclude<LedgerBackend, "remote">;
+  readonly serverUrl: null;
+}
+
+/** The `[ledger]` contract, discriminated by its selected backend. */
+export type LedgerConfig = RemoteLedgerConfig | NonRemoteLedgerConfig;
 
 /**
  * The `[project]` table: project-level metadata (Q270, T570).
@@ -287,8 +335,8 @@ export interface ProjectConfig {
  *   harness effort vocabularies; harness-specific validity (`isEffort`) is
  *   checked at resolution time, once the agent's harness is known.
  * - `ledger`: the `[ledger]` table (backend + branch + remote + backup +
- *   projectId + url), or null if absent. When null, `backend` defaults to
- *   'xdg' (K117) and `backup` defaults to 'none'.
+ *   projectId + url + serverUrl), or null if absent. When null, `backend`
+ *   defaults to 'xdg' (K117) and `backup` defaults to 'none'.
  * - `project`: the `[project]` table (name), or null if absent (T570).
  */
 export interface CqConfig {

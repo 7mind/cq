@@ -39,6 +39,7 @@ import {
   type Harness,
   type LedgerConfig,
   type ProjectConfig,
+  type RemoteServerUrl,
   type ReviewerToken,
   type Tier,
   type TierEntry,
@@ -200,19 +201,21 @@ const DEFAULT_LEDGER_BACKUP: LedgerConfig["backup"] = "none";
  * Type-check the raw `[ledger]` table at the boundary.
  *
  * `backend` (if present) must be a string equal to a known {@link LedgerBackend}
- * ('fs', 'git-object', 'xdg', or 'postgres'); any other value is rejected as a
+ * ('fs', 'git-object', 'xdg', 'postgres', or 'remote'); any other value is rejected as a
  * `CqConfigError`. `branch` and `remote` (if present) must be non-empty
  * strings. `backup` (if present) must be a known backup mode
  * ('none' | 'in-tree' | 'orphan-branch'); `projectId` (if present) must be a
  * string. `url` (if present) must be a string (G81, Q272/Q278 hybrid — a
- * committed credential-less DSN; the env-wins resolver is T571). Absent
+ * committed credential-less DSN; the env-wins resolver is T571). `serverUrl`
+ * has no default and is required for `backend='remote'`; it must be an
+ * absolute HTTP(S) URL without credentials, query, or fragment. Absent
  * `backend` defaults to 'xdg' (K117 — the out-of-tree runtime primary; the
  * old 'fs' default had not been a selectable primary since T505), with
  * `backendExplicit` recording whether the key was present so callers can
  * distinguish a deliberate choice from the default. Absent `branch` defaults
  * to 'cq-ledger'; absent `remote` defaults to 'origin'; absent `backup`
  * defaults to 'none' (Q244); absent `projectId` is `null`; absent `url` is
- * `null`.
+ * `null`; absent `serverUrl` is `null` for non-remote backends.
  */
 function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
   let backend: LedgerConfig["backend"] = "xdg";
@@ -223,7 +226,7 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
     }
     if (!isLedgerBackend(raw.backend)) {
       throw new CqConfigError(
-        `[ledger] backend "${raw.backend}" is not a valid backend (expected fs, git-object, xdg, or postgres)`,
+        `[ledger] backend "${raw.backend}" is not a valid backend (expected fs, git-object, xdg, postgres, or remote)`,
       );
     }
     backend = raw.backend;
@@ -274,7 +277,77 @@ function parseLedger(raw: import("./toml.js").RawLedger): LedgerConfig {
     url = raw.url;
   }
 
-  return { backend, backendExplicit, branch, remote, backup, projectId, url };
+  let serverUrl: RemoteServerUrl | null = null;
+  if (raw.serverUrl !== undefined) {
+    serverUrl = parseRemoteServerUrl(raw.serverUrl);
+  }
+  const common = {
+    backendExplicit,
+    branch,
+    remote,
+    backup,
+    projectId,
+    url,
+  };
+  if (backend === "remote") {
+    if (serverUrl === null) {
+      throw new CqConfigError(
+        '[ledger] backend "remote" requires a non-secret serverUrl using http:// or https://',
+      );
+    }
+    return { ...common, backend, serverUrl };
+  }
+  if (serverUrl !== null) {
+    throw new CqConfigError(
+      '[ledger] serverUrl is only valid when backend = "remote"',
+    );
+  }
+  return { ...common, backend, serverUrl: null };
+}
+
+/** Validate and brand the required endpoint for `backend='remote'`. */
+function parseRemoteServerUrl(raw: unknown): RemoteServerUrl {
+  if (typeof raw !== "string") {
+    throw new CqConfigError("[ledger] serverUrl must be a string");
+  }
+  if (raw !== raw.trim() || raw === "") {
+    throw new CqConfigError(
+      "[ledger] serverUrl must be a valid absolute HTTP(S) URL",
+    );
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new CqConfigError(
+      "[ledger] serverUrl must be a valid absolute HTTP(S) URL",
+    );
+  }
+  if (
+    !/^https?:\/\//i.test(raw)
+  ) {
+    throw new CqConfigError(
+      "[ledger] serverUrl must use http:// or https://",
+    );
+  }
+  if (parsed.hostname === "") {
+    throw new CqConfigError(
+      "[ledger] serverUrl must be a valid absolute HTTP(S) URL with a host",
+    );
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new CqConfigError(
+      "[ledger] serverUrl must not contain credentials; use CQ_LEDGER_REMOTE_TOKEN for the bearer secret",
+    );
+  }
+  if (parsed.href.includes("?")) {
+    throw new CqConfigError("[ledger] serverUrl must not contain a query");
+  }
+  if (parsed.href.includes("#")) {
+    throw new CqConfigError("[ledger] serverUrl must not contain a fragment");
+  }
+  return raw as RemoteServerUrl;
 }
 
 /**
