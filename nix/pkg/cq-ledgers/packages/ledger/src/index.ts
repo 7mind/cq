@@ -93,6 +93,23 @@ export type {
   XdgProjectIdentity,
   XdgProjectIdentityAccess,
 } from "./store/sqlite/projectIdentity.js";
+export {
+  FilesystemXdgProjectCatalogSource,
+  ReadOnlyXdgProjectCatalog,
+  XdgProjectCatalogRootError,
+} from "./store/sqlite/xdgProjectCatalog.js";
+export type {
+  XdgProjectCatalog,
+  XdgProjectCatalogCandidate,
+  XdgProjectCatalogContent,
+  XdgProjectCatalogDiagnostic,
+  XdgProjectCatalogDiagnosticCode,
+  XdgProjectCatalogEntry,
+  XdgProjectCatalogResult,
+  XdgProjectCatalogSource,
+  XdgProjectStoreProbe,
+  XdgProjectStoreSnapshot,
+} from "./store/sqlite/xdgProjectCatalog.js";
 // Postgres backend (G81): the barrel carries ONLY the surface external
 // consumers (cq-cli's logPut postgres branch, the T577 factory, and cq serve's
 // process-lifetime ownership lease) genuinely need — the rest of the
