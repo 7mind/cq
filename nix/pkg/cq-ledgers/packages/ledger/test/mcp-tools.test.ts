@@ -328,6 +328,94 @@ describe("ledger MCP tools", () => {
     expect(reloaded.item.fields["note"]).toBe("bought milk");
   });
 
+  it("create_item accepts an empty serialized defects list for reviews", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+    await callTool(tools, "create_milestone", { title: "review schema" });
+
+    const created = decode<{ item: { id: string } }>(
+      await callTool(tools, "create_item", {
+        ledger_id: "reviews",
+        milestone_id: "M1",
+        status: "go-ahead",
+        fields: { defects: [] },
+      }),
+    );
+
+    const fetched = decode<{ item: { fields: Record<string, unknown> } }>(
+      await callTool(tools, "fetch_item", {
+        ledger_id: "reviews",
+        item_id: created.item.id,
+        projection: "full",
+      }),
+    );
+    expect(fetched.item.fields["defects"]).toEqual([]);
+  });
+
+  it("create_item round-trips serialized review defects byte-for-byte", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+    await callTool(tools, "create_milestone", { title: "serialized defects" });
+    const serialized = [
+      JSON.stringify({
+        headline: "Both optionals",
+        severity: "high",
+        rootCause: "confirmed cause",
+        suggestedFix: "apply the fix",
+      }),
+      JSON.stringify({
+        headline: "Omitted optionals",
+        severity: "low",
+      }),
+      JSON.stringify({
+        headline: 'Quoted "headline" \\ path\nline',
+        severity: "critical",
+        rootCause: "café 根因",
+        suggestedFix: 'replace \\ with "slash"\n次',
+      }),
+    ];
+    const expected = [
+      '{"headline":"Both optionals","severity":"high","rootCause":"confirmed cause","suggestedFix":"apply the fix"}',
+      '{"headline":"Omitted optionals","severity":"low"}',
+      '{"headline":"Quoted \\"headline\\" \\\\ path\\nline","severity":"critical","rootCause":"café 根因","suggestedFix":"replace \\\\ with \\"slash\\"\\n次"}',
+    ];
+    expect(serialized).toEqual(expected);
+
+    const created = decode<{ item: { id: string } }>(
+      await callTool(tools, "create_item", {
+        ledger_id: "reviews",
+        milestone_id: "M1",
+        status: "revise",
+        fields: { defects: serialized },
+      }),
+    );
+    const fetched = decode<{ item: { fields: Record<string, unknown> } }>(
+      await callTool(tools, "fetch_item", {
+        ledger_id: "reviews",
+        item_id: created.item.id,
+        projection: "full",
+      }),
+    );
+    expect(fetched.item.fields["defects"]).toEqual(expected);
+  });
+
+  it("create_item rejects object arrays for reviews.defects", async () => {
+    const store = await buildStore();
+    const tools = createLedgerMcpTools(store);
+    await callTool(tools, "create_milestone", { title: "invalid defects" });
+
+    await expect(
+      callTool(tools, "create_item", {
+        ledger_id: "reviews",
+        milestone_id: "M1",
+        status: "revise",
+        fields: {
+          defects: [{ headline: "not serialized", severity: "high" }],
+        },
+      }),
+    ).rejects.toThrow('field "defects" must be a string[]');
+  });
+
   it("create_item / update_item thread author + session provenance", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);

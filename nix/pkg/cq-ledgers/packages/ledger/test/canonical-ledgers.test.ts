@@ -666,6 +666,27 @@ describe("Req5: reviews summary field — all three registry copies", () => {
   });
 });
 
+describe("T843: reviews serialized defects field — all three registry copies", () => {
+  it("REVIEWS_SCHEMA declares optional string[] defects", () => {
+    expect(REVIEWS_SCHEMA.fields["defects"]).toEqual({
+      type: "string[]",
+      required: false,
+    });
+  });
+
+  for (const [label, relativePath] of [
+    ["docs", "../../../docs/ledgers.yaml"],
+    ["sample", "../../../examples/sample-ledger/docs/ledgers.yaml"],
+  ] as const) {
+    it(`${label} registry declares the same reviews.defects field`, async () => {
+      const text = await readFile(path.resolve(import.meta.dir, relativePath), "utf8");
+      const registry = parseRegistry(text);
+      const reviews = registry.ledgers.find((entry) => entry.name === REVIEWS_LEDGER);
+      expect(reviews?.schema.fields["defects"]).toEqual(REVIEWS_SCHEMA.fields["defects"]);
+    });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // T137 — HANDOFFS_SCHEMA shape + bootstrap + lifecycle (all-terminal).
 // ---------------------------------------------------------------------------
