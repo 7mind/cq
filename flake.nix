@@ -537,6 +537,7 @@
               pkgs.runCommand "codex-cq-skills" { } ''
                 set -eu
                 ${pkgs.ripgrep}/bin/rg -q 'CQ_PROMPT_SURFACE.*codex' ${codexCommandSkillsTest.package}/bin/codex
+                ${pkgs.ripgrep}/bin/rg -q "CQ_HARNESS='codex'" ${codexCommandSkillsTest.package}/bin/codex
                 ${pkgs.ripgrep}/bin/rg -q ${pkgs.lib.escapeShellArg (toString codexPromptRoot)} ${codexCommandSkillsTest.package}/bin/codex
                 mkdir -p "$out"
                 ${pkgs.lib.concatMapStringsSep "\n"
