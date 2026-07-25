@@ -16,9 +16,9 @@
  * (Q283 lock: URL-path addressing, zero tool-schema churn): `/p/<projectKey>/mcp`
  * mounts a per-tenant {@link attachMcpHttp} over a LAZILY-constructed
  * `PostgresLedgerStore` (one per tenant, all sharing the hub pool), and
- * `/p/<projectKey>/ws` upgrades to a socket on a per-tenant pub/sub topic, fed
- * by ONE hub-level LISTEN connection that dispatches every NOTIFY by payload
- * `project_key`. Unknown `projectKey` → 404.
+ * `/p/<projectKey>/ws` upgrades to a socket on a per-tenant pub/sub topic.
+ * Each store publishes its own committed mutations directly to that topic.
+ * Unknown `projectKey` → 404.
  *
  * T588 (Q273 lock) enforces `--token`: a non-loopback `--host` (anything
  * outside 127.0.0.0/8 / `::1` / `localhost`) is REFUSED at startup unless
@@ -54,10 +54,8 @@ import {
   tryAcquireDedicatedAdvisoryLock,
   ensureSchema,
   PostgresLedgerStore,
-  startPostgresHubCoherenceWatcher,
   type PgAdvisoryLockLease,
   type ProjectEntry,
-  type PostgresCoherenceWatcher,
 } from "@cq/ledger";
 import {
   attachMcpHttp,
@@ -317,15 +315,12 @@ interface HubWsData {
 /**
  * A lazily-constructed per-tenant runtime: the tenant's own
  * {@link PostgresLedgerStore} (sharing the hub pool), the
- * {@link attachMcpHttp} handlers bound to it, and a coalesced `refresh` that
- * bulk-invalidates the store and publishes a change frame to the tenant's
- * topic. Cached for the hub's lifetime (one per tenant that is ever addressed).
+ * {@link attachMcpHttp} handlers bound to it. Cached for the hub's lifetime
+ * (one per tenant that is ever addressed).
  */
 interface ProjectRuntime {
   store: PostgresLedgerStore;
   handlers: McpHttpHandlers;
-  /** Coalesced full invalidate of this store + publish a change frame to its topic. */
-  refresh: () => void;
 }
 
 /** Resolved options for {@link serveHub}, after DSN resolution + argv parsing. */
@@ -437,28 +432,21 @@ export async function bootHub(
  *    provides per instance.
  *  - `/p/<k>/ws` upgrades to a socket subscribed to the tenant's OWN pub/sub
  *    topic ({@link hubTopic}), so cross-tenant frames never leak.
- *  - ONE hub-level LISTEN connection ({@link startPostgresHubCoherenceWatcher})
- *    dispatches every NOTIFY by payload `project_key`: invalidate that tenant's
- *    store (if constructed) and publish a change frame to its topic — reusing
- *    the coherence-watcher porsager internals rather than N per-store LISTEN
- *    connections. A tenant's own write, a peer hub, and an EXTERNAL store
- *    process all reach subscribed sockets by this one path.
+ *  - Every store's `onMutation` callback publishes the changed ledger directly
+ *    to that tenant's topic. `PostgresLedgerStore` fires the callback only
+ *    after the transaction commits and its runtime cache has been replaced.
  *
  * The per-project stores share `pool`, so their `dispose()` (which closes the
  * pool) is intentionally NOT called per tenant on shutdown — that would close
  * the shared pool out from under every other tenant. The single shared pool is
- * closed ONCE by the caller (`main`) after `server.stop()`; the returned
- * server's `stop` is wrapped to close ONLY the hub LISTEN connection. The
- * per-store in-memory caches are released with the process.
+ * closed ONCE by the caller (`main`) after `server.stop()`. The per-store
+ * in-memory caches are released with the process.
  *
- * `dsn` is threaded in (alongside the already-open `pool`) because the porsager
- * LISTEN connection needs its OWN connection from the DSN — `Bun.sql` (the pool)
- * implements no LISTEN/NOTIFY (RS1). `opts.token` enforcement remains T588.
+ * `opts.token` enforcement remains T588.
  */
 export function serveHub(
   opts: HubServeOpts,
   pool: ReturnType<typeof openPgPool>,
-  dsn: string,
   indexPath: string,
   promptArtifactStore?: PromptArtifactStore,
 ): ReturnType<typeof Bun.serve> {
@@ -467,32 +455,6 @@ export function serveHub(
   // construction (no double-construct racing the same pool). A failed or
   // unknown-project construction is evicted so a later request can retry.
   const runtimes = new Map<string, Promise<ProjectRuntime | null>>();
-
-  /** Coalesced full-invalidate + publish for one store/topic (mirrors the single-store watcher). */
-  function makeRefresh(store: PostgresLedgerStore, projectKey: string): () => void {
-    let running = false;
-    let pending = false;
-    return () => {
-      if (running) {
-        pending = true;
-        return;
-      }
-      running = true;
-      void (async () => {
-        try {
-          do {
-            pending = false;
-            for (const ledgerId of store.enumerate()) {
-              await store.invalidate(ledgerId);
-            }
-            server.publish(hubTopic(projectKey), changedFrame(null));
-          } while (pending);
-        } finally {
-          running = false;
-        }
-      })();
-    };
-  }
 
   /**
    * Resolve (constructing + caching on first use) the runtime for `projectKey`,
@@ -505,7 +467,14 @@ export function serveHub(
     const built: Promise<ProjectRuntime | null> = (async () => {
       const displayName = await fetchProjectDisplayName(pool, projectKey);
       if (displayName === null) return null; // unknown tenant → 404
-      const store = new PostgresLedgerStore({ pool, projectKey, displayName });
+      const store = new PostgresLedgerStore({
+        pool,
+        projectKey,
+        displayName,
+        onMutation: (ledgerId) => {
+          server.publish(hubTopic(projectKey), changedFrame(ledgerId));
+        },
+      });
       await store.init();
       const handlers = attachMcpHttp(
         store,
@@ -515,7 +484,7 @@ export function serveHub(
         projectKey,
         promptArtifactStore,
       );
-      return { store, handlers, refresh: makeRefresh(store, projectKey) };
+      return { store, handlers };
     })();
     runtimes.set(projectKey, built);
     // Do not cache a negative/failed result: evict so a tenant registered later
@@ -528,11 +497,8 @@ export function serveHub(
     return built;
   }
 
-  // `makeRefresh` / `getRuntime` / the watcher callbacks below close over
-  // `server`; all such uses are DEFERRED (request handlers, notification
-  // callbacks), and `scanForPort` binds the server synchronously before any of
-  // them can fire — so referencing the `const` from the earlier closures is
-  // safe (no use before initialization at runtime).
+  // `getRuntime` closes over `server`; all such uses are deferred to request
+  // handling, and `scanForPort` binds the server synchronously first.
   const server = scanForPort(opts.port, (p) =>
     Bun.serve<HubWsData>({
       hostname: opts.host,
@@ -584,38 +550,6 @@ export function serveHub(
       },
     }),
   );
-
-  // ONE hub-level LISTEN connection dispatching every tenant's NOTIFY by its
-  // payload project_key. onProjectChange: invalidate that tenant's store (if
-  // constructed) and publish to its topic; when the store is NOT yet
-  // constructed there is no cache to invalidate, but subscribed sockets still
-  // want the frame, so publish directly. onListen (reconnect safety):
-  // re-invalidate + publish for every constructed tenant.
-  const watcher: PostgresCoherenceWatcher = startPostgresHubCoherenceWatcher(dsn, {
-    onProjectChange: (projectKey: string): void => {
-      const rt = runtimes.get(projectKey);
-      if (rt !== undefined) {
-        void rt.then((r) => r?.refresh()).catch(() => undefined);
-      } else {
-        server.publish(hubTopic(projectKey), changedFrame(null));
-      }
-    },
-    onListen: (): void => {
-      for (const rt of runtimes.values()) {
-        void rt.then((r) => r?.refresh()).catch(() => undefined);
-      }
-    },
-  });
-
-  // Tear down the hub LISTEN connection when the server stops (main()/tests call
-  // server.stop()). The shared pool is closed by the caller AFTER stop — never
-  // per-store here (a store's dispose() closes the shared pool). Return type
-  // stays the Bun server.
-  const origStop = server.stop.bind(server);
-  server.stop = (closeActiveConnections?: boolean): Promise<void> => {
-    watcher.close();
-    return origStop(closeActiveConnections);
-  };
 
   return server;
 }
@@ -669,14 +603,13 @@ export async function main(argv: readonly string[]): Promise<void> {
   const indexPath = path.join(outdir, "index.html");
 
   const opts: HubServeOpts = { host: args.host, port: args.port, token, outdir };
-  const runningServer = serveHub(opts, pool, dsn, indexPath, promptSurface?.store);
+  const runningServer = serveHub(opts, pool, indexPath, promptSurface?.store);
   server = runningServer;
 
   const shutdown = (): void => {
     if (stopping) return;
     stopping = true;
-    // serveHub's wrapped stop() closes the hub LISTEN connection; the shared
-    // pool and dedicated ownership lease are closed here, ONCE, afterwards
+    // The shared pool and dedicated ownership lease are closed here, ONCE
     // (never per-store — that would close the pool shared across every tenant).
     void (async () => {
       try {

@@ -7,14 +7,12 @@
  *
  * Env-gated on CQ_TEST_PG_URL (same gate as every other postgres-backend
  * suite): spawns the real `hubServe.ts` binary with `--port 0` over TWO
- * registered tenants and asserts the four acceptance properties:
+ * registered tenants and asserts these acceptance scenarios:
  *   1. MCP: create_item on /p/A/mcp is visible via fetch_item on a SECOND
  *      /p/A/mcp session, and NOT via /p/B/mcp (tenant isolation).
- *   2. WS: a /p/A/ws client receives a changedFrame for A's write while a
- *      /p/B/ws client stays silent (per-project topic isolation).
- *   3. LISTEN: a write from an EXTERNAL store process (its OWN pool / DSN
- *      connection) to A also reaches the /p/A/ws client (the one hub-level
- *      LISTEN connection dispatching by payload project_key).
+ *   2. WS: a committed ordinary mutation publishes exactly one ledger-scoped
+ *      changedFrame to /p/A/ws, none to /p/B/ws, and a rejected transaction
+ *      publishes nothing.
  *
  * A second live-Postgres describe block below (T588 / Q273) spins up its OWN
  * `--token`-armed hub and asserts the bearer-auth gate: unauthenticated /mcp
@@ -92,7 +90,10 @@ async function connectMcp(base: string, key: string, name: string): Promise<Clie
 }
 
 /** Open a WS to `http://host:port/p/<key>/ws`, collecting every frame received. */
-async function openWs(base: string, key: string): Promise<{ frames: string[]; close: () => void }> {
+async function openWs(
+  base: string,
+  key: string,
+): Promise<{ frames: string[]; send: (frame: string) => void; close: () => void }> {
   const wsUrl = `${base.replace(/^http/, "ws")}/p/${encodeURIComponent(key)}/ws`;
   const ws = new WebSocket(wsUrl);
   const frames: string[] = [];
@@ -101,7 +102,7 @@ async function openWs(base: string, key: string): Promise<{ frames: string[]; cl
     ws.addEventListener("error", () => reject(new Error(`ws failed to open: ${wsUrl}`)));
   });
   ws.addEventListener("message", (ev) => frames.push(String(ev.data)));
-  return { frames, close: () => ws.close() };
+  return { frames, send: (frame) => ws.send(frame), close: () => ws.close() };
 }
 
 async function waitFor(pred: () => boolean, timeoutMs: number): Promise<void> {
@@ -250,53 +251,88 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
     }
   }, 30_000);
 
-  it("WS: A's write reaches /p/A/ws while /p/B/ws stays silent", async () => {
+  it("T726 Good-Communication: committed mutations publish once; rejected transactions publish nothing", async () => {
+    const s1 = await connectMcp(base, keyA, "t726-a1");
+    const s2 = await connectMcp(base, keyA, "t726-a2");
+    const msId = `M${Math.floor(Math.random() * 1_000_000) + 10_000}`;
+    decode<{ milestone: { id: string } }>(
+      await s1.callTool({ name: "create_milestone", arguments: { id: msId, title: "T726 publish" } }),
+    );
+    const created = decode<{ item: { id: string } }>(
+      await s1.callTool({
+        name: "create_item",
+        arguments: {
+          ledger_id: "tasks",
+          milestone_id: msId,
+          status: "planned",
+          fields: { headline: "before commit" },
+        },
+      }),
+    );
     const wsA = await openWs(base, keyA);
     const wsB = await openWs(base, keyB);
-    const s = await connectMcp(base, keyA, "t587-a-ws");
     try {
-      const msId = `M${Math.floor(Math.random() * 1_000_000) + 10_000}`;
-      decode<{ milestone: { id: string } }>(
-        await s.callTool({ name: "create_milestone", arguments: { id: msId, title: "T587 ws" } }),
+      decode<{ item: { id: string } }>(
+        await s1.callTool({
+          name: "update_item",
+          arguments: {
+            ledger_id: "tasks",
+            item_id: created.item.id,
+            status: "wip",
+            fields: { headline: "committed value" },
+          },
+        }),
       );
-      await s.callTool({
-        name: "create_item",
-        arguments: { ledger_id: "tasks", milestone_id: msId, status: "planned", fields: { headline: "ws A" } },
-      });
 
       await waitFor(() => wsA.frames.length > 0, 5_000);
-      expect(wsA.frames.length).toBeGreaterThan(0);
-      expect(JSON.parse(wsA.frames[0]!)).toEqual({ type: "changed" });
+      const observed = decode<{
+        item: { id: string; status: string; fields: Record<string, unknown> };
+      }>(
+        await s2.callTool({
+          name: "fetch_item",
+          arguments: {
+            ledger_id: "tasks",
+            item_id: created.item.id,
+            projection: "full",
+          },
+        }),
+      );
+      expect(observed.item.status).toBe("wip");
+      expect(observed.item.fields["headline"]).toBe("committed value");
+      expect(wsA.frames).toHaveLength(1);
+      expect(JSON.parse(wsA.frames[0]!)).toEqual({ type: "changed", ledger: "tasks" });
       expect(wsB.frames.length).toBe(0);
+
+      const rejected = await s1.callTool({
+        name: "update_item",
+        arguments: {
+          ledger_id: "tasks",
+          item_id: created.item.id,
+          fields: { dependsOn: ["tasks:T999999999"] },
+        },
+      });
+      expect(isError(rejected)).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(wsA.frames).toHaveLength(1);
+      expect(wsB.frames).toHaveLength(0);
+
+      wsA.send(JSON.stringify({ type: "ping", nonce: "t726-heartbeat", ts: 42 }));
+      await waitFor(
+        () =>
+          wsA.frames.some((frame) => {
+            const parsed = JSON.parse(frame) as { type?: string; nonce?: string };
+            return parsed.type === "pong" && parsed.nonce === "t726-heartbeat";
+          }),
+        5_000,
+      );
+      expect(
+        wsA.frames.filter((frame) => (JSON.parse(frame) as { type?: string }).type === "changed"),
+      ).toHaveLength(1);
     } finally {
-      await s.close();
+      await s1.close();
+      await s2.close();
       wsA.close();
       wsB.close();
-    }
-  }, 30_000);
-
-  it("LISTEN: an EXTERNAL store process's write to A reaches /p/A/ws", async () => {
-    // Ensure A's hub-side store is constructed (so onProjectChange invalidates it)
-    // and a socket is subscribed to A's topic.
-    const warm = await connectMcp(base, keyA, "t587-a-warm");
-    await warm.close();
-    const wsA = await openWs(base, keyA);
-
-    // A SEPARATE store process: its own pool / DSN connection, same tenant A.
-    const extPool = openPgPool(PG_URL!);
-    const extStore = new PostgresLedgerStore({ pool: extPool, projectKey: keyA, displayName: `Tenant A ext` });
-    await extStore.init();
-    try {
-      const msId = `M${Math.floor(Math.random() * 1_000_000) + 10_000}`;
-      await extStore.createMilestone({ id: msId, title: "T587 external" });
-      await extStore.createItem("tasks", msId, { status: "planned", fields: { headline: "external write" } });
-
-      await waitFor(() => wsA.frames.length > 0, 5_000);
-      expect(wsA.frames.length).toBeGreaterThan(0);
-      expect(JSON.parse(wsA.frames[0]!)).toEqual({ type: "changed" });
-    } finally {
-      await extStore.dispose();
-      wsA.close();
     }
   }, 30_000);
 });
