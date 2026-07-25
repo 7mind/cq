@@ -50,6 +50,14 @@ substitution remained, the focused test failed with expected hash
 `1ffcc029…` and received hash `80edd72b…`. Restoring the historical byte made
 the regression pass.
 
+A second follow-up changed the legacy strategy's declared parent-visible byte
+count from 1,873 to 1,874 without changing its serialization, and replaced the
+provider-usage explanation with another `Unavailable:` string. The focused
+tests incorrectly accepted both substitutions. With the exact strategy-object,
+computed-byte, and four-key unavailable-object assertions added, the same run
+failed once for each substituted field. Restoring both fixture values made the
+regressions pass.
+
 ## Measurement definitions
 
 For each prompt-dispatch row:
@@ -111,6 +119,8 @@ Fields unavailable for every row remain separate from the byte counts:
 - latency: unavailable; deterministic serialization made no provider call;
 - provider usage: unavailable; no usage event can be attributed to a row.
 
+The four unavailable keys and their complete messages are frozen exactly; a
+missing key or a different `Unavailable:` explanation fails the fixture test.
 No byte-to-token conversion or latency estimate was inferred.
 
 ## Retained RS4 representative
@@ -165,7 +175,10 @@ The exact legacy decomposition also remains frozen:
 The ref-first serialization consists of a 32-hex-character content-handle
 acknowledgement, the same handle as typed fetch arguments, and one terminal
 envelope carrying the structured output. Dispatcher finalization returns that
-terminal envelope once.
+terminal envelope once. Every strategy object is pinned in full after replacing
+its wire strings with their fixed SHA-256 values, and every declared
+`parentVisibleBytes` value must equal the measured UTF-8 length of its
+`serializedParentVisible` field.
 
 Latency remains a separate measurement:
 
@@ -200,7 +213,7 @@ From `nix/pkg/cq-ledgers`:
 bun test packages/ledger-mcp/test/legacyProtocolMeasurements.test.ts
 ```
 
-Result after the immutability regression: 5 passed, 0 failed, with 534
+Result after the immutability regressions: 5 passed, 0 failed, with 535
 assertions.
 
 `bun run typecheck` and `bun run lint` also passed. The repository-wide

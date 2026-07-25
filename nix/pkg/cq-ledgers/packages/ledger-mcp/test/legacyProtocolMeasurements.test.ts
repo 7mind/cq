@@ -20,6 +20,13 @@ const SURFACES = ["claude", "codex", "pi"] as const;
 const PROMPT_RECORDS_SHA256 = "d38c7c846374b0a55f4fb942da8dcbf8c1471b40712486e2e8c2c539db7e4889";
 const PROMPT_TYPED_INPUTS_SHA256 =
   "c45b977797cc8709aad2c8adee6fba57d1ba1a675e5f6e7d349562e5224cec07";
+const PROMPT_UNAVAILABLE = {
+  parentVisibleTokens:
+    "Unavailable: no tokenizer was run for the 27 surface-specific serialization fixtures.",
+  childTokens: "Unavailable: no tokenizer was run for the 27 rendered child prompt fixtures.",
+  latency: "Unavailable: deterministic serialization performed no provider or dispatch timing.",
+  providerUsage: "Unavailable: deterministic serialization has no provider usage attribution.",
+} as const;
 const RS4_ROLE_MEASUREMENTS = [
   { roleId: "plan-advance", bytes: 32939, words: 4551 },
   { roleId: "plan-reviewer", bytes: 11831, words: 1691 },
@@ -37,19 +44,46 @@ const RS4_REPRESENTATIVE = {
   input:
     '{"hypothesisId":"H104","statement":"Resolve catalog prompts inside dispatch_subagent","branchContext":"RS4 root; test dispatcher-side catalog resolution."}',
 } as const;
-const RS5_PAYLOAD_SHA256 = {
+const RS5_EXACT_PAIR_SHA256 = {
   childPayload: "20d678c75b495cdada4a8f1dbdde00c1b319b442a3d82122672777c5e60465e3",
   validateOutputArguments: "69bc1b6fafd62607239d3b711665d474a4c325db50fd00ccfc50bd3c0b3d0f2d",
   validationResult: "8c74aec4f14647ccffe18e37649d2ec52ea39445151419c9a92c94f6eb9e1195",
-  legacySerializedParentVisible: "3f105d14311aef59199e197c79c1a4baa50dda0cd20d7010c8c114b59cde35ad",
-  refFirstAcknowledgement: "c8f70520f9f9cc574b54d197e4f109dccfcaace1b270c9264dcffffe0c3bc206",
-  refFirstFetchArguments: "c8f70520f9f9cc574b54d197e4f109dccfcaace1b270c9264dcffffe0c3bc206",
-  refFirstTerminalEnvelope: "73cdc77e939a28cfcef4b93735999a66ebfbee1dfd509f8830ffa31cdb55ac52",
-  refFirstSerializedParentVisible:
-    "780bbff49409dd31485e0ee04b6a53a5ab1e3ce4453600d0a7b433bb4634e7d5",
-  dispatcherTerminalEnvelope: "73cdc77e939a28cfcef4b93735999a66ebfbee1dfd509f8830ffa31cdb55ac52",
-  dispatcherSerializedParentVisible:
-    "73cdc77e939a28cfcef4b93735999a66ebfbee1dfd509f8830ffa31cdb55ac52",
+} as const;
+const RS5_STRATEGIES = {
+  legacyValidateOutput: {
+    serializedParentVisible: "3f105d14311aef59199e197c79c1a4baa50dda0cd20d7010c8c114b59cde35ad",
+    parentVisibleBytes: 1873,
+    parentVisibleO200kTokens: 432,
+    childBytes: 1131,
+    modelVisibleFullOutputCopies: 2,
+    fetchCount: 0,
+    validationCallCount: 1,
+    parentRoundTrips: 2,
+  },
+  refFirstSingleFetch: {
+    acknowledgement: "c8f70520f9f9cc574b54d197e4f109dccfcaace1b270c9264dcffffe0c3bc206",
+    fetchArguments: "c8f70520f9f9cc574b54d197e4f109dccfcaace1b270c9264dcffffe0c3bc206",
+    terminalEnvelope: "73cdc77e939a28cfcef4b93735999a66ebfbee1dfd509f8830ffa31cdb55ac52",
+    serializedParentVisible: "780bbff49409dd31485e0ee04b6a53a5ab1e3ce4453600d0a7b433bb4634e7d5",
+    parentVisibleBytes: 839,
+    parentVisibleO200kTokens: 207,
+    childBytes: 1131,
+    modelVisibleFullOutputCopies: 1,
+    fetchCount: 1,
+    validationCallCount: 0,
+    parentRoundTrips: 2,
+  },
+  dispatcherFinalization: {
+    terminalEnvelope: "73cdc77e939a28cfcef4b93735999a66ebfbee1dfd509f8830ffa31cdb55ac52",
+    serializedParentVisible: "73cdc77e939a28cfcef4b93735999a66ebfbee1dfd509f8830ffa31cdb55ac52",
+    parentVisibleBytes: 745,
+    parentVisibleO200kTokens: 161,
+    childBytes: 1131,
+    modelVisibleFullOutputCopies: 1,
+    fetchCount: 0,
+    validationCallCount: 0,
+    parentRoundTrips: 1,
+  },
 } as const;
 
 interface PromptRecord {
@@ -283,9 +317,7 @@ describe("T681 immutable legacy protocol measurements", () => {
         DISPATCHED_ROLES.map((roleId) => `${surface}:${roleId}`),
       ).sort(),
     );
-    expect(
-      Object.values(promptFixture.unavailable).every((value) => value.startsWith("Unavailable:")),
-    ).toBe(true);
+    expect(promptFixture.unavailable).toEqual(PROMPT_UNAVAILABLE);
   });
 
   test("retains the exact RS4 representative bytes and compact comparison", () => {
@@ -357,14 +389,25 @@ describe("T681 immutable legacy protocol measurements", () => {
       childPayload: sha256(exact.childPayload),
       validateOutputArguments: sha256(exact.validateOutputArguments),
       validationResult: sha256(exact.validationResult),
-      legacySerializedParentVisible: sha256(legacy.serializedParentVisible),
-      refFirstAcknowledgement: sha256(refFirst.acknowledgement),
-      refFirstFetchArguments: sha256(refFirst.fetchArguments),
-      refFirstTerminalEnvelope: sha256(refFirst.terminalEnvelope),
-      refFirstSerializedParentVisible: sha256(refFirst.serializedParentVisible),
-      dispatcherTerminalEnvelope: sha256(dispatcher.terminalEnvelope),
-      dispatcherSerializedParentVisible: sha256(dispatcher.serializedParentVisible),
-    }).toEqual(RS5_PAYLOAD_SHA256);
+    }).toEqual(RS5_EXACT_PAIR_SHA256);
+    expect({
+      legacyValidateOutput: {
+        ...legacy,
+        serializedParentVisible: sha256(legacy.serializedParentVisible),
+      },
+      refFirstSingleFetch: {
+        ...refFirst,
+        acknowledgement: sha256(refFirst.acknowledgement),
+        fetchArguments: sha256(refFirst.fetchArguments),
+        terminalEnvelope: sha256(refFirst.terminalEnvelope),
+        serializedParentVisible: sha256(refFirst.serializedParentVisible),
+      },
+      dispatcherFinalization: {
+        ...dispatcher,
+        terminalEnvelope: sha256(dispatcher.terminalEnvelope),
+        serializedParentVisible: sha256(dispatcher.serializedParentVisible),
+      },
+    }).toEqual(RS5_STRATEGIES);
     expect(exact).toMatchObject({
       childBytes: 1131,
       childO200kTokens: 273,
@@ -394,34 +437,12 @@ describe("T681 immutable legacy protocol measurements", () => {
       refFirst.acknowledgement + refFirst.fetchArguments + refFirst.terminalEnvelope,
     );
     expect(dispatcher.serializedParentVisible).toBe(dispatcher.terminalEnvelope);
+    expect(utf8Bytes(legacy.serializedParentVisible)).toBe(legacy.parentVisibleBytes);
+    expect(utf8Bytes(refFirst.serializedParentVisible)).toBe(refFirst.parentVisibleBytes);
+    expect(utf8Bytes(dispatcher.serializedParentVisible)).toBe(dispatcher.parentVisibleBytes);
     expect(utf8Bytes(legacy.serializedParentVisible)).toBe(1873);
     expect(utf8Bytes(refFirst.serializedParentVisible)).toBe(839);
     expect(utf8Bytes(dispatcher.serializedParentVisible)).toBe(745);
-
-    expect(legacy).toMatchObject({
-      parentVisibleO200kTokens: 432,
-      childBytes: 1131,
-      modelVisibleFullOutputCopies: 2,
-      fetchCount: 0,
-      validationCallCount: 1,
-      parentRoundTrips: 2,
-    });
-    expect(refFirst).toMatchObject({
-      parentVisibleO200kTokens: 207,
-      childBytes: 1131,
-      modelVisibleFullOutputCopies: 1,
-      fetchCount: 1,
-      validationCallCount: 0,
-      parentRoundTrips: 2,
-    });
-    expect(dispatcher).toMatchObject({
-      parentVisibleO200kTokens: 161,
-      childBytes: 1131,
-      modelVisibleFullOutputCopies: 1,
-      fetchCount: 0,
-      validationCallCount: 0,
-      parentRoundTrips: 1,
-    });
   });
 
   test("keeps latency, provider attribution, and harness coverage separate", () => {
