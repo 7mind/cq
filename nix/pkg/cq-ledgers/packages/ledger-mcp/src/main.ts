@@ -652,9 +652,13 @@ export interface McpHttpHandlers {
   onWsMessage(ws: ServerWebSocket<undefined>, raw: string | Buffer): void;
 }
 
+export type McpSessionDisplayName =
+  | string
+  | ((req: Request) => Promise<string> | string);
+
 export function attachMcpHttp(
   store: LedgerStore,
-  displayName: string,
+  displayName: McpSessionDisplayName,
   toolPrefix = "",
   configRoot?: string,
   projectKey?: string,
@@ -686,6 +690,8 @@ export function attachMcpHttp(
       );
     }
 
+    const sessionDisplayName =
+      typeof displayName === "string" ? displayName : await displayName(req);
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid) => {
@@ -697,7 +703,7 @@ export function attachMcpHttp(
     });
     const server = createLedgerMcpServer({
       store,
-      displayName,
+      displayName: sessionDisplayName,
       toolPrefix,
       ...(configRoot !== undefined ? { configRoot } : {}),
       ...(projectKey !== undefined ? { projectKey } : {}),

@@ -18,7 +18,8 @@
  * `PostgresLedgerStore` (one per tenant, all sharing the hub pool), and
  * `/p/<projectKey>/ws` upgrades to a socket on a per-tenant pub/sub topic.
  * Each store publishes its own committed mutations directly to that topic.
- * Unknown `projectKey` → 404.
+ * An authenticated MCP initialize registers an unknown `projectKey`; other
+ * requests for an unknown key still answer 404.
  *
  * T588 (Q273 lock) enforces `--token`: a non-loopback `--host` (anything
  * outside 127.0.0.0/8 / `::1` / `localhost`) is REFUSED at startup unless
@@ -49,6 +50,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { ServerWebSocket } from "bun";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import {
   openPgPool,
   tryAcquireDedicatedAdvisoryLock,
@@ -283,6 +285,28 @@ export async function fetchProjectDisplayName(
 /** URL prefix under which every per-project endpoint is mounted: `/p/<key>/…`. */
 export const PROJECT_ROUTE_PREFIX = "/p/";
 
+/** Authenticated MCP initialize metadata used to label the project registry and session. */
+export const PROJECT_DISPLAY_NAME_HEADER = "x-cq-project-display-name";
+
+/** Bound untrusted request metadata before persisting it or echoing it in MCP metadata. */
+export const PROJECT_DISPLAY_NAME_MAX_BYTES = 256;
+
+/**
+ * Resolve the per-initialize display name. Missing or blank metadata falls
+ * back to the stable project key; overlong values fail at the HTTP boundary.
+ */
+export function projectDisplayNameFromRequest(req: Request, projectKey: string): string {
+  const raw = req.headers.get(PROJECT_DISPLAY_NAME_HEADER);
+  if (raw === null || raw.trim() === "") return projectKey;
+  const displayName = raw.trim();
+  if (new TextEncoder().encode(displayName).byteLength > PROJECT_DISPLAY_NAME_MAX_BYTES) {
+    throw new Error(
+      `${PROJECT_DISPLAY_NAME_HEADER} exceeds ${String(PROJECT_DISPLAY_NAME_MAX_BYTES)} bytes`,
+    );
+  }
+  return displayName;
+}
+
 /**
  * Match a per-project route pathname `/p/<projectKey>/<leaf>` where `<leaf>` is
  * `mcp` or `ws`. Returns the decoded `projectKey` + `leaf`, or `null` when the
@@ -426,7 +450,8 @@ export async function bootHub(
  * Per-project wiring (T587):
  *  - Each addressed tenant gets a LAZILY-constructed {@link PostgresLedgerStore}
  *    (one per project, all SHARING the hub's `pool`), cached on first request.
- *    An unknown `projectKey` (no `projects` row) → 404.
+ *    An authenticated initialize auto-registers an unknown `projectKey`;
+ *    non-initialize requests for one → 404.
  *  - `/p/<k>/mcp` routes to that tenant's {@link attachMcpHttp} handlers —
  *    per-(session, project) session management exactly as `attachMcpHttp`
  *    provides per instance.
@@ -453,19 +478,25 @@ export function serveHub(
   // Lazily-constructed per-tenant runtimes, keyed by projectKey. Stored as a
   // PROMISE so two concurrent first-requests for the same tenant share ONE
   // construction (no double-construct racing the same pool). A failed or
-  // unknown-project construction is evicted so a later request can retry.
+  // non-initialize unknown-project construction is evicted so a later request
+  // can retry.
   const runtimes = new Map<string, Promise<ProjectRuntime | null>>();
 
   /**
-   * Resolve (constructing + caching on first use) the runtime for `projectKey`,
-   * or `null` when the tenant is not registered (→ 404). Construction is fully
-   * inside the cached promise so concurrent callers never double-construct.
+   * Resolve (constructing + caching on first use) the runtime for `projectKey`.
+   * An initialize-provided name permits first registration; otherwise an
+   * unregistered tenant returns `null` (→ 404). Construction is fully inside
+   * the cached promise so concurrent callers never double-construct.
    */
-  function getRuntime(projectKey: string): Promise<ProjectRuntime | null> {
+  function getRuntime(
+    projectKey: string,
+    initializeDisplayName?: string,
+  ): Promise<ProjectRuntime | null> {
     const existing = runtimes.get(projectKey);
     if (existing !== undefined) return existing;
     const built: Promise<ProjectRuntime | null> = (async () => {
-      const displayName = await fetchProjectDisplayName(pool, projectKey);
+      const displayName =
+        initializeDisplayName ?? (await fetchProjectDisplayName(pool, projectKey));
       if (displayName === null) return null; // unknown tenant → 404
       const store = new PostgresLedgerStore({
         pool,
@@ -476,9 +507,21 @@ export function serveHub(
         },
       });
       await store.init();
+      let firstInitialize = true;
       const handlers = attachMcpHttp(
         store,
-        displayName,
+        async (req) => {
+          const currentDisplayName = projectDisplayNameFromRequest(req, projectKey);
+          if (firstInitialize) {
+            firstInitialize = false;
+            if (currentDisplayName !== displayName) {
+              await store.registerProject(currentDisplayName);
+            }
+          } else {
+            await store.registerProject(currentDisplayName);
+          }
+          return currentDisplayName;
+        },
         "",
         undefined,
         projectKey,
@@ -524,7 +567,28 @@ export function serveHub(
           } else if (!checkWsAuth(url, opts.token)) {
             return unauthorized();
           }
-          const runtime = await getRuntime(route.projectKey);
+          let initializeDisplayName: string | undefined;
+          if (
+            route.leaf === "mcp" &&
+            req.method === "POST" &&
+            req.headers.get("mcp-session-id") === null
+          ) {
+            const body: unknown = await req
+              .clone()
+              .json()
+              .catch(() => undefined);
+            if (isInitializeRequest(body)) {
+              try {
+                initializeDisplayName = projectDisplayNameFromRequest(
+                  req,
+                  route.projectKey,
+                );
+              } catch (error) {
+                return new Response((error as Error).message, { status: 400 });
+              }
+            }
+          }
+          const runtime = await getRuntime(route.projectKey, initializeDisplayName);
           if (runtime === null) {
             return new Response("unknown project", { status: 404 });
           }
