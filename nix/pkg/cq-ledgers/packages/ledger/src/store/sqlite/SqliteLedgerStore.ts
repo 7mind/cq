@@ -336,6 +336,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
         `WARNING: LedgerStore divergence detected — prior state backed up to ${backupPath}\n`,
       );
       db.transaction(() => {
+        db.exec("DELETE FROM plan_operations");
+        db.exec("DELETE FROM plan_claims");
         db.exec("DELETE FROM archived_items");
         db.exec("DELETE FROM archive_pointers");
         db.exec("DELETE FROM items");

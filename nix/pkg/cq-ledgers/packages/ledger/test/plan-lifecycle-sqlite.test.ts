@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
   GOALS_LEDGER,
+  GOALS_SCHEMA,
   MILESTONES_AMBIENT_ID,
   SqliteLedgerStore,
+  replayPlanClaim,
   type PlanClaimInput,
   type PlanLifecycleStore,
+  type PlanReleaseInput,
 } from "../src/index.js";
 import { openLedgerDb } from "../src/store/sqlite/connection.js";
 
@@ -15,6 +19,7 @@ const roots: string[] = [];
 const OWNER_A = "A".repeat(22);
 const OWNER_B = "B".repeat(22);
 const PROVENANCE = { author: "sqlite-test", session: "sqlite-session" } as const;
+const RESET_NOW = "2026-01-01T00:00:00.000Z";
 
 type SqliteLifecycleStore = SqliteLedgerStore & PlanLifecycleStore;
 
@@ -105,6 +110,108 @@ describe("T850 SQLite lifecycle persistence", () => {
       }
     } finally {
       await reopened.dispose();
+    }
+  });
+
+  test("schema-divergence reset removes private replay records after preserving them in the backup", async () => {
+    const file = await dbPath();
+    const seed = new SqliteLedgerStore({ dbPath: file, now: () => RESET_NOW });
+    await seed.init();
+    await seed.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+      id: "G1",
+      status: "clarifying",
+      fields: { title: "reset lifecycle", description: "divergence fixture" },
+      ...PROVENANCE,
+    });
+    const lifecycle = seed as SqliteLifecycleStore;
+    const input = claimInput("reset-claim", OWNER_A);
+    const claimed = await lifecycle.claimPlan(input);
+    if (!claimed.ok) throw new Error("claim failed");
+    const releaseInput: PlanReleaseInput = {
+      kind: "pause",
+      goalId: "G1",
+      claimId: claimed.acknowledgement.claimId,
+      generation: claimed.acknowledgement.generation,
+      operationId: "reset-release",
+      ownerFenceToken: OWNER_A,
+      ...PROVENANCE,
+      effect: {
+        kind: "questions",
+        questions: [{ key: "reset", question: "Does reset remove private replay?" }],
+      },
+    };
+    const released = await lifecycle.releasePlanClaim(releaseInput);
+    if (!released.ok) throw new Error("release failed");
+    await seed.dispose();
+
+    const tamper = openLedgerDb(file);
+    tamper
+      .query("UPDATE ledgers SET schema_json = ? WHERE name = ?")
+      .run(JSON.stringify({ ...GOALS_SCHEMA, idPrefix: "ZZ" }), GOALS_LEDGER);
+    tamper.close();
+
+    const reset = new SqliteLedgerStore({ dbPath: file, now: () => RESET_NOW });
+    await reset.init();
+    try {
+      const resetLifecycle = reset as SqliteLifecycleStore;
+      expect(await resetLifecycle.claimPlan(input)).toEqual({
+        ok: false,
+        conflict: { code: "goal-not-found", goalId: "G1" },
+      });
+      expect(await resetLifecycle.releasePlanClaim(releaseInput)).toEqual({
+        ok: false,
+        conflict: { code: "goal-not-found", goalId: "G1" },
+      });
+      const primary = openLedgerDb(file);
+      try {
+        expect(
+          primary
+            .query(
+              `SELECT
+                 (SELECT COUNT(*) FROM plan_claims) AS claims,
+                 (SELECT COUNT(*) FROM plan_operations) AS operations`,
+            )
+            .get(),
+        ).toEqual({ claims: 0, operations: 0 });
+      } finally {
+        primary.close();
+      }
+
+      const parsed = path.parse(file);
+      const backupPath = path.join(
+        parsed.dir,
+        `${parsed.name}.backup-${RESET_NOW.replace(/:/g, "-")}${parsed.ext}`,
+      );
+      const backup = new Database(backupPath, { readonly: true });
+      try {
+        const claimRow = backup
+          .query("SELECT record_json FROM plan_claims")
+          .get() as { record_json: string } | null;
+        expect(claimRow).not.toBeNull();
+        expect(replayPlanClaim(JSON.parse(claimRow!.record_json), input)).toEqual({
+          ...claimed,
+          replayed: true,
+        });
+
+        const operationRow = backup
+          .query("SELECT record_json FROM plan_operations")
+          .get() as { record_json: string } | null;
+        expect(operationRow).not.toBeNull();
+        expect(JSON.parse(operationRow!.record_json)).toMatchObject({
+          replay: {
+            goalId: "G1",
+            claimId: claimed.acknowledgement.claimId,
+            generation: claimed.acknowledgement.generation,
+            operationId: releaseInput.operationId,
+            operation: "release",
+          },
+          acknowledgement: released.acknowledgement,
+        });
+      } finally {
+        backup.close();
+      }
+    } finally {
+      await reset.dispose();
     }
   });
 
