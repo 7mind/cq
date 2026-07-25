@@ -28,7 +28,7 @@
  */
 
 import { parse as parseSmolToml, TomlError } from "smol-toml";
-import { isHarness } from "./types.js";
+import { activeHarnessList, isActiveHarness } from "./types.js";
 
 /**
  * The raw `[webui]` table as produced by the parser: the `host` / `port`
@@ -114,9 +114,9 @@ export interface RawToml {
   /** The `[project]` table, or null if absent (T570). */
   readonly project: RawProject | null;
   /**
-   * The `[harness.<name>]` per-harness override tables (Q240): harness name
-   * (`claude`/`pi`) -> its raw overridable subset. Null if the document
-   * carries no `[harness.*]` table at all.
+   * The `[harness.<name>]` per-harness override tables (Q240, T861): ACTIVE
+   * CONFIGURATION SELECTOR name (`claude`/`pi`/`codex`) -> its raw overridable
+   * subset. Null if the document carries no `[harness.*]` table at all.
    */
   readonly harnessOverrides: Record<string, RawHarnessOverride> | null;
 }
@@ -275,8 +275,10 @@ function parseProjectRaw(value: unknown): RawProject {
 
 /**
  * Structurally validate the `[harness]` table of per-harness override blocks
- * (Q240): each sub-table key must be a known harness name (`claude`/`pi` via
- * `isHarness`), and within each block only `reviewers` / `planners` / `tiers`
+ * (Q240, T861): each sub-table key must be a known ACTIVE CONFIGURATION
+ * SELECTOR (`claude`/`pi`/`codex` via `isActiveHarness` — the selector domain,
+ * NOT the narrower executable dispatch-token domain), and within each block
+ * only `reviewers` / `planners` / `tiers`
  * are permitted (the per-harness-overridable subset). `aliases`, `webui`,
  * `ledger`, `agent_tiers`, and `agent_efforts` are SHARED-only and rejected
  * with a precise error naming the offending key. The reviewers/planners arrays and tiers
@@ -291,9 +293,9 @@ function parseHarnessOverrides(
   }
   const overrides: Record<string, RawHarnessOverride> = {};
   for (const [name, block] of Object.entries(value)) {
-    if (!isHarness(name)) {
+    if (!isActiveHarness(name)) {
       throw new TomlSyntaxError(
-        `unknown harness "${name}" in [harness.${name}] (expected "claude" or "pi")`,
+        `unknown harness "${name}" in [harness.${name}] (expected ${activeHarnessList()})`,
       );
     }
     if (!isTable(block)) {

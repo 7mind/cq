@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import Ajv2020 from "ajv/dist/2020";
 import {
+  ACTIVE_HARNESSES,
+  HARNESSES,
   INTENTIONAL_DIFFERENCE_DECLARATION_SCHEMA,
   INTENTIONAL_DIFFERENCE_KINDS,
   PROMPT_SURFACES,
   parseIntentionalDifferenceDeclaration,
   parseIntentionalDifferenceDeclarationJSON,
   serializeIntentionalDifferenceDeclaration,
+  type ActiveHarness,
   type Harness,
   type IntentionalDifferenceKind,
   type PromptSurface,
@@ -23,6 +26,16 @@ const differenceKindTypeIsClosed: Equal<
   "invocation-syntax" | "dispatch-protocol" | "recursion-protocol" | "tool-vocabulary"
 > = true;
 const dispatchHarnessRemainsDistinct: Equal<Harness, "claude" | "pi"> = true;
+/**
+ * T861: THREE domains coexist and must not collapse. A prompt surface selects a
+ * rendered prompt representation; an ActiveHarness selects which `[harness.*]`
+ * config block is in force; a Harness names an EXECUTABLE dispatch transport.
+ * Codex participates in the first two and — having no dispatch transport — must
+ * stay out of the third.
+ */
+const activeSelectorAdmitsCodex: Equal<ActiveHarness, "claude" | "pi" | "codex"> = true;
+const codexIsNeverADispatchTransport: Equal<Extract<ActiveHarness, Harness>, "claude" | "pi"> =
+  true;
 
 const NIX_FIXTURE_URL = new URL("../../../../../lib/prompt-surfaces-fixture.json", import.meta.url);
 
@@ -31,7 +44,11 @@ describe("typed prompt surfaces", () => {
     expect(promptSurfaceTypeIsClosed).toBe(true);
     expect(differenceKindTypeIsClosed).toBe(true);
     expect(dispatchHarnessRemainsDistinct).toBe(true);
+    expect(activeSelectorAdmitsCodex).toBe(true);
+    expect(codexIsNeverADispatchTransport).toBe(true);
     expect(PROMPT_SURFACES).toEqual(["claude", "codex", "pi"]);
+    expect(ACTIVE_HARNESSES).toEqual(["claude", "pi", "codex"]);
+    expect(HARNESSES).toEqual(["claude", "pi"]);
     expect(INTENTIONAL_DIFFERENCE_KINDS).toEqual([
       "invocation-syntax",
       "dispatch-protocol",

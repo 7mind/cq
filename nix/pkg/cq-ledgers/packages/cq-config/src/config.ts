@@ -20,7 +20,12 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
-import { parseToml, type RawWebui, type RawProject } from "./toml.js";
+import {
+  parseToml,
+  type RawHarnessOverride,
+  type RawWebui,
+  type RawProject,
+} from "./toml.js";
 import {
   DEFAULT_HARNESS,
   resolveActiveHarnessFromProcess,
@@ -34,6 +39,7 @@ import {
   DEFAULT_TIER,
   PI_EFFORTS,
   CLAUDE_EFFORTS,
+  type ActiveHarness,
   type CqConfig,
   type Effort,
   type Harness,
@@ -388,16 +394,29 @@ function parseProject(raw: RawProject): ProjectConfig {
  * shape as the shared `[tiers]` (via {@link parseTiers}, resolving keys through
  * the SHARED `[aliases]`).
  *
- * `activeHarness` defaults to {@link DEFAULT_HARNESS}, so an omitted argument
+ * `activeHarness` is an {@link ActiveHarness} CONFIGURATION SELECTOR
+ * (`claude | pi | codex`), NOT an executable {@link Harness} dispatch token
+ * (T861). It defaults to {@link DEFAULT_HARNESS}, so an omitted argument
  * reproduces the pre-override behaviour exactly. A flat cq.toml with no
- * `[harness.*]` table parses identically under any harness.
+ * `[harness.*]` table parses identically under any selector.
+ *
+ * CODEX FAIL-CLOSED RULE (T861) — deliberately NARROWER than the Q239 layered
+ * fallback above. When `activeHarness === "codex"`, {@link assertCodexPanels}
+ * runs after the merge and rejects, BEFORE any dispatch can occur:
+ *  - a document with no `[harness.codex]` block;
+ *  - a `[harness.codex]` block omitting any of `reviewers` / `planners` /
+ *    `tiers` (no fall-through to the shared top-level defaults);
+ *  - any ACTIVE reviewer/planner alias or tier model resolving to a `claude:*`
+ *    token — cq cannot dispatch Claude from a Codex host.
+ * Shared Claude aliases remain legal INACTIVE definitions: only the merged,
+ * ACTIVE panels are checked.
  *
  * Throws on malformed TOML (via the parser), an unknown harness in an alias
- * token, or a non-array `reviewers`.
+ * token, a non-array `reviewers`, or a codex fail-closed violation.
  */
 export function parseConfig(
   source: string,
-  activeHarness: Harness = DEFAULT_HARNESS,
+  activeHarness: ActiveHarness = DEFAULT_HARNESS,
 ): CqConfig {
   const raw = parseToml(source);
 
@@ -428,6 +447,11 @@ export function parseConfig(
     }
   }
 
+  // T861: the codex selector narrows the Q239 fallback to fail-closed.
+  if (activeHarness === "codex") {
+    assertCodexPanels(override, aliases, tiers);
+  }
+
   const webui = raw.webui === null ? null : parseWebui(raw.webui);
   const agentTiers =
     raw.agentTiers === null ? null : parseAgentTiers(raw.agentTiers);
@@ -446,6 +470,111 @@ export function parseConfig(
     ledger,
     project,
   };
+}
+
+/**
+ * Enforce the FAIL-CLOSED rule for an ACTIVE `codex` selector (T861).
+ *
+ * `codex` is a CONFIGURATION SELECTOR with no dispatch transport of its own, so
+ * a Codex-hosted run must state its executable panels explicitly. This
+ * deliberately narrows Q239's general layered fallback in two ways:
+ *
+ *  1. NO FALL-THROUGH. `[harness.codex]` must exist and must itself carry
+ *     `reviewers`, `planners`, AND a `[harness.codex.tiers]` table. Silently
+ *     inheriting the shared top-level panels would hand a Codex host a set of
+ *     Claude reviewers it cannot invoke.
+ *  2. NO CLAUDE TOKENS. Every alias the ACTIVE panels reference — and every
+ *     `[harness.codex.tiers]` model — must resolve to a non-claude executable
+ *     {@link Harness} token. A dangling alias fails here too, eagerly.
+ *
+ * Only the MERGED, ACTIVE panels are inspected: shared Claude aliases (and a
+ * `[harness.claude]` block referencing them) remain legal INACTIVE definitions.
+ *
+ * `override` is the raw `[harness.codex]` block (undefined when the document
+ * declares none); `tiers` is the already-merged tier map.
+ */
+function assertCodexPanels(
+  override: RawHarnessOverride | undefined,
+  aliases: Record<string, ReviewerToken>,
+  tiers: TiersConfig | null,
+): void {
+  if (override === undefined) {
+    throw new CqConfigError(
+      'active harness "codex" requires a [harness.codex] block: the codex selector is fail-closed and never falls back to the shared reviewers/planners/[tiers]',
+    );
+  }
+
+  const reviewers = requireCodexSection(override.reviewers, "reviewers");
+  const planners = requireCodexSection(override.planners, "planners");
+  requireCodexSection(override.tiers, "tiers");
+  if (tiers === null) {
+    // Unreachable while `override.tiers` is non-null (parseConfig assigns the
+    // merged tiers from it), but keeps the narrowing honest.
+    throw new CqConfigError(
+      "[harness.codex] must define its own [harness.codex.tiers] table",
+    );
+  }
+
+  for (const alias of reviewers) {
+    assertCodexPanelAlias(aliases, alias, "reviewers");
+  }
+  for (const alias of planners) {
+    assertCodexPanelAlias(aliases, alias, "planners");
+  }
+  for (const entry of tiers.entries) {
+    assertCodexDispatchable(
+      entry.token,
+      `[harness.codex.tiers] ${entry.class} = "${entry.raw}"`,
+    );
+  }
+}
+
+/** Require one `[harness.codex]` section to be PRESENT (T861 fail-closed). */
+function requireCodexSection<Section>(
+  value: Section | null,
+  section: "reviewers" | "planners" | "tiers",
+): Section {
+  if (value === null) {
+    throw new CqConfigError(
+      `[harness.codex] must define its own ${section}: the codex selector is fail-closed and never falls back to the shared ${section}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Resolve one ACTIVE `[harness.codex]` reviewer/planner alias and assert it is
+ * dispatchable from a Codex host. A dangling alias fails eagerly (T861).
+ */
+function assertCodexPanelAlias(
+  aliases: Record<string, ReviewerToken>,
+  alias: string,
+  section: "reviewers" | "planners",
+): void {
+  const token = aliases[alias];
+  if (token === undefined) {
+    throw new CqConfigError(
+      `[harness.codex] ${section} references undefined alias "${alias}" (not declared in [aliases])`,
+    );
+  }
+  assertCodexDispatchable(token, `[harness.codex] ${section} alias "${alias}"`);
+}
+
+/**
+ * The one EXECUTABLE transport an ACTIVE codex selector may not reach (T861):
+ * a Codex host has no way to invoke Claude Code. Typed as {@link Harness} so
+ * the check stays inside the dispatch-token domain — if a further executable
+ * transport is ever added, it is permitted by default and this stays honest.
+ */
+const CODEX_FORBIDDEN_HARNESS: Harness = "claude";
+
+/** Reject a claude-resolving token in an ACTIVE codex panel (T861). */
+function assertCodexDispatchable(token: ReviewerToken, what: string): void {
+  if (token.harness === CODEX_FORBIDDEN_HARNESS) {
+    throw new CqConfigError(
+      `${what} resolves to "${formatReviewerToken(token)}", but the active codex selector forbids ${CODEX_FORBIDDEN_HARNESS} dispatch tokens (a Codex host cannot invoke the ${CODEX_FORBIDDEN_HARNESS} transport)`,
+    );
+  }
 }
 
 /**
@@ -740,20 +869,23 @@ export function formatReviewerToken(token: ReviewerToken): string {
 }
 
 /**
- * Load cq.toml from `repoRoot` for the ACTIVE harness.
+ * Load cq.toml from `repoRoot` for the ACTIVE configuration selector.
  *
  * Returns `null` when no cq.toml exists (feature OFF => caller falls back to
- * a single native Claude reviewer). Otherwise parses with the active harness's
- * layered override (see {@link parseConfig}), validates, and eagerly resolves
- * the reviewers/planners lists — so a dangling alias in the ALREADY-MERGED
- * active-harness panels throws at load time, not later.
+ * a single native Claude reviewer). Otherwise parses with the active selector's
+ * layered override (see {@link parseConfig}, including its codex fail-closed
+ * rule), validates, and eagerly resolves the reviewers/planners lists — so a
+ * dangling alias in the ALREADY-MERGED active panels throws at load time, not
+ * later.
  *
- * `harness` defaults to {@link resolveActiveHarnessFromProcess}, so the active
- * harness is read from `process.env` (Q238) unless the caller injects one.
+ * `harness` is an {@link ActiveHarness} selector (`claude | pi | codex`), not
+ * an executable dispatch token (T861). It defaults to
+ * {@link resolveActiveHarnessFromProcess}, so the active selector is read from
+ * `process.env` (Q238) unless the caller injects one.
  */
 export function loadConfig(
   repoRoot: string,
-  harness: Harness = resolveActiveHarnessFromProcess(),
+  harness: ActiveHarness = resolveActiveHarnessFromProcess(),
 ): CqConfig | null {
   const file = path.join(repoRoot, CQ_CONFIG_FILENAME);
   if (!existsSync(file)) {

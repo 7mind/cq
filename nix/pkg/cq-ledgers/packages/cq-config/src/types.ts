@@ -19,11 +19,39 @@
  *  Parsing of the effort suffix is deferred to T286.
  */
 
-/** The two reviewer harnesses cq knows how to drive. */
+/**
+ * The EXECUTABLE dispatch transports cq knows how to drive (T861).
+ *
+ * This is the DISPATCH-TOKEN domain: the set of harnesses a reviewer, planner,
+ * or `[tiers]` model may actually be INVOKED through. It is deliberately
+ * NARROWER than the {@link ACTIVE_HARNESSES} configuration-selector domain —
+ * `codex` selects a config block but has no dispatch transport, so it must
+ * never appear here. The `ReviewerToken` grammar, the effort vocabularies, and
+ * the per-harness dispatch model-mapping keys are all keyed on this union.
+ */
 export const HARNESSES = ["claude", "pi"] as const;
 
 /** A reviewer harness identifier (the part before the `:` in a token). */
 export type Harness = (typeof HARNESSES)[number];
+
+/**
+ * The ACTIVE CONFIGURATION SELECTORS cq recognises (T861).
+ *
+ * This is the SELECTOR domain, distinct from {@link HARNESSES}: it names which
+ * `[harness.<name>]` block of cq.toml is in force for the current invocation.
+ * `CQ_HARNESS`, `parseConfig`'s `activeHarness` argument, `loadConfig`'s
+ * `harness` argument, and the `[harness.<name>]` TOML keys all range over THIS
+ * union.
+ *
+ * `codex` is a selector-only member: a Codex-hosted invocation picks
+ * `[harness.codex]`, but the reviewers/planners/tiers that block names must
+ * still resolve to {@link Harness} tokens, because cq has no Codex dispatch
+ * transport. `parseConfig` enforces that fail-closed (see its docstring).
+ */
+export const ACTIVE_HARNESSES = ["claude", "pi", "codex"] as const;
+
+/** An active configuration-selector identifier (`claude | pi | codex`). */
+export type ActiveHarness = (typeof ACTIVE_HARNESSES)[number];
 
 /**
  * Effort levels for the `pi` harness (thinking budget).
@@ -128,9 +156,21 @@ export interface WebuiConfig {
   readonly port: number | null;
 }
 
-/** Type guard: is `value` a known harness? */
+/** Type guard: is `value` a known EXECUTABLE dispatch harness? */
 export function isHarness(value: string): value is Harness {
   return (HARNESSES as readonly string[]).includes(value);
+}
+
+/** Type guard: is `value` a known ACTIVE configuration selector (T861)? */
+export function isActiveHarness(value: string): value is ActiveHarness {
+  return (ACTIVE_HARNESSES as readonly string[]).includes(value);
+}
+
+/** The active selectors, rendered as `"a", "b", or "c"` for error messages. */
+export function activeHarnessList(): string {
+  const quoted = ACTIVE_HARNESSES.map((h) => `"${h}"`);
+  const last = quoted[quoted.length - 1] as string;
+  return `${quoted.slice(0, -1).join(", ")}, or ${last}`;
 }
 
 /** The three suggestedModel tiers cq dispatches at. */

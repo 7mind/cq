@@ -104,9 +104,29 @@ backend = "git"
 [harness.bogus]
 reviewers = ["claude:opus-4.8"]
 `;
+    // T861: the accepted key set is the ACTIVE CONFIGURATION SELECTOR domain
+    // (claude | pi | codex), not the narrower executable dispatch domain.
     expect(() => parseToml(doc)).toThrow(
-      'cq.toml: unknown harness "bogus" in [harness.bogus] (expected "claude" or "pi")',
+      'cq.toml: unknown harness "bogus" in [harness.bogus] (expected "claude", "pi", or "codex")',
     );
+  });
+
+  it("accepts [harness.codex] as an active configuration selector (T861)", () => {
+    const doc = `
+[harness.codex]
+reviewers = ["grok"]
+planners = ["grok"]
+
+[harness.codex.tiers]
+frontier = "grok"
+`;
+    const raw = parseToml(doc);
+    expect(Object.keys(raw.harnessOverrides ?? {})).toEqual(["codex"]);
+    expect(raw.harnessOverrides!["codex"]).toEqual({
+      reviewers: ["grok"],
+      planners: ["grok"],
+      tiers: { frontier: "grok" },
+    });
   });
 
   it("rejects a non-string entry in a per-harness reviewers array", () => {

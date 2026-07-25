@@ -883,3 +883,105 @@ describe("T518 (Q254): computeAgentModels applies the [agent_efforts] override",
     );
   });
 });
+
+// ---- T861: codex is an ACTIVE SELECTOR, never a dispatch transport ---------
+//
+// The config capability reads through loadConfig, so `CQ_HARNESS=codex` must
+// select `[harness.codex]` here too. What must NOT happen is codex leaking into
+// the EXECUTABLE dispatch-token domain: the `modelMappings` keys stay
+// `claude | pi`, because there is no Codex dispatch transport to invoke.
+// (Projecting a dedicated Codex panel through MCP is T862, not this task.)
+
+type Equal<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
+    ? true
+    : false;
+
+const dispatchModelMappingKeysStayExecutable: Equal<
+  keyof AgentModelEntry["modelMappings"],
+  "claude" | "pi"
+> = true;
+
+const T861_CODEX_FIXTURE = [
+  // SHARED defaults stay Claude — INACTIVE under the codex selector.
+  'reviewers = ["opus"]',
+  'planners  = ["opus"]',
+  "",
+  "[aliases]",
+  '  opus = "claude:opus-4.8[1m]"',
+  '  grok = "pi:grok-build/grok-build"',
+  "",
+  "[tiers]",
+  '  frontier = "opus"',
+  "",
+  "[agent_tiers]",
+  '  plan-advance = "frontier"',
+  "",
+  "[harness.codex]",
+  '  reviewers = ["grok"]',
+  '  planners  = ["grok"]',
+  "",
+  "[harness.codex.tiers]",
+  '  frontier = "grok"',
+  "",
+].join("\n");
+
+describe("T861: configCapability under the codex selector", () => {
+  const savedHarness = process.env["CQ_HARNESS"];
+
+  afterEach(() => {
+    if (savedHarness === undefined) {
+      delete process.env["CQ_HARNESS"];
+    } else {
+      process.env["CQ_HARNESS"] = savedHarness;
+    }
+  });
+
+  it("keeps dispatch model mappings limited to the executable transports", () => {
+    expect(dispatchModelMappingKeysStayExecutable).toBe(true);
+  });
+
+  it("CQ_HARNESS=codex selects the [harness.codex] panels", () => {
+    writeCqToml(T861_CODEX_FIXTURE);
+    process.env["CQ_HARNESS"] = "codex";
+
+    const planners = computePlanners(dir);
+    expect(planners.configured).toBe(true);
+    expect(planners.planners).toHaveLength(1);
+    expect(planners.planners[0]!.alias).toBe("grok");
+    // The resolved token is a PI dispatch token — codex selects, pi executes.
+    expect(planners.planners[0]!.harness).toBe("pi");
+
+    const reviewers = computeReviewers(dir);
+    expect(reviewers.reviewers[0]!.harness).toBe("pi");
+
+    const models = computeAgentModels(dir);
+    const planAdvance = agentEntry(models, "plan-advance");
+    expect(planAdvance.status).toBe("resolved");
+    expect(planAdvance.modelMappings.pi).toEqual(["grok-build/grok-build"]);
+    expect(planAdvance.modelMappings.claude).toBeUndefined();
+    // No key outside the executable dispatch domain is ever emitted.
+    expect(Object.keys(planAdvance.modelMappings).sort()).toEqual(["pi"]);
+  });
+
+  it("the same fixture under CQ_HARNESS=claude still serves the shared Claude panels", () => {
+    writeCqToml(T861_CODEX_FIXTURE);
+    process.env["CQ_HARNESS"] = "claude";
+
+    const planners = computePlanners(dir);
+    expect(planners.planners[0]!.alias).toBe("opus");
+    expect(planners.planners[0]!.harness).toBe("claude");
+  });
+
+  it("a fail-closed codex violation surfaces at the capability boundary", () => {
+    // [harness.codex] omits `tiers` -> no silent fall-through to the shared
+    // [tiers], which would have handed a Codex host a claude frontier model.
+    writeCqToml(
+      T861_CODEX_FIXTURE.slice(0, T861_CODEX_FIXTURE.indexOf("[harness.codex.tiers]")),
+    );
+    process.env["CQ_HARNESS"] = "codex";
+
+    expect(() => computePlanners(dir)).toThrow(/\[harness\.codex\] must define its own tiers/);
+    expect(() => computeAgentModels(dir)).toThrow(/\[harness\.codex\]/);
+  });
+});

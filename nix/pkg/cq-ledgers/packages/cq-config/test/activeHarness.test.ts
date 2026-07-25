@@ -1,5 +1,9 @@
 /**
- * T473 (Q238): resolveActiveHarness — pure env -> Harness resolver.
+ * T473 (Q238): resolveActiveHarness — pure env -> ActiveHarness resolver.
+ *
+ * The resolver ranges over the ACTIVE CONFIGURATION SELECTOR domain
+ * (`claude | pi | codex`, T861), not the narrower executable dispatch-token
+ * domain.
  *
  * Acceptance cases:
  *  - CQ_HARNESS=pi => 'pi'
@@ -11,6 +15,7 @@
 
 import { describe, it, expect } from "bun:test";
 import {
+  ACTIVE_HARNESSES,
   resolveActiveHarness,
   resolveActiveHarnessFromProcess,
   DEFAULT_HARNESS,
@@ -24,6 +29,10 @@ describe("resolveActiveHarness", () => {
 
   it("honours CQ_HARNESS=claude for symmetry", () => {
     expect(resolveActiveHarness({ CQ_HARNESS: "claude" })).toBe("claude");
+  });
+
+  it("selects codex on an explicit CQ_HARNESS=codex signal (T861)", () => {
+    expect(resolveActiveHarness({ CQ_HARNESS: "codex" })).toBe("codex");
   });
 
   it("lets the explicit pi signal win over a Claude session id", () => {
@@ -67,10 +76,10 @@ describe("resolveActiveHarness", () => {
 });
 
 describe("resolveActiveHarnessFromProcess", () => {
-  it("resolves a known harness from the actual process env", () => {
-    // The boundary convenience must return one of the known harnesses for the
-    // current process; under bun:test no CQ_HARNESS=bogus is set.
+  it("resolves a known selector from the actual process env", () => {
+    // The boundary convenience must return one of the known ACTIVE SELECTORS
+    // for the current process; under bun:test no CQ_HARNESS=bogus is set.
     const harness = resolveActiveHarnessFromProcess();
-    expect(["claude", "pi"]).toContain(harness);
+    expect(ACTIVE_HARNESSES as readonly string[]).toContain(harness);
   });
 });

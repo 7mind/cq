@@ -8,6 +8,7 @@
 
 export type {
   Harness,
+  ActiveHarness,
   ReviewerToken,
   CqConfig,
   WebuiConfig,
@@ -29,6 +30,8 @@ export type {
 export {
   HARNESSES,
   isHarness,
+  ACTIVE_HARNESSES,
+  isActiveHarness,
   TIERS,
   isTier,
   DEFAULT_TIER,
