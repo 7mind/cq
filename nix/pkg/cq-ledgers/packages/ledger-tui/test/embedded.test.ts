@@ -188,7 +188,7 @@ describe("McpLedgerClient.embedded (in-process, in-memory transport)", () => {
     });
 
     const updated = decode<{
-      item: { status: string; fields: Record<string, never> };
+      item: { status: string; fields: Record<string, unknown> };
     }>(
       await rawClient.callTool({
         name: "update_item",
