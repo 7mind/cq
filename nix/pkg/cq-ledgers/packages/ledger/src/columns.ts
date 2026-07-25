@@ -33,18 +33,14 @@ export const LONG_FIELD_DENYLIST: ReadonlySet<string> = new Set([
   "fix",
 ]);
 
-// Upstream-specific names stay scoped to U so shared log fields retain their
-// established eligibility in every pre-existing ledger.
+// Upstream-specific scalar names stay scoped to U so shared fields retain
+// their established eligibility in every pre-existing ledger.
 const UPSTREAM_LONG_FIELD_DENYLIST: ReadonlySet<string> = new Set([
   "environment",
   "reproduction",
   "observed",
   "expected",
-  "priorArt",
-  "reportUrls",
   "workaround",
-  "sessionLogs",
-  "rawLogs",
 ]);
 
 /**
@@ -78,17 +74,19 @@ export const SUMMARY_SOURCE_FIELDS: ReadonlySet<string> = new Set([
  * declaration order.
  */
 export function eligibleColumnFields(schema: LedgerSchema): string[] {
-  const schemaDenylist =
-    UPSTREAM_SCHEMA.idPrefix !== undefined && schema.idPrefix === UPSTREAM_SCHEMA.idPrefix
-      ? UPSTREAM_LONG_FIELD_DENYLIST
-      : undefined;
-  return Object.keys(schema.fields).filter(
-    (name) =>
-      !LONG_FIELD_DENYLIST.has(name) &&
-      (schemaDenylist === undefined || !schemaDenylist.has(name)) &&
-      !ALWAYS_SHOWN_COLUMNS.has(name) &&
-      !SUMMARY_SOURCE_FIELDS.has(name),
-  );
+  const isUpstreamSchema =
+    UPSTREAM_SCHEMA.idPrefix !== undefined && schema.idPrefix === UPSTREAM_SCHEMA.idPrefix;
+  const schemaDenylist = isUpstreamSchema ? UPSTREAM_LONG_FIELD_DENYLIST : undefined;
+  return Object.entries(schema.fields)
+    .filter(
+      ([name, spec]) =>
+        !LONG_FIELD_DENYLIST.has(name) &&
+        (schemaDenylist === undefined || !schemaDenylist.has(name)) &&
+        (!isUpstreamSchema || (spec.type !== "string[]" && spec.type !== "id[]")) &&
+        !ALWAYS_SHOWN_COLUMNS.has(name) &&
+        !SUMMARY_SOURCE_FIELDS.has(name),
+    )
+    .map(([name]) => name);
 }
 
 /**

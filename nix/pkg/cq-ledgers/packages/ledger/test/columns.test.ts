@@ -72,7 +72,6 @@ describe("eligibleColumnFields", () => {
   it("keeps compact upstream fields eligible and excludes narrative, evidence, and log fields", () => {
     expect(eligibleColumnFields(UPSTREAM_SCHEMA)).toEqual([
       "package",
-      "affectedVersions",
       "fixedVersion",
       "trackingUrl",
       "trackerKind",
@@ -83,13 +82,29 @@ describe("eligibleColumnFields", () => {
       "filingOperationId",
       "filingState",
       "filingClaimedAt",
+      "suggestedModel",
+    ]);
+  });
+
+  it("excludes every upstream list field by schema type", () => {
+    const listFields = Object.entries(UPSTREAM_SCHEMA.fields)
+      .filter(([, spec]) => spec.type === "string[]" || spec.type === "id[]")
+      .map(([name]) => name);
+    expect(listFields).toEqual([
+      "affectedVersions",
+      "priorArt",
+      "reportUrls",
+      "sessionLogs",
+      "rawLogs",
       "sourceRefs",
       "blockedBy",
       "dependsOn",
       "ledgerRefs",
       "tags",
-      "suggestedModel",
     ]);
+
+    const eligible = new Set(eligibleColumnFields(UPSTREAM_SCHEMA));
+    expect(listFields.filter((name) => eligible.has(name))).toEqual([]);
   });
 
   it("preserves the exact eligible-column policy of every pre-upstream canonical ledger", () => {
