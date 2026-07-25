@@ -253,8 +253,10 @@ function validateProjectsRoot(projectsRoot: string): void {
  * A single project-key safety predicate shared across both layered defenses:
  * this filesystem-level runtime (second defense, T832) and the route-level
  * decoded-key guard ahead of catalog lookup (first defense, T836's
- * `isSafeDecodedProjectKey` in `@cq/ledger-web`). Keeping one copy prevents
- * the two layers from silently drifting apart on what counts as unsafe.
+ * `matchSafeXdgProjectRoute` and `createStaticXdgHostCatalog` in
+ * `@cq/ledger-web`, which call this predicate directly). Keeping one copy
+ * prevents the two layers from silently drifting apart on what counts as
+ * unsafe.
  */
 export function isSafeProjectKey(projectKey: string): boolean {
   return !(

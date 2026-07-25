@@ -191,6 +191,127 @@ function changedFrames(frames: readonly string[]): string[] {
   });
 }
 
+/**
+ * Every module specifier `xdgCatalogServe.ts` is allowed to pull in. An
+ * allowlist catches ANY cq-serve/PostgreSQL coupling that arrives through an
+ * import, whatever it is named, because importing an unlisted module at all
+ * fails the guard.
+ */
+const allowedCatalogImports = new Set([
+  "bun",
+  "@cq/ledger",
+  "@cq/ledger-mcp",
+  "./projectRoutes.js",
+  "./serve.js",
+]);
+
+/**
+ * Coupling that needs no import and so slips past the allowlist: an inline
+ * bearer-auth header read, an inline project-registration route, or a direct
+ * PostgreSQL/hub-ownership call. Matched case-insensitively so that
+ * `authorization`/`Authorization` and `Postgres`/`postgres` are both caught.
+ */
+const forbiddenCatalogTokens = [
+  "authorization",
+  "Bearer",
+  "/api/projects",
+  "registerProject",
+  "Postgres",
+  "openPgPool",
+  "checkBearerAuth",
+  "bootHub",
+  "fetchRegisteredProjects",
+];
+
+interface CouplingViolation {
+  readonly kind: "import" | "token";
+  readonly value: string;
+}
+
+/**
+ * Collect every module specifier, across all four import forms. A `from`-only
+ * regex structurally cannot see bare side-effect imports, dynamic imports, or
+ * `require`, so an unlisted module could be pulled in unobserved.
+ */
+function importSpecifiersOf(source: string): string[] {
+  const patterns = [
+    /\bfrom\s*["']([^"']+)["']/g,
+    /\bimport\s+["']([^"']+)["']/g,
+    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
+  ];
+  return patterns.flatMap((pattern) =>
+    [...source.matchAll(pattern)].map((match) => match[1]!),
+  );
+}
+
+function couplingViolationsOf(source: string): CouplingViolation[] {
+  const violations: CouplingViolation[] = [];
+  for (const specifier of importSpecifiersOf(source)) {
+    if (!allowedCatalogImports.has(specifier)) {
+      violations.push({ kind: "import", value: specifier });
+    }
+  }
+  const haystack = source.toLowerCase();
+  for (const token of forbiddenCatalogTokens) {
+    if (haystack.includes(token.toLowerCase())) {
+      violations.push({ kind: "token", value: token });
+    }
+  }
+  return violations;
+}
+
+describe("architecture guard self-check", () => {
+  test("rejects import-free coupling that carries no module specifier", () => {
+    const bearerCheck = `
+      const token = req.headers.get("authorization");
+      if (token !== \`Bearer \${expected}\`) return new Response(null, { status: 401 });
+    `;
+    expect(couplingViolationsOf(bearerCheck)).toEqual([
+      { kind: "token", value: "authorization" },
+      { kind: "token", value: "Bearer" },
+    ]);
+
+    const registrationRoute = `
+      if (url.pathname === "/api/projects") return registerProject(req);
+    `;
+    expect(couplingViolationsOf(registrationRoute)).toEqual([
+      { kind: "token", value: "/api/projects" },
+      { kind: "token", value: "registerProject" },
+    ]);
+
+    for (const token of forbiddenCatalogTokens) {
+      expect(couplingViolationsOf(`const x = ${token};`), token).toContainEqual({
+        kind: "token",
+        value: token,
+      });
+    }
+  });
+
+  test("rejects a forbidden module under every import form", () => {
+    const forms = [
+      'import { bootHub } from "@cq/cq-serve";',
+      'import type { HubOptions } from "@cq/cq-serve";',
+      'import * as serve from "@cq/cq-serve";',
+      'export { bootHub } from "@cq/cq-serve";',
+      'import "@cq/cq-serve";',
+      'const m = await import("@cq/cq-serve");',
+      'const m = require("@cq/cq-serve");',
+    ];
+    for (const form of forms) {
+      expect(couplingViolationsOf(form), form).toContainEqual({
+        kind: "import",
+        value: "@cq/cq-serve",
+      });
+    }
+  });
+
+  test("accepts the allowed import forms with no forbidden token", () => {
+    expect(couplingViolationsOf('import { hubTopic } from "./projectRoutes.js";'))
+      .toEqual([]);
+  });
+});
+
 describe("explicit XDG catalog HTTP/WS host", () => {
   test("lazily serves two isolated projects, one global listing, aliases, scoped WS, and disposal", async () => {
     const fixture = await makeHostFixture();
@@ -419,27 +540,13 @@ describe("explicit XDG catalog HTTP/WS host", () => {
     expect(source).toContain("attachMcpHttp");
     expect(source).toContain("openXdgProjectRuntime");
 
-    // Guard on the module's actual import specifiers rather than scanning for
-    // forbidden symbol names: a substring scan misses the real cq-serve
-    // ownership/auth surface (bootHub, tryAcquireDedicatedAdvisoryLock,
-    // fetchRegisteredProjects, checkBearerAuth, extractBearerToken, the
-    // lowercase "authorization" header read) entirely, since none of those
-    // tokens appear literally in this list. Requiring every import specifier
-    // to be a member of an explicit allowlist catches ANY such coupling,
-    // whatever it is named, because importing it at all fails the guard.
-    const importSpecifiers = [
-      ...source.matchAll(/\bfrom\s+["']([^"']+)["']/g),
-    ].map((match) => match[1]!);
-    expect(importSpecifiers.length).toBeGreaterThan(0);
-    const allowedImports = new Set([
-      "bun",
-      "@cq/ledger",
-      "@cq/ledger-mcp",
-      "./projectRoutes.js",
-      "./serve.js",
-    ]);
-    for (const specifier of importSpecifiers) {
-      expect(allowedImports.has(specifier), specifier).toBe(true);
-    }
+    // Two complementary mechanisms, neither sufficient alone. The import
+    // allowlist catches coupling that arrives through ANY module specifier,
+    // whatever it is named; the forbidden-token scan catches coupling that
+    // needs no import at all (an inline bearer-auth header read, an inline
+    // registration route). Both failure paths are exercised by the
+    // "architecture guard self-check" suite above.
+    expect(importSpecifiersOf(source).length).toBeGreaterThan(0);
+    expect(couplingViolationsOf(source)).toEqual([]);
   });
 });
