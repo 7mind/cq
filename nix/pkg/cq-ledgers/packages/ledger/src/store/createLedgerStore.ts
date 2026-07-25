@@ -38,6 +38,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { SQL } from "bun";
 import { loadConfig, type LedgerBackend, type LedgerBackupMode } from "@cq/config";
@@ -46,6 +47,7 @@ import { FsLedgerStore } from "./FsLedgerStore.js";
 import { GitObjectLedgerBackend } from "./git/GitObjectLedgerBackend.js";
 import { SqliteLedgerStore } from "./sqlite/SqliteLedgerStore.js";
 import { dataVersion, openLedgerDb } from "./sqlite/connection.js";
+import { SqliteXdgProjectIdentityAccess } from "./sqlite/projectIdentity.js";
 import { openPgPool } from "./postgres/connection.js";
 import { ensureSchema } from "./postgres/schema.js";
 import { resolvePostgresDsn } from "./postgres/dsn.js";
@@ -363,6 +365,27 @@ export async function createLedgerStore(root: string): Promise<ResolvedLedgerSto
     onMutation: () => backup?.schedule(),
   });
   await store.init();
+  try {
+    const repositoryPath = await realpath(root);
+    const displayName = resolveDisplayName({
+      projectName: config?.project?.name,
+      projectId,
+      repoBasename: basename(repositoryPath),
+      projectKey,
+    });
+    const identityDb = openLedgerDb(dbPath);
+    try {
+      new SqliteXdgProjectIdentityAccess(identityDb).upsertProjectIdentity({
+        repositoryPath,
+        displayName,
+      });
+    } finally {
+      identityDb.close();
+    }
+  } catch (err) {
+    await store.dispose().catch(() => undefined);
+    throw err;
+  }
   if (backupTarget !== "none") {
     backup = new BackupScheduler(async () => {
       await runBackupExport({ store, root, target: backupTarget, branch, logsDir });
