@@ -79,6 +79,7 @@ import {
 import type { LedgerSnapshot } from "../snapshot.js";
 import { buildSnapshot } from "../snapshot.js";
 import { LedgerSearchIndex } from "../search/LedgerSearchIndex.js";
+import { taskDependenciesSatisfied } from "./predicates.js";
 import type {
   FetchedLedger,
   FetchedMilestoneGroup,
@@ -521,6 +522,12 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   ): Promise<Item> {
     const item = await this.withLock(ledgerId, async () => {
       const ledger = this.getLedger(ledgerId);
+      if (ledgerId === GOALS_LEDGER) {
+        this.assertManagedGoalTransitionAllowed(
+          findItem(ledger, itemId).item,
+          toStatus,
+        );
+      }
       if (ledgerId === TASKS_LEDGER) {
         this.assertManagedTaskTransitionAllowed(
           findItem(ledger, itemId).item,
@@ -726,23 +733,18 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         );
       }
       const to = patch.status;
-      if (
-        fieldIsPresent(goal, PLAN_GENERATION_FIELD) &&
-        to !== undefined &&
-        ((goal.status === "clarifying" && to === "planning") ||
-          (goal.status === "planning" && (to === "clarifying" || to === "planned")) ||
-          (goal.status === "planned" && to === "planning"))
-      ) {
-        throw new LedgerError(
-          "managed plan transition may mutate only through PlanLifecycleStore",
-        );
+      if (to !== undefined && to !== goal.status) {
+        this.assertManagedGoalTransitionAllowed(goal, to);
       }
     }
     if (ledgerId === TASKS_LEDGER) {
-      if (patch.fields?.["ledgerRefs"] !== undefined) {
-        this.assertNoManagedGoalReference(patch.fields["ledgerRefs"]);
-      }
       const task = findItem(source, itemId).item;
+      if (patch.fields?.["ledgerRefs"] !== undefined) {
+        this.assertManagedTaskOwnershipRefsPreserved(
+          task,
+          patch.fields["ledgerRefs"],
+        );
+      }
       if (patch.status !== undefined && patch.status !== task.status) {
         this.assertManagedTaskTransitionAllowed(task, patch.status);
       }
@@ -750,18 +752,64 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   private assertNoManagedGoalReference(value: unknown): void {
-    if (!Array.isArray(value)) return;
-    for (const ref of value) {
-      if (typeof ref !== "string" || !ref.startsWith(`${GOALS_LEDGER}:`)) continue;
+    if (this.managedGoalReferences(value).length > 0) {
+      throw new LedgerError(
+        "managed plan work may mutate only through PlanLifecycleStore",
+      );
+    }
+  }
+
+  private managedGoalReferences(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((ref): ref is string => {
+      if (typeof ref !== "string" || !ref.startsWith(`${GOALS_LEDGER}:`)) {
+        return false;
+      }
       const goal = findOptionalItem(
         this.getLedger(GOALS_LEDGER),
         ref.slice(GOALS_LEDGER.length + 1),
       );
-      if (goal !== undefined && fieldIsPresent(goal, PLAN_GENERATION_FIELD)) {
-        throw new LedgerError(
-          "managed plan work may mutate only through PlanLifecycleStore",
-        );
-      }
+      return goal !== undefined && fieldIsPresent(goal, PLAN_GENERATION_FIELD);
+    });
+  }
+
+  private assertManagedTaskOwnershipRefsPreserved(
+    task: Item,
+    value: unknown,
+  ): void {
+    const current = new Set(
+      this.managedGoalReferences(task.fields["ledgerRefs"]),
+    );
+    const proposed = Array.isArray(value)
+      ? new Set(value.filter((ref): ref is string => typeof ref === "string"))
+      : new Set<string>();
+    const proposedManaged = this.managedGoalReferences(value);
+    if (
+      [...current].some((ref) => !proposed.has(ref)) ||
+      proposedManaged.some((ref) => !current.has(ref))
+    ) {
+      throw new LedgerError(
+        "managed plan work may mutate only through PlanLifecycleStore",
+      );
+    }
+  }
+
+  private assertManagedGoalTransitionAllowed(
+    goal: Item,
+    targetStatus: string,
+  ): void {
+    if (!fieldIsPresent(goal, PLAN_GENERATION_FIELD)) return;
+    const lifecycleOwned =
+      goal.status === "done" ||
+      goal.status === "abandoned" ||
+      (goal.status === "clarifying" && targetStatus === "planning") ||
+      (goal.status === "planning" &&
+        (targetStatus === "clarifying" || targetStatus === "planned")) ||
+      (goal.status === "planned" && targetStatus === "planning");
+    if (lifecycleOwned) {
+      throw new LedgerError(
+        "managed plan transition may mutate only through PlanLifecycleStore",
+      );
     }
   }
 
@@ -786,14 +834,8 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         throw new LedgerError("task belongs to a draft or superseded manifest");
       }
       if (targetStatus !== "wip") continue;
-      for (const raw of fieldArray(task, "dependsOn")) {
-        const id = raw.startsWith(`${TASKS_LEDGER}:`)
-          ? raw.slice(TASKS_LEDGER.length + 1)
-          : raw;
-        const dependency = findOptionalItem(this.getLedger(TASKS_LEDGER), id);
-        if (dependency !== undefined && dependency.status !== "done") {
-          throw new LedgerError("task dependencies are not satisfied");
-        }
+      if (!taskDependenciesSatisfied(this, task)) {
+        throw new LedgerError("task dependencies are not satisfied");
       }
     }
   }

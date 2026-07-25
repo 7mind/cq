@@ -321,6 +321,119 @@ describe("T848 InMemory plan lifecycle semantics", () => {
     }
   });
 
+  for (const replacement of [[], ["goals:G999"]] as const) {
+    it(`rejects replacing managed task ownership refs with ${JSON.stringify(replacement)}`, async () => {
+      const fixture = await buildFixture("planned", 1);
+      try {
+        await fixture.seedWork("G1", {
+          taskStatuses: ["planned"],
+          openQuestionCount: 0,
+          legacy: false,
+        });
+        const task = (await fixture.observe("G1")).tasks[0];
+        if (task === undefined) throw new Error("managed task missing");
+
+        await expect(
+          fixture.store.updateItem(TASKS_LEDGER, task.id, {
+            fields: { ledgerRefs: [...replacement] },
+          }),
+        ).rejects.toThrow(/only through PlanLifecycleStore/);
+        expect(fixture.store.fetchItem(TASKS_LEDGER, task.id).fields["ledgerRefs"])
+          .toEqual(["goals:G1"]);
+      } finally {
+        await fixture.dispose();
+      }
+    });
+  }
+
+  for (const terminalStatus of ["done", "abandoned"] as const) {
+    it(`rejects reopening a managed ${terminalStatus} goal to planning`, async () => {
+      const fixture = await buildFixture("planned", 1);
+      try {
+        if (terminalStatus === "done") {
+          await fixture.store.updateItem(GOALS_LEDGER, "G1", {
+            status: "building",
+          });
+        }
+        await fixture.store.updateItem(GOALS_LEDGER, "G1", {
+          status: terminalStatus,
+        });
+
+        await expect(
+          fixture.store.reopenItem(GOALS_LEDGER, "G1", "planning"),
+        ).rejects.toThrow(/only through PlanLifecycleStore/);
+        expect(fixture.store.fetchItem(GOALS_LEDGER, "G1").status).toBe(
+          terminalStatus,
+        );
+      } finally {
+        await fixture.dispose();
+      }
+    });
+  }
+
+  it("rejects starting a managed task while an active research dependency gates it", async () => {
+    const fixture = await buildFixture("planned", 1);
+    try {
+      await fixture.seedWork("G1", {
+        taskStatuses: ["planned"],
+        openQuestionCount: 0,
+        legacy: false,
+      });
+      const task = (await fixture.observe("G1")).tasks[0];
+      if (task === undefined) throw new Error("managed task missing");
+      const research = await fixture.store.createItem(
+        RESEARCHES_LEDGER,
+        MILESTONES_AMBIENT_ID,
+        {
+          status: "open",
+          fields: { question: "Is the dependency complete?" },
+        },
+      );
+      await fixture.store.updateItem(TASKS_LEDGER, task.id, {
+        fields: { dependsOn: [`${RESEARCHES_LEDGER}:${research.id}`] },
+      });
+
+      await expect(
+        fixture.store.updateItem(TASKS_LEDGER, task.id, { status: "wip" }),
+      ).rejects.toThrow(/dependencies/);
+      expect(fixture.store.fetchItem(TASKS_LEDGER, task.id).status).toBe("planned");
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it("rejects reopening a managed task while its milestone dependencies gate it", async () => {
+    const fixture = await buildFixture("planned", 1);
+    try {
+      await fixture.seedWork("G1", {
+        taskStatuses: ["abandoned"],
+        openQuestionCount: 0,
+        legacy: false,
+      });
+      const task = (await fixture.observe("G1")).tasks[0];
+      if (task === undefined) throw new Error("managed task missing");
+      const dependencyMilestone = await fixture.store.createMilestone({
+        title: "Dependency milestone",
+      });
+      await fixture.store.createItem(TASKS_LEDGER, dependencyMilestone.id, {
+        status: "planned",
+        fields: { headline: "Unfinished prerequisite" },
+      });
+      await fixture.store.updateMilestone(task.milestoneId, {
+        dependsOn: [`${MILESTONES_LEDGER}:${dependencyMilestone.id}`],
+      });
+
+      await expect(
+        fixture.store.reopenItem(TASKS_LEDGER, task.id, "wip"),
+      ).rejects.toThrow(/dependencies/);
+      expect(fixture.store.fetchItem(TASKS_LEDGER, task.id).status).toBe(
+        "abandoned",
+      );
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it("rejects reopening a finalized managed task to wip with unfinished dependencies", async () => {
     const fixture = await buildFixture("planned", 1);
     try {
