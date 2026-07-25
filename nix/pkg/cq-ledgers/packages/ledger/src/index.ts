@@ -81,6 +81,16 @@ export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
 export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBackend.js";
 export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 export type { SqliteLedgerStoreOpts } from "./store/sqlite/SqliteLedgerStore.js";
+export {
+  PROJECT_DISPLAY_NAME_META_KEY,
+  PROJECT_REPOSITORY_PATH_META_KEY,
+  SqliteXdgProjectIdentityAccess,
+  XdgProjectIdentityMetadataError,
+} from "./store/sqlite/projectIdentity.js";
+export type {
+  XdgProjectIdentity,
+  XdgProjectIdentityAccess,
+} from "./store/sqlite/projectIdentity.js";
 // Postgres backend (G81): the barrel carries ONLY the surface external
 // consumers (cq-cli's logPut postgres branch, the T577 factory, and cq serve's
 // process-lifetime ownership lease) genuinely need — the rest of the
