@@ -341,19 +341,31 @@ esac
 # the exact failure condition — a system config that Includes a /nix/store path —
 # so a non-NixOS host's legitimate ssh_config is left untouched. Lives in tmpfs,
 # removed on exit.
+#
+# Bind destination: on NixOS /etc/ssh/ssh_config is a symlink chain
+#   /etc/ssh/ssh_config -> /etc/static/ssh/ssh_config -> /nix/store/…-etc-ssh-ssh_config
+# bwrap follows existing dest symlinks when creating the mountpoint, and binding
+# at the symlink path fails with
+#   Can't create file at /etc/ssh/ssh_config: No such file or directory
+# Binding at the resolved real path succeeds; OpenSSH still opens
+# /etc/ssh/ssh_config and follows the chain onto our overlay.
 SSH_CONFIG_ARGS=()
 SSH_CONFIG_TMPFILE=""
 if [[ -r /etc/ssh/ssh_config ]] \
    && grep -qE '^[[:space:]]*Include[[:space:]]+/nix/store/' /etc/ssh/ssh_config; then
-  SSH_CONFIG_TMPFILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/yolo-ssh-config.XXXXXX")"
-  cat > "$SSH_CONFIG_TMPFILE" <<'EOF'
+  _ssh_cfg_dest="$(readlink -f /etc/ssh/ssh_config || true)"
+  if [[ -n "$_ssh_cfg_dest" ]]; then
+    SSH_CONFIG_TMPFILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/yolo-ssh-config.XXXXXX")"
+    cat > "$SSH_CONFIG_TMPFILE" <<'EOF'
 # Synthesized by yolo for the sandbox. Replaces NixOS's /etc/ssh/ssh_config,
 # whose /nix/store Includes are rejected by OpenSSH under the sandbox uid map.
 Host *
     GlobalKnownHostsFile /etc/ssh/ssh_known_hosts
     ForwardX11 no
 EOF
-  SSH_CONFIG_ARGS+=(--ro-bind "$SSH_CONFIG_TMPFILE,/etc/ssh/ssh_config")
+    SSH_CONFIG_ARGS+=(--ro-bind "$SSH_CONFIG_TMPFILE,${_ssh_cfg_dest}")
+  fi
+  unset _ssh_cfg_dest
 fi
 
 # Extra packages exposed only inside the sandbox (smind.hm.dev.llm.yolo.packages
