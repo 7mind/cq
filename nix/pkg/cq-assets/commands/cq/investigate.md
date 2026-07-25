@@ -45,6 +45,12 @@ On any `create_item` / `update_item`, pass `author` = your OWN model class
 `"opus-4.8[1m]"`; Codex GPT-5.x → e.g. `"gpt-5.5"`) and `session` =
 `$CLAUDE_CODE_SESSION_ID` (or the Codex equivalent; omit if unavailable).
 
+**Mutation response rule:** Every ledger mutation below returns only its fixed
+acknowledgement (allocated id, current status, canonicalized reference fields,
+timestamps, and provenance), never a full entity. Use acknowledgement ids
+directly; issue an explicit full read only when later reasoning needs narrative
+fields.
+
 ## Steps
 
 ### 1. Determine the input form
@@ -59,9 +65,11 @@ Inspect `$ARGUMENTS`:
 ### 2a. Intake path — create a new defect
 
 #### 2a-1. Duplicate check
-`fts_search` the `defects` ledger with the key terms from `$ARGUMENTS`. If a
-non-terminal defect already exists that matches the description, tell the user its id
-and run **Resume path** (step 2b) against that id instead of creating a duplicate.
+`fts_search({ query: "<key terms from $ARGUMENTS>", ledger: "defects",
+projection: "compact", limit: 20 })`. Compact discovery fields are sufficient
+to identify a possible duplicate; if a non-terminal defect already matches the
+description, tell the user its id and run **Resume path** (step 2b) against that
+id instead of creating a duplicate.
 
 #### 2a-2. Infer severity
 Derive a `severity` from the description:
@@ -86,7 +94,7 @@ Example: "nil pointer on empty fetch" → `nil-pointer-empty-fetch`.
 ```
 create_milestone(title: "Investigate: <slug>")
 ```
-Save the returned id as **M**.
+Save the fixed acknowledgement's allocated id as **M**.
 
 #### 2a-5. Create the defect item
 ```
@@ -101,13 +109,16 @@ create_item("defects", M,
   session: <session id>,
 )
 ```
-Save the returned id as **D**.
+Save the fixed acknowledgement's allocated id as **D**.
 
 Note the chosen severity and why (one line) in the report.
 
 ### 2b. Resume path — validate an existing defect
 
-`fetch_item("defects", D)` where D is the id from `$ARGUMENTS`.
+`fetch_item({ ledger_id: "defects", item_id: D, projection: "full" })` where D
+is the id from `$ARGUMENTS`. Full projection is required here because resume
+validation and the inline advance pass consume the defect's reproduction,
+expected/actual behavior, severity, description, and existing cause narrative.
 
 - If the item does not exist → abort with a clear error: "No defect `<D>` found in the
   ledger. Check the id and retry, or provide a defect description to start a new

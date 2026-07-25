@@ -67,6 +67,12 @@ On any `create_item` / `update_item`, pass `author` = your OWN model class
 `"opus-4.8[1m]"`; Codex GPT-5.x → e.g. `"gpt-5.5"`) and `session` =
 `$CLAUDE_CODE_SESSION_ID` (or the Codex equivalent; omit if unavailable).
 
+**Mutation response rule:** Every ledger mutation below returns only its fixed
+acknowledgement (allocated id, current status, canonicalized reference fields,
+timestamps, and provenance), never a full entity. Use acknowledgement ids
+directly; issue an explicit full read only when later reasoning needs narrative
+fields.
+
 ## Steps
 
 ### 1. Determine the input form
@@ -80,9 +86,11 @@ Inspect `$ARGUMENTS`:
 ### 2a. Intake path — create a new research item
 
 #### 2a-1. Duplicate check
-`fts_search` the `researches` ledger with the key terms from `$ARGUMENTS`. If a
-non-terminal research item already exists that matches the question, tell the user its
-id and run **Resume path** (step 2b) against that id instead of creating a duplicate.
+`fts_search({ query: "<key terms from $ARGUMENTS>", ledger: "researches",
+projection: "compact", limit: 20 })`. Compact discovery fields are sufficient
+to identify a possible duplicate; if a non-terminal research item already
+matches the question, tell the user its id and run **Resume path** (step 2b)
+against that id instead of creating a duplicate.
 
 #### 2a-2. Confirm the triage (Q267)
 Re-check `$ARGUMENTS` against **§Question vs research triage** above. If it is actually
@@ -102,7 +110,7 @@ Example: "does bun's fs watcher coalesce rapid writes" → `bun-watcher-coalesce
 ```
 create_milestone(title: "Research: <slug>")
 ```
-Save the returned id as **M**.
+Save the fixed acknowledgement's allocated id as **M**.
 
 #### 2a-6. Create the research item
 ```
@@ -116,11 +124,14 @@ create_item("researches", M,
   session: <session id>,
 )
 ```
-Save the returned id as **RS**.
+Save the fixed acknowledgement's allocated id as **RS**.
 
 ### 2b. Resume path — validate an existing research item
 
-`fetch_item("researches", RS)` where RS is the id from `$ARGUMENTS`.
+`fetch_item({ ledger_id: "researches", item_id: RS, projection: "full" })`
+where RS is the id from `$ARGUMENTS`. Full projection is required because
+resume validation and the inline advance round consume the question, scope,
+findings, conclusion, recommendation, and lifecycle status.
 
 - If the item does not exist → abort with a clear error: "No research `<RS>` found in
   the ledger. Check the id and retry, or provide a research question to start a new

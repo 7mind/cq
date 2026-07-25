@@ -137,6 +137,14 @@ On every `create_item` / `update_item`, pass `author` = your OWN model class
 `"opus-4.8[1m]"`; Codex GPT-5.x → e.g. `"gpt-5.5"`) and `session` =
 `$CLAUDE_CODE_SESSION_ID` (or the Codex equivalent; omit if unavailable).
 
+**Mutation response rule:** Every ledger mutation below returns only its fixed
+acknowledgement (allocated id, current status, canonicalized reference fields,
+timestamps, and provenance), never a full entity. Use acknowledgement ids
+directly and adjudicate from the full state loaded in step 1 plus the evidence
+validated locally this round. If an interrupted or later round needs
+authoritative narrative state, reload it explicitly through step 1; never infer
+that narrative from a mutation acknowledgement.
+
 ## Session logs (after EVERY subagent returns)
 Each `research-explorer` **and** each `research-experimenter` ends its reply with a
 `### Session summary` block. **ALL log writes go through `cq log put` — never a
@@ -190,11 +198,20 @@ summary `.md` to the hypothesis item's `sessionLogs` and the raw
 ## The research round (the six steps)
 
 ### 1. READ state (purely from the ledger)
-`fetch_item("researches", RS)` — read its `question`/`scope` and any existing
-`findings`/`conclusion`/`recommendation`. Then derive the current tree:
-- `search_items` / `fts_search` the `hypothesis` ledger for nodes whose
-  `ledgerRefs` contain `researches:<RS>`; reconstruct ancestry from
-  `parentHypothesis`. Note each node's `status` and `evidence[]`.
+`fetch_item({ ledger_id: "researches", item_id: RS, projection: "full" })` —
+the full projection is intentional because framing and synthesis consume the
+question, scope, findings, conclusion, recommendation, and lifecycle status.
+Then derive the current tree:
+- use the precise
+  `search_items({ ledger_id: "hypothesis", query: "researches:<RS>",
+  projection: "full" })` and/or the bounded ranked
+  `fts_search({ query: 'ledgerRefs:"researches:<RS>"', ledger: "hypothesis",
+  projection: "full", limit: 100 })` for nodes whose `ledgerRefs` contain
+  `researches:<RS>`; reconstruct ancestry from `parentHypothesis`. Full
+  projection is required for the statement, evidence, citations, status,
+  ledgerRefs, and any probe request used in citation validation and
+  adjudication. If the ranked query reaches its bound, narrow it by
+  status/parent and repeat rather than fetching the whole hypothesis ledger.
 - read the linked `questions` (items whose `ledgerRefs` contain `researches:<RS>`):
   if an `open` question is still unanswered, the loop is parked on the user — skip
   to **Report** (resumable: the user answers in the TUI/web, then re-runs
@@ -224,8 +241,10 @@ current state:
 - **Seed roots** — for each distinct top-level candidate answer with no existing
   node, `create_item("hypothesis", <researchMilestone>, status: "open", fields: {
   headline: "<candidate answer>", description: "<what would make this the correct
-  answer>", ledgerRefs: ["researches:<RS>"] })`. Roots have no `parentHypothesis`.
-  (`<researchMilestone>` is the milestone group the research item RS belongs to.)
+  answer>", ledgerRefs: ["researches:<RS>"] })`. Use the fixed
+  acknowledgement's allocated id as H; roots have no `parentHypothesis`.
+  (`<researchMilestone>` is the milestone group the research item RS belongs
+  to.)
 - **Drill children** — when an `uncertain` node needs decomposition, create child
   nodes with `parentHypothesis: <parentId>` (and the same `ledgerRefs:
   ["researches:<RS>"]`), each a narrower sub-claim of the parent.

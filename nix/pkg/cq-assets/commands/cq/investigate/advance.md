@@ -139,6 +139,14 @@ On every `create_item` / `update_item`, pass `author` = your OWN model class
 `"opus-4.8[1m]"`; Codex GPT-5.x → e.g. `"gpt-5.5"`) and `session` =
 `$CLAUDE_CODE_SESSION_ID` (or the Codex equivalent; omit if unavailable).
 
+**Mutation response rule:** Every ledger mutation below returns only its fixed
+acknowledgement (allocated id, current status, canonicalized reference fields,
+timestamps, and provenance), never a full entity. Use acknowledgement ids
+directly and adjudicate from the full state loaded in step 1 plus the evidence
+validated locally this round. If an interrupted or later round needs
+authoritative narrative state, reload it explicitly through step 1; never infer
+that narrative from a mutation acknowledgement.
+
 ## Session logs (after EVERY subagent returns)
 Each `investigate-explorer` **and** each `investigate-prober` ends its reply with a
 `### Session summary` block. **ALL log writes go through `cq log put` — never a
@@ -192,25 +200,37 @@ summary `.md` to the hypothesis item's `sessionLogs` and the raw
 ## The research round (the six steps)
 
 ### 1. READ state (purely from the ledger)
-`fetch_item("defects", D)` — read its `headline`/`description`/`severity` and any
-existing `rootCause`/`suggestedFix`. Then derive the current tree:
-- `search_items` / `fts_search` the `hypothesis` ledger for nodes whose
-  `ledgerRefs` contain `defects:<D>`; reconstruct ancestry from
-  `parentHypothesis`. Note each node's `status` and `evidence[]`.
+`fetch_item({ ledger_id: "defects", item_id: D, projection: "full" })` — the
+full projection is intentional because hypothesis framing consumes the defect's
+headline, description, reproduction, expected/actual behavior, severity, and
+existing cause/fix narrative. Then derive the current tree:
+- use the precise
+  `search_items({ ledger_id: "hypothesis", query: "defects:<D>", projection:
+  "full" })` and/or the bounded ranked
+  `fts_search({ query: 'ledgerRefs:"defects:<D>"', ledger: "hypothesis",
+  projection: "full", limit: 100 })` for nodes whose `ledgerRefs` contain
+  `defects:<D>`; reconstruct ancestry from `parentHypothesis`. Full projection
+  is required for the statement, evidence, citations, status, and ledgerRefs
+  used in citation validation and adjudication. If the ranked query reaches its
+  bound, narrow it by status/parent and repeat rather than fetching the whole
+  hypothesis ledger.
 - read the linked `questions` (items whose `ledgerRefs` contain `defects:<D>`):
   if an `open` question is still unanswered, the loop is parked on the user —
   skip to **Report** (resumable: the user answers in the TUI/web, then re-runs
   `CQ::investigate/advance D`). If a previously-open question is now `answered`
   (non-empty `answer`), fold its answer into this round's framing and continue.
 - check parked-on-research branches (§Research escalation): for each `uncertain`
-  hypothesis node carrying a `researches:<RS>` ledgerRef, `fetch_item("researches",
-  RS)` and apply the un-park rules of §Research escalation (d): `concluded` →
-  un-park and re-adjudicate the branch from the research's
-  `findings`/`conclusion`; `inconclusive`/`abandoned` → un-park and re-adjudicate
-  from the remaining evidence; `open`/`wip` → the branch STAYS parked, skip it
-  this round. If EVERY unresolved branch is parked on a live research and nothing
-  else is adjudicable, skip to **Report** (the "parked on research" line) —
-  resumable once the `CQ::advance` research stage concludes the research.
+  hypothesis node carrying a `researches:<RS>` ledgerRef,
+  `fetch_item({ ledger_id: "researches", item_id: RS, projection: "full" })`
+  and apply the un-park rules of §Research escalation (d). This full read is
+  required for the research question/scope and its findings, conclusion,
+  recommendation, and status: `concluded` → un-park and re-adjudicate the branch
+  from the research's `findings`/`conclusion`; `inconclusive`/`abandoned` →
+  un-park and re-adjudicate from the remaining evidence; `open`/`wip` → the
+  branch STAYS parked, skip it this round. If EVERY unresolved branch is parked
+  on a live research and nothing else is adjudicable, skip to **Report** (the
+  "parked on research" line) — resumable once the `CQ::advance` research stage
+  concludes the research.
 
 **Move the defect to `wip` the moment investigation begins.** If the defect's
 status is still `open` and you are about to do real research this round (form
@@ -232,7 +252,8 @@ Enumerate the DISTINCT candidate root causes consistent with current state:
 - **Seed roots** — for each distinct top-level candidate root cause with no
   existing node, `create_item("hypothesis", <defectMilestone>, status: "open",
   fields: { headline: "<candidate root cause>", description: "<what would make
-  this true>", ledgerRefs: ["defects:<D>"] })`. Roots have no `parentHypothesis`.
+  this true>", ledgerRefs: ["defects:<D>"] })`. Use the fixed acknowledgement's
+  allocated id as H; roots have no `parentHypothesis`.
 - **Drill children** — when an `uncertain` node needs decomposition, create child
   nodes with `parentHypothesis: <parentId>` (and the same `ledgerRefs:
   ["defects:<D>"]`), each a narrower sub-claim of the parent.
@@ -498,10 +519,10 @@ sibling of the step-5 plan handoff:
 (a) **File the research.** `create_item("researches", <defect's milestone>,
     status: "open", fields: { question: "<the empirical question>", scope?:
     "<what to try / how to bound the investigation>", ledgerRefs:
-    ["defects:<D>"] })` — save the returned id as **RS**. `question` is
-    REQUIRED; `scope` is optional; the `defects:<D>` ledgerRef ties the
-    research back to this investigation (lifecycle `open → wip → {concluded |
-    inconclusive | abandoned}`).
+    ["defects:<D>"] })` — save the fixed acknowledgement's allocated id as
+    **RS**. `question` is REQUIRED; `scope` is optional; the `defects:<D>`
+    ledgerRef ties the research back to this investigation (lifecycle `open →
+    wip → {concluded | inconclusive | abandoned}`).
 (b) **PARK the dependent branch as `uncertain`.** `update_item("hypothesis", H,
     status: "uncertain", fields: { ledgerRefs: [<existing entries>,
     "researches:<RS>"] })` — APPEND `researches:<RS>` to the node's

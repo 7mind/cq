@@ -514,7 +514,6 @@ async function validateSourcePolicyConformance(
 
     for (const call of discovered) {
       if (
-        call.invocationArguments === undefined ||
         !(PROJECTION_TOOLS as readonly string[]).includes(call.tool)
       ) {
         continue;
@@ -524,7 +523,7 @@ async function validateSourcePolicyConformance(
         errors.push(`Missing projection inventory policy: ${call.callSite}`);
         continue;
       }
-      const projection = call.invocationArguments.match(
+      const projection = call.invocationArguments?.match(
         /\bprojection\s*:\s*["'](compact|full)["']/,
       )?.[1];
       if (projection !== policy) {
@@ -703,6 +702,16 @@ describe("CQ tool response-policy inventory", () => {
       await validateSourcePolicyConformance(
         inventory,
         new Set<WorkflowFamily>(["plan"]),
+        readCanonicalSource,
+      ),
+    ).toEqual([]);
+  });
+
+  test("investigate/research-family canonical invocations match checked response policies", async () => {
+    expect(
+      await validateSourcePolicyConformance(
+        inventory,
+        new Set<WorkflowFamily>(["investigate", "research"]),
         readCanonicalSource,
       ),
     ).toEqual([]);
