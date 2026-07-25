@@ -515,6 +515,118 @@ export function runPlanLifecycleStoreContract(
         }
       }, timeout);
 
+      it("publishes after legacy adoption identically with and without restart", async () => {
+        async function adoptAndPublish(restart: boolean) {
+          const fixture = await buildGoal(factory, "clarifying", null);
+          let restarted: PlanLifecycleContractFixture | null = null;
+          let active = fixture;
+          try {
+            await fixture.seedWork(GOAL_ID, {
+              taskStatuses: ["planned", "planned"],
+              openQuestionCount: 0,
+              legacy: true,
+            });
+            const before = await fixture.observe(GOAL_ID);
+            const claim = requireClaimWinner(
+              await fixture.lifecycle.claimPlan(
+                claimInput(
+                  "initial",
+                  "legacy-adoption",
+                  OWNER_TOKEN_A,
+                  null,
+                  PROVENANCE_A,
+                ),
+              ),
+            );
+            expect(claim).toMatchObject({
+              legacyAdopted: true,
+              adoptedManifest: {
+                milestoneIds: before.milestones.map(({ id }) => id),
+                taskIds: before.tasks.map(({ id }) => id),
+              },
+            });
+            if (restart) {
+              restarted = await fixture.restart();
+              active = restarted;
+            }
+
+            const published = await active.lifecycle.publishPlanDraft(
+              publishInput(claim, "publish-legacy-adoption"),
+            );
+            if (!published.ok) {
+              throw new Error("legacy-adoption publication unexpectedly conflicted");
+            }
+            const state = await active.observe(GOAL_ID);
+            const adoptedMilestoneIds = new Set(claim.adoptedManifest.milestoneIds);
+            const adoptedTaskIds = new Set(claim.adoptedManifest.taskIds);
+            const publishedTaskIds = new Set(
+              published.acknowledgement.manifest.tasks.map(({ id }) => id),
+            );
+            return {
+              replacedManifest: published.acknowledgement.replacedManifest,
+              adoptedMilestones: state.milestones
+                .filter(({ id }) => adoptedMilestoneIds.has(id))
+                .map(({ id, status }) => ({ id, status })),
+              adoptedTasks: state.tasks
+                .filter(({ id }) => adoptedTaskIds.has(id))
+                .map(({ id, status, executable, dependsOn }) => ({
+                  id,
+                  status,
+                  executable,
+                  dependsOn,
+                })),
+              publishedTasks: state.tasks
+                .filter(({ id }) => publishedTaskIds.has(id))
+                .map(({ id, status, executable, dependsOn }) => ({
+                  id,
+                  status,
+                  executable,
+                  dependsOn,
+                })),
+              readyTaskIds: state.readyTaskIds,
+            };
+          } finally {
+            if (restarted !== null) await restarted.dispose();
+            await fixture.dispose();
+          }
+        }
+
+        const uninterrupted = await adoptAndPublish(false);
+        const restarted = await adoptAndPublish(true);
+
+        expect(restarted).toEqual(uninterrupted);
+        expect(uninterrupted).toEqual({
+          replacedManifest: {
+            revision: 1,
+            milestones: [{ key: "seeded_milestone", id: "M1" }],
+            tasks: [
+              { key: "seeded_task_1", id: "T1" },
+              { key: "seeded_task_2", id: "T2" },
+            ],
+          },
+          adoptedMilestones: [{ id: "M1", status: "open" }],
+          adoptedTasks: [
+            { id: "T1", status: "planned", executable: true, dependsOn: [] },
+            {
+              id: "T2",
+              status: "planned",
+              executable: true,
+              dependsOn: ["T1"],
+            },
+          ],
+          publishedTasks: [
+            { id: "T3", status: "planned", executable: false, dependsOn: [] },
+            {
+              id: "T4",
+              status: "planned",
+              executable: false,
+              dependsOn: ["T3"],
+            },
+          ],
+          readyTaskIds: ["T1"],
+        });
+      }, timeout);
+
       it("rejects follow-up replacement when implementation is actually active", async () => {
         const fixture = await buildGoal(factory, "planned", 4);
         try {

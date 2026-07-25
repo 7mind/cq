@@ -266,6 +266,7 @@ interface MutableGoal {
   generation: number | null;
   activeClaimId: string | null;
   currentDraft: MutableDraft | null;
+  finalizedDraft: PlanDraftIdentity | null;
   finalizedManifest: PlanPublishedManifest | null;
   milestoneIds: string[];
   waitingResearches: string[];
@@ -403,6 +404,19 @@ function payloadVerifier(input: unknown): string {
   return createHash("sha256").update(JSON.stringify(input), "utf8").digest("hex");
 }
 
+function sameDraftIdentity(
+  left: PlanDraftIdentity | null,
+  right: PlanDraftIdentity,
+): boolean {
+  return (
+    left !== null &&
+    left.goalId === right.goalId &&
+    left.claimId === right.claimId &&
+    left.generation === right.generation &&
+    left.revision === right.revision
+  );
+}
+
 function claimScope(goalId: string, claimRequestId: string): string {
   return `${goalId}\u0000${claimRequestId}`;
 }
@@ -500,6 +514,7 @@ export class ReferencePlanLifecycleAdapter
         generation: options.generation,
         activeClaimId: null,
         currentDraft: null,
+        finalizedDraft: null,
         finalizedManifest: null,
         milestoneIds: [],
         waitingResearches: [],
@@ -553,15 +568,17 @@ export class ReferencePlanLifecycleAdapter
         milestones: [{ key: "seeded_milestone", id: milestoneId }],
         tasks: taskIds.map((id, index) => ({ key: `seeded_task_${index + 1}`, id })),
       };
+      const identity = {
+        goalId,
+        claimId: priorClaimId,
+        generation: goal.generation ?? 1,
+        revision,
+      };
       goal.currentDraft = {
-        identity: {
-          goalId,
-          claimId: priorClaimId,
-          generation: goal.generation ?? 1,
-          revision,
-        },
+        identity,
         manifest,
       };
+      goal.finalizedDraft = clone(identity);
       goal.finalizedManifest = manifest;
       goal.legacyMetadataAbsent = options.legacy;
       for (let index = 0; index < options.openQuestionCount; index += 1) {
@@ -862,7 +879,10 @@ export class ReferencePlanLifecycleAdapter
       }
 
       const replacedManifest = goal.currentDraft?.manifest ?? null;
-      if (goal.currentDraft !== null && goal.finalizedManifest !== goal.currentDraft.manifest) {
+      if (
+        goal.currentDraft !== null &&
+        !sameDraftIdentity(goal.finalizedDraft, goal.currentDraft.identity)
+      ) {
         this.supersedeDraft(goal.currentDraft.manifest);
       }
       const revision = (goal.currentDraft?.identity.revision ?? 0) + 1;
@@ -1077,6 +1097,7 @@ export class ReferencePlanLifecycleAdapter
         input,
       );
       goal.phase = "planned";
+      goal.finalizedDraft = clone(goal.currentDraft.identity);
       goal.finalizedManifest = clone(goal.currentDraft.manifest);
       goal.milestoneIds = goal.currentDraft.manifest.milestones.map(({ id }) => id);
       for (const { id } of goal.currentDraft.manifest.tasks) {
@@ -1142,6 +1163,7 @@ export class ReferencePlanLifecycleAdapter
     }
     goal.milestoneIds = [];
     goal.currentDraft = null;
+    goal.finalizedDraft = null;
     goal.finalizedManifest = null;
   }
 
