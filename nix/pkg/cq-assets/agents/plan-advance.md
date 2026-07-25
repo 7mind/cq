@@ -362,6 +362,11 @@ as one side-effect-free preflight whenever rules 3, 4, or 5 process a review:
    review consumption: **one malformed entry means ZERO defects are filed**.
    Never file a valid prefix and then fail on a later entry.
 
+The normative `one-bad-batch-entry` boundary is a mixed batch with one valid
+canonical string followed by one malformed/non-canonical string: preflight the
+second entry before filing the first, hard-fail the whole batch, and perform
+ZERO defect-filing mutations.
+
 After the complete preflight succeeds, for EACH decoded entry:
 
 1. **File it as an `open` defect linked to the goal.** `create_item("defects", M,

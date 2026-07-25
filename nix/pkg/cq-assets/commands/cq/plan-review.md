@@ -138,7 +138,10 @@ Consumers perform the inverse operation for the ENTIRE batch before causing any
 side effect: parse every string, validate the structured object, reconstruct it
 in the same property order, and require compact `JSON.stringify` to reproduce
 the stored bytes exactly. One malformed or non-canonical entry invalidates the
-whole batch.
+whole batch. At a returned-versus-persisted reconciliation boundary, reconstruct
+the returned structured defects in that same property order before comparing
+the two canonical verdicts; JSON Schema does not constrain input key order, so a
+sidecar-valid reordered object must normalize rather than fail.
 
 ## Pi / non-Claude path — ALWAYS return json on stdout
 When this prompt runs under Pi or any non-Claude harness, there is **no MCP

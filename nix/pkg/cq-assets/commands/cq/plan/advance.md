@@ -414,17 +414,22 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
          failure. Do NOT identify the new review by summary, status, timestamps,
          or prose, and do not search for it: an older stale review may carry the
          same summary.
-      2. Validate the returned structured verdict in full. Then decode the
-         recovered review's ENTIRE persisted `fields.defects: string[]` batch.
-         Every entry must parse to an object matching the structured sidecar.
-         Reconstruct each object in exact T843 property order — `headline`,
-         `severity`, optional `rootCause`, optional `suggestedFix` — and require
-         compact `JSON.stringify` to reproduce the persisted string byte-for-byte.
+      2. Validate the returned structured verdict in full. Reconstruct EVERY
+         returned defect object in exact T843 property order — `headline`,
+         `severity`, optional `rootCause`, optional `suggestedFix` — so any
+         sidecar-valid input key order normalizes to the same structured value.
+         Then decode the recovered review's ENTIRE persisted
+         `fields.defects: string[]` batch. Every entry must parse to an object
+         matching the structured sidecar. Reconstruct each persisted object in
+         the same T843 property order and require compact `JSON.stringify` to
+         reproduce the persisted string byte-for-byte.
       3. Construct canonical returned and persisted verdict objects in exact
          property order `{ summary, verdict, new_questions, criticism, defects }`;
          the persisted object's `verdict` comes from the review status and its
-         defects are the decoded structured objects. Compact-`JSON.stringify`
-         both. The persisted verdict bytes MUST equal the returned verdict bytes.
+         defects are the decoded-and-normalized structured objects; the returned
+         object's defects are the normalized returned objects from step 2.
+         Compact-`JSON.stringify` both. The persisted verdict bytes MUST equal the
+         returned verdict bytes.
          This comparison covers status/verdict, summary, array order,
          `new_questions`, `criticism`, and every defect field; comparing only the
          summary is forbidden.
@@ -576,6 +581,8 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       - `invalid-defect-schema`: missing/extra/wrong-typed defect field fails.
       - `invalid-severity`: any value outside
         `low|medium|high|critical` fails.
+      - `reordered-returned-defect`: a sidecar-valid returned defect whose keys
+        arrive in a different order normalizes to T843 order and reconciles.
 
    2c. **Continue the loop.** Either way — fallback (2a) or reconciled (2b) —
       EXACTLY ONE `reviews` item now exists for this round (no double-write).
