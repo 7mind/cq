@@ -11,7 +11,9 @@
  * Acceptance:
  *  - The file contains no bare slash-free `pi:<word>` tokens.
  *  - parseConfig resolves the minimax alias to {harness:'pi', model:'minimax-m3', provider:'ollama-cloud'}.
- *  - parseConfig resolves codex and grok aliases to {harness:'pi', model:'grok-build', provider:'grok-build'}.
+ *  - parseConfig resolves the grok alias to {harness:'pi', model:'grok-build', provider:'grok-build'}.
+ *  - parseConfig resolves codex/terra/luna aliases to the openai-codex GPT-5.6
+ *    sol/terra/luna ladder (T864).
  *  - parseConfig does NOT throw (T274 regression guard).
  *  - tierModel(config, "frontier") returns the opus token (semantic guard).
  *  - resolveAgentModel for 'plan-reviewer' returns the opus token
@@ -28,6 +30,9 @@ import {
   parseConfig,
   tierModel,
   resolveAgentModel,
+  resolveReviewers,
+  resolvePlanners,
+  formatReviewerToken,
   type CqConfig,
 } from "../src/index.js";
 
@@ -125,14 +130,31 @@ describe("cq.toml.example — T234 provider-qualification checks", () => {
     });
   });
 
-  it("resolves codex alias to {harness:'pi', model:'grok-build', provider:'grok-build'}", () => {
+  it("resolves codex alias to {harness:'pi', model:'gpt-5.6-sol', provider:'openai-codex', effort:'xhigh'} (T864)", () => {
     const contents = readFileSync(EXAMPLE_PATH, "utf8");
     const config: CqConfig = parseConfig(contents);
     expect(config.aliases["codex"]).toEqual({
       harness: "pi",
-      model: "grok-build",
-      provider: "grok-build",
-      effort: null,
+      model: "gpt-5.6-sol",
+      provider: "openai-codex",
+      effort: "xhigh",
+    });
+  });
+
+  it("resolves terra/luna aliases to the GPT-5.6 standard/fast ladder (T864)", () => {
+    const contents = readFileSync(EXAMPLE_PATH, "utf8");
+    const config: CqConfig = parseConfig(contents);
+    expect(config.aliases["terra"]).toEqual({
+      harness: "pi",
+      model: "gpt-5.6-terra",
+      provider: "openai-codex",
+      effort: "high",
+    });
+    expect(config.aliases["luna"]).toEqual({
+      harness: "pi",
+      model: "gpt-5.6-luna",
+      provider: "openai-codex",
+      effort: "low",
     });
   });
 
@@ -145,5 +167,113 @@ describe("cq.toml.example — T234 provider-qualification checks", () => {
       provider: "grok-build",
       effort: null,
     });
+  });
+});
+
+/**
+ * T864: the documented `[harness.pi]` / `[harness.codex]` examples (COMMENTED
+ * OUT per T479 — cq.toml.example must carry no uncommented [harness.*] line)
+ * are themselves schema-valid TOML that yields the documented GPT-5.6 ladder
+ * once uncommented. Extracts the contiguous commented block starting at
+ * "# [harness.pi]" (through the following blank line, i.e. past
+ * "# [harness.codex.tiers]"'s three tier lines), strips the leading "# " on
+ * each line, and appends the result — now live TOML — to the example's
+ * existing (already-active) shared sections, so the aliases it references
+ * resolve through the SAME [aliases] table documented above.
+ */
+function uncommentedHarnessExampleOverride(contents: string): string {
+  const lines = contents.split("\n");
+  const startIdx = lines.findIndex((line) => line.trim() === "# [harness.pi]");
+  expect(startIdx).toBeGreaterThan(-1);
+  let endIdx = startIdx;
+  while (endIdx < lines.length && lines[endIdx]!.startsWith("#")) {
+    endIdx += 1;
+  }
+  // Only uncomment lines that are actual TOML content (a table header or a
+  // key = value pair) — the block also carries plain-English prose comments
+  // (e.g. the "EXAMPLE — activate the codex..." lead-in) that must stay
+  // comments, not be fed to the TOML parser as bare text.
+  return lines
+    .slice(startIdx, endIdx)
+    .map((line) => {
+      const stripped = line.replace(/^#\s?/, "");
+      const isTomlContent =
+        /^\[[\w.]+\]\s*(#.*)?$/.test(stripped) || /^[\w-]+\s*=\s*\S/.test(stripped);
+      return isTomlContent ? stripped : line;
+    })
+    .join("\n");
+}
+
+describe("cq.toml.example — T864: the codex CONFIGURATION SELECTOR is documented and schema-valid", () => {
+  it("has no uncommented [harness.*] line (T479 precondition still holds after T864)", () => {
+    const contents = readFileSync(EXAMPLE_PATH, "utf8");
+    const harnessLine = contents.split("\n").find((line) => /^\[harness\./.test(line));
+    expect(harnessLine).toBeUndefined();
+  });
+
+  it("uncommenting the documented [harness.pi]/[harness.codex] examples parses and resolves the GPT-5.6 ladder, with no active opus under codex", () => {
+    const contents = readFileSync(EXAMPLE_PATH, "utf8");
+    const override = uncommentedHarnessExampleOverride(contents);
+    // Sanity: the extracted, uncommented override actually declares both blocks.
+    expect(override).toContain("[harness.pi]");
+    expect(override).toContain("[harness.codex]");
+    expect(override).toContain("[harness.codex.tiers]");
+
+    const withHarness = `${contents}\n${override}\n`;
+
+    const pi = parseConfig(withHarness, "pi");
+    const codex = parseConfig(withHarness, "codex");
+
+    expect(codex.dispatchViolation).toBeNull();
+
+    const CODEX_TOKEN = "pi:openai-codex/gpt-5.6-sol:xhigh";
+    const TERRA_TOKEN = "pi:openai-codex/gpt-5.6-terra:high";
+    const LUNA_TOKEN = "pi:openai-codex/gpt-5.6-luna:low";
+
+    // The pi selector's panel mirrors CQ_TOML_TEMPLATE: grok + codex reviewers,
+    // codex-only planners.
+    expect(resolveReviewers(pi).map(formatReviewerToken)).toEqual([
+      "pi:grok-build/grok-build",
+      CODEX_TOKEN,
+    ]);
+    expect(resolvePlanners(pi).map(formatReviewerToken)).toEqual([CODEX_TOKEN]);
+    expect(formatReviewerToken(tierModel(pi, "frontier")!)).toBe(CODEX_TOKEN);
+    expect(formatReviewerToken(tierModel(pi, "standard")!)).toBe(TERRA_TOKEN);
+    expect(formatReviewerToken(tierModel(pi, "fast")!)).toBe(LUNA_TOKEN);
+
+    // The codex selector's panel/tiers resolve EXCLUSIVELY to the same
+    // OpenAI-Codex-backed GPT-5.6 ladder — no active opus, no active claude
+    // token of any kind.
+    expect(resolveReviewers(codex).map(formatReviewerToken)).toEqual([CODEX_TOKEN]);
+    expect(resolvePlanners(codex).map(formatReviewerToken)).toEqual([CODEX_TOKEN]);
+    expect(formatReviewerToken(tierModel(codex, "frontier")!)).toBe(CODEX_TOKEN);
+    expect(formatReviewerToken(tierModel(codex, "standard")!)).toBe(TERRA_TOKEN);
+    expect(formatReviewerToken(tierModel(codex, "fast")!)).toBe(LUNA_TOKEN);
+    for (const token of [
+      ...resolveReviewers(codex),
+      ...resolvePlanners(codex),
+      tierModel(codex, "frontier")!,
+      tierModel(codex, "standard")!,
+      tierModel(codex, "fast")!,
+    ]) {
+      expect(token.harness).not.toBe("claude");
+    }
+    // The shared opus alias stays defined — legal, INACTIVE, under codex.
+    expect(codex.aliases["opus"]).toBeDefined();
+
+    // The claude selector is untouched by the appended pi/codex override.
+    const claude = parseConfig(withHarness, "claude");
+    expect(claude).toEqual(parseConfig(contents, "claude"));
+  });
+
+  it("an incomplete [harness.codex] override (e.g. missing tiers) still fails closed under codex, exactly like T861's rule", () => {
+    const contents = readFileSync(EXAMPLE_PATH, "utf8");
+    const override = uncommentedHarnessExampleOverride(contents);
+    // Drop the [harness.codex.tiers] section (and its three tier lines) to
+    // simulate an incomplete override — the FAIL-CLOSED rule must reject it.
+    const partial = override.replace(/\[harness\.codex\.tiers\][\s\S]*/, "");
+    const withPartialHarness = `${contents}\n${partial}\n`;
+    const codex = parseConfig(withPartialHarness, "codex");
+    expect(codex.dispatchViolation).toMatch(/tiers/);
   });
 });

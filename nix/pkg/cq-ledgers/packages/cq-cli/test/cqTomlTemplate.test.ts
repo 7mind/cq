@@ -158,6 +158,47 @@ describe("CQ_TOML_TEMPLATE (T331/T440)", () => {
     );
   });
 
+  it("codex selector: [harness.codex] panels + [harness.codex.tiers] resolve exclusively to the openai-codex GPT-5.6 ladder, no active opus (T864)", () => {
+    const codex = parseConfig(CQ_TOML_TEMPLATE, "codex");
+    expect(codex.dispatchViolation).toBeNull();
+    expect(resolveReviewers(codex).map(formatReviewerToken)).toEqual([
+      "pi:openai-codex/gpt-5.6-sol:xhigh",
+    ]);
+    expect(resolvePlanners(codex).map(formatReviewerToken)).toEqual([
+      "pi:openai-codex/gpt-5.6-sol:xhigh",
+    ]);
+    // The SAME GPT-5.6 ladder as [harness.pi.tiers]: frontier -> sol, standard
+    // -> terra, fast -> luna.
+    expect(formatReviewerToken(tierModel(codex, "frontier")!)).toBe(
+      "pi:openai-codex/gpt-5.6-sol:xhigh",
+    );
+    expect(formatReviewerToken(tierModel(codex, "standard")!)).toBe(
+      "pi:openai-codex/gpt-5.6-terra:high",
+    );
+    expect(formatReviewerToken(tierModel(codex, "fast")!)).toBe(
+      "pi:openai-codex/gpt-5.6-luna:low",
+    );
+    expect(formatReviewerToken(resolveAgentModel(codex, "implement-reviewer"))).toBe(
+      "pi:openai-codex/gpt-5.6-sol:xhigh",
+    );
+    expect(formatReviewerToken(resolveAgentModel(codex, "implement-worker"))).toBe(
+      "pi:openai-codex/gpt-5.6-terra:high",
+    );
+    // No active alias resolves to a claude token — the shared opus/sonnet/haiku
+    // aliases stay legal INACTIVE definitions under the codex selector.
+    const activeCodexTokens = [
+      ...resolveReviewers(codex),
+      ...resolvePlanners(codex),
+      tierModel(codex, "frontier")!,
+      tierModel(codex, "standard")!,
+      tierModel(codex, "fast")!,
+    ];
+    for (const token of activeCodexTokens) {
+      expect(token.harness).not.toBe("claude");
+    }
+    expect(codex.aliases["opus"]).toBeDefined();
+  });
+
   it("implement-worker resolves sonnet (standard tier) via [tiers] tier->model lookup", () => {
     const config = parseConfig(CQ_TOML_TEMPLATE);
     const workerToken = resolveAgentModel(config, "implement-worker");

@@ -14,6 +14,11 @@
 #   [ledger]         — ledger storage backend (backend, branch, remote, backup,
 #                      projectId, serverUrl; default: backend="xdg",
 #                      backup="none")
+#   [harness.<name>] — per-ACTIVE-SELECTOR override of reviewers/planners/tiers
+#                      (<name> is "claude" | "pi" | "codex", selected at
+#                      runtime by CQ_HARNESS; default "claude"). See the
+#                      PER-HARNESS LAYERED OVERRIDES section further down —
+#                      including the codex-specific FAIL-CLOSED rule (T861).
 #
 # Panel vs per-role decoupling (T438/T440):
 #   reviewers/planners are the PANEL lists — used for multi-reviewer review
@@ -85,12 +90,20 @@ planners = ["opus"]
   # Inactive aliases (defined here for reference; add to reviewers/planners
   # above to activate — also add the matching [tiers] entry below to make a
   # token eligible for per-role dispatch):
-  codex      = "pi:grok-build/grok-build"
   grok       = "pi:grok-build/grok-build"
   grok-xhigh = "pi:grok-build/grok-build:xhigh"
   opus-high  = "claude:opus:high"
   minimax    = "pi:ollama-cloud/minimax-m3"
   fable      = "claude:fable"       # opt-in frontier alias — add a [tiers] entry to activate
+
+  # The openai-codex provider serves the GPT-5.6 family, a capability tier
+  # ladder: sol (flagship, most capable) > terra (balanced everyday) > luna
+  # (fast, cheap). These three back the [harness.pi]/[harness.codex] examples
+  # further down (both ship the SAME ladder — codex has no dispatch transport
+  # of its own, so it reuses these identical pi-executable tokens):
+  codex      = "pi:openai-codex/gpt-5.6-sol:xhigh"    # frontier — GPT-5.6 sol (flagship)
+  terra      = "pi:openai-codex/gpt-5.6-terra:high"   # standard — balanced everyday
+  luna       = "pi:openai-codex/gpt-5.6-luna:low"     # fast — high-volume lightweight
 
 # [tiers] — DISPATCH MAP: each tier (fast|standard|frontier) names the ONE model
 # an agent of that tier runs.  Per-role resolution ([agent_tiers] -> tier ->
@@ -221,10 +234,15 @@ planners = ["opus"]
 # PER-HARNESS LAYERED OVERRIDES (Q239 / Q240)
 # ---------------------------------------------------------------------------
 #
-# cq supports two harnesses: "claude" (Claude Code) and "pi" (pi shell).
-# A `[harness.<name>]` block (where <name> is "claude" or "pi") overrides
-# the shared top-level config for that harness only.  Absent blocks fall
-# through to the shared values above — backward compatible with flat cq.toml.
+# cq recognizes three ACTIVE CONFIGURATION SELECTORS: "claude" (Claude Code),
+# "pi" (pi shell), and "codex" (a Codex-hosted invocation, T861). A
+# `[harness.<name>]` block (where <name> is "claude", "pi", or "codex")
+# overrides the shared top-level config for that selector only.  Absent
+# blocks fall through to the shared values above — backward compatible with
+# flat cq.toml — EXCEPT for "codex": it is a CONFIGURATION SELECTOR with no
+# executable dispatch transport of its own (the EXECUTABLE {claude|pi} token
+# domain stays two-valued), so it is FAIL-CLOSED rather than falling
+# through — see the codex-specific note below the pi example.
 #
 # LAYERING SEMANTICS:
 #   - When a per-harness block is present, each section it carries WHOLLY
@@ -249,23 +267,58 @@ planners = ["opus"]
 #   [harness.<name>.tiers]    — WHOLLY REPLACES the shared [tiers] map
 #
 # Q238 HARNESS SELECTION RULE (priority order):
-#   1. Explicit CQ_HARNESS env var wins (e.g. CQ_HARNESS=pi).
-#      nix/hm/pi.nix is intended to set CQ_HARNESS=pi (wired in a later task).
-#      Any non-empty unknown value is a CqConfigError (fail fast, no silent
-#      fallback).
+#   1. Explicit CQ_HARNESS env var wins (e.g. CQ_HARNESS=pi, CQ_HARNESS=codex).
+#      nix/hm/pi.nix sets CQ_HARNESS=pi when it launches pi; the packaged
+#      Codex wrapper sets CQ_HARNESS=codex (T863). Any non-empty unknown
+#      value is a CqConfigError (fail fast, no silent fallback).
 #   2. CLAUDE_CODE_SESSION_ID non-empty => "claude".
 #   3. Default => "claude" (preserves today's bare `cq` invocation behaviour).
 #
-# EXAMPLE — activate grok + minimax for the pi harness (COMMENTED OUT; see
-# note about T479: no uncommented [harness.*] lines may appear in this file):
+# CODEX FAIL-CLOSED RULE (T861) — deliberately NARROWER than the layered
+# fallback above. Under an ACTIVE `codex` selector, [harness.codex] must exist
+# AND must itself carry reviewers, planners, AND [harness.codex.tiers] — there
+# is NO fall-through to the shared top-level (or [harness.pi]/[harness.claude])
+# values, even though [harness.pi]/[harness.claude] fall through when absent.
+# Every alias the ACTIVE codex panels/tiers reference must resolve to a
+# NON-CLAUDE executable token (`codex` has no dispatch transport of its own —
+# there is no way to invoke Claude Code from a Codex host); an active alias
+# that resolves to a `claude:*` token is a CONFIG ERROR. Shared Claude aliases
+# (like `opus` above) remain perfectly legal INACTIVE definitions — only the
+# MERGED, ACTIVE codex panels are checked. This is a DISPATCH-PANEL rule: a
+# non-compliant document still PARSES; the error is raised by every
+# dispatch-panel resolver (resolveReviewers / resolvePlanners / tierModel /
+# resolveAgentModel) before any dispatch can occur, so a SHARED-only reader of
+# [ledger] / [project] / [webui] keeps working under CQ_HARNESS=codex.
+#
+# EXAMPLE — activate the pi harness (COMMENTED OUT; see note about T479: no
+# uncommented [harness.*] lines may appear in this file). This mirrors the
+# [harness.pi] block CQ_TOML_TEMPLATE ships by default — the GPT-5.6 family
+# mapped by capability:
 #
 # [harness.pi]
-# reviewers = ["grok", "minimax"]
-# planners  = ["grok"]
+# reviewers = ["grok", "codex"]
+# planners  = ["codex"]
 #
 # [harness.pi.tiers]
-# frontier = "grok"      # tier -> model; value resolves to pi:grok-build/grok-build
-# fast     = "minimax"   # tier -> model; value resolves to pi:ollama-cloud/minimax-m3
+# frontier = "codex"   # sol (flagship) at xhigh  -> pi:openai-codex/gpt-5.6-sol:xhigh
+# standard = "terra"   # balanced everyday         -> pi:openai-codex/gpt-5.6-terra:high
+# fast     = "luna"    # fast, high-volume         -> pi:openai-codex/gpt-5.6-luna:low
+#
+# EXAMPLE — activate the codex CONFIGURATION SELECTOR (COMMENTED OUT; same
+# T479 note applies). This mirrors the [harness.codex] block CQ_TOML_TEMPLATE
+# ships by default, reusing the SAME pi-executable GPT-5.6 ladder as
+# [harness.pi.tiers] above — no active alias resolves to a claude token, and
+# no active `opus` appears (the shared [aliases] table above may still define
+# `opus` — it just stays INACTIVE under this selector):
+#
+# [harness.codex]
+# reviewers = ["codex"]
+# planners  = ["codex"]
+#
+# [harness.codex.tiers]
+# frontier = "codex"
+# standard = "terra"
+# fast     = "luna"
 
 # ---------------------------------------------------------------------------
 # [project] — OPTIONAL PROJECT-LEVEL METADATA (Q270, T570)

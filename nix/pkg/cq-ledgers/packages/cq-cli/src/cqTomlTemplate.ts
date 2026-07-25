@@ -9,16 +9,25 @@
  *
  * Layout rationale:
  *  - Panels (reviewers/planners) are HARNESS-SPECIFIC — a panel lists models of
- *    one harness's kind — so they live under `[harness.claude]` / `[harness.pi]`,
- *    not at top level. The active harness is chosen at runtime (CQ_HARNESS, else
- *    claude), so the default `cq init` config resolves the claude panel.
+ *    one harness's kind — so they live under `[harness.claude]` / `[harness.pi]` /
+ *    `[harness.codex]`, not at top level. The active CONFIGURATION SELECTOR is
+ *    chosen at runtime (CQ_HARNESS, else claude), so the default `cq init`
+ *    config resolves the claude panel. `codex` is a selector only — it has no
+ *    executable dispatch transport of its own — so `[harness.codex]` is
+ *    FAIL-CLOSED (T861): it must define its own reviewers, planners, AND
+ *    `[harness.codex.tiers]` (no fall-through to the shared/claude/pi values),
+ *    and every active alias it references must resolve to a non-claude token.
  *  - `[aliases]` are inert definitions; nothing dispatches until a panel or a
  *    `[tiers]` entry references an alias. So the trio plus a few extra aliases
  *    ship live.
  *  - `[tiers]` is harness-specific too: there is no shared top-level `[tiers]`;
  *    each harness carries its own `[harness.<name>.tiers]` map (claude models
- *    under claude, pi models under pi). A model is dispatchable only if its
- *    harness's tiers block names it for some tier.
+ *    under claude, pi models under pi, and the same pi-backed OpenAI-Codex
+ *    GPT-5.6 ladder under codex). A model is dispatchable only if its
+ *    harness's tiers block names it for some tier. `[harness.pi.tiers]` and
+ *    `[harness.codex.tiers]` intentionally ship the SAME frontier/standard/fast
+ *    ladder (sol/terra/luna) — codex has no dispatch transport of its own, so
+ *    it reuses the identical pi-executable GPT-5.6 tokens.
  *  - `[ledger]` sets `backend = "xdg"` (T501): the out-of-tree bun:sqlite
  *    primary is the default for a FRESH `cq init`. This ONLY affects fresh
  *    inits — an existing repo's cq.toml (untouched by `cq init` without
@@ -94,6 +103,22 @@ export const CQ_TOML_TEMPLATE: string = `\
   reviewers = ["grok", "codex"]
   planners  = ["codex"]
 [harness.pi.tiers]                 # GPT-5.6 family mapped by capability
+  frontier = "codex"               # sol (flagship) at xhigh
+  standard = "terra"               # balanced everyday
+  fast     = "luna"                # fast, high-volume
+
+# The codex harness: active when CQ_HARNESS=codex (set by the packaged Codex
+# wrapper, T863). "codex" is a CONFIGURATION SELECTOR with no executable
+# dispatch transport of its own, so this block is FAIL-CLOSED (T861): it must
+# define reviewers, planners, AND [harness.codex.tiers] itself (no fall-through
+# to the shared/claude/pi values above), and every active alias it references
+# must resolve to a non-claude token — a dispatch-panel read (resolveReviewers /
+# resolvePlanners / tierModel / resolveAgentModel) throws otherwise. It reuses
+# the SAME pi-executable GPT-5.6 ladder as [harness.pi.tiers] above.
+[harness.codex]
+  reviewers = ["codex"]
+  planners  = ["codex"]
+[harness.codex.tiers]              # same GPT-5.6 ladder as [harness.pi.tiers]
   frontier = "codex"               # sol (flagship) at xhigh
   standard = "terra"               # balanced everyday
   fast     = "luna"                # fast, high-volume
