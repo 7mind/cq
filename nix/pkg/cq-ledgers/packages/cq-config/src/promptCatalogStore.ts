@@ -46,7 +46,7 @@ export const DISPATCHED_ROLE_SIDECARS = {
   "investigate-prober": investigateProberSidecar,
   "research-explorer": researchExplorerSidecar,
   "research-experimenter": researchExperimenterSidecar,
-} satisfies Readonly<Record<string, RoleSchemaSidecar>>;
+} as const satisfies Readonly<Record<string, RoleSchemaSidecar>>;
 
 /** The dispatched-subagent role ids (non-null agentTierKey) from the shared roster. */
 export const DISPATCHED_ROLE_IDS: readonly string[] = AGENT_ROLE_TIERS.filter(
