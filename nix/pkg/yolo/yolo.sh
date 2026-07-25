@@ -325,6 +325,37 @@ case "$SUBCMD" in
     ;;
 esac
 
+# Synthesized system ssh_config for the sandbox. NixOS's /etc/ssh/ssh_config
+# `Include`s root-owned files under /nix/store (libvirt / systemd ssh-proxy
+# drop-ins). Under the bwrap uid map the host's root (uid 0) appears as `nobody`
+# (65534) — neither root nor the sandbox user — so OpenSSH's ownership check on
+# Include'd files fatals ("Bad owner or permissions on …") before it can connect
+# to ANY host. We can't chown the read-only store, and OpenSSH has no flag to
+# waive the Include ownership check, so we bind a minimal, store-path-free
+# ssh_config (owned by the sandbox user, thus accepted) over the system one.
+# It intentionally drops the qemu/*, .host, machine/*, unix/*, vsock/*
+# ProxyCommand patterns those Includes provide: that machinery (proxy binaries +
+# libvirt socket) isn't reachable inside the sandbox anyway, and the sandbox's
+# ssh use is plain host/IP to the remote workers. The remaining settings are the
+# OpenSSH defaults (kept explicit to mirror NixOS's non-proxy intent). Gated on
+# the exact failure condition — a system config that Includes a /nix/store path —
+# so a non-NixOS host's legitimate ssh_config is left untouched. Lives in tmpfs,
+# removed on exit.
+SSH_CONFIG_ARGS=()
+SSH_CONFIG_TMPFILE=""
+if [[ -r /etc/ssh/ssh_config ]] \
+   && grep -qE '^[[:space:]]*Include[[:space:]]+/nix/store/' /etc/ssh/ssh_config; then
+  SSH_CONFIG_TMPFILE="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/yolo-ssh-config.XXXXXX")"
+  cat > "$SSH_CONFIG_TMPFILE" <<'EOF'
+# Synthesized by yolo for the sandbox. Replaces NixOS's /etc/ssh/ssh_config,
+# whose /nix/store Includes are rejected by OpenSSH under the sandbox uid map.
+Host *
+    GlobalKnownHostsFile /etc/ssh/ssh_known_hosts
+    ForwardX11 no
+EOF
+  SSH_CONFIG_ARGS+=(--ro-bind "$SSH_CONFIG_TMPFILE,/etc/ssh/ssh_config")
+fi
+
 # Extra packages exposed only inside the sandbox (smind.hm.dev.llm.yolo.packages
 # -> YOLO_SANDBOX_BIN, a buildEnv bin dir in the already-bound /nix/store).
 # Prepend it to PATH so sandboxed tools resolve these without the packages being
@@ -387,6 +418,7 @@ BASE_ARGS=(
   "${EXTRA_PATH_ARGS[@]}"
   "${SECRET_FILE_ARGS[@]}"
   "${SANDBOX_HOOK_ARGS[@]}"
+  "${SSH_CONFIG_ARGS[@]}"
   --ro "${HOME}/.config/git"
   --ro "${HOME}/.config/direnv"
   --ro "${HOME}/.local/share/direnv"
@@ -689,12 +721,24 @@ unset ${!YOLO_@}
 # exec's the command. Otherwise we exec the sandbox directly (no extra entrypoint
 # layer, no cleanup). The host-side composed files live in tmpfs and are removed
 # on exit.
-if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" ]]; then
-  trap 'rm -f "$SECRET_TMPFILE" "$SANDBOX_HOOKS_TMPFILE"' EXIT
-  "$_yolo_sandbox" \
-    "${BASE_ARGS[@]}" \
-    "${EXTRA_ARGS[@]}" \
-    -- "$_yolo_entrypoint" "${EXEC_CMD[@]}"
+# Any host-side tmpfile (secrets, hooks, or the synthesized ssh_config) must
+# outlive the sandbox and be removed on exit, so we run in the foreground behind
+# an EXIT-trap rather than exec'ing (exec would replace this process and skip the
+# cleanup). The entrypoint layer is added only when secrets/hooks are in play —
+# the ssh_config bind is a plain --ro-bind that needs no in-sandbox loading.
+if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMPFILE" ]]; then
+  trap 'rm -f "$SECRET_TMPFILE" "$SANDBOX_HOOKS_TMPFILE" "$SSH_CONFIG_TMPFILE"' EXIT
+  if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" ]]; then
+    "$_yolo_sandbox" \
+      "${BASE_ARGS[@]}" \
+      "${EXTRA_ARGS[@]}" \
+      -- "$_yolo_entrypoint" "${EXEC_CMD[@]}"
+  else
+    "$_yolo_sandbox" \
+      "${BASE_ARGS[@]}" \
+      "${EXTRA_ARGS[@]}" \
+      -- "${EXEC_CMD[@]}"
+  fi
   exit $?
 fi
 
