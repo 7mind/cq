@@ -12,16 +12,16 @@
 }:
 buildNpmPackage (finalAttrs: {
   pname = "pi-coding-agent";
-  version = "0.81.1";
+  version = "0.82.0";
 
   src = fetchFromGitHub {
     owner = "earendil-works";
     repo = "pi";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-xo3uoR7HceOCL3wqoMcacOe8WXP1o7ReAXne5t6Hgao=";
+    hash = "sha256-oKm0nyGmRY6rlQGMODB8DteMTVUUMroy/YXPphoxrvY=";
   };
 
-  npmDepsHash = "sha256-lzKQZbnITzgV9koucsMno6f61ubBLYUcwQEXtak1r1s=";
+  npmDepsHash = "sha256-3oqrN/uguYfkUHlfmKGxnLIvUo484IMGlydz6p9o/Dw=";
 
   npmWorkspace = "packages/coding-agent";
 
@@ -39,7 +39,7 @@ buildNpmPackage (finalAttrs: {
     let
       modelData = fetchzip {
         url = "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-${finalAttrs.version}.tgz";
-        hash = "sha256-V0Y25hxMHxPS7D+u/mAYUsmTvX3Q5zLP09biC7dLHHI=";
+        hash = "sha256-u0+6Jg5NmHzG5P6er9NXedXglwBDDG7s8a+BuYVfaHM=";
       };
     in
     ''
