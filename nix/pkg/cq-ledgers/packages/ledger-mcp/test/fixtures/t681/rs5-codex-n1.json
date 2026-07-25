@@ -1,0 +1,107 @@
+{
+  "fixtureVersion": 1,
+  "researchId": "RS5",
+  "frozenAtCommit": "104d1c2f8fb962a852152bafdf26c7f0a0d27859",
+  "hypothesisId": "H108",
+  "harness": "codex",
+  "sampleSize": 1,
+  "aggregateClaim": false,
+  "crossHarnessClaim": false,
+  "source": {
+    "baseCommit": "104d1c2f8fb962a852152bafdf26c7f0a0d27859",
+    "corpusCutoff": "2026-07-24T17:52:41.427Z",
+    "corpusManifestSha256": "2b3c136fe963ea1fb72e07f1ab0f01d5b2244f36e051502f10f352497ddcfb46",
+    "roleId": "implement-reviewer",
+    "resultSemanticValue": {
+      "ok": true
+    }
+  },
+  "exactPair": {
+    "childPayload": "### Session summary\n- **Did:** reviewed task T659 round 1 (diff 6fbb9aba9da77ad5a0dc0410400cf228e617f50c..HEAD)\n- **Achieved:** verdict approve; 0 criticisms / 0 questions\n- **Discovered:** base replay produced exactly two YAML parse failures and omitted `cq:begin` plus `cq:implement:start`; focused tests passed 41/41, `bun run check` passed 2482 tests with 63 environment-dependent skips, and two generator runs retained the same file hash\n- **Issues:** none\n\n```json\n{\n  \"taskId\": \"T659\",\n  \"verdict\": \"approve\",\n  \"criticism\": [],\n  \"questions\": [],\n  \"defects\": [],\n  \"rationale\": \"The committed change quotes only the two invalid YAML scalars. The generic discovery regression fails against the supplied base for the expected two parser errors and passes at HEAD with exact metadata. Matching-quote normalization, description `#` preservation, mismatched-quote preservation, generator idempotence, worktree cleanliness, and the full check all passed.\",\n  \"summary\": \"Approved: Pi-compatible frontmatter discovery, catalogue normalization, exact metadata, deterministic generation, and the full suite all satisfy T659.\"\n}\n```",
+    "validateOutputArguments": "{\"roleId\":\"implement-reviewer\",\"output\":{\"taskId\":\"T659\",\"verdict\":\"approve\",\"criticism\":[],\"questions\":[],\"defects\":[],\"rationale\":\"The committed change quotes only the two invalid YAML scalars. The generic discovery regression fails against the supplied base for the expected two parser errors and passes at HEAD with exact metadata. Matching-quote normalization, description `#` preservation, mismatched-quote preservation, generator idempotence, worktree cleanliness, and the full check all passed.\",\"summary\":\"Approved: Pi-compatible frontmatter discovery, catalogue normalization, exact metadata, deterministic generation, and the full suite all satisfy T659.\"}}",
+    "validationResult": "Wall time: 0.0255 seconds\nOutput:\n[{\"type\":\"text\",\"text\":\"{\\\"ok\\\":true}\"}]",
+    "childBytes": 1131,
+    "childO200kTokens": 273,
+    "validationArgumentBytes": 668,
+    "validationArgumentO200kTokens": 132,
+    "validationResultBytes": 74,
+    "validationResultO200kTokens": 27
+  },
+  "strategies": {
+    "legacyValidateOutput": {
+      "serializedParentVisible": "### Session summary\n- **Did:** reviewed task T659 round 1 (diff 6fbb9aba9da77ad5a0dc0410400cf228e617f50c..HEAD)\n- **Achieved:** verdict approve; 0 criticisms / 0 questions\n- **Discovered:** base replay produced exactly two YAML parse failures and omitted `cq:begin` plus `cq:implement:start`; focused tests passed 41/41, `bun run check` passed 2482 tests with 63 environment-dependent skips, and two generator runs retained the same file hash\n- **Issues:** none\n\n```json\n{\n  \"taskId\": \"T659\",\n  \"verdict\": \"approve\",\n  \"criticism\": [],\n  \"questions\": [],\n  \"defects\": [],\n  \"rationale\": \"The committed change quotes only the two invalid YAML scalars. The generic discovery regression fails against the supplied base for the expected two parser errors and passes at HEAD with exact metadata. Matching-quote normalization, description `#` preservation, mismatched-quote preservation, generator idempotence, worktree cleanliness, and the full check all passed.\",\n  \"summary\": \"Approved: Pi-compatible frontmatter discovery, catalogue normalization, exact metadata, deterministic generation, and the full suite all satisfy T659.\"\n}\n```{\"roleId\":\"implement-reviewer\",\"output\":{\"taskId\":\"T659\",\"verdict\":\"approve\",\"criticism\":[],\"questions\":[],\"defects\":[],\"rationale\":\"The committed change quotes only the two invalid YAML scalars. The generic discovery regression fails against the supplied base for the expected two parser errors and passes at HEAD with exact metadata. Matching-quote normalization, description `#` preservation, mismatched-quote preservation, generator idempotence, worktree cleanliness, and the full check all passed.\",\"summary\":\"Approved: Pi-compatible frontmatter discovery, catalogue normalization, exact metadata, deterministic generation, and the full suite all satisfy T659.\"}}Wall time: 0.0255 seconds\nOutput:\n[{\"type\":\"text\",\"text\":\"{\\\"ok\\\":true}\"}]",
+      "parentVisibleBytes": 1873,
+      "parentVisibleO200kTokens": 432,
+      "childBytes": 1131,
+      "modelVisibleFullOutputCopies": 2,
+      "fetchCount": 0,
+      "validationCallCount": 1,
+      "parentRoundTrips": 2
+    },
+    "refFirstSingleFetch": {
+      "acknowledgement": "{\"outputId\":\"191f03f9bd5158b72a68008eed686e3f\"}",
+      "fetchArguments": "{\"outputId\":\"191f03f9bd5158b72a68008eed686e3f\"}",
+      "terminalEnvelope": "{\"attestationId\":\"191f03f9bd5158b72a68008eed686e3f\",\"terminalKind\":\"consumed\",\"roleId\":\"implement-reviewer\",\"output\":{\"taskId\":\"T659\",\"verdict\":\"approve\",\"criticism\":[],\"questions\":[],\"defects\":[],\"rationale\":\"The committed change quotes only the two invalid YAML scalars. The generic discovery regression fails against the supplied base for the expected two parser errors and passes at HEAD with exact metadata. Matching-quote normalization, description `#` preservation, mismatched-quote preservation, generator idempotence, worktree cleanliness, and the full check all passed.\",\"summary\":\"Approved: Pi-compatible frontmatter discovery, catalogue normalization, exact metadata, deterministic generation, and the full suite all satisfy T659.\"}}",
+      "serializedParentVisible": "{\"outputId\":\"191f03f9bd5158b72a68008eed686e3f\"}{\"outputId\":\"191f03f9bd5158b72a68008eed686e3f\"}{\"attestationId\":\"191f03f9bd5158b72a68008eed686e3f\",\"terminalKind\":\"consumed\",\"roleId\":\"implement-reviewer\",\"output\":{\"taskId\":\"T659\",\"verdict\":\"approve\",\"criticism\":[],\"questions\":[],\"defects\":[],\"rationale\":\"The committed change quotes only the two invalid YAML scalars. The generic discovery regression fails against the supplied base for the expected two parser errors and passes at HEAD with exact metadata. Matching-quote normalization, description `#` preservation, mismatched-quote preservation, generator idempotence, worktree cleanliness, and the full check all passed.\",\"summary\":\"Approved: Pi-compatible frontmatter discovery, catalogue normalization, exact metadata, deterministic generation, and the full suite all satisfy T659.\"}}",
+      "parentVisibleBytes": 839,
+      "parentVisibleO200kTokens": 207,
+      "childBytes": 1131,
+      "modelVisibleFullOutputCopies": 1,
+      "fetchCount": 1,
+      "validationCallCount": 0,
+      "parentRoundTrips": 2
+    },
+    "dispatcherFinalization": {
+      "terminalEnvelope": "{\"attestationId\":\"191f03f9bd5158b72a68008eed686e3f\",\"terminalKind\":\"consumed\",\"roleId\":\"implement-reviewer\",\"output\":{\"taskId\":\"T659\",\"verdict\":\"approve\",\"criticism\":[],\"questions\":[],\"defects\":[],\"rationale\":\"The committed change quotes only the two invalid YAML scalars. The generic discovery regression fails against the supplied base for the expected two parser errors and passes at HEAD with exact metadata. Matching-quote normalization, description `#` preservation, mismatched-quote preservation, generator idempotence, worktree cleanliness, and the full check all passed.\",\"summary\":\"Approved: Pi-compatible frontmatter discovery, catalogue normalization, exact metadata, deterministic generation, and the full suite all satisfy T659.\"}}",
+      "serializedParentVisible": "{\"attestationId\":\"191f03f9bd5158b72a68008eed686e3f\",\"terminalKind\":\"consumed\",\"roleId\":\"implement-reviewer\",\"output\":{\"taskId\":\"T659\",\"verdict\":\"approve\",\"criticism\":[],\"questions\":[],\"defects\":[],\"rationale\":\"The committed change quotes only the two invalid YAML scalars. The generic discovery regression fails against the supplied base for the expected two parser errors and passes at HEAD with exact metadata. Matching-quote normalization, description `#` preservation, mismatched-quote preservation, generator idempotence, worktree cleanliness, and the full check all passed.\",\"summary\":\"Approved: Pi-compatible frontmatter discovery, catalogue normalization, exact metadata, deterministic generation, and the full suite all satisfy T659.\"}}",
+      "parentVisibleBytes": 745,
+      "parentVisibleO200kTokens": 161,
+      "childBytes": 1131,
+      "modelVisibleFullOutputCopies": 1,
+      "fetchCount": 0,
+      "validationCallCount": 0,
+      "parentRoundTrips": 1
+    }
+  },
+  "latencyMs": {
+    "legacyValidationToolCalls": {
+      "sampleSize": 159,
+      "p50": 69,
+      "p95": 726
+    },
+    "exactChildToValidation": {
+      "sampleSize": 1,
+      "observed": 4919
+    },
+    "refFirstSingleFetch": "Unavailable: the experiment did not measure store or typed-fetch latency.",
+    "dispatcherFinalization": "Unavailable: the experiment did not measure dispatcher finalization latency."
+  },
+  "providerUsage": {
+    "nearestEvent": {
+      "inputTokens": 30774,
+      "cachedInputTokens": 29440,
+      "outputTokens": 173
+    },
+    "attribution": "Unavailable: the transcript does not attribute the nearest provider usage totals to this exact pair."
+  },
+  "corpusCoverage": {
+    "claude": {
+      "validationCalls": 1,
+      "exactPairs": 0,
+      "successes": 0,
+      "failures": 1
+    },
+    "codex": {
+      "validationCalls": 159,
+      "exactPairs": 1,
+      "successes": 153,
+      "failures": 6
+    },
+    "pi": {
+      "validationCalls": 0,
+      "exactPairs": 0,
+      "successes": 0,
+      "failures": 0
+    }
+  }
+}

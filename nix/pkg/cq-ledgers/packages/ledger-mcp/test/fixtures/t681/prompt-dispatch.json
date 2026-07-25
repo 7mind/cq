@@ -1,0 +1,531 @@
+{
+  "fixtureVersion": 1,
+  "frozenAtCommit": "1f0af11883b94ea95b1a7ead4f2013231aa5944f",
+  "scope": {
+    "sampleSizePerRoleSurface": 1,
+    "roles": [
+      "plan-advance",
+      "plan-reviewer",
+      "implement-worker",
+      "implement-reviewer",
+      "implement-conflict-resolver",
+      "investigate-explorer",
+      "investigate-prober",
+      "research-explorer",
+      "research-experimenter"
+    ],
+    "surfaces": ["claude", "codex", "pi"],
+    "aggregateClaim": false,
+    "crossHarnessClaim": false
+  },
+  "measurementDefinitions": {
+    "legacyParentVisibleBytes": "UTF-8 bytes in JSON.stringify(fetch_prompt result), including prompt text, metadata, and both schemas.",
+    "compactParentVisibleBytes": "UTF-8 bytes in JSON.stringify({ roleId, input }) for one schema-valid typed input.",
+    "childPromptBytes": "UTF-8 bytes in the exact rendered role artifact delivered to the child.",
+    "typedInputBytes": "UTF-8 bytes in JSON.stringify(input).",
+    "childBytes": "childPromptBytes + typedInputBytes; no transport framing or provider wrapper is inferred.",
+    "fetchCount": "Legacy parent fetch_prompt calls versus compact native/dispatcher prompt resolution calls visible to the parent."
+  },
+  "unavailable": {
+    "parentVisibleTokens": "Unavailable: no tokenizer was run for the 27 surface-specific serialization fixtures.",
+    "childTokens": "Unavailable: no tokenizer was run for the 27 rendered child prompt fixtures.",
+    "latency": "Unavailable: deterministic serialization performed no provider or dispatch timing.",
+    "providerUsage": "Unavailable: deterministic serialization has no provider usage attribution."
+  },
+  "piInlineCommandRecursion": {
+    "measuredAsDispatchedRole": false,
+    "roleKind": "orchestrator-command",
+    "mechanism": "fetch_prompt(commandRoleId)",
+    "example": "fetch_prompt(\"plan\")",
+    "reason": "Pi inline command recursion is a command-loading path, not parent materialization of a dispatched-subagent prompt."
+  },
+  "typedInputs": {
+    "plan-advance": {
+      "goalId": "G95"
+    },
+    "plan-reviewer": {
+      "goalId": "G95"
+    },
+    "implement-worker": {
+      "taskId": "T681",
+      "acceptance": "Freeze immutable legacy protocol measurements.",
+      "worktreePath": "/tmp/wt-T681",
+      "branch": "implement/T681",
+      "baseCommit": "1f0af11883b94ea95b1a7ead4f2013231aa5944f"
+    },
+    "implement-reviewer": {
+      "taskId": "T681",
+      "acceptance": "Freeze immutable legacy protocol measurements.",
+      "worktreePath": "/tmp/wt-T681",
+      "branch": "implement/T681",
+      "baseCommit": "1f0af11883b94ea95b1a7ead4f2013231aa5944f",
+      "workerResult": {
+        "resultCommit": "1f0af11883b94ea95b1a7ead4f2013231aa5944f",
+        "checkSummary": "Focused fixture checks passed.",
+        "filesTouched": ["packages/ledger-mcp/test/fixtures/t681"]
+      },
+      "round": 1
+    },
+    "implement-conflict-resolver": {
+      "taskId": "T681",
+      "worktreePath": "/tmp/wt-T681",
+      "branch": "implement/T681",
+      "baseCommit": "1f0af11883b94ea95b1a7ead4f2013231aa5944f",
+      "conflictingFiles": ["packages/ledger-mcp/test/fixtures/t681/prompt-dispatch.json"]
+    },
+    "investigate-explorer": {
+      "hypothesisId": "H104",
+      "statement": "Resolve the role prompt at the dispatch boundary.",
+      "branchContext": "Measure one typed dispatch without parent prompt materialization."
+    },
+    "investigate-prober": {
+      "hypothesisId": "H104",
+      "statement": "Resolve the role prompt at the dispatch boundary.",
+      "probeRequest": {
+        "what": "Measure the serialized request.",
+        "why": "Establish the parent-visible byte count."
+      },
+      "branchContext": "Measure one typed dispatch without parent prompt materialization."
+    },
+    "research-explorer": {
+      "hypothesisId": "H104",
+      "statement": "Resolve catalog prompts inside dispatch_subagent",
+      "branchContext": "RS4 root; test dispatcher-side catalog resolution."
+    },
+    "research-experimenter": {
+      "hypothesisId": "H104",
+      "statement": "Resolve catalog prompts inside dispatch_subagent",
+      "probeRequest": {
+        "what": "Measure the serialized request.",
+        "why": "Establish the parent-visible byte count."
+      },
+      "branchContext": "RS4 root; test dispatcher-side catalog resolution."
+    }
+  },
+  "records": [
+    {
+      "surface": "claude",
+      "roleId": "plan-advance",
+      "fixturePath": "fetch-prompt/claude/plan-advance.json",
+      "sha256": "601a8bb3cba8216bec77cfde5833d8d06026f2b82c13b9e794e4f941639c99ac",
+      "legacyParentVisibleBytes": 39536,
+      "compactParentVisibleBytes": 50,
+      "childPromptBytes": 35076,
+      "typedInputBytes": 16,
+      "childBytes": 35092,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "claude",
+      "roleId": "plan-reviewer",
+      "fixturePath": "fetch-prompt/claude/plan-reviewer.json",
+      "sha256": "27e0710d274275d7c52f01f26e6697ac92931627cd8b4cc35a79dbaa0c688bba",
+      "legacyParentVisibleBytes": 16854,
+      "compactParentVisibleBytes": 51,
+      "childPromptBytes": 13659,
+      "typedInputBytes": 16,
+      "childBytes": 13675,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "claude",
+      "roleId": "implement-worker",
+      "fixturePath": "fetch-prompt/claude/implement-worker.json",
+      "sha256": "68c575d3a41e669ee22a37bf80ac47bc231e362f881a24315fa40c6aba70686b",
+      "legacyParentVisibleBytes": 11339,
+      "compactParentVisibleBytes": 229,
+      "childPromptBytes": 7469,
+      "typedInputBytes": 191,
+      "childBytes": 7660,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "claude",
+      "roleId": "implement-reviewer",
+      "fixturePath": "fetch-prompt/claude/implement-reviewer.json",
+      "sha256": "2b3f33f2bfb3c9f8ed4a7f3f7c38e2bdbf761dffe5f0acf4b44234eb85152a7b",
+      "legacyParentVisibleBytes": 11142,
+      "compactParentVisibleBytes": 422,
+      "childPromptBytes": 7153,
+      "typedInputBytes": 382,
+      "childBytes": 7535,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "claude",
+      "roleId": "implement-conflict-resolver",
+      "fixturePath": "fetch-prompt/claude/implement-conflict-resolver.json",
+      "sha256": "a68c987a7ca33ea452207608a8b14fe191fa5a4800f2d458edbb0f8414e4bebc",
+      "legacyParentVisibleBytes": 8079,
+      "compactParentVisibleBytes": 261,
+      "childPromptBytes": 4596,
+      "typedInputBytes": 212,
+      "childBytes": 4808,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "claude",
+      "roleId": "investigate-explorer",
+      "fixturePath": "fetch-prompt/claude/investigate-explorer.json",
+      "sha256": "54209b3b7d560fec1e80a59a132cc589604be984a43f5e85de7f6133b64910d9",
+      "legacyParentVisibleBytes": 12517,
+      "compactParentVisibleBytes": 213,
+      "childPromptBytes": 8385,
+      "typedInputBytes": 171,
+      "childBytes": 8556,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "claude",
+      "roleId": "investigate-prober",
+      "fixturePath": "fetch-prompt/claude/investigate-prober.json",
+      "sha256": "fc5b901979dd2ab2a6e2dbbe831dd7c7fb66a5d62ea2ff981797ea92c20bdf6e",
+      "legacyParentVisibleBytes": 14339,
+      "compactParentVisibleBytes": 318,
+      "childPromptBytes": 10379,
+      "typedInputBytes": 278,
+      "childBytes": 10657,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "claude",
+      "roleId": "research-explorer",
+      "fixturePath": "fetch-prompt/claude/research-explorer.json",
+      "sha256": "6494fa88f93248b7434a88b496ec80cf7cb6e430c01a16ce26312d70edbf29a1",
+      "legacyParentVisibleBytes": 14488,
+      "compactParentVisibleBytes": 194,
+      "childPromptBytes": 10307,
+      "typedInputBytes": 155,
+      "childBytes": 10462,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "claude",
+      "roleId": "research-experimenter",
+      "fixturePath": "fetch-prompt/claude/research-experimenter.json",
+      "sha256": "54da12e325ab5538a69f03efc2ecbeaf67b19c0a3d3ea93b8139a0bddfff01c9",
+      "legacyParentVisibleBytes": 15927,
+      "compactParentVisibleBytes": 305,
+      "childPromptBytes": 12440,
+      "typedInputBytes": 262,
+      "childBytes": 12702,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "codex",
+      "roleId": "plan-advance",
+      "fixturePath": "fetch-prompt/codex/plan-advance.json",
+      "sha256": "44a380cc0b8e98a29f36e942d8f591ba6769df1a41efaa1314c832323192d2f6",
+      "legacyParentVisibleBytes": 39483,
+      "compactParentVisibleBytes": 50,
+      "childPromptBytes": 35025,
+      "typedInputBytes": 16,
+      "childBytes": 35041,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "codex",
+      "roleId": "plan-reviewer",
+      "fixturePath": "fetch-prompt/codex/plan-reviewer.json",
+      "sha256": "aaf48099a1ea58930f0fda487cae20ae2bdeacc1f042fb7a2ac926faafb42d73",
+      "legacyParentVisibleBytes": 16800,
+      "compactParentVisibleBytes": 51,
+      "childPromptBytes": 13607,
+      "typedInputBytes": 16,
+      "childBytes": 13623,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "codex",
+      "roleId": "implement-worker",
+      "fixturePath": "fetch-prompt/codex/implement-worker.json",
+      "sha256": "aa6c257d747c25466bf81dfef9ee02cc2d67905f65b050407702561e89d5fe15",
+      "legacyParentVisibleBytes": 11298,
+      "compactParentVisibleBytes": 229,
+      "childPromptBytes": 7431,
+      "typedInputBytes": 191,
+      "childBytes": 7622,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "codex",
+      "roleId": "implement-reviewer",
+      "fixturePath": "fetch-prompt/codex/implement-reviewer.json",
+      "sha256": "5d58436353e5c77ede6b8ac62b83257884a7fe85d29c05fb2d5e15adbceae5cf",
+      "legacyParentVisibleBytes": 11082,
+      "compactParentVisibleBytes": 422,
+      "childPromptBytes": 7095,
+      "typedInputBytes": 382,
+      "childBytes": 7477,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "codex",
+      "roleId": "implement-conflict-resolver",
+      "fixturePath": "fetch-prompt/codex/implement-conflict-resolver.json",
+      "sha256": "e6b49fe56dd98b96726815e7d4250409b783109eaa71b94d06a6d177c089dc33",
+      "legacyParentVisibleBytes": 8048,
+      "compactParentVisibleBytes": 261,
+      "childPromptBytes": 4567,
+      "typedInputBytes": 212,
+      "childBytes": 4779,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "codex",
+      "roleId": "investigate-explorer",
+      "fixturePath": "fetch-prompt/codex/investigate-explorer.json",
+      "sha256": "e40770ad25b1046f97b1dfffe3b30eba866180a4e6137a411481a4112a6d274e",
+      "legacyParentVisibleBytes": 12449,
+      "compactParentVisibleBytes": 213,
+      "childPromptBytes": 8319,
+      "typedInputBytes": 171,
+      "childBytes": 8490,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "codex",
+      "roleId": "investigate-prober",
+      "fixturePath": "fetch-prompt/codex/investigate-prober.json",
+      "sha256": "ad644b102180c2b383149d7a6a71d79ed16ff4ca494809862f7f9238afe2062b",
+      "legacyParentVisibleBytes": 14296,
+      "compactParentVisibleBytes": 318,
+      "childPromptBytes": 10339,
+      "typedInputBytes": 278,
+      "childBytes": 10617,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "codex",
+      "roleId": "research-explorer",
+      "fixturePath": "fetch-prompt/codex/research-explorer.json",
+      "sha256": "5fdac3ac0dc4a7ff34ebdc7b73c230a5a8406720be690db516c696cf09c785da",
+      "legacyParentVisibleBytes": 14423,
+      "compactParentVisibleBytes": 194,
+      "childPromptBytes": 10244,
+      "typedInputBytes": 155,
+      "childBytes": 10399,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "codex",
+      "roleId": "research-experimenter",
+      "fixturePath": "fetch-prompt/codex/research-experimenter.json",
+      "sha256": "6cba47785dff1df062330e71f0dc8e444455e8c729bf5a6320d630db45f5ebc5",
+      "legacyParentVisibleBytes": 15889,
+      "compactParentVisibleBytes": 305,
+      "childPromptBytes": 12405,
+      "typedInputBytes": 262,
+      "childBytes": 12667,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "pi",
+      "roleId": "plan-advance",
+      "fixturePath": "fetch-prompt/pi/plan-advance.json",
+      "sha256": "73fd4bfe82cc730d8497b60ae87e3cfdc2d659d78f91734bc863dddbcffc50c5",
+      "legacyParentVisibleBytes": 39514,
+      "compactParentVisibleBytes": 50,
+      "childPromptBytes": 35058,
+      "typedInputBytes": 16,
+      "childBytes": 35074,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "pi",
+      "roleId": "plan-reviewer",
+      "fixturePath": "fetch-prompt/pi/plan-reviewer.json",
+      "sha256": "4475cfd4efc522c1961a2b4741e8fd372cde47224e67e3d49b4611bd33d26a89",
+      "legacyParentVisibleBytes": 16832,
+      "compactParentVisibleBytes": 51,
+      "childPromptBytes": 13641,
+      "typedInputBytes": 16,
+      "childBytes": 13657,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "pi",
+      "roleId": "implement-worker",
+      "fixturePath": "fetch-prompt/pi/implement-worker.json",
+      "sha256": "039a30875b7b78dc8ffa91112c7dd9b62b800618897b54c87bc29126308665e9",
+      "legacyParentVisibleBytes": 11314,
+      "compactParentVisibleBytes": 229,
+      "childPromptBytes": 7449,
+      "typedInputBytes": 191,
+      "childBytes": 7640,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "pi",
+      "roleId": "implement-reviewer",
+      "fixturePath": "fetch-prompt/pi/implement-reviewer.json",
+      "sha256": "e513122c06f5176617e7d0dec20fe3b70b4266200691afd69310bfb4f28be90a",
+      "legacyParentVisibleBytes": 11113,
+      "compactParentVisibleBytes": 422,
+      "childPromptBytes": 7128,
+      "typedInputBytes": 382,
+      "childBytes": 7510,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "pi",
+      "roleId": "implement-conflict-resolver",
+      "fixturePath": "fetch-prompt/pi/implement-conflict-resolver.json",
+      "sha256": "8cf60812440379154c200d53f2198152d7a85be7fb6abae9adecd51819e3020d",
+      "legacyParentVisibleBytes": 8075,
+      "compactParentVisibleBytes": 261,
+      "childPromptBytes": 4596,
+      "typedInputBytes": 212,
+      "childBytes": 4808,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "pi",
+      "roleId": "investigate-explorer",
+      "fixturePath": "fetch-prompt/pi/investigate-explorer.json",
+      "sha256": "d8b17392dcd0acfaedcd034f3453bd9f794d0e96cb5dcbab58bb62471dcc163f",
+      "legacyParentVisibleBytes": 12488,
+      "compactParentVisibleBytes": 213,
+      "childPromptBytes": 8360,
+      "typedInputBytes": 171,
+      "childBytes": 8531,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "pi",
+      "roleId": "investigate-prober",
+      "fixturePath": "fetch-prompt/pi/investigate-prober.json",
+      "sha256": "15366affd78b9cf9c0c67fe82861be15e1510226ee0ca71539bc2ce30f4df765",
+      "legacyParentVisibleBytes": 14314,
+      "compactParentVisibleBytes": 318,
+      "childPromptBytes": 10359,
+      "typedInputBytes": 278,
+      "childBytes": 10637,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "pi",
+      "roleId": "research-explorer",
+      "fixturePath": "fetch-prompt/pi/research-explorer.json",
+      "sha256": "9803ce9b54bcfeb29b25afcabc238cd46049370e8a784072fc67c751bbd2816b",
+      "legacyParentVisibleBytes": 14459,
+      "compactParentVisibleBytes": 194,
+      "childPromptBytes": 10282,
+      "typedInputBytes": 155,
+      "childBytes": 10437,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    },
+    {
+      "surface": "pi",
+      "roleId": "research-experimenter",
+      "fixturePath": "fetch-prompt/pi/research-experimenter.json",
+      "sha256": "6aac3beae2d889c2f39ef27d062c672efb277bcbcc579bc2288f3fa20d3fdc85",
+      "legacyParentVisibleBytes": 15907,
+      "compactParentVisibleBytes": 305,
+      "childPromptBytes": 12425,
+      "typedInputBytes": 262,
+      "childBytes": 12687,
+      "legacyFetchCount": 1,
+      "compactFetchCount": 0
+    }
+  ],
+  "rs4": {
+    "researchId": "RS4",
+    "sampleSize": 1,
+    "frozenAtCommit": "96823788f5b47440b5f74d4ba5ff7ccfe95cccb8",
+    "allRoleMeasurements": [
+      {
+        "roleId": "plan-advance",
+        "bytes": 32939,
+        "words": 4551
+      },
+      {
+        "roleId": "plan-reviewer",
+        "bytes": 11831,
+        "words": 1691
+      },
+      {
+        "roleId": "implement-worker",
+        "bytes": 6902,
+        "words": 1022
+      },
+      {
+        "roleId": "implement-reviewer",
+        "bytes": 6847,
+        "words": 993
+      },
+      {
+        "roleId": "implement-conflict-resolver",
+        "bytes": 4276,
+        "words": 628
+      },
+      {
+        "roleId": "investigate-explorer",
+        "bytes": 8170,
+        "words": 1169
+      },
+      {
+        "roleId": "investigate-prober",
+        "bytes": 10164,
+        "words": 1491
+      },
+      {
+        "roleId": "research-explorer",
+        "bytes": 10092,
+        "words": 1453
+      },
+      {
+        "roleId": "research-experimenter",
+        "bytes": 12466,
+        "words": 1789
+      }
+    ],
+    "allRoleBytes": 103687,
+    "allRoleWords": 14787,
+    "representative": {
+      "roleId": "research-explorer",
+      "fixturePath": "rs4-research-explorer.md",
+      "fullPromptBytes": 10092,
+      "fullPromptWords": 1453,
+      "reference": "{\"roleId\":\"research-explorer\",\"version\":1}",
+      "referenceBytes": 42,
+      "referenceWords": 1,
+      "input": "{\"hypothesisId\":\"H104\",\"statement\":\"Resolve catalog prompts inside dispatch_subagent\",\"branchContext\":\"RS4 root; test dispatcher-side catalog resolution.\"}",
+      "inputBytes": 155,
+      "inputWords": 10,
+      "compactBytes": 197,
+      "compactWords": 11,
+      "byteReductionPercent": 98.04795877923107,
+      "wordReductionPercent": 99.2429456297316,
+      "tokenizerTokens": "Unavailable: RS4 measured UTF-8 bytes and whitespace-delimited words only.",
+      "latency": "Unavailable: RS4 performed deterministic local serialization only.",
+      "providerUsage": "Unavailable: RS4 made no attributable provider measurement."
+    }
+  }
+}
