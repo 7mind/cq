@@ -3,6 +3,7 @@
  */
 
 export * from "./types.js";
+export * from "./planLifecycle.js";
 export {
   MILESTONES_LEDGER,
   MILESTONES_ACTIVE_GROUP_ID,
