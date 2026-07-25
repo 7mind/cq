@@ -36,6 +36,15 @@ const ROSTER_COMMAND_IDS = AGENT_ROLE_TIERS.filter((r) => r.agentTierKey === nul
 );
 
 describe("typed prompt-catalog store — roster cross-check (T341)", () => {
+  test("the exported role entries reject reassignment at compile time", () => {
+    const compileOnly = (): void => {
+      const original = DISPATCHED_ROLE_SIDECARS["plan-advance"];
+      // @ts-expect-error DISPATCHED_ROLE_SIDECARS is an immutable catalog.
+      DISPATCHED_ROLE_SIDECARS["plan-advance"] = original;
+    };
+    expect(typeof compileOnly).toBe("function");
+  });
+
   test("the store covers EXACTLY the dispatched-subagent roster subset, in order", () => {
     expect([...DISPATCHED_ROLE_IDS]).toEqual(ROSTER_DISPATCHED_IDS);
     expect(Object.keys(DISPATCHED_ROLE_SIDECARS)).toEqual(ROSTER_DISPATCHED_IDS);
