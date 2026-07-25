@@ -41,6 +41,12 @@ export const MILESTONE_MUTATION_ACK_DESCRIPTION =
 export const LEDGER_MUTATION_ACK_DESCRIPTION =
   "Returns fixed acknowledgement { ledger: { id } }; the schema and items are not returned.";
 
+export const GET_REVIEWERS_RESPONSE_DESCRIPTION =
+  "{ configured, reviewers: [{ harness, model, provider, alias, effort }] }";
+
+export const GET_PLANNERS_RESPONSE_DESCRIPTION =
+  "{ configured, planners: [{ harness, model, provider, alias, effort }] }";
+
 export type CompactItemFieldName =
   (typeof COMPACT_ITEM_FIELD_NAMES)[number];
 

@@ -5,6 +5,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   COMPACT_ITEM_FIELD_NAMES,
+  GET_PLANNERS_RESPONSE_DESCRIPTION,
+  GET_REVIEWERS_RESPONSE_DESCRIPTION,
   InMemoryLedgerStore,
   LEDGER_RESPONSE_CONTRACTS,
   LEDGER_TOOL_NAMES,
@@ -65,12 +67,18 @@ describe("public MCP response-contract documentation", () => {
   it("publishes the exhaustive live tool-category matrix and compact field allowlist", async () => {
     const readme = await packageReadme();
     const matrix = section(readme, "ledger-response-contract");
-    const rows = [...matrix.matchAll(/^\| `([^`]+)` \| `([^`]+)` \|/gm)].map(
-      ([, tool, kind]) => [tool, kind],
+    const rows = [...matrix.matchAll(/^\| `([^`]+)` \| `([^`]+)` \| (.+) \|$/gm)].map(
+      ([, tool, kind, response]) => ({ tool, kind, response }),
     );
 
-    expect(rows).toEqual(
+    expect(rows.map(({ tool, kind }) => [tool, kind])).toEqual(
       LEDGER_TOOL_NAMES.map((tool) => [tool, LEDGER_RESPONSE_CONTRACTS[tool].kind]),
+    );
+    expect(rows.find((row) => row.tool === "get_reviewers")?.response).toBe(
+      `\`${GET_REVIEWERS_RESPONSE_DESCRIPTION}\`.`,
+    );
+    expect(rows.find((row) => row.tool === "get_planners")?.response).toBe(
+      `\`${GET_PLANNERS_RESPONSE_DESCRIPTION}\`.`,
     );
 
     const compactFields = [...section(readme, "compact-item-fields").matchAll(/`([^`]+)`/g)]
@@ -138,6 +146,12 @@ describe("public MCP response-contract documentation", () => {
           expect(tool?.description).toContain("acknowledgement");
         }
       }
+      expect(toolByName.get("get_reviewers")?.description).toContain(
+        GET_REVIEWERS_RESPONSE_DESCRIPTION,
+      );
+      expect(toolByName.get("get_planners")?.description).toContain(
+        GET_PLANNERS_RESPONSE_DESCRIPTION,
+      );
 
       for (const example of documentedExamples(await packageReadme())) {
         if (!Object.hasOwn(LEDGER_RESPONSE_CONTRACTS, example.tool)) {

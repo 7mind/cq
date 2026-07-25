@@ -22,6 +22,8 @@ import { paginate } from "../projection.js";
 import { derivePredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
 import {
+  GET_PLANNERS_RESPONSE_DESCRIPTION,
+  GET_REVIEWERS_RESPONSE_DESCRIPTION,
   ITEM_MUTATION_ACK_DESCRIPTION,
   ITEM_PROJECTION_DESCRIPTION,
   LEDGER_MUTATION_ACK_DESCRIPTION,
@@ -692,7 +694,7 @@ ${QUERY_LANGUAGE_HELP}`,
     {
       description:
         "Resolve the reviewer set from the repo's cq.toml. Returns " +
-        "{ configured, reviewers: [{ harness, model, alias }] }. " +
+        `${GET_REVIEWERS_RESPONSE_DESCRIPTION}. ` +
         "configured=false (no cq.toml or empty list) => use the single native " +
         "Claude reviewer. Only available when the server has a cq.toml-capable " +
         "config root; otherwise returns a not-implemented error.",
@@ -709,7 +711,7 @@ ${QUERY_LANGUAGE_HELP}`,
     {
       description:
         "Resolve the planner set from the repo's cq.toml. Returns " +
-        "{ configured, planners: [{ harness, model, alias }] }. " +
+        `${GET_PLANNERS_RESPONSE_DESCRIPTION}. ` +
         "configured=false (no cq.toml or empty list) => use the single native " +
         "Claude planner. Only available when the server has a cq.toml-capable " +
         "config root; otherwise returns a not-implemented error.",

@@ -187,8 +187,8 @@ measured savings without another batching schema.
 | `reopen_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `unarchive_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `read_log` | `requested-full-content` | `{ path, content, truncated? }`. |
-| `get_reviewers` | `purpose-built-small` | `{ configured, reviewers: [{ harness, model, alias }] }`. |
-| `get_planners` | `purpose-built-small` | `{ configured, planners: [{ harness, model, alias }] }`. |
+| `get_reviewers` | `purpose-built-small` | `{ configured, reviewers: [{ harness, model, provider, alias, effort }] }`. |
+| `get_planners` | `purpose-built-small` | `{ configured, planners: [{ harness, model, provider, alias, effort }] }`. |
 | `get_config` | `requested-full-content` | `{ configured, aliases, reviewers, planners, tiers, agentTiers, agentEfforts }`. |
 | `get_agent_models` | `purpose-built-small` | `{ configured, agents: [{ id, status, modelClass, modelMappings }] }`. |
 | `fetch_prompt` | `requested-full-content` | Full typed prompt entry, including prompt text and schemas when available. |
