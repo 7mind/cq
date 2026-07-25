@@ -30,7 +30,11 @@ import { openPgPool, ensureSchema, PostgresLedgerStore } from "@cq/ledger";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { matchProjectRoute, hubTopic } from "../src/hubServe.js";
+import {
+  matchProjectRoute,
+  hubTopic,
+  PROJECT_DISPLAY_NAME_HEADER,
+} from "../src/hubServe.js";
 
 describe("matchProjectRoute", () => {
   it("parses /p/<key>/mcp and /p/<key>/ws", () => {
@@ -465,3 +469,199 @@ describe.skipIf(!PG_URL)("cq serve — bearer-token auth over live Postgres (T58
     }
   }, 30_000);
 });
+
+describe.skipIf(!PG_URL)(
+  "cq serve — request-bound project registration (T725, Behavioral-Active Group)",
+  () => {
+    let outdir: string;
+    let base: string;
+    let proc: ReturnType<typeof bunSpawn>;
+    let control: ReturnType<typeof openPgPool>;
+    const TOKEN = "t725-registration-token";
+
+    beforeAll(async () => {
+      outdir = await fs.mkdtemp(path.join(os.tmpdir(), "cq-serve-t725-"));
+      control = openPgPool(PG_URL!);
+      await ensureSchema(control);
+
+      const p = bunSpawn({
+        cmd: [
+          process.execPath,
+          "run",
+          hubMain,
+          "--pg-url",
+          PG_URL!,
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "0",
+          "--token",
+          TOKEN,
+        ],
+        cwd: os.tmpdir(),
+        env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc = p;
+      const reader = p.stdout.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      const deadline = Date.now() + 20_000;
+      while (!buf.includes("\n")) {
+        if (Date.now() > deadline) throw new Error("hubServe did not emit a URL within 20s");
+        const { done, value } = await reader.read();
+        if (done) throw new Error("stdout closed without a URL line");
+        buf += decoder.decode(value, { stream: true });
+      }
+      reader.releaseLock();
+      const urlLine = buf.slice(0, buf.indexOf("\n")).trim();
+      const match = urlLine.match(/^(http:\/\/127\.0\.0\.1:\d+)\/$/);
+      if (match === null) throw new Error(`unexpected URL line: ${urlLine}`);
+      base = match[1]!;
+    }, 30_000);
+
+    afterAll(async () => {
+      proc.kill();
+      await proc.exited;
+      await control.close();
+      await fs.rm(outdir, { recursive: true, force: true });
+    });
+
+    async function connectClient(
+      projectKey: string,
+      clientName: string,
+      displayName?: string,
+    ): Promise<Client> {
+      const headers: Record<string, string> = {
+        authorization: `Bearer ${TOKEN}`,
+      };
+      if (displayName !== undefined) headers[PROJECT_DISPLAY_NAME_HEADER] = displayName;
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`${base}/p/${encodeURIComponent(projectKey)}/mcp`),
+        { requestInit: { headers } },
+      );
+      const client = new Client({ name: clientName, version: "0.0.1" }, { capabilities: {} });
+      await client.connect(transport as unknown as Transport);
+      return client;
+    }
+
+    it("registers once under concurrent initialize, refreshes later session metadata without replacing the runtime, and falls back to projectKey", async () => {
+      const tag = `t725-${randomUUID().slice(0, 8)}`;
+      const projectKey = `${tag}-named`;
+      const fallbackKey = `${tag}-fallback`;
+      const unauthenticatedKey = `${tag}-unauthenticated`;
+      const initialName = `Initial ${tag}`;
+      const changedName = `Changed ${tag}`;
+
+      const unauthenticated = await fetch(
+        `${base}/p/${encodeURIComponent(unauthenticatedKey)}/mcp`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            [PROJECT_DISPLAY_NAME_HEADER]: "must-not-register",
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              clientInfo: { name: "unauthenticated", version: "0.0.1" },
+            },
+          }),
+        },
+      );
+      expect(unauthenticated.status).toBe(401);
+      expect(await unauthenticated.text()).toBe("unauthorized");
+      const unauthenticatedRows = await control<Array<{ count: string }>>`
+        SELECT count(*)::text AS count FROM projects
+        WHERE project_key = ${unauthenticatedKey}
+      `;
+      expect(unauthenticatedRows[0]!.count).toBe("0");
+
+      const [first, second] = await Promise.all([
+        connectClient(projectKey, "t725-first", initialName),
+        connectClient(projectKey, "t725-second", initialName),
+      ]);
+      try {
+        const registeredRows = await control<
+          Array<{ count: string; display_name: string }>
+        >`
+          SELECT count(*)::text AS count, min(display_name) AS display_name
+          FROM projects
+          WHERE project_key = ${projectKey}
+        `;
+        expect(registeredRows[0]).toEqual({ count: "1", display_name: initialName });
+        expect(first.getServerVersion()?.title).toBe(initialName);
+        expect(second.getServerVersion()?.title).toBe(initialName);
+
+        const renamed = await connectClient(projectKey, "t725-renamed", changedName);
+        try {
+          expect(renamed.getServerVersion()?.title).toBe(changedName);
+          expect(renamed.getInstructions()).toStartWith(`Project: ${changedName}`);
+
+          const refreshedRows = await control<Array<{ display_name: string }>>`
+            SELECT display_name FROM projects WHERE project_key = ${projectKey}
+          `;
+          expect(refreshedRows).toEqual([{ display_name: changedName }]);
+
+          // The pre-rename session remains valid and observes the refreshed
+          // registry through the same cached runtime/handler session map.
+          const projects = decode<{
+            projects: Array<{ key: string; displayName: string }>;
+          }>(await first.callTool({ name: "list_projects", arguments: {} }));
+          expect(projects.projects.find((project) => project.key === projectKey)?.displayName).toBe(
+            changedName,
+          );
+
+          const rejectedRename = await fetch(
+            `${base}/p/${encodeURIComponent(projectKey)}/mcp`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                [PROJECT_DISPLAY_NAME_HEADER]: "unauthenticated rename",
+              },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 2,
+                method: "initialize",
+                params: {
+                  protocolVersion: "2025-06-18",
+                  capabilities: {},
+                  clientInfo: { name: "unauthenticated", version: "0.0.1" },
+                },
+              }),
+            },
+          );
+          expect(rejectedRename.status).toBe(401);
+          expect(await rejectedRename.text()).toBe("unauthorized");
+          const unchangedRows = await control<Array<{ display_name: string }>>`
+            SELECT display_name FROM projects WHERE project_key = ${projectKey}
+          `;
+          expect(unchangedRows).toEqual([{ display_name: changedName }]);
+        } finally {
+          await renamed.close();
+        }
+
+        const fallback = await connectClient(fallbackKey, "t725-fallback");
+        try {
+          expect(fallback.getServerVersion()?.title).toBe(fallbackKey);
+          expect(fallback.getInstructions()).toStartWith(`Project: ${fallbackKey}`);
+          const fallbackRows = await control<Array<{ display_name: string }>>`
+            SELECT display_name FROM projects WHERE project_key = ${fallbackKey}
+          `;
+          expect(fallbackRows).toEqual([{ display_name: fallbackKey }]);
+        } finally {
+          await fallback.close();
+        }
+      } finally {
+        await first.close();
+        await second.close();
+      }
+    }, 30_000);
+  },
+);

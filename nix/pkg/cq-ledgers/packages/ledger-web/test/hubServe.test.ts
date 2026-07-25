@@ -31,10 +31,45 @@ import {
   HubDsnResolutionError,
   HUB_DEFAULT_HOST,
   HUB_DEFAULT_PORT,
+  PROJECT_DISPLAY_NAME_HEADER,
+  PROJECT_DISPLAY_NAME_MAX_BYTES,
+  projectDisplayNameFromRequest,
   isLoopbackHost,
   assertTokenIfNonLoopback,
   HubTokenRequiredError,
 } from "../src/hubServe.js";
+
+describe("projectDisplayNameFromRequest", () => {
+  it("uses trimmed authenticated request metadata, falling back to the project key", () => {
+    const named = new Request("http://localhost/mcp", {
+      headers: { [PROJECT_DISPLAY_NAME_HEADER]: "  Human name  " },
+    });
+    expect(projectDisplayNameFromRequest(named, "project-key")).toBe("Human name");
+
+    for (const value of [undefined, "", "   "]) {
+      const req =
+        value === undefined
+          ? new Request("http://localhost/mcp")
+          : new Request("http://localhost/mcp", {
+              headers: { [PROJECT_DISPLAY_NAME_HEADER]: value },
+            });
+      expect(
+        projectDisplayNameFromRequest(req, "project-key"),
+      ).toBe("project-key");
+    }
+  });
+
+  it("rejects display-name metadata beyond the persisted boundary", () => {
+    const req = new Request("http://localhost/mcp", {
+      headers: {
+        [PROJECT_DISPLAY_NAME_HEADER]: "x".repeat(PROJECT_DISPLAY_NAME_MAX_BYTES + 1),
+      },
+    });
+    expect(() => projectDisplayNameFromRequest(req, "project-key")).toThrow(
+      new RegExp(`${String(PROJECT_DISPLAY_NAME_MAX_BYTES)} bytes`),
+    );
+  });
+});
 
 describe("parseHubArgs", () => {
   it("defaults host/port/token/pgUrlArg when no flags are given", () => {

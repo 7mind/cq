@@ -323,11 +323,7 @@ export class PostgresLedgerStore implements LedgerStore {
     // not just first registration — so a later cq.toml rename propagates to
     // display_name on reconnect. Runs AFTER the read-only Pass 1 + abort gate
     // (above), but BEFORE any bootstrap WRITE (FK: ledgers -> projects).
-    await pool`
-      INSERT INTO projects (project_key, display_name)
-      VALUES (${pk}, ${this.displayName})
-      ON CONFLICT (project_key) DO UPDATE SET display_name = ${this.displayName}, updated_at = now()
-    `;
+    await this.upsertProject(this.displayName);
 
     if (divergent.length > 0) {
       // Default policy — TENANT-SCOPED backup + reinit (see
@@ -355,6 +351,30 @@ export class PostgresLedgerStore implements LedgerStore {
       this.rebuildLedgerIndexActive(name);
       this.refreshLedgerIndexArchived(name);
     }
+  }
+
+  /**
+   * Refresh this initialized tenant's registry display name without
+   * reconstructing the store or its materialized ledger cache. `cq serve`
+   * calls this at each later authenticated MCP initialize boundary so a cached
+   * ProjectRuntime can create the new session with current metadata.
+   */
+  async registerProject(displayName: string): Promise<void> {
+    this.assertInit();
+    await this.upsertProject(displayName);
+  }
+
+  private async upsertProject(displayName: string): Promise<void> {
+    if (displayName.trim() === "") {
+      throw new LedgerError("project display name must not be blank");
+    }
+    await this.pool()`
+      INSERT INTO projects (project_key, display_name)
+      VALUES (${this.projectKey}, ${displayName})
+      ON CONFLICT (project_key) DO UPDATE
+      SET display_name = EXCLUDED.display_name, updated_at = now()
+      WHERE projects.display_name IS DISTINCT FROM EXCLUDED.display_name
+    `;
   }
 
   /**
