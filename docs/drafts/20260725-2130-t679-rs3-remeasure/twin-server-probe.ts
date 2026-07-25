@@ -14,7 +14,13 @@
  * a pinned clock and pinned ids, so the two runs differ only by server code.
  *
  * Usage:
- *   bun run twin-server-probe.ts --before <rs3 workspace> --after <cutover workspace> [--out <file>]
+ *   bun run twin-server-probe.ts --before <rs3 workspace> --after <cutover workspace> [--out|--json <file>]
+ *
+ * This script ALWAYS writes its artifact. Without an output flag it writes the
+ * COMMITTED `out/twin-server-probe.json`; `--out <file>` and its synonym
+ * `--json <file>` (the name `schema-overhead.ts` uses) redirect it. Any other
+ * `--flag` is rejected before the servers boot, so a mistyped output flag can
+ * never be ignored into overwriting the committed artifact.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -314,6 +320,19 @@ function arg(name: string, fallback?: string): string {
   return value;
 }
 
+/** `--out` and `--json` both name the artifact path; the rest is fatal. */
+const OUTPUT_FLAGS = ["out", "json"] as const;
+const KNOWN_FLAGS: readonly string[] = ["before", "after", ...OUTPUT_FLAGS];
+const unknownFlags = process.argv
+  .slice(2)
+  .filter((token) => token.startsWith("--") && !KNOWN_FLAGS.includes(token.slice(2)));
+if (unknownFlags.length > 0) {
+  console.error(
+    `unknown flag(s): ${unknownFlags.join(", ")}. Known: ${KNOWN_FLAGS.map((f) => `--${f}`).join(", ")}`,
+  );
+  process.exit(2);
+}
+
 const ops = operations();
 const before = await runWorkspace(arg("before"), ops);
 const after = await runWorkspace(arg("after"), ops);
@@ -361,7 +380,12 @@ const report = {
   },
 };
 
-const out = resolve(arg("out", join(import.meta.dir, "out/twin-server-probe.json")));
+const outputFlag = OUTPUT_FLAGS.find((flag) => process.argv.includes(`--${flag}`));
+const out = resolve(
+  outputFlag === undefined
+    ? join(import.meta.dir, "out/twin-server-probe.json")
+    : arg(outputFlag),
+);
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
 console.log(`wrote ${out}`);

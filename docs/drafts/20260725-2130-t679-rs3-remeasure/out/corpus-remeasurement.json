@@ -1,6 +1,6 @@
 {
   "probe": "T679 RS3-corpus re-measurement of implemented wire shapes",
-  "generatedAt": "2026-07-25T21:25:33.944Z",
+  "generatedAt": "2026-07-25T21:54:35.349Z",
   "tokenizer": "gpt-tokenizer@3.4.0 / o200k_base",
   "corpus": {
     "root": "/home/pavel/.local/state/cq/projects/9faab3c136afe411b16a43206b14f834382ed440/logs/raw",
@@ -11,7 +11,7 @@
     "jsonlLines": 26688,
     "jsonlParseFailures": 0
   },
-  "workspaceUnderMeasurement": "/home/pavel/work/safe/flakes/cq/.claude/worktrees/agent-ae752c0fdc175a54d/nix/pkg/cq-ledgers",
+  "workspaceUnderMeasurement": "/home/pavel/work/safe/flakes/cq/.claude/worktrees/agent-acb0f1e0c93cc6acf/nix/pkg/cq-ledgers",
   "totals": {
     "calls": 715,
     "resultsCaptured": 715,
@@ -135,6 +135,30 @@
     "measuredShareOfTrueBeforeVolumePercentLowerBound": 69.33,
     "measuredShareOfTrueBeforeVolumePercentUpperBound": 69.38
   },
+  "corpusWideSavingRateBounds": {
+    "note": "The measured 74%-ish rate is computed over the replayed subset only, so it is not itself a bound on the true corpus-wide rate. The true rate is nonetheless BOUNDED, by 0 <= S_e <= B: it lies in [lowerBoundPercent, upperBoundPercent]. The absolute saving keeps its stronger property of being a strict lower bound.",
+    "measuredRatePercentOverReplayedSubset": 74.36,
+    "measuredSavedTokens": 480119,
+    "measuredBeforeTokens": 645670,
+    "lowerBoundPercent": 51.55,
+    "upperBoundPercent": 82.22,
+    "lowerBoundFraction": "480119/931354",
+    "upperBoundFraction": "765803/931354",
+    "candidates": [
+      {
+        "elidedTokens": 285015,
+        "trueBeforeTokens": 930685,
+        "ratePercentIfElidedSaveNothing": 51.59,
+        "ratePercentIfElidedSaveEverything": 82.21
+      },
+      {
+        "elidedTokens": 285684,
+        "trueBeforeTokens": 931354,
+        "ratePercentIfElidedSaveNothing": 51.55,
+        "ratePercentIfElidedSaveEverything": 82.22
+      }
+    ]
+  },
   "inputSideCost": {
     "projectionBearingCalls": 579,
     "argTokensCompact": 2316,
@@ -148,6 +172,43 @@
     "transcriptsWhereNetSavingExceedsSchemaDelta": 76,
     "medianNetResponseSavingPerCallingTranscript": 1461,
     "maxNetResponseSavingPerCallingTranscript": 15211,
+    "medianRobustnessToElidedCalls": {
+      "note": "Upper bound on how far the 8 elided calls could move the median net saving per calling transcript: every transcript holding one is lifted to +infinity and the median recomputed. Holders already above the median cannot move it.",
+      "transcriptsHoldingElidedCalls": [
+        {
+          "transcript": "20260714-105951-a530795f44b817984.jsonl",
+          "rankAscending": 61,
+          "netSavingTokens": 472,
+          "aboveMedian": false
+        },
+        {
+          "transcript": "20260713-152628-a1929643d726311e4.jsonl",
+          "rankAscending": 160,
+          "netSavingTokens": 4084,
+          "aboveMedian": true
+        },
+        {
+          "transcript": "20260723-115924-a8411023ef67ae7dc.jsonl",
+          "rankAscending": 184,
+          "netSavingTokens": 6353,
+          "aboveMedian": true
+        },
+        {
+          "transcript": "20260723-115924-a95f804e5328fc4ee.jsonl",
+          "rankAscending": 192,
+          "netSavingTokens": 8556,
+          "aboveMedian": true
+        },
+        {
+          "transcript": "20260723-115924-ad3c0c5c780cca9a4.jsonl",
+          "rankAscending": 196,
+          "netSavingTokens": 10173,
+          "aboveMedian": true
+        }
+      ],
+      "holdersAlreadyAboveMedian": 4,
+      "medianIfEveryHolderLiftedArbitrarily": 1485.5
+    },
     "scenarios": {
       "schemaFullyCachedOrIgnored": 477803,
       "schemaChargedOncePerCallingTranscript": 35003,

@@ -730,6 +730,66 @@ const unmeasuredBeforeVolume = {
   ),
 };
 
+// --- what the elided volume bounds, and what it does not -------------------
+// S_e — the saving the 8 elided calls would have contributed — is UNOBSERVABLE,
+// because their payloads are gone. Unobservable is not the same as unbounded:
+// two facts already established constrain it. Every compact projection and
+// every acknowledgement is a key-subset of the entity the RS3-era server
+// returned, so S_e >= 0; and no after-shape is negative, so S_e <= B, where B
+// is the elided before-volume. With M = measured before-tokens and
+// S_m = measured saving, the true corpus-wide rate is (S_m + S_e) / (M + B),
+// which over S_e in [0, B] spans [ S_m/(M+B), (S_m+B)/(M+B) ].
+// The left endpoint DECREASES in B and the right endpoint INCREASES in B, so
+// the widest interval over B in [elidedLower, elidedUpper] is attained at the
+// largest admissible B — but the code takes the min/max over both endpoints
+// rather than relying on that observation.
+const corpusResponseSaving = replayedTotals.beforeTokens - replayedTotals.afterTokens;
+const rateBoundCandidates = [
+  unmeasuredBeforeVolume.elidedTokensLowerBound,
+  unmeasuredBeforeVolume.elidedTokensUpperBound,
+].map((elidedTokens) => {
+  const trueBeforeTokens = replayedTotals.beforeTokens + elidedTokens;
+  return {
+    elidedTokens,
+    trueBeforeTokens,
+    /** S_e = 0: the elided calls compress not at all */
+    ratePercentIfElidedSaveNothing: (corpusResponseSaving / trueBeforeTokens) * 100,
+    /** S_e = B: the elided calls compress to nothing */
+    ratePercentIfElidedSaveEverything:
+      ((corpusResponseSaving + elidedTokens) / trueBeforeTokens) * 100,
+  };
+});
+const worstRateCase = rateBoundCandidates.reduce((a, b) =>
+  b.ratePercentIfElidedSaveNothing < a.ratePercentIfElidedSaveNothing ? b : a,
+);
+const bestRateCase = rateBoundCandidates.reduce((a, b) =>
+  b.ratePercentIfElidedSaveEverything > a.ratePercentIfElidedSaveEverything ? b : a,
+);
+const corpusWideSavingRateBounds = {
+  note:
+    "The measured 74%-ish rate is computed over the replayed subset only, so it is " +
+    "not itself a bound on the true corpus-wide rate. The true rate is nonetheless " +
+    "BOUNDED, by 0 <= S_e <= B: it lies in [lowerBoundPercent, upperBoundPercent]. " +
+    "The absolute saving keeps its stronger property of being a strict lower bound.",
+  measuredRatePercentOverReplayedSubset: Number(
+    ((corpusResponseSaving / replayedTotals.beforeTokens) * 100).toFixed(2),
+  ),
+  measuredSavedTokens: corpusResponseSaving,
+  measuredBeforeTokens: replayedTotals.beforeTokens,
+  lowerBoundPercent: Number(worstRateCase.ratePercentIfElidedSaveNothing.toFixed(2)),
+  upperBoundPercent: Number(bestRateCase.ratePercentIfElidedSaveEverything.toFixed(2)),
+  lowerBoundFraction: `${corpusResponseSaving}/${worstRateCase.trueBeforeTokens}`,
+  upperBoundFraction: `${corpusResponseSaving + bestRateCase.elidedTokens}/${bestRateCase.trueBeforeTokens}`,
+  candidates: rateBoundCandidates.map((c) => ({
+    elidedTokens: c.elidedTokens,
+    trueBeforeTokens: c.trueBeforeTokens,
+    ratePercentIfElidedSaveNothing: Number(c.ratePercentIfElidedSaveNothing.toFixed(2)),
+    ratePercentIfElidedSaveEverything: Number(
+      c.ratePercentIfElidedSaveEverything.toFixed(2),
+    ),
+  })),
+};
+
 // Input-side cost of the mandatory projection parameter, over the calls that
 // the cutover made projection-bearing.
 const projectionTools = perTool.filter(
@@ -756,11 +816,41 @@ const problems = perTool.flatMap((s) => s.correctnessProblems);
 // over explicit assumptions, not measurements of anything billed.
 const schemaDelta = Number(arg("schema-delta", "2498"));
 const withCalls = perTranscript.filter((t) => t.ledgerCalls > 0);
-const savingsPerTranscript = withCalls
-  .map((t) => t.beforeTokens - t.afterTokens - t.argsDeltaTokens)
-  .sort((a, b) => a - b);
-const corpusResponseSaving = replayedTotals.beforeTokens - replayedTotals.afterTokens;
+const netSavingOf = (t: TranscriptStats): number =>
+  t.beforeTokens - t.afterTokens - t.argsDeltaTokens;
+const savingsPerTranscript = withCalls.map(netSavingOf).sort((a, b) => a - b);
 const corpusArgsCost = inputSideCost.argTokensCompact;
+
+// How much could the host-elided calls move the per-transcript MEDIAN? Their
+// payloads are unrecoverable, but their LOCATION is known, and that is enough:
+// a transcript already above the median cannot move the median however far it
+// is lifted. The counterfactual below lifts every holder arbitrarily (to +inf)
+// and recomputes — the strongest admissible perturbation.
+const halfOfCallingTranscripts = Math.ceil(withCalls.length / 2);
+const elidedTranscriptNames = new Set(elidedResults.map((e) => e.transcript));
+const elidedHolders = [...withCalls]
+  .sort((a, b) => netSavingOf(a) - netSavingOf(b))
+  .map((t, index) => ({
+    transcript: t.name,
+    rankAscending: index + 1,
+    netSavingTokens: netSavingOf(t),
+    aboveMedian: index + 1 > halfOfCallingTranscripts,
+  }))
+  .filter((r) => elidedTranscriptNames.has(r.transcript));
+const medianIfEveryHolderLiftedArbitrarily = median(
+  withCalls.map((t) =>
+    elidedTranscriptNames.has(t.name) ? Number.POSITIVE_INFINITY : netSavingOf(t),
+  ),
+);
+const medianRobustnessToElidedCalls = {
+  note:
+    "Upper bound on how far the 8 elided calls could move the median net saving " +
+    "per calling transcript: every transcript holding one is lifted to +infinity " +
+    "and the median recomputed. Holders already above the median cannot move it.",
+  transcriptsHoldingElidedCalls: elidedHolders,
+  holdersAlreadyAboveMedian: elidedHolders.filter((r) => r.aboveMedian).length,
+  medianIfEveryHolderLiftedArbitrarily,
+};
 const sessionAmortization = {
   schemaDeltaTokensPerContext: schemaDelta,
   transcripts: perTranscript.length,
@@ -772,6 +862,7 @@ const sessionAmortization = {
   medianNetResponseSavingPerCallingTranscript: median(savingsPerTranscript),
   maxNetResponseSavingPerCallingTranscript:
     savingsPerTranscript[savingsPerTranscript.length - 1] ?? 0,
+  medianRobustnessToElidedCalls,
   scenarios: {
     schemaFullyCachedOrIgnored: corpusResponseSaving - corpusArgsCost,
     schemaChargedOncePerCallingTranscript:
@@ -818,6 +909,7 @@ const report = {
   },
   mcpToolNameAudit,
   unmeasuredBeforeVolume,
+  corpusWideSavingRateBounds,
   inputSideCost,
   sessionAmortization,
   perTranscript: perTranscript.filter((t) => t.ledgerCalls > 0),
@@ -913,6 +1005,14 @@ console.log(
         statedCharactersExact: report.unmeasuredBeforeVolume.statedCharactersExact,
         elidedTokensLowerBound: report.unmeasuredBeforeVolume.elidedTokensLowerBound,
         elidedTokensUpperBound: report.unmeasuredBeforeVolume.elidedTokensUpperBound,
+      },
+      corpusWideSavingRateBounds: {
+        measuredRatePercentOverReplayedSubset:
+          report.corpusWideSavingRateBounds.measuredRatePercentOverReplayedSubset,
+        lowerBoundPercent: report.corpusWideSavingRateBounds.lowerBoundPercent,
+        upperBoundPercent: report.corpusWideSavingRateBounds.upperBoundPercent,
+        lowerBoundFraction: report.corpusWideSavingRateBounds.lowerBoundFraction,
+        upperBoundFraction: report.corpusWideSavingRateBounds.upperBoundFraction,
       },
       inputSideCost: report.inputSideCost,
       sessionAmortization: report.sessionAmortization,

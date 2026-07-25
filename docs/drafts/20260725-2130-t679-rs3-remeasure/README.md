@@ -11,7 +11,7 @@ Report: `docs/drafts/20260725-2130-t679-rs3-remeasurement.md`.
 | Script | Question it answers |
 |---|---|
 | `pin-corpus.ts` | Which 357 transcripts are the RS3 corpus? Writes `corpus-manifest.json` (name/size/sha256) and fails unless the set is exactly 357 files / 95,152,796 bytes. |
-| `remeasure.ts` | For every captured ledger tool result in that corpus: bytes + `o200k_base` tokens before, and after passing the captured payload through the SHIPPED `wireResponseContract.ts` transforms in the SHIPPED envelopes. Also request-side arg cost, `projection:"full"` control, per-call regression counts, paired per-call deltas, compact/ack correctness assertions, per-transcript amortization scenarios, an `mcpToolNameAudit` (ledger calls by MCP server namespace + unmatched `mcp__*` names), and an `unmeasuredBeforeVolume` bound over the host-elided payloads. |
+| `remeasure.ts` | For every captured ledger tool result in that corpus: bytes + `o200k_base` tokens before, and after passing the captured payload through the SHIPPED `wireResponseContract.ts` transforms in the SHIPPED envelopes. Also request-side arg cost, `projection:"full"` control, per-call regression counts, paired per-call deltas, compact/ack correctness assertions, per-transcript amortization scenarios, an `mcpToolNameAudit` (ledger calls by MCP server namespace + unmatched `mcp__*` names), an `unmeasuredBeforeVolume` bound over the host-elided payloads, the `corpusWideSavingRateBounds` interval that bound implies, and `medianRobustnessToElidedCalls` (how far the elided calls could move the per-transcript median). |
 | `schema-overhead.ts` | What does `tools/list` cost, and how much of the growth is the response contract? Boots the real stdio MCP server over an in-memory transport and tokenizes the returned tool definitions. Run it against BOTH trees. |
 | `twin-server-probe.ts` | For tools the corpus never exercised (`search_items`, `update_milestone`, `create_ledger`, `reopen_item`, `unarchive_item`): drives the RS3-era server and the cutover server with an identical operation script and compares the actual responses. |
 
@@ -43,6 +43,15 @@ bun run twin-server-probe.ts \
   --after  "$PWD/../../../nix/pkg/cq-ledgers"          # -> out/twin-server-probe.json
 ```
 
+**Every script writes its artifact on every run.** `remeasure.ts` and
+`twin-server-probe.ts` write the committed file under `out/` unless redirected
+(`--out <file>`; `twin-server-probe.ts` also accepts `--json <file>`, the name
+`schema-overhead.ts` uses, and rejects any other `--flag` before booting the
+servers rather than silently writing to the default path). `schema-overhead.ts`
+writes only when given `--json <file>`. Re-runs are content-stable: the
+artifacts differ across runs only in `generatedAt` and in the absolute
+workspace paths.
+
 `remeasure.ts` exits non-zero if the corpus drifts from the manifest, if any
 JSONL line fails to parse, if any `mcp__*` tool name fails to split into
 server/tool (a namespace change must never silently remove calls from the
@@ -58,6 +67,16 @@ replaced, and `remeasure.ts` parses them into `unmeasuredBeforeVolume`
 response contract's favour**: every elided call is a large mandatory-projection
 response that overflowed on the RS3-era default-full path, so replaying it could
 only increase the measured saving.
+
+Unmeasured is not unbounded. What those calls would have saved, *S*, is
+constrained to `[0, B]` by the same evidence (`S ≥ 0` because compact/ack shapes
+are key-subsets; `S ≤ B` because no after-shape is negative), so the true
+corpus-wide rate is confined to **[51.55%, 82.22%]** —
+`corpusWideSavingRateBounds`, derived by `remeasure.ts` from the measured
+saving, the measured before-volume and both *B* endpoints. Their effect on the
+per-transcript **median** is bounded separately and much more tightly, by
+lifting every transcript holding an elided call to +∞ and recomputing:
+`sessionAmortization.medianRobustnessToElidedCalls`.
 
 ## What the numbers are and are not
 
