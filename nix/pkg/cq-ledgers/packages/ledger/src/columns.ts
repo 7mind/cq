@@ -5,9 +5,10 @@
  * web (T61) and TUI (T62) clients.
  *
  * Per Q29/Q30:
- *  - `eligibleColumnFields(schema)` — every schema field name EXCEPT the
- *    long/narrative denylist and EXCEPT the always-shown intrinsic
- *    `id`/`status`/`summary` columns.
+ *  - `eligibleColumnFields(schema)` — every schema field name except the
+ *    shared long/narrative denylist, always-shown intrinsic columns, and
+ *    summary-source fields. Upstream additionally excludes its scalar
+ *    narrative/evidence denylist and every `string[]`/`id[]` field.
  *  - `defaultColumns(ledgerName)` — per-ledger default extra columns.
  */
 
@@ -68,10 +69,10 @@ export const SUMMARY_SOURCE_FIELDS: ReadonlySet<string> = new Set([
 
 /**
  * Returns the schema field names that may be offered as toggleable table
- * columns: every declared field name, minus the long/narrative denylist,
- * minus the always-shown intrinsic columns, and minus the summary-source fields
- * that would duplicate the summary cell. Order follows the schema's field
- * declaration order.
+ * columns: every declared field name minus the shared long/narrative,
+ * always-shown, and summary-source exclusions. Upstream also excludes its
+ * scalar narrative/evidence denylist and every field declared as `string[]`
+ * or `id[]`. Order follows the schema's field declaration order.
  */
 export function eligibleColumnFields(schema: LedgerSchema): string[] {
   const isUpstreamSchema =
