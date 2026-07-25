@@ -14,6 +14,10 @@ import {
   type PlanLifecycleContractFactory,
 } from "./planLifecycleReferenceAdapter.js";
 import { runPlanLifecycleStoreContract } from "./planLifecycleStoreContract.js";
+import {
+  fsPlanLifecycleFactory,
+  gitPlanLifecycleFactory,
+} from "./planLifecyclePersistentAdapters.js";
 
 const PLAN_LIFECYCLE_METHODS = [
   "claimPlan",
@@ -65,8 +69,13 @@ function progressionFactory(
 runPlanLifecycleStoreContract(referencePlanLifecycleFactory);
 runPlanLifecycleStoreContract(inMemoryPlanLifecycleFactory);
 runPlanLifecycleStoreContract(sqlitePlanLifecycleFactory);
+runPlanLifecycleStoreContract(fsPlanLifecycleFactory);
+runPlanLifecycleStoreContract(gitPlanLifecycleFactory);
 for (const registration of PRODUCTION_REGISTRATIONS.filter(
-  ({ name }) => name !== "SqliteLedgerStore",
+  ({ name }) =>
+    name !== "SqliteLedgerStore" &&
+    name !== "FsLedgerStore" &&
+    name !== "GitObjectLedgerBackend",
 )) {
   runPlanLifecycleStoreContract(progressionFactory(registration));
 }
@@ -94,8 +103,8 @@ describe("T847 production capability registry", () => {
         available: hasCompletePlanLifecycleCapability(registration.store),
       })),
     ).toEqual([
-      { name: "FsLedgerStore", available: false },
-      { name: "GitObjectLedgerBackend", available: false },
+      { name: "FsLedgerStore", available: true },
+      { name: "GitObjectLedgerBackend", available: true },
       { name: "SqliteLedgerStore", available: true },
       { name: "PostgresLedgerStore", available: false },
     ]);

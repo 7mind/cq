@@ -51,7 +51,10 @@
 
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
-import type { LedgerPersistence } from "../LedgerPersistence.js";
+import type {
+  LedgerPersistence,
+  PlanLifecyclePersistenceCommit,
+} from "../LedgerPersistence.js";
 import type { GitPlumbing, TreeEntry } from "./GitPlumbing.js";
 import { LedgerError } from "../../types.js";
 import { MAX_READ_LOG_BYTES, type ReadLogResult } from "../../mcp/readLog.js";
@@ -60,6 +63,7 @@ import {
   LEDGER_LOGS_RELATIVE_PREFIX,
   LEDGER_LOGS_STRIP_RE,
 } from "../../constants.js";
+import { PLAN_LIFECYCLE_STATE_FILENAME } from "../ledgerArtifacts.js";
 
 /** Regular-file git mode for a ledger blob. */
 const BLOB_MODE = "100644";
@@ -75,6 +79,7 @@ const LOGS_TREE_PREFIX = LEDGER_LOGS_DIRNAME;
 
 /** Registry tree path (docs-relative). */
 const REGISTRY_PATH = "ledgers.yaml";
+const PLAN_LIFECYCLE_PATH = PLAN_LIFECYCLE_STATE_FILENAME;
 
 /**
  * The canonical empty-tree object id git recognises intrinsically in every repo
@@ -195,6 +200,43 @@ export class GitPersistence implements LedgerPersistence {
         : await this.git.writeTree(kept);
     const commit = await this.git.commitTree(tree, expectedOld, message);
     await this.git.updateRef(this.ref, commit, expectedOld);
+  }
+
+  private async advanceMany(
+    replacements: Readonly<Record<string, string>>,
+    message: string,
+  ): Promise<void> {
+    const expectedOld = await this.refSha();
+    const current: TreeEntry[] =
+      expectedOld === null ? [] : await this.git.lsTreeEntries(this.ref);
+    const paths = new Set(Object.keys(replacements));
+    const kept = current.filter((entry) => !paths.has(entry.path));
+    for (const [treePath, text] of Object.entries(replacements)) {
+      kept.push({
+        mode: BLOB_MODE,
+        sha: await this.git.hashObject(text),
+        path: treePath,
+      });
+    }
+    const tree = await this.git.writeTree(kept);
+    const commit = await this.git.commitTree(tree, expectedOld, message);
+    await this.git.updateRef(this.ref, commit, expectedOld);
+  }
+
+  async recoverPlanLifecycleCommit(): Promise<void> {}
+
+  async readPlanLifecycleState(): Promise<string | null> {
+    return this.readAt(PLAN_LIFECYCLE_PATH);
+  }
+
+  async commitPlanLifecycle(commit: PlanLifecyclePersistenceCommit): Promise<void> {
+    const replacements: Record<string, string> = {
+      [PLAN_LIFECYCLE_PATH]: commit.state,
+    };
+    for (const [name, source] of Object.entries(commit.ledgers)) {
+      replacements[this.ledgerTreePath(name)] = source;
+    }
+    await this.advanceMany(replacements, "ledger: plan lifecycle");
   }
 
   // ---------------------------------------------------------------------------

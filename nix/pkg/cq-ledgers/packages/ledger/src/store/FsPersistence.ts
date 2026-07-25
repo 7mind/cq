@@ -27,11 +27,18 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import type { LedgerPersistence } from "./LedgerPersistence.js";
+import type {
+  LedgerPersistence,
+  PlanLifecyclePersistenceCommit,
+} from "./LedgerPersistence.js";
 import type { LedgerRegistry } from "../types.js";
 import { LedgerError } from "../types.js";
 import { CANONICAL_LEDGERS } from "../constants.js";
 import { atomicWrite } from "./fsAtomic.js";
+import {
+  PLAN_LIFECYCLE_PENDING_FILENAME,
+  PLAN_LIFECYCLE_STATE_FILENAME,
+} from "./ledgerArtifacts.js";
 
 /**
  * Layout the {@link FsPersistence} seam binds to. Resolved once by the store so
@@ -62,6 +69,8 @@ export class FsPersistence implements LedgerPersistence {
   private readonly archiveDir: string;
   private readonly registryPath: string;
   private readonly now: () => string;
+  private readonly planStatePath: string;
+  private readonly planPendingPath: string;
   /**
    * Returns the store's CURRENT in-memory registry (for divergence backup).
    * Bound by the owning store AFTER its `super()` call via
@@ -77,6 +86,34 @@ export class FsPersistence implements LedgerPersistence {
     this.archiveDir = opts.layout.archiveDir;
     this.registryPath = opts.layout.registryPath;
     this.now = opts.now;
+    this.planStatePath = path.join(this.docsDir, PLAN_LIFECYCLE_STATE_FILENAME);
+    this.planPendingPath = path.join(this.docsDir, PLAN_LIFECYCLE_PENDING_FILENAME);
+  }
+
+  async recoverPlanLifecycleCommit(): Promise<void> {
+    const pending = await readMaybe(this.planPendingPath);
+    if (pending === null) return;
+    const commit = parsePlanLifecycleCommit(pending);
+    await this.applyPlanLifecycleCommit(commit);
+  }
+
+  async readPlanLifecycleState(): Promise<string | null> {
+    return readMaybe(this.planStatePath);
+  }
+
+  async commitPlanLifecycle(commit: PlanLifecyclePersistenceCommit): Promise<void> {
+    await atomicWrite(this.planPendingPath, JSON.stringify(commit));
+    await this.applyPlanLifecycleCommit(commit);
+  }
+
+  private async applyPlanLifecycleCommit(
+    commit: PlanLifecyclePersistenceCommit,
+  ): Promise<void> {
+    for (const [name, source] of Object.entries(commit.ledgers)) {
+      await atomicWrite(this.ledgerPath(name), source);
+    }
+    await atomicWrite(this.planStatePath, commit.state);
+    await fs.rm(this.planPendingPath, { force: true });
   }
 
   /**
@@ -191,6 +228,30 @@ export class FsPersistence implements LedgerPersistence {
     const stat = await fs.stat(this.ledgerPath(name));
     return String(stat.mtimeMs);
   }
+}
+
+function parsePlanLifecycleCommit(text: string): PlanLifecyclePersistenceCommit {
+  const value: unknown = JSON.parse(text);
+  if (typeof value !== "object" || value === null) {
+    throw new LedgerError("invalid pending plan lifecycle commit");
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record["state"] !== "string" ||
+    typeof record["ledgers"] !== "object" ||
+    record["ledgers"] === null ||
+    Array.isArray(record["ledgers"])
+  ) {
+    throw new LedgerError("invalid pending plan lifecycle commit");
+  }
+  const ledgers: Record<string, string> = {};
+  for (const [name, source] of Object.entries(record["ledgers"])) {
+    if (!/^[a-z][a-z0-9-]*$/.test(name) || typeof source !== "string") {
+      throw new LedgerError("invalid pending plan lifecycle ledger source");
+    }
+    ledgers[name] = source;
+  }
+  return { state: record["state"], ledgers };
 }
 
 /** Read a UTF-8 file, mapping ENOENT to `null`. */

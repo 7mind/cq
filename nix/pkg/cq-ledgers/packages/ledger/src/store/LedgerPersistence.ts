@@ -103,7 +103,19 @@
  * in `test/multi-writer-stress.test.ts` until T498 wires the conforming
  * store).
  */
+export interface PlanLifecyclePersistenceCommit {
+  readonly state: string;
+  readonly ledgers: Readonly<Record<string, string>>;
+}
+
 export interface LedgerPersistence {
+  /** Recover an interrupted filesystem lifecycle commit; atomic backends no-op. */
+  recoverPlanLifecycleCommit(): Promise<void>;
+  /** Read verifier/replay state, never exposed through ledger items. */
+  readPlanLifecycleState(): Promise<string | null>;
+  /** Commit private state and all changed ledgers as one recoverable decision. */
+  commitPlanLifecycle(commit: PlanLifecyclePersistenceCommit): Promise<void>;
+
   // ---------------------------------------------------------------------------
   // (a) Source reads — init() + coherence reload
   // ---------------------------------------------------------------------------

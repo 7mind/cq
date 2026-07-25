@@ -12,6 +12,8 @@
  * The ledger's own artifacts under `.cq/`:
  *   - `ledgers.yaml`                 — the registry
  *   - `<name>.md`                    — one per REGISTERED ledger (and the canonical set)
+ *   - `plan-lifecycle.json`          — durable verifier/replay state
+ *   - `plan-lifecycle.pending.json`  — recoverable filesystem commit decision
  *   - `archive/**`                   — archived milestone groups
  *   - `logs/**`                      — portable session logs (travel with the ledger tree)
  *   - `.locks/`, `.backup/`          — ephemeral runtime dirs (NEVER travel)
@@ -27,6 +29,10 @@ import { CANONICAL_LEDGERS } from "../constants.js";
 export const LEDGER_REGISTRY_FILENAME = "ledgers.yaml";
 /** Directory (under `.cq/`) holding archived milestone groups. */
 export const LEDGER_ARCHIVE_DIRNAME = "archive";
+/** Durable private state for the guarded plan lifecycle. */
+export const PLAN_LIFECYCLE_STATE_FILENAME = "plan-lifecycle.json";
+/** Recoverable filesystem commit decision; never part of a portable tree. */
+export const PLAN_LIFECYCLE_PENDING_FILENAME = "plan-lifecycle.pending.json";
 /**
  * Portable runtime directory under `.cq/` — session logs that travel with the
  * ledger tree (included in `ledgerTreePaths`).
@@ -54,6 +60,8 @@ export interface LedgerArtifacts {
   registryFile: string | null;
   /** Absolute `.cq/<name>.md` for each registered ledger that exists on disk. */
   ledgerFiles: string[];
+  /** Existing private lifecycle state and recovery-decision files. */
+  lifecycleFiles: string[];
   /** Absolute `.cq/archive`, or `null` if it does not exist. */
   archiveDir: string | null;
   /** Absolute runtime dirs (`logs`/`.locks`/`.backup`) that exist on disk. */
@@ -115,11 +123,21 @@ export async function enumerateLedgerArtifacts(docsDir: string): Promise<LedgerA
     if (await exists(p)) runtimeDirs.push(p);
   }
 
+  const lifecycleFiles: string[] = [];
+  for (const filename of [
+    PLAN_LIFECYCLE_STATE_FILENAME,
+    PLAN_LIFECYCLE_PENDING_FILENAME,
+  ]) {
+    const p = path.join(docsDir, filename);
+    if (await exists(p)) lifecycleFiles.push(p);
+  }
+
   const registryPath = path.join(docsDir, LEDGER_REGISTRY_FILENAME);
   const archivePath = path.join(docsDir, LEDGER_ARCHIVE_DIRNAME);
   return {
     registryFile: (await exists(registryPath)) ? registryPath : null,
     ledgerFiles,
+    lifecycleFiles,
     archiveDir: (await exists(archivePath)) ? archivePath : null,
     runtimeDirs,
   };
@@ -127,15 +145,23 @@ export async function enumerateLedgerArtifacts(docsDir: string): Promise<LedgerA
 
 /**
  * The PORTABLE ledger tree as STORAGE-RELATIVE paths: `ledgers.yaml`, every
- * registered `<name>.md`, every `archive/**` file (recursive), and every
- * `logs/**` file (recursive). Ephemeral dirs (`.locks`/`.backup`) are EXCLUDED
- * — they never travel with the ledger. Sorted.
+ * registered `<name>.md`, durable lifecycle verifier/replay state, every
+ * `archive/**` file (recursive), and every `logs/**` file (recursive).
+ * Ephemeral state (`plan-lifecycle.pending.json`, `.locks`, and `.backup`) is
+ * EXCLUDED — it never travels with the ledger. Sorted.
  */
 export async function ledgerTreePaths(docsDir: string): Promise<string[]> {
   const art = await enumerateLedgerArtifacts(docsDir);
   const rel: string[] = [];
   if (art.registryFile !== null) rel.push(LEDGER_REGISTRY_FILENAME);
   for (const f of art.ledgerFiles) rel.push(path.basename(f));
+  if (
+    art.lifecycleFiles.some(
+      (file) => path.basename(file) === PLAN_LIFECYCLE_STATE_FILENAME,
+    )
+  ) {
+    rel.push(PLAN_LIFECYCLE_STATE_FILENAME);
+  }
   if (art.archiveDir !== null) await collectFilesRel(art.archiveDir, LEDGER_ARCHIVE_DIRNAME, rel);
   for (const dirName of LEDGER_PORTABLE_RUNTIME_DIRNAMES) {
     const dirPath = path.join(docsDir, dirName);
@@ -164,9 +190,10 @@ export interface RemoveLedgerArtifactsResult {
 
 /**
  * Remove the ledger's OWN artifacts under `docsDir` (the storage dir) — the
- * registry, every registered `<name>.md`, `archive/`, and the runtime dirs — and
- * NOTHING else. Unrelated content in `docsDir` is PRESERVED. If `docsDir` is
- * empty once the artifacts are gone, `docsDir` itself is removed.
+ * registry, every registered `<name>.md`, lifecycle state/recovery files,
+ * `archive/`, and the runtime dirs — and NOTHING else. Unrelated content in
+ * `docsDir` is PRESERVED. If `docsDir` is empty once the artifacts are gone,
+ * `docsDir` itself is removed.
  * Idempotent and ENOENT-tolerant. Returns the removed paths.
  */
 export async function removeLedgerArtifacts(docsDir: string): Promise<RemoveLedgerArtifactsResult> {
@@ -176,6 +203,7 @@ export async function removeLedgerArtifacts(docsDir: string): Promise<RemoveLedg
   const targets: string[] = [
     ...(art.registryFile !== null ? [art.registryFile] : []),
     ...art.ledgerFiles,
+    ...art.lifecycleFiles,
     ...(art.archiveDir !== null ? [art.archiveDir] : []),
     ...art.runtimeDirs,
   ];

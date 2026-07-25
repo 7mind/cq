@@ -111,8 +111,36 @@ import {
   MILESTONES_LEDGER,
   QUESTIONS_ANSWER_FIELD,
   QUESTIONS_LEDGER,
+  TASKS_LEDGER,
 } from "../constants.js";
 import { schemaCompatible, schemasEqual } from "./schemaCompat.js";
+import {
+  PlanPrivateClaimRecordSchema,
+  PlanOperationReplayRecordSchema,
+  PLAN_ACTIVE_CLAIM_FIELD,
+  PLAN_GENERATION_FIELD,
+  PLAN_MANAGED_GOAL_FIELD_NAMES,
+  type PlanClaimInput,
+  type PlanClaimResult,
+  type PlanFinalizeInput,
+  type PlanFinalizeResult,
+  type PlanLifecycleStore,
+  type PlanPrivateClaimRecord,
+  type PlanPublishDraftInput,
+  type PlanPublishDraftResult,
+  type PlanReleaseInput,
+  type PlanReleaseResult,
+} from "../planLifecycle.js";
+import {
+  claimInMemoryPlan,
+  finalizeInMemoryPlan,
+  publishInMemoryPlanDraft,
+  releaseInMemoryPlanClaim,
+  type InMemoryPlanLifecycleState,
+  type InMemoryPlanOperationRecord,
+  readInMemoryPlanState,
+} from "./inMemoryPlanLifecycle.js";
+import { taskDependenciesSatisfied } from "./predicates.js";
 
 // Moved to schemaCompat.ts (T527) so the sqlite backend's module graph stays
 // free of this file's parser/serialize funnel; re-exported for compatibility.
@@ -128,7 +156,7 @@ const REGISTRY_LOCK_KEY = "__registry__";
  * advisory `Lockfile` + provides the lockfile root via {@link locksRoot}.
  */
 export abstract class AbstractLedgerStore<P extends LedgerPersistence>
-  implements LedgerStore
+  implements LedgerStore, PlanLifecycleStore
 {
   protected readonly persistence: P;
   private readonly mutexes = new Map<string, AsyncMutex>();
@@ -140,6 +168,8 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
   protected readonly searchIndex = new LedgerSearchIndex();
   protected registry: LedgerRegistry = { ...EMPTY_REGISTRY, ledgers: [] };
   protected initialised = false;
+  private readonly planClaims = new Map<string, PlanPrivateClaimRecord>();
+  private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
 
   protected constructor(opts: {
     persistence: P;
@@ -332,6 +362,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
 
   async init(): Promise<void> {
     if (this.initialised) return;
+    await this.persistence.recoverPlanLifecycleCommit();
 
     // Load registry.
     const registryText = await this.persistence.readRegistrySource();
@@ -421,6 +452,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       // before the non-milestones ledgers' backfill runs.
       await this.backfillLegacyArchivePointers(ledger);
     }
+    await this.loadPlanLifecycleState();
     this.initialised = true;
     // Build the FTS index for every loaded ledger (active + archived).
     for (const name of this.ledgers.keys()) {
@@ -437,8 +469,30 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
     // cache mirror) — extends the D-LED-06 drain contract to the backend.
     await this.drainBackend();
     this.ledgers.clear();
+    this.planClaims.clear();
+    this.planOperations.clear();
     this.mutexes.clear();
     this.initialised = false;
+  }
+
+  async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
+    return this.runPlanLifecycleMutation((state) => claimInMemoryPlan(state, input));
+  }
+
+  async publishPlanDraft(input: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
+    return this.runPlanLifecycleMutation((state) =>
+      publishInMemoryPlanDraft(state, input),
+    );
+  }
+
+  async releasePlanClaim(input: PlanReleaseInput): Promise<PlanReleaseResult> {
+    return this.runPlanLifecycleMutation((state) =>
+      releaseInMemoryPlanClaim(state, input),
+    );
+  }
+
+  async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
+    return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input));
   }
 
   // ---------------------------------------------------------------------------
@@ -613,6 +667,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       // H41/D61: reload from the ref tip under the lock before reading/mutating.
       await this.reloadLedgerFromDisk(ledgerId);
       const ledger = this.getLedger(ledgerId);
+      this.assertRawPlanUpdateAllowed(ledgerId, ledger, itemId, patch);
       const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
       const x = applyUpdateItem(
         ledger,
@@ -649,6 +704,7 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
         // allocation + mutation so fresh counters/items are used.
         await this.reloadLedgerFromDisk(ledgerId);
         const ledger = this.getLedger(ledgerId);
+        this.assertRawPlanCreateAllowed(ledgerId, init.fields);
         const x = applyCreateItem(
           ledger,
           milestoneId,
@@ -888,6 +944,12 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       }
       await this.writeLedgerFile(ledger);
     }
+    this.planClaims.clear();
+    this.planOperations.clear();
+    await this.persistence.commitPlanLifecycle({
+      state: this.serializePlanLifecycleState(),
+      ledgers: {},
+    });
     return backupDir;
   }
 
@@ -958,6 +1020,256 @@ export abstract class AbstractLedgerStore<P extends LedgerPersistence>
       isMilestonesLedger: isMilestones,
     });
     this.ledgers.set(entry.name, ledger);
+  }
+
+  private planLifecycleState(): InMemoryPlanLifecycleState {
+    return {
+      ledgers: this.ledgers,
+      claims: this.planClaims,
+      operations: this.planOperations,
+      now: this.now,
+    };
+  }
+
+  private assertRawPlanCreateAllowed(
+    ledgerId: string,
+    fields: Record<string, import("../types.js").FieldValue>,
+  ): void {
+    if (
+      ledgerId === GOALS_LEDGER &&
+      PLAN_MANAGED_GOAL_FIELD_NAMES.some((name) => fields[name] !== undefined)
+    ) {
+      throw new LedgerError("managed plan state may mutate only through PlanLifecycleStore");
+    }
+    if (ledgerId === TASKS_LEDGER) {
+      this.assertNoManagedGoalReference(fields["ledgerRefs"]);
+    }
+  }
+
+  private assertRawPlanUpdateAllowed(
+    ledgerId: string,
+    source: Ledger,
+    itemId: string,
+    patch: UpdateItemPatch,
+  ): void {
+    if (ledgerId === GOALS_LEDGER) {
+      const goal = findItem(source, itemId).item;
+      if (
+        PLAN_MANAGED_GOAL_FIELD_NAMES.some(
+          (name) => patch.fields?.[name] !== undefined,
+        ) ||
+        (fieldIsPresent(goal, PLAN_GENERATION_FIELD) &&
+          patch.fields?.["milestones"] !== undefined)
+      ) {
+        throw new LedgerError(
+          "managed plan state may mutate only through PlanLifecycleStore",
+        );
+      }
+      if (patch.status !== undefined && patch.status !== goal.status) {
+        this.assertManagedGoalTransitionAllowed(goal, patch.status);
+      }
+    }
+    if (ledgerId === TASKS_LEDGER) {
+      const task = findItem(source, itemId).item;
+      if (patch.fields?.["ledgerRefs"] !== undefined) {
+        this.assertManagedTaskOwnershipRefsPreserved(
+          task,
+          patch.fields["ledgerRefs"],
+        );
+      }
+      if (patch.status !== undefined && patch.status !== task.status) {
+        this.assertManagedTaskTransitionAllowed(task, patch.status);
+      }
+    }
+  }
+
+  private assertNoManagedGoalReference(value: unknown): void {
+    if (this.managedGoalReferences(value).length > 0) {
+      throw new LedgerError(
+        "managed plan work may mutate only through PlanLifecycleStore",
+      );
+    }
+  }
+
+  private managedGoalReferences(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((ref): ref is string => {
+      if (typeof ref !== "string" || !ref.startsWith(`${GOALS_LEDGER}:`)) {
+        return false;
+      }
+      const goal = findOptionalItem(
+        this.getLedger(GOALS_LEDGER),
+        ref.slice(GOALS_LEDGER.length + 1),
+      );
+      return goal !== undefined && fieldIsPresent(goal, PLAN_GENERATION_FIELD);
+    });
+  }
+
+  private assertManagedTaskOwnershipRefsPreserved(
+    task: Item,
+    value: unknown,
+  ): void {
+    const current = new Set(
+      this.managedGoalReferences(task.fields["ledgerRefs"]),
+    );
+    const proposed = Array.isArray(value)
+      ? new Set(value.filter((ref): ref is string => typeof ref === "string"))
+      : new Set<string>();
+    const proposedManaged = this.managedGoalReferences(value);
+    if (
+      [...current].some((ref) => !proposed.has(ref)) ||
+      proposedManaged.some((ref) => !current.has(ref))
+    ) {
+      throw new LedgerError(
+        "managed plan work may mutate only through PlanLifecycleStore",
+      );
+    }
+  }
+
+  private assertManagedGoalTransitionAllowed(
+    goal: Item,
+    targetStatus: string,
+  ): void {
+    if (!fieldIsPresent(goal, PLAN_GENERATION_FIELD)) return;
+    const lifecycleOwned =
+      goal.status === "done" ||
+      goal.status === "abandoned" ||
+      (goal.status === "building" && targetStatus === "planning") ||
+      (fieldIsPresent(goal, PLAN_ACTIVE_CLAIM_FIELD) &&
+        (targetStatus === "done" || targetStatus === "abandoned")) ||
+      (goal.status === "clarifying" && targetStatus === "planning") ||
+      (goal.status === "planning" &&
+        (targetStatus === "clarifying" || targetStatus === "planned")) ||
+      (goal.status === "planned" && targetStatus === "planning");
+    if (lifecycleOwned) {
+      throw new LedgerError(
+        "managed plan transition may mutate only through PlanLifecycleStore",
+      );
+    }
+  }
+
+  private assertManagedTaskTransitionAllowed(
+    task: Item,
+    targetStatus: string,
+  ): void {
+    const goalRefs = fieldArray(task, "ledgerRefs").filter((ref) =>
+      ref.startsWith(`${GOALS_LEDGER}:`),
+    );
+    for (const ref of goalRefs) {
+      const goal = findOptionalItem(
+        this.getLedger(GOALS_LEDGER),
+        ref.slice(GOALS_LEDGER.length + 1),
+      );
+      if (goal === undefined || !fieldIsPresent(goal, PLAN_GENERATION_FIELD)) continue;
+      const manifest = readInMemoryPlanState(goal).finalizedManifest;
+      if (
+        manifest === null ||
+        !manifest.tasks.some(({ id }) => id === task.id)
+      ) {
+        throw new LedgerError("task belongs to a draft or superseded manifest");
+      }
+      if (targetStatus === "wip" && !taskDependenciesSatisfied(this, task)) {
+        throw new LedgerError("task dependencies are not satisfied");
+      }
+    }
+  }
+
+  private async loadPlanLifecycleState(): Promise<void> {
+    this.planClaims.clear();
+    this.planOperations.clear();
+    const text = await this.persistence.readPlanLifecycleState();
+    if (text === null) return;
+    const value: unknown = JSON.parse(text);
+    if (typeof value !== "object" || value === null) {
+      throw new LedgerError("invalid persisted plan lifecycle state");
+    }
+    const record = value as Record<string, unknown>;
+    if (!Array.isArray(record["claims"]) || !Array.isArray(record["operations"])) {
+      throw new LedgerError("invalid persisted plan lifecycle state");
+    }
+    for (const raw of record["claims"]) {
+      const entry = PlanPrivateClaimRecordSchema.parse(raw);
+      this.planClaims.set(`${entry.goalId}\u0000${entry.claimRequestId}`, entry);
+    }
+    for (const raw of record["operations"]) {
+      if (typeof raw !== "object" || raw === null) {
+        throw new LedgerError("invalid persisted plan lifecycle operation");
+      }
+      const operation = raw as Record<string, unknown>;
+      const replay = PlanOperationReplayRecordSchema.parse(operation["replay"]);
+      this.planOperations.set(
+        [
+          replay.goalId,
+          replay.claimId,
+          replay.generation,
+          replay.operation,
+          replay.operationId,
+        ].join("\u0000"),
+        { replay, acknowledgement: operation["acknowledgement"] },
+      );
+    }
+  }
+
+  private serializePlanLifecycleState(): string {
+    return JSON.stringify({
+      version: 1,
+      claims: [...this.planClaims.values()],
+      operations: [...this.planOperations.values()],
+    });
+  }
+
+  private async runPlanLifecycleMutation<T>(
+    mutate: (
+      state: InMemoryPlanLifecycleState,
+    ) => { result: T; dirtyLedgers: readonly string[] },
+  ): Promise<T> {
+    this.assertInit();
+    const ledgerIds = [...this.ledgers.keys()]
+      .filter((id) => id !== MILESTONES_LEDGER)
+      .sort();
+    const mutation = await this.withMilestonesLock(() =>
+      this.withLocksInOrder(ledgerIds, async () => {
+        await this.persistence.recoverPlanLifecycleCommit();
+        await this.reloadLedgerFromDisk(MILESTONES_LEDGER);
+        for (const ledgerId of ledgerIds) await this.reloadLedgerFromDisk(ledgerId);
+        await this.loadPlanLifecycleState();
+        const beforeLedgers = cloneMap(this.ledgers);
+        const beforeClaims = cloneMap(this.planClaims);
+        const beforeOperations = cloneMap(this.planOperations);
+        try {
+          const outcome = mutate(this.planLifecycleState());
+          if (outcome.dirtyLedgers.length > 0) {
+            const sources: Record<string, string> = {};
+            const ordered = [...new Set(outcome.dirtyLedgers)].sort((left, right) => {
+              if (left === GOALS_LEDGER) return 1;
+              if (right === GOALS_LEDGER) return -1;
+              return left.localeCompare(right);
+            });
+            for (const ledgerId of ordered) {
+              const ledger = this.ledgers.get(ledgerId);
+              if (ledger === undefined) {
+                throw new LedgerError(`ledger not found: ${ledgerId}`);
+              }
+              sources[ledgerId] = serializeLedger(ledger);
+            }
+            await this.persistence.commitPlanLifecycle({
+              state: this.serializePlanLifecycleState(),
+              ledgers: sources,
+            });
+          }
+          return outcome;
+        } catch (error) {
+          replaceMap(this.ledgers, beforeLedgers);
+          replaceMap(this.planClaims, beforeClaims);
+          replaceMap(this.planOperations, beforeOperations);
+          throw error;
+        }
+      }),
+    );
+    for (const ledgerId of new Set(mutation.dirtyLedgers)) {
+      this.fireMutation(ledgerId, "update");
+    }
+    return mutation.result;
   }
 
   // ---------------------------------------------------------------------------
@@ -1224,6 +1536,37 @@ function cloneFields(
     out[k] = Array.isArray(v) ? [...v] : v;
   }
   return out;
+}
+
+function cloneMap<K, V>(source: ReadonlyMap<K, V>): Map<K, V> {
+  return new Map(
+    [...source.entries()].map(([key, value]) => [
+      key,
+      JSON.parse(JSON.stringify(value)) as V,
+    ]),
+  );
+}
+
+function replaceMap<K, V>(target: Map<K, V>, source: ReadonlyMap<K, V>): void {
+  target.clear();
+  for (const [key, value] of source) target.set(key, value);
+}
+
+function fieldArray(item: Item, name: string): string[] {
+  const value = item.fields[name];
+  return Array.isArray(value) ? value : [];
+}
+
+function fieldIsPresent(item: Item, name: string): boolean {
+  return item.fields[name] !== undefined;
+}
+
+function findOptionalItem(source: Ledger, itemId: string): Item | undefined {
+  for (const milestone of source.milestones) {
+    const item = milestone.items.find((candidate) => candidate.id === itemId);
+    if (item !== undefined) return item;
+  }
+  return undefined;
 }
 
 // Suppress unused-import diagnostic: `Milestone` is referenced via the

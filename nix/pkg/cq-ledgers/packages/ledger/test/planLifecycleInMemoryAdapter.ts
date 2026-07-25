@@ -43,15 +43,18 @@ const SEED_PROVENANCE = { author: "seed", session: "seed-session" } as const;
 
 interface InMemoryInternals {
   ledgers: Map<string, Ledger>;
-  planClaims: Map<string, PlanPrivateClaimRecord>;
-  planOperations: Map<string, InMemoryPlanOperationRecord>;
+  planClaims?: Map<string, PlanPrivateClaimRecord>;
+  planOperations?: Map<string, InMemoryPlanOperationRecord>;
+  writeLedgerFile?: (ledger: Ledger) => Promise<void>;
 }
 
-function internals(store: InMemoryLedgerStore): InMemoryInternals {
+type LifecycleBackedLedgerStore = LedgerStore & PlanLifecycleStore;
+
+function internals(store: LifecycleBackedLedgerStore): InMemoryInternals {
   return store as unknown as InMemoryInternals;
 }
 
-function findMutableItem(store: InMemoryLedgerStore, ledgerId: string, itemId: string): Item {
+function findMutableItem(store: LifecycleBackedLedgerStore, ledgerId: string, itemId: string): Item {
   const source = internals(store).ledgers.get(ledgerId);
   if (source === undefined) throw new Error(`ledger not found: ${ledgerId}`);
   for (const milestone of source.milestones) {
@@ -118,6 +121,7 @@ export abstract class LedgerStorePlanLifecycleFixture<
   constructor(
     readonly store: Store,
     readonly lifecycle: PlanLifecycleStore = store,
+    protected readonly persistDirect?: (ledgerIds: readonly string[]) => Promise<void>,
   ) {}
 
   protected abstract seedUpdate(
@@ -141,6 +145,7 @@ export abstract class LedgerStorePlanLifecycleFixture<
         goal.fields[PLAN_GENERATION_FIELD] = String(options.generation);
         goal.fields[PLAN_WAITING_RESEARCHES_FIELD] = [];
       });
+      await this.persistDirect?.([GOALS_LEDGER]);
     }
   }
 
@@ -153,6 +158,7 @@ export abstract class LedgerStorePlanLifecycleFixture<
       mutableMilestone.author = SEED_PROVENANCE.author;
       mutableMilestone.session = SEED_PROVENANCE.session;
     });
+    await this.persistDirect?.([MILESTONES_LEDGER]);
     const taskIds: string[] = [];
     for (const [index, status] of options.taskStatuses.entries()) {
       const task = await this.store.createItem(TASKS_LEDGER, milestone.id, {
@@ -166,6 +172,7 @@ export abstract class LedgerStorePlanLifecycleFixture<
       await this.seedUpdate(TASKS_LEDGER, task.id, (mutableTask) => {
         mutableTask.fields["ledgerRefs"] = [`${GOALS_LEDGER}:${goalId}`];
       });
+      await this.persistDirect?.([TASKS_LEDGER]);
       taskIds.push(task.id);
     }
     await this.seedUpdate(GOALS_LEDGER, goalId, (goal) => {
@@ -206,6 +213,11 @@ export abstract class LedgerStorePlanLifecycleFixture<
         ...SEED_PROVENANCE,
       });
     }
+    await this.persistDirect?.([
+      MILESTONES_LEDGER,
+      TASKS_LEDGER,
+      GOALS_LEDGER,
+    ]);
   }
 
   async seedReview(options: SeedReviewOptions): Promise<void> {
@@ -419,7 +431,15 @@ export abstract class LedgerStorePlanLifecycleFixture<
   }
 }
 
-class InMemoryPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<InMemoryLedgerStore> {
+export class InMemoryPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<LifecycleBackedLedgerStore> {
+  constructor(
+    store: LifecycleBackedLedgerStore,
+    private readonly restartBuilder?: () => Promise<LifecycleBackedLedgerStore>,
+    persistDirect?: (ledgerIds: readonly string[]) => Promise<void>,
+  ) {
+    super(store, store, persistDirect);
+  }
+
   static async create(): Promise<InMemoryPlanLifecycleFixture> {
     const store = new InMemoryLedgerStore();
     await store.init();
@@ -435,21 +455,44 @@ class InMemoryPlanLifecycleFixture extends LedgerStorePlanLifecycleFixture<InMem
   }
 
   async restart(): Promise<PlanLifecycleContractFixture> {
+    if (this.restartBuilder !== undefined) {
+      const next = await this.restartBuilder();
+      return new InMemoryPlanLifecycleFixture(
+        next,
+        this.restartBuilder,
+        this.persistDirect === undefined
+          ? undefined
+          : async (ledgerIds) => persistDirectLedgers(next, ledgerIds),
+      );
+    }
     const next = new InMemoryLedgerStore();
     await next.init();
     const source = internals(this.store);
     const target = internals(next);
     target.ledgers.clear();
     for (const [key, value] of source.ledgers) target.ledgers.set(key, cloneLedger(value));
-    target.planClaims.clear();
-    for (const [key, value] of source.planClaims) {
-      target.planClaims.set(key, clone(value));
+    target.planClaims!.clear();
+    for (const [key, value] of source.planClaims!) {
+      target.planClaims!.set(key, clone(value));
     }
-    target.planOperations.clear();
-    for (const [key, value] of source.planOperations) {
-      target.planOperations.set(key, clone(value));
+    target.planOperations!.clear();
+    for (const [key, value] of source.planOperations!) {
+      target.planOperations!.set(key, clone(value));
     }
     return new InMemoryPlanLifecycleFixture(next);
+  }
+}
+
+export async function persistDirectLedgers(
+  store: LifecycleBackedLedgerStore,
+  ledgerIds: readonly string[],
+): Promise<void> {
+  const state = internals(store);
+  if (state.writeLedgerFile === undefined) return;
+  for (const ledgerId of new Set(ledgerIds)) {
+    const ledger = state.ledgers.get(ledgerId);
+    if (ledger === undefined) throw new Error(`ledger not found: ${ledgerId}`);
+    await state.writeLedgerFile(ledger);
   }
 }
 
