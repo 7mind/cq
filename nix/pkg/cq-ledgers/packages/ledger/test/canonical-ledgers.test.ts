@@ -107,6 +107,53 @@ interface LedgerCase {
   createStatus?: string;
 }
 
+const UPSTREAM_LEDGER_SPEC = "upstream";
+const UPSTREAM_SCHEMA_SPEC: LedgerSchema = {
+  statusValues: ["open", "reported", "accepted", "fixed-upstream", "released", "wontfix"],
+  terminalStatuses: ["released", "wontfix"],
+  satisfiesDependencyStatuses: ["released"],
+  idPrefix: "U",
+  transitions: {
+    open: ["reported", "wontfix"],
+    reported: ["accepted", "fixed-upstream", "released", "wontfix"],
+    accepted: ["fixed-upstream", "released", "wontfix"],
+    "fixed-upstream": ["released", "wontfix"],
+    released: [],
+    wontfix: [],
+  },
+  fields: {
+    headline: { type: "string", required: true },
+    package: { type: "string", required: true },
+    affectedVersions: { type: "string[]", required: false },
+    fixedVersion: { type: "string", required: false },
+    environment: { type: "string", required: false },
+    reproduction: { type: "string", required: false },
+    observed: { type: "string", required: false },
+    expected: { type: "string", required: false },
+    priorArt: { type: "string[]", required: false },
+    reportUrls: { type: "string[]", required: false },
+    trackingUrl: { type: "string", required: false },
+    trackerKind: { type: "string", required: false },
+    reportingClassification: { type: "string", required: false },
+    workaround: { type: "string", required: false },
+    severity: { type: "string", required: false },
+    description: { type: "string", required: false },
+    lastCheckedAt: { type: "timestamp", required: false },
+    lastCheckOutcome: { type: "string", required: false },
+    filingOperationId: { type: "string", required: false },
+    filingState: { type: "string", required: false },
+    filingClaimedAt: { type: "timestamp", required: false },
+    sessionLogs: { type: "string[]", required: false },
+    rawLogs: { type: "string[]", required: false },
+    sourceRefs: { type: "string[]", required: false },
+    blockedBy: { type: "id[]", required: false },
+    dependsOn: { type: "id[]", required: false },
+    ledgerRefs: { type: "id[]", required: false },
+    tags: { type: "string[]", required: false },
+    suggestedModel: { type: "string", required: false },
+  },
+};
+
 const CASES: LedgerCase[] = [
   {
     ledger: DEFECTS_LEDGER,
@@ -179,7 +226,48 @@ const CASES: LedgerCase[] = [
     // has a direct legal edge to `concluded`.
     createStatus: "wip",
   },
+  {
+    ledger: UPSTREAM_LEDGER_SPEC,
+    prefix: "U",
+    create: { headline: "Dependency fails in the latest release", package: "@cq/ledger" },
+    update: { status: "released", fields: { trackingUrl: "https://example.invalid/upstream/1" } },
+    searchNeedle: "dependency fails",
+    terminalStatus: "released",
+    createStatus: "reported",
+  },
 ];
+
+describe("T793: upstream canonical-ledger specification", () => {
+  const actual = CANONICAL_LEDGERS.find((entry) => entry.name === UPSTREAM_LEDGER_SPEC);
+
+  it("registers upstream with the U id prefix", () => {
+    expect(actual?.name).toBe(UPSTREAM_LEDGER_SPEC);
+    expect(actual?.schema.idPrefix).toBe("U");
+  });
+
+  it("defines the exact lifecycle and dependency-satisfaction sets", () => {
+    expect(actual?.schema.statusValues).toEqual(UPSTREAM_SCHEMA_SPEC.statusValues);
+    expect(actual?.schema.terminalStatuses).toEqual(UPSTREAM_SCHEMA_SPEC.terminalStatuses);
+    expect(actual?.schema.satisfiesDependencyStatuses).toEqual(
+      UPSTREAM_SCHEMA_SPEC.satisfiesDependencyStatuses,
+    );
+  });
+
+  it("defines the exact transition graph, including no terminal exits", () => {
+    expect(actual?.schema.transitions).toEqual(UPSTREAM_SCHEMA_SPEC.transitions);
+    expect(actual?.schema.transitions?.released).toEqual([]);
+    expect(actual?.schema.transitions?.wontfix).toEqual([]);
+  });
+
+  it("defines every field with the exact type and required flag", () => {
+    expect(actual?.schema.fields).toEqual(UPSTREAM_SCHEMA_SPEC.fields);
+    const required = Object.entries(actual?.schema.fields ?? {})
+      .filter(([, field]) => field.required)
+      .map(([name]) => name)
+      .sort();
+    expect(required).toEqual(["headline", "package"]);
+  });
+});
 
 for (const factory of [inMem, fs_]) {
   describe(`canonical ledgers — lifecycle (${factory.name})`, () => {
@@ -230,7 +318,7 @@ for (const factory of [inMem, fs_]) {
         const ids = new Set<string>();
         for (const c of CASES) {
           const it = await store.createItem(c.ledger, m.id, {
-            status: firstStatus(c.ledger),
+            status: c.createStatus ?? firstStatus(c.ledger),
             fields: c.create,
           });
           expect(ids.has(it.id)).toBe(false);
@@ -259,7 +347,19 @@ for (const factory of [inMem, fs_]) {
           const m2 = id.match(/^([A-Z]+)\d+$/);
           return m2 ? m2[1] : id;
         });
-        expect(prefixes.sort()).toEqual(["D", "G", "H", "HO", "I", "K", "Q", "R", "RS", "T"]);
+        expect(prefixes.sort()).toEqual([
+          "D",
+          "G",
+          "H",
+          "HO",
+          "I",
+          "K",
+          "Q",
+          "R",
+          "RS",
+          "T",
+          "U",
+        ]);
       } finally {
         await store.dispose();
       }
@@ -372,6 +472,7 @@ describe("bootstrap idempotence + divergence guard", () => {
     [HANDOFFS_LEDGER, HANDOFFS_SCHEMA],
     [IDEAS_LEDGER, IDEAS_SCHEMA],
     [RESEARCHES_LEDGER, RESEARCHES_SCHEMA],
+    [UPSTREAM_LEDGER_SPEC, UPSTREAM_SCHEMA_SPEC],
   ];
 
   for (const [name] of schemas) {
@@ -760,9 +861,11 @@ describe("HANDOFFS_SCHEMA shape", () => {
     expect(f!.required).toBe(false);
   });
 
-  it("CANONICAL_LEDGERS has 11 entries and researches is last", () => {
-    expect(CANONICAL_LEDGERS).toHaveLength(11);
-    expect(CANONICAL_LEDGERS[CANONICAL_LEDGERS.length - 1]!.name).toBe(RESEARCHES_LEDGER);
+  it("CANONICAL_LEDGERS has 12 entries and upstream is last", () => {
+    expect(CANONICAL_LEDGERS).toHaveLength(12);
+    expect(CANONICAL_LEDGERS[CANONICAL_LEDGERS.length - 1]!.name).toBe(
+      UPSTREAM_LEDGER_SPEC,
+    );
   });
 });
 

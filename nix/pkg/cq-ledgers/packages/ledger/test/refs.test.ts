@@ -32,6 +32,14 @@ describe("parseRef", () => {
     expect(parseRef("tasks:T5")).toEqual({ kind: "prefixed", ledger: "tasks", id: "T5" });
   });
 
+  it("parses an upstream prefixed ref", () => {
+    expect(parseRef("upstream:U7")).toEqual({
+      kind: "prefixed",
+      ledger: "upstream",
+      id: "U7",
+    });
+  });
+
   it("splits only on the FIRST colon, folding extra colons into the id (then rejects them)", () => {
     expect(() => parseRef("tasks:T5:extra")).toThrow(RefParseError);
   });
@@ -66,6 +74,12 @@ describe("buildPrefixRegistry", () => {
       expect(canonicalRegistry.get(prefix as string)).toBe(name);
     }
   });
+
+  it("registers the U prefix exactly once for upstream", () => {
+    expect([...canonicalRegistry.entries()].filter(([prefix]) => prefix === "U")).toEqual([
+      ["U", "upstream"],
+    ]);
+  });
 });
 
 describe("canonicalizeRef", () => {
@@ -79,6 +93,10 @@ describe("canonicalizeRef", () => {
 
   it("resolves a bare handoffs id (multi-letter idPrefix)", () => {
     expect(canonicalizeRef("HO4", canonicalRegistry)).toBe("handoffs:HO4");
+  });
+
+  it("resolves a bare upstream id", () => {
+    expect(canonicalizeRef("U7", canonicalRegistry)).toBe("upstream:U7");
   });
 
   it("is idempotent on an already-prefixed ref", () => {

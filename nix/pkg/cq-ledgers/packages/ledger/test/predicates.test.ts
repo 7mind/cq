@@ -119,6 +119,7 @@ const QUESTIONS = "questions";
 const REVIEWS = "reviews";
 const MILESTONES = "milestones";
 const RESEARCHES = "researches";
+const UPSTREAM = "upstream";
 
 // Sanity guard: the fixtures below assume the canonical names are bootstrapped.
 const canonicalNames = new Set(CANONICAL_LEDGERS.map((c) => c.name));
@@ -861,6 +862,58 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
       });
       return t.id;
     }
+
+    it("(t793-upstream) reported dependency with a workaround → NOT ready", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const upstream = await store.createItem(UPSTREAM, m.id, {
+          status: "reported",
+          fields: {
+            headline: "Dependency failure",
+            package: "@cq/ledger",
+            workaround: "Pin the previous release",
+          },
+        });
+        await seedCandidate(store, m.id, [`${UPSTREAM}:${upstream.id}`]);
+
+        expect(derivePredicates(store).pImplement).toEqual({ value: false, items: [] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    it("(t793-upstream) wontfix dependency → NOT ready", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const upstream = await store.createItem(UPSTREAM, m.id, {
+          status: "wontfix",
+          fields: { headline: "Unsupported use case", package: "@cq/ledger" },
+        });
+        await seedCandidate(store, m.id, [`${UPSTREAM}:${upstream.id}`]);
+
+        expect(derivePredicates(store).pImplement).toEqual({ value: false, items: [] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
+
+    it("(t793-upstream) released dependency → ready", async () => {
+      const store = await factory.build();
+      try {
+        const m = await store.createMilestone({ title: "m" });
+        const upstream = await store.createItem(UPSTREAM, m.id, {
+          status: "released",
+          fields: { headline: "Released fix", package: "@cq/ledger" },
+        });
+        const taskId = await seedCandidate(store, m.id, [`${UPSTREAM}:${upstream.id}`]);
+
+        expect(derivePredicates(store).pImplement).toEqual({ value: true, items: [taskId] });
+      } finally {
+        await factory.teardown(store);
+      }
+    });
 
     for (const form of REF_FORMS) {
       // A dependsOn on an ACTIVE ABANDONED task must NOT satisfy: abandoned is
