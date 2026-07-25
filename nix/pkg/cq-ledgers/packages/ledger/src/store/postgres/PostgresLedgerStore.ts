@@ -750,17 +750,29 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
   }
 
   /**
-   * Swap a transaction-local LIVE ledger map into the cache POST-COMMIT.
+   * Swap a transaction-local LIVE ledger map into BOTH read surfaces POST-COMMIT.
    *
    * A plan-fenced write reads every ledger fresh under its locks, so its map is
    * strictly newer than whatever this instance had cached — adopting it wholesale
    * both publishes the write and repairs any drift a peer instance's earlier
    * commit had left behind. `null` means the write took the unfenced path and
    * read nothing live.
+   *
+   * Review r1 fix: the cache is not this store's only read surface. Absorbing
+   * into `this.ledgers` alone advances `fetchItem`/`search` for EVERY absorbed
+   * ledger while `afterCommit` re-indexes only the MUTATED one, so a peer's
+   * committed item on some third ledger becomes fetchable from an instance whose
+   * `ftsSearch` still cannot see it — two read surfaces of ONE instance
+   * disagreeing. (Before the fence the two were stale TOGETHER, so the
+   * divergence is new.) Absorption therefore repairs the index for exactly the
+   * set it repaired the cache for.
    */
   private absorbLiveLedgers(live: Map<string, Ledger> | null): void {
     if (live === null) return;
-    for (const [name, ledger] of live) this.ledgers.set(name, ledger);
+    for (const [name, ledger] of live) {
+      this.ledgers.set(name, ledger);
+      this.rebuildLedgerIndexActive(name);
+    }
   }
 
   /** Place one archived_items row into the archive cache maps. */
@@ -1619,11 +1631,10 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       dirty = [...new Set(mutation.dirtyLedgers)];
       live = state.ledgers;
     });
-    // Post-commit only: the cache adopts the live map the transaction read and
-    // mutated, so this instance publishes its own write AND picks up whatever a
-    // peer had committed since its last refresh.
+    // Post-commit only: both read surfaces adopt the live map the transaction
+    // read and mutated, so this instance publishes its own write AND picks up
+    // whatever a peer had committed since its last refresh.
     this.absorbLiveLedgers(live);
-    for (const ledgerId of live.keys()) this.rebuildLedgerIndexActive(ledgerId);
     for (const ledgerId of dirty) this.fireHook(ledgerId, "update");
     await this.notify();
     return value;

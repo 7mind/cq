@@ -1,20 +1,24 @@
 /**
- * Postgres-SPECIFIC plan-lifecycle guarantees (T851) — the four claims the
- * shared `planLifecycleStoreContract` cannot make, because each is about how
- * THIS backend reaches its answer rather than what the answer is:
+ * Postgres-SPECIFIC plan-lifecycle guarantees (T851) — the claims the shared
+ * `planLifecycleStoreContract` cannot make, because each is about how THIS
+ * backend reaches its answer rather than what the answer is:
  *
  *  1. The fence reads LIVE rows, never the instance's materialized cache. This
  *     backend is the only one whose reads are served from a cache a peer's
  *     committed write can silently invalidate, so it is the only one where the
  *     staleness defect recorded against the fs/git path (D141) has a genuine
  *     analogue.
- *  2. `reopenItem` is fenced too — a separate write path from `updateItem`, and
+ *  2. Whatever the fence reads live, it publishes to EVERY read surface — cache
+ *     AND search index — for every ledger it absorbed, so no two reads of one
+ *     instance can contradict each other.
+ *  3. `reopenItem` is fenced too — a separate write path from `updateItem`, and
  *     one a backend can plausibly leave unguarded.
- *  3. The whole mutation is ATOMIC: the test injects a failure at EVERY
- *     statement boundary of a finalize transaction and shows no boundary leaves
- *     a partial row behind, and that the decision and the finalized goal only
- *     ever appear together.
- *  4. No owner fence TOKEN is ever persisted — asserted by reading the rows,
+ *  4. The whole mutation is ATOMIC, shown two complementary ways: a failure
+ *     injected at EVERY statement boundary of a finalize transaction leaves no
+ *     partial row behind, and the rows the mutation writes share one `xmin`,
+ *     i.e. one transaction produced them. The second is not redundant — see
+ *     {@link injectingPool} for the case the walk alone cannot see.
+ *  5. No owner fence TOKEN is ever persisted — asserted by reading the rows,
  *     not by reading a projection of them.
  *
  * Env-gated on CQ_TEST_PG_URL (Q286).
@@ -27,6 +31,7 @@ import type { SQL } from "bun";
 import {
   DECISIONS_LEDGER,
   GOALS_LEDGER,
+  HYPOTHESIS_LEDGER,
   MILESTONES_AMBIENT_ID,
   PLAN_FINALIZED_MANIFEST_FIELD,
   PLAN_GENERATION_FIELD,
@@ -52,6 +57,8 @@ import {
 const PG_URL = process.env.CQ_TEST_PG_URL;
 
 const GOAL_ID = "G1";
+/** A token no fixture text contains, so an FTS hit for it is unambiguous. */
+const FTS_MARKER = "zqxjkw";
 const OWNER_TOKEN = "A".repeat(22);
 const PROVENANCE = { author: "t851", session: "t851-session" } as const;
 const INJECTED = "t851 injected mid-transaction failure";
@@ -137,11 +144,24 @@ interface Injector {
 /**
  * A pool that fails the Nth statement issued while armed.
  *
- * BOTH the transaction handle and the pool itself are counted. Counting only
- * the transaction handle would leave a real defect invisible: an implementation
- * that wrote part of the mutation on a SEPARATE connection would place that
- * write outside every countable boundary, so the walk would step straight past
- * the torn interleaving it exists to find.
+ * BOTH the transaction handle and the pool itself are counted, so a statement
+ * issued OFF the transaction still advances the counter and can still be the
+ * one that fails.
+ *
+ * What the walk proves: for every injection index, the failure it causes leaves
+ * NO partial effect — no decision row, no finalized goal, no replay record.
+ *
+ * What the walk does NOT prove — measured, not assumed (review r1): that each
+ * individual write is on the transaction. The `plan_operations` upsert in
+ * `persistPlanRecords` is the LAST statement inside the finalize transaction,
+ * so moving it to `this.pool()` (a separate connection, committing on its own)
+ * leaves this entire suite green: no injection index falls between that write
+ * and the COMMIT, so the walk never gets to observe the torn state. The same
+ * mutation on the `plan_claims` branch IS caught — statements follow it — so
+ * this is a specific gap in the technique's coverage, not a general limit of
+ * it. Connection identity is asserted directly instead, by the `xmin` test:
+ * rows written by one transaction share one `xmin`, and the off-transaction
+ * mutation above makes that test fail (verified).
  */
 function injectingPool(dsn: string): { pool: SQL; injector: Injector } {
   const real = openPgPool(dsn);
@@ -332,6 +352,38 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
     expect(reader.fetchItem(TASKS_LEDGER, second).status).toBe("planned");
   }, 30_000);
 
+  test("a guarded raw write publishes EVERY absorbed ledger to the search index, not just the mutated one", async () => {
+    const h = await newHarness();
+    const writer = await h.open();
+    await seedGoal(writer, GOAL_ID);
+    const { taskIds } = await driveToFinalized(writer, "R6");
+    const [first] = taskIds;
+    if (first === undefined) throw new Error("manifest is short");
+
+    // A PEER instance commits an item on a ledger `writer` never mutates and
+    // never invalidates, so `writer` has it in NEITHER read surface yet.
+    const peer = await h.open();
+    await peer.createItem(HYPOTHESIS_LEDGER, MILESTONES_AMBIENT_ID, {
+      id: "H1",
+      status: "open",
+      fields: { headline: `${FTS_MARKER} peculiar marker` },
+      ...PROVENANCE,
+    });
+    expect(() => writer.fetchItem(HYPOTHESIS_LEDGER, "H1")).toThrow();
+    expect(await writer.ftsSearch(FTS_MARKER)).toHaveLength(0);
+
+    // A guarded RAW write reads every ledger live under its locks and absorbs
+    // the whole map into the cache — including `hypothesis`, which it did not
+    // mutate. Absorbing into the cache alone leaves the two read surfaces of
+    // ONE instance contradicting each other: `fetchItem` finds H1 while
+    // `ftsSearch` cannot. Absorption must publish to both.
+    await writer.updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE });
+
+    expect(writer.fetchItem(HYPOTHESIS_LEDGER, "H1").status).toBe("open");
+    const hits = await writer.ftsSearch(FTS_MARKER);
+    expect(hits.map((hit) => hit.item.id)).toEqual(["H1"]);
+  }, 30_000);
+
   test("reopenItem is fenced: a superseded managed task cannot be resurrected raw", async () => {
     const h = await newHarness();
     const store = await h.open();
@@ -456,6 +508,44 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
     expect(await goalFields()).toHaveProperty(PLAN_FINALIZED_MANIFEST_FIELD);
     expect(await operationCount()).toBe(1);
   }, 120_000);
+
+  test("the replay record, the decision row and the goal row all carry ONE transaction's xmin", async () => {
+    const h = await newHarness();
+    const store = await h.open();
+    await seedGoal(store, GOAL_ID);
+    await driveToFinalized(store, "R7");
+
+    // `xmin` is the id of the transaction that produced a tuple's current
+    // version. Rows sharing an `xmin` were written by the SAME transaction —
+    // which is the atomicity claim itself, read straight off the heap rather
+    // than inferred from the statement-injection walk (whose blind spot is
+    // documented on {@link injectingPool}).
+    const xminOf = async (query: Promise<Array<{ xmin: string }>>): Promise<string[]> =>
+      (await query).map((row) => row.xmin);
+
+    const operationXmins = await xminOf(h.admin<Array<{ xmin: string }>>`
+      SELECT xmin::text AS xmin FROM plan_operations
+      WHERE project_key = ${h.projectKey} AND scope LIKE ${"%finalize%"}
+    `);
+    const decisionXmins = await xminOf(h.admin<Array<{ xmin: string }>>`
+      SELECT xmin::text AS xmin FROM items
+      WHERE project_key = ${h.projectKey} AND ledger = ${DECISIONS_LEDGER}
+    `);
+    const goalXmins = await xminOf(h.admin<Array<{ xmin: string }>>`
+      SELECT xmin::text AS xmin FROM items
+      WHERE project_key = ${h.projectKey} AND ledger = ${GOALS_LEDGER} AND id = ${GOAL_ID}
+    `);
+
+    // The premise: each effect actually landed, so the comparison below is not
+    // vacuously true over empty sets.
+    expect(operationXmins).toHaveLength(1);
+    expect(decisionXmins).toHaveLength(1);
+    expect(goalXmins).toHaveLength(1);
+
+    // Persisting the replay record (or the ledger state) on a connection other
+    // than the finalize transaction's gives it its OWN xid, and this fails.
+    expect(new Set([...operationXmins, ...decisionXmins, ...goalXmins]).size).toBe(1);
+  }, 30_000);
 
   test("no owner fence token is ever persisted — only its verifier", async () => {
     const h = await newHarness();
