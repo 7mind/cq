@@ -1,0 +1,59 @@
+# T865 fixture — the DISPATCH SURFACE of the committed `cq init` config
+# (CQ_TOML_TEMPLATE, cq-cli/src/cqTomlTemplate.ts), comments stripped and with
+# no [ledger] block (the spawning test appends an xdg one with an explicit
+# projectId, since a temp dir has no git identity).
+#
+# It is a COPY on purpose: `@cq/ledger-mcp` must not depend on `@cq/cli`. The
+# copy cannot drift silently — cq-cli's cqTomlTemplate.test.ts asserts that this
+# file resolves the SAME aliases, panels, tiers and agent tiers as
+# CQ_TOML_TEMPLATE under every active selector (claude | pi | codex).
+#
+# This repository's live cq.toml is GITIGNORED and deliberately unused here: a
+# test reading it would not reproduce for anyone else, or in CI.
+
+[aliases]
+  opus      = "claude:opus"
+  sonnet    = "claude:sonnet"
+  haiku     = "claude:haiku"
+  opus-max  = "claude:opus:max"
+  fable     = "claude:fable"
+  grok      = "pi:grok-build/grok-build:high"
+  codex     = "pi:openai-codex/gpt-5.6-sol:xhigh"
+  terra     = "pi:openai-codex/gpt-5.6-terra:high"
+  luna      = "pi:openai-codex/gpt-5.6-luna:low"
+  codex-max = "pi:openai-codex/gpt-5.6-sol:max"
+
+[agent_tiers]
+  investigate-explorer        = "frontier"
+  investigate-prober          = "standard"
+  research-explorer           = "frontier"
+  research-experimenter       = "frontier"
+  plan-advance                = "frontier"
+  plan-reviewer               = "frontier"
+  implement-worker            = "standard"
+  implement-reviewer          = "frontier"
+  implement-conflict-resolver = "standard"
+
+[harness.claude]
+  reviewers = ["opus"]
+  planners  = ["opus"]
+[harness.claude.tiers]
+  frontier = "opus"
+  standard = "sonnet"
+  fast     = "haiku"
+
+[harness.pi]
+  reviewers = ["grok", "codex"]
+  planners  = ["codex"]
+[harness.pi.tiers]
+  frontier = "codex"
+  standard = "terra"
+  fast     = "luna"
+
+[harness.codex]
+  reviewers = ["codex"]
+  planners  = ["codex"]
+[harness.codex.tiers]
+  frontier = "codex"
+  standard = "terra"
+  fast     = "luna"

@@ -16,6 +16,7 @@ let
   codexPkg = pkgs.callPackage ../pkg/codex/package.nix { };
 
   assets = import ../pkg/cq-assets/assets.nix { inherit lib; };
+  codexHarnessEnv = import ../lib/codex-harness-env.nix { inherit lib; };
   codexPromptRoot = import ../pkg/cq-assets/render-prompt-surface.nix {
     inherit pkgs lib;
     surface = "codex";
@@ -122,7 +123,11 @@ in
           # into `buildCommand`, which IS on the resulting attrset, so inspect
           # that directly — this handle also fails if `postBuild` is ever
           # unwired from symlinkJoin, unlike a free-standing let-bound string.
-          assertion = lib.hasInfix "CQ_HARNESS codex" codexWrapped.buildCommand;
+          # T865: the check is the ANCHORED argument-triple predicate, shared
+          # with the focused `codex-harness-env` flake check, so a CHANGED value
+          # fails here too (`lib.hasInfix "CQ_HARNESS codex"` accepted
+          # `--set CQ_HARNESS codex-foo`).
+          assertion = codexHarnessEnv.exportsCodexHarness codexWrapped.buildCommand;
           message = "Codex wrapper does not export CQ_HARNESS=codex (the active configuration selector)";
         }
       ];

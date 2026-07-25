@@ -19,12 +19,14 @@ import { describe, it, expect } from "bun:test";
 import * as path from "node:path";
 import { readFileSync } from "node:fs";
 import {
+  ACTIVE_HARNESSES,
   parseConfig,
   resolveReviewers,
   resolvePlanners,
   resolveAgentModel,
   formatReviewerToken,
   tierModel,
+  type ActiveHarness,
 } from "@cq/config";
 import { CQ_TOML_TEMPLATE } from "../src/cqTomlTemplate.js";
 
@@ -32,6 +34,13 @@ import { CQ_TOML_TEMPLATE } from "../src/cqTomlTemplate.js";
 // test/ -> cq-cli/ -> packages/ -> cq-ledgers/ -> pkg/ -> nix/ -> repo root
 const REPO_ROOT = path.resolve(import.meta.dir, "../../../../../../");
 const EXAMPLE_PATH = path.join(REPO_ROOT, "cq.toml.example");
+// T865: ledger-mcp's spawned-server fixture is a COPY of this template's
+// dispatch surface (`@cq/ledger-mcp` must not depend on `@cq/cli`). Pinned
+// below so the copy cannot drift from what `cq init` actually writes.
+const T865_FIXTURE_PATH = path.resolve(
+  import.meta.dir,
+  "../../ledger-mcp/test/fixtures/t865/codex-selection.cq.toml",
+);
 
 // Expected token strings — bare family aliases (Q252/T509): the Claude Code
 // Agent tool's per-dispatch `model` override is a closed 4-value enum
@@ -355,4 +364,47 @@ describe("cq.toml.example active model set equals CQ_TOML_TEMPLATE (T331/T440)",
     const config = parseConfig(readFileSync(EXAMPLE_PATH, "utf8"));
     expect(config.ledger).toBeNull();
   });
+});
+
+/**
+ * T865: pin ledger-mcp's spawned-server fixture to CQ_TOML_TEMPLATE.
+ *
+ * The T865 integration test launches the REAL ledger-MCP stdio server under
+ * `CQ_HARNESS=codex` and asserts it resolves the repository's Codex ladder. It
+ * cannot read this repository's live cq.toml (gitignored — it would not
+ * reproduce elsewhere or in CI), and `@cq/ledger-mcp` must not depend on
+ * `@cq/cli`, so its fixture is a committed COPY of this template's dispatch
+ * surface. Comparing the RESOLVED surface (not the text) under every active
+ * selector is what makes the copy trustworthy: change the template's aliases,
+ * panels, tiers or agent tiers without updating the fixture and this fails.
+ */
+describe("ledger-mcp T865 fixture equals the CQ_TOML_TEMPLATE dispatch surface", () => {
+  function dispatchSurface(source: string, harness: ActiveHarness) {
+    const config = parseConfig(source, harness);
+    return {
+      aliases: Object.fromEntries(
+        Object.entries(config.aliases).map(([name, token]) => [
+          name,
+          formatReviewerToken(token),
+        ]),
+      ),
+      reviewers: resolveReviewers(config).map(formatReviewerToken),
+      planners: resolvePlanners(config).map(formatReviewerToken),
+      tiers: (["frontier", "standard", "fast"] as const).map((tier) => {
+        const token = tierModel(config, tier);
+        return token === undefined ? null : formatReviewerToken(token);
+      }),
+      agentTiers: config.agentTiers,
+    };
+  }
+
+  it.each([...ACTIVE_HARNESSES])(
+    "resolves the same aliases/panels/tiers/agent tiers under the %s selector",
+    (harness) => {
+      const fixture = readFileSync(T865_FIXTURE_PATH, "utf8");
+      expect(dispatchSurface(fixture, harness)).toEqual(
+        dispatchSurface(CQ_TOML_TEMPLATE, harness),
+      );
+    },
+  );
 });

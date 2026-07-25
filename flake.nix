@@ -77,6 +77,7 @@
           commands = llmAssets.commands;
           promptRoot = codexPromptRoot;
         };
+        codexHarnessEnv = import ./nix/lib/codex-harness-env.nix { lib = pkgs.lib; };
         claudePromptHomeTest = import ./nix/lib/claude-prompt-home-test.nix {
           lib = pkgs.lib;
           inherit pkgs claudePromptRoot;
@@ -532,6 +533,31 @@
                   bash profile-test.sh
                   touch $out
                 '';
+            # T865(a): the FOCUSED evaluation of exactly one fact — the packaged
+            # Codex wrapper exports CQ_HARNESS=codex, the selector the ledger
+            # MCP server consumes (proven at the other boundary by
+            # packages/ledger-mcp/test/codexHarnessSelection.test.ts).
+            #
+            # It does NOT duplicate T863's two guards; it closes what neither
+            # covers. T863's eval-time guard is the home-manager assertion in
+            # nix/hm/codex.nix, which codex-cq-skills below reaches only through
+            # `lib.all (entry: entry.assertion)` over twenty-odd assertions
+            # (discarding their messages); it also matched `lib.hasInfix
+            # "CQ_HARNESS codex"`, which ACCEPTS `--set CQ_HARNESS codex-foo`
+            # (measured) — that assertion now shares the anchored predicate used
+            # here. T863's other guard, the anchored `rg -q "CQ_HARNESS='codex'"`
+            # in codex-cq-skills, does catch a changed value, but only by
+            # BUILDING the wrapper over the codex static binary, which is not an
+            # evaluation. This check is build-free
+            # (`nix eval .#checks.<system>.codex-harness-env.drvPath` suffices),
+            # names the failing fact, and mutation-checks its own predicate via
+            # `selfTest`.
+            codex-harness-env =
+              assert codexHarnessEnv.selfTest;
+              assert pkgs.lib.assertMsg
+                (codexHarnessEnv.exportsCodexHarness codexCommandSkillsTest.package.buildCommand)
+                "the packaged Codex wrapper does not export exactly CQ_HARNESS=codex";
+              pkgs.runCommand "codex-harness-env" { } "touch $out";
             codex-cq-skills =
               assert codexCommandSkillsTest.passed;
               pkgs.runCommand "codex-cq-skills" { } ''
