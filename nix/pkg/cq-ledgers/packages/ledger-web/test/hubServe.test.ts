@@ -14,7 +14,7 @@
  * bundle, and `GET /api/projects` lists every registered tenant.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
 import { spawn as bunSpawn } from "bun";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -191,6 +191,8 @@ describe("assertTokenIfNonLoopback (Q273)", () => {
 
 const here = new URL(".", import.meta.url).pathname;
 const hubMain = path.resolve(here, "..", "src", "hubServe.ts");
+const CQ_SERVE_OWNER_LOCK_KEY = 847_501_002;
+const SCHEMA_DDL_LOCK_KEY = 847_501_001;
 
 /** Spawn hubServe.ts with `env` overrides; resolves once the process exits. */
 async function runHub(
@@ -381,3 +383,177 @@ describe.skipIf(!process.env["CQ_TEST_PG_URL"])("cq serve — live boot (T586)",
     }
   });
 });
+
+describe.skipIf(!process.env["CQ_TEST_PG_URL"])(
+  "cq serve — single PostgreSQL owner (T724, Good-Communication)",
+  () => {
+    const PG_URL = process.env["CQ_TEST_PG_URL"];
+    let outdir: string;
+    const children: Array<{ kill(): void; exited: Promise<number> }> = [];
+    let control: ReturnType<typeof openPgPool> | null = null;
+
+    beforeAll(async () => {
+      outdir = await fs.mkdtemp(path.join(os.tmpdir(), "cq-serve-owner-out-"));
+    });
+
+    afterAll(async () => {
+      await fs.rm(outdir, { recursive: true, force: true });
+    });
+
+    afterEach(async () => {
+      for (const child of children) {
+        child.kill();
+        await child.exited;
+      }
+      children.length = 0;
+      if (control !== null) {
+        await control.close();
+        control = null;
+      }
+    });
+
+    it("rejects a second owner before schema/bind, transfers ownership, and fail-stops on session loss", async () => {
+      const ownerA = bunSpawn({
+        cmd: [
+          process.execPath,
+          "run",
+          hubMain,
+          "--pg-url",
+          PG_URL!,
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "0",
+        ],
+        env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      children.push(ownerA);
+      const ownerAStderr = new Response(ownerA.stderr).text();
+      const ownerAReader = ownerA.stdout.getReader();
+      const readUrl = async (
+        reader: ReadableStreamDefaultReader<Uint8Array>,
+      ): Promise<string> => {
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (!buf.includes("\n")) {
+          const { done, value } = await reader.read();
+          if (done) throw new Error("cq serve stdout closed without a URL");
+          buf += decoder.decode(value, { stream: true });
+        }
+        return buf.slice(0, buf.indexOf("\n")).trim();
+      };
+      const ownerAUrl = await Promise.race([
+        readUrl(ownerAReader),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("owner A did not bind within 20s")), 20_000),
+        ),
+      ]);
+      const ownerAPort = new URL(ownerAUrl).port;
+
+      const controlPool = openPgPool(PG_URL!);
+      control = controlPool;
+      const schemaLock = await controlPool.reserve();
+      try {
+        await schemaLock`SELECT pg_advisory_lock(${SCHEMA_DDL_LOCK_KEY}::bigint)`;
+        const beforeProjects = await controlPool<Array<{ count: string }>>`
+          SELECT count(*)::text AS count FROM projects
+        `;
+        const ownerBContended = bunSpawn({
+          cmd: [
+            process.execPath,
+            "run",
+            hubMain,
+            "--pg-url",
+            PG_URL!,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            ownerAPort,
+          ],
+          env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        children.push(ownerBContended);
+        const contendedExit = await Promise.race([
+          ownerBContended.exited.then((exitCode) => ({ timedOut: false, exitCode })),
+          new Promise<{ timedOut: true; exitCode: null }>((resolve) =>
+            setTimeout(() => resolve({ timedOut: true, exitCode: null }), 5_000),
+          ),
+        ]);
+        if (contendedExit.timedOut) ownerBContended.kill();
+        const [contendedStdout, contendedStderr] = await Promise.all([
+          new Response(ownerBContended.stdout).text(),
+          new Response(ownerBContended.stderr).text(),
+          ownerBContended.exited,
+        ]);
+        expect(contendedExit.timedOut).toBe(false);
+        expect(contendedExit.exitCode).not.toBe(0);
+        expect(contendedStdout).toBe("");
+        expect(contendedStderr).toContain("already has an active cq serve owner");
+        const afterProjects = await controlPool<Array<{ count: string }>>`
+          SELECT count(*)::text AS count FROM projects
+        `;
+        expect(afterProjects).toEqual(beforeProjects);
+      } finally {
+        await schemaLock`SELECT pg_advisory_unlock(${SCHEMA_DDL_LOCK_KEY}::bigint)`;
+        schemaLock.release();
+      }
+
+      ownerA.kill();
+      expect(await ownerA.exited).toBe(0);
+      await ownerAReader.cancel();
+      await ownerAStderr;
+
+      const ownerB = bunSpawn({
+        cmd: [
+          process.execPath,
+          "run",
+          hubMain,
+          "--pg-url",
+          PG_URL!,
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "0",
+        ],
+        env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      children.push(ownerB);
+      const ownerBStderr = new Response(ownerB.stderr).text();
+      const ownerBReader = ownerB.stdout.getReader();
+      const ownerBUrl = await Promise.race([
+        readUrl(ownerBReader),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("owner B did not bind after owner A stopped")), 20_000),
+        ),
+      ]);
+      expect((await fetch(ownerBUrl)).status).toBe(200);
+
+      const terminated = await controlPool<Array<{ terminated: boolean }>>`
+        SELECT pg_terminate_backend(pid) AS terminated
+        FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+          AND classid = 0
+          AND objid = ${CQ_SERVE_OWNER_LOCK_KEY}
+          AND granted
+      `;
+      expect(terminated).toEqual([{ terminated: true }]);
+      const ownerBExit = await Promise.race([
+        ownerB.exited,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("owner B kept serving after ownership-session loss")), 10_000),
+        ),
+      ]);
+      expect(ownerBExit).not.toBe(0);
+      expect(await ownerBStderr).toContain("ownership connection was lost");
+      await ownerBReader.cancel();
+      await expect(fetch(ownerBUrl)).rejects.toThrow();
+    }, 60_000);
+  },
+);

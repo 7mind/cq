@@ -82,12 +82,14 @@ export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBack
 export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 export type { SqliteLedgerStoreOpts } from "./store/sqlite/SqliteLedgerStore.js";
 // Postgres backend (G81): the barrel carries ONLY the surface external
-// consumers (cq-cli's logPut postgres branch, the T577 factory) genuinely
-// need — the rest of the connection/dsn/schema internals stay module-local
-// (review R690 round 2: no over-export).
+// consumers (cq-cli's logPut postgres branch, the T577 factory, and cq serve's
+// process-lifetime ownership lease) genuinely need — the rest of the
+// connection/dsn/schema internals stay module-local (review R690 round 2: no
+// over-export).
 export { PostgresLedgerStore } from "./store/postgres/PostgresLedgerStore.js";
 export type { PostgresLedgerStoreOpts } from "./store/postgres/PostgresLedgerStore.js";
-export { openPgPool } from "./store/postgres/connection.js";
+export { openPgPool, tryAcquireDedicatedAdvisoryLock } from "./store/postgres/connection.js";
+export type { PgAdvisoryLockLease } from "./store/postgres/connection.js";
 export { ensureSchema } from "./store/postgres/schema.js";
 export { resolvePostgresDsn } from "./store/postgres/dsn.js";
 export { resolveDisplayName } from "./store/postgres/displayName.js";

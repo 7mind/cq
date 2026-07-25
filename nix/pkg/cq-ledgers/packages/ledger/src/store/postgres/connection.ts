@@ -26,6 +26,89 @@ export function openPgPool(dsn: string): SQL {
   return new SQL(dsn);
 }
 
+/** A session-level advisory lock retained on one dedicated PostgreSQL connection. */
+export interface PgAdvisoryLockLease {
+  /** Unlock once, release the reserved connection, and close its one-connection pool. */
+  release(): Promise<void>;
+}
+
+/**
+ * Try to retain `lockKey` on a dedicated reserved connection until the
+ * returned lease is released. Unlike {@link withAdvisoryLock}, this helper
+ * does not wait for a contended lock and does not delimit a short critical
+ * section: it supports a process-lifetime ownership invariant.
+ *
+ * The dedicated pool has exactly one connection and disables idle/lifetime
+ * expiry. If PostgreSQL closes that connection after the lock was acquired,
+ * `onConnectionLost` runs immediately; callers must fail-stop because
+ * PostgreSQL released the session-level lock at the same instant.
+ */
+export async function tryAcquireDedicatedAdvisoryLock(
+  dsn: string,
+  lockKey: number,
+  onConnectionLost: (error: Error) => void,
+): Promise<PgAdvisoryLockLease | null> {
+  let lockHeld = false;
+  let closing = false;
+  let lossReported = false;
+  const pool = new SQL({
+    url: dsn,
+    max: 1,
+    idleTimeout: 0,
+    maxLifetime: 0,
+    onclose: (error: Error | null): void => {
+      if (!closing && lockHeld && !lossReported) {
+        lossReported = true;
+        onConnectionLost(
+          error ?? new Error("PostgreSQL closed the dedicated advisory-lock connection"),
+        );
+      }
+    },
+  });
+  let reserved: Awaited<ReturnType<SQL["reserve"]>> | null = null;
+  try {
+    reserved = await pool.reserve();
+    const rows = await reserved<Array<{ acquired: boolean }>>`
+      SELECT pg_try_advisory_lock(${lockKey}::bigint) AS acquired
+    `;
+    if (rows[0]?.acquired !== true) {
+      closing = true;
+      reserved.release();
+      await pool.close();
+      return null;
+    }
+    lockHeld = true;
+  } catch (error) {
+    closing = true;
+    reserved?.release();
+    await pool.close({ timeout: 0 });
+    throw error;
+  }
+
+  let released = false;
+  return {
+    async release(): Promise<void> {
+      if (released) return;
+      released = true;
+      closing = true;
+      try {
+        if (lockHeld) {
+          const rows = await reserved<Array<{ released: boolean }>>`
+            SELECT pg_advisory_unlock(${lockKey}::bigint) AS released
+          `;
+          if (rows[0]?.released !== true) {
+            throw new Error(`PostgreSQL advisory lock ${String(lockKey)} was not held at release`);
+          }
+          lockHeld = false;
+        }
+      } finally {
+        reserved.release();
+        await pool.close();
+      }
+    },
+  };
+}
+
 /**
  * Run `fn` with a lock reserved via `pg_advisory_lock`, on the exact
  * connection that acquired it (Q271): a plain `pool\`select

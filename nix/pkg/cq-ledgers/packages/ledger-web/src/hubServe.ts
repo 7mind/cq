@@ -51,9 +51,11 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { ServerWebSocket } from "bun";
 import {
   openPgPool,
+  tryAcquireDedicatedAdvisoryLock,
   ensureSchema,
   PostgresLedgerStore,
   startPostgresHubCoherenceWatcher,
+  type PgAdvisoryLockLease,
   type ProjectEntry,
   type PostgresCoherenceWatcher,
 } from "@cq/ledger";
@@ -76,6 +78,21 @@ export const HUB_DEFAULT_HOST = "127.0.0.1";
  * on one host with no flag needed to avoid a clash.
  */
 export const HUB_DEFAULT_PORT = 5190;
+
+/**
+ * Process-lifetime `cq serve` owner key. PostgreSQL advisory locks are scoped
+ * to one database, so identical servers contend only when they target the
+ * same database. This key must remain distinct from the schema-migration lock.
+ */
+const CQ_SERVE_OWNER_LOCK_KEY = 847_501_002;
+
+/** A second `cq serve` process already owns the target PostgreSQL database. */
+export class HubOwnershipUnavailableError extends Error {
+  constructor() {
+    super("PostgreSQL database already has an active cq serve owner");
+    this.name = "HubOwnershipUnavailableError";
+  }
+}
 
 /** Parsed `cq serve` argv, pre-DSN-resolution. */
 export interface HubServeArgs {
@@ -370,16 +387,38 @@ function checkWsAuth(url: URL, token: string | null): boolean {
 }
 
 /**
- * Open the pool, ensure schema (idempotent DDL under the `pg_advisory_lock`,
- * T572/Q271), and read back the projects registry. Does not bind a port.
+ * Acquire this database's process-lifetime ownership lease, then open the
+ * shared data pool, ensure schema (idempotent DDL under its distinct
+ * `pg_advisory_lock`, T572/Q271), and read back the projects registry. Does
+ * not bind a port.
  */
 export async function bootHub(
   dsn: string,
-): Promise<{ pool: ReturnType<typeof openPgPool>; projects: ProjectEntry[] }> {
+  onOwnershipConnectionLost: (error: Error) => void,
+): Promise<{
+  pool: ReturnType<typeof openPgPool>;
+  projects: ProjectEntry[];
+  ownership: PgAdvisoryLockLease;
+}> {
+  const ownership = await tryAcquireDedicatedAdvisoryLock(
+    dsn,
+    CQ_SERVE_OWNER_LOCK_KEY,
+    onOwnershipConnectionLost,
+  );
+  if (ownership === null) throw new HubOwnershipUnavailableError();
   const pool = openPgPool(dsn);
-  await ensureSchema(pool);
-  const projects = await fetchRegisteredProjects(pool);
-  return { pool, projects };
+  try {
+    await ensureSchema(pool);
+    const projects = await fetchRegisteredProjects(pool);
+    return { pool, projects, ownership };
+  } catch (error) {
+    try {
+      await pool.close({ timeout: 0 });
+    } finally {
+      await ownership.release();
+    }
+    throw error;
+  }
 }
 
 /**
@@ -610,7 +649,16 @@ export async function main(argv: readonly string[]): Promise<void> {
     process.exit(1);
     return;
   }
-  const { pool, projects } = await bootHub(dsn);
+  let stopping = false;
+  let server: ReturnType<typeof Bun.serve> | null = null;
+  const onOwnershipConnectionLost = (error: Error): void => {
+    if (stopping) return;
+    stopping = true;
+    process.stderr.write(`cq serve: fatal: ownership connection was lost: ${error.message}\n`);
+    if (server !== null) void server.stop(true);
+    process.exit(1);
+  };
+  const { pool, projects, ownership } = await bootHub(dsn, onOwnershipConnectionLost);
   const projectList =
     projects.length > 0 ? projects.map((p) => `${p.key} (${p.displayName})`).join(", ") : "(none registered yet)";
   process.stderr.write(`cq serve: serving ${String(projects.length)} project(s): ${projectList}\n`);
@@ -621,20 +669,36 @@ export async function main(argv: readonly string[]): Promise<void> {
   const indexPath = path.join(outdir, "index.html");
 
   const opts: HubServeOpts = { host: args.host, port: args.port, token, outdir };
-  const server = serveHub(opts, pool, dsn, indexPath, promptSurface?.store);
+  const runningServer = serveHub(opts, pool, dsn, indexPath, promptSurface?.store);
+  server = runningServer;
 
   const shutdown = (): void => {
+    if (stopping) return;
+    stopping = true;
     // serveHub's wrapped stop() closes the hub LISTEN connection; the shared
-    // pool is closed here, ONCE, afterwards (never per-store — that would close
-    // the pool shared across every tenant).
-    server.stop(true);
-    void pool.close();
-    process.exit(0);
+    // pool and dedicated ownership lease are closed here, ONCE, afterwards
+    // (never per-store — that would close the pool shared across every tenant).
+    void (async () => {
+      try {
+        await runningServer.stop(true);
+      } finally {
+        try {
+          await pool.close();
+        } finally {
+          await ownership.release();
+        }
+      }
+      process.exit(0);
+    })().catch((error: unknown) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`cq serve: fatal: shutdown failed: ${msg}\n`);
+      process.exit(1);
+    });
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  const actualPort = server.port;
+  const actualPort = runningServer.port;
   // Machine-readable URL on stdout (for scripts/orchestrators), mirroring `cq web`.
   process.stdout.write(`http://${args.host}:${actualPort}/\n`);
   process.stderr.write(
