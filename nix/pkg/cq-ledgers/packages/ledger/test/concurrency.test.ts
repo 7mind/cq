@@ -25,8 +25,12 @@ import {
   FsLedgerStore,
   parseLedger,
   serializeRegistry,
+  derivePredicates,
   type Item,
   type LedgerSchema,
+  DECISIONS_LEDGER,
+  GOALS_LEDGER,
+  TASKS_LEDGER,
   MILESTONES_LEDGER,
   MILESTONES_SCHEMA,
   LEDGER_STORAGE_DIRNAME,
@@ -69,6 +73,21 @@ async function setup(opts: { now?: () => string } = {}): Promise<FsLedgerStore> 
   const store = new FsLedgerStore(fsOpts);
   await store.init();
   return store;
+}
+
+interface Gate {
+  promise: Promise<void>;
+  open(): void;
+}
+
+function gate(): Gate {
+  let open = (): void => {
+    throw new Error("gate opened before initialization");
+  };
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
 }
 
 describe("FsLedgerStore concurrency", () => {
@@ -424,5 +443,152 @@ describe("FsLedgerStore concurrency", () => {
     await Promise.all(allUpdates);
     expect(store.fetch("a").milestones[0]?.items.length).toBe(N);
     expect(store.fetch("b").milestones[0]?.items.length).toBe(N);
+  });
+
+  it("T845: concurrent planning sessions leave only the selected DAG actionable", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ledger-plan-conc-"));
+    dirs.push(dir);
+    const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
+    await mkdir(docsDir, { recursive: true });
+    await writeFile(
+      path.join(docsDir, "ledgers.yaml"),
+      serializeRegistry({ version: 1, ledgers: [] }),
+      "utf8",
+    );
+
+    const lockfile = { pollIntervalMs: 5 };
+    const plannerA = new FsLedgerStore({ root: dir, lockfile });
+    const plannerB = new FsLedgerStore({ root: dir, lockfile });
+    await plannerA.init();
+    await plannerB.init();
+
+    try {
+      const coordination = await plannerA.createMilestone({ title: "Shared planning goal" });
+      await plannerB.invalidate(MILESTONES_LEDGER);
+      const goal = await plannerA.createItem(GOALS_LEDGER, coordination.id, {
+        status: "planning",
+        fields: { title: "Plan once", description: "Produce one executable DAG" },
+        session: "planner-a",
+      });
+      await plannerB.invalidate(GOALS_LEDGER);
+      await plannerA.createItem(DECISIONS_LEDGER, coordination.id, {
+        status: "locked",
+        fields: {
+          headline: "Approved planning direction",
+          ledgerRefs: [`${GOALS_LEDGER}:${goal.id}`],
+        },
+        session: "planner-a",
+      });
+      await plannerB.invalidate(DECISIONS_LEDGER);
+
+      const bothRead = gate();
+      let readers = 0;
+      const synchronizeAfterRead = async (): Promise<void> => {
+        readers += 1;
+        if (readers === 2) bothRead.open();
+        await bothRead.promise;
+      };
+
+      const aMilestoneCreated = gate();
+      const bMilestoneCreated = gate();
+      const aTasksCreated = gate();
+      const bTasksCreated = gate();
+      const aFinalized = gate();
+
+      async function createPlanTasks(
+        store: FsLedgerStore,
+        session: string,
+        milestone: Item,
+      ): Promise<Item[]> {
+        const tasks: Item[] = [];
+        for (const suffix of ["first", "second"]) {
+          tasks.push(
+            await store.createItem(TASKS_LEDGER, milestone.id, {
+              status: "planned",
+              fields: {
+                headline: `${session} ${suffix} task`,
+                ledgerRefs: [`${GOALS_LEDGER}:${goal.id}`],
+              },
+              session,
+            }),
+          );
+        }
+        return tasks;
+      }
+
+      const [resultA, resultB] = await Promise.all([
+        (async () => {
+          const observed = plannerA.fetchItem(GOALS_LEDGER, goal.id);
+          await synchronizeAfterRead();
+          const milestone = await plannerA.createMilestone({ title: "planner-a plan" });
+          aMilestoneCreated.open();
+          await bMilestoneCreated.promise;
+          const tasks = await createPlanTasks(plannerA, "planner-a", milestone);
+          aTasksCreated.open();
+          await bTasksCreated.promise;
+          await plannerA.updateItem(GOALS_LEDGER, goal.id, {
+            status: "planned",
+            fields: { milestones: [milestone.id] },
+            session: "planner-a",
+          });
+          aFinalized.open();
+          return { observed, milestone, tasks };
+        })(),
+        (async () => {
+          const observed = plannerB.fetchItem(GOALS_LEDGER, goal.id);
+          await synchronizeAfterRead();
+          await aMilestoneCreated.promise;
+          const milestone = await plannerB.createMilestone({ title: "planner-b plan" });
+          bMilestoneCreated.open();
+          await aTasksCreated.promise;
+          const tasks = await createPlanTasks(plannerB, "planner-b", milestone);
+          bTasksCreated.open();
+          await aFinalized.promise;
+          await plannerB.updateItem(GOALS_LEDGER, goal.id, {
+            status: "planned",
+            fields: { milestones: [milestone.id] },
+            session: "planner-b",
+          });
+          return { observed, milestone, tasks };
+        })(),
+      ]);
+
+      expect(resultA.observed).toEqual(resultB.observed);
+      expect(resultA.observed.status).toBe("planning");
+      expect(resultA.observed.fields["milestones"]).toBeUndefined();
+
+      const finalGoal = plannerB.fetchItem(GOALS_LEDGER, goal.id);
+      const selectedMilestoneIds = finalGoal.fields["milestones"];
+      expect(selectedMilestoneIds).toEqual([resultB.milestone.id]);
+
+      const allTasks = [...resultA.tasks, ...resultB.tasks];
+      expect(allTasks.map((task) => task.status)).toEqual([
+        "planned",
+        "planned",
+        "planned",
+        "planned",
+      ]);
+      const readyTaskIds = [...derivePredicates(plannerB).pImplement.items].sort();
+      expect(readyTaskIds).toEqual(allTasks.map((task) => task.id).sort());
+
+      if (!Array.isArray(selectedMilestoneIds)) {
+        throw new Error("goals.milestones must be an id array");
+      }
+      const taskById = new Map(allTasks.map((task) => [task.id, task]));
+      const actionableMilestoneIds = [
+        ...new Set(
+          readyTaskIds.map((taskId) => {
+            const task = taskById.get(taskId);
+            if (task === undefined) throw new Error(`missing ready task ${taskId}`);
+            return task.milestoneId;
+          }),
+        ),
+      ].sort();
+
+      expect(actionableMilestoneIds).toEqual([...selectedMilestoneIds].sort());
+    } finally {
+      await plannerA.dispose();
+      await plannerB.dispose();
+    }
   });
 });
