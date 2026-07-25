@@ -737,8 +737,8 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
         this.assertNoManagedGoalReference(patch.fields["ledgerRefs"]);
       }
       const task = findItem(source, itemId).item;
-      if (patch.status === "wip" && task.status !== "wip") {
-        this.assertTaskStartAllowed(task);
+      if (patch.status !== undefined && patch.status !== task.status) {
+        this.assertManagedTaskTransitionAllowed(task, patch.status);
       }
     }
   }
@@ -759,7 +759,10 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
   }
 
-  private assertTaskStartAllowed(task: Item): void {
+  private assertManagedTaskTransitionAllowed(
+    task: Item,
+    targetStatus: string,
+  ): void {
     const goalRefs = fieldArray(task, "ledgerRefs").filter((ref) =>
       ref.startsWith(`${GOALS_LEDGER}:`),
     );
@@ -776,6 +779,7 @@ export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
       ) {
         throw new LedgerError("task belongs to a draft or superseded manifest");
       }
+      if (targetStatus !== "wip") continue;
       for (const raw of fieldArray(task, "dependsOn")) {
         const id = raw.startsWith(`${TASKS_LEDGER}:`)
           ? raw.slice(TASKS_LEDGER.length + 1)

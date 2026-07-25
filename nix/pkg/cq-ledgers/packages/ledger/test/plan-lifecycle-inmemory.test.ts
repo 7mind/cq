@@ -6,8 +6,10 @@ import {
   GOALS_SCHEMA,
   InMemoryLedgerStore,
   MILESTONES_AMBIENT_ID,
+  MILESTONES_LEDGER,
   PLAN_GENERATION_FIELD,
   RESEARCHES_LEDGER,
+  TASKS_LEDGER,
   derivePredicates,
   schemaCompatible,
   type Item,
@@ -222,6 +224,124 @@ describe("T848 InMemory plan lifecycle semantics", () => {
       expect(replacements).toHaveLength(2);
       expect(replacements).not.toContain(firstResearch);
       expect((await fixture.observe("G1")).waitingResearches).toEqual(replacements);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  for (const targetStatus of ["done", "abandoned"] as const) {
+    it(`rejects an unfinalized managed draft task transition to ${targetStatus}`, async () => {
+      const fixture = await buildFixture();
+      try {
+        const claim = await claimInitial(
+          fixture,
+          `terminal-bypass-${targetStatus}`,
+          OWNER_A,
+          null,
+        );
+        const published = await fixture.lifecycle.publishPlanDraft({
+          goalId: "G1",
+          claimId: claim.claimId,
+          generation: claim.generation,
+          operationId: `terminal-bypass-publish-${targetStatus}`,
+          ownerFenceToken: claim.ownerFenceToken,
+          ...PROVENANCE,
+          manifest: {
+            milestones: [{ key: "delivery", title: "Delivery" }],
+            tasks: [
+              {
+                key: "implementation",
+                milestoneKey: "delivery",
+                headline: "Implementation",
+              },
+            ],
+          },
+        });
+        if (!published.ok) throw new Error("draft publication failed");
+        const taskId = published.acknowledgement.manifest.tasks[0]?.id;
+        if (taskId === undefined) throw new Error("task allocation missing");
+
+        await expect(
+          fixture.store.updateItem(TASKS_LEDGER, taskId, {
+            status: targetStatus,
+          }),
+        ).rejects.toThrow(/draft|superseded/);
+        expect(fixture.store.fetchItem(TASKS_LEDGER, taskId).status).toBe("planned");
+      } finally {
+        await fixture.dispose();
+      }
+    });
+  }
+
+  it("persists canonical ledger prefixes for materialized internal draft references", async () => {
+    const fixture = await buildFixture();
+    try {
+      const claim = await claimInitial(fixture, "canonical-internal-refs", OWNER_A, null);
+      const published = await fixture.lifecycle.publishPlanDraft({
+        goalId: "G1",
+        claimId: claim.claimId,
+        generation: claim.generation,
+        operationId: "canonical-internal-refs-publish",
+        ownerFenceToken: claim.ownerFenceToken,
+        ...PROVENANCE,
+        manifest: {
+          milestones: [
+            { key: "design", title: "Design" },
+            {
+              key: "delivery",
+              title: "Delivery",
+              dependsOn: [{ kind: "draft-milestone", key: "design" }],
+            },
+          ],
+          tasks: [
+            {
+              key: "contract",
+              milestoneKey: "design",
+              headline: "Contract",
+              dependsOn: [{ kind: "draft-milestone", key: "delivery" }],
+            },
+            {
+              key: "implementation",
+              milestoneKey: "delivery",
+              headline: "Implementation",
+              dependsOn: [{ kind: "draft-task", key: "contract" }],
+              blockedBy: [{ kind: "draft-task", key: "contract" }],
+            },
+          ],
+        },
+      });
+      if (!published.ok) throw new Error("draft publication failed");
+      const allocations = Object.fromEntries([
+        ...published.acknowledgement.manifest.milestones.map(({ key, id }) => [
+          key,
+          id,
+        ]),
+        ...published.acknowledgement.manifest.tasks.map(({ key, id }) => [key, id]),
+      ]);
+      const designId = allocations["design"];
+      const deliveryId = allocations["delivery"];
+      const contractId = allocations["contract"];
+      const implementationId = allocations["implementation"];
+      if (
+        designId === undefined ||
+        deliveryId === undefined ||
+        contractId === undefined ||
+        implementationId === undefined
+      ) {
+        throw new Error("draft allocations missing");
+      }
+
+      expect(
+        fixture.store.fetchItem(MILESTONES_LEDGER, deliveryId).fields["dependsOn"],
+      ).toEqual([`${MILESTONES_LEDGER}:${designId}`]);
+      expect(fixture.store.fetchItem(TASKS_LEDGER, contractId).fields["dependsOn"])
+        .toEqual([`${MILESTONES_LEDGER}:${deliveryId}`]);
+      expect(
+        fixture.store.fetchItem(TASKS_LEDGER, implementationId).fields["dependsOn"],
+      ).toEqual([`${TASKS_LEDGER}:${contractId}`]);
+      expect(
+        fixture.store.fetchItem(TASKS_LEDGER, implementationId).fields["blockedBy"],
+      ).toEqual([`${TASKS_LEDGER}:${contractId}`]);
     } finally {
       await fixture.dispose();
     }

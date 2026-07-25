@@ -292,7 +292,9 @@ function materializeReferences(
         ? milestoneAllocations.get(reference.key)
         : taskAllocations.get(reference.key);
     if (id === undefined) throw new LedgerError(`missing draft allocation ${reference.key}`);
-    return id;
+    return reference.kind === "draft-milestone"
+      ? `${MILESTONES_LEDGER}:${id}`
+      : `${TASKS_LEDGER}:${id}`;
   });
 }
 
