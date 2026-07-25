@@ -209,8 +209,12 @@ export function clampPanelSize(size: number, max: number): number {
   return Math.max(MIN_PANEL, Math.min(size, Math.max(MIN_PANEL, max)));
 }
 
-/** Query-string key the active project is persisted under (T589 / Q276/Q284). */
-const PROJECT_QUERY_KEY = "project";
+/**
+ * Query-string key the active project is persisted under (T589 / Q276/Q284).
+ * Exported so main.tsx's pre-connection bootstrap (T837) reads the SAME key
+ * this component persists on switch — a single shared literal, no drift.
+ */
+export const PROJECT_QUERY_KEY = "project";
 
 /**
  * Derive the sibling `/p/<key>/mcp` URL for a project switch (T589 / Q283/Q284
