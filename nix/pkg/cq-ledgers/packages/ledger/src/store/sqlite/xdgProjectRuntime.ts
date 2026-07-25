@@ -7,7 +7,9 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import * as path from "node:path";
+import { loadConfig } from "@cq/config";
 
+import { resolveProjectKey } from "../../projectKey.js";
 import { STORE_LAYOUT } from "../../stateDir.js";
 import type { OnMutation } from "../LedgerStore.js";
 import { SqliteLedgerStore } from "./SqliteLedgerStore.js";
@@ -28,6 +30,8 @@ export interface XdgProjectRuntime {
   readonly projectKey: string;
   readonly dbPath: string;
   readonly logsDir: string;
+  /** Canonical matching repository root; absent when persisted provenance is invalid. */
+  readonly configRoot?: string;
   readonly store: SqliteLedgerStore;
   dispose(): Promise<void>;
 }
@@ -59,7 +63,10 @@ export async function openXdgProjectRuntime(
   });
 
   const catalogSource = new FilesystemXdgProjectCatalogSource();
-  const probe = await catalogSource.probeProject(normalizedRoot, projectKey);
+  const probe = await catalogSource.probeProjectForRuntime(
+    normalizedRoot,
+    projectKey,
+  );
   if (!probe.ok) {
     throw new XdgProjectRuntimeLocationError(
       `Project "${projectKey}" cannot be opened: ${probe.message}`,
@@ -71,6 +78,10 @@ export async function openXdgProjectRuntime(
       `Project "${projectKey}" cannot be opened: ${diagnostic}`,
     );
   }
+  const configRoot = await recoverConfigRoot(
+    probe.snapshot.identity,
+    projectKey,
+  );
 
   await validateWritableLocations(stateDir, dbPath, logsDir);
 
@@ -91,12 +102,39 @@ export async function openXdgProjectRuntime(
     projectKey,
     dbPath,
     logsDir,
+    ...(configRoot === undefined ? {} : { configRoot }),
     store,
     dispose(): Promise<void> {
       disposal ??= store.dispose();
       return disposal;
     },
   };
+}
+
+async function recoverConfigRoot(
+  identity: { readonly repositoryPath: string } | null,
+  projectKey: string,
+): Promise<string | undefined> {
+  if (
+    identity === null ||
+    !path.isAbsolute(identity.repositoryPath)
+  ) {
+    return undefined;
+  }
+  try {
+    const canonicalRoot = await realpath(identity.repositoryPath);
+    const rootStat = await lstat(canonicalRoot);
+    if (!rootStat.isDirectory()) return undefined;
+    const config = loadConfig(canonicalRoot);
+    const resolvedProjectKey = await resolveProjectKey({
+      repoRoot: canonicalRoot,
+      projectId: config?.ledger?.projectId ?? null,
+    });
+    return resolvedProjectKey === projectKey ? canonicalRoot : undefined;
+  } catch {
+    // Invalid provenance disables only repository-rooted capabilities.
+    return undefined;
+  }
 }
 
 interface RuntimeLocations {
