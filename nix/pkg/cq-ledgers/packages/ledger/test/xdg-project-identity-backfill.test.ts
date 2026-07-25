@@ -73,11 +73,19 @@ describe("XDG project identity backfill", () => {
           "stale-checkout",
           "unmatched-checkout",
           "unmatched-project",
+          "unresolved-project-key",
         ]);
         expect(first.diagnostics.find((entry) => entry.code === "duplicate-checkout"))
           .toMatchObject({
             checkoutRoot: fixture.duplicateCheckoutRoot,
             projectKey: "shared-project",
+          });
+        const unresolvedDiagnostic = first.diagnostics.find(
+          (entry) => entry.code === "unresolved-project-key",
+        );
+        expect(unresolvedDiagnostic).toMatchObject({
+          checkoutRoot: fixture.unresolvedCheckoutRoot,
+          projectKey: null,
         });
         expect(await fixture.readIdentity("fill-project")).toEqual(
           fillIdentity,
@@ -98,6 +106,11 @@ describe("XDG project identity backfill", () => {
           "unchanged",
           "unchanged",
         ]);
+        expect(
+          second.diagnostics.find(
+            (entry) => entry.code === "unresolved-project-key",
+          ),
+        ).toEqual(unresolvedDiagnostic);
 
         const reversed = await backfill.run({
           projectsRoot: fixture.request.projectsRoot,
@@ -110,6 +123,11 @@ describe("XDG project identity backfill", () => {
           displayName: sharedIdentity.displayName,
           status: "unchanged",
         });
+        expect(
+          reversed.diagnostics.find(
+            (entry) => entry.code === "unresolved-project-key",
+          ),
+        ).toEqual(unresolvedDiagnostic);
 
         for (const event of fixture.accessEvents) {
           if (event.scope === "projects") {
@@ -206,6 +224,7 @@ interface ContractFixture {
   readonly access: XdgProjectIdentityBackfillAccess;
   readonly request: XdgProjectIdentityBackfillRequest;
   readonly duplicateCheckoutRoot: string;
+  readonly unresolvedCheckoutRoot: string;
   readonly expectedIdentities: ReadonlyMap<string, XdgProjectIdentity>;
   readonly orphanIdentity: XdgProjectIdentity;
   readonly accessEvents: readonly XdgProjectIdentityBackfillAccessEvent[];
@@ -228,6 +247,7 @@ function dummyFactory(): ContractFactory {
       const fillRoot = "/bounded/checkouts/fill";
       const staleRoot = "/bounded/checkouts/stale";
       const nonRepositoryRoot = "/bounded/checkouts/non-repository";
+      const unresolvedRoot = "/bounded/checkouts/b-unresolved";
       const unmatchedRoot = "/bounded/checkouts/unmatched";
       const winnerIdentity = {
         repositoryPath: winnerRoot,
@@ -280,6 +300,15 @@ function dummyFactory(): ContractFactory {
           },
         ],
         [
+          unresolvedRoot,
+          {
+            ok: false,
+            checkoutRoot: unresolvedRoot,
+            code: "unresolved-project-key",
+            message: "no projectId and no root commit",
+          },
+        ],
+        [
           unmatchedRoot,
           resolved(unmatchedRoot, "unmatched-checkout", {
             repositoryPath: unmatchedRoot,
@@ -307,10 +336,12 @@ function dummyFactory(): ContractFactory {
             fillRoot,
             unmatchedRoot,
             nonRepositoryRoot,
+            unresolvedRoot,
             winnerRoot,
           ],
         },
         duplicateCheckoutRoot: duplicateRoot,
+        unresolvedCheckoutRoot: unresolvedRoot,
         expectedIdentities: new Map([
           ["fill-project", fillIdentity],
           ["shared-project", winnerIdentity],
@@ -358,6 +389,10 @@ function filesystemFactory(): ContractFactory {
         "unmatched",
         "unmatched-checkout",
         "Unmatched checkout",
+      );
+      const unresolvedRoot = await seedUnresolvedCheckout(
+        checkoutsRoot,
+        "b-unresolved",
       );
       const nonRepositoryRoot = path.join(checkoutsRoot, "non-repository");
       await mkdir(nonRepositoryRoot);
@@ -408,10 +443,12 @@ function filesystemFactory(): ContractFactory {
             fillRoot,
             unmatchedRoot,
             nonRepositoryRoot,
+            unresolvedRoot,
             winnerRoot,
           ],
         },
         duplicateCheckoutRoot: duplicateRoot,
+        unresolvedCheckoutRoot: unresolvedRoot,
         expectedIdentities: new Map([
           ["fill-project", fillIdentity],
           ["shared-project", winnerIdentity],
@@ -490,6 +527,21 @@ async function seedCheckout(
     path.join(checkoutRoot, "cq.toml"),
     `[project]\nname = ${JSON.stringify(displayName)}\n\n` +
       `[ledger]\nbackend = "xdg"\nprojectId = ${JSON.stringify(projectId)}\n`,
+  );
+  return checkoutRoot;
+}
+
+async function seedUnresolvedCheckout(
+  checkoutsRoot: string,
+  name: string,
+): Promise<string> {
+  const checkoutRoot = path.join(checkoutsRoot, name);
+  await mkdir(checkoutRoot);
+  execFileSync("git", ["init", "--quiet"], { cwd: checkoutRoot });
+  await writeFile(
+    path.join(checkoutRoot, "cq.toml"),
+    `[project]\nname = "Unresolved empty repository"\n\n` +
+      `[ledger]\nbackend = "xdg"\n`,
   );
   return checkoutRoot;
 }
