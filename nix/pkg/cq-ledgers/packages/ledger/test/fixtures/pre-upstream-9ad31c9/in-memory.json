@@ -1,0 +1,1053 @@
+{
+  "sourceRevision": "9ad31c918fac51ef20fa48e4a9eaaeca28f9dbb3",
+  "ledgers": [
+    [
+      "milestones",
+      {
+        "id": "milestones",
+        "schema": {
+          "statusValues": [
+            "open",
+            "done",
+            "postponed",
+            "blocked"
+          ],
+          "terminalStatuses": [
+            "done"
+          ],
+          "idPrefix": "M",
+          "transitions": {
+            "open": [
+              "done",
+              "postponed",
+              "blocked"
+            ],
+            "postponed": [
+              "open",
+              "done",
+              "blocked"
+            ],
+            "blocked": [
+              "open",
+              "done",
+              "postponed"
+            ],
+            "done": []
+          },
+          "fields": {
+            "title": {
+              "type": "string",
+              "required": true
+            },
+            "description": {
+              "type": "string",
+              "required": false
+            },
+            "blockedBy": {
+              "type": "id[]",
+              "required": false
+            },
+            "dependsOn": {
+              "type": "id[]",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 43
+        },
+        "milestones": [
+          {
+            "id": "active",
+            "title": "active",
+            "description": "",
+            "items": [
+              {
+                "id": "M-AMBIENT",
+                "milestoneId": "active",
+                "status": "open",
+                "fields": {
+                  "title": "ambient"
+                },
+                "createdAt": "2026-07-24T12:34:56.000Z",
+                "updatedAt": "2026-07-24T12:34:56.000Z"
+              },
+              {
+                "id": "M41",
+                "milestoneId": "active",
+                "status": "open",
+                "fields": {
+                  "title": "Active legacy milestone",
+                  "description": "Must remain active across additive initialization"
+                },
+                "createdAt": "2026-07-24T12:34:56.000Z",
+                "updatedAt": "2026-07-24T12:34:56.000Z"
+              }
+            ]
+          }
+        ],
+        "archivePointers": [
+          {
+            "id": "M42",
+            "path": "./archive/milestones/M42.md",
+            "summary": "Archived before upstream existed",
+            "title": "Archived legacy milestone",
+            "status": "done"
+          }
+        ]
+      }
+    ],
+    [
+      "defects",
+      {
+        "id": "defects",
+        "schema": {
+          "statusValues": [
+            "open",
+            "wip",
+            "root-caused",
+            "inconclusive",
+            "resolved",
+            "wontfix"
+          ],
+          "terminalStatuses": [
+            "resolved",
+            "wontfix"
+          ],
+          "satisfiesDependencyStatuses": [
+            "resolved"
+          ],
+          "idPrefix": "D",
+          "transitions": {
+            "open": [
+              "wip",
+              "resolved",
+              "wontfix"
+            ],
+            "wip": [
+              "root-caused",
+              "inconclusive",
+              "resolved",
+              "wontfix"
+            ],
+            "root-caused": [
+              "resolved",
+              "wontfix",
+              "wip"
+            ],
+            "inconclusive": [
+              "wip",
+              "wontfix"
+            ],
+            "resolved": [],
+            "wontfix": []
+          },
+          "fields": {
+            "headline": {
+              "type": "string",
+              "required": true
+            },
+            "description": {
+              "type": "string",
+              "required": false
+            },
+            "rootCause": {
+              "type": "string",
+              "required": false
+            },
+            "suggestedFix": {
+              "type": "string",
+              "required": false
+            },
+            "fix": {
+              "type": "string",
+              "required": false
+            },
+            "severity": {
+              "type": "string",
+              "required": true
+            },
+            "sessionLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "rawLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "sourceRefs": {
+              "type": "string[]",
+              "required": false
+            },
+            "blockedBy": {
+              "type": "id[]",
+              "required": false
+            },
+            "dependsOn": {
+              "type": "id[]",
+              "required": false
+            },
+            "ledgerRefs": {
+              "type": "id[]",
+              "required": false
+            },
+            "tags": {
+              "type": "string[]",
+              "required": false
+            },
+            "suggestedModel": {
+              "type": "string",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 0
+        },
+        "milestones": [],
+        "archivePointers": []
+      }
+    ],
+    [
+      "tasks",
+      {
+        "id": "tasks",
+        "schema": {
+          "statusValues": [
+            "planned",
+            "wip",
+            "done",
+            "blocked",
+            "abandoned"
+          ],
+          "terminalStatuses": [
+            "done",
+            "abandoned"
+          ],
+          "satisfiesDependencyStatuses": [
+            "done"
+          ],
+          "idPrefix": "T",
+          "transitions": {
+            "planned": [
+              "wip",
+              "blocked",
+              "done",
+              "abandoned"
+            ],
+            "wip": [
+              "blocked",
+              "done",
+              "abandoned"
+            ],
+            "blocked": [
+              "planned",
+              "wip",
+              "done",
+              "abandoned"
+            ],
+            "done": [],
+            "abandoned": []
+          },
+          "fields": {
+            "headline": {
+              "type": "string",
+              "required": true
+            },
+            "description": {
+              "type": "string",
+              "required": false
+            },
+            "acceptance": {
+              "type": "string",
+              "required": false
+            },
+            "planDoc": {
+              "type": "string",
+              "required": false
+            },
+            "resultCommit": {
+              "type": "string",
+              "required": false
+            },
+            "completion": {
+              "type": "string",
+              "required": false
+            },
+            "severity": {
+              "type": "string",
+              "required": false
+            },
+            "sessionLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "rawLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "sourceRefs": {
+              "type": "string[]",
+              "required": false
+            },
+            "blockedBy": {
+              "type": "id[]",
+              "required": false
+            },
+            "dependsOn": {
+              "type": "id[]",
+              "required": false
+            },
+            "ledgerRefs": {
+              "type": "id[]",
+              "required": false
+            },
+            "tags": {
+              "type": "string[]",
+              "required": false
+            },
+            "suggestedModel": {
+              "type": "string",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 53
+        },
+        "milestones": [
+          {
+            "id": "M41",
+            "title": "",
+            "description": "",
+            "items": [
+              {
+                "id": "T51",
+                "milestoneId": "M41",
+                "status": "wip",
+                "fields": {
+                  "headline": "Active legacy task",
+                  "description": "Preserve the active row and its log references",
+                  "sessionLogs": [
+                    ".cq/logs/20260724-legacy-session.md"
+                  ],
+                  "rawLogs": [
+                    ".cq/logs/raw/20260724-legacy-worker.jsonl"
+                  ]
+                },
+                "createdAt": "2026-07-24T12:34:56.000Z",
+                "updatedAt": "2026-07-24T12:34:56.000Z",
+                "author": "legacy-generator",
+                "session": "legacy-active"
+              }
+            ]
+          }
+        ],
+        "archivePointers": [
+          {
+            "id": "M42",
+            "path": "./archive/tasks/M42.md",
+            "summary": "Archived before upstream existed",
+            "title": "Archived legacy milestone",
+            "status": "done"
+          }
+        ]
+      }
+    ],
+    [
+      "hypothesis",
+      {
+        "id": "hypothesis",
+        "schema": {
+          "statusValues": [
+            "open",
+            "uncertain",
+            "confirmed",
+            "wrong"
+          ],
+          "terminalStatuses": [
+            "confirmed",
+            "wrong"
+          ],
+          "satisfiesDependencyStatuses": [
+            "confirmed"
+          ],
+          "idPrefix": "H",
+          "transitions": {
+            "open": [
+              "uncertain",
+              "confirmed",
+              "wrong"
+            ],
+            "uncertain": [
+              "confirmed",
+              "wrong"
+            ],
+            "confirmed": [],
+            "wrong": []
+          },
+          "fields": {
+            "headline": {
+              "type": "string",
+              "required": true
+            },
+            "description": {
+              "type": "string",
+              "required": false
+            },
+            "rationale": {
+              "type": "string",
+              "required": false
+            },
+            "parentHypothesis": {
+              "type": "id",
+              "required": false
+            },
+            "evidence": {
+              "type": "string[]",
+              "required": false
+            },
+            "sessionLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "rawLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "sourceRefs": {
+              "type": "string[]",
+              "required": false
+            },
+            "blockedBy": {
+              "type": "id[]",
+              "required": false
+            },
+            "dependsOn": {
+              "type": "id[]",
+              "required": false
+            },
+            "ledgerRefs": {
+              "type": "id[]",
+              "required": false
+            },
+            "tags": {
+              "type": "string[]",
+              "required": false
+            },
+            "suggestedModel": {
+              "type": "string",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 0
+        },
+        "milestones": [],
+        "archivePointers": []
+      }
+    ],
+    [
+      "questions",
+      {
+        "id": "questions",
+        "schema": {
+          "statusValues": [
+            "open",
+            "answered",
+            "withdrawn"
+          ],
+          "terminalStatuses": [
+            "answered",
+            "withdrawn"
+          ],
+          "satisfiesDependencyStatuses": [
+            "answered"
+          ],
+          "idPrefix": "Q",
+          "transitions": {
+            "open": [
+              "answered",
+              "withdrawn"
+            ],
+            "answered": [],
+            "withdrawn": []
+          },
+          "fields": {
+            "question": {
+              "type": "string",
+              "required": true
+            },
+            "context": {
+              "type": "string",
+              "required": false
+            },
+            "suggestions": {
+              "type": "string[]",
+              "required": false
+            },
+            "recommendation": {
+              "type": "string",
+              "required": false
+            },
+            "answer": {
+              "type": "string",
+              "required": false
+            },
+            "sourceRefs": {
+              "type": "string[]",
+              "required": false
+            },
+            "blockedBy": {
+              "type": "id[]",
+              "required": false
+            },
+            "dependsOn": {
+              "type": "id[]",
+              "required": false
+            },
+            "ledgerRefs": {
+              "type": "id[]",
+              "required": false
+            },
+            "tags": {
+              "type": "string[]",
+              "required": false
+            },
+            "suggestedModel": {
+              "type": "string",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 0
+        },
+        "milestones": [],
+        "archivePointers": []
+      }
+    ],
+    [
+      "decisions",
+      {
+        "id": "decisions",
+        "schema": {
+          "statusValues": [
+            "proposed",
+            "locked",
+            "superseded"
+          ],
+          "terminalStatuses": [
+            "locked",
+            "superseded"
+          ],
+          "satisfiesDependencyStatuses": [
+            "locked"
+          ],
+          "idPrefix": "K",
+          "transitions": {
+            "proposed": [
+              "locked",
+              "superseded"
+            ],
+            "locked": [],
+            "superseded": []
+          },
+          "fields": {
+            "headline": {
+              "type": "string",
+              "required": true
+            },
+            "rationale": {
+              "type": "string",
+              "required": false
+            },
+            "alternatives": {
+              "type": "string",
+              "required": false
+            },
+            "supersedes": {
+              "type": "id[]",
+              "required": false
+            },
+            "landsIn": {
+              "type": "id[]",
+              "required": false
+            },
+            "sourceRefs": {
+              "type": "string[]",
+              "required": false
+            },
+            "blockedBy": {
+              "type": "id[]",
+              "required": false
+            },
+            "dependsOn": {
+              "type": "id[]",
+              "required": false
+            },
+            "ledgerRefs": {
+              "type": "id[]",
+              "required": false
+            },
+            "tags": {
+              "type": "string[]",
+              "required": false
+            },
+            "suggestedModel": {
+              "type": "string",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 0
+        },
+        "milestones": [],
+        "archivePointers": []
+      }
+    ],
+    [
+      "goals",
+      {
+        "id": "goals",
+        "schema": {
+          "statusValues": [
+            "clarifying",
+            "planning",
+            "planned",
+            "building",
+            "done",
+            "abandoned"
+          ],
+          "terminalStatuses": [
+            "done",
+            "abandoned"
+          ],
+          "satisfiesDependencyStatuses": [
+            "done"
+          ],
+          "idPrefix": "G",
+          "transitions": {
+            "clarifying": [
+              "planning",
+              "abandoned"
+            ],
+            "planning": [
+              "clarifying",
+              "planned",
+              "abandoned"
+            ],
+            "planned": [
+              "building",
+              "abandoned",
+              "planning"
+            ],
+            "building": [
+              "done",
+              "abandoned",
+              "planning"
+            ],
+            "done": [],
+            "abandoned": []
+          },
+          "fields": {
+            "title": {
+              "type": "string",
+              "required": true
+            },
+            "description": {
+              "type": "string",
+              "required": true
+            },
+            "milestones": {
+              "type": "id[]",
+              "required": false
+            },
+            "grounding": {
+              "type": "string",
+              "required": false
+            },
+            "tags": {
+              "type": "string[]",
+              "required": false
+            },
+            "sourceRefs": {
+              "type": "string[]",
+              "required": false
+            },
+            "sessionLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "rawLogs": {
+              "type": "string[]",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 0
+        },
+        "milestones": [],
+        "archivePointers": []
+      }
+    ],
+    [
+      "reviews",
+      {
+        "id": "reviews",
+        "schema": {
+          "statusValues": [
+            "go-ahead",
+            "revise"
+          ],
+          "terminalStatuses": [
+            "go-ahead",
+            "revise"
+          ],
+          "idPrefix": "R",
+          "transitions": {
+            "go-ahead": [],
+            "revise": []
+          },
+          "fields": {
+            "summary": {
+              "type": "string",
+              "required": false
+            },
+            "new_questions": {
+              "type": "string[]",
+              "required": false
+            },
+            "criticism": {
+              "type": "string[]",
+              "required": false
+            },
+            "defects": {
+              "type": "string[]",
+              "required": false
+            },
+            "ledgerRefs": {
+              "type": "id[]",
+              "required": false
+            },
+            "tags": {
+              "type": "string[]",
+              "required": false
+            },
+            "sourceRefs": {
+              "type": "string[]",
+              "required": false
+            },
+            "sessionLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "rawLogs": {
+              "type": "string[]",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 0
+        },
+        "milestones": [],
+        "archivePointers": []
+      }
+    ],
+    [
+      "handoffs",
+      {
+        "id": "handoffs",
+        "schema": {
+          "statusValues": [
+            "drained",
+            "answers-required",
+            "mixed",
+            "illness-detected",
+            "user-action-required"
+          ],
+          "terminalStatuses": [
+            "drained",
+            "answers-required",
+            "mixed",
+            "illness-detected",
+            "user-action-required"
+          ],
+          "idPrefix": "HO",
+          "transitions": {
+            "drained": [],
+            "answers-required": [],
+            "mixed": [],
+            "illness-detected": [],
+            "user-action-required": []
+          },
+          "fields": {
+            "summary": {
+              "type": "string",
+              "required": true
+            },
+            "flow": {
+              "type": "string",
+              "required": false
+            },
+            "ledgerRefs": {
+              "type": "id[]",
+              "required": false
+            },
+            "blockingQuestions": {
+              "type": "id[]",
+              "required": false
+            },
+            "handoffReasons": {
+              "type": "string[]",
+              "required": false
+            },
+            "sessionLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "rawLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "tags": {
+              "type": "string[]",
+              "required": false
+            },
+            "sourceRefs": {
+              "type": "string[]",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 0
+        },
+        "milestones": [],
+        "archivePointers": []
+      }
+    ],
+    [
+      "ideas",
+      {
+        "id": "ideas",
+        "schema": {
+          "statusValues": [
+            "open",
+            "planned",
+            "discarded",
+            "postponed"
+          ],
+          "terminalStatuses": [
+            "planned",
+            "discarded"
+          ],
+          "satisfiesDependencyStatuses": [
+            "planned"
+          ],
+          "idPrefix": "I",
+          "transitions": {
+            "open": [
+              "planned",
+              "discarded",
+              "postponed"
+            ],
+            "postponed": [
+              "open",
+              "planned",
+              "discarded"
+            ],
+            "planned": [],
+            "discarded": []
+          },
+          "fields": {
+            "title": {
+              "type": "string",
+              "required": true
+            },
+            "description": {
+              "type": "string",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 0
+        },
+        "milestones": [],
+        "archivePointers": []
+      }
+    ],
+    [
+      "researches",
+      {
+        "id": "researches",
+        "schema": {
+          "statusValues": [
+            "open",
+            "wip",
+            "concluded",
+            "inconclusive",
+            "abandoned"
+          ],
+          "terminalStatuses": [
+            "concluded",
+            "abandoned"
+          ],
+          "satisfiesDependencyStatuses": [
+            "concluded"
+          ],
+          "idPrefix": "RS",
+          "transitions": {
+            "open": [
+              "wip",
+              "abandoned"
+            ],
+            "wip": [
+              "concluded",
+              "inconclusive",
+              "abandoned"
+            ],
+            "inconclusive": [
+              "wip",
+              "abandoned"
+            ],
+            "concluded": [],
+            "abandoned": []
+          },
+          "fields": {
+            "question": {
+              "type": "string",
+              "required": true
+            },
+            "scope": {
+              "type": "string",
+              "required": false
+            },
+            "findings": {
+              "type": "string",
+              "required": false
+            },
+            "conclusion": {
+              "type": "string",
+              "required": false
+            },
+            "recommendation": {
+              "type": "string",
+              "required": false
+            },
+            "sessionLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "rawLogs": {
+              "type": "string[]",
+              "required": false
+            },
+            "sourceRefs": {
+              "type": "string[]",
+              "required": false
+            },
+            "blockedBy": {
+              "type": "id[]",
+              "required": false
+            },
+            "dependsOn": {
+              "type": "id[]",
+              "required": false
+            },
+            "ledgerRefs": {
+              "type": "id[]",
+              "required": false
+            },
+            "tags": {
+              "type": "string[]",
+              "required": false
+            },
+            "suggestedModel": {
+              "type": "string",
+              "required": false
+            }
+          }
+        },
+        "counters": {
+          "milestone": 0,
+          "item": 0
+        },
+        "milestones": [],
+        "archivePointers": []
+      }
+    ]
+  ],
+  "archives": [
+    [
+      "tasks/M42",
+      {
+        "id": "M42",
+        "title": "",
+        "description": "",
+        "items": [
+          {
+            "id": "T52",
+            "milestoneId": "M42",
+            "status": "done",
+            "fields": {
+              "headline": "Archived legacy task",
+              "description": "Preserve archive rows, pointers, and log references",
+              "sessionLogs": [
+                ".cq/logs/20260724-legacy-session.md"
+              ],
+              "rawLogs": [
+                ".cq/logs/raw/20260724-legacy-worker.jsonl"
+              ]
+            },
+            "createdAt": "2026-07-24T12:34:56.000Z",
+            "updatedAt": "2026-07-24T12:34:56.000Z",
+            "author": "legacy-generator",
+            "session": "legacy-archived"
+          }
+        ]
+      }
+    ]
+  ],
+  "itemArchives": [
+    [
+      "milestones/M42",
+      {
+        "id": "M42",
+        "milestoneId": "active",
+        "status": "done",
+        "fields": {
+          "title": "Archived legacy milestone",
+          "description": "Contains a nonempty archived task group"
+        },
+        "createdAt": "2026-07-24T12:34:56.000Z",
+        "updatedAt": "2026-07-24T12:34:56.000Z"
+      }
+    ]
+  ],
+  "logs": [
+    {
+      "path": ".cq/logs/20260724-legacy-session.md",
+      "content": "# Legacy session\n\nProduced before the upstream ledger existed.\n"
+    },
+    {
+      "path": ".cq/logs/raw/20260724-legacy-worker.jsonl",
+      "content": "{\"type\":\"assistant\",\"message\":{\"content\":\"legacy raw transcript\"}}\n"
+    }
+  ]
+}

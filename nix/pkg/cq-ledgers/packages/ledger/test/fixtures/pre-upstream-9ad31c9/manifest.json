@@ -1,0 +1,14 @@
+{
+  "sourceRevision": "9ad31c918fac51ef20fa48e4a9eaaeca28f9dbb3",
+  "generatedAt": "2026-07-24T12:34:56.000Z",
+  "storageDir": ".cq",
+  "artifacts": [
+    "fs-root",
+    "git-object.bundle",
+    "in-memory.json",
+    "expected-public.json",
+    "xdg/ledger.db",
+    "xdg/logs",
+    "postgres.sql"
+  ]
+}
