@@ -651,22 +651,6 @@
     ],
     "unboundedFetchLedger": [
       {
-        "callSite": "commands/cq/advance.md::Bootstrap recipe (T156 / Q79 — derive_predicates-first start)::fetch_ledger#2",
-        "reason": "The current canonical call needs the complete active tasks worklist for one coordinator decision; bounded pagination cannot preserve that single-read snapshot."
-      },
-      {
-        "callSite": "commands/cq/advance.md::Bootstrap recipe (T156 / Q79 — derive_predicates-first start)::fetch_ledger#3",
-        "reason": "The current canonical call needs the complete active defects worklist for one coordinator decision; bounded pagination cannot preserve that single-read snapshot."
-      },
-      {
-        "callSite": "commands/cq/advance.md::Bootstrap recipe (T156 / Q79 — derive_predicates-first start)::fetch_ledger#4",
-        "reason": "The current canonical call needs the complete active goals worklist for one coordinator decision; bounded pagination cannot preserve that single-read snapshot."
-      },
-      {
-        "callSite": "commands/cq/advance.md::Bootstrap recipe (T156 / Q79 — derive_predicates-first start)::fetch_ledger#5",
-        "reason": "The current canonical call needs the complete active questions worklist for one coordinator decision; bounded pagination cannot preserve that single-read snapshot."
-      },
-      {
         "callSite": "commands/cq/plan/advance.md::Select the target goal(s)::fetch_ledger#1",
         "reason": "The current canonical call needs the complete active goals worklist for one coordinator decision; bounded pagination cannot preserve that single-read snapshot."
       }

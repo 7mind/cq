@@ -44,6 +44,12 @@ The orchestrator passes you, in the prompt:
 - **prior-round criticism** (optional) — on a re-dispatch after review, the
   reviewer's `criticism[]` from the previous round. Address each point.
 
+**Mutation response rule:** Every ledger mutation below that has an ack policy
+returns only its fixed acknowledgement, never a full entity. This response
+shape does not authorize this worker to invoke mutations: the ledger-mutation
+prohibition remains absolute, and the dispatch input already carries all task
+narrative needed for the work.
+
 ## Boundaries (hard rules)
 - **Ledger is read-only to you.** Do NOT call any ledger *mutation* tool
   (`create_item`/`update_item`/…). The orchestrator owns task status, reviews,

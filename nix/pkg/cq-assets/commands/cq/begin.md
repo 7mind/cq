@@ -58,6 +58,12 @@ OWN model class (derived from runtime identity, never hardcoded — Claude Opus
 4.8 (1M) → `"opus-4.8[1m]"`; Codex GPT-5.x → e.g. `"gpt-5.5"`) and `session` =
 `$CLAUDE_CODE_SESSION_ID` (or the Codex equivalent; omit if unavailable).
 
+**Mutation response rule:** Every ledger mutation below that has an ack policy
+returns only its fixed acknowledgement (allocated id, current status,
+canonicalized reference fields, timestamps, and provenance), never a full
+entity. Use acknowledgement ids directly; issue an explicit full read only when
+later reasoning needs task, review, or handoff narrative fields.
+
 ## Steps
 
 ### 1. SEGMENT the request
@@ -91,8 +97,9 @@ Classify every segment into exactly one route:
 ### 3. DEDUP + ambiguity triage (Q300)
 BEFORE intaking anything, run this over every segment:
 
-- **Dedup each clear segment** via `fts_search` against the route's target
-  ledger (`goals` / `defects` / `researches`) using the segment's key terms:
+- **Dedup each clear segment** via
+  `fts_search({ query: "<segment key terms>", ledger: "<goals | defects | researches>", projection: "compact", limit: 20 })`
+  against the route's target ledger using the segment's key terms:
   - an **exact duplicate** of a live item → report the existing id in the
     routing table and SKIP the segment (no intake);
   - a **clear EXTENSION of an existing live goal** (more scope for something a
@@ -107,7 +114,8 @@ BEFORE intaking anything, run this over every segment:
   suggestions: [...] })`. These segments are **NOT intaked this run**; after the
   user answers, they re-run `CQ::begin` (or the named flow) with the routing
   resolved. Clear segments are never held back by ambiguous ones — they route
-  immediately.
+  immediately. Capture M and the question id directly from their fixed
+  acknowledgements; no entity reload is needed.
 
 ### 4. INTAKE every clear segment (Q299, option c — no inline first pass)
 Intake ALL clear segments FIRST, performing each flow's **bootstrap-intake

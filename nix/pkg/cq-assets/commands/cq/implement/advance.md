@@ -92,6 +92,12 @@ On every `create_item` / `update_item`, pass `author` = your OWN model class
 `"opus-4.8[1m]"`; Codex GPT-5.x → e.g. `"gpt-5.5"`) and `session` =
 `$CLAUDE_CODE_SESSION_ID` (or the Codex equivalent; omit if unavailable).
 
+**Mutation response rule:** Every ledger mutation below that has an ack policy
+returns only its fixed acknowledgement (allocated id, current status,
+canonicalized reference fields, timestamps, and provenance), never a full
+entity. Use acknowledgement ids directly; issue an explicit full read only when
+later reasoning needs task, review, or handoff narrative fields.
+
 ## Session logs (after EVERY subagent returns)
 Each subagent ends its reply with a `### Session summary` block. **ALL log writes
 go through `cq log put` — never a direct `Write` to a log path, and never
@@ -142,9 +148,13 @@ trace). Also write a summary `.md` (header: task id, role `implement-reviewer
 ## The pass (repeat until no task is ready)
 
 ### 1. Derive the READY-SET (purely from the ledger)
-For each target milestone, `list_milestone_items` and collect its `tasks`. Also
-read the `questions` ledger items linked `tasks:<id>` and the milestones' own
-`dependsOn`/`blockedBy`.
+For each target milestone,
+`list_milestone_items({ milestone_id: M, projection: "full" })` and collect its
+`tasks`. Also read the `questions` ledger items linked `tasks:<id>` and the
+milestones' own `dependsOn`/`blockedBy`. This per-milestone read is structurally
+bounded to M; full projection is required because the task
+headline/description/acceptance and answered-question narrative feed downstream
+worker dispatch, review, and handoff reasoning.
 
 **Start-of-pass worktree prune sweep (G38-1a-start-sweep).** <!-- G38-1a-start-sweep -->
 This is the SAME generalized cleanup recipe `CQ::advance` runs at run-stop

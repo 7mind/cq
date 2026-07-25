@@ -38,9 +38,15 @@ limited to TWO sanctioned writer classes: **(1)** the **SEED stage's** fix-goal
 seeding (`create_milestone` + `create_item("goals", …, planning)` + the
 defect→goal back-link — §Provenance / §The cycle, Seed stage, per Q259 option A), and **(2)**
 the single **run-level `handoffs` record** at end-of-run. DETECTION itself stays
-strictly **read-only** (`derive_predicates`/`fetch_ledger`/`search_items`/
-`fts_search`/`fetch_item`); every OTHER ledger MUTATION — defect triage, goal/task
-status, milestone archive, reviews, questions — the chained sub-commands own.
+strictly **read-only** through:
+`derive_predicates`,
+`fetch_ledger({ ledger_id: "<ledger>", projection: "compact", offset: 0, limit: 100 })`,
+`search_items({ ledger_id: "<ledger>", query: "<terms>", projection: "compact" })`,
+`fts_search({ query: "<terms>", ledger: "<ledger>", projection: "compact", limit: 100 })`,
+and
+`fetch_item({ ledger_id: "<ledger>", item_id: "<id>", projection: "compact" })`;
+every OTHER ledger MUTATION — defect triage, goal/task status, milestone
+archive, reviews, questions — the chained sub-commands own.
 
 **This command is idempotent and fully resumable** — it re-derives ALL state from
 the ledger on each invocation and on each cycle. Run it repeatedly (e.g. after
@@ -84,6 +90,12 @@ the chained sub-commands, which stamp `author`/`session` per their own prompts.
 Detection stays strictly read-only (the five predicates + the informational
 `belowFloor` and `goalDrift` companions query item STATUS; they never write — the
 SEED stage acts on P-seed's verdict, but the derivation that produced it is read-only).
+
+**Mutation response rule:** Every ledger mutation below that has an ack policy
+returns only its fixed acknowledgement (allocated id, current status,
+canonicalized reference fields, timestamps, and provenance), never a full
+entity. Use acknowledgement ids directly; issue an explicit full read only when
+later reasoning needs task, review, or handoff narrative fields.
 
 ### The end-of-run write — the run-level handoff (Q83/Q84/Q85)
 At end-of-run, after you classify the run (see §End-of-run report), write ONE
@@ -232,23 +244,26 @@ backs the `cq advance-gate` Stop-hook CLI — so the prose definitions below,
 this MCP tool, and the stop-hook can never drift from one another.
 
 **Fallback for edge cases.** `derive_predicates` is the sole authoritative
-predicate source. If you need the full item view (long narrative fields,
-`dependsOn` chain detail) for a specific item, call **`snapshot()`** or
-**`fetch_ledger`** with `compact: true` as supplementary read-only queries —
-but the predicate VALUES still come from `derive_predicates`, not from a
-hand-derivation over those supplementary results:
+predicate source. If you need supplementary status, reference, or `dependsOn`
+detail for a specific item, call **`snapshot()`** or
+**`fetch_ledger({ ledger_id: "<ledger>", projection: "compact", offset: 0,
+limit: 100 })`** as a supplementary read-only query — but the predicate VALUES
+still come from `derive_predicates`, not from a hand-derivation over those
+supplementary results:
 
 ```
 snapshot()
-fetch_ledger({ ledger_id: "tasks",    compact: true })
-fetch_ledger({ ledger_id: "defects",  compact: true })
-fetch_ledger({ ledger_id: "goals",    compact: true })
-fetch_ledger({ ledger_id: "questions",compact: true })
+fetch_ledger({ ledger_id: "tasks",     projection: "compact", offset: 0, limit: 100 })
+fetch_ledger({ ledger_id: "defects",   projection: "compact", offset: 0, limit: 100 })
+fetch_ledger({ ledger_id: "goals",     projection: "compact", offset: 0, limit: 100 })
+fetch_ledger({ ledger_id: "questions", projection: "compact", offset: 0, limit: 100 })
 ```
 
-`compact: true` strips long narrative fields; combine with `offset`/`limit`
-for pagination on large ledgers. Use `fetch_item` for a single item's full
-fields only when the compact view is not enough.
+The compact projection strips long narrative fields. Follow `nextOffset` only
+when the edge-case check genuinely needs another bounded page. Use
+`fetch_item({ ledger_id: "<ledger>", item_id: "<id>", projection: "compact" })`
+for a single item's status and reference fields; this sequencer does not load
+narrative fields during predicate detection.
 
 **Rule:** this bootstrap MUST NOT exceed ~2 tool calls for the common case
 (`derive_predicates` + at most one targeted follow-up). The ~13-call
@@ -404,8 +419,11 @@ you re-derive the predicates and continue.
    **Exclude research-parked defects from this cycle's dispatch (T626 — with
    T625's park-as-uncertain in place).** Before calling `CQ::investigate/advance D`
    on a worklist defect, check whether D is **research-blocked**: read D's
-   hypothesis tree (`search_items`/`fts_search` the `hypothesis` ledger for nodes
-   whose `ledgerRefs` contain `defects:<D>` — the same read
+   hypothesis tree
+   (`search_items({ ledger_id: "hypothesis", query: "defects:<D>", projection: "compact" })`
+   /
+   `fts_search({ query: 'ledgerRefs:"defects:<D>"', ledger: "hypothesis", projection: "compact", limit: 100 })`
+   for nodes whose `ledgerRefs` contain `defects:<D>` — the same read
    `CQ::investigate/advance` §1 performs) and test whether EVERY currently
    unresolved branch (every leaf with no `confirmed`/adjudicated descendant) is
    `uncertain` and carries a `researches:<RS>` ledgerRef (the T625 park marker)
@@ -452,11 +470,13 @@ you re-derive the predicates and continue.
      state**: a non-empty `pSeed` keeps the loop cycling (§Stop condition).
    - **CLUSTER-GROUP the whole batch into ONE defect-seeded hardening goal**
      (LOCKED BOUND: a batch → ONE goal, **NEVER one goal per defect**):
-     `create_milestone(title: "Plan: fix <batch summary>")` as **M**, then
+     `create_milestone(title: "Plan: fix <batch summary>")` as **M**, taking M
+     from the fixed acknowledgement, then
      `create_item("goals", M, status: "planning", fields: { title: "Fix
      D<…>: <short cluster summary>", description: "<goal text embedding, for EACH
      batched defect, its CONFIRMED rootCause + suggestedFix VERBATIM>", sourceRefs:
-     ["defects:<D>", …one per batched defect] })` as **G**. Use the same
+     ["defects:<D>", …one per batched defect] })` as **G**, taking G from that
+     fixed acknowledgement. Use the same
      defect-seeded shape investigate step-5 emits
      (`commands/cq/investigate/advance.md` step 5), EXCEPT the goal→defect link is
      written as the goal's **`sourceRefs`** — the `goals` ledger has **NO

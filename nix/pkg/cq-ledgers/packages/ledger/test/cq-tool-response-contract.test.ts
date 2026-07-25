@@ -478,7 +478,7 @@ async function validateCanonicalInventory(
 }
 
 const MUTATION_ACK_RULE =
-  /Every ledger mutation below returns only its fixed\s+acknowledgement/;
+  /Every ledger mutation below(?: that has an ack policy)?\s+returns only its fixed\s+acknowledgement/;
 
 async function validateSourcePolicyConformance(
   candidate: ResponsePolicyInventory,
@@ -500,15 +500,10 @@ async function validateSourcePolicyConformance(
   )) {
     const markdown = await readSource(source.source);
     const discovered = discoverCalls(source, markdown);
-    const invokedMutations = discovered.filter(
-      (call) =>
-        call.invocationArguments !== undefined &&
-        (ACK_TOOLS as readonly string[]).includes(call.tool),
+    const hasAckPolicy = discovered.some(
+      (call) => inventoryById.get(call.callSite)?.policy === "ack",
     );
-    if (
-      invokedMutations.length > 0 &&
-      !MUTATION_ACK_RULE.test(markdown)
-    ) {
+    if (hasAckPolicy && !MUTATION_ACK_RULE.test(markdown)) {
       errors.push(`Missing fixed-ack rule: ${source.source}`);
     }
 
@@ -523,9 +518,7 @@ async function validateSourcePolicyConformance(
         errors.push(`Missing projection inventory policy: ${call.callSite}`);
         continue;
       }
-      const projection = call.invocationArguments?.match(
-        /\bprojection\s*:\s*["'](compact|full)["']/,
-      )?.[1];
+      const projection = call.invocationArguments?.match(/\bprojection\s*:\s*["'](compact|full)["']/)?.[1];
       if (projection !== policy) {
         errors.push(
           `Projection mismatch: ${call.callSite} expected ${policy}, got ${
@@ -712,6 +705,16 @@ describe("CQ tool response-policy inventory", () => {
       await validateSourcePolicyConformance(
         inventory,
         new Set<WorkflowFamily>(["investigate", "research"]),
+        readCanonicalSource,
+      ),
+    ).toEqual([]);
+  });
+
+  test("advance, begin, and implement canonical invocations match checked response policies", async () => {
+    expect(
+      await validateSourcePolicyConformance(
+        inventory,
+        new Set<WorkflowFamily>(["advance", "begin", "implement"]),
         readCanonicalSource,
       ),
     ).toEqual([]);

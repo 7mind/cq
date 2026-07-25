@@ -58,16 +58,25 @@ On any `create_item` / `update_item`, pass `author` = your OWN model class
 `"opus-4.8[1m]"`; Codex GPT-5.x → e.g. `"gpt-5.5"`) and `session` =
 `$CLAUDE_CODE_SESSION_ID` (or the Codex equivalent; omit if unavailable).
 
+**Mutation response rule:** Every ledger mutation below that has an ack policy
+returns only its fixed acknowledgement (allocated id, current status,
+canonicalized reference fields, timestamps, and provenance), never a full
+entity. Use acknowledgement ids directly; issue an explicit full read only when
+later reasoning needs task, review, or handoff narrative fields.
+
 ## Steps
 
 1. **Resolve the target milestone set.**
-   - If `$ARGUMENTS` lists milestone ids → those are the targets. `fetch_milestone`
-     each to VALIDATE it exists and is non-archived, non-terminal; abort with a
-     clear message on any unknown/archived id.
+   - If `$ARGUMENTS` lists milestone ids → those are the targets.
+     `fetch_milestone({ milestone_id: M, projection: "compact" })` for each to
+     VALIDATE it exists and is non-archived, non-terminal; abort with a clear
+     message on any unknown/archived id.
    - If `$ARGUMENTS` is empty → target **ALL** open milestones: every
      non-archived, non-terminal milestone in the `milestones` ledger that has at
-     least one non-terminal linked `tasks` item (`list_milestone_items` to check).
-     Skip milestones whose tasks are all terminal (nothing to do).
+     least one non-terminal linked `tasks` item
+     (`list_milestone_items({ milestone_id: M, projection: "compact" })` to
+     check). This per-milestone read is structurally bounded to M. Skip
+     milestones whose tasks are all terminal (nothing to do).
 
 2. **Resolve and sanity-check the task DAG.** For each target, collect its
    `tasks` and their `dependsOn` edges (and the milestones' own
