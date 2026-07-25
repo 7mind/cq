@@ -89,6 +89,16 @@ export function ensureSchema(db: Database): void {
       FOREIGN KEY (ledger, pointer_id) REFERENCES archive_pointers(ledger, id)
     );
 
+    CREATE TABLE IF NOT EXISTS plan_claims (
+      scope       TEXT PRIMARY KEY,
+      record_json TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS plan_operations (
+      scope       TEXT PRIMARY KEY,
+      record_json TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value NOT NULL
