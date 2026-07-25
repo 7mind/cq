@@ -14,7 +14,8 @@
     "regen-bootstrap": "bun run scripts/regen-bootstrap.ts",
     "link-prompts": "bun run scripts/link-prompts.ts",
     "gen-prompt-catalog": "bun run packages/cq-config/scripts/gen-prompt-catalog.ts",
-    "gen-agents": "bun run packages/ledger-web/scripts/gen-agents-catalogue.ts"
+    "gen-agents": "bun run packages/ledger-web/scripts/gen-agents-catalogue.ts",
+    "verify-packaged-prompt-surfaces": "bun run packages/ledger-mcp/scripts/verify-packaged-prompt-surfaces.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
