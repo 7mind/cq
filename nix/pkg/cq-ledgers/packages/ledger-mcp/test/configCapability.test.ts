@@ -984,4 +984,19 @@ describe("T861: configCapability under the codex selector", () => {
     expect(() => computePlanners(dir)).toThrow(/\[harness\.codex\] must define its own tiers/);
     expect(() => computeAgentModels(dir)).toThrow(/\[harness\.codex\]/);
   });
+
+  it("get_config fails closed on the same violation", () => {
+    // computeConfig is its own gate site: projectConfig reads config.aliases /
+    // reviewers / planners / tiers DIRECTLY, so no gated resolver covers it
+    // transitively. get_config IS a dispatch path — commands/cq/reviewers.md,
+    // planners.md and implement/advance.md resolve dispatch tokens out of it —
+    // so dropping its assertDispatchable would hand a Codex host the shared
+    // claude:* frontier token. This case pins that gate.
+    writeCqToml(
+      T861_CODEX_FIXTURE.slice(0, T861_CODEX_FIXTURE.indexOf("[harness.codex.tiers]")),
+    );
+    process.env["CQ_HARNESS"] = "codex";
+
+    expect(() => computeConfig(dir)).toThrow(/\[harness\.codex\]/);
+  });
 });
