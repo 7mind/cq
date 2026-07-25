@@ -33,7 +33,7 @@ import { AbstractLedgerStore } from "../AbstractLedgerStore.js";
 import { GitPlumbing } from "./GitPlumbing.js";
 import { GitPersistence } from "./GitPersistence.js";
 import type { ReadLogResult } from "../../mcp/readLog.js";
-import { LEDGER_STORAGE_DIRNAME } from "../../constants.js";
+import { DEFAULT_ON_SCHEMA_DIVERGENCE, LEDGER_STORAGE_DIRNAME } from "../../constants.js";
 
 /** Default orphan branch the ledger tree lives on (short name, no `refs/`). */
 const DEFAULT_BRANCH = "cq-ledger";
@@ -72,8 +72,10 @@ export interface GitObjectLedgerBackendOpts {
   /**
    * Policy for an on-ref canonical ledger whose schema diverged from canon
    * (detected at init()):
-   *  - `'backup-reinit'` (default): tag the ref head, then reinit canonical;
-   *  - `'abort'`: throw `BootstrapViolationError` so the divergence is loud.
+   *  - `'abort'` (default, {@link DEFAULT_ON_SCHEMA_DIVERGENCE}): throw
+   *    `BootstrapViolationError`, leaving the ref untouched, so the divergence
+   *    is loud;
+   *  - `'backup-reinit'`: tag the ref head, then reinit canonical.
    */
   onSchemaDivergence?: "backup-reinit" | "abort";
 }
@@ -100,7 +102,7 @@ export class GitObjectLedgerBackend
       lockfile: new Lockfile(opts.lockfile ?? {}),
       now,
       onMutation: opts.onMutation ?? null,
-      onSchemaDivergence: opts.onSchemaDivergence ?? "backup-reinit",
+      onSchemaDivergence: opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE,
     });
     this.repoRoot = repoRoot;
     this.locksDir = path.join(repoRoot, LEDGER_STORAGE_DIRNAME, ".locks");

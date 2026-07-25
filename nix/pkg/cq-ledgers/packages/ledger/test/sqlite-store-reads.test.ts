@@ -215,7 +215,7 @@ describe("SqliteLedgerStore init/bootstrap (acceptance a)", () => {
     expect(JSON.parse(row!.schema_json)).toEqual(REVIEWS_SCHEMA);
   });
 
-  test("schema divergence: 'abort' throws BootstrapViolationError; default policy throws the T529 backup stub", async () => {
+  test("schema divergence: default 'abort' throws BootstrapViolationError; opt-in backup-reinit does not", async () => {
     const divergedDbPath = async (): Promise<string> => {
       const dbPath = await freshDbPath();
       const db = openLedgerDb(dbPath);
@@ -236,9 +236,13 @@ describe("SqliteLedgerStore init/bootstrap (acceptance a)", () => {
     });
     await expect(abortStore.init()).rejects.toThrow(BootstrapViolationError);
 
-    // Default policy (T529): backup-reinit resolves instead of throwing — the
-    // full backup+reinit contract is exercised in sqlite-store-archive.test.ts.
-    const backupStore = new SqliteLedgerStore({ dbPath: await divergedDbPath(), now });
+    // Opt-in backup-reinit (T529) resolves instead of throwing — the full
+    // backup+reinit contract is exercised in sqlite-store-archive.test.ts.
+    const backupStore = new SqliteLedgerStore({
+      dbPath: await divergedDbPath(),
+      now,
+      onSchemaDivergence: "backup-reinit",
+    });
     await expect(backupStore.init()).resolves.toBeUndefined();
     expect(backupStore.fetch("tasks").schema.idPrefix).not.toBe("ZZ");
     await backupStore.dispose();

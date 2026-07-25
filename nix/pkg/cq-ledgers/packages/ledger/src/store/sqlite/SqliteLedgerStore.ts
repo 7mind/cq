@@ -129,6 +129,7 @@ import {
   TASKS_LEDGER,
   LEDGER_LOGS_STRIP_RE,
   LEDGER_LOGS_RELATIVE_PREFIX,
+  DEFAULT_ON_SCHEMA_DIVERGENCE,
 } from "../../constants.js";
 import { immediateWriteTransaction, openLedgerDb } from "./connection.js";
 import { ensureSchema, SCHEMA_VERSION } from "./schema.js";
@@ -180,11 +181,11 @@ export interface SqliteLedgerStoreOpts {
    * (detected at init(), same detection as AbstractLedgerStore via
    * schemasEqual/schemaCompatible):
    *
-   * - `'backup-reinit'` (default): the byte-level BACKUP action for this
-   *   backend lands in T529 — until then init() throws a clear stub error
-   *   instead of silently destroying divergent state.
-   * - `'abort'`: refuse to start — throw `BootstrapViolationError` — so the
-   *   divergence is loud and operator-handled.
+   * - `'abort'` (default, {@link DEFAULT_ON_SCHEMA_DIVERGENCE}): refuse to
+   *   start — throw `BootstrapViolationError` — leaving every row untouched,
+   *   so the divergence is loud and operator-handled.
+   * - `'backup-reinit'`: `VACUUM INTO` a timestamped sibling snapshot (T529),
+   *   then wipe every row and reseed fresh canonical state.
    */
   onSchemaDivergence?: "backup-reinit" | "abort";
 }
@@ -271,7 +272,7 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.logsDir = opts.logsDir;
     this.now = opts.now ?? (() => new Date().toISOString());
     this.onMutation = opts.onMutation ?? null;
-    this.onSchemaDivergence = opts.onSchemaDivergence ?? "backup-reinit";
+    this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
   }
 
   // ---------------------------------------------------------------------------

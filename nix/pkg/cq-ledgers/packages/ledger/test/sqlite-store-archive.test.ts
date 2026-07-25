@@ -425,7 +425,7 @@ describe("T529: schema-divergence BACKUP action (VACUUM INTO a timestamped sibli
       .run("tasks", "ZZ1", MILESTONES_AMBIENT_ID, "planned", JSON.stringify({ headline: "prior task" }), FIXED_NOW, FIXED_NOW);
     seed.close();
 
-    const store = new SqliteLedgerStore({ dbPath, now });
+    const store = new SqliteLedgerStore({ dbPath, now, onSchemaDivergence: "backup-reinit" });
     const stderr = await captureStderr(() => store.init());
     try {
       expect(stderr).toContain("WARNING");

@@ -661,7 +661,7 @@ describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () =>
     expect(committedText).toBe(expectedText);
   });
 
-  it("abort-mode throws on a deliberately stale fixture; default backup-reinit does not (D47 reproduce-first)", async () => {
+  it("default abort-mode throws on a deliberately stale fixture; opt-in backup-reinit does not (D47 reproduce-first)", async () => {
     // Build a stale variant: serialize a registry where the decisions schema has
     // one field's `required` flipped (false → true). The resulting YAML parses
     // successfully (valid schema, transitions unchanged) but schemasEqual returns
@@ -695,15 +695,16 @@ describe("repo docs/ledgers.yaml matches canon (no bootstrap divergence)", () =>
       await expect(store.init()).rejects.toBeInstanceOf(BootstrapViolationError);
     }
 
-    // Part B — the old default backup-reinit mode silently heals the stale fixture
-    // and does NOT throw, proving the pre-fix test was inadequate.
+    // Part B — the backup-reinit mode (now an explicit opt-in, no longer the
+    // default) silently heals the stale fixture and does NOT throw, proving the
+    // pre-fix test was inadequate.
     {
       const dir = await mkdtemp(path.join(tmpdir(), "ledger-canon-stale-reinit-"));
       dirs.push(dir);
       const docsDir = path.join(dir, LEDGER_STORAGE_DIRNAME);
       await mkdir(docsDir, { recursive: true });
       await writeFile(path.join(docsDir, "ledgers.yaml"), staleText, "utf8");
-      const store = new FsLedgerStore({ root: dir }); // default: 'backup-reinit'
+      const store = new FsLedgerStore({ root: dir, onSchemaDivergence: "backup-reinit" });
       // Must NOT throw — it self-heals silently (the D47 defect).
       await store.init();
       await store.dispose();

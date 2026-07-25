@@ -35,6 +35,7 @@ import { LedgerError } from "../types.js";
 import { Lockfile, type LockfileOpts } from "./lockfile.js";
 import {
   CANONICAL_LEDGERS,
+  DEFAULT_ON_SCHEMA_DIVERGENCE,
   LEDGER_STORAGE_DIRNAME,
   LEDGER_LOGS_STRIP_RE,
   LEDGER_LOGS_RELATIVE_PREFIX,
@@ -80,10 +81,11 @@ export interface FsLedgerStoreOpts {
    * Policy for an on-disk canonical ledger whose schema has diverged from
    * its canonical bootstrap schema (detected at init()).
    *
-   * - `'backup-reinit'` (default): back up the divergent on-disk state and
-   *   reinitialise the canonical files from scratch, then continue startup.
-   * - `'abort'`: refuse to start — throw `BootstrapViolationError` — so the
-   *   divergence is loud and operator-handled.
+   * - `'abort'` (default, {@link DEFAULT_ON_SCHEMA_DIVERGENCE}): refuse to
+   *   start — throw `BootstrapViolationError` — leaving every file untouched,
+   *   so the divergence is loud and operator-handled.
+   * - `'backup-reinit'`: back up the divergent on-disk state and reinitialise
+   *   the canonical files from scratch, then continue startup.
    */
   onSchemaDivergence?: "backup-reinit" | "abort";
 }
@@ -111,7 +113,7 @@ export class FsLedgerStore
       lockfile: new Lockfile(opts.lockfile ?? {}),
       now,
       onMutation: opts.onMutation ?? null,
-      onSchemaDivergence: opts.onSchemaDivergence ?? "backup-reinit",
+      onSchemaDivergence: opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE,
     });
     // The seam's divergence backup must enumerate the store's CURRENT registry
     // (held in the base) to copy + unlink the non-canonical ledger files; bind

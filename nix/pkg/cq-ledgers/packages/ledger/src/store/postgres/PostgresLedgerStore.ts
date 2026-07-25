@@ -116,6 +116,7 @@ import {
   MILESTONES_LEDGER,
   QUESTIONS_ANSWER_FIELD,
   QUESTIONS_LEDGER,
+  DEFAULT_ON_SCHEMA_DIVERGENCE,
 } from "../../constants.js";
 import {
   MAX_READ_LOG_BYTES,
@@ -279,7 +280,7 @@ export class PostgresLedgerStore implements LedgerStore {
     this.displayName = opts.displayName;
     this.now = opts.now ?? (() => new Date().toISOString());
     this.onMutation = opts.onMutation ?? null;
-    this.onSchemaDivergence = opts.onSchemaDivergence ?? "backup-reinit";
+    this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
   }
 
   // ---------------------------------------------------------------------------

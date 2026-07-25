@@ -568,6 +568,19 @@ export const UPSTREAM_SCHEMA: LedgerSchema = {
 };
 
 /**
+ * Default policy every backend applies when init() finds a persisted canonical
+ * schema that diverges from canon (see `schemaCompatible` for what counts as
+ * benign widening rather than divergence).
+ *
+ * `'abort'` — refuse to open, leaving every row untouched. The divergence that
+ * matters in practice is an OLDER build meeting a store a NEWER one widened:
+ * the persisted schema carries fields canon does not know, which is precisely
+ * when destroying data is least acceptable. `'backup-reinit'` stays available
+ * as an explicit opt-in for an operator who genuinely wants the reinit.
+ */
+export const DEFAULT_ON_SCHEMA_DIVERGENCE = "abort" as const;
+
+/**
  * Bootstrap manifest. `milestones` MUST be first (the others reference it
  * for milestone-group resolution). On init() every entry is provisioned if
  * its file is absent and guarded against on-disk schema divergence.

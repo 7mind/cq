@@ -384,7 +384,10 @@ describe("git invariant 5 — backup-tag before reinit", () => {
       const priorHead = await git(dir, "rev-parse", REF);
       expect(await git(dir, "tag", "--list", "cq-ledger-backup-*")).toBe("");
 
-      const store = new GitObjectLedgerBackend({ repoRoot: dir });
+      const store = new GitObjectLedgerBackend({
+        repoRoot: dir,
+        onSchemaDivergence: "backup-reinit",
+      });
       await store.init(); // divergence → backup tag, then reinit advances the ref
 
       const tags = (await git(dir, "tag", "--list", "cq-ledger-backup-*"))

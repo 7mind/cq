@@ -153,7 +153,11 @@ describe("T850 SQLite lifecycle persistence", () => {
       .run(JSON.stringify({ ...GOALS_SCHEMA, idPrefix: "ZZ" }), GOALS_LEDGER);
     tamper.close();
 
-    const reset = new SqliteLedgerStore({ dbPath: file, now: () => RESET_NOW });
+    const reset = new SqliteLedgerStore({
+      dbPath: file,
+      now: () => RESET_NOW,
+      onSchemaDivergence: "backup-reinit",
+    });
     await reset.init();
     try {
       const resetLifecycle = reset as SqliteLifecycleStore;

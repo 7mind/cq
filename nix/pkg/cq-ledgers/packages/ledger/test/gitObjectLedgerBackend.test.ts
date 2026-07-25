@@ -271,7 +271,10 @@ describe("GitObjectLedgerBackend — orphan-ref invariants", () => {
     const tagsBefore = await git(dir, "tag", "--list", "cq-ledger-backup-*");
     expect(tagsBefore).toBe("");
 
-    const store = new GitObjectLedgerBackend({ repoRoot: dir });
+    const store = new GitObjectLedgerBackend({
+      repoRoot: dir,
+      onSchemaDivergence: "backup-reinit",
+    });
     await store.init(); // divergence → backupCanonicalState tags, then reinit
 
     const tagsAfter = (await git(dir, "tag", "--list", "cq-ledger-backup-*"))
