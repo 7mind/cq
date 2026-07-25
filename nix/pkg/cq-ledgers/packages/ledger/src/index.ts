@@ -85,6 +85,14 @@ export type { GitObjectLedgerBackendOpts } from "./store/git/GitObjectLedgerBack
 export { SqliteLedgerStore } from "./store/sqlite/SqliteLedgerStore.js";
 export type { SqliteLedgerStoreOpts } from "./store/sqlite/SqliteLedgerStore.js";
 export {
+  openXdgProjectRuntime,
+  XdgProjectRuntimeLocationError,
+} from "./store/sqlite/xdgProjectRuntime.js";
+export type {
+  OpenXdgProjectRuntimeOptions,
+  XdgProjectRuntime,
+} from "./store/sqlite/xdgProjectRuntime.js";
+export {
   PROJECT_DISPLAY_NAME_META_KEY,
   PROJECT_REPOSITORY_PATH_META_KEY,
   SqliteXdgProjectIdentityAccess,
