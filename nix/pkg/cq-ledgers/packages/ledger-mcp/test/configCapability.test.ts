@@ -1000,3 +1000,200 @@ describe("T861: configCapability under the codex selector", () => {
     expect(() => computeConfig(dir)).toThrow(/\[harness\.codex\]/);
   });
 });
+
+// ---- T862: project the complete shared alias table + full [harness.codex] --
+//             panels/tiers through EVERY configuration MCP capability --------
+//
+// T861 proved the codex selector at the capability boundary with a MINIMAL
+// two-alias fixture and a single agent role. T862 extends that coverage with
+// the PRODUCTION-shaped `[aliases]` table (the same claude opus/sonnet/haiku
+// names plus the pi grok/codex/terra/luna names `cqTomlTemplate.ts` ships) and
+// a COMPLETE `[harness.codex]` block whose reviewers, planners, AND all three
+// `[harness.codex.tiers]` slots resolve exclusively to the single shared
+// `codex` alias (`pi:openai-codex/gpt-5.6-sol:xhigh`) — so get_reviewers,
+// get_planners, get_config's selected panels/tiers, AND get_agent_models'
+// per-role mappings ALL project through pi with zero claude/opus leakage,
+// while get_config.aliases keeps exposing the full table, Claude aliases
+// included (inactive, but present).
+
+const T862_CODEX_TOKEN_MAPPING = {
+  harness: "pi",
+  model: "gpt-5.6-sol",
+  provider: "openai-codex",
+  effort: "xhigh",
+} as const;
+
+const T862_FULL_ALIAS_FIXTURE = [
+  'reviewers = ["opus"]',
+  'planners  = ["opus"]',
+  "",
+  "[aliases]",
+  '  opus   = "claude:opus-4.8[1m]"',
+  '  sonnet = "claude:sonnet-4.8"',
+  '  haiku  = "claude:haiku"',
+  '  grok   = "pi:grok-build/grok-build:high"',
+  '  codex  = "pi:openai-codex/gpt-5.6-sol:xhigh"',
+  '  terra  = "pi:openai-codex/gpt-5.6-terra:high"',
+  '  luna   = "pi:openai-codex/gpt-5.6-luna:low"',
+  "",
+  "[tiers]",
+  '  frontier = "opus"',
+  '  standard = "sonnet"',
+  '  fast     = "haiku"',
+  "",
+  "[agent_tiers]",
+  '  plan-advance     = "frontier"',
+  '  implement-worker = "standard"',
+  "",
+  "[harness.codex]",
+  '  reviewers = ["codex"]',
+  '  planners  = ["codex"]',
+  "",
+  "[harness.codex.tiers]",
+  '  frontier = "codex"',
+  '  standard = "codex"',
+  '  fast     = "codex"',
+].join("\n");
+
+describe("T862: the full shared alias table projects through every configuration MCP capability", () => {
+  const savedHarness = process.env["CQ_HARNESS"];
+
+  afterEach(() => {
+    if (savedHarness === undefined) {
+      delete process.env["CQ_HARNESS"];
+    } else {
+      process.env["CQ_HARNESS"] = savedHarness;
+    }
+  });
+
+  it("get_reviewers exposes only the pi-backed codex alias, no claude/opus value", () => {
+    writeCqToml(T862_FULL_ALIAS_FIXTURE);
+    process.env["CQ_HARNESS"] = "codex";
+
+    const result = computeReviewers(dir);
+    expect(result.configured).toBe(true);
+    expect(result.reviewers).toEqual([
+      { ...T862_CODEX_TOKEN_MAPPING, alias: "codex" },
+    ]);
+  });
+
+  it("get_planners exposes only the pi-backed codex alias, no claude/opus value", () => {
+    writeCqToml(T862_FULL_ALIAS_FIXTURE);
+    process.env["CQ_HARNESS"] = "codex";
+
+    const result = computePlanners(dir);
+    expect(result.configured).toBe(true);
+    expect(result.planners).toEqual([
+      { ...T862_CODEX_TOKEN_MAPPING, alias: "codex" },
+    ]);
+  });
+
+  it("get_config's selected panels/tiers are pi-only, while aliases keeps the full table (Claude included)", () => {
+    writeCqToml(T862_FULL_ALIAS_FIXTURE);
+    process.env["CQ_HARNESS"] = "codex";
+
+    const result = computeConfig(dir);
+    expect(result.configured).toBe(true);
+
+    // Selected/active panels + tiers: pi only.
+    expect(result.reviewers).toEqual(["codex"]);
+    expect(result.planners).toEqual(["codex"]);
+    expect(result.tiers).not.toBeNull();
+    expect(result.tiers!.frontier).toEqual(T862_CODEX_TOKEN_MAPPING);
+    expect(result.tiers!.standard).toEqual(T862_CODEX_TOKEN_MAPPING);
+    expect(result.tiers!.fast).toEqual(T862_CODEX_TOKEN_MAPPING);
+
+    // aliases stays the COMPLETE shared table, Claude/opus definitions
+    // included — they are legal INACTIVE entries, not active values.
+    expect(Object.keys(result.aliases).sort()).toEqual([
+      "codex",
+      "grok",
+      "haiku",
+      "luna",
+      "opus",
+      "sonnet",
+      "terra",
+    ]);
+    expect(result.aliases["opus"]).toEqual({
+      harness: "claude",
+      model: "opus-4.8[1m]",
+      provider: null,
+      effort: null,
+    });
+    expect(result.aliases["codex"]).toEqual(T862_CODEX_TOKEN_MAPPING);
+  });
+
+  it("get_agent_models resolves every model-configurable role to pi only, no claude leakage", () => {
+    writeCqToml(T862_FULL_ALIAS_FIXTURE);
+    process.env["CQ_HARNESS"] = "codex";
+
+    const result = computeAgentModels(dir);
+    expect(result.configured).toBe(true);
+
+    const configurable = result.agents.filter((a) => a.status !== "not-model-configurable");
+    // At least one role is actually exercised (plan-advance/implement-worker,
+    // plus every DEFAULT_TIER role that falls back to "standard").
+    expect(configurable.length).toBeGreaterThan(0);
+    for (const agent of configurable) {
+      expect(agent.status).toBe("resolved");
+      expect(agent.modelMappings.pi).toEqual(["openai-codex/gpt-5.6-sol:xhigh"]);
+      expect(agent.modelMappings.claude).toBeUndefined();
+    }
+
+    const planAdvance = agentEntry(result, "plan-advance");
+    expect(planAdvance.modelClass).toBe("frontier");
+    const implWorker = agentEntry(result, "implement-worker");
+    expect(implWorker.modelClass).toBe("standard");
+  });
+
+  it("the same fixture under CQ_HARNESS=claude still resolves the shared Claude panels/aliases unchanged", () => {
+    writeCqToml(T862_FULL_ALIAS_FIXTURE);
+    process.env["CQ_HARNESS"] = "claude";
+
+    expect(computeReviewers(dir).reviewers).toEqual([
+      {
+        harness: "claude",
+        model: "opus-4.8[1m]",
+        provider: null,
+        alias: "opus",
+        effort: null,
+      },
+    ]);
+    const planAdvance = agentEntry(computeAgentModels(dir), "plan-advance");
+    expect(planAdvance.modelMappings.claude).toEqual(["opus-4.8[1m]"]);
+    expect(planAdvance.modelMappings.pi).toBeUndefined();
+  });
+
+  it("a missing/partial [harness.codex] on this full-alias fixture surfaces the T861 error, not a fallback, on every capability", () => {
+    // Drop [harness.codex.tiers] entirely: no fall-through to the shared
+    // [tiers] (which would leak the claude opus frontier model).
+    const partial = T862_FULL_ALIAS_FIXTURE.slice(
+      0,
+      T862_FULL_ALIAS_FIXTURE.indexOf("[harness.codex.tiers]"),
+    );
+    writeCqToml(partial);
+    process.env["CQ_HARNESS"] = "codex";
+
+    // The recorded violation is ONE verdict for the whole config (T861), so
+    // EVERY dispatch-panel capability fails closed — even get_reviewers /
+    // get_planners, whose OWN sections are present — because assertDispatchable
+    // gates on the config's single dispatchViolation, not a per-section check.
+    expect(() => computeReviewers(dir)).toThrow(/\[harness\.codex\]/);
+    expect(() => computePlanners(dir)).toThrow(/\[harness\.codex\]/);
+    expect(() => computeAgentModels(dir)).toThrow(/\[harness\.codex\]/);
+    expect(() => computeConfig(dir)).toThrow(/\[harness\.codex\]/);
+  });
+
+  it("a Claude-backed codex panel on this full-alias fixture surfaces the T861 error on every capability", () => {
+    const claudeLeak = T862_FULL_ALIAS_FIXTURE.replace(
+      '  reviewers = ["codex"]',
+      '  reviewers = ["opus"]',
+    );
+    writeCqToml(claudeLeak);
+    process.env["CQ_HARNESS"] = "codex";
+
+    expect(() => computeReviewers(dir)).toThrow(/claude/);
+    expect(() => computeConfig(dir)).toThrow(/claude/);
+    expect(() => computeAgentModels(dir)).toThrow(/claude/);
+  });
+});

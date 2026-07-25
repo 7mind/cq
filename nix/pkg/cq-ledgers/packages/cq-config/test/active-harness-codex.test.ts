@@ -527,3 +527,96 @@ port = 4321
     );
   });
 });
+
+describe("T862: the complete shared alias table + full [harness.codex] block resolve exclusively to pi:openai-codex/gpt-5.6-sol", () => {
+  /**
+   * The PRODUCTION-shaped `[aliases]` table (the same names `cqTomlTemplate.ts`
+   * ships: opus/sonnet/haiku claude aliases plus grok/codex/terra/luna pi
+   * aliases), with a COMPLETE `[harness.codex]` block whose reviewers,
+   * planners, AND all three `[harness.codex.tiers]` slots resolve exclusively
+   * to the single shared `codex` alias (`pi:openai-codex/gpt-5.6-sol:xhigh`).
+   * The shared top-level panels/tiers stay Claude — INACTIVE under codex.
+   */
+  const FULL_ALIAS_CODEX_TOML = `
+reviewers = ["opus"]
+planners = ["opus"]
+
+[aliases]
+opus   = "claude:opus-4.8[1m]"
+sonnet = "claude:sonnet-4.8"
+haiku  = "claude:haiku"
+grok   = "pi:grok-build/grok-build:high"
+codex  = "pi:openai-codex/gpt-5.6-sol:xhigh"
+terra  = "pi:openai-codex/gpt-5.6-terra:high"
+luna   = "pi:openai-codex/gpt-5.6-luna:low"
+
+[tiers]
+frontier = "opus"
+standard = "sonnet"
+fast     = "haiku"
+
+[harness.codex]
+reviewers = ["codex"]
+planners  = ["codex"]
+
+[harness.codex.tiers]
+frontier = "codex"
+standard = "codex"
+fast     = "codex"
+`;
+
+  const CODEX_TOKEN = parseReviewerToken("pi:openai-codex/gpt-5.6-sol:xhigh");
+
+  it("resolves reviewers, planners, and every tier slot to the shared codex alias", () => {
+    const config = parseConfig(FULL_ALIAS_CODEX_TOML, "codex");
+    expect(config.dispatchViolation).toBeNull();
+
+    expect(resolveReviewers(config)).toEqual([CODEX_TOKEN]);
+    expect(resolvePlanners(config)).toEqual([CODEX_TOKEN]);
+    expect(tierModel(config, "frontier")).toEqual(CODEX_TOKEN);
+    expect(tierModel(config, "standard")).toEqual(CODEX_TOKEN);
+    expect(tierModel(config, "fast")).toEqual(CODEX_TOKEN);
+    // No suggestedModel / DEFAULT_TIER agent can escape to a claude token
+    // either, since every tier slot resolves to the same pi token.
+    expect(resolveAgentModel(config, "plan-advance")).toEqual(CODEX_TOKEN);
+    expect(resolveAgentModel(config, "an-agent-with-no-agent_tiers-entry")).toEqual(
+      CODEX_TOKEN,
+    );
+  });
+
+  it("keeps the complete shared alias table intact, including the inactive Claude aliases", () => {
+    const config = parseConfig(FULL_ALIAS_CODEX_TOML, "codex");
+    expect(Object.keys(config.aliases).sort()).toEqual([
+      "codex",
+      "grok",
+      "haiku",
+      "luna",
+      "opus",
+      "sonnet",
+      "terra",
+    ]);
+    expect(config.aliases["opus"]).toEqual(parseReviewerToken("claude:opus-4.8[1m]"));
+    expect(config.aliases["sonnet"]).toEqual(parseReviewerToken("claude:sonnet-4.8"));
+    expect(config.aliases["haiku"]).toEqual(parseReviewerToken("claude:haiku"));
+    expect(config.aliases["codex"]).toEqual(CODEX_TOKEN);
+    // ...and the claude selector still resolves off the shared top-level panels.
+    const claude = parseConfig(FULL_ALIAS_CODEX_TOML, "claude");
+    expect(resolveReviewers(claude)).toEqual([parseReviewerToken("claude:opus-4.8[1m]")]);
+  });
+
+  it("fails closed (rather than falling back) when this full-alias document's [harness.codex.tiers] is dropped", () => {
+    const partial = FULL_ALIAS_CODEX_TOML.replace(
+      /\[harness\.codex\.tiers\][\s\S]*/,
+      "",
+    );
+    expectCodexFailClosed(partial, /tiers/);
+  });
+
+  it("fails closed when a [harness.codex] slot is re-pointed at a Claude alias", () => {
+    const claudeLeak = FULL_ALIAS_CODEX_TOML.replace(
+      'planners  = ["codex"]',
+      'planners  = ["opus"]',
+    );
+    expectCodexFailClosed(claudeLeak, /claude/);
+  });
+});
