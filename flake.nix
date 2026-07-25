@@ -605,6 +605,12 @@
               ${pkgs.jq}/bin/jq -e '
                 .mcpServers.ledger.lifecycle == "keep-alive"
                 and .mcpServers.ledger.directTools == true
+                and .mcpServers.ledger.type == "stdio"
+                and (.mcpServers.ledger | has("url") | not)
+                and (.mcpServers.ledger | has("enabled") | not)
+                and (.mcpServers.ledger | has("env") | not)
+                and (.mcpServers.ledger | has("headers") | not)
+                and ([.mcpServers.ledger[] | select(. == null)] | length == 0)
               ' ${piPromptRootTest.mcpJson} >/dev/null
               if ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS|\$cq-|mcp__ledger__|Agent\(' ${piPromptRoot}/roles; then
                 echo "packaged Pi prompt root contains a foreign or unresolved renderer token" >&2

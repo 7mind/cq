@@ -56,9 +56,16 @@ let
           };
           config = {
             home.homeDirectory = "/home/test";
+            # Mirror programs.mcp submodule defaults (nullOr / empty attrs) so
+            # the Pi override path must strip them — raw merge would re-emit
+            # JSON null and crash pi-mcp-adapter (issue #222).
             programs.mcp.servers.ledger = {
               command = "/nix/store/test-cq/bin/cq";
               args = [ "mcp" ];
+              url = null;
+              enabled = null;
+              env = { };
+              headers = { };
             };
             smind.hm.dev.llm = {
               enable = true;
@@ -89,6 +96,8 @@ let
   externalAgent = files.".pi/agent/cq-agents/external-agent.md";
   appendSystem = files."/home/test/.pi/agent/APPEND_SYSTEM.md";
   mcpJson = files.".pi/agent/mcp.json".source;
+  mcpParsed = builtins.fromJSON (builtins.readFile mcpJson);
+  ledgerServer = mcpParsed.mcpServers.ledger;
 in
 {
   inherit mcpJson;
@@ -105,5 +114,14 @@ in
       extension: lib.hasSuffix "cq-subagent-dispatch.ts" extension
     ) piSettings.extensions;
     assert lib.all (entry: entry.assertion) evaluatedPiModule.config.assertions;
+    # Pi MCP override: Pi-only fields present, optional null/empty fields absent.
+    assert ledgerServer.lifecycle == "keep-alive";
+    assert ledgerServer.directTools == true;
+    assert ledgerServer.type == "stdio";
+    assert ledgerServer.command == "/nix/store/test-cq/bin/cq";
+    assert !(ledgerServer ? url);
+    assert !(ledgerServer ? enabled);
+    assert !(ledgerServer ? env);
+    assert !(ledgerServer ? headers);
     true;
 }

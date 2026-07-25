@@ -171,7 +171,42 @@ let
   # Pi-only — it registers a server's tools directly instead of behind the
   # adapter's mcp() proxy, and stays out of the shared registry for the same
   # reason.
+  #
+  # Shape: match programs.mcp → ~/.config/mcp/mcp.json (null/empty optional
+  # fields stripped, type added), then layer Pi-only lifecycle/directTools.
+  # Raw `programs.mcp.servers` submodule attrs carry `url = null`,
+  # `enabled = null`, `env = {}`, `headers = {}` defaults; emitting those as
+  # JSON null crashes pi-mcp-adapter@2.14.0 — resolveServerUrl only treats
+  # `url === undefined` as missing, then calls `url.matchAll(...)` after the
+  # stdio child has already been spawned (upstream
+  # https://github.com/nicobailon/pi-mcp-adapter/issues/222). The empty-value
+  # filter mirrors lib.hm.mcp.transformMcpServer (home-manager
+  # modules/lib/mcp.nix); reimplemented locally so this module stays evaluable
+  # under pure nixpkgs lib (pi-prompt-root-test) without a home-manager input.
   piMcpDirectTools = cfg.pi.mcpDirectTools;
+  # Same empty-value filter as lib.hm.mcp.transformMcpServer + addType
+  # (also drops disabled/serverUrl, which the shared transform excludes).
+  normalizeMcpServer =
+    server:
+    let
+      withType =
+        server
+        // {
+          type =
+            if server ? type then
+              server.type
+            else if (server.url or null) != null then
+              "http"
+            else
+              "stdio";
+        };
+    in
+    lib.filterAttrs (_: value: value != null && value != [ ] && value != { }) (
+      removeAttrs withType [
+        "disabled"
+        "serverUrl"
+      ]
+    );
   piMcpJson = jsonFormat.generate "pi-mcp.json" {
     mcpServers = lib.mapAttrs
       (
@@ -186,7 +221,9 @@ let
                   piMcpDirectTools
               );
           in
-          server // { lifecycle = "keep-alive"; } // lib.optionalAttrs directToolsEnabled { directTools = true; }
+          (normalizeMcpServer server)
+          // { lifecycle = "keep-alive"; }
+          // lib.optionalAttrs directToolsEnabled { directTools = true; }
       )
       config.programs.mcp.servers;
   };
