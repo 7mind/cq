@@ -18,6 +18,7 @@ import {
   fsPlanLifecycleFactory,
   gitPlanLifecycleFactory,
 } from "./planLifecyclePersistentAdapters.js";
+import { postgresPlanLifecycleFactory } from "./planLifecyclePostgresAdapter.js";
 
 const PLAN_LIFECYCLE_METHODS = [
   "claimPlan",
@@ -71,11 +72,13 @@ runPlanLifecycleStoreContract(inMemoryPlanLifecycleFactory);
 runPlanLifecycleStoreContract(sqlitePlanLifecycleFactory);
 runPlanLifecycleStoreContract(fsPlanLifecycleFactory);
 runPlanLifecycleStoreContract(gitPlanLifecycleFactory);
+runPlanLifecycleStoreContract(postgresPlanLifecycleFactory);
+// Whatever is left WITHOUT the capability keeps explicit progression coverage.
+// Deriving the set from the capability probe (rather than a hand-maintained
+// name list) is what makes T851's move of the Postgres leg out of progression
+// and into the real run above a single edit that cannot go half-done.
 for (const registration of PRODUCTION_REGISTRATIONS.filter(
-  ({ name }) =>
-    name !== "SqliteLedgerStore" &&
-    name !== "FsLedgerStore" &&
-    name !== "GitObjectLedgerBackend",
+  (registration) => !hasCompletePlanLifecycleCapability(registration.store),
 )) {
   runPlanLifecycleStoreContract(progressionFactory(registration));
 }
@@ -106,7 +109,7 @@ describe("T847 production capability registry", () => {
       { name: "FsLedgerStore", available: true },
       { name: "GitObjectLedgerBackend", available: true },
       { name: "SqliteLedgerStore", available: true },
-      { name: "PostgresLedgerStore", available: false },
+      { name: "PostgresLedgerStore", available: true },
     ]);
   });
 });

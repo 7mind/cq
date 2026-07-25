@@ -160,7 +160,8 @@ async function buildGoal(
 export function runPlanLifecycleStoreContract(
   factory: PlanLifecycleContractFactory,
 ): void {
-  const contractDescribe = factory.progression ? describe.skip : describe;
+  const contractDescribe =
+    factory.progression || factory.skip === true ? describe.skip : describe;
   const timeout = factory.progression ? 5_000 : 10_000;
 
   contractDescribe(

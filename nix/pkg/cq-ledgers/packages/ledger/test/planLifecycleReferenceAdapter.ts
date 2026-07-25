@@ -187,6 +187,13 @@ export interface PlanLifecycleContractFactory {
     | "Behavioral-Active Blackbox-GoodCommunication"
     | "Behavioral-Progression Blackbox-GoodCommunication";
   readonly progression: boolean;
+  /**
+   * Skip this leg for an ENVIRONMENTAL reason rather than a capability one —
+   * the Postgres leg (T851) needs a live server via CQ_TEST_PG_URL (Q286).
+   * Distinct from `progression`, which records that the backend has not
+   * implemented the contract yet.
+   */
+  readonly skip?: boolean;
   build(): Promise<PlanLifecycleContractFixture>;
 }
 

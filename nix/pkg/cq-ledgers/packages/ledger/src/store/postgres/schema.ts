@@ -14,6 +14,10 @@
  * - `logs` — tenant-keyed raw log-artifact storage (Q274/Q285): log content
  *   (JSONL/markdown transcripts, per CLAUDE.md's artifact-format doc) is
  *   textual, hence TEXT rather than BYTEA.
+ * - `plan_claims` / `plan_operations` (T851) — the plan-lifecycle fence's
+ *   durable side state, the multi-tenant analogue of ../sqlite/schema.ts's
+ *   same-named `(scope, record_json)` tables with the same leading
+ *   `project_key` treatment every other shared table gets.
  *
  * `meta(schema_version)` stays PER-DATABASE, not per-tenant (Q280): schema
  * version describes the physical database's DDL generation, shared by every
@@ -42,6 +46,13 @@ import { withAdvisoryLock } from "./connection.js";
  *   for this: Postgres rewrites a tuple's ctid on UPDATE, so ordering by it
  *   reorders updated rows across restart/invalidate — unlike the sqlite
  *   backend's stable rowid.
+ *
+ *   Amended again in T851 (STILL v1, same never-released rationale as the T573
+ *   amendment above): the two plan-lifecycle side tables `plan_claims` and
+ *   `plan_operations` were added. Both are `CREATE TABLE IF NOT EXISTS`, so a
+ *   database provisioned by an earlier build simply gains them on the next
+ *   `ensureSchema` — there is no row to migrate, because no prior build wrote
+ *   plan-lifecycle state to Postgres at all.
  */
 export const PG_SCHEMA_VERSION = 1;
 
@@ -154,6 +165,28 @@ export async function ensureSchema(pool: SQL): Promise<void> {
         content     TEXT NOT NULL,
         created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (project_key, path)
+      )
+    `;
+
+    // Plan-lifecycle fence state (T851). `record_json` holds the SAME payloads
+    // the sqlite backend stores — a verifier-only `PlanPrivateClaimRecord` and
+    // an `InMemoryPlanOperationRecord` (replay descriptor + acknowledgement).
+    // No owner fence TOKEN is ever persisted, only its sha256 verifier.
+    await locked`
+      CREATE TABLE IF NOT EXISTS plan_claims (
+        project_key TEXT NOT NULL REFERENCES projects(project_key),
+        scope       TEXT NOT NULL,
+        record_json TEXT NOT NULL,
+        PRIMARY KEY (project_key, scope)
+      )
+    `;
+
+    await locked`
+      CREATE TABLE IF NOT EXISTS plan_operations (
+        project_key TEXT NOT NULL REFERENCES projects(project_key),
+        scope       TEXT NOT NULL,
+        record_json TEXT NOT NULL,
+        PRIMARY KEY (project_key, scope)
       )
     `;
 
