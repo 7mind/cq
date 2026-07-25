@@ -20,6 +20,16 @@ let
     inherit pkgs lib;
     surface = "codex";
   };
+  # Bound separately (rather than inlined into symlinkJoin's postBuild arg)
+  # so the assertion below can inspect the exact wrapProgram invocation at
+  # eval time — symlinkJoin does not forward `postBuild` onto the resulting
+  # derivation's attrset, so there is no other eval-time handle on this string.
+  codexWrapperPostBuild = ''
+    wrapProgram $out/bin/codex \
+      --set CQ_PROMPT_SURFACE codex \
+      --set CQ_HARNESS codex \
+      --set CQ_PROMPT_ROOT ${codexPromptRoot}
+  '';
   codexWrapped = pkgs.symlinkJoin {
     name = "codex-with-prompt-root";
     inherit (codexPkg) version;
@@ -29,11 +39,7 @@ let
     };
     paths = [ codexPkg ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
-    postBuild = ''
-      wrapProgram $out/bin/codex \
-        --set CQ_PROMPT_SURFACE codex \
-        --set CQ_PROMPT_ROOT ${codexPromptRoot}
-    '';
+    postBuild = codexWrapperPostBuild;
   };
   mkCodexCommandSkills = import ../lib/codex-command-skills.nix { inherit lib; };
   codexProjection = mkCodexCommandSkills {
@@ -113,6 +119,13 @@ in
           message =
             "Codex cq command skills collide with shared skills: "
             + lib.concatStringsSep ", " skillNameCollisions;
+        }
+        {
+          # T863: the packaged Codex wrapper must export CQ_HARNESS=codex (the
+          # active configuration selector T861 wired into cq-config) alongside
+          # its existing prompt-surface variables.
+          assertion = lib.hasInfix "CQ_HARNESS codex" codexWrapperPostBuild;
+          message = "Codex wrapper does not export CQ_HARNESS=codex (the active configuration selector)";
         }
       ];
     }
