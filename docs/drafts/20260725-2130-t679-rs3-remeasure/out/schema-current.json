@@ -1,0 +1,189 @@
+{
+  "workspace": "/home/pavel/work/safe/flakes/cq/.claude/worktrees/agent-adbca74e1db65827f/nix/pkg/cq-ledgers",
+  "toolCount": 27,
+  "totalBytes": 30493,
+  "totalTokens": 7035,
+  "perTool": [
+    {
+      "name": "archive_milestone",
+      "bytes": 615,
+      "tokens": 151,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "create_item",
+      "bytes": 1566,
+      "tokens": 384,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "create_ledger",
+      "bytes": 1359,
+      "tokens": 332,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "create_milestone",
+      "bytes": 1005,
+      "tokens": 237,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "derive_predicates",
+      "bytes": 1122,
+      "tokens": 269,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "enumerate_ledgers",
+      "bytes": 403,
+      "tokens": 99,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "fetch_item",
+      "bytes": 1272,
+      "tokens": 281,
+      "hasProjectionParam": true
+    },
+    {
+      "name": "fetch_ledger",
+      "bytes": 2356,
+      "tokens": 520,
+      "hasProjectionParam": true
+    },
+    {
+      "name": "fetch_ledger_archive",
+      "bytes": 495,
+      "tokens": 110,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "fetch_milestone",
+      "bytes": 1375,
+      "tokens": 301,
+      "hasProjectionParam": true
+    },
+    {
+      "name": "fetch_prompt",
+      "bytes": 1015,
+      "tokens": 208,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "fts_search",
+      "bytes": 4489,
+      "tokens": 1011,
+      "hasProjectionParam": true
+    },
+    {
+      "name": "get_agent_models",
+      "bytes": 832,
+      "tokens": 200,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "get_config",
+      "bytes": 841,
+      "tokens": 196,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "get_planners",
+      "bytes": 605,
+      "tokens": 141,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "get_reviewers",
+      "bytes": 610,
+      "tokens": 141,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "list_milestone_items",
+      "bytes": 1340,
+      "tokens": 299,
+      "hasProjectionParam": true
+    },
+    {
+      "name": "list_projects",
+      "bytes": 635,
+      "tokens": 143,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "read_log",
+      "bytes": 779,
+      "tokens": 192,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "reopen_item",
+      "bytes": 827,
+      "tokens": 192,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "search_items",
+      "bytes": 1293,
+      "tokens": 280,
+      "hasProjectionParam": true
+    },
+    {
+      "name": "snapshot",
+      "bytes": 939,
+      "tokens": 217,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "unarchive_item",
+      "bytes": 943,
+      "tokens": 227,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "update_item",
+      "bytes": 1245,
+      "tokens": 296,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "update_milestone",
+      "bytes": 946,
+      "tokens": 228,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "validate_input",
+      "bytes": 776,
+      "tokens": 189,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "validate_output",
+      "bytes": 782,
+      "tokens": 189,
+      "hasProjectionParam": false
+    }
+  ],
+  "projectionParamTools": [
+    "fetch_item",
+    "fetch_ledger",
+    "fetch_milestone",
+    "fts_search",
+    "list_milestone_items",
+    "search_items"
+  ],
+  "counterfactualWithoutProjection": {
+    "totalBytes": 25273,
+    "totalTokens": 5924,
+    "tokensAttributableToProjection": 1111
+  },
+  "contractAttributable": {
+    "projectionTokens": 1111,
+    "ackSentenceTokens": 542,
+    "authoritativeResponseTokens": 1162,
+    "allTokens": 2214
+  }
+}

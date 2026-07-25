@@ -1,0 +1,9 @@
+{
+  "name": "t679-rs3-remeasure",
+  "private": true,
+  "type": "module",
+  "description": "T679: re-measure the implemented ledger MCP wire shapes against the pinned RS3 corpus.",
+  "dependencies": {
+    "gpt-tokenizer": "3.4.0"
+  }
+}

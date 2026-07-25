@@ -1,0 +1,182 @@
+{
+  "workspace": "/tmp/claude-1000/-home-pavel-work-safe-flakes-cq/f35107f7-b0ee-46e5-92b2-d0254799aa6c/scratchpad/t679-rs3-tree/nix/pkg/cq-ledgers",
+  "toolCount": 27,
+  "totalBytes": 19318,
+  "totalTokens": 4537,
+  "perTool": [
+    {
+      "name": "archive_milestone",
+      "bytes": 546,
+      "tokens": 136,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "create_item",
+      "bytes": 1151,
+      "tokens": 288,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "create_ledger",
+      "bytes": 1154,
+      "tokens": 290,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "create_milestone",
+      "bytes": 622,
+      "tokens": 152,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "derive_predicates",
+      "bytes": 938,
+      "tokens": 214,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "enumerate_ledgers",
+      "bytes": 269,
+      "tokens": 65,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "fetch_item",
+      "bytes": 319,
+      "tokens": 76,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "fetch_ledger",
+      "bytes": 388,
+      "tokens": 84,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "fetch_ledger_archive",
+      "bytes": 393,
+      "tokens": 90,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "fetch_milestone",
+      "bytes": 393,
+      "tokens": 93,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "fetch_prompt",
+      "bytes": 660,
+      "tokens": 149,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "fts_search",
+      "bytes": 3432,
+      "tokens": 780,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "get_agent_models",
+      "bytes": 734,
+      "tokens": 175,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "get_config",
+      "bytes": 733,
+      "tokens": 169,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "get_planners",
+      "bytes": 485,
+      "tokens": 112,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "get_reviewers",
+      "bytes": 489,
+      "tokens": 112,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "list_milestone_items",
+      "bytes": 400,
+      "tokens": 92,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "list_projects",
+      "bytes": 556,
+      "tokens": 121,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "read_log",
+      "bytes": 719,
+      "tokens": 176,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "reopen_item",
+      "bytes": 412,
+      "tokens": 96,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "search_items",
+      "bytes": 339,
+      "tokens": 75,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "snapshot",
+      "bytes": 819,
+      "tokens": 183,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "unarchive_item",
+      "bytes": 528,
+      "tokens": 131,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "update_item",
+      "bytes": 830,
+      "tokens": 200,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "update_milestone",
+      "bytes": 563,
+      "tokens": 142,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "validate_input",
+      "bytes": 706,
+      "tokens": 167,
+      "hasProjectionParam": false
+    },
+    {
+      "name": "validate_output",
+      "bytes": 712,
+      "tokens": 167,
+      "hasProjectionParam": false
+    }
+  ],
+  "projectionParamTools": [],
+  "counterfactualWithoutProjection": {
+    "totalBytes": 19318,
+    "totalTokens": 4537,
+    "tokensAttributableToProjection": 0
+  },
+  "contractAttributable": {
+    "projectionTokens": 0,
+    "ackSentenceTokens": 0,
+    "authoritativeResponseTokens": 0,
+    "allTokens": 0
+  }
+}

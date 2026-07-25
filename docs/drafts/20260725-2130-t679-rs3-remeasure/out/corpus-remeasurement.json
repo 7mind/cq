@@ -1,0 +1,2105 @@
+{
+  "probe": "T679 RS3-corpus re-measurement of implemented wire shapes",
+  "generatedAt": "2026-07-25T20:39:10.741Z",
+  "tokenizer": "gpt-tokenizer@3.4.0 / o200k_base",
+  "corpus": {
+    "root": "/home/pavel/.local/state/cq/projects/9faab3c136afe411b16a43206b14f834382ed440/logs/raw",
+    "fileCount": 357,
+    "totalBytes": 95152796,
+    "sha256Verified": true,
+    "rs3PinnedSourceCommit": "3fe3b8a7935f3027218581e76bb9da2ce1b833e2",
+    "jsonlLines": 26688,
+    "jsonlParseFailures": 0
+  },
+  "workspaceUnderMeasurement": "/home/pavel/work/safe/flakes/cq/.claude/worktrees/agent-adbca74e1db65827f/nix/pkg/cq-ledgers",
+  "totals": {
+    "calls": 710,
+    "resultsCaptured": 710,
+    "errors": 14,
+    "replayed": 688,
+    "unreplayable": 8,
+    "beforeBytes": 2460093,
+    "beforeTokens": 646375,
+    "afterBytes": 501997,
+    "afterTokens": 164780,
+    "fullControlBytes": 2446583,
+    "fullControlTokens": 642912,
+    "nonImprovingCalls": 16,
+    "argsTokens": 41111,
+    "argsTokensWithCompact": 43947,
+    "argsTokensWithFull": 43947
+  },
+  "replayedSubset": {
+    "beforeBytes": 2446583,
+    "beforeTokens": 642912,
+    "afterBytes": 501997,
+    "afterTokens": 164780,
+    "savedBytes": 1944586,
+    "savedTokens": 478132,
+    "savedPercent": 74.37,
+    "fullControlTokens": 642912,
+    "fullControlDeltaTokens": 0
+  },
+  "inputSideCost": {
+    "projectionBearingCalls": 574,
+    "argTokensCompact": 2296,
+    "argTokensFull": 2296
+  },
+  "sessionAmortization": {
+    "schemaDeltaTokensPerContext": 2214,
+    "transcripts": 357,
+    "transcriptsWithLedgerCalls": 198,
+    "transcriptsWithoutLedgerCalls": 159,
+    "transcriptsWhereNetSavingExceedsSchemaDelta": 76,
+    "medianNetResponseSavingPerCallingTranscript": 1461,
+    "maxNetResponseSavingPerCallingTranscript": 15211,
+    "scenarios": {
+      "schemaFullyCachedOrIgnored": 475836,
+      "schemaChargedOncePerCallingTranscript": 37464,
+      "schemaChargedOncePerTranscript": -314562
+    }
+  },
+  "perTranscript": [
+    {
+      "name": "20260615-163352-a1c07f83004f4d64c.jsonl",
+      "ledgerCalls": 8,
+      "replayed": 8,
+      "beforeTokens": 2943,
+      "afterTokens": 840,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260615-165344-afea5624f5e97748d.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 3109,
+      "afterTokens": 1494,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260615-170030-a86e8986b22abdb3a.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 7,
+      "beforeTokens": 8539,
+      "afterTokens": 2874,
+      "argsDeltaTokens": 20
+    },
+    {
+      "name": "20260615-170338-ad1f086bd4e2615c4.jsonl",
+      "ledgerCalls": 8,
+      "replayed": 8,
+      "beforeTokens": 4334,
+      "afterTokens": 1105,
+      "argsDeltaTokens": 32
+    },
+    {
+      "name": "20260615-170614-a9504f240aa9202f6.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 10122,
+      "afterTokens": 3009,
+      "argsDeltaTokens": 20
+    },
+    {
+      "name": "20260615-170858-a15da424830c490e5.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 6941,
+      "afterTokens": 2088,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260615-175024-a80979c2bfc09d712.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 53,
+      "afterTokens": 53,
+      "argsDeltaTokens": 0
+    },
+    {
+      "name": "20260615-195303-a54784ad15c0b1ed3.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 879,
+      "afterTokens": 129,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260615-195700-a75f0b7f06b44d663.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 4060,
+      "afterTokens": 701,
+      "argsDeltaTokens": 16
+    },
+    {
+      "name": "20260615-195846-ab7f663a95d6e79a0.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 3481,
+      "afterTokens": 715,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260621-123521-a686840d90da38d3a.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 3496,
+      "afterTokens": 654,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260621-144654-a2cfaa49e796ab47e.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 3564,
+      "afterTokens": 773,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260621-145928-a44106b93af3ece54.jsonl",
+      "ledgerCalls": 8,
+      "replayed": 8,
+      "beforeTokens": 13185,
+      "afterTokens": 3549,
+      "argsDeltaTokens": 28
+    },
+    {
+      "name": "20260621-150302-a13af5ba77e3ab6e9.jsonl",
+      "ledgerCalls": 9,
+      "replayed": 9,
+      "beforeTokens": 9891,
+      "afterTokens": 2506,
+      "argsDeltaTokens": 32
+    },
+    {
+      "name": "20260621-183830-aad7f3a4ef9a08b20.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 398,
+      "afterTokens": 127,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260621-184035-a11604df0d8815b7d.jsonl",
+      "ledgerCalls": 5,
+      "replayed": 5,
+      "beforeTokens": 2112,
+      "afterTokens": 594,
+      "argsDeltaTokens": 16
+    },
+    {
+      "name": "20260621-185236-ae8472a909a80598a.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 368,
+      "afterTokens": 128,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260621-185519-a29100e2d86334b4e.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 2730,
+      "afterTokens": 737,
+      "argsDeltaTokens": 20
+    },
+    {
+      "name": "20260713-121216-a7373fe1fc7a6be33.jsonl",
+      "ledgerCalls": 8,
+      "replayed": 8,
+      "beforeTokens": 3594,
+      "afterTokens": 865,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260713-123102-a15a6212b63cead14.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 4768,
+      "afterTokens": 2080,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260713-124443-a0576299cbde50862.jsonl",
+      "ledgerCalls": 15,
+      "replayed": 15,
+      "beforeTokens": 21797,
+      "afterTokens": 6999,
+      "argsDeltaTokens": 60
+    },
+    {
+      "name": "20260713-124737-a82b5624d8a167d10.jsonl",
+      "ledgerCalls": 9,
+      "replayed": 9,
+      "beforeTokens": 4431,
+      "afterTokens": 1224,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260713-125034-a46a1df2e908f01b6.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 7,
+      "beforeTokens": 12926,
+      "afterTokens": 4593,
+      "argsDeltaTokens": 28
+    },
+    {
+      "name": "20260713-125216-a209b877f892f17ce.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 8323,
+      "afterTokens": 2742,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260713-152628-a1929643d726311e4.jsonl",
+      "ledgerCalls": 5,
+      "replayed": 3,
+      "beforeTokens": 11079,
+      "afterTokens": 6975,
+      "argsDeltaTokens": 20
+    },
+    {
+      "name": "20260713-153239-aef35e9feda6b59c4.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 631,
+      "afterTokens": 131,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260713-153725-a8b7967475eeb36d3.jsonl",
+      "ledgerCalls": 5,
+      "replayed": 5,
+      "beforeTokens": 5145,
+      "afterTokens": 875,
+      "argsDeltaTokens": 20
+    },
+    {
+      "name": "20260713-153914-a35fb827d9ae0023b.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 2343,
+      "afterTokens": 585,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260713-170326-a8b893ec01cd6d3d0.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 834,
+      "afterTokens": 834,
+      "argsDeltaTokens": 0
+    },
+    {
+      "name": "20260713-173101-a021a4a9160e0598f.jsonl",
+      "ledgerCalls": 8,
+      "replayed": 8,
+      "beforeTokens": 6745,
+      "afterTokens": 1762,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260713-173101-a22c7a8798eaaf266.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 7,
+      "beforeTokens": 7063,
+      "afterTokens": 1072,
+      "argsDeltaTokens": 28
+    },
+    {
+      "name": "20260713-174822-a3cd9e8d176678331.jsonl",
+      "ledgerCalls": 12,
+      "replayed": 12,
+      "beforeTokens": 14166,
+      "afterTokens": 2835,
+      "argsDeltaTokens": 44
+    },
+    {
+      "name": "20260713-174822-abe5d6ecc460024a4.jsonl",
+      "ledgerCalls": 10,
+      "replayed": 10,
+      "beforeTokens": 11542,
+      "afterTokens": 2475,
+      "argsDeltaTokens": 36
+    },
+    {
+      "name": "20260713-175141-a3d0beeea14db649d.jsonl",
+      "ledgerCalls": 10,
+      "replayed": 10,
+      "beforeTokens": 9346,
+      "afterTokens": 1366,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260713-175402-aa548cb9721a4454f.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 18814,
+      "afterTokens": 3579,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260713-175402-af3101e7af8e48c98.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 18814,
+      "afterTokens": 3579,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260713-175634-a690477f2678899c1.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 3957,
+      "afterTokens": 327,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260713-191933-aa69d9e43d3c5ab0e.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 3204,
+      "afterTokens": 631,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260713-192214-aa45b5fb0be6d50c1.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 1903,
+      "afterTokens": 378,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260713-193247-a43b868e93710a84c.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 791,
+      "afterTokens": 197,
+      "argsDeltaTokens": 0
+    },
+    {
+      "name": "20260713-202355-a7879423a5e2b302b.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 7,
+      "beforeTokens": 6320,
+      "afterTokens": 1313,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260713-202902-a52e5d5618443aa81.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 6704,
+      "afterTokens": 1107,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260713-202902-aa2f7dd9102d819b1.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 381,
+      "afterTokens": 381,
+      "argsDeltaTokens": 0
+    },
+    {
+      "name": "20260713-202902-ad535239d6e995d2c.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 1,
+      "beforeTokens": 4187,
+      "afterTokens": 931,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260713-204007-acbc531ca0ea8c61f.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 2075,
+      "afterTokens": 316,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260713-204949-a471dc58b2f98dbe6.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 1858,
+      "afterTokens": 626,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260713-204949-aa4c8ce9160601cd2.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 695,
+      "afterTokens": 160,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260713-220719-a746f943fdf38bcab.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 322,
+      "afterTokens": 322,
+      "argsDeltaTokens": 0
+    },
+    {
+      "name": "20260713-220719-afb94ca6784a1b5ef.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 322,
+      "afterTokens": 322,
+      "argsDeltaTokens": 0
+    },
+    {
+      "name": "20260713-223355-a21c543d5e716fa04.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 479,
+      "afterTokens": 155,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260713-224055-ab346f5f94d61ec95.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 1170,
+      "afterTokens": 270,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260713-224055-adee16341caf53b1a.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 3191,
+      "afterTokens": 645,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260713-224545-a01deb22d49691c17.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 2278,
+      "afterTokens": 636,
+      "argsDeltaTokens": 16
+    },
+    {
+      "name": "20260713-231111-aa1a86cc0fc93c0cb.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 3191,
+      "afterTokens": 619,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260713-231111-af6ac883fb405746b.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 2628,
+      "afterTokens": 514,
+      "argsDeltaTokens": 16
+    },
+    {
+      "name": "20260714-105951-a530795f44b817984.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 2,
+      "beforeTokens": 802,
+      "afterTokens": 318,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260714-142757-a649c5512fd898590.jsonl",
+      "ledgerCalls": 11,
+      "replayed": 11,
+      "beforeTokens": 3574,
+      "afterTokens": 1278,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260714-145556-a146a45356ba0a5fc.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 8203,
+      "afterTokens": 2503,
+      "argsDeltaTokens": 20
+    },
+    {
+      "name": "20260714-145556-a2d698ef6a4400025.jsonl",
+      "ledgerCalls": 11,
+      "replayed": 11,
+      "beforeTokens": 8871,
+      "afterTokens": 2970,
+      "argsDeltaTokens": 44
+    },
+    {
+      "name": "20260714-150536-ae52dc06f01d84202.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 1560,
+      "afterTokens": 401,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260714-150536-af1875dd4a79c6b1b.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 2195,
+      "afterTokens": 264,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260720-180529-aeb18a8f3c5470b31.jsonl",
+      "ledgerCalls": 11,
+      "replayed": 11,
+      "beforeTokens": 10779,
+      "afterTokens": 2071,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260720-230408-a30528b97c40f7cc2.jsonl",
+      "ledgerCalls": 9,
+      "replayed": 9,
+      "beforeTokens": 3585,
+      "afterTokens": 990,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260722-195430-a9e92ab7136fe8f00.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 761,
+      "afterTokens": 130,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260722-195720-af2495add0ef7351d.jsonl",
+      "ledgerCalls": 5,
+      "replayed": 5,
+      "beforeTokens": 6189,
+      "afterTokens": 1059,
+      "argsDeltaTokens": 16
+    },
+    {
+      "name": "20260722-195720-afe1cabdd0052ff70.jsonl",
+      "ledgerCalls": 10,
+      "replayed": 10,
+      "beforeTokens": 7864,
+      "afterTokens": 1549,
+      "argsDeltaTokens": 40
+    },
+    {
+      "name": "20260722-200500-a1991eb3e313a04ae.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 7,
+      "beforeTokens": 4357,
+      "afterTokens": 897,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260722-200500-af10cedfd0bbb30d2.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 4298,
+      "afterTokens": 838,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260722-200630-a45591a8d53c1afbd.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 2925,
+      "afterTokens": 610,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260722-232248-a4a313664eb1ffe77.jsonl",
+      "ledgerCalls": 8,
+      "replayed": 8,
+      "beforeTokens": 2287,
+      "afterTokens": 810,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-000625-aaaa77db0a41f084f.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 7,
+      "beforeTokens": 2717,
+      "afterTokens": 785,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-000749-a13db8dbfa28d23a1.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 1522,
+      "afterTokens": 236,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-000749-a220473feab204f55.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 1501,
+      "afterTokens": 279,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-000749-a2802d530d64ed6e2.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 1518,
+      "afterTokens": 232,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-000749-a4a0aed79e9282c3a.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 1501,
+      "afterTokens": 279,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-000749-a5f8f41aaa1a4074e.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 3118,
+      "afterTokens": 377,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-000749-a6cd8b50dd06baae4.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 2292,
+      "afterTokens": 247,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-001601-a0538917ba379e371.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 6344,
+      "afterTokens": 1641,
+      "argsDeltaTokens": 20
+    },
+    {
+      "name": "20260723-001601-a152e77391f020af6.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 3737,
+      "afterTokens": 508,
+      "argsDeltaTokens": 16
+    },
+    {
+      "name": "20260723-001601-a8ffe7bec1f7f4380.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 2720,
+      "afterTokens": 584,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-001601-ac12392b2d5130931.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 2855,
+      "afterTokens": 451,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-001601-ac208f9bf578af6d6.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 2661,
+      "afterTokens": 525,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-001601-aee0f61ea56d805d8.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 7801,
+      "afterTokens": 1748,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260723-002057-a0eabd6a3bd879fe0.jsonl",
+      "ledgerCalls": 5,
+      "replayed": 5,
+      "beforeTokens": 7725,
+      "afterTokens": 1800,
+      "argsDeltaTokens": 20
+    },
+    {
+      "name": "20260723-002057-abad2c6f4d9e3c2cf.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 6,
+      "beforeTokens": 7784,
+      "afterTokens": 1859,
+      "argsDeltaTokens": 20
+    },
+    {
+      "name": "20260723-002915-a53a7078c5766e4e0.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 2761,
+      "afterTokens": 1300,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-002915-a617563f5efa49edf.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 7,
+      "beforeTokens": 4901,
+      "afterTokens": 2166,
+      "argsDeltaTokens": 28
+    },
+    {
+      "name": "20260723-002915-ad0313c9b774495e1.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 8671,
+      "afterTokens": 2554,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-002915-ae05d46a57cc1fd35.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 2761,
+      "afterTokens": 1300,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-003712-a08cff775256b2789.jsonl",
+      "ledgerCalls": 12,
+      "replayed": 12,
+      "beforeTokens": 11079,
+      "afterTokens": 3420,
+      "argsDeltaTokens": 44
+    },
+    {
+      "name": "20260723-003712-a3499f4b2f9443269.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 7,
+      "beforeTokens": 7783,
+      "afterTokens": 2735,
+      "argsDeltaTokens": 28
+    },
+    {
+      "name": "20260723-003712-a780907f0f6d95fe5.jsonl",
+      "ledgerCalls": 8,
+      "replayed": 8,
+      "beforeTokens": 7842,
+      "afterTokens": 2794,
+      "argsDeltaTokens": 28
+    },
+    {
+      "name": "20260723-003712-acf43ee44053d1a85.jsonl",
+      "ledgerCalls": 11,
+      "replayed": 11,
+      "beforeTokens": 11020,
+      "afterTokens": 3361,
+      "argsDeltaTokens": 44
+    },
+    {
+      "name": "20260723-004025-a51958bc5553c3f71.jsonl",
+      "ledgerCalls": 8,
+      "replayed": 8,
+      "beforeTokens": 8606,
+      "afterTokens": 3007,
+      "argsDeltaTokens": 28
+    },
+    {
+      "name": "20260723-004025-acb8283ebf3015085.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 7,
+      "beforeTokens": 8547,
+      "afterTokens": 2948,
+      "argsDeltaTokens": 28
+    },
+    {
+      "name": "20260723-010515-a1fb9e4643b028184.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 363,
+      "afterTokens": 127,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-010515-a693887e7c243503c.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 683,
+      "afterTokens": 128,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-010515-a847904a71d6d5c8c.jsonl",
+      "ledgerCalls": 5,
+      "replayed": 5,
+      "beforeTokens": 5584,
+      "afterTokens": 962,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-010515-a98e5f3260e0edc48.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 780,
+      "afterTokens": 125,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-010515-a9b09dd6f9466f725.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 832,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-010515-aa52b8009b06d6678.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 2787,
+      "afterTokens": 475,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-010515-ad5fd5a000abef168.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 314,
+      "afterTokens": 129,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-010515-afe0b789ff92c0eb9.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 1928,
+      "afterTokens": 294,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-012118-a07b6ccd1267a458c.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 314,
+      "afterTokens": 129,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-a313e4473258d98cd.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 780,
+      "afterTokens": 125,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-a3564b69702b28552.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 832,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-a543ee849a56955e9.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 412,
+      "afterTokens": 128,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-a60ff3ca4285f5e82.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 412,
+      "afterTokens": 128,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-a6695dbf29b134779.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 412,
+      "afterTokens": 128,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-a67e656013351b693.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 412,
+      "afterTokens": 128,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-a9e73571db80e9a86.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 780,
+      "afterTokens": 125,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-aa42b2b3f128e7f53.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 314,
+      "afterTokens": 129,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-ab892264fa744aa3a.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 363,
+      "afterTokens": 127,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-abc64f791ab279c50.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 2488,
+      "afterTokens": 275,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-012118-abec18e61f17fdae6.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 832,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-acc3913648369370f.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 2488,
+      "afterTokens": 275,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-012118-ad53df742975fe23b.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 2841,
+      "afterTokens": 568,
+      "argsDeltaTokens": 16
+    },
+    {
+      "name": "20260723-012118-ae6e24003e2da3eef.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 2707,
+      "afterTokens": 434,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-012118-af6fc4ef2ecdde8ae.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 363,
+      "afterTokens": 127,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012118-afe0b789ff92c0eb9-r2.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 1928,
+      "afterTokens": 294,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-012458-a00bfcd189ab84da7.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 683,
+      "afterTokens": 128,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-012458-ab4f9636f7bacb6e3.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 683,
+      "afterTokens": 128,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-105340-a1569934d0eb20f64.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 298,
+      "afterTokens": 133,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-105340-a31569ea7a43a7126.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 323,
+      "afterTokens": 133,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-105340-a3abfa7f128931bfe.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 298,
+      "afterTokens": 133,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-105340-a525d724611c126a8.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 323,
+      "afterTokens": 133,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-105340-ab5d4b86a1b27d9a8.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 323,
+      "afterTokens": 133,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-105340-abbb1c77d519999c5.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 298,
+      "afterTokens": 133,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-112148-a0228f88516b9da99.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 396,
+      "afterTokens": 130,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-112148-a158737579e37ded9.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 323,
+      "afterTokens": 133,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-112148-a258e7e2e537f5ccd.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 719,
+      "afterTokens": 269,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-112148-a31569ea7a43a7126.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 323,
+      "afterTokens": 133,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-112148-a37831d8be1b633e0.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 1,
+      "beforeTokens": 320,
+      "afterTokens": 137,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-112148-a3a17e1e88c0112ab.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 323,
+      "afterTokens": 133,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-112148-a5b3f7dec93c3ce26.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 1321,
+      "afterTokens": 396,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-112148-a76e2c84656d87a8b.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 649,
+      "afterTokens": 119,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-112148-a9c0a13cd0ae927ee.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 832,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-112148-ae3d0d2e8f557ac5c.jsonl",
+      "ledgerCalls": 5,
+      "replayed": 5,
+      "beforeTokens": 3278,
+      "afterTokens": 768,
+      "argsDeltaTokens": 20
+    },
+    {
+      "name": "20260723-113346-a122f0fdb71036622.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 888,
+      "afterTokens": 119,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-113346-a44d3d85d52598d68.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 649,
+      "afterTokens": 119,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-113346-a4d422099d38ac9a1.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 7913,
+      "afterTokens": 1492,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-113346-a66c1c48a5ac153fe.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 396,
+      "afterTokens": 130,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-113346-a7e5dd1c60b525152.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 649,
+      "afterTokens": 119,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-113346-a8b3bc915391153d8.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 832,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-113346-a946948ce3f7fa087.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 1,
+      "beforeTokens": 323,
+      "afterTokens": 133,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-113346-ac224c4305aa01ecb.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 832,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-113346-aca6b8f716d17329b.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 396,
+      "afterTokens": 130,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-115924-a4d53953f11eb5c8a.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 322,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-115924-a6f16f637c5f173fc.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 1276,
+      "afterTokens": 271,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-115924-a74a10d676bf4ae0f.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 1276,
+      "afterTokens": 271,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-115924-a8411023ef67ae7dc.jsonl",
+      "ledgerCalls": 18,
+      "replayed": 14,
+      "beforeTokens": 8480,
+      "afterTokens": 2055,
+      "argsDeltaTokens": 72
+    },
+    {
+      "name": "20260723-115924-a95f804e5328fc4ee.jsonl",
+      "ledgerCalls": 13,
+      "replayed": 10,
+      "beforeTokens": 12695,
+      "afterTokens": 4087,
+      "argsDeltaTokens": 52
+    },
+    {
+      "name": "20260723-115924-abb754bfa1a3e173d.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 459,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-115924-ad3c0c5c780cca9a4.jsonl",
+      "ledgerCalls": 16,
+      "replayed": 10,
+      "beforeTokens": 13365,
+      "afterTokens": 3140,
+      "argsDeltaTokens": 52
+    },
+    {
+      "name": "20260723-115924-aef701775171436b5.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 459,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-115924-af8675386d6303b10.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 459,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-124349-a1a9b2584f8c3b2e9.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 284,
+      "afterTokens": 156,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-124349-a464bf251f72466f4.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 572,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-124349-a7385140ccd446f57.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 572,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-124349-a7fa95437504ca154.jsonl",
+      "ledgerCalls": 9,
+      "replayed": 9,
+      "beforeTokens": 4691,
+      "afterTokens": 1219,
+      "argsDeltaTokens": 36
+    },
+    {
+      "name": "20260723-124349-a8253200a5590113c.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 1564,
+      "afterTokens": 254,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-124349-a83ced5a7e6d78325.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 284,
+      "afterTokens": 156,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-125010-a1316bff685a7029a.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 428,
+      "afterTokens": 132,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-125010-a47b53a424073e62c.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 428,
+      "afterTokens": 132,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-130432-a10d75861d89d4494.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 474,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-130432-a2f4a9d7c267c49e8.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 615,
+      "afterTokens": 118,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-130432-a8b3671c24db8e823.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 474,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-130432-aa1377d6eacec2420.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 474,
+      "afterTokens": 136,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-130432-affa42fe3241c0b8a.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 615,
+      "afterTokens": 118,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-131300-a2f4a9d7c267c49e8-r2.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 615,
+      "afterTokens": 118,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-132432-a2828689011eb8fda.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 330,
+      "afterTokens": 125,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-132432-a62b1a0149aa649a0.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 330,
+      "afterTokens": 125,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-133312-aa2aef01a37821ccf.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 3280,
+      "afterTokens": 263,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-133650-a2828689011eb8fda-r2.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 330,
+      "afterTokens": 125,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-133858-a636028f92f9b140f-fin.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 438,
+      "afterTokens": 142,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-133858-ab6a47a0f15dc502d-fin.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 438,
+      "afterTokens": 142,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-155654-a1bc864f794466e3f-fin.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 3992,
+      "afterTokens": 435,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-155654-aa2aef01a37821ccf-fin.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 3280,
+      "afterTokens": 263,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-155654-acd985f8a733987ef-fin.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 3992,
+      "afterTokens": 435,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-160924-a418b701bd22af6b9.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 248,
+      "afterTokens": 126,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-160924-a5d1637cefade1cc0.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 248,
+      "afterTokens": 126,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-160924-a87f87da9eea06327.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 412,
+      "afterTokens": 145,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-160924-af840a454fd6808a7.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 412,
+      "afterTokens": 145,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-163123-a11580480bea041b9.jsonl",
+      "ledgerCalls": 3,
+      "replayed": 3,
+      "beforeTokens": 3189,
+      "afterTokens": 406,
+      "argsDeltaTokens": 12
+    },
+    {
+      "name": "20260723-163123-a46aa224b56fc3418.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 5591,
+      "afterTokens": 1147,
+      "argsDeltaTokens": 16
+    },
+    {
+      "name": "20260723-163123-ab9cbb028b21ed029.jsonl",
+      "ledgerCalls": 2,
+      "replayed": 2,
+      "beforeTokens": 2556,
+      "afterTokens": 272,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260723-171507-a1f9ff59d2fd8f295.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 282,
+      "afterTokens": 125,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-171507-aec500a1cba88531d.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 282,
+      "afterTokens": 125,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-174434-a45af0a8087af84a8.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 314,
+      "afterTokens": 139,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-174434-ae56a78c6aeb6d728.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 314,
+      "afterTokens": 139,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260723-235425-a64e81799beed4daa.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 2,
+      "beforeTokens": 2800,
+      "afterTokens": 603,
+      "argsDeltaTokens": 16
+    },
+    {
+      "name": "20260724-000828-a26b4c773fc15cdc1.jsonl",
+      "ledgerCalls": 6,
+      "replayed": 6,
+      "beforeTokens": 3507,
+      "afterTokens": 664,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260724-002914-a5cb89219561ccb27.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 724,
+      "afterTokens": 132,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260724-003145-a0c8585af94ae7b88.jsonl",
+      "ledgerCalls": 5,
+      "replayed": 5,
+      "beforeTokens": 2824,
+      "afterTokens": 616,
+      "argsDeltaTokens": 16
+    },
+    {
+      "name": "20260724-003241-a9a50ca350a6ee30e.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 2812,
+      "afterTokens": 698,
+      "argsDeltaTokens": 8
+    },
+    {
+      "name": "20260724-003621-a318dcc5fd79ffbe7.jsonl",
+      "ledgerCalls": 1,
+      "replayed": 1,
+      "beforeTokens": 738,
+      "afterTokens": 129,
+      "argsDeltaTokens": 4
+    },
+    {
+      "name": "20260724-003906-a42076716488c3b35.jsonl",
+      "ledgerCalls": 7,
+      "replayed": 7,
+      "beforeTokens": 3452,
+      "afterTokens": 903,
+      "argsDeltaTokens": 24
+    },
+    {
+      "name": "20260724-004005-a124ffe0ee5a68d41.jsonl",
+      "ledgerCalls": 4,
+      "replayed": 4,
+      "beforeTokens": 2137,
+      "afterTokens": 623,
+      "argsDeltaTokens": 8
+    }
+  ],
+  "perTool": [
+    {
+      "tool": "fetch_item",
+      "contractKind": "mandatory-item-projection",
+      "calls": 366,
+      "resultsCaptured": 366,
+      "errors": 6,
+      "replayed": 360,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 995049,
+      "capturedBeforeTokens": 262466,
+      "beforeBytes": 995049,
+      "beforeTokens": 262466,
+      "afterBytes": 145402,
+      "afterTokens": 49515,
+      "savedBytes": 849647,
+      "savedTokens": 212951,
+      "savedPercent": 81.13,
+      "fullControlBytes": 995049,
+      "fullControlTokens": 262466,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 1,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 592,
+      "medianAfterTokens": 133,
+      "argsTokens": 4521,
+      "argsProjectionCompactDeltaTokens": 1464,
+      "argsProjectionFullDeltaTokens": 1464,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "list_milestone_items",
+      "contractKind": "mandatory-item-projection",
+      "calls": 155,
+      "resultsCaptured": 155,
+      "errors": 0,
+      "replayed": 155,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 982981,
+      "capturedBeforeTokens": 256111,
+      "beforeBytes": 982981,
+      "beforeTokens": 256111,
+      "afterBytes": 251049,
+      "afterTokens": 80347,
+      "savedBytes": 731932,
+      "savedTokens": 175764,
+      "savedPercent": 68.63,
+      "fullControlBytes": 982981,
+      "fullControlTokens": 256111,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 1272,
+      "medianAfterTokens": 380,
+      "argsTokens": 1240,
+      "argsProjectionCompactDeltaTokens": 620,
+      "argsProjectionFullDeltaTokens": 620,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "fts_search",
+      "contractKind": "mandatory-item-projection",
+      "calls": 21,
+      "resultsCaptured": 21,
+      "errors": 0,
+      "replayed": 19,
+      "unreplayable": 2,
+      "unreplayableReasons": {
+        "captured result is not JSON": 2
+      },
+      "capturedBeforeBytes": 232908,
+      "capturedBeforeTokens": 62926,
+      "beforeBytes": 228380,
+      "beforeTokens": 61719,
+      "afterBytes": 55105,
+      "afterTokens": 17270,
+      "savedBytes": 173275,
+      "savedTokens": 44449,
+      "savedPercent": 72.02,
+      "fullControlBytes": 228380,
+      "fullControlTokens": 61719,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 4,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 2626,
+      "medianAfterTokens": 710,
+      "argsTokens": 526,
+      "argsProjectionCompactDeltaTokens": 84,
+      "argsProjectionFullDeltaTokens": 84,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "create_item",
+      "contractKind": "fixed-acknowledgement",
+      "calls": 70,
+      "resultsCaptured": 70,
+      "errors": 0,
+      "replayed": 70,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 125098,
+      "capturedBeforeTokens": 31713,
+      "beforeBytes": 125098,
+      "beforeTokens": 31713,
+      "afterBytes": 17276,
+      "afterTokens": 7241,
+      "savedBytes": 107822,
+      "savedTokens": 24472,
+      "savedPercent": 77.17,
+      "fullControlBytes": 125098,
+      "fullControlTokens": 31713,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 428,
+      "medianAfterTokens": 104,
+      "argsTokens": 28925,
+      "argsProjectionCompactDeltaTokens": 280,
+      "argsProjectionFullDeltaTokens": 280,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "update_item",
+      "contractKind": "fixed-acknowledgement",
+      "calls": 26,
+      "resultsCaptured": 26,
+      "errors": 0,
+      "replayed": 26,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 83823,
+      "capturedBeforeTokens": 22181,
+      "beforeBytes": 83823,
+      "beforeTokens": 22181,
+      "afterBytes": 6309,
+      "afterTokens": 2673,
+      "savedBytes": 77514,
+      "savedTokens": 19508,
+      "savedPercent": 87.95,
+      "fullControlBytes": 83823,
+      "fullControlTokens": 22181,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 741,
+      "medianAfterTokens": 98,
+      "argsTokens": 5243,
+      "argsProjectionCompactDeltaTokens": 104,
+      "argsProjectionFullDeltaTokens": 104,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "fetch_milestone",
+      "contractKind": "mandatory-item-projection",
+      "calls": 26,
+      "resultsCaptured": 26,
+      "errors": 7,
+      "replayed": 19,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 13196,
+      "capturedBeforeTokens": 3564,
+      "beforeBytes": 13196,
+      "beforeTokens": 3564,
+      "afterBytes": 10288,
+      "afterTokens": 2924,
+      "savedBytes": 2908,
+      "savedTokens": 640,
+      "savedPercent": 17.96,
+      "fullControlBytes": 13196,
+      "fullControlTokens": 3564,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 11,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 134,
+      "medianAfterTokens": 134,
+      "argsTokens": 208,
+      "argsProjectionCompactDeltaTokens": 104,
+      "argsProjectionFullDeltaTokens": 104,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "fetch_ledger",
+      "contractKind": "mandatory-item-projection",
+      "calls": 6,
+      "resultsCaptured": 6,
+      "errors": 0,
+      "replayed": 0,
+      "unreplayable": 6,
+      "unreplayableReasons": {
+        "no replay transform": 6
+      },
+      "capturedBeforeBytes": 8982,
+      "capturedBeforeTokens": 2256,
+      "beforeBytes": 0,
+      "beforeTokens": 0,
+      "afterBytes": 0,
+      "afterTokens": 0,
+      "savedBytes": 0,
+      "savedTokens": 0,
+      "savedPercent": 0,
+      "fullControlBytes": 0,
+      "fullControlTokens": 0,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 376,
+      "medianAfterTokens": 0,
+      "argsTokens": 40,
+      "argsProjectionCompactDeltaTokens": 24,
+      "argsProjectionFullDeltaTokens": 24,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "get_config",
+      "contractKind": "requested-full-content",
+      "calls": 5,
+      "resultsCaptured": 5,
+      "errors": 0,
+      "replayed": 5,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 5669,
+      "capturedBeforeTokens": 1674,
+      "beforeBytes": 5669,
+      "beforeTokens": 1674,
+      "afterBytes": 5669,
+      "afterTokens": 1674,
+      "savedBytes": 0,
+      "savedTokens": 0,
+      "savedPercent": 0,
+      "fullControlBytes": 5669,
+      "fullControlTokens": 1674,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 322,
+      "medianAfterTokens": 322,
+      "argsTokens": 9,
+      "argsProjectionCompactDeltaTokens": 20,
+      "argsProjectionFullDeltaTokens": 20,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "get_reviewers",
+      "contractKind": "purpose-built-small",
+      "calls": 22,
+      "resultsCaptured": 22,
+      "errors": 0,
+      "replayed": 22,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 3952,
+      "capturedBeforeTokens": 1210,
+      "beforeBytes": 3952,
+      "beforeTokens": 1210,
+      "afterBytes": 3952,
+      "afterTokens": 1210,
+      "savedBytes": 0,
+      "savedTokens": 0,
+      "savedPercent": 0,
+      "fullControlBytes": 3952,
+      "fullControlTokens": 1210,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 59,
+      "medianAfterTokens": 59,
+      "argsTokens": 22,
+      "argsProjectionCompactDeltaTokens": 88,
+      "argsProjectionFullDeltaTokens": 88,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "get_agent_models",
+      "contractKind": "purpose-built-small",
+      "calls": 2,
+      "resultsCaptured": 2,
+      "errors": 0,
+      "replayed": 2,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 3846,
+      "capturedBeforeTokens": 960,
+      "beforeBytes": 3846,
+      "beforeTokens": 960,
+      "afterBytes": 3846,
+      "afterTokens": 960,
+      "savedBytes": 0,
+      "savedTokens": 0,
+      "savedPercent": 0,
+      "fullControlBytes": 3846,
+      "fullControlTokens": 960,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 480,
+      "medianAfterTokens": 480,
+      "argsTokens": 2,
+      "argsProjectionCompactDeltaTokens": 8,
+      "argsProjectionFullDeltaTokens": 8,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "create_milestone",
+      "contractKind": "fixed-acknowledgement",
+      "calls": 4,
+      "resultsCaptured": 4,
+      "errors": 0,
+      "replayed": 4,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 2020,
+      "capturedBeforeTokens": 568,
+      "beforeBytes": 2020,
+      "beforeTokens": 568,
+      "afterBytes": 532,
+      "afterTokens": 220,
+      "savedBytes": 1488,
+      "savedTokens": 348,
+      "savedPercent": 61.27,
+      "fullControlBytes": 2020,
+      "fullControlTokens": 568,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 142,
+      "medianAfterTokens": 55,
+      "argsTokens": 336,
+      "argsProjectionCompactDeltaTokens": 12,
+      "argsProjectionFullDeltaTokens": 12,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "enumerate_ledgers",
+      "contractKind": "purpose-built-small",
+      "calls": 1,
+      "resultsCaptured": 1,
+      "errors": 0,
+      "replayed": 1,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 1578,
+      "capturedBeforeTokens": 438,
+      "beforeBytes": 1578,
+      "beforeTokens": 438,
+      "afterBytes": 1578,
+      "afterTokens": 438,
+      "savedBytes": 0,
+      "savedTokens": 0,
+      "savedPercent": 0,
+      "fullControlBytes": 1578,
+      "fullControlTokens": 438,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 438,
+      "medianAfterTokens": 438,
+      "argsTokens": 1,
+      "argsProjectionCompactDeltaTokens": 4,
+      "argsProjectionFullDeltaTokens": 4,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "fetch_ledger_archive",
+      "contractKind": "requested-full-content",
+      "calls": 2,
+      "resultsCaptured": 2,
+      "errors": 0,
+      "replayed": 2,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 476,
+      "capturedBeforeTokens": 159,
+      "beforeBytes": 476,
+      "beforeTokens": 159,
+      "afterBytes": 476,
+      "afterTokens": 159,
+      "savedBytes": 0,
+      "savedTokens": 0,
+      "savedPercent": 0,
+      "fullControlBytes": 476,
+      "fullControlTokens": 159,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 79.5,
+      "medianAfterTokens": 79.5,
+      "argsTokens": 26,
+      "argsProjectionCompactDeltaTokens": 8,
+      "argsProjectionFullDeltaTokens": 8,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "derive_predicates",
+      "contractKind": "purpose-built-small",
+      "calls": 3,
+      "resultsCaptured": 3,
+      "errors": 0,
+      "replayed": 3,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 515,
+      "capturedBeforeTokens": 149,
+      "beforeBytes": 515,
+      "beforeTokens": 149,
+      "afterBytes": 515,
+      "afterTokens": 149,
+      "savedBytes": 0,
+      "savedTokens": 0,
+      "savedPercent": 0,
+      "fullControlBytes": 515,
+      "fullControlTokens": 149,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 48,
+      "medianAfterTokens": 48,
+      "argsTokens": 3,
+      "argsProjectionCompactDeltaTokens": 12,
+      "argsProjectionFullDeltaTokens": 12,
+      "correctnessProblems": []
+    },
+    {
+      "tool": "fetch_prompt",
+      "contractKind": "requested-full-content",
+      "calls": 1,
+      "resultsCaptured": 1,
+      "errors": 1,
+      "replayed": 0,
+      "unreplayable": 0,
+      "unreplayableReasons": {},
+      "capturedBeforeBytes": 0,
+      "capturedBeforeTokens": 0,
+      "beforeBytes": 0,
+      "beforeTokens": 0,
+      "afterBytes": 0,
+      "afterTokens": 0,
+      "savedBytes": 0,
+      "savedTokens": 0,
+      "savedPercent": 0,
+      "fullControlBytes": 0,
+      "fullControlTokens": 0,
+      "fullControlDeltaTokens": 0,
+      "nonImprovingCalls": 0,
+      "worstRegressionTokens": 0,
+      "medianBeforeTokens": 0,
+      "medianAfterTokens": 0,
+      "argsTokens": 9,
+      "argsProjectionCompactDeltaTokens": 4,
+      "argsProjectionFullDeltaTokens": 4,
+      "correctnessProblems": []
+    }
+  ],
+  "correctnessProblemCount": 0
+}
