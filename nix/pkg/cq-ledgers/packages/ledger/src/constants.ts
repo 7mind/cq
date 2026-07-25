@@ -513,6 +513,49 @@ export const RESEARCHES_SCHEMA: LedgerSchema = {
   },
 };
 
+export const UPSTREAM_LEDGER = "upstream" as const;
+
+export const UPSTREAM_SCHEMA: LedgerSchema = {
+  statusValues: ["open", "reported", "accepted", "fixed-upstream", "released", "wontfix"],
+  terminalStatuses: ["released", "wontfix"],
+  satisfiesDependencyStatuses: ["released"],
+  idPrefix: "U",
+  transitions: {
+    open: ["reported", "wontfix"],
+    reported: ["accepted", "fixed-upstream", "released", "wontfix"],
+    accepted: ["fixed-upstream", "released", "wontfix"],
+    "fixed-upstream": ["released", "wontfix"],
+    released: [],
+    wontfix: [],
+  },
+  fields: {
+    headline: { type: "string", required: true },
+    package: { type: "string", required: true },
+    affectedVersions: { type: "string[]", required: false },
+    fixedVersion: { type: "string", required: false },
+    environment: { type: "string", required: false },
+    reproduction: { type: "string", required: false },
+    observed: { type: "string", required: false },
+    expected: { type: "string", required: false },
+    priorArt: { type: "string[]", required: false },
+    reportUrls: { type: "string[]", required: false },
+    trackingUrl: { type: "string", required: false },
+    trackerKind: { type: "string", required: false },
+    reportingClassification: { type: "string", required: false },
+    workaround: { type: "string", required: false },
+    severity: { type: "string", required: false },
+    description: { type: "string", required: false },
+    lastCheckedAt: { type: "timestamp", required: false },
+    lastCheckOutcome: { type: "string", required: false },
+    filingOperationId: { type: "string", required: false },
+    filingState: { type: "string", required: false },
+    filingClaimedAt: { type: "timestamp", required: false },
+    sessionLogs: { type: "string[]", required: false },
+    rawLogs: { type: "string[]", required: false },
+    ...COMMON_REF_FIELDS,
+  },
+};
+
 /**
  * Bootstrap manifest. `milestones` MUST be first (the others reference it
  * for milestone-group resolution). On init() every entry is provisioned if
@@ -530,6 +573,7 @@ export const CANONICAL_LEDGERS: ReadonlyArray<{ name: string; schema: LedgerSche
   { name: HANDOFFS_LEDGER, schema: HANDOFFS_SCHEMA },
   { name: IDEAS_LEDGER, schema: IDEAS_SCHEMA },
   { name: RESEARCHES_LEDGER, schema: RESEARCHES_SCHEMA },
+  { name: UPSTREAM_LEDGER, schema: UPSTREAM_SCHEMA },
 ];
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "knownLedgers": [
+    {
+      "name": "milestones",
+      "schemaSha256": "917b91a9b8bb11d9f5429af99c5ea383243365bd867cc286a68128b7c1916596"
+    },
+    {
+      "name": "defects",
+      "schemaSha256": "d3a79b2552b23f43d19ad839fa12dbcb4428c5aafe1915efe8f612b6262005be"
+    },
+    {
+      "name": "tasks",
+      "schemaSha256": "0815a6eecf21d05d413846d5afd641e7ee9defbffd5086a220cdc0f41bbcecfe"
+    },
+    {
+      "name": "hypothesis",
+      "schemaSha256": "7a3917626a7d6c0aaab0dcb70d125e67a1d075f2bac485f7b0663a47982a988b"
+    },
+    {
+      "name": "questions",
+      "schemaSha256": "1de9ac0acabc1e688f6b940e13668b349bbf21d10f8638f2bbcaac491e3dd369"
+    },
+    {
+      "name": "decisions",
+      "schemaSha256": "0bdde622fbc828da0c1b6b5a5f947bf4c83ffcc46c604eafeae31dda517556d0"
+    },
+    {
+      "name": "goals",
+      "schemaSha256": "3638916ae246d9ef143cf9a47ecf07b4ae769cef2468b529ff1ebacf08ad8666"
+    },
+    {
+      "name": "reviews",
+      "schemaSha256": "dea81e3440febd53b7f698968865057db9c810df1420897c6032cec6c537c2a0"
+    },
+    {
+      "name": "handoffs",
+      "schemaSha256": "f3eb3bf47a035c3cee83cfafdcad9bec352ffb27a953062c1706143bf65a74a9"
+    },
+    {
+      "name": "ideas",
+      "schemaSha256": "6dea665eed200ccf9f2026f402d66d90de1bb2525e6046a3e87a8b3712d3f5dd"
+    },
+    {
+      "name": "researches",
+      "schemaSha256": "19d756a933178311d25e599086a252763467953c35518d0f59b96b6042eb9363"
+    }
+  ]
+}

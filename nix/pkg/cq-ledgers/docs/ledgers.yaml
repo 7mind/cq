@@ -603,3 +603,124 @@ ledgers:
         abandoned: []
       satisfiesDependencyStatuses:
         - concluded
+  - name: upstream
+    schema:
+      statusValues:
+        - open
+        - reported
+        - accepted
+        - fixed-upstream
+        - released
+        - wontfix
+      terminalStatuses:
+        - released
+        - wontfix
+      fields:
+        headline:
+          type: string
+          required: true
+        package:
+          type: string
+          required: true
+        affectedVersions:
+          type: string[]
+          required: false
+        fixedVersion:
+          type: string
+          required: false
+        environment:
+          type: string
+          required: false
+        reproduction:
+          type: string
+          required: false
+        observed:
+          type: string
+          required: false
+        expected:
+          type: string
+          required: false
+        priorArt:
+          type: string[]
+          required: false
+        reportUrls:
+          type: string[]
+          required: false
+        trackingUrl:
+          type: string
+          required: false
+        trackerKind:
+          type: string
+          required: false
+        reportingClassification:
+          type: string
+          required: false
+        workaround:
+          type: string
+          required: false
+        severity:
+          type: string
+          required: false
+        description:
+          type: string
+          required: false
+        lastCheckedAt:
+          type: timestamp
+          required: false
+        lastCheckOutcome:
+          type: string
+          required: false
+        filingOperationId:
+          type: string
+          required: false
+        filingState:
+          type: string
+          required: false
+        filingClaimedAt:
+          type: timestamp
+          required: false
+        sessionLogs:
+          type: string[]
+          required: false
+        rawLogs:
+          type: string[]
+          required: false
+        sourceRefs:
+          type: string[]
+          required: false
+        blockedBy:
+          type: id[]
+          required: false
+        dependsOn:
+          type: id[]
+          required: false
+        ledgerRefs:
+          type: id[]
+          required: false
+        tags:
+          type: string[]
+          required: false
+        suggestedModel:
+          type: string
+          required: false
+      idPrefix: U
+      transitions:
+        open:
+          - reported
+          - wontfix
+        reported:
+          - accepted
+          - fixed-upstream
+          - released
+          - wontfix
+        accepted:
+          - fixed-upstream
+          - released
+          - wontfix
+        fixed-upstream:
+          - released
+          - wontfix
+        released: []
+        wontfix: []
+      satisfiesDependencyStatuses:
+        - released
