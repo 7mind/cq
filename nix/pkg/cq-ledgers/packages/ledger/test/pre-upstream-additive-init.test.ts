@@ -23,12 +23,16 @@ import {
   FsLedgerStore,
   GitObjectLedgerBackend,
   GitPlumbing,
+  GOALS_LEDGER,
   InMemoryLedgerStore,
   LEDGER_STORAGE_DIRNAME,
   parseRegistry,
+  PLAN_MANAGED_GOAL_FIELD_NAMES,
+  PLAN_REVIEW_DRAFT_FIELD,
   PostgresLedgerStore,
   removeLedgerArtifacts,
   restoreDumpToXdg,
+  REVIEWS_LEDGER,
   SqliteLedgerStore,
   UPSTREAM_LEDGER,
   UPSTREAM_SCHEMA,
@@ -36,6 +40,7 @@ import {
   type BackupDumpFile,
   type FetchedLedger,
   type Ledger,
+  type LedgerSchema,
   type LedgerStore,
 } from "../src/index.js";
 import { openPgPool } from "../src/store/postgres/connection.js";
@@ -102,12 +107,63 @@ function publicSnapshot(store: LedgerStore, names: readonly string[]): PublicSna
   return Object.fromEntries(names.map((name) => [name, structuredClone(store.fetch(name))]));
 }
 
+function withoutPlanLifecycleSchemaFields(snapshot: PublicSnapshot): PublicSnapshot {
+  const compatible = structuredClone(snapshot);
+  const goals = compatible[GOALS_LEDGER];
+  if (goals !== undefined) {
+    for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete goals.schema.fields[field];
+  }
+  const reviews = compatible[REVIEWS_LEDGER];
+  if (reviews !== undefined) delete reviews.schema.fields[PLAN_REVIEW_DRAFT_FIELD];
+  return compatible;
+}
+
+function withoutPlanLifecycleFields(
+  ledgerName: string,
+  schema: LedgerSchema,
+): LedgerSchema {
+  const compatible = structuredClone(schema);
+  if (ledgerName === GOALS_LEDGER) {
+    for (const field of PLAN_MANAGED_GOAL_FIELD_NAMES) delete compatible.fields[field];
+  }
+  if (ledgerName === REVIEWS_LEDGER) delete compatible.fields[PLAN_REVIEW_DRAFT_FIELD];
+  return compatible;
+}
+
+function withoutPlanLifecycleSchemaRows(
+  rows: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  return rows.map((row) => {
+    const name = row["name"];
+    const storedSchema = row["schema_json"];
+    if (
+      typeof name !== "string" ||
+      (typeof storedSchema !== "string" &&
+        (storedSchema === null || typeof storedSchema !== "object"))
+    ) {
+      throw new Error("invalid captured ledger schema row");
+    }
+    const schema =
+      typeof storedSchema === "string"
+        ? (JSON.parse(storedSchema) as LedgerSchema)
+        : (storedSchema as LedgerSchema);
+    const compatible = withoutPlanLifecycleFields(name, schema);
+    return {
+      ...row,
+      schema_json:
+        typeof storedSchema === "string" ? JSON.stringify(compatible) : compatible,
+    };
+  });
+}
+
 async function assertAdditivePublicState(
   store: LedgerStore,
   expected: FrozenPublicFixture,
 ): Promise<void> {
   expect(store.enumerate().sort()).toEqual(CURRENT_NAMES);
-  expect(publicSnapshot(store, PRE_UPSTREAM_NAMES)).toEqual(expected.ledgers);
+  expect(withoutPlanLifecycleSchemaFields(publicSnapshot(store, PRE_UPSTREAM_NAMES))).toEqual(
+    expected.ledgers,
+  );
 
   for (const [key, archive] of Object.entries(expected.archives)) {
     const separator = key.indexOf("/");
@@ -215,7 +271,12 @@ async function captureFsPriorState(storageDir: string): Promise<string> {
   const paths = (await frozenFsPaths()).filter((file) => file !== "ledgers.yaml");
   const registry = parseRegistry(await readFile(path.join(storageDir, "ledgers.yaml"), "utf8"));
   return JSON.stringify({
-    registry: registry.ledgers.filter(({ name }) => name !== UPSTREAM_LEDGER),
+    registry: registry.ledgers
+      .filter(({ name }) => name !== UPSTREAM_LEDGER)
+      .map((entry) => ({
+        ...entry,
+        schema: withoutPlanLifecycleFields(entry.name, entry.schema),
+      })),
     files: JSON.parse(await captureFiles(storageDir, paths)) as unknown,
   });
 }
@@ -295,7 +356,12 @@ async function captureGitState(
   return JSON.stringify({
     registry: complete
       ? registry.ledgers
-      : registry.ledgers.filter(({ name }) => name !== UPSTREAM_LEDGER),
+      : registry.ledgers
+          .filter(({ name }) => name !== UPSTREAM_LEDGER)
+          .map((entry) => ({
+            ...entry,
+            schema: withoutPlanLifecycleFields(entry.name, entry.schema),
+          })),
     contents,
     ref: complete ? await git.readRef(GIT_REF) : null,
   });
@@ -333,7 +399,7 @@ async function captureSqliteState(
 ): Promise<string> {
   const db = openLedgerDb(dbPath);
   try {
-    const ledgers = includeUpstream
+    const ledgerRows = includeUpstream
       ? db
           .query(
             "SELECT name, schema_json, milestone_counter, item_counter FROM ledgers ORDER BY rowid",
@@ -344,6 +410,11 @@ async function captureSqliteState(
             "SELECT name, schema_json, milestone_counter, item_counter FROM ledgers WHERE name <> ? ORDER BY rowid",
           )
           .all(UPSTREAM_LEDGER);
+    const ledgers = includeUpstream
+      ? ledgerRows
+      : withoutPlanLifecycleSchemaRows(
+          ledgerRows as Array<Record<string, unknown>>,
+        );
     const tables = Object.fromEntries(
       SQLITE_TABLES.map((table) => [
         table,
@@ -394,7 +465,7 @@ async function capturePostgresState(
     SELECT project_key, display_name, created_at::text, updated_at::text
     FROM projects WHERE project_key = ${projectKey}
   `;
-  const ledgers = includeUpstream
+  const ledgerRows = includeUpstream
     ? await pool<Array<Record<string, unknown>>>`
         SELECT name, schema_json, milestone_counter, item_counter
         FROM ledgers WHERE project_key = ${projectKey} ORDER BY name
@@ -405,6 +476,9 @@ async function capturePostgresState(
         WHERE project_key = ${projectKey} AND name <> ${UPSTREAM_LEDGER}
         ORDER BY name
       `;
+  const ledgers = includeUpstream
+    ? ledgerRows
+    : withoutPlanLifecycleSchemaRows(ledgerRows);
   const groups = await pool<Array<Record<string, unknown>>>`
     SELECT seq::text, ledger, id, title, description
     FROM groups WHERE project_key = ${projectKey} ORDER BY seq

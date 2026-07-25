@@ -54,9 +54,36 @@ import type {
   UpdateItemPatch,
   UpdateMilestoneItemPatch,
 } from "./LedgerStore.js";
+import type {
+  PlanClaimInput,
+  PlanClaimResult,
+  PlanFinalizeInput,
+  PlanFinalizeResult,
+  PlanLifecycleStore,
+  PlanPrivateClaimRecord,
+  PlanPublishDraftInput,
+  PlanPublishDraftResult,
+  PlanReleaseInput,
+  PlanReleaseResult,
+} from "../planLifecycle.js";
+import {
+  PLAN_ACTIVE_CLAIM_FIELD,
+  PLAN_GENERATION_FIELD,
+  PLAN_MANAGED_GOAL_FIELD_NAMES,
+} from "../planLifecycle.js";
+import {
+  claimInMemoryPlan,
+  finalizeInMemoryPlan,
+  publishInMemoryPlanDraft,
+  readInMemoryPlanState,
+  releaseInMemoryPlanClaim,
+  type InMemoryPlanLifecycleState,
+  type InMemoryPlanOperationRecord,
+} from "./inMemoryPlanLifecycle.js";
 import type { LedgerSnapshot } from "../snapshot.js";
 import { buildSnapshot } from "../snapshot.js";
 import { LedgerSearchIndex } from "../search/LedgerSearchIndex.js";
+import { taskDependenciesSatisfied } from "./predicates.js";
 import type {
   FetchedLedger,
   FetchedMilestoneGroup,
@@ -73,6 +100,7 @@ import {
   MILESTONES_LEDGER,
   QUESTIONS_ANSWER_FIELD,
   QUESTIONS_LEDGER,
+  TASKS_LEDGER,
 } from "../constants.js";
 
 export interface InMemoryLedgerStoreOpts {
@@ -91,7 +119,7 @@ export interface InMemoryLedgerStoreOpts {
 /** Lock key for the global milestones mutex. */
 const MILESTONES_MUTEX_KEY = "__milestones__";
 
-export class InMemoryLedgerStore implements LedgerStore {
+export class InMemoryLedgerStore implements LedgerStore, PlanLifecycleStore {
   private readonly ledgers = new Map<string, Ledger>();
   private readonly archives = new Map<string, Milestone>(); // key: `<ledger>/<id>` (groups)
   private readonly itemArchives = new Map<string, Item>(); // key: `milestones/<id>` (items)
@@ -99,6 +127,8 @@ export class InMemoryLedgerStore implements LedgerStore {
   private readonly now: () => string;
   private readonly onMutation: OnMutation | null;
   private readonly searchIndex = new LedgerSearchIndex();
+  private readonly planClaims = new Map<string, PlanPrivateClaimRecord>();
+  private readonly planOperations = new Map<string, InMemoryPlanOperationRecord>();
   private initialised = false;
   private readonly initialSeed: Array<{ name: string; schema: LedgerSchema }>;
 
@@ -242,6 +272,8 @@ export class InMemoryLedgerStore implements LedgerStore {
     this.ledgers.clear();
     this.archives.clear();
     this.itemArchives.clear();
+    this.planClaims.clear();
+    this.planOperations.clear();
     this.mutexes.clear();
     this.initialised = false;
   }
@@ -407,6 +439,7 @@ export class InMemoryLedgerStore implements LedgerStore {
   async updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item> {
     const item = await this.withLock(ledgerId, async () => {
       const ledger = this.getLedger(ledgerId);
+      this.assertRawPlanUpdateAllowed(ledgerId, ledger, itemId, patch);
       const precondition = this.statusChangePrecondition(ledgerId, ledger, itemId, patch);
       return cloneItem(
         applyUpdateItem(
@@ -438,6 +471,7 @@ export class InMemoryLedgerStore implements LedgerStore {
     const item = await this.withMilestonesLock(async () => {
       assertMilestoneActive(this.getLedger(MILESTONES_LEDGER), milestoneId);
       return this.withLock(ledgerId, async () => {
+        this.assertRawPlanCreateAllowed(ledgerId, init.fields);
         return cloneItem(
           applyCreateItem(
             this.getLedger(ledgerId),
@@ -492,6 +526,18 @@ export class InMemoryLedgerStore implements LedgerStore {
   ): Promise<Item> {
     const item = await this.withLock(ledgerId, async () => {
       const ledger = this.getLedger(ledgerId);
+      if (ledgerId === GOALS_LEDGER) {
+        this.assertManagedGoalTransitionAllowed(
+          findItem(ledger, itemId).item,
+          toStatus,
+        );
+      }
+      if (ledgerId === TASKS_LEDGER) {
+        this.assertManagedTaskTransitionAllowed(
+          findItem(ledger, itemId).item,
+          toStatus,
+        );
+      }
       return cloneItem(applyReopenItem(ledger, itemId, toStatus, this.now()));
     });
     this.fireMutation(ledgerId, "update");
@@ -587,6 +633,26 @@ export class InMemoryLedgerStore implements LedgerStore {
     return ptr;
   }
 
+  async claimPlan(input: PlanClaimInput): Promise<PlanClaimResult> {
+    return this.runPlanLifecycleMutation((state) => claimInMemoryPlan(state, input));
+  }
+
+  async publishPlanDraft(input: PlanPublishDraftInput): Promise<PlanPublishDraftResult> {
+    return this.runPlanLifecycleMutation((state) =>
+      publishInMemoryPlanDraft(state, input),
+    );
+  }
+
+  async releasePlanClaim(input: PlanReleaseInput): Promise<PlanReleaseResult> {
+    return this.runPlanLifecycleMutation((state) =>
+      releaseInMemoryPlanClaim(state, input),
+    );
+  }
+
+  async finalizePlan(input: PlanFinalizeInput): Promise<PlanFinalizeResult> {
+    return this.runPlanLifecycleMutation((state) => finalizeInMemoryPlan(state, input));
+  }
+
   /**
    * In-memory adapter is the source of truth — there is no other
    * writer for `invalidate` to consult. Provided so the interface
@@ -596,6 +662,190 @@ export class InMemoryLedgerStore implements LedgerStore {
   async invalidate(_ledgerId: string): Promise<void> {}
 
   // --- internals ---
+
+  private planLifecycleState(): InMemoryPlanLifecycleState {
+    return {
+      ledgers: this.ledgers,
+      claims: this.planClaims,
+      operations: this.planOperations,
+      now: this.now,
+    };
+  }
+
+  private async runPlanLifecycleMutation<T>(
+    mutate: (
+      state: InMemoryPlanLifecycleState,
+    ) => { result: T; dirtyLedgers: readonly string[] },
+  ): Promise<T> {
+    this.assertInit();
+    const ledgerIds = [...this.ledgers.keys()]
+      .filter((id) => id !== MILESTONES_LEDGER)
+      .sort();
+    const mutation = await this.withMilestonesLock(() =>
+      this.withLocksInOrder(ledgerIds, async () => {
+        const beforeLedgers = cloneLedgerMap(this.ledgers);
+        const beforeClaims = cloneMap(this.planClaims);
+        const beforeOperations = cloneMap(this.planOperations);
+        try {
+          return mutate(this.planLifecycleState());
+        } catch (error) {
+          replaceMap(this.ledgers, beforeLedgers);
+          replaceMap(this.planClaims, beforeClaims);
+          replaceMap(this.planOperations, beforeOperations);
+          throw error;
+        }
+      }),
+    );
+    for (const ledgerId of new Set(mutation.dirtyLedgers)) {
+      this.fireMutation(ledgerId, "update");
+    }
+    return mutation.result;
+  }
+
+  private assertRawPlanCreateAllowed(
+    ledgerId: string,
+    fields: Record<string, import("../types.js").FieldValue>,
+  ): void {
+    if (
+      ledgerId === GOALS_LEDGER &&
+      PLAN_MANAGED_GOAL_FIELD_NAMES.some((name) => fields[name] !== undefined)
+    ) {
+      throw new LedgerError("managed plan state may mutate only through PlanLifecycleStore");
+    }
+    if (ledgerId === TASKS_LEDGER) {
+      this.assertNoManagedGoalReference(fields["ledgerRefs"]);
+    }
+  }
+
+  private assertRawPlanUpdateAllowed(
+    ledgerId: string,
+    source: Ledger,
+    itemId: string,
+    patch: UpdateItemPatch,
+  ): void {
+    if (ledgerId === GOALS_LEDGER) {
+      const goal = findItem(source, itemId).item;
+      if (
+        PLAN_MANAGED_GOAL_FIELD_NAMES.some(
+          (name) => patch.fields?.[name] !== undefined,
+        ) ||
+        (fieldIsPresent(goal, PLAN_GENERATION_FIELD) &&
+          patch.fields?.["milestones"] !== undefined)
+      ) {
+        throw new LedgerError(
+          "managed plan state may mutate only through PlanLifecycleStore",
+        );
+      }
+      const to = patch.status;
+      if (to !== undefined && to !== goal.status) {
+        this.assertManagedGoalTransitionAllowed(goal, to);
+      }
+    }
+    if (ledgerId === TASKS_LEDGER) {
+      const task = findItem(source, itemId).item;
+      if (patch.fields?.["ledgerRefs"] !== undefined) {
+        this.assertManagedTaskOwnershipRefsPreserved(
+          task,
+          patch.fields["ledgerRefs"],
+        );
+      }
+      if (patch.status !== undefined && patch.status !== task.status) {
+        this.assertManagedTaskTransitionAllowed(task, patch.status);
+      }
+    }
+  }
+
+  private assertNoManagedGoalReference(value: unknown): void {
+    if (this.managedGoalReferences(value).length > 0) {
+      throw new LedgerError(
+        "managed plan work may mutate only through PlanLifecycleStore",
+      );
+    }
+  }
+
+  private managedGoalReferences(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((ref): ref is string => {
+      if (typeof ref !== "string" || !ref.startsWith(`${GOALS_LEDGER}:`)) {
+        return false;
+      }
+      const goal = findOptionalItem(
+        this.getLedger(GOALS_LEDGER),
+        ref.slice(GOALS_LEDGER.length + 1),
+      );
+      return goal !== undefined && fieldIsPresent(goal, PLAN_GENERATION_FIELD);
+    });
+  }
+
+  private assertManagedTaskOwnershipRefsPreserved(
+    task: Item,
+    value: unknown,
+  ): void {
+    const current = new Set(
+      this.managedGoalReferences(task.fields["ledgerRefs"]),
+    );
+    const proposed = Array.isArray(value)
+      ? new Set(value.filter((ref): ref is string => typeof ref === "string"))
+      : new Set<string>();
+    const proposedManaged = this.managedGoalReferences(value);
+    if (
+      [...current].some((ref) => !proposed.has(ref)) ||
+      proposedManaged.some((ref) => !current.has(ref))
+    ) {
+      throw new LedgerError(
+        "managed plan work may mutate only through PlanLifecycleStore",
+      );
+    }
+  }
+
+  private assertManagedGoalTransitionAllowed(
+    goal: Item,
+    targetStatus: string,
+  ): void {
+    if (!fieldIsPresent(goal, PLAN_GENERATION_FIELD)) return;
+    const lifecycleOwned =
+      goal.status === "done" ||
+      goal.status === "abandoned" ||
+      (goal.status === "building" && targetStatus === "planning") ||
+      (fieldIsPresent(goal, PLAN_ACTIVE_CLAIM_FIELD) &&
+        (targetStatus === "done" || targetStatus === "abandoned")) ||
+      (goal.status === "clarifying" && targetStatus === "planning") ||
+      (goal.status === "planning" &&
+        (targetStatus === "clarifying" || targetStatus === "planned")) ||
+      (goal.status === "planned" && targetStatus === "planning");
+    if (lifecycleOwned) {
+      throw new LedgerError(
+        "managed plan transition may mutate only through PlanLifecycleStore",
+      );
+    }
+  }
+
+  private assertManagedTaskTransitionAllowed(
+    task: Item,
+    targetStatus: string,
+  ): void {
+    const goalRefs = fieldArray(task, "ledgerRefs").filter((ref) =>
+      ref.startsWith(`${GOALS_LEDGER}:`),
+    );
+    for (const ref of goalRefs) {
+      const goal = findOptionalItem(
+        this.getLedger(GOALS_LEDGER),
+        ref.slice(GOALS_LEDGER.length + 1),
+      );
+      if (goal === undefined || !fieldIsPresent(goal, PLAN_GENERATION_FIELD)) continue;
+      const manifest = readInMemoryPlanState(goal).finalizedManifest;
+      if (
+        manifest === null ||
+        !manifest.tasks.some(({ id }) => id === task.id)
+      ) {
+        throw new LedgerError("task belongs to a draft or superseded manifest");
+      }
+      if (targetStatus !== "wip") continue;
+      if (!taskDependenciesSatisfied(this, task)) {
+        throw new LedgerError("task dependencies are not satisfied");
+      }
+    }
+  }
   private bootstrapCanonicalLedgers(): void {
     for (const { name, schema } of CANONICAL_LEDGERS) {
       if (this.ledgers.has(name)) continue;
@@ -847,6 +1097,51 @@ function cloneSchema(s: LedgerSchema): LedgerSchema {
 
 function cloneMilestone(m: Milestone): Milestone {
   return { id: m.id, title: m.title, description: m.description, items: m.items.map(cloneItem) };
+}
+
+function cloneLedger(ledger: Ledger): Ledger {
+  return {
+    id: ledger.id,
+    schema: cloneSchema(ledger.schema),
+    counters: { ...ledger.counters },
+    milestones: ledger.milestones.map(cloneMilestone),
+    archivePointers: ledger.archivePointers.map((pointer) => ({ ...pointer })),
+  };
+}
+
+function cloneLedgerMap(source: ReadonlyMap<string, Ledger>): Map<string, Ledger> {
+  return new Map([...source].map(([key, value]) => [key, cloneLedger(value)]));
+}
+
+function cloneMap<T>(source: ReadonlyMap<string, T>): Map<string, T> {
+  return new Map(
+    [...source].map(([key, value]) => [
+      key,
+      JSON.parse(JSON.stringify(value)) as T,
+    ]),
+  );
+}
+
+function replaceMap<T>(target: Map<string, T>, replacement: ReadonlyMap<string, T>): void {
+  target.clear();
+  for (const [key, value] of replacement) target.set(key, value);
+}
+
+function fieldArray(item: Item, name: string): string[] {
+  const value = item.fields[name];
+  return Array.isArray(value) ? value : [];
+}
+
+function fieldIsPresent(item: Item, name: string): boolean {
+  return item.fields[name] !== undefined;
+}
+
+function findOptionalItem(source: Ledger, itemId: string): Item | undefined {
+  for (const milestone of source.milestones) {
+    const item = milestone.items.find((candidate) => candidate.id === itemId);
+    if (item !== undefined) return item;
+  }
+  return undefined;
 }
 
 /** Deep-clone an Item (exported for SqliteLedgerStore, whose K102 module

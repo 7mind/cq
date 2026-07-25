@@ -213,6 +213,28 @@ export type PlanPrivateClaimRecord = z.infer<typeof PlanPrivateClaimRecordSchema
 
 export const PLAN_SECRET_FIELD_NAMES = ["ownerFenceToken", "ownerFenceTokenVerifier"] as const;
 
+/**
+ * Additive public goal metadata owned by {@link PlanLifecycleStore}. Private
+ * claim authority and replay records deliberately do not live in item fields:
+ * observers may read every value below without learning an owner token or its
+ * verifier.
+ */
+export const PLAN_GENERATION_FIELD = "planGeneration" as const;
+export const PLAN_ACTIVE_CLAIM_FIELD = "planActiveClaim" as const;
+export const PLAN_CURRENT_DRAFT_FIELD = "planCurrentDraft" as const;
+export const PLAN_FINALIZED_DRAFT_FIELD = "planFinalizedDraft" as const;
+export const PLAN_FINALIZED_MANIFEST_FIELD = "planFinalizedManifest" as const;
+export const PLAN_WAITING_RESEARCHES_FIELD = "waitingResearches" as const;
+
+export const PLAN_MANAGED_GOAL_FIELD_NAMES = [
+  PLAN_GENERATION_FIELD,
+  PLAN_ACTIVE_CLAIM_FIELD,
+  PLAN_CURRENT_DRAFT_FIELD,
+  PLAN_FINALIZED_DRAFT_FIELD,
+  PLAN_FINALIZED_MANIFEST_FIELD,
+  PLAN_WAITING_RESEARCHES_FIELD,
+] as const;
+
 export const PlanOperationKeySchema = z
   .object({
     goalId: goalIdSchema,

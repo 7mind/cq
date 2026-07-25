@@ -6,6 +6,9 @@ import {
   SqliteLedgerStore,
 } from "../src/index.js";
 import {
+  inMemoryPlanLifecycleFactory,
+} from "./planLifecycleInMemoryAdapter.js";
+import {
   referencePlanLifecycleFactory,
   type PlanLifecycleContractFactory,
 } from "./planLifecycleReferenceAdapter.js";
@@ -59,6 +62,7 @@ function progressionFactory(
 }
 
 runPlanLifecycleStoreContract(referencePlanLifecycleFactory);
+runPlanLifecycleStoreContract(inMemoryPlanLifecycleFactory);
 for (const registration of PRODUCTION_REGISTRATIONS) {
   runPlanLifecycleStoreContract(progressionFactory(registration));
 }

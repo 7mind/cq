@@ -87,6 +87,7 @@ import {
   RESEARCHES_LEDGER,
   TASKS_LEDGER,
 } from "../constants.js";
+import { PLAN_WAITING_RESEARCHES_FIELD } from "../planLifecycle.js";
 import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
 import type { LedgerStore } from "./LedgerStore.js";
 
@@ -202,6 +203,115 @@ function stringField(item: Item, name: string): string {
   return typeof value === "string" ? value : "";
 }
 
+/**
+ * The single owner of research-wait status interpretation. Missing and
+ * archived researches are absent from `activeResearches`, so they resume
+ * planning along with the explicit concluded/abandoned terminal statuses.
+ */
+export function activePlanResearchWaits(
+  goal: Item,
+  activeResearches: readonly Item[],
+): string[] {
+  const raw = goal.fields[PLAN_WAITING_RESEARCHES_FIELD];
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const byId = new Map(activeResearches.map((research) => [research.id, research]));
+  const activeStatuses = new Set(["open", "wip", "inconclusive"]);
+  return raw
+    .map((ref) =>
+      ref.startsWith(`${RESEARCHES_LEDGER}:`)
+        ? ref.slice(RESEARCHES_LEDGER.length + 1)
+        : ref,
+    )
+    .filter((id) => {
+      const research = byId.get(id);
+      return research !== undefined && activeStatuses.has(research.status);
+    });
+}
+
+function buildTaskDependencyReadiness(
+  store: LedgerStore,
+  tasks: readonly Item[],
+  milestones: readonly Item[],
+): (task: Item) => boolean {
+  const ledgerNames = store.enumerate();
+  const registry = buildPrefixRegistry(
+    ledgerNames.map((name) => ({ name, schema: store.fetch(name).schema })),
+  );
+  const canonicalSchemaByName = new Map<string, LedgerSchema>(
+    CANONICAL_LEDGERS.map((canonical) => [canonical.name, canonical.schema]),
+  );
+  const activeItemsByLedger = new Map<string, Map<string, Item>>();
+  const satisfyingByLedger = new Map<string, Set<string>>();
+  for (const name of ledgerNames) {
+    const idIndex = new Map<string, Item>();
+    for (const item of activeItems(store, name)) idIndex.set(item.id, item);
+    activeItemsByLedger.set(name, idIndex);
+    const schema = canonicalSchemaByName.get(name) ?? store.fetch(name).schema;
+    satisfyingByLedger.set(
+      name,
+      new Set(schema.satisfiesDependencyStatuses ?? schema.terminalStatuses),
+    );
+  }
+
+  function resolveRef(raw: string): { ledger: string; id: string } | undefined {
+    let canonical: string;
+    try {
+      canonical = canonicalizeRef(raw, registry);
+    } catch {
+      return undefined;
+    }
+    const parsed = parseRef(canonical);
+    if (parsed.kind !== "prefixed") return undefined;
+    return { ledger: parsed.ledger, id: parsed.id };
+  }
+
+  const tasksByMilestone = new Map<string, Item[]>();
+  for (const task of tasks) {
+    const grouped = tasksByMilestone.get(task.milestoneId) ?? [];
+    grouped.push(task);
+    tasksByMilestone.set(task.milestoneId, grouped);
+  }
+  const milestoneDependsOn = new Map<string, string[]>();
+  for (const milestone of milestones) {
+    milestoneDependsOn.set(milestone.id, refList(milestone, "dependsOn"));
+  }
+
+  function milestoneSatisfied(milestoneId: string): boolean {
+    const grouped = tasksByMilestone.get(milestoneId) ?? [];
+    return grouped.every((task) => TASK_TERMINAL_STATUSES.has(task.status));
+  }
+
+  function dependencySatisfied(raw: string): boolean {
+    const target = resolveRef(raw);
+    if (target === undefined) return true;
+    if (target.ledger === MILESTONES_LEDGER) return milestoneSatisfied(target.id);
+    const item = activeItemsByLedger.get(target.ledger)?.get(target.id);
+    if (item === undefined) return true;
+    return satisfyingByLedger.get(target.ledger)?.has(item.status) ?? false;
+  }
+
+  return (task: Item): boolean => {
+    if (!refList(task, "dependsOn").every((raw) => dependencySatisfied(raw))) {
+      return false;
+    }
+    return (milestoneDependsOn.get(task.milestoneId) ?? []).every((raw) => {
+      const target = resolveRef(raw);
+      return target === undefined || milestoneSatisfied(target.id);
+    });
+  };
+}
+
+export function taskDependenciesSatisfied(
+  store: LedgerStore,
+  task: Item,
+): boolean {
+  return buildTaskDependencyReadiness(
+    store,
+    activeItems(store, TASKS_LEDGER),
+    activeItems(store, MILESTONES_LEDGER),
+  )(task);
+}
+
 // ---------------------------------------------------------------------------
 // derivePredicates
 // ---------------------------------------------------------------------------
@@ -224,55 +334,6 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
   const questions = activeItems(store, QUESTIONS_LEDGER);
   const milestones = activeItems(store, MILESTONES_LEDGER);
   const researches = activeItems(store, RESEARCHES_LEDGER);
-
-  // --- dependency-resolution indexes (G80/M245), built ONCE up front --------
-  // A single snapshot of every registered ledger: its active items keyed by id
-  // (for target resolution) plus its SATISFY-DEPENDENCY status set. Building
-  // these here keeps the resolver free of per-dep store round-trips.
-  const ledgerNames = store.enumerate();
-  const registry = buildPrefixRegistry(
-    ledgerNames.map((name) => ({ name, schema: store.fetch(name).schema })),
-  );
-  const canonicalSchemaByName = new Map<string, LedgerSchema>(
-    CANONICAL_LEDGERS.map((c) => [c.name, c.schema]),
-  );
-  const activeItemsByLedger = new Map<string, Map<string, Item>>();
-  const satisfyingByLedger = new Map<string, Set<string>>();
-  for (const name of ledgerNames) {
-    const idIndex = new Map<string, Item>();
-    for (const item of activeItems(store, name)) idIndex.set(item.id, item);
-    activeItemsByLedger.set(name, idIndex);
-    // Rule (a): a canonical ledger name reads the canonical CONSTANT's schema
-    // (persisted schemas predate `satisfiesDependencyStatuses`); a custom
-    // ledger reads its persisted schema. Rule (b): absent declaration falls
-    // back to `terminalStatuses`.
-    const schema = canonicalSchemaByName.get(name) ?? store.fetch(name).schema;
-    satisfyingByLedger.set(
-      name,
-      new Set(schema.satisfiesDependencyStatuses ?? schema.terminalStatuses),
-    );
-  }
-
-  /**
-   * Resolve one raw `dependsOn` entry to its target `{ledger, id}`, tolerating
-   * BOTH the bare ("T523") and prefixed ("tasks:T523") forms. Returns
-   * `undefined` for any entry that does not parse as a ref OR whose bare alpha
-   * prefix / prefixed ledger name is not registered — i.e. an advisory / legacy
-   * free-text entry the caller treats as SATISFIED. Never throws.
-   */
-  function resolveRef(raw: string): { ledger: string; id: string } | undefined {
-    let canonical: string;
-    try {
-      canonical = canonicalizeRef(raw, registry);
-    } catch {
-      return undefined;
-    }
-    const parsed = parseRef(canonical);
-    // canonicalizeRef always yields the prefixed form; the bare branch is
-    // unreachable but keeps the function total.
-    if (parsed.kind !== "prefixed") return undefined;
-    return { ledger: parsed.ledger, id: parsed.id };
-  }
 
   // The open questions, indexed by the cross-ledger refs they carry, so a
   // single pass answers "is item X gated by an open question?".
@@ -365,6 +426,7 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
   // --- P-plan --------------------------------------------------------------
   const planItems: string[] = [];
   for (const g of goals) {
+    if (activePlanResearchWaits(g, researches).length > 0) continue;
     if (g.status === GOAL_PLANNING_STATUS) {
       planItems.push(g.id);
       continue;
@@ -396,41 +458,11 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
   }
 
   // --- P-implement ---------------------------------------------------------
-  // Lookup tables P-implement needs:
-  //  - tasks grouped by milestone (for milestone-dependsOn satisfaction);
-  //  - milestone dependsOn (raw entries from the milestones-ledger item fields,
-  //    resolved through refs.ts at check time to tolerate both ref forms).
-  const tasksByMilestone = new Map<string, Item[]>();
-  for (const t of tasks) {
-    const list = tasksByMilestone.get(t.milestoneId) ?? [];
-    list.push(t);
-    tasksByMilestone.set(t.milestoneId, list);
-  }
-  const milestoneDependsOn = new Map<string, string[]>();
-  for (const m of milestones) milestoneDependsOn.set(m.id, refList(m, "dependsOn"));
-
-  /** A milestone is satisfied when every task under it is terminal. */
-  function milestoneSatisfied(milestoneId: string): boolean {
-    const ts = tasksByMilestone.get(milestoneId) ?? [];
-    return ts.every((t) => TASK_TERMINAL_STATUSES.has(t.status));
-  }
-
-  /**
-   * Is one raw `dependsOn` entry SATISFIED? Resolves the ref (both forms),
-   * then applies the dependency-resolution spec in the module docblock:
-   * unresolvable / free-text → satisfied; unknown-or-archived target (no active
-   * item) → satisfied (archived-never-strands); a `milestones:<M>` / bare "M<n>"
-   * target → the all-tasks-terminal rule; otherwise the ACTIVE target's status
-   * must be in its ledger's satisfy-dependency set.
-   */
-  function dependencySatisfied(raw: string): boolean {
-    const target = resolveRef(raw);
-    if (target === undefined) return true; // free-text / unresolvable → advisory
-    if (target.ledger === MILESTONES_LEDGER) return milestoneSatisfied(target.id);
-    const item = activeItemsByLedger.get(target.ledger)?.get(target.id);
-    if (item === undefined) return true; // unknown / archived → never strands
-    return satisfyingByLedger.get(target.ledger)?.has(item.status) ?? false;
-  }
+  const dependenciesSatisfied = buildTaskDependencyReadiness(
+    store,
+    tasks,
+    milestones,
+  );
 
   const buildableGoalIds = new Set(
     goals.filter((g) => GOAL_BUILDABLE_STATUSES.has(g.status)).map((g) => g.id),
@@ -445,19 +477,7 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
     if (!ownedByBuildableGoal) continue;
     // Non-terminal and NOT blocked.
     if (TASK_TERMINAL_STATUSES.has(t.status) || t.status === TASK_BLOCKED_STATUS) continue;
-    // Every entry in its dependsOn is satisfied (both ref forms; cross-ledger).
-    if (!refList(t, "dependsOn").every((raw) => dependencySatisfied(raw))) continue;
-    // Its milestone's dependsOn milestones are satisfied. Milestone-item
-    // dependsOn entries are resolved through refs.ts and keyed by the parsed
-    // bare milestone id, so a prefixed "milestones:<M>" entry no longer misses
-    // the tasksByMilestone lookup and vacuously passes.
-    const milestoneDeps = milestoneDependsOn.get(t.milestoneId) ?? [];
-    const milestoneDepsReady = milestoneDeps.every((raw) => {
-      const target = resolveRef(raw);
-      // Unresolvable milestone-dep entry → advisory, satisfied.
-      return target === undefined || milestoneSatisfied(target.id);
-    });
-    if (!milestoneDepsReady) continue;
+    if (!dependenciesSatisfied(t)) continue;
     // No linked open question.
     const blockingQs = questionsGating(TASKS_LEDGER, t.id);
     if (blockingQs.length > 0) {
