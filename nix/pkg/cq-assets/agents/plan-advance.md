@@ -72,25 +72,33 @@ On every `create_item` / `update_item` / `create_milestone`, pass:
   hardcoded literal.
 - `session` = the active runtime session id; omit if unavailable.
 
+**Mutation response rule:** Every ledger mutation below returns only its fixed
+acknowledgement (allocated id, current status, canonicalized reference fields,
+timestamps, and provenance), never a full entity. Use acknowledgement ids
+directly; issue an explicit full read only when later reasoning needs narrative
+fields.
+
 ## Read the state first
-1. `fetch_item("goals", G)` → the goal: `status` (phase), `fields.title`,
+1. `fetch_item({ ledger_id: "goals", item_id: G, projection: "full" })` → the
+   goal: `status` (phase), `fields.title`,
    `fields.description`, `fields.grounding`, `fields.milestones`. The
    coordination milestone **M** is the milestone-group the goal was created
    under; the goal, its questions, its reviews, and the final approval decision
    all live under M. Resolve M from a linked question's milestone. The plan's
    WORK tasks do NOT live under M — they live under the work milestones listed
    in `fields.milestones` (an `id[]`), each created during the `planning` phase.
-2. Find linked **questions**: `list_milestone_items(M)`, take the `questions`
-   ledger's items, and keep those whose `fields.ledgerRefs` contains
+2. Find linked **questions**:
+   `list_milestone_items({ milestone_id: M, projection: "full" })`, take the
+   `questions` ledger's items, and keep those whose `fields.ledgerRefs` contains
    `"goals:<G>"` (this mirrors the server's own link rule). Do NOT use
-   `fts_search(query: "goals:<G>", ...)` — `goals:` parses as a qualifier key,
-   not a link, and matches nothing.
+   `fts_search({ query: "goals:<G>", projection: "compact" })` — `goals:`
+   parses as a qualifier key, not a link, and matches nothing.
 3. If phase is `planning`, find the **latest review**: from
-   `list_milestone_items(M)`, take the `reviews` items whose `fields.ledgerRefs`
-   contains `"goals:<G>"`, and pick the latest — the `reviews` item with the
-   highest `R<n>` id (equivalently max `createdAt`). Its `status` is the verdict
-   (`go-ahead` | `revise`); fields are `new_questions: string[]`,
-   `criticism: string[]`.
+   `list_milestone_items({ milestone_id: M, projection: "full" })`, take the
+   `reviews` items whose `fields.ledgerRefs` contains `"goals:<G>"`, and pick
+   the latest — the `reviews` item with the highest `R<n>` id (equivalently max
+   `createdAt`). Its `status` is the verdict (`go-ahead` | `revise`); fields are
+   `new_questions: string[]`, `criticism: string[]`.
 
 ## Filing clarifying questions
 When the goal is in `clarifying` and needs (more) input, think hard about what
@@ -244,16 +252,17 @@ throw `InvalidTransitionError`. Do not attempt any other transition.
 
 3. **`planning`, latest review is `revise` with EMPTY `new_questions`** (only
    `criticism`) → first DISCOVER the current plan: read the goal, take
-   `fields.milestones` (the work-milestone ids), and `list_milestone_items` for
-   EACH to collect its `tasks` (plus the work-milestone metadata). Do NOT rely
-   on `list_milestone_items(M)` for tasks — M holds no work tasks. Then apply
-   the criticism: revise the milestones/tasks (`update_item` the affected
-   `tasks`, add/remove tasks or work milestones as needed; record any new
-   work-milestone id on the goal's `fields.milestones`, preserving existing
-   ids). Do NOT change the goal phase. ALSO consume this review's `defects[]`
-   bucket if non-empty — see **Consuming the reviewer's `defects[]` bucket**
-   (file-and-defer; it neither blocks nor revises this plan). Return
-   `review-requested`.
+   `fields.milestones` (the work-milestone ids), and
+   `list_milestone_items({ milestone_id: Wᵢ, projection: "full" })` for EACH to
+   collect its `tasks` (plus the work-milestone metadata). Do NOT rely on
+   `list_milestone_items({ milestone_id: M, projection: "full" })` for tasks —
+   M holds no work tasks. Then apply the criticism: revise the milestones/tasks
+   (`update_item` the affected `tasks`, add/remove tasks or work milestones as
+   needed; record any new work-milestone id on the goal's `fields.milestones`,
+   preserving existing ids). Do NOT change the goal phase. ALSO consume this
+   review's `defects[]` bucket if non-empty — see **Consuming the reviewer's
+   `defects[]` bucket** (file-and-defer; it neither blocks nor revises this
+   plan). Return `review-requested`.
 
 4. **`planning`, latest review is `revise` with NON-EMPTY `new_questions`** →
    the reviewer found gaps only the user can resolve. Create each as an `open`
@@ -401,9 +410,10 @@ to commit it.
 **What you do (and do not do):**
 1. **Ground yourself read-only — same as the default mode.** Use codegraph /
    Read / Grep / Glob (and WebSearch/WebFetch for external libraries) to read the
-   goal (`fetch_item("goals", G)`), its full answered-question history, its
-   `fields.grounding`, and the actual repo structure the plan must target. You
-   MAY read the ledger; you read it exactly as the default mode does.
+   goal (`fetch_item({ ledger_id: "goals", item_id: G, projection: "full" })`),
+   its full answered-question history, its `fields.grounding`, and the actual
+   repo structure the plan must target. You MAY read the ledger; you read it
+   exactly as the default mode does.
 2. **Decide whether the goal's state warrants a plan.** Candidate mode is for a
    goal whose state is ready for a fine-grained plan (the orchestrator only
    dispatches candidates for such goals — typically the same condition as default

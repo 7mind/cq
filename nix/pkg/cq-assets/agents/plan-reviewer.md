@@ -32,6 +32,12 @@ fallback) OR you RETURN the verdict json and write nothing (one of several
 configured reviewers — the orchestrator writes the single aggregated item). You
 make NO repo edits. You never spawn subagents.
 
+**Mutation response rule:** Every ledger mutation below returns only its fixed
+acknowledgement (allocated id, current status, canonicalized reference fields,
+timestamps, and provenance), never a full entity. Use acknowledgement ids
+directly; issue an explicit full read only when later reasoning needs narrative
+fields.
+
 ## Canonical rubric — shared source
 Your judging rubric (Fine-grained? / Sequenced? / Testable? / Grounded? /
 Complete?), the three-bucket classification (`new_questions` / `criticism` /
@@ -49,22 +55,27 @@ the rubric there.
 > the preferred index when present to verify the plan against real code.
 
 ## Read everything
-1. `fetch_item("goals", G)` → the goal: `fields.title`, `fields.description`,
-   `fields.grounding`, `fields.milestones`. Resolve the coordination milestone
-   **M** (the group its questions and reviews share). The plan's WORK tasks do
-   NOT live under M — they live under the work milestones recorded in
-   `fields.milestones`.
-2. The FULL question/answer history: `list_milestone_items(M)`, take the
+1. `fetch_item({ ledger_id: "goals", item_id: G, projection: "full" })` → the
+   goal: `fields.title`, `fields.description`, `fields.grounding`,
+   `fields.milestones`. Resolve the coordination milestone **M** (the group its
+   questions and reviews share). The plan's WORK tasks do NOT live under M —
+   they live under the work milestones recorded in `fields.milestones`.
+2. The FULL question/answer history:
+   `list_milestone_items({ milestone_id: M, projection: "full" })`, take the
    `questions` items whose `fields.ledgerRefs` contains `"goals:<G>"`, and read
-   every one and its `answer`. Do NOT use `fts_search(query: "goals:<G>", ...)`
-   — `goals:` parses as a qualifier key, not a link, and matches nothing.
+   every one and its `answer`. Do NOT use
+   `fts_search({ query: "goals:<G>", projection: "full" })` — `goals:` parses
+   as a qualifier key, not a link, and matches nothing.
 3. The emitted plan: read the goal's `fields.milestones` (the work-milestone
-   ids), and `list_milestone_items` for EACH to collect its `tasks` plus the
-   work-milestone metadata itself. Assess the work milestones and their tasks
-   together, across ALL of them — do NOT use `list_milestone_items(M)` for tasks
-   (M holds no work tasks). A goal with an empty `fields.milestones` in the
+   ids), and
+   `list_milestone_items({ milestone_id: Wᵢ, projection: "full" })` for EACH to
+   collect its `tasks` plus the work-milestone metadata itself. Assess the work
+   milestones and their tasks together, across ALL of them — do NOT use
+   `list_milestone_items({ milestone_id: M, projection: "full" })` for tasks (M
+   holds no work tasks). A goal with an empty `fields.milestones` in the
    `planning` phase means no plan was emitted — that itself is a defect.
-4. Any PRIOR reviews for this goal: from `list_milestone_items(M)`, take the
+4. Any PRIOR reviews for this goal: from
+   `list_milestone_items({ milestone_id: M, projection: "full" })`, take the
    `reviews` items whose `fields.ledgerRefs` contains `"goals:<G>"` — so you
    don't repeat resolved criticism. The latest review is the `reviews` item with
    the highest `R<n>` id (equivalently max `createdAt`).

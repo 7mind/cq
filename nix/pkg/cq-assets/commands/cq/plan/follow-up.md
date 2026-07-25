@@ -65,9 +65,10 @@ goal id. If the remainder is empty, stop and ask the user what to add.
 ### Consume-an-idea-into-this-goal (idea-ids mode)
 Run this ONCE per idea-id, for the SAME target goal **G**. For each idea-id **I**:
 
-1. **Fetch the idea.** `fetch_item("ideas", I)` from the `ideas` ledger. If `I`
-   does not exist (or is not on the `ideas` ledger), report it and skip this id
-   (continue with the remaining ids).
+1. **Fetch the idea.**
+   `fetch_item({ ledger_id: "ideas", item_id: I, projection: "full" })` from the
+   `ideas` ledger. If `I` does not exist (or is not on the `ideas` ledger),
+   report it and skip this id (continue with the remaining ids).
 2. **Append the idea as new scope onto G.** Append the idea's **title +
    description** to G's `description` as a new follow-up scope section, using the
    SAME re-open path this command already documents for adding scope to a
@@ -101,14 +102,21 @@ runtime identity, never hardcoded — Claude Opus 4.8 (1M) → `"opus-4.8[1m]"`;
 Codex GPT-5.x → e.g. `"gpt-5.5"`) and `session` = `$CLAUDE_CODE_SESSION_ID` (or
 the Codex equivalent; omit if unavailable).
 
+**Mutation response rule:** Every ledger mutation below returns only its fixed
+acknowledgement (allocated id, current status, canonicalized reference fields,
+timestamps, and provenance), never a full entity. Use acknowledgement ids
+directly; issue an explicit full read only when later reasoning needs narrative
+fields.
+
 ## Steps
 
 1. **Parse + validate.** Split off the goal id **G** (first token); classify the
    remainder per §Argument grammar — **idea-ids mode** (every remaining token
    matches `/^I\d+$/`) or **free-text mode** (otherwise). If the remainder is
-   empty, stop and ask the user what to add. `fetch_item("goals", G)` — if G does
-   not exist, report and stop. In idea-ids mode, the per-idea append + link +
-   transition runs via §Consume-an-idea-into-this-goal (which drives steps 3–4
+   empty, stop and ask the user what to add.
+   `fetch_item({ ledger_id: "goals", item_id: G, projection: "full" })` — if G
+   does not exist, report and stop. In idea-ids mode, the per-idea append + link
+   + transition runs via §Consume-an-idea-into-this-goal (which drives steps 3–4
    per idea); in free-text mode, step 3 records the request verbatim.
 
 2. **Phase gate.** Read `G`'s status (phase):
@@ -187,8 +195,11 @@ the Codex equivalent; omit if unavailable).
    > every `open` defect whose `ledgerRefs` link the just-advanced goal
    > (`goals:<G>`) and that has no terminal status (`resolved`/`wontfix`).
 
-   (`fts_search`/`search_items` on the `defects` ledger filtered to
-   `status:open` with a `goals:<G>` ledgerRef.)
+   (`fts_search({ query: 'status:open ledgerRefs:"goals:<G>"', ledger:
+   "defects", projection: "compact", limit: 100 })` /
+   `search_items({ ledger_id: "defects", query: "goals:<G>", projection:
+   "compact" })`, retaining only `status:open` items with a `goals:<G>`
+   ledgerRef.)
 
    **If the worklist is empty (the typical case on a fresh follow-up bootstrap)
    — skip this step entirely.** A freshly re-opened goal usually reaches

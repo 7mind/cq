@@ -72,6 +72,7 @@ interface DiscoveredCall {
   family: WorkflowFamily;
   callSite: string;
   tool: AffectedTool;
+  invocationArguments: string | undefined;
   unboundedFetchLedger: boolean;
 }
 
@@ -165,6 +166,39 @@ function inlineCodeRegions(
   return regions;
 }
 
+function parseInvocationArguments(suffix: string): string | undefined {
+  const start = suffix.search(/\S/);
+  if (start < 0 || suffix[start] !== "(") return undefined;
+  let depth = 0;
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+  for (let index = start; index < suffix.length; index += 1) {
+    const char = suffix[index];
+    if (char === undefined) {
+      throw new Error("Invocation scanner read beyond the source");
+    }
+    if (quote !== undefined) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === "(") {
+      depth += 1;
+    } else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) return suffix.slice(start + 1, index);
+    }
+  }
+  return undefined;
+}
+
 function discoverCalls(
   source: InventorySource,
   markdown: string,
@@ -220,9 +254,7 @@ function discoverCalls(
         const ordinal = (ordinalByLocation.get(location) ?? 0) + 1;
         ordinalByLocation.set(location, ordinal);
         const suffix = region.code.slice(match.index + tool.length);
-        const invocation = suffix.match(/^\s*\(([^)]*)\)/);
-        const invocationArguments =
-          invocation === null ? undefined : invocation[1];
+        const invocationArguments = parseInvocationArguments(suffix);
         const unboundedFetchLedger =
           tool === "fetch_ledger" &&
           invocationArguments !== undefined &&
@@ -232,6 +264,7 @@ function discoverCalls(
           family: source.family,
           callSite: `${location}#${ordinal}`,
           tool,
+          invocationArguments,
           unboundedFetchLedger,
         });
       }
@@ -444,6 +477,69 @@ async function validateCanonicalInventory(
   return validateInventory(candidate, readCanonicalSource);
 }
 
+const MUTATION_ACK_RULE =
+  /Every ledger mutation below returns only its fixed\s+acknowledgement/;
+
+async function validateSourcePolicyConformance(
+  candidate: ResponsePolicyInventory,
+  families: ReadonlySet<WorkflowFamily>,
+  readSource: SourceReader,
+): Promise<string[]> {
+  const errors: string[] = [];
+  const inventoryErrors: string[] = [];
+  const inventoryById = new Map(
+    expandInventoryCalls(candidate.sources, inventoryErrors).map((call) => [
+      call.callSite,
+      call,
+    ]),
+  );
+  errors.push(...inventoryErrors);
+
+  for (const source of candidate.sources.filter((entry) =>
+    families.has(entry.family),
+  )) {
+    const markdown = await readSource(source.source);
+    const discovered = discoverCalls(source, markdown);
+    const invokedMutations = discovered.filter(
+      (call) =>
+        call.invocationArguments !== undefined &&
+        (ACK_TOOLS as readonly string[]).includes(call.tool),
+    );
+    if (
+      invokedMutations.length > 0 &&
+      !MUTATION_ACK_RULE.test(markdown)
+    ) {
+      errors.push(`Missing fixed-ack rule: ${source.source}`);
+    }
+
+    for (const call of discovered) {
+      if (
+        call.invocationArguments === undefined ||
+        !(PROJECTION_TOOLS as readonly string[]).includes(call.tool)
+      ) {
+        continue;
+      }
+      const policy = inventoryById.get(call.callSite)?.policy;
+      if (policy !== "compact" && policy !== "full") {
+        errors.push(`Missing projection inventory policy: ${call.callSite}`);
+        continue;
+      }
+      const projection = call.invocationArguments.match(
+        /\bprojection\s*:\s*["'](compact|full)["']/,
+      )?.[1];
+      if (projection !== policy) {
+        errors.push(
+          `Projection mismatch: ${call.callSite} expected ${policy}, got ${
+            projection ?? "omitted"
+          }`,
+        );
+      }
+    }
+  }
+
+  return errors;
+}
+
 function cloneInventory(
   candidate: ResponsePolicyInventory,
 ): ResponsePolicyInventory {
@@ -600,5 +696,15 @@ describe("CQ tool response-policy inventory", () => {
     expect((await validateCanonicalInventory(projection)).join("\n")).toContain(
       "Projection must use compact or full policy:",
     );
+  });
+
+  test("plan-family canonical invocations match checked response policies", async () => {
+    expect(
+      await validateSourcePolicyConformance(
+        inventory,
+        new Set<WorkflowFamily>(["plan"]),
+        readCanonicalSource,
+      ),
+    ).toEqual([]);
   });
 });

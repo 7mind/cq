@@ -66,14 +66,22 @@ outcome.
 > the **single-reviewer fallback** the `plan-reviewer` subagent writes the
 > review, so an unconfigured round stays read-only-to-you.
 
+**Mutation response rule:** Every ledger mutation below returns only its fixed
+acknowledgement (allocated id, current status, canonicalized reference fields,
+timestamps, and provenance), never a full entity. Use acknowledgement ids
+directly; issue an explicit full read only when later reasoning needs narrative
+fields.
+
 ## Select the target goal(s)
 
 - **`$ARGUMENTS` is a goal id** → the target set is just that one goal.
 - **`$ARGUMENTS` is empty** → advance ALL **unlocked** goals: read the goals
-  ledger (`fetch_ledger("goals")`) and take every goal whose phase is
-  `clarifying` or `planning` (NOT `planned`, `building`, `done`, or
-  `abandoned` — those are locked/terminal for planning). If none qualify, report
-  "no unlocked goals" and stop.
+  ledger (`fetch_ledger({ ledger_id: "goals", projection: "compact" })`) and
+  take every goal whose phase is `clarifying` or `planning` (NOT `planned`,
+  `building`, `done`, or `abandoned` — those are locked/terminal for planning).
+  This is the checked unbounded-read exception: target selection requires the
+  complete active-goal snapshot in one response. If none qualify, report "no
+  unlocked goals" and stop.
 
 > **NEVER FABRICATE A GOAL.** `plan:advance` only *advances goals that already
 > exist* — goals are created solely by `CQ::plan` at the user's request. An empty
@@ -295,8 +303,8 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         participate fully). Resolve the candidate's by-title/by-headline
         references to real ids as you persist:
         - `create_milestone(title, dependsOn?)` for each synthesized work
-          milestone (resolve `dependsOn` titles → the `W…` ids you just created),
-          and record those ids on the goal:
+          milestone (resolve `dependsOn` titles → the `W…` ids from the fixed
+          acknowledgements), and record those ids on the goal:
           `update_item("goals", G, fields: { milestones: [...] })` (preserve any
           ids already in `fields.milestones`, append the new ones).
         - `create_item("tasks", Wᵢ, status: "planned", fields: { headline,
@@ -478,7 +486,8 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         `new_questions` and/or `criticism` (those are what `revise` acts on);
         STRICTEST-WINS guarantees this because any reviewer that voted `revise`
         contributed at least one such finding. Stamp `author`/`session`. This is
-        the SINGLE `reviews` item for the round.
+        the SINGLE `reviews` item for the round. Capture its id from the fixed
+        acknowledgement for the session-log attachment below.
 
    2c. **Continue the loop.** Either way — fallback (2a) or reconciled (2b) —
       EXACTLY ONE `reviews` item now exists for this round (no double-write).
@@ -515,10 +524,14 @@ ADVISORY ONLY and MUST NOT be the source of truth. Query the ledger by defect
 > root-caused backlog via P-seed — NOT a fresh investigate target here;
 > `resolved`/`wontfix` are terminal and EXCLUDED.)
 
-(`fts_search`/`search_items` on the `defects` ledger filtered to
-`(status:open OR status:wip OR status:inconclusive)` with a `goals:<G>`
-ledgerRef; cross-check `fetch_item` as needed). This set — NOT the subagent's
-summary — is the auto-investigate worklist for G.
+(`fts_search({ query: '(status:open OR status:wip OR status:inconclusive)
+ledgerRefs:"goals:<G>"', ledger: "defects", projection: "compact", limit: 100 })` /
+`search_items({ ledger_id: "defects", query: "goals:<G>", projection:
+"compact" })`, retaining only the listed actionable statuses with a
+`goals:<G>` ledgerRef; cross-check
+`fetch_item({ ledger_id: "defects", item_id: D, projection: "full" })` as
+needed). This set — NOT the subagent's summary — is the auto-investigate
+worklist for G.
 
 ### For each defect D in the worklist
 
@@ -700,8 +713,9 @@ the paths):
   `reviews` item the round produced:
   `update_item("reviews", <reviewId>, fields: { sessionLogs: [<summary path(s)>], rawLogs: [<raw path(s)>] })`.
   - In the **fallback (2a)** the native reviewer subagent created the review
-    item; use the review id it reported (or look it up via `fts_search` on the
-    reviews ledger for the just-created verdict), with the one `claude`-subagent
+    item; use the acknowledgement id it reported (or look it up via
+    `fts_search({ query: "<just-created verdict>", ledger: "reviews",
+    projection: "compact", limit: 10 })`), with the one `claude`-subagent
     `.md`+`.jsonl` pair.
   - In the **configured (2b)** path YOU created the aggregated review item
     (sub-step 2b-iii), so you already have its id; attach the log paths for
@@ -719,8 +733,9 @@ iteration — one log pair per spawned subagent and per pi shellout, ALL via
 ## Report to the user
 
 After running the round on every target goal, read each goal
-(`fetch_item("goals", <G>)`) for its current phase and give a **per-goal**
-summary line (when run with no argument, one line for each goal advanced):
+(`fetch_item({ ledger_id: "goals", item_id: <G>, projection: "full" })`) for
+its current phase and give a **per-goal** summary line (when run with no
+argument, one line for each goal advanced):
 - the goal's id + current phase (`clarifying` / `planning` / `planned` / …);
 - what the user must do next:
   - `awaiting-answers` → "answer the N open questions for goal G in the TUI/web,

@@ -50,6 +50,12 @@ On every `create_item` / `create_milestone`, pass:
 - `session` = the value of the `$CLAUDE_CODE_SESSION_ID` environment variable
   (Claude), or the Codex session-id equivalent. If unavailable, omit it.
 
+**Mutation response rule:** Every ledger mutation below returns only its fixed
+acknowledgement (allocated id, current status, canonicalized reference fields,
+timestamps, and provenance), never a full entity. Use acknowledgement ids
+directly; issue an explicit full read only when later reasoning needs narrative
+fields.
+
 ## Defect vs goal — intake the right ledger
 Plan-flow goals are for **greenfield work** (build/change something). A
 user-reported **DEFECT** — an existing fault to fix — should NOT be intaked as a
@@ -85,9 +91,10 @@ Run this ONCE per idea-id when in idea-ids mode. It is the single definition of
 "turn an idea into a seeded plan-flow goal"; `CQ::plan/follow-up` references this
 same sub-procedure (DRY — do not re-derive it there). For idea-id **I**:
 
-1. **Fetch the idea.** `fetch_item("ideas", I)` from the `ideas` ledger. If `I`
-   does not exist (or is not on the `ideas` ledger), report it and skip this id
-   (continue with the remaining ids).
+1. **Fetch the idea.**
+   `fetch_item({ ledger_id: "ideas", item_id: I, projection: "full" })` from the
+   `ideas` ledger. If `I` does not exist (or is not on the `ideas` ledger),
+   report it and skip this id (continue with the remaining ids).
 2. **Bootstrap a goal seeded from the idea.** Create the coordination milestone
    (step 1 of §Steps) and the goal (step 2), but **seed the goal's `title` from
    the idea's title** and its `description` **VERBATIM from the idea's
@@ -104,10 +111,11 @@ same sub-procedure (DRY — do not re-derive it there). For idea-id **I**:
    terminal `planned` status).
 
 ## Before you start
-Search the ledger so you don't duplicate an existing goal: `fts_search` with
-`ledger: "goals"` over the goal's key terms. If a live goal already covers this,
-report its id and stop instead of creating a new one. In idea-ids mode, run this
-de-dup check per idea before consuming it.
+Search the ledger so you don't duplicate an existing goal:
+`fts_search({ query: "<goal key terms>", ledger: "goals", projection:
+"compact", limit: 20 })`. If a live goal already covers this, report its id and
+stop instead of creating a new one. In idea-ids mode, run this de-dup check per
+idea before consuming it.
 
 ## Steps
 In **free-text mode** these steps run once over `$ARGUMENTS`. In **idea-ids
@@ -116,16 +124,18 @@ which supplies the seeded title/description (step 2), performs the bidirectional
 link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
 
 1. **Create the coordination milestone.** `create_milestone(title: "Plan: <short
-   goal>")` — keep the title to a short slug of the goal. Capture the returned id
-   as **M**. M groups the goal, its questions, its reviews, and the final
+   goal>")` — keep the title to a short slug of the goal. Capture the fixed
+   acknowledgement's allocated id as **M**. M groups the goal, its questions,
+   its reviews, and the final
    approval decision. (The plan's WORK tasks live under separate work milestones
    that the planner creates during the `planning` phase and records on the goal's
    `fields.milestones` — not under M.)
 
 2. **Create the goal.** `create_item(ledger_id: "goals", milestone_id: M, status:
    "clarifying", fields: { title: "<short goal>", description: "<the full goal
-   text, verbatim or lightly cleaned>" })`. Capture the returned id as **G**.
-   (The `goals` schema requires both `title` and `description`.)
+   text, verbatim or lightly cleaned>" })`. Capture the fixed acknowledgement's
+   allocated id as **G**. (The `goals` schema requires both `title` and
+   `description`.)
 
 3. **Hand off to the planner.** Spawn the `plan-advance` subagent — `CQ_SUBAGENT` tool,
    `role: "plan-advance"`, passing the goal id **G** in the prompt. On a
@@ -170,8 +180,11 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
    > every `open` defect whose `ledgerRefs` link the just-created goal
    > (`goals:<G>`) and that has no terminal status (`resolved`/`wontfix`).
 
-   (`fts_search`/`search_items` on the `defects` ledger filtered to
-   `status:open` with a `goals:<G>` ledgerRef.)
+   (`fts_search({ query: 'status:open ledgerRefs:"goals:<G>"', ledger:
+   "defects", projection: "compact", limit: 100 })` /
+   `search_items({ ledger_id: "defects", query: "goals:<G>", projection:
+   "compact" })`, retaining only `status:open` items with a `goals:<G>`
+   ledgerRef.)
 
    **If the worklist is empty (the typical case on a fresh bootstrap) — skip
    this step entirely.** A freshly bootstrapped goal usually reaches
