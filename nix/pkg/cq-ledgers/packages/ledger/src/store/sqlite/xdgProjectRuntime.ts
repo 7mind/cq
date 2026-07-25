@@ -125,6 +125,13 @@ async function recoverConfigRoot(
     const canonicalRoot = await realpath(identity.repositoryPath);
     const rootStat = await lstat(canonicalRoot);
     if (!rootStat.isDirectory()) return undefined;
+    const gitStat = await lstat(path.join(canonicalRoot, ".git"));
+    if (
+      gitStat.isSymbolicLink() ||
+      (!gitStat.isDirectory() && !gitStat.isFile())
+    ) {
+      return undefined;
+    }
     const config = loadConfig(canonicalRoot);
     const resolvedProjectKey = await resolveProjectKey({
       repoRoot: canonicalRoot,

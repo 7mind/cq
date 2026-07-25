@@ -302,7 +302,7 @@ describe("explicit XDG runtime repository provenance capabilities", () => {
     repositoryPath(
       projectsRoot: string,
       unrelatedRepository: string,
-    ): string | null;
+    ): string | null | Promise<string | null>;
   }> = [
     {
       name: "missing",
@@ -322,6 +322,16 @@ describe("explicit XDG runtime repository provenance capabilities", () => {
       repositoryPath: (_projectsRoot, unrelatedRepository) =>
         unrelatedRepository,
     },
+    {
+      name: "matching non-repository",
+      repositoryPath: async (projectsRoot) => {
+        await writeFile(
+          path.join(projectsRoot, "cq.toml"),
+          `[ledger]\nprojectId = "${PROJECT_KEY}"\n`,
+        );
+        return projectsRoot;
+      },
+    },
   ];
 
   for (const invalidCase of invalidCases) {
@@ -335,7 +345,7 @@ describe("explicit XDG runtime repository provenance capabilities", () => {
       );
       await prepareProject(
         projectsRoot,
-        invalidCase.repositoryPath(projectsRoot, unrelatedRepository),
+        await invalidCase.repositoryPath(projectsRoot, unrelatedRepository),
       );
       const unrelatedBefore = await repositorySnapshot(unrelatedRepository);
       const previousCwd = process.cwd();
