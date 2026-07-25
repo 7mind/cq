@@ -273,6 +273,22 @@ interface PlanRecordRow {
   record_json: string;
 }
 
+/**
+ * Everything a plan-fenced write reads LIVE from its transaction — the whole
+ * durable input of this store's THREE cache-backed read surfaces, kept in one
+ * object so absorption can never publish part of it.
+ *
+ * `archived` carries the tenant's `archived_items` rows because
+ * {@link PostgresLedgerStore.fetchArchive} is served from `this.archives` /
+ * `this.itemArchives`, which the active-ledger read does not touch: absorbing
+ * `ledgers` alone advertises archive POINTERS whose CONTENT the same instance
+ * then denies having (review r2).
+ */
+interface LiveTenantState {
+  readonly ledgers: Map<string, Ledger>;
+  readonly archived: readonly ArchivedItemRow[];
+}
+
 function rowToItem(row: ItemRow): Item {
   const item: Item = {
     id: row.id,
@@ -653,7 +669,6 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
    */
   private async loadCache(): Promise<void> {
     const pool = this.pool();
-    const pk = this.projectKey;
     this.ledgers.clear();
     this.archives.clear();
     this.itemArchives.clear();
@@ -662,11 +677,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       this.ledgers.set(name, ledger);
     }
 
-    const archivedRows = await pool<ArchivedItemRow[]>`
-      SELECT ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session
-      FROM archived_items WHERE project_key = ${pk} ORDER BY ledger, seq
-    `;
-    for (const ar of archivedRows) {
+    for (const ar of await this.readArchivedRows(pool)) {
       this.absorbArchivedRow(ar);
     }
   }
@@ -749,29 +760,93 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     return ledgers;
   }
 
+  /** Read this tenant's `archived_items` rows — the content behind every archive pointer. */
+  private async readArchivedRows(sql: SQL): Promise<ArchivedItemRow[]> {
+    return await sql<ArchivedItemRow[]>`
+      SELECT ledger, pointer_id, id, milestone_id, status, fields_json, created_at, updated_at, author, session
+      FROM archived_items WHERE project_key = ${this.projectKey} ORDER BY ledger, seq
+    `;
+  }
+
   /**
-   * Swap a transaction-local LIVE ledger map into BOTH read surfaces POST-COMMIT.
+   * Read the WHOLE durable input of this store's read surfaces from `sql` —
+   * active ledgers plus the archived rows behind their pointers.
    *
-   * A plan-fenced write reads every ledger fresh under its locks, so its map is
-   * strictly newer than whatever this instance had cached — adopting it wholesale
-   * both publishes the write and repairs any drift a peer instance's earlier
-   * commit had left behind. `null` means the write took the unfenced path and
-   * read nothing live.
-   *
-   * Review r1 fix: the cache is not this store's only read surface. Absorbing
-   * into `this.ledgers` alone advances `fetchItem`/`search` for EVERY absorbed
-   * ledger while `afterCommit` re-indexes only the MUTATED one, so a peer's
-   * committed item on some third ledger becomes fetchable from an instance whose
-   * `ftsSearch` still cannot see it — two read surfaces of ONE instance
-   * disagreeing. (Before the fence the two were stale TOGETHER, so the
-   * divergence is new.) Absorption therefore repairs the index for exactly the
-   * set it repaired the cache for.
+   * The archived rows are read AFTER the active ones ON PURPOSE. A write
+   * transaction runs at READ COMMITTED, so these are separate snapshots, and
+   * only this order can leave archived content that is at least as new as the
+   * pointer list that advertises it; {@link PostgresLedgerStore.absorbLiveLedgers}
+   * then discards any content whose pointer the older snapshot did not carry,
+   * so the two surfaces move together even when a peer archives mid-read.
    */
-  private absorbLiveLedgers(live: Map<string, Ledger> | null): void {
+  private async readLiveTenant(sql: SQL): Promise<LiveTenantState> {
+    const ledgers = await this.readActiveLedgers(sql);
+    return { ledgers, archived: await this.readArchivedRows(sql) };
+  }
+
+  /**
+   * Swap a transaction-local LIVE read into EVERY read surface POST-COMMIT.
+   *
+   * A plan-fenced write reads every ledger fresh under its locks, so its state
+   * is strictly newer than whatever this instance had cached — adopting it
+   * wholesale both publishes the write and repairs any drift a peer instance's
+   * earlier commit had left behind. `null` means the write took the unfenced
+   * path and read nothing live.
+   *
+   * The cache is not this store's only read surface, and there are THREE, not
+   * two. Absorbing into `this.ledgers` alone would advance:
+   *
+   *  - `fetchItem`/`search` for EVERY absorbed ledger while `afterCommit`
+   *    re-indexes only the MUTATED one, so a peer's committed item on some
+   *    third ledger becomes fetchable from an instance whose `ftsSearch` still
+   *    cannot see it (review r1); and
+   *  - `fetch(...).archivePointers` for every absorbed ledger while
+   *    `this.archives` / `this.itemArchives` — the ONLY source `fetchArchive`
+   *    reads — keep the pre-absorption content, so the same instance advertises
+   *    an archive pointer and then throws `not found` for its content
+   *    (review r2, reachable over MCP as `fetch_ledger_archive`).
+   *
+   * Before the fence all three were stale TOGETHER, so either divergence would
+   * be introduced by absorption itself. Absorption therefore repairs the active
+   * cache, the archive maps and BOTH search buckets for exactly the set of
+   * ledgers it absorbed — and, so a torn read cannot re-open the second gap the
+   * other way round, admits archived rows only for pointers the absorbed
+   * ledgers actually advertise.
+   *
+   * Cost, measured not assumed: a fenced `updateItem` against a tenant with
+   * 1500 archived items takes a median 40.6 ms vs 13.96 ms with none. The
+   * marginal ~27 ms splits into 3.9 ms for the `archived_items` SELECT and
+   * 18.4 ms for the MiniSearch archived-bucket rebuild — i.e. the dominant term
+   * is the whole-bucket index rebuild D147 already owns for the active side
+   * (40.92 ms @1500 there), and D147's remedy (incremental index upsert) is the
+   * remedy here too. Deferred to D147 rather than fixed in place.
+   */
+  private absorbLiveLedgers(live: LiveTenantState | null): void {
     if (live === null) return;
-    for (const [name, ledger] of live) {
+    const advertised = new Set<string>();
+    for (const [name, ledger] of live.ledgers) {
       this.ledgers.set(name, ledger);
+      this.dropArchiveCacheOf(name);
+      for (const ptr of ledger.archivePointers) advertised.add(`${name}/${ptr.id}`);
+    }
+    for (const ar of live.archived) {
+      if (!advertised.has(`${ar.ledger}/${ar.pointer_id}`)) continue;
+      this.absorbArchivedRow(ar);
+    }
+    for (const name of live.ledgers.keys()) {
       this.rebuildLedgerIndexActive(name);
+      this.refreshLedgerIndexArchived(name);
+    }
+  }
+
+  /** Drop one ledger's entries from BOTH archive-cache maps. */
+  private dropArchiveCacheOf(ledgerId: string): void {
+    const prefix = `${ledgerId}/`;
+    for (const key of [...this.archives.keys()]) {
+      if (key.startsWith(prefix)) this.archives.delete(key);
+    }
+    for (const key of [...this.itemArchives.keys()]) {
+      if (key.startsWith(prefix)) this.itemArchives.delete(key);
     }
   }
 
@@ -1031,7 +1106,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     const item = await this.withLock(ledgerId, async () => {
       let out!: Item;
       let mutated!: Ledger;
-      let refreshed: Map<string, Ledger> | null = null;
+      let refreshed: LiveTenantState | null = null;
       await writeTransaction(this.pool(), async (tx) => {
         refreshed = null;
         // T851 plan fence. For the two plan-managed ledgers the guard decision
@@ -1044,7 +1119,8 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
             tx,
             await this.fencedGoalIds(tx, ledgerId, itemId, patch.fields?.["ledgerRefs"]),
           );
-          const live = await this.readActiveLedgers(tx);
+          const state = await this.readLiveTenant(tx);
+          const live = state.ledgers;
           const source = requireLiveLedger(live, ledgerId);
           assertRawPlanUpdateAllowed(
             planGuardStoreOf(live),
@@ -1065,7 +1141,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           await this.persistItemRow(tx, ledgerId, x);
           out = cloneItem(x);
           mutated = source;
-          refreshed = live;
+          refreshed = state;
           return;
         }
         const clone = cloneLedger(this.getLedger(ledgerId));
@@ -1108,14 +1184,15 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       return this.withLock(ledgerId, async () => {
         let out!: Item;
         let mutated!: Ledger;
-        let refreshed: Map<string, Ledger> | null = null;
+        let refreshed: LiveTenantState | null = null;
         await writeTransaction(this.pool(), async (tx) => {
           refreshed = null;
           // T851 plan fence. A raw create is forbidden from attaching to a
           // MANAGED goal at all (assertRawPlanCreateAllowed), so there is no
           // goal row to lock here — but deciding whether the referenced goal is
           // managed still has to read LIVE goal rows, not this instance's cache.
-          const live = this.isPlanFenced(ledgerId) ? await this.readActiveLedgers(tx) : null;
+          const state = this.isPlanFenced(ledgerId) ? await this.readLiveTenant(tx) : null;
+          const live = state === null ? null : state.ledgers;
           if (live !== null) {
             assertRawPlanCreateAllowed(
               (id) => requireLiveLedger(live, id),
@@ -1130,7 +1207,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           );
           out = cloneItem(x);
           mutated = base;
-          refreshed = live;
+          refreshed = state;
         });
         this.absorbLiveLedgers(refreshed);
         this.ledgers.set(ledgerId, mutated);
@@ -1207,7 +1284,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     const item = await this.withLock(ledgerId, async () => {
       let out!: Item;
       let mutated!: Ledger;
-      let refreshed: Map<string, Ledger> | null = null;
+      let refreshed: LiveTenantState | null = null;
       await writeTransaction(this.pool(), async (tx) => {
         refreshed = null;
         // T851 plan fence. `reopenItem` is a SEPARATE write path from
@@ -1216,7 +1293,8 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
         // resurrected straight past the lifecycle.
         if (this.isPlanFenced(ledgerId)) {
           await this.lockGoalRows(tx, await this.fencedGoalIds(tx, ledgerId, itemId, undefined));
-          const live = await this.readActiveLedgers(tx);
+          const state = await this.readLiveTenant(tx);
+          const live = state.ledgers;
           const source = requireLiveLedger(live, ledgerId);
           const current = findItem(source, itemId).item;
           if (ledgerId === GOALS_LEDGER) {
@@ -1233,7 +1311,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
           await this.persistItemRow(tx, ledgerId, x);
           out = cloneItem(x);
           mutated = source;
-          refreshed = live;
+          refreshed = state;
           return;
         }
         const clone = cloneLedger(this.getLedger(ledgerId));
@@ -1616,11 +1694,12 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.assertInit();
     let value!: T;
     let dirty: readonly string[] = [];
-    let live!: Map<string, Ledger>;
+    let live!: LiveTenantState;
     await writeTransaction(this.pool(), async (tx) => {
       await this.lockGoalRows(tx, [goalId]);
       await this.lockTenantCounters(tx);
-      const state = await this.loadPlanLifecycleState(tx);
+      const tenant = await this.readLiveTenant(tx);
+      const state = await this.loadPlanLifecycleState(tx, tenant.ledgers);
       const mutation = mutate(state);
       for (const ledgerId of new Set(mutation.dirtyLedgers)) {
         await this.persistLedgerState(tx, requireLiveLedger(state.ledgers, ledgerId));
@@ -1629,7 +1708,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       await this.persistPlanRecords(tx, "plan_operations", state.operations);
       value = mutation.result;
       dirty = [...new Set(mutation.dirtyLedgers)];
-      live = state.ledgers;
+      live = tenant;
     });
     // Post-commit only: both read surfaces adopt the live map the transaction
     // read and mutated, so this instance publishes its own write AND picks up
@@ -1640,9 +1719,14 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
     return value;
   }
 
-  /** Read the fence's whole durable input set from `tx` (LIVE rows). */
-  private async loadPlanLifecycleState(tx: SQL): Promise<InMemoryPlanLifecycleState> {
-    const ledgers = await this.readActiveLedgers(tx);
+  /**
+   * Read the fence's side records from `tx` (LIVE rows) and pair them with the
+   * `ledgers` its caller already read live in the SAME transaction.
+   */
+  private async loadPlanLifecycleState(
+    tx: SQL,
+    ledgers: Map<string, Ledger>,
+  ): Promise<InMemoryPlanLifecycleState> {
     const claims = new Map<string, PlanPrivateClaimRecord>();
     for (const row of await tx<PlanRecordRow[]>`
       SELECT scope, record_json FROM plan_claims WHERE project_key = ${this.projectKey}
@@ -2056,12 +2140,7 @@ export class PostgresLedgerStore implements LedgerStore, PlanLifecycleStore {
       `
     )[0];
     // Drop the ledger's stale archive-map entries either way.
-    for (const key of [...this.archives.keys()]) {
-      if (key.startsWith(`${ledgerId}/`)) this.archives.delete(key);
-    }
-    for (const key of [...this.itemArchives.keys()]) {
-      if (key.startsWith(`${ledgerId}/`)) this.itemArchives.delete(key);
-    }
+    this.dropArchiveCacheOf(ledgerId);
     if (lr === undefined) {
       this.ledgers.delete(ledgerId);
       this.searchIndex.removeLedger(ledgerId);

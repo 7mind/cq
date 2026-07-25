@@ -8,9 +8,14 @@
  *     committed write can silently invalidate, so it is the only one where the
  *     staleness defect recorded against the fs/git path (D141) has a genuine
  *     analogue.
- *  2. Whatever the fence reads live, it publishes to EVERY read surface — cache
- *     AND search index — for every ledger it absorbed, so no two reads of one
- *     instance can contradict each other.
+ *  2. Whatever the fence reads live, it publishes to all THREE cache-backed
+ *     read surfaces — the active cache, the archive maps behind `fetchArchive`,
+ *     and both search-index buckets — for every ledger it absorbed, so no two
+ *     reads of one instance can contradict each other. Because the live read is
+ *     several statements at READ COMMITTED, absorption also has to be
+ *     self-consistent when a peer commits BETWEEN two of them: it publishes
+ *     archive content only for pointers the snapshot it absorbed advertises, so
+ *     an interleaved archive is absorbed whole on a later refresh or not at all.
  *  3. `reopenItem` is fenced too — a separate write path from `updateItem`, and
  *     one a backend can plausibly leave unguarded.
  *  4. The whole mutation is ATOMIC, shown two complementary ways: a failure
@@ -33,6 +38,7 @@ import {
   GOALS_LEDGER,
   HYPOTHESIS_LEDGER,
   MILESTONES_AMBIENT_ID,
+  MILESTONES_LEDGER,
   PLAN_FINALIZED_MANIFEST_FIELD,
   PLAN_GENERATION_FIELD,
   PLAN_REVIEW_DRAFT_FIELD,
@@ -116,6 +122,24 @@ class Harness {
     await store.init();
     this.stores.push(store as LifecycleStore);
     return { store: store as LifecycleStore, injector };
+  }
+
+  /**
+   * Open a store whose pool runs `hook` ONCE, right after the first
+   * transaction statement whose SQL contains `marker` — a deterministic way to
+   * land a peer's commit BETWEEN two reads of the same transaction.
+   */
+  async openInterleaving(marker: string, hook: () => Promise<void>): Promise<LifecycleStore> {
+    const pool = interleavingPool(this.dsn, marker, hook);
+    await ensureSchema(pool);
+    const store = new PostgresLedgerStore({
+      pool,
+      projectKey: this.projectKey,
+      displayName: this.projectKey,
+    });
+    await store.init();
+    this.stores.push(store as LifecycleStore);
+    return store as LifecycleStore;
   }
 
   track(tenant: string): void {
@@ -215,6 +239,55 @@ function injectingPool(dsn: string): { pool: SQL; injector: Injector } {
   };
 }
 
+/**
+ * A pool that lets another party commit BETWEEN two statements of one
+ * transaction.
+ *
+ * A write transaction runs at READ COMMITTED, so each statement takes its own
+ * snapshot and a multi-statement read is not atomic against peers. This wrapper
+ * makes that window deterministic instead of racy: the FIRST transaction
+ * statement whose SQL text contains `marker` is issued, awaited, and then
+ * `hook` runs to completion before the caller is resumed.
+ */
+function interleavingPool(dsn: string, marker: string, hook: () => Promise<void>): SQL {
+  const real = openPgPool(dsn);
+  let fired = false;
+
+  const sqlTextOf = (args: readonly unknown[]): string => {
+    const [strings] = args;
+    return Array.isArray(strings) ? (strings as readonly string[]).join(" ") : "";
+  };
+
+  const interleaving = (handle: SQL): SQL =>
+    new Proxy(handle as unknown as (...args: unknown[]) => unknown, {
+      apply(target, thisArg, args: unknown[]): unknown {
+        const result = Reflect.apply(target, thisArg, args);
+        if (fired || !sqlTextOf(args).includes(marker)) return result;
+        fired = true;
+        return (async (): Promise<unknown> => {
+          const rows: unknown = await result;
+          await hook();
+          return rows;
+        })();
+      },
+      get(target, prop, receiver): unknown {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as unknown as SQL;
+
+  return new Proxy(real as unknown as (...args: unknown[]) => unknown, {
+    get(target, prop, receiver): unknown {
+      if (prop === "begin") {
+        return (fn: (tx: SQL) => Promise<unknown>): unknown =>
+          (target as unknown as SQL).begin((tx) => fn(interleaving(tx as unknown as SQL)));
+      }
+      const value = Reflect.get(target, prop, receiver) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as SQL;
+}
+
 function verifier(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
@@ -232,6 +305,41 @@ async function seedGoal(store: LifecycleStore, goalId: string): Promise<void> {
     fields: { title: `goal ${goalId}`, description: "T851 fence coverage" },
     ...PROVENANCE,
   });
+}
+
+/**
+ * Create a hypothesis milestone holding ONE item on `store` and drive both
+ * terminal, i.e. leave it ARCHIVABLE — on a ledger no plan fence ever mutates.
+ */
+async function seedArchivableHypothesisMilestone(
+  store: LifecycleStore,
+  itemId: string,
+  headline: string,
+): Promise<string> {
+  const milestone = await store.createMilestone({
+    title: `archived elsewhere (${itemId})`,
+    ...PROVENANCE,
+  });
+  await store.createItem(HYPOTHESIS_LEDGER, milestone.id, {
+    id: itemId,
+    status: "open",
+    fields: { headline },
+    ...PROVENANCE,
+  });
+  await store.updateItem(HYPOTHESIS_LEDGER, itemId, { status: "confirmed", ...PROVENANCE });
+  await store.updateMilestone(milestone.id, { status: "done", ...PROVENANCE });
+  return milestone.id;
+}
+
+/** …and archive it: an `archive_pointers` row plus the `archived_items` rows behind it. */
+async function archiveHypothesisMilestone(
+  store: LifecycleStore,
+  itemId: string,
+  headline: string,
+): Promise<string> {
+  const milestoneId = await seedArchivableHypothesisMilestone(store, itemId, headline);
+  await store.archiveMilestone(milestoneId, `peer archived ${milestoneId}`);
+  return milestoneId;
 }
 
 async function claim(store: LifecycleStore, requestId: string): Promise<PlanClaimAcknowledgement> {
@@ -382,6 +490,103 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
     expect(writer.fetchItem(HYPOTHESIS_LEDGER, "H1").status).toBe("open");
     const hits = await writer.ftsSearch(FTS_MARKER);
     expect(hits.map((hit) => hit.item.id)).toEqual(["H1"]);
+  }, 30_000);
+
+  test("a guarded raw write publishes the ARCHIVE surface too, not just the active one", async () => {
+    const h = await newHarness();
+    const writer = await h.open();
+    await seedGoal(writer, GOAL_ID);
+    const { taskIds } = await driveToFinalized(writer, "R7");
+    const [first] = taskIds;
+    if (first === undefined) throw new Error("manifest is short");
+
+    // A PEER instance archives a whole milestone on a ledger `writer` never
+    // mutates. That writes BOTH an `archive_pointers` row (which
+    // `readActiveLedgers` reads, so absorption publishes it) and
+    // `archived_items` rows (which live in `this.archives` /
+    // `this.itemArchives`, the ONLY source `fetchArchive` reads).
+    const peer = await h.open();
+    const milestoneId = await archiveHypothesisMilestone(
+      peer,
+      "H1",
+      `${FTS_MARKER} archived marker`,
+    );
+
+    // Premise: before the fenced write BOTH archive surfaces are stale
+    // TOGETHER — no pointer, no content — which is consistent.
+    expect(writer.fetch(HYPOTHESIS_LEDGER).archivePointers).toHaveLength(0);
+    await expect(writer.fetchArchive(HYPOTHESIS_LEDGER, milestoneId)).rejects.toThrow(/not found/);
+
+    // The fenced raw write absorbs every live ledger. Absorbing the pointer
+    // list without the archived rows would publish a pointer whose content
+    // `fetchArchive` still cannot resolve — one instance advertising an
+    // archive it denies having.
+    await writer.updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE });
+
+    expect(writer.fetch(HYPOTHESIS_LEDGER).archivePointers.map((p) => p.id)).toEqual([
+      milestoneId,
+    ]);
+    const archived = await writer.fetchArchive(HYPOTHESIS_LEDGER, milestoneId);
+    if (archived.kind !== "group") throw new Error("hypothesis archive must be a group");
+    expect(archived.milestone.items.map((it) => it.id)).toEqual(["H1"]);
+
+    // The detached milestone ITEM archive is the same surface, keyed under the
+    // milestones ledger, and it must be repaired too.
+    const milestoneArchive = await writer.fetchArchive(MILESTONES_LEDGER, milestoneId);
+    if (milestoneArchive.kind !== "item") throw new Error("milestone archive must be an item");
+    expect(milestoneArchive.item.id).toBe(milestoneId);
+
+    // …and the ARCHIVED search bucket is the third read of the same rows.
+    const hits = await writer.ftsSearch(FTS_MARKER, { includeArchived: true });
+    expect(hits.map((hit) => hit.item.id)).toEqual(["H1"]);
+
+    // Absorption is idempotent: a SECOND fenced write re-reads the same
+    // archived rows, and must replace the archive maps rather than append to
+    // them (an archive that grows a duplicate item per fenced write).
+    await writer.updateItem(TASKS_LEDGER, first, { status: "done", ...PROVENANCE });
+    const again = await writer.fetchArchive(HYPOTHESIS_LEDGER, milestoneId);
+    if (again.kind !== "group") throw new Error("hypothesis archive must be a group");
+    expect(again.milestone.items.map((it) => it.id)).toEqual(["H1"]);
+    expect(await writer.ftsSearch(FTS_MARKER, { includeArchived: true })).toHaveLength(1);
+  }, 30_000);
+
+  test("absorption publishes no archive CONTENT its own pointer snapshot does not advertise", async () => {
+    const h = await newHarness();
+    const setup = await h.open();
+    await seedGoal(setup, GOAL_ID);
+    const { taskIds } = await driveToFinalized(setup, "R8");
+    const [first] = taskIds;
+    if (first === undefined) throw new Error("manifest is short");
+
+    const peer = await h.open();
+    const archivedId = await seedArchivableHypothesisMilestone(peer, "H2", "torn-read marker");
+    let interleaved = false;
+
+    // The fence's live read is several statements at READ COMMITTED, so it is
+    // NOT atomic against peers. Land the peer's archive squarely between the
+    // pointer read and the archived-row read: the item + pointer snapshots
+    // pre-date the archive, the archived-row snapshot post-dates it.
+    const writer = await h.openInterleaving("FROM archive_pointers", async () => {
+      await peer.archiveMilestone(archivedId, "archived mid-read");
+      interleaved = true;
+    });
+    await writer.updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE });
+    expect(interleaved).toBe(true);
+
+    // Absorbing every row read would publish content for a pointer this
+    // instance does not have — H2 both ACTIVE and ARCHIVED at once. Absorption
+    // publishes the older, self-consistent state instead: H2 active, no
+    // pointer, no content.
+    expect(writer.fetchItem(HYPOTHESIS_LEDGER, "H2").status).toBe("confirmed");
+    expect(writer.fetch(HYPOTHESIS_LEDGER).archivePointers).toHaveLength(0);
+    await expect(writer.fetchArchive(HYPOTHESIS_LEDGER, archivedId)).rejects.toThrow(/not found/);
+
+    // Deferred, not lost: the next refresh publishes both halves together.
+    await writer.invalidate(HYPOTHESIS_LEDGER);
+    expect(writer.fetch(HYPOTHESIS_LEDGER).archivePointers.map((p) => p.id)).toEqual([archivedId]);
+    const archived = await writer.fetchArchive(HYPOTHESIS_LEDGER, archivedId);
+    if (archived.kind !== "group") throw new Error("hypothesis archive must be a group");
+    expect(archived.milestone.items.map((it) => it.id)).toEqual(["H2"]);
   }, 30_000);
 
   test("reopenItem is fenced: a superseded managed task cannot be resurrected raw", async () => {
