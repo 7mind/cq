@@ -1,7 +1,15 @@
-import { Database, constants as sqliteConstants } from "bun:sqlite";
-import { lstat, readdir } from "node:fs/promises";
+import { Database } from "bun:sqlite";
+import { constants as fsConstants } from "node:fs";
+import {
+  lstat,
+  mkdtemp,
+  open,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { pathToFileURL } from "node:url";
 import type { LedgerSchema } from "../../types.js";
 import {
   CANONICAL_LEDGERS,
@@ -24,6 +32,8 @@ const XDG_DB_FILENAME = "ledger.db";
 const MIN_SUPPORTED_SCHEMA_VERSION = 1;
 const SHA1_PROJECT_KEY_RE = /^[0-9a-f]{40}$/i;
 const SHA1_FALLBACK_LENGTH = 12;
+const STABLE_SNAPSHOT_ATTEMPTS = 3;
+const SNAPSHOT_DIRECTORY_PREFIX = "cq-xdg-catalog-";
 
 const REQUIRED_TABLE_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   ledgers: ["name", "schema_json", "milestone_counter", "item_counter"],
@@ -369,8 +379,13 @@ export class FilesystemXdgProjectCatalogSource implements XdgProjectCatalogSourc
     }
 
     let db: Database | null = null;
+    let snapshotDirectory: string | null = null;
     try {
-      db = openStrictReadOnlyDatabase(dbPath);
+      snapshotDirectory = await createStableDatabaseSnapshot(dbPath);
+      db = new Database(path.join(snapshotDirectory, XDG_DB_FILENAME), {
+        readonly: true,
+      });
+      db.exec("PRAGMA query_only = ON");
       const snapshot = readSnapshot(db);
       return { ok: true, snapshot };
     } catch (error) {
@@ -387,22 +402,112 @@ export class FilesystemXdgProjectCatalogSource implements XdgProjectCatalogSourc
         message: "project state/ledger.db cannot be read as a SQLite ledger",
       };
     } finally {
-      db?.close();
+      try {
+        db?.close();
+      } finally {
+        if (snapshotDirectory !== null) {
+          await rm(snapshotDirectory, { recursive: true, force: true });
+        }
+      }
     }
   }
 }
 
-function openStrictReadOnlyDatabase(dbPath: string): Database {
-  const dbUrl = pathToFileURL(dbPath);
-  dbUrl.searchParams.set("mode", "ro");
-  dbUrl.searchParams.set("immutable", "1");
-  const flags =
-    sqliteConstants.SQLITE_OPEN_READONLY |
-    sqliteConstants.SQLITE_OPEN_URI |
-    sqliteConstants.SQLITE_OPEN_NOFOLLOW;
-  const db = new Database(dbUrl.href, flags);
-  db.exec("PRAGMA query_only = ON");
-  return db;
+interface DatabaseFileSnapshot {
+  readonly database: Buffer;
+  readonly wal: Buffer | null;
+}
+
+// SQLite's immutable mode omits WAL frames. Rebuild WAL state in a disposable
+// copy so SQLite may create coordination sidecars without touching the source.
+async function createStableDatabaseSnapshot(dbPath: string): Promise<string> {
+  const source = await captureStableDatabaseFiles(dbPath);
+  const snapshotDirectory = await mkdtemp(
+    path.join(tmpdir(), SNAPSHOT_DIRECTORY_PREFIX),
+  );
+  try {
+    const snapshotDbPath = path.join(snapshotDirectory, XDG_DB_FILENAME);
+    await writeFile(snapshotDbPath, source.database, { mode: 0o600 });
+    if (source.wal !== null) {
+      await writeFile(`${snapshotDbPath}-wal`, source.wal, { mode: 0o600 });
+    }
+    return snapshotDirectory;
+  } catch (error) {
+    await rm(snapshotDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function captureStableDatabaseFiles(
+  dbPath: string,
+): Promise<DatabaseFileSnapshot> {
+  // Equal consecutive captures establish one stable database/WAL generation.
+  for (let attempt = 0; attempt < STABLE_SNAPSHOT_ATTEMPTS; attempt += 1) {
+    const first = await captureDatabaseFiles(dbPath);
+    const second = await captureDatabaseFiles(dbPath);
+    if (databaseFileSnapshotsEqual(first, second)) return second;
+  }
+  throw new Error("ledger database changed while its read-only snapshot was captured");
+}
+
+async function captureDatabaseFiles(dbPath: string): Promise<DatabaseFileSnapshot> {
+  return {
+    database: await readRegularFileNoFollow(dbPath, false),
+    wal: await readRegularFileNoFollow(`${dbPath}-wal`, true),
+  };
+}
+
+async function readRegularFileNoFollow(
+  filePath: string,
+  allowMissing: false,
+): Promise<Buffer>;
+async function readRegularFileNoFollow(
+  filePath: string,
+  allowMissing: true,
+): Promise<Buffer | null>;
+async function readRegularFileNoFollow(
+  filePath: string,
+  allowMissing: boolean,
+): Promise<Buffer | null> {
+  let file;
+  try {
+    file = await open(
+      filePath,
+      fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if (allowMissing && errorHasCode(error, "ENOENT")) return null;
+    throw error;
+  }
+  try {
+    const info = await file.stat();
+    if (!info.isFile()) {
+      throw new Error(`database snapshot source is not a regular file: ${filePath}`);
+    }
+    return await file.readFile();
+  } finally {
+    await file.close();
+  }
+}
+
+function databaseFileSnapshotsEqual(
+  left: DatabaseFileSnapshot,
+  right: DatabaseFileSnapshot,
+): boolean {
+  return (
+    left.database.equals(right.database) &&
+    ((left.wal === null && right.wal === null) ||
+      (left.wal !== null && right.wal !== null && left.wal.equals(right.wal)))
+  );
+}
+
+function errorHasCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === code
+  );
 }
 
 function readSnapshot(db: Database): XdgProjectStoreSnapshot {

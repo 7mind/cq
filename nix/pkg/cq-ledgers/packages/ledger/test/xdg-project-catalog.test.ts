@@ -256,68 +256,75 @@ async function seedSqliteCandidate(
   const dbPath = path.join(stateDir, "ledger.db");
   const db = openLedgerDb(dbPath);
   try {
-    ensureSchema(db);
-    db.query("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(
-      options.schemaVersion,
-    );
-    const insertLedger = db.query(
-      "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
-    );
-    for (const [name, rawSchema] of cloneCanonicalSchemas(options)) {
-      insertLedger.run(name, rawSchema);
-    }
-    if (options.includeActiveGroup) {
-      db.query(
-        "INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, ?, '')",
-      ).run(
-        MILESTONES_LEDGER,
-        MILESTONES_ACTIVE_GROUP_ID,
-        MILESTONES_ACTIVE_GROUP_TITLE,
-      );
-    }
-    if (options.includeAmbientMilestone) {
-      db.query(
-        `INSERT INTO items
-           (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
-         VALUES (?, ?, ?, 'open', ?, ?, ?, NULL, NULL)`,
-      ).run(
-        MILESTONES_LEDGER,
-        MILESTONES_AMBIENT_ID,
-        MILESTONES_ACTIVE_GROUP_ID,
-        JSON.stringify({ title: "ambient" }),
-        FIXED_NOW,
-        FIXED_NOW,
-      );
-    }
-    if (options.substantive) {
-      db.query(
-        `INSERT INTO items
-           (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
-         VALUES (?, 'T1', ?, 'planned', ?, ?, ?, NULL, NULL)`,
-      ).run(
-        TASKS_LEDGER,
-        MILESTONES_AMBIENT_ID,
-        JSON.stringify({ headline: "content title must not become project identity" }),
-        FIXED_NOW,
-        FIXED_NOW,
-      );
-    }
-    if (options.identity !== null) {
-      new SqliteXdgProjectIdentityAccess(db).upsertProjectIdentity(options.identity);
-    }
-    if (options.addSqlColumn) {
-      db.exec("ALTER TABLE items ADD COLUMN future_optional TEXT");
-    }
-    if (options.foreignKeyViolation) {
-      db.exec("PRAGMA foreign_keys = OFF");
-      db.query(
-        "INSERT INTO groups (ledger, id, title, description) VALUES ('ghost', 'g', 'g', '')",
-      ).run();
-    }
+    populateSqliteCandidate(db, options);
   } finally {
     db.close();
   }
   return dbPath;
+}
+
+function populateSqliteCandidate(
+  db: ReturnType<typeof openLedgerDb>,
+  options: ValidCandidateOptions,
+): void {
+  ensureSchema(db);
+  db.query("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(
+    options.schemaVersion,
+  );
+  const insertLedger = db.query(
+    "INSERT INTO ledgers (name, schema_json, milestone_counter, item_counter) VALUES (?, ?, 0, 0)",
+  );
+  for (const [name, rawSchema] of cloneCanonicalSchemas(options)) {
+    insertLedger.run(name, rawSchema);
+  }
+  if (options.includeActiveGroup) {
+    db.query(
+      "INSERT INTO groups (ledger, id, title, description) VALUES (?, ?, ?, '')",
+    ).run(
+      MILESTONES_LEDGER,
+      MILESTONES_ACTIVE_GROUP_ID,
+      MILESTONES_ACTIVE_GROUP_TITLE,
+    );
+  }
+  if (options.includeAmbientMilestone) {
+    db.query(
+      `INSERT INTO items
+         (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+       VALUES (?, ?, ?, 'open', ?, ?, ?, NULL, NULL)`,
+    ).run(
+      MILESTONES_LEDGER,
+      MILESTONES_AMBIENT_ID,
+      MILESTONES_ACTIVE_GROUP_ID,
+      JSON.stringify({ title: "ambient" }),
+      FIXED_NOW,
+      FIXED_NOW,
+    );
+  }
+  if (options.substantive) {
+    db.query(
+      `INSERT INTO items
+         (ledger, id, milestone_id, status, fields_json, created_at, updated_at, author, session)
+       VALUES (?, 'T1', ?, 'planned', ?, ?, ?, NULL, NULL)`,
+    ).run(
+      TASKS_LEDGER,
+      MILESTONES_AMBIENT_ID,
+      JSON.stringify({ headline: "content title must not become project identity" }),
+      FIXED_NOW,
+      FIXED_NOW,
+    );
+  }
+  if (options.identity !== null) {
+    new SqliteXdgProjectIdentityAccess(db).upsertProjectIdentity(options.identity);
+  }
+  if (options.addSqlColumn) {
+    db.exec("ALTER TABLE items ADD COLUMN future_optional TEXT");
+  }
+  if (options.foreignKeyViolation) {
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.query(
+      "INSERT INTO groups (ledger, id, title, description) VALUES ('ghost', 'g', 'g', '')",
+    ).run();
+  }
 }
 
 const dummyFactory: CatalogContractFactory = {
@@ -592,6 +599,62 @@ describe("filesystem XDG catalog boundaries", () => {
       "ledger.db-shm",
       "ledger.db-wal",
     ]);
+  });
+
+  test("discovers committed WAL schema, identity, and content without mutating an open production store", async () => {
+    const root = await freshProjectsRoot("t830-live-wal-");
+    const key = "live-wal-project";
+    const stateDir = path.join(root, key, "state");
+    await mkdir(stateDir, { recursive: true });
+    const dbPath = path.join(stateDir, "ledger.db");
+    const writer = openLedgerDb(dbPath);
+    const initSpy = spyOn(SqliteLedgerStore.prototype, "init");
+    try {
+      writer.exec("PRAGMA wal_autocheckpoint = 0");
+      populateSqliteCandidate(
+        writer,
+        withValidOptions({
+          identity: {
+            repositoryPath: "/repos/live-wal",
+            displayName: "live WAL project",
+          },
+          substantive: true,
+        }),
+      );
+
+      expect((await readdir(stateDir)).sort()).toEqual([
+        "ledger.db",
+        "ledger.db-shm",
+        "ledger.db-wal",
+      ]);
+      const before = await captureFilesystemManifest(root);
+
+      const result = await new ReadOnlyXdgProjectCatalog(
+        new FilesystemXdgProjectCatalogSource(),
+      ).discover(root);
+
+      expect(result).toEqual({
+        projects: [
+          {
+            key,
+            displayName: "live WAL project",
+            repositoryPath: "/repos/live-wal",
+            content: "substantive",
+          },
+        ],
+        diagnostics: [],
+      });
+      expect(initSpy).toHaveBeenCalledTimes(0);
+      expect(await captureFilesystemManifest(root)).toEqual(before);
+      expect((await readdir(stateDir)).sort()).toEqual([
+        "ledger.db",
+        "ledger.db-shm",
+        "ledger.db-wal",
+      ]);
+    } finally {
+      initSpy.mockRestore();
+      writer.close();
+    }
   });
 
   test("reports integrity failures from the shared validation layer", async () => {
