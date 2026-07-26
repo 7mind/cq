@@ -86,14 +86,27 @@ const PATTERNS: ReadonlyArray<{
   // Plan-lifecycle owner fence tokens (T852 / G99). The value is an opaque
   // caller-generated base64url secret with no distinguishing prefix, so the
   // KEY is the anchor: the JSON (`"ownerFenceToken":"…"`), YAML
-  // (`ownerFenceToken: …`), and shell (`ownerFenceToken=…`) spellings a
-  // transcript can carry. Only the value is replaced, so the surrounding
-  // structure — including a closing JSON quote, which the pattern never
-  // consumes — survives. Idempotent: the placeholder starts with `[`, which
-  // is outside the base64url value class, so a second pass cannot match it.
+  // (`ownerFenceToken: …` / `ownerFenceToken: '…'`), and shell
+  // (`ownerFenceToken=…`) spellings a transcript can carry.
+  //
+  // The dominant on-disk shape is NOT bare JSON but JSON-in-JSON: a raw JSONL
+  // transcript stores an MCP tool result as a STRINGIFIED payload inside the
+  // message, so the bytes `redactSecrets` actually sees are escaped —
+  // `\"ownerFenceToken\":\"<token>\"` — and a nested capture escapes again
+  // (`\\\"…\\\"`). The `(?:\\+)?` groups therefore straddle any run of
+  // backslashes on both sides of the separator; without them the pattern
+  // cannot cross the backslash before the quote and every persisted claim
+  // leaks its token verbatim.
+  //
+  // Only the value is replaced, so the surrounding structure — including the
+  // (possibly escaped) closing quote, which the pattern never consumes —
+  // survives and the line stays parseable JSON. `ownerFenceTokenVerifier` is
+  // NOT matched: after the key the separator is mandatory, and `V` is neither
+  // a backslash, a quote, nor `:`/`=`. Idempotent: the placeholder starts with
+  // `[`, outside the base64url value class, so a second pass cannot match it.
   {
     kind: "plan-owner-fence-token",
-    re: /(ownerFenceToken"?\s*[:=]\s*"?)[A-Za-z0-9_-]{22,}/gm,
+    re: /(ownerFenceToken(?:\\+)?"?\s*[:=]\s*(?:\\+)?["']?)[A-Za-z0-9_-]{22,}/gm,
     replacement: "$1[REDACTED:plan-owner-fence-token]",
   },
 ];

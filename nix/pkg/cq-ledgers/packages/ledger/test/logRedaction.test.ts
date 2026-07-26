@@ -182,6 +182,107 @@ describe("redactSecrets", () => {
     expect(redactSecrets(short)).toBe(short);
   });
 
+  // ---- the ACTUAL on-disk byte shape: JSON-in-JSON --------------------------
+  //
+  // `redactSecrets` runs over the RAW transcript text (cq-cli/src/logPut.ts),
+  // and a raw JSONL line stores an MCP tool result as a STRINGIFIED payload.
+  // The bytes on disk are therefore escaped — `\"ownerFenceToken\":\"…\"` —
+  // not the bare JSON every other case above exercises. These fixtures are
+  // built by JSON.stringify-ing a message whose tool_result content is itself
+  // a JSON string, so the escaping is produced the same way the real writer
+  // produces it rather than hand-spelled.
+
+  const FENCE_TOKEN = "tZ3n5Qw8Lp2Rk9Vb4Xc7Ym";
+
+  /** One raw-JSONL line carrying `payload` as a stringified tool result. */
+  function rawJsonlLine(payload: unknown): string {
+    return JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_01",
+            content: JSON.stringify(payload),
+          },
+        ],
+      },
+    });
+  }
+
+  const claimResponse = {
+    ok: true,
+    replayed: false,
+    acknowledgement: {
+      goalId: "G1",
+      claimId: "claim_G1_1",
+      generation: 1,
+      ownerFenceToken: FENCE_TOKEN,
+    },
+  };
+
+  it("redacts the token in the escaped JSON-in-JSON shape a raw JSONL line actually stores", () => {
+    const line = rawJsonlLine(claimResponse);
+    // Precondition: the fixture really is the escaped shape, not bare JSON.
+    expect(line).toContain('\\"ownerFenceToken\\":\\"');
+    expect(line).toContain(FENCE_TOKEN);
+
+    const redacted = redactSecrets(line);
+    expect(redacted).not.toContain(FENCE_TOKEN);
+    expect(redacted).toContain("[REDACTED:plan-owner-fence-token]");
+  });
+
+  it("keeps the redacted raw JSONL line parseable at both nesting levels", () => {
+    // `cq log put` validates JSONL AFTER redacting, so a replacement that ate
+    // the closing quote would reject the whole artifact.
+    const redacted = redactSecrets(rawJsonlLine(claimResponse));
+    const envelope = JSON.parse(redacted) as {
+      message: { content: Array<{ content: string }> };
+    };
+    const inner = JSON.parse(envelope.message.content[0]!.content) as {
+      acknowledgement: { claimId: string; ownerFenceToken: string };
+    };
+    expect(inner.acknowledgement.ownerFenceToken).toBe(
+      "[REDACTED:plan-owner-fence-token]",
+    );
+    // Public metadata around the secret survives untouched.
+    expect(inner.acknowledgement.claimId).toBe("claim_G1_1");
+  });
+
+  it("redacts the doubly-escaped shape of a nested transcript capture", () => {
+    // A transcript that quotes another transcript escapes a second time, so
+    // the single-escaped spelling is no longer present verbatim.
+    const singleEscaped = '\\"ownerFenceToken\\":';
+    const line = rawJsonlLine(claimResponse);
+    expect(line).toContain(singleEscaped);
+
+    const doubled = JSON.stringify(line);
+    expect(doubled).not.toContain(singleEscaped);
+    expect(doubled).toContain(FENCE_TOKEN);
+    expect(redactSecrets(doubled)).not.toContain(FENCE_TOKEN);
+  });
+
+  it("redacts the single-quoted spelling", () => {
+    expect(redactSecrets(`ownerFenceToken: '${FENCE_TOKEN}'`)).toBe(
+      "ownerFenceToken: '[REDACTED:plan-owner-fence-token]'",
+    );
+  });
+
+  it("leaves the verifier untouched in the escaped shape too", () => {
+    // The escape-crossing must not become a licence to eat the public digest.
+    const line = rawJsonlLine({
+      ownerFenceTokenVerifier:
+        "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+    });
+    expect(redactSecrets(line)).toBe(line);
+  });
+
+  it("is idempotent on the escaped raw JSONL shape", () => {
+    const once = redactSecrets(rawJsonlLine(claimResponse));
+    expect(redactSecrets(once)).toBe(once);
+  });
+
   // -------------------------------------------------------------------------
   // Non-secret text is untouched
   // -------------------------------------------------------------------------

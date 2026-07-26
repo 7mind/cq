@@ -682,6 +682,31 @@ describe("T852 guarded plan lifecycle over MCP", () => {
       expect(dumped).not.toContain(OWNER_A);
       expect(dumped).not.toContain("ownerFenceTokenVerifier");
       expect(dump.map(({ path: rel }) => rel)).toContain("logs/raw/session.jsonl");
+      // …and the log really is IN that dump, so the assertion above is about
+      // redaction rather than about an absent file.
+      expect(dumped).toContain("[REDACTED:plan-owner-fence-token]");
+
+      // POSITIVE CONTROL. `buildBackupDump` mirrors the logs area
+      // byte-for-byte — it does NOT redact — so the token is absent above
+      // ONLY because the write path redacted it. Dumping the same transcript
+      // UNREDACTED must therefore surface the secret. This is what makes the
+      // `cq log put` choke point load-bearing instead of decorative, and it
+      // is what stops the assertion above from passing vacuously.
+      const unredactedDir = await mkdtemp(path.join(tmpdir(), "t852-raw-"));
+      try {
+        await mkdir(path.join(unredactedDir, "raw"), { recursive: true });
+        await writeFile(
+          path.join(unredactedDir, "raw", "session.jsonl"),
+          `${liveTranscript}\n`,
+          "utf8",
+        );
+        const leaked = JSON.stringify(
+          await buildBackupDump(single.fixture.store, unredactedDir),
+        );
+        expect(leaked).toContain(OWNER_A);
+      } finally {
+        await rm(unredactedDir, { recursive: true, force: true });
+      }
     } finally {
       await rm(logsDir, { recursive: true, force: true });
       await single.dispose();
@@ -803,5 +828,150 @@ describe("assertPlanLifecycleTokenExposure", () => {
         acknowledgement: { claimId: "claim_G1_1" },
       }),
     ).toThrow(/allow exactly \[acknowledgement\.ownerFenceToken\]/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// …and the guard is WIRED, not merely present
+// ---------------------------------------------------------------------------
+
+/**
+ * The unit tests above invoke `assertPlanLifecycleTokenExposure` DIRECTLY, so
+ * none of them can observe the call site going missing: deleting the single
+ * `assertPlanLifecycleTokenExposure(...)` in `planResult` leaves the whole
+ * suite green while every guarded tool starts emitting the token onto the
+ * wire. These tests close that hole. They drive a STUB store whose guarded
+ * mutations RETURN a leaking payload and push it through the real tool
+ * handlers on BOTH transports, so the subject is the wire boundary itself —
+ * remove the guard call and they fail.
+ */
+describe("the owner-token guard is enforced at the wire boundary", () => {
+  /** Guarded-mutation stubs, keyed by `PlanLifecycleStore` method name. */
+  type LifecycleStub = Readonly<Record<string, () => Promise<unknown>>>;
+
+  /**
+   * `base` with the named guarded mutations replaced by leaking stubs. Every
+   * other member still resolves to the real store (bound to it, so private
+   * state keeps working), which is what lets both transport factories accept
+   * this as an ordinary `LedgerStore` and what keeps `isPlanLifecycleStore`
+   * satisfied.
+   */
+  function withLeakingLifecycle(
+    base: LedgerStore,
+    stub: LifecycleStub,
+  ): LedgerStore {
+    return new Proxy(base, {
+      get(target, prop, receiver): unknown {
+        if (typeof prop === "string" && prop in stub) return stub[prop];
+        const value: unknown = Reflect.get(target, prop, receiver);
+        return typeof value === "function"
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
+  }
+
+  /** Invoke one tool over a leaking store on the direct AND stdio surfaces. */
+  async function bothTransports(
+    stub: LifecycleStub,
+    name: LedgerToolName,
+    args: ToolArgs,
+  ): Promise<ReadonlyArray<readonly [string, Outcome]>> {
+    const fixture = await InMemoryPlanLifecycleFixture.create();
+    const store = withLeakingLifecycle(fixture.store, stub);
+    const stdio = await connectStdio(store);
+    try {
+      return [
+        ["direct", await invokeDirect(createLedgerMcpTools(store), name, args)],
+        ["stdio", await invokeStdio(stdio.client, name, args)],
+      ];
+    } finally {
+      await stdio.close();
+      await fixture.dispose();
+    }
+  }
+
+  /**
+   * Every transport must have refused, naming the path but never the value.
+   * Leaks are collected across ALL transports before throwing, so removing the
+   * guard reports each surface that let the token through rather than
+   * short-circuiting on the first.
+   */
+  function expectRefused(
+    outcomes: ReadonlyArray<readonly [string, Outcome]>,
+    expected: RegExp,
+  ): void {
+    const leaked = outcomes.filter(([, outcome]) => outcome.ok);
+    if (leaked.length > 0) {
+      throw new Error(
+        "the leaking payload reached the caller unguarded on " +
+          leaked
+            .map(
+              ([label, outcome]) =>
+                `${label}: ${JSON.stringify(outcome.ok ? outcome.payload : null)}`,
+            )
+            .join(" | "),
+      );
+    }
+    for (const [label, outcome] of outcomes) {
+      if (outcome.ok) continue;
+      expect(outcome.message, label).toMatch(expected);
+      // The diagnostic names the offending PATH; it must not quote the secret.
+      expect(outcome.message, label).not.toContain(OWNER_A);
+    }
+  }
+
+  it("refuses a claim CONFLICT that leaks the token, on both transports", async () => {
+    expectRefused(
+      await bothTransports(
+        {
+          claimPlan: () =>
+            Promise.resolve({
+              ok: false,
+              conflict: { code: "claim-active", ownerFenceToken: OWNER_A },
+            }),
+        },
+        "claim_plan",
+        claimArgs("request_1", OWNER_A, null),
+      ),
+      /ownerFenceToken at \[conflict\.ownerFenceToken\]/,
+    );
+  });
+
+  it("refuses an owner-operation acknowledgement that leaks the token, on both transports", async () => {
+    // The token is a legitimate INPUT here — owner authority for publish — so
+    // what is under test is strictly what comes BACK.
+    const claim = { claimId: "claim_G1_1", generation: 1, ownerFenceToken: OWNER_A };
+    expectRefused(
+      await bothTransports(
+        {
+          publishPlanDraft: () =>
+            Promise.resolve({ ok: true, replayed: false, acknowledgement: claim }),
+        },
+        "publish_plan_draft",
+        { ...ownerArgs(claim, "publish_1"), manifest: MANIFEST },
+      ),
+      /ownerFenceToken at \[acknowledgement\.ownerFenceToken\]/,
+    );
+  });
+
+  it("refuses a claim that wins but withholds the echo, on both transports", async () => {
+    // The guard fails closed in BOTH directions: a winning claim with no
+    // token would leave the owner unable to exercise the authority it just won.
+    expectRefused(
+      await bothTransports(
+        {
+          claimPlan: () =>
+            Promise.resolve({
+              ok: true,
+              replayed: false,
+              acknowledgement: { claimId: "claim_G1_1", generation: 1 },
+            }),
+        },
+        "claim_plan",
+        claimArgs("request_1", OWNER_A, null),
+      ),
+      /allow exactly \[acknowledgement\.ownerFenceToken\]/,
+    );
   });
 });
