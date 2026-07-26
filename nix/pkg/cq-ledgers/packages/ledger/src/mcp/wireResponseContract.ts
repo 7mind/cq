@@ -305,6 +305,26 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   list_projects: purposeBuiltSmall(
     "`{ projects: [{ key, displayName, createdAt? }] }`.",
   ),
+  claim_plan: purposeBuiltSmall(
+    "`{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes " +
+      "`ownerFenceToken`, and only back to the winning or exactly-retried " +
+      "claimant — or `{ ok: false, conflict }` carrying public claim metadata only.",
+  ),
+  publish_plan_draft: purposeBuiltSmall(
+    "`{ ok: true, replayed, acknowledgement: { …operation key, manifest, " +
+      "replacedManifest, reviewDefects } }` or `{ ok: false, conflict }`; never " +
+      "carries `ownerFenceToken`.",
+  ),
+  release_plan_claim: purposeBuiltSmall(
+    "`{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, " +
+      "researches, waitingResearches, reviewDefects, goalPhase } }` or " +
+      "`{ ok: false, conflict }`; never carries `ownerFenceToken`.",
+  ),
+  finalize_plan: purposeBuiltSmall(
+    "`{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, " +
+      "decisionId, manifest, reviewDefects, goalPhase } }` or " +
+      "`{ ok: false, conflict }`; never carries `ownerFenceToken`.",
+  ),
 } as const satisfies Record<LedgerToolName, LedgerResponseContract>;
 
 export function appendLedgerResponseDescription(

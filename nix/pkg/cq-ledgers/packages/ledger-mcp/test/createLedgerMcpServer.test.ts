@@ -8,7 +8,7 @@
  * assert:
  *  - a non-empty `toolPrefix` registers exactly `prefixedToolNames(prefix)`;
  *  - an omitted `toolPrefix` registers exactly the unprefixed `LEDGER_TOOL_NAMES`
- *    (the 27-tool surface), matching the legacy `buildServer` default.
+ *    (the 31-tool surface), matching the legacy `buildServer` default.
  */
 
 import { describe, it, expect } from "bun:test";

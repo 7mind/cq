@@ -1,6 +1,6 @@
 # @cq/ledger-mcp
 
-Standalone MCP server exposing the 27 ledger tools backed by a file-system
+Standalone MCP server exposing the 31 ledger tools backed by a file-system
 (`FsLedgerStore`) or git-object store.  Speaks stdio (default) and Streamable
 HTTP (`--http`).
 
@@ -16,7 +16,7 @@ cq mcp --cwd /path/to/project
 # Streamable HTTP on 127.0.0.1:7777
 cq mcp --cwd /path/to/project --http 7777
 
-# Prefix all 27 tool names with "myproj_"
+# Prefix all 31 tool names with "myproj_"
 cq mcp --cwd /path/to/project --tool-prefix myproj
 ```
 
@@ -54,7 +54,7 @@ const { store } = await createLedgerStore(root);
 // - toolPrefix   renames every tool to "<prefix>_<name>" so this server's
 //                tools don't clash with another cq mcp instance in the
 //                same session.  Omit (or pass "") for the default unprefixed
-//                27-tool surface.
+//                31-tool surface.
 const server = createLedgerMcpServer({
   store,
   displayName: "my-project",
@@ -66,7 +66,7 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 ```
 
-That is the complete setup: `createLedgerMcpServer` registers all 27 ledger
+That is the complete setup: `createLedgerMcpServer` registers all 31 ledger
 tools on the returned `McpServer`, applies the prefix to both tool names and the
 server-level `instructions` text, and the process is ready to receive MCP
 requests.
@@ -195,6 +195,10 @@ measured savings without another batching schema.
 | `validate_input` | `purpose-built-small` | `{ ok: true }` or `{ ok: false, errors }`. |
 | `validate_output` | `purpose-built-small` | `{ ok: true }` or `{ ok: false, errors }`. |
 | `list_projects` | `purpose-built-small` | `{ projects: [{ key, displayName, createdAt? }] }`. |
+| `claim_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes `ownerFenceToken`, and only back to the winning or exactly-retried claimant — or `{ ok: false, conflict }` carrying public claim metadata only. |
+| `publish_plan_draft` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, manifest, replacedManifest, reviewDefects } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
+| `release_plan_claim` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, researches, waitingResearches, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
+| `finalize_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, decisionId, manifest, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 <!-- ledger-response-contract:end -->
 
 ### Schema-checked request examples
@@ -288,7 +292,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 27-tool matrix, not as a generic
+Treat response decoding as a closed 31-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the six
 item-bearing read tools, model the three acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes

@@ -122,7 +122,7 @@ function decode<T>(result: unknown): T {
 }
 
 describe("ledger-mcp stdio binary", () => {
-  it("lists exactly the 27 ledger tools (no cq ask/submit tools)", async () => {
+  it("lists exactly the 31 ledger tools (no cq ask/submit tools)", async () => {
     await withClient(async (client) => {
       const list = await client.listTools();
       const names = list.tools.map((t) => t.name).sort();

@@ -28,6 +28,10 @@ describe("redactSecrets", () => {
       { kind: "api-key", input: "Authorization: sk-abcdefghijklmnopqrstuvwxyz012345" },
       { kind: "bearer", input: "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" },
       { kind: "slack-token", input: "token=xoxb-1234567890-abcdefghij" },
+      {
+        kind: "plan-owner-fence-token",
+        input: '{"ownerFenceToken":"tZ3n5Qw8Lp2Rk9Vb4Xc7Ym"}',
+      },
     ];
 
     for (const { kind, input } of cases) {
@@ -144,6 +148,41 @@ describe("redactSecrets", () => {
   });
 
   // -------------------------------------------------------------------------
+  // plan-owner-fence-token (T852): key-anchored, value-only replacement
+  // -------------------------------------------------------------------------
+
+  it("redacts a JSON-spelled owner fence token and keeps the surrounding syntax", () => {
+    const input =
+      '{"ok":true,"acknowledgement":{"claimId":"claim_G1_1","ownerFenceToken":"tZ3n5Qw8Lp2Rk9Vb4Xc7Ym"}}';
+    expect(redactSecrets(input)).toBe(
+      '{"ok":true,"acknowledgement":{"claimId":"claim_G1_1","ownerFenceToken":"[REDACTED:plan-owner-fence-token]"}}',
+    );
+  });
+
+  it("redacts the YAML and shell spellings of an owner fence token", () => {
+    expect(redactSecrets("ownerFenceToken: tZ3n5Qw8Lp2Rk9Vb4Xc7Ym")).toBe(
+      "ownerFenceToken: [REDACTED:plan-owner-fence-token]",
+    );
+    expect(redactSecrets("ownerFenceToken=tZ3n5Qw8Lp2Rk9Vb4Xc7Ym")).toBe(
+      "ownerFenceToken=[REDACTED:plan-owner-fence-token]",
+    );
+  });
+
+  it("leaves the public verifier field and its digest untouched", () => {
+    // Only the plaintext token is a secret; the SHA-256 verifier is what the
+    // store legitimately persists.
+    const input =
+      '{"ownerFenceTokenVerifier":"5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"}';
+    expect(redactSecrets(input)).toBe(input);
+  });
+
+  it("does not redact an owner-fence value shorter than 22 chars", () => {
+    // 21 chars — below the >=128-bit base64url floor the contract requires.
+    const short = '{"ownerFenceToken":"tZ3n5Qw8Lp2Rk9Vb4Xc7"}';
+    expect(redactSecrets(short)).toBe(short);
+  });
+
+  // -------------------------------------------------------------------------
   // Non-secret text is untouched
   // -------------------------------------------------------------------------
 
@@ -192,6 +231,7 @@ describe("redactSecrets", () => {
       "Authorization: Bearer mytoken",
       "sk-ant-api03-xxxxxxxxxxxxxxxxxxxxxxxxxxxx01234",
       "xoxb-111-222-abc",
+      '{"ownerFenceToken":"tZ3n5Qw8Lp2Rk9Vb4Xc7Ym"}',
     ];
     for (const input of inputs) {
       const once = redactSecrets(input);

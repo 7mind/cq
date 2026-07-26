@@ -1,7 +1,7 @@
 /**
  * Stdio MCP tool registration for the ledger surface.
  *
- * Registers the 27-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
+ * Registers the 31-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
  * `@modelcontextprotocol/sdk` `McpServer` via `registerTool`, backed by a
  * `LedgerStore`. Stdio counterpart to `createLedgerMcpTools` (the in-process
  * Claude-SDK `tool()` factory in `./ledgerTools.ts`): identical operational
@@ -64,6 +64,7 @@ import {
   prefixToolName,
   type LedgerToolName,
 } from "./ledgerTools.js";
+import { PLAN_LIFECYCLE_TOOL_SPECS } from "./planLifecycleTools.js";
 
 // ---------------------------------------------------------------------------
 // Shared Zod fragments (mirror ./ledgerTools.ts)
@@ -160,7 +161,7 @@ function wireResult(value: ProducedWireDto<object>): {
 }
 
 /**
- * Register the 27 ledger tools on the given MCP server. Identical
+ * Register the 31 ledger tools on the given MCP server. Identical
  * semantics to the Claude-side factory in `./ledgerTools.ts`.
  *
  * `readLog` is the explicit, FS-store-backed `read_log` capability (Q87 /
@@ -874,4 +875,16 @@ ${QUERY_LANGUAGE_HELP}`,
       return jsonResult(await listProjects());
     },
   );
+
+  // ---- Guarded plan lifecycle (4) -----------------------------------------
+
+  // Registered from the SHARED specs the Claude factory also consumes, so the
+  // two surfaces cannot drift in description, schema, or behaviour (T852).
+  for (const spec of PLAN_LIFECYCLE_TOOL_SPECS) {
+    reg(
+      spec.name,
+      { description: spec.description, inputSchema: spec.inputSchema },
+      async (args: unknown) => wireResult(await spec.run(store, args)),
+    );
+  }
 }

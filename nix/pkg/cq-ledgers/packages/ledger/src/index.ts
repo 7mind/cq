@@ -256,6 +256,18 @@ export type {
 } from "./mcp/wireResponseContract.js";
 export { registerLedgerStdioTools } from "./mcp/stdioLedgerTools.js";
 export {
+  PLAN_CLAIM_TOKEN_ECHO_PATH,
+  PLAN_LIFECYCLE_TOOL_NAMES,
+  PLAN_LIFECYCLE_TOOL_SPECS,
+  PlanLifecycleNotImplementedError,
+  assertPlanLifecycleTokenExposure,
+  isPlanLifecycleStore,
+} from "./mcp/planLifecycleTools.js";
+export type {
+  PlanLifecycleToolName,
+  PlanLifecycleToolSpec,
+} from "./mcp/planLifecycleTools.js";
+export {
   MAX_READ_LOG_BYTES,
   ReadLogNotImplementedError,
 } from "./mcp/readLog.js";

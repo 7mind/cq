@@ -3,7 +3,7 @@
  *
  * Returns an array of `tool()` instances for
  * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
- * The 27-tool surface is `LEDGER_TOOL_NAMES` (see the section dividers below);
+ * The 31-tool surface is `LEDGER_TOOL_NAMES` (see the section dividers below);
  * the stdio counterpart is `registerLedgerStdioTools` (./stdioLedgerTools.ts).
  *
  * Capability-gated tools:
@@ -12,6 +12,10 @@
  *  - get_reviewers / get_planners / get_config require an injected
  *    `configCapability` (constructed in @cq/ledger-mcp over @cq/config, R193/G18);
  *    absent it they throw `ConfigNotImplementedError`.
+ *  - the four guarded plan-lifecycle tools (T852, ./planLifecycleTools.ts)
+ *    require a store that implements `PlanLifecycleStore`; every production
+ *    backend does, and a store that does not throws
+ *    `PlanLifecycleNotImplementedError`.
  *  - list_projects requires an injected `listProjects` capability (T585 /
  *    Q284); UNLIKE the above, every real server always supplies one (the
  *    public `createLedgerMcpServer` builder never leaves it undefined) — the
@@ -70,6 +74,10 @@ import {
   ListProjectsNotImplementedError,
   type ListProjectsCapability,
 } from "./listProjects.js";
+import {
+  PLAN_LIFECYCLE_TOOL_NAMES,
+  PLAN_LIFECYCLE_TOOL_SPECS,
+} from "./planLifecycleTools.js";
 
 /**
  * The SDK's `tools?:` field on createSdkMcpServer is typed as
@@ -751,6 +759,19 @@ ${QUERY_LANGUAGE_HELP}`,
     },
   );
 
+  // ---- Guarded plan lifecycle (4) ----------------------------------------
+
+  // Built from the SHARED specs so the stdio registration cannot drift: one
+  // description, one Zod shape, one handler per guarded mutation (T852).
+  const planLifecycleTools = PLAN_LIFECYCLE_TOOL_SPECS.map((spec) =>
+    tool(
+      spec.name,
+      spec.description,
+      spec.inputSchema,
+      async (args: unknown) => wireResult(await spec.run(store, args)),
+    ),
+  );
+
   const tools = [
     enumerateLedgers,
     fetchLedger,
@@ -779,6 +800,7 @@ ${QUERY_LANGUAGE_HELP}`,
     validateInput,
     validateOutput,
     listProjectsTool,
+    ...planLifecycleTools,
   ] as unknown as AnyTool[];
 
   const describedTools = tools.map((ledgerTool, index) => {
@@ -884,6 +906,7 @@ export const LEDGER_TOOL_NAMES = [
   "validate_input",
   "validate_output",
   "list_projects",
+  ...PLAN_LIFECYCLE_TOOL_NAMES,
 ] as const;
 
 export type LedgerToolName = (typeof LEDGER_TOOL_NAMES)[number];

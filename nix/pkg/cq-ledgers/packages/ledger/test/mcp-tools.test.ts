@@ -95,11 +95,11 @@ function expectedMilestoneAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("exports the expected tool names (27 tools)", async () => {
+  it("exports the expected tool names (31 tools)", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual([...LEDGER_TOOL_NAMES].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(27);
+    expect(LEDGER_TOOL_NAMES.length).toBe(31);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
@@ -114,6 +114,10 @@ describe("ledger MCP tools", () => {
     expect(LEDGER_TOOL_NAMES).toContain("validate_input");
     expect(LEDGER_TOOL_NAMES).toContain("validate_output");
     expect(LEDGER_TOOL_NAMES).toContain("list_projects");
+    expect(LEDGER_TOOL_NAMES).toContain("claim_plan");
+    expect(LEDGER_TOOL_NAMES).toContain("publish_plan_draft");
+    expect(LEDGER_TOOL_NAMES).toContain("release_plan_claim");
+    expect(LEDGER_TOOL_NAMES).toContain("finalize_plan");
   });
 
   it("prefixed factory names equal prefixedToolNames(prefix) — drift guard", async () => {

@@ -29,6 +29,7 @@ export const REDACTION_KINDS = [
   "api-key",
   "bearer",
   "slack-token",
+  "plan-owner-fence-token",
 ] as const;
 
 /** Union of all recognised credential kinds. */
@@ -42,8 +43,16 @@ export type RedactionKind = (typeof REDACTION_KINDS)[number];
  * scope is enforced by the absence of the `s` (dotAll) flag: `.` and character
  * classes do not cross newline boundaries. The `m` flag is present but not
  * load-bearing here — none of the patterns use `^`/`$` anchors.
+ *
+ * `replacement` defaults to the bare `[REDACTED:<kind>]` placeholder. An entry
+ * that must keep surrounding syntax (a key name, its separator) supplies its
+ * own replacement string with `$n` back-references into the pattern.
  */
-const PATTERNS: ReadonlyArray<{ kind: RedactionKind; re: RegExp }> = [
+const PATTERNS: ReadonlyArray<{
+  kind: RedactionKind;
+  re: RegExp;
+  replacement?: string;
+}> = [
   // AWS access key IDs: AKIA followed by exactly 16 uppercase letters/digits.
   {
     kind: "aws-key",
@@ -74,6 +83,19 @@ const PATTERNS: ReadonlyArray<{ kind: RedactionKind; re: RegExp }> = [
     kind: "slack-token",
     re: /xox[bp]-[0-9A-Za-z-]+/gm,
   },
+  // Plan-lifecycle owner fence tokens (T852 / G99). The value is an opaque
+  // caller-generated base64url secret with no distinguishing prefix, so the
+  // KEY is the anchor: the JSON (`"ownerFenceToken":"…"`), YAML
+  // (`ownerFenceToken: …`), and shell (`ownerFenceToken=…`) spellings a
+  // transcript can carry. Only the value is replaced, so the surrounding
+  // structure — including a closing JSON quote, which the pattern never
+  // consumes — survives. Idempotent: the placeholder starts with `[`, which
+  // is outside the base64url value class, so a second pass cannot match it.
+  {
+    kind: "plan-owner-fence-token",
+    re: /(ownerFenceToken"?\s*[:=]\s*"?)[A-Za-z0-9_-]{22,}/gm,
+    replacement: "$1[REDACTED:plan-owner-fence-token]",
+  },
 ];
 
 /**
@@ -84,10 +106,10 @@ const PATTERNS: ReadonlyArray<{ kind: RedactionKind; re: RegExp }> = [
  */
 export function redactSecrets(text: string): string {
   let result = text;
-  for (const { kind, re } of PATTERNS) {
+  for (const { kind, re, replacement } of PATTERNS) {
     // Reset lastIndex in case the regex object was previously used.
     re.lastIndex = 0;
-    result = result.replace(re, `[REDACTED:${kind}]`);
+    result = result.replace(re, replacement ?? `[REDACTED:${kind}]`);
   }
   return result;
 }

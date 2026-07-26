@@ -5,8 +5,10 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   createLedgerMcpTools,
+  GOALS_LEDGER,
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
+  MILESTONES_AMBIENT_ID,
   registerLedgerStdioTools,
   type ConfigCapability,
   type LedgerStore,
@@ -56,6 +58,19 @@ const PROMPT_RESULT = {
   inputSchema: { type: "object", required: ["goalId"] },
   outputSchema: { type: "object", required: ["verdict"] },
 };
+// A caller-generated owner fence token (base64url, >=22 chars) and the plan
+// identities the in-memory lifecycle allocates deterministically for G1's
+// first claim. Hardcoding them keeps the matrix static; the publish/release
+// assertions below fail loudly if the allocation ever stops matching.
+const PARITY_OWNER_FENCE_TOKEN = "parity_owner_fence_token_0";
+const PARITY_GOAL_ID = "G1";
+const PARITY_CLAIM_ID = `claim_${PARITY_GOAL_ID}_1`;
+const PARITY_GENERATION = 1;
+const PARITY_PROVENANCE = {
+  author: "parity-owner",
+  session: "parity-owner-session",
+} as const;
+
 const PROJECTS_RESULT = {
   projects: [
     {
@@ -247,6 +262,17 @@ async function buildFixture(): Promise<Fixture> {
   });
   await store.updateMilestone(archivedMilestone.id, { status: "done" });
   await store.archiveMilestone(archivedMilestone.id, "pre-seeded archive");
+
+  // A clarifying goal so the four guarded plan-lifecycle tools have a subject.
+  await store.createItem(GOALS_LEDGER, MILESTONES_AMBIENT_ID, {
+    id: PARITY_GOAL_ID,
+    status: "clarifying",
+    fields: {
+      title: "Transport parity goal",
+      description: "goal full narrative",
+    },
+    ...PARITY_PROVENANCE,
+  });
 
   const archivableMilestone = await store.createMilestone({
     title: "Archive through tool",
@@ -625,6 +651,66 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       args: { roleId: PROMPT_RESULT.roleId, output: {} },
     },
     { name: "list_projects", args: {} },
+    {
+      name: "claim_plan",
+      args: {
+        goalId: PARITY_GOAL_ID,
+        purpose: "initial",
+        claimRequestId: "parity_claim_request",
+        ownerFenceToken: PARITY_OWNER_FENCE_TOKEN,
+        expectedGeneration: null,
+        ...PARITY_PROVENANCE,
+      },
+    },
+    {
+      name: "publish_plan_draft",
+      args: {
+        goalId: PARITY_GOAL_ID,
+        claimId: PARITY_CLAIM_ID,
+        generation: PARITY_GENERATION,
+        operationId: "parity_publish",
+        ownerFenceToken: PARITY_OWNER_FENCE_TOKEN,
+        ...PARITY_PROVENANCE,
+        manifest: {
+          milestones: [{ key: "delivery", title: "Delivery" }],
+          tasks: [
+            {
+              key: "implementation",
+              milestoneKey: "delivery",
+              headline: "Implementation",
+            },
+          ],
+        },
+      },
+    },
+    {
+      // No review exists, so this exercises the conflict channel of finalize
+      // (a conflict is a SUCCESSFUL tool call carrying `{ ok: false }`).
+      name: "finalize_plan",
+      args: {
+        goalId: PARITY_GOAL_ID,
+        claimId: PARITY_CLAIM_ID,
+        generation: PARITY_GENERATION,
+        operationId: "parity_finalize",
+        ownerFenceToken: PARITY_OWNER_FENCE_TOKEN,
+        ...PARITY_PROVENANCE,
+        reviewId: "R1",
+        draftRevision: 1,
+        decision: { headline: "Approve the parity draft" },
+      },
+    },
+    {
+      name: "release_plan_claim",
+      args: {
+        kind: "abandon",
+        goalId: PARITY_GOAL_ID,
+        claimId: PARITY_CLAIM_ID,
+        generation: PARITY_GENERATION,
+        operationId: "parity_release",
+        reason: "recover the parity claim",
+        ...PARITY_PROVENANCE,
+      },
+    },
   ];
 }
 
@@ -731,6 +817,48 @@ function assertRepresentativeContracts(
     item: { id: fixture.ids.archivedItem, status: "done" },
   });
 
+  // Guarded plan lifecycle: the winning claim is the ONLY response that may
+  // carry the owner token, and it must actually be the WINNER — otherwise the
+  // three owner operations below would be exercising conflict paths only.
+  expect(responses.get("claim_plan")).toMatchObject({
+    ok: true,
+    replayed: false,
+    acknowledgement: {
+      goalId: PARITY_GOAL_ID,
+      claimId: PARITY_CLAIM_ID,
+      generation: PARITY_GENERATION,
+      ownerFenceToken: PARITY_OWNER_FENCE_TOKEN,
+      goalPhase: "planning",
+    },
+  });
+  const published = responses.get("publish_plan_draft") as {
+    ok: boolean;
+    acknowledgement: { manifest: { revision: number; tasks: unknown[] } };
+  };
+  expect(published.ok).toBe(true);
+  expect(published.acknowledgement.manifest.revision).toBe(1);
+  expect(published.acknowledgement.manifest.tasks).toHaveLength(1);
+  expect(responses.get("finalize_plan")).toMatchObject({
+    ok: false,
+    conflict: { code: "review-not-found", reviewId: "R1" },
+  });
+  expect(responses.get("release_plan_claim")).toMatchObject({
+    ok: true,
+    acknowledgement: { kind: "abandon", goalPhase: "planning" },
+  });
+  for (const toolName of [
+    "publish_plan_draft",
+    "release_plan_claim",
+    "finalize_plan",
+  ] as const) {
+    expect(JSON.stringify(responses.get(toolName)), toolName).not.toContain(
+      "ownerFenceToken",
+    );
+    expect(JSON.stringify(responses.get(toolName)), toolName).not.toContain(
+      PARITY_OWNER_FENCE_TOKEN,
+    );
+  }
+
   expect(responses.get("read_log")).toEqual(READ_LOG_RESULT);
   expect(responses.get("get_config")).toEqual(CONFIG_RESULT);
   expect(responses.get("fetch_prompt")).toEqual(PROMPT_RESULT);
@@ -739,7 +867,7 @@ function assertRepresentativeContracts(
   expect(responses.get("list_projects")).toEqual(PROJECTS_RESULT);
 }
 
-// BG, specified-origin: both public registrations expose one 27-tool contract.
+// BG, specified-origin: both public registrations expose one 31-tool contract.
 describe("stdio/direct ledger tool differential contract", () => {
   for (const prefix of PREFIXES) {
     it(`matches complete definitions for prefix ${JSON.stringify(prefix)}`, async () => {
@@ -769,7 +897,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 27 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 31 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);
