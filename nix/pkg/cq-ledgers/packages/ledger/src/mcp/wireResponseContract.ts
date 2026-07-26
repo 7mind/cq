@@ -268,7 +268,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "`{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`.",
   ),
   derive_predicates: purposeBuiltSmall(
-    "Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `openQuestionGate`, `belowFloor`, and `goalDrift`.",
+    "Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`.",
   ),
   reopen_item: fixedAcknowledgement(
     "item",

@@ -188,7 +188,7 @@ export const USAGE = [
   "  predicates  [--cwd <path>]                      emit the derived flow predicates JSON",
   "                                                  ({ predicates: { pInvestigate, pSeed, pPlan,",
   "                                                  pResearch, pImplement, openQuestionGate,",
-  "                                                  belowFloor, goalDrift } })",
+  "                                                  belowFloor, planBusy, goalDrift } })",
   "                                                  to stdout UNCONDITIONALLY;",
   "                                                  no session/marker, always exit 0.",
   "  counts      [--cwd <path>]                      emit the ledger-summaries JSON",

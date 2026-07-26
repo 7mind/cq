@@ -28,7 +28,10 @@
  *    defect owned by no clarifying/planning goal matched NONE of the other three
  *    predicates, so the flow falsely reported DRAINED.
  *  - P-plan — a goal in `clarifying` with NO open linked question, OR a goal in
- *    `planning`.
+ *    `planning`; in BOTH cases the goal must carry NO active plan claim (G99 /
+ *    D134: an active claim means a planner already owns the goal's planning
+ *    round — the goal is reported on the informational `planBusy` companion
+ *    instead) AND NO active research wait (T848's `activePlanResearchWaits`).
  *  - P-research (G80/M246, Q265/Q261) — a `researches` item in an ACTIONABLE
  *    status (open/wip/inconclusive, mirroring DEFECT_ACTIONABLE_STATUSES: an
  *    answered question can revive an inconclusive research) that is NOT gated
@@ -40,7 +43,12 @@
  *    task: status non-terminal and not `blocked`; every entry in its `dependsOn`
  *    is SATISFIED (see the dependency-resolution spec below); its milestone's
  *    `dependsOn` milestones are satisfied (all their tasks terminal); and no
- *    linked open question.
+ *    linked open question. ADDITIONALLY (G99 / D134 / H117, T853), when the
+ *    owning goal is PROTOCOL-MANAGED (carries a `planGeneration` field), the
+ *    task must ALSO be a member of the goal's FINALIZED manifest and the goal
+ *    must carry NO active (follow-up) claim — draft, superseded, and
+ *    off-manifest tasks (the Q337 duplicate-DAG leak) never execute. LEGACY
+ *    goals (no `planGeneration`) keep the pre-G99 readiness rules verbatim.
  *  - openQuestionGate — the open `questions` items gating the above.
  *
  * Dependency-resolution spec (G80/M245, read-side of the `<ledger>:<id>`
@@ -75,6 +83,14 @@
  *    `ledgerRefs` naming `goals:<G>`, the same ownership pattern P-implement
  *    reads) already show execution progress (`wip`/`done`). REPORT-ONLY, like
  *    belowFloor: it never participates in any stop condition.
+ *  - planBusy (G99 / D134, T853) — a goal carrying an ACTIVE plan claim (the
+ *    public `planActiveClaim` field is present, which the lifecycle maintains
+ *    in lockstep with claim state: set at claim, cleared at release/finalize).
+ *    Such goals are SUPPRESSED from P-plan (and their tasks from P-implement),
+ *    so a second planner never picks up an owned planning round (the H117
+ *    stale-writer race). REPORT-ONLY, like belowFloor/goalDrift: it never
+ *    feeds the open-question gate and never participates in any stop
+ *    condition.
  */
 
 import type { Item, LedgerSchema } from "../types.js";
@@ -87,7 +103,13 @@ import {
   RESEARCHES_LEDGER,
   TASKS_LEDGER,
 } from "../constants.js";
-import { PLAN_WAITING_RESEARCHES_FIELD } from "../planLifecycle.js";
+import {
+  PLAN_ACTIVE_CLAIM_FIELD,
+  PLAN_FINALIZED_MANIFEST_FIELD,
+  PLAN_GENERATION_FIELD,
+  PlanPublishedManifestSchema,
+  PLAN_WAITING_RESEARCHES_FIELD,
+} from "../planLifecycle.js";
 import { buildPrefixRegistry, canonicalizeRef, parseRef } from "../refs.js";
 import type { LedgerStore } from "./LedgerStore.js";
 
@@ -117,6 +139,15 @@ export interface DerivedPredicates {
   pImplement: PredicateVerdict;
   openQuestionGate: PredicateVerdict;
   belowFloor: PredicateVerdict;
+  /**
+   * REPORT-ONLY busy signal (G99 / D134, T853): TRUE with the ids of goals
+   * carrying an ACTIVE plan claim. An active claim suppresses the goal from
+   * P-plan (a planner already owns its planning round) and its managed tasks
+   * from P-implement. Like `belowFloor`/`goalDrift`, this signal NEVER
+   * participates in any stop condition and never feeds the open-question
+   * gate.
+   */
+  planBusy: PredicateVerdict;
   /**
    * REPORT-ONLY phase-drift signal (G84 / D113): TRUE with the ids of goals
    * still at `planned` whose owned tasks (task `ledgerRefs` naming
@@ -228,6 +259,42 @@ export function activePlanResearchWaits(
       const research = byId.get(id);
       return research !== undefined && activeStatuses.has(research.status);
     });
+}
+
+/**
+ * The goal's plan-lifecycle gate state, read tolerantly from the public plan
+ * fields (T853 / G99). Field PRESENCE — not parseability — is the operative
+ * signal, mirroring the write-side guards in planLifecycleGuards.ts: the
+ * lifecycle keeps `planActiveClaim` in lockstep with claim state (set at
+ * claim, deleted at release/finalize), so a present field means an ACTIVE
+ * claim. A missing or corrupt finalized manifest yields a null task set,
+ * which is FAIL-SAFE: a managed goal without a readable finalized manifest
+ * authorizes no task start (the same posture the write-side fence takes).
+ * Never throws — corrupt managed state suppresses rather than crashes.
+ */
+interface GoalPlanGate {
+  /** The goal entered the guarded plan protocol (planGeneration present). */
+  readonly managed: boolean;
+  /** An active claim holds the goal (planActiveClaim present). */
+  readonly claimActive: boolean;
+  /** Task ids of the FINALIZED manifest; null when absent or unreadable. */
+  readonly finalizedTaskIds: ReadonlySet<string> | null;
+}
+
+function goalPlanGate(goal: Item): GoalPlanGate {
+  const managed = goal.fields[PLAN_GENERATION_FIELD] !== undefined;
+  const claimActive = goal.fields[PLAN_ACTIVE_CLAIM_FIELD] !== undefined;
+  let finalizedTaskIds: ReadonlySet<string> | null = null;
+  const rawManifest = goal.fields[PLAN_FINALIZED_MANIFEST_FIELD];
+  if (typeof rawManifest === "string") {
+    try {
+      const manifest = PlanPublishedManifestSchema.parse(JSON.parse(rawManifest));
+      finalizedTaskIds = new Set(manifest.tasks.map(({ id }) => id));
+    } catch {
+      finalizedTaskIds = null;
+    }
+  }
+  return { managed, claimActive, finalizedTaskIds };
 }
 
 function buildTaskDependencyReadiness(
@@ -425,9 +492,18 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
     else belowFloorItems.push(d.id);
   }
 
-  // --- P-plan --------------------------------------------------------------
+  // --- P-plan (+ planBusy) ---------------------------------------------------
+  // A goal carrying an ACTIVE claim is BUSY: a planner already owns its
+  // planning round (H117's stale-writer race is what the claim fence closes),
+  // so it is suppressed from P-plan and reported on the report-only planBusy
+  // companion instead.
   const planItems: string[] = [];
+  const busyGoalIds: string[] = [];
   for (const g of goals) {
+    if (goalPlanGate(g).claimActive) {
+      busyGoalIds.push(g.id);
+      continue;
+    }
     if (activePlanResearchWaits(g, researches).length > 0) continue;
     if (g.status === GOAL_PLANNING_STATUS) {
       planItems.push(g.id);
@@ -469,14 +545,37 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
   const buildableGoalIds = new Set(
     goals.filter((g) => GOAL_BUILDABLE_STATUSES.has(g.status)).map((g) => g.id),
   );
+  const goalsById = new Map(goals.map((g) => [g.id, g]));
+  const planGatesByGoalId = new Map<string, GoalPlanGate>();
+  function planGateFor(goalId: string): GoalPlanGate | undefined {
+    let gate = planGatesByGoalId.get(goalId);
+    if (gate === undefined) {
+      const goal = goalsById.get(goalId);
+      if (goal === undefined) return undefined;
+      gate = goalPlanGate(goal);
+      planGatesByGoalId.set(goalId, gate);
+    }
+    return gate;
+  }
   const implementItems: string[] = [];
   for (const t of tasks) {
-    // Belongs to a goal in planned/building?
-    const ownedByBuildableGoal = refList(t, "ledgerRefs").some((ref) => {
+    // Authorized by an owning goal? A goal authorizes its task iff ALL hold:
+    //  - the goal is in planned/building;
+    //  - the goal is LEGACY (no planGeneration — pre-G99 readiness, verbatim),
+    //    OR PROTOCOL-MANAGED with NO active (follow-up) claim AND the task a
+    //    member of the goal's FINALIZED manifest (draft, superseded, and
+    //    off-manifest tasks — the Q337 duplicate-DAG leak — never execute).
+    const authorized = refList(t, "ledgerRefs").some((ref) => {
       if (!ref.startsWith(`${GOALS_LEDGER}:`)) return false;
-      return buildableGoalIds.has(ref.slice(GOALS_LEDGER.length + 1));
+      const goalId = ref.slice(GOALS_LEDGER.length + 1);
+      if (!buildableGoalIds.has(goalId)) return false;
+      const gate = planGateFor(goalId);
+      if (gate === undefined) return false;
+      if (!gate.managed) return true;
+      if (gate.claimActive) return false;
+      return gate.finalizedTaskIds?.has(t.id) === true;
     });
-    if (!ownedByBuildableGoal) continue;
+    if (!authorized) continue;
     // Non-terminal and NOT blocked.
     if (TASK_TERMINAL_STATUSES.has(t.status) || t.status === TASK_BLOCKED_STATUS) continue;
     if (!dependenciesSatisfied(t)) continue;
@@ -520,6 +619,7 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
       items: [...gatingQuestionIds],
     },
     belowFloor: { value: belowFloorItems.length > 0, items: belowFloorItems },
+    planBusy: { value: busyGoalIds.length > 0, items: busyGoalIds },
     goalDrift: { value: goalDriftItems.length > 0, items: goalDriftItems },
   };
 }

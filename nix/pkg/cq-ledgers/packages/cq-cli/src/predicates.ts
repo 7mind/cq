@@ -11,10 +11,10 @@
  *
  * The emitted JSON mirrors advance-gate's `verdict.predicates` shape exactly —
  * `{ "predicates": { pInvestigate, pSeed, pPlan, pResearch, pImplement,
- * openQuestionGate, belowFloor, goalDrift } }` — so the auto-driver oracle's
+ * openQuestionGate, belowFloor, planBusy, goalDrift } }` — so the auto-driver oracle's
  * `parseAdvanceGateOutput` (which reads `parsed.predicates`) parses
  * `cq predicates` output UNCHANGED. pSeed is a first-class stage predicate;
- * belowFloor and goalDrift are informational (never gate).
+ * belowFloor, planBusy, and goalDrift are informational (never gate).
  *
  * The store is built IN-PROCESS via `createLedgerStore(cwd)` (exactly like
  * `runAdvanceGate`'s step 4 and `runInit`) and disposed in a `finally`.
@@ -45,7 +45,7 @@ export interface PredicatesOutcome {
 /**
  * The object serialised to stdout — the SAME `predicates` shape advance-gate
  * emits (pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate,
- * belowFloor, goalDrift),
+ * belowFloor, planBusy, goalDrift),
  * so the oracle's `parseAdvanceGateOutput` reads `parsed.predicates`
  * identically.
  */

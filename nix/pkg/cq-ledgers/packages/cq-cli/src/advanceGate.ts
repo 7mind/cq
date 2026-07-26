@@ -22,11 +22,11 @@
  *     pInvestigate/pSeed/pPlan/pResearch/pImplement is TRUE-and-unblocked →
  *     BLOCK (block=true), naming the FIRST such predicate in flow order
  *     (investigate → seed → plan → research → implement); else ALLOW.
- *     The informational `belowFloor` and `goalDrift` companions are NEVER
- *     part of the block decision.
+ *     The informational `belowFloor`, `planBusy`, and `goalDrift` companions
+ *     are NEVER part of the block decision.
  *  5. Emit on stdout the NEUTRAL verdict JSON
  *     `{ block, reason, predicates: { pInvestigate, pSeed, pPlan, pResearch,
- *     pImplement, openQuestionGate, belowFloor, goalDrift } }`. EXIT CODE:
+ *     pImplement, openQuestionGate, belowFloor, planBusy, goalDrift } }`. EXIT CODE:
  *     0 = allow, non-zero = block.
  *
  * The CLI emits NO Claude-Code `{decision}` JSON — translating the neutral
@@ -196,8 +196,9 @@ export async function computeVerdict(args: AdvanceGateArgs): Promise<AdvanceGate
  * The first TRUE-and-unblocked detection predicate, in flow order
  * (investigate → seed → plan → research → implement), or `null` when none is
  * TRUE. The returned label names the predicate in the BLOCK reason. The
- * informational `belowFloor` and `goalDrift` (report-only, G84/D113)
- * companions are intentionally NOT consulted — they never block.
+ * informational `belowFloor`, `planBusy` (report-only, G99/D134), and
+ * `goalDrift` (report-only, G84/D113) companions are intentionally NOT
+ * consulted — they never block.
  */
 function firstBlockingPredicate(
   p: DerivedPredicates,
@@ -228,6 +229,7 @@ function allowVerdict(reason: string): AdvanceGateVerdict {
       pImplement: empty,
       openQuestionGate: empty,
       belowFloor: empty,
+      planBusy: empty,
       goalDrift: empty,
     },
   };

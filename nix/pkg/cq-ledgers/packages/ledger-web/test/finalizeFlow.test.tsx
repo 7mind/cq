@@ -160,6 +160,7 @@ function emptyPredicates(): DerivedPredicates {
     pImplement: v(),
     openQuestionGate: v(),
     belowFloor: v(),
+    planBusy: v(),
     goalDrift: v(),
   };
 }

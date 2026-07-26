@@ -65,7 +65,7 @@ const ORIGINAL_SERVER_INSTRUCTIONS = [
   "- snapshot() — compact {id,status,summary} cross-ledger state in one call.",
   "- derive_predicates() — the /cq:advance flow-detection predicates",
   "  { pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate,",
-  "  belowFloor, goalDrift } in one call; read these instead of hand-deriving",
+  "  belowFloor, planBusy, goalDrift } in one call; read these instead of hand-deriving",
   "  actionability from snapshot.",
   '- fetch_ledger with projection:"compact" — strips long narrative fields to avoid',
   "  token-overflow on large ledgers. Combine with offset/limit for pagination.",

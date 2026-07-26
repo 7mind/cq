@@ -183,7 +183,7 @@ measured savings without another batching schema.
 | `archive_milestone` | `purpose-built-small` | `{ pointer }` for the archived milestone. |
 | `list_milestone_items` | `mandatory-item-projection` | `{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection. |
 | `snapshot` | `purpose-built-small` | `{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`. |
-| `derive_predicates` | `purpose-built-small` | Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `openQuestionGate`, `belowFloor`, and `goalDrift`. |
+| `derive_predicates` | `purpose-built-small` | Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`. |
 | `reopen_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `unarchive_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `read_log` | `requested-full-content` | `{ path, content, truncated? }`. |

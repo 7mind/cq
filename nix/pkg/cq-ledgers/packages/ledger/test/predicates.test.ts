@@ -375,6 +375,8 @@ function runPredicatesSuite(factory: PredicatesStoreFactory): void {
         expect(p.pResearch).toEqual({ value: false, items: [] });
         expect(p.pImplement).toEqual({ value: false, items: [] });
         expect(p.openQuestionGate).toEqual({ value: false, items: [] });
+        // T853/G99: the DRAINED snapshot also carries an all-false planBusy.
+        expect(p.planBusy).toEqual({ value: false, items: [] });
         // G77/M240: the DRAINED snapshot also carries an all-false seed verdict
         // + an empty belowFloor companion.
         const ext = p as unknown as SeedProbe;

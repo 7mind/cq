@@ -803,6 +803,7 @@ function assertRepresentativeContracts(
       "pPlan",
       "pResearch",
       "pSeed",
+      "planBusy",
     ].sort(),
   );
   expect(predicates).toMatchObject({
