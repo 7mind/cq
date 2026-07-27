@@ -260,24 +260,25 @@ the task id + verbatim `headline`/`description`/`acceptance`, the branch
 concurrently. Record each worker's session log on return via `cq log put` (§Session logs).
 
 **Catalog-driven dispatch (G41 — implement-worker).** Drive each
-`implement-worker` dispatch through the typed prompt-catalog MCP tools the
-ledger-mcp server added in T343 (`fetch_prompt` / `validate_input` /
-`validate_output`), MIRRORING the a–g sequence `commands/cq/plan/advance.md`
-sub-step 1a established for `plan-advance`: **(a)** `prompt-catalog fetch ("implement-worker")`
-for its `promptTemplate` + typed `inputSchema`/`outputSchema` (present — a
-dispatched subagent); **(b–c)** compose the input against that `inputSchema`
+`implement-worker` dispatch through the typed prompt-catalog output validator the
+ledger-mcp server added in T343, MIRRORING the surviving-step sequence
+`commands/cq/plan/advance.md` sub-step 1a establishes for `plan-advance` (T975
+removed the parent-side (a) prompt-template fetch — `bun run gen-agents` already
+bakes the identical role prompt into `agents/implement-worker.md`, which the
+harness injects at the child's system boundary — and the (d) input round-trip;
+the surviving steps keep their original letters):
+**(b–c)** compose the input against the role's typed `inputSchema`
 (`{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit,
-priorCriticism? }`); **(d)** `validate_input("implement-worker", input)`, fix and
-re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
+priorCriticism? }`); **(e)** dispatch the `CQ_SUBAGENT`
 (`role: "implement-worker"`, `model` = the §K4 `get_config`-resolved
 token's bare-alias `model` verbatim, `isolation: "worktree"`)
-with the validated input rendered into the prompt; **(f–g)** await its result and
+with that composed input rendered into the prompt; **(f–g)** await its result and
 `validate_output("implement-worker", output)` against the role's `outputSchema`
 (a validation failure is a contract breach to surface, §Session logs). **Degrade
-gracefully when the catalog tools are absent** (an older / embedded ledger-mcp
-that predates T343) — skip (a)–(d) and (g) and fall straight through to the bare
-`CQ_SUBAGENT` dispatch (e). The validate steps are an ADDITIVE contract check, never a
-hard dependency — their absence never blocks the pass.
+gracefully when the catalog output validator is absent** (an older / embedded
+ledger-mcp that predates T343) — skip (g) and fall straight through to the bare
+`CQ_SUBAGENT` dispatch (e). The validate step is an ADDITIVE contract check, never a
+hard dependency — its absence never blocks the pass.
 
 ### 3. Review each finished worker (multi-reviewer panel, reconciled)
 For every worker that returned `status: "pass"`, run the **reviewer panel** for
@@ -333,21 +334,20 @@ concurrently, keyed by `harness`:
 
 **Catalog-driven dispatch (G41 — implement-reviewer).** Drive each NATIVE
 `claude:*` `implement-reviewer` `CQ_SUBAGENT` dispatch (3a single-native fallback and
-each `claude:*` panel member in 3b) through the typed prompt-catalog MCP tools,
-MIRRORING the a–g sequence `commands/cq/plan/advance.md` sub-step 1a established
-for `plan-advance`: **(a)** `prompt-catalog fetch ("implement-reviewer")` for its
-`promptTemplate` + typed `inputSchema`/`outputSchema` (present — a dispatched
-subagent); **(b–c)** compose the input against that `inputSchema` (`{ taskId,
+each `claude:*` panel member in 3b) through the typed prompt-catalog output
+validator, MIRRORING the surviving-step sequence
+`commands/cq/plan/advance.md` sub-step 1a establishes for `plan-advance` (T975
+removed the parent-side (a) prompt-template fetch and (d) input round-trip);
+**(b–c)** compose the input against the role's typed `inputSchema` (`{ taskId,
 acceptance, worktreePath, branch, baseCommit, workerResult, round,
-priorCriticism? }`); **(d)** `validate_input("implement-reviewer", input)`, fix
-and re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
+priorCriticism? }`); **(e)** dispatch the `CQ_SUBAGENT`
 (`role: "implement-reviewer"`, `model` = the reviewer's resolved
 `model`, else the §K4 FRONTIER token's `model`, verbatim); **(f–g)** await its
 verdict and `validate_output("implement-reviewer", output)` against the role's
 `outputSchema` (a validation failure is a contract breach to surface, §Session
-logs). **Degrade gracefully when the catalog tools are absent** — skip (a)–(d)
-and (g) and fall straight through to the bare `CQ_SUBAGENT` dispatch (e). The validate
-steps are an ADDITIVE contract check, never a hard dependency. (The `pi:*` panel
+logs). **Degrade gracefully when the catalog output validator is absent** — skip
+(g) and fall straight through to the bare `CQ_SUBAGENT` dispatch (e). The validate
+step is an ADDITIVE contract check, never a hard dependency. (The `pi:*` panel
 members are EXTERNAL shellouts driving the shared `CQ::implement-review` rubric,
 not `CQ_SUBAGENT` dispatches of this catalog role — they are out of this catalog
 validate-in/out path; their stdout-json is parsed and reconciled as 3b/3c
@@ -502,23 +502,22 @@ after every task in its `dependsOn` has merged). For each:
    `questions` item, set the task `blocked`, leave the worktree) and SKIP merging
    this task (and transitively anything depending on it) this pass.
    **Catalog-driven dispatch (G41 — implement-conflict-resolver).** Drive this
-   dispatch through the typed prompt-catalog MCP tools, MIRRORING the a–g sequence
-   `commands/cq/plan/advance.md` sub-step 1a established for `plan-advance`:
-   **(a)** `prompt-catalog fetch ("implement-conflict-resolver")` for its `promptTemplate`
-   + typed `inputSchema`/`outputSchema` (present — a dispatched subagent);
-   **(b–c)** compose the input against that `inputSchema` (`{ taskId, headline?,
+   dispatch through the typed prompt-catalog output validator, MIRRORING the
+   surviving-step sequence `commands/cq/plan/advance.md` sub-step 1a establishes
+   for `plan-advance` (T975 removed the parent-side (a) prompt-template fetch and
+   (d) input round-trip); **(b–c)** compose the input against the role's typed
+   `inputSchema` (`{ taskId, headline?,
    description?, worktreePath, branch, baseCommit, conflictingFiles, baseSideNote?
-   }`); **(d)** `validate_input("implement-conflict-resolver", input)`, fix and
-   re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
+   }`); **(e)** dispatch the `CQ_SUBAGENT`
    (`role: "implement-conflict-resolver"`, `model` = the §K4 FRONTIER
    token's `model`, verbatim — the token's `effort` is N/A at `CQ_SUBAGENT` dispatch
    per T510, provenance/display only,
    `isolation: "worktree"`); **(f–g)** await its result and
    `validate_output("implement-conflict-resolver", output)` against the role's
    `outputSchema` (a validation failure is a contract breach to surface, §Session
-   logs). **Degrade gracefully when the catalog tools are absent** — skip (a)–(d)
-   and (g) and fall straight through to the bare `CQ_SUBAGENT` dispatch (e). The
-   validate steps are an ADDITIVE contract check, never a hard dependency.
+   logs). **Degrade gracefully when the catalog output validator is absent** — skip
+   (g) and fall straight through to the bare `CQ_SUBAGENT` dispatch (e). The
+   validate step is an ADDITIVE contract check, never a hard dependency.
 3. On a clean rebase (or resolved conflict) → fast-forward merge into the base,
    set `update_item("tasks", <id>, status: "done", fields: { resultCommit:
    "<merged sha>", completion: "<1-line: what landed>", sessionLogs:

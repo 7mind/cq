@@ -279,15 +279,13 @@ validated findings before framing the next child. Write each explorer's session
 log on return (§Session logs).
 
 **Catalog-driven dispatch (G41 — investigate-explorer).** Drive each
-`investigate-explorer` dispatch through the typed prompt-catalog MCP tools the
-ledger-mcp server added in T343 (`fetch_prompt` / `validate_input` /
-`validate_output`), MIRRORING the a–g sequence `commands/cq/plan/advance.md`
-sub-step 1a established for `plan-advance`: **(a)**
-`prompt-catalog fetch ("investigate-explorer")` for its `promptTemplate` + typed
-`inputSchema`/`outputSchema` (present — a dispatched subagent); **(b–c)** compose
-the input against that `inputSchema` (`{ hypothesisId, statement, branchContext,
-leads? }`); **(d)** `validate_input("investigate-explorer", input)`, fix and
-re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
+`investigate-explorer` dispatch through the typed prompt-catalog output
+validator the ledger-mcp server added in T343, MIRRORING the surviving-step
+sequence `commands/cq/plan/advance.md` sub-step 1a establishes for
+`plan-advance` (T975 removed the parent-side (a) prompt-template fetch and (d)
+input round-trip; the surviving steps keep their original letters):
+**(b–c)** compose the input against the role's typed `inputSchema`
+(`{ hypothesisId, statement, branchContext, leads? }`); **(e)** dispatch the `CQ_SUBAGENT`
 (`role: "investigate-explorer"`, `model` = the §K8 FRONTIER token's
 `model`, verbatim — its `effort` is N/A at `CQ_SUBAGENT` dispatch per T510,
 provenance/display only, NO worktree);
@@ -295,8 +293,8 @@ provenance/display only, NO worktree);
 output)` against the role's `outputSchema` — the shared `investigate-evidence`
 shape (`{ hypothesisId, evidence[], lean, notes?, probeRequest? }`); a validation
 failure is a contract breach to surface (§Session logs). **Degrade gracefully
-when the catalog tools are absent** — skip (a)–(d) and (g) and fall straight
-through to the bare `CQ_SUBAGENT` dispatch (e). The validate steps are an ADDITIVE
+when the catalog output validator is absent** — skip (g) and fall straight
+through to the bare `CQ_SUBAGENT` dispatch (e). The validate step is an ADDITIVE
 contract check, never a hard dependency.
 
 **An explorer may return a `probeRequest` instead of (or alongside) settling H**
@@ -325,14 +323,12 @@ citation yourself:
   **read+execute** in that worktree and RETURNS the SAME evidence-json shape an
   explorer returns.
   **Catalog-driven dispatch (G41 — investigate-prober).** Drive this dispatch
-  through the typed prompt-catalog MCP tools, MIRRORING the a–g sequence
-  `commands/cq/plan/advance.md` sub-step 1a established for `plan-advance`:
-  **(a)** `prompt-catalog fetch ("investigate-prober")` for its `promptTemplate` + typed
-  `inputSchema`/`outputSchema` (present — a dispatched subagent); **(b–c)** compose
-  the input against that `inputSchema` (`{ hypothesisId, statement, probeRequest:
-  { what, why }, branchContext, leads? }`); **(d)**
-  `validate_input("investigate-prober", input)`, fix and re-validate on
-  `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT` (`role:
+  through the typed prompt-catalog output validator, MIRRORING the
+  surviving-step sequence `commands/cq/plan/advance.md` sub-step 1a establishes
+  for `plan-advance` (T975 removed the parent-side (a) prompt-template fetch and
+  (d) input round-trip): **(b–c)** compose the input against the role's typed
+  `inputSchema` (`{ hypothesisId, statement, probeRequest:
+  { what, why }, branchContext, leads? }`); **(e)** dispatch the `CQ_SUBAGENT` (`role:
   "investigate-prober"`, `isolation: "worktree"`, `model` = the §K8 FRONTIER
   token's `model`, verbatim — its `effort` is N/A at `CQ_SUBAGENT` dispatch per
   T510, provenance/display only); **(f–g)**
@@ -340,8 +336,8 @@ citation yourself:
   against the role's `outputSchema` — the shared `investigate-evidence` shape
   (`{ hypothesisId, evidence[], lean, notes? }`, no `probeRequest`); a validation
   failure is a contract breach to surface (§Session logs). **Degrade gracefully
-  when the catalog tools are absent** — skip (a)–(d) and (g) and fall straight
-  through to the bare `CQ_SUBAGENT` dispatch (e). The validate steps are an ADDITIVE
+  when the catalog output validator is absent** — skip (g) and fall straight
+  through to the bare `CQ_SUBAGENT` dispatch (e). The validate step is an ADDITIVE
   contract check, never a hard dependency.
   **Scope guard (Q89):** probes are **LOCAL-ONLY, NO network**,
   and make **NO persisted edits to the main checkout** — every write stays confined

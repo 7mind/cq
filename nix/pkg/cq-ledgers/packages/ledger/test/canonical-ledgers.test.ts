@@ -1802,10 +1802,13 @@ describe("T854: claim-before-plan protocol shape — structural grep invariants"
 //     dispatched roles ONLY — orchestrator-command roles carry no typed schema,
 //     so their prose ioSchema (which may still restate a JSON shape) is exempt.
 //
-// (2) EACH-DISPATCH-SITE documents the validate-in → run → validate-out flow for
+// (2) EACH-DISPATCH-SITE documents the compose → run → validate-out flow for
 //     its dispatched subagents, MIRRORING the T344 plan-advance proof: each of
 //     the three enumerated dispatch-site command files carries a
 //     `Catalog-driven dispatch (G41 — <role>)` marker per subagent it dispatches.
+//     T975 removed the parent-side prompt-materialization and validate-in legs
+//     of that flow for native Claude dispatch, so only the validate-OUT leg is
+//     asserted here; the T975 block below owns the negative inventory.
 //
 // Path resolution mirrors the T255/T264/D43/T340 blocks above.
 // ---------------------------------------------------------------------------
@@ -1899,18 +1902,16 @@ describe("T345: dispatched roles wired through the typed prompt catalog — grep
     for (const role of roles) {
       it(`${label} documents catalog-driven dispatch for ${role}`, async () => {
         const text = await readFile(file, "utf8");
-        // plan-advance's own block was authored by T344 with the original
-        // `(G41, Q185 steps a–g) — the proof path` marker (T345 must NOT retouch
-        // it); the sibling roles T345 adds carry the uniform `(G41 — <role>)`
-        // site marker. Either marker form proves the block is present.
-        expect(
-          text.includes(`Catalog-driven dispatch (G41 — ${role})`) ||
-            (role === "plan-advance" && text.includes("Catalog-driven dispatch (G41, Q185 steps a–g)")),
-        ).toBe(true);
-        // and the validate-in / run / validate-out tool calls for that role.
-        expect(text).toContain(`prompt-catalog fetch ("${role}")`);
-        expect(text).toContain(`validate_input("${role}", input)`);
+        // Every site — plan-advance's T344-authored block included, relabelled by
+        // T975 when its `steps a–g` enumeration lost (a) and (d) — carries the
+        // uniform `(G41 — <role>)` site marker.
+        expect(text).toContain(`Catalog-driven dispatch (G41 — ${role})`);
+        // and the validate-OUT tool call for that role (T898/T977 own this leg;
+        // T975 removed the parent-side fetch + validate-in legs).
         expect(text).toContain(`validate_output("${role}",`);
+        // The catalog fetch stays ALLOWLISTED as an inspection/debug capability
+        // on every surface's operational vocabulary — T975 removed only the
+        // parent orchestrator's ordinary use of it.
         for (const fragmentPath of operationalToolFragments) {
           const fragment = await readFile(fragmentPath, "utf8");
           expect(fragment).toContain('`prompt-catalog fetch ("<roleId>")` → call `');

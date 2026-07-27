@@ -241,24 +241,21 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       an optional orthogonal `defectsToFile` batch. Strip any prose around the
       fenced block before parsing.
 
-      **Catalog-driven dispatch (G41, Q185 steps a–g) — the proof path.** Drive
-      this `plan-advance` dispatch through the typed prompt-catalog MCP tools the
-      ledger-mcp server added in T343 (`fetch_prompt` / `validate_input` /
-      `validate_output`). The full sequence is:
-      - **(a) fetch the prompt template.** Call `prompt-catalog fetch ("plan-advance")`
-        for the role's `promptTemplate` plus its typed `inputSchema` /
-        `outputSchema` (the dispatched-subagent payload — `plan-advance` is a
-        dispatched subagent, so the schemas are present).
-      - **(b) take its `inputSchema`.** Read the `inputSchema` off that
-        `fetch_prompt` result — the input contract for the dispatch.
-      - **(c) compose the input.** Build the input object against that schema:
-        `{ goalId: "<G>" }`, with `candidateMode` omitted/false in this
-        single-planner mode.
-      - **(d) validate the input.** Call `validate_input("plan-advance", input)`.
-        On `{ ok: false, errors }`, FIX the composed input and re-validate — do
-        NOT dispatch an input the schema rejects.
+      **Catalog-driven dispatch (G41 — plan-advance) — the proof path.** Drive
+      this `plan-advance` dispatch through the typed prompt-catalog output
+      validator the ledger-mcp server added in T343. **T975 removed the two
+      parent-side steps that were pure duplication for a NATIVE Claude dispatch:
+      the old step (a) prompt-template fetch (`bun run gen-agents` already bakes
+      the identical role prompt into `agents/plan-advance.md`, which the harness
+      injects at the child's system boundary — the parent's fetched copy launched
+      nothing) and the old step (d) input round-trip. The surviving steps KEEP
+      their original letters**, so (a) and (d) are simply absent:
+      - **(b–c) compose the input.** Build the input object against the role's
+        typed `inputSchema` (the dispatched-subagent contract the catalog holds
+        server-side): `{ goalId: "<G>" }`, with `candidateMode` omitted/false in
+        this single-planner mode.
       - **(e) run the subagent.** Dispatch the `CQ_SUBAGENT` (`role:
-        "plan-advance"`) with the validated input rendered into the prompt
+        "plan-advance"`) with that composed input rendered into the prompt
         (goal id + DEFAULT mode), as above.
       - **(f) await the output.** Capture the subagent's reply and parse the
         fenced-json PlanStepResult out of it.
@@ -272,21 +269,21 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         `abandon` (reason: the contract breach), and stop the loop for this
         goal.
 
-      **Degrade gracefully when the catalog tools are absent** (an older or
-      embedded ledger-mcp server that predates T343 does not advertise
-      `fetch_prompt` / `validate_input` / `validate_output`) — exactly like the
-      `get_agent_models` / `get_planners` / `get_reviewers` tool-absence paths:
-      when these tools are unavailable, SKIP steps (a)–(d) and (g) and fall
-      straight through to the bare `CQ_SUBAGENT` dispatch (step (e)) on the prompt as
-      authored, applying the SAME closed contract by hand: an object with
+      **Degrade gracefully when the catalog output validator is absent** (an
+      older or embedded ledger-mcp server that predates T343 does not advertise
+      it) — exactly like the `get_agent_models` / `get_planners` /
+      `get_reviewers` tool-absence paths: when that tool is unavailable, SKIP
+      step (g) and fall straight through to the bare `CQ_SUBAGENT` dispatch
+      (step (e)) on the prompt as authored, applying the SAME closed contract by
+      hand: an object with
       exactly `mode: "default"`, an `action` in the six-value enum, the payload
       that action requires (`questions` min 1 for `questions`; `researches`
       min 1 for `researches`; a complete `manifest` for `draft`; `finalize:
       { reviewId, decision }` for `finalize`; NO payload for
       `awaiting`/`noop`), optional `grounding`, and an optional `defectsToFile:
       { reviewId: "R<n>", defects: [{ key, headline, severity ∈
-      low|medium|high|critical, ... }] }`. The validate steps are an ADDITIVE
-      contract check, never a hard dependency — their absence never blocks the
+      low|medium|high|critical, ... }] }`. The validate step is an ADDITIVE
+      contract check, never a hard dependency — its absence never blocks the
       round.
 
       **Apply the validated result through the ONE matching guarded mutation.**
@@ -518,8 +515,8 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
    and have their verdicts reconciled into ONE `reviews` item. Resolve which
    reviewers run, run them, reconcile, then continue the loop.
 
-   1. **Resolve the active reviewer set.** Call the ledger MCP
-      `get_reviewers` tool (registered in `.mcp.json`; returns
+   1. **Resolve the active reviewer set.** Call the
+      `ledger::get_reviewers` MCP tool (registered in `.mcp.json`; returns
       `{ configured: boolean, reviewers: [{ harness, model, alias }] }`,
       `harness` ∈ {`claude`, `pi`}).
       - If the tool is **absent** (server not registered) or it returns
@@ -549,20 +546,19 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       snapshot MUST precede the reviewer dispatch.
 
       **Catalog-driven dispatch (G41 — plan-reviewer).** Drive this
-      `plan-reviewer` dispatch through the same typed prompt-catalog MCP tools the
-      `plan-advance` dispatch uses in sub-step 1a, MIRRORING that a–g sequence for
-      the `plan-reviewer` role: **(a)** `prompt-catalog fetch ("plan-reviewer")` for its
-      `promptTemplate` + typed `inputSchema`/`outputSchema` (present — a dispatched
-      subagent); **(b–c)** compose the input against that `inputSchema`
-      (`{ goalId: "<G>" }`); **(d)** `validate_input("plan-reviewer", input)`, fix
-      and re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
-      (`role: "plan-reviewer"`) with the validated input rendered into the
+      `plan-reviewer` dispatch through the same typed prompt-catalog output
+      validator the `plan-advance` dispatch uses in sub-step 1a, MIRRORING that
+      surviving-step sequence for the `plan-reviewer` role (T975 removed the
+      parent-side (a) prompt-template fetch and (d) input round-trip there and
+      here alike): **(b–c)** compose the input against the role's typed
+      `inputSchema` (`{ goalId: "<G>" }`); **(e)** dispatch the `CQ_SUBAGENT`
+      (`role: "plan-reviewer"`) with that composed input rendered into the
       prompt; **(f–g)** await its reply and `validate_output("plan-reviewer",
       output)` against the role's `outputSchema` (a validation failure is a
       contract breach to surface, §Session logs). **Degrade gracefully when the
-      catalog tools are absent** — exactly as sub-step 1a degrades for
-      `plan-advance`: skip (a)–(d) and (g) and fall straight through to the bare
-      `CQ_SUBAGENT` dispatch (e). When the catalog tools are absent, manually
+      catalog output validator is absent** — exactly as sub-step 1a degrades for
+      `plan-advance`: skip (g) and fall straight through to the bare
+      `CQ_SUBAGENT` dispatch (e). When that tool is absent, manually
       apply the identical closed contract: an object with exactly `summary:
       string`, `verdict: "go-ahead"|"revise"`, `new_questions: string[]`,
       `criticism: string[]`, and `defects: object[]`; every defect has exactly

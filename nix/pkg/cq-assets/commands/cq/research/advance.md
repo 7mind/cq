@@ -269,23 +269,21 @@ findings before framing the next child. Write each explorer's session log on ret
 (§Session logs).
 
 **Catalog-driven dispatch (research-explorer).** Drive each `research-explorer`
-dispatch through the typed prompt-catalog MCP tools (`fetch_prompt` /
-`validate_input` / `validate_output`), MIRRORING the a–g sequence
-`commands/cq/plan/advance.md` sub-step 1a established for `plan-advance`: **(a)**
-`prompt-catalog fetch ("research-explorer")` for its `promptTemplate` + typed
-`inputSchema`/`outputSchema` (present — a dispatched subagent); **(b–c)** compose
-the input against that `inputSchema` (`{ hypothesisId, statement, branchContext,
-leads? }`); **(d)** `validate_input("research-explorer", input)`, fix and
-re-validate on `{ ok: false, errors }`; **(e)** dispatch the `CQ_SUBAGENT`
+dispatch through the typed prompt-catalog output validator, MIRRORING the
+surviving-step sequence `commands/cq/plan/advance.md` sub-step 1a establishes for
+`plan-advance` (T975 removed the parent-side (a) prompt-template fetch and (d)
+input round-trip): **(b–c)** compose the input against the role's typed
+`inputSchema` (`{ hypothesisId, statement, branchContext,
+leads? }`); **(e)** dispatch the `CQ_SUBAGENT`
 (`role: "research-explorer"`, `model` = the FRONTIER token's `model`,
 verbatim — its `effort` is N/A at `CQ_SUBAGENT` dispatch per T510, provenance/display
 only, NO worktree); **(f–g)** await its evidence-json and
 `validate_output("research-explorer", output)` against the role's `outputSchema` —
 the shared `investigate-evidence` shape (`{ hypothesisId, evidence[], lean, notes?,
 probeRequest? }`); a validation failure is a contract breach to surface (§Session
-logs). **Degrade gracefully when the catalog tools are absent** — skip (a)–(d) and
-(g) and fall straight through to the bare `CQ_SUBAGENT` dispatch (e). The validate steps
-are an ADDITIVE contract check, never a hard dependency.
+logs). **Degrade gracefully when the catalog output validator is absent** — skip
+(g) and fall straight through to the bare `CQ_SUBAGENT` dispatch (e). The validate step
+is an ADDITIVE contract check, never a hard dependency.
 
 **An explorer may return a `probeRequest` instead of (or alongside) settling H**
 when it cannot adjudicate by reading alone (repo + web) — it needs something RUN.
@@ -314,13 +312,12 @@ so re-open every citation yourself:
   evidence-json shape an explorer returns, WITHOUT a `probeRequest` (it executes; it
   does not escalate further).
   **Catalog-driven dispatch (research-experimenter).** Drive this dispatch through
-  the typed prompt-catalog MCP tools, MIRRORING the a–g sequence
-  `commands/cq/plan/advance.md` sub-step 1a: **(a)**
-  `prompt-catalog fetch ("research-experimenter")` for its `promptTemplate` + typed
-  `inputSchema`/`outputSchema`; **(b–c)** compose the input against that
+  the typed prompt-catalog output validator, MIRRORING the surviving-step sequence
+  `commands/cq/plan/advance.md` sub-step 1a establishes (T975 removed the
+  parent-side (a) prompt-template fetch and (d) input round-trip): **(b–c)**
+  compose the input against the role's typed
   `inputSchema` (`{ hypothesisId, statement, probeRequest: { what, why },
-  branchContext, leads? }`); **(d)** `validate_input("research-experimenter",
-  input)`, fix and re-validate on `{ ok: false, errors }`; **(e)** dispatch the
+  branchContext, leads? }`); **(e)** dispatch the
   `CQ_SUBAGENT` (`role: "research-experimenter"`, `isolation: "worktree"`,
   `model` = the FRONTIER token's `model`, verbatim — its `effort` is N/A at `CQ_SUBAGENT`
   dispatch per T510, provenance/display only); **(f–g)** await its evidence-json and
@@ -328,7 +325,7 @@ so re-open every citation yourself:
   `outputSchema` — the shared `investigate-evidence` shape (`{ hypothesisId,
   evidence[], lean, notes? }`, no `probeRequest`); a validation failure is a
   contract breach to surface (§Session logs). **Degrade gracefully when the catalog
-  tools are absent** — skip (a)–(d) and (g) and fall straight through to the bare
+  output validator is absent** — skip (g) and fall straight through to the bare
   `CQ_SUBAGENT` dispatch (e).
   **Scope note (Q263):** the experimenter is **NETWORK-ALLOWED, including
   in-worktree package installs** (`bun add`/`npm`/`pip`) — the deliberate widening
