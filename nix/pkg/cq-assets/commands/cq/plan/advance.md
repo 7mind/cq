@@ -298,7 +298,11 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       payload conflicts `idempotency-key-reused`, so mint a fresh id for a
       genuinely new operation), the result's `defectsToFile` (when present) as
       `reviewDefects` — filed ATOMICALLY with the action — and
-      `author`/`session`:
+      `author`/`session`. The ONE tokenless call is `kind: "abandon"`: the
+      schema REJECTS `ownerFenceToken` on an abandon (the exact public
+      `claimId` + `generation` pair is its fence), while `kind: "pause"`
+      releases, `publish_plan_draft`, and `finalize_plan` all REQUIRE the
+      token:
       - `questions` →
         `release_plan_claim({ kind: "pause", ..., effect: { kind: "questions",
         questions: <result.questions> }, reviewDefects: <result.defectsToFile?> })`.

@@ -1106,6 +1106,74 @@ export function runPlanLifecycleStoreContract(
         }
       }, timeout);
 
+      it("replays a multi-defect publish batch with identical ids, links, and provenance", async () => {
+        const fixture = await buildGoal(factory, "clarifying", null);
+        try {
+          const claim = requireClaimWinner(
+            await fixture.lifecycle.claimPlan(
+              claimInput("initial", "multi-defect", OWNER_TOKEN_A, null, PROVENANCE_A),
+            ),
+          );
+          const input: PlanPublishDraftInput = {
+            ...publishInput(claim, "multi-defect-publish"),
+            reviewDefects: {
+              reviewId: "R7",
+              defects: [
+                {
+                  key: "lost_response",
+                  headline: "A lost publish response must not double-file",
+                  severity: "critical",
+                  rootCause: "The response was lost after the batch committed",
+                  suggestedFix: "Replay the recorded allocation exactly",
+                },
+                {
+                  key: "unlinked_defect",
+                  headline: "A filed defect must link its goal and review",
+                  severity: "high",
+                  sourceRefs: ["reviews:R7"],
+                  tags: ["guard"],
+                },
+              ],
+            },
+          };
+          const first = await fixture.lifecycle.publishPlanDraft(input);
+          if (!first.ok) throw new Error("multi-defect publish unexpectedly conflicted");
+          expect(first.acknowledgement.reviewDefects).toHaveLength(2);
+          const allocatedIds = first.acknowledgement.reviewDefects.map(({ id }) => id);
+          expect(new Set(allocatedIds).size).toBe(2);
+
+          const state = await fixture.observe(GOAL_ID);
+          expect(state.defects).toHaveLength(2);
+          for (const [index, allocation] of
+            first.acknowledgement.reviewDefects.entries()) {
+            expect(state.defects[index]).toMatchObject({
+              id: allocation.id,
+              goalId: GOAL_ID,
+              reviewId: "R7",
+              provenance: PROVENANCE_A,
+            });
+          }
+
+          // The exact retry — same operationId AND same payload, across a
+          // restart — replays the recorded acknowledgement verbatim: SAME
+          // allocated defect ids, and no defect is re-filed.
+          const restarted = await fixture.restart();
+          const replay = await restarted.lifecycle.publishPlanDraft(input);
+          expect(replay).toEqual({ ...first, replayed: true });
+          if (!replay.ok) throw new Error("multi-defect replay unexpectedly conflicted");
+          expect(replay.acknowledgement.reviewDefects).toEqual(
+            first.acknowledgement.reviewDefects,
+          );
+          const replayed = await restarted.observe(GOAL_ID);
+          expect(replayed.defects).toEqual(state.defects);
+          expect([...replayed.defects.map(({ id }) => id)].sort()).toEqual(
+            [...allocatedIds].sort(),
+          );
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
       it("persists research waits and suppresses claims until every wait is terminal", async () => {
         const fixture = await buildGoal(factory, "clarifying", null);
         try {

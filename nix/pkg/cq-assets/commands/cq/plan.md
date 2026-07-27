@@ -139,81 +139,49 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
    allocated id as **G**. (The `goals` schema requires both `title` and
    `description`.)
 
-3. **Hand off to the planner.** Spawn the `plan-advance` subagent — `CQ_SUBAGENT` tool,
-   `role: "plan-advance"`, passing the goal id **G** in the prompt. On a
-   fresh goal (in `clarifying` with no questions yet) it files the FIRST batch of
-   clarifying questions and returns `awaiting-answers`. You drive it exactly once
-   here — there is nothing to review yet, so no loop is needed.
+3. **Hand off to the planner — chain `CQ::plan/advance` inline.** Run
+   **`CQ::plan/advance G` INLINE** in this same main session, exactly per
+   `commands/cq/plan/advance.md` — do NOT duplicate or re-implement that logic;
+   run it (legal under **K12**: only this orchestrator does the chaining). With
+   G freshly created in `clarifying` and no questions yet, the chained command
+   CLAIMS the round (`claim_plan`, purpose `initial`) BEFORE any planner
+   dispatch, dispatches the `plan-advance` planner, and applies its RETURNED
+   `questions` **PlanStepResult** through the guarded `release_plan_claim`
+   questions pause (the no-write PlanStepResult contract: the `plan-advance`
+   subagent RETURNS its typed result and writes NOTHING — every managed write
+   is the chained command's, made through the guarded plan mutations). The
+   pause files the FIRST batch of clarifying questions and returns the goal to
+   `clarifying`, so the chained run stops at `awaiting-answers`. One chained
+   run is enough here — there is nothing to review yet. The chained command
+   SUPPRESSES its own handoff (step 7 writes the ONE record) and writes +
+   attaches BOTH planner session logs itself (its §Session logs) — you do NOT
+   redo that here.
 
-4. **Write the session logs and attach them to the goal.** The `plan-advance`
-   subagent ends its reply with a `### Session summary` section. Persist BOTH a
-   raw transcript and a summary — **ALL log writes go through `cq log put`;
-   never a direct `Write` to a log path, and never `git add` a
-   log file** (`cq log put` does redaction + strict-JSONL validation IN the CLI
-   and writes into the primary store's out-of-tree logs area; the logical paths
-   `.cq/logs/…` are recorded in sessionLogs/rawLogs and read back via
-   `read_log`). Take
-   `<agent-id>` from the `CQ_SUBAGENT` tool result and stamp `<timestamp>` via `Bash`
-   (`date -u +%Y%m%d-%H%M%S`), then:
-   - **Raw transcript.** Locate the native transcript at
-     `~/.claude/projects/<slug>/<session>/subagents/agent-<agent-id>.jsonl` (the
-     `<slug>` is the absolute ledger-root path with `/` → `-`; `<session>` =
-     `$CLAUDE_CODE_SESSION_ID`) and pipe it through `cq log put`:
-     `cat <transcript> | cq log put --stdin --dest logs/raw/<timestamp>-<agent-id>.jsonl`.
-     **Absent transcript** (older run / crash / non-Claude harness) → do NOT
-     fabricate a raw log: write an explicit `raw transcript unavailable: <reason>`
-     line in the summary-log HEADER and proceed summary-only (leave `rawLogs`
-     un-extended).
-   - **Summary.** Write a short header (goal id, role: planner, returned status
-     token) followed by the verbatim summary block via `cq log put` to
-     `logs/<timestamp>-<agent-id>.md`.
-   **Immediately after writing the logs**, call `update_item("goals", G, fields: {
-   sessionLogs: [".cq/logs/<timestamp>-<agent-id>.md"], rawLogs:
-   [".cq/logs/raw/<timestamp>-<agent-id>.jsonl"] })` to attach BOTH paths to the
-   goal item in the SAME call (omit `rawLogs` when the transcript was absent) —
-   do NOT defer this to a separate pass.
+4. **Confirm the questions.** After the chained run stops, read the goal's
+   open linked questions (`list_milestone_items({ milestone_id: M, projection:
+   "compact" })`, `questions` items with a `goals:<G>` ledgerRef in `open`
+   status) so step 6 can name them. (No writes in this step.)
 
-5. **Auto-investigate filed defects (conditional — K12).** This mirrors the
-   same phase in `CQ::plan/advance` (see that command's §Auto-investigate filed
-   defects for the full logic) — this step is a pointer to it, not a
-   re-derivation.
-
-   Derive the worklist by **LEDGER QUERY** — NOT from the planner's prose:
-   > every `open` defect whose `ledgerRefs` link the just-created goal
-   > (`goals:<G>`) and that has no terminal status (`resolved`/`wontfix`).
-
-   (`fts_search({ query: 'status:open ledgerRefs:"goals:<G>"', ledger:
-   "defects", projection: "compact", limit: 100 })` /
-   `search_items({ ledger_id: "defects", query: "goals:<G>", projection:
-   "compact" })`, retaining only `status:open` items with a `goals:<G>`
-   ledgerRef.)
-
-   **If the worklist is empty (the typical case on a fresh bootstrap) — skip
-   this step entirely.** A freshly bootstrapped goal usually reaches
-   `clarifying` with open questions and no filed defects; the
-   defect-seeded-goal path (investigate→plan) is the main case.
-
-   For each defect **D** in the worklist, run **`CQ::investigate/advance D`
-   inline** in this same main session, exactly per
-   `CQ::investigate/advance` — do NOT duplicate or re-implement
-   that logic; run it. Inherit the stop predicates from `CQ::plan/advance`'s
-   auto-investigate phase (predicates a–f, per K12). A command chaining
-   another command's loop is legal under **K12**; the
-   subagents-cannot-spawn-subagents rule is preserved because only this
-   orchestrator (a command) does the chaining.
+5. **Auto-investigate filed defects (conditional — K12).** Already covered:
+   the chained `CQ::plan/advance` runs its own auto-investigate phase after the
+   per-goal round (see that command's §Auto-investigate filed defects — the
+   authoritative goal-linked defect worklist lives THERE, exactly once). Do NOT
+   re-derive or re-run that phase here (its once-per-round predicate (a)
+   bounds it).
 
 6. **Report.** Tell the user:
    - the goal id **G** and milestone **M** (in idea-ids mode: one G+M line PER
      idea, each annotated with the source idea-id `I` it was seeded from and that
      `I` was flipped to `planned`);
-   - the questions the planner filed (from its returned summary);
+   - the questions the chained planning round filed (named from step 4);
    - that they should answer the questions in the TUI or web client (set each to
      `answered` with a non-empty `answer`), then run **`CQ::plan/advance G`** to
      continue;
-   - if step 5 ran: for each defect D in the worklist, one line covering its
-     auto-investigate outcome (confirmed→seeded goal, parked on a question, or
-     stopped by a K12 predicate) — same format as `CQ::plan/advance`'s §Report
-     auto-investigate lines.
+   - for each defect D the chained command's auto-investigate phase handled
+     (usually none on a fresh bootstrap): one line covering its outcome
+     (confirmed→seeded goal, parked on a question, or stopped by a K12
+     predicate) — same format as `CQ::plan/advance`'s §Report auto-investigate
+     lines.
 
 7. **Handoff record.** This command is the outermost wrapper for this
    invocation (the user ran `CQ::plan`), so **this command** writes the ONE

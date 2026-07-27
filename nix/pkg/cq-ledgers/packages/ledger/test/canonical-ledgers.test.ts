@@ -1726,6 +1726,69 @@ describe("T342: /cq:plan:follow-up idea-ids grammar — structural grep invarian
 });
 
 // ---------------------------------------------------------------------------
+// T854 — claim-before-plan protocol shape: structural grep-invariants over the
+// cq-assets markdown.
+//
+// (1) CHAINED BOOTSTRAP: plan.md's Steps hand off to CQ::plan/advance INLINE
+//     (never a direct unclaimed plan-advance spawn) and attribute the no-write
+//     PlanStepResult contract (the subagent RETURNS its result, writes NOTHING).
+// (2) EXACTLY-ONCE AUTO-INVESTIGATE: the auto-investigate phase (the
+//     authoritative goal-linked defect worklist) is DEFINED in exactly one
+//     place — plan/advance.md — and the two bootstrap wrappers (plan.md,
+//     plan/follow-up.md) POINT to it rather than re-deriving the worklist
+//     query.
+// (3) TOKENLESS-ABANDON GUIDANCE: plan/advance.md's apply block states
+//     explicitly that kind=abandon REJECTS ownerFenceToken while
+//     pause/publish/finalize REQUIRE it.
+// ---------------------------------------------------------------------------
+
+describe("T854: claim-before-plan protocol shape — structural grep invariants", () => {
+  const cqCommandsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
+  const planMd = path.join(cqCommandsRoot, "plan.md");
+  const advanceMd = path.join(cqCommandsRoot, "plan", "advance.md");
+  const followUpMd = path.join(cqCommandsRoot, "plan", "follow-up.md");
+
+  it("plan.md hands off by chaining CQ::plan/advance inline — never a direct unclaimed spawn", async () => {
+    const text = await readFile(planMd, "utf8");
+    expect(text).toContain("chain `CQ::plan/advance` inline");
+    expect(text).toContain("CLAIMS the round (`claim_plan`, purpose `initial`) BEFORE any planner");
+    expect(text).not.toContain("Spawn the `plan-advance` subagent");
+  });
+
+  it("plan.md attributes the no-write PlanStepResult contract", async () => {
+    const text = await readFile(planMd, "utf8");
+    expect(text).toContain("PlanStepResult");
+    expect(text).toContain("writes NOTHING");
+  });
+
+  it("plan/advance.md defines the auto-investigate phase exactly once across the plan commands", async () => {
+    const advance = await readFile(advanceMd, "utf8");
+    const plan = await readFile(planMd, "utf8");
+    const followUp = await readFile(followUpMd, "utf8");
+    expect(advance.match(/## Auto-investigate filed defects/g)).toHaveLength(1);
+    expect(plan).not.toContain("## Auto-investigate filed defects");
+    expect(followUp).not.toContain("## Auto-investigate filed defects");
+  });
+
+  it("the bootstrap wrappers point at the phase instead of re-deriving its worklist query", async () => {
+    const plan = await readFile(planMd, "utf8");
+    const followUp = await readFile(followUpMd, "utf8");
+    for (const text of [plan, followUp]) {
+      expect(text).toContain("§Auto-investigate filed defects");
+      // No re-derived worklist derivation or status-query in the wrappers.
+      expect(text).not.toContain("Derive the worklist");
+      expect(text).not.toContain('fts_search({ query: \'status:open ledgerRefs:"goals:<G>"\'');
+    }
+  });
+
+  it("plan/advance.md states explicitly that abandon is tokenless while pause/publish/finalize require the token", async () => {
+    const text = await readFile(advanceMd, "utf8");
+    expect(text).toContain("REJECTS `ownerFenceToken` on an abandon");
+    expect(text).toMatch(/all REQUIRE the\s+token/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // T345 — every DISPATCHED-SUBAGENT role is wired through the typed prompt
 // catalog (G41). Two structural grep-invariants over the cq-assets markdown:
 //

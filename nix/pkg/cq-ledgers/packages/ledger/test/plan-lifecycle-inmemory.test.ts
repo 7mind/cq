@@ -805,6 +805,57 @@ describe("T848 InMemory plan lifecycle semantics", () => {
     }
   });
 
+  it("rejects raw planner writes against managed plan state (T854)", async () => {
+    const fixture = await buildFixture();
+    try {
+      const claim = await claimInitial(fixture, "raw-planner-writes", OWNER_A, null);
+      const before = await fixture.observe("G1");
+
+      // A planner writing a task onto the managed goal DIRECTLY (bypassing
+      // publishPlanDraft) is refused.
+      await expect(
+        fixture.store.createItem(TASKS_LEDGER, MILESTONES_AMBIENT_ID, {
+          status: "planned",
+          fields: {
+            headline: "planner bypass task",
+            ledgerRefs: ["goals:G1"],
+          },
+        }),
+      ).rejects.toThrow(/only through PlanLifecycleStore/);
+
+      // So is every raw rewrite of the goal's MANAGED plan fields.
+      for (const fields of [
+        { waitingResearches: ["RS1"] },
+        { planCurrentDraft: "null" },
+        { planFinalizedManifest: "{}" },
+        { planActiveClaim: "{}" },
+        { milestones: ["M999"] },
+      ]) {
+        await expect(
+          fixture.store.updateItem(GOALS_LEDGER, "G1", { fields }),
+        ).rejects.toThrow(/only through PlanLifecycleStore/);
+      }
+
+      // The managed state is undisturbed and the claimed round still works.
+      expect(await fixture.observe("G1")).toEqual(before);
+      expect(
+        (
+          await fixture.lifecycle.releasePlanClaim({
+            kind: "abandon",
+            goalId: "G1",
+            claimId: claim.claimId,
+            generation: claim.generation,
+            operationId: "raw-planner-writes-abandon",
+            reason: "guard probe complete",
+            ...PROVENANCE,
+          })
+        ).ok,
+      ).toBe(true);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it("keeps research-wait status interpretation structurally single-owned", async () => {
     const [predicateSource, lifecycleSource] = await Promise.all([
       readFile(new URL("../src/store/predicates.ts", import.meta.url), "utf8"),

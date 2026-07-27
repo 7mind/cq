@@ -22,6 +22,16 @@
  *             claim + abandon release the goal is plannable again, and a
  *             re-pause installs a fresh wait set that suppresses and
  *             re-enables in turn;
+ *  (defects)  the guarded-filed review-defect batch (T854): for EACH action
+ *             that can carry one — draft PUBLISH (revise), QUESTION pause,
+ *             FINALIZE, and abandon release (noop) — the filed defects carry
+ *             the goals:<G> + reviews:<R> links (goal- and review-side), are
+ *             discovered by the plan-owned goal-linked worklist query EXACTLY
+ *             ONCE each, and are EXCLUDED from the global P-investigate
+ *             predicate while the goal is clarifying/planning (the exclusion
+ *             LIFTS at `planned`); the question-pause case also proves the
+ *             phase divergence: questions park the goal in `clarifying`
+ *             waiting for ANSWERS (P-plan suppressed until answered);
  *  (manifest) DRAFT tasks (published, not yet finalized) and SUPERSEDED-
  *             manifest tasks are EXCLUDED from P-implement; the FINALIZED
  *             current manifest EXECUTES across generations; a
@@ -47,6 +57,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "bun:test";
 import {
   derivePredicates,
+  DEFECTS_LEDGER,
   FsLedgerStore,
   GitObjectLedgerBackend,
   GOALS_LEDGER,
@@ -59,6 +70,8 @@ import {
   type PlanClaimAcknowledgement,
   type PlanDraftManifest,
   type PlanLifecycleStore,
+  type PlanReviewDefectBatch,
+  QUESTIONS_LEDGER,
   RESEARCHES_LEDGER,
   REVIEWS_LEDGER,
   SqliteLedgerStore,
@@ -367,7 +380,8 @@ async function publishManifest(
   claim: PlanClaimAcknowledgement,
   operationId: string,
   manifest: PlanDraftManifest,
-): Promise<void> {
+  reviewDefects?: PlanReviewDefectBatch,
+): Promise<string[]> {
   const result = await store.publishPlanDraft({
     goalId: claim.goalId,
     claimId: claim.claimId,
@@ -376,8 +390,44 @@ async function publishManifest(
     ownerFenceToken: claim.ownerFenceToken,
     ...PROVENANCE,
     manifest,
+    ...(reviewDefects === undefined ? {} : { reviewDefects }),
   });
   if (!result.ok) throw new Error(`publish failed: ${result.conflict.code}`);
+  return result.acknowledgement.reviewDefects.map(({ id }) => id);
+}
+
+async function pauseForQuestions(
+  store: LifecycleStore,
+  claim: PlanClaimAcknowledgement,
+  operationId: string,
+  key = "scope",
+  reviewDefects?: PlanReviewDefectBatch,
+): Promise<{ questionId: string; defectIds: string[] }> {
+  const result = await store.releasePlanClaim({
+    kind: "pause",
+    goalId: claim.goalId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    operationId,
+    ownerFenceToken: claim.ownerFenceToken,
+    ...PROVENANCE,
+    effect: {
+      kind: "questions",
+      questions: [
+        { key, question: "Which scope should the plan cover?", recommendation: "smallest" },
+      ],
+    },
+    ...(reviewDefects === undefined ? {} : { reviewDefects }),
+  });
+  if (!result.ok || result.acknowledgement.kind !== "questions") {
+    throw new Error("question pause failed");
+  }
+  const [questionId] = result.acknowledgement.questions.map(({ id }) => id);
+  if (questionId === undefined) throw new Error("question allocation missing");
+  return {
+    questionId,
+    defectIds: result.acknowledgement.reviewDefects.map(({ id }) => id),
+  };
 }
 
 async function reviewAndFinalize(
@@ -386,7 +436,8 @@ async function reviewAndFinalize(
   reviewId: string,
   draftRevision: number,
   operationId: string,
-): Promise<void> {
+  reviewDefects?: PlanReviewDefectBatch,
+): Promise<string[]> {
   await store.createItem(REVIEWS_LEDGER, MILESTONES_AMBIENT_ID, {
     id: reviewId,
     status: "go-ahead",
@@ -413,15 +464,18 @@ async function reviewAndFinalize(
     reviewId,
     draftRevision,
     decision: { headline: "Ship the guarded plan" },
+    ...(reviewDefects === undefined ? {} : { reviewDefects }),
   });
   if (!result.ok) throw new Error(`finalize failed: ${result.conflict.code}`);
+  return result.acknowledgement.reviewDefects.map(({ id }) => id);
 }
 
 async function abandonClaim(
   store: LifecycleStore,
   claim: PlanClaimAcknowledgement,
   operationId: string,
-): Promise<void> {
+  reviewDefects?: PlanReviewDefectBatch,
+): Promise<string[]> {
   const result = await store.releasePlanClaim({
     kind: "abandon",
     goalId: claim.goalId,
@@ -430,8 +484,10 @@ async function abandonClaim(
     operationId,
     reason: "predicate probe complete",
     ...PROVENANCE,
+    ...(reviewDefects === undefined ? {} : { reviewDefects }),
   });
   if (!result.ok) throw new Error(`abandon release failed: ${result.conflict.code}`);
+  return result.acknowledgement.reviewDefects.map(({ id }) => id);
 }
 
 /** All active tasks whose fields.ledgerRefs name `goals:<goalId>`. */
@@ -444,6 +500,91 @@ function goalLinkedTasks(store: LifecycleStore, goalId: string): Item[] {
         Array.isArray(fields["ledgerRefs"]) &&
         fields["ledgerRefs"].includes(`${GOALS_LEDGER}:${goalId}`),
     );
+}
+
+/**
+ * The plan-owned auto-investigate WORKLIST query (advance.md §Auto-investigate
+ * filed defects): every ACTIVE defect whose ledgerRefs link the goal
+ * (`goals:<goalId>`) and whose status is still actionable
+ * (open/wip/inconclusive) — derived by LEDGER QUERY, never from prose.
+ */
+function goalLinkedDefectWorklist(store: LifecycleStore, goalId: string): Item[] {
+  return store
+    .fetch(DEFECTS_LEDGER)
+    .milestones.flatMap(({ items }) => items)
+    .filter(
+      ({ status, fields }) =>
+        ["open", "wip", "inconclusive"].includes(status) &&
+        Array.isArray(fields["ledgerRefs"]) &&
+        fields["ledgerRefs"].includes(`${GOALS_LEDGER}:${goalId}`),
+    );
+}
+
+/** A two-defect review batch — multi-defect filing is the T854 atomic unit. */
+function reviewDefectsBatch(reviewId: string): PlanReviewDefectBatch {
+  return {
+    reviewId,
+    defects: [
+      {
+        key: "double_file",
+        headline: "A retried operation must not double-file its batch",
+        severity: "high",
+        rootCause: "The response was lost after the batch committed",
+        suggestedFix: "Replay the recorded allocation exactly",
+      },
+      {
+        key: "unowned_triage",
+        headline: "A goal-linked defect must not be triaged globally",
+        severity: "medium",
+        tags: ["guard"],
+      },
+    ],
+  };
+}
+
+/** The goal+review links every guarded-filed defect must carry. */
+function expectFiledDefectLinks(
+  defects: readonly Item[],
+  goalId: string,
+  reviewId: string,
+): void {
+  for (const defect of defects) {
+    expect(defect.status).toBe("open");
+    expect(defect.fields["ledgerRefs"]).toEqual([
+      `${GOALS_LEDGER}:${goalId}`,
+      `${REVIEWS_LEDGER}:${reviewId}`,
+    ]);
+  }
+}
+
+/** Seed a review the guarded batch can link back to (review-side defect list). */
+async function seedReview(
+  store: LifecycleStore,
+  reviewId: string,
+  goalId: string,
+): Promise<void> {
+  await store.createItem(REVIEWS_LEDGER, MILESTONES_AMBIENT_ID, {
+    id: reviewId,
+    status: "revise",
+    fields: {
+      summary: "reviewed",
+      ledgerRefs: [`${GOALS_LEDGER}:${goalId}`],
+    },
+    author: "reviewer",
+    session: "review-session",
+  });
+}
+
+/** The review-side link: the named review's defects[] names the batch ids. */
+function expectReviewSideLink(
+  store: LifecycleStore,
+  reviewId: string,
+  defectIds: readonly string[],
+): void {
+  expectIds(
+    (store.fetchItem(REVIEWS_LEDGER, reviewId).fields["defects"] ?? []) as string[],
+    defectIds,
+  );
 }
 
 /** Sorted id-list comparison (allocation order is incidental). */
@@ -570,6 +711,158 @@ function runPlanPredicatesSuite(backend: Backend): void {
         expectIds(derivePredicates(store).pPlan.items, []);
         await setResearchStatus(store, secondResearch, "concluded");
         expectIds(derivePredicates(store).pPlan.items, [GOAL_ID]);
+      } finally {
+        await backend.dispose(store);
+      }
+    });
+
+    it("(defects:revise) publish-filed defects are P-investigate-excluded under the planning round and discovered exactly once", async () => {
+      const store = await backend.build();
+      try {
+        await seedLegacyGoal(store, GOAL_ID, "clarifying");
+        await seedReview(store, "R11", GOAL_ID);
+        const claim = await claimInitial(store, GOAL_ID, "defects-revise-claim", null);
+        const allocated = await publishManifest(
+          store,
+          claim,
+          "defects-revise-publish",
+          {
+            milestones: [{ key: "delivery", title: "Delivery" }],
+            tasks: [
+              { key: "implementation", milestoneKey: "delivery", headline: "Implementation" },
+            ],
+          },
+          reviewDefectsBatch("R11"),
+        );
+        expect(allocated).toHaveLength(2);
+
+        // The plan-owned worklist discovers EXACTLY the filed batch, once
+        // each — and re-derivation is idempotent (a filed defect appears in it
+        // EXACTLY ONCE, predicate (a)'s store-side half).
+        const worklist = goalLinkedDefectWorklist(store, GOAL_ID);
+        expectIds(worklist.map(({ id }) => id), allocated);
+        expectIds(goalLinkedDefectWorklist(store, GOAL_ID).map(({ id }) => id), allocated);
+        expectFiledDefectLinks(worklist, GOAL_ID, "R11");
+        expectReviewSideLink(store, "R11", allocated);
+
+        // While the goal is in a movable planning phase the GLOBAL predicate
+        // never surfaces them — the plan-owned worklist is their ONLY
+        // investigation channel (never double-triaged).
+        expectIds(derivePredicates(store).pInvestigate.items, []);
+      } finally {
+        await backend.dispose(store);
+      }
+    });
+
+    it("(defects:question) question-pause-filed defects stay P-investigate-excluded in clarifying; the goal waits for answers", async () => {
+      const store = await backend.build();
+      try {
+        await seedLegacyGoal(store, GOAL_ID, "clarifying");
+        await seedReview(store, "R12", GOAL_ID);
+        const claim = await claimInitial(store, GOAL_ID, "defects-question-claim", null);
+        const { questionId, defectIds } = await pauseForQuestions(
+          store,
+          claim,
+          "defects-question-pause",
+          "scope",
+          reviewDefectsBatch("R12"),
+        );
+        expect(defectIds).toHaveLength(2);
+
+        // The question pause returned the goal to clarifying (the release
+        // contract's goalPhase): the goal WAITS FOR ANSWERS, not for research.
+        const goal = store.fetchItem(GOALS_LEDGER, GOAL_ID);
+        expect(goal.status).toBe("clarifying");
+        expect(goal.fields["waitingResearches"] ?? []).toEqual([]);
+
+        const worklist = goalLinkedDefectWorklist(store, GOAL_ID);
+        expectIds(worklist.map(({ id }) => id), defectIds);
+        expectIds(goalLinkedDefectWorklist(store, GOAL_ID).map(({ id }) => id), defectIds);
+        expectFiledDefectLinks(worklist, GOAL_ID, "R12");
+        expectReviewSideLink(store, "R12", defectIds);
+
+        const waiting = derivePredicates(store);
+        expectIds(waiting.pInvestigate.items, []);
+        expectIds(waiting.pPlan.items, []); // parked on the open question
+        expectIds(waiting.planBusy.items, []); // the pause released the claim
+
+        // Answering the question unblocks planning; the defect exclusion holds.
+        await store.updateItem(QUESTIONS_LEDGER, questionId, {
+          status: "answered",
+          fields: { answer: "the smallest scope" },
+          ...PROVENANCE,
+        });
+        const answered = derivePredicates(store);
+        expectIds(answered.pPlan.items, [GOAL_ID]);
+        expectIds(answered.pInvestigate.items, []);
+      } finally {
+        await backend.dispose(store);
+      }
+    });
+
+    it("(defects:finalize) finalize-filed defects are discovered exactly once and the exclusion lifts at planned", async () => {
+      const store = await backend.build();
+      try {
+        await seedLegacyGoal(store, GOAL_ID, "clarifying");
+        const claim = await claimInitial(store, GOAL_ID, "defects-finalize-claim", null);
+        await publishManifest(store, claim, "defects-finalize-publish", {
+          milestones: [{ key: "delivery", title: "Delivery" }],
+          tasks: [
+            { key: "implementation", milestoneKey: "delivery", headline: "Implementation" },
+          ],
+        });
+        const allocated = await reviewAndFinalize(
+          store,
+          claim,
+          "R13",
+          1,
+          "defects-finalize",
+          reviewDefectsBatch("R13"),
+        );
+        expect(allocated).toHaveLength(2);
+        expect(store.fetchItem(GOALS_LEDGER, GOAL_ID).status).toBe("planned");
+
+        // Discovery still finds EXACTLY the filed batch, once each...
+        const worklist = goalLinkedDefectWorklist(store, GOAL_ID);
+        expectIds(worklist.map(({ id }) => id), allocated);
+        expectIds(goalLinkedDefectWorklist(store, GOAL_ID).map(({ id }) => id), allocated);
+        expectFiledDefectLinks(worklist, GOAL_ID, "R13");
+        expectReviewSideLink(store, "R13", allocated);
+
+        // ...but the goal has LEFT the movable planning phases, so the global
+        // predicate's ownership exclusion no longer applies to them.
+        expectIds(derivePredicates(store).pInvestigate.items, allocated);
+      } finally {
+        await backend.dispose(store);
+      }
+    });
+
+    it("(defects:noop) abandon-filed defects stay P-investigate-excluded in planning and are discovered exactly once", async () => {
+      const store = await backend.build();
+      try {
+        await seedLegacyGoal(store, GOAL_ID, "clarifying");
+        await seedReview(store, "R14", GOAL_ID);
+        const claim = await claimInitial(store, GOAL_ID, "defects-noop-claim", null);
+        const allocated = await abandonClaim(
+          store,
+          claim,
+          "defects-noop-abandon",
+          reviewDefectsBatch("R14"),
+        );
+        expect(allocated).toHaveLength(2);
+
+        // The abandon released the claim WITHOUT a phase change: the goal is
+        // still in planning, so the filed defects remain plan-owned.
+        expect(store.fetchItem(GOALS_LEDGER, GOAL_ID).status).toBe("planning");
+        const worklist = goalLinkedDefectWorklist(store, GOAL_ID);
+        expectIds(worklist.map(({ id }) => id), allocated);
+        expectIds(goalLinkedDefectWorklist(store, GOAL_ID).map(({ id }) => id), allocated);
+        expectFiledDefectLinks(worklist, GOAL_ID, "R14");
+        expectReviewSideLink(store, "R14", allocated);
+
+        const predicates = derivePredicates(store);
+        expectIds(predicates.pInvestigate.items, []);
+        expectIds(predicates.planBusy.items, []); // the abandon released the claim
       } finally {
         await backend.dispose(store);
       }

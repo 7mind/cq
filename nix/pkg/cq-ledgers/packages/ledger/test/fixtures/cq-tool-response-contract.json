@@ -208,10 +208,7 @@
         "Before you start::fts_search#1|compact",
         "Steps::create_milestone#1|ack",
         "Steps::create_item#1|ack",
-        "Steps::read_log#1|full-content",
-        "Steps::update_item#1|ack",
-        "Steps::fts_search#1|compact",
-        "Steps::search_items#1|compact"
+        "Steps::list_milestone_items#1|compact"
       ]
     },
     {
