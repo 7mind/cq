@@ -1,5 +1,10 @@
 import { DISPATCHED_ROLE_IDS, DISPATCHED_ROLE_SIDECARS } from "./promptCatalogStore.js";
 import { PROMPT_SURFACES, type JSONSchema, type PromptSurface } from "./promptCatalog.js";
+import {
+  DISPATCH_OVERLAY_REGISTRY,
+  dispatchOverlayListSchema,
+  type DispatchOverlayRegistry,
+} from "./dispatchOverlays.js";
 
 /** The dispatched-role ids accepted by the compact launch boundary. */
 export type DispatchedRoleId = keyof typeof DISPATCHED_ROLE_SIDECARS;
@@ -231,21 +236,11 @@ const nativeCompletionSchema = {
   additionalProperties: false,
 } as const;
 
-const emptyOverlayListSchema = {
-  type: "array",
-  items: {
-    type: "object",
-    properties: {
-      overlayId: { type: "string", minLength: 1 },
-      data: {},
-    },
-    required: ["overlayId", "data"],
-    additionalProperties: false,
-  },
-  maxItems: 0,
-} as const;
-
-function launchBranch(roleId: string, inputSchema: JSONSchema): JSONSchema {
+function launchBranch(
+  roleId: string,
+  inputSchema: JSONSchema,
+  registry: DispatchOverlayRegistry,
+): JSONSchema {
   return {
     type: "object",
     properties: {
@@ -258,7 +253,7 @@ function launchBranch(roleId: string, inputSchema: JSONSchema): JSONSchema {
         pattern: "\\S",
       },
       timeoutMs: { type: "integer", minimum: 1 },
-      overlays: emptyOverlayListSchema,
+      overlays: dispatchOverlayListSchema(roleId, registry),
     },
     required: ["roleId", "input", "idempotencyKey", "timeoutMs"],
     additionalProperties: false,
@@ -266,21 +261,31 @@ function launchBranch(roleId: string, inputSchema: JSONSchema): JSONSchema {
 }
 
 /**
- * Role-aware launch schema. Each branch embeds the authoritative input sidecar,
- * so a valid role id with another role's input fails before launch.
- *
- * The runtime-overlay registry intentionally starts empty. T684 owns adding
- * declared overlay schemas and deterministic rendering; until then only an
- * absent or empty `overlays` list can pass.
+ * Role-aware launch schema over an explicit overlay registry (T684). Each
+ * branch embeds the authoritative input sidecar, so a valid role id with
+ * another role's input fails before launch, and derives its `overlays` list
+ * from the registry, so an undeclared overlay id, another role's overlay, or
+ * invalid overlay data also fails before launch.
  */
-export const COMPACT_DISPATCH_LAUNCH_SCHEMA: JSONSchema = {
-  $schema: DRAFT_2020_12,
-  $id: "cq:compact-dispatch/launch",
-  title: "compact dispatched-subagent launch",
-  oneOf: Object.entries(DISPATCHED_ROLE_SIDECARS).map(([roleId, sidecar]) =>
-    launchBranch(roleId, sidecar.inputSchema),
-  ),
-};
+export function compactDispatchLaunchSchemaFor(registry: DispatchOverlayRegistry): JSONSchema {
+  return {
+    $schema: DRAFT_2020_12,
+    $id: "cq:compact-dispatch/launch",
+    title: "compact dispatched-subagent launch",
+    oneOf: Object.entries(DISPATCHED_ROLE_SIDECARS).map(([roleId, sidecar]) =>
+      launchBranch(roleId, sidecar.inputSchema, registry),
+    ),
+  };
+}
+
+/**
+ * The launch schema over the production overlay registry, which ships empty
+ * (T684 — no concrete runtime-overlay use case exists), so only an absent or
+ * empty `overlays` list can pass.
+ */
+export const COMPACT_DISPATCH_LAUNCH_SCHEMA: JSONSchema = compactDispatchLaunchSchemaFor(
+  DISPATCH_OVERLAY_REGISTRY,
+);
 
 /** Handle-only ordinary launch completion. */
 export const DISPATCH_HANDLE_SCHEMA: JSONSchema = {

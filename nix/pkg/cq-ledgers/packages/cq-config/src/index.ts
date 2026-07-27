@@ -194,6 +194,7 @@ export {
   DISPATCH_LIFECYCLE_STATES,
   DISPATCH_PROTOCOL_OPERATIONS,
   COMPACT_DISPATCH_LAUNCH_SCHEMA,
+  compactDispatchLaunchSchemaFor,
   DISPATCH_HANDLE_SCHEMA,
   DISPATCH_PREPARED_SCHEMA,
   STORE_DISPATCH_RESULT_SCHEMA,
@@ -201,3 +202,16 @@ export {
   ABORT_DISPATCH_SCHEMA,
   FETCH_DISPATCH_RESULT_SCHEMA,
 } from "./compactDispatchProtocol.js";
+export type {
+  DispatchOverlayDefinition,
+  DispatchOverlayRegistry,
+  DispatchPromptMaterializationInput,
+  DispatchPromptMaterialization,
+} from "./dispatchOverlays.js";
+export {
+  DispatchOverlayError,
+  createDispatchOverlayRegistry,
+  DISPATCH_OVERLAY_REGISTRY,
+  dispatchOverlayListSchema,
+  materializeDispatchPrompt,
+} from "./dispatchOverlays.js";
