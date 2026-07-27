@@ -157,6 +157,8 @@ describe("T850 SQLite lifecycle persistence", () => {
       dbPath: file,
       now: () => RESET_NOW,
       onSchemaDivergence: "backup-reinit",
+      // D170: this test DELIBERATELY reinitialises a populated store.
+      allowDestructiveReinitOfPopulatedStore: true,
     });
     await reset.init();
     try {

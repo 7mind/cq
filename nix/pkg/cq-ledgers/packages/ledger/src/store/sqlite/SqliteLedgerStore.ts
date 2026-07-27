@@ -188,6 +188,26 @@ export interface SqliteLedgerStoreOpts {
    *   then wipe every row and reseed fresh canonical state.
    */
   onSchemaDivergence?: "backup-reinit" | "abort";
+  /**
+   * Consent to `'backup-reinit'` DESTROYING a store that already holds user
+   * data. Default `false` — without it, a populated store REFUSES to reinit
+   * even when the policy says `'backup-reinit'` (D170).
+   *
+   * WHY THIS EXISTS: the ledger was destroyed TWICE on 2026-07-27 (1147 then
+   * 1155 active items, plus 2278 archived, replaced by a single bootstrap
+   * milestone). Neither wipe came from production code — production never
+   * passes a policy and so always takes `'abort'` — but test-shaped code passes
+   * `'backup-reinit'` in many places, and two different code paths reached the
+   * REAL store: one from an agent worktree, one presenting the main-checkout
+   * path. Guarding the RESOLUTION routes proved to be whack-a-mole; guarding
+   * the DESTRUCTION is route-independent, which is why this gate exists.
+   *
+   * A store that is merely bootstrapped (the immortal `M-AMBIENT` milestone and
+   * nothing else) is NOT populated, so ordinary fresh-store tests are
+   * unaffected. A test that genuinely wants to exercise reinit over real rows
+   * must say so explicitly, in the clear.
+   */
+  allowDestructiveReinitOfPopulatedStore?: boolean;
 }
 
 // --- row shapes (mirror schema.ts DDL) --------------------------------------
@@ -255,6 +275,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
   /** Fired post-COMMIT by {@link fireMutation}; guarded. */
   protected readonly onMutation: OnMutation | null;
   private readonly onSchemaDivergence: "backup-reinit" | "abort";
+  /** D170 destructive-intent gate — see {@link SqliteLedgerStoreOpts}. */
+  private readonly allowDestructiveReinitOfPopulatedStore: boolean;
   private handle: Database | null = null;
   private initialised = false;
   /**
@@ -273,6 +295,8 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     this.now = opts.now ?? (() => new Date().toISOString());
     this.onMutation = opts.onMutation ?? null;
     this.onSchemaDivergence = opts.onSchemaDivergence ?? DEFAULT_ON_SCHEMA_DIVERGENCE;
+    this.allowDestructiveReinitOfPopulatedStore =
+      opts.allowDestructiveReinitOfPopulatedStore ?? false;
   }
 
   // ---------------------------------------------------------------------------
@@ -326,6 +350,29 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
     }
 
     if (divergent.length > 0) {
+      // D170 DESTRUCTIVE-INTENT GATE — runs BEFORE the backup and before any
+      // row is touched. `backup-reinit` may create a fresh store, but it may
+      // NOT silently destroy one that already holds user data unless the caller
+      // consented explicitly. Route-independent by design: the two 2026-07-27
+      // wipes reached this same code through DIFFERENT resolution paths (an
+      // agent worktree, then the main-checkout path), so guarding paths is
+      // whack-a-mole while guarding the destruction is not.
+      const userRows = this.countUserRows(db);
+      if (userRows.total > 0 && !this.allowDestructiveReinitOfPopulatedStore) {
+        db.close();
+        throw new BootstrapViolationError(
+          `refusing to reinitialise a POPULATED ledger: ${divergent.join(", ")} ledger(s) ` +
+            `diverged from canon, and onSchemaDivergence='backup-reinit' would DESTROY ` +
+            `${userRows.items} item(s), ${userRows.archivedItems} archived item(s) and ` +
+            `${userRows.archivePointers} archive pointer(s) at ${this.dbPath}. No data was ` +
+            `touched. Either resolve the divergence (the usual cause is a build whose canon ` +
+            `differs from the persisted schema — deploy/rebuild so they match), or, if you ` +
+            `genuinely intend to erase this store, pass ` +
+            `allowDestructiveReinitOfPopulatedStore: true. D170: this path destroyed the live ` +
+            `ledger twice on 2026-07-27.`,
+        );
+      }
+
       // Default policy — T529 divergence BACKUP action (parity with
       // AbstractLedgerStore.backupAndReinit): VACUUM INTO a byte-complete
       // snapshot of the WHOLE db (every table, not just the divergent
@@ -425,6 +472,46 @@ export class SqliteLedgerStore implements LedgerStore, PlanLifecycleStore {
    */
   private backupDivergentState(db: Database): string {
     return this.vacuumIntoSibling(db, "backup");
+  }
+
+  /**
+   * Count rows that represent USER DATA, for the D170 destructive-intent gate.
+   *
+   * A freshly bootstrapped store holds exactly the immortal `M-AMBIENT`
+   * milestone and its `active` group, so that state must NOT count as populated
+   * — otherwise every ordinary fresh-store test would need the consent flag.
+   * Anything beyond it (any other item, any archived item, any archive pointer)
+   * is data a human or a flow put there, and losing it is the D170 incident.
+   *
+   * Counted on the OPEN handle before any mutation, so the numbers reported in
+   * the refusal are exactly what would have been destroyed.
+   */
+  private countUserRows(db: Database): {
+    items: number;
+    archivedItems: number;
+    archivePointers: number;
+    total: number;
+  } {
+    const scalar = (sql: string): number => {
+      const row = db.query(sql).get() as { c: number } | null;
+      return row === null ? 0 : row.c;
+    };
+    // Exclude ONLY the bootstrap milestone row, matched by exact ledger + id
+    // through placeholders (never interpolation).
+    const itemsRow = db
+      .query<{ c: number }, [string, string]>(
+        "SELECT count(*) AS c FROM items WHERE NOT (ledger = ? AND id = ?)",
+      )
+      .get(MILESTONES_LEDGER, MILESTONES_AMBIENT_ID);
+    const items = itemsRow === null ? 0 : itemsRow.c;
+    const archivedItems = scalar("SELECT count(*) AS c FROM archived_items");
+    const archivePointers = scalar("SELECT count(*) AS c FROM archive_pointers");
+    return {
+      items,
+      archivedItems,
+      archivePointers,
+      total: items + archivedItems + archivePointers,
+    };
   }
 
   /**

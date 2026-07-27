@@ -134,7 +134,13 @@ describe("older build opening a newer store (default policy)", () => {
 describe("explicit backup-reinit opt-in still available", () => {
   test("an operator who asks for backup-reinit still gets it", async () => {
     const { dbPath } = await seedStoreWrittenByNewerBuild();
-    const store = new SqliteLedgerStore({ dbPath, now, onSchemaDivergence: "backup-reinit" });
+    const store = new SqliteLedgerStore({
+      dbPath,
+      now,
+      onSchemaDivergence: "backup-reinit",
+      // D170: this test DELIBERATELY reinitialises a populated store.
+      allowDestructiveReinitOfPopulatedStore: true,
+    });
 
     await expect(store.init()).resolves.toBeUndefined();
     await store.dispose();
