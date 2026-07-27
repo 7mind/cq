@@ -5,9 +5,8 @@
 # focused module. Imported alongside dev-llm via `homeManagerModules.dev-llm`,
 # so it shares the same `config`: it reuses `smind.hm.dev.llm.enable` as its
 # on/off switch. Provider/API-key secrets are wired here via
-# `smind.hm.dev.llm.yolo.secretSessionVariables` on Linux (composed + sourced
-# inside bubblewrap), so every Linux harness inherits them. Darwin inherits the
-# launcher's environment; secret-file composition is not wired there.
+# `smind.hm.dev.llm.yolo.secretSessionVariables` (composed + sourced inside the
+# sandbox), so every harness inherits them.
 #
 # Curried over the flake's `inputs` (for the codegraph package the per-project
 # index bootstrap needs). All host/hardware coupling (device passthrough,
@@ -31,8 +30,8 @@ let
 
   cfg = config.smind.hm.dev.llm;
 
-  # SSH key for remote worker machines: bound read-only (folded into the ro path
-  # set below) and announced to agents via a prompt fragment (config, below) —
+  # SSH key for remote worker machines: made available read-only (folded into
+  # the read-only path set below) and announced via a prompt fragment —
   # replacing the old dedicated YOLO_LLM_SSH_KEY_PATH env + bind. null disables.
   sshKeySet = cfg.llmSshKeyPath != null;
 
@@ -103,8 +102,9 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = ''
-        Host path of a rootless-Podman socket to bind into the yolo sandbox,
-        exposing container access to sandboxed agents. null disables it.
+        Linux host path of a rootless-Podman socket to bind into the yolo
+        sandbox, exposing container access to sandboxed agents. The Darwin
+        runtime-adapter design remains pending. null disables it.
       '';
     };
 
@@ -112,7 +112,7 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = ''
-        DOCKER_HOST-style URI for the rootless-Podman socket bound via
+        Linux DOCKER_HOST-style URI for the rootless-Podman socket bound via
         {option}`smind.hm.dev.llm.podman.socketPath`. null disables it.
       '';
     };
@@ -121,11 +121,10 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = ''
-        Linux-only path to an SSH private key for remote worker machines. When
-        set on Linux, the key is read-only bound into the sandbox at the same
-        host path (folded into the read-only bind set), AND a prompt fragment
-        (tagged "ssh") tells agents how to authenticate. Darwin does not add a
-        filesystem grant or prompt for this option. null disables both.
+        Path to an SSH private key for remote worker machines. When set, the key
+        is made available read-only inside the sandbox at the same host path,
+        and a prompt fragment (tagged "ssh") tells agents how to authenticate.
+        null disables both.
       '';
     };
 
@@ -133,10 +132,10 @@ in
       type = lib.types.listOf lib.types.str;
       default = [ ];
       description = ''
-        Extra host paths to ro-bind into the yolo sandbox. Paths that don't
-        exist on the host are silently skipped (handled by llm-sandbox.sh).
-        Use this for per-host bulk storage (e.g. `/srv/nvme`) that should
-        be visible read-only to sandboxed agents.
+        Extra host paths to expose read-only inside the yolo sandbox: Linux
+        creates read-only bind mounts and Darwin appends exact Seatbelt grants.
+        Paths that do not exist on the host are silently skipped. Use this for
+        per-host bulk storage (e.g. `/srv/nvme`).
       '';
     };
 
@@ -144,8 +143,9 @@ in
       type = lib.types.listOf lib.types.str;
       default = [ ];
       description = ''
-        Extra host paths to rw-bind into the yolo sandbox. Same skip-on-missing
-        semantics as `extraReadOnlyPaths`.
+        Extra host paths to expose read-write inside the yolo sandbox: Linux
+        creates bind mounts and Darwin appends exact Seatbelt grants. Same
+        skip-on-missing semantics as `extraReadOnlyPaths`.
       '';
     };
 
@@ -177,8 +177,9 @@ in
         ]
       '';
       description = ''
-        Host device paths bound into the sandbox WITH device access (bwrap
-        `--dev-bind`) — e.g. GPU render nodes for compute passthrough. Each entry
+        Linux host device paths bound into the sandbox WITH device access
+        (bwrap `--dev-bind`) — e.g. GPU render nodes for compute passthrough.
+        Darwin needs capability-specific Seatbelt rules instead. Each entry
         is `{ path; tags ? []; }`; a directory `path` exposes every device node
         under it (so `/dev/dri` covers all render nodes). A device is dropped at
         launch if any of its `tags` is in the `yolo --disable=<tag>` set (e.g.
@@ -243,9 +244,9 @@ in
         agent's `--append-system-prompt`, filtered per agent by `target`, gated
         statically by `when` (Nix-eval) and at runtime by `tags` + the
         `yolo --disable=<tag>` flag. List-merges across modules: this module
-        contributes the YOLO pre-authorization note (target "claude") and, on
-        Linux only, the configured remote-worker SSH note (tag "ssh") and
-        GitHub agent-account note (tag "github"). The consumer appends
+        contributes the YOLO pre-authorization note (target "claude"), the
+        configured remote-worker SSH note (tag "ssh"), and GitHub agent-account
+        note (tag "github"). The consumer appends
         host-specific fragments (e.g. the GPU
         availability note, tagged "gpu"). Replaces the old hardcoded
         permission/GPU notes and the former `extraPromptFragments` option. Codex
@@ -261,10 +262,9 @@ in
         Extra packages to expose on `PATH` INSIDE the yolo sandbox without
         installing them into the host home profile. The packages are collected
         into a single `buildEnv` whose `bin` directory is prepended to the
-        sandboxed command's `PATH` (the closure is already reachable via the
-        ro-bound `/nix/store`, so no extra bind is needed). Applies to every
-        `yolo` subcommand (claude/codex/pi/shell/cmd). Linux-only, like the rest
-        of the sandbox.
+        sandboxed command's `PATH` (the closure is already reachable through
+        `/nix/store`, so no extra filesystem rule is needed). Applies to every
+        `yolo` subcommand (claude/codex/pi/shell/cmd).
       '';
     };
 
@@ -278,11 +278,9 @@ in
         }
       '';
       description = ''
-        Linux-only environment variables to set inside the bubblewrap session,
-        as a NAME -> value map. Applied to every Linux `yolo` subcommand and
-        overridable by `--env NAME=VALUE`. Values may contain `=` but not
-        newlines. Darwin instead inherits the launcher's environment and accepts
-        per-invocation `--env`; this declarative map is not wired there.
+        Environment variables to set inside the sandbox session, as a NAME ->
+        value map. Applied to every `yolo` subcommand and overridable by
+        `--env NAME=VALUE`. Values may contain `=` but not newlines.
       '';
     };
 
@@ -301,14 +299,13 @@ in
         the environment-variable name to the host path of the secret FILE (e.g.
         an agenix secret under `/run/agenix`, or `config.age.secrets.<n>.path`).
 
-        Linux-only secret-file-backed environment variables. Unlike
+        Unlike
         {option}`smind.hm.dev.llm.yolo.sessionVariables`, these never pass
-        through bwrap's argv: yolo composes one mode-0600 file, binds it into
-        bubblewrap, sources it before exec, and removes it on exit. Unreadable
-        files are skipped with a warning. Darwin does not compose or bind these
-        files; use native OAuth or the launcher's inherited environment there.
-        Values are single-line API tokens; use
-        {option}`smind.hm.dev.llm.llmSshKeyPath` for Linux multi-line key files.
+        through the sandbox process's argv: yolo composes one mode-0600 file,
+        sources it through the shared in-sandbox entrypoint before exec, and
+        removes it on exit. Unreadable files are skipped with a warning. Values
+        are single-line API tokens; use
+        {option}`smind.hm.dev.llm.llmSshKeyPath` for multi-line key files.
       '';
     };
 
@@ -367,8 +364,8 @@ in
       #   - YOLO authorization (claude only — Pi/Codex have no permission system).
       #   - Sandbox-active note (every harness — yolo always sets SMIND_SANDBOXED,
       #     so presence of this fragment IS the "sandbox active" signal).
-      #   - SSH remote-worker key usage (Linux, when llmSshKeyPath is set).
-      #   - GitHub agent-account note (Linux, when GH_TOKEN is a secret session var).
+      #   - SSH remote-worker key usage (when llmSshKeyPath is set).
+      #   - GitHub agent-account note (when GH_TOKEN is a secret session var).
       smind.hm.dev.llm.yolo.promptExtensions = lib.mkBefore (
         [
           {
@@ -384,12 +381,12 @@ in
                 ''Sandbox: ACTIVE (macOS Seatbelt via the 'yolo' wrapper; SMIND_SANDBOXED=1). Network access remains available. Filesystem writes are confined to the project directory, agent configuration/profile directories, shared cache, temporary directories allowed by the base policy, and cq's XDG state directory; unrelated home-directory paths are denied.'';
           }
         ]
-        ++ lib.optional (sshKeySet && isLinux) {
+        ++ lib.optional sshKeySet {
           target = "*";
           tags = [ "ssh" ];
-          prompt = ''A dedicated SSH private key for logging into remote worker machines is bound read-only at ${cfg.llmSshKeyPath} inside the sandbox. When you are instructed to use remote worker machines, authenticate with this key — e.g. `ssh -i ${cfg.llmSshKeyPath} <user>@<host>` or `GIT_SSH_COMMAND='ssh -i ${cfg.llmSshKeyPath}' git <push|fetch> ...`.'';
+          prompt = ''A dedicated SSH private key for logging into remote worker machines is available read-only at ${cfg.llmSshKeyPath} inside the sandbox. When you are instructed to use remote worker machines, authenticate with this key — e.g. `ssh -i ${cfg.llmSshKeyPath} <user>@<host>` or `GIT_SSH_COMMAND='ssh -i ${cfg.llmSshKeyPath}' git <push|fetch> ...`.'';
         }
-        ++ lib.optional (isLinux && cfg.yolo.secretSessionVariables ? GH_TOKEN) {
+        ++ lib.optional (cfg.yolo.secretSessionVariables ? GH_TOKEN) {
           target = "*";
           tags = [ "github" ];
           prompt = ''
@@ -408,8 +405,8 @@ in
       );
     }
     # CodeGraph per-project index bootstrap as a sandbox pre-start hook (tag
-    # "codegraph"). Running after bwrap hides unbound ancestor indexes, so the
-    # index selected here is necessarily visible to the agent's MCP server.
+    # "codegraph"). Running inside confinement makes the selected index match
+    # the paths visible to the agent's MCP server.
     # `--disable=codegraph` skips it; explicit tool paths keep it self-contained.
     (lib.mkIf codegraphSet {
       smind.hm.dev.llm.yolo.hooks.pre-start.sandbox = lib.mkBefore [
@@ -439,7 +436,12 @@ in
         pkgs.git
         (pkgs.callPackage ../pkg/yolo-darwin/default.nix {
           claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
-          inherit promptJson;
+          extraReadOnlyPaths = cfg.yolo.extraReadOnlyPaths ++ lib.optional sshKeySet cfg.llmSshKeyPath;
+          extraReadWritePaths = cfg.yolo.extraReadWritePaths;
+          sandboxPackages = cfg.yolo.packages ++ lib.optional codegraphSet cfg.yolo.codegraph;
+          sessionVariables = cfg.yolo.sessionVariables;
+          secretSessionVariables = cfg.yolo.secretSessionVariables;
+          inherit promptJson prehooksJson sandboxHooksJson;
         })
       ];
     })

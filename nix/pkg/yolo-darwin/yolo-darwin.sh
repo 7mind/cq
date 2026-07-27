@@ -5,23 +5,36 @@
 #   YOLO_SANDBOX_EXEC - path to the Darwin sandbox-exec wrapper/binary
 #   YOLO_JQ           - path to jq binary
 #   YOLO_CUSTOM_PROMPT - path to the shared prompt-composition library
-# Darwin applies --disable tags to prompt fragments; Linux also applies them to
-# bwrap-only resources and hooks that Darwin does not provide.
+#   YOLO_SANDBOX_ENTRYPOINT - shared secret/hook-loading child entrypoint
 
 : "${YOLO_SANDBOX_EXEC:?must be set}"
 : "${YOLO_JQ:?must be set}"
 : "${YOLO_CUSTOM_PROMPT:?must be set}"
+: "${YOLO_SANDBOX_ENTRYPOINT:?must be set}"
 
 # An empty profile preserves each agent's native home-directory defaults.
 PROFILE=""
 UNSAFE_SHARE_HOME=0
 # Applied only to the child; explicit pairs override profile-derived values.
 ENV_PAIRS=()
+SESSION_ENV_PAIRS=()
+SANDBOX_PACKAGE_ENV_PAIRS=()
+EXTRA_RO_PATHS=()
+EXTRA_RW_PATHS=()
+CLEANUP_FILES=()
 # Feature suppression: --disable=TAG is repeatable and comma-separated.
 # shellcheck disable=SC2034
 DISABLE_TAGS=()
 # shellcheck source=/dev/null
 source "$YOLO_CUSTOM_PROMPT"
+
+cleanup_yolo_tempfiles() {
+  local file
+  for file in "${CLEANUP_FILES[@]}"; do
+    [[ -n "$file" ]] && rm -f -- "$file"
+  done
+}
+trap cleanup_yolo_tempfiles EXIT
 
 validate_env_pair() {
   if [[ ! "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
@@ -29,6 +42,59 @@ validate_env_pair() {
     exit 1
   fi
 }
+
+print_help() {
+  cat <<'EOF'
+yolo — LLM tool launcher inside a macOS Seatbelt sandbox.
+
+Usage: yolo-darwin [FLAGS...] <claude|codex|pi|shell|cmd> [args...]
+
+Flags (must precede the subcommand):
+  -p, --profile NAME     Use isolated config namespace ~/.config/yolo/NAME
+                         (default: agents read their native home directories).
+  -w, --work             Alias for `--profile work`.
+      --disable=TAG      Drop prompt fragments and pre-start hooks carrying TAG
+                         (repeatable, comma-separated).
+      --ro PATH          Grant ad-hoc read-only access to PATH (repeatable;
+                         skipped if missing).
+      --rw PATH          Grant ad-hoc read-write access to PATH (repeatable;
+                         skipped if missing).
+      --env KEY=VAL      Set an env var inside the sandbox (repeatable).
+      --unsafe-share-home  Allow running with $PWD == $HOME (grants all of $HOME
+                         read-write; refused by default).
+  -h, --help             Show this help and exit.
+
+Subcommands:
+  claude | codex | pi    Launch the named coding agent (bypass approvals).
+  shell                  Interactive shell inside the sandbox.
+  cmd <program> [args…]  Run an arbitrary command inside the sandbox.
+
+The current working directory ($PWD) is always granted read-write. Additional
+paths, packages, environment variables, secrets, and hooks can be configured
+declaratively through smind.hm.dev.llm.yolo.*.
+EOF
+}
+
+if [[ -n "${YOLO_SESSION_VARS:-}" ]]; then
+  while IFS= read -r _session_pair; do
+    [[ -z "$_session_pair" ]] && continue
+    validate_env_pair "$_session_pair"
+    SESSION_ENV_PAIRS+=("$_session_pair")
+  done <<< "$YOLO_SESSION_VARS"
+fi
+if [[ -n "${YOLO_SANDBOX_BIN:-}" ]]; then
+  SANDBOX_PACKAGE_ENV_PAIRS+=("PATH=$YOLO_SANDBOX_BIN:$PATH")
+fi
+if [[ -n "${YOLO_EXTRA_RO_PATHS:-}" ]]; then
+  while IFS= read -r _path; do
+    [[ -n "$_path" ]] && EXTRA_RO_PATHS+=("$_path")
+  done <<< "$YOLO_EXTRA_RO_PATHS"
+fi
+if [[ -n "${YOLO_EXTRA_RW_PATHS:-}" ]]; then
+  while IFS= read -r _path; do
+    [[ -n "$_path" ]] && EXTRA_RW_PATHS+=("$_path")
+  done <<< "$YOLO_EXTRA_RW_PATHS"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +108,16 @@ while [[ $# -gt 0 ]]; do
       IFS=',' read -ra _dtags <<< "${1#*=}"
       DISABLE_TAGS+=("${_dtags[@]}")
       shift ;;
+    --ro)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: $1 requires a path" >&2; exit 1
+      fi
+      EXTRA_RO_PATHS+=("$2"); shift 2 ;;
+    --rw)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "Error: $1 requires a path" >&2; exit 1
+      fi
+      EXTRA_RW_PATHS+=("$2"); shift 2 ;;
     --unsafe-share-home) UNSAFE_SHARE_HOME=1; shift ;;
     --env)
       if [[ $# -lt 2 || -z "$2" ]]; then
@@ -49,7 +125,8 @@ while [[ $# -gt 0 ]]; do
       fi
       validate_env_pair "$2"
       ENV_PAIRS+=("$2"); shift 2 ;;
-    -*) echo "Unknown flag: $1" >&2; exit 1 ;;
+    -h|--help) print_help; exit 0 ;;
+    -*) echo "Unknown flag: $1" >&2; echo "Try 'yolo --help'." >&2; exit 1 ;;
     *) break ;;
   esac
 done
@@ -74,12 +151,27 @@ if [[ "$_pwd_real" == "$_home_real" && $UNSAFE_SHARE_HOME -ne 1 ]]; then
 fi
 
 if [[ $# -eq 0 ]]; then
-  echo "Usage: yolo-darwin [--profile NAME|-p NAME] [--work] [--disable=TAG]... [--unsafe-share-home] [--env KEY=VAL]... <claude|codex|pi|shell|cmd> [args...]" >&2
+  print_help >&2
   exit 1
 fi
 
 SUBCMD="$1"; shift
 CMD_ARGS=("$@")
+
+case "$SUBCMD" in
+  claude|codex|pi|shell) ;;
+  cmd)
+    if [[ ${#CMD_ARGS[@]} -eq 0 ]]; then
+      echo "Usage: yolo-darwin [flags...] cmd <program> [args...]" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Unknown tool: $SUBCMD" >&2
+    echo "Supported: claude, codex, pi, shell, cmd" >&2
+    exit 1
+    ;;
+esac
 
 profile_dir() { printf '%s/.config/yolo/%s/%s' "${HOME}" "${PROFILE}" "$1"; }
 
@@ -103,6 +195,66 @@ _sb_escape() {
   p="${p//\\/\\\\}"
   p="${p//\"/\\\"}"
   printf '%s' "$p"
+}
+
+_logical_absolute_path() {
+  local path="$1" dir base
+  [[ "$path" == /* ]] || path="$PWD/$path"
+  while [[ "$path" != "/" && "$path" == */ ]]; do path="${path%/}"; done
+  if [[ "$path" == "/" ]]; then
+    printf /
+    return
+  fi
+  dir="${path%/*}"
+  base="${path##*/}"
+  [[ -n "$dir" ]] || dir="/"
+  (cd -P -- "$dir" && printf '%s/%s' "$(pwd -P)" "$base")
+}
+
+_render_parent_metadata_grant() {
+  local path="$1" parent esc_parent
+  parent="${path%/*}"
+  printf '(allow file-read-metadata\n'
+  while [[ -n "$parent" && "$parent" != "/" ]]; do
+    esc_parent="$(_sb_escape "$parent")"
+    printf '    (literal "%s")\n' "$esc_parent"
+    parent="${parent%/*}"
+  done
+  printf '    (literal "/"))\n'
+}
+
+_render_path_grant() {
+  local access="$1" path="$2" esc_path
+  esc_path="$(_sb_escape "$path")"
+  _render_parent_metadata_grant "$path"
+  if [[ "$access" == ro ]]; then
+    printf '(allow file-read* file-read-metadata\n'
+  else
+    printf '(allow file-read* file-write* file-write-create file-read-metadata file-ioctl\n'
+  fi
+  printf '    (literal "%s")\n' "$esc_path"
+  printf '    (subpath "%s"))\n' "$esc_path"
+}
+
+_render_configured_path_grants() {
+  local access raw logical canonical
+  for access in ro rw; do
+    if [[ "$access" == ro ]]; then
+      set -- "${EXTRA_RO_PATHS[@]}"
+    else
+      set -- "${EXTRA_RW_PATHS[@]}"
+    fi
+    for raw in "$@"; do
+      [[ -e "$raw" ]] || continue
+      logical="$(_logical_absolute_path "$raw")"
+      canonical="$(realpath "$logical" 2>/dev/null || printf '%s' "$logical")"
+      printf '\n;; Explicit %s grant: %s\n' "$access" "$logical"
+      _render_path_grant "$access" "$logical"
+      if [[ "$canonical" != "$logical" ]]; then
+        _render_path_grant "$access" "$canonical"
+      fi
+    done
+  done
 }
 
 # `--use-profile` replaces the tool's built-in policy, so prepend the pinned
@@ -188,6 +340,7 @@ _render_yolo_rules() {
     printf '    (literal (string-append (param "HOME_DIR") "/.config/yolo/%s/pi"))\n' "$name"
     printf '    (subpath (string-append (param "HOME_DIR") "/.config/yolo/%s/pi")))\n' "$name"
   fi
+  _render_configured_path_grants
 }
 
 render_sandbox_profile() {
@@ -260,8 +413,34 @@ reshare_profile_assets() {
   done
 }
 
-# Environment precedence increases from profile to Claude token to user --env.
-# SMIND_SANDBOXED remains non-overridable because agent tooling relies on it.
+prepare_profile_assets() {
+  [[ -z "$PROFILE" ]] && return 0
+  reshare_profile_assets claude
+  reshare_profile_assets codex
+  reshare_profile_assets pi
+  ensure_codex_config "$CODEX_HOME/config.toml" "${HOME}/.codex/config.toml" "$PWD"
+}
+
+# Host pre-start hooks run for agent subcommands only. Hooks are best-effort and
+# a hook is omitted when any of its tags occurs in the --disable set.
+run_prestart_hooks() {
+  [[ -z "${YOLO_PREHOOKS_JSON:-}" ]] && return 0
+  local disabled hook
+  # shellcheck disable=SC2016
+  local disabled_filter='$ARGS.positional' hook_filter='.[] | select((.tags - $dis) == .tags) | .command + "\u0000"'
+  disabled="$("$YOLO_JQ" -nc "$disabled_filter" --args "${DISABLE_TAGS[@]}")"
+  while IFS= read -r -d '' hook; do
+    [[ -z "$hook" ]] && continue
+    bash -c "$hook" || echo "warning: yolo pre-start hook failed (continuing)" >&2
+  done < <(
+    printf '%s' "$YOLO_PREHOOKS_JSON" \
+      | "$YOLO_JQ" -j --argjson dis "$disabled" "$hook_filter"
+  )
+}
+
+# Environment precedence increases from profile, extra-package PATH, and
+# declarative session variables to user --env. Secrets load inside Seatbelt
+# after those values, while SMIND_SANDBOXED remains non-overridable.
 yolo_exec_agent() {
   local subcmd="$1"; shift
   # cmd supplies its executable through "$@"; other modes prepend fixed argv.
@@ -282,34 +461,103 @@ yolo_exec_agent() {
     shell)  agent_argv=("${SHELL:-/bin/sh}") ;;
     cmd)    agent_argv=() ;;
   esac
+
+  local secret_tmpfile="" sandbox_hooks_tmpfile="" have_secret=0
+  local disabled_hooks composed_hooks line name path
+  # shellcheck disable=SC2016
+  local disabled_filter='$ARGS.positional' sandbox_hook_filter='.[] | select((.tags - $dis) == .tags) | .command + "\n"'
+  local -a entrypoint_env=()
+  if [[ -n "${YOLO_SECRET_VARS:-}" ]]; then
+    secret_tmpfile="$(mktemp "${TMPDIR:-/tmp}/yolo-darwin-secrets.XXXXXX")"
+    chmod 600 "$secret_tmpfile"
+    CLEANUP_FILES+=("$secret_tmpfile")
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      name="${line%%=*}"
+      path="${line#*=}"
+      if [[ -r "$path" ]]; then
+        printf '%s=%s\n' "$name" "$(cat -- "$path")" >> "$secret_tmpfile"
+        have_secret=1
+      else
+        echo "warning: secret for $name not readable at $path; skipping" >&2
+      fi
+    done <<< "$YOLO_SECRET_VARS"
+    if [[ $have_secret -eq 1 ]]; then
+      entrypoint_env+=("YOLO_SECRETS_FILE=$secret_tmpfile")
+    else
+      rm -f -- "$secret_tmpfile"
+      secret_tmpfile=""
+    fi
+  fi
+
+  case "$subcmd" in
+    claude|codex|pi)
+      if [[ -n "${YOLO_SANDBOX_HOOKS_JSON:-}" ]]; then
+        disabled_hooks="$("$YOLO_JQ" -nc "$disabled_filter" --args "${DISABLE_TAGS[@]}")"
+        composed_hooks="$(
+          printf '%s' "$YOLO_SANDBOX_HOOKS_JSON" \
+            | "$YOLO_JQ" -j --argjson dis "$disabled_hooks" "$sandbox_hook_filter"
+        )"
+        if [[ -n "$composed_hooks" ]]; then
+          sandbox_hooks_tmpfile="$(mktemp "${TMPDIR:-/tmp}/yolo-darwin-hooks.XXXXXX")"
+          chmod 600 "$sandbox_hooks_tmpfile"
+          printf '%s\n' "$composed_hooks" > "$sandbox_hooks_tmpfile"
+          CLEANUP_FILES+=("$sandbox_hooks_tmpfile")
+          entrypoint_env+=("YOLO_SANDBOX_HOOKS_FILE=$sandbox_hooks_tmpfile")
+        fi
+      fi
+      ;;
+  esac
+
   # Keep the generated policy private and remove it after the confined process.
-  local yolo_sb_profile
+  local yolo_sb_profile status sandbox_entrypoint bash_executable
   yolo_sb_profile="$(mktemp "${TMPDIR:-/tmp}/yolo-darwin-sb.XXXXXXXX")"
   chmod 600 "$yolo_sb_profile"
-  # shellcheck disable=SC2064
-  trap "rm -f -- '$yolo_sb_profile'" EXIT
+  CLEANUP_FILES+=("$yolo_sb_profile")
   render_sandbox_profile "$PROFILE" "$PWD" > "$yolo_sb_profile"
   local sandbox_argv=("$YOLO_SANDBOX_EXEC" --use-profile "$yolo_sb_profile" --target-dir "$PWD" --)
+  local child_argv=("${agent_argv[@]}" "$@")
+  sandbox_entrypoint="$YOLO_SANDBOX_ENTRYPOINT"
+  bash_executable="$BASH"
+  if [[ ${#entrypoint_env[@]} -gt 0 ]]; then
+    child_argv=("$bash_executable" "$sandbox_entrypoint" "${child_argv[@]}")
+  fi
   local yolo_vars=("${!YOLO_@}")
   unset "${yolo_vars[@]}"
-  exec env "${PROFILE_ENV_PAIRS[@]}" "${ENV_PAIRS[@]}" SMIND_SANDBOXED=1 "${sandbox_argv[@]}" "${agent_argv[@]}" "$@"
+  env \
+    "${PROFILE_ENV_PAIRS[@]}" \
+    "${SANDBOX_PACKAGE_ENV_PAIRS[@]}" \
+    "${SESSION_ENV_PAIRS[@]}" \
+    "${ENV_PAIRS[@]}" \
+    SMIND_SANDBOXED=1 \
+    "${entrypoint_env[@]}" \
+    "${sandbox_argv[@]}" \
+    "${child_argv[@]}"
+  status=$?
+  cleanup_yolo_tempfiles
+  CLEANUP_FILES=()
+  return "$status"
 }
+
+prepare_profile_assets
+case "$SUBCMD" in
+  claude|codex|pi) run_prestart_hooks ;;
+esac
 
 case "$SUBCMD" in
   claude)
-    reshare_profile_assets claude
     yolo_exec_agent claude "${CMD_ARGS[@]}"
     ;;
 
   codex)
     # File credential stores prevent named profiles from sharing Keychain state.
-    ensure_codex_config "${CODEX_HOME:-${HOME}/.codex}/config.toml" "${HOME}/.codex/config.toml" "$PWD"
-    reshare_profile_assets codex
+    if [[ -z "$PROFILE" ]]; then
+      ensure_codex_config "${HOME}/.codex/config.toml" "${HOME}/.codex/config.toml" "$PWD"
+    fi
     yolo_exec_agent codex "${CMD_ARGS[@]}"
     ;;
 
   pi)
-    reshare_profile_assets pi
     yolo_exec_agent pi "${CMD_ARGS[@]}"
     ;;
 
@@ -318,15 +566,6 @@ case "$SUBCMD" in
     ;;
 
   cmd)
-    if [[ ${#CMD_ARGS[@]} -eq 0 ]]; then
-      echo "Usage: yolo-darwin [flags...] cmd <program> [args...]" >&2; exit 1
-    fi
     yolo_exec_agent cmd "${CMD_ARGS[@]}"
-    ;;
-
-  *)
-    echo "Unknown tool: $SUBCMD" >&2
-    echo "Supported: claude, codex, pi, shell, cmd" >&2
-    exit 1
     ;;
 esac

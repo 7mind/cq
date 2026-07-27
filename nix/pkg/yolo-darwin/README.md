@@ -53,7 +53,7 @@ yolo --work codex --search
 
 ### Feature suppression
 
-- `--disable=TAG` — Exclude prompt fragments carrying `TAG`. Repeatable and comma-separated, matching Linux `yolo` parsing.
+- `--disable=TAG` — Exclude prompt fragments and pre-start hooks carrying `TAG`. Repeatable and comma-separated, matching Linux `yolo` parsing.
 
 ```bash
 yolo --disable=gpu,ssh --disable=github claude
@@ -76,6 +76,15 @@ Example:
 ```bash
 yolo --env RUST_BACKTRACE=1 --env DEBUG=true claude
 ```
+
+### Ad-hoc filesystem grants
+
+- `--ro PATH` — Grant read-only access to an existing host path.
+- `--rw PATH` — Grant read-write access to an existing host path.
+
+Both flags are repeatable, preserve the host path inside the sandbox, and skip
+missing paths. Symlinks receive grants for both the link and its canonical
+target.
 
 ## Profile directory layout
 
@@ -109,7 +118,7 @@ When you select a named profile (e.g., `--profile work`), `yolo-darwin` creates 
 
 Each directory is created with `chmod 700` (read-write-execute for the owner only).
 
-All three agents get the home-manager-managed shared assets **copied** into their profile directory on launch (claude: settings.json, CLAUDE.md, skills, plugins, commands, agents; codex: AGENTS.md, prompts, skills; pi: settings.json, AGENTS.md, APPEND_SYSTEM.md, cq-agents, prompts, skills, extensions, mcp.json). The copies are dereferenced and self-contained (no symlinks back into the sandbox-denied real homes) and are copy-if-absent: an existing file in the profile directory is never overwritten, so HM changes only propagate into a profile directory that is recreated.
+All three agents get the home-manager-managed shared assets **copied** into their profile directory before every named-profile launch, regardless of which agent or `shell`/`cmd` mode was selected (claude: settings.json, CLAUDE.md, skills, plugins, commands, agents; codex: AGENTS.md, prompts, skills; pi: settings.json, AGENTS.md, APPEND_SYSTEM.md, cq-agents, prompts, skills, extensions, mcp.json). The copies are dereferenced and self-contained (no symlinks back into the sandbox-denied real homes) and are copy-if-absent: an existing file in the profile directory is never overwritten, so HM changes only propagate into a profile directory that is recreated.
 
 The default profile (empty, no `--profile` flag) does NOT create any directories. Agents use their real home directories:
 
@@ -129,6 +138,7 @@ Read-write access is granted only to:
 - **`~/.cache`** — cache directory shared across profiles.
 - **cq's XDG state root** — `$XDG_STATE_HOME/cq` when `XDG_STATE_HOME` is an absolute path, otherwise `~/.local/state/cq`; required by the ledger MCP server and Claude stop gate.
 - **This profile's configuration directories** (when a named profile is active) — only the active profile's `~/.config/yolo/<name>/claude`, `~/.config/yolo/<name>/codex`, `~/.config/yolo/<name>/pi` directories are accessible; sibling profiles are explicitly denied.
+- **Declarative and `--rw` paths** — exact paths configured through `extraReadWritePaths` or supplied per invocation.
 
 Read-only access is granted to system files required to run the agent:
 
@@ -137,6 +147,8 @@ Read-only access is granted to system files required to run the agent:
 - `~/.config/git`, `~/.gitconfig`, `~/.config/jj` (version control configuration).
 - `~/.nix-profile`, `~/.config/nix`, `~/.local/share/nix` (Nix configuration).
 - `~/.config/gh` (GitHub CLI configuration).
+- `~/.config/mcp`, `~/.config/direnv`, `~/.local/share/direnv`, and `~/.direnvrc` (from the pinned upstream base profile).
+- Declarative `extraReadOnlyPaths` and per-invocation `--ro` paths.
 - System configuration: `/etc`, `/var`, `/System`, and essential service files.
 
 ### What is NOT confined
@@ -224,11 +236,37 @@ Complete the authentication flow. The credentials are stored in `~/.config/yolo/
 When an agent runs under `yolo-darwin`:
 
 - **Profile environment variables** (e.g., `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`) are set only for named profiles and applied **before** explicit `--env KEY=VAL` pairs, so an explicit flag overrides a profile default.
+- **Declarative session variables** and the extra-package `PATH` come from the home-manager module and apply to every subcommand.
+- **Secret session variables** are read from their configured files into one mode-0600 temporary file, loaded by the child entrypoint without placing secret values in argv, and removed after the session.
+- **Host and sandbox pre-start hooks** run for agent modes only; sandbox hooks run after secrets load and can export environment variables to the agent. `--disable` filters both hook sets by tag.
 - **`--env KEY=VAL` pairs** are applied to the agent process **only**, not to the launcher itself, and not visible in the command-line arguments of the spawned process.
+
+### Remaining platform-specific gaps
+
+**Runtime integration proposal:** keep `extraDevicePaths` as a Linux-specific
+interface and introduce capability-oriented Darwin adapters instead of
+translating `/dev` and PipeWire paths. A container adapter should accept an
+explicit Docker, Colima, or Podman Unix socket plus URI, grant only that socket,
+and set `DOCKER_HOST`/`CONTAINER_HOST`. Audio support should identify the
+required files and Mach services with live Seatbelt denial probes before adding
+an `audio`-tagged policy fragment. tmux needs no separate adapter while the
+upstream profile grants the host temporary directories containing its socket.
+
+**Shell-mode proposal:** add a shell-specific Seatbelt overlay selected from
+`$SHELL`: grant only that shell's startup files read-only and redirect writable
+history to a private temporary file. Verify zsh, bash, and fish startup and
+history behavior on macOS before enabling it; the Linux bind list does not by
+itself establish the corresponding Seatbelt operations.
 
 ## Manual macOS verification checklist
 
-The `yolo-darwin-profile` flake check covers deterministic SBPL generation, the per-profile `~/.config/yolo/<name>/<agent>` directory layout (created `700`), and the `$PWD==$HOME` guard. Live Seatbelt execution must run outside the Nix Darwin builder because macOS rejects nested `sandbox-exec` with `sandbox_apply: Operation not permitted`.
+The `yolo-darwin-profile` flake check covers deterministic SBPL generation,
+CLI and declarative path grants, environment/secret/hook propagation through a
+hand-written sandbox adapter, profile-wide asset materialization, the
+per-profile directory layout, and the `$PWD==$HOME` guard. It also asserts that
+the pinned upstream base carries the shared MCP and direnv grants. Live
+Seatbelt execution must run outside the Nix Darwin builder because macOS
+rejects nested `sandbox-exec` with `sandbox_apply: Operation not permitted`.
 
 Run the steps below on a Mac using an actual test repository. They cover live confinement, account/credential resolution, session isolation, and OAuth refresh. At minimum, confirm `yolo cmd pwd` succeeds from the repository and that `yolo cmd cat <an unrelated home path>` fails without leaking its contents.
 
@@ -286,11 +324,17 @@ Repeat the live inside/outside-path probe after policy or macOS upgrades; determ
 
 When launching `yolo-darwin`, environment variable precedence is:
 
-1. **Profile environment variables** (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`) — applied first.
-2. **Agent-specific environment variables** (e.g., `CLAUDE_CODE_OAUTH_TOKEN` for Claude Code) — applied second.
-3. **Explicit `--env KEY=VAL` pairs** — applied last, so they override both profile and agent-specific values.
+1. **Inherited launcher environment**.
+2. **Profile environment variables** (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`).
+3. **Extra-package `PATH`**, when packages are configured.
+4. **Declarative `sessionVariables`**.
+5. **Explicit `--env KEY=VAL` pairs**.
+6. **Secret-file-backed variables**.
+7. **Environment exported by sandbox pre-start hooks**.
 
-Example: If a profile sets `RUST_BACKTRACE=0` but you pass `--env RUST_BACKTRACE=1`, the agent receives `RUST_BACKTRACE=1`.
+Later entries override earlier entries with the same name. `SMIND_SANDBOXED=1`
+is set by the launcher and cannot be overridden through declarative variables or
+`--env`.
 
 ## Troubleshooting
 

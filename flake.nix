@@ -503,7 +503,8 @@
           dontStrip = true;
           dontFixup = true;
         };
-      in {
+      in
+      {
         packages = {
           default = cqCli;
           cq = cqCli;
@@ -589,6 +590,10 @@
                   chmod -R u+w yolo-darwin
                   cd yolo-darwin
                   shellcheck ../yolo/custom-prompt.sh yolo-darwin.sh profile-test.sh
+                  grep -Fq '"/.config/mcp"' ${inputs.claude-code-sandbox}/noread.sb
+                  grep -Fq '"/.config/direnv"' ${inputs.claude-code-sandbox}/noread.sb
+                  grep -Fq '"/.local/share/direnv"' ${inputs.claude-code-sandbox}/noread.sb
+                  grep -Fq '"/.direnvrc"' ${inputs.claude-code-sandbox}/noread.sb
                   bash profile-test.sh
                   touch $out
                 '';

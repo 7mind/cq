@@ -21,6 +21,10 @@ FAILURES=0
 TESTS_RUN=0
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
+TEST_SANDBOX_ENTRYPOINT="$WORKDIR/yolo-sandbox-entrypoint"
+cp "$SCRIPT_DIR/../yolo/sandbox-entrypoint.sh" "$TEST_SANDBOX_ENTRYPOINT"
+chmod +x "$TEST_SANDBOX_ENTRYPOINT"
+export YOLO_SANDBOX_ENTRYPOINT="$TEST_SANDBOX_ENTRYPOINT"
 PROJECT_DIR="$WORKDIR/project"
 FAKE_HOME="$WORKDIR/home"
 mkdir -p "$PROJECT_DIR" "$FAKE_HOME"
@@ -82,6 +86,10 @@ render_profile() {
   (cd "$PROJECT_DIR" && HOME="$FAKE_HOME" bash -c \
     'source "$1" cmd true; _render_yolo_rules "$2" "$3"' _ "$PREFIX" "$@")
 }
+render_profile_cli() {
+  (cd "$PROJECT_DIR" && HOME="$FAKE_HOME" bash -c \
+    'p="$1"; shift; source "$p" "$@"; _render_yolo_rules "$PROFILE" "$PWD"' _ "$PREFIX" "$@")
+}
 dump_state() {
   (cd "$PROJECT_DIR" && HOME="$FAKE_HOME" bash -c '
      p="$1"; shift; source "$p"
@@ -101,6 +109,10 @@ source_guard() {
 run_script
 assert_nonzero "no args exits non-zero" "$STATUS"
 assert_contains "no args prints usage" "$OUT" "Usage: yolo-darwin"
+run_script --help
+assert_zero "--help exits zero" "$STATUS"
+assert_contains "--help documents ad-hoc read-only paths" "$OUT" "--ro PATH"
+assert_contains "--help documents ad-hoc read-write paths" "$OUT" "--rw PATH"
 run_script bogus
 assert_nonzero "unknown subcommand exits non-zero" "$STATUS"
 assert_contains "unknown subcommand lists supported tools" "$OUT" "claude, codex, pi, shell, cmd"
@@ -134,6 +146,31 @@ assert_contains "allows active profile pi dir" "$RENDERED" '"/.config/yolo/foo/p
 assert_contains "allows active profile pi root canonicalization" "$RENDERED" '(literal (string-append (param "HOME_DIR") "/.config/yolo/foo/pi"))'
 assert_contains "explicitly denies the ~/.config/yolo profiles tree" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.config/yolo")))'
 assert_not_contains "no (version 1) line (the base provides it)" "$RENDERED" '(version 1)'
+
+DECL_RO="$WORKDIR/declarative-ro"
+DECL_RW="$WORKDIR/declarative-rw"
+CLI_RO="$WORKDIR/cli-ro"
+CLI_RW="$WORKDIR/cli-rw"
+SSH_TARGET="$WORKDIR/ssh-key-target"
+SSH_LINK="$WORKDIR/ssh-key"
+mkdir -p "$DECL_RO" "$DECL_RW" "$CLI_RO" "$CLI_RW"
+printf private-key > "$SSH_TARGET"
+ln -s "$SSH_TARGET" "$SSH_LINK"
+RENDERED_PATHS="$(
+  YOLO_EXTRA_RO_PATHS="$DECL_RO"$'\n'"$SSH_LINK" \
+  YOLO_EXTRA_RW_PATHS="$DECL_RW" \
+    render_profile_cli --profile foo --ro "$CLI_RO" --rw "$CLI_RW" cmd true
+)"
+assert_contains "declarative read-only path receives only read operations" "$RENDERED_PATHS" \
+  $'(allow file-read* file-read-metadata\n    (literal "'"$DECL_RO"$'")\n    (subpath "'"$DECL_RO"$'"))'
+assert_contains "CLI read-only path receives only read operations" "$RENDERED_PATHS" \
+  $'(allow file-read* file-read-metadata\n    (literal "'"$CLI_RO"$'")\n    (subpath "'"$CLI_RO"$'"))'
+assert_contains "declarative read-write path receives write operations" "$RENDERED_PATHS" \
+  $'(allow file-read* file-write* file-write-create file-read-metadata file-ioctl\n    (literal "'"$DECL_RW"$'")\n    (subpath "'"$DECL_RW"$'"))'
+assert_contains "CLI read-write path receives write operations" "$RENDERED_PATHS" \
+  $'(allow file-read* file-write* file-write-create file-read-metadata file-ioctl\n    (literal "'"$CLI_RW"$'")\n    (subpath "'"$CLI_RW"$'"))'
+assert_contains "declared SSH-key symlink receives read access" "$RENDERED_PATHS" "(literal \"$SSH_LINK\")"
+assert_contains "declared SSH-key target receives read access" "$RENDERED_PATHS" "(literal \"$SSH_TARGET\")"
 
 # Named profiles override any upstream grants to native agent homes.
 assert_contains "named: denies real ~/.claude" "$RENDERED" '(subpath (string-append (param "HOME_DIR") "/.claude"))'
@@ -192,6 +229,8 @@ printf '%s\n' \
   "printf \"sandbox_oauth=%s\\n\" \"\${CLAUDE_CODE_OAUTH_TOKEN:-<unset>}\"" > "$FAKE_BIN/sandbox"
 # The generated script, rather than this test process, expands its positional parameters.
 # shellcheck disable=SC2016
+# These single-quoted lines are generated script source, not expressions here.
+# shellcheck disable=SC2016
 printf '%s\n' \
   "#!$_bash_path" \
   'if [[ "${1:-}" == "--write-base-profile" ]]; then printf "(version 1)\n"; exit 0; fi' \
@@ -204,7 +243,31 @@ printf '%s\n' \
   '  fi' \
   'done' \
   'env | sed -n "/^YOLO_/s/=.*//p" | sort' > "$FAKE_BIN/prompt-sandbox"
-chmod +x "$FAKE_BIN/security" "$FAKE_BIN/sandbox" "$FAKE_BIN/prompt-sandbox"
+# shellcheck disable=SC2016
+printf '%s\n' \
+  "#!$_bash_path" \
+  'if [[ "${1:-}" == "--write-base-profile" ]]; then printf "(version 1)\n"; exit 0; fi' \
+  '[[ -n "${CAPTURE_ARGS_FILE:-}" ]] && printf "%s\n" "$@" > "$CAPTURE_ARGS_FILE"' \
+  '[[ -n "${CAPTURE_POINTERS_FILE:-}" ]] && printf "%s\n%s\n" "${YOLO_SECRETS_FILE:-}" "${YOLO_SANDBOX_HOOKS_FILE:-}" > "$CAPTURE_POINTERS_FILE"' \
+  'while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done' \
+  '[[ "${1:-}" == "--" ]] && shift' \
+  'exec "$@"' > "$FAKE_BIN/capture-sandbox"
+# shellcheck disable=SC2016
+printf '%s\n' \
+  "#!$_bash_path" \
+  'printf "DECLARED=%s\n" "${DECLARED:-<unset>}"' \
+  'printf "ORDER=%s\n" "${ORDER:-<unset>}"' \
+  'printf "SECRET_VALUE=%s\n" "${SECRET_VALUE:-<unset>}"' \
+  'printf "SANDBOX_HOOK=%s\n" "${SANDBOX_HOOK:-<unset>}"' \
+  'printf "DISABLED_HOOK=%s\n" "${DISABLED_HOOK:-<unset>}"' \
+  'printf "EXTRA_TOOL=%s\n" "$(command -v yolo-extra-tool || printf missing)"' \
+  'env | sed -n "/^YOLO_/s/=.*//p" | sort' > "$FAKE_BIN/pi"
+chmod +x \
+  "$FAKE_BIN/security" \
+  "$FAKE_BIN/sandbox" \
+  "$FAKE_BIN/prompt-sandbox" \
+  "$FAKE_BIN/capture-sandbox" \
+  "$FAKE_BIN/pi"
 
 run_claude_exec() {
   local security_fail="$1"
@@ -261,6 +324,62 @@ assert_contains "repeatable and comma-separated disable tags preserve untagged f
 assert_not_contains "disabled gpu prompt fragment is excluded" "$OUT" "shared line"
 assert_not_contains "disabled audio prompt fragment is excluded" "$OUT" "audio line"
 
+# ── configured environment, secrets, packages, and hooks ─────────────────────
+EXTRA_BIN="$WORKDIR/extra-bin"
+mkdir -p "$EXTRA_BIN"
+printf '%s\n' "#!$_bash_path" 'exit 0' > "$EXTRA_BIN/yolo-extra-tool"
+chmod +x "$EXTRA_BIN/yolo-extra-tool"
+SECRET_SOURCE="$WORKDIR/secret-token"
+printf '%s\n' "from-secret-file" > "$SECRET_SOURCE"
+HOST_HOOK_MARKER="$WORKDIR/host-hook"
+DISABLED_HOST_HOOK_MARKER="$WORKDIR/disabled-host-hook"
+CAPTURE_ARGS_FILE="$WORKDIR/captured-args"
+CAPTURE_POINTERS_FILE="$WORKDIR/captured-pointers"
+# shellcheck disable=SC2016
+HOST_HOOKS="$(
+  "$_jq_path" -nc \
+    --arg run "printf host > '$HOST_HOOK_MARKER'" \
+    --arg skip "printf disabled > '$DISABLED_HOST_HOOK_MARKER'" \
+    '[{command:$run,tags:[]},{command:$skip,tags:["skip"]}]'
+)"
+SANDBOX_HOOKS="$(
+  "$_jq_path" -nc \
+    '[{command:"export SANDBOX_HOOK=ran",tags:[]},{command:"export DISABLED_HOOK=ran",tags:["skip"]}]'
+)"
+OUT="$(
+  cd "$PROJECT_DIR" &&
+    HOME="$FAKE_HOME" \
+    PATH="$FAKE_BIN:$PATH" \
+    CAPTURE_ARGS_FILE="$CAPTURE_ARGS_FILE" \
+    CAPTURE_POINTERS_FILE="$CAPTURE_POINTERS_FILE" \
+    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+    YOLO_SANDBOX_BIN="$EXTRA_BIN" \
+    YOLO_SESSION_VARS=$'DECLARED=session\nORDER=session\nSECRET_VALUE=session' \
+    YOLO_SECRET_VARS="SECRET_VALUE=$SECRET_SOURCE" \
+    YOLO_PREHOOKS_JSON="$HOST_HOOKS" \
+    YOLO_SANDBOX_HOOKS_JSON="$SANDBOX_HOOKS" \
+    bash "$SCRIPT" --disable=skip --env ORDER=cli --env SECRET_VALUE=cli pi 2>&1
+)"
+STATUS=$?
+assert_zero "configured environment launch succeeds" "$STATUS"
+assert_contains "declarative session variable reaches agent" "$OUT" "DECLARED=session"
+assert_contains "explicit --env overrides declarative session variable" "$OUT" "ORDER=cli"
+assert_contains "secret file value overrides non-secret values" "$OUT" "SECRET_VALUE=from-secret-file"
+assert_contains "sandbox hook exports reach agent" "$OUT" "SANDBOX_HOOK=ran"
+assert_contains "disabled sandbox hook does not run" "$OUT" "DISABLED_HOOK=<unset>"
+assert_contains "extra package bin is prepended to PATH" "$OUT" "EXTRA_TOOL=$EXTRA_BIN/yolo-extra-tool"
+assert_not_contains "configured child excludes YOLO orchestration variables" "$OUT" "YOLO_"
+assert_eq "enabled host hook runs" "host" "$(cat "$HOST_HOOK_MARKER" 2>/dev/null || true)"
+assert_eq "disabled host hook does not run" "absent" "$(if [[ -e "$DISABLED_HOST_HOOK_MARKER" ]]; then echo present; else echo absent; fi)"
+CAPTURED_ARGS="$(cat "$CAPTURE_ARGS_FILE" 2>/dev/null || true)"
+assert_not_contains "secret value never appears in sandbox argv" "$CAPTURED_ARGS" "from-secret-file"
+SECRET_TMP_PATH="$(sed -n '1p' "$CAPTURE_POINTERS_FILE" 2>/dev/null)"
+HOOK_TMP_PATH="$(sed -n '2p' "$CAPTURE_POINTERS_FILE" 2>/dev/null)"
+assert_contains "secret tempfile is supplied to sandbox entrypoint" "$SECRET_TMP_PATH" "yolo-darwin-secrets."
+assert_contains "hook tempfile is supplied to sandbox entrypoint" "$HOOK_TMP_PATH" "yolo-darwin-hooks."
+assert_eq "secret temp file is removed after launch" "absent" "$(if [[ -n "$SECRET_TMP_PATH" && -e "$SECRET_TMP_PATH" ]]; then echo present; else echo absent; fi)"
+assert_eq "sandbox-hook temp file is removed after launch" "absent" "$(if [[ -n "$HOOK_TMP_PATH" && -e "$HOOK_TMP_PATH" ]]; then echo present; else echo absent; fi)"
+
 # ── copied HM assets ─────────────────────────────────────────────────────────
 # Run all agents in one shell so a second pass can verify copy-if-absent.
 RESHARE_HOME="$WORKDIR/reshare-home"
@@ -274,21 +393,21 @@ mkdir -p \
 echo x > "$RESHARE_HOME/.claude/settings.json"
 echo x > "$RESHARE_HOME/.claude/CLAUDE.md"
 echo x > "$RESHARE_HOME/.codex/AGENTS.md"
+printf 'model = "test"\n' > "$RESHARE_HOME/.codex/config.toml"
 echo x > "$RESHARE_HOME/.codex/prompts/cq:plan.md"
 echo x > "$RESHARE_HOME/.pi/agent/settings.json"
 echo x > "$RESHARE_HOME/.pi/agent/APPEND_SYSTEM.md"
 echo x > "$RESHARE_HOME/.pi/agent/cq-agents/plan-reviewer.md"
 echo x > "$RESHARE_HOME/.pi/agent/prompts/cq:plan.md"
-(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" bash -c '
-  source "$1" --profile foo cmd true
-  reshare_profile_assets claude
-  reshare_profile_assets codex
-  reshare_profile_assets pi
-  echo sentinel > "$CLAUDE_CONFIG_DIR/settings.json"
-  reshare_profile_assets claude
-  exit 0
-' _ "$PREFIX")
-assert_zero "reshare subshell ran" "$?"
+OUT="$(
+  cd "$PROJECT_DIR" &&
+    HOME="$RESHARE_HOME" \
+    PATH="$FAKE_BIN:$PATH" \
+    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+    bash "$SCRIPT" --profile foo cmd true 2>&1
+)"
+STATUS=$?
+assert_zero "cmd launch prepares every profile's assets" "$STATUS"
 RESHARE_PROF="$RESHARE_HOME/.config/yolo/foo"
 _is_real_file() { if [[ -f "$1" && ! -L "$1" ]]; then echo yes; else echo no; fi; }
 _is_real_dir()  { if [[ -d "$1" && ! -L "$1" ]]; then echo yes; else echo no; fi; }
@@ -305,6 +424,17 @@ assert_eq "reshare: pi prompts copied as a real dir" "yes" "$(_is_real_dir "$RES
 assert_eq "reshare: pi skills copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/pi/skills")"
 assert_eq "reshare: copied content matches the source" "x" "$(cat "$RESHARE_PROF/codex/AGENTS.md")"
 assert_eq "reshare: copied Codex prompt content matches the source" "x" "$(cat "$RESHARE_PROF/codex/prompts/cq:plan.md" 2>/dev/null)"
+assert_contains "cmd launch materializes Codex profile config" "$(cat "$RESHARE_PROF/codex/config.toml" 2>/dev/null)" 'model = "test"'
+echo sentinel > "$RESHARE_PROF/claude/settings.json"
+OUT="$(
+  cd "$PROJECT_DIR" &&
+    HOME="$RESHARE_HOME" \
+    PATH="$FAKE_BIN:$PATH" \
+    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+    bash "$SCRIPT" --profile foo shell -c true 2>&1
+)"
+STATUS=$?
+assert_zero "shell launch prepares every profile's assets" "$STATUS"
 assert_eq "reshare: copy-if-absent preserves an existing dest (sentinel)" "sentinel" "$(cat "$RESHARE_PROF/claude/settings.json")"
 
 # ── $PWD==$HOME refusal guard (+ --unsafe-share-home + symlink canonicalization)
