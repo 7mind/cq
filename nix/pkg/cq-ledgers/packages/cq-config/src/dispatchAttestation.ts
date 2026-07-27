@@ -1095,6 +1095,30 @@ function abortedResultOf(row: AttestationEnvelope): AbortedDispatchResult {
   });
 }
 
+/**
+ * Project a consumed envelope onto the HANDLE-ONLY confirm view (D173).
+ *
+ * Kept separate from {@link consumedResultOf} on purpose: fetch is the one
+ * surface allowed to materialise `output`, so the two projections must not share
+ * a code path that could reintroduce the body here.
+ */
+function confirmedViewOf(row: AttestationEnvelope): ConfirmedDispatchResultView {
+  if (
+    row.state !== "consumed" ||
+    row.consumedAt === undefined ||
+    row.outputDigest === undefined
+  ) {
+    throw new AttestationContractError("row", `expected a consumed envelope, got "${row.state}"`);
+  }
+  return Object.freeze({
+    state: "consumed" as const,
+    attestationId: row.attestationId,
+    generation: row.generation,
+    consumedAt: row.consumedAt,
+    outputDigest: row.outputDigest,
+  });
+}
+
 function consumedResultOf(row: AttestationEnvelope): ConsumedDispatchResult {
   if (
     row.state !== "consumed" ||
@@ -1362,8 +1386,35 @@ export interface ConfirmDispatchCompletionRequest {
  * A confirmation either promotes the stored result to `consumed` or ABORTS
  * `missing-result` — a native completion with nothing stored is not a success.
  */
+/**
+ * The trusted-parent acknowledgement of a promotion to `consumed` — HANDLE-ONLY
+ * (D173). It deliberately mirrors {@link StoredDispatchResultView}: state,
+ * handle, instant, digest, and NO output body.
+ *
+ * WHY (D173, found by the T713 probe): confirm previously returned
+ * {@link ConsumedDispatchResult}, whose `output` carries the full body. Confirm
+ * is NOT optional — it is the only `result-stored → consumed` promotion — so
+ * every dispatch's parent surface handed back the entire payload. Measured on a
+ * 45,833-byte payload: confirm returned 46,510 bytes with the body present,
+ * against a 250-byte handle-only `store_result` ack. That is a SECOND, mandatory
+ * body-returning surface, and it defeats ref-first independently of how well the
+ * child behaves — T682's contract requires the body reach the parent model ONCE,
+ * on fetch.
+ *
+ * `fetch_dispatch_result` remains the SOLE body-returning surface. The digest is
+ * kept here so a parent can bind the promotion to the payload it will later
+ * fetch, without materialising it.
+ */
+export interface ConfirmedDispatchResultView {
+  readonly state: "consumed";
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly consumedAt: string;
+  readonly outputDigest: string;
+}
+
 export type ConfirmDispatchCompletionOutcome =
-  | { readonly state: "consumed"; readonly result: ConsumedDispatchResult }
+  | { readonly state: "consumed"; readonly result: ConfirmedDispatchResultView }
   | { readonly state: "aborted"; readonly result: AbortedDispatchResult };
 
 const CONFIRM: DispatchProtocolOperation = "confirm_dispatch_completion";
@@ -1411,7 +1462,7 @@ export function confirmDispatchCompletion(
       existing.runId === proof.runId &&
       existing.completedAt === proof.completedAt
     ) {
-      return Object.freeze({ state: "consumed" as const, result: consumedResultOf(row) });
+      return Object.freeze({ state: "consumed" as const, result: confirmedViewOf(row) });
     }
     throw new DispatchStateConflictError(
       CONFIRM,
@@ -1460,7 +1511,7 @@ export function confirmDispatchCompletion(
     }),
   });
   deps.store.replace(row, next);
-  return Object.freeze({ state: "consumed" as const, result: consumedResultOf(next) });
+  return Object.freeze({ state: "consumed" as const, result: confirmedViewOf(next) });
 }
 
 function assertTrustedNamespace(
@@ -1616,6 +1667,18 @@ export function abortDispatch(
 // ---------------------------------------------------------------------------
 
 /**
+ * The trusted-parent read request (D174). Mirrors {@link AbortDispatchRequest}:
+ * the handle, plus the namespace it claims and the actor performing the read.
+ */
+export interface FetchDispatchResultRequest extends DispatchHandle {
+  readonly namespace: AttestationNamespace;
+  /** Who is reading. Only a trusted actor may materialise the output body. */
+  readonly actor: TrustedDispatchActor;
+}
+
+const FETCH: DispatchProtocolOperation = "fetch_dispatch_result";
+
+/**
  * THE typed lookup (T685). It is a PURE READ: it never mutates, never launches,
  * and never interprets absence as a child failure — an unknown well-formed
  * handle is `attestation-not-found`, a distinct lifecycle answer from any abort.
@@ -1627,10 +1690,21 @@ export function abortDispatch(
  * storage failures stay explicit errors and can never appear in this union.
  */
 export function fetchDispatchResult(
-  handle: DispatchHandle,
+  request: FetchDispatchResultRequest,
   deps: DispatchServiceDeps,
 ): FetchDispatchResult {
-  const resolved = assertDispatchHandle(handle);
+  // D174: fetch is declared `trusted-parent` by dispatchOperationScope, and now
+  // ENFORCES it — previously its arity was (handle, deps) with no namespace and
+  // no actor, so the declaration was documentation rather than a guard and the
+  // only real boundary was who happened to hold `deps.store`. Fetch is the SOLE
+  // body-materialising surface, so it is exactly where a check matters most.
+  // Same shape as abort_dispatch, deliberately: namespace THEN actor.
+  assertTrustedNamespace(request.namespace, deps, FETCH);
+  const actor: unknown = request.actor;
+  if (typeof actor !== "string" || !TRUSTED_ACTOR_SET.has(actor)) {
+    throw new DispatchAuthorizationError(FETCH, `untrusted fetch actor "${String(actor)}"`);
+  }
+  const resolved = assertDispatchHandle(request);
   const { atMs } = readNow(deps);
   const row = readRow(resolved, deps);
   if (row === undefined) {

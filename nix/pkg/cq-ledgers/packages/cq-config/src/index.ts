@@ -326,6 +326,8 @@ export type {
   InvalidOutputAbortDetails,
   ConfirmDispatchCompletionRequest,
   ConfirmDispatchCompletionOutcome,
+  ConfirmedDispatchResultView,
+  FetchDispatchResultRequest,
   AbortDispatchRequest,
 } from "./dispatchAttestation.js";
 export {
