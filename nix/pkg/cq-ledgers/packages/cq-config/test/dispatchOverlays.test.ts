@@ -175,6 +175,35 @@ describe("pre-launch overlay validation", () => {
     ).toThrow("overlays[0].data: missing overlay application field");
   });
 
+  test("rejects prototype-exposed role ids as unknown dispatched roles", () => {
+    for (const roleId of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+      expect(() => materialize({ roleId })).toThrow(DispatchOverlayError);
+      expect(() => materialize({ roleId })).toThrow(
+        `roleId: unknown dispatched role "${roleId}"`,
+      );
+    }
+  });
+
+  test('rejects the prototype-exposed overlay id "constructor" with the typed policy error', () => {
+    let caught: unknown;
+    try {
+      materialize({ overlays: [{ overlayId: "constructor", data: { note: "x" } }] });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(DispatchOverlayError);
+    expect((caught as Error).message).toBe(
+      'overlays[0].overlayId: undeclared overlay "constructor"',
+    );
+  });
+
+  test('registers an overlay named "constructor" without a phantom duplicate', () => {
+    const registry = createDispatchOverlayRegistry([
+      { ...FIXTURE_OVERLAY, overlayId: "constructor" },
+    ]);
+    expect(Object.keys(registry)).toEqual(["constructor"]);
+  });
+
   test("fails closed on an unknown role, unknown surface, or a stale attested digest", () => {
     expect(() => materialize({ roleId: "advance" })).toThrow(
       'roleId: unknown dispatched role "advance"',

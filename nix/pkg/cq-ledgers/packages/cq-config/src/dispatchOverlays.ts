@@ -103,7 +103,12 @@ function assertClosedList<T extends string>(
 export function createDispatchOverlayRegistry(
   definitions: readonly DispatchOverlayDefinition[],
 ): DispatchOverlayRegistry {
-  const registry: Record<string, DispatchOverlayDefinition> = {};
+  // Null-prototype: overlay ids are caller-chosen keys, so no Object.prototype
+  // property may masquerade as a registry entry.
+  const registry: Record<string, DispatchOverlayDefinition> = Object.create(null) as Record<
+    string,
+    DispatchOverlayDefinition
+  >;
   for (const [index, definition] of definitions.entries()) {
     const path = `overlays[${index}]`;
     if (!isRecord(definition)) {
@@ -113,7 +118,7 @@ export function createDispatchOverlayRegistry(
     if (typeof overlayId !== "string" || !SAFE_OVERLAY_ID_PATTERN.test(overlayId)) {
       throw new DispatchOverlayError(`${path}.overlayId`, "expected a safe overlay identifier");
     }
-    if (overlayId in registry) {
+    if (Object.hasOwn(registry, overlayId)) {
       throw new DispatchOverlayError(`${path}.overlayId`, `duplicate overlay "${overlayId}"`);
     }
     assertClosedList(
@@ -269,13 +274,19 @@ function parseApplications(
       );
     }
     for (const field of APPLICATION_FIELDS) {
-      if (!(field in candidate)) {
+      // Object.hasOwn: a prototype-inherited field must not satisfy presence.
+      if (!Object.hasOwn(candidate, field)) {
         throw new DispatchOverlayError(`${path}.${field}`, "missing overlay application field");
       }
     }
     const overlayId = candidate.overlayId;
     if (typeof overlayId !== "string" || !SAFE_OVERLAY_ID_PATTERN.test(overlayId)) {
       throw new DispatchOverlayError(`${path}.overlayId`, "expected a safe overlay identifier");
+    }
+    // Object.hasOwn: an Object.prototype property name (e.g. "constructor")
+    // must fail as undeclared, not resolve through the prototype chain.
+    if (!Object.hasOwn(registry, overlayId)) {
+      throw new DispatchOverlayError(`${path}.overlayId`, `undeclared overlay "${overlayId}"`);
     }
     const definition = registry[overlayId];
     if (definition === undefined) {
@@ -360,7 +371,9 @@ export function materializeDispatchPrompt(
   input: DispatchPromptMaterializationInput,
 ): DispatchPromptMaterialization {
   const roleId = input.roleId;
-  if (!(roleId in DISPATCHED_ROLE_SIDECARS)) {
+  // Object.hasOwn: `in` would accept Object.prototype names ("constructor",
+  // "toString", ...) as dispatched roles and materialize bytes for them.
+  if (!Object.hasOwn(DISPATCHED_ROLE_SIDECARS, roleId)) {
     throw new DispatchOverlayError("roleId", `unknown dispatched role "${roleId}"`);
   }
   if (!(PROMPT_SURFACES as readonly string[]).includes(input.surface)) {
