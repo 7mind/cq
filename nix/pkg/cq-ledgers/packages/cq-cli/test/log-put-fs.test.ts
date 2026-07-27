@@ -256,3 +256,65 @@ describe("cq log put fs — positional src file path", () => {
     expect(await findTmpOrphans(root)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Empty / whitespace-only input (T866)
+// ---------------------------------------------------------------------------
+
+describe("cq log put fs — empty input refusal", () => {
+  it("empty stdin exits 1, cites the refusal, and writes NOTHING (absent, not zero-byte)", async () => {
+    const root = await makeTmpDir();
+    const io = makeIo("");
+    const args = parseLogPutArgs(root, ["--stdin", "--dest", "logs/x.md"]);
+    const outcome = await runLogPut(args, io);
+
+    expect(outcome.exitCode).toBe(1);
+    expect(io.errs.join("\n")).toContain("refusing to write an empty log");
+
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "x.md");
+    await expect(fsPromises.stat(destAbs)).rejects.toThrow();
+    expect(await findTmpOrphans(root)).toEqual([]);
+  });
+
+  it("whitespace-only stdin is refused identically", async () => {
+    const root = await makeTmpDir();
+    const io = makeIo("  \n\t \n");
+    const args = parseLogPutArgs(root, ["--stdin", "--dest", "logs/x.md"]);
+    const outcome = await runLogPut(args, io);
+
+    expect(outcome.exitCode).toBe(1);
+    expect(io.errs.join("\n")).toContain("refusing to write an empty log");
+
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "x.md");
+    await expect(fsPromises.stat(destAbs)).rejects.toThrow();
+  });
+
+  it("an empty --src file is refused identically", async () => {
+    const root = await makeTmpDir();
+    const srcDir = await fsPromises.mkdtemp(path.join(tmpdir(), "cq-log-src-empty-"));
+    tmpDirs.push(srcDir);
+    const srcFile = path.join(srcDir, "empty.md");
+    await fsPromises.writeFile(srcFile, "", "utf8");
+
+    const io = makeIo(""); // stdin not used
+    const args = parseLogPutArgs(root, [srcFile, "--dest", "logs/x.md"]);
+    const outcome = await runLogPut(args, io);
+
+    expect(outcome.exitCode).toBe(1);
+    expect(io.errs.join("\n")).toContain("refusing to write an empty log");
+
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "x.md");
+    await expect(fsPromises.stat(destAbs)).rejects.toThrow();
+  });
+
+  it("non-empty input still exits 0 and writes the artifact", async () => {
+    const root = await makeTmpDir();
+    const io = makeIo("# summary\n");
+    const args = parseLogPutArgs(root, ["--stdin", "--dest", "logs/x.md"]);
+    const outcome = await runLogPut(args, io);
+
+    expect(outcome.exitCode).toBe(0);
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "x.md");
+    expect(await fsPromises.readFile(destAbs, "utf8")).toBe("# summary\n");
+  });
+});

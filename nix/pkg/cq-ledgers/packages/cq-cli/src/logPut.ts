@@ -255,6 +255,14 @@ export async function runLogPut(
   // --- Redact secrets (SAME for both backends) ---
   const redacted = redactSecrets(raw);
 
+  // --- Empty-input refusal (T866): fail fast BEFORE jsonl validation and any
+  // backend write. Checking POST-redaction also fails closed if the content
+  // ever redacts to empty. ---
+  if (redacted.trim().length === 0) {
+    io.err(`cq log put: refusing to write an empty log to ${args.dest}`);
+    return { exitCode: 1 };
+  }
+
   // --- JSONL validation (only for .jsonl destinations; SAME for both
   // backends; MUST fail BEFORE any write / ref mutation) ---
   if (args.dest.endsWith(".jsonl")) {
