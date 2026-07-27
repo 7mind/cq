@@ -176,6 +176,7 @@ export abstract class LedgerStorePlanLifecycleFixture<
       taskIds.push(task.id);
     }
     await this.seedUpdate(GOALS_LEDGER, goalId, (goal) => {
+      if (options.register === false) return;
       goal.fields["milestones"] = [milestone.id];
       const currentGeneration = Number(goal.fields[PLAN_GENERATION_FIELD] ?? "1");
       const manifest = {
@@ -323,6 +324,7 @@ export abstract class LedgerStorePlanLifecycleFixture<
           context: optionalString(item, "context"),
           suggestions: refValues(item, "suggestions"),
           recommendation: optionalString(item, "recommendation"),
+          ledgerRefs: refValues(item, "ledgerRefs"),
           provenance: provenance(item),
         }),
       );
@@ -424,6 +426,28 @@ export abstract class LedgerStorePlanLifecycleFixture<
       status: "wip",
       ...provenanceValue,
     });
+  }
+
+  async blockTask(
+    taskId: string,
+    provenanceValue: { author: string; session?: string },
+  ): Promise<void> {
+    await this.store.updateItem(TASKS_LEDGER, taskId, {
+      status: "blocked",
+      ...provenanceValue,
+    });
+  }
+
+  async seedQuestion(goalId: string, refs: readonly string[]): Promise<{ id: string }> {
+    const item = await this.store.createItem(QUESTIONS_LEDGER, MILESTONES_AMBIENT_ID, {
+      status: "open",
+      fields: {
+        question: `seeded question for ${goalId}`,
+        ledgerRefs: [...refs],
+      },
+      ...SEED_PROVENANCE,
+    });
+    return { id: item.id };
   }
 
   async rawReopenTask(taskId: string, toStatus: string): Promise<void> {

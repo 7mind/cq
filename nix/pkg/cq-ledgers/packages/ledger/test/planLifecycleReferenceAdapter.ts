@@ -89,6 +89,7 @@ export interface ReferencePublicQuestion extends ReferencePublicEffectItem {
   readonly context: string | null;
   readonly suggestions: readonly string[];
   readonly recommendation: string | null;
+  readonly ledgerRefs: readonly string[];
 }
 
 export interface ReferencePublicResearch extends ReferencePublicEffectItem {
@@ -148,6 +149,13 @@ export interface SeedWorkOptions {
   readonly taskStatuses: readonly ReferencePublicTask["status"][];
   readonly openQuestionCount: number;
   readonly legacy: boolean;
+  /**
+   * When false, the seeded work is NOT registered on the goal — neither
+   * `goals.milestones` nor the draft/finalized metadata is written. The tasks
+   * still reference the goal, which makes them ORPHANS: visible through the
+   * goal ref but outside the declared manifest (T856).
+   */
+  readonly register?: boolean;
 }
 
 export interface SeedReviewOptions {
@@ -171,6 +179,19 @@ export interface PlanLifecycleContractFixture {
   restart(): Promise<PlanLifecycleContractFixture>;
   rawMutateManagedState(goalId: string): Promise<void>;
   startTask(taskId: string, provenance: PlanWriteProvenance): Promise<void>;
+  /**
+   * Guarded planned/wip → blocked transition through the store's ordinary
+   * write path (the way implement-flow parks a task on a question). Rejects
+   * once the task no longer belongs to the executable manifest.
+   */
+  blockTask(taskId: string, provenance: PlanWriteProvenance): Promise<void>;
+  /**
+   * Seed an OPEN question with explicit `ledgerRefs`, so fixtures can own a
+   * question solely by the superseded work or share it with live items
+   * (T856). Include the goal ref (`goals:<id>`) — observes surface questions
+   * through it.
+   */
+  seedQuestion(goalId: string, refs: readonly string[]): Promise<{ id: string }>;
   /**
    * Raw reopen of a TERMINAL managed task, bypassing the lifecycle API. A
    * separate hook from {@link startTask} because `reopenItem` is a distinct
@@ -238,6 +259,7 @@ interface MutableQuestion extends MutableEffectItem {
   context: string | null;
   suggestions: string[];
   recommendation: string | null;
+  ledgerRefs: string[];
 }
 
 interface MutableResearch extends MutableEffectItem {
@@ -283,7 +305,6 @@ interface MutableGoal {
   finalizedManifest: PlanPublishedManifest | null;
   milestoneIds: string[];
   waitingResearches: string[];
-  legacyMetadataAbsent: boolean;
 }
 
 interface RecordedOperation {
@@ -531,7 +552,6 @@ export class ReferencePlanLifecycleAdapter
         finalizedManifest: null,
         milestoneIds: [],
         waitingResearches: [],
-        legacyMetadataAbsent: options.generation === null,
       });
     });
   }
@@ -539,6 +559,7 @@ export class ReferencePlanLifecycleAdapter
   async seedWork(goalId: string, options: SeedWorkOptions): Promise<void> {
     await this.backend.mutex.run(() => {
       const goal = this.requireGoal(goalId);
+      const register = options.register !== false;
       const milestoneId = `M${++this.backend.milestoneCounter}`;
       const taskIds: string[] = [];
       this.backend.milestones.set(milestoneId, {
@@ -569,10 +590,11 @@ export class ReferencePlanLifecycleAdapter
           tags: [],
           dependsOn,
           blockedBy: [],
-          executable: true,
+          executable: register,
           provenance: SEED_PROVENANCE,
         });
       }
+      if (!register) return;
       goal.milestoneIds = [milestoneId];
       const revision = 1;
       const priorClaimId = "seeded_claim";
@@ -593,7 +615,6 @@ export class ReferencePlanLifecycleAdapter
       };
       goal.finalizedDraft = clone(identity);
       goal.finalizedManifest = manifest;
-      goal.legacyMetadataAbsent = options.legacy;
       for (let index = 0; index < options.openQuestionCount; index += 1) {
         const id = `Q${++this.backend.questionCounter}`;
         this.backend.questions.set(id, {
@@ -604,6 +625,7 @@ export class ReferencePlanLifecycleAdapter
           context: null,
           suggestions: [],
           recommendation: null,
+          ledgerRefs: [`goals:${goalId}`],
           provenance: SEED_PROVENANCE,
         });
       }
@@ -727,6 +749,40 @@ export class ReferencePlanLifecycleAdapter
     });
   }
 
+  async blockTask(taskId: string, provenance: PlanWriteProvenance): Promise<void> {
+    await this.backend.mutex.run(() => {
+      const task = this.backend.tasks.get(taskId);
+      if (task === undefined) throw new Error(`task not found: ${taskId}`);
+      if (!task.executable) {
+        throw new Error("task belongs to a draft or superseded manifest");
+      }
+      if (task.status !== "planned" && task.status !== "wip") {
+        throw new Error(`task is not blockable from status ${task.status}`);
+      }
+      task.status = "blocked";
+      task.provenance = clone(provenance);
+    });
+  }
+
+  async seedQuestion(goalId: string, refs: readonly string[]): Promise<{ id: string }> {
+    return this.backend.mutex.run(() => {
+      this.requireGoal(goalId);
+      const id = `Q${++this.backend.questionCounter}`;
+      this.backend.questions.set(id, {
+        id,
+        goalId,
+        status: "open",
+        text: `seeded question ${id}`,
+        context: null,
+        suggestions: [],
+        recommendation: null,
+        ledgerRefs: [...refs],
+        provenance: SEED_PROVENANCE,
+      });
+      return { id };
+    });
+  }
+
   async rawReopenTask(taskId: string, toStatus: string): Promise<void> {
     await this.backend.mutex.run(() => {
       const task = this.backend.tasks.get(taskId);
@@ -809,7 +865,7 @@ export class ReferencePlanLifecycleAdapter
       }
 
       if (input.purpose === "follow-up") {
-        const activeTasks = this.goalTasks(goal).filter(
+        const activeTasks = this.declaredTasks(goal).filter(
           ({ status }) => status === "wip" || status === "blocked",
         );
         if (activeTasks.length > 0) {
@@ -827,12 +883,13 @@ export class ReferencePlanLifecycleAdapter
         }
       }
 
-      const adoptedManifest = goal.legacyMetadataAbsent
-        ? {
-            milestoneIds: [...goal.milestoneIds],
-            taskIds: this.goalTasks(goal).map(({ id }) => id),
-          }
-        : { milestoneIds: [], taskIds: [] };
+      const adoptedManifest =
+        goal.generation === null
+          ? {
+              milestoneIds: [...goal.milestoneIds],
+              taskIds: this.declaredTasks(goal).map(({ id }) => id),
+            }
+          : { milestoneIds: [], taskIds: [] };
       if (input.purpose === "follow-up") this.applyFollowUpCleanup(goal);
 
       const priorGeneration = goal.generation;
@@ -842,7 +899,6 @@ export class ReferencePlanLifecycleAdapter
       goal.activeClaimId = claimId;
       goal.phase = phase.goalPhase;
       goal.waitingResearches = [];
-      goal.legacyMetadataAbsent = false;
 
       const record = PlanPrivateClaimRecordSchema.parse({
         goalId: input.goalId,
@@ -979,6 +1035,7 @@ export class ReferencePlanLifecycleAdapter
               context: question.context ?? null,
               suggestions: [...(question.suggestions ?? [])],
               recommendation: question.recommendation ?? null,
+              ledgerRefs: [`goals:${input.goalId}`],
               provenance: { author: input.author, session: input.session },
             });
             return { key: question.key, id };
@@ -1171,9 +1228,21 @@ export class ReferencePlanLifecycleAdapter
     return [...this.backend.tasks.values()].filter((task) => task.goalId === goal.goalId);
   }
 
+  /** Tasks under the goal's DECLARED milestones — the manifest the guard sees (T856). */
+  private declaredTasks(goal: MutableGoal): MutableTask[] {
+    const declared = new Set(goal.milestoneIds);
+    return [...this.backend.tasks.values()].filter((task) =>
+      declared.has(task.milestoneId),
+    );
+  }
+
+  private static stripRefId(ref: string): string {
+    return ref.includes(":") ? ref.slice(ref.indexOf(":") + 1) : ref;
+  }
+
   private applyFollowUpCleanup(goal: MutableGoal): void {
     const supersededIds = new Set<string>(goal.milestoneIds);
-    for (const task of this.goalTasks(goal)) {
+    for (const task of this.declaredTasks(goal)) {
       task.executable = false;
       if (task.status === "planned") {
         task.status = "abandoned";
@@ -1185,9 +1254,22 @@ export class ReferencePlanLifecycleAdapter
       const milestone = this.backend.milestones.get(milestoneId);
       if (milestone !== undefined) milestone.status = "postponed";
     }
+    const goalRef = `goals:${goal.goalId}`;
     for (const question of this.backend.questions.values()) {
-      if (question.goalId === goal.goalId && question.status === "open") {
+      if (question.status !== "open") continue;
+      const refs = question.ledgerRefs;
+      if (refs.length === 0) continue;
+      if (
+        refs.every(
+          (ref) =>
+            ref === goalRef || supersededIds.has(ReferencePlanLifecycleAdapter.stripRefId(ref)),
+        )
+      ) {
         question.status = "withdrawn";
+      } else {
+        question.ledgerRefs = refs.filter(
+          (ref) => !supersededIds.has(ReferencePlanLifecycleAdapter.stripRefId(ref)),
+        );
       }
     }
     goal.milestoneIds = [];

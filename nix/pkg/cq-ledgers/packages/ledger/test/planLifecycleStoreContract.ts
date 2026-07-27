@@ -123,6 +123,16 @@ function requireClaimWinner(
   return result.acknowledgement;
 }
 
+/**
+ * Stagger a racing write so the OTHER contender commits first — the same
+ * technique the Postgres cross-connection race uses, applied to same-process
+ * stores whose lock queues otherwise schedule on microtask timing.
+ */
+async function delayed<T>(op: () => Promise<T>): Promise<T> {
+  await Bun.sleep(5);
+  return op();
+}
+
 function publishInput(
   claim: PlanClaimAcknowledgement,
   operationId: string,
@@ -654,6 +664,435 @@ export function runPlanLifecycleStoreContract(
           expect(await fixture.observe(GOAL_ID)).toEqual(before);
         } finally {
           await fixture.dispose();
+        }
+      }, timeout);
+
+      it("adopts only the declared legacy manifest and never abandons goal-ref orphans", async () => {
+        const fixture = await buildGoal(factory, "planned", null);
+        try {
+          await fixture.seedWork(GOAL_ID, {
+            taskStatuses: ["planned"],
+            openQuestionCount: 0,
+            legacy: true,
+          });
+          await fixture.seedWork(GOAL_ID, {
+            taskStatuses: ["planned"],
+            openQuestionCount: 0,
+            legacy: true,
+            register: false,
+          });
+          const before = await fixture.observe(GOAL_ID);
+          expect(before.tasks).toHaveLength(2);
+          const [declaredTask, orphanTask] = before.tasks;
+          if (declaredTask === undefined || orphanTask === undefined) {
+            throw new Error("seeded tasks missing");
+          }
+          const result = await fixture.lifecycle.claimPlan(
+            claimInput("follow-up", "legacy-follow-up", OWNER_TOKEN_A, null, PROVENANCE_A),
+          );
+          const acknowledgement = requireClaimWinner(result);
+          expect(acknowledgement.legacyAdopted).toBe(true);
+          expect(acknowledgement.adoptedManifest).toEqual({
+            milestoneIds: [declaredTask.milestoneId],
+            taskIds: [declaredTask.id],
+          });
+          const after = await fixture.observe(GOAL_ID);
+          expect(after.phase).toBe("planning");
+          expect(after.generation).toBe(1);
+          // The declared work is superseded; the adopted manifest is NOT
+          // installed as the new generation's executable draft.
+          expect(after.milestoneIds).toEqual([]);
+          expect(after.finalizedManifest).toBeNull();
+          expect(after.currentDraft).toBeNull();
+          const declared = after.tasks.find(({ id }) => id === declaredTask.id);
+          expect(declared?.status).toBe("abandoned");
+          const declaredMilestone = after.milestones.find(
+            ({ id }) => id === declaredTask.milestoneId,
+          );
+          expect(declaredMilestone?.status).toBe("postponed");
+          // The orphan references the goal but sits outside the declared
+          // milestones: never adopted, never abandoned, never scanned.
+          const orphan = after.tasks.find(({ id }) => id === orphanTask.id);
+          expect(orphan?.status).toBe("planned");
+          const orphanMilestone = after.milestones.find(
+            ({ id }) => id === orphanTask.milestoneId,
+          );
+          expect(orphanMilestone?.status).toBe("open");
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
+      it("replaces an unstarted planned task cleanly on follow-up", async () => {
+        const fixture = await buildGoal(factory, "planned", 1);
+        try {
+          await fixture.seedWork(GOAL_ID, {
+            taskStatuses: ["planned"],
+            openQuestionCount: 1,
+            legacy: false,
+          });
+          const before = await fixture.observe(GOAL_ID);
+          const result = await fixture.lifecycle.claimPlan(
+            claimInput("follow-up", "replace-planned", OWNER_TOKEN_A, 1, PROVENANCE_A),
+          );
+          const acknowledgement = requireClaimWinner(result);
+          expect(acknowledgement.generation).toBe(2);
+          const after = await fixture.observe(GOAL_ID);
+          expect(after.phase).toBe("planning");
+          expect(after.tasks.map(({ status }) => status)).toEqual(["abandoned"]);
+          expect(after.milestones.map(({ status }) => status)).toEqual(["postponed"]);
+          expect(after.questions.map(({ status }) => status)).toEqual(["withdrawn"]);
+          expect(after.milestoneIds).toEqual([]);
+          expect(after.finalizedManifest).toBeNull();
+          expect(before.tasks[0]?.dependsOn).toEqual([]);
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
+      it("replaces a planned task whose dependencies are merely unsatisfied", async () => {
+        const fixture = await buildGoal(factory, "planned", 1);
+        try {
+          await fixture.seedWork(GOAL_ID, {
+            taskStatuses: ["planned", "planned"],
+            openQuestionCount: 0,
+            legacy: false,
+          });
+          const before = await fixture.observe(GOAL_ID);
+          // The second task could never have started: its dependency is not done.
+          expect(before.tasks[1]?.dependsOn).toEqual([before.tasks[0]!.id]);
+          expect(before.readyTaskIds).toEqual([before.tasks[0]!.id]);
+          const result = await fixture.lifecycle.claimPlan(
+            claimInput("follow-up", "replace-chained", OWNER_TOKEN_A, 1, PROVENANCE_A),
+          );
+          requireClaimWinner(result);
+          const after = await fixture.observe(GOAL_ID);
+          expect(after.tasks.map(({ status }) => status)).toEqual([
+            "abandoned",
+            "abandoned",
+          ]);
+          // The dangling dependency edge into superseded work is reconciled.
+          expect(after.tasks[1]?.dependsOn).toEqual([]);
+          expect(after.milestones.map(({ status }) => status)).toEqual(["postponed"]);
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
+      it("rejects follow-up on a wip task without touching linked questions or backlinks", async () => {
+        const fixture = await buildGoal(factory, "planned", 1);
+        try {
+          await fixture.seedWork(GOAL_ID, {
+            taskStatuses: ["wip", "planned"],
+            openQuestionCount: 1,
+            legacy: false,
+          });
+          const before = await fixture.observe(GOAL_ID);
+          const result = await fixture.lifecycle.claimPlan(
+            claimInput("follow-up", "reject-wip", OWNER_TOKEN_A, 1, PROVENANCE_A),
+          );
+          expect(result).toEqual({
+            ok: false,
+            conflict: {
+              code: "implementation-active",
+              goalId: GOAL_ID,
+              tasks: [{ taskId: before.tasks[0]!.id, status: "wip" }],
+            },
+          });
+          expect(await fixture.observe(GOAL_ID)).toEqual(before);
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
+      it("rejects follow-up on a task blocked straight from planned, byte-identically", async () => {
+        const fixture = await buildGoal(factory, "planned", 1);
+        try {
+          await fixture.seedWork(GOAL_ID, {
+            taskStatuses: ["planned"],
+            openQuestionCount: 1,
+            legacy: false,
+          });
+          const seeded = await fixture.observe(GOAL_ID);
+          await fixture.blockTask(seeded.tasks[0]!.id, PROVENANCE_B);
+          const before = await fixture.observe(GOAL_ID);
+          expect(before.tasks[0]?.status).toBe("blocked");
+          const result = await fixture.lifecycle.claimPlan(
+            claimInput("follow-up", "reject-blocked-planned", OWNER_TOKEN_A, 1, PROVENANCE_A),
+          );
+          expect(result).toEqual({
+            ok: false,
+            conflict: {
+              code: "implementation-active",
+              goalId: GOAL_ID,
+              tasks: [{ taskId: before.tasks[0]!.id, status: "blocked" }],
+            },
+          });
+          // The blocked task retains its linked open question and the goal's
+          // declared manifest: rejection is mutation-free.
+          expect(await fixture.observe(GOAL_ID)).toEqual(before);
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
+      it("rejects follow-up on a task blocked from wip, byte-identically", async () => {
+        const fixture = await buildGoal(factory, "planned", 1);
+        try {
+          await fixture.seedWork(GOAL_ID, {
+            taskStatuses: ["planned"],
+            openQuestionCount: 1,
+            legacy: false,
+          });
+          const seeded = await fixture.observe(GOAL_ID);
+          await fixture.startTask(seeded.tasks[0]!.id, PROVENANCE_B);
+          await fixture.blockTask(seeded.tasks[0]!.id, PROVENANCE_B);
+          const before = await fixture.observe(GOAL_ID);
+          expect(before.tasks[0]?.status).toBe("blocked");
+          const result = await fixture.lifecycle.claimPlan(
+            claimInput("follow-up", "reject-blocked-wip", OWNER_TOKEN_A, 1, PROVENANCE_A),
+          );
+          expect(result).toEqual({
+            ok: false,
+            conflict: {
+              code: "implementation-active",
+              goalId: GOAL_ID,
+              tasks: [{ taskId: before.tasks[0]!.id, status: "blocked" }],
+            },
+          });
+          expect(await fixture.observe(GOAL_ID)).toEqual(before);
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
+      it("reopens a drained manifest normally", async () => {
+        const fixture = await buildGoal(factory, "planned", 1);
+        try {
+          await fixture.seedWork(GOAL_ID, {
+            taskStatuses: ["done", "abandoned"],
+            openQuestionCount: 0,
+            legacy: false,
+          });
+          const before = await fixture.observe(GOAL_ID);
+          const result = await fixture.lifecycle.claimPlan(
+            claimInput("follow-up", "reopen-drained", OWNER_TOKEN_A, 1, PROVENANCE_A),
+          );
+          const claim = requireClaimWinner(result);
+          expect(claim.generation).toBe(2);
+          const drained = await fixture.observe(GOAL_ID);
+          // Nothing was left to terminalize; the drained tasks are untouched.
+          expect(drained.tasks.map(({ status }) => status)).toEqual([
+            "done",
+            "abandoned",
+          ]);
+          expect(drained.milestones.map(({ status }) => status)).toEqual(["postponed"]);
+          expect(drained.phase).toBe("planning");
+
+          // …and the reopened goal plans and finalizes a fresh manifest.
+          const published = await fixture.lifecycle.publishPlanDraft(
+            publishInput(claim, "reopen-draft"),
+          );
+          if (!published.ok) throw new Error("draft publication unexpectedly conflicted");
+          const draft: PlanDraftIdentity = {
+            goalId: GOAL_ID,
+            claimId: claim.claimId,
+            generation: claim.generation,
+            revision: published.acknowledgement.manifest.revision,
+          };
+          await fixture.seedReview({
+            reviewId: "R91",
+            goalId: GOAL_ID,
+            status: "go-ahead",
+            draft,
+            provenance: PROVENANCE_B,
+          });
+          const finalized = await fixture.lifecycle.finalizePlan({
+            goalId: GOAL_ID,
+            claimId: claim.claimId,
+            generation: claim.generation,
+            operationId: "reopen-finalize",
+            ownerFenceToken: claim.ownerFenceToken,
+            ...PROVENANCE_A,
+            reviewId: "R91",
+            draftRevision: draft.revision,
+            decision: { headline: "Reopen with a fresh manifest" },
+          });
+          if (!finalized.ok) throw new Error("finalize unexpectedly conflicted");
+          const reopened = await fixture.observe(GOAL_ID);
+          expect(reopened.phase).toBe("planned");
+          expect(reopened.readyTaskIds).toEqual([
+            finalized.acknowledgement.manifest.tasks[0]!.id,
+          ]);
+          // The drained tasks stayed terminal and outside the new manifest.
+          expect(
+            reopened.tasks.find(({ id }) => id === before.tasks[0]!.id)?.status,
+          ).toBe("done");
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
+      it("withdraws only questions owned solely by superseded work and strips dangling backlinks", async () => {
+        const fixture = await buildGoal(factory, "planned", 1);
+        try {
+          await fixture.seedGoal({
+            goalId: OTHER_GOAL_ID,
+            phase: "clarifying",
+            generation: null,
+          });
+          await fixture.seedWork(GOAL_ID, {
+            taskStatuses: ["planned", "planned"],
+            openQuestionCount: 0,
+            legacy: false,
+          });
+          const seeded = await fixture.observe(GOAL_ID);
+          const [first, second] = seeded.tasks;
+          if (first === undefined || second === undefined) {
+            throw new Error("seeded tasks missing");
+          }
+          await fixture.seedQuestion(GOAL_ID, [`goals:${GOAL_ID}`]);
+          await fixture.seedQuestion(GOAL_ID, [`goals:${GOAL_ID}`, `tasks:${second.id}`]);
+          await fixture.seedQuestion(GOAL_ID, [`goals:${GOAL_ID}`, `goals:${OTHER_GOAL_ID}`]);
+          await fixture.seedQuestion(GOAL_ID, [
+            `goals:${GOAL_ID}`,
+            `tasks:${second.id}`,
+            `goals:${OTHER_GOAL_ID}`,
+          ]);
+          const result = await fixture.lifecycle.claimPlan(
+            claimInput("follow-up", "reconcile-questions", OWNER_TOKEN_A, 1, PROVENANCE_A),
+          );
+          requireClaimWinner(result);
+          const after = await fixture.observe(GOAL_ID);
+          expect(after.tasks.map(({ status }) => status)).toEqual([
+            "abandoned",
+            "abandoned",
+          ]);
+          const [soleGoal, soleWork, shared, sharedStripped] = after.questions;
+          // Owned solely by the goal's superseded work: withdrawn with it.
+          expect(soleGoal?.status).toBe("withdrawn");
+          expect(soleWork?.status).toBe("withdrawn");
+          // Shared with a live goal: survives, refs untouched.
+          expect(shared?.status).toBe("open");
+          expect(shared?.ledgerRefs).toEqual([`goals:${GOAL_ID}`, `goals:${OTHER_GOAL_ID}`]);
+          // Shared, but carrying a backlink into the superseded manifest: the
+          // question survives and the dangling backlink is reconciled away.
+          expect(sharedStripped?.status).toBe("open");
+          expect(sharedStripped?.ledgerRefs).toEqual([
+            `goals:${GOAL_ID}`,
+            `goals:${OTHER_GOAL_ID}`,
+          ]);
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
+      it("settles a task start racing a follow-up claim to exactly one authority", async () => {
+        // Both operations reach the store's locks within a few microtasks, so
+        // staggering the launch is what makes BOTH serialization orders
+        // reachable — without it the multi-lock claim always loses to the
+        // single-lock task write and one branch below stays dead.
+        const outcomes: string[] = [];
+        for (const headStart of ["starter", "replacer"] as const) {
+          const fixture = await buildGoal(factory, "planned", 1);
+          try {
+            await fixture.seedWork(GOAL_ID, {
+              taskStatuses: ["planned"],
+              openQuestionCount: 1,
+              legacy: false,
+            });
+            const seeded = await fixture.observe(GOAL_ID);
+            const taskId = seeded.tasks[0]!.id;
+            const start = () =>
+              fixture.startTask(taskId, PROVENANCE_B).then(
+                () => "started" as const,
+                () => "rejected" as const,
+              );
+            const claim = () =>
+              fixture.lifecycle.claimPlan(
+                claimInput("follow-up", `race-${headStart}`, OWNER_TOKEN_A, 1, PROVENANCE_A),
+              );
+            const [startOutcome, claimOutcome] =
+              headStart === "starter"
+                ? await Promise.all([start(), delayed(claim)])
+                : await Promise.all([delayed(start), claim()]);
+            const after = await fixture.observe(GOAL_ID);
+            if (claimOutcome.ok) {
+              // The replacement won: the startable task was abandoned and the
+              // raw start lost the fence.
+              outcomes.push("replacer-won");
+              expect(startOutcome).toBe("rejected");
+              expect(after.tasks[0]?.status).toBe("abandoned");
+              expect(after.generation).toBe(2);
+              expect(after.phase).toBe("planning");
+            } else {
+              // The raw start won: the claim was refused because implementation
+              // is active, and nothing about the goal moved.
+              outcomes.push("starter-won");
+              expect(startOutcome).toBe("started");
+              expect(claimOutcome.conflict.code).toBe("implementation-active");
+              expect(after.tasks[0]?.status).toBe("wip");
+              expect(after.generation).toBe(1);
+              expect(after.phase).toBe("planned");
+              expect(after.questions.map(({ status }) => status)).toEqual(["open"]);
+            }
+          } finally {
+            await fixture.dispose();
+          }
+        }
+        // Both serialization orders were exercised; each produced ONE result.
+        expect([...outcomes].sort()).toEqual(["replacer-won", "starter-won"]);
+      }, timeout);
+
+      it("settles a wip-to-blocked park racing a follow-up claim to one rejection", async () => {
+        for (const headStart of ["block", "claim"] as const) {
+          const fixture = await buildGoal(factory, "planned", 1);
+          try {
+            await fixture.seedWork(GOAL_ID, {
+              taskStatuses: ["wip"],
+              openQuestionCount: 1,
+              legacy: false,
+            });
+            const seeded = await fixture.observe(GOAL_ID);
+            const taskId = seeded.tasks[0]!.id;
+            const block = () =>
+              fixture.blockTask(taskId, PROVENANCE_B).then(
+                () => "blocked" as const,
+                () => "rejected" as const,
+              );
+            const claim = () =>
+              fixture.lifecycle.claimPlan(
+                claimInput("follow-up", `race-${headStart}`, OWNER_TOKEN_A, 1, PROVENANCE_A),
+              );
+            const [blockOutcome, claimOutcome] =
+              headStart === "block"
+                ? await Promise.all([block(), delayed(claim)])
+                : await Promise.all([delayed(block), claim()]);
+            // Whichever serialized first, the follow-up can NEVER supersede
+            // active work: the claim is refused, the park commits, and the
+            // linked question stays open.
+            expect(blockOutcome).toBe("blocked");
+            expect(claimOutcome.ok).toBe(false);
+            if (claimOutcome.ok) {
+              throw new Error("follow-up unexpectedly superseded active work");
+            }
+            expect(claimOutcome.conflict).toEqual({
+              code: "implementation-active",
+              goalId: GOAL_ID,
+              tasks: [
+                { taskId, status: headStart === "block" ? "blocked" : "wip" },
+              ],
+            });
+            const after = await fixture.observe(GOAL_ID);
+            expect(after.tasks[0]?.status).toBe("blocked");
+            expect(after.generation).toBe(1);
+            expect(after.phase).toBe("planned");
+            expect(after.milestoneIds).toEqual(seeded.milestoneIds);
+            expect(after.questions.map(({ status }) => status)).toEqual(["open"]);
+            expect(after.milestones.map(({ status }) => status)).toEqual(["open"]);
+          } finally {
+            await fixture.dispose();
+          }
         }
       }, timeout);
 

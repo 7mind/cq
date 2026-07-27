@@ -308,13 +308,26 @@ function sameDraft(left: PlanDraftIdentity | null, right: PlanDraftIdentity): bo
   );
 }
 
-function goalTasks(state: InMemoryPlanLifecycleState, goalId: string): Item[] {
-  const goalRef = `${GOALS_LEDGER}:${goalId}`;
+function stripRefId(ref: string): string {
+  return ref.includes(":") ? ref.slice(ref.indexOf(":") + 1) : ref;
+}
+
+/**
+ * The goal's DECLARED manifest work: the tasks grouped under the milestones
+ * `goals.milestones` names, in ledger order. Adoption, the follow-up
+ * implementation-active check, and replacement cleanup all range over exactly
+ * this set — a task that references the goal but sits outside the declared
+ * milestones is an orphan the guard never scans, adopts, or abandons (T856).
+ */
+function declaredManifestTasks(
+  state: InMemoryPlanLifecycleState,
+  goal: Item,
+): Item[] {
+  const declared = new Set(fieldStrings(goal, "milestones"));
   const out: Item[] = [];
   for (const milestone of ledger(state, TASKS_LEDGER).milestones) {
-    for (const item of milestone.items) {
-      if (fieldStrings(item, "ledgerRefs").includes(goalRef)) out.push(item);
-    }
+    if (!declared.has(milestone.id)) continue;
+    out.push(...milestone.items);
   }
   return out;
 }
@@ -330,7 +343,7 @@ function removeSupersededReferences(
           const refs = fieldStrings(item, field);
           if (refs.length > 0) {
             item.fields[field] = refs.filter((ref) => {
-              const id = ref.includes(":") ? ref.slice(ref.indexOf(":") + 1) : ref;
+              const id = stripRefId(ref);
               return !supersededIds.has(id);
             });
           }
@@ -364,7 +377,7 @@ function supersedeManifest(
 function applyFollowUpCleanup(state: InMemoryPlanLifecycleState, goal: Item): void {
   const milestoneIds = fieldStrings(goal, "milestones");
   const superseded = new Set(milestoneIds);
-  for (const task of goalTasks(state, goal.id)) {
+  for (const task of declaredManifestTasks(state, goal)) {
     if (task.status === "planned") {
       task.status = "abandoned";
       superseded.add(task.id);
@@ -379,11 +392,18 @@ function applyFollowUpCleanup(state: InMemoryPlanLifecycleState, goal: Item): vo
   const goalRef = `${GOALS_LEDGER}:${goal.id}`;
   for (const milestone of ledger(state, QUESTIONS_LEDGER).milestones) {
     for (const question of milestone.items) {
-      if (
-        question.status === "open" &&
-        fieldStrings(question, "ledgerRefs").includes(goalRef)
-      ) {
+      if (question.status !== "open") continue;
+      const refs = fieldStrings(question, "ledgerRefs");
+      if (refs.length === 0) continue;
+      if (refs.every((ref) => ref === goalRef || superseded.has(stripRefId(ref)))) {
+        // Owned solely by the superseded work: the question asked about a plan
+        // that no longer exists, so it is withdrawn with it.
         question.status = "withdrawn";
+      } else {
+        // Shared ownership: the question survives, but its backlinks into the
+        // superseded manifest dangle and are reconciled away.
+        const retained = refs.filter((ref) => !superseded.has(stripRefId(ref)));
+        if (retained.length !== refs.length) setField(question, "ledgerRefs", retained);
       }
     }
   }
@@ -400,10 +420,7 @@ function adoptedManifest(
     return { milestoneIds: [], taskIds: [] };
   }
   const milestoneIds = fieldStrings(goal, "milestones");
-  const declared = new Set(milestoneIds);
-  const taskIds = goalTasks(state, goal.id)
-    .filter((task) => declared.has(task.milestoneId))
-    .map(({ id }) => id);
+  const taskIds = declaredManifestTasks(state, goal).map(({ id }) => id);
   return { milestoneIds, taskIds };
 }
 
@@ -824,7 +841,7 @@ export function claimInMemoryPlan(
     };
   }
   if (input.purpose === "follow-up") {
-    const activeTasks = goalTasks(state, input.goalId).filter(
+    const activeTasks = declaredManifestTasks(state, goal).filter(
       ({ status }) => status === "wip" || status === "blocked",
     );
     if (activeTasks.length > 0) {
@@ -846,7 +863,14 @@ export function claimInMemoryPlan(
   if (input.purpose === "follow-up") applyFollowUpCleanup(state, goal);
   const nextGeneration = (currentGeneration ?? 0) + 1;
   const claimId = `claim_${input.goalId}_${nextGeneration}`;
-  if (adopted.milestoneIds.length > 0 && currentDraft(goal) === null) {
+  // An initial claim ADOPTS the legacy manifest as the executable baseline so
+  // the old work keeps running under the guard; a follow-up SUPERSEDES it, so
+  // the adopted record stays in the claim but no draft is installed.
+  if (
+    input.purpose === "initial" &&
+    adopted.milestoneIds.length > 0 &&
+    currentDraft(goal) === null
+  ) {
     const manifest = seededManifest(adopted);
     const identity: PlanDraftIdentity = {
       goalId: input.goalId,

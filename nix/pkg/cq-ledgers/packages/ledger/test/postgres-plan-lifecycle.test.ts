@@ -851,6 +851,66 @@ describe.skipIf(!PG_URL)("postgres plan-lifecycle fence (T851)", () => {
     expect([...outcomes].sort()).toEqual(["replacer-won", "starter-won"]);
   }, 120_000);
 
+  test("a wip-to-blocked park racing a follow-up claim on independent connections never lets the claim through", async () => {
+    // A park (wip → blocked) is not a fresh authority grab the way a task
+    // start is: the work is active EITHER WAY, so the follow-up must be
+    // refused under BOTH serialization orders — the only thing the race
+    // decides is which current status the conflict reports.
+    for (const headStart of ["parker", "replacer"] as const) {
+      const h = await newHarness();
+      try {
+        const setup = await h.open();
+        await seedGoal(setup, GOAL_ID);
+        const { taskIds } = await driveToFinalized(setup, "R6");
+        const [first] = taskIds;
+        if (first === undefined) throw new Error("manifest is short");
+        await setup.updateItem(TASKS_LEDGER, first, { status: "wip", ...PROVENANCE });
+
+        // Two INDEPENDENT connections, contending for the same goal.
+        const parker = await h.open();
+        const replacer = await h.open();
+        const blockTask = (): Promise<"blocked" | "rejected"> =>
+          parker
+            .updateItem(TASKS_LEDGER, first, { status: "blocked", ...PROVENANCE })
+            .then(
+              () => "blocked" as const,
+              () => "rejected" as const,
+            );
+        const followUp = (): ReturnType<LifecycleStore["claimPlan"]> =>
+          replacer.claimPlan({
+            goalId: GOAL_ID,
+            purpose: "follow-up",
+            claimRequestId: `race-park-${headStart}`,
+            ownerFenceToken: OWNER_TOKEN,
+            expectedGeneration: 1,
+            ...PROVENANCE,
+          });
+
+        const [blockOutcome, claimOutcome] =
+          headStart === "parker"
+            ? await Promise.all([blockTask(), delayed(followUp)])
+            : await Promise.all([delayed(blockTask), followUp()]);
+
+        // ONE result under both orders: the park commits, the claim is
+        // refused BECAUSE implementation is active, and nothing else moved.
+        expect(blockOutcome).toBe("blocked");
+        expect(claimOutcome.ok).toBe(false);
+        if (claimOutcome.ok) throw new Error("follow-up superseded active work");
+        expect(claimOutcome.conflict.code).toBe("implementation-active");
+
+        const observer = await h.open();
+        const task = observer.fetchItem(TASKS_LEDGER, first);
+        const goal = observer.fetchItem(GOALS_LEDGER, GOAL_ID);
+        expect(task.status).toBe("blocked");
+        expect(Number(goal.fields[PLAN_GENERATION_FIELD])).toBe(1);
+      } finally {
+        const current = harness;
+        harness = null;
+        if (current !== null) await current.dispose();
+      }
+    }
+  }, 120_000);
+
   test("plan-fence side state survives a tenant clone, so a restarted peer replays exactly", async () => {
     const h = await newHarness();
     const store = await h.open();
