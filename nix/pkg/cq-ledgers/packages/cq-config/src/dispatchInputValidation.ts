@@ -96,7 +96,14 @@ export class DispatchInputValidationError extends Error {
  */
 export const DISPATCH_PRE_LAUNCH_OUTCOME = "pre-launch-rejection" as const;
 
-/** Why ordinary dispatch input was rejected before any child launched. */
+/**
+ * Why ordinary dispatch input was rejected before any child launched.
+ *
+ * The first six are T976's inside-prepare validation failures; the last six are
+ * T978's server-side REFS-ASSEMBLY failures (see {@link ./dispatchRefAssembly}).
+ * They share ONE rejection type deliberately — a caller distinguishes them by
+ * `reason`, never by catching a second rejection shape.
+ */
 export const DISPATCH_PRE_LAUNCH_REJECTION_REASONS = [
   "unknown-role",
   "unsupported-surface",
@@ -104,6 +111,12 @@ export const DISPATCH_PRE_LAUNCH_REJECTION_REASONS = [
   "invalid-overlay-data",
   "unknown-validator-placement",
   "undeclared-child-side-validation",
+  "invalid-refs-form",
+  "inline-narrative-courier",
+  "no-ref-assembler",
+  "unresolvable-ref",
+  "cross-project-ref",
+  "invalid-parent-guidance",
 ] as const;
 
 export type DispatchPreLaunchRejectionReason =
@@ -291,11 +304,20 @@ export function classifyDispatchOutcomeTag(tag: string): DispatchOutcomeTagClass
   return "unknown";
 }
 
-/** Runtime type guard for a pre-launch rejection value. */
-export function isDispatchPreLaunchRejection(
-  value: DispatchInputValidation,
-): value is DispatchPreLaunchRejection {
-  return value.accepted === false && value.outcome === DISPATCH_PRE_LAUNCH_OUTCOME;
+/**
+ * Runtime type guard for a pre-launch rejection value. The parameter is the
+ * structural supertype `{ accepted }` so the ONE rejection type is recognizable
+ * on every pre-launch result union — T976's validation, T976's validator
+ * resolution, and T978's refs assembly — without a second guard per module.
+ */
+export function isDispatchPreLaunchRejection(value: {
+  readonly accepted: boolean;
+}): value is DispatchPreLaunchRejection {
+  return (
+    value.accepted === false &&
+    Object.hasOwn(value, "outcome") &&
+    (value as DispatchPreLaunchRejection).outcome === DISPATCH_PRE_LAUNCH_OUTCOME
+  );
 }
 
 /**
@@ -416,7 +438,13 @@ export interface ChildSideValidatorResolution {
 export type DispatchInputValidatorResolution =
   InsidePrepareValidatorResolution | ChildSideValidatorResolution | DispatchPreLaunchRejection;
 
-function reject(
+/**
+ * THE single constructor of a {@link DispatchPreLaunchRejection}. Exported so
+ * every pre-launch failure — inside-prepare validation (this module) and
+ * server-side refs assembly ({@link ./dispatchRefAssembly}) alike — produces one
+ * rejection type with one tag, instead of a second parallel rejection shape.
+ */
+export function dispatchPreLaunchRejection(
   reason: DispatchPreLaunchRejectionReason,
   path: string,
   detail: string,
@@ -430,6 +458,8 @@ function reject(
     allocated: false as const,
   });
 }
+
+const reject = dispatchPreLaunchRejection;
 
 /**
  * Resolve a surface's validator-placement claim. The ordinary
