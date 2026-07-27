@@ -392,7 +392,34 @@ ensure_codex_config() {
 # remains shared because pi-mcp-adapter reads ~/.config/mcp/mcp.json directly.
 PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md cq-agents prompts skills extensions mcp.json)
 # Seatbelt cannot bind-mount HM assets, so copy and dereference store symlinks.
-# Copy-if-absent preserves profile edits; HM updates require profile recreation.
+profile_asset_matches() {
+  local src="$1" dst="$2"
+  [[ ! -L "$dst" ]] || return 1
+  if [[ -d "$src" ]]; then
+    [[ -d "$dst" ]] && diff -qr "$src" "$dst" >/dev/null
+  elif [[ -f "$src" ]]; then
+    [[ -f "$dst" ]] && cmp -s "$src" "$dst"
+  else
+    return 1
+  fi
+}
+
+sync_profile_asset() {
+  local src="$1" dst="$2"
+  [[ -e "$src" ]] || return 0
+  if [[ -e "$dst" || -L "$dst" ]]; then
+    profile_asset_matches "$src" "$dst" && return 0
+    local backup_index=1 backup
+    backup="${dst}.yolobak-${backup_index}"
+    while [[ -e "$backup" || -L "$backup" ]]; do
+      backup_index=$((backup_index + 1))
+      backup="${dst}.yolobak-${backup_index}"
+    done
+    mv "$dst" "$backup"
+  fi
+  cp -RL "$src" "$dst"
+}
+
 reshare_profile_assets() {
   local agent="$1"
   [[ -z "$PROFILE" ]] && return 0
@@ -409,7 +436,7 @@ reshare_profile_assets() {
   for a in "${assets[@]}"; do
     src="$src_dir/$a"
     dst="$dst_dir/$a"
-    [[ -e "$src" && ! -e "$dst" ]] && cp -RL "$src" "$dst"
+    sync_profile_asset "$src" "$dst"
   done
 }
 

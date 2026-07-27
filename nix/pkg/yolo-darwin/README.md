@@ -118,7 +118,7 @@ When you select a named profile (e.g., `--profile work`), `yolo-darwin` creates 
 
 Each directory is created with `chmod 700` (read-write-execute for the owner only).
 
-All three agents get the home-manager-managed shared assets **copied** into their profile directory before every named-profile launch, regardless of which agent or `shell`/`cmd` mode was selected (claude: settings.json, CLAUDE.md, skills, plugins, commands, agents; codex: AGENTS.md, prompts, skills; pi: settings.json, AGENTS.md, APPEND_SYSTEM.md, cq-agents, prompts, skills, extensions, mcp.json). The copies are dereferenced and self-contained (no symlinks back into the sandbox-denied real homes) and are copy-if-absent: an existing file in the profile directory is never overwritten, so HM changes only propagate into a profile directory that is recreated.
+All three agents get the home-manager-managed shared assets **copied** into their profile directory before every named-profile launch, regardless of which agent or `shell`/`cmd` mode was selected (claude: settings.json, CLAUDE.md, skills, plugins, commands, agents; codex: AGENTS.md, prompts, skills; pi: settings.json, AGENTS.md, APPEND_SYSTEM.md, cq-agents, prompts, skills, extensions, mcp.json). The copies are dereferenced and self-contained (no symlinks back into the sandbox-denied real homes). Managed assets are source-authoritative: when a profile copy differs, the launcher moves it to the next unused `<asset>.yolobak-N` path and installs the current home-manager source. Identical assets remain untouched and produce no backup.
 
 The default profile (empty, no `--profile` flag) does NOT create any directories. Agents use their real home directories:
 
@@ -221,7 +221,7 @@ pi (the Anthropic coding agent) exposes a configuration-directory environment va
 This means:
 
 - Each profile's pi instance has its own `auth.json`, sessions, trust store, and npm packages.
-- Shared assets (like skill definitions) are copied in on first launch; existing files are never overwritten, so HM updates reach a profile only when its directory is recreated.
+- Shared assets (like skill definitions) are synchronized on every launch. A differing profile copy is preserved as `<asset>.yolobak-N` before the home-manager version replaces it.
 
 To authenticate pi in a named profile:
 

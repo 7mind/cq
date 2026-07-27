@@ -381,7 +381,6 @@ assert_eq "secret temp file is removed after launch" "absent" "$(if [[ -n "$SECR
 assert_eq "sandbox-hook temp file is removed after launch" "absent" "$(if [[ -n "$HOOK_TMP_PATH" && -e "$HOOK_TMP_PATH" ]]; then echo present; else echo absent; fi)"
 
 # ── copied HM assets ─────────────────────────────────────────────────────────
-# Run all agents in one shell so a second pass can verify copy-if-absent.
 RESHARE_HOME="$WORKDIR/reshare-home"
 mkdir -p \
   "$RESHARE_HOME/.claude/skills" \
@@ -399,13 +398,14 @@ echo x > "$RESHARE_HOME/.pi/agent/settings.json"
 echo x > "$RESHARE_HOME/.pi/agent/APPEND_SYSTEM.md"
 echo x > "$RESHARE_HOME/.pi/agent/cq-agents/plan-reviewer.md"
 echo x > "$RESHARE_HOME/.pi/agent/prompts/cq:plan.md"
-OUT="$(
+run_profile_sync() {
   cd "$PROJECT_DIR" &&
     HOME="$RESHARE_HOME" \
     PATH="$FAKE_BIN:$PATH" \
     YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
     bash "$SCRIPT" --profile foo cmd true 2>&1
-)"
+}
+OUT="$(run_profile_sync)"
 STATUS=$?
 assert_zero "cmd launch prepares every profile's assets" "$STATUS"
 RESHARE_PROF="$RESHARE_HOME/.config/yolo/foo"
@@ -425,17 +425,33 @@ assert_eq "reshare: pi skills copied as a real dir" "yes" "$(_is_real_dir "$RESH
 assert_eq "reshare: copied content matches the source" "x" "$(cat "$RESHARE_PROF/codex/AGENTS.md")"
 assert_eq "reshare: copied Codex prompt content matches the source" "x" "$(cat "$RESHARE_PROF/codex/prompts/cq:plan.md" 2>/dev/null)"
 assert_contains "cmd launch materializes Codex profile config" "$(cat "$RESHARE_PROF/codex/config.toml" 2>/dev/null)" 'model = "test"'
+assert_eq "reshare: initial copy does not create a backup" "absent" "$(if [[ -e "$RESHARE_PROF/claude/settings.json.yolobak-1" ]]; then echo present; else echo absent; fi)"
+
 echo sentinel > "$RESHARE_PROF/claude/settings.json"
-OUT="$(
-  cd "$PROJECT_DIR" &&
-    HOME="$RESHARE_HOME" \
-    PATH="$FAKE_BIN:$PATH" \
-    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
-    bash "$SCRIPT" --profile foo shell -c true 2>&1
-)"
+echo user-prompt > "$RESHARE_PROF/codex/prompts/cq:plan.md"
+echo user-only > "$RESHARE_PROF/codex/prompts/user.md"
+OUT="$(run_profile_sync)"
 STATUS=$?
-assert_zero "shell launch prepares every profile's assets" "$STATUS"
-assert_eq "reshare: copy-if-absent preserves an existing dest (sentinel)" "sentinel" "$(cat "$RESHARE_PROF/claude/settings.json")"
+assert_zero "second launch synchronizes every profile's assets" "$STATUS"
+assert_eq "reshare: differing file is overwritten from source" "x" "$(cat "$RESHARE_PROF/claude/settings.json")"
+assert_eq "reshare: differing file is preserved in first backup" "sentinel" "$(cat "$RESHARE_PROF/claude/settings.json.yolobak-1" 2>/dev/null)"
+assert_eq "reshare: differing directory is overwritten from source" "x" "$(cat "$RESHARE_PROF/codex/prompts/cq:plan.md" 2>/dev/null)"
+assert_eq "reshare: differing directory is preserved in first backup" "user-prompt" "$(cat "$RESHARE_PROF/codex/prompts.yolobak-1/cq:plan.md" 2>/dev/null)"
+assert_eq "reshare: user-only directory content is preserved in backup" "user-only" "$(cat "$RESHARE_PROF/codex/prompts.yolobak-1/user.md" 2>/dev/null)"
+assert_eq "reshare: user-only directory content is absent after sync" "absent" "$(if [[ -e "$RESHARE_PROF/codex/prompts/user.md" ]]; then echo present; else echo absent; fi)"
+
+OUT="$(run_profile_sync)"
+STATUS=$?
+assert_zero "unchanged launch keeps synchronized profile assets" "$STATUS"
+assert_eq "reshare: unchanged file does not create another backup" "absent" "$(if [[ -e "$RESHARE_PROF/claude/settings.json.yolobak-2" ]]; then echo present; else echo absent; fi)"
+assert_eq "reshare: unchanged directory does not create another backup" "absent" "$(if [[ -e "$RESHARE_PROF/codex/prompts.yolobak-2" ]]; then echo present; else echo absent; fi)"
+
+echo second-edit > "$RESHARE_PROF/claude/settings.json"
+OUT="$(run_profile_sync)"
+STATUS=$?
+assert_zero "later differing launch synchronizes profile assets" "$STATUS"
+assert_eq "reshare: later differing file is overwritten from source" "x" "$(cat "$RESHARE_PROF/claude/settings.json")"
+assert_eq "reshare: later differing file uses next backup suffix" "second-edit" "$(cat "$RESHARE_PROF/claude/settings.json.yolobak-2" 2>/dev/null)"
 
 # ── $PWD==$HOME refusal guard (+ --unsafe-share-home + symlink canonicalization)
 source_guard "$FAKE_HOME" "$FAKE_HOME"
