@@ -302,8 +302,9 @@ describe("Agents tab — live model overlay (T297)", () => {
     expect(outputCell).not.toBeNull();
     const outputText = outputCell!.textContent ?? "";
     expect(outputText).toContain("cq:prompt-catalog/plan-advance/output");
-    // The DEFAULT-mode status-token enum members appear in the typed output schema.
-    expect(outputText).toContain("review-requested");
+    // The DEFAULT-mode PlanStepResult action-enum members appear in the typed
+    // output schema (T854 replaced the legacy status tokens).
+    expect(outputText).toContain("defectsToFile");
     expect(outputText).not.toBe("(no typed schema)");
   });
 

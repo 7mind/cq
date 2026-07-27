@@ -142,7 +142,7 @@ export {
   PromptCatalogVerificationError,
   verifyPromptCatalog,
 } from "./promptCatalogVerification.js";
-export { planAdvanceSidecar, PLAN_ADVANCE_STATUS_TOKENS } from "./schemas/plan-advance.js";
+export { planAdvanceSidecar, PLAN_STEP_ACTIONS } from "./schemas/plan-advance.js";
 export { planReviewerSidecar, PLAN_REVIEW_VERDICTS } from "./schemas/plan-reviewer.js";
 export { implementWorkerSidecar, IMPLEMENT_WORKER_STATUSES } from "./schemas/implement-worker.js";
 export {

@@ -17,12 +17,12 @@ outputs:
   - "coordination milestone M (create_milestone)"
   - "one-or-more goal items G in clarifying status (one goal PER idea when idea-ids are given; create_item on goals ledger)"
   - "for each idea-seeded goal: bidirectional ledgerRefs link (goal↔idea) + idea status→planned"
-  - "first batch of clarifying questions (filed by plan-advance subagent)"
-  - "planner summary log .cq/logs/<timestamp>-<agent-id>.md AND raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
+  - "first batch of clarifying questions (filed by the chained CQ::plan/advance via the guarded questions pause)"
+  - "planner summary log .cq/logs/<timestamp>-<agent-id>.md AND raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put` (by the chained CQ::plan/advance)"
   - "handoffs item (answers-required)"
 ioSchema:
-  - "bootstrap only — no plan logic; plan-advance subagent owns question generation"
-  - "goal schema fields: title, description (required); grounding, milestones (set later by planner)"
+  - "bootstrap only — no plan logic; CQ::plan/advance owns the claim + question generation"
+  - "goal schema fields: title, description (required); grounding, milestones (set later via the guarded plan mutations)"
   - "idea-id token grammar: /^I\\d+$/; argument is EITHER all idea-ids OR free text (no interleave)"
   - "handoffs item: flow=plan, ledgerRefs=goals:<G>, blockingQuestions=filed question ids"
 ```
@@ -32,10 +32,12 @@ You are starting a **plan-flow goal**. The user's goal is:
 > $ARGUMENTS
 
 This command does the one-time **bootstrap** only — create the coordination
-milestone and the goal(s) — then hands off to the `plan-advance` planner for the
-first clarifying questions. It owns NO question or plan logic of its own: that
-all lives in the `plan-advance` subagent (the same planner `CQ::plan/advance`
-drives), so the question-generation logic exists in exactly one place.
+milestone and the goal(s) — then hands off to **`CQ::plan/advance`** (chained
+inline) for the first clarifying round. It owns NO question or plan logic of
+its own: that all lives in `CQ::plan/advance` (which claims the round,
+dispatches the `plan-advance` planner, and applies its typed result through the
+guarded plan mutations), so the question-generation logic exists in exactly one
+place.
 
 The argument is EITHER a **free-text goal description** (today's path) OR
 **one-or-more idea-ids** drawn from the `ideas` ledger — see §Argument grammar
@@ -220,17 +222,18 @@ link, and flips the idea to `planned` — so one goal is bootstrapped per idea.
    `clarifying`/`awaiting-answers` with the first questions filed, so the stop
    classification is `answers-required` (`flow` = `plan`; `ledgerRefs`
    `goals:<G>`; `blockingQuestions` the filed question ids; `sessionLogs` +
-   `rawLogs` the step-4 summary + raw paths). Do not restate the field mapping
-   here. The conditional step-5
+   `rawLogs` the planner summary + raw paths the chained command wrote). Do not
+   restate the field mapping
+   here. The chained command's
    auto-investigate sub-round writes NO handoff of its own — `CQ::investigate/advance`
-   suppresses its handoff when chained by this command (per its CHAINED section:
-   `/<flow>:start` is listed as a suppress-context; this command owns the single
-   authoritative write).
+   suppresses its handoff when chained (per its CHAINED section), and the
+   chained `CQ::plan/advance` suppresses its own handoff under this
+   `/<flow>:start` wrapper; this command owns the single authoritative write.
 
 8. **Ledger persistence.** Persistence is the store's job — no git action here;
    when the optional `[ledger].backup` mode (in-tree / orphan-branch) is
    enabled, the debounced exporter mirrors the ledger + logs to git.
 
-Do not file questions, transition the goal, or emit any plan yourself — the
-`plan-advance` planner and `CQ::plan/advance` own everything after the goal is
+Do not file questions, transition the goal, claim the round, or emit any plan
+yourself — `CQ::plan/advance` (chained above) owns everything after the goal is
 created.

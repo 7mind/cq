@@ -142,10 +142,14 @@ The labelled handoffs are:
   then STOPS — file-and-defer, never an inline plan loop.
 - **plan → investigate** (file-and-defer-defect-to-investigate): when the
   plan-flow reviewer reports an OUT-OF-SCOPE or pre-existing fault in its
-  `defects[]` bucket, the planner files it as an `open` defect linked
-  `goals:<G>`. The `/cq:plan:advance` command then re-derives an
+  `defects[]` bucket, the planner RETURNS it in its result's `defectsToFile`
+  and the `/cq:plan:advance` orchestrator files it as an `open` defect linked
+  `goals:<G>` + `reviews:<R>` through the SAME guarded plan mutation that
+  applies the planner's action (atomic, idempotent under retry). While the goal
+  stays in `clarifying`/`planning` such goal-linked defects are EXCLUDED from
+  the global P-investigate above; the `/cq:plan:advance` command re-derives an
   auto-investigate worklist by ledger query and runs `/cq:investigate:advance`
-  on those defects itself.
+  on those defects itself, exactly once per round.
 - **plan → implement** (the task DAG): when a goal reaches `planned` (plan
   locked behind a `go-ahead` review and a `locked` decision), the implement flow
   picks up the goal's task DAG and drives the tasks to merge.

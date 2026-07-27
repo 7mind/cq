@@ -13,50 +13,22 @@
       "source": "agents/plan-advance.md",
       "family": "plan",
       "calls": [
-        "Two modes (mode-gated — mirror plan-reviewer's configured-vs-fallback)::create_item#1|ack",
-        "Two modes (mode-gated — mirror plan-reviewer's configured-vs-fallback)::update_item#1|ack",
-        "Two modes (mode-gated — mirror plan-reviewer's configured-vs-fallback)::create_milestone#1|ack",
-        "Provenance (every ledger write)::create_item#1|ack",
-        "Provenance (every ledger write)::update_item#1|ack",
-        "Provenance (every ledger write)::create_milestone#1|ack",
+        "No ledger writes (hard rule, both modes)::create_item#1|ack",
+        "No ledger writes (hard rule, both modes)::update_item#1|ack",
+        "No ledger writes (hard rule, both modes)::create_milestone#1|ack",
+        "No ledger writes (hard rule, both modes)::create_ledger#1|ack",
+        "No ledger writes (hard rule, both modes)::reopen_item#1|ack",
+        "No ledger writes (hard rule, both modes)::unarchive_item#1|ack",
         "Read the state first::fetch_item#1|full",
         "Read the state first::list_milestone_items#1|full",
         "Read the state first::fts_search#1|compact",
         "Read the state first::list_milestone_items#2|full",
-        "Decide the single step (match the FIRST applicable rule)::update_item#1|ack",
-        "Decide the single step (match the FIRST applicable rule)::create_milestone#1|ack",
-        "Decide the single step (match the FIRST applicable rule)::update_item#2|ack",
-        "Decide the single step (match the FIRST applicable rule)::list_milestone_items#1|full",
-        "Decide the single step (match the FIRST applicable rule)::list_milestone_items#2|full",
-        "Decide the single step (match the FIRST applicable rule)::update_item#3|ack",
-        "Decide the single step (match the FIRST applicable rule)::update_item#4|ack",
-        "Decide the single step (match the FIRST applicable rule)::update_item#5|ack",
+        "Decide the single action (match the FIRST applicable rule)::list_milestone_items#1|full",
         "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json)::fetch_item#1|full",
         "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json)::create_item#1|ack",
         "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json)::update_item#1|ack",
         "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json)::create_milestone#1|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_item#1|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_milestone#1|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_item#2|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_milestone#2|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_item#3|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_milestone#3|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_milestone#4|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_item#4|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_item#5|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_milestone#5|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_item#6|ack",
-        "Filing clarifying questions::create_item#1|ack",
-        "Filing clarifying questions / Triage each unknown FIRST — empirical unknown → a `researches` item, NOT a user question (Q267)::create_item#1|ack",
-        "Decide the single step (match the FIRST applicable rule)::create_item#1|ack",
-        "Decide the single step (match the FIRST applicable rule)::create_item#2|ack",
-        "Decide the single step (match the FIRST applicable rule)::create_item#3|ack",
-        "Decide the single step (match the FIRST applicable rule)::update_item#6|ack",
-        "Defect-aware planning (goal describes a fault to fix)::create_item#1|ack",
-        "Defect-aware planning (goal describes a fault to fix)::create_item#2|ack",
-        "Defect-aware planning (goal describes a fault to fix)::update_item#1|ack",
-        "Consuming the reviewer's `defects[]` bucket (file-only, K12 supersedes K8 pt3 / Q26)::create_item#1|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — must match what `create_item` needs)::create_milestone#6|ack"
+        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — the DAG schema configured planners retain)::create_milestone#1|ack"
       ]
     },
     {
@@ -234,12 +206,12 @@
         "Consume-an-idea sub-procedure::update_item#2|ack",
         "Consume-an-idea sub-procedure::update_item#3|ack",
         "Before you start::fts_search#1|compact",
-        "Steps::read_log#1|full-content",
-        "Steps::fts_search#1|compact",
-        "Steps::search_items#1|compact",
         "Steps::create_milestone#1|ack",
         "Steps::create_item#1|ack",
-        "Steps::update_item#1|ack"
+        "Steps::read_log#1|full-content",
+        "Steps::update_item#1|ack",
+        "Steps::fts_search#1|compact",
+        "Steps::search_items#1|compact"
       ]
     },
     {
@@ -249,14 +221,17 @@
         "Select the target goal(s)::fetch_ledger#1|compact",
         "Select the target goal(s)::create_item#1|ack",
         "Select the target goal(s)::create_milestone#1|ack",
+        "The per-goal round (for one goal G)::fetch_item#1|full",
+        "The per-goal round (for one goal G)::list_milestone_items#1|compact",
         "The per-goal round (for one goal G)::fetch_prompt#1|full-content",
         "The per-goal round (for one goal G)::fetch_prompt#2|full-content",
         "The per-goal round (for one goal G)::fetch_prompt#3|full-content",
-        "The per-goal round (for one goal G)::list_milestone_items#1|compact",
-        "The per-goal round (for one goal G)::list_milestone_items#2|full",
-        "The per-goal round (for one goal G)::create_milestone#1|ack",
         "The per-goal round (for one goal G)::update_item#1|ack",
         "The per-goal round (for one goal G)::update_item#2|ack",
+        "The per-goal round (for one goal G)::list_milestone_items#2|compact",
+        "The per-goal round (for one goal G)::list_milestone_items#3|full",
+        "The per-goal round (for one goal G)::update_item#3|ack",
+        "The per-goal round (for one goal G)::create_item#1|ack",
         "Auto-investigate filed defects (after the per-goal round) / Worklist = LEDGER QUERY (authoritative — NOT prose-parse)::fts_search#1|compact",
         "Auto-investigate filed defects (after the per-goal round) / Worklist = LEDGER QUERY (authoritative — NOT prose-parse)::search_items#1|compact",
         "Auto-investigate filed defects (after the per-goal round) / Worklist = LEDGER QUERY (authoritative — NOT prose-parse)::fetch_item#1|full",
@@ -266,9 +241,7 @@
         "Report to the user::fetch_item#1|full",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#1|ack",
         "Handoff record (STANDALONE only — suppressed when chained)::create_item#2|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack",
-        "The per-goal round (for one goal G)::create_item#1|ack",
-        "The per-goal round (for one goal G)::create_item#2|ack"
+        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack"
       ]
     },
     {
@@ -285,10 +258,7 @@
         "Steps::update_item#4|ack",
         "Steps::update_item#5|ack",
         "Steps::update_item#6|ack",
-        "Steps::read_log#1|full-content",
-        "Steps::fts_search#1|compact",
-        "Steps::search_items#1|compact",
-        "Steps::update_item#7|ack"
+        "Steps::list_milestone_items#1|compact"
       ]
     },
     {
@@ -379,29 +349,17 @@
         ]
       },
       {
-        "callSite": "agents/plan-advance.md::Decide the single step (match the FIRST applicable rule)::list_milestone_items#1",
+        "callSite": "agents/plan-advance.md::Decide the single action (match the FIRST applicable rule)::list_milestone_items#1",
         "fields": [
           "headline",
           "description",
           "acceptance",
-          "answer",
-          "criticism",
+          "status",
           "dependsOn",
           "blockedBy",
-          "status"
-        ]
-      },
-      {
-        "callSite": "agents/plan-advance.md::Decide the single step (match the FIRST applicable rule)::list_milestone_items#2",
-        "fields": [
-          "headline",
-          "description",
-          "acceptance",
-          "answer",
-          "criticism",
-          "dependsOn",
-          "blockedBy",
-          "status"
+          "suggestedModel",
+          "sourceRefs",
+          "tags"
         ]
       },
       {
@@ -564,7 +522,15 @@
         ]
       },
       {
-        "callSite": "commands/cq/plan/advance.md::The per-goal round (for one goal G)::list_milestone_items#2",
+        "callSite": "commands/cq/plan/advance.md::The per-goal round (for one goal G)::fetch_item#1",
+        "fields": [
+          "status",
+          "waitingResearches",
+          "ledgerRefs"
+        ]
+      },
+      {
+        "callSite": "commands/cq/plan/advance.md::The per-goal round (for one goal G)::list_milestone_items#3",
         "fields": [
           "summary",
           "new_questions",

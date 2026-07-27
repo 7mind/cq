@@ -17,15 +17,18 @@ inputs:
   - "get_planners result: configured: bool, planners[] (harness/model/alias)"
   - "get_reviewers result: configured: bool, reviewers[] (harness/model/alias)"
 outputs:
-  - "planner ledger writes (questions / plan / revision / decision + planned) via plan-advance subagent or orchestrator persist"
-  - "one aggregated reviews item per round (written by reviewer subagent or orchestrator)"
+  - "one guarded claim per planning round (claim_plan), released by the round's terminal operation"
+  - "default planner: typed PlanStepResult applied by the ORCHESTRATOR via the matching guarded mutation (release_plan_claim pause/abandon, publish_plan_draft, finalize_plan), with defectsToFile supplied as the SAME operation's reviewDefects"
+  - "configured planner panel: ONE synthesized draft manifest persisted by the ORCHESTRATOR via publish_plan_draft"
+  - "one aggregated reviews item per round (written by reviewer subagent or orchestrator), stamped with the exact current draft identity"
   - "auto-investigate: CQ::investigate/advance inline for each goal-linked actionable defect"
   - "per planner/reviewer: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl (pi:* → .cq/logs/raw/<ts>-pi-<alias>.md plain), BOTH written via `cq log put`"
   - "handoffs item (standalone only)"
 ioSchema:
-  - "planner loop token: awaiting-answers | review-requested | completed | noop"
-  - "single-planner fallback: plan-advance writes the ledger; orchestrator writes nothing for the plan"
-  - "multi-planner path: orchestrator persists synthesized plan; candidate JSON: {milestones[], tasks[], rationale}"
+  - "planner loop token: awaiting-answers | awaiting-research | review-requested | completed | noop"
+  - "claim: claim_plan BEFORE any planner dispatch (configured or default); the round ends with the claim released (pause / abandon / finalize)"
+  - "single-planner fallback: plan-advance RETURNS a typed PlanStepResult {mode:default, action, payload?, grounding?, defectsToFile?} and writes NOTHING; the orchestrator validates the whole result and applies it"
+  - "multi-planner path: candidates keep the DAG JSON {milestones[], tasks[], rationale}; the orchestrator synthesizes ONE keyed manifest and publishes it"
   - "review verdict JSON: {summary, verdict, new_questions[], criticism[], defects[]}"
   - "auto-investigate stop predicates a-f (once-per-round, no-new-evidence, seeded/extended, non-converging, two dead rounds)"
 ```
@@ -36,19 +39,27 @@ You are the **thin orchestrator** for the plan-flow advance loop. The argument
 > $ARGUMENTS
 
 Subagents cannot spawn other subagents, so the planner↔reviewer LOOP lives here
-in the main session. The **primary planning round** is itself **pluggable**
-(step 1's *resolve-planners* sub-step): in the **single-planner fallback** the
-native `plan-advance` subagent makes every goal/plan state change itself (you
-write nothing — today's path, UNCHANGED); in the **configured multi-planner**
-path you, the orchestrator, launch ALL active planners in parallel as
-candidate-emitters (claude `plan-advance` in CANDIDATE mode + `pi:*` shellouts —
-each RETURNS a candidate-plan JSON and writes nothing), run the **JUDGE+SYNTHESIS**
-step that folds the strongest candidate together with the valuable parts of the
-others into ONE synthesized plan, and then YOU — the orchestrator — are the ONLY
-writer that persists that one plan to the ledger. The **review** step is likewise
-pluggable (step 2): in the **single-reviewer fallback** the native `plan-reviewer`
-subagent writes the one review itself and returns the same structured verdict
-(you write nothing); in the **configured multi-reviewer** path you, the
+in the main session. **You CLAIM the goal's planning round BEFORE any planner
+dispatch** (T854 / G99 / D134: `claim_plan` fences the round against concurrent
+planners — the H117 stale-writer race — and moves the goal to `planning`), and
+the claim stays active across the round's publish/review iterations until ONE
+terminal operation releases it (a pause, an abandon, or a finalize). The
+**primary planning round** is itself **pluggable** (step 1's *resolve-planners*
+sub-step): in the **single-planner fallback** the native `plan-advance`
+subagent decides ONE state-driven action and RETURNS it as a typed
+**PlanStepResult** — writing NOTHING — and YOU validate the whole result and
+apply it through the ONE matching guarded mutation (`release_plan_claim` /
+`publish_plan_draft` / `finalize_plan`), supplying the result's `defectsToFile`
+batch to that SAME operation (`reviewDefects`) for atomic idempotent filing; in
+the **configured multi-planner** path you launch ALL active planners in
+parallel as candidate-emitters (each RETURNS a candidate task-DAG and writes
+nothing), run the **JUDGE+SYNTHESIS** step that folds the strongest candidate
+together with the valuable parts of the others into ONE synthesized keyed
+manifest, and publish that one manifest YOURSELF through `publish_plan_draft`.
+The **review** step is likewise pluggable (step 2): in the **single-reviewer
+fallback** the native `plan-reviewer` subagent writes the one review itself and
+returns the same structured verdict (you write nothing but the draft-binding
+stamp and logs); in the **configured multi-reviewer** path you, the
 orchestrator, write the SINGLE aggregated `reviews` item that reconciles all
 reviewers' structured verdicts (the reviewers return JSON and write nothing).
 Your job is to drive that loop, then run the
@@ -60,12 +71,13 @@ outcome.
 > following llm/commands/cq/investigate/advance.md, writes the ledger (the
 > investigate loop's own writes), and the broadened `allowed-tools`
 > (`ledger::*`, `Read`/`Grep`/`Glob`) supports it. The OTHER ledger writes
-> you make are: the **configured multi-planner** synthesized plan (step 1's
-> JUDGE+SYNTHESIS → orchestrator-persist, sub-step 1b-v) and the **configured
-> multi-reviewer** aggregated `reviews` item (step 2b-iii). In the
-> **single-planner fallback** the `plan-advance` subagent writes the plan and in
-> the **single-reviewer fallback** the `plan-reviewer` subagent writes the
-> review, so an unconfigured round stays read-only-to-you.
+> you make are: the guarded plan mutations (claim / publish / release /
+> finalize — the ONLY writers of the goal's managed plan state, the draft
+> DAG, the pause questions/researches, and the filed review defects), the
+> review's draft-binding stamp + log attachments, the goal's `grounding` and
+> session-log fields (unmanaged), and the **configured multi-reviewer**
+> aggregated `reviews` item (step 2b-iii). In the **single-reviewer fallback**
+> the `plan-reviewer` subagent writes the review itself.
 
 **Mutation response rule:** Every ledger mutation below returns only its fixed
 acknowledgement (allocated id, current status, canonicalized reference fields,
@@ -117,29 +129,32 @@ per-goal report.
 
 > **FORWARD-PROGRESS INVARIANT — every loop iteration must change state or
 > dispatch, else STOP.** Each pass of the loop below MUST do exactly one of:
-> dispatch a subagent, or make a state-changing ledger WRITE (file a question,
-> persist/revise a plan, lock a decision, record a review). Re-reading the ledger
+> dispatch a subagent, or make a state-changing ledger WRITE (claim, publish a
+> draft, release a pause, finalize, record a review). Re-reading the ledger
 > (`fetch_*` / `list_*` / `search_*` / `derive_predicates` / `snapshot`) is NOT
 > progress. If you have reached a **terminal token** — `awaiting-answers` (an
-> `open` question now exists), `completed`, or `noop` — **STOP the loop
+> `open` question now exists), `awaiting-research` (an active research wait now
+> exists), `completed`, or `noop` — **STOP the loop
 > immediately** and write the handoff; do not re-read the ledger "to check", do
 > not look for more to do. Two consecutive read-only iterations with no write and
 > no dispatch means you are ill-looping: STOP and report where you are.
 
-Loop the planner↔reviewer steps below until the planner returns a terminal token
-(`awaiting-answers` / `completed` / `noop`). There is **NO hard iteration cap** —
-the loop is bounded by the planner's state machine (it advances ONE step per
-call toward a terminal phase) and, for the cross-command auto-investigate↔replan
+Loop the planner↔reviewer steps below until the planner step yields a terminal
+token (`awaiting-answers` / `awaiting-research` / `completed` / `noop`). There is
+**NO hard iteration cap** —
+the loop is bounded by the planner's state machine (it advances ONE decision per
+dispatch toward a terminal phase) and, for the cross-command auto-investigate↔replan
 axis, by the **concrete stop predicates** in the auto-investigate phase (cite
 **K12**, which supersedes K8 pt3 and removed the former 4-iteration cap):
 
-1. **Advance the plan** (spawn the planner). The planner step is **pluggable**,
-   structurally mirroring the pluggable reviewer step (step 2) but with the
-   **Q100 generate-N-then-JUDGE+SYNTHESIS** reconciliation model (NOT the
-   reviewer's strictest-wins/union). Resolve which planners run, run them, and —
-   in the multi-planner path — synthesize one plan and persist it yourself. The
-   step yields the SAME single status token regardless of path; the loop reads
-   that token below.
+1. **Advance the plan** (claim, dispatch, apply). The planner step is
+   **pluggable**, structurally mirroring the pluggable reviewer step (step 2)
+   but with the **Q100 generate-N-then-JUDGE+SYNTHESIS** reconciliation model
+   (NOT the reviewer's strictest-wins/union). Whatever path runs, the step has
+   THREE phases: **claim the round FIRST** (no planner ever runs against an
+   unclaimed goal), **dispatch** the planner(s), and **apply** the outcome
+   through the ONE matching guarded plan mutation. The step yields the SAME
+   single status token regardless of path; the loop reads that token below.
 
    1. **Resolve the active planner set.** Call the ledger MCP `get_planners`
       tool (registered in `.mcp.json`; returns
@@ -147,7 +162,7 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       `harness` ∈ {`claude`, `pi`} — mirrors `get_reviewers`).
       - If the tool is **absent** (server not registered) or it returns
         `configured: false` (no `cq.toml`, or an empty `[planners]` list), take
-        the **single-planner fallback** (sub-step 1a — today's path, UNCHANGED).
+        the **single-planner fallback** (sub-step 1a).
       - If it returns `configured: true`, take the **multi-planner path**
         (sub-step 1b), AND honor any **session-only planner override** the user
         stated this run via `CQ::planners` (T16): an in-memory override
@@ -156,15 +171,75 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         `planners` when one is in effect (exactly as `CQ::reviewers` overrides the
         reviewer set for step 2).
 
-   1a. **Single-planner fallback** (unconfigured / tool absent — UNCHANGED
-      behaviour: this is today's default plan-advance subagent path). Use the
-      `CQ_SUBAGENT` tool with `role: "plan-advance"`, passing the goal id
-      (`$ARGUMENTS`) in the prompt. The native `plan-advance` runs in its DEFAULT
-      single-planner state-machine mode (it is NOT told it is a candidate): it
-      performs EXACTLY ONE state-driven step against the goal, **writes the
-      ledger itself** (files questions / emits or revises the plan / locks the
-      decision and reaches `planned`), and returns a single status token. The
-      orchestrator writes NOTHING for the plan this round.
+   2. **Pre-claim gate — never claim a goal that is already waiting.** Read the
+      goal (`fetch_item({ ledger_id: "goals", item_id: <G>, projection: "full" })`)
+      and its linked questions (`list_milestone_items({ milestone_id: M,
+      projection: "compact" })`, `questions` items whose `fields.ledgerRefs`
+      contains `"goals:<G>"`). BEFORE claiming:
+      - **An `open` linked question exists** → the goal is WAITING FOR ANSWERS.
+        Do NOT claim, do NOT dispatch. The step's token is `awaiting-answers` —
+        **stop the loop** for this goal (a question filed mid-round between the
+        gate and the dispatch is the defensive case the planner's own
+        `awaiting` action covers).
+      - **The goal carries ACTIVE research waits** — its
+        `fields.waitingResearches` names one-or-more `RS…` ids of which AT
+        LEAST ONE is still `open` / `wip` / `inconclusive` on the `researches`
+        ledger → the round is RESEARCH-PARKED. Do NOT claim, do NOT dispatch.
+        The step's token is `awaiting-research` — **stop the loop** for this
+        goal. Planning resumes only when EVERY waited research is `concluded`
+        or `abandoned` (or has left the active view — missing or archived);
+        the claim's own `research-wait-active` conflict enforces the same
+        table, so a race here fails safe, never corrupts.
+
+   3. **Claim the round (BEFORE any planner dispatch).** Generate a fresh
+      `claimRequestId` (a uuid, e.g. `Bash: cat /proc/sys/kernel/random/uuid`)
+      and a fresh `ownerFenceToken` (≥128 bits of base64url, ≥22 chars, e.g.
+      `Bash: openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`), then call
+      `claim_plan({ goalId: <G>, purpose: "initial", claimRequestId,
+      ownerFenceToken, expectedGeneration: <the goal's current
+      fields.planGeneration as a number, or null when absent>, author, session })`.
+      - On `ok: true`: capture `claimId`, `generation`, and the echoed
+        `ownerFenceToken` from the acknowledgement. **The token appears ONLY in
+        this acknowledgement** — keep it in memory for this round's later
+        operations; NEVER write it into a log, summary, handoff, or ledger
+        field. A `replayed: true` result is the normal recovery of a lost
+        claim response — proceed with the SAME captured values.
+      - On `claim-active` → another planner already owns this goal's round
+        (the fence working as designed — the goal also surfaces on the
+        report-only `planBusy` predicate companion). Do NOT dispatch, do NOT
+        retry: **skip this goal this run** and report it as busy.
+      - On `research-wait-active` → the pre-claim gate raced a wait that is
+        still active: token `awaiting-research`, **stop the loop** for this
+        goal.
+      - On `stale-generation` → the goal's generation moved under you (another
+        session claimed and released between your read and your claim). Re-read
+        the goal and retry ONCE with its current generation; if it recurs,
+        skip the goal and report the race.
+      - On `goal-terminal` / `goal-phase-conflict` → the goal left the
+        claimable phases under you (e.g. finalized by the other session, or a
+        `building` goal — a `planned` goal needing MORE scope is the
+        `purpose: "follow-up"` claim path, wired by T855/T856, not this
+        command). Skip it and report the phase.
+      - On `claim-request-reused` / `owner-fence-mismatch` → you fatally
+        confused a claim retry: STOP the round and report; never improvise a
+        third claim identity.
+
+   1a. **Single-planner fallback** (unconfigured / tool absent). The claim from
+      sub-step 3 holds the round. Dispatch the native `plan-advance` subagent in
+      its DEFAULT mode — it performs EXACTLY ONE state-driven decision against
+      the claimed goal and RETURNS a typed **PlanStepResult**, writing NOTHING.
+      YOU then validate the whole result and apply it through the ONE matching
+      guarded mutation.
+
+      **Dispatch.** Use the `CQ_SUBAGENT` tool with `role: "plan-advance"`,
+      passing the goal id in the prompt (DEFAULT mode — do NOT request
+      candidate mode). The subagent reads the goal's state (it is `planning`
+      under your claim) and returns the fenced-json PlanStepResult as the last
+      content of its reply — `mode: "default"`, one `action` of
+      `questions | researches | draft | finalize | awaiting | noop`, the
+      payload fields that action requires, an optional `grounding` string, and
+      an optional orthogonal `defectsToFile` batch. Strip any prose around the
+      fenced block before parsing.
 
       **Catalog-driven dispatch (G41, Q185 steps a–g) — the proof path.** Drive
       this `plan-advance` dispatch through the typed prompt-catalog MCP tools the
@@ -177,19 +252,25 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       - **(b) take its `inputSchema`.** Read the `inputSchema` off that
         `fetch_prompt` result — the input contract for the dispatch.
       - **(c) compose the input.** Build the input object against that schema:
-        `{ goalId: "<G>" }` (`$ARGUMENTS`), with `candidateMode` omitted/false in
-        this single-planner mode.
+        `{ goalId: "<G>" }`, with `candidateMode` omitted/false in this
+        single-planner mode.
       - **(d) validate the input.** Call `validate_input("plan-advance", input)`.
         On `{ ok: false, errors }`, FIX the composed input and re-validate — do
         NOT dispatch an input the schema rejects.
       - **(e) run the subagent.** Dispatch the `CQ_SUBAGENT` (`role:
         "plan-advance"`) with the validated input rendered into the prompt
         (goal id + DEFAULT mode), as above.
-      - **(f) await the output.** Capture the subagent's reply — its status token
-        (and, for a candidate run, its candidate JSON).
+      - **(f) await the output.** Capture the subagent's reply and parse the
+        fenced-json PlanStepResult out of it.
       - **(g) validate the output.** Call `validate_output("plan-advance",
-        output)` against the role's `outputSchema`. A validation failure is a
-        contract breach to surface (log it, §Session logs), not silently dropped.
+        output)` against the role's `outputSchema` — the WHOLE result must
+        validate (exactly one action, that action's required payload, no extra
+        fields, a schema-valid `defectsToFile` when present). A validation
+        failure is a contract breach: log it (§Session logs) and treat the
+        dispatch as failed — apply NOTHING from an invalid result (never apply
+        a valid prefix), release the claim with `release_plan_claim` kind
+        `abandon` (reason: the contract breach), and stop the loop for this
+        goal.
 
       **Degrade gracefully when the catalog tools are absent** (an older or
       embedded ledger-mcp server that predates T343 does not advertise
@@ -197,23 +278,91 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
       `get_agent_models` / `get_planners` / `get_reviewers` tool-absence paths:
       when these tools are unavailable, SKIP steps (a)–(d) and (g) and fall
       straight through to the bare `CQ_SUBAGENT` dispatch (step (e)) on the prompt as
-      authored. The validate steps are an ADDITIVE contract check, never a hard
-      dependency — their absence never blocks the round.
+      authored, applying the SAME closed contract by hand: an object with
+      exactly `mode: "default"`, an `action` in the six-value enum, the payload
+      that action requires (`questions` min 1 for `questions`; `researches`
+      min 1 for `researches`; a complete `manifest` for `draft`; `finalize:
+      { reviewId, decision }` for `finalize`; NO payload for
+      `awaiting`/`noop`), optional `grounding`, and an optional `defectsToFile:
+      { reviewId: "R<n>", defects: [{ key, headline, severity ∈
+      low|medium|high|critical, ... }] }`. The validate steps are an ADDITIVE
+      contract check, never a hard dependency — their absence never blocks the
+      round.
 
-      Take the returned token and go to **sub-step 1c** (read the token, drive
-      the loop).
+      **Apply the validated result through the ONE matching guarded mutation.**
+      Every call carries `goalId`, the captured `claimId` / `generation` /
+      `ownerFenceToken`, a FRESH `operationId` per NEW intended operation (a
+      uuid — REUSE it only when retrying the SAME intended operation after a
+      lost response: same `operationId` + same payload replays the identical
+      acknowledgement, allocated ids and all; same `operationId` + a CHANGED
+      payload conflicts `idempotency-key-reused`, so mint a fresh id for a
+      genuinely new operation), the result's `defectsToFile` (when present) as
+      `reviewDefects` — filed ATOMICALLY with the action — and
+      `author`/`session`:
+      - `questions` →
+        `release_plan_claim({ kind: "pause", ..., effect: { kind: "questions",
+        questions: <result.questions> }, reviewDefects: <result.defectsToFile?> })`.
+        The pause files the questions `open` (linked `goals:<G>`), returns the
+        goal to `clarifying`, and releases the claim. Token:
+        `awaiting-answers`. **Stop the loop.**
+      - `researches` →
+        `release_plan_claim({ kind: "pause", ..., effect: { kind: "researches",
+        researches: <result.researches> }, reviewDefects: <result.defectsToFile?> })`.
+        The pause files the researches `open` (linked `goals:<G>`), persists
+        them as the goal's `waitingResearches` (replacing any prior set), keeps
+        the goal in `planning`, and releases the claim. Token:
+        `awaiting-research`. **Stop the loop** — the CQ::advance research stage
+        drives the filed researches; planning resumes once none remain active.
+      - `draft` →
+        `publish_plan_draft({ ..., manifest: <result.manifest>, reviewDefects:
+        <result.defectsToFile?> })`. The publish materializes the COMPLETE draft
+        (superseding any prior un-finalized draft), keeps every draft task
+        NON-actionable, and keeps the claim ACTIVE. If the result carried a
+        `grounding` string, persist it on the goal
+        (`update_item("goals", G, fields: { grounding: <result.grounding> })` —
+        an unmanaged field, so a raw update is legal on a managed goal). Token:
+        `review-requested`. **Run the reviewer** (step 2), then continue the
+        loop — the next dispatch reads the new review and acts on it.
+      - `finalize` → first read the goal's current draft identity
+        (`fields.planCurrentDraft.identity.revision`), then
+        `finalize_plan({ ..., reviewId: <result.finalize.reviewId>,
+        draftRevision: <that current revision>, decision:
+        <result.finalize.decision>, reviewDefects: <result.defectsToFile?> })`.
+        The finalize creates the `locked` decision (linked `goals:<G>` +
+        `reviews:<R>`), finalizes the EXACT current draft as the goal's ONLY
+        executable manifest (`goal.milestones` := the finalized manifest's
+        milestone ids), moves the goal to `planned`, and releases the claim.
+        Token: `completed`. **Stop.**
+      - `awaiting` / `noop` →
+        `release_plan_claim({ kind: "abandon", ..., reason: "planner returned
+        <action> — nothing to apply this round", reviewDefects:
+        <result.defectsToFile?> })`. The abandon releases the claim without
+        creating effect items (any `defectsToFile` still files atomically).
+        Token: `awaiting-answers` for `awaiting`, `noop` for `noop`. **Stop.**
+      On an `ok: false` conflict from the APPLY call:
+      `idempotency-key-reused` → retry ONCE with a FRESH `operationId`;
+      `owner-fence-mismatch` / `claim-not-active` / `stale-claim` /
+      `stale-generation` → the claim was lost or superseded mid-round (another
+      session recovered it): STOP the round and report — never re-claim and
+      improvise over someone else's round; a `review-*` conflict on `finalize`
+      → the review binding is wrong for the current draft: STOP and report the
+      mismatch (step 2's draft-binding stamp is what keeps this unreachable in
+      a clean round).
 
    1b. **Multi-planner path** (configured) — **generate-N-then-JUDGE+SYNTHESIS**
-      (Q100/Q101). Launch ALL active planners **in parallel** as
-      candidate-emitters (each RETURNS a candidate-plan JSON and writes NOTHING),
-      then synthesize ONE plan and persist it YOURSELF. The native planner
-      subagents and `pi:*` planners do **not** write the ledger in this path — the
-      ORCHESTRATOR is the only writer (Q101), so `pi:*` planners (which cannot call
-      MCP tools) participate fully as pure candidate-emitters.
+      (Q100/Q101) under the SAME active claim from sub-step 3. Launch ALL active
+      planners **in parallel** as candidate-emitters (each RETURNS a
+      candidate-plan JSON and writes NOTHING), then synthesize ONE keyed
+      manifest and publish it YOURSELF through `publish_plan_draft`. The native
+      planner subagents and `pi:*` planners do **not** write the ledger in this
+      path — the ORCHESTRATOR is the only writer (Q101), so `pi:*` planners
+      (which cannot call MCP tools) participate fully as pure
+      candidate-emitters.
       - **i. Per-planner launch (fan-out).** For each active planner token,
         dispatch it in CANDIDATE MODE and capture its candidate-plan JSON. The
         shared candidate-JSON contract is the one in `agents/plan-advance.md`'s
-        **CANDIDATE mode** section: `{ milestones: [{ title, dependsOn? }], tasks:
+        **CANDIDATE mode** section (UNCHANGED — configured candidates retain
+        the DAG schema): `{ milestones: [{ title, dependsOn? }], tasks:
         [{ headline, description, acceptance, suggestedModel, milestone,
         dependsOn?, ledgerRefs }], rationale }` (references are by
         title/headline, and each task's `milestone` names the work-milestone it
@@ -273,15 +422,19 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         non-zero exit, empty, or unparseable; a genuinely hung shellout is an
         operational stall to handle directly, never a silent abstention).
         **Quorum floor:** if EVERY configured planner abstained, fall back to the
-        single-planner native path (sub-step 1a — the `plan-advance` subagent
-        writes the plan) and REPORT that the configured planner panel was
+        single-planner native path (sub-step 1a — under the SAME already-held
+        claim; the `plan-advance` subagent's typed result is applied by you) and
+        REPORT that the configured planner panel was
         unavailable (which aliases abstained + why); the round never blocks on an
         unavailable panel and never synthesizes from zero candidates.
         Distinguish an abstention (a FAILURE to respond) from a deliberate empty
         candidate: if a SURVIVING candidate comes back with empty
         `milestones`/`tasks` and a `rationale` explaining the goal cannot be
         planned yet (still needs user clarification), that is a VALID signal —
-        treat it as this step falling through to `awaiting-answers` (sub-step 1c).
+        release the claim with a `questions` pause when you hold concrete
+        questions to file (mint a `questions` effect from the candidates'
+        rationales), else with an `abandon` release, and treat the step as
+        `awaiting-answers` (sub-step 1c).
       - **ii. JUDGE + SYNTHESIS (Q100 — fold-in, NOT pick-best-discard-rest).**
         Run a synthesis step — either inline as the orchestrator, or via a
         dedicated `plan-synthesizer` subagent (an `CQ_SUBAGENT` call) — over the N
@@ -293,56 +446,68 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         consideration the base candidate missed, INCORPORATE it into the result.
         The judge MUST NOT blindly discard the non-best candidates — when a
         non-best planner contributed something important, it is folded in. The
-        output is ONE **synthesized plan** in the same candidate-JSON shape
-        (milestones + tasks with title/headline references + rationale),
-        reconciling milestone titles and task headlines, de-duplicating
-        overlapping tasks, and keeping the union of genuinely-distinct work.
-      - **iii. Orchestrator persists the ONE synthesized plan (Q101 — all writes
-        are the orchestrator's).** YOU (the orchestrator), not any planner, write
-        the synthesized plan to the ledger, exactly as the default single-planner
-        mode would persist a plan (so `pi:*` planners — which never touch MCP —
-        participate fully). Resolve the candidate's by-title/by-headline
-        references to real ids as you persist:
-        - `create_milestone(title, dependsOn?)` for each synthesized work
-          milestone (resolve `dependsOn` titles → the `W…` ids from the fixed
-          acknowledgements), and record those ids on the goal:
-          `update_item("goals", G, fields: { milestones: [...] })` (preserve any
-          ids already in `fields.milestones`, append the new ones).
-        - `create_item("tasks", Wᵢ, status: "planned", fields: { headline,
-          description, acceptance, suggestedModel, dependsOn?, ledgerRefs:
-          ["goals:<G>"] })` for each synthesized task under its named work
-          milestone `Wᵢ` (resolve `dependsOn` headlines → the `T…` ids). For a
-          DEFECT fix task carry `"defects:<D>"` in `ledgerRefs` too, and write the
-          bidirectional `defects.dependsOn` back-link, exactly as
-          `agents/plan-advance.md` **Defect-aware planning** prescribes.
-        - Transition the goal `update_item("goals", G, status: "planning")` (from
-          `clarifying`) so it enters review, and persist a short grounding summary
-          if the synthesis surfaced one. Stamp `author`/`session` on every write.
-        After persisting, the step's status token is `review-requested` (a plan
-        now exists and awaits the reviewer). Go to **sub-step 1c**.
-      - The synthesized plan now lives in the ledger exactly as a single-planner
-        plan would, so it enters the **SAME reviewer loop (step 2) UNCHANGED** —
-        the pluggable reviewer step judges it identically whether it came from the
-        single-planner fallback or this multi-planner synthesis.
+        output is ONE **synthesized keyed manifest** in the guarded publish
+        schema (`{ milestones: [{ key, title, description?, dependsOn?,
+        blockedBy? }], tasks: [{ key, milestoneKey, headline, description?,
+        acceptance?, suggestedModel?, sourceRefs?, tags?, dependsOn?,
+        blockedBy? }] }`), reconciling milestone titles and task headlines,
+        de-duplicating overlapping tasks, and keeping the union of
+        genuinely-distinct work. The candidate→manifest mapping is MECHANICAL:
+        mint a client `key` slug per milestone and per task; map each
+        title/headline `dependsOn` entry to `{ "kind": "draft-milestone" |
+        "draft-task", "key": <the referenced entry's key> }`; carry an
+        already-persisted `"researches:<RS>"` `dependsOn` token as `{
+        "kind": "ledger", "ref": "researches:<RS>" }` verbatim; and map any
+        `defects:<D>` candidate `ledgerRefs` entries into the task's
+        `sourceRefs` (the guarded publish links every task to the goal
+        itself).
+      - **iii. Orchestrator publishes the ONE synthesized draft (Q101 — all
+        writes are the orchestrator's).** YOU (the orchestrator), not any
+        planner, publish the synthesized manifest through the guarded mutation
+        under the SAME claim:
+        `publish_plan_draft({ goalId: <G>, claimId, generation, operationId:
+        <fresh uuid>, ownerFenceToken, manifest: <the synthesized keyed
+        manifest>, reviewDefects: <the latest review's validated defect batch,
+        when this publish is a REVISION consuming that review — derived exactly
+        as the fallback's defectsToFile (receipt-check, then the T843
+        preflight); omitted for a first draft>, author, session })`. The
+        publish materializes the COMPLETE draft (superseding any prior
+        un-finalized draft) and keeps the claim ACTIVE. Persist a short
+        `grounding` summary on the goal if the synthesis surfaced one (an
+        unmanaged field — raw `update_item` is legal). Handle the apply
+        conflicts exactly as sub-step 1a prescribes (`idempotency-key-reused` →
+        fresh `operationId`, retry once; lost-claim conflicts → STOP and
+        report).
+        After publishing, the step's status token is `review-requested` (a
+        draft now exists and awaits the reviewer). Go to **sub-step 1c**.
+      - The synthesized draft now lives in the ledger exactly as a
+        single-planner draft would, so it enters the **SAME reviewer loop (step
+        2) UNCHANGED** — the pluggable reviewer step judges it identically
+        whether it came from the single-planner fallback or this multi-planner
+        synthesis.
 
    1c. **Read the status token and drive the loop.** Whichever path ran — fallback
-      (1a, token from the subagent) or multi-planner synthesis (1b, token derived
-      from the persisted outcome: `review-requested` after a plan was written,
-      `awaiting-answers` if every candidate reported the goal still needs
-      clarification, `completed`/`noop` if no planning step was possible) — act on
-      the single status token:
-      - `awaiting-answers` — questions are `open` (filed by the fallback subagent,
-        or — when the multi-planner step could not yet plan — by a default
-        single-planner pass you run to file them; candidate-mode planners file
-        nothing). The user must answer them. **Stop the loop.**
-      - `review-requested` — a plan was emitted or revised (by the fallback
-        subagent, or by your multi-planner synthesis persist). **Run the reviewer**
-        (step 2), then continue the loop.
-      - `completed` — the goal reached `planned` (plan locked), or was already in a
-        post-planning phase (`building`/`done`) when the step ran (no further
-        planning step possible). **Stop.** The planner never auto-closes a goal to
-        `done`; `building→done` is always the user's action.
-      - `noop` — nothing to do in the current state. **Stop.**
+      (1a, token derived from the applied guarded operation) or multi-planner
+      synthesis (1b, `review-requested` after the publish, `awaiting-answers`
+      when the candidates reported the goal unplannable) — act on the single
+      status token:
+      - `awaiting-answers` — `open` questions now exist on the goal (filed by
+        your `questions` pause, or pre-existing when the pre-claim gate fired).
+        The user must answer them; the claim is released. **Stop the loop.**
+      - `awaiting-research` — the round is parked on filed or pre-existing
+        `waitingResearches` (at least one still `open`/`wip`/`inconclusive`);
+        the claim is released. **Stop the loop** — the CQ::advance research
+        stage drives the researches; the next plan round runs when none remain
+        active.
+      - `review-requested` — a draft was published or revised (by your fallback
+        apply, or by your multi-planner synthesis publish); the claim stays
+        ACTIVE. **Run the reviewer** (step 2), then continue the loop.
+      - `completed` — the goal reached `planned` (plan finalized behind a
+        go-ahead review and a locked decision; the claim is released). **Stop.**
+        The planner never auto-closes a goal to `done`; `building→done` is
+        always the user's action.
+      - `noop` — nothing to do in the current state; the claim is released.
+        **Stop.**
 
 2. **Review the plan** (only on `review-requested`). The review step is
    **pluggable**: a configurable set of reviewers may judge the plan in parallel
@@ -440,6 +605,19 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
          On success, retain this exact recovered review id for log attachment and
          continue to sub-step 2c. EXACTLY ONE `reviews` item was written by the
          reviewer.
+      5. **Stamp the review with the EXACT current draft identity (T854 — the
+         finalize binding).** Read the goal's `fields.planCurrentDraft.identity`
+         (`{ goalId, claimId, generation, revision }` — the draft this review
+         just judged) and write it onto the recovered review:
+         `update_item("reviews", <reviewId>, fields: { planDraft:
+         "<JSON.stringify of that identity object>" })`. `finalize_plan`
+         REQUIRES the go-ahead review to name the exact current draft identity;
+         this stamp is what binds the review to the draft it approved (a stale
+         or missing binding conflicts `review-draft-mismatch` at finalize).
+         `planDraft` is an unmanaged review field, so the raw update is legal;
+         it does NOT touch the reconciled verdict buckets. When the round's
+         review already carries a `planDraft` equal to the current identity
+         (e.g. a re-stamp after a retry), skip the write.
 
    2b. **Multi-reviewer path** (configured). Launch ALL active reviewers **in
       parallel** and collect each one's verdict JSON. In this mode NO reviewer
@@ -546,8 +724,12 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         `create_item("reviews", M, status: <reconciled verdict>, fields: {
         summary: "<one-line reconciled verdict>", new_questions: [<tagged
         union>], criticism: [<tagged union>], defects: [<T843 serialized tagged
-        defect strings>], ledgerRefs: ["goals:<G>"] })` (M = the goal's
-        coordination milestone). Validate the complete reconciled structured
+        defect strings>], ledgerRefs: ["goals:<G>"], planDraft:
+        "<JSON.stringify of the goal's CURRENT planCurrentDraft.identity —
+        { goalId, claimId, generation, revision }>" })` (M = the goal's
+        coordination milestone). The `planDraft` stamp (T854) binds this review
+        to the EXACT draft it judged — `finalize_plan` requires the go-ahead
+        review to name the current draft identity. Validate the complete reconciled structured
         object and the entire serialized defect batch before this single write.
         **Preserve the invariant:** a `revise` must carry non-empty
         `new_questions` and/or `criticism` (those are what `revise` acts on);
@@ -605,11 +787,26 @@ defects that round filed — this is **Change A** per decision **K12** (supersed
 K8 pt3's handoff direction only; K8 pts 1/2/4/5 stay in force). Per **Q42**:
 auto-launch **always when possible**.
 
+> **Where the filed defects come from (T854).** The round's defects are filed
+> by the guarded plan mutations themselves: the planner RETURNED them as its
+> result's `defectsToFile` batch and YOU supplied that batch as the SAME
+> operation's `reviewDefects` (publish / release / finalize) — so every defect
+> exists ATOMICALLY with the action that consumed its review, carries
+> `ledgerRefs: ["goals:<G>", "reviews:<R>"]`, and is idempotent under retry
+> (a replayed operation re-files NOTHING). While the goal is in
+> `clarifying`/`planning` these goal-linked defects are intentionally EXCLUDED
+> from the GLOBAL P-investigate predicate (ownership by a movable planning
+> goal) — THIS worklist is their ONLY investigation channel, so a filed defect
+> is investigated EXACTLY ONCE per round (predicate (a) below) and never
+> double-triaged by `CQ::advance`'s Investigate stage. The exclusion lifts when
+> the goal leaves the movable planning phases.
+
 ### Worklist = LEDGER QUERY (authoritative — NOT prose-parse)
 
 Derive the worklist from the **ledger**, not from the plan-advance subagent's
-prose summary. The subagent emits a single advisory status token; its prose is
-ADVISORY ONLY and MUST NOT be the source of truth. Query the ledger by defect
+returned summary. The subagent's PlanStepResult is ALREADY APPLIED by the time
+this phase runs; its prose is ADVISORY ONLY and MUST NOT be the source of
+truth. Query the ledger by defect
 **STATUS** (T116's queryable lifecycle, not a prose marker):
 
 > every **defect** whose `ledgerRefs` link the just-advanced goal (`goals:<G>`)
@@ -626,7 +823,9 @@ ledgerRefs:"goals:<G>"', ledger: "defects", projection: "compact", limit: 100 })
 `goals:<G>` ledgerRef; cross-check
 `fetch_item({ ledger_id: "defects", item_id: D, projection: "full" })` as
 needed). This set — NOT the subagent's summary — is the auto-investigate
-worklist for G.
+worklist for G. Each defect appears in it EXACTLY ONCE (deduplicate by defect
+id); you run `CQ::investigate/advance D` on each member AT MOST ONCE this round
+(predicate (a)).
 
 ### For each defect D in the worklist
 
@@ -707,22 +906,27 @@ relevant), and report it** — these predicates REPLACE the numeric cap:
     new confidence to relaunch, stops on convergence or on a non-converging /
     dead cycle), so the pass provably converges.
 
-## Research items the planner filed are driven by `CQ::advance`, NOT here (Q267)
+## Research items the planner returned are driven by `CQ::advance`, NOT here (Q267)
 
-The `plan-advance` planner subagent (`agents/plan-advance.md`) may file
-`researches` items for EMPIRICAL unknowns — the Q267 triage rule: an
+The `plan-advance` planner subagent (`agents/plan-advance.md`) may RETURN a
+`researches` action for EMPIRICAL unknowns — the Q267 triage rule: an
 empirically-answerable unknown (which library / data structure / approach
 performs best; a verifiable-by-experiment fact) becomes an `open` `researches`
-item linked `goals:<G>` INSTEAD of a user question, while user questions stay
-reserved for preference/requirements decisions. Those research items are **NOT
+item INSTEAD of a user question, while user questions stay
+reserved for preference/requirements decisions. YOU file those items through the
+`release_plan_claim` researches pause (sub-step 1a), which links them `goals:<G>`
+AND persists them as the goal's `waitingResearches` — suppressing re-planning
+(including your own next claim, via the `research-wait-active` conflict) while
+any is `open`/`wip`/`inconclusive`, and resuming once every one is
+`concluded`/`abandoned` or has left the active view. Those research items are **NOT
 this orchestrator's to drive.** Unlike the defects the round files — which THIS
 orchestrator auto-investigates INLINE (the auto-investigate phase above) — an
 actionable `researches` item linked `goals:<G>` is driven by **`CQ::advance`'s
 RESEARCH stage** (`commands/cq/advance.md` §The cycle → Research stage, which
 runs `CQ::research/advance` on each actionable research). `CQ::plan/advance` does
 **NOT** spawn research subagents itself and does NOT chain `CQ::research/advance`:
-subagents-cannot-spawn-subagents holds (the planner subagent only FILES the
-research), and the flow-level `CQ::advance` wrapper owns the research stage and
+subagents-cannot-spawn-subagents holds (the planner subagent only RETURNS the
+researches action), and the flow-level `CQ::advance` wrapper owns the research stage and
 its P-research gate. Treat any filed research item as advisory context in the
 §Report only; it is picked up by the next `CQ::advance` cycle's research stage.
 
@@ -746,6 +950,15 @@ strict-JSONL validation IN the CLI and writes into the primary store's
 out-of-tree logs area; the logical paths `.cq/logs/…` are recorded in
 sessionLogs/rawLogs and read back via `read_log`). Stamp
 `<timestamp>` (`Bash`: `date -u +%Y%m%d-%H%M%S`) once per returned subagent.
+
+> **The `ownerFenceToken` NEVER enters a log.** The claim's owner token appears
+> ONLY in the winning (or exactly-retried) claim acknowledgement — never write
+> it into a summary header, a session-log line, a handoff field, or a ledger
+> item. (`cq log put`'s redaction strips the plan-owner-fence-token spellings
+> from persisted transcripts — defence in depth, not licence to write it.)
+> For the planner summary header, record the planner's returned ACTION
+> (`questions`/`researches`/`draft`/`finalize`/`awaiting`/`noop`) and the
+> guarded operation you applied — never the claim's secret material.
 
 **Native `CQ_SUBAGENT` subagent (planner / reviewer / `plan-synthesizer`).** Take
 `<agent-id>` from the tool result, then:
@@ -787,9 +1000,9 @@ summary `.md` to the outcome item's `sessionLogs` and the raw
 `logs/raw/<timestamp>-pi-<alias>.md` to its `rawLogs`.
 
 **Populate `sessionLogs`+`rawLogs` on the outcome items** — the orchestrator owns
-the goal's and the `reviews` item's log writes (the planner subagent updates the
-goal's phase, but after its logs are written you, the orchestrator, must attach
-the paths):
+the goal's and the `reviews` item's log writes (the planner subagent writes
+NOTHING — you apply its result and attach its logs after your guarded
+operation commits):
 - **After the planner step returns** and you have written its log(s), call
   `update_item("goals", G, fields: { sessionLogs: [".cq/logs/<ts>-<agent-id>.md", ...], rawLogs: [".cq/logs/raw/<ts>-<agent-id>.jsonl", ...] })`
   to record the log path(s) on the goal item — both buckets in the SAME call.
@@ -834,8 +1047,12 @@ argument, one line for each goal advanced):
 - what the user must do next:
   - `awaiting-answers` → "answer the N open questions for goal G in the TUI/web,
     then run `CQ::plan/advance G` again" (list the question ids);
+  - `awaiting-research` → "goal G is parked on research RS… (still
+    open/wip/inconclusive); the next `CQ::advance` research stage drives it —
+    planning resumes automatically once every waited research is
+    concluded/abandoned" (list the waiting research ids);
   - `completed` → "plan approved and locked; goal G is now `planned`" (point to
-    the milestones/tasks and the locked decision); if the goal was already
+    the finalized milestones/tasks and the locked decision); if the goal was already
     `building` or `done` when the planner ran (no planning step needed), report
     the current phase and note that implementation is in progress or already
     complete — the user closes `building→done` via the TUI/web;

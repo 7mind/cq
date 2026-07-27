@@ -186,11 +186,11 @@ function runPromptCatalogSuite(label: string, make: () => PromptCatalogCapabilit
 
     it("validate_output accepts a valid plan-advance output and rejects an invalid one", () => {
       const cap = make();
-      // DEFAULT-mode status-token branch of the oneOf.
-      const ok = cap.validateOutput(DISPATCHED_ROLE, { mode: "default", status: "completed" });
+      // DEFAULT-mode PlanStepResult branch of the oneOf (T854).
+      const ok = cap.validateOutput(DISPATCHED_ROLE, { mode: "default", action: "noop" });
       expect(ok.ok).toBe(true);
-      // An unknown status token fails the oneOf.
-      const bad = cap.validateOutput(DISPATCHED_ROLE, { mode: "default", status: "bogus" });
+      // An unknown action fails the oneOf.
+      const bad = cap.validateOutput(DISPATCHED_ROLE, { mode: "default", action: "bogus" });
       expect(bad.ok).toBe(false);
       if (bad.ok) throw new Error("expected validation failure");
       expect(bad.errors.length).toBeGreaterThan(0);

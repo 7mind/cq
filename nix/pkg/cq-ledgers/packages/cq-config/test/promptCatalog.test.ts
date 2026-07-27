@@ -15,7 +15,7 @@ import { describe, expect, test } from "bun:test";
 import Ajv2020 from "ajv/dist/2020";
 import {
   planAdvanceSidecar,
-  PLAN_ADVANCE_STATUS_TOKENS,
+  PLAN_STEP_ACTIONS,
   type PromptCatalogEntry,
 } from "@cq/config";
 
@@ -58,10 +58,48 @@ describe("plan-advance schema sidecar (T336 proof-of-one-role)", () => {
     expect(validate({ goalId: "G41", extra: 1 })).toBe(false);
   });
 
-  test("outputSchema ACCEPTS a valid DEFAULT-mode status token", () => {
+  test("outputSchema ACCEPTS a valid DEFAULT-mode PlanStepResult per action", () => {
     const validate = newAjv().compile(planAdvanceSidecar.outputSchema);
-    for (const status of PLAN_ADVANCE_STATUS_TOKENS) {
-      expect(validate({ mode: "default", status })).toBe(true);
+    const manifest = {
+      milestones: [{ key: "delivery", title: "Deliver" }],
+      tasks: [
+        { key: "contract", milestoneKey: "delivery", headline: "Publish the contract" },
+        {
+          key: "impl",
+          milestoneKey: "delivery",
+          headline: "Implement it",
+          acceptance: "bun run check green",
+          suggestedModel: "standard",
+          dependsOn: [{ kind: "draft-task", key: "contract" }],
+        },
+      ],
+    };
+    const validByAction: Record<string, object> = {
+      questions: {
+        questions: [{ key: "scope", question: "Which packages?" }],
+      },
+      researches: {
+        researches: [{ key: "bench", question: "Which store is fastest?" }],
+      },
+      draft: { manifest },
+      finalize: {
+        finalize: { reviewId: "R12", decision: { headline: "plan review: approved" } },
+      },
+      awaiting: {},
+      noop: {},
+    };
+    for (const action of PLAN_STEP_ACTIONS) {
+      const result = { mode: "default", action, ...validByAction[action] };
+      expect(validate(result), `action ${action}`).toBe(true);
+    }
+    // defectsToFile is orthogonal — allowed on every action.
+    const defectsToFile = {
+      reviewId: "R12",
+      defects: [{ key: "latent", headline: "Latent fault", severity: "high" }],
+    };
+    for (const action of PLAN_STEP_ACTIONS) {
+      const result = { mode: "default", action, ...validByAction[action], defectsToFile };
+      expect(validate(result), `action ${action} + defectsToFile`).toBe(true);
     }
   });
 
@@ -87,8 +125,32 @@ describe("plan-advance schema sidecar (T336 proof-of-one-role)", () => {
 
   test("outputSchema REJECTS invalid examples", () => {
     const validate = newAjv().compile(planAdvanceSidecar.outputSchema);
-    // unknown status token
-    expect(validate({ mode: "default", status: "in-progress" })).toBe(false);
+    // unknown action
+    expect(validate({ mode: "default", action: "in-progress" })).toBe(false);
+    // questions action without its questions payload
+    expect(validate({ mode: "default", action: "questions" })).toBe(false);
+    // draft action without a manifest
+    expect(validate({ mode: "default", action: "draft" })).toBe(false);
+    // payload on a payload-less action
+    expect(
+      validate({
+        mode: "default",
+        action: "noop",
+        questions: [{ key: "q", question: "x" }],
+      }),
+    ).toBe(false);
+    // another action's payload mixed in
+    expect(
+      validate({
+        mode: "default",
+        action: "questions",
+        questions: [{ key: "q", question: "x" }],
+        manifest: {
+          milestones: [{ key: "m", title: "M" }],
+          tasks: [{ key: "t", milestoneKey: "m", headline: "h" }],
+        },
+      }),
+    ).toBe(false);
     // candidate missing required rationale
     expect(validate({ mode: "candidate", milestones: [], tasks: [] })).toBe(false);
     // candidate task missing required acceptance
@@ -119,8 +181,21 @@ describe("plan-advance schema sidecar (T336 proof-of-one-role)", () => {
         rationale: "r",
       }),
     ).toBe(false);
+    // bad severity in defectsToFile
+    expect(
+      validate({
+        mode: "default",
+        action: "noop",
+        defectsToFile: {
+          reviewId: "R1",
+          defects: [{ key: "d", headline: "h", severity: "blocker" }],
+        },
+      }),
+    ).toBe(false);
     // neither mode shape (mode mismatch with payload)
     expect(validate({ mode: "default" })).toBe(false);
+    // unknown property on a default result
+    expect(validate({ mode: "default", action: "noop", extra: 1 })).toBe(false);
   });
 });
 
