@@ -322,6 +322,33 @@ function parseApplications(
   return applications;
 }
 
+/**
+ * Validate declared overlay applications for one role and surface WITHOUT
+ * materializing prompt bytes — the overlay half of the inside-prepare
+ * input-validation placement (T976), where prepare holds the declared overlay
+ * data but not yet the artifact bytes.
+ *
+ * Applies exactly the same fail-closed policy as
+ * {@link materializeDispatchPrompt}: an undeclared or duplicate overlay id, an
+ * overlay applied to a role or surface it is not declared for, overlay data
+ * failing its declared input schema, and any field beyond
+ * `{ overlayId, data }` all throw {@link DispatchOverlayError}. Returns the
+ * applied overlay ids in canonical registry declaration order.
+ */
+export function validateDispatchOverlayApplications(
+  roleId: DispatchedRoleId,
+  surface: PromptSurface,
+  overlays: readonly DispatchOverlayApplication[],
+  registry: DispatchOverlayRegistry,
+): readonly string[] {
+  const applications = parseApplications(overlays, roleId, surface, registry);
+  return Object.freeze(
+    Object.values(registry)
+      .filter((definition) => applications.has(definition.overlayId))
+      .map((definition) => definition.overlayId),
+  );
+}
+
 function renderOverlay(definition: DispatchOverlayDefinition, data: DispatchJSONValue): string {
   const path = `overlays.${definition.overlayId}`;
   let first: unknown;
