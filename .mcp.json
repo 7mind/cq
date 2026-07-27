@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "ledger": {
-      "command": "nix",
-      "args": ["run", ".#cq", "--", "mcp"]
+      "command": "cq",
+      "args": ["mcp"]
     }
   }
 }

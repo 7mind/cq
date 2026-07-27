@@ -1,5 +1,10 @@
 [test]
 # Exclude compiled JS output from test discovery; tests run from TypeScript source.
 pathIgnorePatterns = ["**/dist/**", "result/**", "result-*/**"]
+# D170: force a throwaway XDG_STATE_HOME before any test module is evaluated, so
+# no test can resolve (or reinitialise) the developer's real out-of-tree ledger.
+# projectKey is git-derived and identical across worktrees, so without this the
+# suite targets the live store — which is how it was once destroyed.
+preload = ["./test-setup/isolate-state-dir.ts"]
 # happy-dom globals are registered per-test-file (see ledger-web's
 # test/helpers/dom.ts), not preloaded, so DOM-using and non-DOM tests coexist.
