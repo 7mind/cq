@@ -61,6 +61,26 @@ export class ProjectKeyResolutionError extends Error {
   }
 }
 
+/**
+ * Path segment marking a harness-created agent worktree (D170). Both the native
+ * `worktree-agent-<hex>` trees and `implement/<taskId>` trees the flow creates
+ * live under this directory.
+ */
+export const AGENT_WORKTREE_SEGMENT = ".claude/worktrees";
+
+/**
+ * True when `repoRoot` lies inside an agent worktree (D170). Compared on path
+ * SEGMENTS, so a directory merely *named* like the segment (e.g.
+ * `my.claude/worktrees-notes`) does not match, and both separators are handled.
+ */
+export function isInsideAgentWorktree(repoRoot: string): boolean {
+  const segments = repoRoot.split(/[/\\]+/);
+  for (let i = 0; i + 1 < segments.length; i++) {
+    if (segments[i] === ".claude" && segments[i + 1] === "worktrees") return true;
+  }
+  return false;
+}
+
 /** Options for {@link resolveProjectKey}. */
 export interface ResolveProjectKeyOpts {
   /** The repo root to derive a key for when `projectId` is absent. */
@@ -100,6 +120,38 @@ export async function resolveProjectKey(opts: ResolveProjectKeyOpts): Promise<st
       );
     }
     return opts.projectId;
+  }
+
+  // D170: REFUSE to SHA-derive a key from inside an agent worktree.
+  //
+  // A worktree shares the repo's object database, so `firstCommitShas` returns
+  // the SAME root SHA as the main checkout — by design (Q246, to keep every
+  // worktree on ONE store). The consequence is that anything executed inside a
+  // dispatched-agent worktree resolves the developer's LIVE store. That is how
+  // the ledger was destroyed on 2026-07-27 (1147 active + 2278 archived items
+  // replaced by one bootstrap milestone) and, by the same signature, once
+  // before on 2026-07-25: a subagent ran `bun -e` with a module import from its
+  // worktree, and the store's divergence path reinitialised canon.
+  //
+  // Refusing here is semantically correct, not merely defensive: by the flow's
+  // own contract a dispatched worker NEVER mutates the ledger, so a worktree has
+  // no business resolving the shared project store at all. This also covers
+  // vectors a `bun test` preload cannot: `bun -e`, `bun run`, and the `cq` CLI.
+  //
+  // Deliberate overrides still work — an explicit [ledger].projectId returns
+  // above, before this check, so a worktree that genuinely wants its own store
+  // can pin one.
+  if (isInsideAgentWorktree(opts.repoRoot)) {
+    throw new ProjectKeyResolutionError(
+      `Refusing to resolve a project key for ${opts.repoRoot}: it is inside an agent worktree ` +
+        `(${AGENT_WORKTREE_SEGMENT}). A worktree shares the repo's object database, so the ` +
+        `first-commit SHA would resolve the SAME out-of-tree store as the main checkout — the ` +
+        `developer's LIVE ledger — and a divergent open can reinitialise it (D170: this ` +
+        `destroyed 1147 active + 2278 archived items). Dispatched workers must not touch the ` +
+        `shared ledger. Fix: point XDG_STATE_HOME at a throwaway directory for this process, or ` +
+        `set [ledger].projectId = "<a stable identifier>" in the worktree's cq.toml to pin a ` +
+        `separate store deliberately.`,
+    );
   }
 
   const git = opts.git ?? GitPlumbing.withCwd(opts.repoRoot);
