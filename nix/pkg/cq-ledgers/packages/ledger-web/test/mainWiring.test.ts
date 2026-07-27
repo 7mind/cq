@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { spawn as bunSpawn } from "bun";
+import { execFileSync } from "node:child_process";
 import * as net from "node:net";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -143,6 +144,10 @@ afterAll(async () => {
  */
 async function makeLedgerRoot(extraToml = ""): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-main-wiring-"));
+  // T834: embedded mode is selected only inside a resolvable git repository
+  // (projectId pins the key, so no commit is needed); without `git init` the
+  // root would now select the implicit whole-store mode instead.
+  execFileSync("git", ["init", "--quiet"], { cwd: root });
   await fs.writeFile(
     path.join(root, "cq.toml"),
     `${extraToml}[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(root)}"\n`,

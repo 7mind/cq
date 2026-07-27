@@ -10,6 +10,13 @@
  *
  * CLI:
  *   ledger-web --port 5180 --mcp-url http://127.0.0.1:7777/mcp
+ *   ledger-web --backend=xdg [--store=<projects-root>] [--cwd=<checkout hint>]
+ *
+ * With `--backend=xdg` (explicit) or a cwd outside any resolvable repository
+ * (implicit), the process instead hosts the WHOLE local XDG store: every
+ * readable project under the projects root is discovered, rejected candidates
+ * are reported, the cwd checkout hint backfills identity metadata, and the
+ * static catalog is served over /p/<key>/{mcp,ws} (default port 5191).
  *
  * The bundle is built at startup with Bun.build (TypeScript/JSX transpiled on
  * the fly). LEDGER_WEB_OUTDIR redirects the bundler output to a writable path
@@ -28,9 +35,23 @@ import {
   resolvePromptSurface,
   startLedgerCoherenceWatcher,
 } from "@cq/ledger-mcp";
-import { resolveProjectKey, resolveStateDirBase } from "@cq/ledger";
+import {
+  backfillXdgProjectIdentities,
+  FilesystemXdgProjectCatalogSource,
+  ReadOnlyXdgProjectCatalog,
+  resolveProjectKey,
+  resolveStateDirBase,
+  type XdgProjectCatalogEntry,
+  type XdgProjectIdentityBackfillResult,
+} from "@cq/ledger";
 import type { WebuiConfig } from "@cq/config";
 import { loadConfig } from "@cq/config";
+import {
+  createStaticXdgHostCatalog,
+  filesystemXdgRuntimeOpener,
+  serveXdgCatalog,
+  type XdgHostProject,
+} from "./xdgCatalogServe.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_PORT = 5180;
@@ -675,8 +696,178 @@ export function scanForPort<T>(startPort: number, bind: (port: number) => T): T 
   );
 }
 
+/** Startup result of the composed whole-store host (T838). */
+export interface XdgWholeStoreStartup {
+  readonly server: ReturnType<typeof Bun.serve>;
+  /** The startup-static catalog the host serves (never re-read afterwards). */
+  readonly projects: readonly XdgHostProject[];
+  /** The preselected initial project the `/mcp` + `/ws` aliases route to. */
+  readonly aliasProjectKey: string;
+  readonly aliasDisplayName: string;
+}
+
+/**
+ * Compose the whole-store startup (T838): discover readable XDG stores under
+ * `opts.projectsRoot`, emit one rejection line per invalid candidate, run the
+ * bounded identity backfill over the single cwd checkout hint, refresh the
+ * catalog so backfilled descriptors (display names) are picked up, preselect
+ * the initial project, build the browser bundle, and bind the XDG host.
+ *
+ * The catalog is STARTUP-STATIC: no project-root filesystem watcher is
+ * installed and the project list is never re-read while the host runs. Every
+ * project runtime stays dormant until its first data request (T836); the
+ * returned server's `stop(true)` releases the port and disposes every runtime
+ * initialized so far, which is the whole shutdown/rollback contract — startup
+ * steps before the bind acquire nothing (the bundle build only writes files
+ * and a failed bind scan holds no port), so a startup failure leaves nothing
+ * behind.
+ */
+export async function serveWholeStore(
+  opts: XdgWholeStoreOpts,
+): Promise<XdgWholeStoreStartup> {
+  const catalog = new ReadOnlyXdgProjectCatalog(
+    new FilesystemXdgProjectCatalogSource(),
+  );
+  const discovered = await catalog.discover(opts.projectsRoot);
+  for (const diagnostic of discovered.diagnostics) {
+    if (diagnostic.severity === "error") {
+      process.stderr.write(
+        `ledger-web: rejected XDG project ${diagnostic.key}: ${diagnostic.code}: ${diagnostic.message}\n`,
+      );
+    }
+  }
+  const backfill = await backfillXdgProjectIdentities({
+    projectsRoot: opts.projectsRoot,
+    checkoutRoots: [opts.cwdHint],
+  });
+  const refreshed = await catalog.discover(opts.projectsRoot);
+  if (refreshed.projects.length === 0) {
+    const rejected = refreshed.diagnostics.filter(
+      (diagnostic) => diagnostic.severity === "error",
+    ).length;
+    throw new Error(
+      `no readable XDG projects under ${opts.projectsRoot} ` +
+        `(${String(rejected)} candidate(s) rejected); nothing to serve`,
+    );
+  }
+  const aliasProjectKey = preselectInitialProject(refreshed.projects, backfill);
+  const alias = refreshed.projects.find(
+    (project) => project.key === aliasProjectKey,
+  );
+  if (alias === undefined) {
+    throw new Error(
+      `preselected project is absent from the catalog: ${aliasProjectKey}`,
+    );
+  }
+  const hostCatalog = createStaticXdgHostCatalog(
+    refreshed.projects.map((project) => ({
+      key: project.key,
+      displayName: project.displayName,
+    })),
+  );
+  const promptSurface = resolvePromptSurface({
+    promptSurface: undefined,
+    promptRoot: undefined,
+    environment: process.env,
+  });
+  await fs.mkdir(opts.outdir, { recursive: true });
+  const indexPath = path.join(opts.outdir, "index.html");
+  await prepare(opts.outdir);
+  const server = serveXdgCatalog(
+    {
+      host: opts.host,
+      port: opts.port,
+      projectsRoot: opts.projectsRoot,
+      outdir: opts.outdir,
+      aliasProjectKey,
+      catalog: hostCatalog,
+      runtimeOpener: filesystemXdgRuntimeOpener,
+      ...(promptSurface?.store === undefined
+        ? {}
+        : { promptArtifactStore: promptSurface.store }),
+    },
+    indexPath,
+  );
+  return {
+    server,
+    projects: hostCatalog.projects,
+    aliasProjectKey,
+    aliasDisplayName: alias.displayName,
+  };
+}
+
+/**
+ * Preselect the initial project: the catalog entry the cwd checkout hint
+ * resolved to during backfill, else the catalog's first entry (discover sorts
+ * by display name, then key — deterministic). `projects` must be non-empty.
+ */
+function preselectInitialProject(
+  projects: readonly XdgProjectCatalogEntry[],
+  backfill: XdgProjectIdentityBackfillResult,
+): string {
+  const hinted = backfill.projects[0]?.projectKey;
+  if (
+    hinted !== undefined &&
+    projects.some((project) => project.key === hinted)
+  ) {
+    return hinted;
+  }
+  const first = projects[0];
+  if (first === undefined) {
+    throw new Error("cannot preselect an initial project from an empty catalog");
+  }
+  return first.key;
+}
+
+/**
+ * Whole-store entry (T838): compose discovery/backfill/hosting, print the
+ * project list with labels, then keep the process alive until SIGINT/SIGTERM,
+ * whose handler closes the server and every initialized runtime.
+ */
+async function mainWholeStore(opts: XdgWholeStoreOpts): Promise<void> {
+  const startup = await serveWholeStore(opts);
+  const server = startup.server;
+  process.stderr.write(
+    `ledger-web: serving ${String(startup.projects.length)} project(s): ` +
+      `${startup.projects.map((p) => `${p.key} (${p.displayName})`).join(", ")}\n`,
+  );
+  let stopping = false;
+  const shutdown = (): void => {
+    if (stopping) return;
+    stopping = true;
+    void (async () => {
+      // stop(true) releases the port and disposes every runtime the host
+      // initialized for any project (T836's disposal contract).
+      await server.stop(true);
+      process.exit(0);
+    })().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`ledger-web: fatal: shutdown failed: ${msg}\n`);
+      process.exit(1);
+    });
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  const actualPort = server.port;
+  // Machine-readable URL on stdout (for scripts/orchestrators).
+  process.stdout.write(`http://${opts.host}:${actualPort}/\n`);
+  // Human-readable line on stderr.
+  process.stderr.write(
+    `ledger-web: serving http://${opts.host}:${actualPort}/ → XDG store ${opts.projectsRoot} ` +
+      `(initial project: ${startup.aliasProjectKey} (${startup.aliasDisplayName}))\n`,
+  );
+}
+
 export async function main(argv: readonly string[]): Promise<void> {
   const parsed = parseArgs(argv);
+  // T838: strict mode resolution (T834) selects the composed whole-store host
+  // for explicit/implicit XDG launches; proxy and repository-local embedded
+  // launches keep the legacy wiring below, unchanged.
+  const mode = await resolveWebMode(parsed);
+  if (mode.kind === "xdg") {
+    await mainWholeStore(mode.opts);
+    return;
+  }
   // Load cq.toml from the ledger root (null when absent — feature off).
   // A dangling reviewers/planners alias in cq.toml throws CqConfigError, which
   // we treat as a fatal startup error (consistent with the catch below).

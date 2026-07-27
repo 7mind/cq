@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { spawn as bunSpawn, type Subprocess } from "bun";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as net from "node:net";
 import * as fs from "node:fs/promises";
@@ -72,6 +73,9 @@ beforeAll(async () => {
   process.env["XDG_STATE_HOME"] = xdgHome;
 
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-"));
+  // T834: embedded mode is selected only inside a resolvable git repository
+  // (the pinned projectId keys the store, so no commit is needed).
+  execFileSync("git", ["init", "--quiet"], { cwd: tmpRoot });
   await fs.writeFile(
     path.join(tmpRoot, "cq.toml"),
     `[ledger]\nbackend = "xdg"\nprojectId = "${path.basename(tmpRoot)}"\n`,
