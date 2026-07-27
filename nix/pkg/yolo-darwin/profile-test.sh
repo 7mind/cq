@@ -202,7 +202,8 @@ printf '%s\n' \
   '  else' \
   '    shift' \
   '  fi' \
-  'done' > "$FAKE_BIN/prompt-sandbox"
+  'done' \
+  'env | sed -n "/^YOLO_/s/=.*//p" | sort' > "$FAKE_BIN/prompt-sandbox"
 chmod +x "$FAKE_BIN/security" "$FAKE_BIN/sandbox" "$FAKE_BIN/prompt-sandbox"
 
 run_claude_exec() {
@@ -237,6 +238,7 @@ run_prompt_exec() {
     cd "$PROJECT_DIR" &&
       HOME="$FAKE_HOME" \
       YOLO_PROMPT_JSON="$PROMPT_JSON" \
+      YOLO_TEST_SENTINEL=present \
       YOLO_SANDBOX_EXEC="$FAKE_BIN/prompt-sandbox" \
       bash "$SCRIPT" "$@" 2>&1
   )"
@@ -247,6 +249,8 @@ run_prompt_exec claude
 assert_zero "claude launch with custom prompt succeeds" "$STATUS"
 assert_contains "claude receives targeted and shared prompt fragments" "$OUT" $'prompt<<claude only\n\nshared line\n\naudio line>>'
 assert_not_contains "claude excludes pi-targeted prompt fragments" "$OUT" "pi only"
+# Regression: D1 — orchestration variables must stop at the launcher boundary.
+assert_not_contains "confined child excludes the YOLO orchestration namespace" "$OUT" "YOLO_"
 run_prompt_exec pi
 assert_zero "pi launch with custom prompt succeeds" "$STATUS"
 assert_contains "pi receives shared and targeted prompt fragments" "$OUT" $'prompt<<shared line\n\naudio line\n\npi only>>'

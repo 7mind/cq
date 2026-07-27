@@ -290,6 +290,8 @@ yolo_exec_agent() {
   trap "rm -f -- '$yolo_sb_profile'" EXIT
   render_sandbox_profile "$PROFILE" "$PWD" > "$yolo_sb_profile"
   local sandbox_argv=("$YOLO_SANDBOX_EXEC" --use-profile "$yolo_sb_profile" --target-dir "$PWD" --)
+  local yolo_vars=("${!YOLO_@}")
+  unset "${yolo_vars[@]}"
   exec env "${PROFILE_ENV_PAIRS[@]}" "${ENV_PAIRS[@]}" SMIND_SANDBOXED=1 "${sandbox_argv[@]}" "${agent_argv[@]}" "$@"
 }
 
