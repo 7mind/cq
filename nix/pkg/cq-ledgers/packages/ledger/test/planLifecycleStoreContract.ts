@@ -1238,6 +1238,75 @@ export function runPlanLifecycleStoreContract(
         }
       }, timeout);
 
+      it("reacquisition preserves the current draft and clears satisfied wait metadata", async () => {
+        const fixture = await buildGoal(factory, "clarifying", null);
+        try {
+          const first = requireClaimWinner(
+            await fixture.lifecycle.claimPlan(
+              claimInput("initial", "reacquire-1", OWNER_TOKEN_A, null, PROVENANCE_A),
+            ),
+          );
+          const published = await fixture.lifecycle.publishPlanDraft(
+            publishInput(first, "reacquire-draft"),
+          );
+          if (!published.ok) throw new Error("draft publication unexpectedly conflicted");
+          const pause = await fixture.lifecycle.releasePlanClaim({
+            kind: "pause",
+            goalId: GOAL_ID,
+            claimId: first.claimId,
+            generation: first.generation,
+            operationId: "reacquire-pause",
+            ownerFenceToken: first.ownerFenceToken,
+            ...PROVENANCE_A,
+            effect: {
+              kind: "researches",
+              researches: [
+                { key: "probe", question: "Does the draft survive reacquisition?" },
+              ],
+            },
+          });
+          if (!pause.ok || pause.acknowledgement.kind !== "researches") {
+            throw new Error("research pause unexpectedly conflicted");
+          }
+          const [researchId] = pause.acknowledgement.waitingResearches;
+          if (researchId === undefined) throw new Error("research allocation missing");
+
+          // The wait suppresses re-planning until it concludes; concluding
+          // SATISFIES it, so the next claim is admitted...
+          await fixture.setResearchStatus(researchId, "concluded");
+          const second = requireClaimWinner(
+            await fixture.lifecycle.claimPlan(
+              claimInput("initial", "reacquire-2", OWNER_TOKEN_B, 1, PROVENANCE_B),
+            ),
+          );
+          expect(second.generation).toBe(2);
+          const state = await fixture.observe(GOAL_ID);
+          // ...the prior generation's draft is PRESERVED for the new round to
+          // revise (never reset by reacquisition)...
+          expect(state.currentDraft).toEqual({
+            goalId: GOAL_ID,
+            claimId: first.claimId,
+            generation: first.generation,
+            revision: 1,
+          });
+          // ...and the satisfied wait metadata is cleared.
+          expect(state.waitingResearches).toEqual([]);
+
+          // Revision CONTINUES from the preserved draft: the next publish
+          // supersedes it and reports the preserved manifest as replaced.
+          const revised = await fixture.lifecycle.publishPlanDraft(
+            publishInput(second, "reacquire-revised"),
+          );
+          if (!revised.ok) throw new Error("revision unexpectedly conflicted");
+          expect(revised.acknowledgement.manifest.revision).toBe(2);
+          expect(revised.acknowledgement.replacedManifest).toEqual(
+            published.acknowledgement.manifest,
+          );
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
       it("supports exact tokenless abandonment with an atomic defect batch", async () => {
         const fixture = await buildGoal(factory, "clarifying", null);
         try {

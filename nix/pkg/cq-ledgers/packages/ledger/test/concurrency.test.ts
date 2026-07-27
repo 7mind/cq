@@ -568,8 +568,12 @@ describe("FsLedgerStore concurrency", () => {
         "planned",
         "planned",
       ]);
+      // D166/T855: both sessions' raw writes committed (all four tasks stay
+      // `planned` — legacy selection never deletes the loser's DAG), but
+      // readiness follows the goal's SELECTED manifest, so only planner B's
+      // DAG — the last selection write — is actionable.
       const readyTaskIds = [...derivePredicates(plannerB).pImplement.items].sort();
-      expect(readyTaskIds).toEqual(allTasks.map((task) => task.id).sort());
+      expect(readyTaskIds).toEqual(resultB.tasks.map((task) => task.id).sort());
 
       if (!Array.isArray(selectedMilestoneIds)) {
         throw new Error("goals.milestones must be an id array");

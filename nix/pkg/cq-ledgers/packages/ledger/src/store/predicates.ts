@@ -48,7 +48,11 @@
  *    task must ALSO be a member of the goal's FINALIZED manifest and the goal
  *    must carry NO active (follow-up) claim — draft, superseded, and
  *    off-manifest tasks (the Q337 duplicate-DAG leak) never execute. LEGACY
- *    goals (no `planGeneration`) keep the pre-G99 readiness rules verbatim.
+ *    goals (no `planGeneration`) follow their DECLARED `milestones` manifest
+ *    when one is present (D166/T855: the write-side selection fence for
+ *    concurrent legacy planning sessions — only the selected DAG is
+ *    actionable); a legacy goal with NO declared `milestones` field keeps the
+ *    pre-G99 goal-ref readiness rule verbatim.
  *  - openQuestionGate — the open `questions` items gating the above.
  *
  * Dependency-resolution spec (G80/M245, read-side of the `<ledger>:<id>`
@@ -279,6 +283,14 @@ interface GoalPlanGate {
   readonly claimActive: boolean;
   /** Task ids of the FINALIZED manifest; null when absent or unreadable. */
   readonly finalizedTaskIds: ReadonlySet<string> | null;
+  /**
+   * The LEGACY goal's DECLARED work-milestone manifest (`milestones` field),
+   * with any `milestones:` prefix tolerated; null when the field is ABSENT.
+   * A present-but-malformed value yields an EMPTY set — the same fail-safe
+   * posture as the managed manifest: a declared selection authorizes only
+   * its members (D166/T855).
+   */
+  readonly legacyMilestoneIds: ReadonlySet<string> | null;
 }
 
 function goalPlanGate(goal: Item): GoalPlanGate {
@@ -294,7 +306,20 @@ function goalPlanGate(goal: Item): GoalPlanGate {
       finalizedTaskIds = null;
     }
   }
-  return { managed, claimActive, finalizedTaskIds };
+  const rawMilestones = goal.fields["milestones"];
+  const legacyMilestoneIds =
+    rawMilestones === undefined
+      ? null
+      : new Set(
+          (Array.isArray(rawMilestones) ? rawMilestones : [])
+            .filter((entry): entry is string => typeof entry === "string")
+            .map((entry) =>
+              entry.startsWith(`${MILESTONES_LEDGER}:`)
+                ? entry.slice(MILESTONES_LEDGER.length + 1)
+                : entry,
+            ),
+        );
+  return { managed, claimActive, finalizedTaskIds, legacyMilestoneIds };
 }
 
 function buildTaskDependencyReadiness(
@@ -561,8 +586,11 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
   for (const t of tasks) {
     // Authorized by an owning goal? A goal authorizes its task iff ALL hold:
     //  - the goal is in planned/building;
-    //  - the goal is LEGACY (no planGeneration — pre-G99 readiness, verbatim),
-    //    OR PROTOCOL-MANAGED with NO active (follow-up) claim AND the task a
+    //  - the goal is LEGACY (no planGeneration) with NO declared `milestones`
+    //    manifest (pre-G99 goal-ref readiness, verbatim) or with the task's
+    //    milestone a MEMBER of the declared one (D166/T855: the loser's DAG
+    //    of a concurrent legacy planning race never executes), OR
+    //    PROTOCOL-MANAGED with NO active (follow-up) claim AND the task a
     //    member of the goal's FINALIZED manifest (draft, superseded, and
     //    off-manifest tasks — the Q337 duplicate-DAG leak — never execute).
     const authorized = refList(t, "ledgerRefs").some((ref) => {
@@ -571,7 +599,11 @@ export function derivePredicates(store: LedgerStore): DerivedPredicates {
       if (!buildableGoalIds.has(goalId)) return false;
       const gate = planGateFor(goalId);
       if (gate === undefined) return false;
-      if (!gate.managed) return true;
+      if (!gate.managed) {
+        return (
+          gate.legacyMilestoneIds === null || gate.legacyMilestoneIds.has(t.milestoneId)
+        );
+      }
       if (gate.claimActive) return false;
       return gate.finalizedTaskIds?.has(t.id) === true;
     });

@@ -65,6 +65,7 @@ import {
   type Item,
   type LedgerStore,
   MILESTONES_AMBIENT_ID,
+  MILESTONES_LEDGER,
   openPgPool,
   PLAN_REVIEW_DRAFT_FIELD,
   type PlanClaimAcknowledgement,
@@ -1023,6 +1024,55 @@ function runPlanPredicatesSuite(backend: Backend): void {
         await backend.dispose(store);
       }
     }, 15_000);
+
+    it("(legacy-manifest) a declared legacy goals.milestones fences readiness to the selected DAG (D166)", async () => {
+      const store = await backend.build();
+      try {
+        // Two racing LEGACY planning sessions both publish a goal-linked DAG;
+        // the last goals.milestones write selects the executable set (T845).
+        await seedLegacyGoal(store, GOAL_ID, "planned");
+        const selected = await store.createMilestone({ title: "selected plan", ...PROVENANCE });
+        const superseded = await store.createMilestone({ title: "superseded plan", ...PROVENANCE });
+        const selectedTask = await store.createItem(TASKS_LEDGER, selected.id, {
+          status: "planned",
+          fields: { headline: "selected task", ledgerRefs: [`${GOALS_LEDGER}:${GOAL_ID}`] },
+          ...PROVENANCE,
+        });
+        const supersededTask = await store.createItem(TASKS_LEDGER, superseded.id, {
+          status: "planned",
+          fields: { headline: "superseded task", ledgerRefs: [`${GOALS_LEDGER}:${GOAL_ID}`] },
+          ...PROVENANCE,
+        });
+
+        // No declared manifest yet: the pre-G99 goal-ref rule authorizes BOTH.
+        expectIds(derivePredicates(store).pImplement.items, [selectedTask.id, supersededTask.id]);
+
+        // The selection write fences readiness to the selected DAG; the
+        // canonical `milestones:<id>` prefix form is tolerated.
+        await store.updateItem(GOALS_LEDGER, GOAL_ID, {
+          fields: { milestones: [`${MILESTONES_LEDGER}:${selected.id}`] },
+          ...PROVENANCE,
+        });
+        expectIds(derivePredicates(store).pImplement.items, [selectedTask.id]);
+
+        // The fence holds in `building` (the implement-flow's dispatch phase).
+        await store.updateItem(GOALS_LEDGER, GOAL_ID, { status: "building", ...PROVENANCE });
+        expectIds(derivePredicates(store).pImplement.items, [selectedTask.id]);
+
+        // A declared-but-EMPTY manifest authorizes nothing (fail-safe).
+        await store.updateItem(GOALS_LEDGER, GOAL_ID, {
+          fields: { milestones: [] },
+          ...PROVENANCE,
+        });
+        expectIds(derivePredicates(store).pImplement.items, []);
+
+        // The superseded DAG was never deleted — selection is a readiness
+        // fence, not a mutation of the loser's tasks.
+        expect(store.fetchItem(TASKS_LEDGER, supersededTask.id).status).toBe("planned");
+      } finally {
+        await backend.dispose(store);
+      }
+    });
   });
 }
 

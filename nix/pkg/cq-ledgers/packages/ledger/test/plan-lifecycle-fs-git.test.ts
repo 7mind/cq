@@ -4,6 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  DECISIONS_LEDGER,
   DEFECTS_LEDGER,
   FsLedgerStore,
   GOALS_LEDGER,
@@ -11,10 +12,12 @@ import {
   Lockfile,
   ledgerTreePaths,
   MILESTONES_AMBIENT_ID,
+  PLAN_REVIEW_DRAFT_FIELD,
   RESEARCHES_LEDGER,
   REVIEWS_LEDGER,
   TASKS_LEDGER,
   removeLedgerArtifacts,
+  type PlanFinalizeInput,
   type PlanLifecycleStore,
   type PlanReleaseInput,
 } from "../src/index.js";
@@ -273,6 +276,174 @@ describe("T849 filesystem and Git plan lifecycle capability", () => {
     expect(
       await fs.readFile(path.join(docs, "plan-lifecycle.json"), "utf8"),
     ).not.toContain(input.ownerFenceToken);
+    await expect(
+      fs.stat(path.join(docs, "plan-lifecycle.pending.json")),
+    ).rejects.toThrow();
+    await recovered.dispose();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("recovers one finalize decision and defect batch before the marker after partial apply", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "plan-fs-finalize-recovery-"));
+    const docs = path.join(root, ".cq");
+    const ledgerIds = [
+      DECISIONS_LEDGER,
+      DEFECTS_LEDGER,
+      GOALS_LEDGER,
+      REVIEWS_LEDGER,
+      TASKS_LEDGER,
+    ] as const;
+    const store = new FsLedgerStore({ root });
+    await store.init();
+    await seedGoal(store);
+    const claim = await store.claimPlan(
+      claimInput("recover-finalize-claim", "F".repeat(22)),
+    );
+    if (!claim.ok) throw new Error("expected claim success");
+    const publish = await store.publishPlanDraft({
+      goalId: "G1",
+      claimId: claim.acknowledgement.claimId,
+      generation: claim.acknowledgement.generation,
+      operationId: "recover-finalize-publish",
+      ownerFenceToken: "F".repeat(22),
+      author: "planner",
+      session: "planner-session",
+      manifest: {
+        milestones: [{ key: "delivery", title: "Delivery" }],
+        tasks: [
+          { key: "implementation", milestoneKey: "delivery", headline: "Implementation" },
+        ],
+      },
+    });
+    if (!publish.ok) throw new Error("expected publish success");
+    const draft = {
+      goalId: "G1",
+      claimId: claim.acknowledgement.claimId,
+      generation: claim.acknowledgement.generation,
+      revision: publish.acknowledgement.manifest.revision,
+    };
+    await store.createItem(REVIEWS_LEDGER, MILESTONES_AMBIENT_ID, {
+      id: "R1",
+      status: "go-ahead",
+      fields: {
+        summary: "approved",
+        [PLAN_REVIEW_DRAFT_FIELD]: JSON.stringify(draft),
+        ledgerRefs: [`${GOALS_LEDGER}:G1`],
+      },
+      author: "reviewer",
+      session: "reviewer-session",
+    });
+    const beforeState = await fs.readFile(
+      path.join(docs, "plan-lifecycle.json"),
+      "utf8",
+    );
+    const beforeLedgers = Object.fromEntries(
+      await Promise.all(
+        ledgerIds.map(async (ledgerId) => [
+          ledgerId,
+          await fs.readFile(path.join(docs, `${ledgerId}.md`), "utf8"),
+        ]),
+      ),
+    ) as Record<(typeof ledgerIds)[number], string>;
+    const input: PlanFinalizeInput = {
+      goalId: "G1",
+      claimId: claim.acknowledgement.claimId,
+      generation: claim.acknowledgement.generation,
+      operationId: "recover-finalize",
+      ownerFenceToken: "F".repeat(22),
+      author: "planner",
+      session: "planner-session",
+      reviewId: "R1",
+      draftRevision: draft.revision,
+      decision: {
+        headline: "Recover the complete finalize",
+        rationale: "Exercise a filesystem retry across the finalized marker",
+      },
+      reviewDefects: {
+        reviewId: "R1",
+        defects: [
+          {
+            key: "finalize-defect",
+            headline: "Recover the finalize defect batch",
+            severity: "medium",
+          },
+        ],
+      },
+    };
+    const first = await store.finalizePlan(input);
+    if (!first.ok) throw new Error("expected finalize success");
+    const finalState = await fs.readFile(
+      path.join(docs, "plan-lifecycle.json"),
+      "utf8",
+    );
+    const finalLedgers = Object.fromEntries(
+      await Promise.all(
+        ledgerIds.map(async (ledgerId) => [
+          ledgerId,
+          await fs.readFile(path.join(docs, `${ledgerId}.md`), "utf8"),
+        ]),
+      ),
+    ) as Record<(typeof ledgerIds)[number], string>;
+    await store.dispose();
+
+    // Roll every touched ledger + the lifecycle state back to BEFORE the
+    // finalize, then apply only the decision + defect writes: the decision is
+    // durable, the finalized marker (goals.md) is not — the create-before-
+    // marker ordering the retry must recover from without duplicating.
+    for (const ledgerId of ledgerIds) {
+      await fs.writeFile(
+        path.join(docs, `${ledgerId}.md`),
+        beforeLedgers[ledgerId],
+        "utf8",
+      );
+    }
+    await fs.writeFile(path.join(docs, "plan-lifecycle.json"), beforeState, "utf8");
+    for (const partiallyApplied of [DECISIONS_LEDGER, DEFECTS_LEDGER]) {
+      await fs.writeFile(
+        path.join(docs, `${partiallyApplied}.md`),
+        finalLedgers[partiallyApplied],
+        "utf8",
+      );
+    }
+    await fs.writeFile(
+      path.join(docs, "plan-lifecycle.pending.json"),
+      JSON.stringify({ state: finalState, ledgers: finalLedgers }),
+      "utf8",
+    );
+
+    const recovered = new FsLedgerStore({ root });
+    await recovered.init();
+    const replay = await recovered.finalizePlan(input);
+    expect(replay).toEqual({ ...first, replayed: true });
+    if (!replay.ok) throw new Error("expected exact finalize replay");
+    // ONE decision — the retry REUSES the recovered one, never duplicates it.
+    expect(replay.acknowledgement.decisionId).toBe(first.acknowledgement.decisionId);
+    const decisions = recovered
+      .fetch(DECISIONS_LEDGER)
+      .milestones.flatMap(({ items }) => items);
+    expect(decisions.map(({ id }) => id)).toEqual([first.acknowledgement.decisionId]);
+    // ONE defect batch, with the review-side link recovered too.
+    const defects = recovered
+      .fetch(DEFECTS_LEDGER)
+      .milestones.flatMap(({ items }) => items);
+    expect(defects.map(({ id }) => id)).toEqual(
+      first.acknowledgement.reviewDefects.map(({ id }) => id),
+    );
+    // ONE executable manifest; the claim's authority is released.
+    const goal = recovered.fetchItem(GOALS_LEDGER, "G1");
+    expect(goal.status).toBe("planned");
+    expect(goal.fields["planActiveClaim"]).toBeUndefined();
+    expect(goal.fields["milestones"]).toEqual(
+      first.acknowledgement.manifest.milestones.map(({ id }) => id),
+    );
+    expect(JSON.parse(goal.fields["planFinalizedManifest"] as string)).toEqual(
+      first.acknowledgement.manifest,
+    );
+    expect(JSON.parse(goal.fields["planFinalizedDraft"] as string)).toEqual(draft);
+    // A second retry stays a pure replay.
+    expect(JSON.stringify(await recovered.finalizePlan(input))).toBe(
+      JSON.stringify(replay),
+    );
     await expect(
       fs.stat(path.join(docs, "plan-lifecycle.pending.json")),
     ).rejects.toThrow();
