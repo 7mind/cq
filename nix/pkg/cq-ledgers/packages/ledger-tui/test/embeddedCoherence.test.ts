@@ -74,8 +74,19 @@ async function waitUntil(pred: () => boolean, timeoutMs = 4000): Promise<boolean
 }
 
 let prevXdgStateHome: string | undefined;
+let prevPromptRoot: string | undefined;
+let prevPromptSurface: string | undefined;
+let prevPromptSurfacesRoot: string | undefined;
 beforeAll(async () => {
   prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  // These embedded/watcher tests are prompt-agnostic: an ambient prompt root
+  // must not leak into the in-process server construction.
+  prevPromptRoot = process.env["CQ_PROMPT_ROOT"];
+  prevPromptSurface = process.env["CQ_PROMPT_SURFACE"];
+  prevPromptSurfacesRoot = process.env["CQ_PROMPT_SURFACES_ROOT"];
+  delete process.env["CQ_PROMPT_ROOT"];
+  delete process.env["CQ_PROMPT_SURFACE"];
+  delete process.env["CQ_PROMPT_SURFACES_ROOT"];
   const xdgHome = await fs.mkdtemp(path.join(tmpdir(), "tui-coherence-xdg-home-"));
   dirs.push(xdgHome);
   process.env["XDG_STATE_HOME"] = xdgHome;
@@ -84,6 +95,12 @@ beforeAll(async () => {
 afterAll(async () => {
   if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
   else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+  if (prevPromptRoot === undefined) delete process.env["CQ_PROMPT_ROOT"];
+  else process.env["CQ_PROMPT_ROOT"] = prevPromptRoot;
+  if (prevPromptSurface === undefined) delete process.env["CQ_PROMPT_SURFACE"];
+  else process.env["CQ_PROMPT_SURFACE"] = prevPromptSurface;
+  if (prevPromptSurfacesRoot === undefined) delete process.env["CQ_PROMPT_SURFACES_ROOT"];
+  else process.env["CQ_PROMPT_SURFACES_ROOT"] = prevPromptSurfacesRoot;
   await Promise.all(dirs.map((d) => fs.rm(d, { recursive: true, force: true })));
 });
 

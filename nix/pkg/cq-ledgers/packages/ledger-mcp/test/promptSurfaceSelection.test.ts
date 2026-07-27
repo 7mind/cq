@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -23,20 +24,34 @@ let explicitPiRoot: string;
 
 function writePromptRoot(root: string, surface: PromptSurface, body: string): void {
   mkdirSync(path.join(root, "roles"), { recursive: true });
-  writeFileSync(path.join(root, "surface.json"), JSON.stringify({ surface }));
-  writeFileSync(
-    path.join(root, "catalog.json"),
-    encoder.encode(
-      JSON.stringify([
-        {
-          roleId: ROLE_ID,
-          roleKind: "dispatched-subagent",
-          sidecar: { schemaRoleId: ROLE_ID },
-        },
-      ]),
-    ),
+  const roleBytes = encoder.encode(body);
+  const catalogBytes = encoder.encode(
+    JSON.stringify([
+      {
+        roleId: ROLE_ID,
+        roleKind: "dispatched-subagent",
+        sidecar: { schemaRoleId: ROLE_ID },
+      },
+    ]),
   );
-  writeFileSync(path.join(root, "roles", `${ROLE_ID}.md`), encoder.encode(body));
+  const core = {
+    surface,
+    catalogMetadataHash: createHash("sha256").update(catalogBytes).digest("hex"),
+    roles: [
+      {
+        roleId: ROLE_ID,
+        version: 1,
+        sha256: createHash("sha256").update(roleBytes).digest("hex"),
+      },
+    ],
+  };
+  const surfaceJson = JSON.stringify({
+    ...core,
+    surfaceDigest: createHash("sha256").update(JSON.stringify(core), "utf8").digest("hex"),
+  });
+  writeFileSync(path.join(root, "surface.json"), surfaceJson);
+  writeFileSync(path.join(root, "catalog.json"), catalogBytes);
+  writeFileSync(path.join(root, "roles", `${ROLE_ID}.md`), roleBytes);
 }
 
 function resolve(input: {

@@ -114,6 +114,18 @@ export interface FetchPromptResult {
   readonly requiredCapabilities?: readonly PromptRendererCapability[];
   /** Typed cross-surface differences declared by the catalog. */
   readonly intentionalDifferences?: readonly PromptIntentionalDifference[];
+  /**
+   * Lowercase hex SHA-256 of the exact installed rendered bytes that supplied
+   * `promptTemplate` (frontmatter included); present only when an attested
+   * prompt root backs the capability.
+   */
+  readonly promptDigest?: string;
+  /**
+   * Lowercase hex SHA-256 of the installed `catalog.json` bytes (the catalog
+   * metadata hash); present only when an attested prompt root backs the
+   * capability.
+   */
+  readonly catalogHash?: string;
   /** Contract version stamp; present only for a dispatched-subagent role. */
   readonly version?: number;
   /** The parent-supplied input contract; present only for a dispatched subagent. */

@@ -40,6 +40,7 @@ import { fileURLToPath } from "node:url";
 import {
   AGENT_ROLE_TIERS,
   DISPATCHED_ROLE_IDS,
+  DISPATCHED_ROLE_VERSIONS,
   PROMPT_ROLE_SOURCE_INVENTORY,
   getRoleSidecar,
 } from "@cq/config";
@@ -156,6 +157,7 @@ function renderClaudeAgentSources(): ReadonlyMap<string, string> {
     catalogJson,
     sourcePaths,
     fragmentPaths,
+    roleVersions: DISPATCHED_ROLE_VERSIONS,
   });
   return new Map(
     catalog.map((role) => {

@@ -586,6 +586,108 @@ function assertAuthoritativeFragmentParity(
   }
 }
 
+/**
+ * Verify the attested packaged-surface manifest (`surface.json`, T683) of one
+ * root against its own installed bytes and the authoritative catalog: exact
+ * field shape, surface identity, catalog metadata hash, canonical role order,
+ * per-role exact-byte digests, schema-sidecar version/role-kind consistency,
+ * and the recomputed surface aggregate digest. Any drift fails closed.
+ */
+function assertSurfaceManifest(
+  root: PromptVerificationRoot,
+  roles: readonly CatalogRole[],
+  path: string,
+): void {
+  const surfacePath = `${path}.surface.json`;
+  let value: unknown;
+  try {
+    value = JSON.parse(root.artifacts["surface.json"]!) as unknown;
+  } catch {
+    fail(surfacePath, "expected valid JSON");
+  }
+  if (!isRecord(value)) {
+    fail(surfacePath, "expected an object");
+  }
+  const fields = Object.keys(value).sort();
+  if (
+    !sameOrderedValues(fields, [
+      "catalogMetadataHash",
+      "roles",
+      "surface",
+      "surfaceDigest",
+    ])
+  ) {
+    fail(surfacePath, "expected exactly surface, catalogMetadataHash, roles, and surfaceDigest");
+  }
+  if (value.surface !== root.surface) {
+    fail(`${surfacePath}.surface`, `expected "${root.surface}"`);
+  }
+  const catalogHash = value.catalogMetadataHash;
+  if (typeof catalogHash !== "string" || !/^[0-9a-f]{64}$/.test(catalogHash)) {
+    fail(`${surfacePath}.catalogMetadataHash`, "expected a lowercase hex SHA-256 digest");
+  }
+  if (catalogHash !== sha256(root.artifacts["catalog.json"]!)) {
+    fail(
+      `${surfacePath}.catalogMetadataHash`,
+      "does not match the installed catalog.json bytes",
+    );
+  }
+  if (!Array.isArray(value.roles)) {
+    fail(`${surfacePath}.roles`, "expected an array");
+  }
+  const entries = value.roles as readonly Record<string, unknown>[];
+  if (entries.length !== roles.length) {
+    fail(`${surfacePath}.roles`, `expected ${roles.length} role attestations`);
+  }
+  for (const [index, role] of roles.entries()) {
+    const entry = entries[index]!;
+    const entryPath = `${surfacePath}.roles[${index}]`;
+    if (!isRecord(entry)) {
+      fail(entryPath, "expected an object");
+    }
+    const entryFields = Object.keys(entry).sort();
+    if (!sameOrderedValues(entryFields, ["roleId", "sha256", "version"])) {
+      fail(entryPath, "expected exactly roleId, version, and sha256");
+    }
+    if (entry.roleId !== role.roleId) {
+      fail(`${entryPath}.roleId`, `expected "${role.roleId}" in canonical catalog order`);
+    }
+    const digest = entry.sha256;
+    if (typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest)) {
+      fail(`${entryPath}.sha256`, "expected a lowercase hex SHA-256 digest");
+    }
+    if (digest !== sha256(root.artifacts[`roles/${role.roleId}.md`]!)) {
+      fail(`${entryPath}.sha256`, "does not match the installed role artifact bytes");
+    }
+    if (role.roleKind === "dispatched-subagent") {
+      if (
+        typeof entry.version !== "number" ||
+        !Number.isSafeInteger(entry.version) ||
+        entry.version < 1
+      ) {
+        fail(`${entryPath}.version`, "expected a positive integer schema-sidecar version");
+      }
+    } else if (entry.version !== null) {
+      fail(`${entryPath}.version`, "orchestrator-command roles must carry null");
+    }
+  }
+  const canonicalCore = JSON.stringify({
+    surface: value.surface,
+    catalogMetadataHash: catalogHash,
+    roles: entries.map((entry) => ({
+      roleId: entry.roleId,
+      version: entry.version,
+      sha256: entry.sha256,
+    })),
+  });
+  if (value.surfaceDigest !== sha256(canonicalCore)) {
+    fail(
+      `${surfacePath}.surfaceDigest`,
+      "surface aggregate digest does not match the attested contents",
+    );
+  }
+}
+
 function assertRoot(
   root: PromptVerificationRoot,
   expected: PromptVerificationRoot,
@@ -620,12 +722,7 @@ function assertRoot(
   if (root.artifacts["catalog.json"] !== catalogJson) {
     fail(`${path}.catalog.json`, "catalog bytes differ from the authoritative Nix JSON");
   }
-  if (
-    root.artifacts["surface.json"] !==
-    JSON.stringify({ surface: root.surface })
-  ) {
-    fail(`${path}.surface.json`, "surface identity does not match the root");
-  }
+  assertSurfaceManifest(root, roles, path);
 
   for (const role of roles) {
     const artifactPath = `roles/${role.roleId}.md`;

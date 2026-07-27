@@ -41,6 +41,7 @@ import {
   type PromptArtifactStore,
   type PromptRoleArtifact,
 } from "./promptArtifactStore.js";
+import { stripPromptFrontmatter } from "./promptFrontmatter.js";
 
 /**
  * The cq-assets package root, relative to a ledger/config root. The assets live
@@ -64,16 +65,11 @@ function assetRelPath(roleId: string, dispatched: boolean): string {
 
 /**
  * Strip a leading `---`-fenced frontmatter block and return the body (the
- * prompt-template). Mirrors the ledger-web `parseFrontmatterBlock` body-extraction
- * (the `rest` after the fence): everything after the closing `---` line, or the
- * whole document when no frontmatter fence is present. The body is `trim()`med to
- * match the codegen's `promptTemplate = body.trim()`.
+ * prompt-template). Delegates to the ONE explicit stripping rule in
+ * `./promptFrontmatter.js` (T683) — kept as a local alias so the legacy
+ * source store below reads unchanged.
  */
-function stripFrontmatter(raw: string): string {
-  const fence = raw.match(/^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/);
-  const body = fence === null ? raw : raw.slice(fence[0].length);
-  return body.trim();
-}
+const stripFrontmatter = stripPromptFrontmatter;
 
 /**
  * Read + assemble a role's {@link FetchPromptResult}. Fails fast
@@ -113,6 +109,7 @@ function fetchedCatalogMetadata(
   | "workflowDependencies"
   | "requiredCapabilities"
   | "intentionalDifferences"
+  | "promptDigest"
 > {
   return {
     ...(metadata.promptSurface !== undefined
@@ -129,13 +126,38 @@ function fetchedCatalogMetadata(
     ...(metadata.intentionalDifferences !== undefined
       ? { intentionalDifferences: metadata.intentionalDifferences }
       : {}),
+    ...(metadata.promptDigest !== undefined ? { promptDigest: metadata.promptDigest } : {}),
   };
+}
+
+/**
+ * Fail closed when the running schema sidecar and the attested prompt root
+ * disagree about a dispatched role's contract version (T683): the bytes bound
+ * to `metadata.promptDigest` were rendered for the attested version, so a
+ * drifted sidecar must never be paired with them silently.
+ */
+function assertAttestedSidecarVersion(
+  metadata: PromptArtifactRoleMetadata,
+  sidecarVersion: number,
+): void {
+  if (metadata.schemaVersion !== undefined && metadata.schemaVersion !== sidecarVersion) {
+    throw new Error(
+      `prompt catalog: dispatched role "${metadata.roleId}" schema sidecar version ${String(sidecarVersion)} does not match the attested prompt root version ${String(metadata.schemaVersion)}`,
+    );
+  }
 }
 
 function fetchPromptFor(store: PromptArtifactStore, roleId: string): FetchPromptResult {
   const artifact = roleArtifact(store, roleId);
   const promptTemplate = decodePrompt(artifact);
   const catalogMetadata = fetchedCatalogMetadata(artifact.metadata);
+  let attestationMetadata: Pick<FetchPromptResult, "catalogHash"> = {};
+  if (artifact.metadata.promptDigest !== undefined) {
+    const { catalogHash } = store.readManifest();
+    if (catalogHash !== undefined) {
+      attestationMetadata = { catalogHash };
+    }
+  }
 
   if (artifact.metadata.roleKind === "orchestrator-command") {
     return {
@@ -144,6 +166,7 @@ function fetchPromptFor(store: PromptArtifactStore, roleId: string): FetchPrompt
       dispatched: false,
       promptTemplate,
       ...catalogMetadata,
+      ...attestationMetadata,
     };
   }
 
@@ -155,12 +178,14 @@ function fetchPromptFor(store: PromptArtifactStore, roleId: string): FetchPrompt
       `prompt catalog: dispatched role "${roleId}" has no schema sidecar in @cq/config`,
     );
   }
+  assertAttestedSidecarVersion(artifact.metadata, sidecar.version);
   return {
     roleId,
     kind: "dispatched-subagent",
     dispatched: true,
     promptTemplate,
     ...catalogMetadata,
+    ...attestationMetadata,
     version: sidecar.version,
     inputSchema: sidecar.inputSchema as JSONSchemaDoc,
     outputSchema: sidecar.outputSchema as JSONSchemaDoc,
@@ -187,6 +212,7 @@ function schemaForRole(
       `prompt catalog: dispatched role "${roleId}" has no schema sidecar in @cq/config`,
     );
   }
+  assertAttestedSidecarVersion(artifact.metadata, sidecar.version);
   return side === "input" ? sidecar.inputSchema : sidecar.outputSchema;
 }
 

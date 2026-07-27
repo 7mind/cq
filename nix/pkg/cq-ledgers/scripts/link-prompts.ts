@@ -177,7 +177,21 @@ function parseCatalog(content: string): readonly ClaudePromptRole[] {
   });
 }
 
-function validateClaudeSurface(content: string): void {
+function sha256Hex(content: string): string {
+  return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+/**
+ * Validate the attested surface manifest (T683) against the in-memory
+ * rendered tree: exact field shape, `"claude"` identity, catalog metadata
+ * hash, per-role exact-byte digests in canonical catalog order, version
+ * shape, and the recomputed surface aggregate digest.
+ */
+function validateClaudeSurface(
+  content: string,
+  tree: readonly PromptFile[],
+  catalog: readonly ClaudePromptRole[],
+): void {
   let value: unknown;
   try {
     value = JSON.parse(content) as unknown;
@@ -187,12 +201,91 @@ function validateClaudeSurface(content: string): void {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("rendered prompt surface.json must contain an object");
   }
-  const fields = Object.keys(value);
-  if (fields.length !== 1 || fields[0] !== "surface") {
-    throw new Error('rendered prompt surface.json must contain exactly one "surface" field');
+  const fields = Object.keys(value).sort();
+  if (
+    fields.length !== 4 ||
+    fields[0] !== "catalogMetadataHash" ||
+    fields[1] !== "roles" ||
+    fields[2] !== "surface" ||
+    fields[3] !== "surfaceDigest"
+  ) {
+    throw new Error(
+      'rendered prompt surface.json must contain exactly "surface", "catalogMetadataHash", "roles", and "surfaceDigest"',
+    );
   }
   if (Reflect.get(value, "surface") !== "claude") {
     throw new Error('rendered prompt surface.json.surface must equal "claude"');
+  }
+  const catalogHash = Reflect.get(value, "catalogMetadataHash");
+  if (typeof catalogHash !== "string" || !/^[0-9a-f]{64}$/.test(catalogHash)) {
+    throw new Error("rendered prompt surface.json.catalogMetadataHash must be a SHA-256 hex digest");
+  }
+  const catalogContent = tree.find((file) => file.path === "catalog.json");
+  if (catalogContent === undefined || sha256Hex(catalogContent.content) !== catalogHash) {
+    throw new Error(
+      "rendered prompt surface.json.catalogMetadataHash does not match catalog.json",
+    );
+  }
+  const attestedRoles = Reflect.get(value, "roles");
+  if (!Array.isArray(attestedRoles) || attestedRoles.length !== catalog.length) {
+    throw new Error("rendered prompt surface.json.roles must cover every catalog role");
+  }
+  attestedRoles.forEach((entry, index) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new Error(`rendered prompt surface.json.roles[${index}] must contain an object`);
+    }
+    const entryFields = Object.keys(entry).sort();
+    if (
+      entryFields.length !== 3 ||
+      entryFields[0] !== "roleId" ||
+      entryFields[1] !== "sha256" ||
+      entryFields[2] !== "version"
+    ) {
+      throw new Error(
+        `rendered prompt surface.json.roles[${index}] must contain exactly "roleId", "version", and "sha256"`,
+      );
+    }
+    const roleId = Reflect.get(entry, "roleId");
+    if (roleId !== catalog[index]!.roleId) {
+      throw new Error(
+        `rendered prompt surface.json.roles[${index}].roleId must equal "${catalog[index]!.roleId}" in canonical catalog order`,
+      );
+    }
+    const version = Reflect.get(entry, "version");
+    if (
+      version !== null &&
+      (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1)
+    ) {
+      throw new Error(
+        `rendered prompt surface.json.roles[${index}].version must be null or a positive integer`,
+      );
+    }
+    const digest = Reflect.get(entry, "sha256");
+    if (typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest)) {
+      throw new Error(
+        `rendered prompt surface.json.roles[${index}].sha256 must be a SHA-256 hex digest`,
+      );
+    }
+    const roleFile = tree.find((file) => file.path === `roles/${String(roleId)}.md`);
+    if (roleFile === undefined || sha256Hex(roleFile.content) !== digest) {
+      throw new Error(
+        `rendered prompt surface.json.roles[${index}].sha256 does not match the installed role bytes`,
+      );
+    }
+  });
+  const canonicalCore = JSON.stringify({
+    surface: "claude",
+    catalogMetadataHash: catalogHash,
+    roles: (attestedRoles as readonly Record<string, unknown>[]).map((entry) => ({
+      roleId: entry.roleId,
+      version: entry.version,
+      sha256: entry.sha256,
+    })),
+  });
+  if (Reflect.get(value, "surfaceDigest") !== sha256Hex(canonicalCore)) {
+    throw new Error(
+      "rendered prompt surface.json.surfaceDigest does not match the attested contents",
+    );
   }
 }
 
@@ -218,7 +311,6 @@ export function validateRenderedClaudeRoot(
   if (surfaceFile === undefined) {
     throw new Error("rendered prompt root is missing surface.json");
   }
-  validateClaudeSurface(surfaceFile.content);
   const catalog = parseCatalog(catalogFile.content);
   const expectedPaths = new Set([
     "catalog.json",
@@ -235,6 +327,7 @@ export function validateRenderedClaudeRoot(
       throw new Error(`rendered prompt root contains undeclared file "${file.path}"`);
     }
   }
+  validateClaudeSurface(surfaceFile.content, tree, catalog);
   return catalog;
 }
 

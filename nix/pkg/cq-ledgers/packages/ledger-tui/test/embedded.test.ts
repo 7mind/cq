@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -36,27 +37,44 @@ beforeAll(async () => {
   process.env["XDG_STATE_HOME"] = xdgHome;
   promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-tui-prompts-"));
   await fs.mkdir(path.join(promptRoot, "roles"));
-  await fs.writeFile(path.join(promptRoot, "surface.json"), '{"surface":"codex"}');
-  await fs.writeFile(
-    path.join(promptRoot, "catalog.json"),
-    JSON.stringify([
+  const catalogJson = JSON.stringify([
+    {
+      roleId: "plan-advance",
+      roleKind: "dispatched-subagent",
+      canonicalSource: "agents/plan-advance.md",
+      surfaces: ["claude", "codex", "pi"],
+      sharedSourceBlock: {
+        classification: "shared-prose",
+        sourceBlock: "all prose outside the classified surface-sensitive blocks",
+        targetFragment: null,
+      },
+      fragmentBindings: [],
+      dispatchRelations: [],
+      intentionalDifferences: [],
+      sidecar: { schemaRoleId: "plan-advance" },
+    },
+  ]);
+  const surfaceCore = {
+    surface: "codex",
+    catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+    roles: [
       {
         roleId: "plan-advance",
-        roleKind: "dispatched-subagent",
-        canonicalSource: "agents/plan-advance.md",
-        surfaces: ["claude", "codex", "pi"],
-        sharedSourceBlock: {
-          classification: "shared-prose",
-          sourceBlock: "all prose outside the classified surface-sensitive blocks",
-          targetFragment: null,
-        },
-        fragmentBindings: [],
-        dispatchRelations: [],
-        intentionalDifferences: [],
-        sidecar: { schemaRoleId: "plan-advance" },
+        version: 1,
+        sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
       },
-    ]),
+    ],
+  };
+  await fs.writeFile(
+    path.join(promptRoot, "surface.json"),
+    JSON.stringify({
+      ...surfaceCore,
+      surfaceDigest: createHash("sha256")
+        .update(JSON.stringify(surfaceCore), "utf8")
+        .digest("hex"),
+    }),
   );
+  await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
   await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);
   process.env["CQ_PROMPT_ROOT"] = promptRoot;
   process.env["CQ_PROMPT_SURFACE"] = "codex";

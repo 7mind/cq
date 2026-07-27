@@ -83,7 +83,13 @@ beforeAll(async () => {
 
   ({ port, proc: server } = await spawnWithFreePort(
     (p) => [process.execPath, "run", serverMain, "--cwd", tmpRoot, "--http", String(p)],
-    { stdout: "ignore", stderr: "ignore", env: { ...process.env } },
+    { stdout: "ignore", stderr: "ignore", env: {
+      ...process.env,
+      // The spawned upstream is prompt-agnostic here: no ambient prompt root.
+      CQ_PROMPT_ROOT: undefined,
+      CQ_PROMPT_SURFACE: undefined,
+      CQ_PROMPT_SURFACES_ROOT: undefined,
+    } },
   ));
 });
 

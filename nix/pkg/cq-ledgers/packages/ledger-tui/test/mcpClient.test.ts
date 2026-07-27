@@ -55,7 +55,13 @@ beforeAll(async () => {
 
   ({ port, proc } = await spawnWithFreePort(
     (p) => [process.execPath, "run", serverMain, "--cwd", tmpRoot, "--http", String(p)],
-    { stdout: "inherit", stderr: "inherit", env: { ...process.env } },
+    { stdout: "inherit", stderr: "inherit", env: {
+      ...process.env,
+      // Prompt-agnostic client tests must not inherit an ambient prompt root.
+      CQ_PROMPT_ROOT: undefined,
+      CQ_PROMPT_SURFACE: undefined,
+      CQ_PROMPT_SURFACES_ROOT: undefined,
+    } },
   ));
   client = await McpLedgerClient.connect(`http://127.0.0.1:${port}/mcp`);
 });

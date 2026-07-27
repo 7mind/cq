@@ -44,6 +44,9 @@ const serverMain = path.resolve(here, "..", "..", "ledger-mcp", "src", "main.ts"
 let tmpRoot: string;
 let xdgHome: string;
 let prevXdgStateHome: string | undefined;
+let prevPromptRoot: string | undefined;
+let prevPromptSurface: string | undefined;
+let prevPromptSurfacesRoot: string | undefined;
 let proc: Subprocess;
 let client: McpLedgerClient;
 let port: number;
@@ -62,6 +65,14 @@ beforeAll(async () => {
   // passed EXPLICITLY at spawn time (Bun's default child env is a
   // process-start snapshot that misses runtime mutations).
   prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  // The in-process embedded client below is prompt-agnostic: an ambient
+  // prompt root must not leak into its server construction.
+  prevPromptRoot = process.env["CQ_PROMPT_ROOT"];
+  prevPromptSurface = process.env["CQ_PROMPT_SURFACE"];
+  prevPromptSurfacesRoot = process.env["CQ_PROMPT_SURFACES_ROOT"];
+  delete process.env["CQ_PROMPT_ROOT"];
+  delete process.env["CQ_PROMPT_SURFACE"];
+  delete process.env["CQ_PROMPT_SURFACES_ROOT"];
   xdgHome = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-displayname-xdg-"));
   process.env["XDG_STATE_HOME"] = xdgHome;
 
@@ -95,6 +106,12 @@ afterAll(async () => {
   await proc.exited;
   if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
   else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+  if (prevPromptRoot === undefined) delete process.env["CQ_PROMPT_ROOT"];
+  else process.env["CQ_PROMPT_ROOT"] = prevPromptRoot;
+  if (prevPromptSurface === undefined) delete process.env["CQ_PROMPT_SURFACE"];
+  else process.env["CQ_PROMPT_SURFACE"] = prevPromptSurface;
+  if (prevPromptSurfacesRoot === undefined) delete process.env["CQ_PROMPT_SURFACES_ROOT"];
+  else process.env["CQ_PROMPT_SURFACES_ROOT"] = prevPromptSurfacesRoot;
   await fs.rm(xdgHome, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });

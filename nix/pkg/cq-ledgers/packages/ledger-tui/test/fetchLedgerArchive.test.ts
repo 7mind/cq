@@ -17,12 +17,22 @@ import { McpLedgerClient } from "../src/mcpClient.js";
 let tmpRoot: string;
 let xdgHome: string;
 let prevXdgStateHome: string | undefined;
+let prevPromptRoot: string | undefined;
+let prevPromptSurface: string | undefined;
+let prevPromptSurfacesRoot: string | undefined;
 let client: McpLedgerClient;
 
 beforeAll(async () => {
   // The runtime store is the out-of-tree xdg primary (T505): point
   // XDG_STATE_HOME at a temp dir and pin the backend with a projectId.
   prevXdgStateHome = process.env["XDG_STATE_HOME"];
+  // The embedded client is prompt-agnostic here: no ambient prompt root.
+  prevPromptRoot = process.env["CQ_PROMPT_ROOT"];
+  prevPromptSurface = process.env["CQ_PROMPT_SURFACE"];
+  prevPromptSurfacesRoot = process.env["CQ_PROMPT_SURFACES_ROOT"];
+  delete process.env["CQ_PROMPT_ROOT"];
+  delete process.env["CQ_PROMPT_SURFACE"];
+  delete process.env["CQ_PROMPT_SURFACES_ROOT"];
   xdgHome = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-archive-test-xdg-"));
   process.env["XDG_STATE_HOME"] = xdgHome;
 
@@ -59,6 +69,12 @@ afterAll(async () => {
   await client.close();
   if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
   else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
+  if (prevPromptRoot === undefined) delete process.env["CQ_PROMPT_ROOT"];
+  else process.env["CQ_PROMPT_ROOT"] = prevPromptRoot;
+  if (prevPromptSurface === undefined) delete process.env["CQ_PROMPT_SURFACE"];
+  else process.env["CQ_PROMPT_SURFACE"] = prevPromptSurface;
+  if (prevPromptSurfacesRoot === undefined) delete process.env["CQ_PROMPT_SURFACES_ROOT"];
+  else process.env["CQ_PROMPT_SURFACES_ROOT"] = prevPromptSurfacesRoot;
   await fs.rm(xdgHome, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });

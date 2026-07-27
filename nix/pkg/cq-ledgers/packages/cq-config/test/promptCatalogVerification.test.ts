@@ -13,6 +13,72 @@ const INVOCATION_DIFFERENCE = {
   surfaces: SURFACES,
 } as const;
 
+/** Lowercase hex SHA-256 of the UTF-8 encoding of `value`. */
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+/** The fixture's schema-sidecar versions (worker is the dispatched role). */
+const FIXTURE_ROLE_VERSIONS: Readonly<Record<string, number>> = { worker: 1 };
+
+/**
+ * Serialize the attested surface manifest (T683 canonical byte shape) for one
+ * fixture root from its current artifact bytes.
+ */
+function stampSurfaceManifest(
+  surface: PromptSurface,
+  catalogJson: string,
+  artifacts: Readonly<Record<string, string>>,
+): string {
+  const roleIds = Object.keys(artifacts)
+    .filter((artifactPath) => artifactPath.startsWith("roles/") && artifactPath.endsWith(".md"))
+    .map((artifactPath) => artifactPath.slice("roles/".length, -".md".length));
+  const catalog = JSON.parse(catalogJson) as readonly {
+    readonly roleId: string;
+    readonly sidecar: unknown;
+  }[];
+  const roles = catalog.map(({ roleId, sidecar }) => {
+    const content = artifacts[`roles/${roleId}.md`];
+    if (content === undefined) {
+      throw new Error(`fixture root has no rendered bytes for role "${roleId}"`);
+    }
+    return {
+      roleId,
+      version: sidecar === null ? null : FIXTURE_ROLE_VERSIONS[roleId] ?? 1,
+      sha256: sha256Hex(content),
+    };
+  });
+  if (roles.length !== roleIds.length) {
+    throw new Error("fixture root role artifacts do not cover the catalog");
+  }
+  const core = {
+    surface,
+    catalogMetadataHash: sha256Hex(catalogJson),
+    roles,
+  };
+  return JSON.stringify({ ...core, surfaceDigest: sha256Hex(JSON.stringify(core)) });
+}
+
+/** Recompute every packaged (and local Claude) surface manifest after a byte mutation. */
+function restampSurfaceManifests(input: PromptCatalogVerificationInput): void {
+  for (const surface of SURFACES) {
+    const packaged = input.packagedRoots[surface].artifacts as Record<string, string>;
+    packaged["surface.json"] = stampSurfaceManifest(
+      surface,
+      input.authoritativeCatalogJson,
+      packaged,
+    );
+    const expected = input.expectedRoots[surface].artifacts as Record<string, string>;
+    expected["surface.json"] = stampSurfaceManifest(
+      surface,
+      input.authoritativeCatalogJson,
+      expected,
+    );
+  }
+  const local = input.localClaudeRoot.artifacts as Record<string, string>;
+  local["surface.json"] = stampSurfaceManifest("claude", input.authoritativeCatalogJson, local);
+}
+
 function fixture(): PromptCatalogVerificationInput {
   const binding = {
     fragment: "cq-command-invocation",
@@ -88,18 +154,19 @@ function fixture(): PromptCatalogVerificationInput {
     },
   };
   const roots = Object.fromEntries(
-    SURFACES.map((surface) => [
-      surface,
-      {
+    SURFACES.map((surface) => {
+      const artifacts: Record<string, string> = {
+        "catalog.json": authoritativeCatalogJson,
+        "roles/worker.md": roleBodies[surface].worker!,
+        "roles/start.md": roleBodies[surface].start!,
+      };
+      artifacts["surface.json"] = stampSurfaceManifest(
         surface,
-        artifacts: {
-          "catalog.json": authoritativeCatalogJson,
-          "surface.json": JSON.stringify({ surface }),
-          "roles/worker.md": roleBodies[surface].worker!,
-          "roles/start.md": roleBodies[surface].start!,
-        },
-      },
-    ]),
+        authoritativeCatalogJson,
+        artifacts,
+      );
+      return [surface, { surface, artifacts }];
+    }),
   ) as unknown as Record<
     PromptSurface,
     PromptCatalogVerificationInput["expectedRoots"][PromptSurface]
@@ -194,6 +261,7 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
     (sourceDrift.packagedRoots.codex.artifacts as Record<string, string>)[
       "roles/worker.md"
     ] = "drifted $ARGUMENTS\n";
+    restampSurfaceManifests(sourceDrift);
     expect(() => verifyPromptCatalog(sourceDrift)).toThrow("source drift");
 
     const sidecarDrift = mutableFixture();
@@ -215,18 +283,21 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
     (forbidden.packagedRoots.codex.artifacts as Record<string, string>)[
       "roles/worker.md"
     ] += "/cq:";
+    restampSurfaceManifests(forbidden);
     expect(() => verifyPromptCatalog(forbidden)).toThrow("forbidden vocabulary");
 
     const unresolved = mutableFixture();
     (unresolved.packagedRoots.pi.artifacts as Record<string, string>)[
       "roles/start.md"
     ] += "{{cq:fragment:cq-command-invocation}}";
+    restampSurfaceManifests(unresolved);
     expect(() => verifyPromptCatalog(unresolved)).toThrow("unresolved slot");
 
     const placeholder = mutableFixture();
     (placeholder.packagedRoots.claude.artifacts as Record<string, string>)[
       "roles/worker.md"
     ] = "worker /cq:advance\n";
+    restampSurfaceManifests(placeholder);
     expect(() => verifyPromptCatalog(placeholder)).toThrow("runtime placeholder");
   });
 
@@ -288,6 +359,7 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
       "worker",
       (surface, content) => content.replace("policy common", `policy ${surface}`),
     );
+    restampSurfaceManifests(undeclaredRenderedDifference);
     expect(() => verifyPromptCatalog(undeclaredRenderedDifference)).toThrow(
       "missing difference declaration",
     );
@@ -301,8 +373,88 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
         "same-invocation $ARGUMENTS",
       ),
     );
+    restampSurfaceManifests(staleRenderedDifference);
     expect(() => verifyPromptCatalog(staleRenderedDifference)).toThrow(
       "stale difference declaration",
     );
+  });
+
+  test("fails closed on a stale per-role digest (T683)", () => {
+    const staleDigest = mutableFixture();
+    (staleDigest.packagedRoots.codex.artifacts as Record<string, string>)[
+      "roles/worker.md"
+    ] = "tampered bytes\n";
+    expect(() => verifyPromptCatalog(staleDigest)).toThrow(
+      "does not match the installed role artifact bytes",
+    );
+  });
+
+  test("fails closed on stale catalog, aggregate, version, and roster attestation drift", () => {
+    const tamper = (
+      mutate: (manifest: {
+        catalogMetadataHash: string;
+        roles: { roleId: string; version: number | null; sha256: string }[];
+        surfaceDigest: string;
+      }) => void,
+    ): PromptCatalogVerificationInput => {
+      const input = mutableFixture();
+      const artifacts = input.packagedRoots.pi.artifacts as Record<string, string>;
+      const manifest = JSON.parse(artifacts["surface.json"]!) as {
+        catalogMetadataHash: string;
+        roles: { roleId: string; version: number | null; sha256: string }[];
+        surfaceDigest: string;
+      };
+      mutate(manifest);
+      artifacts["surface.json"] = JSON.stringify(manifest);
+      return input;
+    };
+
+    expect(() =>
+      verifyPromptCatalog(
+        tamper((manifest) => {
+          manifest.catalogMetadataHash = "0".repeat(64);
+        }),
+      ),
+    ).toThrow("does not match the installed catalog.json bytes");
+
+    expect(() =>
+      verifyPromptCatalog(
+        tamper((manifest) => {
+          manifest.roles = manifest.roles.filter((entry) => entry.roleId !== "start");
+        }),
+      ),
+    ).toThrow("expected 2 role attestations");
+
+    expect(() =>
+      verifyPromptCatalog(
+        tamper((manifest) => {
+          manifest.roles[0]!.version = null;
+        }),
+      ),
+    ).toThrow("expected a positive integer schema-sidecar version");
+
+    expect(() =>
+      verifyPromptCatalog(
+        tamper((manifest) => {
+          manifest.roles[1]!.version = 2;
+        }),
+      ),
+    ).toThrow("orchestrator-command roles must carry null");
+
+    expect(() =>
+      verifyPromptCatalog(
+        tamper((manifest) => {
+          manifest.roles.reverse();
+        }),
+      ),
+    ).toThrow("in canonical catalog order");
+
+    expect(() =>
+      verifyPromptCatalog(
+        tamper((manifest) => {
+          manifest.surfaceDigest = "f".repeat(64);
+        }),
+      ),
+    ).toThrow("surface aggregate digest does not match");
   });
 });

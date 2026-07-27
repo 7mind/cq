@@ -159,6 +159,7 @@ export { EVIDENCE_LEANS } from "./schemas/investigate-evidence.js";
 export {
   DISPATCHED_ROLE_SIDECARS,
   DISPATCHED_ROLE_IDS,
+  DISPATCHED_ROLE_VERSIONS,
   getRoleSidecar,
 } from "./promptCatalogStore.js";
 export type { ValidationError, ValidationResult } from "./validation.js";

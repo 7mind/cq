@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import {
   DISPATCHED_ROLE_SIDECARS,
+  getRoleSidecar,
   verifyPromptCatalog,
   type PromptSurface,
   type PromptVerificationRoot,
@@ -202,18 +204,41 @@ function independentlyRenderRoot(
   canonicalSources: Readonly<Record<string, string>>,
   fragmentSources: readonly FragmentSource[],
 ): PromptVerificationRoot {
+  const roleArtifacts = roles.map((role) => ({
+    path: `roles/${role.roleId}.md`,
+    content: substitutePromptSlots(
+      role,
+      surface,
+      canonicalSources[role.canonicalSource]!,
+      fragmentSources,
+    ),
+  }));
+  const manifestRoles = roles.map((role, index) => {
+    const sidecar =
+      role.roleKind === "dispatched-subagent" ? getRoleSidecar(role.roleId) : undefined;
+    return {
+      roleId: role.roleId,
+      version: sidecar === undefined ? null : sidecar.version,
+      sha256: createHash("sha256").update(roleArtifacts[index]!.content, "utf8").digest("hex"),
+    };
+  });
+  const core = {
+    surface,
+    catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+    roles: manifestRoles,
+  };
   return rootFromArtifacts(surface, [
     { path: "catalog.json", content: catalogJson },
-    { path: "surface.json", content: JSON.stringify({ surface }) },
-    ...roles.map((role) => ({
-      path: `roles/${role.roleId}.md`,
-      content: substitutePromptSlots(
-        role,
-        surface,
-        canonicalSources[role.canonicalSource]!,
-        fragmentSources,
-      ),
-    })),
+    {
+      path: "surface.json",
+      content: JSON.stringify({
+        ...core,
+        surfaceDigest: createHash("sha256")
+          .update(JSON.stringify(core), "utf8")
+          .digest("hex"),
+      }),
+    },
+    ...roleArtifacts,
   ]);
 }
 

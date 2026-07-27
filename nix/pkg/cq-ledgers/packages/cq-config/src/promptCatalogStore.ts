@@ -54,6 +54,18 @@ export const DISPATCHED_ROLE_IDS: readonly string[] = AGENT_ROLE_TIERS.filter(
 ).map((r) => r.id);
 
 /**
+ * The schema-sidecar contract version of every dispatched role, keyed by role
+ * id (T683). The deterministic surface renderer stamps these into the
+ * attested packaged-surface manifest so a stale root whose rendered bytes
+ * predate a sidecar version bump fails closed at load time.
+ */
+export const DISPATCHED_ROLE_VERSIONS: Readonly<Record<string, number>> = Object.freeze(
+  Object.fromEntries(
+    Object.values(DISPATCHED_ROLE_SIDECARS).map((sidecar) => [sidecar.id, sidecar.version]),
+  ),
+);
+
+/**
  * Look up the schema sidecar for a dispatched role id, or `undefined` for an
  * orchestrator-command id (which has no parent-validated contract).
  */

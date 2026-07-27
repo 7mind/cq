@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -14,7 +15,43 @@ import {
   type PromptPublicationStore,
 } from "./link-prompts.ts";
 
-const OLD_TREE: readonly PromptFile[] = [
+/** Serialize the attested surface manifest (T683) for a fixture tree. */
+function surfaceManifestJson(tree: readonly PromptFile[], surface = "claude"): string {
+  const catalogFile = tree.find((file) => file.path === "catalog.json");
+  if (catalogFile === undefined) {
+    throw new Error("fixture tree has no catalog.json");
+  }
+  const catalog = JSON.parse(catalogFile.content) as readonly { roleId: string }[];
+  const roles = catalog.map(({ roleId }) => {
+    const roleFile = tree.find((file) => file.path === `roles/${roleId}.md`);
+    if (roleFile === undefined) {
+      throw new Error(`fixture tree has no roles/${roleId}.md`);
+    }
+    return {
+      roleId,
+      version: roleId === "plan-advance" ? 1 : null,
+      sha256: createHash("sha256").update(roleFile.content, "utf8").digest("hex"),
+    };
+  });
+  const core = {
+    surface,
+    catalogMetadataHash: createHash("sha256").update(catalogFile.content, "utf8").digest("hex"),
+    roles,
+  };
+  return JSON.stringify({
+    ...core,
+    surfaceDigest: createHash("sha256").update(JSON.stringify(core), "utf8").digest("hex"),
+  });
+}
+
+/** Replace a fixture tree's surface.json with a freshly stamped manifest. */
+function restampSurface(tree: readonly PromptFile[], surface = "claude"): readonly PromptFile[] {
+  return tree.map((file) =>
+    file.path === "surface.json" ? { ...file, content: surfaceManifestJson(tree, surface) } : file,
+  );
+}
+
+const OLD_TREE_BASE: readonly PromptFile[] = [
   {
     path: "catalog.json",
     content: JSON.stringify([
@@ -42,10 +79,14 @@ const OLD_TREE: readonly PromptFile[] = [
   },
 ];
 
-const NEW_TREE: readonly PromptFile[] = OLD_TREE.map((file) =>
-  file.path === "roles/begin.md"
-    ? { ...file, content: file.content.replace("Old begin", "New begin") }
-    : file,
+const OLD_TREE: readonly PromptFile[] = restampSurface(OLD_TREE_BASE);
+
+const NEW_TREE: readonly PromptFile[] = restampSurface(
+  OLD_TREE_BASE.map((file) =>
+    file.path === "roles/begin.md"
+      ? { ...file, content: file.content.replace("Old begin", "New begin") }
+      : file,
+  ),
 );
 
 class StaticRenderer implements ClaudePromptRenderer {
@@ -674,11 +715,7 @@ describe("rendered Claude root validation", () => {
       validateRenderedClaudeRoot(OLD_TREE.filter((file) => file.path !== "surface.json")),
     ).toThrow("rendered prompt root is missing surface.json");
     expect(() =>
-      validateRenderedClaudeRoot(
-        OLD_TREE.map((file) =>
-          file.path === "surface.json" ? { ...file, content: '{"surface":"pi"}' } : file,
-        ),
-      ),
+      validateRenderedClaudeRoot(restampSurface(OLD_TREE, "pi")),
     ).toThrow('rendered prompt surface.json.surface must equal "claude"');
     expect(() =>
       validateRenderedClaudeRoot(
@@ -688,7 +725,31 @@ describe("rendered Claude root validation", () => {
             : file,
         ),
       ),
-    ).toThrow('rendered prompt surface.json must contain exactly one "surface" field');
+    ).toThrow(
+      'rendered prompt surface.json must contain exactly "surface", "catalogMetadataHash", "roles", and "surfaceDigest"',
+    );
+  });
+
+  test("fails closed when installed bytes drift from the attested manifest (T683)", () => {
+    expect(() =>
+      validateRenderedClaudeRoot(
+        OLD_TREE.map((file) =>
+          file.path === "roles/begin.md" ? { ...file, content: `${file.content}tampered\n` } : file,
+        ),
+      ),
+    ).toThrow("does not match the installed role bytes");
+
+    const tampered = JSON.parse(
+      OLD_TREE.find((file) => file.path === "surface.json")!.content,
+    ) as { catalogMetadataHash: string };
+    tampered.catalogMetadataHash = "0".repeat(64);
+    expect(() =>
+      validateRenderedClaudeRoot(
+        OLD_TREE.map((file) =>
+          file.path === "surface.json" ? { ...file, content: JSON.stringify(tampered) } : file,
+        ),
+      ),
+    ).toThrow("catalogMetadataHash does not match catalog.json");
   });
 
   test("requires the exact catalog-declared role set", () => {

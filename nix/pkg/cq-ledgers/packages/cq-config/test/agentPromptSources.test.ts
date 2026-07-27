@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { DISPATCHED_ROLE_IDS, getRoleSidecar } from "@cq/config";
+import { DISPATCHED_ROLE_IDS, DISPATCHED_ROLE_VERSIONS, getRoleSidecar } from "@cq/config";
 import {
   PromptRendererError,
   renderPromptSurfaceTree,
@@ -124,15 +124,31 @@ describe("dispatched-role prompt sources", () => {
         catalogJson,
         sourcePaths,
         fragmentPaths,
+        roleVersions: DISPATCHED_ROLE_VERSIONS,
       });
       expect(
-        renderPromptSurfaceTree({ surface, catalogJson, sourcePaths, fragmentPaths }),
+        renderPromptSurfaceTree({
+          surface,
+          catalogJson,
+          sourcePaths,
+          fragmentPaths,
+          roleVersions: DISPATCHED_ROLE_VERSIONS,
+        }),
       ).toEqual(tree);
       expect(tree.artifacts).toHaveLength(catalog.length + 2);
-      expect(tree.artifacts[1]).toEqual({
-        path: "surface.json",
-        content: JSON.stringify({ surface }),
-      });
+      const manifest = JSON.parse(tree.artifacts[1]!.content) as {
+        readonly surface: string;
+        readonly roles: readonly { readonly version: number | null }[];
+      };
+      expect(manifest.surface).toBe(surface);
+      expect(
+        manifest.roles.every(
+          (entry) =>
+            typeof entry.version === "number" &&
+            Number.isSafeInteger(entry.version) &&
+            entry.version >= 1,
+        ),
+      ).toBe(true);
 
       for (const [index, role] of catalog.entries()) {
         const content = tree.artifacts[index + 2]!.content;
@@ -184,6 +200,7 @@ describe("dispatched-role prompt sources", () => {
         catalogJson,
         sourcePaths,
         fragmentPaths: fragmentPaths.slice(1),
+        roleVersions: DISPATCHED_ROLE_VERSIONS,
       }),
     );
     expect(missing.message).toBe(
@@ -212,6 +229,7 @@ describe("dispatched-role prompt sources", () => {
           catalogJson,
           sourcePaths: copiedPaths,
           fragmentPaths,
+          roleVersions: DISPATCHED_ROLE_VERSIONS,
         }),
       );
       expect(unconsumed.message).toBe(

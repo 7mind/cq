@@ -89,7 +89,13 @@ beforeAll(async () => {
     cmd: [process.execPath, "run", mcpMain, "--cwd", tmpRoot, "--http", String(mcpPort)],
     stdout: "ignore",
     stderr: "ignore",
-    env: { ...process.env },
+    env: {
+      ...process.env,
+      // The proxied MCP is prompt-agnostic here: no ambient prompt root.
+      CQ_PROMPT_ROOT: undefined,
+      CQ_PROMPT_SURFACE: undefined,
+      CQ_PROMPT_SURFACES_ROOT: undefined,
+    },
   });
   await waitForPort(mcpPort);
 

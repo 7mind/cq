@@ -2,6 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { DISPATCHED_ROLE_VERSIONS } from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
@@ -109,6 +110,7 @@ function directPiTree(catalogJson: string): ReturnType<typeof renderPromptSurfac
     catalogJson,
     sourcePaths,
     fragmentPaths,
+    roleVersions: DISPATCHED_ROLE_VERSIONS,
   });
 }
 
@@ -134,9 +136,14 @@ describe("packaged Pi prompt root", () => {
     expect(catalog).toHaveLength(24);
     expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles", "surface.json"]);
     expect(readFileSync(path.join(output, "catalog.json"), "utf8")).toBe(catalogJson);
-    expect(readFileSync(path.join(output, "surface.json"), "utf8")).toBe(
-      '{"surface":"pi"}',
-    );
+    const manifest = JSON.parse(
+      readFileSync(path.join(output, "surface.json"), "utf8"),
+    ) as {
+      readonly surface: string;
+      readonly roles: readonly { readonly version: number | null }[];
+    };
+    expect(manifest.surface).toBe("pi");
+    expect(manifest.roles).toHaveLength(catalog.length);
     expect(
       [...new Bun.Glob("**/*.md").scanSync({ cwd: path.join(output, "roles") })].sort(),
     ).toEqual(catalog.map(({ roleId }) => `${roleId}.md`).sort());
@@ -204,6 +211,18 @@ describe("packaged Pi prompt root", () => {
       "scripts/render-prompt-surface.ts",
       "src/promptCatalog.ts",
       "src/promptRenderer.ts",
+      // The schema sidecars stamp the per-role contract versions into the
+      // attested surface manifest (T683).
+      "src/schemas/implement-conflict-resolver.ts",
+      "src/schemas/implement-reviewer.ts",
+      "src/schemas/implement-worker.ts",
+      "src/schemas/investigate-evidence.ts",
+      "src/schemas/investigate-explorer.ts",
+      "src/schemas/investigate-prober.ts",
+      "src/schemas/plan-advance.ts",
+      "src/schemas/plan-reviewer.ts",
+      "src/schemas/research-experimenter.ts",
+      "src/schemas/research-explorer.ts",
     ]);
     const context = readFileSync(PI_CONTEXT, "utf8");
     expect(context).toContain('fetch_prompt("investigate/advance")');

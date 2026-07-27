@@ -19,7 +19,7 @@ import { spawn as bunSpawn } from "bun";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
@@ -236,7 +236,15 @@ async function runHub(
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const proc = bunSpawn({
     cmd: [process.execPath, "run", hubMain, ...args],
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      // Prompt-agnostic tests must not inherit an ambient prompt root; tests
+      // that exercise prompt selection set the variables explicitly below.
+      CQ_PROMPT_ROOT: undefined,
+      CQ_PROMPT_SURFACE: undefined,
+      CQ_PROMPT_SURFACES_ROOT: undefined,
+      ...env,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -321,15 +329,33 @@ describe.skipIf(!process.env["CQ_TEST_PG_URL"])("cq serve — live boot (T586)",
     displayName = `T586 Hub Test ${tag}`;
     promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "cq-serve-prompts-"));
     await fs.mkdir(path.join(promptRoot, "roles"));
-    await fs.writeFile(
-      path.join(promptRoot, "catalog.json"),
-      JSON.stringify([
+    const catalogJson = JSON.stringify([
+      {
+        roleId: "plan-advance",
+        roleKind: "dispatched-subagent",
+        sidecar: { schemaRoleId: "plan-advance" },
+      },
+    ]);
+    await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
+    const surfaceCore = {
+      surface: "claude",
+      catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+      roles: [
         {
           roleId: "plan-advance",
-          roleKind: "dispatched-subagent",
-          sidecar: { schemaRoleId: "plan-advance" },
+          version: 1,
+          sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
         },
-      ]),
+      ],
+    };
+    await fs.writeFile(
+      path.join(promptRoot, "surface.json"),
+      JSON.stringify({
+        ...surfaceCore,
+        surfaceDigest: createHash("sha256")
+          .update(JSON.stringify(surfaceCore), "utf8")
+          .digest("hex"),
+      }),
     );
     await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);
     // Register a tenant directly (mirrors postgres-list-projects.test.ts) so

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawn as bunSpawn, type Subprocess } from "bun";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import * as os from "node:os";
@@ -219,15 +220,40 @@ beforeAll(async () => {
   for (const surface of SURFACES) {
     const surfaceRoot = surfaceRoots[surface];
     await fs.mkdir(path.join(surfaceRoot, "roles"), { recursive: true });
-    await fs.writeFile(path.join(surfaceRoot, "catalog.json"), JSON.stringify(CATALOG));
-    await fs.writeFile(path.join(surfaceRoot, "surface.json"), JSON.stringify({ surface }));
+    const catalogJson = JSON.stringify(CATALOG);
+    await fs.writeFile(path.join(surfaceRoot, "catalog.json"), catalogJson);
+    const dispatchedBytes = PROMPT_BYTES[surface];
+    const orchestratorBytes = `orchestrator ${surface}\n`;
+    const core = {
+      surface,
+      catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+      roles: [
+        {
+          roleId: DISPATCHED_ROLE_ID,
+          version: 1,
+          sha256: createHash("sha256").update(dispatchedBytes, "utf8").digest("hex"),
+        },
+        {
+          roleId: ORCHESTRATOR_ROLE_ID,
+          version: null,
+          sha256: createHash("sha256").update(orchestratorBytes, "utf8").digest("hex"),
+        },
+      ],
+    };
+    await fs.writeFile(
+      path.join(surfaceRoot, "surface.json"),
+      JSON.stringify({
+        ...core,
+        surfaceDigest: createHash("sha256").update(JSON.stringify(core), "utf8").digest("hex"),
+      }),
+    );
     await fs.writeFile(
       path.join(surfaceRoot, "roles", `${DISPATCHED_ROLE_ID}.md`),
-      PROMPT_BYTES[surface],
+      dispatchedBytes,
     );
     await fs.writeFile(
       path.join(surfaceRoot, "roles", `${ORCHESTRATOR_ROLE_ID}.md`),
-      `orchestrator ${surface}\n`,
+      orchestratorBytes,
     );
   }
 });

@@ -31,6 +31,19 @@ let
       (configRoot + "/scripts/render-prompt-surface.ts")
       (configRoot + "/src/promptCatalog.ts")
       (configRoot + "/src/promptRenderer.ts")
+      # The schema sidecars stamp the per-role contract versions into the
+      # attested surface manifest (T683); keep this closure in sync with the
+      # render script's sidecar imports.
+      (configRoot + "/src/schemas/implement-conflict-resolver.ts")
+      (configRoot + "/src/schemas/implement-reviewer.ts")
+      (configRoot + "/src/schemas/implement-worker.ts")
+      (configRoot + "/src/schemas/investigate-evidence.ts")
+      (configRoot + "/src/schemas/investigate-explorer.ts")
+      (configRoot + "/src/schemas/investigate-prober.ts")
+      (configRoot + "/src/schemas/plan-advance.ts")
+      (configRoot + "/src/schemas/plan-reviewer.ts")
+      (configRoot + "/src/schemas/research-experimenter.ts")
+      (configRoot + "/src/schemas/research-explorer.ts")
     ];
   };
   catalogFile = builtins.toFile "cq-prompt-catalog.json" assets.catalogJson;
@@ -57,7 +70,7 @@ pkgs.runCommand "cq-${validatedSurface}-prompt-root"
     passthru.promptCatalog = assets.catalog;
   }
   ''
-    test "$(find ${rendererSource} -type f | wc -l)" -eq 3
+    test "$(find ${rendererSource} -type f | wc -l)" -eq 13
     test "$(find ${filteredAssets} -type f | wc -l)" -eq ${toString expectedAssetFileCount}
     bun run ${rendererSource}/scripts/render-prompt-surface.ts \
       ${lib.escapeShellArg validatedSurface} \

@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { DISPATCHED_ROLE_VERSIONS } from "@cq/config";
 import {
   PromptRendererError,
   renderPromptSurfaceTree,
+  serializePromptSurfaceManifest,
   type PromptCatalogFileInput,
   type PromptFragmentFileInput,
 } from "@cq/config/prompt-renderer";
@@ -90,6 +93,42 @@ function role(
     dispatchRelations: [],
     intentionalDifferences: [],
   };
+}
+
+/** A dispatched-subagent catalog entry (schema sidecar reference included). */
+function dispatchedRole(
+  roleId: string,
+  fragments: readonly (typeof SLOTS)[number][],
+): Record<string, unknown> {
+  return {
+    ...role(roleId, `agents/${roleId}.md`, fragments),
+    roleKind: "dispatched-subagent",
+    name: roleId,
+    sidecar: { schemaRoleId: roleId },
+  };
+}
+
+/** Lowercase hex SHA-256 of the UTF-8 encoding of `value` (test-side oracle). */
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+interface SurfaceManifestRole {
+  readonly roleId: string;
+  readonly version: number | null;
+  readonly sha256: string;
+}
+
+interface SurfaceManifest {
+  readonly surface: string;
+  readonly catalogMetadataHash: string;
+  readonly roles: readonly SurfaceManifestRole[];
+  readonly surfaceDigest: string;
+}
+
+function parseSurfaceManifest(artifact: { readonly path: string; readonly content: string }) {
+  expect(artifact.path).toBe("surface.json");
+  return JSON.parse(artifact.content) as SurfaceManifest;
 }
 
 function makeFixture(): Fixture {
@@ -223,6 +262,7 @@ function renderNixFixture(fixture: NixFixture) {
     catalogJson: fixture.catalogJson,
     sourcePaths: fixture.sourcePaths,
     fragmentPaths: fixture.fragmentPaths,
+    roleVersions: DISPATCHED_ROLE_VERSIONS,
   });
 }
 
@@ -241,6 +281,7 @@ function render(fixture: Fixture) {
     catalogJson: fixture.catalogJson,
     sourcePaths: fixture.sourcePaths,
     fragmentPaths: fixture.fragmentPaths,
+    roleVersions: {},
   });
 }
 
@@ -263,10 +304,22 @@ describe("deterministic prompt renderer core", () => {
       "roles/nested/second.md",
     ]);
     expect(tree.artifacts[0]!.content).toBe(fixture.catalogJson);
-    expect(tree.artifacts[1]).toEqual({
-      path: "surface.json",
-      content: '{"surface":"codex"}',
-    });
+    const manifest = parseSurfaceManifest(tree.artifacts[1]!);
+    expect(manifest.surface).toBe("codex");
+    expect(manifest.catalogMetadataHash).toBe(sha256Hex(fixture.catalogJson));
+    expect(manifest.roles.map((entry) => entry.roleId)).toEqual(["first", "nested/second"]);
+    expect(manifest.roles.every((entry) => entry.version === null)).toBe(true);
+    expect(manifest.roles[0]!.sha256).toBe(sha256Hex(tree.artifacts[2]!.content));
+    expect(manifest.roles[1]!.sha256).toBe(sha256Hex(tree.artifacts[3]!.content));
+    expect(manifest.surfaceDigest).toBe(
+      sha256Hex(
+        JSON.stringify({
+          surface: manifest.surface,
+          catalogMetadataHash: manifest.catalogMetadataHash,
+          roles: manifest.roles,
+        }),
+      ),
+    );
 
     const first = tree.artifacts[2]!.content;
     expect(first).toStartWith(
@@ -302,10 +355,13 @@ describe("deterministic prompt renderer core", () => {
         path: "catalog.json",
         content: fixture.catalogJson,
       });
-      expect(tree.artifacts[1]).toEqual({
-        path: "surface.json",
-        content: JSON.stringify({ surface }),
-      });
+      const manifest = parseSurfaceManifest(tree.artifacts[1]!);
+      expect(manifest.surface).toBe(surface);
+      expect(manifest.catalogMetadataHash).toBe(sha256Hex(fixture.catalogJson));
+      expect(manifest.roles).toHaveLength(fixture.catalog.length);
+      for (const [index, entry] of manifest.roles.entries()) {
+        expect(entry.sha256).toBe(sha256Hex(tree.artifacts[index + 2]!.content));
+      }
       expect(tree.artifacts[2]!.content).toContain("$ARGUMENTS");
       expect(tree.artifacts[2]!.content).toContain("{{runtime_value}}");
       expect(tree.artifacts.every((artifact) => !artifact.content.includes("{{cq:fragment:"))).toBe(
@@ -363,6 +419,7 @@ describe("deterministic prompt renderer core", () => {
               path: fragmentPath,
             },
           ],
+          roleVersions: {},
         })});`,
         "process.stdout.write(JSON.stringify(tree));",
       ].join("\n"),
@@ -386,15 +443,122 @@ describe("deterministic prompt renderer core", () => {
     const tree = JSON.parse(new TextDecoder().decode(executed.stdout)) as {
       readonly artifacts: readonly { readonly path: string; readonly content: string }[];
     };
+    const expectedRoleContent =
+      "---\ndescription: isolated\n---\nShared $ARGUMENTS.\nisolated codex adapter\n";
     expect(tree.artifacts).toEqual([
       { path: "catalog.json", content: catalogJson },
-      { path: "surface.json", content: '{"surface":"codex"}' },
+      {
+        path: "surface.json",
+        content: serializePromptSurfaceManifest("codex", sha256Hex(catalogJson), [
+          { roleId: "isolated", version: null, sha256: sha256Hex(expectedRoleContent) },
+        ]),
+      },
       {
         path: "roles/isolated.md",
-        content:
-          "---\ndescription: isolated\n---\nShared $ARGUMENTS.\nisolated codex adapter\n",
+        content: expectedRoleContent,
       },
     ]);
+  });
+});
+
+describe("attested surface manifest (T683)", () => {
+  test("emits byte-identical manifests for byte-identical inputs", () => {
+    const fixture = makeFixture();
+    const first = render(fixture);
+    const second = render(fixture);
+    expect(first.artifacts[1]!.content).toBe(second.artifacts[1]!.content);
+  });
+
+  test("changing one rendered byte changes only the affected digest and the surface aggregate", () => {
+    const fixture = makeFixture();
+    const before = parseSurfaceManifest(render(fixture).artifacts[1]!);
+
+    const secondFragment = fixture.fragmentPaths.find(
+      ({ roleId, fragment }) =>
+        roleId === "nested/second" && fragment === "host-tool-vocabulary",
+    );
+    expect(secondFragment).toBeDefined();
+    writeFileSync(secondFragment!.path, "codex nested/second host-tool-vocabulary CHANGED");
+    const after = parseSurfaceManifest(render(fixture).artifacts[1]!);
+
+    expect(after.roles[0]!.roleId).toBe("first");
+    expect(after.roles[0]!.sha256).toBe(before.roles[0]!.sha256);
+    expect(after.roles[1]!.roleId).toBe("nested/second");
+    expect(after.roles[1]!.sha256).not.toBe(before.roles[1]!.sha256);
+    expect(after.catalogMetadataHash).toBe(before.catalogMetadataHash);
+    expect(after.surfaceDigest).not.toBe(before.surfaceDigest);
+  });
+
+  test("binds the exact rendered bytes including frontmatter", () => {
+    const fixture = makeFixture();
+    const tree = render(fixture);
+    const manifest = parseSurfaceManifest(tree.artifacts[1]!);
+    const rendered = tree.artifacts[2]!.content;
+    expect(rendered).toStartWith("---\ndescription: fixture command");
+    expect(manifest.roles[0]!.sha256).toBe(sha256Hex(rendered));
+    expect(manifest.roles[0]!.sha256).not.toBe(
+      sha256Hex(rendered.replace(/^---[\s\S]*?---\n/, "")),
+    );
+  });
+
+  test("stamps schema-sidecar versions only onto dispatched roles", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "cq-prompt-renderer-versions-"));
+    roots.push(root);
+    const catalog = [
+      dispatchedRole("plan-advance", ["host-tool-vocabulary"]),
+      role("advance", "commands/cq/advance.md", ["host-tool-vocabulary"]),
+    ];
+    const sourcePaths: PromptCatalogFileInput[] = [];
+    const fragmentPaths: PromptFragmentFileInput[] = [];
+    for (const entry of catalog) {
+      const roleId = entry.roleId as string;
+      const canonicalSource = entry.canonicalSource as string;
+      const sourcePath = path.join(root, canonicalSource);
+      mkdirSync(path.dirname(sourcePath), { recursive: true });
+      writeFileSync(sourcePath, "Shared prose.\n{{cq:fragment:host-tool-vocabulary}}\n");
+      sourcePaths.push({ canonicalSource, path: sourcePath });
+      const fragmentPath = path.join(root, "fragments", "codex", roleId, "host-tool-vocabulary.md");
+      mkdirSync(path.dirname(fragmentPath), { recursive: true });
+      writeFileSync(fragmentPath, `codex ${roleId} adapter`);
+      fragmentPaths.push({ roleId, fragment: "host-tool-vocabulary", path: fragmentPath });
+    }
+    const input = {
+      surface: "codex",
+      catalogJson: JSON.stringify(catalog),
+      sourcePaths,
+      fragmentPaths,
+    };
+    const manifest = parseSurfaceManifest(
+      renderPromptSurfaceTree({ ...input, roleVersions: { "plan-advance": 7 } }).artifacts[1]!,
+    );
+    expect(manifest.roles).toEqual([
+      {
+        roleId: "plan-advance",
+        version: 7,
+        sha256: manifest.roles[0]!.sha256,
+      },
+      {
+        roleId: "advance",
+        version: null,
+        sha256: manifest.roles[1]!.sha256,
+      },
+    ]);
+
+    expect(() => renderPromptSurfaceTree({ ...input, roleVersions: {} })).toThrow(
+      "roleVersions.plan-advance: missing schema-sidecar version for a dispatched role",
+    );
+    expect(() =>
+      renderPromptSurfaceTree({
+        ...input,
+        roleVersions: { "plan-advance": 7, advance: 1 },
+      }),
+    ).toThrow("roleVersions.advance: version entry has no dispatched catalog role");
+    expect(() =>
+      renderPromptSurfaceTree({ ...input, roleVersions: { "plan-advance": 1.5 } }),
+    ).toThrow("roleVersions.plan-advance: expected a positive integer schema-sidecar version");
+    expect(() =>
+      renderPromptSurfaceTree({ ...input, roleVersions: { "plan-advance": 0 } }),
+    ).toThrow("roleVersions.plan-advance: expected a positive integer schema-sidecar version");
   });
 });
 
@@ -457,6 +621,7 @@ describe("prompt renderer boundary failures", () => {
         catalogJson: fixture.catalogJson,
         sourcePaths: fixture.sourcePaths,
         fragmentPaths: fixture.fragmentPaths,
+        roleVersions: {},
       }),
     ).toThrow('surface: unsupported prompt surface "terminal"');
 
@@ -468,6 +633,7 @@ describe("prompt renderer boundary failures", () => {
         catalogJson: JSON.stringify(catalog),
         sourcePaths: fixture.sourcePaths,
         fragmentPaths: fixture.fragmentPaths,
+        roleVersions: {},
       }),
     ).toThrow('catalog[0].surfaces: surface "codex" is unsupported for role "first"');
   });

@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { spawn as bunSpawn, type Subprocess } from "bun";
+import { createHash } from "node:crypto";
 import * as net from "node:net";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -87,17 +88,34 @@ beforeAll(async () => {
   outdir = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-out-"));
   promptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-web-embedded-prompts-"));
   await fs.mkdir(path.join(promptRoot, "roles"));
-  await fs.writeFile(path.join(promptRoot, "surface.json"), '{"surface":"pi"}');
-  await fs.writeFile(
-    path.join(promptRoot, "catalog.json"),
-    JSON.stringify([
+  const catalogJson = JSON.stringify([
+    {
+      roleId: "plan-advance",
+      roleKind: "dispatched-subagent",
+      sidecar: { schemaRoleId: "plan-advance" },
+    },
+  ]);
+  const surfaceCore = {
+    surface: "pi",
+    catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+    roles: [
       {
         roleId: "plan-advance",
-        roleKind: "dispatched-subagent",
-        sidecar: { schemaRoleId: "plan-advance" },
+        version: 1,
+        sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
       },
-    ]),
+    ],
+  };
+  await fs.writeFile(
+    path.join(promptRoot, "surface.json"),
+    JSON.stringify({
+      ...surfaceCore,
+      surfaceDigest: createHash("sha256")
+        .update(JSON.stringify(surfaceCore), "utf8")
+        .digest("hex"),
+    }),
   );
+  await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
   await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);
   webPort = await freePort();
   // No --mcp-url ⇒ embedded MCP rooted at --cwd.

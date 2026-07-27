@@ -18,9 +18,11 @@
  */
 
 import { describe, it, test, expect } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { getRoleSidecar } from "@cq/config";
 import { UnknownRoleError, NoSchemaForRoleError, type PromptCatalogCapability } from "@cq/ledger";
 import { createPromptCatalogCapability } from "../src/promptCatalogCapability.js";
 import {
@@ -88,11 +90,47 @@ const MANIFEST_BYTES = new TextEncoder().encode(
     ]),
   ]),
 );
-const SURFACE_BYTES = new TextEncoder().encode(JSON.stringify({ surface: PROMPT_SURFACE }));
 const ROLE_ARTIFACTS = [
   { roleId: DISPATCHED_ROLE, bytes: new TextEncoder().encode(DISPATCHED_PROMPT) },
   { roleId: COMMAND_ROLE, bytes: new TextEncoder().encode(COMMAND_PROMPT) },
 ] as const;
+
+/** Lowercase hex SHA-256 of raw bytes. */
+function sha256Bytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+const DISPATCHED_PROMPT_DIGEST = sha256Bytes(ROLE_ARTIFACTS[0].bytes);
+const CATALOG_DIGEST = sha256Bytes(MANIFEST_BYTES);
+
+/** The attested surface manifest (T683) binding the fixture's exact role bytes. */
+function surfaceManifestBytes(dispatchedVersion: number): Uint8Array {
+  const core = {
+    surface: PROMPT_SURFACE,
+    catalogMetadataHash: CATALOG_DIGEST,
+    roles: [
+      {
+        roleId: DISPATCHED_ROLE,
+        version: dispatchedVersion,
+        sha256: DISPATCHED_PROMPT_DIGEST,
+      },
+      {
+        roleId: COMMAND_ROLE,
+        version: null,
+        sha256: sha256Bytes(ROLE_ARTIFACTS[1].bytes),
+      },
+    ],
+  };
+  return new TextEncoder().encode(
+    JSON.stringify({
+      ...core,
+      surfaceDigest: sha256Bytes(new TextEncoder().encode(JSON.stringify(core))),
+    }),
+  );
+}
+
+const SIDECAR_VERSION = getRoleSidecar(DISPATCHED_ROLE)!.version;
+const SURFACE_BYTES = surfaceManifestBytes(SIDECAR_VERSION);
 
 function inMemoryStore(): PromptArtifactStore {
   return new InMemoryPromptArtifactStore(
@@ -146,6 +184,9 @@ function runPromptCatalogSuite(label: string, make: () => PromptCatalogCapabilit
       expect(result.workflowDependencies).toEqual([]);
       expect(result.requiredCapabilities).toEqual(["host-tool-vocabulary"]);
       expect(result.intentionalDifferences).toEqual([INTENTIONAL_DIFFERENCE]);
+      // The attested root binds exact bytes and the catalog hash (T683).
+      expect(result.promptDigest).toBe(DISPATCHED_PROMPT_DIGEST);
+      expect(result.catalogHash).toBe(CATALOG_DIGEST);
       // Both schemas present, and they are the @cq/config draft-2020-12 documents.
       expect(result.inputSchema).toBeDefined();
       expect(result.outputSchema).toBeDefined();
@@ -247,6 +288,50 @@ runPromptCatalogSuite("production filesystem artifact store", () =>
 runPromptCatalogSuite("strict in-memory artifact store", () =>
   createPromptCatalogCapability(inMemoryStore()),
 );
+
+describe("attested version pairing (T683)", () => {
+  const mismatchedSurfaceBytes = surfaceManifestBytes(SIDECAR_VERSION + 1);
+
+  function mismatchedInMemoryStore(): PromptArtifactStore {
+    return new InMemoryPromptArtifactStore(
+      PROMPT_SURFACE,
+      mismatchedSurfaceBytes,
+      MANIFEST_BYTES,
+      ROLE_ARTIFACTS,
+    );
+  }
+
+  function mismatchedFilesystemStore(): PromptArtifactStore {
+    const root = mkdtempSync(path.join(tmpdir(), "cq-prompt-capability-stale-"));
+    try {
+      writeFileSync(path.join(root, "surface.json"), mismatchedSurfaceBytes);
+      writeFileSync(path.join(root, "catalog.json"), MANIFEST_BYTES);
+      for (const artifact of ROLE_ARTIFACTS) {
+        const artifactPath = path.join(root, "roles", `${artifact.roleId}.md`);
+        mkdirSync(path.dirname(artifactPath), { recursive: true });
+        writeFileSync(artifactPath, artifact.bytes);
+      }
+      return new FileSystemPromptArtifactStore(PROMPT_SURFACE, root);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  it("fails closed when the sidecar version and the attested root version mismatch", () => {
+    for (const store of [mismatchedInMemoryStore(), mismatchedFilesystemStore()]) {
+      const cap = createPromptCatalogCapability(store);
+      expect(() => cap.fetchPrompt(DISPATCHED_ROLE)).toThrow(
+        `schema sidecar version ${String(SIDECAR_VERSION)} does not match the attested prompt root version ${String(SIDECAR_VERSION + 1)}`,
+      );
+      expect(() => cap.validateInput(DISPATCHED_ROLE, { goalId: "G1" })).toThrow(
+        "does not match the attested prompt root version",
+      );
+      expect(() => cap.validateOutput(DISPATCHED_ROLE, {})).toThrow(
+        "does not match the attested prompt root version",
+      );
+    }
+  });
+});
 
 /**
  * D60 regression: validate_input/validateOutput are called with a JSON STRING

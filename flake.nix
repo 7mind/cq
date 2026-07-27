@@ -93,6 +93,35 @@
           inherit pkgs piPromptRoot;
         };
 
+        # Shared *-prompt-root check snippet (T683): verify the attested
+        # packaged-surface manifest against the exact installed bytes —
+        # surface identity, catalog metadata hash, per-role digests,
+        # version/role-kind pairing, and the surface aggregate digest.
+        verifySurfaceAttestation = surface: root: ''
+          set -eu
+          surface_json=${root}/surface.json
+          test "$(${pkgs.jq}/bin/jq -r '.surface' "$surface_json")" = "${surface}"
+          test "$(${pkgs.jq}/bin/jq '.roles | length' "$surface_json")" -eq 24
+          test "$(${pkgs.jq}/bin/jq -r '.catalogMetadataHash' "$surface_json")" = \
+            "$(sha256sum ${root}/catalog.json | cut -d' ' -f1)"
+          test "$(${pkgs.jq}/bin/jq -r '.surfaceDigest' "$surface_json")" = \
+            "$(${pkgs.jq}/bin/jq -cj 'del(.surfaceDigest)' "$surface_json" | sha256sum | cut -d' ' -f1)"
+          ${pkgs.jq}/bin/jq -e -n \
+            --slurpfile surface "$surface_json" \
+            --slurpfile catalog ${root}/catalog.json \
+            '([$surface[0].roles[] | select(.version != null) | .roleId] | sort)
+               == ([$catalog[0][] | select(.sidecar != null) | .roleId] | sort)
+             and all($surface[0].roles[];
+               .version == null
+               or ((.version | type) == "number" and .version >= 1
+                   and (.version | floor) == .version))' \
+            > /dev/null
+          ${pkgs.jq}/bin/jq -r '.roles[] | .roleId + " " + .sha256' "$surface_json" \
+            | while read -r role_id digest; do
+                test "$(sha256sum "${root}/roles/''${role_id}.md" | cut -d' ' -f1)" = "''${digest}"
+              done
+        '';
+
         # Fixed-output derivation: fetches all npm dependencies via
         # `bun install --frozen-lockfile`. Nix allows network access inside
         # FODs; hermeticity is guaranteed by the output hash.
@@ -584,8 +613,7 @@
                   find "$out" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l
                 )" -eq "${toString (builtins.length (builtins.attrNames codexCqSkillSpecs))}"
                 test "$(find ${codexPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
-                cmp ${builtins.toFile "cq-expected-codex-surface.json" (builtins.toJSON { surface = "codex"; })} \
-                  ${codexPromptRoot}/surface.json
+                ${verifySurfaceAttestation "codex" codexPromptRoot}
                 if ${pkgs.ripgrep}/bin/rg -n \
                   'Agent\\(|Task\\(|dispatch_agent\\(|/cq:|\\{\\{cq:fragment:' \
                   ${codexPromptRoot}/roles; then
@@ -609,10 +637,9 @@
             claude-prompt-root = pkgs.runCommand "claude-prompt-root-check" { } ''
               test "$(find ${claudePromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
               test -f ${claudePromptRoot}/roles/begin.md
-              cmp ${builtins.toFile "cq-expected-claude-surface.json" (builtins.toJSON { surface = "claude"; })} \
-                ${claudePromptRoot}/surface.json
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
                 ${claudePromptRoot}/catalog.json
+              ${verifySurfaceAttestation "claude" claudePromptRoot}
               if ${pkgs.ripgrep}/bin/rg -n '\{\{cq:fragment:|CQ_HARNESS' ${claudePromptRoot}; then
                 echo "packaged Claude prompt root contains an unresolved renderer token" >&2
                 exit 1
@@ -625,10 +652,9 @@
               ${pkgs.ripgrep}/bin/rg -q ${pkgs.lib.escapeShellArg (toString piPromptRoot)} ${piPromptRootTest.package}/bin/pi
               test "$(find ${piPromptRoot}/roles -type f -name '*.md' | wc -l)" -eq 24
               test -f ${piPromptRoot}/roles/begin.md
-              cmp ${builtins.toFile "cq-expected-pi-surface.json" (builtins.toJSON { surface = "pi"; })} \
-                ${piPromptRoot}/surface.json
               cmp ${builtins.toFile "cq-expected-prompt-catalog.json" llmAssets.catalogJson} \
                 ${piPromptRoot}/catalog.json
+              ${verifySurfaceAttestation "pi" piPromptRoot}
               ${pkgs.jq}/bin/jq -e '
                 .mcpServers.ledger.lifecycle == "keep-alive"
                 and .mcpServers.ledger.directTools == true

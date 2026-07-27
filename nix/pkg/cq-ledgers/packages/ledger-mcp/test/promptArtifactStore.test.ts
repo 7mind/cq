@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -76,13 +77,74 @@ function role(
   };
 }
 
+/** Lowercase hex SHA-256 of raw bytes. */
+function sha256Bytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Serialize the attested surface manifest (T683 canonical byte shape) for a
+ * fixture: per-role exact-byte digests in catalog order, the catalog metadata
+ * hash, and the recomputed surface aggregate digest. The optional `mutate`
+ * hook tampers with the manifest BEFORE the aggregate is restamped, so tests
+ * can target exactly one verification layer.
+ */
+function surfaceManifestBytes(
+  surface: string,
+  manifestBytes: Uint8Array,
+  roles: readonly Readonly<Record<string, unknown>>[],
+  artifacts: readonly InMemoryPromptRoleArtifact[],
+  mutate?: (manifest: {
+    catalogMetadataHash: string;
+    roles: { roleId: string; version: number | null; sha256: string }[];
+    surfaceDigest: string;
+  }) => void,
+): Uint8Array {
+  const entries = roles.map((candidate) => {
+    const roleId = candidate.roleId as string;
+    const bytes = artifacts.find((artifact) => artifact.roleId === roleId)?.bytes;
+    return {
+      roleId,
+      version: candidate.sidecar === null ? null : 1,
+      sha256: sha256Bytes(bytes ?? new Uint8Array()),
+    };
+  });
+  const core = {
+    surface,
+    catalogMetadataHash: sha256Bytes(manifestBytes),
+    roles: entries,
+  };
+  const manifest = {
+    ...core,
+    surfaceDigest: sha256Bytes(encoder.encode(JSON.stringify(core))),
+  };
+  if (mutate !== undefined) {
+    mutate(manifest);
+    const restampedCore = {
+      surface,
+      catalogMetadataHash: manifest.catalogMetadataHash,
+      roles: manifest.roles,
+    };
+    manifest.surfaceDigest = sha256Bytes(encoder.encode(JSON.stringify(restampedCore)));
+  }
+  return encoder.encode(JSON.stringify(manifest));
+}
+
 function fixture(
   roles: readonly Readonly<Record<string, unknown>>[],
   artifacts: readonly InMemoryPromptRoleArtifact[],
+  mutateSurface?: Parameters<typeof surfaceManifestBytes>[4],
 ): StoreFixture {
+  const manifestBytes = encoder.encode(JSON.stringify(roles));
   return {
-    surfaceBytes: encoder.encode(JSON.stringify({ surface: PROMPT_SURFACE })),
-    manifestBytes: encoder.encode(JSON.stringify(roles)),
+    surfaceBytes: surfaceManifestBytes(
+      PROMPT_SURFACE,
+      manifestBytes,
+      roles,
+      artifacts,
+      mutateSurface,
+    ),
+    manifestBytes,
     artifacts,
   };
 }
@@ -160,6 +222,7 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
           "roles/plan-advance.md",
         ]);
         expect(manifest.promptSurface).toBe(PROMPT_SURFACE);
+        expect(manifest.catalogHash).toBe(sha256Bytes(CONTRACT_FIXTURE.manifestBytes));
       } finally {
         handle.cleanup();
       }
@@ -183,6 +246,8 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
           workflowDependencies: [],
           requiredCapabilities: ["host-tool-vocabulary"],
           intentionalDifferences: [INTENTIONAL_DIFFERENCE],
+          promptDigest: sha256Bytes(CONTRACT_FIXTURE.artifacts[0]!.bytes),
+          schemaVersion: 1,
         });
         expect(decoder.decode(artifact.bytes)).toBe(
           "---\ndescription: rendered\n---\n\nKeep {{cq:literal}}, $ARGUMENTS, and ${INPUT} unchanged.\n",
@@ -190,6 +255,7 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
         expect(handle.store.readRole("plan/advance").bytes).toEqual(
           Uint8Array.from([0x00, 0x7f, 0x80, 0xff]),
         );
+        expect(handle.store.readRole("plan/advance").metadata.schemaVersion).toBeNull();
       } finally {
         handle.cleanup();
       }
@@ -296,7 +362,17 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
     test("rejects a selected surface that does not match the immutable root identity", () => {
       const mismatched = {
         ...CONTRACT_FIXTURE,
-        surfaceBytes: encoder.encode('{"surface":"pi"}'),
+        surfaceBytes: surfaceManifestBytes(
+          "pi",
+          CONTRACT_FIXTURE.manifestBytes,
+          [
+            role("plan/advance", "orchestrator-command", [
+              { kind: "dispatch", targetRoleId: "plan-advance" },
+            ]),
+            role("plan-advance", "dispatched-subagent"),
+          ],
+          CONTRACT_FIXTURE.artifacts,
+        ),
       };
       expect(() => adapter.create(mismatched)).toThrow(
         'surface.json.surface: selected prompt surface "codex" does not match built root "pi"',
@@ -306,10 +382,126 @@ function runPromptArtifactStoreContract(adapter: StoreAdapter): void {
     test("rejects additional surface metadata fields", () => {
       const malformed = {
         ...CONTRACT_FIXTURE,
-        surfaceBytes: encoder.encode('{"surface":"codex","extra":true}'),
+        surfaceBytes: encoder.encode(
+          '{"surface":"codex","catalogMetadataHash":"' + "0".repeat(64) + '","roles":[],"surfaceDigest":"' + "0".repeat(64) + '","extra":true}',
+        ),
       };
       expect(() => adapter.create(malformed)).toThrow(
-        'surface.json: expected exactly one "surface" field',
+        "surface.json.extra: unexpected field in the attested surface manifest",
+      );
+    });
+
+    test("rejects a tampered surface aggregate digest", () => {
+      const tampered = {
+        ...CONTRACT_FIXTURE,
+        surfaceBytes: surfaceManifestBytes(
+          PROMPT_SURFACE,
+          CONTRACT_FIXTURE.manifestBytes,
+          [
+            role("plan/advance", "orchestrator-command", [
+              { kind: "dispatch", targetRoleId: "plan-advance" },
+            ]),
+            role("plan-advance", "dispatched-subagent"),
+          ],
+          CONTRACT_FIXTURE.artifacts,
+        ),
+      };
+      const parsed = JSON.parse(decoder.decode(tampered.surfaceBytes)) as {
+        surfaceDigest: string;
+      };
+      parsed.surfaceDigest = "f".repeat(64);
+      expect(() =>
+        adapter.create({
+          ...tampered,
+          surfaceBytes: encoder.encode(JSON.stringify(parsed)),
+        }),
+      ).toThrow("surface aggregate digest does not match the attested contents");
+    });
+
+    test("rejects stale role bytes that no longer match the attested digest", () => {
+      const stale = fixture(
+        [role("plan-advance", "dispatched-subagent")],
+        [{ roleId: "plan-advance", bytes: encoder.encode("body") }],
+        (manifest) => {
+          manifest.roles[0]!.sha256 = "0".repeat(64);
+        },
+      );
+      expect(() => adapter.create(stale)).toThrow(
+        'installed bytes do not match the attested digest for role "plan-advance"',
+      );
+    });
+
+    test("rejects a stale catalog metadata hash", () => {
+      const stale = fixture(
+        [role("plan-advance", "dispatched-subagent")],
+        [{ roleId: "plan-advance", bytes: encoder.encode("body") }],
+        (manifest) => {
+          manifest.catalogMetadataHash = "0".repeat(64);
+        },
+      );
+      expect(() => adapter.create(stale)).toThrow(
+        "does not match the installed catalog.json bytes",
+      );
+    });
+
+    test("rejects a missing digest entry for a manifest role", () => {
+      const missing = fixture(
+        [
+          role("plan/advance", "orchestrator-command", [
+            { kind: "dispatch", targetRoleId: "plan-advance" },
+          ]),
+          role("plan-advance", "dispatched-subagent"),
+        ],
+        CONTRACT_FIXTURE.artifacts,
+        (manifest) => {
+          manifest.roles = manifest.roles.filter(
+            (entry) => entry.roleId !== "plan-advance",
+          );
+        },
+      );
+      expect(() => adapter.create(missing)).toThrow(
+        'missing digest for manifest role "plan-advance"',
+      );
+    });
+
+    test("rejects a digest entry with no manifest role", () => {
+      const extra = fixture(
+        [role("plan-advance", "dispatched-subagent")],
+        [{ roleId: "plan-advance", bytes: encoder.encode("body") }],
+        (manifest) => {
+          manifest.roles.push({
+            roleId: "ghost-role",
+            version: 1,
+            sha256: "0".repeat(64),
+          });
+        },
+      );
+      expect(() => adapter.create(extra)).toThrow(
+        'digest entry has no manifest role "ghost-role"',
+      );
+    });
+
+    test("rejects version and role-kind mismatches in the attestation", () => {
+      const dispatchedWithoutVersion = fixture(
+        [role("plan-advance", "dispatched-subagent")],
+        [{ roleId: "plan-advance", bytes: encoder.encode("body") }],
+        (manifest) => {
+          manifest.roles[0]!.version = null;
+        },
+      );
+      expect(() => adapter.create(dispatchedWithoutVersion)).toThrow(
+        'dispatched role "plan-advance" has no attested schema-sidecar version',
+      );
+
+      const orchestratorWithVersion = fixture(
+        [role("plan/advance", "orchestrator-command")],
+        [{ roleId: "plan/advance", bytes: encoder.encode("body") }],
+        (manifest) => {
+          manifest.roles[0]!.version = 3;
+        },
+      );
+      expect(() => adapter.create(orchestratorWithVersion)).toThrow(
+        'orchestrator-command role "plan/advance" must not carry a schema-sidecar version',
       );
     });
   });

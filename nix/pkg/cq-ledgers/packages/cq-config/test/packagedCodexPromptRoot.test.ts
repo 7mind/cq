@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import * as path from "node:path";
+import { DISPATCHED_ROLE_VERSIONS } from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
@@ -109,6 +110,7 @@ describe("packaged Codex prompt root and command skills", () => {
         catalogJson,
         sourcePaths,
         fragmentPaths,
+        roleVersions: DISPATCHED_ROLE_VERSIONS,
       });
       const commands = catalog.filter(
         ({ roleKind }) => roleKind === "orchestrator-command",
@@ -125,9 +127,14 @@ describe("packaged Codex prompt root and command skills", () => {
       expect(readFileSync(path.join(promptRoot, "catalog.json"), "utf8")).toBe(
         catalogJson,
       );
-      expect(readFileSync(path.join(promptRoot, "surface.json"), "utf8")).toBe(
-        '{"surface":"codex"}',
-      );
+      const manifest = JSON.parse(
+        readFileSync(path.join(promptRoot, "surface.json"), "utf8"),
+      ) as {
+        readonly surface: string;
+        readonly roles: readonly { readonly version: number | null }[];
+      };
+      expect(manifest.surface).toBe("codex");
+      expect(manifest.roles).toHaveLength(catalog.length);
       for (const artifact of direct.artifacts.slice(1)) {
         expect(readFileSync(path.join(promptRoot, artifact.path), "utf8")).toBe(
           artifact.content,

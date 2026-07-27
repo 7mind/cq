@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import * as path from "node:path";
+import { DISPATCHED_ROLE_VERSIONS } from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
@@ -74,15 +75,21 @@ describe("packaged Claude prompt root", () => {
         catalogJson,
         sourcePaths,
         fragmentPaths,
+        roleVersions: DISPATCHED_ROLE_VERSIONS,
       });
 
       expect(catalog).toHaveLength(24);
       expect(catalog.some(({ roleId }) => roleId === "begin")).toBe(true);
       expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles", "surface.json"]);
       expect(readFileSync(path.join(output, "catalog.json"), "utf8")).toBe(catalogJson);
-      expect(readFileSync(path.join(output, "surface.json"), "utf8")).toBe(
-        '{"surface":"claude"}',
-      );
+      const manifest = JSON.parse(
+        readFileSync(path.join(output, "surface.json"), "utf8"),
+      ) as {
+        readonly surface: string;
+        readonly roles: readonly { readonly version: number | null }[];
+      };
+      expect(manifest.surface).toBe("claude");
+      expect(manifest.roles).toHaveLength(catalog.length);
       expect(
         [...new Bun.Glob("**/*.md").scanSync({ cwd: path.join(output, "roles") })].sort(),
       ).toEqual(catalog.map(({ roleId }) => `${roleId}.md`).sort());

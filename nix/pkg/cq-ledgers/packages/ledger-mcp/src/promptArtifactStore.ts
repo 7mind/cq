@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
 import type {
@@ -11,8 +12,16 @@ import type {
 } from "@cq/ledger";
 
 const SAFE_ROLE_ID_PATTERN = /^[a-z0-9-]+(?:\/[a-z0-9-]+)*$/;
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const MANIFEST_FILENAME = "catalog.json";
 const SURFACE_METADATA_FILENAME = "surface.json";
+const SURFACE_MANIFEST_FIELDS = [
+  "surface",
+  "catalogMetadataHash",
+  "roles",
+  "surfaceDigest",
+] as const;
+const SURFACE_ROLE_FIELDS = ["roleId", "version", "sha256"] as const;
 const ROLE_ARTIFACTS_DIRECTORY = "roles";
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 const PROMPT_RENDERER_CAPABILITIES = [
@@ -54,12 +63,29 @@ export interface PromptArtifactRoleMetadata {
    */
   readonly requiredCapabilities?: readonly PromptRendererCapability[];
   readonly intentionalDifferences?: readonly PromptIntentionalDifference[];
+  /**
+   * Lowercase hex SHA-256 of the exact installed artifact bytes, bound by the
+   * attested surface manifest; present only for an attested prompt root.
+   */
+  readonly promptDigest?: string;
+  /**
+   * The schema-sidecar contract version stamped into the surface attestation
+   * (`null` for an orchestrator-command role); present only for an attested
+   * prompt root.
+   */
+  readonly schemaVersion?: number | null;
 }
 
 export interface PromptArtifactManifest {
   readonly bytes: Uint8Array;
   readonly roles: readonly PromptArtifactRoleMetadata[];
   readonly promptSurface?: PromptSurface;
+  /**
+   * Lowercase hex SHA-256 of the installed `catalog.json` bytes (the catalog
+   * metadata hash), bound by the attested surface manifest; present only for
+   * an attested prompt root.
+   */
+  readonly catalogHash?: string;
 }
 
 export interface PromptRoleArtifact {
@@ -99,6 +125,7 @@ interface PromptArtifactSnapshot {
   readonly manifestBytes: Uint8Array;
   readonly roles: readonly PromptArtifactRoleMetadata[];
   readonly artifacts: ReadonlyMap<string, Uint8Array>;
+  readonly catalogHash?: string;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -123,7 +150,40 @@ function parsePromptSurface(value: string, pathLabel: string): PromptSurface {
   );
 }
 
-function parseSurfaceMetadata(surfaceBytes: Uint8Array): PromptSurface {
+/** Lowercase hex SHA-256 of raw bytes. */
+function sha256Bytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** Lowercase hex SHA-256 of the UTF-8 encoding of `value`. */
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+/** One attested role binding: schema-sidecar version paired with exact-byte digest. */
+interface PromptSurfaceRoleAttestation {
+  readonly roleId: string;
+  readonly version: number | null;
+  readonly digest: string;
+}
+
+/**
+ * The parsed attested packaged-surface manifest (`surface.json`, T683). The
+ * canonical byte shape is written once by the deterministic renderer
+ * (`serializePromptSurfaceManifest` in @cq/config): exactly the keys
+ * `surface`, `catalogMetadataHash`, `roles`, `surfaceDigest` in this order,
+ * `roles` in canonical catalog order with exactly `roleId`, `version`,
+ * `sha256` per entry, and `surfaceDigest` = lowercase hex SHA-256 of the
+ * UTF-8 `JSON.stringify` of the object without the `surfaceDigest` key.
+ */
+interface PromptSurfaceAttestation {
+  readonly surface: PromptSurface;
+  readonly catalogHash: string;
+  readonly roles: readonly PromptSurfaceRoleAttestation[];
+  readonly surfaceDigest: string;
+}
+
+function parseSurfaceAttestation(surfaceBytes: Uint8Array): PromptSurfaceAttestation {
   let surfaceText: string;
   try {
     surfaceText = new TextDecoder("utf-8", { fatal: true }).decode(surfaceBytes);
@@ -141,11 +201,22 @@ function parseSurfaceMetadata(surfaceBytes: Uint8Array): PromptSurface {
     throw new PromptArtifactStoreError(SURFACE_METADATA_FILENAME, "expected an object");
   }
   const fields = Object.keys(value);
-  if (fields.length !== 1 || fields[0] !== "surface") {
+  const unexpectedField = fields.find(
+    (field) => !(SURFACE_MANIFEST_FIELDS as readonly string[]).includes(field),
+  );
+  if (unexpectedField !== undefined) {
     throw new PromptArtifactStoreError(
-      SURFACE_METADATA_FILENAME,
-      'expected exactly one "surface" field',
+      `${SURFACE_METADATA_FILENAME}.${unexpectedField}`,
+      "unexpected field in the attested surface manifest",
     );
+  }
+  for (const field of SURFACE_MANIFEST_FIELDS) {
+    if (!(field in value)) {
+      throw new PromptArtifactStoreError(
+        `${SURFACE_METADATA_FILENAME}.${field}`,
+        "missing field in the attested surface manifest",
+      );
+    }
   }
   if (typeof value.surface !== "string") {
     throw new PromptArtifactStoreError(
@@ -153,21 +224,110 @@ function parseSurfaceMetadata(surfaceBytes: Uint8Array): PromptSurface {
       `expected one of ${PROMPT_SURFACES.join(", ")}`,
     );
   }
-  return parsePromptSurface(value.surface, `${SURFACE_METADATA_FILENAME}.surface`);
+  const surface = parsePromptSurface(value.surface, `${SURFACE_METADATA_FILENAME}.surface`);
+
+  const catalogHash = value.catalogMetadataHash;
+  if (typeof catalogHash !== "string" || !SHA256_HEX_PATTERN.test(catalogHash)) {
+    throw new PromptArtifactStoreError(
+      `${SURFACE_METADATA_FILENAME}.catalogMetadataHash`,
+      "expected a lowercase hex SHA-256 digest",
+    );
+  }
+
+  if (!Array.isArray(value.roles)) {
+    throw new PromptArtifactStoreError(
+      `${SURFACE_METADATA_FILENAME}.roles`,
+      "expected an array",
+    );
+  }
+  const seenRoleIds = new Set<string>();
+  const roles = value.roles.map((candidate, index): PromptSurfaceRoleAttestation => {
+    const entryPath = `${SURFACE_METADATA_FILENAME}.roles[${index}]`;
+    if (!isRecord(candidate)) {
+      throw new PromptArtifactStoreError(entryPath, "expected an object");
+    }
+    const entryFields = Object.keys(candidate);
+    const unexpectedEntryField = entryFields.find(
+      (field) => !(SURFACE_ROLE_FIELDS as readonly string[]).includes(field),
+    );
+    if (unexpectedEntryField !== undefined) {
+      throw new PromptArtifactStoreError(
+        `${entryPath}.${unexpectedEntryField}`,
+        "unexpected field in the role attestation",
+      );
+    }
+    for (const field of SURFACE_ROLE_FIELDS) {
+      if (!(field in candidate)) {
+        throw new PromptArtifactStoreError(
+          `${entryPath}.${field}`,
+          "missing field in the role attestation",
+        );
+      }
+    }
+    const roleId = candidate.roleId;
+    if (typeof roleId !== "string" || !SAFE_ROLE_ID_PATTERN.test(roleId)) {
+      throw new PromptArtifactStoreError(
+        `${entryPath}.roleId`,
+        "expected a safe role identifier",
+      );
+    }
+    if (seenRoleIds.has(roleId)) {
+      throw new PromptArtifactStoreError(`${entryPath}.roleId`, `duplicate role "${roleId}"`);
+    }
+    seenRoleIds.add(roleId);
+    const version = candidate.version;
+    if (
+      version !== null &&
+      (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1)
+    ) {
+      throw new PromptArtifactStoreError(
+        `${entryPath}.version`,
+        "expected null or a positive integer schema-sidecar version",
+      );
+    }
+    const digest = candidate.sha256;
+    if (typeof digest !== "string" || !SHA256_HEX_PATTERN.test(digest)) {
+      throw new PromptArtifactStoreError(
+        `${entryPath}.sha256`,
+        "expected a lowercase hex SHA-256 digest",
+      );
+    }
+    return Object.freeze({ roleId, version, digest });
+  });
+
+  const surfaceDigest = value.surfaceDigest;
+  if (typeof surfaceDigest !== "string" || !SHA256_HEX_PATTERN.test(surfaceDigest)) {
+    throw new PromptArtifactStoreError(
+      `${SURFACE_METADATA_FILENAME}.surfaceDigest`,
+      "expected a lowercase hex SHA-256 digest",
+    );
+  }
+  const canonicalCore = JSON.stringify({
+    surface,
+    catalogMetadataHash: catalogHash,
+    roles: roles.map((role) => ({ roleId: role.roleId, version: role.version, sha256: role.digest })),
+  });
+  if (sha256Hex(canonicalCore) !== surfaceDigest) {
+    throw new PromptArtifactStoreError(
+      `${SURFACE_METADATA_FILENAME}.surfaceDigest`,
+      "surface aggregate digest does not match the attested contents",
+    );
+  }
+  return Object.freeze({ surface, catalogHash, roles: Object.freeze(roles), surfaceDigest });
 }
 
 function validateSelectedSurface(
   selectedSurface: PromptSurface,
   surfaceBytes: Uint8Array,
-): PromptSurface {
-  const builtSurface = parseSurfaceMetadata(surfaceBytes);
-  if (builtSurface !== selectedSurface) {
+): PromptSurfaceAttestation {
+  const attestation = parseSurfaceAttestation(surfaceBytes);
+  if (attestation.surface !== selectedSurface) {
     throw new PromptArtifactStoreError(
       `${SURFACE_METADATA_FILENAME}.surface`,
-      `selected prompt surface "${selectedSurface}" does not match built root "${builtSurface}"`,
+      `selected prompt surface "${selectedSurface}" does not match built root "${attestation.surface}"`,
     );
   }
-  return builtSurface;
+  return attestation;
 }
 
 function parseNonEmptyString(value: unknown, pathLabel: string): string {
@@ -540,8 +700,9 @@ function buildSnapshot(
   promptSurface: PromptSurface | undefined,
   manifestBytes: Uint8Array,
   inputArtifacts: readonly InMemoryPromptRoleArtifact[],
+  attestation: PromptSurfaceAttestation | undefined,
 ): PromptArtifactSnapshot {
-  const roles = parseManifest(manifestBytes, promptSurface);
+  const parsedRoles = parseManifest(manifestBytes, promptSurface);
   const artifacts = new Map<string, Uint8Array>();
   for (const [index, artifact] of inputArtifacts.entries()) {
     if (!SAFE_ROLE_ID_PATTERN.test(artifact.roleId)) {
@@ -559,8 +720,8 @@ function buildSnapshot(
     artifacts.set(artifact.roleId, copyBytes(artifact.bytes));
   }
 
-  const declaredRoleIds = new Set(roles.map((role) => role.roleId));
-  const missingRole = roles.find((role) => !artifacts.has(role.roleId));
+  const declaredRoleIds = new Set(parsedRoles.map((role) => role.roleId));
+  const missingRole = parsedRoles.find((role) => !artifacts.has(role.roleId));
   if (missingRole !== undefined) {
     throw new PromptArtifactStoreError(
       missingRole.artifactPath,
@@ -575,12 +736,90 @@ function buildSnapshot(
     );
   }
 
+  let roles = parsedRoles;
+  let catalogHash: string | undefined;
+  if (attestation !== undefined) {
+    roles = verifySurfaceAttestation(attestation, manifestBytes, parsedRoles, artifacts);
+    catalogHash = attestation.catalogHash;
+  }
+
   return Object.freeze({
     ...(promptSurface !== undefined ? { promptSurface } : {}),
     manifestBytes: copyBytes(manifestBytes),
     roles,
     artifacts,
+    ...(catalogHash !== undefined ? { catalogHash } : {}),
   });
+}
+
+/**
+ * Verify the attested surface manifest against the exact installed bytes and
+ * return the role metadata bound to the attestation (T683). Every check fails
+ * closed: a stale catalog hash, a missing or extra role entry, a digest that
+ * no longer matches the installed bytes, or a version/role-kind mismatch
+ * makes the whole root unusable before any prompt can be dispatched.
+ */
+function verifySurfaceAttestation(
+  attestation: PromptSurfaceAttestation,
+  manifestBytes: Uint8Array,
+  roles: readonly PromptArtifactRoleMetadata[],
+  artifacts: ReadonlyMap<string, Uint8Array>,
+): readonly PromptArtifactRoleMetadata[] {
+  if (attestation.catalogHash !== sha256Bytes(manifestBytes)) {
+    throw new PromptArtifactStoreError(
+      `${SURFACE_METADATA_FILENAME}.catalogMetadataHash`,
+      `does not match the installed ${MANIFEST_FILENAME} bytes`,
+    );
+  }
+  const attestationByRoleId = new Map(
+    attestation.roles.map((entry) => [entry.roleId, entry] as const),
+  );
+  const missingAttestation = roles.find((role) => !attestationByRoleId.has(role.roleId));
+  if (missingAttestation !== undefined) {
+    throw new PromptArtifactStoreError(
+      `${SURFACE_METADATA_FILENAME}.roles`,
+      `missing digest for manifest role "${missingAttestation.roleId}"`,
+    );
+  }
+  const extraAttestation = attestation.roles.find(
+    (entry) => !roles.some((role) => role.roleId === entry.roleId),
+  );
+  if (extraAttestation !== undefined) {
+    throw new PromptArtifactStoreError(
+      `${SURFACE_METADATA_FILENAME}.roles`,
+      `digest entry has no manifest role "${extraAttestation.roleId}"`,
+    );
+  }
+  return Object.freeze(
+    roles.map((role) => {
+      const entry = attestationByRoleId.get(role.roleId)!;
+      const bytes = artifacts.get(role.roleId)!;
+      if (sha256Bytes(bytes) !== entry.digest) {
+        throw new PromptArtifactStoreError(
+          role.artifactPath,
+          `installed bytes do not match the attested digest for role "${role.roleId}"`,
+        );
+      }
+      if (role.roleKind === "dispatched-subagent") {
+        if (entry.version === null) {
+          throw new PromptArtifactStoreError(
+            `${SURFACE_METADATA_FILENAME}.roles`,
+            `dispatched role "${role.roleId}" has no attested schema-sidecar version`,
+          );
+        }
+      } else if (entry.version !== null) {
+        throw new PromptArtifactStoreError(
+          `${SURFACE_METADATA_FILENAME}.roles`,
+          `orchestrator-command role "${role.roleId}" must not carry a schema-sidecar version`,
+        );
+      }
+      return Object.freeze({
+        ...role,
+        promptDigest: entry.digest,
+        schemaVersion: entry.version,
+      });
+    }),
+  );
 }
 
 abstract class SnapshotPromptArtifactStore implements PromptArtifactStore {
@@ -596,6 +835,9 @@ abstract class SnapshotPromptArtifactStore implements PromptArtifactStore {
       roles: this.#snapshot.roles,
       ...(this.#snapshot.promptSurface !== undefined
         ? { promptSurface: this.#snapshot.promptSurface }
+        : {}),
+      ...(this.#snapshot.catalogHash !== undefined
+        ? { catalogHash: this.#snapshot.catalogHash }
         : {}),
     });
   }
@@ -648,17 +890,14 @@ export class InMemoryPromptArtifactStore extends SnapshotPromptArtifactStore {
           "expected surface metadata bytes, manifest bytes, and artifacts",
         );
       }
-      const promptSurface = validateSelectedSurface(
-        selectedSurface,
-        surfaceBytesOrArtifacts,
-      );
-      super(buildSnapshot(promptSurface, maybeManifestBytes, maybeArtifacts));
+      const attestation = validateSelectedSurface(selectedSurface, surfaceBytesOrArtifacts);
+      super(buildSnapshot(attestation.surface, maybeManifestBytes, maybeArtifacts, attestation));
       return;
     }
     if (!Array.isArray(surfaceBytesOrArtifacts)) {
       throw new PromptArtifactStoreError("constructor", "expected artifacts");
     }
-    super(buildSnapshot(undefined, promptSurfaceOrManifestBytes, surfaceBytesOrArtifacts));
+    super(buildSnapshot(undefined, promptSurfaceOrManifestBytes, surfaceBytesOrArtifacts, undefined));
   }
 }
 
@@ -762,7 +1001,7 @@ export class FileSystemPromptArtifactStore extends SnapshotPromptArtifactStore {
     if (!statSync(resolvedRoot).isDirectory()) {
       throw new PromptArtifactStoreError("root", "expected a directory");
     }
-    const validatedSurface =
+    const attestation =
       promptSurface === undefined
         ? undefined
         : validateSelectedSurface(
@@ -776,9 +1015,10 @@ export class FileSystemPromptArtifactStore extends SnapshotPromptArtifactStore {
     const manifestBytes = readContainedFile(resolvedRoot, MANIFEST_FILENAME, MANIFEST_FILENAME);
     super(
       buildSnapshot(
-        validatedSurface,
+        attestation?.surface,
         manifestBytes,
         collectFilesystemArtifacts(resolvedRoot),
+        attestation,
       ),
     );
     this.root = resolvedRoot;

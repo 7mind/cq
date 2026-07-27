@@ -5,6 +5,36 @@ import {
   type PromptCatalogFileInput,
   type PromptFragmentFileInput,
 } from "../src/promptRenderer.js";
+// The per-role schema sidecars supply the contract versions stamped into the
+// attested surface manifest. This list MIRRORS
+// `promptCatalogStore.DISPATCHED_ROLE_SIDECARS`: the Nix renderer derivation
+// must not import promptCatalogStore/agentRoster because those pull in the
+// generated promptCatalog.gen.ts mirror, which is never an input to a Nix
+// prompt renderer derivation. The renderer fails the build closed when this
+// closure drifts from the catalog's dispatched roles.
+import { implementConflictResolverSidecar } from "../src/schemas/implement-conflict-resolver.js";
+import { implementReviewerSidecar } from "../src/schemas/implement-reviewer.js";
+import { implementWorkerSidecar } from "../src/schemas/implement-worker.js";
+import { investigateExplorerSidecar } from "../src/schemas/investigate-explorer.js";
+import { investigateProberSidecar } from "../src/schemas/investigate-prober.js";
+import { planAdvanceSidecar } from "../src/schemas/plan-advance.js";
+import { planReviewerSidecar } from "../src/schemas/plan-reviewer.js";
+import { researchExperimenterSidecar } from "../src/schemas/research-experimenter.js";
+import { researchExplorerSidecar } from "../src/schemas/research-explorer.js";
+
+const DISPATCHED_ROLE_VERSIONS: Readonly<Record<string, number>> = Object.fromEntries(
+  [
+    planAdvanceSidecar,
+    planReviewerSidecar,
+    implementWorkerSidecar,
+    implementReviewerSidecar,
+    implementConflictResolverSidecar,
+    investigateExplorerSidecar,
+    investigateProberSidecar,
+    researchExplorerSidecar,
+    researchExperimenterSidecar,
+  ].map((sidecar) => [sidecar.id, sidecar.version]),
+);
 
 const argumentsAfterScript = process.argv.slice(2);
 if (argumentsAfterScript.length !== 5) {
@@ -47,6 +77,7 @@ const tree = renderPromptSurfaceTree({
     fragmentPathsPath,
     "fragment-paths-json",
   ),
+  roleVersions: DISPATCHED_ROLE_VERSIONS,
 });
 const writtenPaths = new Set<string>();
 for (const artifact of tree.artifacts) {

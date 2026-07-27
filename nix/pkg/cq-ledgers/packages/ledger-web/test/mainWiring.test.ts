@@ -58,7 +58,14 @@ async function spawnAndReadUrl(
 
   const proc = bunSpawn({
     cmd: [process.execPath, "run", webMain, "--cwd", cwd, ...args],
-    env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
+    env: {
+      ...process.env,
+      LEDGER_WEB_OUTDIR: outdir,
+      // Prompt-agnostic wiring tests must not inherit an ambient prompt root.
+      CQ_PROMPT_ROOT: undefined,
+      CQ_PROMPT_SURFACE: undefined,
+      CQ_PROMPT_SURFACES_ROOT: undefined,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

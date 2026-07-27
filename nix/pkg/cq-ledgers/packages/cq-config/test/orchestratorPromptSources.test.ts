@@ -165,12 +165,17 @@ describe("orchestrator command prompt sources", () => {
         catalogJson: JSON.stringify([begin]),
         sourcePaths,
         fragmentPaths,
+        roleVersions: {},
       });
 
-      expect(tree.artifacts[1]).toEqual({
-        path: "surface.json",
-        content: JSON.stringify({ surface }),
-      });
+      const manifest = JSON.parse(tree.artifacts[1]!.content) as {
+        readonly surface: string;
+        readonly roles: readonly { readonly roleId: string; readonly version: number | null }[];
+      };
+      expect(manifest.surface).toBe(surface);
+      expect(manifest.roles).toHaveLength(1);
+      expect(manifest.roles[0]!.roleId).toBe("begin");
+      expect(manifest.roles[0]!.version).toBeNull();
       expect(tree.artifacts[2]!.path).toBe("roles/begin.md");
       expect(tree.artifacts[2]!.content).toStartWith("---\n");
       expect(tree.artifacts[2]!.content).toContain("$ARGUMENTS");
@@ -225,7 +230,7 @@ describe("orchestrator command prompt sources", () => {
           fragment: entry.fragment,
           path: path.join(ASSETS_ROOT, entry.source),
         }));
-      const input = { surface, catalogJson, sourcePaths, fragmentPaths };
+      const input = { surface, catalogJson, sourcePaths, fragmentPaths, roleVersions: {} };
       const first = renderPromptSurfaceTree(input);
       const second = renderPromptSurfaceTree(input);
 
@@ -291,6 +296,7 @@ describe("orchestrator command prompt sources", () => {
         catalogJson,
         sourcePaths,
         fragmentPaths: missing,
+        roleVersions: {},
       }),
     ).toThrow(
       'fragments.begin.cq-command-invocation: missing slot input for surface "codex"',
@@ -319,6 +325,7 @@ describe("orchestrator command prompt sources", () => {
           catalogJson,
           sourcePaths: copiedPaths,
           fragmentPaths,
+          roleVersions: {},
         }),
       ).toThrow("fragments.begin.inline-command-recursion: unconsumed slot input");
     } finally {
