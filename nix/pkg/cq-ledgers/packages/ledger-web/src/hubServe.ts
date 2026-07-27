@@ -56,6 +56,8 @@ import {
   tryAcquireDedicatedAdvisoryLock,
   ensureSchema,
   PostgresLedgerStore,
+  PROJECT_DISPLAY_NAME_HEADER,
+  PROJECT_DISPLAY_NAME_MAX_BYTES,
   type PgAdvisoryLockLease,
   type ProjectEntry,
 } from "@cq/ledger";
@@ -288,11 +290,13 @@ export async function fetchProjectDisplayName(
 /** URL prefix under which every per-project endpoint is mounted: `/p/<key>/…`. */
 export const PROJECT_ROUTE_PREFIX = "/p/";
 
-/** Authenticated MCP initialize metadata used to label the project registry and session. */
-export const PROJECT_DISPLAY_NAME_HEADER = "x-cq-project-display-name";
-
-/** Bound untrusted request metadata before persisting it or echoing it in MCP metadata. */
-export const PROJECT_DISPLAY_NAME_MAX_BYTES = 256;
+// Re-exported from @cq/ledger (RemoteLedgerClient.ts, T727): the SINGLE
+// definition of the authenticated-initialize display-name header + its byte
+// bound, shared by the remote client and this hub so the two never drift.
+export {
+  PROJECT_DISPLAY_NAME_HEADER,
+  PROJECT_DISPLAY_NAME_MAX_BYTES,
+} from "@cq/ledger";
 
 /**
  * Resolve the per-initialize display name. Missing or blank metadata falls

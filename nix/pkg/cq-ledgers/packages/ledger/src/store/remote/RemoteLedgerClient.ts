@@ -1,0 +1,627 @@
+/**
+ * RemoteLedgerClient — the ONE async authenticated remote MCP client shared by
+ * the CLI, TUI, and web-facing launch code (T727).
+ *
+ * The client speaks to a `cq serve` hub (ledger-web/src/hubServe.ts,
+ * T586–T588):
+ *
+ *  - URL derivation: the hub mounts each tenant's Streamable HTTP MCP endpoint
+ *    at `/p/<projectKey>/mcp` on the hub origin (Q283 lock: URL-path
+ *    addressing). {@link remoteMcpUrl} derives that endpoint from the
+ *    configured non-secret `serverUrl` (cq.toml `[ledger].serverUrl`,
+ *    `backend = "remote"`, T723) by keeping protocol + host and replacing the
+ *    path wholesale — the same derivation ledger-tui's `projectMcpUrl`
+ *    performs from a base MCP URL.
+ *  - Authentication: every request carries `Authorization: Bearer <token>`
+ *    (the hub's T588/Q273 gate) plus the bounded project display-name header
+ *    {@link PROJECT_DISPLAY_NAME_HEADER}, which an authenticated initialize
+ *    uses to label/register the tenant. The token resolves from
+ *    `CQ_LEDGER_REMOTE_TOKEN` (the only ordinary bearer source — @cq/config
+ *    remoteToken.ts); it never enters cq.toml and is never echoed into an
+ *    error message here either.
+ *  - Protocol: MCP initialize/version negotiation and the CURRENT ledger tool
+ *    schemas are the external routine API. This client is a thin typed
+ *    transport over that tool surface — it is NOT a LedgerStore and holds no
+ *    store-over-HTTP cache (that adapter is deliberately out of scope).
+ *
+ * Fail-loud boundaries (each a dedicated error class, never a silent
+ * fallback):
+ *  - auth: HTTP 401/403 → {@link RemoteAuthError} (the token is never
+ *    embedded in the message);
+ *  - unavailable service: a connection-level failure or a non-auth non-2xx
+ *    HTTP status → {@link RemoteUnavailableError};
+ *  - protocol: MCP/JSON-RPC errors (unknown tool, unsupported protocol
+ *    version) → {@link RemoteProtocolError};
+ *  - malformed response: a tool result without a text content block, or text
+ *    that is not valid JSON → {@link RemoteMalformedResponseError};
+ *  - remote tool error: a result flagged `isError` → {@link RemoteToolError}
+ *    carrying the server's message VERBATIM (remote error preservation).
+ */
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { McpError } from "@modelcontextprotocol/sdk/types.js";
+import type { ArchivePointer, FieldValue } from "../../types.js";
+import type { ArchiveContent } from "../LedgerStore.js";
+import type {
+  FetchedLedgerDto,
+  FetchedMilestoneDto,
+  FtsSearchResultDto,
+  ItemDto,
+  ItemMutationAckDto,
+  ItemProjection,
+  MilestoneItemGroupsDto,
+  MilestoneMutationAckDto,
+  PaginatedLedgerDto,
+} from "../../mcp/wireResponseContract.js";
+import type { ReadLogResult } from "../../mcp/readLog.js";
+import type { ListProjectsResult, ProjectEntry } from "../../mcp/listProjects.js";
+import type { DerivedPredicates } from "../predicates.js";
+import type { LedgerSnapshot } from "../../snapshot.js";
+import type { LedgerSummariesResult } from "../../summaries.js";
+
+/**
+ * Authenticated MCP initialize metadata used to label the project registry
+ * and session. This is the SINGLE definition — the `cq serve` hub
+ * (ledger-web/src/hubServe.ts) re-exports it so client and server can never
+ * drift on the header name.
+ */
+export const PROJECT_DISPLAY_NAME_HEADER = "x-cq-project-display-name";
+
+/** Bound untrusted request metadata before persisting it or echoing it in MCP metadata. */
+export const PROJECT_DISPLAY_NAME_MAX_BYTES = 256;
+
+/** Base class of every error this client raises on a service boundary. */
+export class RemoteLedgerClientError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RemoteLedgerClientError";
+  }
+}
+
+/** The service rejected the bearer credential (HTTP 401/403). Never carries the token. */
+export class RemoteAuthError extends RemoteLedgerClientError {
+  constructor(endpoint: string, status: number) {
+    super(
+      `remote ledger service at ${endpoint} rejected the bearer token ` +
+        `(HTTP ${String(status)})`,
+    );
+    this.name = "RemoteAuthError";
+  }
+}
+
+/** The service could not be reached or answered a non-auth non-2xx HTTP status. */
+export class RemoteUnavailableError extends RemoteLedgerClientError {
+  constructor(endpoint: string, detail: string) {
+    super(`remote ledger service at ${endpoint} is unavailable: ${detail}`);
+    this.name = "RemoteUnavailableError";
+  }
+}
+
+/** An MCP/JSON-RPC protocol failure (unknown tool, unsupported protocol version). */
+export class RemoteProtocolError extends RemoteLedgerClientError {
+  constructor(endpoint: string, tool: string | null, detail: string) {
+    super(
+      `remote ledger protocol error at ${endpoint}` +
+        (tool !== null ? ` calling ${tool}` : "") +
+        `: ${detail}`,
+    );
+    this.name = "RemoteProtocolError";
+  }
+}
+
+/** A tool result that is not the expected single text content block holding JSON. */
+export class RemoteMalformedResponseError extends RemoteLedgerClientError {
+  constructor(tool: string, detail: string) {
+    super(`malformed response from remote ledger tool ${tool}: ${detail}`);
+    this.name = "RemoteMalformedResponseError";
+  }
+}
+
+/** A tool result flagged `isError`; `message` is the server's message VERBATIM. */
+export class RemoteToolError extends RemoteLedgerClientError {
+  constructor(
+    public readonly tool: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "RemoteToolError";
+  }
+}
+
+/** The display name exceeded {@link PROJECT_DISPLAY_NAME_MAX_BYTES} (client-side bound). */
+export class RemoteDisplayNameError extends RemoteLedgerClientError {
+  constructor(byteLength: number) {
+    super(
+      `${PROJECT_DISPLAY_NAME_HEADER} value exceeds ` +
+        `${String(PROJECT_DISPLAY_NAME_MAX_BYTES)} bytes (got ${String(byteLength)})`,
+    );
+    this.name = "RemoteDisplayNameError";
+  }
+}
+
+/** A non-HTTP(S) `serverUrl` cannot address a `cq serve` hub. */
+export class RemoteLedgerClientConfigError extends RemoteLedgerClientError {
+  constructor(serverUrl: string) {
+    super(
+      `remote ledger serverUrl ${JSON.stringify(serverUrl)} is not an absolute ` +
+        "http(s) endpoint",
+    );
+    this.name = "RemoteLedgerClientConfigError";
+  }
+}
+
+/**
+ * Derive a `cq serve` hub's per-project MCP endpoint from the configured
+ * `serverUrl`: same origin, path replaced wholesale with
+ * `/p/<encodeURIComponent(projectKey)>/mcp` (Q283 lock).
+ *
+ * Throws `TypeError` from `new URL` when `serverUrl` is not an absolute URL,
+ * and {@link RemoteLedgerClientConfigError} when it is not HTTP(S).
+ */
+export function remoteMcpUrl(serverUrl: string, projectKey: string): string {
+  const u = new URL(serverUrl);
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new RemoteLedgerClientConfigError(serverUrl);
+  }
+  return `${u.protocol}//${u.host}/p/${encodeURIComponent(projectKey)}/mcp`;
+}
+
+/** Connection parameters for {@link RemoteLedgerClient.connect}. */
+export interface RemoteLedgerClientOpts {
+  /** The hub origin (cq.toml `[ledger].serverUrl`), e.g. `http://127.0.0.1:5190/`. */
+  readonly serverUrl: string;
+  /** The tenant projectKey to connect to. */
+  readonly projectKey: string;
+  /** The bearer token (resolved from `CQ_LEDGER_REMOTE_TOKEN` by the caller). */
+  readonly token: string;
+  /**
+   * The project display name sent on {@link PROJECT_DISPLAY_NAME_HEADER}
+   * (trimmed; absent/blank sends no header, so the hub falls back to the
+   * projectKey). Must fit {@link PROJECT_DISPLAY_NAME_MAX_BYTES} when encoded
+   * UTF-8 — checked client-side before any request is issued.
+   */
+  readonly displayName?: string;
+  /** MCP `clientInfo` override (tests); defaults to the shared client identity. */
+  readonly clientInfo?: { readonly name: string; readonly version: string };
+}
+
+/** `create_item` input (mirrors the tool schema). */
+export interface RemoteItemInit {
+  readonly status: string;
+  readonly fields: Record<string, FieldValue>;
+  readonly id?: string;
+  readonly author?: string;
+  readonly session?: string;
+}
+
+/** `update_item` patch (mirrors the tool schema). */
+export interface RemoteItemPatch {
+  readonly status?: string;
+  readonly fields?: Record<string, FieldValue>;
+  readonly author?: string;
+  readonly session?: string;
+}
+
+/** `create_milestone` input (mirrors the tool schema). */
+export interface RemoteMilestoneInit {
+  readonly title: string;
+  readonly description?: string;
+  readonly blockedBy?: string[];
+  readonly dependsOn?: string[];
+  readonly id?: string;
+}
+
+/** `update_milestone` patch (mirrors the tool schema). */
+export interface RemoteMilestonePatch {
+  readonly status?: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly blockedBy?: string[];
+  readonly dependsOn?: string[];
+}
+
+/** `fts_search` optional params (mirrors the tool schema). */
+export interface RemoteFtsSearchOpts {
+  readonly ledger?: string;
+  readonly limit?: number;
+  readonly fuzzy?: boolean;
+  readonly prefix?: boolean;
+  readonly status?: string;
+  readonly includeArchived?: boolean;
+}
+
+interface CallToolResultLike {
+  content?: Array<{ type: string; text?: string }>;
+  isError?: boolean;
+}
+
+const VERSION_NEGOTIATION_RE = /protocol version is not supported/;
+
+/**
+ * Classify a thrown SDK/transport error into the fail-loud boundary taxonomy;
+ * returns the original error when no known boundary matches (a client-side
+ * defect must surface as itself, not be relabelled).
+ */
+function toRemoteError(err: unknown, endpoint: string, tool: string | null): unknown {
+  if (err instanceof RemoteLedgerClientError) return err;
+  if (err instanceof McpError) {
+    return new RemoteProtocolError(endpoint, tool, err.message);
+  }
+  if (err instanceof StreamableHTTPError) {
+    if (err.code === 401 || err.code === 403) {
+      return new RemoteAuthError(endpoint, err.code);
+    }
+    return new RemoteUnavailableError(endpoint, `HTTP status ${String(err.code)}`);
+  }
+  if (err instanceof Error) {
+    if (VERSION_NEGOTIATION_RE.test(err.message)) {
+      return new RemoteProtocolError(endpoint, tool, err.message);
+    }
+    // Bun surfaces a refused connection as an Error with a string `code`
+    // (e.g. "ConnectionRefused"); Node/undici surfaces TypeError("fetch failed").
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === "string" || err instanceof TypeError) {
+      return new RemoteUnavailableError(endpoint, err.message);
+    }
+  }
+  return err;
+}
+
+/** Normalize the optional display name, enforcing the shared byte bound client-side. */
+function normalizeDisplayName(displayName: string | undefined): string | undefined {
+  if (displayName === undefined) return undefined;
+  const trimmed = displayName.trim();
+  if (trimmed === "") return undefined;
+  const byteLength = new TextEncoder().encode(trimmed).byteLength;
+  if (byteLength > PROJECT_DISPLAY_NAME_MAX_BYTES) {
+    throw new RemoteDisplayNameError(byteLength);
+  }
+  return trimmed;
+}
+
+/**
+ * The shared authenticated remote MCP client. Construct ONLY via
+ * {@link RemoteLedgerClient.connect} (the async connection resolver): it
+ * derives the per-project endpoint, runs MCP initialize/version negotiation,
+ * and captures the negotiated protocol version + project display name.
+ */
+export class RemoteLedgerClient {
+  private constructor(
+    private readonly client: Client,
+    private readonly transport: StreamableHTTPClientTransport,
+    private readonly endpoint: string,
+    private readonly _displayName: string,
+    private readonly _protocolVersion: string,
+  ) {}
+
+  /**
+   * Connect to a `cq serve` hub's per-project MCP endpoint. The bearer token
+   * and (bounded) display-name header ride the transport's `requestInit`, so
+   * EVERY transport request (initialize included) is authenticated.
+   */
+  static async connect(opts: RemoteLedgerClientOpts): Promise<RemoteLedgerClient> {
+    const endpoint = remoteMcpUrl(opts.serverUrl, opts.projectKey);
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${opts.token}`,
+    };
+    const displayName = normalizeDisplayName(opts.displayName);
+    if (displayName !== undefined) {
+      headers[PROJECT_DISPLAY_NAME_HEADER] = displayName;
+    }
+    const transport = new StreamableHTTPClientTransport(new URL(endpoint), {
+      requestInit: { headers },
+    });
+    const client = new Client(
+      opts.clientInfo ?? { name: "cq-remote-ledger-client", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    try {
+      // The SDK's StreamableHTTPClientTransport declares `sessionId?: string`,
+      // which trips exactOptionalPropertyTypes against the Transport
+      // interface; the shapes are behaviourally identical, so bridge the
+      // declaration gap through unknown (same bridge as ledger-tui/web).
+      await client.connect(transport as unknown as Transport);
+    } catch (err) {
+      throw toRemoteError(err, endpoint, null);
+    }
+    return new RemoteLedgerClient(
+      client,
+      transport,
+      endpoint,
+      RemoteLedgerClient.resolveDisplayName(client),
+      transport.protocolVersion ?? "",
+    );
+  }
+
+  /**
+   * Read the project display name from the SDK client after a successful
+   * connect. Primary carrier: `serverInfo.title`; fallback: the leading
+   * `'Project: <name>'` instructions line (the redundant carrier for SDK
+   * runtimes that drop `title`). Mirrors the resolution ledger-tui/web use.
+   */
+  private static resolveDisplayName(client: Client): string {
+    try {
+      const title = client.getServerVersion()?.title;
+      if (title !== undefined && title !== "") return title;
+      const instructions = client.getInstructions() ?? "";
+      const first = instructions.split("\n")[0] ?? "";
+      const m = /^Project:\s+(.+)$/.exec(first.trim());
+      if (m !== null && m[1] !== undefined && m[1] !== "") return m[1];
+    } catch {
+      // stub/test client that doesn't implement SDK query methods
+    }
+    return "";
+  }
+
+  /** The project display name the server surfaced at connect time. */
+  displayName(): string {
+    return this._displayName;
+  }
+
+  /** The MCP protocol version negotiated at connect time. */
+  protocolVersion(): string {
+    return this._protocolVersion;
+  }
+
+  /** The derived `/p/<projectKey>/mcp` endpoint this client is connected to. */
+  get url(): string {
+    return this.endpoint;
+  }
+
+  private async call<T>(name: string, args: Record<string, unknown>): Promise<T> {
+    let result: CallToolResultLike;
+    try {
+      result = (await this.client.callTool({
+        name,
+        arguments: args,
+      })) as CallToolResultLike;
+    } catch (err) {
+      throw toRemoteError(err, this.endpoint, name);
+    }
+    const first = result.content?.[0];
+    if (result.isError === true) {
+      const text = first?.type === "text" ? (first.text ?? "") : "";
+      throw new RemoteToolError(name, text || "tool reported an error");
+    }
+    if (first === undefined || first.type !== "text" || typeof first.text !== "string") {
+      throw new RemoteMalformedResponseError(name, "expected a text content block");
+    }
+    try {
+      return JSON.parse(first.text) as T;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new RemoteMalformedResponseError(name, `invalid JSON: ${detail}`);
+    }
+  }
+
+  /**
+   * Low-level escape hatch: call ANY tool by name and return its parsed JSON
+   * payload with no envelope unwrapping. The routine methods below are the
+   * supported surface; this exists for forward-compatible probes (and the
+   * contract's unknown-tool case), still under the same boundary taxonomy.
+   */
+  async callToolRaw(name: string, args: Record<string, unknown>): Promise<unknown> {
+    return await this.call<unknown>(name, args);
+  }
+
+  // ---- Routine read families ---------------------------------------------
+
+  async enumerateLedgers(): Promise<LedgerSummariesResult> {
+    return await this.call<LedgerSummariesResult>("enumerate_ledgers", {});
+  }
+
+  async fetchLedger(
+    ledgerId: string,
+    projection: ItemProjection,
+  ): Promise<FetchedLedgerDto> {
+    return (
+      await this.call<{ ledger: FetchedLedgerDto }>("fetch_ledger", {
+        ledger_id: ledgerId,
+        projection,
+      })
+    ).ledger;
+  }
+
+  async fetchLedgerPage(
+    ledgerId: string,
+    projection: ItemProjection,
+    page: { offset?: number; limit?: number },
+  ): Promise<PaginatedLedgerDto> {
+    const args: Record<string, unknown> = { ledger_id: ledgerId, projection };
+    if (page.offset !== undefined) args["offset"] = page.offset;
+    if (page.limit !== undefined) args["limit"] = page.limit;
+    return await this.call<PaginatedLedgerDto>("fetch_ledger", args);
+  }
+
+  async fetchLedgerArchive(
+    ledgerId: string,
+    archiveId: string,
+  ): Promise<ArchiveContent> {
+    return (
+      await this.call<{ archive: ArchiveContent }>("fetch_ledger_archive", {
+        ledger_id: ledgerId,
+        archive_id: archiveId,
+      })
+    ).archive;
+  }
+
+  async fetchItem(
+    ledgerId: string,
+    itemId: string,
+    projection: ItemProjection,
+  ): Promise<ItemDto> {
+    return (
+      await this.call<{ item: ItemDto }>("fetch_item", {
+        ledger_id: ledgerId,
+        item_id: itemId,
+        projection,
+      })
+    ).item;
+  }
+
+  async searchItems(
+    ledgerId: string,
+    query: string,
+    projection: ItemProjection,
+  ): Promise<ItemDto[]> {
+    return (
+      await this.call<{ items: ItemDto[] }>("search_items", {
+        ledger_id: ledgerId,
+        query,
+        projection,
+      })
+    ).items;
+  }
+
+  async ftsSearch(
+    query: string,
+    projection: ItemProjection,
+    opts?: RemoteFtsSearchOpts,
+  ): Promise<FtsSearchResultDto[]> {
+    const args: Record<string, unknown> = { query, projection };
+    if (opts?.ledger !== undefined) args["ledger"] = opts.ledger;
+    if (opts?.limit !== undefined) args["limit"] = opts.limit;
+    if (opts?.fuzzy !== undefined) args["fuzzy"] = opts.fuzzy;
+    if (opts?.prefix !== undefined) args["prefix"] = opts.prefix;
+    if (opts?.status !== undefined) args["status"] = opts.status;
+    if (opts?.includeArchived !== undefined) {
+      args["include_archived"] = opts.includeArchived;
+    }
+    return (
+      await this.call<{ results: FtsSearchResultDto[] }>("fts_search", args)
+    ).results;
+  }
+
+  async snapshot(): Promise<LedgerSnapshot> {
+    return (await this.call<{ ledger: LedgerSnapshot }>("snapshot", {})).ledger;
+  }
+
+  async derivePredicates(): Promise<DerivedPredicates> {
+    return await this.call<DerivedPredicates>("derive_predicates", {});
+  }
+
+  async fetchMilestone(
+    milestoneId: string,
+    projection: ItemProjection,
+  ): Promise<FetchedMilestoneDto> {
+    return await this.call<FetchedMilestoneDto>("fetch_milestone", {
+      milestone_id: milestoneId,
+      projection,
+    });
+  }
+
+  async listMilestoneItems(
+    milestoneId: string,
+    projection: ItemProjection,
+  ): Promise<MilestoneItemGroupsDto> {
+    return (
+      await this.call<{ items: MilestoneItemGroupsDto }>(
+        "list_milestone_items",
+        { milestone_id: milestoneId, projection },
+      )
+    ).items;
+  }
+
+  async listProjects(): Promise<ProjectEntry[]> {
+    return (await this.call<ListProjectsResult>("list_projects", {})).projects;
+  }
+
+  async readLog(path: string): Promise<ReadLogResult> {
+    return await this.call<ReadLogResult>("read_log", { path });
+  }
+
+  // ---- Routine write families --------------------------------------------
+
+  async createItem(
+    ledgerId: string,
+    milestoneId: string,
+    init: RemoteItemInit,
+  ): Promise<ItemMutationAckDto> {
+    const args: Record<string, unknown> = {
+      ledger_id: ledgerId,
+      milestone_id: milestoneId,
+      status: init.status,
+      fields: init.fields,
+    };
+    if (init.id !== undefined) args["id"] = init.id;
+    if (init.author !== undefined) args["author"] = init.author;
+    if (init.session !== undefined) args["session"] = init.session;
+    return (
+      await this.call<{ item: ItemMutationAckDto }>("create_item", args)
+    ).item;
+  }
+
+  async updateItem(
+    ledgerId: string,
+    itemId: string,
+    patch: RemoteItemPatch,
+  ): Promise<ItemMutationAckDto> {
+    const args: Record<string, unknown> = {
+      ledger_id: ledgerId,
+      item_id: itemId,
+    };
+    if (patch.status !== undefined) args["status"] = patch.status;
+    if (patch.fields !== undefined) args["fields"] = patch.fields;
+    if (patch.author !== undefined) args["author"] = patch.author;
+    if (patch.session !== undefined) args["session"] = patch.session;
+    return (
+      await this.call<{ item: ItemMutationAckDto }>("update_item", args)
+    ).item;
+  }
+
+  async createMilestone(
+    init: RemoteMilestoneInit,
+  ): Promise<MilestoneMutationAckDto> {
+    const args: Record<string, unknown> = { title: init.title };
+    if (init.description !== undefined) args["description"] = init.description;
+    if (init.blockedBy !== undefined) args["blockedBy"] = init.blockedBy;
+    if (init.dependsOn !== undefined) args["dependsOn"] = init.dependsOn;
+    if (init.id !== undefined) args["id"] = init.id;
+    return (
+      await this.call<{ milestone: MilestoneMutationAckDto }>(
+        "create_milestone",
+        args,
+      )
+    ).milestone;
+  }
+
+  async updateMilestone(
+    milestoneId: string,
+    patch: RemoteMilestonePatch,
+  ): Promise<MilestoneMutationAckDto> {
+    const args: Record<string, unknown> = { milestone_id: milestoneId };
+    if (patch.status !== undefined) args["status"] = patch.status;
+    if (patch.title !== undefined) args["title"] = patch.title;
+    if (patch.description !== undefined) args["description"] = patch.description;
+    if (patch.blockedBy !== undefined) args["blockedBy"] = patch.blockedBy;
+    if (patch.dependsOn !== undefined) args["dependsOn"] = patch.dependsOn;
+    return (
+      await this.call<{ milestone: MilestoneMutationAckDto }>(
+        "update_milestone",
+        args,
+      )
+    ).milestone;
+  }
+
+  async archiveMilestone(
+    milestoneId: string,
+    summary: string,
+  ): Promise<ArchivePointer> {
+    return (
+      await this.call<{ pointer: ArchivePointer }>("archive_milestone", {
+        milestone_id: milestoneId,
+        summary,
+      })
+    ).pointer;
+  }
+
+  /** Close the MCP session and release the transport. */
+  async close(): Promise<void> {
+    await this.client.close();
+  }
+}

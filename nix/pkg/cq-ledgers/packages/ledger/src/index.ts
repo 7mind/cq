@@ -177,6 +177,28 @@ export type {
   ResolvedPostgresHandle,
   XdgCoherenceWatcher,
 } from "./store/createLedgerStore.js";
+export {
+  PROJECT_DISPLAY_NAME_HEADER,
+  PROJECT_DISPLAY_NAME_MAX_BYTES,
+  RemoteLedgerClient,
+  RemoteLedgerClientError,
+  RemoteAuthError,
+  RemoteUnavailableError,
+  RemoteProtocolError,
+  RemoteMalformedResponseError,
+  RemoteToolError,
+  RemoteDisplayNameError,
+  RemoteLedgerClientConfigError,
+  remoteMcpUrl,
+} from "./store/remote/RemoteLedgerClient.js";
+export type {
+  RemoteLedgerClientOpts,
+  RemoteItemInit,
+  RemoteItemPatch,
+  RemoteMilestoneInit,
+  RemoteMilestonePatch,
+  RemoteFtsSearchOpts,
+} from "./store/remote/RemoteLedgerClient.js";
 export { InMemoryLedgerStore } from "./store/InMemoryLedgerStore.js";
 export type { InMemoryLedgerStoreOpts } from "./store/InMemoryLedgerStore.js";
 export { validateSchema } from "./store/core.js";
