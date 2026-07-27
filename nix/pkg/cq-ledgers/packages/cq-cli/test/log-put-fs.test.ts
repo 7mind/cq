@@ -276,6 +276,20 @@ describe("cq log put fs — empty input refusal", () => {
     expect(await findTmpOrphans(root)).toEqual([]);
   });
 
+  it("empty stdin to a .jsonl dest is refused BEFORE jsonl validation (validateJsonl passes empty vacuously)", async () => {
+    const root = await makeTmpDir();
+    const io = makeIo("");
+    const args = parseLogPutArgs(root, ["--stdin", "--dest", "logs/raw/x.jsonl"]);
+    const outcome = await runLogPut(args, io);
+
+    expect(outcome.exitCode).toBe(1);
+    expect(io.errs.join("\n")).toContain("refusing to write an empty log");
+
+    const destAbs = path.join(root, LEDGER_STORAGE_DIRNAME, "logs", "raw", "x.jsonl");
+    await expect(fsPromises.stat(destAbs)).rejects.toThrow();
+    expect(await findTmpOrphans(root)).toEqual([]);
+  });
+
   it("whitespace-only stdin is refused identically", async () => {
     const root = await makeTmpDir();
     const io = makeIo("  \n\t \n");
