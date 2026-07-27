@@ -1,0 +1,290 @@
+/**
+ * The STRICT in-memory {@link AttestationStore} dummy (T685, goal G94).
+ *
+ * A hand-written dummy, not a generated mock: it implements the same port the
+ * namespaced production adapters will (T720), and it is deliberately STRICTER
+ * than a production store needs to be, so a service-logic defect fails here
+ * rather than silently succeeding:
+ *
+ *  - no lookup is an object property read: rows live in a `Map` under a COMPOSITE
+ *    `<attestationId>#<generation>` key, and the idempotency-key and
+ *    capability-hash lookups scan with `===`. Neither a caller-chosen id nor a
+ *    caller-chosen key can therefore resolve an `Object.prototype` member
+ *    ("constructor", "__proto__", …) as a phantom row — the prototype-pollution
+ *    class that has already produced three instances in this package. The
+ *    composite key space alone makes a collision impossible; the `Map` is
+ *    belt-and-braces on top of it;
+ *  - `insert` refuses a duplicate handle AND a duplicate live idempotency key;
+ *  - `replace` is a real compare-and-set over
+ *    {@link attestationRowDigest}, so a lost update is an
+ *    {@link AttestationStorageError} rather than a silently clobbered row —
+ *    and it survives a restart-equivalent rehydration, where object identity
+ *    would not;
+ *  - `replace` refuses to change a row's identity (handle or namespace);
+ *  - every row crossing the boundary is checked against the store's bound
+ *    namespace, so a namespace confusion is an {@link AttestationNamespaceError};
+ *  - `rows()` hands back a frozen copy, so no caller can mutate storage
+ *    in place;
+ *  - an injected {@link AttestationStoreFault} hook makes transport and storage
+ *    failures reproducible, proving they stay EXPLICIT instead of degrading into
+ *    a lifecycle state.
+ *
+ * {@link InMemoryAttestationStore.snapshot} and
+ * {@link InMemoryAttestationStore.rehydrate} give the restart-equivalence test
+ * its round trip: only what a real store would persist survives, which is why a
+ * rehydrated store still authorizes the original capability (it holds the HASH)
+ * and still answers every lookup identically.
+ */
+
+import {
+  AttestationContractError,
+  AttestationNamespaceError,
+  AttestationStorageError,
+  attestationInstantMs,
+  assertAttestationNamespace,
+  attestationNamespacesEqual,
+  attestationRowDigest,
+  formatAttestationNamespace,
+  isAttestationTombstone,
+  type AttestationEnvelope,
+  type AttestationNamespace,
+  type AttestationRow,
+  type AttestationStore,
+} from "./dispatchAttestation.js";
+import type { DispatchHandle } from "./compactDispatchProtocol.js";
+
+/** The store operations a fault hook can be triggered on. */
+export const ATTESTATION_STORE_OPERATIONS = [
+  "insert",
+  "read",
+  "readByCapabilityHash",
+  "readByIdempotencyKey",
+  "replace",
+  "remove",
+  "rows",
+] as const;
+
+export type AttestationStoreOperation = (typeof ATTESTATION_STORE_OPERATIONS)[number];
+
+/**
+ * Injected fault hook, called at the START of every store operation. Throw from
+ * it to simulate a transport or storage failure; return to proceed.
+ */
+export type AttestationStoreFault = (operation: AttestationStoreOperation) => void;
+
+function handleKey(handle: DispatchHandle): string {
+  return `${handle.attestationId}#${handle.generation}`;
+}
+
+/**
+ * The injected FAKE CLOCK the lifecycle tests drive. It only ever moves when a
+ * test moves it, so every deadline, 24h envelope and 30d horizon boundary is
+ * exact rather than approximate, and `reads` makes "the operation samples the
+ * clock once" an observable property rather than a claim.
+ */
+export class FakeDispatchClock {
+  private ms: number;
+  private observed = 0;
+
+  constructor(start: string) {
+    this.ms = attestationInstantMs(start, "start");
+  }
+
+  /** The injected `now: () => string`, bound so it can be passed as a value. */
+  readonly now = (): string => {
+    this.observed += 1;
+    return new Date(this.ms).toISOString();
+  };
+
+  /** The current instant WITHOUT counting a read. */
+  peek(): string {
+    return new Date(this.ms).toISOString();
+  }
+
+  /** Epoch ms of the current instant. */
+  get epochMs(): number {
+    return this.ms;
+  }
+
+  /** How many times {@link now} has been read. */
+  get reads(): number {
+    return this.observed;
+  }
+
+  /** Move the clock forward. Negative deltas are an authoring defect. */
+  advance(deltaMs: number): this {
+    if (!Number.isFinite(deltaMs) || deltaMs < 0) {
+      throw new AttestationContractError(
+        "advance",
+        `expected a non-negative delta, got "${deltaMs}"`,
+      );
+    }
+    this.ms += deltaMs;
+    return this;
+  }
+
+  /** Jump to an explicit instant. */
+  set(instant: string): this {
+    this.ms = attestationInstantMs(instant, "instant");
+    return this;
+  }
+}
+
+/**
+ * A deterministic entropy source: byte `i` of draw `n` is a pure function of
+ * both, so minted ids and capabilities are reproducible across a test run while
+ * still being distinct per draw. NEVER a production entropy source.
+ */
+export function sequentialDispatchRandomBytes(seed = 0): (count: number) => Uint8Array {
+  let draw = seed;
+  return (count: number): Uint8Array => {
+    draw += 1;
+    const bytes = new Uint8Array(count);
+    for (let i = 0; i < count; i += 1) {
+      bytes[i] = (draw * 31 + i * 7) % 256;
+    }
+    return bytes;
+  };
+}
+
+/** The strict in-memory attestation store. One instance, one namespace. */
+export class InMemoryAttestationStore implements AttestationStore {
+  readonly namespace: AttestationNamespace;
+
+  /** Rows by `<attestationId>#<generation>`; a Map, never a plain object. */
+  private readonly byHandle = new Map<string, AttestationRow>();
+  private readonly fault: AttestationStoreFault | undefined;
+
+  constructor(namespace: AttestationNamespace, fault?: AttestationStoreFault) {
+    this.namespace = assertAttestationNamespace(namespace);
+    this.fault = fault;
+  }
+
+  /**
+   * Rehydrate a store from what a real backend would have persisted — the
+   * restart-equivalent path. Rows are re-validated against the namespace.
+   */
+  static rehydrate(
+    namespace: AttestationNamespace,
+    rows: readonly AttestationRow[],
+    fault?: AttestationStoreFault,
+  ): InMemoryAttestationStore {
+    const store = new InMemoryAttestationStore(namespace, fault);
+    for (const row of rows) {
+      store.assertOwnNamespace(row);
+      const key = handleKey(row);
+      if (store.byHandle.has(key)) {
+        throw new AttestationStorageError(`duplicate rehydrated attestation "${key}"`);
+      }
+      store.byHandle.set(key, Object.freeze({ ...row }) as AttestationRow);
+    }
+    return store;
+  }
+
+  /** Exactly the rows a real backend would persist, in insertion order. */
+  snapshot(): readonly AttestationRow[] {
+    return Object.freeze([...this.byHandle.values()]);
+  }
+
+  insert(row: AttestationEnvelope): void {
+    this.trip("insert");
+    this.assertOwnNamespace(row);
+    if (row.kind !== "envelope") {
+      throw new AttestationStorageError("insert accepts a prepared envelope only");
+    }
+    const key = handleKey(row);
+    if (this.byHandle.has(key)) {
+      throw new AttestationStorageError(`attestation "${key}" already exists`);
+    }
+    for (const existing of this.byHandle.values()) {
+      if (existing.idempotencyKey === row.idempotencyKey) {
+        throw new AttestationStorageError(
+          `idempotency key "${row.idempotencyKey}" is already held by "${handleKey(existing)}"`,
+        );
+      }
+    }
+    this.byHandle.set(key, row);
+  }
+
+  read(handle: DispatchHandle): AttestationRow | undefined {
+    this.trip("read");
+    return this.byHandle.get(handleKey(handle));
+  }
+
+  readByCapabilityHash(capabilityHash: string): AttestationRow | undefined {
+    this.trip("readByCapabilityHash");
+    if (typeof capabilityHash !== "string" || capabilityHash === "") {
+      return undefined;
+    }
+    for (const row of this.byHandle.values()) {
+      // A tombstone has no capability hash at all, so an expired envelope can
+      // never be resolved by a capability again.
+      if (!isAttestationTombstone(row) && row.resultCapabilityHash === capabilityHash) {
+        return row;
+      }
+    }
+    return undefined;
+  }
+
+  readByIdempotencyKey(idempotencyKey: string): readonly AttestationRow[] {
+    this.trip("readByIdempotencyKey");
+    const found: AttestationRow[] = [];
+    for (const row of this.byHandle.values()) {
+      if (row.idempotencyKey === idempotencyKey) {
+        found.push(row);
+      }
+    }
+    return Object.freeze(found);
+  }
+
+  replace(expected: AttestationRow, next: AttestationRow): void {
+    this.trip("replace");
+    this.assertOwnNamespace(next);
+    const key = handleKey(expected);
+    if (key !== handleKey(next)) {
+      throw new AttestationStorageError(
+        `replace must not change a row's identity ("${key}" -> "${handleKey(next)}")`,
+      );
+    }
+    const current = this.byHandle.get(key);
+    if (current === undefined) {
+      throw new AttestationStorageError(`no attestation "${key}" to replace`);
+    }
+    // Compare-and-set over the row's CONTENT digest, so a concurrent writer that
+    // already advanced the row loses instead of clobbering it.
+    if (attestationRowDigest(current) !== attestationRowDigest(expected)) {
+      throw new AttestationStorageError(`lost update on attestation "${key}"`);
+    }
+    if (current.idempotencyKey !== next.idempotencyKey) {
+      throw new AttestationStorageError(`replace must not change the idempotency key of "${key}"`);
+    }
+    this.byHandle.set(key, next);
+  }
+
+  remove(handle: DispatchHandle): void {
+    this.trip("remove");
+    const key = handleKey(handle);
+    if (!this.byHandle.delete(key)) {
+      throw new AttestationStorageError(`no attestation "${key}" to remove`);
+    }
+  }
+
+  rows(): readonly AttestationRow[] {
+    this.trip("rows");
+    return Object.freeze([...this.byHandle.values()]);
+  }
+
+  private trip(operation: AttestationStoreOperation): void {
+    this.fault?.(operation);
+  }
+
+  private assertOwnNamespace(row: AttestationRow): void {
+    if (!attestationNamespacesEqual(this.namespace, row.namespace)) {
+      throw new AttestationNamespaceError(
+        `attestation "${row.attestationId}" belongs to namespace ` +
+          `${formatAttestationNamespace(row.namespace)}, not ` +
+          `${formatAttestationNamespace(this.namespace)}`,
+      );
+    }
+  }
+}

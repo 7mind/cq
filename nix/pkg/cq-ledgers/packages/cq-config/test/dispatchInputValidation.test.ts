@@ -279,10 +279,12 @@ describe("the inside-prepare validation entry point", () => {
   });
 
   test("every rejection reason is a declared member of the closed reason set", () => {
-    // The closed set spans BOTH pre-launch stages: T976's inside-prepare
-    // validation (first six) and T978's server-side refs assembly (last six).
-    // The T978 half is exercised in dispatchRefAssembly.test.ts, which also
-    // asserts the UNION observed across both modules covers the whole set.
+    // The closed set spans ALL THREE pre-launch stages: T976's inside-prepare
+    // validation (first six), T978's server-side refs assembly (next six), and
+    // T685's launch-envelope check inside prepare (the last). The T978 half is
+    // exercised in dispatchRefAssembly.test.ts and the T685 one in
+    // dispatchAttestation.test.ts; the former also asserts the UNION observed
+    // across the modules covers the whole set.
     expect(DISPATCH_PRE_LAUNCH_REJECTION_REASONS).toEqual([
       "unknown-role",
       "unsupported-surface",
@@ -296,6 +298,7 @@ describe("the inside-prepare validation entry point", () => {
       "unresolvable-ref",
       "cross-project-ref",
       "invalid-parent-guidance",
+      "invalid-launch-envelope",
     ]);
     const observed = new Set(
       [

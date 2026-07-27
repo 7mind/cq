@@ -864,9 +864,12 @@ describe("a refs-assembly rejection is T976's rejection, not a lifecycle state",
     );
     expect(source.readItem("tasks", "T978")).toBeDefined();
     // The two T976-only placement reasons come from resolveDispatchInputValidator
-    // (covered in dispatchInputValidation.test.ts); everything else is here.
+    // (covered in dispatchInputValidation.test.ts) and the launch-envelope reason
+    // from T685's prepare (covered in dispatchAttestation.test.ts); everything
+    // else is here.
     const placementOnly = ["unknown-validator-placement", "undeclared-child-side-validation"];
-    expect([...observed, ...placementOnly].sort()).toEqual(
+    const prepareOnly = ["invalid-launch-envelope"];
+    expect([...observed, ...placementOnly, ...prepareOnly].sort()).toEqual(
       [...DISPATCH_PRE_LAUNCH_REJECTION_REASONS].sort(),
     );
   });

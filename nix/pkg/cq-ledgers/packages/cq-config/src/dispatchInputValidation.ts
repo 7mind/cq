@@ -99,10 +99,13 @@ export const DISPATCH_PRE_LAUNCH_OUTCOME = "pre-launch-rejection" as const;
 /**
  * Why ordinary dispatch input was rejected before any child launched.
  *
- * The first six are T976's inside-prepare validation failures; the last six are
- * T978's server-side REFS-ASSEMBLY failures (see {@link ./dispatchRefAssembly}).
- * They share ONE rejection type deliberately — a caller distinguishes them by
- * `reason`, never by catching a second rejection shape.
+ * The first six are T976's inside-prepare validation failures; the next six are
+ * T978's server-side REFS-ASSEMBLY failures (see {@link ./dispatchRefAssembly});
+ * the last is T685's LAUNCH-ENVELOPE failure, raised by `prepare` itself when the
+ * idempotency key or the timeout is outside the bound contract (see
+ * {@link ./dispatchAttestation}). They share ONE rejection type deliberately — a
+ * caller distinguishes them by `reason`, never by catching a second rejection
+ * shape.
  */
 export const DISPATCH_PRE_LAUNCH_REJECTION_REASONS = [
   "unknown-role",
@@ -117,6 +120,7 @@ export const DISPATCH_PRE_LAUNCH_REJECTION_REASONS = [
   "unresolvable-ref",
   "cross-project-ref",
   "invalid-parent-guidance",
+  "invalid-launch-envelope",
 ] as const;
 
 export type DispatchPreLaunchRejectionReason =
