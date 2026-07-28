@@ -943,6 +943,50 @@ for (const mode of MODES) {
       expect(outcome.result.details).toBeDefined();
     });
 
+    test("an INVALID store AT the deadline is `invalid-output` — in time, then judged on merit", () => {
+      // Completes the store matrix: {valid, invalid} x {before, at, after}. AT the
+      // boundary the submission is in time, so it is classified by its payload.
+      const h = harness({ seed: 110 });
+      const prepared = prepareCodex(h);
+      h.clock.advance(TIMEOUT_MS);
+      expect(h.clock.peek()).toBe(prepared.childCancelAt);
+      const outcome = storeVia(h, prepared, INVALID_OUTPUT);
+      expect(outcome.state).toBe("aborted");
+      if (outcome.state !== "aborted") throw new Error("unreachable");
+      expect(outcome.result.reason).toBe("invalid-output");
+    });
+
+    test("PREPARE itself refuses a bad launch envelope, allocating nothing", () => {
+      // The other reading of "delayed prepare/refusal": prepare is the fail-closed
+      // gate (T976), so a refusal must leave NO record to be confirmed or fetched.
+      const h = harness({ seed: 151 });
+      for (const overrides of [
+        { timeoutMs: 1 },
+        { idempotencyKey: "" },
+        { roleId: "not-a-dispatched-role" },
+        { input: { taskId: "T690" } as DispatchJSONValue },
+      ]) {
+        const outcome = prepareDispatch(
+          {
+            namespace: NAMESPACE,
+            roleId: ROLE_ID,
+            surface: "codex",
+            input: INPUT,
+            idempotencyKey: "T690-refused",
+            timeoutMs: TIMEOUT_MS,
+            registry: DISPATCH_OVERLAY_REGISTRY,
+            promptDigest: PROMPT_DIGEST,
+            catalogHash: CATALOG_HASH,
+            expectedChild: codexExpectedChild(CORRELATION),
+            ...overrides,
+          } as PrepareDispatchRequest,
+          h.prepareDeps,
+        );
+        expect(outcome.accepted).toBe(false);
+      }
+      expect(h.store.snapshot()).toHaveLength(0);
+    });
+
     test("an INVALID store AFTER the deadline is `deadline-exceeded` — the deadline is read first", () => {
       // Ordering matters: a late submission must not be re-classified by the
       // quality of its payload, or a late child could choose its abort reason.
