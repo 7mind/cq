@@ -1541,6 +1541,15 @@ function detectNativeAgentDeclarations(text: string): boolean {
   });
 }
 
+/**
+ * Whether `text` materialises a native-agent declaration file under the GLOBAL
+ * `$CODEX_HOME/<dir>/`. A function of the directory name so the assertion tracks
+ * {@link CODEX_GLOBAL_AGENTS_DIR} rather than a hard-coded copy of it.
+ */
+function detectGlobalAgentsDir(text: string, dir: string): boolean {
+  return new RegExp(String.raw`\.codex/${dir}/[^"']*\.toml`).test(text);
+}
+
 /** `mkReferenceLine`'s command-role branch, which must SURVIVE T691 (defects:D178). */
 const SYNTHETIC_COMMAND_ROLE_LINE =
   '  "- `${"$"}${skillName role.roleId}` → [`references/${referenceName}`](references/${referenceName})"';
@@ -1715,6 +1724,34 @@ describe("T690 §6 — the two-part role-delivery prerequisite must stay atomic"
       'description = "b"; developer_instructions = "c";',
     ].join("");
     expect(detectNativeAgentDeclarations(scattered)).toBe(false);
+  });
+
+  test("the declarations land in the dir CODEX_GLOBAL_AGENTS_DIR names, under $CODEX_HOME", () => {
+    // The remaining cross-LANGUAGE gap in the pair: nix cannot import this
+    // constant, so without a check `CODEX_GLOBAL_AGENTS_DIR` could name one
+    // directory while the home module materialises another, and every dispatch
+    // would fail to resolve its agent. `$CODEX_HOME` defaults to `~/.codex`, and
+    // home-manager paths are home-relative, so `.codex/<dir>/` is that location.
+    //
+    // It must be THE GLOBAL dir: a project-scoped `.codex/agents/` at a repository
+    // root is advertised but UNSPAWNABLE (openai/codex#26408), which is the
+    // `project-agents-dir` verdict — the two spellings are indistinguishable by
+    // eye, so this pins which one the module writes.
+    expect(detectGlobalAgentsDir(homeModule, CODEX_GLOBAL_AGENTS_DIR)).toBe(true);
+    // Negative controls: the detector tracks the CONSTANT, and is not satisfied by
+    // some other `.codex/` path (the module writes `.codex/skills/` and
+    // `.codex/prompts/` too, so a bare `.codex/` probe would pass vacuously).
+    expect(detectGlobalAgentsDir(homeModule, "agents-v2")).toBe(false);
+    expect(detectGlobalAgentsDir('home.file.".codex/skills/x" = { };', "agents")).toBe(false);
+    expect(detectGlobalAgentsDir('home.file.".codex/agents/x.toml" = { };', "agents")).toBe(true);
+    // A renamed target in the real module breaks it, which is the regression this
+    // exists to catch.
+    expect(
+      detectGlobalAgentsDir(
+        homeModule.replaceAll(`.codex/${CODEX_GLOBAL_AGENTS_DIR}/`, ".codex/renamed/"),
+        CODEX_GLOBAL_AGENTS_DIR,
+      ),
+    ).toBe(false);
   });
 
   test("the COMMAND-role reference lines are out of scope and must survive", () => {
