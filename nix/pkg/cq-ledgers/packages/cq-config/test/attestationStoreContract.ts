@@ -186,6 +186,7 @@ const OUTPUT: DispatchJSONValue = {
   filesTouched: ["packages/cq-config/src/dispatchAttestationBackend.ts"],
   checkSummary: "adapters green",
   summary: `Adapters landed (${OUTPUT_MARKER}).`,
+  gateDurationMs: 1,
 };
 
 const OTHER_OUTPUT: DispatchJSONValue = {

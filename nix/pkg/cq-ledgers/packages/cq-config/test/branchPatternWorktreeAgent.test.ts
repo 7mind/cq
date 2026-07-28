@@ -63,10 +63,11 @@ describe("D77 — implement-worker outputSchema.branch accepts both namings", ()
   const base = {
     taskId: "T123",
     status: "pass",
-    resultCommit: "deadbeef",
+    resultCommit: "a".repeat(40),
     filesTouched: [],
     checkSummary: "ok",
     summary: "s",
+    gateDurationMs: 1,
   };
 
   test("accepts implement/T123", () => {

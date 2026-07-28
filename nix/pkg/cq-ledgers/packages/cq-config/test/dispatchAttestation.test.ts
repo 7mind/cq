@@ -134,6 +134,7 @@ const OUTPUT: DispatchJSONValue = {
   filesTouched: ["packages/cq-config/src/dispatchAttestation.ts"],
   checkSummary: "3621 pass / 142 skip / 0 fail",
   summary: "Contract, port and strict dummy landed.",
+  gateDurationMs: 1,
 };
 
 const OTHER_OUTPUT: DispatchJSONValue = {

@@ -144,7 +144,11 @@ export {
 } from "./promptCatalogVerification.js";
 export { planAdvanceSidecar, PLAN_STEP_ACTIONS } from "./schemas/plan-advance.js";
 export { planReviewerSidecar, PLAN_REVIEW_VERDICTS } from "./schemas/plan-reviewer.js";
-export { implementWorkerSidecar, IMPLEMENT_WORKER_STATUSES } from "./schemas/implement-worker.js";
+export {
+  implementWorkerSidecar,
+  IMPLEMENT_WORKER_STATUSES,
+  TEST_GUARD_GLOBS,
+} from "./schemas/implement-worker.js";
 export {
   implementReviewerSidecar,
   IMPLEMENT_REVIEW_VERDICTS,
