@@ -1429,6 +1429,23 @@ export const AGENT_ROLES: AgentRole[] = [
         },
         "summary": {
           "type": "string"
+        },
+        "gateReRan": {
+          "type": "boolean",
+          "description": "Whether the reviewer re-ran `bun run check` itself rather than trusting the worker's claim."
+        },
+        "resultCommitVerified": {
+          "type": "boolean",
+          "description": "Whether the reviewer verified the worker's resultCommit sha (e.g. via cat-file / tip equality) rather than accepting it unchecked."
+        },
+        "gateDurationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Wall-clock milliseconds the reviewer's own re-run of `bun run check` took. Required when gateReRan is true."
+        },
+        "gateReRanReason": {
+          "type": "string",
+          "description": "Optional free-text explanation for why the gate was not re-run, when gateReRan is false."
         }
       },
       "required": [
@@ -1437,9 +1454,30 @@ export const AGENT_ROLES: AgentRole[] = [
         "criticism",
         "questions",
         "defects",
-        "rationale"
+        "rationale",
+        "gateReRan",
+        "resultCommitVerified"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "gateReRan": {
+                "const": true
+              }
+            },
+            "required": [
+              "gateReRan"
+            ]
+          },
+          "then": {
+            "required": [
+              "gateDurationMs"
+            ]
+          }
+        }
+      ]
     },
   },
   {
