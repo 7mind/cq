@@ -47,6 +47,13 @@
  * tombstone itself is dropped at {@link IDEMPOTENCY_HORIZON_MS} (30d), after
  * which the key is reusable and the lookup answers `attestation-not-found`.
  *
+ * Both boundaries are decided at OPERATION time, never by a sweep: a sweep only
+ * reclaims storage. In particular a row past the 30d horizon that no sweep has
+ * dropped yet does not hold its idempotency key — `prepare_dispatch` reclaims it
+ * in the same unit of work that reuses the key, so a durable UNIQUE constraint on
+ * `(namespace, idempotencyKey)` can never refuse an insert this module has
+ * authorized (T720; see `resolveIdempotencyKeyReclaim`).
+ *
  * The clock is injected as `now: () => string` (ISO-8601 UTC), the pattern the
  * surrounding store code already uses (`AbstractLedgerStore`, `FsPersistence`,
  * `InMemoryLedgerStore`), so every deadline, expiry and sweep boundary is driven
@@ -932,7 +939,11 @@ export function prepareDispatch(
   // --- allocation phase -------------------------------------------------
   const { at, atMs } = readNow(deps);
   const generation = resolveGeneration(request.reprepareOf, deps);
-  assertIdempotencyKeyFree(idempotencyKey, atMs, deps);
+  // Rows whose idempotency horizon has passed no longer HOLD the key, but they
+  // are still physically present until a sweep runs. They are reclaimed here, in
+  // this unit of work, so reuse is decided purely by the clock — see
+  // `resolveIdempotencyKeyReclaim`.
+  const reclaimable = resolveIdempotencyKeyReclaim(idempotencyKey, atMs, deps);
 
   executed.push("allocate-attestation");
   const attestationId =
@@ -961,6 +972,13 @@ export function prepareDispatch(
     catalogHash,
     inputDigest,
   });
+  // Drop the reclaimed rows BEFORE the insert: a durable store enforces the
+  // idempotency horizon's other half with a UNIQUE (namespace, idempotency_key)
+  // constraint, so an expired row still occupying the key would refuse an insert
+  // the service has already authorized.
+  for (const stale of reclaimable) {
+    deps.store.remove(stale);
+  }
   deps.store.insert(
     Object.freeze({
       kind: "envelope" as const,
@@ -1009,17 +1027,53 @@ function resolveGeneration(
   return reprepareOf.generation + 1;
 }
 
-function assertIdempotencyKeyFree(idempotencyKey: string, atMs: number, deps: Deps): void {
+/**
+ * The instant a row stops holding its idempotency key, or `undefined` while the
+ * row is still LIVE (and therefore holds it indefinitely). A tombstone carries
+ * the instant explicitly; a terminal envelope that no sweep has collapsed yet
+ * derives the same instant from `terminalAt`, so the two agree and neither
+ * depends on a sweep having run.
+ */
+function idempotencyHorizonOf(row: AttestationRow): number | undefined {
+  if (isAttestationTombstone(row)) {
+    return attestationInstantMs(row.reuseAfter, "reuseAfter");
+  }
+  if (row.terminalAt === undefined) {
+    return undefined;
+  }
+  return attestationInstantMs(row.terminalAt, "terminalAt") + IDEMPOTENCY_HORIZON_MS;
+}
+
+/**
+ * Decide whether `idempotencyKey` is free, and return the rows that must be
+ * RECLAIMED for it to be — those past {@link IDEMPOTENCY_HORIZON_MS}, which
+ * {@link fetchDispatchResult} already answers `attestation-not-found` for.
+ *
+ * Reclaiming is not housekeeping, it is the operation-time half of the horizon.
+ * A store enforces key uniqueness DURABLY (a unique index, or a scan of the
+ * namespace directory under its lock), so a row whose horizon has passed but
+ * which a sweep has not yet dropped would refuse an insert this function has
+ * already authorized — the key would be free according to every lookup and held
+ * according to the store, until an unrelated sweep happened to run. T685 asserted
+ * reuse only AFTER a sweep, so this gap survived; T720's shared adapter contract,
+ * which requires every operation-time check to be independent of sweeps, is what
+ * exposed it.
+ */
+function resolveIdempotencyKeyReclaim(
+  idempotencyKey: string,
+  atMs: number,
+  deps: Deps,
+): readonly DispatchHandle[] {
+  const reclaimable: DispatchHandle[] = [];
   for (const row of deps.store.readByIdempotencyKey(idempotencyKey)) {
     assertSameNamespace(deps.store.namespace, row);
-    if (isAttestationTombstone(row)) {
-      if (atMs < attestationInstantMs(row.reuseAfter, "reuseAfter")) {
-        throw new AttestationKeyReuseError(idempotencyKey, handleOf(row));
-      }
-      continue;
+    const horizon = idempotencyHorizonOf(row);
+    if (horizon === undefined || atMs < horizon) {
+      throw new AttestationKeyReuseError(idempotencyKey, handleOf(row));
     }
-    throw new AttestationKeyReuseError(idempotencyKey, handleOf(row));
+    reclaimable.push(handleOf(row));
   }
+  return Object.freeze(reclaimable);
 }
 
 function handleOf(row: AttestationRow): DispatchHandle {

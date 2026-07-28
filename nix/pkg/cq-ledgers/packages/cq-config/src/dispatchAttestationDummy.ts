@@ -40,6 +40,7 @@ import {
   AttestationContractError,
   AttestationNamespaceError,
   AttestationStorageError,
+  AttestationTransportError,
   attestationInstantMs,
   assertAttestationNamespace,
   attestationNamespacesEqual,
@@ -51,6 +52,14 @@ import {
   type AttestationRow,
   type AttestationStore,
 } from "./dispatchAttestation.js";
+import {
+  applyJournalToStore,
+  loadScopeFromStore,
+  runAttestationUnitOfWork,
+  type AttestationBackend,
+  type AttestationLoadScope,
+} from "./dispatchAttestationBackend.js";
+import { AsyncMutex } from "./asyncMutex.js";
 import type { DispatchHandle } from "./compactDispatchProtocol.js";
 
 /** The store operations a fault hook can be triggered on. */
@@ -153,7 +162,13 @@ export class InMemoryAttestationStore implements AttestationStore {
 
   /** Rows by `<attestationId>#<generation>`; a Map, never a plain object. */
   private readonly byHandle = new Map<string, AttestationRow>();
-  private readonly fault: AttestationStoreFault | undefined;
+  /**
+   * The injected fault hook. Public because a rehydration — the dummy's
+   * restart-equivalent — must carry it forward: a restart that silently dropped
+   * the hook would make an injected transport failure stop reproducing halfway
+   * through a test, which is worse than not having the hook at all.
+   */
+  readonly fault: AttestationStoreFault | undefined;
 
   constructor(namespace: AttestationNamespace, fault?: AttestationStoreFault) {
     this.namespace = assertAttestationNamespace(namespace);
@@ -200,6 +215,18 @@ export class InMemoryAttestationStore implements AttestationStore {
       if (existing.idempotencyKey === row.idempotencyKey) {
         throw new AttestationStorageError(
           `idempotency key "${row.idempotencyKey}" is already held by "${handleKey(existing)}"`,
+        );
+      }
+      // T720: the dummy's stand-in for the production adapters' unique
+      // capability-hash index. Without it, "two live rows resolvable by ONE
+      // capability" would be refused only by the durable stores, and the shared
+      // adapter contract could not hold the dummy to the same assertion.
+      if (
+        !isAttestationTombstone(existing) &&
+        existing.resultCapabilityHash === row.resultCapabilityHash
+      ) {
+        throw new AttestationStorageError(
+          `capability hash is already held by "${handleKey(existing)}"`,
         );
       }
     }
@@ -286,5 +313,96 @@ export class InMemoryAttestationStore implements AttestationStore {
           `${formatAttestationNamespace(this.namespace)}`,
       );
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The in-memory reference BACKEND (T720)
+// ---------------------------------------------------------------------------
+
+/**
+ * An {@link AttestationBackend} over one {@link InMemoryAttestationStore}, so the
+ * strict dummy can be driven through the SAME shared adapter contract as the
+ * three production stores (T720) rather than through a parallel set of
+ * assertions. It reuses the production unit-of-work runner verbatim: the same
+ * scope narrowing, the same {@link BufferedAttestationStore}, the same
+ * journal-with-expected-digest apply. What it does NOT have is durability or
+ * cross-process visibility, which is exactly why
+ * {@link ATTESTATION_IN_MEMORY_BACKEND} is refused at registration.
+ *
+ * `apply` restores the pre-apply snapshot on any failure, so a partially applied
+ * journal cannot leave the dummy in a state no durable adapter could reach — a
+ * rolled-back transaction is the behaviour the contract asserts, and a test
+ * double that quietly kept half a sweep would make that assertion vacuous.
+ */
+export class InMemoryAttestationBackend implements AttestationBackend {
+  private readonly mutex = new AsyncMutex();
+  private store: InMemoryAttestationStore;
+  private closed = false;
+
+  constructor(store: InMemoryAttestationStore) {
+    this.store = store;
+  }
+
+  get namespace(): AttestationNamespace {
+    return this.store.namespace;
+  }
+
+  /** The rows this backend holds, in insertion order. */
+  storedRows(): readonly AttestationRow[] {
+    return this.store.snapshot();
+  }
+
+  /**
+   * Replace the live store with one rehydrated from what a real backend would
+   * have persisted — the dummy's restart-equivalent.
+   */
+  rehydrate(): this {
+    this.store = this.reopen(this.store.snapshot());
+    return this;
+  }
+
+  /** Write one revision WITHOUT a unit of work — the out-of-band writer. */
+  outOfBandReplace(row: AttestationRow): void {
+    const current = this.store.read(row);
+    if (current === undefined) {
+      throw new AttestationStorageError(`no attestation to replace out of band`);
+    }
+    this.store.replace(current, row);
+  }
+
+  transact<T>(scope: AttestationLoadScope, body: (store: AttestationStore) => T): Promise<T> {
+    return this.mutex.run(async () => {
+      if (this.closed) {
+        throw new AttestationTransportError("the in-memory attestation store is closed");
+      }
+      return runAttestationUnitOfWork(
+        this.namespace,
+        scope,
+        {
+          load: (loadScope) => loadScopeFromStore(this.store, loadScope),
+          apply: (journal) => {
+            const before = this.store.snapshot();
+            try {
+              applyJournalToStore(this.store, journal);
+            } catch (error) {
+              this.store = this.reopen(before);
+              throw error;
+            }
+          },
+        },
+        body,
+      );
+    });
+  }
+
+  close(): Promise<void> {
+    this.closed = true;
+    return Promise.resolve();
+  }
+
+  /** Rebuild the store over `rows`, carrying the injected fault hook forward. */
+  private reopen(rows: readonly AttestationRow[]): InMemoryAttestationStore {
+    return InMemoryAttestationStore.rehydrate(this.store.namespace, rows, this.store.fault);
   }
 }

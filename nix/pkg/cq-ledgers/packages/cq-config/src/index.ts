@@ -389,6 +389,89 @@ export type { AttestationStoreOperation, AttestationStoreFault } from "./dispatc
 export {
   ATTESTATION_STORE_OPERATIONS,
   InMemoryAttestationStore,
+  InMemoryAttestationBackend,
   FakeDispatchClock,
   sequentialDispatchRandomBytes,
 } from "./dispatchAttestationDummy.js";
+
+// --- T720: the namespaced production AttestationStore adapters -------------
+export { AsyncMutex } from "./asyncMutex.js";
+export type {
+  AttestationStoreBackend,
+  AttestationExcludedBackend,
+  AttestationLoadScope,
+  AttestationLoadScopeKind,
+  AttestationJournalEntry,
+  AttestationBackend,
+  AttestationBackendIO,
+  AttestationBackendDeps,
+  AttestationBackendPrepareDeps,
+  AttestationSweepTimer,
+  AttestationSweepScheduleOptions,
+  PersistedAttestationRow,
+} from "./dispatchAttestationBackend.js";
+export {
+  ATTESTATION_STORE_BACKENDS,
+  ATTESTATION_EXCLUDED_BACKENDS,
+  ATTESTATION_EXCLUSION_REASONS,
+  ATTESTATION_IN_MEMORY_BACKEND,
+  ATTESTATION_BACKEND_COVERAGE,
+  ATTESTATION_DEFERRAL_DISCHARGE,
+  ATTESTATION_DEFERRAL_COVERAGE,
+  assertAttestationDeferralDischarge,
+  ATTESTATION_LOAD_SCOPE_KINDS,
+  ATTESTATION_TABLE,
+  PERSISTED_ATTESTATION_COLUMNS,
+  AttestationBackendUnsupportedError,
+  AttestationSweepScheduler,
+  BufferedAttestationStore,
+  abortDispatchOn,
+  applyJournalToStore,
+  assertAttestationBackendCoverage,
+  assertAttestationStoreBackend,
+  assertAttestationStoreNamespace,
+  attestationStorageKey,
+  confirmDispatchCompletionOn,
+  defaultAttestationSweepTimer,
+  fetchDispatchResultOn,
+  formatAttestationNamespaceLockKey,
+  handleLoadScope,
+  journalEntryHandle,
+  loadScopeFromStore,
+  persistAttestationRow,
+  prepareDispatchOn,
+  prepareLoadScope,
+  rehydrateAttestationRow,
+  runAttestationUnitOfWork,
+  storeDispatchResultOn,
+  storeResultLoadScope,
+  sweepAttestationsOn,
+} from "./dispatchAttestationBackend.js";
+export type { SqliteAttestationBackendOptions } from "./dispatchAttestationSqlite.js";
+export {
+  ATTESTATION_BUSY_TIMEOUT_MS,
+  ATTESTATION_DB_FILENAME,
+  SqliteAttestationBackend,
+  asSqliteBackendError,
+  ensureAttestationSchema,
+  xdgAttestationDbPath,
+  xdgAttestationStateBase,
+} from "./dispatchAttestationSqlite.js";
+export type { FsAttestationBackendOptions } from "./dispatchAttestationFs.js";
+export {
+  ATTESTATION_LOCKS_DIR,
+  ATTESTATION_LOCK_POLL_MS,
+  ATTESTATION_LOCK_TIMEOUT_MS,
+  FsAttestationBackend,
+  asFsBackendError,
+  fsAttestationNamespaceDir,
+  fsAttestationRowFileContent,
+  fsAttestationRowPath,
+} from "./dispatchAttestationFs.js";
+export type { PostgresAttestationBackendOptions } from "./dispatchAttestationPostgres.js";
+export {
+  PostgresAttestationBackend,
+  asPgBackendError,
+  ensurePgAttestationSchema,
+  openAttestationPgPool,
+} from "./dispatchAttestationPostgres.js";

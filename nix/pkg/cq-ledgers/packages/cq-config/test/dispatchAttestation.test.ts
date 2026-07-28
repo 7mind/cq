@@ -1670,8 +1670,18 @@ describe("namespace, auth, transport and storage errors stay explicit", () => {
     expect(() => h.store.insert(sameKeyOtherHandle)).toThrow(
       `idempotency key "T685-round-0" is already held by "${p.attestationId}#1"`,
     );
-    // A different key at a different handle is accepted, and nothing was lost.
-    h.store.insert({ ...sameKeyOtherHandle, idempotencyKey: "T685-round-1" });
+    // A free key at a free handle but the SAME capability hash is refused too:
+    // T720 gave the dummy the production adapters' unique capability-hash guard,
+    // so two live rows can never be resolvable by ONE capability here either.
+    expect(() =>
+      h.store.insert({ ...sameKeyOtherHandle, idempotencyKey: "T685-round-1" }),
+    ).toThrow(`capability hash is already held by "${p.attestationId}#1"`);
+    // A different key, handle AND capability is accepted, and nothing was lost.
+    h.store.insert({
+      ...sameKeyOtherHandle,
+      idempotencyKey: "T685-round-1",
+      resultCapabilityHash: "f".repeat(64),
+    });
     expect(h.store.rows()).toHaveLength(2);
     expect(fetchDispatchResult(fetchRequest(p), h.deps).state).toBe("prepared");
 
