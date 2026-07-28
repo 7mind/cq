@@ -1338,3 +1338,95 @@ for (const mode of MODES) {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// 6. The deployment-coupling guard (defects:D186), and this task's boundary
+// ---------------------------------------------------------------------------
+
+const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
+const CODEX_SKILL_PROJECTION = path.join(REPO_ROOT, "nix", "lib", "codex-command-skills.nix");
+const CODEX_HOME_MODULE = path.join(REPO_ROOT, "nix", "hm", "codex.nix");
+
+/** The `else` branch of `mkReferenceLine` — the line researches:RS11 measured. */
+const DISPATCHED_ROLE_REFERENCE_LINE = "- Codex collaboration role `";
+/** The `$cq-*` branch, which defects:D178 says to KEEP: inline recursion needs it. */
+const COMMAND_ROLE_REFERENCE_LINE = "→ [`references/${referenceName}`]";
+
+describe("T690 §6 — the two-part role-delivery prerequisite must stay atomic", () => {
+  const projection = readFileSync(CODEX_SKILL_PROJECTION, "utf8");
+  const homeModule = readFileSync(CODEX_HOME_MODULE, "utf8");
+  const nixSurface = `${projection}\n${homeModule}`;
+
+  /** Prerequisite (a): the dispatched-role advertisement is gone. */
+  const suppressedReferenceLines = !projection.includes(DISPATCHED_ROLE_REFERENCE_LINE);
+  /** Prerequisite (b): each dispatched role is a native agent declaration. */
+  const declaresNativeAgents = nixSurface.includes("developer_instructions");
+
+  test("the prerequisites are declared as a PAIR, in the order they must be applied", () => {
+    expect([...CODEX_ROLE_DELIVERY_PREREQUISITES]).toEqual([
+      "suppress-dispatched-role-reference-lines",
+      "declare-dispatched-roles-as-global-native-agents",
+    ]);
+    expect(CODEX_ROLE_DELIVERY_PREREQUISITES_ARE_ATOMIC).toBe(true);
+    expect(CODEX_ROLE_DELIVERY_MIGRATION_OWNER).toBe("T691");
+  });
+
+  test("THE GUARD: neither prerequisite may ship without the other", () => {
+    // defects:D186's lesson, applied PRE-EMPTIVELY on the codex surface rather
+    // than discovered after the fact on the pi one: a dispatch contract that
+    // spans an asset and the code it drives, with nothing coupling them, breaks
+    // the surface on the next deploy.
+    //
+    // The specific hazard here is measured, not hypothetical. researches:RS11
+    // recommendation #1: "Never ship (a) alone — it removes the leak and leaves
+    // children un-roled", and RS11 measured what un-roled costs at real scale
+    // (the child executes the 43.5 KB ORCHESTRATOR workflow, then fails to spawn).
+    // Shipping (b) alone is merely wasteful rather than broken, but it is still
+    // an incomplete migration, so the guard is symmetric.
+    expect(suppressedReferenceLines).toBe(declaresNativeAgents);
+  });
+
+  test("the guard is not a no-op: it distinguishes all four combinations", () => {
+    // Negative control on the two detectors themselves.
+    expect(DISPATCHED_ROLE_REFERENCE_LINE.length).toBeGreaterThan(0);
+    const withLine = `x ${DISPATCHED_ROLE_REFERENCE_LINE} y`;
+    const withoutLine = "x y";
+    expect(withLine.includes(DISPATCHED_ROLE_REFERENCE_LINE)).toBe(true);
+    expect(withoutLine.includes(DISPATCHED_ROLE_REFERENCE_LINE)).toBe(false);
+    expect("developer_instructions = ''".includes("developer_instructions")).toBe(true);
+    expect('description = "x"'.includes("developer_instructions")).toBe(false);
+  });
+
+  test("the COMMAND-role reference lines are out of scope and must survive", () => {
+    // defects:D178's suggestedFix, verbatim: "Judge the command-role (`$cq-*`)
+    // lines SEPARATELY and keep them: inline command recursion genuinely needs
+    // those paths, and the ablation says nothing about them."
+    expect(projection).toContain(COMMAND_ROLE_REFERENCE_LINE);
+    expect(projection).toContain("Every `CQ::<path>` token in the workflow names");
+  });
+
+  test("this task changed NEITHER half — the migration is T691's, and says so", () => {
+    // The observed state of the repo, recorded so the boundary is a fact rather
+    // than a claim in a commit message. T690 defines the protocol and is inert;
+    // it renders no asset and spawns no child. This assertion INVERTS when T691
+    // lands both halves — at which point §6's guard above still holds.
+    expect(suppressedReferenceLines).toBe(false);
+    expect(declaresNativeAgents).toBe(false);
+    expect(CODEX_DISPATCH_DEFERRED_TO).toBe(CODEX_ROLE_DELIVERY_MIGRATION_OWNER);
+    expect([...CODEX_DISPATCH_DEFERRED]).toEqual([
+      "suppress-the-dispatched-role-reference-lines-in-the-generated-skill",
+      "generate-the-global-native-agent-declarations",
+      "spawn-and-intercept-a-real-codex-child",
+      "migrate-the-codex-dispatch-fragment-to-the-new-call-shape",
+      "frontier-model-read-batching-remeasurement",
+    ]);
+  });
+
+  test("researches:RS10 threat #2 is carried forward, not quietly dropped", () => {
+    // RS11's recommendation #5: both studies used `gpt-5.6-luna`, the leak is a
+    // model-BEHAVIOUR outcome, and a frontier model may batch reads differently.
+    // That residual risk is named in the deferred list above so it survives this
+    // task rather than dying in a report.
+    expect([...CODEX_DISPATCH_DEFERRED]).toContain("frontier-model-read-batching-remeasurement");
+  });
+});

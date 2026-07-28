@@ -305,7 +305,14 @@ export const CODEX_ROLE_DELIVERY_PREREQUISITES_ARE_ATOMIC = true;
 /** The task that applies both prerequisites and wires spawn. */
 export const CODEX_ROLE_DELIVERY_MIGRATION_OWNER = "T691" as const;
 
-/** The GLOBAL agents directory the native mode requires, relative to `$CODEX_HOME`. */
+/**
+ * The GLOBAL agents directory the native mode requires, relative to
+ * `$CODEX_HOME` (which defaults to `~/.codex`, so in practice `~/.codex/agents/`).
+ *
+ * NOT to be confused with a repository-local `./.codex/agents/`: the paths look
+ * alike and only one of them works. The project-scoped variant is advertised but
+ * UNSPAWNABLE (openai/codex#26408, OPEN) — see the `project-agents-dir` verdict.
+ */
 export const CODEX_GLOBAL_AGENTS_DIR = "agents" as const;
 
 /** The keys a native agent declaration must carry (researches:RS11 ARM 3-real). */
