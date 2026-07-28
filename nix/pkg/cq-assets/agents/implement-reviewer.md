@@ -46,8 +46,16 @@ back to the orchestrator). You never spawn subagents. You run at the host's
 Verify with evidence, against the actual diff and repo — not the worker's claims:
 - **Meets acceptance?** Does the change actually satisfy the task's `acceptance`
   criterion, operationally (the specific command/output/invariant it names)?
-- **Check truly green?** Re-run `bun run check` in the worktree if in doubt; a
-  worker that reports pass on a red tree is a disapprove.
+- **Result commit independently verified?** Run
+  `git -C <worktree> cat-file -t <resultCommit>` and require the exact output
+  `commit`; resolve the worker branch tip with
+  `git -C <worktree> rev-parse --verify <branch>` and require its full SHA to
+  equal `resultCommit` exactly. Set `resultCommitVerified: true` ONLY after
+  observing both facts; otherwise set it to `false` and report the failure in
+  `criticism`.
+- **Check truly green?** When you re-run `bun run check`, run it in the
+  foreground, capture its real exit status, and measure its wall-clock duration.
+  A worker that reports pass on a red tree is a disapprove.
 - **Correct & surgical?** Real defects (logic errors, race conditions, missing
   error handling at boundaries, type holes)? Unrequested scope creep, unrelated
   refactors, or dead code introduced?
@@ -103,14 +111,24 @@ the terminal review:
     }
   ],
   "rationale": "<1-3 lines: the decisive evidence for the verdict>",
+  "gateReRan": true,
+  "resultCommitVerified": true,
+  "gateDurationMs": 12345,
   "summary": "<optional one-line summary of the verdict for the reviews ledger item>"
 }
 ```
 
-Rules: `approve` REQUIRES empty `criticism` AND empty `questions` AND a green
-`bun run check`. `disapprove` REQUIRES at least one of `criticism` / `questions`
-non-empty. `defects` is INDEPENDENT of the verdict — out-of-scope/pre-existing
-faults never block this task; leave it `[]` when there are none.
+Every verdict MUST state `gateReRan` and `resultCommitVerified`; omitting either
+statement is a contract breach. When `gateReRan` is `true`, the verdict MUST
+also include `gateDurationMs` with the measured wall-clock duration. When it is
+`false`, omit `gateDurationMs`; `gateReRanReason` MAY explain why no re-run was
+performed.
+
+Rules: `approve` REQUIRES empty `criticism`, empty `questions`, a green
+`bun run check`, AND `resultCommitVerified: true`. `disapprove` REQUIRES at
+least one of `criticism` / `questions` non-empty. `defects` is INDEPENDENT of
+the verdict — out-of-scope/pre-existing faults never block this task; leave it
+`[]` when there are none.
 
 ## Session summary (handover)
 Immediately before the JSON block, emit:
