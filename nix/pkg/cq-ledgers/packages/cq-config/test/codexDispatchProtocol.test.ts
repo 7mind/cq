@@ -51,6 +51,7 @@ import {
   DISPATCHED_ROLE_IDS,
   DISPATCH_ABORT_REASONS,
   DISPATCH_OVERLAY_REGISTRY,
+  DISPATCH_TIMEOUT_MAX_MS,
   DISPATCH_TIMEOUT_MIN_MS,
   DispatchAuthorizationError,
   DispatchStateConflictError,
@@ -86,6 +87,8 @@ import {
   type CodexChildCorrelation,
   type CodexCompletionObservation,
   type CodexDeliveryMode,
+  type CodexLaunchRefusal,
+  type DispatchDeadlines,
   type DispatchHandle,
   type DispatchJSONValue,
   type DispatchPrepared,
@@ -470,24 +473,67 @@ describe("T690 §3 — the launch gate", () => {
     expect(verdict.abortReason).toBe("deadline-exceeded");
   });
 
-  test("every declared refusal maps to a real abort reason", () => {
+  test("every declared refusal is REACHABLE by a witness input, and aborts for a real reason", () => {
     expect([...CODEX_LAUNCH_REFUSALS]).toEqual([
       "launch-budget-lapsed",
       "response-window-lapsed",
-      "child-window-lapsed",
       "clock-skew",
     ]);
-    const seen = new Set<string>();
-    for (const at of [
-      new Date(T0_MS - 1).toISOString(),
-      new Date(T0_MS + LAUNCH_DEADLINE_MS).toISOString(),
-    ]) {
-      const verdict = codexLaunchGate(prepared, at);
-      if (verdict.launch) throw new Error("unreachable");
+    // One witness per declared refusal, each pinned to the refusal it claims.
+    // The set EQUALITY below is what makes the vocabulary and the reached set
+    // agree BY CONSTRUCTION: a future entry no input can produce fails here
+    // instead of passing silently. A `seen.size` count does not do that — it is
+    // how `child-window-lapsed` stayed declared while being unreachable.
+    const minTimeout = prepareCodex(harness({ seed: 21 }), {
+      timeoutMs: DISPATCH_TIMEOUT_MIN_MS,
+      idempotencyKey: "T690-reachability",
+    });
+    const witnesses: readonly (readonly [CodexLaunchRefusal, DispatchDeadlines, string])[] = [
+      ["clock-skew", prepared, new Date(T0_MS - 1).toISOString()],
+      ["launch-budget-lapsed", prepared, new Date(T0_MS + LAUNCH_DEADLINE_MS).toISOString()],
+      [
+        "response-window-lapsed",
+        minTimeout,
+        new Date(T0_MS + DISPATCH_TIMEOUT_MIN_MS - RESPONSE_STORE_LEAD_MS).toISOString(),
+      ],
+    ];
+    const seen = new Set<CodexLaunchRefusal>();
+    for (const [expected, deadlines, at] of witnesses) {
+      const verdict = codexLaunchGate(deadlines, at);
+      if (verdict.launch) throw new Error(`expected ${expected}, got an approval at ${at}`);
+      expect(verdict.refusal).toBe(expected);
       expect(DISPATCH_ABORT_REASONS as readonly string[]).toContain(verdict.abortReason);
       seen.add(verdict.refusal);
     }
-    expect(seen.size).toBe(2);
+    expect([...seen].sort()).toEqual([...CODEX_LAUNCH_REFUSALS].sort());
+  });
+
+  test("NO cancel-window refusal is declared, because prepare cannot order the deadlines that way", () => {
+    // Why removing the branch is sound rather than merely tidy. `prepare_dispatch`
+    // is the sole producer of DispatchDeadlines; across the WHOLE accepted timeout
+    // range it never places childCancelAt before launchDeadline, so `at >=
+    // childCancelAt` always implies `at >= launchDeadline` and is refused as
+    // launch-budget-lapsed one branch earlier.
+    expect(DISPATCH_TIMEOUT_MIN_MS).toBe(LAUNCH_DEADLINE_MS);
+    const timeouts = [
+      DISPATCH_TIMEOUT_MIN_MS,
+      DISPATCH_TIMEOUT_MIN_MS + 1,
+      TIMEOUT_MS,
+      DISPATCH_TIMEOUT_MAX_MS,
+    ];
+    for (const [index, timeoutMs] of timeouts.entries()) {
+      const p = prepareCodex(harness({ seed: 40 + index }), {
+        timeoutMs,
+        idempotencyKey: `T690-ordering-${String(timeoutMs)}`,
+      });
+      expect(Date.parse(p.childCancelAt)).toBeGreaterThanOrEqual(Date.parse(p.launchDeadline));
+      // The instant that WOULD have been `child-window-lapsed`, classified.
+      const verdict = codexLaunchGate(p, p.childCancelAt);
+      expect(verdict.launch).toBe(false);
+      if (verdict.launch) throw new Error("unreachable");
+      expect(verdict.refusal).toBe("launch-budget-lapsed");
+    }
+    expect([...CODEX_LAUNCH_REFUSALS] as readonly string[]).not.toContain("child-window-lapsed");
   });
 
   test("a refused launch has allocated nothing beyond the prepared record", () => {

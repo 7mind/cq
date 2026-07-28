@@ -439,11 +439,23 @@ export function codexExpectedChild(correlation: CodexChildCorrelation): NativeCh
 // 3. The launch gate: budget, remaining child window, and clock skew
 // ---------------------------------------------------------------------------
 
-/** Why a launch was refused. */
+/**
+ * Why a launch was refused.
+ *
+ * There is deliberately NO `child-window-lapsed` entry. `prepare_dispatch` is the
+ * sole producer of {@link DispatchDeadlines} and computes
+ * `childCancelAt = prepared + timeoutMs` against `launchDeadline = prepared +
+ * LAUNCH_DEADLINE_MS`, while rejecting any `timeoutMs` below
+ * `DISPATCH_TIMEOUT_MIN_MS` — and `DISPATCH_TIMEOUT_MIN_MS === LAUNCH_DEADLINE_MS`.
+ * So `childCancelAt >= launchDeadline` for every dispatch the system can
+ * construct, `at >= childCancelAt` implies `at >= launchDeadline`, and the cancel
+ * window can only lapse via `launch-budget-lapsed`. A refusal no input can
+ * produce is exactly the defects:D186 class this module's section 6 guard exists
+ * to reject, so it is not declared here.
+ */
 export const CODEX_LAUNCH_REFUSALS = [
   "launch-budget-lapsed",
   "response-window-lapsed",
-  "child-window-lapsed",
   "clock-skew",
 ] as const;
 
@@ -488,6 +500,10 @@ export type CodexLaunchVerdict = CodexLaunchApproved | CodexLaunchRefused;
  *
  * The prepare instant is recovered exactly, not estimated:
  * `launchDeadline - LAUNCH_DEADLINE_MS` is how `prepare_dispatch` computed it.
+ *
+ * The branch order is total over {@link CODEX_LAUNCH_REFUSALS} and there is no
+ * separate cancel-window branch; see that vocabulary for why the deadline
+ * ordering makes one unreachable.
  */
 export function codexLaunchGate(deadlines: DispatchDeadlines, at: string): CodexLaunchVerdict {
   const atMs = attestationInstantMs(at, "at");
@@ -512,14 +528,6 @@ export function codexLaunchGate(deadlines: DispatchDeadlines, at: string): Codex
       refusal: "launch-budget-lapsed" as const,
       abortReason: "deadline-exceeded" as const,
       detail: `launchDeadline ${deadlines.launchDeadline} has passed at ${at}`,
-    });
-  }
-  if (atMs >= cancelMs) {
-    return Object.freeze({
-      launch: false as const,
-      refusal: "child-window-lapsed" as const,
-      abortReason: "deadline-exceeded" as const,
-      detail: `childCancelAt ${deadlines.childCancelAt} has passed at ${at}`,
     });
   }
   if (atMs >= storeMs) {
