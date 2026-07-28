@@ -1439,8 +1439,28 @@ const CODEX_HOME_MODULE = path.join(REPO_ROOT, "nix", "hm", "codex.nix");
 
 /** The `else` branch of `mkReferenceLine` — the line researches:RS11 measured. */
 const DISPATCHED_ROLE_REFERENCE_LINE = "- Codex collaboration role `";
-/** The `$cq-*` branch, which defects:D178 says to KEEP: inline recursion needs it. */
-const COMMAND_ROLE_REFERENCE_LINE = "→ [`references/${referenceName}`]";
+/**
+ * The OTHER half of the same advertisement: the skill prose that sends the child
+ * to those role references. T691 must suppress it together with the line, and no
+ * line-shaped detector sees it.
+ */
+const DISPATCHED_ROLE_ADVERTISEMENT_PROSE =
+  "Every `CQ_SUBAGENT` role in the workflow names the corresponding Codex " +
+  "collaboration-role reference below.";
+/**
+ * The `$cq-*` branch, which defects:D178 says to KEEP: inline recursion needs it.
+ *
+ * This literal is unique to the COMMAND-role branch of `mkReferenceLine`. The
+ * shared tail — "→ [`references/${referenceName}`]" — occurs in BOTH branches, so
+ * pinning that instead would be satisfied by the dispatched-role line alone and
+ * an isolated deletion of the command-role line would go undetected.
+ */
+const COMMAND_ROLE_REFERENCE_LINE = '- `${"$"}${skillName role.roleId}` →';
+
+/** Collapse the nix string's hard wrapping, so a re-wrap is not a false negative. */
+function normalizeProse(text: string): string {
+  return text.replace(/\s+/g, " ");
+}
 
 /**
  * Prerequisite (a) as a FUNCTION of the projection text.
@@ -1450,9 +1470,16 @@ const COMMAND_ROLE_REFERENCE_LINE = "→ [`references/${referenceName}`]";
  * produces the real-file verdict. (Round 1 evaluated the detectors once over the
  * real files and then asserted `String.prototype.includes` on toy literals,
  * which demonstrated nothing about the detectors themselves.)
+ *
+ * Suppression means BOTH advertisements are gone: leaving the prose behind would
+ * still send the child hunting for role references the projection no longer
+ * lists.
  */
 function detectSuppressedReferenceLines(text: string): boolean {
-  return !text.includes(DISPATCHED_ROLE_REFERENCE_LINE);
+  return (
+    !text.includes(DISPATCHED_ROLE_REFERENCE_LINE) &&
+    !normalizeProse(text).includes(DISPATCHED_ROLE_ADVERTISEMENT_PROSE)
+  );
 }
 
 /** How far apart two keys may sit and still belong to ONE agent declaration. */
@@ -1508,15 +1535,42 @@ function detectNativeAgentDeclarations(text: string): boolean {
   });
 }
 
-/** A projection that still advertises dispatched roles — today's state. */
+/** `mkReferenceLine`'s command-role branch, which must SURVIVE T691 (defects:D178). */
+const SYNTHETIC_COMMAND_ROLE_LINE =
+  '  "- `${"$"}${skillName role.roleId}` → [`references/${referenceName}`](references/${referenceName})"';
+
+/** `mkReferenceLine`'s dispatched-role branch, which T691 removes. */
+const SYNTHETIC_DISPATCHED_ROLE_LINE =
+  '  "- Codex collaboration role `${role.roleId}` → [`references/${referenceName}`](references/${referenceName})"';
+
+/**
+ * The prose half of the advertisement, hard-wrapped at a DIFFERENT column from the
+ * real file so the prose detector is shown to survive re-wrapping.
+ */
+const SYNTHETIC_DISPATCHED_ROLE_PROSE = [
+  "        Every `CQ_SUBAGENT` role in the workflow",
+  "        names the corresponding Codex collaboration-role reference",
+  "        below. Read that role reference completely before dispatching it.",
+].join("\n");
+
+/** A projection that still advertises dispatched roles both ways — today's state. */
 const SYNTHETIC_PROJECTION_ADVERTISING = [
-  '  "- `${"$"}${skillName role.roleId}` → [`references/${referenceName}`](references/${referenceName})"',
-  '  "- Codex collaboration role `${role.roleId}` → [`references/${referenceName}`](references/${referenceName})"',
+  SYNTHETIC_COMMAND_ROLE_LINE,
+  SYNTHETIC_DISPATCHED_ROLE_LINE,
+  SYNTHETIC_DISPATCHED_ROLE_PROSE,
 ].join("\n");
 
 /** The same projection after T691's half (a): only the command-role branch left. */
-const SYNTHETIC_PROJECTION_SUPPRESSED =
-  '  "- `${"$"}${skillName role.roleId}` → [`references/${referenceName}`](references/${referenceName})"';
+const SYNTHETIC_PROJECTION_SUPPRESSED = SYNTHETIC_COMMAND_ROLE_LINE;
+
+/** Half-done suppression: the line is gone but the prose still advertises. */
+const SYNTHETIC_PROJECTION_PROSE_ONLY = [
+  SYNTHETIC_COMMAND_ROLE_LINE,
+  SYNTHETIC_DISPATCHED_ROLE_PROSE,
+].join("\n");
+
+/** The inverse ablation: the command-role line deleted in isolation. */
+const SYNTHETIC_PROJECTION_DISPATCHED_ONLY = SYNTHETIC_DISPATCHED_ROLE_LINE;
 
 /** A real native-agent declaration — T691's half (b). */
 const SYNTHETIC_SURFACE_DECLARING = [
@@ -1663,6 +1717,30 @@ describe("T690 §6 — the two-part role-delivery prerequisite must stay atomic"
     // those paths, and the ablation says nothing about them."
     expect(projection).toContain(COMMAND_ROLE_REFERENCE_LINE);
     expect(projection).toContain("Every `CQ::<path>` token in the workflow names");
+    // Negative control: the pin DISCRIMINATES its branch. Round 1 matched the tail
+    // both branches share, so the dispatched-role line alone satisfied it and an
+    // isolated deletion of the command-role line went undetected — it happened to
+    // hold for T691's exact migration without pinning what it claimed.
+    expect(SYNTHETIC_PROJECTION_DISPATCHED_ONLY).toContain(DISPATCHED_ROLE_REFERENCE_LINE);
+    expect(SYNTHETIC_PROJECTION_DISPATCHED_ONLY).toContain("→ [`references/${referenceName}`]");
+    expect(SYNTHETIC_PROJECTION_DISPATCHED_ONLY.includes(COMMAND_ROLE_REFERENCE_LINE)).toBe(false);
+    // …and it survives the ablation T691 DOES perform.
+    expect(SYNTHETIC_PROJECTION_SUPPRESSED).toContain(COMMAND_ROLE_REFERENCE_LINE);
+  });
+
+  test("prerequisite (a) covers BOTH advertisements: the reference line and the prose", () => {
+    // The prose at the top of the generated skill sends the child to the same role
+    // references the line lists, so removing only the line leaves the child hunting
+    // for references that are no longer there. No round-1 detector saw it.
+    expect(detectSuppressedReferenceLines(SYNTHETIC_PROJECTION_PROSE_ONLY)).toBe(false);
+    expect(SYNTHETIC_PROJECTION_PROSE_ONLY.includes(DISPATCHED_ROLE_REFERENCE_LINE)).toBe(false);
+    expect(detectSuppressedReferenceLines(SYNTHETIC_PROJECTION_SUPPRESSED)).toBe(true);
+    // Wrapping-insensitive: the synthetic prose is wrapped at a different column
+    // from the real file and both are still detected.
+    expect(normalizeProse(projection)).toContain(DISPATCHED_ROLE_ADVERTISEMENT_PROSE);
+    expect(normalizeProse(SYNTHETIC_PROJECTION_PROSE_ONLY)).toContain(
+      DISPATCHED_ROLE_ADVERTISEMENT_PROSE,
+    );
   });
 
   test("this task changed NEITHER half — the migration is T691's, and says so", () => {
