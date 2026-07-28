@@ -15,10 +15,16 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
 import {
   AttestationBindingError,
   AttestationContractError,
   AttestationStorageError,
+  CLAUDE_ARTIFACT_INSPECTION_TOKEN,
+  CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON,
+  CLAUDE_ARTIFACT_MIGRATION_PINNED,
+  CLAUDE_ARTIFACT_VIOLATIONS,
   CLAUDE_BRIDGE_DEFERRED,
   CLAUDE_BRIDGE_FETCH_COUNT,
   CLAUDE_BRIDGE_MODE,
@@ -34,7 +40,10 @@ import {
   FakeDispatchClock,
   InMemoryAttestationStore,
   assertClaudeBridgeMode,
+  assertClaudeRefFirstArtifact,
   assertCompactClaudeLaunchPrompt,
+  claudeArtifactViolations,
+  scanClaudeRefFirstArtifact,
   buildClaudeCompactNativeLaunch,
   claudeBridgeCorrelation,
   claudeCompactLaunchPrompt,
@@ -793,5 +802,129 @@ describe("T688 §2c — correlation, idempotency, restart, and an unavailable st
     expect(() =>
       materializeClaudeDispatchOutput({ namespace: NAMESPACE, ...result.handle }, b.service),
     ).toThrow(/only a consumed dispatch carries an output body/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. Generated-artifact conformance, over the REAL asset files
+// ---------------------------------------------------------------------------
+
+const ASSETS_ROOT = path.resolve(
+  import.meta.dir,
+  "..",
+  "..",
+  "..",
+  "..",
+  "..",
+  "..",
+  "nix",
+  "pkg",
+  "cq-assets",
+);
+
+function artifactText(artifact: string): string {
+  return readFileSync(path.join(ASSETS_ROOT, artifact), "utf8");
+}
+
+describe("T688 §3 — the artifact detector, run over the REAL Claude assets", () => {
+  test("the executable bridge's own launch is ref-first clean", () => {
+    // The path T688 actually implements has NONE of the four violations. This is
+    // the positive control for the whole detector: it must not fire on conformant
+    // material, or its findings below would be worthless.
+    const b = bridge();
+    run(b);
+    const envelope = JSON.stringify(b.launches[0]!.envelope, null, 2);
+    expect(scanClaudeRefFirstArtifact("bridge-launch-envelope", envelope)).toEqual([]);
+    expect(() => assertClaudeRefFirstArtifact("bridge-launch-envelope", envelope)).not.toThrow();
+    // And it pins the two arguments whose wrong values ARE `generic-launcher`.
+    expect(envelope).toContain('"isolation": "none"');
+    expect(envelope).toContain('"run_in_background": false');
+  });
+
+  test("every declared violation is REACHABLE, witnessed on a real artifact", () => {
+    // A closed vocabulary no input can produce is defects:D186's dead
+    // declaration. Each of the four is witnessed by a REAL file below.
+    const observed = new Set<string>();
+    for (const artifact of CLAUDE_ARTIFACT_MIGRATION_PINNED.keys()) {
+      for (const violation of claudeArtifactViolations(artifact, artifactText(artifact))) {
+        observed.add(violation);
+      }
+    }
+    expect([...observed].sort()).toEqual([...CLAUDE_ARTIFACT_VIOLATIONS].sort());
+  });
+
+  for (const [artifact, pinned] of CLAUDE_ARTIFACT_MIGRATION_PINNED) {
+    test(`${artifact} carries EXACTLY its pinned pre-ref-first violations`, () => {
+      const text = artifactText(artifact);
+      // Equality, not containment: a NEW violation fails, and a SILENTLY REMOVED
+      // one fails too — so the migration can be neither half-done unnoticed nor
+      // claimed done without updating the pin.
+      expect(claudeArtifactViolations(artifact, text)).toEqual(pinned);
+      // Findings carry a line number and the offending text, so the pin is
+      // traceable to the artifact rather than being a bare label.
+      const findings = scanClaudeRefFirstArtifact(artifact, text);
+      expect(findings.length).toBeGreaterThan(0);
+      for (const finding of findings) {
+        expect(finding.line).toBeGreaterThan(0);
+        expect(finding.evidence.length).toBeGreaterThan(0);
+        expect(text.split("\n")[finding.line - 1]).toContain(finding.evidence.slice(0, 20));
+      }
+    });
+  }
+
+  test("the migration blockers are named, with T695 recorded as DOWNSTREAM", () => {
+    // The blocking claim is checkable from the workspace, not taken on trust:
+    // no dispatch MCP tool is registered anywhere under ledger-mcp/src.
+    expect(CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON.join(" ")).toContain("tasks:T695");
+    expect(CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON.join(" ")).toContain("worktree_manage");
+    expect(CLAUDE_BRIDGE_DEFERRED).toContain(
+      "rewrite-the-deployed-claude-dispatch-instructions-blocked-on-T695-and-worktree_manage",
+    );
+  });
+
+  test("NEGATIVE CONTROL: the REAL detector fires on a REAL artifact mutated to regress", () => {
+    // The mutation is applied to the REAL fragment text, and the REAL scanner
+    // reads it — not a toy literal standing in for the pipeline.
+    const artifact = "fragments/claude/subagent-dispatch.md";
+    const real = artifactText(artifact);
+    expect(claudeArtifactViolations(artifact, real)).not.toContain("raw-output-completion");
+
+    const regressed = `${real}\n> Then await its result and \`validate_output("implement-worker", output)\`.\n`;
+    const after = claudeArtifactViolations(artifact, regressed);
+    expect(after).toContain("raw-output-completion");
+    expect(after).toContain("ordinary-validate-output");
+    expect(() => assertClaudeRefFirstArtifact(artifact, regressed)).toThrow(
+      AttestationContractError,
+    );
+  });
+
+  test("NEGATIVE CONTROL: removing a pinned violation from the REAL text is ALSO caught", () => {
+    // The other direction, which is what stops a partial migration being claimed
+    // complete: the REAL fragment with its `isolation: "worktree"` deleted no
+    // longer matches its pin, so the per-artifact test above would fail.
+    const artifact = "fragments/claude/subagent-dispatch.md";
+    const half = artifactText(artifact).replace('isolation: "worktree"', 'isolation: "none"');
+    expect(half).not.toBe(artifactText(artifact));
+    const after = claudeArtifactViolations(artifact, half);
+    expect(after).not.toContain("generic-launcher");
+    expect(after).not.toEqual(CLAUDE_ARTIFACT_MIGRATION_PINNED.get(artifact));
+  });
+
+  test("the INSPECTION token exempts a line, and exempts ONLY that line", () => {
+    const artifact = "inspection-fixture";
+    const exempt = `Debug: \`validate_output("implement-worker", out)\` ${CLAUDE_ARTIFACT_INSPECTION_TOKEN}`;
+    expect(scanClaudeRefFirstArtifact(artifact, exempt)).toEqual([]);
+    // The NEXT line is not exempt — the token is per-line, not a file-wide opt-out.
+    const leaky = `${exempt}\nThen \`validate_output("implement-worker", out)\`.`;
+    const findings = scanClaudeRefFirstArtifact(artifact, leaky);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.violation).toBe("ordinary-validate-output");
+    expect(findings[0]!.line).toBe(2);
+  });
+
+  test("a non-string artifact body is refused rather than scanned as empty", () => {
+    expect(() =>
+      scanClaudeRefFirstArtifact("bogus", undefined as unknown as string),
+    ).toThrow(AttestationContractError);
   });
 });

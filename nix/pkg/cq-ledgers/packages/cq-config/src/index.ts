@@ -537,9 +537,18 @@ export type {
   ClaudeDispatchRequest,
   ClaudeBridgeDeps,
   ClaudeSettleContext,
+  ClaudeArtifactViolation,
+  ClaudeArtifactFinding,
 } from "./claudeDispatchBridge.js";
 export {
   CLAUDE_DISPATCH_RUN_OUTCOMES,
+  CLAUDE_ARTIFACT_VIOLATIONS,
+  CLAUDE_ARTIFACT_INSPECTION_TOKEN,
+  scanClaudeRefFirstArtifact,
+  claudeArtifactViolations,
+  assertClaudeRefFirstArtifact,
+  CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON,
+  CLAUDE_ARTIFACT_MIGRATION_PINNED,
   runClaudeNativeDispatch,
   recoverClaudeNativeDispatch,
   materializeClaudeDispatchOutput,

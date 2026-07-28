@@ -689,6 +689,244 @@ export function materializeClaudeDispatchOutput(
 }
 
 // ---------------------------------------------------------------------------
+// 5. Generated-artifact conformance
+// ---------------------------------------------------------------------------
+
+/**
+ * The four ways a generated Claude artifact can defeat ref-first, named exactly
+ * as tasks:T688's acceptance names them.
+ */
+export const CLAUDE_ARTIFACT_VIOLATIONS = [
+  "dispatched-prompt-copy",
+  "generic-launcher",
+  "raw-output-completion",
+  "ordinary-validate-output",
+] as const;
+
+export type ClaudeArtifactViolation = (typeof CLAUDE_ARTIFACT_VIOLATIONS)[number];
+
+/**
+ * A line carrying this token is EXPLICIT inspection/debug and is exempt.
+ * tasks:T688 keeps `fetch_prompt` available for inspection but removes the
+ * ORDINARY, model-visible validation call; a token makes "ordinary" decidable
+ * instead of a matter of reading tone.
+ */
+export const CLAUDE_ARTIFACT_INSPECTION_TOKEN = "CQ_INSPECTION_ONLY" as const;
+
+interface ClaudeArtifactMarker {
+  readonly violation: ClaudeArtifactViolation;
+  readonly marker: RegExp;
+  /** Why this spelling is the violation, and where it was observed. */
+  readonly rationale: string;
+}
+
+/**
+ * The markers, each matched against a REAL spelling present in a REAL artifact
+ * at the time it was written — not invented shapes. A marker that matches
+ * nothing anywhere is a defects:D186 dead declaration, so every entry below is
+ * witnessed by this module's suite against the artifact it was taken from.
+ */
+const CLAUDE_ARTIFACT_MARKERS: readonly ClaudeArtifactMarker[] = Object.freeze([
+  Object.freeze({
+    violation: "dispatched-prompt-copy" as const,
+    marker: /\bthe (?:complete|full|entire) (?:task )?prompt\b/i,
+    rationale:
+      "tasks:T975's defect verbatim: the parent renders a whole role prompt whose copy launches " +
+      "nothing, because `bun run gen-agents` already bakes the identical prompt into " +
+      "`agents/<role>.md` and the harness injects it at the CHILD's system boundary.",
+  }),
+  Object.freeze({
+    violation: "dispatched-prompt-copy" as const,
+    marker: /\bthe prompt MUST carry\b/i,
+    rationale:
+      "An instruction to fold the task narrative into the launch. Under T978 the narrative is " +
+      "assembled server-side and retrieved by the child BY HANDLE, so the launch carries the " +
+      "handle and nothing else.",
+  }),
+  Object.freeze({
+    violation: "dispatched-prompt-copy" as const,
+    marker: /rendered into the prompt\b/i,
+    rationale:
+      "The composed INPUT rendered into the launch text — the same cost as a prompt copy, and the " +
+      "reason `buildClaudeCompactNativeLaunch` refuses anything but the handle.",
+  }),
+  Object.freeze({
+    violation: "generic-launcher" as const,
+    marker: /isolation:\s*"worktree"/,
+    rationale:
+      'defects:D119\'s root cause. `isolation: "worktree"` makes the HARNESS allocate-or-REUSE a ' +
+      "tree at whatever commit it was left; questions:Q363 abolished that in favour of an " +
+      "orchestrator-prepared fresh tree, so T687 pins the argument to `\"none\"`.",
+  }),
+  Object.freeze({
+    violation: "generic-launcher" as const,
+    marker: /run_in_background:\s*true/,
+    rationale:
+      "tasks:T722 §4.1/§5.3: a background subagent's completion arrives as a harness-injected " +
+      "synthetic user message that emits NO hook event, leaving no transport-supplied field to " +
+      "correlate on.",
+  }),
+  Object.freeze({
+    violation: "raw-output-completion" as const,
+    marker: /\bawait its (?:result|reply|evidence-json|structured result)\b/i,
+    rationale:
+      "defects:D173: a completion that hands back the child's own output is a body-returning " +
+      "parent surface. Measured at 46,510 bytes on a 45,833-byte payload, against a 250-byte " +
+      "handle-only acknowledgement.",
+  }),
+  Object.freeze({
+    violation: "ordinary-validate-output" as const,
+    marker: /validate_output\(/,
+    rationale:
+      "Under ref-first the output was ALREADY validated against the role's `outputSchema` inside " +
+      "`storeDispatchResult`, which is where a child cannot choose what it is validated against. " +
+      "A parent-side re-validation therefore adds no check and requires the body in the parent's " +
+      "context to perform.",
+  }),
+]);
+
+export interface ClaudeArtifactFinding {
+  readonly artifact: string;
+  readonly violation: ClaudeArtifactViolation;
+  /** 1-based line number, so a reader can go straight to it. */
+  readonly line: number;
+  /** The offending line, trimmed. */
+  readonly evidence: string;
+  readonly rationale: string;
+}
+
+/**
+ * Scan ONE generated Claude artifact for the four violations. A pure function of
+ * the text: it reads no file and resolves no fragment, so a caller decides which
+ * artifact is in scope and this function only says what is in it.
+ *
+ * A line carrying {@link CLAUDE_ARTIFACT_INSPECTION_TOKEN} is exempt, which is
+ * how `fetch_prompt` and a deliberate debug `validate_output` stay available
+ * without reopening the ordinary path.
+ */
+export function scanClaudeRefFirstArtifact(
+  artifact: string,
+  text: string,
+): readonly ClaudeArtifactFinding[] {
+  if (typeof text !== "string") {
+    throw new AttestationContractError(
+      "artifact.text",
+      `expected the artifact text of "${String(artifact)}", got "${String(text)}"`,
+    );
+  }
+  const findings: ClaudeArtifactFinding[] = [];
+  const lines = text.split("\n");
+  for (const [index, line] of lines.entries()) {
+    if (line.includes(CLAUDE_ARTIFACT_INSPECTION_TOKEN)) continue;
+    for (const { violation, marker, rationale } of CLAUDE_ARTIFACT_MARKERS) {
+      if (marker.test(line)) {
+        findings.push(
+          Object.freeze({
+            artifact,
+            violation,
+            line: index + 1,
+            evidence: line.trim(),
+            rationale,
+          }),
+        );
+      }
+    }
+  }
+  return Object.freeze(findings);
+}
+
+/** The distinct violations present in an artifact, sorted and de-duplicated. */
+export function claudeArtifactViolations(
+  artifact: string,
+  text: string,
+): readonly ClaudeArtifactViolation[] {
+  return Object.freeze(
+    [...new Set(scanClaudeRefFirstArtifact(artifact, text).map((f) => f.violation))].sort(),
+  );
+}
+
+/**
+ * Assert an artifact is ref-first clean. Throws naming the FIRST finding with its
+ * line, so a failure is actionable without re-running the scanner by hand.
+ */
+export function assertClaudeRefFirstArtifact(artifact: string, text: string): void {
+  const findings = scanClaudeRefFirstArtifact(artifact, text);
+  const first = findings[0];
+  if (first !== undefined) {
+    throw new AttestationContractError(
+      `artifact:${artifact}:${first.line}`,
+      `${first.violation}: ${first.evidence} — ${first.rationale}`,
+    );
+  }
+}
+
+/**
+ * Why the PROMPT-ARTIFACT half of tasks:T688's acceptance is not flipped in this
+ * task, recorded as data because "we did not do it" is worthless without the
+ * mechanism and the owner.
+ *
+ * The bridge above is ref-first NOW and its suite proves it. Rewriting the
+ * deployed Claude instructions to match, however, requires two things that do
+ * not exist yet, and shipping the rewrite without them would be a REGRESSION —
+ * strictly worse than the measured status quo:
+ *
+ *  1. **The MCP tools are not registered.** `packages/ledger-mcp/src` exposes no
+ *     `prepare_dispatch`, `store_result`, `confirm_dispatch_completion`,
+ *     `abort_dispatch` or `fetch_dispatch_result`;
+ *     `packages/ledger/src/store/attestationConstruction.ts` records in terms
+ *     that "a future task (T695) wires the actual … MCP tools". tasks:T695 is
+ *     `planned` and its own `dependsOn` includes tasks:T689 — so it is
+ *     DOWNSTREAM of this task, not a missing prerequisite of it. An instruction
+ *     naming tools that do not exist cannot be followed, and removing the
+ *     `validate_output` call that DOES work would leave no output check at all.
+ *  2. **`worktree_manage(prepare|release)` is not implemented** — no
+ *     implementation exists in the workspace, only prose. Switching the fragment
+ *     to `isolation: "none"` today would remove the ONLY working worktree
+ *     allocation with nothing to replace it. T687 already priced this exact
+ *     option as "Reinstates defects:D119".
+ *
+ * So the detector lands and runs; the artifacts are PINNED with their measured
+ * violations; and the flip is a deletion from
+ * {@link CLAUDE_ARTIFACT_MIGRATION_PINNED} once its blockers land.
+ */
+export const CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON = Object.freeze([
+  "tasks:T695 — register prepare_dispatch/store_result/confirm/abort/fetch as MCP tools",
+  "worktree_manage(prepare|release) — no implementation in the workspace",
+] as const);
+
+/**
+ * The artifacts that still carry pre-ref-first dispatch instructions, with the
+ * EXACT violation set each one currently has.
+ *
+ * Pinning rather than omitting is what makes this a guard: a NEW violation in
+ * either file fails the suite, and SILENTLY REMOVING one fails it too — so the
+ * migration cannot be quietly half-done, and it cannot be quietly claimed done.
+ */
+const CLAUDE_ARTIFACT_MIGRATION_PINS: readonly (readonly [
+  string,
+  readonly ClaudeArtifactViolation[],
+])[] = Object.freeze([
+  Object.freeze([
+    "fragments/claude/subagent-dispatch.md",
+    Object.freeze<ClaudeArtifactViolation[]>(["dispatched-prompt-copy", "generic-launcher"]),
+  ] as const),
+  Object.freeze([
+    "commands/cq/implement/advance.md",
+    Object.freeze<ClaudeArtifactViolation[]>([
+      "dispatched-prompt-copy",
+      "generic-launcher",
+      "ordinary-validate-output",
+      "raw-output-completion",
+    ]),
+  ] as const),
+]);
+
+export const CLAUDE_ARTIFACT_MIGRATION_PINNED: ReadonlyMap<
+  string,
+  readonly ClaudeArtifactViolation[]
+> = new Map(CLAUDE_ARTIFACT_MIGRATION_PINS);
+
+// ---------------------------------------------------------------------------
 // Deferred
 // ---------------------------------------------------------------------------
 
@@ -716,4 +954,7 @@ export const CLAUDE_BRIDGE_DEFERRED = Object.freeze([
   "implement-worktree_manage-prepare-and-release",
   "consolidate-the-duplicated-launch-gate-into-the-shared-module",
   "decide-defects-D188s-fetch-repeatability-divergence-T1142",
+  // See CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON: the detector lands here, the
+  // rewrite cannot until its two blockers do.
+  "rewrite-the-deployed-claude-dispatch-instructions-blocked-on-T695-and-worktree_manage",
 ] as const);
