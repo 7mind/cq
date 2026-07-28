@@ -69,6 +69,48 @@ let
     lib.nameValuePair ".codex/skills/${skillName}" { inherit source; }
   ) cqCommandSkillPackages;
 
+  # TOML's multi-line LITERAL delimiter. Held as a binding because a role body is
+  # markdown: a literal string processes NO escapes, so backslashes and quotes in
+  # the prompt survive byte-for-byte, which a basic (`"""`) string would mangle.
+  # Kept out of the `''` build scripts below, where `'''` is nix's own escape for
+  # `''` and would silently emit the wrong delimiter.
+  tomlLiteralDelimiter = "'''";
+
+  # defects:D178 half (b): render one dispatched role's global native-agent
+  # declaration. The body is CONCATENATED at build time rather than interpolated,
+  # so the rendered prompt root is not needed during evaluation.
+  mkCodexAgentPackage =
+    agentName: declaration:
+    let
+      header = pkgs.writeText "${agentName}-codex-agent-header" (
+        "name = \"${declaration.name}\"\n"
+        + "description = \"${declaration.description}\"\n"
+        + "developer_instructions = ${tomlLiteralDelimiter}\n"
+      );
+    in
+    pkgs.runCommandLocal "${agentName}-codex-agent" { } ''
+      set -eu
+      body=${declaration.developer_instructions}
+      if grep -qF ${lib.escapeShellArg tomlLiteralDelimiter} "$body"; then
+        echo "codex agent ${agentName}: the role body contains a TOML multi-line literal delimiter" >&2
+        exit 1
+      fi
+      {
+        cat ${header}
+        printf '%s\n' "$(cat "$body")"
+        printf '%s\n' ${lib.escapeShellArg tomlLiteralDelimiter}
+      } > "$out"
+    '';
+
+  cqAgentPackages = lib.mapAttrs mkCodexAgentPackage codexProjection.agents;
+  # The GLOBAL $CODEX_HOME/agents dir — `~/.codex/agents/`, the one
+  # researches:RS11 measured. NOT a repository-local `./.codex/agents/`, which is
+  # advertised but unspawnable (openai/codex#26408).
+  cqAgentFiles = lib.mapAttrs' (
+    agentName: source:
+    lib.nameValuePair ".codex/agents/${agentName}.toml" { inherit source; }
+  ) cqAgentPackages;
+
   # Command bundles key entries as "<ns>/<name>"; flat slash-prompt harnesses
   # derive the command name from the filename stem, so fold "/" → ":" (matching
   # the same transform tools.nix uses for its collision assertion and Claude's
@@ -143,10 +185,13 @@ in
       # commandKeyToStem turns "plan/advance" into plan:advance.md; Codex
       # namespaces ~/.codex/prompts/*.md under its own "prompts:" prefix (stem
       # verbatim, no char filtering), so this surfaces as /prompts:plan:advance.
-      # Dispatched roles stay in the immutable Codex prompt root and enter a
-      # command skill only when that command's manifest closure declares them.
+      # Dispatched roles stay in the immutable Codex prompt root and NO LONGER
+      # enter any command skill (defects:D178 half (a)). Each is instead declared
+      # as a global native agent under `.codex/agents/`, so its body reaches the
+      # child through the collaboration transport and never through the parent.
       home.file =
         cqCommandSkillFiles
+        // cqAgentFiles
         // lib.mapAttrs'
           (
             key: body: lib.nameValuePair ".codex/prompts/${commandKeyToStem key}.md" { text = body; }
