@@ -78,6 +78,36 @@
           promptRoot = codexPromptRoot;
         };
         codexHarnessEnv = import ./nix/lib/codex-harness-env.nix { lib = pkgs.lib; };
+        # T691 / defects:D178 half (b): parse one rendered native-agent declaration
+        # and check it against the role body it must carry. A FILE rather than a
+        # `python3 -c` string: the assertions need both quote characters, which no
+        # single-quoted shell argument can carry.
+        verifyCodexAgentDeclaration = pkgs.writeText "verify-codex-agent-declaration.py" ''
+          import sys
+          import tomllib
+
+          name, declaration_path, body_path = sys.argv[1:4]
+          expected_keys = ["description", "developer_instructions", "name"]
+
+          with open(declaration_path, "rb") as handle:
+              document = tomllib.load(handle)
+
+          if sorted(document) != expected_keys:
+              sys.exit(f"{name}: expected keys {expected_keys}, got {sorted(document)}")
+          if document["name"] != name:
+              sys.exit(f"{name}: the name field is {document['name']!r}")
+          if not str(document["description"]).strip():
+              sys.exit(f"{name}: the description is empty")
+
+          body = document["developer_instructions"]
+          with open(body_path, "r", encoding="utf-8") as handle:
+              expected_body = handle.read()
+
+          if not body.strip():
+              sys.exit(f"{name}: developer_instructions is empty")
+          if body.rstrip("\n") != expected_body.rstrip("\n"):
+              sys.exit(f"{name}: developer_instructions is not the role body verbatim")
+        '';
         claudePromptHomeTest = import ./nix/lib/claude-prompt-home-test.nix {
           lib = pkgs.lib;
           inherit pkgs claudePromptRoot;
@@ -625,6 +655,32 @@
                 if ${pkgs.ripgrep}/bin/rg -n \
                   'Agent\\(|Task\\(|dispatch_agent\\(|/cq:|\\{\\{cq:fragment:' "$out"; then
                   echo "generated Codex skills contain foreign or unresolved vocabulary" >&2
+                  exit 1
+                fi
+
+                # defects:D178 half (b): every dispatched role is materialised as a
+                # GLOBAL native-agent declaration, and the rendered TOML is parsed
+                # as BYTES — evaluation only proves the derivation exists, not that
+                # the writer's quoting produced a parseable document with the role
+                # body intact. Verified in a build-directory scratch dir, never
+                # next to $out.
+                agentsDir="$NIX_BUILD_TOP/codex-agents"
+                mkdir -p "$agentsDir"
+                ${pkgs.lib.concatMapStringsSep "\n"
+                  (name: ''
+                    cp ${codexCommandSkillsTest.agentFiles.${name}} "$agentsDir/${name}.toml"
+                    ${pkgs.python3}/bin/python3 ${verifyCodexAgentDeclaration} \
+                      ${name} "$agentsDir/${name}.toml" ${codexPromptRoot}/roles/${name}.md
+                  '')
+                  codexCommandSkillsTest.agentNames}
+                test "$(find "$agentsDir" -maxdepth 1 -name '*.toml' | wc -l)" \
+                  -eq "${toString (builtins.length codexCommandSkillsTest.agentNames)}"
+                # The declared roster is the dispatched-role roster, not a subset.
+                test "${toString (builtins.length codexCommandSkillsTest.agentNames)}" -eq 9
+                # Half (a) again, on the RENDERED bytes rather than the nix source:
+                # no dispatched role body may reach a skill package.
+                if find "$out" -name 'role-*.md' | ${pkgs.gnugrep}/bin/grep -q .; then
+                  echo "a dispatched role body was shipped into a Codex skill" >&2
                   exit 1
                 fi
               '';
