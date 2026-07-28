@@ -49,7 +49,7 @@
  */
 
 import {
-  CLAUDE_NATIVE_DELIVERY_MODE,
+  CLAUDE_CROSS_HARNESS_DELIVERY_MODE,
   CLAUDE_NATIVE_ISOLATION_ARGUMENT,
   CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT,
   assertClaudeChildCorrelation,
@@ -58,7 +58,6 @@ import {
   claudeExpectedChild,
   claudeLaunchGate,
   decideClaudeCompletion,
-  mintClaudeLaunchNonce,
   type ClaudeChildCorrelation,
   type ClaudeCorrelationProvenance,
   type ClaudeDeliveryMode,
@@ -82,6 +81,7 @@ import {
 import type { AttestationNamespace } from "./dispatchAttestation.js";
 import type { DispatchOverlayRegistry } from "./dispatchOverlays.js";
 import type { DispatchPreLaunchRejection } from "./dispatchInputValidation.js";
+import { DISPATCH_HANDLE_SCHEMA } from "./compactDispatchProtocol.js";
 import type {
   AbortedDispatchResult,
   DispatchAbortReason,
@@ -238,11 +238,11 @@ export function assertCompactClaudeLaunchPrompt(prompt: string, handle: Dispatch
 }
 
 /**
- * The delivery mode this bridge drives. Native only: decisions:K170's
- * cross-harness wrapper path belongs to a codex/pi dispatcher, not to a Claude
- * parent, and T687 declares no fallback between them.
+ * The delivery mode this executable bridge drives: T722's process-boundary
+ * wrapper. A native Agent launch cannot keep its final text out of the parent
+ * context on the measured Claude build; the wrapper can.
  */
-export const CLAUDE_BRIDGE_MODE: ClaudeDeliveryMode = CLAUDE_NATIVE_DELIVERY_MODE;
+export const CLAUDE_BRIDGE_MODE: ClaudeDeliveryMode = CLAUDE_CROSS_HARNESS_DELIVERY_MODE;
 
 /**
  * Assert that `mode` is the one this bridge implements. Distinguishes "not a
@@ -254,8 +254,7 @@ export function assertClaudeBridgeMode(mode: string): ClaudeDeliveryMode {
   if (supported !== CLAUDE_BRIDGE_MODE) {
     throw new AttestationContractError(
       "mode",
-      `this bridge drives "${CLAUDE_BRIDGE_MODE}"; "${supported}" is dispatched by a ` +
-        "codex or pi parent and has its own transport",
+      `this bridge drives "${CLAUDE_BRIDGE_MODE}"; "${supported}" has a different transport`,
     );
   }
   return supported;
@@ -279,6 +278,13 @@ export function claudeBridgeCorrelation(
 export interface ClaudeNativeLaunchContext {
   readonly envelope: ClaudeNativeLaunchEnvelope;
   /**
+   * The identity the parent bound at prepare. A production transport carries
+   * the nonce on the launch it observes and returns an independently observed
+   * correlation in {@link ClaudeNativeLaunchReport}; settlement compares the
+   * two instead of copying this value into the observation.
+   */
+  readonly expectedCorrelation: ClaudeChildCorrelation;
+  /**
    * The per-dispatch capability, delivered to the child through an INLINE
    * per-subagent `mcpServers` entry whose server `env` holds it — tasks:T722
    * §8.1a's measured mechanism, in which the PARENT's own tool set reported
@@ -298,10 +304,10 @@ export interface ClaudeNativeLaunchContext {
 /**
  * What the transport OBSERVED about the child's turn.
  *
- * Note what is ABSENT: `roleId`, `launchNonce` and `sessionId`. The bridge fills
- * those from the launch IT made, so a launcher — and a fortiori a child — has no
- * field through which to assert its own identity. tasks:T713's constraint is
- * therefore structural on this seam rather than checked after the fact.
+ * Every identity below comes from the trusted transport observation (the
+ * native Agent result / hook event), not from the child's final message. This
+ * makes a wrong-child result representable and routes it through T687's typed
+ * correlation abort instead of silently substituting the parent's expectation.
  */
 export interface ClaudeNativeLaunchReport {
   /** Whether the PARENT cancelled. A parent-side fact about the run. */
@@ -310,6 +316,14 @@ export interface ClaudeNativeLaunchReport {
   /** The child's last message. Checked for handle-only shape, never for identity. */
   readonly finalMessage: string;
   readonly observedAt: string;
+  /** Actual role/nonce/session observed on the completed launch. */
+  readonly correlation: ClaudeChildCorrelation;
+  /** Harness-minted native child id, e.g. Agent's `agentId`. */
+  readonly agentId: string;
+  /** Harness/API tool-use id that launched this child. */
+  readonly parentToolUseId: string;
+  /** Canonical model reported by the transport, not the requested alias. */
+  readonly resolvedModel: string;
   /**
    * What the child's capability-bound submission produced AT THE PER-DISPATCH
    * ENDPOINT — which is bridge-side infrastructure, so this is an observation,
@@ -325,6 +339,208 @@ export type ClaudeNativeLauncher = (
   context: ClaudeNativeLaunchContext,
 ) => ClaudeNativeLaunchReport;
 
+export interface ClaudePrintStoreServer {
+  readonly name: string;
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly env: Readonly<Record<string, string>>;
+  /** Environment key consumed by the scoped server for this dispatch. */
+  readonly capabilityEnv: string;
+}
+
+export interface ClaudePrintLaunchOptions {
+  readonly claudeExecutable: string;
+  /** Empty in production; test recordings use `bun <fixture>`. */
+  readonly claudeArgsPrefix: readonly string[];
+  readonly cwd: string;
+  /** Generated role instructions selected by `envelope.subagent_type`. */
+  readonly rolePrompt: string;
+  readonly storeServer: ClaudePrintStoreServer;
+}
+
+interface ClaudePrintResult {
+  readonly type: "result";
+  readonly subtype: string;
+  readonly is_error: boolean;
+  readonly terminal_reason: string;
+  readonly session_id: string;
+  readonly uuid: string;
+  readonly result: string;
+  readonly modelUsage: Readonly<Record<string, { readonly canonicalModel?: string }>>;
+}
+
+function parseClaudePrintResult(value: unknown): ClaudePrintResult | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const result = value as Readonly<Record<string, unknown>>;
+  if (
+    result["type"] !== "result" ||
+    typeof result["subtype"] !== "string" ||
+    typeof result["is_error"] !== "boolean" ||
+    typeof result["terminal_reason"] !== "string" ||
+    typeof result["session_id"] !== "string" ||
+    typeof result["uuid"] !== "string" ||
+    typeof result["result"] !== "string" ||
+    typeof result["modelUsage"] !== "object" ||
+    result["modelUsage"] === null ||
+    Array.isArray(result["modelUsage"])
+  ) {
+    return undefined;
+  }
+  const modelUsage: Record<string, { readonly canonicalModel?: string }> = {};
+  for (const [model, rawUsage] of Object.entries(result["modelUsage"])) {
+    if (typeof rawUsage !== "object" || rawUsage === null || Array.isArray(rawUsage)) {
+      return undefined;
+    }
+    const canonicalModel = (rawUsage as Readonly<Record<string, unknown>>)["canonicalModel"];
+    if (canonicalModel !== undefined && typeof canonicalModel !== "string") return undefined;
+    modelUsage[model] = canonicalModel === undefined ? {} : { canonicalModel };
+  }
+  return {
+    type: "result",
+    subtype: result["subtype"],
+    is_error: result["is_error"],
+    terminal_reason: result["terminal_reason"],
+    session_id: result["session_id"],
+    uuid: result["uuid"],
+    result: result["result"],
+    modelUsage,
+  };
+}
+
+/**
+ * The production T722 process-boundary transport. It launches a real
+ * `claude -p`, supplies one per-dispatch stdio server whose environment carries
+ * the result capability, consumes the raw terminal JSON inside this function,
+ * and returns only transport facts to the lifecycle sequencer.
+ */
+export function launchClaudePrint(
+  context: ClaudeNativeLaunchContext,
+  options: ClaudePrintLaunchOptions,
+): ClaudeNativeLaunchReport {
+  const serverName = assertObservedTransportString(options.storeServer.name, "storeServer.name");
+  const toolName = `mcp__${serverName}__store_result`;
+  const mcpConfig = JSON.stringify({
+    mcpServers: {
+      [serverName]: {
+        type: "stdio",
+        command: options.storeServer.command,
+        args: [...options.storeServer.args],
+        cwd: options.storeServer.cwd,
+        env: {
+          ...options.storeServer.env,
+          [options.storeServer.capabilityEnv]: context.resultCapability.token,
+        },
+      },
+    },
+  });
+  const processResult = Bun.spawnSync(
+    [
+      options.claudeExecutable,
+      ...options.claudeArgsPrefix,
+      "-p",
+      context.envelope.prompt,
+      "--model",
+      context.envelope.model,
+      "--session-id",
+      context.expectedCorrelation.sessionId,
+      "--output-format",
+      "json",
+      "--json-schema",
+      JSON.stringify(DISPATCH_HANDLE_SCHEMA),
+      "--append-system-prompt",
+      options.rolePrompt,
+      "--tools",
+      "",
+      "--allowedTools",
+      toolName,
+      "--strict-mcp-config",
+      "--mcp-config",
+      mcpConfig,
+      "--permission-mode",
+      "dontAsk",
+      "--no-session-persistence",
+    ],
+    {
+      cwd: options.cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: context.childWindowMs,
+    },
+  );
+  const raw = processResult.stdout.toString().trim();
+  const observedAt = new Date().toISOString();
+  if (raw === "") {
+    return failedClaudePrintReport(
+      context,
+      processResult.exitCode,
+      observedAt,
+      processResult.stderr.toString(),
+    );
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch {
+    return failedClaudePrintReport(context, processResult.exitCode, observedAt, raw);
+  }
+  const parsed = parseClaudePrintResult(decoded);
+  if (parsed === undefined) {
+    return failedClaudePrintReport(
+      context,
+      processResult.exitCode,
+      observedAt,
+      "malformed Claude print terminal result",
+    );
+  }
+  const model = Object.values(parsed.modelUsage ?? {})
+    .map((usage) => usage.canonicalModel)
+    .find((candidate): candidate is string => typeof candidate === "string" && candidate !== "");
+  return Object.freeze({
+    cancelled: Boolean(processResult.signalCode),
+    terminal: Object.freeze({
+      subtype: parsed.subtype,
+      isError: parsed.is_error || processResult.exitCode !== 0,
+      terminalReason: parsed.terminal_reason,
+      exitStatus: processResult.exitCode,
+    }),
+    finalMessage: parsed.result,
+    observedAt,
+    correlation: Object.freeze({
+      roleId: context.envelope.subagent_type,
+      launchNonce: parsed.session_id,
+      sessionId: parsed.session_id,
+    }),
+    agentId: parsed.session_id,
+    parentToolUseId: parsed.uuid,
+    resolvedModel: assertObservedTransportString(model ?? "", "result.modelUsage.canonicalModel"),
+  });
+}
+
+function failedClaudePrintReport(
+  context: ClaudeNativeLaunchContext,
+  exitStatus: number,
+  observedAt: string,
+  detail: string,
+): ClaudeNativeLaunchReport {
+  return Object.freeze({
+    cancelled: false,
+    terminal: Object.freeze({
+      subtype: "error",
+      isError: true,
+      terminalReason: detail.trim() === "" ? "transport_error" : detail.trim().slice(0, 512),
+      exitStatus,
+    }),
+    finalMessage: "",
+    observedAt,
+    correlation: context.expectedCorrelation,
+    agentId: "claude-print-transport-failed",
+    parentToolUseId: "claude-print-transport-failed",
+    resolvedModel: context.envelope.model,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 3. The parent-visible outcome — HANDLE-ONLY on every branch
 // ---------------------------------------------------------------------------
@@ -334,7 +550,7 @@ export type ClaudeNativeLauncher = (
  * handle, the digest, the native proof, and the two per-mode strengths — and NO
  * `output` property, on purpose: defects:D173 removed the body from confirm
  * after measuring a 45,833-byte payload returned on a 46,510-byte confirm
- * response. The body arrives on {@link materializeClaudeDispatchOutput} and
+ * response. The body arrives through {@link ClaudeDispatchMaterializer} and
  * nowhere else.
  *
  * `nativeCompletion` is retained because it is what makes RESTART RECOVERY
@@ -351,6 +567,15 @@ export interface ClaudeParentCompletion {
   readonly correlationProvenance: ClaudeCorrelationProvenance;
   readonly handleOnlyEnforcement: ClaudeEnforcementStrength;
   readonly exitStatusCorroborates: ClaudeExitCorroboration;
+  /** Actual transport provenance, retained beside the shared native proof. */
+  readonly transportProvenance: ClaudeTransportProvenance;
+}
+
+export interface ClaudeTransportProvenance {
+  readonly agentId: string;
+  readonly parentToolUseId: string;
+  readonly resolvedModel: string;
+  readonly correlation: ClaudeChildCorrelation;
 }
 
 /**
@@ -403,14 +628,13 @@ export type ClaudeDispatchRun =
 export interface ClaudeDispatchRequest {
   readonly namespace: AttestationNamespace;
   readonly roleId: string;
-  /** The resolved model class handed to the `Agent` call. */
+  /** The resolved model class handed to `claude -p`. */
   readonly model: string;
   /**
-   * The DISPATCHING PARENT's own session id. A native `Agent` child's session
-   * cannot be pre-assigned (the tool has no session parameter), so T687 binds
-   * the parent's — `parent-constructed` provenance, stated rather than averaged.
+   * The child session UUID pre-assigned through `claude -p --session-id` and
+   * required back on the terminal event.
    */
-  readonly parentSessionId: string;
+  readonly childSessionId: string;
   /** The assembled role input. Assembled elsewhere (T978); bound here. */
   readonly input: DispatchJSONValue;
   readonly idempotencyKey: string;
@@ -431,9 +655,9 @@ function serviceDeps(deps: ClaudeBridgeDeps): DispatchServiceDeps {
 }
 
 /**
- * Drive ONE native ref-first dispatch end to end: prepare → gate → launch →
+ * Drive ONE Claude ref-first dispatch end to end: prepare → gate → launch →
  * decide → confirm. It does NOT fetch — see {@link CLAUDE_BRIDGE_FETCH_COUNT}
- * and {@link materializeClaudeDispatchOutput}.
+ * and {@link ClaudeDispatchMaterializer}.
  *
  * Every lifecycle write goes through the shared service. Storage and transport
  * failures are deliberately NOT caught: an unavailable store must fail the
@@ -462,8 +686,11 @@ export function runClaudeNativeDispatch(
 ): ClaudeDispatchRun {
   const correlation = claudeBridgeCorrelation({
     roleId: request.roleId,
-    launchNonce: mintClaudeLaunchNonce(deps.randomBytes),
-    sessionId: request.parentSessionId,
+    // T722's wrapper pre-assigns this UUID and observes the terminal event echo.
+    // Reusing it as the nonce makes every correlation field observable rather
+    // than depending on a second parent-only value.
+    launchNonce: request.childSessionId,
+    sessionId: request.childSessionId,
   });
   const prepareOutcome = prepareDispatch(
     {
@@ -524,6 +751,7 @@ export function runClaudeNativeDispatch(
         model: request.model,
         handle,
       }),
+      expectedCorrelation: correlation,
       resultCapability: prepared.resultCapability,
       childWindowMs: gate.childWindowMs,
     }),
@@ -575,10 +803,11 @@ function settleClaudeNativeDispatch(
     observation: {
       source: "transport",
       mode: CLAUDE_BRIDGE_MODE,
-      // Filled from the launch the PARENT made — never from the report.
-      roleId: correlation.roleId,
-      launchNonce: correlation.launchNonce,
-      sessionId: correlation.sessionId,
+      // These values came from the trusted transport, independently of the
+      // child-controlled final message. A mismatch reaches the typed abort.
+      roleId: report.correlation.roleId,
+      launchNonce: report.correlation.launchNonce,
+      sessionId: report.correlation.sessionId,
       cancelled: report.cancelled,
       terminal: report.terminal,
       finalMessage: report.finalMessage,
@@ -639,8 +868,27 @@ function settleClaudeNativeDispatch(
       correlationProvenance: decision.correlationProvenance,
       handleOnlyEnforcement: decision.handleOnlyEnforcement,
       exitStatusCorroborates: decision.exitStatusCorroborates,
+      transportProvenance: Object.freeze({
+        agentId: assertObservedTransportString(report.agentId, "report.agentId"),
+        parentToolUseId: assertObservedTransportString(
+          report.parentToolUseId,
+          "report.parentToolUseId",
+        ),
+        resolvedModel: assertObservedTransportString(
+          report.resolvedModel,
+          "report.resolvedModel",
+        ),
+        correlation: Object.freeze({ ...report.correlation }),
+      }),
     }),
   });
+}
+
+function assertObservedTransportString(value: string, path: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new AttestationContractError(path, "expected a non-empty transport-observed value");
+  }
+  return value;
 }
 
 /**
@@ -662,30 +910,48 @@ export function recoverClaudeNativeDispatch(
 export type { ClaudeSettleContext };
 
 /**
- * THE one body-materialising call. Separate from the run on purpose: the run's
- * result type has no place to put a body, so a caller that never invokes this
- * never sees one, and a caller that invokes it twice is visibly doing so.
- *
- * This performs EXACTLY ONE fetch, which is why defects:D188's repeatability
- * divergence does not reach this bridge in either direction.
+ * A one-use body materializer. The capability lives in the object identity and
+ * is consumed BEFORE the shared fetch runs, so even an unavailable backend
+ * cannot turn a retry into a second materialization attempt. This bridge does
+ * not rely on the shared fetch's current repeatability (defects:D188/T1142).
  */
-export function materializeClaudeDispatchOutput(
+export class ClaudeDispatchMaterializer {
+  private materialized = false;
+
+  constructor(
+    private readonly request: { readonly namespace: AttestationNamespace } & DispatchHandle,
+    private readonly deps: DispatchServiceDeps,
+  ) {}
+
+  materialize(): DispatchJSONValue {
+    if (this.materialized) {
+      throw new AttestationContractError(
+        "fetch",
+        "this Claude dispatch result was already materialized",
+      );
+    }
+    this.materialized = true;
+    const handle = assertDispatchHandle(this.request, "fetch");
+    const result = fetchDispatchResult(
+      { namespace: this.request.namespace, actor: "trusted-parent", ...handle },
+      this.deps,
+    );
+    if (result.state !== "consumed") {
+      throw new AttestationContractError(
+        "fetch.state",
+        `only a consumed dispatch carries an output body; attestation ` +
+          `"${handle.attestationId}" is "${result.state}"`,
+      );
+    }
+    return result.output;
+  }
+}
+
+export function createClaudeDispatchMaterializer(
   request: { readonly namespace: AttestationNamespace } & DispatchHandle,
   deps: DispatchServiceDeps,
-): DispatchJSONValue {
-  const handle = assertDispatchHandle(request, "fetch");
-  const result = fetchDispatchResult(
-    { namespace: request.namespace, actor: "trusted-parent", ...handle },
-    deps,
-  );
-  if (result.state !== "consumed") {
-    throw new AttestationContractError(
-      "fetch.state",
-      `only a consumed dispatch carries an output body; attestation ` +
-        `"${handle.attestationId}" is "${result.state}"`,
-    );
-  }
-  return result.output;
+): ClaudeDispatchMaterializer {
+  return new ClaudeDispatchMaterializer(request, deps);
 }
 
 // ---------------------------------------------------------------------------
@@ -860,71 +1126,12 @@ export function assertClaudeRefFirstArtifact(artifact: string, text: string): vo
   }
 }
 
-/**
- * Why the PROMPT-ARTIFACT half of tasks:T688's acceptance is not flipped in this
- * task, recorded as data because "we did not do it" is worthless without the
- * mechanism and the owner.
- *
- * The bridge above is ref-first NOW and its suite proves it. Rewriting the
- * deployed Claude instructions to match, however, requires two things that do
- * not exist yet, and shipping the rewrite without them would be a REGRESSION —
- * strictly worse than the measured status quo:
- *
- *  1. **The MCP tools are not registered.** `packages/ledger-mcp/src` exposes no
- *     `prepare_dispatch`, `store_result`, `confirm_dispatch_completion`,
- *     `abort_dispatch` or `fetch_dispatch_result`;
- *     `packages/ledger/src/store/attestationConstruction.ts` records in terms
- *     that "a future task (T695) wires the actual … MCP tools". tasks:T695 is
- *     `planned` and its own `dependsOn` includes tasks:T689 — so it is
- *     DOWNSTREAM of this task, not a missing prerequisite of it. An instruction
- *     naming tools that do not exist cannot be followed, and removing the
- *     `validate_output` call that DOES work would leave no output check at all.
- *  2. **`worktree_manage(prepare|release)` is not implemented** — no
- *     implementation exists in the workspace, only prose. Switching the fragment
- *     to `isolation: "none"` today would remove the ONLY working worktree
- *     allocation with nothing to replace it. T687 already priced this exact
- *     option as "Reinstates defects:D119".
- *
- * So the detector lands and runs; the artifacts are PINNED with their measured
- * violations; and the flip is a deletion from
- * {@link CLAUDE_ARTIFACT_MIGRATION_PINNED} once its blockers land.
- */
-export const CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON = Object.freeze([
-  "tasks:T695 — register prepare_dispatch/store_result/confirm/abort/fetch as MCP tools",
-  "worktree_manage(prepare|release) — no implementation in the workspace",
+/** The deployed Claude assets that must remain ref-first clean. */
+export const CLAUDE_REF_FIRST_ARTIFACTS = Object.freeze([
+  "fragments/claude/subagent-dispatch.md",
+  "fragments/claude/implement-dispatch-workflow.md",
+  "commands/cq/implement/advance.md",
 ] as const);
-
-/**
- * The artifacts that still carry pre-ref-first dispatch instructions, with the
- * EXACT violation set each one currently has.
- *
- * Pinning rather than omitting is what makes this a guard: a NEW violation in
- * either file fails the suite, and SILENTLY REMOVING one fails it too — so the
- * migration cannot be quietly half-done, and it cannot be quietly claimed done.
- */
-const CLAUDE_ARTIFACT_MIGRATION_PINS: readonly (readonly [
-  string,
-  readonly ClaudeArtifactViolation[],
-])[] = Object.freeze([
-  Object.freeze([
-    "fragments/claude/subagent-dispatch.md",
-    Object.freeze<ClaudeArtifactViolation[]>(["dispatched-prompt-copy", "generic-launcher"]),
-  ] as const),
-  Object.freeze([
-    "commands/cq/implement/advance.md",
-    Object.freeze<ClaudeArtifactViolation[]>([
-      "dispatched-prompt-copy",
-      "generic-launcher",
-      "ordinary-validate-output",
-      "raw-output-completion",
-    ]),
-  ] as const),
-]);
-
-export const CLAUDE_ARTIFACT_MIGRATION_PINNED: ReadonlyMap<
-  string,
-  readonly ClaudeArtifactViolation[]
-> = new Map(CLAUDE_ARTIFACT_MIGRATION_PINS);
 
 // ---------------------------------------------------------------------------
 // Deferred
@@ -950,11 +1157,7 @@ export const CLAUDE_BRIDGE_FETCH_COUNT = 1;
  */
 export const CLAUDE_BRIDGE_DEFERRED = Object.freeze([
   "child-side-one-shot-retrieval-of-the-assembled-input-by-handle-T977",
-  "spawn-and-intercept-a-real-wrapper-shellout-child-cross-harness",
   "implement-worktree_manage-prepare-and-release",
   "consolidate-the-duplicated-launch-gate-into-the-shared-module",
   "decide-defects-D188s-fetch-repeatability-divergence-T1142",
-  // See CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON: the detector lands here, the
-  // rewrite cannot until its two blockers do.
-  "rewrite-the-deployed-claude-dispatch-instructions-blocked-on-T695-and-worktree_manage",
 ] as const);

@@ -22,7 +22,7 @@ outputs:
   - "handoffs item (standalone only)"
 ioSchema:
   - "ready-set: tasks status non-terminal and not blocked, all dependsOn satisfied per target ledger's satisfies-dependency statuses (abandoned/wontfix never satisfy), milestone dependsOn satisfied, no open question"
-  - "worker dispatch: isolation=worktree, branch=implement/<taskId>, up to N=8 concurrent"
+  - "worker dispatch: surface-defined isolation, branch=implement/<taskId>, up to N=8 concurrent"
   - "worker result JSON: {taskId, status, resultCommit, branch, filesTouched, checkSummary, summary, blockedReason?}"
   - "reviewer result JSON: {taskId, verdict, criticism[], questions[], defects[], rationale, summary?}"
   - "criticism loop: re-dispatch worker with prior criticism until verdict=approve or questions filed"
@@ -34,6 +34,7 @@ subagents, so the whole loop — concurrent dispatch, the criticism loop, and
 merge-back — lives HERE in the main session.
 
 {{cq:fragment:subagent-dispatch}}
+{{cq:fragment:implement-dispatch-workflow}}
 
 > **FORWARD-PROGRESS INVARIANT — each pass must dispatch or WRITE, else STOP.**
 > Re-reading the ledger or the worktrees is not progress. A pass must dispatch a
@@ -74,9 +75,10 @@ exactly where it left off.
 - **Reviewer & conflict-resolver** always run at the FRONTIER tier resolved
   from `get_config` (`tiers.frontier` — most-capable == frontier, Q253),
   regardless of the task's tier.
-- **Worktrees**: dispatch the worker through `CQ_SUBAGENT` with worktree
-  isolation. The surface adapter owns whether it prepares the worktree natively
-  or manually and removes it after merge-back. Branch: `implement/<taskId>`. A
+- **Worktrees**: the surface-specific implement dispatch procedure defines
+  whether the adapter prepares the tree before dispatch or the transport
+  allocates it. In either case the adapter removes it after merge-back. Branch:
+  `implement/<taskId>`. A
   fresh worktree has NO `node_modules`; do NOT symlink
   the parent checkout's `node_modules` (a single root symlink does not reproduce
   a bun workspace's per-package layout and makes a later `bun install` a no-op —
@@ -243,9 +245,10 @@ this instruction): this write NEVER performs, and must never be conflated
 with, that terminal edge.
 
 Take up to N ready tasks. For each, resolve its model via `get_config` (§K4), set
-`update_item("tasks", <id>, status: "wip")`, prepare its worktree through the
-surface adapter, and dispatch an `implement-worker` via `CQ_SUBAGENT` (`role:
-"implement-worker"`, `model: <token.model VERBATIM>`, worktree isolation). The
+`update_item("tasks", <id>, status: "wip")`, prepare or select its worktree
+through the surface adapter as prescribed by the surface-specific procedure,
+and dispatch an `implement-worker` via `CQ_SUBAGENT` (`role:
+"implement-worker"`, `model: <token.model VERBATIM>`). The
 resolved token's `model` is a BARE alias (`opus`/`sonnet`/`haiku`/`fable` —
 T509: the CQ_SUBAGENT tool's `model` param is a CLOSED enum that rejects full
 `claude-*` ids, and the config tokens are already bare aliases), so pass it
@@ -253,32 +256,12 @@ verbatim with NO mangling. The token's `effort` is **N/A at `CQ_SUBAGENT` dispat
 — the CQ_SUBAGENT tool exposes no per-dispatch effort/reasoning param (T510; `effort`
 exists only as subagent-definition frontmatter) — record it for
 provenance/display only. A configured external shellout transport emits the
-effort according to its adapter (R342). The prompt MUST carry:
-the task id + verbatim `headline`/`description`/`acceptance`, the branch
-`implement/<taskId>` and base commit, and (on a re-dispatch) the prior round's
-`criticism[]`. Issue the batch's `CQ_SUBAGENT` calls in ONE message so they run
-concurrently. Record each worker's session log on return via `cq log put` (§Session logs).
-
-**Catalog-driven dispatch (G41 — implement-worker).** Drive each
-`implement-worker` dispatch through the typed prompt-catalog output validator the
-ledger-mcp server added in T343, MIRRORING the surviving-step sequence
-`commands/cq/plan/advance.md` sub-step 1a establishes for `plan-advance` (T975
-removed the parent-side (a) prompt-template fetch — `bun run gen-agents` already
-bakes the identical role prompt into `agents/implement-worker.md`, which the
-harness injects at the child's system boundary — and the (d) input round-trip;
-the surviving steps keep their original letters):
-**(b–c)** compose the input against the role's typed `inputSchema`
-(`{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit,
-priorCriticism? }`); **(e)** dispatch the `CQ_SUBAGENT`
-(`role: "implement-worker"`, `model` = the §K4 `get_config`-resolved
-token's bare-alias `model` verbatim, `isolation: "worktree"`)
-with that composed input rendered into the prompt; **(f–g)** await its result and
-`validate_output("implement-worker", output)` against the role's `outputSchema`
-(a validation failure is a contract breach to surface, §Session logs). **Degrade
-gracefully when the catalog output validator is absent** (an older / embedded
-ledger-mcp that predates T343) — skip (g) and fall straight through to the bare
-`CQ_SUBAGENT` dispatch (e). The validate step is an ADDITIVE contract check, never a
-hard dependency — its absence never blocks the pass.
+effort according to its adapter (R342). The structured role input MUST bind the
+task id + verbatim `headline`/`description`/`acceptance`, the absolute prepared
+worktree path, the branch `implement/<taskId>` and base commit, and (on a
+re-dispatch) the prior round's `criticism[]`. Issue the batch's `CQ_SUBAGENT`
+calls in ONE message so they run concurrently. Record each worker's session log
+on return via `cq log put` (§Session logs).
 
 ### 3. Review each finished worker (multi-reviewer panel, reconciled)
 For every worker that returned `status: "pass"`, run the **reviewer panel** for
@@ -331,27 +314,6 @@ concurrently, keyed by `harness`:
   rubric (`commands/cq/implement-review.md`, T174) PLUS the task acceptance, the
   worktree diff (`base..HEAD`), and the latest `bun run check` output. `pi` runs
   in default text mode; parse the (possibly fence-wrapped) json from its stdout.
-
-**Catalog-driven dispatch (G41 — implement-reviewer).** Drive each NATIVE
-`claude:*` `implement-reviewer` `CQ_SUBAGENT` dispatch (3a single-native fallback and
-each `claude:*` panel member in 3b) through the typed prompt-catalog output
-validator, MIRRORING the surviving-step sequence
-`commands/cq/plan/advance.md` sub-step 1a establishes for `plan-advance` (T975
-removed the parent-side (a) prompt-template fetch and (d) input round-trip);
-**(b–c)** compose the input against the role's typed `inputSchema` (`{ taskId,
-acceptance, worktreePath, branch, baseCommit, workerResult, round,
-priorCriticism? }`); **(e)** dispatch the `CQ_SUBAGENT`
-(`role: "implement-reviewer"`, `model` = the reviewer's resolved
-`model`, else the §K4 FRONTIER token's `model`, verbatim); **(f–g)** await its
-verdict and `validate_output("implement-reviewer", output)` against the role's
-`outputSchema` (a validation failure is a contract breach to surface, §Session
-logs). **Degrade gracefully when the catalog output validator is absent** — skip
-(g) and fall straight through to the bare `CQ_SUBAGENT` dispatch (e). The validate
-step is an ADDITIVE contract check, never a hard dependency. (The `pi:*` panel
-members are EXTERNAL shellouts driving the shared `CQ::implement-review` rubric,
-not `CQ_SUBAGENT` dispatches of this catalog role — they are out of this catalog
-validate-in/out path; their stdout-json is parsed and reconciled as 3b/3c
-describe.)
 
 Every reviewer — native `implement-reviewer` and the shared `CQ::implement-review`
 rubric driving `pi` — returns the SAME byte-identical contract: `{ taskId,
@@ -501,23 +463,6 @@ after every task in its `dependsOn` has merged). For each:
    continue; on its `fail`, treat like a question bailout (§5: register a
    `questions` item, set the task `blocked`, leave the worktree) and SKIP merging
    this task (and transitively anything depending on it) this pass.
-   **Catalog-driven dispatch (G41 — implement-conflict-resolver).** Drive this
-   dispatch through the typed prompt-catalog output validator, MIRRORING the
-   surviving-step sequence `commands/cq/plan/advance.md` sub-step 1a establishes
-   for `plan-advance` (T975 removed the parent-side (a) prompt-template fetch and
-   (d) input round-trip); **(b–c)** compose the input against the role's typed
-   `inputSchema` (`{ taskId, headline?,
-   description?, worktreePath, branch, baseCommit, conflictingFiles, baseSideNote?
-   }`); **(e)** dispatch the `CQ_SUBAGENT`
-   (`role: "implement-conflict-resolver"`, `model` = the §K4 FRONTIER
-   token's `model`, verbatim — the token's `effort` is N/A at `CQ_SUBAGENT` dispatch
-   per T510, provenance/display only,
-   `isolation: "worktree"`); **(f–g)** await its result and
-   `validate_output("implement-conflict-resolver", output)` against the role's
-   `outputSchema` (a validation failure is a contract breach to surface, §Session
-   logs). **Degrade gracefully when the catalog output validator is absent** — skip
-   (g) and fall straight through to the bare `CQ_SUBAGENT` dispatch (e). The
-   validate step is an ADDITIVE contract check, never a hard dependency.
 3. On a clean rebase (or resolved conflict) → fast-forward merge into the base,
    set `update_item("tasks", <id>, status: "done", fields: { resultCommit:
    "<merged sha>", completion: "<1-line: what landed>", sessionLogs:

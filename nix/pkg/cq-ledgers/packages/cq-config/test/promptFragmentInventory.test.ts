@@ -120,7 +120,7 @@ describe("prompt fragment inventory schema and closure failures", () => {
     const contracts = cloneContracts() as Array<Record<string, unknown>>;
     contracts[0]!.fragment = "terminal-command";
     expect(() => validatePromptFragmentInventory(contracts, cloneSources())).toThrow(
-      "expected one of cq-command-invocation, subagent-dispatch, inline-command-recursion, host-tool-vocabulary",
+      "expected one of cq-command-invocation, subagent-dispatch, implement-dispatch-workflow, inline-command-recursion, host-tool-vocabulary, operational-tool-vocabulary",
     );
   });
 

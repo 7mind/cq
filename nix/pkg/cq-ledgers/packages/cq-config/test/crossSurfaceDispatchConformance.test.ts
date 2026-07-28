@@ -310,13 +310,18 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     ).toBe(0);
   });
 
-  it("the surviving (g) validate_output gate is untouched on every surface", () => {
-    // T979 must not be mistaken for retiring (g); that is T977/T695's job.
+  it("claude consumes the store-validated result while the other surfaces retain (g)", () => {
+    // T688 moves Claude validation to the capability-scoped store boundary.
+    // T695 owns removing the remaining parent-side (g) round-trips.
     for (const surface of PROMPT_SURFACES) {
       for (const edge of DISPATCH_EDGE_INPUTS) {
-        expect(renderedOf(surface, edge.flowRoleId)).toContain(
-          `validate_output("${edge.role}",`,
-        );
+        const rendered = renderedOf(surface, edge.flowRoleId);
+        const validation = `validate_output("${edge.role}",`;
+        if (surface === "claude" && edge.flowRoleId === "implement/advance") {
+          expect(rendered).not.toContain(validation);
+        } else {
+          expect(rendered).toContain(validation);
+        }
       }
     }
   });
@@ -402,7 +407,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     // The three transports differ, but all three are role-NAME-addressed. The
     // codex divergence above is in the SKILL wrapper, not in this fragment.
     const expectations: Readonly<Record<PromptSurface, string>> = {
-      claude: 'Agent(subagent_type: "<role>", ...)',
+      claude: 'CQ_SUBAGENT(role: "<role>", handle: <dispatch-handle>, model: <model>)',
       codex: "`spawn_agent` transport",
       pi: 'dispatch_agent(agent: "<role>", task: "<complete prompt>")',
     };

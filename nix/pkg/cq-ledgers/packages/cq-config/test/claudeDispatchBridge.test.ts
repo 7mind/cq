@@ -15,15 +15,13 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import {
-  AttestationBindingError,
   AttestationContractError,
   AttestationStorageError,
   CLAUDE_ARTIFACT_INSPECTION_TOKEN,
-  CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON,
-  CLAUDE_ARTIFACT_MIGRATION_PINNED,
   CLAUDE_ARTIFACT_VIOLATIONS,
   CLAUDE_BRIDGE_DEFERRED,
   CLAUDE_BRIDGE_FETCH_COUNT,
@@ -35,6 +33,7 @@ import {
   CLAUDE_NATIVE_DELIVERY_MODE,
   CLAUDE_NATIVE_ISOLATION_ARGUMENT,
   CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT,
+  CLAUDE_REF_FIRST_ARTIFACTS,
   ClaudeUnsupportedModeError,
   DISPATCH_OVERLAY_REGISTRY,
   FakeDispatchClock,
@@ -51,7 +50,8 @@ import {
   classifyClaudeFinalMessage,
   fetchDispatchResult,
   invalidOutputDetailsOf,
-  materializeClaudeDispatchOutput,
+  launchClaudePrint,
+  createClaudeDispatchMaterializer,
   prepareDispatch,
   recoverClaudeNativeDispatch,
   runClaudeNativeDispatch,
@@ -88,6 +88,8 @@ const CORRELATION: ClaudeChildCorrelation = {
   launchNonce: LAUNCH_NONCE,
   sessionId: SESSION_ID,
 };
+
+const liveClaudeTest = process.env["CQ_T688_LIVE_CLAUDE"] === "1" ? test : test.skip;
 
 /** The orchestrator-prepared worktree from questions:Q363 — a UUID-named fresh tree. */
 const WORKTREE_PATH = "/tmp/cq-worktrees/018f2c7a-6b21-7c44-9e10-7a3f5d9b2e08";
@@ -249,17 +251,16 @@ describe("T688 §1 — the compact native launch carries the HANDLE, not a promp
   });
 });
 
-describe("T688 §1b — the bridge drives the NATIVE mode only", () => {
-  test("the bridge's mode is T687's native mode", () => {
-    expect(CLAUDE_BRIDGE_MODE).toBe(CLAUDE_NATIVE_DELIVERY_MODE);
-    expect(assertClaudeBridgeMode(CLAUDE_NATIVE_DELIVERY_MODE)).toBe(CLAUDE_NATIVE_DELIVERY_MODE);
+describe("T688 §1b — the bridge drives T722's process-boundary mode only", () => {
+  test("the bridge's mode is T687's wrapper mode", () => {
+    expect(CLAUDE_BRIDGE_MODE).toBe(CLAUDE_CROSS_HARNESS_DELIVERY_MODE);
+    expect(assertClaudeBridgeMode(CLAUDE_CROSS_HARNESS_DELIVERY_MODE)).toBe(
+      CLAUDE_CROSS_HARNESS_DELIVERY_MODE,
+    );
   });
 
-  test("the CROSS-HARNESS mode is refused HERE, distinctly from an unsupported mode", () => {
-    // Supported by T687, but dispatched by a codex/pi parent — not this bridge.
-    // K170 declares no fallback between the two, so conflating them would be a
-    // silent reversal of a user decision.
-    expect(() => assertClaudeBridgeMode(CLAUDE_CROSS_HARNESS_DELIVERY_MODE)).toThrow(
+  test("the native mode is refused HERE, distinctly from an unsupported mode", () => {
+    expect(() => assertClaudeBridgeMode(CLAUDE_NATIVE_DELIVERY_MODE)).toThrow(
       AttestationContractError,
     );
     // An unsupported mode fails EARLIER, with T687's own error type.
@@ -285,6 +286,144 @@ describe("T688 §1b — the bridge drives the NATIVE mode only", () => {
     expect(CLAUDE_BRIDGE_DEFERRED).toContain(
       "decide-defects-D188s-fetch-repeatability-divergence-T1142",
     );
+  });
+
+  test("the production claude -p launcher binds role, handle, scoped store, run, and model", () => {
+    const dispatch = prepared();
+    const handle = handleOf(dispatch);
+    const correlation: ClaudeChildCorrelation = {
+      roleId: ROLE_ID,
+      launchNonce: SESSION_ID,
+      sessionId: SESSION_ID,
+    };
+    const report = launchClaudePrint(
+      {
+        envelope: buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model: MODEL, handle }),
+        expectedCorrelation: correlation,
+        resultCapability: dispatch.resultCapability,
+        childWindowMs: 30_000,
+      },
+      {
+        claudeExecutable: "bun",
+        claudeArgsPrefix: [
+          path.join(import.meta.dir, "fixtures", "claude-print-recording.ts"),
+        ],
+        cwd: import.meta.dir,
+        rolePrompt: "T688-ROLE-PROMPT implement-worker",
+        storeServer: {
+          name: "t688store",
+          command: "cq",
+          args: ["mcp", "--dispatch-store"],
+          cwd: import.meta.dir,
+          env: { T688_SCOPE: "one-dispatch" },
+          capabilityEnv: "T688_CAPABILITY",
+        },
+      },
+    );
+    expect(report.terminal).toEqual({
+      subtype: "success",
+      isError: false,
+      terminalReason: "completed",
+      exitStatus: 0,
+    });
+    expect(report.finalMessage).toBe(JSON.stringify(handle));
+    expect(report.correlation).toEqual(correlation);
+    expect(report.agentId).toBe(SESSION_ID);
+    expect(report.parentToolUseId).toBe("recorded-tool-use-t688");
+    expect(report.resolvedModel).toBe(`recorded-${MODEL}`);
+  });
+
+  test("a malformed claude -p terminal result becomes a typed transport failure", () => {
+    const dispatch = prepared();
+    const handle = handleOf(dispatch);
+    const report = launchClaudePrint(
+      {
+        envelope: buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model: MODEL, handle }),
+        expectedCorrelation: {
+          roleId: ROLE_ID,
+          launchNonce: SESSION_ID,
+          sessionId: SESSION_ID,
+        },
+        resultCapability: dispatch.resultCapability,
+        childWindowMs: 30_000,
+      },
+      {
+        claudeExecutable: "bun",
+        claudeArgsPrefix: [
+          path.join(import.meta.dir, "fixtures", "claude-print-recording.ts"),
+          "--emit-malformed",
+        ],
+        cwd: import.meta.dir,
+        rolePrompt: "T688-ROLE-PROMPT implement-worker",
+        storeServer: {
+          name: "t688store",
+          command: "cq",
+          args: ["mcp", "--dispatch-store"],
+          cwd: import.meta.dir,
+          env: { T688_SCOPE: "one-dispatch" },
+          capabilityEnv: "T688_CAPABILITY",
+        },
+      },
+    );
+    expect(report.terminal.isError).toBe(true);
+    expect(report.terminal.terminalReason).toContain("malformed Claude print terminal result");
+    expect(report.finalMessage).toBe("");
+  });
+
+  liveClaudeTest("ON-DEMAND: real claude -p submits through the scoped endpoint", () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), "cq-t688-live-"));
+    try {
+      const dispatch = prepared();
+      const handle = handleOf(dispatch);
+      const capturePath = path.join(scratch, "store-result.json");
+      const model = process.env["CQ_T688_LIVE_MODEL"] ?? "haiku";
+      const report = launchClaudePrint(
+        {
+          envelope: buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model, handle }),
+          expectedCorrelation: {
+            roleId: ROLE_ID,
+            launchNonce: SESSION_ID,
+            sessionId: SESSION_ID,
+          },
+          resultCapability: dispatch.resultCapability,
+          childWindowMs: 180_000,
+        },
+        {
+          claudeExecutable: process.env["CQ_T688_CLAUDE"] ?? "claude",
+          claudeArgsPrefix: [],
+          cwd: scratch,
+          rolePrompt:
+            `You are the selected implement-worker. Call mcp__t688store__store_result exactly ` +
+            `once with output ${JSON.stringify(OUTPUT)}. After its acknowledgement, reply with ` +
+            `exactly ${JSON.stringify(handle)} and no other text.`,
+          storeServer: {
+            name: "t688store",
+            command: "bun",
+            args: [
+              path.join(import.meta.dir, "fixtures", "claude-print-store-server.ts"),
+            ],
+            cwd: scratch,
+            env: {
+              T688_HANDLE: JSON.stringify(handle),
+              T688_CAPTURE_PATH: capturePath,
+            },
+            capabilityEnv: "T688_CAPABILITY",
+          },
+        },
+      );
+      expect(report.terminal.isError).toBe(false);
+      expect(report.finalMessage).toBe(JSON.stringify(handle));
+      expect(report.correlation).toEqual({
+        roleId: ROLE_ID,
+        launchNonce: SESSION_ID,
+        sessionId: SESSION_ID,
+      });
+      expect(report.agentId).toBe(SESSION_ID);
+      expect(report.resolvedModel.length).toBeGreaterThan(0);
+      expect(readFileSync(capturePath, "utf8")).toContain(BODY_SENTINEL);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
 
@@ -362,6 +501,8 @@ interface ChildBehaviour {
   readonly finalMessage?: (handle: DispatchHandle) => string;
   /** Advance the clock by this many ms before the child submits. */
   readonly submitAfterMs?: number;
+  /** Trusted transport's independently observed correlation. */
+  readonly correlation?: ClaudeChildCorrelation;
 }
 
 /**
@@ -393,6 +534,10 @@ function child(b: Bridge, behaviour: ChildBehaviour = {}): ClaudeNativeLauncher 
           ? JSON.stringify(handle)
           : behaviour.finalMessage(handle),
       observedAt: b.clock.now(),
+      correlation: behaviour.correlation ?? context.expectedCorrelation,
+      agentId: "agent-a3faf8a32fe197738",
+      parentToolUseId: "toolu_T688",
+      resolvedModel: "claude-opus-5",
       ...(submission === undefined ? {} : { submission }),
     };
   };
@@ -405,7 +550,7 @@ function dispatchRequest(
     namespace: NAMESPACE,
     roleId: ROLE_ID,
     model: MODEL,
-    parentSessionId: SESSION_ID,
+    childSessionId: SESSION_ID,
     input: INPUT,
     idempotencyKey: "T688-round-0",
     timeoutMs: TIMEOUT_MS,
@@ -454,12 +599,14 @@ describe("T688 §2 — prepare -> gate -> launch -> confirm, driving the real se
       throw new Error(`expected consumed, got ${result.outcome}`);
     }
     expect(CLAUDE_BRIDGE_FETCH_COUNT).toBe(1);
-    const body = materializeClaudeDispatchOutput(
+    const materializer = createClaudeDispatchMaterializer(
       { namespace: NAMESPACE, ...result.handle },
       b.service,
     );
+    const body = materializer.materialize();
     expect(JSON.stringify(body)).toContain(BODY_SENTINEL);
     expect(body).toEqual(OUTPUT);
+    expect(() => materializer.materialize()).toThrow(/already materialized/);
   });
 
   test("the launch selects the role and carries the capability OUT of the prompt", () => {
@@ -497,14 +644,22 @@ describe("T688 §2 — prepare -> gate -> launch -> confirm, driving the real se
     }
     // The confirmation names the actual child/run it launched, role folded in.
     expect(result.completion.nativeCompletion.kind).toBe("native-completion");
-    expect(result.completion.nativeCompletion.actor).toBe("trusted-parent");
+    expect(result.completion.nativeCompletion.actor).toBe("trusted-extension");
     expect(result.completion.nativeCompletion.childId.startsWith(`${ROLE_ID}#`)).toBe(true);
     expect(result.completion.nativeCompletion.runId).toBe(SESSION_ID);
-    // Native: parent-constructed identity, best-effort handle-only, no exit status.
-    expect(result.completion.correlationProvenance).toBe("parent-constructed");
-    expect(result.completion.handleOnlyEnforcement).toBe("prompt-best-effort");
+    expect(result.completion.correlationProvenance).toBe("transport-attested");
+    expect(result.completion.handleOnlyEnforcement).toBe("structural");
     expect(result.completion.exitStatusCorroborates).toBe("unavailable");
-    // And the model actually passed to the launch is the requested one.
+    expect(result.completion.transportProvenance).toEqual({
+      agentId: "agent-a3faf8a32fe197738",
+      parentToolUseId: "toolu_T688",
+      resolvedModel: "claude-opus-5",
+      correlation: {
+        roleId: ROLE_ID,
+        launchNonce: SESSION_ID,
+        sessionId: SESSION_ID,
+      },
+    });
     expect(b.launches[0]!.envelope.model).toBe(MODEL);
   });
 });
@@ -520,11 +675,10 @@ describe("T688 §2b — every failure is routed to a TYPED terminal state", () =
     }
     expect(result.reason).toBe("protocol-violation");
     expect(JSON.stringify(result.abort.details)).toContain("echo");
-    // The lifecycle is sound — nothing was promoted — but on the NATIVE mode the
-    // abort is a remedy, not containment: T687 records that distinction, and the
-    // detail says so rather than implying a saving that did not happen.
+    // The process-boundary bridge consumes the raw child stream before the
+    // orchestrator sees it, so this abort preserves containment.
     expect(JSON.stringify(result.abort.details)).toContain(
-      '"containedBeforeParentContext":false',
+      '"containedBeforeParentContext":true',
     );
   });
 
@@ -690,6 +844,10 @@ describe("T688 §2c — correlation, idempotency, restart, and an unavailable st
       terminal: TERMINAL_OK,
       finalMessage: JSON.stringify(handleOf(prepared)),
       observedAt: b.clock.now(),
+      correlation: CORRELATION,
+      agentId: "agent-recovered",
+      parentToolUseId: "toolu_recovered",
+      resolvedModel: "claude-opus-5",
       submission,
     };
   }
@@ -719,57 +877,20 @@ describe("T688 §2c — correlation, idempotency, restart, and an unavailable st
     expect(JSON.stringify(again)).not.toContain(BODY_SENTINEL);
   });
 
-  test("CORRELATION FAILURE is UNREPRESENTABLE on the live path, by construction", () => {
+  test("a live CORRELATION FAILURE becomes a typed native-failure abort", () => {
     const b = bridge();
-    run(b);
-    // The launch report has no `roleId`, `launchNonce` or `sessionId` field at
-    // all: the bridge fills the observation from the launch IT made. So a
-    // launcher — and a fortiori a child — has nothing through which to assert an
-    // identity, and `decideClaudeCompletion`'s mismatch abort cannot be provoked
-    // from this seam. tasks:T713's constraint is structural here, not checked.
-    const reportKeys = Object.keys(
-      run(bridge()) as unknown as Record<string, unknown>,
-    );
-    expect(reportKeys).not.toContain("roleId");
-    const context = b.launches[0]!;
-    // Nor does the launcher receive the correlation to echo back.
-    expect(Object.keys(context).sort()).toEqual([
-      "childWindowMs",
-      "envelope",
-      "resultCapability",
-    ]);
-  });
-
-  test("a RECOVERED parent that mis-derives its correlation is REFUSED by the store", () => {
-    const b = bridge();
-    const prepared = preparedRun(b);
-    const report = storedReport(b, prepared);
     const wrong: ClaudeChildCorrelation = {
       ...CORRELATION,
-      launchNonce: "d3Jvbmdub25jZWZpeHR1cmV3cm9uZ25vbmNl",
+      sessionId: "2f250bd2-e108-41c9-9374-deabca1188ad",
     };
-    // The store refuses because the role AND the nonce are folded into `childId`
-    // — this is the shared service's binding check, not one this module performs.
-    //
-    // It THROWS rather than aborting, and that is the correct routing: a parent's
-    // own bookkeeping error is not a verdict on the child. Aborting here would
-    // destroy a dispatch whose real child may still be about to complete
-    // correctly — the same reasoning by which T687 makes an unsupported mode
-    // throw instead of becoming an abort reason.
-    expect(() =>
-      recoverClaudeNativeDispatch(settleContext(b, prepared, wrong, report), b.service),
-    ).toThrow(AttestationBindingError);
-    // Load-bearing: the record SURVIVES, still consumable by a correct recovery.
-    const state = fetchDispatchResult(
-      { namespace: NAMESPACE, actor: "trusted-parent", ...handleOf(prepared) },
-      b.service,
-    );
-    expect(state.state).toBe("result-stored");
-    const recovered = recoverClaudeNativeDispatch(
-      settleContext(b, prepared, CORRELATION, report),
-      b.service,
-    );
-    expect(recovered.outcome).toBe("consumed");
+    const result = run(b, { correlation: wrong });
+    if (result.outcome !== "aborted") {
+      throw new Error(`expected aborted, got ${result.outcome}`);
+    }
+    expect(result.reason).toBe("native-failure");
+    expect(JSON.stringify(result.abort.details)).toContain("sessionId");
+    expect(JSON.stringify(result.abort.details)).toContain(SESSION_ID);
+    expect(JSON.stringify(result.abort.details)).toContain(wrong.sessionId);
   });
 
   test("an UNAVAILABLE STORE fails the protocol; it never books a ref-first saving", () => {
@@ -800,7 +921,10 @@ describe("T688 §2c — correlation, idempotency, restart, and an unavailable st
       throw new Error(`expected aborted, got ${result.outcome}`);
     }
     expect(() =>
-      materializeClaudeDispatchOutput({ namespace: NAMESPACE, ...result.handle }, b.service),
+      createClaudeDispatchMaterializer(
+        { namespace: NAMESPACE, ...result.handle },
+        b.service,
+      ).materialize(),
     ).toThrow(/only a consumed dispatch carries an output body/);
   });
 });
@@ -826,7 +950,7 @@ function artifactText(artifact: string): string {
   return readFileSync(path.join(ASSETS_ROOT, artifact), "utf8");
 }
 
-describe("T688 §3 — the artifact detector, run over the REAL Claude assets", () => {
+describe("T688 §3 — the generated Claude assets are ref-first", () => {
   test("the executable bridge's own launch is ref-first clean", () => {
     // The path T688 actually implements has NONE of the four violations. This is
     // the positive control for the whole detector: it must not fire on conformant
@@ -841,45 +965,26 @@ describe("T688 §3 — the artifact detector, run over the REAL Claude assets", 
     expect(envelope).toContain('"run_in_background": false');
   });
 
-  test("every declared violation is REACHABLE, witnessed on a real artifact", () => {
-    // A closed vocabulary no input can produce is defects:D186's dead
-    // declaration. Each of the four is witnessed by a REAL file below.
-    const observed = new Set<string>();
-    for (const artifact of CLAUDE_ARTIFACT_MIGRATION_PINNED.keys()) {
-      for (const violation of claudeArtifactViolations(artifact, artifactText(artifact))) {
-        observed.add(violation);
-      }
-    }
-    expect([...observed].sort()).toEqual([...CLAUDE_ARTIFACT_VIOLATIONS].sort());
-  });
-
-  for (const [artifact, pinned] of CLAUDE_ARTIFACT_MIGRATION_PINNED) {
-    test(`${artifact} carries EXACTLY its pinned pre-ref-first violations`, () => {
+  for (const artifact of CLAUDE_REF_FIRST_ARTIFACTS) {
+    test(`${artifact} contains none of the four prohibited patterns`, () => {
       const text = artifactText(artifact);
-      // Equality, not containment: a NEW violation fails, and a SILENTLY REMOVED
-      // one fails too — so the migration can be neither half-done unnoticed nor
-      // claimed done without updating the pin.
-      expect(claudeArtifactViolations(artifact, text)).toEqual(pinned);
-      // Findings carry a line number and the offending text, so the pin is
-      // traceable to the artifact rather than being a bare label.
-      const findings = scanClaudeRefFirstArtifact(artifact, text);
-      expect(findings.length).toBeGreaterThan(0);
-      for (const finding of findings) {
-        expect(finding.line).toBeGreaterThan(0);
-        expect(finding.evidence.length).toBeGreaterThan(0);
-        expect(text.split("\n")[finding.line - 1]).toContain(finding.evidence.slice(0, 20));
-      }
+      expect(claudeArtifactViolations(artifact, text)).toEqual([]);
+      expect(() => assertClaudeRefFirstArtifact(artifact, text)).not.toThrow();
     });
   }
 
-  test("the migration blockers are named, with T695 recorded as DOWNSTREAM", () => {
-    // The blocking claim is checkable from the workspace, not taken on trust:
-    // no dispatch MCP tool is registered anywhere under ledger-mcp/src.
-    expect(CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON.join(" ")).toContain("tasks:T695");
-    expect(CLAUDE_ARTIFACT_MIGRATION_BLOCKED_ON.join(" ")).toContain("worktree_manage");
-    expect(CLAUDE_BRIDGE_DEFERRED).toContain(
-      "rewrite-the-deployed-claude-dispatch-instructions-blocked-on-T695-and-worktree_manage",
-    );
+  test("every declared violation remains reachable through a mutation of a real artifact", () => {
+    const observed = new Set<string>();
+    const artifact = "commands/cq/implement/advance.md";
+    const real = artifactText(artifact);
+    const regressed = `${real}
+Pass the complete task prompt with isolation: "worktree".
+Then await its result and \`validate_output("implement-worker", output)\`.
+`;
+    for (const violation of claudeArtifactViolations(artifact, regressed)) {
+      observed.add(violation);
+    }
+    expect([...observed].sort()).toEqual([...CLAUDE_ARTIFACT_VIOLATIONS].sort());
   });
 
   test("NEGATIVE CONTROL: the REAL detector fires on a REAL artifact mutated to regress", () => {
@@ -887,7 +992,7 @@ describe("T688 §3 — the artifact detector, run over the REAL Claude assets", 
     // reads it — not a toy literal standing in for the pipeline.
     const artifact = "fragments/claude/subagent-dispatch.md";
     const real = artifactText(artifact);
-    expect(claudeArtifactViolations(artifact, real)).not.toContain("raw-output-completion");
+    expect(claudeArtifactViolations(artifact, real)).toEqual([]);
 
     const regressed = `${real}\n> Then await its result and \`validate_output("implement-worker", output)\`.\n`;
     const after = claudeArtifactViolations(artifact, regressed);
@@ -898,16 +1003,10 @@ describe("T688 §3 — the artifact detector, run over the REAL Claude assets", 
     );
   });
 
-  test("NEGATIVE CONTROL: removing a pinned violation from the REAL text is ALSO caught", () => {
-    // The other direction, which is what stops a partial migration being claimed
-    // complete: the REAL fragment with its `isolation: "worktree"` deleted no
-    // longer matches its pin, so the per-artifact test above would fail.
+  test("NEGATIVE CONTROL: a generic-launcher regression in a real asset is caught", () => {
     const artifact = "fragments/claude/subagent-dispatch.md";
-    const half = artifactText(artifact).replace('isolation: "worktree"', 'isolation: "none"');
-    expect(half).not.toBe(artifactText(artifact));
-    const after = claudeArtifactViolations(artifact, half);
-    expect(after).not.toContain("generic-launcher");
-    expect(after).not.toEqual(CLAUDE_ARTIFACT_MIGRATION_PINNED.get(artifact));
+    const regressed = `${artifactText(artifact)}\nLaunch with isolation: "worktree".\n`;
+    expect(claudeArtifactViolations(artifact, regressed)).toContain("generic-launcher");
   });
 
   test("the INSPECTION token exempts a line, and exempts ONLY that line", () => {

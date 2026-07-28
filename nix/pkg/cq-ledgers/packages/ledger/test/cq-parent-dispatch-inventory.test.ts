@@ -22,13 +22,9 @@
  *   (2) the SAME structured input field set is still composed — the verbatim
  *       `inputSchema` field literal the prompt carried before the removal, so
  *       no input content was lost with the fetch;
- *   (3) `validate_output("<role>", …)` — the (g) leg — is INTACT, with its
- *       failure-consequence prose. (g) is deliberately OUT of T975's scope:
- *       T898 makes implement-worker / implement-reviewer `validate_output`
- *       failures BLOCKING before §6 success interpretation and §7 merge, and it
- *       is the only mechanical check that a worker's evidence payload is not
- *       fabricated (D156). It retires later, in T977/T695, when validation
- *       moves inside `store_result`;
+ *   (3) `validate_output("<role>", …)` — the (g) leg — remains on the original
+ *       flow edges. T688 retires it only for Claude's implement edges after
+ *       validation moves inside the capability-scoped `store_result`;
  *   (4) ZERO parent-side prompt materialization and ZERO ordinary
  *       `validate_input` round-trips remain anywhere in the four files.
  *
@@ -48,6 +44,12 @@ import { LEDGER_TOOL_NAMES } from "../src/mcp/ledgerTools.js";
 
 const ASSETS_ROOT = path.resolve(import.meta.dir, "../../../../cq-assets");
 const COMMANDS_ROOT = path.join(ASSETS_ROOT, "commands", "cq");
+const CLAUDE_IMPLEMENT_DISPATCH = path.join(
+  ASSETS_ROOT,
+  "fragments",
+  "claude",
+  "implement-dispatch-workflow.md",
+);
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 
 /** The four flow orchestrator prompts that dispatch native Claude subagents. */
@@ -187,6 +189,7 @@ const flowBodies = new Map<FlowKey, string>(
     ),
   ),
 );
+const claudeImplementDispatch = await readFile(CLAUDE_IMPLEMENT_DISPATCH, "utf8");
 
 function bodyOf(flow: FlowKey): string {
   const body = flowBodies.get(flow);
@@ -194,23 +197,34 @@ function bodyOf(flow: FlowKey): string {
   return body;
 }
 
+function claudeDispatchBodyOf(edge: DispatchEdge): string {
+  return edge.flow === "implement"
+    ? `${bodyOf(edge.flow)}\n${claudeImplementDispatch}`
+    : bodyOf(edge.flow);
+}
+
 describe("T975: native dispatch edges carry no parent-side prompt materialization", () => {
   // (1)–(3) — per dispatch edge.
   for (const edge of DISPATCH_EDGES) {
     it(`${edge.flow}/advance.md still documents the ${edge.role} dispatch site`, () => {
-      expect(countOccurrences(bodyOf(edge.flow), edge.siteMarker)).toBe(1);
+      expect(countOccurrences(claudeDispatchBodyOf(edge), edge.siteMarker)).toBe(1);
     });
 
     it(`${edge.flow}/advance.md still composes the SAME ${edge.role} input field set`, () => {
-      const body = normalize(bodyOf(edge.flow));
+      const body = normalize(claudeDispatchBodyOf(edge));
       for (const fields of edge.inputFields) {
         expect(body).toContain(normalize(fields));
       }
     });
 
-    it(`${edge.flow}/advance.md keeps the ${edge.role} validate_output gate intact`, () => {
-      // (g) survives T975 verbatim — T898 hardens it, T977/T695 retire it.
-      expect(bodyOf(edge.flow)).toContain(`validate_output("${edge.role}",`);
+    it(`${edge.flow}/advance.md has the expected ${edge.role} validate_output policy`, () => {
+      const body = claudeDispatchBodyOf(edge);
+      const call = `validate_output("${edge.role}",`;
+      if (edge.flow === "implement") {
+        expect(body).not.toContain(call);
+      } else {
+        expect(body).toContain(call);
+      }
     });
   }
 
@@ -220,13 +234,14 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
       expect(parentMaterializationViolations(bodyOf(flow))).toEqual([]);
     });
 
-    it(`${flow}/advance.md keeps one validate_output gate per dispatch edge, with its consequence prose`, () => {
+    it(`${flow}/advance.md has the expected validate_output count and consequence prose`, () => {
       const edges = DISPATCH_EDGES.filter((edge) => edge.flow === flow);
       expect(edges.length).toBeGreaterThan(0);
-      expect(countOccurrences(bodyOf(flow), "validate_output(")).toBe(edges.length);
-      expect(countOccurrences(normalize(bodyOf(flow)), VALIDATE_OUT_CONSEQUENCE)).toBe(
-        edges.length,
-      );
+      const body =
+        flow === "implement" ? `${bodyOf(flow)}\n${claudeImplementDispatch}` : bodyOf(flow);
+      const expectedCount = flow === "implement" ? 0 : edges.length;
+      expect(countOccurrences(body, "validate_output(")).toBe(expectedCount);
+      expect(countOccurrences(normalize(body), VALIDATE_OUT_CONSEQUENCE)).toBe(expectedCount);
     });
   }
 

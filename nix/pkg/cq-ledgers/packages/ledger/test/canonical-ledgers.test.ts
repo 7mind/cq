@@ -1883,41 +1883,80 @@ describe("T345: dispatched roles wired through the typed prompt catalog — grep
   }
 
   // Each enumerated dispatch site documents the catalog-driven dispatch for the
-  // subagent(s) it spawns (mirroring T344's plan-advance block). plan-advance's
-  // own block was authored in T344; T345 adds the siblings.
-  const dispatchSiteMarkers: Array<{ file: string; roles: string[] }> = [
-    { file: path.join(cqCommandsRoot, "plan", "advance.md"), roles: ["plan-advance", "plan-reviewer"] },
+  // subagent(s) it spawns. T688 moves implement's transport-sensitive procedure
+  // into one classified fragment per surface.
+  const implementDispatchRoot = path.resolve(
+    import.meta.dir,
+    "../../../../cq-assets/fragments",
+  );
+  const dispatchSiteMarkers: Array<{
+    files: Array<{ file: string; validateOutput: boolean }>;
+    roles: string[];
+  }> = [
     {
-      file: path.join(cqCommandsRoot, "implement", "advance.md"),
+      files: [{ file: path.join(cqCommandsRoot, "plan", "advance.md"), validateOutput: true }],
+      roles: ["plan-advance", "plan-reviewer"],
+    },
+    {
+      files: [
+        {
+          file: path.join(
+            implementDispatchRoot,
+            "claude",
+            "implement-dispatch-workflow.md",
+          ),
+          validateOutput: false,
+        },
+        {
+          file: path.join(
+            implementDispatchRoot,
+            "codex",
+            "implement-dispatch-workflow.md",
+          ),
+          validateOutput: true,
+        },
+        {
+          file: path.join(implementDispatchRoot, "pi", "implement-dispatch-workflow.md"),
+          validateOutput: true,
+        },
+      ],
       roles: ["implement-worker", "implement-reviewer", "implement-conflict-resolver"],
     },
     {
-      file: path.join(cqCommandsRoot, "investigate", "advance.md"),
+      files: [
+        {
+          file: path.join(cqCommandsRoot, "investigate", "advance.md"),
+          validateOutput: true,
+        },
+      ],
       roles: ["investigate-explorer", "investigate-prober"],
     },
   ];
 
-  for (const { file, roles } of dispatchSiteMarkers) {
-    const label = file.replace(/.*\/commands\/cq\//, "cq/");
-    for (const role of roles) {
-      it(`${label} documents catalog-driven dispatch for ${role}`, async () => {
-        const text = await readFile(file, "utf8");
-        // Every site — plan-advance's T344-authored block included, relabelled by
-        // T975 when its `steps a–g` enumeration lost (a) and (d) — carries the
-        // uniform `(G41 — <role>)` site marker.
-        expect(text).toContain(`Catalog-driven dispatch (G41 — ${role})`);
-        // and the validate-OUT tool call for that role (T898/T977 own this leg;
-        // T975 removed the parent-side fetch + validate-in legs).
-        expect(text).toContain(`validate_output("${role}",`);
-        // The catalog fetch stays ALLOWLISTED as an inspection/debug capability
-        // on every surface's operational vocabulary — T975 removed only the
-        // parent orchestrator's ordinary use of it.
-        for (const fragmentPath of operationalToolFragments) {
-          const fragment = await readFile(fragmentPath, "utf8");
-          expect(fragment).toContain('`prompt-catalog fetch ("<roleId>")` → call `');
-          expect(fragment).toContain("fetch_prompt` with");
-        }
-      });
+  for (const { files, roles } of dispatchSiteMarkers) {
+    for (const { file, validateOutput } of files) {
+      const label = file
+        .replace(/.*\/commands\/cq\//, "cq/")
+        .replace(/.*\/fragments\//, "fragment:");
+      for (const role of roles) {
+        it(`${label} documents catalog-driven dispatch for ${role}`, async () => {
+          const text = await readFile(file, "utf8");
+          expect(text).toContain(`Catalog-driven dispatch (G41 — ${role})`);
+          const validationCall = `validate_output("${role}",`;
+          if (validateOutput) {
+            expect(text).toContain(validationCall);
+          } else {
+            expect(text).not.toContain(validationCall);
+          }
+          // The catalog fetch stays ALLOWLISTED as an inspection/debug capability
+          // on every surface's operational vocabulary.
+          for (const fragmentPath of operationalToolFragments) {
+            const fragment = await readFile(fragmentPath, "utf8");
+            expect(fragment).toContain('`prompt-catalog fetch ("<roleId>")` → call `');
+            expect(fragment).toContain("fetch_prompt` with");
+          }
+        });
+      }
     }
   }
 });

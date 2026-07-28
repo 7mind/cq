@@ -121,7 +121,6 @@
         "The pass (repeat until no task is ready) / 2. Dispatch workers (up to N concurrently)::update_item#1|ack",
         "The pass (repeat until no task is ready) / 2. Dispatch workers (up to N concurrently)::get_config#1|full-content",
         "The pass (repeat until no task is ready) / 2. Dispatch workers (up to N concurrently)::update_item#2|ack",
-        "The pass (repeat until no task is ready) / 2. Dispatch workers (up to N concurrently)::get_config#2|full-content",
         "The pass (repeat until no task is ready) / 3. Review each finished worker (multi-reviewer panel, reconciled)::get_config#1|full-content",
         "The pass (repeat until no task is ready) / 7. Merge-back (sequential, DAG order, rebase-before-merge)::get_config#1|full-content",
         "The pass (repeat until no task is ready) / 7. Merge-back (sequential, DAG order, rebase-before-merge)::update_item#1|ack",

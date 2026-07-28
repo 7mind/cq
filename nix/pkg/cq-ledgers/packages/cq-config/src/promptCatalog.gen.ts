@@ -2861,6 +2861,36 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "dispatch_agent("
+            ],
+            "codex": [
+              "Agent(",
+              "dispatch_agent("
+            ],
+            "pi": [
+              "Agent("
+            ]
+          },
+          "fragment": "implement-dispatch-workflow",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Claude uses the ref-first attested bridge while Codex and Pi retain their catalog-validator dispatch path until their own cutover.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "implement worker, reviewer, and conflict-resolver catalog dispatch procedure",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -2894,6 +2924,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "dispatch-protocol",
           "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Claude uses the ref-first attested bridge while Codex and Pi retain their catalog-validator dispatch path until their own cutover.",
           "surfaces": [
             "claude",
             "codex",
@@ -3248,7 +3287,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "fe55989b39c071a2f7e419defafe669fa73ab1503b2be9773a7ab7f3aba8668a",
+  "catalogMetadataHash": "430e9cd07269e1982823ee6483ce83326313af5eaec96d0fe33392d6c4e627be",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -3295,6 +3334,35 @@ export const PROMPT_CATALOG_PROJECTION = {
       "intentionalDifference": {
         "kind": "dispatch-protocol",
         "reason": "Each host exposes a distinct subagent-dispatch transport and argument vocabulary.",
+        "surfaces": [
+          "claude",
+          "codex",
+          "pi"
+        ]
+      },
+      "supportedSurfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    {
+      "forbiddenVocabulary": {
+        "claude": [
+          "dispatch_agent("
+        ],
+        "codex": [
+          "Agent(",
+          "dispatch_agent("
+        ],
+        "pi": [
+          "Agent("
+        ]
+      },
+      "fragment": "implement-dispatch-workflow",
+      "intentionalDifference": {
+        "kind": "dispatch-protocol",
+        "reason": "Claude uses the ref-first attested bridge while Codex and Pi retain their catalog-validator dispatch path until their own cutover.",
         "surfaces": [
           "claude",
           "codex",

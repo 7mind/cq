@@ -97,6 +97,23 @@ let
       };
     }
     {
+      fragment = "implement-dispatch-workflow";
+      supportedSurfaces = promptSurfaces;
+      forbiddenVocabulary = {
+        claude = [ "dispatch_agent(" ];
+        codex = [
+          "Agent("
+          "dispatch_agent("
+        ];
+        pi = [ "Agent(" ];
+      };
+      intentionalDifference = {
+        kind = "dispatch-protocol";
+        reason = "Claude uses the ref-first attested bridge while Codex and Pi retain their catalog-validator dispatch path until their own cutover.";
+        surfaces = promptSurfaces;
+      };
+    }
+    {
       fragment = "inline-command-recursion";
       supportedSurfaces = promptSurfaces;
       forbiddenVocabulary = {
@@ -166,6 +183,7 @@ let
   sourceBlockByFragment = {
     cq-command-invocation = "frontmatter and body CQ command references";
     subagent-dispatch = "subagent dispatch instructions and host transport branch";
+    implement-dispatch-workflow = "implement worker, reviewer, and conflict-resolver catalog dispatch procedure";
     inline-command-recursion = "inline chained-command execution instructions";
     host-tool-vocabulary = "frontmatter host tool and isolation capabilities";
     operational-tool-vocabulary = "body-level mapping from canonical operational tokens to callable host tools";
@@ -300,6 +318,7 @@ let
 
   I = "cq-command-invocation";
   D = "subagent-dispatch";
+  W = "implement-dispatch-workflow";
   R = "inline-command-recursion";
   T = "host-tool-vocabulary";
   O = "operational-tool-vocabulary";
@@ -357,7 +376,7 @@ let
     (mkCommand "implement/start" [ I T R ] [
       (recursion "implement/advance")
     ])
-    (mkCommand "implement/advance" [ I T O D ] [
+    (mkCommand "implement/advance" [ I T O D W ] [
       (dispatch "implement-worker")
       (dispatch "implement-reviewer")
       (dispatch "implement-conflict-resolver")
