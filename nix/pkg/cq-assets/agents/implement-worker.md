@@ -92,13 +92,48 @@ narrative needed for the work.
 2. **Implement** the change that satisfies `acceptance`. Follow the repo
    conventions: reproduce a defect with a failing test before fixing it; prefer
    editing over rewriting; add only the code the task asks for.
-3. **Gate:** run `bun run check` (tsc + eslint + bun test) from the repo root of
-   the worktree. Iterate until it is GREEN. If you cannot get it green because
-   the task itself is under-specified or contradictory (not merely hard),
-   stop and report `fail` with the reason — do NOT thrash.
-4. **Commit** your work on the task branch (`git add -A && git commit`) so the
-   orchestrator has a concrete `resultCommit` to rebase and merge. One commit is
-   enough; a tidy history is welcome but not required.
+3. **Prove changed tests and guards can fail.** For every test, assertion,
+   guard, or invariant you add or change, run a deliberate fail-first mutation,
+   capture the expected failure text, restore the exact intended bytes, and
+   capture the restored pass. Hash the relevant file before mutation and after
+   restoration so the restoration is verified rather than asserted. Record
+   only mutations you personally ran and observed; never inherit a predecessor's
+   claims. Report the observations through `mutationTable` exactly when the
+   output schema requires it. If you cannot reconstruct what ran, report that
+   gap rather than claiming the guard works.
+4. **Run targeted checks.** When a test's placement matters, run
+   `bun test <exact-path>` and quote its observed non-zero pass/total count.
+   The full gate is non-discriminating for files outside a configured test
+   workspace because the test command permits no-test success. When checking
+   hard-wrapped prose, use a newline-insensitive operation such as `rg -U` or a
+   script that scans the whole body; line-oriented grep can miss a broken clause.
+5. **Gate in the foreground:** run `bun run check` (tsc + eslint + bun test)
+   from the repo root of the worktree. `bun test` alone does NOT typecheck or
+   lint and is not evidence that this gate passed. Capture start/end time and
+   the gate's real exit status: the status assignment must be on its own line
+   immediately after `bun run check`, never after a pipe and never inferred
+   from a wrapper's status. Preserve a `REAL_CHECK_EXIT=<n>` line and the
+   verbatim pass/skip/fail tail, and report the observed wall-clock duration as
+   `gateDurationMs`. Run in the foreground; do not trust a background
+   notification. Iterate until the captured real status is zero. If you cannot
+   get it green because the task itself is under-specified or contradictory
+   (not merely hard), stop and report `fail` with the observed reason.
+   - An "unrelated failure" claim requires an A/B reproduction: run the same
+     failing selector on this task tree and on the unmodified recorded base
+     commit, then paste BOTH commands, statuses, and failure signatures. The
+     known load-sensitive cases are the `ledger-web` UI suites and
+     `PlanLifecycleStore contract > settles a task start racing a follow-up
+     claim` (defects:D168/D176). If worktree confinement prevents a safe base
+     run, you cannot label the failure unrelated; report `fail`.
+6. **Commit and verify** on the task branch (`git add -A && git commit`) so the
+   orchestrator has a concrete `resultCommit` to rebase and merge. Verify the
+   committed result with ALL of: `git rev-parse --verify HEAD`,
+   `git cat-file -t <resolved-head>` returning `commit`, an empty
+   `git status --porcelain --untracked-files=all`, and
+   `git merge-base --is-ancestor <baseCommit> HEAD` exiting zero. Immediately
+   before emitting the evidence block, make the final command
+   `git rev-parse --verify HEAD` and copy that command's stdout VERBATIM into
+   `resultCommit`; do not recall or hand-type it.
 
 ## Output contract
 Emit the **Session summary** section (below), then return a single fenced
@@ -108,17 +143,21 @@ Emit the **Session summary** section (below), then return a single fenced
 {
   "taskId": "<task id>",
   "status": "pass | fail",
-  "resultCommit": "<full sha of your commit, or null on fail>",
+  "resultCommit": "<verbatim stdout of the final git rev-parse --verify HEAD, or null on fail>",
   "branch": "implement/<taskId>",
   "filesTouched": ["<path>", "..."],
-  "checkSummary": "<last ~15 lines of `bun run check`: pass/fail counts or the error>",
+  "checkSummary": "<REAL_CHECK_EXIT line plus the verbatim pass/skip/fail tail or error>",
+  "gateDurationMs": 0,
   "summary": "<2-4 lines: what you implemented and how it meets acceptance>",
   "blockedReason": "<present only when status=fail: why you could not finish>"
 }
 ```
 
-`status: "pass"` REQUIRES `bun run check` green AND a commit made. Anything else
-is `status: "fail"` with a `blockedReason`.
+The prompt-catalog output schema is authoritative for the field set and its
+conditional `mutationTable` requirement. `status: "pass"` REQUIRES observed
+`REAL_CHECK_EXIT=0`, the captured duration and tail, a verified commit object,
+clean tree, and successful base-ancestry check. Reporting any unobserved claim
+is itself a task failure: return `status: "fail"` with a `blockedReason`.
 
 ## Session summary (handover)
 Immediately before the JSON block, emit:
@@ -130,3 +169,7 @@ Immediately before the JSON block, emit:
 - **Discovered:** <anything non-obvious about the code or the task>
 - **Issues:** <blockers / risks / follow-ups, or "none">
 ```
+
+Before sending, verify the reply contains this complete Session summary followed
+by the required fenced result block as its LAST content, with no text after it.
+A reply missing either section is a lost report, not a successful task return.
