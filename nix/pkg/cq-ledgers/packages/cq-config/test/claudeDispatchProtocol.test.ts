@@ -395,8 +395,12 @@ describe("T687 §1 — which Claude delivery modes can satisfy the contract", ()
       expect(raised).toBeInstanceOf(ClaudeUnsupportedModeError);
       const error = raised as ClaudeUnsupportedModeError;
       expect(error.mode).toBe(mode);
+      const verdict = CLAUDE_DELIVERY_MODES.get(mode);
+      // Fail loudly rather than comparing against `undefined`: an unsupported
+      // mode with no verdict would make the next assertion vacuously true.
+      if (verdict === undefined) throw new Error(`mode "${mode}" declares no verdict`);
       // The refusal carries the measured reason, not a bare rejection.
-      expect(error.evidence).toBe(CLAUDE_DELIVERY_MODES.get(mode)?.evidence);
+      expect(error.evidence).toBe(verdict.evidence);
       expect(error.message).toContain(mode);
     }
   });
