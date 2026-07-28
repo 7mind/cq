@@ -1149,7 +1149,9 @@ export const AGENT_ROLES: AgentRole[] = [
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "description": "Full 40-hex commit sha on pass (^[0-9a-f]{40}$); null on fail. The pattern applies only to a string instance, so null still validates.",
+          "pattern": "^[0-9a-f]{40}$"
         },
         "branch": {
           "type": "string",
@@ -1170,6 +1172,35 @@ export const AGENT_ROLES: AgentRole[] = [
         },
         "blockedReason": {
           "type": "string"
+        },
+        "gateDurationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Wall-clock milliseconds `bun run check` took. Required when status is \"pass\"."
+        },
+        "mutationTable": {
+          "type": "array",
+          "description": "Evidence rows for a claimed mutation/guard change: one {mutation, observed, restored} triple per test/guard mutated. REQUIRED iff filesTouched intersects TEST_GUARD_GLOBS = ['**/test/**', '**/*.test.ts', '**/*guard*', '**/*invariant*'] — i.e. at least one filesTouched entry is under a test/ directory, ends in .test.ts, or names a guard or invariant. Omit entirely when no touched file matches (do not send an empty array).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "mutation": {
+                "type": "string"
+              },
+              "observed": {
+                "type": "string"
+              },
+              "restored": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "mutation",
+              "observed",
+              "restored"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -1181,7 +1212,47 @@ export const AGENT_ROLES: AgentRole[] = [
         "checkSummary",
         "summary"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "pass"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "required": [
+              "gateDurationMs"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "filesTouched": {
+                "type": "array",
+                "contains": {
+                  "type": "string",
+                  "pattern": "(?:^(.*/)?test/.*$)|(?:^(.*/)?[^/]*\\.test\\.ts$)|(?:^(.*/)?[^/]*guard[^/]*$)|(?:^(.*/)?[^/]*invariant[^/]*$)"
+                }
+              }
+            },
+            "required": [
+              "filesTouched"
+            ]
+          },
+          "then": {
+            "required": [
+              "mutationTable"
+            ]
+          }
+        }
+      ]
     },
   },
   {
