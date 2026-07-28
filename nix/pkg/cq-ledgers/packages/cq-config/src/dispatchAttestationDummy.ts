@@ -244,8 +244,11 @@ export class InMemoryAttestationStore implements AttestationStore {
       return undefined;
     }
     for (const row of this.byHandle.values()) {
-      // A tombstone has no capability hash at all, so an expired envelope can
-      // never be resolved by a capability again.
+      // What makes an expired envelope unresolvable by a capability is that
+      // `AttestationTombstone` has NO `resultCapabilityHash` field — the
+      // invariant is the field's absence, not this branch, which narrows the
+      // union so the comparison typechecks. (Equivalent mutant; the earlier
+      // comment claimed the branch was the guard.)
       if (!isAttestationTombstone(row) && row.resultCapabilityHash === capabilityHash) {
         return row;
       }

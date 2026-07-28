@@ -67,8 +67,14 @@ const request: PrepareDispatchRequest = {
   expectedChild: { childId: "child-t720", runId: `run-${String(process.pid)}` },
 };
 
-const backend = openBackend();
+// OPEN inside the try as well: a constructor failure is an outcome the parent
+// must be able to read, not a silent crash. When it was outside, a peer that lost
+// the WAL-conversion race exited having printed nothing at all, and the parent
+// could only report "peer produced no JSON" — which hid the actual defect
+// (a missing busy_timeout during WAL conversion) behind a test-harness message.
+let backend: AttestationBackend | undefined;
 try {
+  backend = openBackend();
   const outcome = await prepareDispatchOn(backend, request, {
     now: () => new Date().toISOString(),
     randomBytes: defaultDispatchRandomBytes,
@@ -88,5 +94,5 @@ try {
     })}\n`,
   );
 } finally {
-  await backend.close();
+  await backend?.close();
 }

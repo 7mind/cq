@@ -69,15 +69,16 @@ import { timingSafeEqual } from "node:crypto";
 import { DISPATCHED_ROLE_SIDECARS } from "./promptCatalogStore.js";
 import { validateAgainstSchema, type ValidationError } from "./validation.js";
 import { LEDGER_BACKENDS, type LedgerBackend } from "./types.js";
-import type { DispatchOverlayRegistry } from "./dispatchOverlays.js";
+import { DispatchOverlayError, type DispatchOverlayRegistry } from "./dispatchOverlays.js";
 import {
   dispatchPreLaunchRejection,
   validateDispatchInput,
   assertValidateThenAllocate,
+  DispatchInputValidationError,
   type DispatchPreLaunchRejection,
   type DispatchPrepareStep,
 } from "./dispatchInputValidation.js";
-import { canonicalDispatchInputBytes } from "./dispatchRefAssembly.js";
+import { canonicalDispatchInputBytes, DispatchRefAssemblyError } from "./dispatchRefAssembly.js";
 import {
   DISPATCH_PROTOCOL_OPERATIONS,
   type AbortDispatch,
@@ -215,6 +216,58 @@ export class AttestationKeyReuseError extends AttestationStorageError {
     this.name = "AttestationKeyReuseError";
     this.existing = existing;
   }
+}
+
+/**
+ * Every error class that can escape a dispatch service call as a DECISION about
+ * the dispatch, rather than as a failure of the underlying store.
+ *
+ * It is deliberately not just this module's own classes. A unit of work runs
+ * `prepareDispatch` (hence T976's step-order and input validation, and T684's
+ * overlay validation) and digests payloads through T978's canonicalizer, so
+ * {@link DispatchInputValidationError}, {@link DispatchOverlayError} and
+ * {@link DispatchRefAssemblyError} can all surface from inside a transaction too.
+ * Every one of them is a statement about the REQUEST, and an adapter that
+ * rewrote it as "the store is unreachable" would be as wrong as it was for the
+ * classes below.
+ *
+ * An adapter that must tell "the SERVICE decided this" from "the DRIVER failed"
+ * tests against this list rather than enumerating classes at its own call site,
+ * so adding a class here cannot silently leave an adapter misclassifying it.
+ */
+export const ATTESTATION_ERROR_CLASSES = Object.freeze([
+  AttestationContractError,
+  AttestationNamespaceError,
+  DispatchAuthorizationError,
+  AttestationBindingError,
+  AttestationNotFoundError,
+  DispatchStateConflictError,
+  AttestationStorageError,
+  AttestationTransportError,
+  AttestationKeyReuseError,
+  DispatchInputValidationError,
+  DispatchOverlayError,
+  DispatchRefAssemblyError,
+] as const);
+
+/**
+ * Whether `error` is one this module raised — a decision about the DISPATCH — as
+ * opposed to a failure of the underlying driver.
+ *
+ * WHY (defect D177): the PostgreSQL adapter wrapped its whole transaction body in
+ * a classifier, because `Bun.sql`'s `pool.begin` is the only place a driver error
+ * can surface for that backend. The classifier passed through only
+ * {@link AttestationStorageError} and {@link AttestationTransportError}, so every
+ * OTHER decision the service made inside the unit of work — a foreign namespace,
+ * an unauthorized capability, a state conflict, a binding mismatch, a missing
+ * record, a malformed handle — was rewritten as "postgres attestation store
+ * unreachable". That inverts this module's central promise and leaves a parent
+ * unable to distinguish "retry, the store is down" from "you are not authorized".
+ * The bun:sqlite and filesystem adapters never had it: they classify at
+ * individual query sites, where only driver errors can appear.
+ */
+export function isAttestationDomainError(error: unknown): boolean {
+  return ATTESTATION_ERROR_CLASSES.some((errorClass) => error instanceof errorClass);
 }
 
 // ---------------------------------------------------------------------------

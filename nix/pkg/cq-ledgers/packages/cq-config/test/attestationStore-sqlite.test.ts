@@ -11,7 +11,7 @@
 
 import { afterAll, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -159,6 +159,83 @@ describe("bun:sqlite attestation backend specifics", () => {
       `${ATTESTATION_TABLE}_idempotency`,
     ]);
     db.close();
+  });
+
+  test("opening succeeds while a peer holds the write lock — WAL is best-effort", async () => {
+    // REGRESSION (found by the cross-process suite): a peer crashed inside the
+    // constructor with SQLITE_BUSY from `PRAGMA journal_mode = WAL`, because
+    // converting to WAL needs an EXCLUSIVE lock and — measured, not assumed —
+    // `busy_timeout` does NOT apply to that conversion: it fails after 0ms
+    // whether or not a timeout is set. So two processes opening the same fresh
+    // store at once had one of them fail before it could serve anything.
+    //
+    // WAL is an optimisation; cross-process serialization comes from
+    // `BEGIN IMMEDIATE` + `busy_timeout`, which work in rollback-journal mode
+    // too. The conversion is therefore retried briefly and then skipped.
+    const dbPath = join(freshRoot(), ATTESTATION_DB_FILENAME);
+    // A store whose schema already exists, deliberately NOT in WAL mode, so the
+    // only contended statement at open is the journal-mode conversion.
+    const seed = new Database(dbPath, { create: true });
+    ensureAttestationSchema(seed);
+    seed.exec("PRAGMA journal_mode = delete");
+    seed.close();
+
+    const holder = new Database(dbPath);
+    holder.exec("BEGIN IMMEDIATE");
+    let backend: SqliteAttestationBackend | undefined;
+    try {
+      // Previously this THREW; it must now open.
+      backend = new SqliteAttestationBackend({
+        namespace: { backend: NAMESPACE_BACKEND, projectKey: "wal-contended" },
+        dbPath,
+      });
+      expect(backend.storedRows()).toEqual([]);
+    } finally {
+      holder.exec("ROLLBACK");
+      holder.close();
+    }
+    // And the store is fully usable once the peer releases the lock.
+    expect(await backend!.transact({ kind: "namespace" }, (store) => store.rows())).toEqual([]);
+    await backend!.close();
+    // A later open, uncontended, does convert the file to WAL as intended.
+    const later = new SqliteAttestationBackend({
+      namespace: { backend: NAMESPACE_BACKEND, projectKey: "wal-contended" },
+      dbPath,
+    });
+    const mode = new Database(dbPath).query("PRAGMA journal_mode").all() as readonly {
+      readonly journal_mode: string;
+    }[];
+    expect(mode[0]?.journal_mode).toBe("wal");
+    await later.close();
+  });
+
+  test("a NON-contention journal-mode failure is still raised, not swallowed", () => {
+    // The other half of the best-effort conversion: skipping the WAL switch is
+    // only correct when the cause is CONTENTION. A read-only store cannot be
+    // opened for writing at all, and must fail loudly rather than be reported as
+    // an ordinary store that merely stayed in rollback mode. (Mutation M54.)
+    const root = freshRoot();
+    const dbPath = join(root, ATTESTATION_DB_FILENAME);
+    const seed = new Database(dbPath, { create: true });
+    ensureAttestationSchema(seed);
+    seed.exec("PRAGMA journal_mode = delete");
+    seed.close();
+    // Read-only file AND directory: no -wal sidecar can be created either.
+    chmodSync(dbPath, 0o444);
+    chmodSync(root, 0o555);
+    try {
+      expect(
+        () =>
+          new SqliteAttestationBackend({
+            namespace: { backend: NAMESPACE_BACKEND, projectKey: "readonly" },
+            dbPath,
+          }),
+      ).toThrow();
+    } finally {
+      // Restore permissions so afterAll can remove the directory.
+      chmodSync(root, 0o755);
+      chmodSync(dbPath, 0o644);
+    }
   });
 
   test("a closed handle refuses every unit of work as a transport failure", async () => {

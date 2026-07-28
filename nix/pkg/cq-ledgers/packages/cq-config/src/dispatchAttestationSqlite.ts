@@ -381,14 +381,76 @@ function openAttestationDb(dbPath: string): Database {
     throw asSqliteBackendError(error);
   }
   try {
-    db.exec("PRAGMA journal_mode = WAL");
+    // Connection-local pragmas first: neither takes a lock, and `busy_timeout`
+    // must be in force before any contended statement runs.
     db.exec(`PRAGMA busy_timeout = ${ATTESTATION_BUSY_TIMEOUT_MS}`);
     db.exec("PRAGMA synchronous = NORMAL");
   } catch (error) {
     db.close();
     throw asSqliteBackendError(error);
   }
+  try {
+    enableWalBestEffort(db);
+  } catch (error) {
+    db.close();
+    throw asSqliteBackendError(error);
+  }
   return db;
+}
+
+/** How many times a contended WAL conversion is retried before giving up on it. */
+export const ATTESTATION_WAL_CONVERSION_ATTEMPTS = 5;
+
+/** How long to wait between WAL-conversion attempts. */
+const WAL_RETRY_SLEEP_MS = 25;
+
+/**
+ * Switch the database to WAL, tolerating a peer that is converting it right now.
+ *
+ * **Why this cannot just be `db.exec("PRAGMA journal_mode = WAL")`.** Converting a
+ * database to WAL needs an EXCLUSIVE lock, and — measured, not assumed —
+ * `busy_timeout` does NOT apply to it: with another connection holding a write
+ * lock, the conversion fails with `SQLITE_BUSY` after 0ms whether or not a busy
+ * timeout is set. So two processes opening the same FRESH store at once will have
+ * one of them fail inside the constructor, before it can serve anything. That is
+ * what happened to a peer in the cross-process key-reuse suite: it crashed at open
+ * instead of losing the key race it was spawned to run.
+ *
+ * WAL is an OPTIMISATION here, not a correctness requirement: cross-process
+ * serialization comes from `BEGIN IMMEDIATE` plus `busy_timeout`, which work in
+ * rollback-journal mode too. The journal mode is a property of the FILE, so once
+ * any process converts it every later connection sees WAL. Retrying briefly and
+ * then proceeding is therefore strictly better than refusing to open — and it is
+ * NOT a swallowed error: a store that stays in rollback mode is fully correct,
+ * only less concurrent.
+ */
+function enableWalBestEffort(db: Database): void {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      return;
+    } catch (error) {
+      const classified = asSqliteBackendError(error);
+      // Anything that is NOT contention is a real failure to open.
+      if (!(classified instanceof AttestationTransportError) || !isBusy(error)) {
+        throw error;
+      }
+      if (attempt >= ATTESTATION_WAL_CONVERSION_ATTEMPTS) {
+        return;
+      }
+      Bun.sleepSync(WAL_RETRY_SLEEP_MS);
+    }
+  }
+}
+
+function isBusy(error: unknown): boolean {
+  if (!(error instanceof SQLiteError)) {
+    return false;
+  }
+  const code = error.code;
+  return (
+    typeof code === "string" && (code.startsWith("SQLITE_BUSY") || code.startsWith("SQLITE_LOCKED"))
+  );
 }
 
 /**

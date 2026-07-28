@@ -22,6 +22,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   ATTESTATION_BACKEND_COVERAGE,
+  ATTESTATION_ERROR_CLASSES,
+  AttestationKeyReuseError,
+  isAttestationDomainError,
   ATTESTATION_DEFERRAL_COVERAGE,
   ATTESTATION_DEFERRAL_DISCHARGE,
   ATTESTATION_EXCLUDED_BACKENDS,
@@ -589,6 +592,75 @@ describe("persisted row serialization", () => {
         AttestationContractError,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Domain-error classification (the D177 predicate)
+// ---------------------------------------------------------------------------
+
+describe("isAttestationDomainError separates a service decision from a driver failure", () => {
+  test("EVERY error class this package exports is recognised by the predicate", async () => {
+    // The predicate's whole value is that an adapter need not enumerate classes
+    // at its own call site. That only holds if NOTHING the package raises escapes
+    // it — so the check is against the package's ACTUAL exports, not against a
+    // second hand-written list, which would only move the problem.
+    //
+    // The assertion is on the PREDICATE, not on membership of
+    // ATTESTATION_ERROR_CLASSES: a subclass (AttestationKeyReuseError,
+    // AttestationBackendUnsupportedError) is recognised through its base and does
+    // not need its own entry. Requiring membership would force every future
+    // subclass into the list for no benefit — and it is how this test first
+    // failed after the taxonomy was corrected.
+    const module = (await import("@cq/config")) as unknown as Readonly<Record<string, unknown>>;
+    const exported = Object.entries(module).filter(
+      ([name, value]) =>
+        typeof value === "function" &&
+        /^(Attestation|Dispatch).*Error$/.test(name) &&
+        Object.prototype.isPrototypeOf.call(Error, value as object),
+    );
+    // Sanity: the filter found the classes at all, including the backend module's.
+    expect(exported.length).toBeGreaterThanOrEqual(10);
+    expect(exported.map(([name]) => name)).toContain("AttestationBackendUnsupportedError");
+    for (const [name, value] of exported) {
+      const instance = Object.create((value as { prototype: object }).prototype) as unknown;
+      expect(isAttestationDomainError(instance), `${name} escapes isAttestationDomainError`).toBe(
+        true,
+      );
+    }
+  });
+
+  test("each declared class is recognised, by instance", () => {
+    for (const errorClass of ATTESTATION_ERROR_CLASSES) {
+      // Constructed through a real call path rather than with bare `new`, so the
+      // arity of each constructor is respected.
+      const instance = Object.create(errorClass.prototype) as unknown;
+      expect(isAttestationDomainError(instance), errorClass.name).toBe(true);
+    }
+  });
+
+  test("a driver error, and anything else, is NOT a domain error", () => {
+    for (const foreign of [
+      new Error("connection refused"),
+      new TypeError("undefined is not an object"),
+      Object.assign(new Error("pg"), { errno: "23505", code: "ERR_POSTGRES_SERVER_ERROR" }),
+      "a string",
+      42,
+      null,
+      undefined,
+      {},
+    ]) {
+      expect(isAttestationDomainError(foreign), String(foreign)).toBe(false);
+    }
+  });
+
+  test("AttestationKeyReuseError is recognised as itself, not flattened to its base", () => {
+    const reuse = new AttestationKeyReuseError("k", { attestationId: ID_A, generation: 1 });
+    expect(isAttestationDomainError(reuse)).toBe(true);
+    // It IS an AttestationStorageError by inheritance, and must stay the more
+    // specific class through any adapter that passes it along.
+    expect(reuse).toBeInstanceOf(AttestationStorageError);
+    expect(reuse).toBeInstanceOf(AttestationKeyReuseError);
   });
 });
 

@@ -163,12 +163,21 @@ export const ATTESTATION_EXCLUSION_REASONS: ReadonlyMap<string, string> = new Ma
  */
 export const ATTESTATION_IN_MEMORY_BACKEND = "in-memory" as const;
 
-/** A backend that cannot hold attestations was named where one is required. */
-export class AttestationBackendUnsupportedError extends Error {
+/**
+ * A backend that cannot hold attestations was named where one is required.
+ *
+ * Extends {@link AttestationContractError} because that is exactly what this is:
+ * an authoring defect in a declaration, caught at registration. Being part of the
+ * declared error taxonomy also means {@link isAttestationDomainError} recognises
+ * it, so no adapter can rewrite it into a driver failure — the D177 class of bug.
+ * (A coverage test over the package's exported error classes found it sitting
+ * outside the taxonomy.)
+ */
+export class AttestationBackendUnsupportedError extends AttestationContractError {
   readonly backend: string;
 
   constructor(backend: string, detail: string) {
-    super(`backend "${backend}" cannot hold dispatch attestations: ${detail}`);
+    super(`backend "${backend}"`, `cannot hold dispatch attestations: ${detail}`);
     this.name = "AttestationBackendUnsupportedError";
     this.backend = backend;
   }
@@ -445,8 +454,12 @@ export class BufferedAttestationStore implements AttestationStore {
       return undefined;
     }
     for (const row of this.rowsByHandle.values()) {
-      // A tombstone carries no capability hash at all, so an expired envelope
-      // can never be resolved by a capability again.
+      // What makes an expired envelope unresolvable by a capability is that
+      // `AttestationTombstone` has NO `resultCapabilityHash` field — the
+      // invariant is enforced by the field's absence, not by this branch, which
+      // is here to narrow the union so the comparison typechecks. (A reviewer
+      // found this branch to be an equivalent mutant; an earlier comment claimed
+      // it was the guard.)
       if (!isAttestationTombstone(row) && row.resultCapabilityHash === capabilityHash) {
         return row;
       }

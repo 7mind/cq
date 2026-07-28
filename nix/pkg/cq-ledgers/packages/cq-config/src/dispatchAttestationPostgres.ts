@@ -20,6 +20,17 @@
  * digest compare-and-set in the `UPDATE`/`DELETE` predicates is belt-and-braces
  * on top.
  *
+ * **Only a DRIVER failure is classified** (D177). `Bun.sql` surfaces connection
+ * and SQL errors out of `pool.begin`, which is also where every decision the
+ * SERVICE made inside the unit of work surfaces, so the two must be separated by
+ * {@link isAttestationDomainError} rather than by position. An earlier revision
+ * wrapped the whole transaction body unconditionally and rewrote a foreign
+ * namespace, an unauthorized capability, a state conflict, a binding mismatch and
+ * a missing record all into "postgres attestation store unreachable" — the exact
+ * degradation this contract exists to prevent. The bun:sqlite and filesystem
+ * adapters classify at individual query sites, where only driver errors can
+ * appear, and never had the problem.
+ *
  * Env-gating for tests follows the repo's existing Postgres suites (Q286):
  * `CQ_TEST_PG_URL` points at a throwaway database, and every Postgres case
  * SKIPS cleanly when it is unset.
@@ -29,6 +40,7 @@ import { SQL } from "bun";
 import {
   AttestationStorageError,
   AttestationTransportError,
+  isAttestationDomainError,
   type AttestationNamespace,
   type AttestationRow,
   type AttestationStore,
@@ -202,7 +214,15 @@ export class PostgresAttestationBackend implements AttestationBackend {
           );
         })) as T;
       } catch (error) {
-        throw asPgBackendError(error);
+        // D177: classify ONLY a genuine driver failure. Every decision the
+        // SERVICE made inside the unit of work passes through untouched — a
+        // foreign namespace stays an AttestationNamespaceError, an unauthorized
+        // capability stays a DispatchAuthorizationError, and so on. Wrapping the
+        // whole transaction body unconditionally (as this adapter first did)
+        // rewrote all of them as "postgres attestation store unreachable",
+        // inverting the contract's promise that an authorization or lifecycle
+        // failure is never degraded into unreachability.
+        throw isAttestationDomainError(error) ? error : asPgBackendError(error);
       }
     });
   }

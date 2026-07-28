@@ -340,6 +340,8 @@ export {
   AttestationStorageError,
   AttestationTransportError,
   AttestationKeyReuseError,
+  ATTESTATION_ERROR_CLASSES,
+  isAttestationDomainError,
   assertAttestationNamespace,
   attestationNamespacesEqual,
   formatAttestationNamespace,
