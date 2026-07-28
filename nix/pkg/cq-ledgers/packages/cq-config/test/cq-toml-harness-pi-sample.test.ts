@@ -115,6 +115,9 @@ describe("cq-toml-harness-pi-sample — T484 [harness.<name>] override mechanics
     for (const tier of TIERS) {
       expect(tierModel(config, tier)).not.toEqual(opusToken);
     }
+    // T861 (active-harness-codex.test.ts) is the former incidental detector
+    // of wholesale replacement; this assertion mechanically enforces it.
+    expect(tierModel(config, "standard")).toBeUndefined();
   });
 
   it("parseConfig(sample, 'claude') keeps shared reviewers=[opus] unchanged", () => {
