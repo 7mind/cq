@@ -53,6 +53,7 @@ import {
   launchClaudePrint,
   createClaudeDispatchMaterializer,
   prepareDispatch,
+  provenanceBindingOf,
   recoverClaudeNativeDispatch,
   runClaudeNativeDispatch,
   sequentialDispatchRandomBytes,
@@ -75,7 +76,12 @@ import {
 
 const NAMESPACE: AttestationNamespace = { backend: "xdg", projectKey: "cq-ledger-suite" };
 const T0 = "2026-07-28T12:00:00.000Z";
-const PROMPT_DIGEST = "a".repeat(64);
+const ROLE_PROMPT = "T688-ROLE-PROMPT implement-worker";
+const REVIEWER_ROLE_ID = "implement-reviewer";
+const REVIEWER_ROLE_PROMPT = "T688-ROLE-PROMPT implement-reviewer";
+const promptDigestOf = (prompt: string): string =>
+  new Bun.CryptoHasher("sha256").update(prompt).digest("hex");
+const PROMPT_DIGEST = promptDigestOf(ROLE_PROMPT);
 const CATALOG_HASH = "b".repeat(64);
 const TIMEOUT_MS = 600_000;
 const ROLE_ID = "implement-worker";
@@ -104,7 +110,7 @@ const INPUT: DispatchJSONValue = {
   baseCommit: "7e3bfd579800a3e0db18dac15d5939ba08edbdb4",
 };
 
-function prepared(): DispatchPrepared {
+function prepared(promptDigest: string = PROMPT_DIGEST): DispatchPrepared {
   const clock = new FakeDispatchClock(T0);
   const store = new InMemoryAttestationStore(NAMESPACE);
   const request: PrepareDispatchRequest = {
@@ -115,7 +121,7 @@ function prepared(): DispatchPrepared {
     idempotencyKey: "T688-round-0",
     timeoutMs: TIMEOUT_MS,
     registry: DISPATCH_OVERLAY_REGISTRY,
-    promptDigest: PROMPT_DIGEST,
+    promptDigest,
     catalogHash: CATALOG_HASH,
     expectedChild: claudeExpectedChild(CORRELATION),
   };
@@ -126,6 +132,54 @@ function prepared(): DispatchPrepared {
   });
   if (!outcome.accepted) {
     throw new Error(`expected a prepared dispatch, got ${outcome.reason}: ${outcome.detail}`);
+  }
+  return outcome.prepared;
+}
+
+function preparedReviewer(): DispatchPrepared {
+  const clock = new FakeDispatchClock(T0);
+  const store = new InMemoryAttestationStore(NAMESPACE);
+  const correlation: ClaudeChildCorrelation = {
+    roleId: REVIEWER_ROLE_ID,
+    launchNonce: SESSION_ID,
+    sessionId: SESSION_ID,
+  };
+  const outcome = prepareDispatch(
+    {
+      namespace: NAMESPACE,
+      roleId: REVIEWER_ROLE_ID,
+      surface: "claude",
+      input: {
+        taskId: "T688",
+        headline: "Review the Claude ref-first compact native launch",
+        description: "Adversarially review the candidate.",
+        acceptance: "Return a bound implementation verdict.",
+        worktreePath: WORKTREE_PATH,
+        branch: "worktree-agent-a3faf8a32fe197738",
+        baseCommit: "7e3bfd579800a3e0db18dac15d5939ba08edbdb4",
+        workerResult: {
+          resultCommit: "40e58e91268a0ff7dfbd54922fdbf57c4434538c",
+          checkSummary: "targeted suites green",
+          filesTouched: ["packages/cq-config/src/claudeDispatchBridge.ts"],
+        },
+        round: 1,
+        priorCriticism: [],
+      },
+      idempotencyKey: "T688-review-round-0",
+      timeoutMs: TIMEOUT_MS,
+      registry: DISPATCH_OVERLAY_REGISTRY,
+      promptDigest: promptDigestOf(REVIEWER_ROLE_PROMPT),
+      catalogHash: CATALOG_HASH,
+      expectedChild: claudeExpectedChild(correlation),
+    },
+    {
+      store,
+      now: clock.now,
+      randomBytes: sequentialDispatchRandomBytes(31),
+    },
+  );
+  if (!outcome.accepted) {
+    throw new Error(`expected a prepared reviewer dispatch, got ${outcome.reason}: ${outcome.detail}`);
   }
   return outcome.prepared;
 }
@@ -299,6 +353,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
     const report = launchClaudePrint(
       {
         envelope: buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model: MODEL, handle }),
+        preparedProvenance: provenanceBindingOf(dispatch),
         expectedCorrelation: correlation,
         resultCapability: dispatch.resultCapability,
         childWindowMs: 30_000,
@@ -309,7 +364,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
           path.join(import.meta.dir, "fixtures", "claude-print-recording.ts"),
         ],
         cwd: import.meta.dir,
-        rolePrompt: "T688-ROLE-PROMPT implement-worker",
+        rolePrompt: ROLE_PROMPT,
         storeServer: {
           name: "t688store",
           command: "cq",
@@ -333,12 +388,54 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
     expect(report.resolvedModel).toBe(`recorded-${MODEL}`);
   });
 
+  test("NEGATIVE CONTROL: a generated prompt for the wrong role is refused before launch", () => {
+    const dispatch = preparedReviewer();
+    const handle = handleOf(dispatch);
+    const correlation: ClaudeChildCorrelation = {
+      roleId: REVIEWER_ROLE_ID,
+      launchNonce: SESSION_ID,
+      sessionId: SESSION_ID,
+    };
+    expect(() =>
+      launchClaudePrint(
+        {
+          envelope: buildClaudeCompactNativeLaunch({
+            roleId: REVIEWER_ROLE_ID,
+            model: MODEL,
+            handle,
+          }),
+          preparedProvenance: provenanceBindingOf(dispatch),
+          expectedCorrelation: correlation,
+          resultCapability: dispatch.resultCapability,
+          childWindowMs: 30_000,
+        },
+        {
+          claudeExecutable: "bun",
+          claudeArgsPrefix: [
+            path.join(import.meta.dir, "fixtures", "claude-print-recording.ts"),
+          ],
+          cwd: import.meta.dir,
+          rolePrompt: ROLE_PROMPT,
+          storeServer: {
+            name: "t688store",
+            command: "cq",
+            args: ["mcp", "--dispatch-store"],
+            cwd: import.meta.dir,
+            env: { T688_SCOPE: "one-dispatch" },
+            capabilityEnv: "T688_CAPABILITY",
+          },
+        },
+      ),
+    ).toThrow(/generated role prompt for "implement-reviewer" has digest .* not the prepared digest/);
+  });
+
   test("a malformed claude -p terminal result becomes a typed transport failure", () => {
     const dispatch = prepared();
     const handle = handleOf(dispatch);
     const report = launchClaudePrint(
       {
         envelope: buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model: MODEL, handle }),
+        preparedProvenance: provenanceBindingOf(dispatch),
         expectedCorrelation: {
           roleId: ROLE_ID,
           launchNonce: SESSION_ID,
@@ -354,7 +451,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
           "--emit-malformed",
         ],
         cwd: import.meta.dir,
-        rolePrompt: "T688-ROLE-PROMPT implement-worker",
+        rolePrompt: ROLE_PROMPT,
         storeServer: {
           name: "t688store",
           command: "cq",
@@ -373,13 +470,18 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
   liveClaudeTest("ON-DEMAND: real claude -p submits through the scoped endpoint", () => {
     const scratch = mkdtempSync(path.join(tmpdir(), "cq-t688-live-"));
     try {
-      const dispatch = prepared();
+      const liveRolePrompt =
+        `You are the selected implement-worker. Read the dispatch handle from the user prompt. ` +
+        `Call mcp__t688store__store_result exactly once with output ${JSON.stringify(OUTPUT)}. ` +
+        `After its acknowledgement, reply with exactly that handle JSON and no other text.`;
+      const dispatch = prepared(promptDigestOf(liveRolePrompt));
       const handle = handleOf(dispatch);
       const capturePath = path.join(scratch, "store-result.json");
       const model = process.env["CQ_T688_LIVE_MODEL"] ?? "haiku";
       const report = launchClaudePrint(
         {
           envelope: buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model, handle }),
+          preparedProvenance: provenanceBindingOf(dispatch),
           expectedCorrelation: {
             roleId: ROLE_ID,
             launchNonce: SESSION_ID,
@@ -392,10 +494,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
           claudeExecutable: process.env["CQ_T688_CLAUDE"] ?? "claude",
           claudeArgsPrefix: [],
           cwd: scratch,
-          rolePrompt:
-            `You are the selected implement-worker. Call mcp__t688store__store_result exactly ` +
-            `once with output ${JSON.stringify(OUTPUT)}. After its acknowledgement, reply with ` +
-            `exactly ${JSON.stringify(handle)} and no other text.`,
+          rolePrompt: liveRolePrompt,
           storeServer: {
             name: "t688store",
             command: "bun",

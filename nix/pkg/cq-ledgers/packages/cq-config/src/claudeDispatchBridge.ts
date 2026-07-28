@@ -75,6 +75,7 @@ import {
   prepareDispatch,
   provenanceBindingOf,
   type DispatchServiceDeps,
+  type DispatchProvenanceBinding,
   type PrepareDispatchDeps,
   type StoreDispatchResultOutcome,
 } from "./dispatchAttestation.js";
@@ -278,6 +279,13 @@ export function claudeBridgeCorrelation(
 export interface ClaudeNativeLaunchContext {
   readonly envelope: ClaudeNativeLaunchEnvelope;
   /**
+   * The exact role/prompt/input binding persisted by prepare. The production
+   * launcher verifies its generated role prompt against this binding before it
+   * spawns Claude, so the reported role cannot be synthesized from an
+   * unverified request envelope.
+   */
+  readonly preparedProvenance: DispatchProvenanceBinding;
+  /**
    * The identity the parent bound at prepare. A production transport carries
    * the nonce on the launch it observes and returns an independently observed
    * correlation in {@link ClaudeNativeLaunchReport}; settlement compares the
@@ -359,6 +367,35 @@ export interface ClaudePrintLaunchOptions {
   readonly storeServer: ClaudePrintStoreServer;
 }
 
+function boundClaudePrintRole(
+  context: ClaudeNativeLaunchContext,
+  rolePrompt: string,
+): string {
+  const roleId = context.preparedProvenance.roleId;
+  if (
+    context.envelope.subagent_type !== roleId ||
+    context.expectedCorrelation.roleId !== roleId
+  ) {
+    throw new AttestationContractError(
+      "launch.rolePrompt.roleId",
+      `prepared role "${roleId}" does not match requested role ` +
+        `"${context.envelope.subagent_type}" and expected correlation role ` +
+        `"${context.expectedCorrelation.roleId}"`,
+    );
+  }
+  const observedPromptDigest = new Bun.CryptoHasher("sha256")
+    .update(rolePrompt)
+    .digest("hex");
+  if (observedPromptDigest !== context.preparedProvenance.promptDigest) {
+    throw new AttestationContractError(
+      "launch.rolePrompt.promptDigest",
+      `generated role prompt for "${roleId}" has digest "${observedPromptDigest}", ` +
+        `not the prepared digest "${context.preparedProvenance.promptDigest}"`,
+    );
+  }
+  return roleId;
+}
+
 interface ClaudePrintResult {
   readonly type: "result";
   readonly subtype: string;
@@ -418,6 +455,7 @@ export function launchClaudePrint(
   context: ClaudeNativeLaunchContext,
   options: ClaudePrintLaunchOptions,
 ): ClaudeNativeLaunchReport {
+  const boundRoleId = boundClaudePrintRole(context, options.rolePrompt);
   const serverName = assertObservedTransportString(options.storeServer.name, "storeServer.name");
   const toolName = `mcp__${serverName}__store_result`;
   const mcpConfig = JSON.stringify({
@@ -508,7 +546,7 @@ export function launchClaudePrint(
     finalMessage: parsed.result,
     observedAt,
     correlation: Object.freeze({
-      roleId: context.envelope.subagent_type,
+      roleId: boundRoleId,
       launchNonce: parsed.session_id,
       sessionId: parsed.session_id,
     }),
@@ -751,6 +789,7 @@ export function runClaudeNativeDispatch(
         model: request.model,
         handle,
       }),
+      preparedProvenance: provenanceBindingOf(prepared),
       expectedCorrelation: correlation,
       resultCapability: prepared.resultCapability,
       childWindowMs: gate.childWindowMs,
