@@ -1442,15 +1442,111 @@ const DISPATCHED_ROLE_REFERENCE_LINE = "- Codex collaboration role `";
 /** The `$cq-*` branch, which defects:D178 says to KEEP: inline recursion needs it. */
 const COMMAND_ROLE_REFERENCE_LINE = "→ [`references/${referenceName}`]";
 
+/**
+ * Prerequisite (a) as a FUNCTION of the projection text.
+ *
+ * Both detectors below take text and return a verdict, so the four-combination
+ * negative control can drive SYNTHETIC content through the very same code that
+ * produces the real-file verdict. (Round 1 evaluated the detectors once over the
+ * real files and then asserted `String.prototype.includes` on toy literals,
+ * which demonstrated nothing about the detectors themselves.)
+ */
+function detectSuppressedReferenceLines(text: string): boolean {
+  return !text.includes(DISPATCHED_ROLE_REFERENCE_LINE);
+}
+
+/** How far apart two keys may sit and still belong to ONE agent declaration. */
+const NATIVE_AGENT_DECLARATION_SPAN = 2_000;
+
+/** A declaration binds its keys with ONE of these, consistently. */
+const NATIVE_AGENT_DECLARATION_SEPARATORS = ["=", ":"] as const;
+
+/** Drop `#`-to-EOL comments: a commented-out block must NOT satisfy prerequisite (b). */
+function stripLineComments(text: string): string {
+  return text.replace(/#[^\n]*/g, "");
+}
+
+/** Offsets at which `key` is BOUND by `separator`, rather than merely mentioned. */
+function declarationKeyOffsets(
+  text: string,
+  key: string,
+  separator: string,
+): readonly number[] {
+  const binding = new RegExp(String.raw`(?:^|[\s{,([])${key}[ \t]*${separator}`, "gm");
+  const offsets: number[] = [];
+  for (let match = binding.exec(text); match !== null; match = binding.exec(text)) {
+    offsets.push(match.index);
+  }
+  return offsets;
+}
+
+/**
+ * Prerequisite (b): the nix surface carries a DECLARATION, not a mention.
+ *
+ * Round 1 tested `nixSurface.includes("developer_instructions")`, which a bare
+ * comment satisfies. This requires every key of
+ * {@link CODEX_NATIVE_AGENT_DECLARATION_KEYS} to be BOUND — outside comments, by
+ * the SAME separator, and within one declaration-sized span of a common anchor.
+ * The separator agreement matters concretely: the generated skill's YAML
+ * frontmatter already binds `name:` and `description:`, so without it a single
+ * stray `developer_instructions = …` anywhere in the surface would fake a
+ * declaration.
+ */
+function detectNativeAgentDeclarations(text: string): boolean {
+  const body = stripLineComments(text);
+  return NATIVE_AGENT_DECLARATION_SEPARATORS.some((separator) => {
+    const offsets = CODEX_NATIVE_AGENT_DECLARATION_KEYS.map((key) =>
+      declarationKeyOffsets(body, key, separator),
+    );
+    const anchors = offsets[0];
+    if (anchors === undefined) throw new Error("CODEX_NATIVE_AGENT_DECLARATION_KEYS is empty");
+    return anchors.some((anchor) =>
+      offsets.every((keyOffsets) =>
+        keyOffsets.some((offset) => Math.abs(offset - anchor) <= NATIVE_AGENT_DECLARATION_SPAN),
+      ),
+    );
+  });
+}
+
+/** A projection that still advertises dispatched roles — today's state. */
+const SYNTHETIC_PROJECTION_ADVERTISING = [
+  '  "- `${"$"}${skillName role.roleId}` → [`references/${referenceName}`](references/${referenceName})"',
+  '  "- Codex collaboration role `${role.roleId}` → [`references/${referenceName}`](references/${referenceName})"',
+].join("\n");
+
+/** The same projection after T691's half (a): only the command-role branch left. */
+const SYNTHETIC_PROJECTION_SUPPRESSED =
+  '  "- `${"$"}${skillName role.roleId}` → [`references/${referenceName}`](references/${referenceName})"';
+
+/** A real native-agent declaration — T691's half (b). */
+const SYNTHETIC_SURFACE_DECLARING = [
+  '  agents."implement-worker" = {',
+  '    name = "implement-worker";',
+  '    description = "CQ implement-flow worker.";',
+  "    developer_instructions = ''",
+  "      Implement exactly one task.",
+  "    '';",
+  "  };",
+].join("\n");
+
+/** The hazard: a COMMENTED-OUT declaration, which a substring detector accepts. */
+const SYNTHETIC_SURFACE_COMMENTED = [
+  "  # T691 will declare, in this shape:",
+  '  #   name = "implement-worker";',
+  '  #   description = "CQ implement-flow worker.";',
+  '  #   developer_instructions = "…";',
+  "  programs.codex.enable = true;",
+].join("\n");
+
 describe("T690 §6 — the two-part role-delivery prerequisite must stay atomic", () => {
   const projection = readFileSync(CODEX_SKILL_PROJECTION, "utf8");
   const homeModule = readFileSync(CODEX_HOME_MODULE, "utf8");
   const nixSurface = `${projection}\n${homeModule}`;
 
   /** Prerequisite (a): the dispatched-role advertisement is gone. */
-  const suppressedReferenceLines = !projection.includes(DISPATCHED_ROLE_REFERENCE_LINE);
+  const suppressedReferenceLines = detectSuppressedReferenceLines(projection);
   /** Prerequisite (b): each dispatched role is a native agent declaration. */
-  const declaresNativeAgents = nixSurface.includes("developer_instructions");
+  const declaresNativeAgents = detectNativeAgentDeclarations(nixSurface);
 
   test("the prerequisites are declared as a PAIR, in the order they must be applied", () => {
     expect([...CODEX_ROLE_DELIVERY_PREREQUISITES]).toEqual([
@@ -1476,15 +1572,89 @@ describe("T690 §6 — the two-part role-delivery prerequisite must stay atomic"
     expect(suppressedReferenceLines).toBe(declaresNativeAgents);
   });
 
-  test("the guard is not a no-op: it distinguishes all four combinations", () => {
-    // Negative control on the two detectors themselves.
-    expect(DISPATCHED_ROLE_REFERENCE_LINE.length).toBeGreaterThan(0);
-    const withLine = `x ${DISPATCHED_ROLE_REFERENCE_LINE} y`;
-    const withoutLine = "x y";
-    expect(withLine.includes(DISPATCHED_ROLE_REFERENCE_LINE)).toBe(true);
-    expect(withoutLine.includes(DISPATCHED_ROLE_REFERENCE_LINE)).toBe(false);
-    expect("developer_instructions = ''".includes("developer_instructions")).toBe(true);
-    expect('description = "x"'.includes("developer_instructions")).toBe(false);
+  test("the guard is not a no-op: the DETECTORS distinguish all four combinations", () => {
+    // Driven THROUGH detectSuppressedReferenceLines / detectNativeAgentDeclarations
+    // on synthetic surfaces, so the guard is demonstrated rather than reasoned.
+    // `coupled` is the verdict the real-file assertion above computes, so each row
+    // states what the guard would do if the repo were in that state.
+    const combinations = [
+      {
+        label: "both halves applied — T691's target state",
+        projection: SYNTHETIC_PROJECTION_SUPPRESSED,
+        surface: SYNTHETIC_SURFACE_DECLARING,
+        suppressed: true,
+        declares: true,
+        coupled: true,
+      },
+      {
+        label: "neither half applied — today's state",
+        projection: SYNTHETIC_PROJECTION_ADVERTISING,
+        surface: SYNTHETIC_SURFACE_COMMENTED,
+        suppressed: false,
+        declares: false,
+        coupled: true,
+      },
+      {
+        label: "(a) alone — RS11's measured hazard: children left un-roled",
+        projection: SYNTHETIC_PROJECTION_SUPPRESSED,
+        surface: SYNTHETIC_SURFACE_COMMENTED,
+        suppressed: true,
+        declares: false,
+        coupled: false,
+      },
+      {
+        label: "(b) alone — an incomplete migration, so refused symmetrically",
+        projection: SYNTHETIC_PROJECTION_ADVERTISING,
+        surface: SYNTHETIC_SURFACE_DECLARING,
+        suppressed: false,
+        declares: true,
+        coupled: false,
+      },
+    ] as const;
+
+    for (const row of combinations) {
+      const suppressed = detectSuppressedReferenceLines(row.projection);
+      const declares = detectNativeAgentDeclarations(row.surface);
+      expect({ label: row.label, suppressed, declares }).toEqual({
+        label: row.label,
+        suppressed: row.suppressed,
+        declares: row.declares,
+      });
+      expect(suppressed === declares).toBe(row.coupled);
+    }
+    // The rows really are the four DISTINCT combinations, not four spellings of
+    // fewer, and exactly half of them are refused.
+    const pairs = combinations.map((row) => `${String(row.suppressed)}/${String(row.declares)}`);
+    expect(new Set(pairs).size).toBe(4);
+    expect(combinations.filter((row) => !row.coupled).length).toBe(2);
+  });
+
+  test("prerequisite (b) needs a DECLARATION: a mention or a comment is not one", () => {
+    // The round-1 detector was `nixSurface.includes("developer_instructions")`, so
+    // a comment — or this very test file — satisfied it.
+    expect(detectNativeAgentDeclarations(SYNTHETIC_SURFACE_DECLARING)).toBe(true);
+    expect(detectNativeAgentDeclarations(SYNTHETIC_SURFACE_COMMENTED)).toBe(false);
+    expect(detectNativeAgentDeclarations("name description developer_instructions")).toBe(false);
+    // Every key is required: a partial declaration is not one.
+    for (const key of CODEX_NATIVE_AGENT_DECLARATION_KEYS) {
+      const missingOne = SYNTHETIC_SURFACE_DECLARING.replace(`${key} =`, `renamed_${key} =`);
+      expect(detectNativeAgentDeclarations(missingOne)).toBe(false);
+    }
+    // Keys bound by DIFFERENT separators are not one declaration — which is what
+    // stops the generated skill's own `name:` / `description:` frontmatter from
+    // combining with a stray `developer_instructions =` elsewhere in the surface.
+    expect(
+      detectNativeAgentDeclarations(
+        'name: "a"\ndescription: "b"\ndeveloper_instructions = "c"',
+      ),
+    ).toBe(false);
+    // Nor are keys scattered beyond one declaration's span.
+    const scattered = [
+      'name = "a";',
+      " ".repeat(NATIVE_AGENT_DECLARATION_SPAN + 1),
+      'description = "b"; developer_instructions = "c";',
+    ].join("");
+    expect(detectNativeAgentDeclarations(scattered)).toBe(false);
   });
 
   test("the COMMAND-role reference lines are out of scope and must survive", () => {
