@@ -55,11 +55,43 @@ import {
   assertClaudeChildCorrelation,
   assertSupportedClaudeDeliveryMode,
   classifyClaudeFinalMessage,
+  claudeExpectedChild,
+  claudeLaunchGate,
+  decideClaudeCompletion,
+  mintClaudeLaunchNonce,
   type ClaudeChildCorrelation,
+  type ClaudeCorrelationProvenance,
   type ClaudeDeliveryMode,
+  type ClaudeEnforcementStrength,
+  type ClaudeExitCorroboration,
+  type ClaudeLaunchRefusal,
+  type ClaudeTerminalSignal,
 } from "./claudeDispatchProtocol.js";
-import { AttestationContractError, assertDispatchHandle } from "./dispatchAttestation.js";
-import type { DispatchHandle } from "./compactDispatchProtocol.js";
+import {
+  AttestationContractError,
+  abortDispatch,
+  assertDispatchHandle,
+  confirmDispatchCompletion,
+  fetchDispatchResult,
+  prepareDispatch,
+  provenanceBindingOf,
+  type DispatchServiceDeps,
+  type PrepareDispatchDeps,
+  type StoreDispatchResultOutcome,
+} from "./dispatchAttestation.js";
+import type { AttestationNamespace } from "./dispatchAttestation.js";
+import type { DispatchOverlayRegistry } from "./dispatchOverlays.js";
+import type { DispatchPreLaunchRejection } from "./dispatchInputValidation.js";
+import type {
+  AbortedDispatchResult,
+  DispatchAbortReason,
+  DispatchOverlayApplication,
+  DispatchHandle,
+  DispatchJSONValue,
+  DispatchPrepared,
+  NativeCompletionProof,
+  ResultCapability,
+} from "./compactDispatchProtocol.js";
 
 // ---------------------------------------------------------------------------
 // 1. The compact native launch envelope
@@ -234,6 +266,426 @@ export function claudeBridgeCorrelation(
   correlation: ClaudeChildCorrelation,
 ): ClaudeChildCorrelation {
   return assertClaudeChildCorrelation(correlation, "launch.expectedChild");
+}
+
+// ---------------------------------------------------------------------------
+// 2. The launcher seam
+// ---------------------------------------------------------------------------
+
+/**
+ * What a launcher is HANDED. Everything here is parent-side; nothing comes back
+ * through it.
+ */
+export interface ClaudeNativeLaunchContext {
+  readonly envelope: ClaudeNativeLaunchEnvelope;
+  /**
+   * The per-dispatch capability, delivered to the child through an INLINE
+   * per-subagent `mcpServers` entry whose server `env` holds it — tasks:T722
+   * §8.1a's measured mechanism, in which the PARENT's own tool set reported
+   * `hasStoreTool=false`. It is passed to the launcher, never to the child's
+   * prompt, because a prompt-carried capability would be readable by the model
+   * turn that composed it.
+   */
+  readonly resultCapability: ResultCapability;
+  /**
+   * The CONSERVATIVE window, in milliseconds, from T687's launch gate — time
+   * remaining until `responseStoreNow`, not until `childCancelAt`. A DURATION,
+   * never an instant, so a child with an offset clock still stops on time.
+   */
+  readonly childWindowMs: number;
+}
+
+/**
+ * What the transport OBSERVED about the child's turn.
+ *
+ * Note what is ABSENT: `roleId`, `launchNonce` and `sessionId`. The bridge fills
+ * those from the launch IT made, so a launcher — and a fortiori a child — has no
+ * field through which to assert its own identity. tasks:T713's constraint is
+ * therefore structural on this seam rather than checked after the fact.
+ */
+export interface ClaudeNativeLaunchReport {
+  /** Whether the PARENT cancelled. A parent-side fact about the run. */
+  readonly cancelled: boolean;
+  readonly terminal: ClaudeTerminalSignal;
+  /** The child's last message. Checked for handle-only shape, never for identity. */
+  readonly finalMessage: string;
+  readonly observedAt: string;
+  /**
+   * What the child's capability-bound submission produced AT THE PER-DISPATCH
+   * ENDPOINT — which is bridge-side infrastructure, so this is an observation,
+   * not a child claim. `undefined` means the child never submitted, and the
+   * bridge does NOT convert that into a failure itself: it lets
+   * `confirm_dispatch_completion` return the authoritative `missing-result`
+   * abort, keeping defects:D179's rule where it belongs.
+   */
+  readonly submission?: StoreDispatchResultOutcome;
+}
+
+export type ClaudeNativeLauncher = (
+  context: ClaudeNativeLaunchContext,
+) => ClaudeNativeLaunchReport;
+
+// ---------------------------------------------------------------------------
+// 3. The parent-visible outcome — HANDLE-ONLY on every branch
+// ---------------------------------------------------------------------------
+
+/**
+ * The promotion acknowledgement the ORCHESTRATOR receives. It carries the
+ * handle, the digest, the native proof, and the two per-mode strengths — and NO
+ * `output` property, on purpose: defects:D173 removed the body from confirm
+ * after measuring a 45,833-byte payload returned on a 46,510-byte confirm
+ * response. The body arrives on {@link materializeClaudeDispatchOutput} and
+ * nowhere else.
+ *
+ * `nativeCompletion` is retained because it is what makes RESTART RECOVERY
+ * possible: a parent that lost its in-memory state re-derives the same proof
+ * from the correlation and re-confirms idempotently.
+ */
+export interface ClaudeParentCompletion {
+  readonly state: "consumed";
+  readonly attestationId: string;
+  readonly generation: number;
+  readonly consumedAt: string;
+  readonly outputDigest: string;
+  readonly nativeCompletion: NativeCompletionProof;
+  readonly correlationProvenance: ClaudeCorrelationProvenance;
+  readonly handleOnlyEnforcement: ClaudeEnforcementStrength;
+  readonly exitStatusCorroborates: ClaudeExitCorroboration;
+}
+
+/**
+ * Compile-time proof that the parent completion carries no body. Adding an
+ * `output` property to {@link ClaudeParentCompletion} breaks `tsc`, not just a
+ * test — the same technique `PreLaunchRejectionOutcomeIsNotALifecycleState` uses.
+ */
+type NeverOnly<T extends never> = T;
+export type ClaudeParentCompletionCarriesNoBody = NeverOnly<
+  Extract<keyof ClaudeParentCompletion, "output">
+>;
+
+export const CLAUDE_DISPATCH_RUN_OUTCOMES = ["rejected", "aborted", "consumed"] as const;
+
+export type ClaudeDispatchRunOutcome = (typeof CLAUDE_DISPATCH_RUN_OUTCOMES)[number];
+
+/** Nothing was allocated: the launch envelope or the role input failed validation. */
+export interface ClaudeDispatchRejected {
+  readonly outcome: "rejected";
+  readonly rejection: DispatchPreLaunchRejection;
+  readonly launched: false;
+}
+
+/** A terminal abort. `refusal` is present only when the LAUNCH GATE refused. */
+export interface ClaudeDispatchAborted {
+  readonly outcome: "aborted";
+  readonly handle: DispatchHandle;
+  readonly reason: DispatchAbortReason;
+  readonly abort: AbortedDispatchResult;
+  readonly launched: boolean;
+  readonly refusal?: ClaudeLaunchRefusal;
+}
+
+export interface ClaudeDispatchConsumed {
+  readonly outcome: "consumed";
+  readonly handle: DispatchHandle;
+  readonly completion: ClaudeParentCompletion;
+  readonly launched: true;
+}
+
+export type ClaudeDispatchRun =
+  | ClaudeDispatchRejected
+  | ClaudeDispatchAborted
+  | ClaudeDispatchConsumed;
+
+// ---------------------------------------------------------------------------
+// 4. The sequencer
+// ---------------------------------------------------------------------------
+
+export interface ClaudeDispatchRequest {
+  readonly namespace: AttestationNamespace;
+  readonly roleId: string;
+  /** The resolved model class handed to the `Agent` call. */
+  readonly model: string;
+  /**
+   * The DISPATCHING PARENT's own session id. A native `Agent` child's session
+   * cannot be pre-assigned (the tool has no session parameter), so T687 binds
+   * the parent's — `parent-constructed` provenance, stated rather than averaged.
+   */
+  readonly parentSessionId: string;
+  /** The assembled role input. Assembled elsewhere (T978); bound here. */
+  readonly input: DispatchJSONValue;
+  readonly idempotencyKey: string;
+  readonly timeoutMs: number;
+  readonly registry: DispatchOverlayRegistry;
+  readonly promptDigest: string;
+  readonly catalogHash: string;
+  readonly overlays?: readonly DispatchOverlayApplication[];
+  readonly reprepareOf?: DispatchHandle;
+}
+
+export interface ClaudeBridgeDeps extends PrepareDispatchDeps {
+  readonly launch: ClaudeNativeLauncher;
+}
+
+function serviceDeps(deps: ClaudeBridgeDeps): DispatchServiceDeps {
+  return { store: deps.store, now: deps.now };
+}
+
+/**
+ * Drive ONE native ref-first dispatch end to end: prepare → gate → launch →
+ * decide → confirm. It does NOT fetch — see {@link CLAUDE_BRIDGE_FETCH_COUNT}
+ * and {@link materializeClaudeDispatchOutput}.
+ *
+ * Every lifecycle write goes through the shared service. Storage and transport
+ * failures are deliberately NOT caught: an unavailable store must fail the
+ * protocol, because returning any non-error outcome would let a caller book the
+ * ref-first saving on a dispatch whose result was never recorded.
+ *
+ * The routing, and where each verdict comes from:
+ *
+ * | observed | routed to | decided by |
+ * |---|---|---|
+ * | invalid role input / launch envelope | `rejected`, nothing allocated | `prepareDispatch` |
+ * | launch budget or response window lapsed | `aborted` `deadline-exceeded` | `claudeLaunchGate` |
+ * | launch instant off the prepare clock | `aborted` `protocol-violation` | `claudeLaunchGate` |
+ * | child stored INVALID output | `aborted` `invalid-output` | `storeDispatchResult`, atomically |
+ * | child stored past `childCancelAt` | `aborted` `deadline-exceeded` | `storeDispatchResult`, atomically |
+ * | parent cancelled | `aborted` `cancelled` | `decideClaudeCompletion` |
+ * | native/API error turn | `aborted` `native-failure` | `decideClaudeCompletion` |
+ * | wrong child completed | `aborted` `native-failure` | `decideClaudeCompletion` |
+ * | echoed / malformed final message | `aborted` `protocol-violation` | `decideClaudeCompletion` |
+ * | nothing stored | `aborted` `missing-result` | `confirmDispatchCompletion` |
+ * | conformant | `consumed`, handle-only | `confirmDispatchCompletion` |
+ */
+export function runClaudeNativeDispatch(
+  request: ClaudeDispatchRequest,
+  deps: ClaudeBridgeDeps,
+): ClaudeDispatchRun {
+  const correlation = claudeBridgeCorrelation({
+    roleId: request.roleId,
+    launchNonce: mintClaudeLaunchNonce(deps.randomBytes),
+    sessionId: request.parentSessionId,
+  });
+  const prepareOutcome = prepareDispatch(
+    {
+      namespace: request.namespace,
+      roleId: request.roleId,
+      surface: "claude",
+      input: request.input,
+      idempotencyKey: request.idempotencyKey,
+      timeoutMs: request.timeoutMs,
+      registry: request.registry,
+      promptDigest: request.promptDigest,
+      catalogHash: request.catalogHash,
+      expectedChild: claudeExpectedChild(correlation),
+      ...(request.overlays === undefined ? {} : { overlays: request.overlays }),
+      ...(request.reprepareOf === undefined ? {} : { reprepareOf: request.reprepareOf }),
+    },
+    deps,
+  );
+  if (!prepareOutcome.accepted) {
+    return Object.freeze({
+      outcome: "rejected" as const,
+      rejection: prepareOutcome,
+      launched: false as const,
+    });
+  }
+  const prepared = prepareOutcome.prepared;
+  const handle: DispatchHandle = Object.freeze({
+    attestationId: prepared.attestationId,
+    generation: prepared.generation,
+  });
+
+  const gate = claudeLaunchGate(prepared, deps.now());
+  if (!gate.launch) {
+    const abort = abortDispatch(
+      {
+        namespace: request.namespace,
+        actor: "trusted-parent",
+        ...handle,
+        reason: gate.abortReason,
+        details: Object.freeze({ refusal: gate.refusal, detail: gate.detail }),
+      },
+      serviceDeps(deps),
+    );
+    return Object.freeze({
+      outcome: "aborted" as const,
+      handle,
+      reason: abort.reason,
+      abort,
+      launched: false,
+      refusal: gate.refusal,
+    });
+  }
+
+  const report = deps.launch(
+    Object.freeze({
+      envelope: buildClaudeCompactNativeLaunch({
+        roleId: request.roleId,
+        model: request.model,
+        handle,
+      }),
+      resultCapability: prepared.resultCapability,
+      childWindowMs: gate.childWindowMs,
+    }),
+  );
+  return settleClaudeNativeDispatch(
+    { request, prepared, handle, correlation, report },
+    serviceDeps(deps),
+  );
+}
+
+interface ClaudeSettleContext {
+  readonly request: ClaudeDispatchRequest;
+  readonly prepared: DispatchPrepared;
+  readonly handle: DispatchHandle;
+  readonly correlation: ClaudeChildCorrelation;
+  readonly report: ClaudeNativeLaunchReport;
+}
+
+/**
+ * Settle a launched dispatch. Split out from {@link runClaudeNativeDispatch} so
+ * that RESTART RECOVERY has an entry point: a parent that lost its state, and
+ * re-reads the prepared record plus the correlation it minted, settles through
+ * exactly this function and reaches exactly the same terminal state.
+ */
+function settleClaudeNativeDispatch(
+  context: ClaudeSettleContext,
+  deps: DispatchServiceDeps,
+): ClaudeDispatchRun {
+  const { request, prepared, handle, correlation, report } = context;
+
+  // The submission is already TERMINAL when the service aborted it atomically
+  // (invalid output, or a store past `childCancelAt`). Nothing the parent decides
+  // afterwards can move a terminal record, and trying would be a typed conflict
+  // rather than a re-route — so this branch is read FIRST.
+  if (report.submission?.state === "aborted") {
+    const abort = report.submission.result;
+    return Object.freeze({
+      outcome: "aborted" as const,
+      handle,
+      reason: abort.reason,
+      abort,
+      launched: true,
+    });
+  }
+
+  const decision = decideClaudeCompletion({
+    handle,
+    expectedChild: correlation,
+    observation: {
+      source: "transport",
+      mode: CLAUDE_BRIDGE_MODE,
+      // Filled from the launch the PARENT made — never from the report.
+      roleId: correlation.roleId,
+      launchNonce: correlation.launchNonce,
+      sessionId: correlation.sessionId,
+      cancelled: report.cancelled,
+      terminal: report.terminal,
+      finalMessage: report.finalMessage,
+      observedAt: report.observedAt,
+    },
+  });
+  if (decision.action === "abort") {
+    const abort = abortDispatch(
+      {
+        namespace: request.namespace,
+        actor: "trusted-parent",
+        ...handle,
+        reason: decision.reason,
+        details: decision.details,
+      },
+      deps,
+    );
+    return Object.freeze({
+      outcome: "aborted" as const,
+      handle,
+      reason: abort.reason,
+      abort,
+      launched: true,
+    });
+  }
+
+  const confirmed = confirmDispatchCompletion(
+    {
+      namespace: request.namespace,
+      ...handle,
+      nativeCompletion: decision.nativeCompletion,
+      expectedProvenance: provenanceBindingOf(prepared),
+    },
+    deps,
+  );
+  if (confirmed.state === "aborted") {
+    // `missing-result`: a native completion with nothing stored is not a success,
+    // and this module never pretends otherwise from Claude evidence alone.
+    return Object.freeze({
+      outcome: "aborted" as const,
+      handle,
+      reason: confirmed.result.reason,
+      abort: confirmed.result,
+      launched: true,
+    });
+  }
+  return Object.freeze({
+    outcome: "consumed" as const,
+    handle,
+    launched: true as const,
+    completion: Object.freeze({
+      state: "consumed" as const,
+      attestationId: confirmed.result.attestationId,
+      generation: confirmed.result.generation,
+      consumedAt: confirmed.result.consumedAt,
+      outputDigest: confirmed.result.outputDigest,
+      nativeCompletion: decision.nativeCompletion,
+      correlationProvenance: decision.correlationProvenance,
+      handleOnlyEnforcement: decision.handleOnlyEnforcement,
+      exitStatusCorroborates: decision.exitStatusCorroborates,
+    }),
+  });
+}
+
+/**
+ * Re-settle a dispatch after the parent lost its state — questions:Q363's
+ * restart case, and the one path on which the bridge does not launch.
+ *
+ * Idempotency is the shared service's, not this module's: an identical
+ * confirmation retry is idempotent there, so a recovered parent that re-derives
+ * the same correlation reaches the same `consumed` record without a second
+ * child and without a second promotion.
+ */
+export function recoverClaudeNativeDispatch(
+  context: ClaudeSettleContext,
+  deps: DispatchServiceDeps,
+): ClaudeDispatchRun {
+  return settleClaudeNativeDispatch(context, deps);
+}
+
+export type { ClaudeSettleContext };
+
+/**
+ * THE one body-materialising call. Separate from the run on purpose: the run's
+ * result type has no place to put a body, so a caller that never invokes this
+ * never sees one, and a caller that invokes it twice is visibly doing so.
+ *
+ * This performs EXACTLY ONE fetch, which is why defects:D188's repeatability
+ * divergence does not reach this bridge in either direction.
+ */
+export function materializeClaudeDispatchOutput(
+  request: { readonly namespace: AttestationNamespace } & DispatchHandle,
+  deps: DispatchServiceDeps,
+): DispatchJSONValue {
+  const handle = assertDispatchHandle(request, "fetch");
+  const result = fetchDispatchResult(
+    { namespace: request.namespace, actor: "trusted-parent", ...handle },
+    deps,
+  );
+  if (result.state !== "consumed") {
+    throw new AttestationContractError(
+      "fetch.state",
+      `only a consumed dispatch carries an output body; attestation ` +
+        `"${handle.attestationId}" is "${result.state}"`,
+    );
+  }
+  return result.output;
 }
 
 // ---------------------------------------------------------------------------
