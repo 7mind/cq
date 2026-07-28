@@ -13,8 +13,16 @@
  *
  * - **Output** — the verdict block
  *   `{ taskId, verdict, criticism[], questions[], defects[], rationale,
- *   summary? }`. `verdict` is `approve | disapprove`; each `defects` item is
- *   `{ headline, description, severity, suggestedFix? }`.
+ *   gateReRan, resultCommitVerified, summary?, gateDurationMs?,
+ *   gateReRanReason? }`. `verdict` is `approve | disapprove`; each `defects`
+ *   item is `{ headline, description, severity, suggestedFix? }`.
+ *   `gateReRan`/`resultCommitVerified` are REQUIRED (T895, closing the
+ *   reviewer-side half of the D156/H135 self-report-evidence gap): a verdict
+ *   must state whether the reviewer re-ran the gate itself and whether it
+ *   verified the worker's `resultCommit`, rather than trusting the worker's
+ *   claim silently. `gateDurationMs` is required IFF `gateReRan` is true.
+ *   `gateReRanReason` is an optional free-text field for stating why the gate
+ *   was not re-run when `gateReRan` is false.
  */
 
 import type { RoleSchemaSidecar } from "../promptCatalog.js";
@@ -91,9 +99,18 @@ const defectSchema = {
 } as const;
 
 /**
- * The verdict-block output contract. `criticism`/`questions` are string lists;
- * `defects` is orthogonal to the verdict (out-of-scope faults to file-and-defer);
- * `summary` is optional.
+ * The verdict-block output contract (T895 evidence-carrying revision).
+ * `criticism`/`questions` are string lists; `defects` is orthogonal to the
+ * verdict (out-of-scope faults to file-and-defer); `summary` is optional.
+ * `gateReRan` and `resultCommitVerified` are ALWAYS required — a verdict must
+ * state whether the reviewer re-ran `bun run check` itself and whether it
+ * verified the worker's `resultCommit` sha, rather than accepting the
+ * self-report silently. `gateDurationMs` is required IFF `gateReRan` is
+ * `true` via the `if`/`then` below (a real conditional, not an
+ * unconditionally-required field — the negative-direction check is
+ * `gateReRan: false` with no `gateDurationMs`, which must stay ACCEPTED).
+ * `gateReRanReason` is an optional string for documenting why the gate was
+ * not re-run when `gateReRan` is `false`.
  */
 const outputSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -108,15 +125,62 @@ const outputSchema = {
     defects: { type: "array", items: defectSchema },
     rationale: { type: "string" },
     summary: { type: "string" },
+    gateReRan: {
+      type: "boolean",
+      description: "Whether the reviewer re-ran `bun run check` itself rather than trusting the worker's claim.",
+    },
+    resultCommitVerified: {
+      type: "boolean",
+      description: "Whether the reviewer verified the worker's resultCommit sha (e.g. via cat-file / tip equality) rather than accepting it unchecked.",
+    },
+    gateDurationMs: {
+      type: "integer",
+      minimum: 0,
+      description: "Wall-clock milliseconds the reviewer's own re-run of `bun run check` took. Required when gateReRan is true.",
+    },
+    gateReRanReason: {
+      type: "string",
+      description: "Optional free-text explanation for why the gate was not re-run, when gateReRan is false.",
+    },
   },
-  required: ["taskId", "verdict", "criticism", "questions", "defects", "rationale"],
+  required: [
+    "taskId",
+    "verdict",
+    "criticism",
+    "questions",
+    "defects",
+    "rationale",
+    "gateReRan",
+    "resultCommitVerified",
+  ],
   additionalProperties: false,
+  allOf: [
+    {
+      if: {
+        properties: {
+          gateReRan: { const: true },
+        },
+        required: ["gateReRan"],
+      },
+      then: {
+        required: ["gateDurationMs"],
+      },
+    },
+  ],
 } as const;
 
-/** The implement-reviewer per-role schema sidecar (storage-format decision 3). */
+/**
+ * The implement-reviewer per-role schema sidecar (storage-format decision 3).
+ * `version: 2` (bumped from 1, T895, decisions:D185's precedent): the output
+ * contract's validation is now STRICTER in a way old data can violate —
+ * `gateReRan`/`resultCommitVerified` became required and `gateDurationMs`
+ * gained a conditional `required` — so a stale deployed root rendered against
+ * the old (v1) contract must not be mistaken for this one;
+ * DISPATCHED_ROLE_VERSIONS derives this automatically, it is not hand-edited.
+ */
 export const implementReviewerSidecar: RoleSchemaSidecar = {
   id: "implement-reviewer",
-  version: 1,
+  version: 2,
   inputSchema,
   outputSchema,
 };
