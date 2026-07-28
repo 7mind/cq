@@ -67,6 +67,7 @@ import {
   type ClaudeTerminalSignal,
 } from "./claudeDispatchProtocol.js";
 import {
+  AttestationBindingError,
   AttestationContractError,
   abortDispatch,
   assertDispatchHandle,
@@ -820,6 +821,7 @@ function settleClaudeNativeDispatch(
   deps: DispatchServiceDeps,
 ): ClaudeDispatchRun {
   const { request, prepared, handle, correlation, report } = context;
+  assertSubmissionMatchesHandle(report.submission, handle);
 
   // The submission is already TERMINAL when the service aborted it atomically
   // (invalid output, or a store past `childCancelAt`). Nothing the parent decides
@@ -873,6 +875,11 @@ function settleClaudeNativeDispatch(
     });
   }
 
+  // Transport provenance belongs to the confirmation proof. Validate every
+  // required observation BEFORE the irreversible `result-stored -> consumed`
+  // transition; otherwise a malformed report can commit success and only then
+  // throw while constructing the parent acknowledgement.
+  const transportProvenance = claudeTransportProvenanceOf(report);
   const confirmed = confirmDispatchCompletion(
     {
       namespace: request.namespace,
@@ -907,19 +914,40 @@ function settleClaudeNativeDispatch(
       correlationProvenance: decision.correlationProvenance,
       handleOnlyEnforcement: decision.handleOnlyEnforcement,
       exitStatusCorroborates: decision.exitStatusCorroborates,
-      transportProvenance: Object.freeze({
-        agentId: assertObservedTransportString(report.agentId, "report.agentId"),
-        parentToolUseId: assertObservedTransportString(
-          report.parentToolUseId,
-          "report.parentToolUseId",
-        ),
-        resolvedModel: assertObservedTransportString(
-          report.resolvedModel,
-          "report.resolvedModel",
-        ),
-        correlation: Object.freeze({ ...report.correlation }),
-      }),
+      transportProvenance,
     }),
+  });
+}
+
+function assertSubmissionMatchesHandle(
+  submission: StoreDispatchResultOutcome | undefined,
+  handle: DispatchHandle,
+): void {
+  if (
+    submission !== undefined &&
+    (submission.result.attestationId !== handle.attestationId ||
+      submission.result.generation !== handle.generation)
+  ) {
+    throw new AttestationBindingError(
+      "report.submission",
+      `submission belongs to attestation "${submission.result.attestationId}" generation ` +
+        `${submission.result.generation}, not "${handle.attestationId}" generation ` +
+        `${handle.generation}`,
+    );
+  }
+}
+
+function claudeTransportProvenanceOf(
+  report: ClaudeNativeLaunchReport,
+): ClaudeTransportProvenance {
+  return Object.freeze({
+    agentId: assertObservedTransportString(report.agentId, "report.agentId"),
+    parentToolUseId: assertObservedTransportString(
+      report.parentToolUseId,
+      "report.parentToolUseId",
+    ),
+    resolvedModel: assertObservedTransportString(report.resolvedModel, "report.resolvedModel"),
+    correlation: Object.freeze({ ...report.correlation }),
   });
 }
 
