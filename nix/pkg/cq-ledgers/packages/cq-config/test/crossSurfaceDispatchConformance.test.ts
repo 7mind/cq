@@ -359,17 +359,32 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     expect(extension).toContain("systemPrompt: body");
   });
 
-  it("codex STILL instructs the PARENT to read a dispatched role's prompt — known divergence", () => {
-    // CHARACTERIZATION of a KNOWN NON-CONFORMANCE (T979 divergence D-1).
-    // The codex skill projection tells the ORCHESTRATOR to pull a dispatched
+  it("codex NO LONGER instructs the PARENT to read a dispatched role's prompt — T979 divergence D-1 CLOSED", () => {
+    // INVERTED (not deleted) by tasks:T691, exactly as the prior wording
+    // instructed: "INVERT this assertion when the divergence is fixed; do not
+    // delete it."
+    //
+    // WAS a characterization of a KNOWN NON-CONFORMANCE (T979 divergence D-1):
+    // the codex skill projection told the ORCHESTRATOR to pull a dispatched
     // role's full prompt into its own context before dispatching — the exact
-    // (a) leg T975 removed for claude, reintroduced by a different mechanism.
-    // Measured live: the parent's own `-p` transcript contains the role-body
-    // sentinel (report §5). INVERT this assertion when the divergence is
-    // fixed; do not delete it.
+    // (a) leg tasks:T975 removed for claude, reintroduced by a different
+    // mechanism. Measured live at the time: the parent's own `-p` transcript
+    // contained the role-body sentinel.
+    //
+    // defects:D178 half (a) removed that advertisement and half (b) supplied
+    // the replacement delivery path (a global native-agent declaration), and
+    // researches:RS11 measured why they are INSEPARABLE — shipping (a) alone
+    // leaves children un-roled, executing the 43.5 KB orchestrator workflow
+    // and then failing to spawn. Both halves shipped together in T691.
+    //
+    // Keeping this as a NEGATIVE assertion rather than deleting it is what
+    // makes a re-advertisement regression fail here instead of passing
+    // silently.
     const projection = readFileSync(CODEX_SKILL_PROJECTION, "utf8");
-    expect(projection).toContain("Read that role reference completely");
-    expect(projection).toContain("before dispatching it through the collaboration transport");
+    expect(projection).not.toContain("Read that role reference completely");
+    expect(projection).not.toContain(
+      "before dispatching it through the collaboration transport",
+    );
 
     // ...and neither of the conformant surfaces carries an equivalent
     // parent-read instruction for a dispatched role.

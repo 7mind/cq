@@ -150,7 +150,21 @@ describe("packaged Codex prompt root and command skills", () => {
         const skill = readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
         const references = readdirSync(path.join(skillRoot, "references")).sort();
         const closure = declaredClosure(command.roleId, catalog);
-        expect(references).toEqual(closure.map(referenceName).sort());
+        // defects:D178 half (a), applied by tasks:T691: the projection now
+        // advertises ONLY command-role references. A dispatched role's body
+        // reaches its child through the global native-agent declaration, never
+        // through a path this skill hands the parent — researches:RS10/RS11
+        // measured that advertising the mapping is what makes the parent
+        // batch-read EVERY advertised body before dispatching anything.
+        // This filter mirrors `advertisedRoles` in the Nix projection. The
+        // assertion stays EXACT (references must EQUAL the advertised set);
+        // only the definition of "advertised" changed, so a regression that
+        // re-advertised a dispatched role would still fail here.
+        const advertised = closure.filter(
+          ({ roleKind }) => roleKind === "orchestrator-command",
+        );
+        expect(references).toEqual(advertised.map(referenceName).sort());
+        expect(references.filter((ref) => ref.startsWith("role-"))).toEqual([]);
         expect(skill).toStartWith(`---\nname: ${name}\ndescription: `);
         expect(skill).toContain(`Treat text accompanying \`$${name}\``);
       }
