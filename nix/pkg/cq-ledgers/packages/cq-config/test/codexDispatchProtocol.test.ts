@@ -501,3 +501,333 @@ describe("T690 §3 — the launch gate", () => {
     ).state).toBe("prepared");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 4. The handle-only check (defects:D175) and the completion decision (D179)
+// ---------------------------------------------------------------------------
+
+describe("T690 §4 — the parent-side handle-only check", () => {
+  const handle: DispatchHandle = { attestationId: `att_${"A".repeat(32)}`, generation: 1 };
+
+  test("the four verdicts are the whole classification", () => {
+    expect([...CODEX_FINAL_MESSAGE_VERDICTS]).toEqual([
+      "handle-only",
+      "echo",
+      "wrong-handle",
+      "unparseable",
+    ]);
+  });
+
+  test("a conformant reply carries exactly the handle, bare or fenced", () => {
+    for (const message of [
+      handleOnlyReply(handle),
+      `  ${handleOnlyReply(handle)}\n`,
+      "```json\n" + handleOnlyReply(handle) + "\n```",
+      "```\n" + handleOnlyReply(handle) + "\n```",
+    ]) {
+      const verdict = classifyCodexFinalMessage(message, handle);
+      expect(verdict.verdict).toBe("handle-only");
+      if (verdict.verdict !== "handle-only") throw new Error("unreachable");
+      expect(verdict.handle).toEqual(handle);
+    }
+  });
+
+  test("ECHO: any surplus key is the echo, and the surplus keys are named", () => {
+    // The defects:D175 gap: the store sees a valid submission and has NO
+    // visibility into what the child additionally said, so this check has to
+    // exist on the parent side or nowhere.
+    const echoed = JSON.stringify({ ...handle, output: OUTPUT, summary: "did the thing" });
+    const verdict = classifyCodexFinalMessage(echoed, handle);
+    expect(verdict.verdict).toBe("echo");
+    if (verdict.verdict !== "echo") throw new Error("unreachable");
+    expect([...verdict.extraKeys]).toEqual(["output", "summary"]);
+  });
+
+  test("ECHO: a raw body with no handle at all is also an echo", () => {
+    expect(classifyCodexFinalMessage(JSON.stringify(OUTPUT), handle).verdict).toBe("echo");
+  });
+
+  test("a handle for a DIFFERENT dispatch is wrong-handle, distinct from echo", () => {
+    for (const claimed of [
+      { attestationId: `att_${"B".repeat(32)}`, generation: 1 },
+      { attestationId: handle.attestationId, generation: 2 },
+    ]) {
+      const verdict = classifyCodexFinalMessage(JSON.stringify(claimed), handle);
+      expect(verdict.verdict).toBe("wrong-handle");
+      if (verdict.verdict !== "wrong-handle") throw new Error("unreachable");
+      expect(verdict.claimed).toEqual(claimed);
+    }
+  });
+
+  test("prose, an array, a scalar, and a malformed handle are unparseable", () => {
+    for (const message of [
+      "I stored the result, all done.",
+      JSON.stringify([handle]),
+      JSON.stringify("done"),
+      JSON.stringify(null),
+      JSON.stringify({ attestationId: handle.attestationId, generation: "1" }),
+      "",
+    ]) {
+      expect(classifyCodexFinalMessage(message, handle).verdict).toBe("unparseable");
+    }
+  });
+
+  test("the check is PURE: it never consults the store, so storing well cannot excuse an echo", () => {
+    // A store whose every operation faults is in scope and never reached — the
+    // call below would throw if the check read anything.
+    harness({
+      seed: 31,
+      fault: () => {
+        throw new AttestationTransportError("the store must not be touched by the echo check");
+      },
+    });
+    expect(
+      classifyCodexFinalMessage(JSON.stringify({ ...handle, output: OUTPUT }), handle).verdict,
+    ).toBe("echo");
+  });
+});
+
+describe("T690 §4b — the completion decision keys on evidence, never on exit status", () => {
+  test("the outcome and corroboration vocabularies are closed", () => {
+    expect([...CODEX_CHILD_OUTCOMES]).toEqual(["completed", "cancelled", "transport-failed"]);
+    expect([...CODEX_EXIT_CORROBORATIONS]).toEqual([
+      "corroborates",
+      "contradicts",
+      "unavailable",
+    ]);
+    expect(codexExitCorroboration(undefined)).toBe("unavailable");
+    expect(codexExitCorroboration(0)).toBe("corroborates");
+    expect(codexExitCorroboration(1)).toBe("contradicts");
+    expect(codexExitCorroboration(137)).toBe("contradicts");
+  });
+
+  for (const mode of MODES) {
+    test(`${mode}: a completed, correlated, handle-only child yields a confirm`, () => {
+      const h = harness({ seed: 41 });
+      const prepared = prepareCodex(h);
+      const decision = decideCodexCompletion({
+        handle: handleOf(prepared),
+        expectedChild: CORRELATION,
+        observation: observation(mode, handleOf(prepared)),
+      });
+      expect(decision.action).toBe("confirm");
+      if (decision.action !== "confirm") throw new Error("unreachable");
+      expect(decision.nativeCompletion.actor).toBe(codexCompletionActor(mode));
+      expect(decision.nativeCompletion.childId).toBe(codexExpectedChild(CORRELATION).childId);
+      expect(decision.nativeCompletion.runId).toBe(THREAD_ID);
+      // native-agent has no subprocess, so there is no exit status to see;
+      // exec-intercepted saw a clean one. Distinguishing the two is the point.
+      expect(decision.exitStatusCorroborates).toBe(
+        mode === CODEX_FALLBACK_DELIVERY_MODE ? "corroborates" : "unavailable",
+      );
+    });
+  }
+
+  test("D179: a NON-ZERO exit after a correct reply still confirms, and records the contradiction", () => {
+    // defects:D179 / hypothesis:H177, measured on the sibling surface: a sibling
+    // extension throwing at teardown makes the child process exit non-zero AFTER
+    // a correct reply was already written. Keying promotion on the exit code
+    // would discard a valid result.
+    const h = harness({ seed: 43 });
+    const prepared = prepareCodex(h);
+    const decision = decideCodexCompletion({
+      handle: handleOf(prepared),
+      expectedChild: CORRELATION,
+      observation: observation(CODEX_FALLBACK_DELIVERY_MODE, handleOf(prepared), { exitStatus: 1 }),
+    });
+    expect(decision.action).toBe("confirm");
+    if (decision.action !== "confirm") throw new Error("unreachable");
+    expect(decision.exitStatusCorroborates).toBe("contradicts");
+  });
+
+  test("D179, the converse: a CLEAN exit does not manufacture a result", () => {
+    // Exit status corroborates in one direction only. With nothing stored, the
+    // confirmation the decision authorises still aborts `missing-result` — and
+    // that verdict comes from the SHARED service, not from this module.
+    const h = harness({ seed: 45 });
+    const prepared = prepareCodex(h);
+    const decision = decideCodexCompletion({
+      handle: handleOf(prepared),
+      expectedChild: CORRELATION,
+      observation: observation(CODEX_FALLBACK_DELIVERY_MODE, handleOf(prepared), { exitStatus: 0 }),
+    });
+    expect(decision.action).toBe("confirm");
+    if (decision.action !== "confirm") throw new Error("unreachable");
+    const outcome = confirmDispatchCompletion(
+      {
+        namespace: NAMESPACE,
+        ...handleOf(prepared),
+        nativeCompletion: decision.nativeCompletion,
+        expectedProvenance: provenanceBindingOf(prepared),
+      },
+      h.deps,
+    );
+    expect(outcome.state).toBe("aborted");
+    if (outcome.state !== "aborted") throw new Error("unreachable");
+    expect(outcome.result.reason).toBe("missing-result");
+  });
+
+  test("the decision NEVER reads the store — `missing-result` stays the service's verdict", () => {
+    const h = harness({
+      seed: 47,
+      fault: (operation) => {
+        if (operation !== "insert" && operation !== "readByIdempotencyKey") {
+          throw new AttestationTransportError(`the decision must not ${operation}`);
+        }
+      },
+    });
+    const prepared = prepareCodex(h);
+    expect(
+      decideCodexCompletion({
+        handle: handleOf(prepared),
+        expectedChild: CORRELATION,
+        observation: observation(CODEX_NATIVE_DELIVERY_MODE, handleOf(prepared)),
+      }).action,
+    ).toBe("confirm");
+  });
+
+  for (const mode of MODES) {
+    test(`${mode}: a cancelled child aborts \`cancelled\``, () => {
+      const handle = { attestationId: `att_${"C".repeat(32)}`, generation: 1 };
+      const decision = decideCodexCompletion({
+        handle,
+        expectedChild: CORRELATION,
+        observation: observation(mode, handle, { outcome: "cancelled" }),
+      });
+      expect(decision.action).toBe("abort");
+      if (decision.action !== "abort") throw new Error("unreachable");
+      expect(decision.reason).toBe("cancelled");
+    });
+
+    test(`${mode}: a transport failure aborts \`native-failure\``, () => {
+      const handle = { attestationId: `att_${"D".repeat(32)}`, generation: 1 };
+      const decision = decideCodexCompletion({
+        handle,
+        expectedChild: CORRELATION,
+        observation: observation(mode, handle, { outcome: "transport-failed" }),
+      });
+      expect(decision.action).toBe("abort");
+      if (decision.action !== "abort") throw new Error("unreachable");
+      expect(decision.reason).toBe("native-failure");
+    });
+  }
+
+  test("a MISMATCHED child/thread aborts `native-failure` and names the mismatched fields", () => {
+    const handle = { attestationId: `att_${"E".repeat(32)}`, generation: 1 };
+    const cases: readonly (readonly [Partial<CodexCompletionObservation>, readonly string[]])[] = [
+      [{ agentType: "implement-reviewer" }, ["agentType"]],
+      [{ correlationId: "Zm9yZ2VkZm9yZ2VkZm9yZ2VkZm9yZ2Vk" }, ["correlationId"]],
+      [{ threadId: "codex-thread-OTHER" }, ["threadId"]],
+      [
+        { agentType: "implement-reviewer", threadId: "codex-thread-OTHER" },
+        ["agentType", "threadId"],
+      ],
+    ];
+    for (const [overrides, expectedFields] of cases) {
+      const decision = decideCodexCompletion({
+        handle,
+        expectedChild: CORRELATION,
+        observation: observation(CODEX_NATIVE_DELIVERY_MODE, handle, overrides),
+      });
+      expect(decision.action).toBe("abort");
+      if (decision.action !== "abort") throw new Error("unreachable");
+      expect(decision.reason).toBe("native-failure");
+      expect(
+        (decision.details as { readonly mismatchedFields: readonly string[] }).mismatchedFields,
+      ).toEqual(expectedFields);
+    }
+  });
+
+  test("ECHO and every other non-handle-only reply abort `protocol-violation`", () => {
+    const handle = { attestationId: `att_${"F".repeat(32)}`, generation: 1 };
+    const cases: readonly (readonly [string, string])[] = [
+      [JSON.stringify({ ...handle, output: OUTPUT }), "echo"],
+      [JSON.stringify(OUTPUT), "echo"],
+      [JSON.stringify({ attestationId: `att_${"G".repeat(32)}`, generation: 1 }), "wrong-handle"],
+      ["all done!", "unparseable"],
+    ];
+    for (const [finalMessage, expectedVerdict] of cases) {
+      const decision = decideCodexCompletion({
+        handle,
+        expectedChild: CORRELATION,
+        observation: observation(CODEX_NATIVE_DELIVERY_MODE, handle, { finalMessage }),
+      });
+      expect(decision.action).toBe("abort");
+      if (decision.action !== "abort") throw new Error("unreachable");
+      expect(decision.reason).toBe("protocol-violation");
+      expect(
+        (decision.details as { readonly finalMessageVerdict: string }).finalMessageVerdict,
+      ).toBe(expectedVerdict);
+    }
+  });
+
+  test("cancellation and transport failure OUTRANK the message check", () => {
+    // A cancelled child that also echoed is still `cancelled`: the run-level
+    // fact is decided before the payload-level one, so a protocol violation
+    // cannot mask a cancellation (or vice versa).
+    const handle = { attestationId: `att_${"H".repeat(32)}`, generation: 1 };
+    const decision = decideCodexCompletion({
+      handle,
+      expectedChild: CORRELATION,
+      observation: observation(CODEX_NATIVE_DELIVERY_MODE, handle, {
+        outcome: "cancelled",
+        finalMessage: JSON.stringify({ ...handle, output: OUTPUT }),
+      }),
+    });
+    expect(decision.action).toBe("abort");
+    if (decision.action !== "abort") throw new Error("unreachable");
+    expect(decision.reason).toBe("cancelled");
+  });
+
+  test("T713: correlation read from a CHILD-CONTROLLED message is refused, not trusted", () => {
+    // "do not assume opaque ids prove provenance" — the observation must come
+    // off the transport. A `source` of anything else is a hard refusal, so a
+    // child cannot claim to be another child by saying so.
+    const handle = { attestationId: `att_${"I".repeat(32)}`, generation: 1 };
+    for (const source of ["child-reported", "", undefined, "transport "]) {
+      expect(() =>
+        decideCodexCompletion({
+          handle,
+          expectedChild: CORRELATION,
+          observation: {
+            ...observation(CODEX_NATIVE_DELIVERY_MODE, handle),
+            source: source as "transport",
+          },
+        }),
+      ).toThrow(CodexObservationProvenanceError);
+    }
+  });
+
+  test("an unsupported mode on an observation THROWS rather than aborting", () => {
+    const handle = { attestationId: `att_${"J".repeat(32)}`, generation: 1 };
+    for (const mode of UNSUPPORTED_CODEX_DELIVERY_MODES) {
+      expect(() =>
+        decideCodexCompletion({
+          handle,
+          expectedChild: CORRELATION,
+          observation: observation(CODEX_NATIVE_DELIVERY_MODE, handle, { mode }),
+        }),
+      ).toThrow(CodexUnsupportedModeError);
+    }
+  });
+
+  test("a malformed outcome or exit status is a contract error, not a silent default", () => {
+    const handle = { attestationId: `att_${"K".repeat(32)}`, generation: 1 };
+    expect(() =>
+      decideCodexCompletion({
+        handle,
+        expectedChild: CORRELATION,
+        observation: observation(CODEX_NATIVE_DELIVERY_MODE, handle, {
+          outcome: "succeeded" as never,
+        }),
+      }),
+    ).toThrow(AttestationContractError);
+    expect(() =>
+      decideCodexCompletion({
+        handle,
+        expectedChild: CORRELATION,
+        observation: observation(CODEX_FALLBACK_DELIVERY_MODE, handle, { exitStatus: 1.5 }),
+      }),
+    ).toThrow(AttestationContractError);
+  });
+});
