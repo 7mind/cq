@@ -178,6 +178,35 @@ export type {
   XdgCoherenceWatcher,
 } from "./store/createLedgerStore.js";
 export {
+  LEDGER_SERVER_CONSTRUCTIONS,
+  SINGLE_PROJECT_CONSTRUCTIONS,
+  ATTESTATION_HUB_CONSTRUCTION,
+  ATTESTATION_UNSUPPORTED_LOCAL_HUB_CONSTRUCTION,
+  ATTESTATION_CONSTRUCTION_COVERAGE,
+  ATTESTATION_STORE_BACKENDS,
+  ATTESTATION_IN_MEMORY_BACKEND,
+  AttestationConstructionUnsupportedError,
+  isLedgerServerConstruction,
+  isSingleProjectConstruction,
+  assertAttestationConstructionSupported,
+  buildAttestationConstructionCoverage,
+  supportedConstructionCells,
+  resolveSingleProjectAttestationNamespace,
+  attestationNamespaceForTrustedHubProject,
+  fsAttestationProductionRoot,
+  createAttestationStoreForConstruction,
+} from "./store/attestationConstruction.js";
+export type {
+  LedgerServerConstruction,
+  SingleProjectConstruction,
+  AttestationConstructionVerdict,
+  SingleProjectNamespaceInput,
+  XdgAttestationConstructionInput,
+  FsAttestationConstructionInput,
+  PostgresAttestationConstructionInput,
+  AttestationConstructionStoreInput,
+} from "./store/attestationConstruction.js";
+export {
   PROJECT_DISPLAY_NAME_HEADER,
   PROJECT_DISPLAY_NAME_MAX_BYTES,
   RemoteLedgerClient,
