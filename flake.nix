@@ -582,7 +582,7 @@
             yolo-darwin-profile =
               pkgs.runCommand "yolo-darwin-profile"
                 {
-                  nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq ];
+                  nativeBuildInputs = [ pkgs.shellcheck pkgs.bash pkgs.jq pkgs.python3 ];
                 }
                 ''
                   cp -r ${./nix/pkg/yolo} yolo

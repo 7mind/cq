@@ -13,6 +13,7 @@ GOLDEN_FILE="$SCRIPT_DIR/testdata/profile-foo.sb"
 _true_path="$(command -v true || echo /bin/true)"
 _bash_path="$(command -v bash || echo /bin/bash)"
 _jq_path="$(command -v jq || echo /usr/bin/jq)"
+_python_path="$(command -v python3 || echo /usr/bin/python3)"
 export YOLO_SANDBOX_EXEC="$_true_path"
 export YOLO_JQ="$_jq_path"
 export YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh"
@@ -153,9 +154,27 @@ CLI_RO="$WORKDIR/cli-ro"
 CLI_RW="$WORKDIR/cli-rw"
 SSH_TARGET="$WORKDIR/ssh-key-target"
 SSH_LINK="$WORKDIR/ssh-key"
-mkdir -p "$DECL_RO" "$DECL_RW" "$CLI_RO" "$CLI_RW"
+PODMAN_SOCKET_TARGET="$WORKDIR/runtime/podman/podman-machine-default-api.sock"
+PODMAN_SOCKET_LINK="$FAKE_HOME/.local/share/containers/podman/machine/podman.sock"
+PODMAN_SOCKET_URI="unix://$PODMAN_SOCKET_LINK"
+mkdir -p \
+  "$DECL_RO" \
+  "$DECL_RW" \
+  "$CLI_RO" \
+  "$CLI_RW" \
+  "$(dirname "$PODMAN_SOCKET_TARGET")" \
+  "$(dirname "$PODMAN_SOCKET_LINK")"
 printf private-key > "$SSH_TARGET"
 ln -s "$SSH_TARGET" "$SSH_LINK"
+"$_python_path" - "$PODMAN_SOCKET_TARGET" <<'PY'
+import socket
+import sys
+
+sock = socket.socket(socket.AF_UNIX)
+sock.bind(sys.argv[1])
+sock.close()
+PY
+ln -s "$PODMAN_SOCKET_TARGET" "$PODMAN_SOCKET_LINK"
 RENDERED_PATHS="$(
   YOLO_EXTRA_RO_PATHS="$DECL_RO"$'\n'"$SSH_LINK" \
   YOLO_EXTRA_RW_PATHS="$DECL_RW" \
@@ -249,6 +268,11 @@ printf '%s\n' \
   'if [[ "${1:-}" == "--write-base-profile" ]]; then printf "(version 1)\n"; exit 0; fi' \
   '[[ -n "${CAPTURE_ARGS_FILE:-}" ]] && printf "%s\n" "$@" > "$CAPTURE_ARGS_FILE"' \
   '[[ -n "${CAPTURE_POINTERS_FILE:-}" ]] && printf "%s\n%s\n" "${YOLO_SECRETS_FILE:-}" "${YOLO_SANDBOX_HOOKS_FILE:-}" > "$CAPTURE_POINTERS_FILE"' \
+  'previous=' \
+  'for arg in "$@"; do' \
+  '  if [[ "$previous" == "--use-profile" && -n "${CAPTURE_PROFILE_FILE:-}" ]]; then cp "$arg" "$CAPTURE_PROFILE_FILE"; break; fi' \
+  '  previous="$arg"' \
+  'done' \
   'while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done' \
   '[[ "${1:-}" == "--" ]] && shift' \
   'exec "$@"' > "$FAKE_BIN/capture-sandbox"
@@ -260,6 +284,8 @@ printf '%s\n' \
   'printf "SECRET_VALUE=%s\n" "${SECRET_VALUE:-<unset>}"' \
   'printf "SANDBOX_HOOK=%s\n" "${SANDBOX_HOOK:-<unset>}"' \
   'printf "DISABLED_HOOK=%s\n" "${DISABLED_HOOK:-<unset>}"' \
+  'printf "DOCKER_HOST=%s\n" "${DOCKER_HOST:-<unset>}"' \
+  'printf "CONTAINER_HOST=%s\n" "${CONTAINER_HOST:-<unset>}"' \
   'printf "EXTRA_TOOL=%s\n" "$(command -v yolo-extra-tool || printf missing)"' \
   'env | sed -n "/^YOLO_/s/=.*//p" | sort' > "$FAKE_BIN/pi"
 chmod +x \
@@ -335,6 +361,7 @@ HOST_HOOK_MARKER="$WORKDIR/host-hook"
 DISABLED_HOST_HOOK_MARKER="$WORKDIR/disabled-host-hook"
 CAPTURE_ARGS_FILE="$WORKDIR/captured-args"
 CAPTURE_POINTERS_FILE="$WORKDIR/captured-pointers"
+CAPTURE_PROFILE_FILE="$WORKDIR/captured-profile"
 # shellcheck disable=SC2016
 HOST_HOOKS="$(
   "$_jq_path" -nc \
@@ -348,14 +375,18 @@ SANDBOX_HOOKS="$(
 )"
 OUT="$(
   cd "$PROJECT_DIR" &&
+    unset DOCKER_HOST CONTAINER_HOST &&
     HOME="$FAKE_HOME" \
     PATH="$FAKE_BIN:$PATH" \
     CAPTURE_ARGS_FILE="$CAPTURE_ARGS_FILE" \
     CAPTURE_POINTERS_FILE="$CAPTURE_POINTERS_FILE" \
+    CAPTURE_PROFILE_FILE="$CAPTURE_PROFILE_FILE" \
     YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
     YOLO_SANDBOX_BIN="$EXTRA_BIN" \
     YOLO_SESSION_VARS=$'DECLARED=session\nORDER=session\nSECRET_VALUE=session' \
     YOLO_SECRET_VARS="SECRET_VALUE=$SECRET_SOURCE" \
+    YOLO_PODMAN_SOCKET_PATH="$PODMAN_SOCKET_LINK" \
+    YOLO_PODMAN_SOCKET_URI="$PODMAN_SOCKET_URI" \
     YOLO_PREHOOKS_JSON="$HOST_HOOKS" \
     YOLO_SANDBOX_HOOKS_JSON="$SANDBOX_HOOKS" \
     bash "$SCRIPT" --disable=skip --env ORDER=cli --env SECRET_VALUE=cli pi 2>&1
@@ -367,6 +398,11 @@ assert_contains "explicit --env overrides declarative session variable" "$OUT" "
 assert_contains "secret file value overrides non-secret values" "$OUT" "SECRET_VALUE=from-secret-file"
 assert_contains "sandbox hook exports reach agent" "$OUT" "SANDBOX_HOOK=ran"
 assert_contains "disabled sandbox hook does not run" "$OUT" "DISABLED_HOOK=<unset>"
+assert_contains "Podman socket URI reaches Docker clients" "$OUT" "DOCKER_HOST=$PODMAN_SOCKET_URI"
+assert_contains "Podman socket URI reaches Podman clients" "$OUT" "CONTAINER_HOST=$PODMAN_SOCKET_URI"
+CAPTURED_PROFILE="$(cat "$CAPTURE_PROFILE_FILE" 2>/dev/null || true)"
+assert_contains "Podman stable socket symlink receives read access" "$CAPTURED_PROFILE" "(literal \"$PODMAN_SOCKET_LINK\")"
+assert_contains "Podman runtime socket target receives read access" "$CAPTURED_PROFILE" "(literal \"$PODMAN_SOCKET_TARGET\")"
 assert_contains "extra package bin is prepended to PATH" "$OUT" "EXTRA_TOOL=$EXTRA_BIN/yolo-extra-tool"
 assert_not_contains "configured child excludes YOLO orchestration variables" "$OUT" "YOLO_"
 assert_eq "enabled host hook runs" "host" "$(cat "$HOST_HOOK_MARKER" 2>/dev/null || true)"
@@ -379,6 +415,26 @@ assert_contains "secret tempfile is supplied to sandbox entrypoint" "$SECRET_TMP
 assert_contains "hook tempfile is supplied to sandbox entrypoint" "$HOOK_TMP_PATH" "yolo-darwin-hooks."
 assert_eq "secret temp file is removed after launch" "absent" "$(if [[ -n "$SECRET_TMP_PATH" && -e "$SECRET_TMP_PATH" ]]; then echo present; else echo absent; fi)"
 assert_eq "sandbox-hook temp file is removed after launch" "absent" "$(if [[ -n "$HOOK_TMP_PATH" && -e "$HOOK_TMP_PATH" ]]; then echo present; else echo absent; fi)"
+
+# An absent configured socket matches Linux yolo: warn, skip the grant, and do
+# not advertise an unusable endpoint to Docker-compatible clients.
+MISSING_PODMAN_SOCKET="$WORKDIR/missing-podman.sock"
+OUT="$(
+  cd "$PROJECT_DIR" &&
+    unset DOCKER_HOST CONTAINER_HOST &&
+    HOME="$FAKE_HOME" \
+    PATH="$FAKE_BIN:$PATH" \
+    YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+    YOLO_PODMAN_SOCKET_PATH="$MISSING_PODMAN_SOCKET" \
+    YOLO_PODMAN_SOCKET_URI="unix://$MISSING_PODMAN_SOCKET" \
+    bash "$SCRIPT" pi 2>&1
+)"
+STATUS=$?
+assert_zero "missing configured Podman socket does not prevent launch" "$STATUS"
+assert_contains "missing configured Podman socket emits a warning" "$OUT" \
+  "warning: podsvc-llm Podman socket not available, skipping bind: $MISSING_PODMAN_SOCKET"
+assert_contains "missing configured Podman socket leaves Docker endpoint unset" "$OUT" "DOCKER_HOST=<unset>"
+assert_contains "missing configured Podman socket leaves Podman endpoint unset" "$OUT" "CONTAINER_HOST=<unset>"
 
 # ── copied HM assets ─────────────────────────────────────────────────────────
 RESHARE_HOME="$WORKDIR/reshare-home"

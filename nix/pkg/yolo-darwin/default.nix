@@ -5,6 +5,8 @@
 , writeTextFile
 , jq
 , claude-code-sandbox
+, podmanSocketPath ? null
+, podmanSocketUri ? null
 , extraReadOnlyPaths ? [ ]
 , extraReadWritePaths ? [ ]
 , promptJson ? "[]"
@@ -28,6 +30,10 @@ let
     text = builtins.readFile ../yolo/sandbox-entrypoint.sh;
   };
   joinLines = lib.concatStringsSep "\n";
+  podmanExports = lib.optionalString (podmanSocketPath != null && podmanSocketUri != null) ''
+    export YOLO_PODMAN_SOCKET_PATH=${lib.escapeShellArg podmanSocketPath}
+    export YOLO_PODMAN_SOCKET_URI=${lib.escapeShellArg podmanSocketUri}
+  '';
   extraRoExports = lib.optionalString (extraReadOnlyPaths != [ ]) ''
     export YOLO_EXTRA_RO_PATHS=${lib.escapeShellArg (joinLines extraReadOnlyPaths)}
   '';
@@ -63,6 +69,7 @@ let
     export YOLO_JQ="${jq}/bin/jq"
     export YOLO_CUSTOM_PROMPT="${customPromptScript}"
     export YOLO_SANDBOX_ENTRYPOINT="${sandboxEntrypoint}/bin/yolo-sandbox-entrypoint"
+    ${podmanExports}
     ${extraRoExports}
     ${extraRwExports}
     ${secretVarsExports}

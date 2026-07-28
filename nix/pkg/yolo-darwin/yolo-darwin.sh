@@ -19,6 +19,7 @@ UNSAFE_SHARE_HOME=0
 ENV_PAIRS=()
 SESSION_ENV_PAIRS=()
 SANDBOX_PACKAGE_ENV_PAIRS=()
+SOCKET_ENV_PAIRS=()
 EXTRA_RO_PATHS=()
 EXTRA_RW_PATHS=()
 CLEANUP_FILES=()
@@ -172,6 +173,19 @@ case "$SUBCMD" in
     exit 1
     ;;
 esac
+
+# Match Linux yolo's container-runtime contract. Seatbelt already grants
+# network*, so the socket needs only filesystem visibility; the generic path
+# renderer grants both a stable symlink and its canonical runtime target.
+if [[ -n "${YOLO_PODMAN_SOCKET_PATH:-}" && -n "${YOLO_PODMAN_SOCKET_URI:-}" ]]; then
+  if [[ -S "$YOLO_PODMAN_SOCKET_PATH" ]]; then
+    EXTRA_RO_PATHS+=("$YOLO_PODMAN_SOCKET_PATH")
+    SOCKET_ENV_PAIRS+=("DOCKER_HOST=$YOLO_PODMAN_SOCKET_URI")
+    SOCKET_ENV_PAIRS+=("CONTAINER_HOST=$YOLO_PODMAN_SOCKET_URI")
+  else
+    echo "warning: podsvc-llm Podman socket not available, skipping bind: $YOLO_PODMAN_SOCKET_PATH" >&2
+  fi
+fi
 
 profile_dir() { printf '%s/.config/yolo/%s/%s' "${HOME}" "${PROFILE}" "$1"; }
 
@@ -465,9 +479,10 @@ run_prestart_hooks() {
   )
 }
 
-# Environment precedence increases from profile, extra-package PATH, and
-# declarative session variables to user --env. Secrets load inside Seatbelt
-# after those values, while SMIND_SANDBOXED remains non-overridable.
+# Environment precedence increases from profile, container socket defaults,
+# extra-package PATH, and declarative session variables to user --env. Secrets
+# load inside Seatbelt after those values, while SMIND_SANDBOXED remains
+# non-overridable.
 yolo_exec_agent() {
   local subcmd="$1"; shift
   # cmd supplies its executable through "$@"; other modes prepend fixed argv.
@@ -553,6 +568,7 @@ yolo_exec_agent() {
   unset "${yolo_vars[@]}"
   env \
     "${PROFILE_ENV_PAIRS[@]}" \
+    "${SOCKET_ENV_PAIRS[@]}" \
     "${SANDBOX_PACKAGE_ENV_PAIRS[@]}" \
     "${SESSION_ENV_PAIRS[@]}" \
     "${ENV_PAIRS[@]}" \

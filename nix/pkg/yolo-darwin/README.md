@@ -149,6 +149,8 @@ Read-only access is granted to system files required to run the agent:
 - `~/.config/gh` (GitHub CLI configuration).
 - `~/.config/mcp`, `~/.config/direnv`, `~/.local/share/direnv`, and `~/.direnvrc` (from the pinned upstream base profile).
 - Declarative `extraReadOnlyPaths` and per-invocation `--ro` paths.
+- A configured Podman/Docker Unix socket, including both a stable symlink and
+  its canonical runtime target.
 - System configuration: `/etc`, `/var`, `/System`, and essential service files.
 
 ### What is NOT confined
@@ -237,20 +239,22 @@ When an agent runs under `yolo-darwin`:
 
 - **Profile environment variables** (e.g., `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`) are set only for named profiles and applied **before** explicit `--env KEY=VAL` pairs, so an explicit flag overrides a profile default.
 - **Declarative session variables** and the extra-package `PATH` come from the home-manager module and apply to every subcommand.
+- **Container runtime variables** set `DOCKER_HOST` and `CONTAINER_HOST` when
+  the configured Podman socket exists. On macOS with `podman-mac-helper`, the
+  stable socket is normally `~/.local/share/containers/podman/machine/podman.sock`.
 - **Secret session variables** are read from their configured files into one mode-0600 temporary file, loaded by the child entrypoint without placing secret values in argv, and removed after the session.
 - **Host and sandbox pre-start hooks** run for agent modes only; sandbox hooks run after secrets load and can export environment variables to the agent. `--disable` filters both hook sets by tag.
 - **`--env KEY=VAL` pairs** are applied to the agent process **only**, not to the launcher itself, and not visible in the command-line arguments of the spawned process.
 
 ### Remaining platform-specific gaps
 
-**Runtime integration proposal:** keep `extraDevicePaths` as a Linux-specific
-interface and introduce capability-oriented Darwin adapters instead of
-translating `/dev` and PipeWire paths. A container adapter should accept an
-explicit Docker, Colima, or Podman Unix socket plus URI, grant only that socket,
-and set `DOCKER_HOST`/`CONTAINER_HOST`. Audio support should identify the
-required files and Mach services with live Seatbelt denial probes before adding
-an `audio`-tagged policy fragment. tmux needs no separate adapter while the
-upstream profile grants the host temporary directories containing its socket.
+**Remaining runtime integration proposal:** keep `extraDevicePaths` as a
+Linux-specific interface rather than translating `/dev` and PipeWire paths.
+Filesystem-backed devices can use ad-hoc `--ro`/`--rw` grants; audio or devices
+that require Mach or IOKit permissions should add a tagged policy fragment only
+after live Seatbelt denial probes identify the required operations. tmux needs
+no separate adapter while the upstream profile grants the host temporary
+directories containing its socket.
 
 **Shell-mode proposal:** add a shell-specific Seatbelt overlay selected from
 `$SHELL`: grant only that shell's startup files read-only and redirect writable
@@ -261,12 +265,13 @@ itself establish the corresponding Seatbelt operations.
 ## Manual macOS verification checklist
 
 The `yolo-darwin-profile` flake check covers deterministic SBPL generation,
-CLI and declarative path grants, environment/secret/hook propagation through a
-hand-written sandbox adapter, profile-wide asset materialization, the
-per-profile directory layout, and the `$PWD==$HOME` guard. It also asserts that
-the pinned upstream base carries the shared MCP and direnv grants. Live
-Seatbelt execution must run outside the Nix Darwin builder because macOS
-rejects nested `sandbox-exec` with `sandbox_apply: Operation not permitted`.
+CLI and declarative path grants, Podman's stable-symlink and runtime-socket
+grants, environment/secret/hook propagation through a hand-written sandbox
+adapter, profile-wide asset materialization, the per-profile directory layout,
+and the `$PWD==$HOME` guard. It also asserts that the pinned upstream base
+carries the shared MCP and direnv grants. Live Seatbelt execution must run
+outside the Nix Darwin builder because macOS rejects nested `sandbox-exec` with
+`sandbox_apply: Operation not permitted`.
 
 Run the steps below on a Mac using an actual test repository. They cover live confinement, account/credential resolution, session isolation, and OAuth refresh. At minimum, confirm `yolo cmd pwd` succeeds from the repository and that `yolo cmd cat <an unrelated home path>` fails without leaking its contents.
 
@@ -326,11 +331,12 @@ When launching `yolo-darwin`, environment variable precedence is:
 
 1. **Inherited launcher environment**.
 2. **Profile environment variables** (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`).
-3. **Extra-package `PATH`**, when packages are configured.
-4. **Declarative `sessionVariables`**.
-5. **Explicit `--env KEY=VAL` pairs**.
-6. **Secret-file-backed variables**.
-7. **Environment exported by sandbox pre-start hooks**.
+3. **Configured Podman/Docker socket variables**.
+4. **Extra-package `PATH`**, when packages are configured.
+5. **Declarative `sessionVariables`**.
+6. **Explicit `--env KEY=VAL` pairs**.
+7. **Secret-file-backed variables**.
+8. **Environment exported by sandbox pre-start hooks**.
 
 Later entries override earlier entries with the same name. `SMIND_SANDBOXED=1`
 is set by the launcher and cannot be overridden through declarative variables or

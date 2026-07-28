@@ -102,9 +102,10 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = ''
-        Linux host path of a rootless-Podman socket to bind into the yolo
-        sandbox, exposing container access to sandboxed agents. The Darwin
-        runtime-adapter design remains pending. null disables it.
+        Host path of a rootless-Podman socket to expose to sandboxed agents.
+        Linux binds the socket; Darwin grants read access to its logical and
+        canonical paths. On macOS with podman-mac-helper, use
+        `~/.local/share/containers/podman/machine/podman.sock`. null disables it.
       '';
     };
 
@@ -112,7 +113,7 @@ in
       type = lib.types.nullOr lib.types.str;
       default = null;
       description = ''
-        Linux DOCKER_HOST-style URI for the rootless-Podman socket bound via
+        DOCKER_HOST-style URI for the rootless-Podman socket exposed via
         {option}`smind.hm.dev.llm.podman.socketPath`. null disables it.
       '';
     };
@@ -436,6 +437,8 @@ in
         pkgs.git
         (pkgs.callPackage ../pkg/yolo-darwin/default.nix {
           claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
+          podmanSocketPath = cfg.podman.socketPath;
+          podmanSocketUri = cfg.podman.socketUri;
           extraReadOnlyPaths = cfg.yolo.extraReadOnlyPaths ++ lib.optional sshKeySet cfg.llmSshKeyPath;
           extraReadWritePaths = cfg.yolo.extraReadWritePaths;
           sandboxPackages = cfg.yolo.packages ++ lib.optional codegraphSet cfg.yolo.codegraph;
