@@ -45,6 +45,7 @@ import {
   CODEX_NATIVE_DELIVERY_MODE,
   CODEX_ROLE_DELIVERY_MIGRATION_OWNER,
   CODEX_ROLE_DELIVERY_PREREQUISITES,
+  CODEX_ROLE_DELIVERY_PREREQUISITES_APPLIED,
   CODEX_ROLE_DELIVERY_PREREQUISITES_ARE_ATOMIC,
   CodexObservationProvenanceError,
   CodexUnsupportedModeError,
@@ -1741,28 +1742,42 @@ describe("T690 §6 — the two-part role-delivery prerequisite must stay atomic"
     expect(SYNTHETIC_PROJECTION_PROSE_ONLY.includes(DISPATCHED_ROLE_REFERENCE_LINE)).toBe(false);
     expect(detectSuppressedReferenceLines(SYNTHETIC_PROJECTION_SUPPRESSED)).toBe(true);
     // Wrapping-insensitive: the synthetic prose is wrapped at a different column
-    // from the real file and both are still detected.
-    expect(normalizeProse(projection)).toContain(DISPATCHED_ROLE_ADVERTISEMENT_PROSE);
+    // from the real file and is still detected. The REAL projection no longer
+    // carries it (T691 applied half (a)), so the wrapping-insensitivity claim is
+    // now demonstrated on the synthetic surface alone.
+    expect(normalizeProse(projection)).not.toContain(DISPATCHED_ROLE_ADVERTISEMENT_PROSE);
     expect(normalizeProse(SYNTHETIC_PROJECTION_PROSE_ONLY)).toContain(
       DISPATCHED_ROLE_ADVERTISEMENT_PROSE,
     );
   });
 
-  test("this task changed NEITHER half — the migration is T691's, and says so", () => {
+  test("T691 applied BOTH halves, and the claim agrees with the measurement", () => {
     // The observed state of the repo, recorded so the boundary is a fact rather
-    // than a claim in a commit message. T690 defines the protocol and is inert;
-    // it renders no asset and spawns no child. This assertion INVERTS when T691
-    // lands both halves — at which point §6's guard above still holds.
-    expect(suppressedReferenceLines).toBe(false);
-    expect(declaresNativeAgents).toBe(false);
+    // than a claim in a commit message. This is the INVERSION T690 predicted:
+    // T690 defined the protocol and was inert (both detectors read false); T691
+    // rendered the assets, so both read true — and §6's guard above still holds
+    // BECAUSE they moved together.
+    expect(suppressedReferenceLines).toBe(true);
+    expect(declaresNativeAgents).toBe(true);
+    // The hand-maintained claim must not drift from what the files say. Reverting
+    // either half flips a detector and breaks this equality, not just the guard.
+    expect(CODEX_ROLE_DELIVERY_PREREQUISITES_APPLIED).toBe(
+      suppressedReferenceLines && declaresNativeAgents,
+    );
     expect(CODEX_DISPATCH_DEFERRED_TO).toBe(CODEX_ROLE_DELIVERY_MIGRATION_OWNER);
+    // The two asset halves are GONE from the outstanding list; what remains is
+    // what genuinely outlives T691.
     expect([...CODEX_DISPATCH_DEFERRED]).toEqual([
-      "suppress-the-dispatched-role-reference-lines-in-the-generated-skill",
-      "generate-the-global-native-agent-declarations",
       "spawn-and-intercept-a-real-codex-child",
       "migrate-the-codex-dispatch-fragment-to-the-new-call-shape",
       "frontier-model-read-batching-remeasurement",
     ]);
+    for (const applied of [
+      "suppress-the-dispatched-role-reference-lines-in-the-generated-skill",
+      "generate-the-global-native-agent-declarations",
+    ]) {
+      expect([...CODEX_DISPATCH_DEFERRED]).not.toContain(applied);
+    }
   });
 
   test("researches:RS10 threat #2 is carried forward, not quietly dropped", () => {

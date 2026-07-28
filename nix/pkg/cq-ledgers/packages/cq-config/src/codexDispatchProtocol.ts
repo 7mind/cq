@@ -306,6 +306,23 @@ export const CODEX_ROLE_DELIVERY_PREREQUISITES_ARE_ATOMIC = true;
 export const CODEX_ROLE_DELIVERY_MIGRATION_OWNER = "T691" as const;
 
 /**
+ * Whether the pair is APPLIED in this repository, as opposed to merely defined.
+ *
+ * tasks:T690 shipped NEITHER half, deliberately, because either alone is worse
+ * than neither. tasks:T691 shipped BOTH: `nix/lib/codex-command-skills.nix` no
+ * longer advertises a dispatched role's path (its `mkReferenceLine` has only the
+ * command-role branch left, and the prose that sent the reader to those
+ * references now forbids reconstructing a role body), and `nix/hm/codex.nix`
+ * materialises one `name` / `description` / `developer_instructions` declaration
+ * per dispatched role under the global `~/.codex/agents/`.
+ *
+ * This constant is a CLAIM; the section 6 detectors measure the same thing off
+ * the two nix files. The test cross-checks them, so reverting either half makes
+ * the claim and the measurement disagree rather than silently drift.
+ */
+export const CODEX_ROLE_DELIVERY_PREREQUISITES_APPLIED = true;
+
+/**
  * The GLOBAL agents directory the native mode requires, relative to
  * `$CODEX_HOME` (which defaults to `~/.codex`, so in practice `~/.codex/agents/`).
  *
@@ -869,13 +886,20 @@ export function codexExitCorroboration(exitStatus: number | undefined): CodexExi
 export const CODEX_DISPATCH_DEFERRED_TO = CODEX_ROLE_DELIVERY_MIGRATION_OWNER;
 
 /**
- * What this DEFINITION task deliberately does not do, recorded so none of it is
- * silently assumed done. Every entry lands in
- * {@link CODEX_DISPATCH_DEFERRED_TO}.
+ * What is STILL outstanding, recorded so none of it is silently assumed done.
+ *
+ * This is a live list, not a historical one: an entry is removed when it lands.
+ * tasks:T690 also listed the two asset halves —
+ * `suppress-the-dispatched-role-reference-lines-in-the-generated-skill` and
+ * `generate-the-global-native-agent-declarations` — which tasks:T691 applied
+ * TOGETHER (see {@link CODEX_ROLE_DELIVERY_PREREQUISITES_APPLIED}); they are gone
+ * from here because a reader consults this list to learn what is unfinished.
+ *
+ * The three below OUTLIVE {@link CODEX_DISPATCH_DEFERRED_TO}: applying the pair
+ * changed the ASSETS a child is delivered by, and left the live-spawn wiring and
+ * the call-shape migration for the follow-on work.
  */
 export const CODEX_DISPATCH_DEFERRED = Object.freeze([
-  "suppress-the-dispatched-role-reference-lines-in-the-generated-skill",
-  "generate-the-global-native-agent-declarations",
   "spawn-and-intercept-a-real-codex-child",
   "migrate-the-codex-dispatch-fragment-to-the-new-call-shape",
   "frontier-model-read-batching-remeasurement",
