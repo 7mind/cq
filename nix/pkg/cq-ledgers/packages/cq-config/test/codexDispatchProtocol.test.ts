@@ -831,3 +831,510 @@ describe("T690 §4b — the completion decision keys on evidence, never on exit 
     ).toThrow(AttestationContractError);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 5. The end-to-end matrix, run identically on BOTH supported modes
+// ---------------------------------------------------------------------------
+
+/** The sentinel that must appear in exactly ONE protocol response: the fetch. */
+const BODY_SENTINEL = "CODEX-BODY-SENTINEL";
+
+function fetchRequest(handle: DispatchHandle, actor: "trusted-parent" | "trusted-extension") {
+  return { ...handle, namespace: NAMESPACE, actor } as const;
+}
+
+/** Drive the happy path to `result-stored`, returning everything the rest needs. */
+function storeVia(
+  h: Harness,
+  prepared: DispatchPrepared,
+  output: DispatchJSONValue = OUTPUT,
+): ReturnType<typeof storeDispatchResult> {
+  return storeDispatchResult({ resultCapability: prepared.resultCapability, output }, h.deps);
+}
+
+function confirmVia(h: Harness, prepared: DispatchPrepared, mode: CodexDeliveryMode) {
+  const decision = decideCodexCompletion({
+    handle: handleOf(prepared),
+    expectedChild: CORRELATION,
+    observation: observation(mode, handleOf(prepared), { observedAt: h.clock.peek() }),
+  });
+  if (decision.action !== "confirm") {
+    throw new Error(`expected a confirm decision, got abort ${decision.reason}`);
+  }
+  return confirmDispatchCompletion(
+    {
+      namespace: NAMESPACE,
+      ...handleOf(prepared),
+      nativeCompletion: decision.nativeCompletion,
+      expectedProvenance: provenanceBindingOf(prepared),
+    },
+    h.deps,
+  );
+}
+
+for (const mode of MODES) {
+  const actor = codexCompletionActor(mode);
+
+  describe(`T690 §5 [${mode}] — prepare → store → confirm → fetch`, () => {
+    test("the happy path reaches `consumed`, and the BODY appears on the fetch ALONE", () => {
+      const h = harness({ seed: 101 });
+      const prepared = prepareCodex(h);
+      const gate = codexLaunchGate(prepared, h.clock.peek());
+      expect(gate.launch).toBe(true);
+
+      const stored = storeVia(h, prepared);
+      expect(stored.state).toBe("result-stored");
+      const confirmed = confirmVia(h, prepared, mode);
+      expect(confirmed.state).toBe("consumed");
+
+      const fetched = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps);
+      expect(fetched.state).toBe("consumed");
+      if (fetched.state !== "consumed") throw new Error("unreachable");
+      expect(fetched.output).toEqual(OUTPUT);
+
+      // defects:D173's invariant, measured per surface rather than asserted:
+      // fetch is the SOLE body-returning response.
+      const surfaces: readonly (readonly [string, unknown])[] = [
+        ["prepare", prepared],
+        ["store_result ack", stored],
+        ["confirm ack", confirmed],
+      ];
+      for (const [name, payload] of surfaces) {
+        expect(JSON.stringify(payload)).not.toContain(BODY_SENTINEL);
+        expect(name.length).toBeGreaterThan(0);
+      }
+      expect(JSON.stringify(fetched)).toContain(BODY_SENTINEL);
+    });
+
+    test("a valid store BEFORE the deadline stores; AT the deadline still stores", () => {
+      const before = harness({ seed: 103 });
+      const p1 = prepareCodex(before);
+      before.clock.advance(TIMEOUT_MS - RESPONSE_STORE_LEAD_MS);
+      expect(storeVia(before, p1).state).toBe("result-stored");
+
+      // The boundary is INCLUSIVE: `childCancelAt` itself is still in time.
+      const at = harness({ seed: 105 });
+      const p2 = prepareCodex(at);
+      at.clock.advance(TIMEOUT_MS);
+      expect(at.clock.peek()).toBe(p2.childCancelAt);
+      expect(storeVia(at, p2).state).toBe("result-stored");
+    });
+
+    test("a valid store AFTER the deadline aborts `deadline-exceeded`, storing nothing", () => {
+      const h = harness({ seed: 107 });
+      const prepared = prepareCodex(h);
+      h.clock.advance(TIMEOUT_MS + 1);
+      const outcome = storeVia(h, prepared);
+      expect(outcome.state).toBe("aborted");
+      if (outcome.state !== "aborted") throw new Error("unreachable");
+      expect(outcome.result.reason).toBe("deadline-exceeded");
+      // The late payload is NOT retained: a late child cannot smuggle a body in.
+      const fetched = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps);
+      expect(JSON.stringify(fetched)).not.toContain(BODY_SENTINEL);
+    });
+
+    test("an INVALID store before the deadline aborts `invalid-output` with typed details", () => {
+      const h = harness({ seed: 109 });
+      const prepared = prepareCodex(h);
+      const outcome = storeVia(h, prepared, INVALID_OUTPUT);
+      expect(outcome.state).toBe("aborted");
+      if (outcome.state !== "aborted") throw new Error("unreachable");
+      expect(outcome.result.reason).toBe("invalid-output");
+      expect(outcome.result.details).toBeDefined();
+    });
+
+    test("an INVALID store AFTER the deadline is `deadline-exceeded` — the deadline is read first", () => {
+      // Ordering matters: a late submission must not be re-classified by the
+      // quality of its payload, or a late child could choose its abort reason.
+      const h = harness({ seed: 111 });
+      const prepared = prepareCodex(h);
+      h.clock.advance(TIMEOUT_MS + 1);
+      const outcome = storeVia(h, prepared, INVALID_OUTPUT);
+      expect(outcome.state).toBe("aborted");
+      if (outcome.state !== "aborted") throw new Error("unreachable");
+      expect(outcome.result.reason).toBe("deadline-exceeded");
+    });
+
+    test("a child instant WILDLY skewed from the service clock changes nothing", () => {
+      // §3's skew rule, end to end: the child is given a duration, and the
+      // lifecycle is decided by the service clock alone. Here the child claims to
+      // have completed two hours in the future; the outcome is identical.
+      const h = harness({ seed: 113 });
+      const prepared = prepareCodex(h);
+      expect(storeVia(h, prepared).state).toBe("result-stored");
+      const skewed = decideCodexCompletion({
+        handle: handleOf(prepared),
+        expectedChild: CORRELATION,
+        observation: observation(mode, handleOf(prepared), {
+          observedAt: new Date(T0_MS + 2 * 60 * 60 * 1000).toISOString(),
+        }),
+      });
+      expect(skewed.action).toBe("confirm");
+      if (skewed.action !== "confirm") throw new Error("unreachable");
+      const outcome = confirmDispatchCompletion(
+        {
+          namespace: NAMESPACE,
+          ...handleOf(prepared),
+          nativeCompletion: skewed.nativeCompletion,
+          expectedProvenance: provenanceBindingOf(prepared),
+        },
+        h.deps,
+      );
+      expect(outcome.state).toBe("consumed");
+      if (outcome.state !== "consumed") throw new Error("unreachable");
+      // `consumedAt` is the SERVICE clock, not the child's claim.
+      expect(outcome.result.consumedAt).toBe(T0);
+    });
+
+    test("a MISSING completion (nothing stored) aborts `missing-result`", () => {
+      const h = harness({ seed: 115 });
+      const prepared = prepareCodex(h);
+      const outcome = confirmVia(h, prepared, mode);
+      expect(outcome.state).toBe("aborted");
+      if (outcome.state !== "aborted") throw new Error("unreachable");
+      expect(outcome.result.reason).toBe("missing-result");
+    });
+
+    test("a MISMATCHED completion cannot consume, even with a result stored", () => {
+      const h = harness({ seed: 117 });
+      const prepared = prepareCodex(h);
+      expect(storeVia(h, prepared).state).toBe("result-stored");
+      // A forged proof that skips this module's correlation check is still
+      // refused by the STORE, because the role and nonce are bound into childId.
+      expect(() =>
+        confirmDispatchCompletion(
+          {
+            namespace: NAMESPACE,
+            ...handleOf(prepared),
+            nativeCompletion: {
+              kind: "native-completion",
+              actor,
+              childId: codexExpectedChild({ ...CORRELATION, agentType: "implement-reviewer" })
+                .childId,
+              runId: THREAD_ID,
+              completedAt: h.clock.peek(),
+            },
+            expectedProvenance: provenanceBindingOf(prepared),
+          },
+          h.deps,
+        ),
+      ).toThrow(AttestationBindingError);
+      // Still `result-stored`: a refused confirmation is not a terminal state.
+      expect(fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps).state).toBe(
+        "result-stored",
+      );
+    });
+
+    test("CANCELLATION AFTER STORAGE: the abort wins and the stored result is never consumed", () => {
+      const h = harness({ seed: 119 });
+      const prepared = prepareCodex(h);
+      expect(storeVia(h, prepared).state).toBe("result-stored");
+
+      const decision = decideCodexCompletion({
+        handle: handleOf(prepared),
+        expectedChild: CORRELATION,
+        observation: observation(mode, handleOf(prepared), {
+          outcome: "cancelled",
+          observedAt: h.clock.peek(),
+        }),
+      });
+      expect(decision.action).toBe("abort");
+      if (decision.action !== "abort") throw new Error("unreachable");
+      const aborted = abortDispatch(
+        {
+          namespace: NAMESPACE,
+          ...handleOf(prepared),
+          actor,
+          reason: decision.reason,
+          details: decision.details,
+        },
+        h.deps,
+      );
+      expect(aborted.state).toBe("aborted");
+      expect(aborted.reason).toBe("cancelled");
+
+      // A late completion cannot resurrect it.
+      expect(() => confirmVia(h, prepared, mode)).toThrow(DispatchStateConflictError);
+      const fetched = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps);
+      expect(fetched.state).toBe("aborted");
+      expect(JSON.stringify(fetched)).not.toContain(BODY_SENTINEL);
+    });
+
+    test("EXACTLY ONE terminal state persists: consumed excludes abort, aborted excludes consume", () => {
+      const consumed = harness({ seed: 121 });
+      const p1 = prepareCodex(consumed);
+      expect(storeVia(consumed, p1).state).toBe("result-stored");
+      expect(confirmVia(consumed, p1, mode).state).toBe("consumed");
+      expect(() =>
+        abortDispatch(
+          { namespace: NAMESPACE, ...handleOf(p1), actor, reason: "cancelled" },
+          consumed.deps,
+        ),
+      ).toThrow(DispatchStateConflictError);
+      expect(consumed.store.snapshot()).toHaveLength(1);
+
+      const abandoned = harness({ seed: 123 });
+      const p2 = prepareCodex(abandoned);
+      expect(storeVia(abandoned, p2).state).toBe("result-stored");
+      abortDispatch(
+        { namespace: NAMESPACE, ...handleOf(p2), actor, reason: "native-failure" },
+        abandoned.deps,
+      );
+      expect(() => confirmVia(abandoned, p2, mode)).toThrow(DispatchStateConflictError);
+      expect(abandoned.store.snapshot()).toHaveLength(1);
+    });
+
+    test("IDENTICAL retries are idempotent at every stage", () => {
+      const h = harness({ seed: 125 });
+      const prepared = prepareCodex(h);
+      const first = storeVia(h, prepared);
+      const second = storeVia(h, prepared);
+      expect(second).toEqual(first);
+
+      const confirmedOnce = confirmVia(h, prepared, mode);
+      const confirmedTwice = confirmVia(h, prepared, mode);
+      expect(confirmedTwice).toEqual(confirmedOnce);
+      expect(h.store.snapshot()).toHaveLength(1);
+    });
+
+    test("CONFLICTING retries are typed conflicts, never a second terminal state", () => {
+      const h = harness({ seed: 127 });
+      const prepared = prepareCodex(h);
+      expect(storeVia(h, prepared).state).toBe("result-stored");
+      // A different body under the same capability.
+      expect(() => storeVia(h, prepared, { ...(OUTPUT as object), status: "fail" } as DispatchJSONValue)).toThrow(
+        DispatchStateConflictError,
+      );
+      expect(confirmVia(h, prepared, mode).state).toBe("consumed");
+      // A different completion proof for an already-consumed record.
+      expect(() =>
+        confirmDispatchCompletion(
+          {
+            namespace: NAMESPACE,
+            ...handleOf(prepared),
+            nativeCompletion: {
+              kind: "native-completion",
+              actor,
+              childId: codexExpectedChild(CORRELATION).childId,
+              runId: THREAD_ID,
+              completedAt: "2026-07-28T23:59:59.000Z",
+            },
+            expectedProvenance: provenanceBindingOf(prepared),
+          },
+          h.deps,
+        ),
+      ).toThrow(DispatchStateConflictError);
+    });
+
+    test("a STALE generation cannot be confirmed, and an unallocated one is not-found", () => {
+      const h = harness({ seed: 129 });
+      const first = prepareCodex(h);
+      abortDispatch(
+        { namespace: NAMESPACE, ...handleOf(first), actor, reason: "parent-lost" },
+        h.deps,
+      );
+      const second = prepareCodex(
+        h,
+        { idempotencyKey: "T690-round-1", reprepareOf: handleOf(first) },
+        CORRELATION,
+      );
+      expect(second.generation).toBe(2);
+      expect(second.attestationId).toBe(first.attestationId);
+      // The stale generation is terminal and refuses promotion...
+      expect(() => confirmVia(h, first, mode)).toThrow(DispatchStateConflictError);
+      // ...its capability is stale too...
+      expect(() => storeVia(h, first)).toThrow(DispatchStateConflictError);
+      // ...and a generation that was never allocated is a lifecycle answer.
+      expect(
+        fetchDispatchResult(
+          fetchRequest({ attestationId: second.attestationId, generation: 3 }, actor),
+          h.deps,
+        ).state,
+      ).toBe("attestation-not-found");
+      // The live generation still works.
+      expect(storeVia(h, second).state).toBe("result-stored");
+      expect(confirmVia(h, second, mode).state).toBe("consumed");
+    });
+
+    test("PARENT LOSS then RESTART: the result survives and the new parent confirms it", () => {
+      const h = harness({ seed: 131 });
+      const prepared = prepareCodex(h);
+      expect(storeVia(h, prepared).state).toBe("result-stored");
+
+      // The parent dies here. Everything it held in memory is gone; the handle is
+      // the only thing a restarted parent needs. ONE rehydrated store, so the
+      // fetch and the confirmation below really do see the same rows.
+      const store = InMemoryAttestationStore.rehydrate(NAMESPACE, h.store.snapshot());
+      const restarted: Harness = {
+        clock: h.clock,
+        store,
+        deps: { store, now: h.clock.now },
+        prepareDeps: { store, now: h.clock.now, randomBytes: sequentialDispatchRandomBytes(133) },
+      };
+      expect(
+        fetchDispatchResult(fetchRequest(handleOf(prepared), actor), restarted.deps).state,
+      ).toBe("result-stored");
+      expect(confirmVia(restarted, prepared, mode).state).toBe("consumed");
+      const fetched = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), restarted.deps);
+      expect(fetched.state).toBe("consumed");
+      if (fetched.state !== "consumed") throw new Error("unreachable");
+      expect(fetched.output).toEqual(OUTPUT);
+    });
+
+    test("a parent that is NOT coming back aborts `parent-lost`, keeping one terminal state", () => {
+      const h = harness({ seed: 135 });
+      const prepared = prepareCodex(h);
+      expect(storeVia(h, prepared).state).toBe("result-stored");
+      const aborted: AbortedDispatchResult = abortDispatch(
+        {
+          namespace: NAMESPACE,
+          ...handleOf(prepared),
+          actor,
+          reason: "parent-lost",
+          details: { mode },
+        },
+        h.deps,
+      );
+      expect(aborted.reason).toBe("parent-lost");
+      expect(h.store.snapshot()).toHaveLength(1);
+    });
+
+    test("AUTH failures: a forged capability and an untrusted fetch actor both fail closed", () => {
+      const h = harness({ seed: 137 });
+      const prepared = prepareCodex(h);
+      // A stolen/forged capability resolves nothing — lookup is BY STORED HASH.
+      expect(() =>
+        storeDispatchResult(
+          {
+            resultCapability: { scope: "store-result", token: `cq_result_${"Z".repeat(43)}` },
+            output: OUTPUT,
+          },
+          h.deps,
+        ),
+      ).toThrow(DispatchAuthorizationError);
+      // And an untrusted reader cannot materialise the body (defects:D174).
+      expect(() =>
+        fetchDispatchResult(
+          { ...handleOf(prepared), namespace: NAMESPACE, actor: "child" as never },
+          h.deps,
+        ),
+      ).toThrow(DispatchAuthorizationError);
+    });
+
+    test("STORE and BACKEND failures stay errors — neither becomes a lifecycle state", () => {
+      const storeFault = harness({
+        seed: 139,
+        fault: (operation) => {
+          if (operation === "replace") throw new AttestationStorageError("write refused");
+        },
+      });
+      const p1 = prepareCodex(storeFault);
+      expect(() => storeVia(storeFault, p1)).toThrow(AttestationStorageError);
+
+      const backendFault = harness({
+        seed: 141,
+        fault: (operation) => {
+          if (operation === "read") throw new AttestationTransportError("backend unreachable");
+        },
+      });
+      const p2 = prepareCodex(backendFault);
+      expect(() =>
+        fetchDispatchResult(fetchRequest(handleOf(p2), actor), backendFault.deps),
+      ).toThrow(AttestationTransportError);
+      // Neither error name appears in the lifecycle vocabulary.
+      for (const name of ["storage-failure", "transport-failure", "backend-failure"]) {
+        expect(DISPATCH_ABORT_REASONS as readonly string[]).not.toContain(name);
+      }
+    });
+
+    test("EXPIRY and SWEEP walk the two retention boundaries in order", () => {
+      const h = harness({ seed: 143 });
+      const prepared = prepareCodex(h);
+      expect(storeVia(h, prepared).state).toBe("result-stored");
+      expect(confirmVia(h, prepared, mode).state).toBe("consumed");
+
+      // Within the 24h envelope the body is still fetchable.
+      h.clock.advance(TERMINAL_ENVELOPE_RETENTION_MS - 1);
+      expect(fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps).state).toBe(
+        "consumed",
+      );
+
+      // At 24h the envelope has expired — BEFORE any sweep runs.
+      h.clock.advance(1);
+      const expired = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps);
+      expect(expired.state).toBe("terminal-envelope-expired");
+      if (expired.state !== "terminal-envelope-expired") throw new Error("unreachable");
+      expect(expired.terminalKind).toBe("consumed");
+      expect(JSON.stringify(expired)).not.toContain(BODY_SENTINEL);
+
+      // The sweep collapses it to a tombstone and drops the body irrecoverably.
+      const collapse = sweepAttestations(h.deps);
+      expect(collapse.envelopesCollapsed).toHaveLength(1);
+      expect(JSON.stringify(h.store.snapshot())).not.toContain(BODY_SENTINEL);
+      expect(fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps).state).toBe(
+        "terminal-envelope-expired",
+      );
+
+      // At the 30d horizon the record is gone and the key is reusable.
+      h.clock.advance(IDEMPOTENCY_HORIZON_MS);
+      expect(fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps).state).toBe(
+        "attestation-not-found",
+      );
+      const drop = sweepAttestations(h.deps);
+      expect(drop.tombstonesRemoved).toHaveLength(1);
+      expect(drop.rowsRemaining).toBe(0);
+    });
+
+    test("all SIX fetch states are reachable on this mode", () => {
+      const seen = new Set<string>();
+
+      const live = harness({ seed: 145 });
+      const p1 = prepareCodex(live);
+      seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
+      storeVia(live, p1);
+      seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
+      confirmVia(live, p1, mode);
+      seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
+      live.clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
+      seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
+      live.clock.advance(IDEMPOTENCY_HORIZON_MS);
+      seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
+
+      const stopped = harness({ seed: 147 });
+      const p2 = prepareCodex(stopped);
+      abortDispatch(
+        { namespace: NAMESPACE, ...handleOf(p2), actor, reason: "cancelled" },
+        stopped.deps,
+      );
+      seen.add(fetchDispatchResult(fetchRequest(handleOf(p2), actor), stopped.deps).state);
+
+      expect([...seen].sort()).toEqual([
+        "aborted",
+        "attestation-not-found",
+        "consumed",
+        "prepared",
+        "result-stored",
+        "terminal-envelope-expired",
+      ]);
+    });
+
+    test("REPEAT fetch of a consumed record re-renders the body — the shared service is idempotent", () => {
+      // Pinned as a CHARACTERIZATION, and named as a cross-surface DIVERGENCE:
+      // tasks:T693's pi extension materialises the body EXACTLY ONCE and answers
+      // `output-already-materialized` on a repeat, whereas the shared
+      // `fetchDispatchResult` this surface uses is a pure, repeatable read. Both
+      // satisfy "the body reaches the parent on FETCH and on no other surface",
+      // which is what defects:D173 required; they differ on repeat-fetch. That
+      // difference is recorded here rather than silently assumed either way,
+      // because changing it would change every surface at once.
+      const h = harness({ seed: 149 });
+      const prepared = prepareCodex(h);
+      storeVia(h, prepared);
+      confirmVia(h, prepared, mode);
+      const first = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps);
+      const second = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps);
+      expect(second).toEqual(first);
+      expect(JSON.stringify(second)).toContain(BODY_SENTINEL);
+    });
+  });
+}
