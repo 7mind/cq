@@ -557,6 +557,7 @@
           yolo-darwin = pkgs.callPackage ./nix/pkg/yolo-darwin/default.nix {
             claude-code-sandbox = inputs.claude-code-sandbox.packages.${system}.default;
           };
+          yolo = self.packages.${system}.yolo-darwin;
         };
 
         # Deterministic launcher/policy checks run on every build system. A live
