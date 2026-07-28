@@ -1,0 +1,26 @@
+const DispatchParams = Type.Object({
+  roleId: Type.String({
+    description:
+      "The dispatched cq role to run (e.g. implement-worker, plan-reviewer). Resolved and attested against the packaged Pi prompt surface; the prompt bytes are never passed here.",
+  }),
+  input: Type.Object(
+    {},
+    {
+      additionalProperties: true,
+      description:
+        "The role's STRUCTURED input object, validated against the role's contract before anything is spawned. Not prose, not a prompt.",
+    },
+  ),
+  overlay: Type.Optional(
+    Type.Object(
+      {
+        overlayId: Type.String({ description: "A DECLARED overlay id." }),
+        data: Type.Optional(Type.Unknown({ description: "The overlay's typed data." })),
+      },
+      {
+        description:
+          "Optional typed overlay application. The runtime overlay registry is EMPTY, so any overlay is refused before launch.",
+      },
+    ),
+  ),
+});

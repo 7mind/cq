@@ -1,0 +1,12 @@
+export const LEGACY_DISPATCH_FIELDS = [
+  "agent",
+  "task",
+  "model",
+  "isolation",
+  "prompt",
+  "systemPrompt",
+  "output",
+  "result",
+  "rawResult",
+  "resultCapability",
+] as const;

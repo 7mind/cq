@@ -1,0 +1,24 @@
+{
+  "sourceRef": "refs/heads/worktree-agent-aeea0c6c44d4f5ad1",
+  "sourceCommit": "2b497f375df004bc289dcb5f99e36663bf52cd35",
+  "files": [
+    {
+      "fixture": "index.ts.fixture",
+      "sourcePath": "nix/pkg/pi-extensions/cq-subagent-dispatch/index.ts",
+      "sourceLines": "87-112",
+      "sourceGitBlob": "2802f471640a355fb2b531deba7f5dda9eb91695",
+      "sourceSha256": "87c0e1917656795a9bd1e7d5e3c20d12afd3f05f99b4de610aa9316f91fed6a1",
+      "fixtureGitBlob": "03b0c04a21fc6ef1002be6d873e47e4845b47fd7",
+      "fixtureSha256": "ee169323422151d7580f2b679a07aca9c6c8a177789697a38c9c89ba8a56d9bf"
+    },
+    {
+      "fixture": "dispatch.ts.fixture",
+      "sourcePath": "nix/pkg/pi-extensions/cq-subagent-dispatch/dispatch.ts",
+      "sourceLines": "77-88",
+      "sourceGitBlob": "d53a2f0090cbcabc709a860624fb9a9caa690a2d",
+      "sourceSha256": "46c6fb5eae694d7662bb35b75006c2c41f328b7c1ea454e3869b68bbe2152aa8",
+      "fixtureGitBlob": "4be87d9841c3718bce050c7192572ec51670487b",
+      "fixtureSha256": "84f76825efda1a4c612003ba2e0f39c8845fe3079596b63375cede77b93fe385"
+    }
+  ]
+}
