@@ -521,6 +521,7 @@ export {
   CLAUDE_DISPATCH_PROVEN_BY,
   CLAUDE_DISPATCH_DEFERRED,
 } from "./claudeDispatchProtocol.js";
+export { CLAUDE_BRIDGE_DEFINED_BY, CLAUDE_BRIDGE_PROVEN_BY } from "./claudeDispatchBridge.js";
 
 export type { AttestationStoreOperation, AttestationStoreFault } from "./dispatchAttestationDummy.js";
 export {
