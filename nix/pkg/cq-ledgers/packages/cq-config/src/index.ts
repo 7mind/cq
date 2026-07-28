@@ -521,7 +521,23 @@ export {
   CLAUDE_DISPATCH_PROVEN_BY,
   CLAUDE_DISPATCH_DEFERRED,
 } from "./claudeDispatchProtocol.js";
-export { CLAUDE_BRIDGE_DEFINED_BY, CLAUDE_BRIDGE_PROVEN_BY } from "./claudeDispatchBridge.js";
+export type {
+  ClaudeNativeLaunchEnvelope,
+  ClaudeCompactLaunchRequest,
+} from "./claudeDispatchBridge.js";
+export {
+  CLAUDE_COMPACT_LAUNCH_PROMPT_MAX_BYTES,
+  claudeCompactLaunchPrompt,
+  buildClaudeCompactNativeLaunch,
+  assertCompactClaudeLaunchPrompt,
+  CLAUDE_BRIDGE_MODE,
+  assertClaudeBridgeMode,
+  claudeBridgeCorrelation,
+  CLAUDE_BRIDGE_DEFINED_BY,
+  CLAUDE_BRIDGE_PROVEN_BY,
+  CLAUDE_BRIDGE_FETCH_COUNT,
+  CLAUDE_BRIDGE_DEFERRED,
+} from "./claudeDispatchBridge.js";
 
 export type { AttestationStoreOperation, AttestationStoreFault } from "./dispatchAttestationDummy.js";
 export {
