@@ -135,6 +135,23 @@ afterEach(() => {
   container.remove();
 });
 
+describe("BatchAnswerModal shows question id", () => {
+  it("renders the active question id in the progress header", async () => {
+    await mount();
+    click(testid("batch-open"));
+    await flush();
+    // FakeClient seeds Q1 first among open questions.
+    expect(testid("batch-question-id")?.textContent).toBe("Q1");
+    expect(testid("batch-progress")?.textContent).toContain("Q1");
+    expect(testid("batch-progress")?.textContent).toContain("open question 1 of");
+
+    click(testid("batch-next"));
+    await flush();
+    expect(testid("batch-question-id")?.textContent).toBe("Q2");
+    expect(testid("batch-progress")?.textContent).toContain("Q2");
+  });
+});
+
 describe("BatchAnswerModal close on queue drain (D19 / T115)", () => {
   // ---- last-question close -------------------------------------------------
 

@@ -3031,7 +3031,16 @@ function BatchAnswerModal({
       >
         <div className="lw-help-head">
           <strong data-testid="batch-progress">
-            {rows.length === 0 ? "no open questions" : `open question ${index + 1} of ${rows.length}`}
+            {rows.length === 0 ? (
+              "no open questions"
+            ) : (
+              // Mirror TUI BatchAnswerOverlay: id first so the operator can
+              // cite the question without leaving the dialog.
+              <>
+                <span data-testid="batch-question-id">{row!.item.id}</span>
+                {` · open question ${index + 1} of ${rows.length}`}
+              </>
+            )}
           </strong>
           <button type="button" className="lw-close" data-testid="batch-close" onClick={onClose}>
             ✕
