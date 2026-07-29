@@ -4,7 +4,8 @@
  * This capability supplies a repo's TYPED prompt catalog: each role's prompt
  * template plus — for dispatched subagents — its input/output JSON Schemas and
  * validators over them. Ordinary MCP exposes `fetch_prompt` and
- * `validate_output`; `validateInput` remains direct inspection/debug API only.
+ * `fetch_prompt`; `validateInput` and `validateOutput` remain direct
+ * inspection/debug APIs only.
  * Like the
  * config capability (./configCapability.ts) and `read_log` (./readLog.ts), the
  * catalog read + JSON-Schema validation is a capability the OUTER package

@@ -3,7 +3,7 @@
  *
  * Returns an array of `tool()` instances for
  * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
- * The canonical 33-tool surface is `LEDGER_TOOL_NAMES`; the six dispatch
+ * The canonical 32-tool surface is `LEDGER_TOOL_NAMES`; the six dispatch
  * handlers are omitted when no durable `DispatchCapability` is supplied.
  * the stdio counterpart is `registerLedgerStdioTools` (./stdioLedgerTools.ts).
  *
@@ -683,10 +683,9 @@ ${QUERY_LANGUAGE_HELP}`,
     },
   );
 
-  // ---- Ordinary prompt-catalog MCP surface (2) ---------------------------
-  // validateInput remains available on PromptCatalogCapability only for the
-  // explicitly allowlisted inspection/debug callers; ordinary tools/list must
-  // not advertise a model-visible validate_input operation.
+  // ---- Ordinary prompt-catalog MCP surface (1) ---------------------------
+  // Both validators remain available on PromptCatalogCapability only for
+  // explicit inspection/debug callers; ordinary tools/list advertises neither.
 
   const fetchPrompt = tool(
     "fetch_prompt",
@@ -704,21 +703,6 @@ ${QUERY_LANGUAGE_HELP}`,
     async (args) => {
       if (promptCatalog === undefined) throw new PromptCatalogNotImplementedError();
       return jsonResult(promptCatalog.fetchPrompt(args.roleId));
-    },
-  );
-
-  const validateOutput = tool(
-    "validate_output",
-    "Validate `output` against a dispatched role's outputSchema (Ajv, draft 2020-12). " +
-      "Returns { ok:true } or { ok:false, errors:[{ path, message, keyword, schemaPath, params }] } " +
-      "with every failing constraint (the failing JSON-Schema field path included). Fails fast on " +
-      "an unknown roleId, and on an orchestrator-command roleId (which has no output schema). Only " +
-      "available when the server has an asset-capable catalog root; otherwise returns a " +
-      "not-implemented error.",
-    { roleId: z.string(), output: z.unknown() } as const,
-    async (args) => {
-      if (promptCatalog === undefined) throw new PromptCatalogNotImplementedError();
-      return jsonResult(promptCatalog.validateOutput(args.roleId, args.output));
     },
   );
 
@@ -783,7 +767,6 @@ ${QUERY_LANGUAGE_HELP}`,
     getConfig,
     ...dispatchTools,
     fetchPrompt,
-    validateOutput,
     listProjectsTool,
     ...planLifecycleTools,
   ] as unknown as AnyTool[];
@@ -888,7 +871,6 @@ export const LEDGER_TOOL_NAMES = [
   "abort_dispatch",
   "fetch_dispatch_result",
   "fetch_prompt",
-  "validate_output",
   "list_projects",
   ...PLAN_LIFECYCLE_TOOL_NAMES,
 ] as const;

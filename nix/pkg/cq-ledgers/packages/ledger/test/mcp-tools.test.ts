@@ -96,13 +96,13 @@ function expectedMilestoneAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("exports 33 canonical names, hides validate_input, and omits unwired dispatch handlers", async () => {
+  it("exports 32 canonical names, hides both validators, and omits unwired dispatch handlers", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual(
       [...NON_DISPATCH_LEDGER_TOOL_NAMES].sort(),
     );
-    expect(LEDGER_TOOL_NAMES.length).toBe(33);
+    expect(LEDGER_TOOL_NAMES.length).toBe(32);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
@@ -121,7 +121,7 @@ describe("ledger MCP tools", () => {
     expect(LEDGER_TOOL_NAMES).toContain("fetch_dispatch_result");
     expect(LEDGER_TOOL_NAMES).toContain("fetch_prompt");
     expect(LEDGER_TOOL_NAMES).not.toContain("validate_input" as never);
-    expect(LEDGER_TOOL_NAMES).toContain("validate_output");
+    expect(LEDGER_TOOL_NAMES).not.toContain("validate_output" as never);
     expect(LEDGER_TOOL_NAMES).toContain("list_projects");
     expect(LEDGER_TOOL_NAMES).toContain("claim_plan");
     expect(LEDGER_TOOL_NAMES).toContain("publish_plan_draft");
@@ -173,19 +173,16 @@ describe("ledger MCP tools", () => {
     ]);
   });
 
-  it("fetch_prompt/validate_output without a catalog capability throw not-implemented", async () => {
+  it("fetch_prompt without a catalog capability throws not-implemented", async () => {
     const store = await buildStore();
     // No promptCatalog capability supplied -> the in-memory wiring has no catalog.
     const tools = createLedgerMcpTools(store);
     await expect(callTool(tools, "fetch_prompt", { roleId: "plan-advance" })).rejects.toThrow(
       /not implemented/i,
     );
-    await expect(
-      callTool(tools, "validate_output", { roleId: "plan-advance", output: {} }),
-    ).rejects.toThrow(/not implemented/i);
   });
 
-  it("ordinary MCP dispatches fetch_prompt/validate_output while validateInput stays direct", async () => {
+  it("ordinary MCP dispatches fetch_prompt while both validators stay direct", async () => {
     const store = await buildStore();
     const calls: string[] = [];
     const promptCatalog: PromptCatalogCapability = {
@@ -225,10 +222,10 @@ describe("ledger MCP tools", () => {
     const vin = promptCatalog.validateInput("plan-advance", { goalId: "G1" });
     expect(vin.ok).toBe(true);
 
-    const vout = decode<{ ok: boolean; errors: { path: string }[] }>(
-      await callTool(tools, "validate_output", { roleId: "plan-advance", output: {} }),
-    );
+    expect(tools.map((tool) => tool.name)).not.toContain("validate_output");
+    const vout = promptCatalog.validateOutput("plan-advance", {});
     expect(vout.ok).toBe(false);
+    if (vout.ok) throw new Error("expected direct output validation to fail");
     expect(vout.errors[0]?.path).toBe("/x");
 
     expect(calls).toEqual(["fetch:plan-advance", "vin:plan-advance", "vout:plan-advance"]);

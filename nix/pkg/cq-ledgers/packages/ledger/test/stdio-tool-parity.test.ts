@@ -705,10 +705,6 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     { name: "fetch_prompt", args: { roleId: PROMPT_RESULT.roleId } },
-    {
-      name: "validate_output",
-      args: { roleId: PROMPT_RESULT.roleId, output: {} },
-    },
     { name: "list_projects", args: {} },
     {
       name: "claim_plan",
@@ -910,11 +906,10 @@ function assertRepresentativeContracts(
   expect(responses.get("read_log")).toEqual(READ_LOG_RESULT);
   expect(responses.get("get_config")).toEqual(CONFIG_RESULT);
   expect(responses.get("fetch_prompt")).toEqual(PROMPT_RESULT);
-  expect(responses.get("validate_output")).toMatchObject({ ok: false });
   expect(responses.get("list_projects")).toEqual(PROJECTS_RESULT);
 }
 
-// BG, specified-origin: both public registrations expose one 33-tool contract.
+// BG, specified-origin: both public registrations expose one 32-tool contract.
 describe("stdio/direct ledger tool differential contract", () => {
   for (const prefix of PREFIXES) {
     it(`matches complete definitions for prefix ${JSON.stringify(prefix)}`, async () => {
@@ -935,7 +930,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 33 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 32 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

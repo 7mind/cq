@@ -1,8 +1,8 @@
 /**
  * Typed prompt-catalog capability for the ledger MCP (T343, goal G41).
  *
- * Implements the prompt-catalog capability behind ordinary `fetch_prompt` /
- * `validate_output` plus the direct inspection/debug `validateInput` API by
+ * Implements the prompt-catalog capability behind ordinary `fetch_prompt`
+ * plus the direct inspection/debug `validateInput` / `validateOutput` APIs by
  * joining TWO injected sources:
  *
  *  - the per-role schema sidecars from `@cq/config`'s typed prompt-catalog STORE

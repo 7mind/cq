@@ -174,7 +174,6 @@ describe("ledger response contract matrix", () => {
       abort_dispatch: { kind: "purpose-built-small" },
       fetch_dispatch_result: { kind: "requested-full-content" },
       fetch_prompt: { kind: "requested-full-content" },
-      validate_output: { kind: "purpose-built-small" },
       list_projects: { kind: "purpose-built-small" },
     });
   });

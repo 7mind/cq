@@ -1,6 +1,6 @@
 #!/usr/bin/env -S bun run
 /**
- * ledger-mcp — standalone MCP server exposing the 33 ledger tools.
+ * ledger-mcp — standalone MCP server exposing the 32 ledger tools.
  *
  * This is the cq-free ledger MCP server: it serves the tool surface backed
  * by the store `createLedgerStore` resolves for the supplied `--cwd` directory
@@ -392,7 +392,7 @@ export function projectInstructionLine(displayName: string): string {
 }
 
 /**
- * Build a fresh McpServer with the 33 ledger tools (LEDGER_TOOL_NAMES) bound to
+ * Build a fresh McpServer with the 32 ledger tools (LEDGER_TOOL_NAMES) bound to
  * `store`. read_log is wired only when `store` is filesystem-backed.
  *
  * `displayName` is the basename of the resolved `--cwd` (the project directory
@@ -519,7 +519,7 @@ export function startLedgerCoherenceWatcher(
  * `McpServer` bound to one `store` (G45 / Q209).
  *
  * `toolPrefix` is OPTIONAL and defaults to `''`. The server registers the
- * full 33-tool surface when `dispatchCapability` exists and the 27-tool
+ * full 32-tool surface when `dispatchCapability` exists and the 26-tool
  * non-dispatch surface otherwise. A non-empty prefix renames every registered tool to its
  * `prefixToolName(prefix, name)` form and rewrites the matching tool names in
  * the server-level `instructions`. The prefix is validated by

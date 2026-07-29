@@ -980,6 +980,71 @@ describe("prepared -> result-stored -> consumed", () => {
       DISPATCHED_ROLE_SIDECARS["implement-worker"].version,
     );
   });
+
+  test("store_result rejects implement-worker output missing T894 gate evidence", () => {
+    const h = harness();
+    const p = prepared(h);
+    const output = { ...(OUTPUT as object) } as Record<string, DispatchJSONValue>;
+    delete output.gateDurationMs;
+
+    const outcome = storeOne(h, p, output);
+    expect(outcome.state).toBe("aborted");
+    if (outcome.state !== "aborted") throw new Error("unreachable");
+    expect(outcome.result.reason).toBe("invalid-output");
+    expect(
+      invalidOutputDetailsOf(outcome.result)?.errors.some(
+        ({ path, message }) => path === "" && message.includes("gateDurationMs"),
+      ),
+    ).toBe(true);
+    expect(
+      h.replaced.map((row) => (isAttestationTombstone(row) ? "tombstone" : row.state)),
+    ).toEqual(["prepared", "aborted"]);
+  });
+
+  test("store_result rejects implement-reviewer output missing T895 commit evidence", () => {
+    const h = harness();
+    const reviewerInput: DispatchJSONValue = {
+      taskId: "T685",
+      acceptance: "The implementation satisfies the task contract.",
+      worktreePath: "/tmp/wt-T685",
+      branch: "implement/T685",
+      baseCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
+      workerResult: {
+        resultCommit: "0be2cc034dd490d484bdac0dfad5efb9be52c068",
+        checkSummary: "3621 pass / 142 skip / 0 fail",
+        filesTouched: ["packages/cq-config/src/dispatchAttestation.ts"],
+      },
+      round: 1,
+    };
+    const p = prepared(h, {
+      roleId: "implement-reviewer",
+      input: reviewerInput,
+      idempotencyKey: "T685-review-round-1",
+    });
+    const reviewerOutput: DispatchJSONValue = {
+      taskId: "T685",
+      verdict: "approve",
+      criticism: [],
+      questions: [],
+      defects: [],
+      rationale: "The result matches the acceptance criteria.",
+      gateReRan: true,
+      gateDurationMs: 1,
+    };
+
+    const outcome = storeOne(h, p, reviewerOutput);
+    expect(outcome.state).toBe("aborted");
+    if (outcome.state !== "aborted") throw new Error("unreachable");
+    expect(outcome.result.reason).toBe("invalid-output");
+    expect(
+      invalidOutputDetailsOf(outcome.result)?.errors.some(
+        ({ path, message }) => path === "" && message.includes("resultCommitVerified"),
+      ),
+    ).toBe(true);
+    expect(
+      h.replaced.map((row) => (isAttestationTombstone(row) ? "tombstone" : row.state)),
+    ).toEqual(["prepared", "aborted"]);
+  });
 });
 
 describe("abort wins, from every non-terminal state", () => {

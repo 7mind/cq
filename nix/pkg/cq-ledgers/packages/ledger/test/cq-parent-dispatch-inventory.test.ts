@@ -22,14 +22,14 @@
  *   (2) the same semantic input remains reachable — ordinarily through the
  *       composed `inputSchema` field literal, and for T977's Claude worker edge
  *       through refs from which the server assembles those fields;
- *   (3) `validate_output("<role>", …)` — the (g) leg — remains on the original
- *       flow edges. T688 retires it only for Claude's implement edges after
- *       validation moves inside the capability-scoped `store_result`;
+ *   (3) `validate_output("<role>", …)` — the (g) leg — remains on the
+ *       not-yet-migrated flow edges. T898 retires it for every implement
+ *       surface after validation moves inside capability-scoped `store_result`;
  *   (4) ZERO parent-side prompt materialization and ZERO ordinary
  *       `validate_input` round-trips remain anywhere in the four files.
  *
- * `fetch_prompt` / `validate_output` stay on the ordinary MCP surface.
- * `validateInput` stays only in the catalog capability for explicitly
+ * `fetch_prompt` stays on the ordinary MCP surface. Both validators stay only
+ * in the catalog capability for explicitly
  * allowlisted inspection/debug consumers (the Agents tab and external
  * harnesses); (5) pins the model-visible boundary.
  *
@@ -291,18 +291,18 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     expect(
       parentMaterializationViolations("call `mcp__ledger__fetch_prompt` with the roleId"),
     ).toEqual(["fetch_prompt"]);
-    // and stays silent on the surviving (g) leg.
+    // and stays silent on a direct validation spelling (the scanner's concern
+    // is parent-side prompt/input materialization, not validator inventory).
     expect(
       parentMaterializationViolations('`validate_output("implement-worker", output)`'),
     ).toEqual([]);
   });
 
   // (5) — only the still-model-visible catalog operations remain registered.
-  it("keeps fetch_prompt / validate_output and hides validate_input from ordinary tools/list", () => {
-    for (const tool of ["fetch_prompt", "validate_output"] as const) {
-      expect(LEDGER_TOOL_NAMES).toContain(tool);
-    }
+  it("keeps fetch_prompt and hides both validators from ordinary tools/list", () => {
+    expect(LEDGER_TOOL_NAMES).toContain("fetch_prompt");
     expect(LEDGER_TOOL_NAMES).not.toContain("validate_input" as never);
+    expect(LEDGER_TOOL_NAMES).not.toContain("validate_output" as never);
   });
 
   for (const surface of PROMPT_SURFACES) {

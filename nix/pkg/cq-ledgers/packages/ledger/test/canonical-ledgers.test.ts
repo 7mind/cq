@@ -1913,11 +1913,11 @@ describe("T345: dispatched roles wired through the typed prompt catalog — grep
             "codex",
             "implement-dispatch-workflow.md",
           ),
-          validateOutput: true,
+          validateOutput: false,
         },
         {
           file: path.join(implementDispatchRoot, "pi", "implement-dispatch-workflow.md"),
-          validateOutput: true,
+          validateOutput: false,
         },
       ],
       roles: ["implement-worker", "implement-reviewer", "implement-conflict-resolver"],

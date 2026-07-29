@@ -313,18 +313,51 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     ).toBe(0);
   });
 
-  it("claude consumes the store-validated result while the other surfaces retain (g)", () => {
-    // T688 moves Claude validation to the capability-scoped store boundary.
-    // T695 owns removing the remaining parent-side (g) round-trips.
+  it("T898 gates implement success on the parent-minted consumed result on every surface", () => {
+    const consumedGate =
+      'ONLY when `fetch_dispatch_result` returns `state: "consumed"` with the server-validated body';
+    const parentHandle =
+      "retain the exact `attestationId` and `generation` from that orchestrator's `prepare_dispatch` response";
+    const rejectedStates = [
+      "prepared",
+      "result-stored",
+      "aborted",
+      "terminal-envelope-expired",
+      "attestation-not-found",
+      "output-already-materialized",
+    ] as const;
+
     for (const surface of PROMPT_SURFACES) {
-      for (const edge of DISPATCH_EDGE_INPUTS) {
-        const rendered = renderedOf(surface, edge.flowRoleId);
-        const validation = `validate_output("${edge.role}",`;
-        if (surface === "claude" && edge.flowRoleId === "implement/advance") {
-          expect(rendered).not.toContain(validation);
-        } else {
-          expect(rendered).toContain(validation);
-        }
+      const rendered = renderedOf(surface, "implement/advance");
+      const normalized = normalize(rendered);
+      expect(countOccurrences(normalized, normalize(consumedGate))).toBe(1);
+      expect(normalized).toContain(normalize(parentHandle));
+      expect(normalized).toContain(
+        normalize(
+          "Never select a result with an attestation id, generation, capability, or token reported by the child.",
+        ),
+      );
+      for (const state of rejectedStates) {
+        expect(rendered).toContain(`\`${state}\``);
+      }
+      expect(rendered).not.toContain('validate_output("implement-worker",');
+      expect(rendered).not.toContain('validate_output("implement-reviewer",');
+    }
+  });
+
+  it("T898 makes worker and reviewer bodies store-only with handle-only completion", () => {
+    for (const surface of PROMPT_SURFACES) {
+      for (const role of ["implement-worker", "implement-reviewer"] as const) {
+        const rendered = normalize(renderedOf(surface, role));
+        expect(rendered).toContain(
+          normalize(
+            "call the capability-scoped `store_result` exactly once with `{ output: <payload> }`",
+          ).replace("<payload>", role === "implement-worker" ? "<payload>" : "<verdict>"),
+        );
+        expect(rendered).toContain("The final message is never the handover channel");
+        expect(rendered).toContain("carries only the prepared dispatch handle");
+        expect(rendered).not.toContain("structured JSON result block as final reply content");
+        expect(rendered).not.toContain("structured JSON verdict block as final reply content");
       }
     }
   });
@@ -361,7 +394,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     const piWorker = renderedOf("pi", "implement-worker");
     expect(countOccurrences(piWorker, "fetch_dispatch_input")).toBe(0);
     expect(piWorker).toContain("passes the complete typed worker input directly");
-    expect(piWorker).not.toContain("exactly once");
+    expect(piWorker).not.toContain("call `fetch_dispatch_input` exactly once");
   });
 
   // ── CHECK 1 — the per-surface child-boundary injection MECHANISM ────────

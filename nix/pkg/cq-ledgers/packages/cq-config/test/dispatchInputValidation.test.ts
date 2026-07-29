@@ -586,9 +586,9 @@ describe("the child-side-validation exception must be explicitly declared", () =
 });
 
 describe("the allowlisted inspection/debug validator stays representable", () => {
-  test("only validate_output remains model-visible; validate_input is direct inspection only", () => {
-    expect(RETAINED_NON_FLOW_MCP_VALIDATORS).toEqual(["validate_output"]);
-    expect(RETAINED_INSPECTION_VALIDATORS).toEqual(["validate_input"]);
+  test("no validator remains model-visible; both remain direct inspection only", () => {
+    expect(RETAINED_NON_FLOW_MCP_VALIDATORS).toEqual([]);
+    expect(RETAINED_INSPECTION_VALIDATORS).toEqual(["validate_input", "validate_output"]);
     for (const validator of RETAINED_NON_FLOW_MCP_VALIDATORS) {
       expect(DISPATCH_PROTOCOL_OPERATIONS).not.toContain(validator);
     }

@@ -1,7 +1,7 @@
 /**
  * Stdio MCP tool registration for the ledger surface.
  *
- * Registers the canonical 33-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
+ * Registers the canonical 32-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
  * `@modelcontextprotocol/sdk` `McpServer` via `registerTool`, backed by a
  * `LedgerStore`; the six dispatch handlers are omitted when no durable
  * capability is supplied. Stdio counterpart to `createLedgerMcpTools` (the in-process
@@ -148,7 +148,7 @@ function wireResult(value: ProducedWireDto<object>): {
 }
 
 /**
- * Register the 33 ledger tools on the given MCP server. Identical
+ * Register the 32 ledger tools on the given MCP server. Identical
  * semantics to the Claude-side factory in `./ledgerTools.ts`.
  *
  * `readLog` is the explicit, FS-store-backed `read_log` capability (Q87 /
@@ -162,8 +162,8 @@ function wireResult(value: ProducedWireDto<object>): {
  *
  * `promptCatalog` is the injected typed prompt-catalog capability (T343),
  * constructed in `@cq/ledger-mcp` over `@cq/config` + the asset markdown. The
- * ordinary MCP surface exposes fetch_prompt and validate_output; validateInput
- * remains a direct inspection/debug capability and is not registered here.
+ * ordinary MCP surface exposes fetch_prompt. Both validators remain direct
+ * inspection/debug capabilities and are not registered here.
  *
  * `toolPrefix` (T375 / G45) is a TRAILING optional tool-name prefix. It is a
  * pure name transform applied via `prefixToolName(toolPrefix, name)` on every
@@ -756,7 +756,7 @@ ${QUERY_LANGUAGE_HELP}`,
     );
   }
 
-  // ---- Ordinary prompt-catalog MCP surface (2) ---------------------------
+  // ---- Ordinary prompt-catalog MCP surface (1) ---------------------------
 
   reg(
     "fetch_prompt",
@@ -777,27 +777,6 @@ ${QUERY_LANGUAGE_HELP}`,
     (args) => {
       if (promptCatalog === undefined) throw new PromptCatalogNotImplementedError();
       return jsonResult(promptCatalog.fetchPrompt(args.roleId));
-    },
-  );
-
-  reg(
-    "validate_output",
-    {
-      description:
-        "Validate `output` against a dispatched role's outputSchema (Ajv, draft 2020-12). " +
-        "Returns { ok:true } or { ok:false, errors:[{ path, message, keyword, schemaPath, params }] } " +
-        "with every failing constraint (the failing JSON-Schema field path included). Fails fast on " +
-        "an unknown roleId, and on an orchestrator-command roleId (which has no output schema). Only " +
-        "available when the server has an asset-capable catalog root; otherwise returns a " +
-        "not-implemented error.",
-      inputSchema: {
-        roleId: z.string(),
-        output: z.unknown(),
-      },
-    },
-    (args) => {
-      if (promptCatalog === undefined) throw new PromptCatalogNotImplementedError();
-      return jsonResult(promptCatalog.validateOutput(args.roleId, args.output));
     },
   );
 

@@ -1,6 +1,6 @@
 # @cq/ledger-mcp
 
-Standalone MCP server exposing the 33 ledger tools backed by an xdg/sqlite,
+Standalone MCP server exposing the 32 ledger tools backed by an xdg/sqlite,
 filesystem, or PostgreSQL ledger store. Speaks stdio (default) and Streamable
 HTTP (`--http`). The six dispatch-lifecycle tools use a separate durable,
 namespaced attestation backend and appear only when the server has both a
@@ -18,7 +18,7 @@ cq mcp --cwd /path/to/project
 # Streamable HTTP on 127.0.0.1:7777
 cq mcp --cwd /path/to/project --http 7777
 
-# Prefix all 33 tool names with "myproj_"
+# Prefix all 32 tool names with "myproj_"
 cq mcp --cwd /path/to/project --tool-prefix myproj
 ```
 
@@ -96,10 +96,10 @@ process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 ```
 
-With a supported backend and attested prompt surface, this registers all 33
+With a supported backend and attested prompt surface, this registers all 32
 tools. Without a durable dispatch runtime, `createLedgerMcpServer` omits the
 six dispatch-lifecycle tools before registration and exposes the remaining
-27. The prefix applies to every tool that the server registers and to matching
+26. The prefix applies to every tool that the server registers and to matching
 references in its server-level `instructions`.
 
 ### 3. Discover prefixed tool names at runtime
@@ -230,7 +230,6 @@ measured savings without another batching schema.
 | `abort_dispatch` | `purpose-built-small` | A typed aborted acknowledgement. |
 | `fetch_dispatch_result` | `requested-full-content` | One typed fetch state; only the first consumed fetch can carry `output`. |
 | `fetch_prompt` | `requested-full-content` | Full typed prompt entry, including prompt text and schemas when available. |
-| `validate_output` | `purpose-built-small` | `{ ok: true }` or `{ ok: false, errors }`. |
 | `list_projects` | `purpose-built-small` | `{ projects: [{ key, displayName, createdAt? }] }`. |
 | `claim_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes `ownerFenceToken`, and only back to the winning or exactly-retried claimant — or `{ ok: false, conflict }` carrying public claim metadata only. |
 | `publish_plan_draft` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, manifest, replacedManifest, reviewDefects } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
@@ -329,7 +328,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 33-tool matrix, not as a generic
+Treat response decoding as a closed 32-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the six
 item-bearing read tools, model the three acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes

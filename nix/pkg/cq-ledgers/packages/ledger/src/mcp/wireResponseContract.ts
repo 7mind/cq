@@ -279,7 +279,6 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   fetch_prompt: requestedFullContent(
     "Full typed prompt entry, including prompt text and schemas when available.",
   ),
-  validate_output: purposeBuiltSmall("`{ ok: true }` or `{ ok: false, errors }`."),
   list_projects: purposeBuiltSmall("`{ projects: [{ key, displayName, createdAt? }] }`."),
   claim_plan: purposeBuiltSmall(
     "`{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes " +

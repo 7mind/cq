@@ -6,7 +6,7 @@
  * (Ajv 2020 — decision 2 of T336). It lives in `@cq/config` because Ajv is a
  * DIRECT dependency here (and only here) — so a consumer that needs to validate
  * a dispatched role's input/output against its sidecar (the ledger-mcp
- * `validate_input`/`validate_output` tools, T343) reuses THIS helper rather than
+ * direct `validateInput`/`validateOutput` inspection APIs (T343) reuse THIS helper rather than
  * pulling Ajv into its own package.
  *
  * The 2020-12 dialect entrypoint (`ajv/dist/2020`) is required because the

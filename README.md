@@ -49,7 +49,7 @@ diffable and git-friendly. Milestones form a dependency DAG via their
 | Package | What it is |
 |---|---|
 | `@cq/ledger` | The library: parser, `FsLedgerStore`, schema/registry, FTS index, and the MCP tool definitions. |
-| `@cq/ledger-mcp` | Standalone MCP server exposing the 33-tool ledger surface over **stdio** or **Streamable HTTP**. |
+| `@cq/ledger-mcp` | Standalone MCP server exposing the 32-tool ledger surface over **stdio** or **Streamable HTTP**. |
 | `@cq/ledger-tui` | Ink terminal UI — a pure MCP client. Runs against a remote `cq mcp --http` (`--mcp-url`) or, by default, with the MCP server **embedded in-process** (`--cwd`). |
 | `@cq/ledger-web` | Browser explorer/editor + milestone **DAG view** — a pure MCP client served as a static bundle. Reverse-proxies to a remote `cq mcp` (`--mcp-url`) or, by default, **embeds the MCP server in-process** (`--cwd`). |
 
@@ -59,7 +59,7 @@ MCP protocol. Embedded mode does not change that invariant: it merely
 transport for the TUI; a co-hosted `/mcp` + `/ws` for the web server), so a
 single command needs no separately-running server.
 
-## Tool surface (33)
+## Tool surface (32)
 
 `enumerate_ledgers`, `create_ledger`, `fetch_ledger`, `fetch_ledger_archive`,
 `create_item`, `fetch_item`, `update_item`, `search_items`, `fts_search`,
@@ -67,17 +67,17 @@ single command needs no separately-running server.
 `list_milestone_items`, `archive_milestone`, `snapshot`, `reopen_item`,
 `unarchive_item`, `read_log`, `derive_predicates`, `get_config`,
 `prepare_dispatch`, `fetch_dispatch_input`, `store_result`, `confirm_dispatch_completion`,
-`abort_dispatch`, `fetch_dispatch_result`, `fetch_prompt`, `validate_output`,
+`abort_dispatch`, `fetch_dispatch_result`, `fetch_prompt`,
 `list_projects`, `claim_plan`, `publish_plan_draft`,
 `release_plan_claim`, `finalize_plan`.
 
 The six dispatch-lifecycle tools require both a supported durable backend
 (`xdg`, `fs`, or PostgreSQL in its supported server construction) and an
 attested prompt surface. A server that cannot satisfy those prerequisites
-omits the six names during registration, exposing the remaining 27 tools
+omits the six names during registration, exposing the remaining 26 tools
 instead of advertising handlers that can only fail.
 
-The 33-tool ledger surface uses a single breaking wire-response contract:
+The 32-tool ledger surface uses a single breaking wire-response contract:
 item-bearing reads require an explicit compact/full projection and eligible
 mutations return acknowledgements rather than full entities. See the
 [`@cq/ledger-mcp` response matrix](nix/pkg/cq-ledgers/packages/ledger-mcp/README.md#wire-response-contract)

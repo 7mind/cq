@@ -39,9 +39,9 @@
  * exists yet to have a state, because validation precedes allocation
  * ({@link DISPATCH_PREPARE_STEP_ORDER}).
  *
- * `validate_output` remains on the ordinary MCP surface until T898
- * ({@link RETAINED_NON_FLOW_MCP_VALIDATORS}). `validate_input` remains only as
- * a direct inspection/debug capability for the Agents tab and external
+ * T898 removes `validate_output` from the ordinary MCP surface
+ * ({@link RETAINED_NON_FLOW_MCP_VALIDATORS}). Both schema validators remain
+ * direct inspection/debug capabilities for the Agents tab and external
  * harnesses ({@link RETAINED_INSPECTION_VALIDATORS},
  * {@link VALIDATE_INPUT_INSPECTION_CALLERS}); ordinary tools/list does not
  * advertise it.
@@ -264,12 +264,12 @@ export function assertValidateThenAllocate(order: readonly string[]): void {
 
 /**
  * Model-visible MCP validators retained outside the dispatch vocabulary.
- * validate_output remains until T898; validate_input is deliberately absent.
+ * T898 makes this set empty: validation belongs inside prepare/store.
  */
-export const RETAINED_NON_FLOW_MCP_VALIDATORS = ["validate_output"] as const;
+export const RETAINED_NON_FLOW_MCP_VALIDATORS = [] as const;
 
 /** Direct inspection/debug validators deliberately absent from ordinary tools/list. */
-export const RETAINED_INSPECTION_VALIDATORS = ["validate_input"] as const;
+export const RETAINED_INSPECTION_VALIDATORS = ["validate_input", "validate_output"] as const;
 
 /** The allowlisted callers of the retained direct `validateInput` capability. */
 export const VALIDATE_INPUT_INSPECTION_CALLERS = [
