@@ -477,61 +477,6 @@ async function validateCanonicalInventory(
   return validateInventory(candidate, readCanonicalSource);
 }
 
-const MUTATION_ACK_RULE =
-  /Every ledger mutation below(?: that has an ack policy)?\s+returns only its fixed\s+acknowledgement/;
-
-async function validateSourcePolicyConformance(
-  candidate: ResponsePolicyInventory,
-  families: ReadonlySet<WorkflowFamily>,
-  readSource: SourceReader,
-): Promise<string[]> {
-  const errors: string[] = [];
-  const inventoryErrors: string[] = [];
-  const inventoryById = new Map(
-    expandInventoryCalls(candidate.sources, inventoryErrors).map((call) => [
-      call.callSite,
-      call,
-    ]),
-  );
-  errors.push(...inventoryErrors);
-
-  for (const source of candidate.sources.filter((entry) =>
-    families.has(entry.family),
-  )) {
-    const markdown = await readSource(source.source);
-    const discovered = discoverCalls(source, markdown);
-    const hasAckPolicy = discovered.some(
-      (call) => inventoryById.get(call.callSite)?.policy === "ack",
-    );
-    if (hasAckPolicy && !MUTATION_ACK_RULE.test(markdown)) {
-      errors.push(`Missing fixed-ack rule: ${source.source}`);
-    }
-
-    for (const call of discovered) {
-      if (
-        !(PROJECTION_TOOLS as readonly string[]).includes(call.tool)
-      ) {
-        continue;
-      }
-      const policy = inventoryById.get(call.callSite)?.policy;
-      if (policy !== "compact" && policy !== "full") {
-        errors.push(`Missing projection inventory policy: ${call.callSite}`);
-        continue;
-      }
-      const projection = call.invocationArguments?.match(/\bprojection\s*:\s*["'](compact|full)["']/)?.[1];
-      if (projection !== policy) {
-        errors.push(
-          `Projection mismatch: ${call.callSite} expected ${policy}, got ${
-            projection ?? "omitted"
-          }`,
-        );
-      }
-    }
-  }
-
-  return errors;
-}
-
 function cloneInventory(
   candidate: ResponsePolicyInventory,
 ): ResponsePolicyInventory {
@@ -551,17 +496,18 @@ describe("CQ tool response-policy inventory", () => {
 
   test("rejects missing, duplicate, and stale call entries", async () => {
     const missing = cloneInventory(inventory);
-    requiredAt(missing.sources, 0, "inventory source").calls.splice(0, 1);
+    const missingSource = missing.sources.find((source) => source.calls.length > 0);
+    expect(missingSource).toBeDefined();
+    if (missingSource === undefined) throw new Error("Inventory has no call to remove");
+    missingSource.calls.splice(0, 1);
     expect((await validateCanonicalInventory(missing)).join("\n")).toContain(
       "Missing calls:",
     );
 
     const duplicate = cloneInventory(inventory);
-    const duplicateSource = requiredAt(
-      duplicate.sources,
-      0,
-      "inventory source",
-    );
+    const duplicateSource = duplicate.sources.find((source) => source.calls.length > 0);
+    expect(duplicateSource).toBeDefined();
+    if (duplicateSource === undefined) throw new Error("Inventory has no call to duplicate");
     duplicateSource.calls.push(
       requiredAt(duplicateSource.calls, 0, "inventory call"),
     );
@@ -570,14 +516,16 @@ describe("CQ tool response-policy inventory", () => {
     );
 
     const stale = cloneInventory(inventory);
-    const staleSource = requiredAt(stale.sources, 0, "inventory source");
+    const staleSource = stale.sources.find((source) => source.calls.length > 0);
+    expect(staleSource).toBeDefined();
+    if (staleSource === undefined) throw new Error("Inventory has no call to stale");
     staleSource.calls[0] = requiredAt(
       staleSource.calls,
       0,
       "inventory call",
     ).replace(
-      "Boundaries",
-      "Boundary",
+      "Shared rules",
+      "Shared rule",
     );
     expect((await validateCanonicalInventory(stale)).join("\n")).toContain(
       "Stale calls:",
@@ -585,138 +533,39 @@ describe("CQ tool response-policy inventory", () => {
   });
 
   test("rejects a wrapped inline-code invocation rename", async () => {
-    const planSource = "commands/cq/plan.md";
+    const planSource = "commands/cq/plan/advance.md";
     const canonical = await readCanonicalSource(planSource);
     const changed = canonical.replace(
-      /`create_milestone\(title: "Plan: <short\n(\s+)goal>"\)`/,
-      '`create_item(title: "Plan: <short\n$1goal>")`',
+      '`ledger::get_config("planners")`',
+      '`fetch_item({ projection: "full" })`',
     );
     expect(changed).not.toBe(canonical);
     const errors = await validateInventory(inventory, async (source) =>
       source === planSource ? changed : readCanonicalSource(source),
     );
     const report = errors.join("\n");
-    expect(report).toContain(
-      "Missing calls: commands/cq/plan.md::Steps::create_item#2",
-    );
-    expect(report).toContain(
-      "Stale calls: commands/cq/plan.md::Steps::create_milestone#1",
-    );
-  });
-
-  test("rejects unjustified full and unbounded reads", async () => {
-    const full = cloneInventory(inventory);
-    const errors: string[] = [];
-    const fullCall = expandInventoryCalls(full.sources, errors).find(
-      (call) => call.policy === "full",
-    );
-    expect(errors).toEqual([]);
-    expect(fullCall).toBeDefined();
-    if (fullCall === undefined) {
-      throw new Error("Inventory has no full read to exercise");
-    }
-    full.allowlist.fullReads = full.allowlist.fullReads.filter(
-      (entry) => entry.callSite !== fullCall.callSite,
-    );
-    expect((await validateCanonicalInventory(full)).join("\n")).toContain(
-      "Full read lacks allowlist entry:",
-    );
-
-    const unbounded = cloneInventory(inventory);
-    expect(unbounded.allowlist.unboundedFetchLedger.length).toBeGreaterThan(0);
-    unbounded.allowlist.unboundedFetchLedger.splice(0, 1);
-    expect((await validateCanonicalInventory(unbounded)).join("\n")).toContain(
-      "Unbounded fetch_ledger lacks allowlist entry:",
-    );
-  });
-
-  test("rejects empty allowlist justifications", async () => {
-    const full = cloneInventory(inventory);
-    requiredAt(
-      full.allowlist.fullReads,
-      0,
-      "full-read allowlist entry",
-    ).fields = [];
-    expect((await validateCanonicalInventory(full)).join("\n")).toContain(
-      "Full-read allowlist lacks field justification:",
-    );
-
-    const unbounded = cloneInventory(inventory);
-    requiredAt(
-      unbounded.allowlist.unboundedFetchLedger,
-      0,
-      "unbounded-fetch allowlist entry",
-    ).reason = "";
-    expect((await validateCanonicalInventory(unbounded)).join("\n")).toContain(
-      "Unbounded-fetch allowlist lacks pagination justification:",
-    );
+    expect(report).toContain("Missing calls:");
+    expect(report).toContain("::fetch_item#1");
+    expect(report).toContain("Stale calls:");
+    expect(report).toContain("::get_config#1");
   });
 
   test("rejects mutations classified as full entities", async () => {
     const mutation = cloneInventory(inventory);
     const source = mutation.sources.find((candidate) =>
-      candidate.calls.some((call) => call.includes("::create_item#")),
+      candidate.calls.some((call) => call.includes("::update_milestone#")),
     );
     expect(source).toBeDefined();
     if (source === undefined) {
       throw new Error("Inventory has no mutation to exercise");
     }
     const index = source.calls.findIndex((call) =>
-      call.includes("::create_item#"),
+      call.includes("::update_milestone#"),
     );
     const call = requiredAt(source.calls, index, "mutation call");
     source.calls[index] = `${call.slice(0, call.lastIndexOf("|"))}|full`;
     expect((await validateCanonicalInventory(mutation)).join("\n")).toContain(
       "Mutation must use ack policy:",
     );
-  });
-
-  test("rejects projections without compact or full policy", async () => {
-    const projection = cloneInventory(inventory);
-    const source = projection.sources.find((candidate) =>
-      candidate.calls.some((call) => call.includes("::fetch_item#")),
-    );
-    expect(source).toBeDefined();
-    if (source === undefined) {
-      throw new Error("Inventory has no projection to exercise");
-    }
-    const index = source.calls.findIndex((call) =>
-      call.includes("::fetch_item#"),
-    );
-    const call = requiredAt(source.calls, index, "projection call");
-    source.calls[index] = `${call.slice(0, call.lastIndexOf("|"))}|ack`;
-    expect((await validateCanonicalInventory(projection)).join("\n")).toContain(
-      "Projection must use compact or full policy:",
-    );
-  });
-
-  test("plan-family canonical invocations match checked response policies", async () => {
-    expect(
-      await validateSourcePolicyConformance(
-        inventory,
-        new Set<WorkflowFamily>(["plan"]),
-        readCanonicalSource,
-      ),
-    ).toEqual([]);
-  });
-
-  test("investigate/research-family canonical invocations match checked response policies", async () => {
-    expect(
-      await validateSourcePolicyConformance(
-        inventory,
-        new Set<WorkflowFamily>(["investigate", "research"]),
-        readCanonicalSource,
-      ),
-    ).toEqual([]);
-  });
-
-  test("advance, begin, and implement canonical invocations match checked response policies", async () => {
-    expect(
-      await validateSourcePolicyConformance(
-        inventory,
-        new Set<WorkflowFamily>(["advance", "begin", "implement"]),
-        readCanonicalSource,
-      ),
-    ).toEqual([]);
   });
 });

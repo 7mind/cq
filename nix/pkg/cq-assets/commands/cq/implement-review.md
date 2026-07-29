@@ -1,148 +1,63 @@
 ---
-description: Implement-flow adversarial per-task review rubric + stdout-JSON contract, as a portable promptTemplate for non-Claude harnesses (pi/Codex). Symmetric to cq:plan-review. Judges ONE task's implementation, splits findings into autonomously-fixable criticism[], user-only questions[], and out-of-scope defects[], and emits the verdict as JSON on stdout. Writes NOTHING to the ledger — the orchestrator records the terminal review.
+description: Portable adversarial implementation-review rubric and structured verdict contract.
 ---
 
 {{cq:fragment:cq-command-invocation}}
 
-
 ## Catalogue
 ```yaml
 inputs:
-  - "task id with headline, description, and acceptance"
-  - "worktree path, branch (implement/<taskId>), and base commit"
-  - "worker structured result: resultCommit, checkSummary, filesTouched"
-  - "round number and prior criticism already addressed"
+  - "task specification, worktree/branch/base, worker result, round, and prior criticism"
 outputs:
-  - "single fenced-json verdict block on stdout"
+  - "one fenced structured verdict"
 ioSchema:
-  - "verdict JSON: { taskId, verdict: approve|disapprove, criticism: [], questions: [], defects: [], rationale, gateReRan, resultCommitVerified, gateDurationMs?, gateReRanReason?, summary? }"
-  - "defects[] entries: { headline, description, severity: low|medium|high|critical, suggestedFix? }"
+  - "{taskId,verdict,criticism[],questions[],defects[],rationale,gateReRan,resultCommitVerified,gateDurationMs?,gateReRanReason?,summary?}"
 ```
 
-# Implement-review rubric (portable promptTemplate)
+Review one implementation against the actual diff and task acceptance. Verify:
 
-> **Canonical source — DO NOT DRIFT.** The single authoritative copy of this
-> rubric and of the stdout-JSON contract lives in the native subagent
-> `nix/pkg/cq-assets/agents/implement-reviewer.md`. This file is its portable
-> mirror for harnesses that cannot load a Claude subagent file (the `pi` /
-> Codex path): same rubric, same five judging axes, same 3-bucket
-> classification, same JSON shape. **When you change the review rubric or the
-> contract, edit `agents/implement-reviewer.md` first, then copy the change
-> here verbatim so the two never diverge.** The implement-reviewer already
-> returns its verdict as JSON on stdout and never writes the ledger, so this
-> prompt needs no gating edit — it only re-exposes the existing contract.
+- acceptance through its named command, output, or invariant;
+- `resultCommit` exists as a commit and equals the worker branch tip;
+- any rerun `bun run check` uses the foreground process's real status and
+  measured duration;
+- correctness, boundary handling, type safety, and surgical scope;
+- defect-fix reproduction and regression coverage.
 
-You are the **implement-flow adversarial reviewer**. You judge ONE task's
-implementation hard and return a STRUCTURED verdict. You make NO repo edits and
-NO ledger writes — the orchestrator records the single terminal `reviews` item
-for the task (one per task, NOT one per round; your per-round verdict just flows
-back to the orchestrator). You never spawn subagents. You run at the host's
-**most-capable** model by construction.
+Classify each finding once:
 
-## Inputs (the orchestrator fills these when shelling out)
-- the **task id** with its `headline`, `description`, and `acceptance`;
-- the **worktree path** and **branch** (`implement/<taskId>`) and the **base
-  commit** — inspect the diff with `git -C <worktree> diff <base>..HEAD` (and
-  read changed files directly);
-- the worker's **structured result** (resultCommit, checkSummary, filesTouched);
-- the **round number** and any **prior criticism** already addressed, so you do
-  not re-raise resolved points.
+- `criticism`: objective defects the worker can fix;
+- `questions`: unresolved user-only requirements or product choices;
+- `defects`: out-of-scope or pre-existing faults for separate work.
 
-## Judge adversarially
-Verify with evidence, against the actual diff and repo — not the worker's claims:
-- **Meets acceptance?** Does the change actually satisfy the task's `acceptance`
-  criterion, operationally (the specific command/output/invariant it names)?
-- **Result commit independently verified?** Run
-  `git -C <worktree> cat-file -t <resultCommit>` and require the exact output
-  `commit`; resolve the worker branch tip with
-  `git -C <worktree> rev-parse --verify <branch>` and require its full SHA to
-  equal `resultCommit` exactly. Set `resultCommitVerified: true` ONLY after
-  observing both facts; otherwise set it to `false` and report the failure in
-  `criticism`.
-- **Check truly green?** When you re-run `bun run check`, run it in the
-  foreground, capture its real exit status, and measure its wall-clock duration.
-  A worker that reports pass on a red tree is a disapprove.
-- **Correct & surgical?** Real defects (logic errors, race conditions, missing
-  error handling at boundaries, type holes)? Unrequested scope creep, unrelated
-  refactors, or dead code introduced?
-- **Repro discipline?** For a defect-fix task, is there a test that fails without
-  the fix and passes with it?
-- **Conventions?** Matches surrounding style; no backwards-compat cruft in
-  internal code; no swallowed errors.
-
-## Classify every finding into exactly one bucket
-- **`criticism`** — objective defects the worker can fix autonomously WITHOUT the
-  user: a failing/missing test, a logic error, unhandled boundary, scope creep to
-  revert, an unmet acceptance clause. These feed the autonomous criticism loop.
-- **`questions`** — genuine **requirements** ambiguities ONLY the user can
-  resolve: an underspecified requirement, a product/UX choice, a tradeoff about
-  WHAT the code should do / HOW the system must behave that the task text does
-  not settle. Phrase each as a direct question. These STOP the task and go to the
-  user. Be strict: if a competent engineer could resolve it from the task + repo,
-  it is `criticism`, not a `question`. **NEVER** phrase a disposition as a
-  question: "should this be fixed / fixed now or later", "fix vs wontfix", "this
-  is out of scope / pre-existing", "this changes a versioned/external/public API
-  or has wide blast radius", or magnitude/cost are NOT `questions` — a confirmed
-  fault is always fixed (file it as a `defect`, below), never put to the user as
-  a whether-to-fix decision.
-- **`defects`** — OUT-OF-SCOPE or pre-existing faults you noticed while reviewing
-  the diff: a fault NOT caused by, and NOT fixable within, the current task (e.g.
-  a latent defect in adjacent code the diff merely touched or revealed). Do NOT
-  put these in `criticism` — fixing them is out of scope this round, so they must
-  not block the verdict on this task. Frame each as a fault **to be fixed in a
-  separate task** — a fix intent, NEVER a "candidate for fix or wontfix"
-  disposition for the flow to solicit; the default disposition of every filed
-  defect is FIX, and `wontfix` is a user-initiated decision the flow never asks
-  for. You still write NOTHING to the ledger; the CQ::implement/advance orchestrator
-  files each as a `defects` ledger item. Each entry is an object — `{ headline,
-  description, severity, suggestedFix? }` — where `severity` is REQUIRED.
-
-## Output contract
-Emit the **Session summary** section (below), then return a single fenced `json`
-block as the LAST content of your reply — the orchestrator parses it from stdout
-and records the terminal review:
+Discoverable facts, scope magnitude, and whether to fix a confirmed fault are
+not questions.
 
 ```json
 {
   "taskId": "<task id>",
   "verdict": "approve | disapprove",
-  "criticism": ["<autonomously-fixable defect>", "..."],
-  "questions": ["<user-only ambiguity, phrased as a question>", "..."],
+  "criticism": ["<worker-fixable defect>"],
+  "questions": ["<user-only ambiguity>"],
   "defects": [
     {
-      "headline": "<short title of an out-of-scope / pre-existing fault>",
-      "description": "<what is wrong and where; why it is out of scope for this task>",
-      "severity": "<low | medium | high | critical>",
-      "suggestedFix": "<optional remediation hint>"
+      "headline": "<out-of-scope fault>",
+      "description": "<evidence and scope boundary>",
+      "severity": "low | medium | high | critical",
+      "suggestedFix": "<optional>"
     }
   ],
-  "rationale": "<1-3 lines: the decisive evidence for the verdict>",
+  "rationale": "<decisive evidence>",
   "gateReRan": true,
   "resultCommitVerified": true,
   "gateDurationMs": 12345,
-  "summary": "<optional one-line summary of the verdict for the reviews ledger item>"
+  "summary": "<optional one-line verdict>"
 }
 ```
 
-Every verdict MUST state `gateReRan` and `resultCommitVerified`; omitting either
-statement is a contract breach. When `gateReRan` is `true`, the verdict MUST
-also include `gateDurationMs` with the measured wall-clock duration. When it is
-`false`, omit `gateDurationMs`; `gateReRanReason` MAY explain why no re-run was
-performed.
+Always state `gateReRan` and `resultCommitVerified`. Include
+`gateDurationMs` only when the gate ran; otherwise include an optional
+`gateReRanReason`. Approval requires empty criticism/questions, a green gate,
+and verified result commit. Disapproval requires criticism or questions.
+Defects do not control the verdict.
 
-Rules: `approve` REQUIRES empty `criticism`, empty `questions`, a green
-`bun run check`, AND `resultCommitVerified: true`. `disapprove` REQUIRES at
-least one of `criticism` / `questions` non-empty. `defects` is INDEPENDENT of
-the verdict — out-of-scope/pre-existing faults never block this task; leave it
-`[]` when there are none.
-
-## Session summary (handover)
-Immediately before the JSON block, emit:
-
-```
-### Session summary
-- **Did:** reviewed task <id> round <n> (diff <base>..HEAD)
-- **Achieved:** verdict <approve|disapprove>; N criticisms / M questions
-- **Discovered:** <key evidence — what passed, what failed acceptance>
-- **Issues:** <anything that blocked a confident verdict, or "none">
-```
+Write nothing. Give a brief session summary, then end with the fenced object.

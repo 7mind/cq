@@ -1,854 +1,232 @@
 ---
-description: Advance an implement-flow run one full pass — pick DAG-ready tasks, implement each in an isolated worktree, adversarially review, autonomously fix criticism, register user questions, and merge back in dependency order.
-argument-hint: [milestoneId ...]   # optional; omit to resume the in-progress run
+description: "Advance implementation: dispatch DAG-ready tasks in isolated worktrees, review and correct them, then merge verified commits in dependency order."
+argument-hint: [milestoneId ...]
 # {{cq:fragment:host-tool-vocabulary}}
 ---
 
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:operational-tool-vocabulary}}
 
-
 ## Catalogue
 ```yaml
 inputs:
-  - "optional milestone ids ($ARGUMENTS); empty = all non-archived non-terminal milestones with non-terminal tasks"
-  - "ledger task state: status, dependsOn, suggestedModel, open questions per task"
-  - "git worktrees for in-progress tasks (idempotent resume)"
+  - "optional milestone ids; empty resumes all active milestones with non-terminal tasks"
+  - "full task state, dependencies, linked questions, worktrees, and reviewer configuration"
 outputs:
-  - "task status transitions: planned->wip->done (or blocked/open-question registered)"
-  - "one reviews item per task (written by reviewer subagent or orchestrator)"
-  - "merged commits on base branch via rebase-merge (conflict-resolver dispatched on conflict)"
-  - "per worker/reviewer/conflict-resolver: a summary log .cq/logs/<timestamp>-<agent-id>.md AND a raw transcript .cq/logs/raw/<timestamp>-<agent-id>.jsonl, BOTH written via `cq log put`"
-  - "handoffs item (standalone only)"
+  - "task transitions, one terminal review per task, verified fast-forward merges, defect closure, and milestone archival"
+  - "standalone handoff"
 ioSchema:
-  - "ready-set: tasks status non-terminal and not blocked, all dependsOn satisfied per target ledger's satisfies-dependency statuses (abandoned/wontfix never satisfy), milestone dependsOn satisfied, no open question"
-  - "worker dispatch: surface-defined isolation, branch=implement/<taskId>, up to N=8 concurrent"
-  - "worker result JSON: {taskId, status, resultCommit, branch, filesTouched, checkSummary, summary, blockedReason?}"
-  - "reviewer result JSON: {taskId, verdict, criticism[], questions[], defects[], rationale, summary?}"
-  - "criticism loop: re-dispatch worker with prior criticism until verdict=approve or questions filed"
+  - "worker: {taskId,status,resultCommit,branch,filesTouched,checkSummary,gateDurationMs,summary,blockedReason?}"
+  - "reviewer: {taskId,verdict,criticism[],questions[],defects[],rationale,summary?}"
+  - "resolver: {taskId,status,resultCommit?,summary,blockedReason?}"
 ```
 
-You are the **implement-flow orchestrator**. You execute a plan-flow roadmap by
-driving worker/reviewer/conflict-resolver subagents. Subagents CANNOT spawn
-subagents, so the whole loop — concurrent dispatch, the criticism loop, and
-merge-back — lives HERE in the main session.
+You orchestrate implementation. Children never mutate the ledger or merge.
+Re-derive state on every invocation. A pass must dispatch a child, mutate the
+ledger, or merge; stop after two consecutive read-only passes.
 
 {{cq:fragment:subagent-dispatch}}
 {{cq:fragment:implement-dispatch-workflow}}
 
-> **FORWARD-PROGRESS INVARIANT — each pass must dispatch or WRITE, else STOP.**
-> Re-reading the ledger or the worktrees is not progress. A pass must dispatch a
-> worker/reviewer/conflict-resolver or make a state-changing WRITE (task status,
-> a review, a merge, a filed question). If no DAG-ready task remains and nothing
-> is mid-review — every task terminal or blocked on an open question — **STOP**
-> and write the handoff; do NOT re-read "to check". Two consecutive read-only
-> passes with no write and no dispatch mean you are ill-looping: STOP.
+## Shared rules
 
-Target milestones (optional): `$ARGUMENTS`. If empty, operate on the run already
-in progress: every non-archived, non-terminal milestone that has non-terminal
-`tasks` linked to it. **This command is idempotent and fully resumable** — it
-re-derives ALL state from the ledger and the git worktrees on each invocation,
-so a user can run it repeatedly (e.g. after answering questions) and it picks up
-exactly where it left off.
+- Resolve `tiers` and `reviewers` once per pass with
+  `ledger::get_config("tiers")` and `ledger::get_config("reviewers")`.
+  Workers use their task's `suggestedModel`; reviewers and conflict resolvers
+  use `tiers.frontier`. Pass configured model aliases verbatim. If a tier is
+  absent, inherit the current model and report the missing configuration.
+- Run at most eight workers concurrently. Each task uses an isolated worktree
+  and branch `implement/<taskId>`.
+- Persist every child summary and available raw transcript with `cq log put`,
+  attach their logical paths to the affected ledger item, and never expose
+  capabilities or secrets.
+- The surface-specific fragment defines dispatch input delivery and result
+  materialization. Retain the parent-prepared handle. Interpret a native
+  result only after the exact retained handle yields `state: "consumed"`.
+  Never inspect a body-returning completion or trust a child-reported handle.
+- A missing or non-consumed native result is a LOST REPORT. Log it and retry
+  the same role once with a fresh prepared dispatch. A second loss fails that
+  task path closed, leaves the task non-terminal and its worktree intact, and
+  cannot become a worker failure, reviewer abstention, or resolver verdict.
 
-## Conventions this command obeys (decision K4)
-- **Model tiers** (`tasks.suggestedModel`): tier→model comes from CONFIG, never
-  a hardcoded table. ONCE per pass, call the
-  `ledger::get_config({"section":"tiers"})` MCP tool
-  (an MCP-tool call, NOT a `Bash` shellout — same server as `get_config({"section":"reviewers"})`)
-  and read its `tiers` slots: `tiers.{fast,standard,frontier}`, each a resolved
-  token `{ harness, model, provider, effort }` from the ACTIVE harness's
-  `[harness.<h>.tiers]` map in `cq.toml` for the active surface. Resolve a
-  task's `suggestedModel` tier to that slot's token just before dispatch. If
-  `suggestedModel` is unset → default to your OWN class through the surface's
-  native inheritance mechanism AND
-  print a `WARNING: task <id> has no suggestedModel` line. **Degrade
-  gracefully** when the `get_config` tool is ABSENT, `configured: false`,
-  `tiers: null`, or the
-  task's tier slot is missing: same inherit-your-own-class default + the
-  WARNING line (mirroring the `get_config({"section":"reviewers"})`-absence pattern in §3a) — never
-  invent a model literal. This section-scoped `configured` reports whether
-  `tiers` itself is populated; it remains independent of the reviewers list, so
-  valid tiers remain active when reviewers are empty (anti-D78).
-- **Reviewer & conflict-resolver** always run at the FRONTIER tier resolved
-  from `get_config({"section":"tiers"})` (`tiers.frontier` —
-  most-capable == frontier, Q253),
-  regardless of the task's tier.
-- **Worktrees**: the surface-specific implement dispatch procedure defines
-  whether the adapter prepares the tree before dispatch or the transport
-  allocates it. In either case the adapter removes it after merge-back. Branch:
-  `implement/<taskId>`. A
-  fresh worktree has NO `node_modules`; do NOT symlink
-  the parent checkout's `node_modules` (a single root symlink does not reproduce
-  a bun workspace's per-package layout and makes a later `bun install` a no-op —
-  see defect D2). Let the worker run a real `bun install` in the worktree
-  (cheap with a warm global cache, offline-capable).
-- **Concurrency**: at most **N = 8** workers in flight at once (configurable —
-  treat 8 as the default ready-batch size). Dispatch a batch in a single
-  message (parallel `CQ_SUBAGENT` calls), then process returns.
+## 1. Derive the ready set
 
-## Provenance (every ledger write)
-On every `create_item` / `update_item`, pass `author` = your OWN model class
-(derived from runtime identity, never hardcoded — Claude Opus 4.8 (1M) →
-`"opus-4.8[1m]"`; Codex GPT-5.x → e.g. `"gpt-5.5"`) and `session` =
-`$CLAUDE_CODE_SESSION_ID` (or the Codex equivalent; omit if unavailable).
+Read each target milestone and its full task items, linked questions, milestone
+dependencies, and referenced dependency items.
 
-**Mutation response rule:** Every ledger mutation below that has an ack policy
-returns only its fixed acknowledgement (allocated id, current status,
-canonicalized reference fields, timestamps, and provenance), never a full
-entity. Use acknowledgement ids directly; issue an explicit full read only when
-later reasoning needs task, review, or handoff narrative fields.
+Before dispatch, prune stale worktree metadata and inspect all implementation
+and runtime-created worktrees. Never touch the main checkout, the ledger backup
+branch, a worktree for a `wip`/`blocked` task, or an unmerged worktree without a
+terminal task association. Remove a worktree and branch only when its branch
+has merged into the base or its associated task is `done`/`abandoned`.
 
-## Session logs (after EVERY subagent returns)
-Each native subagent stores its structured body and ends with a handle-only
-reply; its fetched consumed body carries the worker `summary` or reviewer
-`summary`/`rationale` used below. **ALL log writes go through `cq log put` —
-never a direct `Write` to a log path, and never `git add` a log file** (`cq log
-put` does redaction + strict-JSONL validation IN the CLI and writes into the
-primary store's out-of-tree logs area; the logical paths `.cq/logs/…` are
-recorded in sessionLogs/rawLogs and read back via `read_log`). Stamp
-`<timestamp>` (`Bash`: `date -u +%Y%m%d-%H%M%S`) once per returned subagent.
+Change a `blocked` task back to `planned` after all linked questions become
+`answered`; include the answers in its next dispatch.
 
-**Native `CQ_SUBAGENT` subagent (worker / reviewer / conflict-resolver).** Take
-`<agent-id>` from the tool result, then:
-1. **Locate its native transcript** at
-   `~/.claude/projects/<slug>/<session>/subagents/agent-<agent-id>.jsonl` — the
-   `<slug>` is derived from the ledger root path (Claude's project-dir slug; the
-   absolute ledger-root path with `/` → `-`), and `<session>` =
-   `$CLAUDE_CODE_SESSION_ID`.
-2. **Pipe the transcript through `cq log put`** for redaction + strict-JSONL
-   validation in the CLI:
-   `cat <transcript> | cq log put --stdin --dest logs/raw/<timestamp>-<agent-id>.jsonl`.
-3. **Write the summary** (a short header — task id, role, fetched
-   status/verdict — plus the fetched body’s `summary`, or reviewer `rationale`
-   when `summary` is absent) via `cq log put` to
-   `logs/<timestamp>-<agent-id>.md` (e.g. compose the header+summary to a temp
-   file or pipe via `--stdin --dest logs/<timestamp>-<agent-id>.md`).
-4. **Record BOTH paths on the task item**: `sessionLogs +=` the
-   `.cq/logs/<timestamp>-<agent-id>.md` summary path; `rawLogs +=` the
-   `.cq/logs/raw/<timestamp>-<agent-id>.jsonl` raw path (§Record, §7.3).
+A task is ready when:
 
-**Absent transcript (older run / crash / non-Claude harness).** When the
-`agent-<agent-id>.jsonl` file does not exist, do NOT fabricate a raw log: write an
-explicit `raw transcript unavailable: <reason>` line in the summary-log HEADER
-(via `cq log put` to `logs/<timestamp>-<agent-id>.md`) and proceed summary-only —
-add ONLY the `.md` to `sessionLogs`, leave `rawLogs` un-extended for that subagent.
+- its status is `planned`;
+- it has no open linked question;
+- every resolvable `dependsOn` item has a satisfying status declared by its
+  ledger (`tasks:done`, `defects:resolved`, `questions:answered`, and analogous
+  configured sets);
+- every prerequisite milestone has all tasks terminal.
 
-**`pi:*` shellout reviewer (§3b).** There is no native `CQ_SUBAGENT` id and no
-`.jsonl` transcript — the verbatim shellout **stdout IS the raw log**. Route it
-through `cq log put` to a PLAIN/markdown dest (NOT `.jsonl`):
-`… | cq log put --stdin --dest logs/raw/<timestamp>-pi-<alias>.md` — the
-reviewer's VERBATIM stdout (the raw, possibly fence-wrapped json). Capture this
-even when its stdout was unparseable (so a failed external reviewer leaves a
-trace). Also write a summary `.md` (header: task id, role `implement-reviewer
-(pi:<harness>:<model>)`, parsed verdict) via `cq log put` to
-`logs/<timestamp>-pi-<alias>-<taskId>.md`. Add the summary `.md` to the task's
-`sessionLogs` and the raw `logs/raw/<timestamp>-pi-<alias>.md` to its `rawLogs`
-(§Record, §7.3).
+Terminal-but-unsatisfying statuses such as `abandoned` and `wontfix` do not
+satisfy dependencies. Advisory or unresolvable free-text references do.
 
----
+If no task is ready and no task awaits review or merge, report and stop.
 
-## The pass (repeat until no task is ready)
+## 2. Dispatch workers
 
-### 1. Derive the READY-SET (purely from the ledger)
-For each target milestone,
-`list_milestone_items({ milestone_id: M, projection: "full" })` and collect its
-`tasks`. Also read the `questions` ledger items linked `tasks:<id>` and the
-milestones' own `dependsOn`/`blockedBy`. This per-milestone read is structurally
-bounded to M; full projection is required because the task
-headline/description/acceptance and answered-question narrative feed downstream
-worker dispatch, review, and handoff reasoning.
+Before each initial or criticism-round dispatch, resolve the intended base with
+`git rev-parse --verify` and require `git cat-file -t` to return `commit`.
+Retain that exact `baseCommit`; never reconstruct it from a child report.
 
-**Start-of-pass worktree prune sweep (G38-1a-start-sweep).** <!-- G38-1a-start-sweep -->
-This is the SAME generalized cleanup recipe `CQ::advance` runs at run-stop
-(`commands/cq/advance.md` §End-of-run worktree/branch cleanup sweep, marker
-`G38-1a-end-sweep`) — keep the two in sync, do not let them diverge.
-Before deriving the ready-set, prune orphaned and locked worktrees left by prior
-interrupted runs. Run `git worktree prune` (clears stale administrative entries).
-Then enumerate **ALL** worktrees under the implement worktree root with
-`git worktree list --porcelain` — this sweep covers BOTH `implement/*` worktrees
-AND Claude's native `worktree-agent-<8hex>` worktrees (the harness names a
-worktree-isolated subagent's tree `worktree-agent-*`; a stale one outlives its
-agent after an interrupted run). For each enumerated worktree, derive its branch
-from the porcelain `branch refs/heads/<name>` line (or
-`git -C <wt> rev-parse --abbrev-ref HEAD`).
+For each selected task:
 
-REMOVE a worktree ONLY when the conservative **merged-OR-terminal safety key**
-holds — i.e. its branch is EITHER:
-- **(a) fully merged** into base/main — the branch appears in
-  `git branch --merged <base>` (its work already landed); OR
-- **(b) bound to a TERMINAL ledger task** — an `implement/<taskId>` whose
-  `<taskId>` is `done` or `abandoned` in the ledger.
+1. If its linked owning goal is `planned`, move it once to `building`. Never
+   move a goal to a terminal status.
+2. Set the task `wip`.
+3. Prepare its worktree and dispatch `implement-worker` with the exact task
+   specification, worktree coordinates, verified base, and any prior
+   criticism.
+4. Accept only a consumed, schema-valid result through the dispatch protocol.
 
-When the key holds, remove it (unlock first — a native worktree may be locked):
+Do not symlink another checkout's `node_modules`; the worker installs its own
+workspace dependencies.
+
+## 3. Review
+
+Review each passing worker result against the actual `baseCommit..resultCommit`
+diff, acceptance criteria, and gate evidence. A worker failure enters the
+criticism loop using `blockedReason`.
+
+If reviewers are unconfigured, dispatch one native `implement-reviewer`. If
+configured, dispatch the panel concurrently. Native reviewers use the
+surface-specific dispatch protocol. External reviewers run through their
+configured non-interactive adapter and the shared implement-review rubric.
+
+A returned external failure, empty output, malformed result, or off-enum
+verdict abstains and must be logged. Do not impose a silent timeout. If every
+configured reviewer abstains, use one native reviewer; zero successful
+reviewers can never approve a task.
+
+Reconcile surviving reviews in configured order:
+
+- any `disapprove` wins; all must approve and the gate must be green for
+  `approve`;
+- union and source-tag `criticism`, `questions`, and `defects`, deduplicating
+  equivalent entries;
+- `approve` requires empty criticism/questions;
+- `disapprove` requires at least one criticism or question.
+
+File each out-of-scope or pre-existing `defects[]` entry once as an open defect
+linked to the task and owning goal. Such defects do not block the current task
+and never become user disposition questions.
+
+## 4. Correct or park
+
+When the reconciled verdict disapproves with criticism and no questions,
+redispatch the same worker in the same worktree, then review again. There is no
+fixed round cap while evidence shows convergence.
+
+Park the task when:
+
+- the review asks a genuine user-only requirements question;
+- a correction round makes no file change;
+- the same criticism repeats without shrinking across consecutive rounds;
+- the same gate failure signature repeats.
+
+Create linked open questions with the round history, set the task `blocked`,
+and preserve its worktree. Do not ask the user to decide whether a confirmed
+fault deserves a fix.
+
+## 5. Success authority
+
+A task may merge only when all of these hold:
+
+- its latest worker and required native-reviewer results were consumed through
+  parent-retained handles;
+- the worker reported `REAL_CHECK_EXIT=0`;
+- all surviving reviewers approved with empty criticism/questions;
+- the orchestrator independently verified the exact commit and ancestry.
+
+Treat `gateDurationMs` below `50`, absent/zero, or below one quarter of the
+median for earlier rounds of this same task as implausible. Re-run
+`bun run check` in the foreground and use its real exit status. If that cannot
+be done, fail closed.
+
+Before rebase and immediately before merge:
+
+1. require `git cat-file -t <resultCommit>` to return `commit`;
+2. require the worker branch tip to equal `resultCommit`;
+3. require `git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`
+   to exit zero.
+
+Any failure is a contract breach and forbids merge-back.
+
+## 6. Merge in DAG order
+
+Process successful tasks sequentially after their dependencies have landed.
+Rebase each branch onto the current base. If the tip changes, the old worker
+result loses authority: redispatch the worker on the rebased tree, rerun its
+gate and review, and repeat the success checks.
+
+On conflict, dispatch `implement-conflict-resolver`. Continue only from a
+consumed `pass` result. On `fail`, create a linked question, set the task
+`blocked`, keep the worktree, and skip its dependants.
+
+After the final checks, merge the exact object:
+
+```sh
+git merge --ff-only <resultCommit>
 ```
-git worktree unlock <wt> 2>/dev/null; git worktree remove --force <wt>; git branch -D <branch>
-```
-Finish the whole sweep with a closing `git worktree prune`.
 
-**HARD SAFETY GUARDS (obey these literally):**
-- **NEVER** touch `main` or the `cq-ledger` orphan branch, nor any worktree
-  bound to either — they are off-limits regardless of merge/terminal state.
-- **NEVER** remove a worktree whose bound task is still `wip` or `blocked` —
-  those hold in-progress / paused work that §2 (dispatch) and §5
-  (questions/blocked) rely on for resumption. Terminal (`done`/`abandoned`)
-  tasks ONLY for the (b) path.
-- A `worktree-agent-*` worktree whose agentId has **NO stable ledger link**
-  (cannot be tied to any task) is removed **ONLY if its branch is fully merged
-  into base/main** (the (a) path — its work already landed). NEVER remove such a
-  worktree when it carries unmerged commits and cannot be tied to a terminal
-  task — preserve it intact.
+Then mark the task `done` with `resultCommit`, completion summary, and all
+worker/reviewer log paths in the same update. Remove its worktree, delete its
+derived branch, and prune worktree metadata.
 
-First, **resume bookkeeping (Q7)**: for any task currently `blocked` whose
-linked blocking `questions` are now all `answered` (non-empty `answer`), flip it
-back `update_item("tasks", <id>, status: "planned")` and fold the answer text
-into the next dispatch as additional guidance.
+For each linked defect, collect all fix tasks from the defect's task
+dependencies and reverse task links. When all are `done`, set the defect
+`resolved` with a concise fix summary.
 
-A task is **READY** iff ALL hold:
-- its status is non-terminal and NOT `blocked` (`planned`, or re-opened above);
-- every entry in its `dependsOn` is SATISFIED — each entry is a `<ledger>:<id>`
-  ref (bare ids tolerated as a legacy shorthand), resolved against its TARGET
-  ledger's declared satisfies-dependency statuses (tasks: `done`; defects:
-  `resolved`; questions: `answered`; a ledger that declares no
-  satisfies-dependency set falls back to its terminal statuses);
-  a `milestones` target is satisfied when all its tasks are terminal;
-  free-text/unresolvable entries and refs to an archived or absent item are
-  satisfied by default; a terminal-but-non-satisfying status such as a task's
-  `abandoned` or a defect's `wontfix` NEVER satisfies;
-- its milestone's `dependsOn` milestones are satisfied (all their tasks
-  terminal);
-- it has NO linked `open` question.
+Record exactly one terminal `reviews` item per task from the reconciled result:
+`go-ahead` for approval, otherwise `revise`, with source-tagged findings and
+all reviewer log paths.
 
-If the ready-set is empty: skip to **Report** (nothing left to do this pass).
+Re-derive the ready set after every merge and continue until drained.
 
-### 2. Dispatch workers (up to N concurrently)
+## 7. Milestones and goals
 
-**Goal ownership write (D113/H78 — `planned → building`, non-terminal).** BEFORE
-dispatching this pass's batch, for each ready task resolve its owning goal:
-scan the task's `ledgerRefs` for a `goals:<G>` entry. If found AND that goal's
-status is `planned`, perform `update_item("goals", G, status: "building")`
-ONCE, idempotently — skip the write when the goal is already `building` (or
-any other non-`planned` status; only a `planned` goal advances). A task with
-NO `goals:<G>` entry (M-AMBIENT / goal-less work) is SKIPPED for this write,
-never blocked on it — a missing owning goal is not a precondition failure, it
-just means there is nothing to advance. Stamp `author`/`session` on this write
-per the provenance rule (§Provenance) like any other ledger write. This adds
-ONLY the `planned → building` edge — the exact non-terminal edge
-`flow-state-machines.md:221` already assigns to the implement flow (its
-`planned → building` row names this very step — implement/advance.md §2,
-"Goal ownership write" — as the idempotent transitioner) and this command's own
-"Goal-vs-milestone asymmetry (explicit)" paragraph (under "### Milestone
-auto-close+archive sweep (factored predicate)" below) already permits
-("`planned`→`building` may stay automatic as it is non-terminal").
-**`building → done` stays strictly user-only** (the G3-B/M16 invariant
-restated in that same paragraph, "**GOALS NEVER auto-close**" — unchanged by
-this instruction): this write NEVER performs, and must never be conflated
-with, that terminal edge.
+For each touched milestone, close and archive it only when every contained item
+is terminal and, for a coordination milestone, its goal is also terminal.
+Perform `update_milestone(..., status: "done")` before
+`archive_milestone(...)`.
 
-**Verified dispatch base (D119/T902 — blocking).** Before preparing or
-selecting a worktree and before every initial or criticism-round worker
-dispatch, resolve the intended current base with
-`git rev-parse --verify <base>` and copy that command's exact stdout to
-`<verifiedBaseCommit>`. Then run
-`git cat-file -t <verifiedBaseCommit>`; this check requires its exact output to
-be `commit`. Record that verified object as `baseCommit` in the per-task
-dispatch envelope and in the orchestrator's authority record for that exact
-dispatch, and carry the same value in the worker's structured input. If either
-check fails, do not dispatch and leave the task non-terminal. Never reconstruct
-this record from a child report or substitute a later branch tip for it.
+Never auto-close a goal. When all of a goal's work milestones are archived,
+report that the user may set the goal to `done`; a later sweep may then archive
+its coordination milestone.
 
-Take up to N ready tasks. For each, resolve its model via
-`get_config({"section":"tiers"})` (§K4), set
-`update_item("tasks", <id>, status: "wip")`, prepare or select its worktree
-through the surface adapter as prescribed by the surface-specific procedure,
-and dispatch an `implement-worker` via `CQ_SUBAGENT` (`role:
-"implement-worker"`, `model: <token.model VERBATIM>`). The
-resolved token's `model` is a BARE alias (`opus`/`sonnet`/`haiku`/`fable` —
-T509: the CQ_SUBAGENT tool's `model` param is a CLOSED enum that rejects full
-`claude-*` ids, and the config tokens are already bare aliases), so pass it
-verbatim with NO mangling. The token's `effort` is **N/A at `CQ_SUBAGENT` dispatch**
-— the CQ_SUBAGENT tool exposes no per-dispatch effort/reasoning param (T510; `effort`
-exists only as subagent-definition frontmatter) — record it for
-provenance/display only. A configured external shellout transport emits the
-effort according to its adapter (R342). The structured role input MUST bind the
-task id + verbatim `headline`/`description`/`acceptance`, the absolute prepared
-worktree path, the branch `implement/<taskId>` and base commit, and (on a
-re-dispatch) the prior round's `criticism[]`. Issue the batch's `CQ_SUBAGENT`
-calls in ONE message so they run concurrently. Record each worker's session log
-on return via `cq log put` (§Session logs).
+## Report and handoff
 
-**Parent-minted dispatch-result gate (T898, blocking).** For every
-`implement-worker`, native `implement-reviewer`, and
-`implement-conflict-resolver`, retain the exact
-`attestationId` and `generation` from that orchestrator's `prepare_dispatch`
-response before launch. The role's structured result is eligible for the
-interpretation below ONLY when `fetch_dispatch_result` returns `state:
-"consumed"` with the server-validated body for that exact retained handle.
-`prepared`, `result-stored`, `aborted`, `terminal-envelope-expired`,
-`attestation-not-found`, and `output-already-materialized` are all blocking
-non-results. Never inspect or salvage any child final-message body. Never select
-a result with an attestation id, generation, capability, or token reported by
-the child. A child-reported identifier has no authority even when it matches
-the expected format; the orchestrator already holds the only handle it may
-fetch.
+Report merged tasks and commits, blocked tasks and question ids, failed paths,
+archived milestones, and goals ready for user closure.
 
-**LOST REPORT retry gate (T901, native roles only).** LOST REPORT means the
-orchestrator did not consume a server-validated body from
-`fetch_dispatch_result` on the exact parent-retained handle. A progress-only
-notification, raw or body-returning final message, malformed handle-only text,
-wrong or child-reported handle, or any non-`consumed` fetch state never counts
-as the required output and can never satisfy §6. This classification includes
-the blocking states listed above and a missing final reply; none may be
-reinterpreted as a valid worker `fail`, reviewer abstention, or resolver `fail`.
+When invoked standalone, write exactly one append-only `handoffs` item:
 
-Log each LOST REPORT as a dispatch-contract breach through §Session logs,
-including the native role, retained attestation id and generation, observed
-final-message classification or fetch state, and attempt number. Re-dispatch
-the same required role exactly once with the same semantic input; the retry
-budget is exactly 1. The retry uses a fresh parent-prepared dispatch and its
-fresh retained handle, then follows the same store / handle-only / confirm /
-one-shot-fetch protocol. A second LOST REPORT exhausts that budget and fails
-the affected task, reviewer path, or conflict-resolution turn closed: stop
-processing that task before review, reconciliation, question synthesis,
-success, or merge-back; leave its task non-terminal and its worktree intact;
-and report the operational failure. Do not send a twice-lost worker through the
-criticism loop, drop a twice-lost native reviewer as an abstainer, invoke the
-all-abstain fallback for it, or treat a twice-lost resolver as a structured
-`fail`. Apply this retry gate to `implement-worker`, native
-`implement-reviewer`, and `implement-conflict-resolver`. The held direct
-`pi:*` paths keep their existing fail-closed parsing and abstention rules; do
-not route them through this native retry gate. Server validation at the
-store/fetch boundary is authoritative: do not restore Session-summary or
-result-body parsing, and do not add an ordinary `validate_output` call.
+- `drained`: no reachable task remains;
+- `answers-required`: tasks are blocked on open questions;
+- `user-action-required`: a named task needs a specific external action only
+  the user can perform;
+- `mixed`: several stop causes coexist;
+- `illness-detected`: a protocol, merge, or invariant failure prevents
+  progress.
 
-### 3. Review each finished worker (multi-reviewer panel, reconciled)
-For every worker that returned `status: "pass"`, run the **reviewer panel** for
-that task (below) against its worktree diff (`base..HEAD`), passing the task
-acceptance, the worker's structured result, the latest `bun run check` output,
-and the round number. A worker that returned `status: "fail"` skips review and
-goes straight to the criticism loop (its `blockedReason` is treated as round-0
-criticism).
+Set `flow: "implement"`, relevant `ledgerRefs`, required
+`blockingQuestions`/`handoffReasons`, and pass log paths. Do not write a
+handoff for an ordinary context-window interruption. Never stop because of
+elapsed effort, task count, or remaining work size.
 
-**3a. Resolve the reviewer panel (T172).** ONCE per pass, query
-the ledger's reviewer list by calling the `ledger::get_config({"section":"reviewers"})` MCP
-tool (the ledger MCP server is registered in `.mcp.json` as `ledger`;
-it has no stdout-printing CLI, so this is an MCP-tool call, NOT a `Bash`
-shellout). It returns `{ configured, reviewers: [{ harness, model, alias }] }`.
-Apply any session-only override already in effect. Then:
-- **`configured` is false (absent / unconfigured)** → the panel is the SINGLE
-  native `implement-reviewer` CQ_SUBAGENT, exactly as before (`role:
-  "implement-reviewer"`, `model` = the §K4 FRONTIER token's bare-alias `model`,
-  verbatim; §K4's graceful degradation applies when `get_config` too is
-  absent). Its terminal json is available only as the consumed,
-  server-validated body under the T898/T901 gate; nothing else changes. Skip
-  3b/3c.
-- **`configured` is true** → the panel is the listed active reviewers; run them
-  in PARALLEL per task (3b) and RECONCILE their verdicts (3c).
-
-**3b. Launch the panel in PARALLEL (one batch per task).** For each active
-reviewer in the resolved list, dispatch in a SINGLE message so they run
-concurrently, keyed by `harness`:
-- **`claude:*`** → native `implement-reviewer` CQ_SUBAGENT (`role:
-  "implement-reviewer"`, model from the reviewer's `model` — a bare alias,
-  verbatim — else the §K4 FRONTIER token's `model`). The reviewer token's
-  `effort` is N/A at `CQ_SUBAGENT` dispatch (T510, §2) — provenance/display only.
-  Its structured json (the contract below) is stored server-side and consumed
-  through the parent-retained handle under the T898/T901 gate; its final reply
-  carries only that handle. It writes nothing to the ledger.
-- **`pi:*`** → `Bash` shellout to the `pi` CLI (T169 invocation, decision K30):
-  `env -u CODEX_COMPANION_SESSION_ID -u CLAUDE_PLUGIN_DATA pi -p --no-tools --no-session --provider <P> --model <M> '<prompt>' </dev/null`
-  (grok-build → `--provider grok-build --model grok-build`; gpt-5.5 →
-  `--provider openai-codex --model gpt-5.5`; map from the reviewer's
-  `harness`/`model`/`alias`). When the resolved reviewer token carries an
-  `effort`, emit it as the R342 shorthand — `--model <provider>/<model>:<effort>`
-  (e.g. `--model openai-codex/gpt-5.5:xhigh`); with no effort, the bare
-  `--model <provider>/<model>` form. **The `env -u CODEX_COMPANION_SESSION_ID -u
-  CLAUDE_PLUGIN_DATA … </dev/null` wrapper is REQUIRED, not cosmetic:** launched
-  from inside this session pi inherits the codex-inline companion env and BLOCKS
-  INDEFINITELY on the companion handshake when that companion is down (a real,
-  output-less hang — verified); stripping that env and detaching stdin makes pi
-  run standalone and FAST-FAIL on real errors instead — a quota-exhausted /
-  unauthorized provider then exits non-zero with the error on stderr and empty
-  stdout (e.g. openrouter `402 Insufficient credits`, exit 1, ~2s), which the
-  abstention rule (3c) catches. The `<prompt>` feeds the SHARED `CQ::implement-review`
-  rubric (`commands/cq/implement-review.md`, T174) PLUS the task acceptance, the
-  worktree diff (`base..HEAD`), and the latest `bun run check` output. `pi` runs
-  in default text mode; parse the (possibly fence-wrapped) json from its stdout.
-
-Every reviewer — native `implement-reviewer` and the shared `CQ::implement-review`
-rubric driving `pi` — returns the SAME byte-identical contract: `{ taskId,
-verdict: "approve" | "disapprove", criticism: [], questions: [], defects: [...],
-rationale, summary }`. Tag each parsed result with its source reviewer
-(`harness:model`/`alias`) for the reconciliation step. **A direct `pi:*`
-reviewer that fails to return a usable verdict ABSTAINS** — a shellout that
-exits non-zero, emits empty stdout, or yields stdout that does not parse (after
-fence-strip) into the verdict contract is DROPPED from the panel for this task:
-it is NOT counted as `approve` and NOT counted as `disapprove` (an abstention is
-a panel-membership change, not a vote). A native reviewer's absent body follows
-the T901 LOST REPORT retry gate instead and can never become an abstention. Log
-a Pi reviewer's raw stdout + the abstention reason (alias + cause) per §Session
-logs, and proceed to reconcile over the reviewers that DID return a usable
-verdict. **No wall-clock timeout is imposed** (decision: Pi abstention keys ONLY
-on a RETURNED failure — non-zero exit, empty, or unparseable; a genuinely hung
-shellout surfaces as an operational stall to handle directly, never a silent
-abstention). A quota-exhausted / unauthorized / unavailable Pi reviewer
-therefore drops out and the available reviewers still gate the task — it does
-NOT block a task the rest of the panel approved.
-
-**3c. RECONCILE the panel — STRICTEST-WINS + UNION (Q91).** Fold the panel's
-per-reviewer json into ONE reconciled verdict that drives the criticism loop
-(§4), the success gate (§6), and the single recorded `reviews` item (§Record):
-- **Reconcile over SURVIVORS (abstainers excluded).** The panel for
-  reconciliation is the reviewers that returned a usable verdict in 3b; any that
-  ABSTAINED (failed / empty / unparseable) is excluded from BOTH the verdict and
-  the union — it is not a vote.
-- **Quorum floor (all-abstain fallback).** If EVERY configured reviewer
-  abstained (zero usable verdicts), fall back to the SINGLE native
-  `implement-reviewer` CQ_SUBAGENT (`role: "implement-reviewer"`, `model` =
-  the §K4 FRONTIER token's `model`, verbatim; its `effort` is N/A at `CQ_SUBAGENT`
-  dispatch per T510 — provenance/display only, never an CQ_SUBAGENT argument) —
-  the always-available default — and use its verdict as the reconciled result;
-  REPORT that the configured panel was unavailable this pass (which aliases
-  abstained + why). This native fallback is itself subject to the T901
-  one-retry LOST REPORT gate; a twice-lost fallback fails the reviewer path
-  closed rather than approving or abstaining. The flow NEVER approves with zero
-  successful reviewers.
-- **Off-enum verdict ⇒ ABSTENTION (fail-loud, BEFORE reconcile).** After
-  parsing the verdict contract, VALIDATE the `verdict` string against the
-  closed implement-review enum `{approve, disapprove}` (the literal enum in
-  `commands/cq/implement-review.md`). If `verdict` is NOT EXACTLY `approve`
-  or `disapprove`, treat that reviewer as ABSTAINING — DROP it from the panel
-  (not counted `approve`, not counted `disapprove`), exactly as the
-  abstention rule above drops an unparseable verdict, and LOG it with the
-  reviewer's alias + the raw off-enum value + cause (§Session logs). Do
-  NOT normalize or recover synonyms — an off-enum value is an ABSTENTION,
-  NEVER a value to coerce into a canonical enum (silent coercion would
-  defeat the fail-loud contract). This validation runs BEFORE the
-  strictest-wins reconcile match (§3c) so an off-enum value can never reach
-  reconcile.
-- **Verdict (strictest-wins, over survivors):** ANY surviving reviewer
-  `disapprove` → the reconciled verdict is `disapprove`. The reconciled verdict
-  is `approve` ONLY when ALL surviving reviewers `approve` AND the worker's
-  latest `bun run check` is green.
-- **Findings (union, source-tagged):** the reconciled `criticism[]`,
-  `questions[]`, and `defects[]` are the UNION across all reviewers, each entry
-  tagged with its source reviewer (`harness:model`/`alias`); dedup byte-identical
-  entries from different reviewers into one entry that lists all its sources.
-- **Routing is unchanged on the reconciled result:** the unioned `questions[]`
-  drive §5 (park the task as `blocked`); the unioned `criticism[]` (with empty
-  reconciled `questions[]`) drives §4 (autonomous criticism loop); the unioned
-  `defects[]` are file-and-defer below — INDEPENDENT of the verdict.
-- **Invariants preserved on the RECONCILED result** (same as the single-reviewer
-  case): an `approve` REQUIRES empty reconciled `criticism` + empty reconciled
-  `questions` + green check; a `disapprove` REQUIRES non-empty reconciled
-  `criticism` and/or `questions`. (A bare strictest-wins `disapprove` whose union
-  is empty cannot occur, since the dissenting reviewer's own `disapprove` carries
-  non-empty findings by its contract.)
-
-Everywhere below, "the reviewer verdict" / "the reviewer's `criticism`" /
-"the reviewer's `questions`" refer to this **reconciled** result.
-
-**File the reviewer's `defects[]` (Q22/Q26, file-and-defer, K13).** A reviewer
-return may carry a non-empty `defects[]` — OUT-OF-SCOPE or pre-existing faults
-the reviewer noticed in the diff (entries `{ headline, description, severity,
-suggestedFix? }`, see implement-reviewer T42). This is INDEPENDENT of the
-verdict and never blocks the current in-scope task (Q26). For each entry,
-`create_item("defects", <taskMilestone>, status: "open", fields: { headline,
-description, severity: <reviewer's severity>, suggestedFix?, ledgerRefs:
-["tasks:<id>", "goals:<G>"] })`. Record the triage context (task id, round,
-reviewer rationale) in the defect's OWN `fields` (e.g. `description` or
-`suggestedFix`). A filed defect is a fault **to be fixed in a separate task** —
-its default disposition is FIX; it is NEVER a "candidate for fix or wontfix"
-choice the flow puts to the user. **Do NOT file a `questions` item routing the
-user to `CQ::investigate <D>`, AND do NOT file a `questions` item asking
-whether/how/when to fix it (fix-vs-wontfix, out-of-scope/pre-existing,
-external-API or blast-radius disposition) (K13 — `questions` are reserved for
-genuine user *requirements* decisions, not routing pointers and not
-fix-disposition prompts; `wontfix` is user-initiated only).** The defect is self-contained: its
-`ledgerRefs` link it to the task and goal, and `CQ::investigate` accepts a
-bare defect id (`^D\d+$` resume path) so any open defect is directly actionable
-via ledger query without a pointer question. **Implement:* does NOT auto-launch
-investigate inline (Q43) — that is plan:*'s responsibility, since implement:* is
-an execution flow, not a planning flow. The filed defect will be triaged by the
-next CQ::plan/advance cycle's auto-investigate phase, or by a direct user
-CQ::investigate <D>.** Do NOT block, fail, or re-dispatch the current task on
-a filed defect, and do NOT add it to the criticism loop — it is tracked
-separately. Filing a defect is idempotent: on a re-run, skip entries already
-filed for this task (match by headline + task ledgerRef).
-
-### 4. Autonomous criticism loop (NO fixed cap)
-For a task whose reviewer verdict is `disapprove` with non-empty `criticism` and
-EMPTY `questions`: re-dispatch the SAME worker in the SAME worktree with the
-`criticism[]` as guidance, then re-review. Repeat. There is deliberately **no
-normal round cap** — keep iterating while the work is converging.
-
-**Validate each round and detect an ILL LOOP.** Before re-dispatching, check the
-returned results for sanity and STOP the loop (→ §5 bailout) when ANY holds:
-- the latest round produced **no file changes** (worker's `filesTouched` empty /
-  diff identical to the previous round's);
-- the **criticism repeats without shrinking** — the same defects recur across
-  two consecutive rounds with no reduction in count/severity;
-- the **same `bun run check` failure** (same failing test/error signature)
-  recurs across rounds.
-
-Log the reason you stopped.
-
-### 5. Register questions (reviewer questions OR ill-loop bailout)
-When the reviewer returns non-empty `questions`, OR the criticism loop bailed as
-an ill loop: for each open issue create
-`create_item("questions", <taskMilestone>, status: "open", fields: { question:
-"<the question / the ill-loop diagnosis as a question>", context: "<round
-history, last criticism, last check failure>", ledgerRefs: ["tasks:<id>",
-"goals:<G>"] })`, then `update_item("tasks", <id>, status: "blocked")`. Leave
-the worktree INTACT (do not remove it) so the work survives until the user
-answers. The user answers in the TUI/web, then re-runs `CQ::implement/advance` to
-resume (step 1 re-opens the task).
-
-### 6. Success gate
-A task SUCCEEDS only when ALL hold: the T898 parent-minted dispatch-result gate
-accepted the worker and every native reviewer result; the worker's last
-`bun run check` was green; AND the RECONCILED reviewer verdict (§3c) is
-`approve` (empty unioned criticism and questions). With a multi-reviewer panel
-this means EVERY active reviewer approved AND the check is green
-(strictest-wins); a single dissenting `disapprove` or any non-`consumed`
-dispatch result keeps the task out of merge-back. Only succeeded tasks proceed
-to merge-back. In addition, no required native-role dispatch may have an
-unresolved or twice-lost report; after a first LOST REPORT, the T901 retry must
-produce a consumed server-validated body before that role can contribute to
-success or merge-back.
-
-**Worker gate-duration tripwire (D156/T900 — blocking).** Apply the two named
-constants `MIN_GATE_DURATION_MS = 50` and
-`PRIOR_ROUND_MEDIAN_FRACTION = 0.25` to the `gateDurationMs` in the same T898
-server-validated consumed worker body. Never accept `checkSummary` prose alone
-as evidence that the worker gate passed. A `gateDurationMs` is IMPLAUSIBLE when
-it is absent, zero, below `MIN_GATE_DURATION_MS`, or below
-`PRIOR_ROUND_MEDIAN_FRACTION` times the median of THIS TASK's prior-round
-`gateDurationMs` values within the same implement run. Compute the ordinary
-median over that per-task series (average the two middle values for an even
-count); never use another task's history. At round 0, or when this task has no
-prior-round values, apply only the absolute bound. The relative comparison
-compares the current self-report with prior self-reports and therefore detects
-inconsistency, not truth; it is a tripwire, not verification.
-
-When the duration is implausible, the orchestrator MUST re-run `bun run check`
-in the foreground and use that process's actual exit status for the green-check
-condition. If that re-run is infeasible, fail closed and re-dispatch the worker
-through the T898 parent-minted consumed-result path; never merge on the
-implausible report. Regardless of duration plausibility, success still requires
-T898's consumed-body authority and T899's independent exact-object checks.
-
-**Independent git authority (D156/T899 — blocking).** Use only the worker
-`resultCommit` from the `state: "consumed"` body fetched with the retained
-parent-minted handle. Before any rebase and again immediately before merge, the
-orchestrator ITSELF runs `git cat-file -t <resultCommit>` and requires its exact
-output to be `commit`; it also runs `git rev-parse <worker-branch>` (where
-`<worker-branch>` is the selected `implement/<taskId>` branch) and requires that
-branch tip to equal `<resultCommit>` exactly. A missing object or tip mismatch
-is a contract breach: log it and do not merge. Reviewer-reported `gateReRan`
-and `resultCommitVerified` fields are provenance/evidence only; the
-orchestrator's own git checks are the sole merge authority. The branch ref
-alone never authorizes merge-back.
-
-The consumed `resultCommit` must also descend from the base verified for that
-exact worker dispatch. The orchestrator runs
-`git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>` and requires
-exit zero before any rebase and again immediately before merge. If no verified
-base record exists for that dispatch, refuse merge-back; do not reconstruct one
-from the current branch or worktree. A non-ancestor result is a contract breach:
-log it and do not merge.
-
-### 7. Merge-back (sequential, DAG order, rebase-before-merge)
-Process succeeded tasks ONE AT A TIME, in dependency order (a task merges only
-after every task in its `dependsOn` has merged). For each:
-1. Rebase its branch onto the CURRENT base (which now includes earlier
-   merge-backs from this pass): `git rebase <base> implement/<taskId>` (run from
-   its worktree, or fetch the branch into the main checkout). If the rebase
-   changes the branch tip, the previously fetched `resultCommit` loses merge
-   authority: re-dispatch the worker in the rebased worktree to re-run its gate
-   and report the new tip, accept only its newly fetched `state: "consumed"`
-   body through the retained parent-minted handle, re-run review, and return
-   through §6 before merge. Never carry the pre-rebase `resultCommit` across a
-   rewritten branch.
-2. **On conflict** → dispatch `implement-conflict-resolver` (the §K4 FRONTIER
-   tier resolved from `get_config({"section":"tiers"})` — most-capable ==
-   frontier, Q253; the token's
-   `effort` is N/A at `CQ_SUBAGENT` dispatch per T510 — provenance/display only, never
-   an CQ_SUBAGENT argument)
-   with the worktree, branch, base, and conflicting files. Only a consumed
-   server-validated body under the T898/T901 gate can supply its `pass` or
-   `fail`. On its `pass`, continue; on its `fail`, treat like a question bailout
-   (§5: register a `questions` item, set the task `blocked`, leave the worktree)
-   and SKIP merging this task (and transitively anything depending on it) this
-   pass. A LOST REPORT follows the distinct one-retry/fail-closed route and
-   never synthesizes either verdict.
-3. On a clean rebase (or resolved conflict), and after any tip-changing rebase
-   or resolver commit has completed the worker/reviewer re-gate above, repeat
-   §6's gate-duration tripwire against the latest T898 consumed worker body and
-   complete any required foreground re-run. Then repeat §6's independent
-   `git cat-file -t <resultCommit>` and
-   `git rev-parse <worker-branch>` checks immediately before merge. Then
-   fast-forward the exact verified object into the base with
-   `git merge --ff-only <resultCommit>` — never merge
-   `implement/<taskId>` by branch ref alone. A failed fast-forward is also a
-   contract breach: log it and do not merge. After the exact object lands,
-   set `update_item("tasks", <id>, status: "done", fields: { resultCommit:
-   "<resultCommit>", completion: "<1-line: what landed>", sessionLogs:
-   [".cq/logs/<ts>-<worker-agent-id>.md", ...], rawLogs:
-   [".cq/logs/raw/<ts>-<worker-agent-id>.jsonl", ...] })` — include ALL
-   summary-log paths (`sessionLogs`) AND all raw-transcript paths (`rawLogs`)
-   written for this task (worker + reviewer rounds, §Session logs) in the SAME
-   `update_item` call that marks the task `done`; do NOT defer `sessionLogs` /
-   `rawLogs` to a separate update. (Omit a `rawLogs` entry for any subagent whose
-   transcript was absent — that subagent is summary-only per §Session logs.) Then tear down the worktree <!-- G38-1a-post-done-cleanup -->
-   through the surface adapter — run explicitly immediately after the `done`
-   ledger write above:
-   ```
-   branch=$(git -C <wt> rev-parse --abbrev-ref HEAD); git worktree unlock <wt> 2>/dev/null; git worktree remove --force <wt>; git branch -D "$branch"; git worktree prune
-   ```
-   **Why explicit?** Native `isolation: worktree` only auto-removes worktrees
-   that have NO new commits since creation. A worker that committed its task IS
-   changed, so the native teardown silently skips it — leaving the worktree and
-   branch locked on disk. This was the source of ~140 stale locked worktrees
-   accumulating under `.claude/worktrees/`. The explicit sequence above derives
-   the actual branch name from the worktree itself (covering both the Codex
-   `implement/<taskId>` and the native `worktree-agent-<8hex>` naming paths
-   symmetrically), unlocks the worktree, removes it, deletes the derived branch,
-   and prunes the worktree list.
-4. **Resolve the defect this task fixed (Q20 — orchestrator-owned closure).** If
-   the just-merged task `ledgerRefs` one or more `defects:<D>` (it is a fix task
-   for D), check whether D is now fully fixed: collect D's fix-task set =
-   `D.dependsOn` (filtered to tasks) UNION every task whose `ledgerRefs` include
-   `defects:<D>` (the bidirectional link from the plan-flow, dedup'd). If EVERY
-   task in that set is now `done`, close the defect:
-   `update_item("defects", <D>, status: "resolved", fields: { fix: "<1-line:
-   what landed across the fix tasks>" })`. If any fix task is still non-terminal,
-   leave D `open` — a later merge-back closes it. The orchestrator OWNS this
-   closure; the reviewer and worker never touch the defects ledger status.
-5. **Ledger persistence.** Persistence is the store's job — no git action here;
-   when the optional `[ledger].backup` mode (in-tree / orphan-branch) is
-   enabled, the debounced exporter mirrors the ledger + logs to git.
-
-### 8. Loop
-After merge-back, RE-DERIVE the ready-set (step 1) — tasks unblocked by the
-just-merged ones become ready. Continue passes until the ready-set is empty.
-
----
-
-## Record the terminal review (one per task)
-The reviewers write NOTHING to the ledger. YOU record exactly ONE terminal
-`reviews` item per task — from the RECONCILED verdict (§3c), NOT one per reviewer
-— once it reaches a terminal review outcome (approved, or blocked-on-question):
-`create_item("reviews", <taskMilestone>, status:
-"go-ahead" | "revise", fields: { summary: "<reconciled summary, or
-'<reconciled-verdict>: <first line of rationale, truncated to ~80 chars>' if
-omitted>", criticism: [...], new_questions: [...], ledgerRefs: ["tasks:<id>",
-"goals:<G>"], sessionLogs: [".cq/logs/<ts>-<reviewer-agent-id>.md", ...],
-rawLogs: [".cq/logs/raw/<ts>-<reviewer-agent-id>.jsonl",
-".cq/logs/raw/<ts>-pi-<alias>.md", ...] })`.
-The `criticism`/`new_questions` are the source-tagged UNION across the panel
-(§3c); the `status` follows the reconciled verdict (`go-ahead` only when ALL
-reviewers approved + green check, else `revise`). Include EVERY reviewer's
-summary-log path (`sessionLogs`) AND raw-log path (`rawLogs`) written for this
-task (the native-CQ_SUBAGENT `.md`+`.jsonl` pairs and the `pi` summary `.md` + raw
-`.md` stdout logs, §Session logs) in the SAME `create_item` — do NOT defer them
-to a separate update. (Omit a `rawLogs` entry for any reviewer whose transcript
-was absent.) With a single configured/unconfigured reviewer this collapses
-to the prior behaviour. Use the reconciled `summary` when present; otherwise
-synthesize `'<reconciled-verdict>: <first line of rationale, truncated to ~80
-chars>'`. This keeps the ledger to one review per task instead of one per
-reviewer or one per criticism round.
-
-## Milestone completion
-`archive_milestone(<id>)` requires ALL items under the milestone to be terminal —
-that includes its `defects` (terminal = `resolved`/`wontfix`), not just its
-`tasks` (`done`/`abandoned`). So a milestone whose tasks are all `done` but that
-still carries an `open` defect is NOT yet complete: archiving waits until the
-defect reaches a terminal status too (it gets there via the orchestrator-owned
-closure in §7.4 when its fix tasks all merge, or via the investigate-flow for an
-out-of-scope defect filed in §3).
-
-Note the asymmetry: a filed defect does NOT gate task merge-back (§3 file-and-
-defer — tasks merge regardless), but it DOES gate milestone archival.
-
-### Milestone auto-close+archive sweep (factored predicate)
-After merge-back, run the **auto-close+archive sweep** over every milestone the
-pass touched (and, in `CQ::advance`, over the whole `milestones` ledger). This is
-the single authoritative predicate — `CQ::advance` (llm/commands/cq/advance.md) states
-the same rule and is the catch-all that also sweeps milestones whose goal the
-user closed between runs.
-
-A milestone `M` is **eligible to auto-close+archive** iff BOTH:
-1. **every item under `M`** (across ALL ledgers — tasks, defects, reviews,
-   questions, decisions, hypotheses, and the goal if any) is **terminal**; AND
-2. if `M` is a **coordination milestone** (its items include a `goals` item),
-   that **goal is itself terminal** (`done`/`abandoned`). A **work** milestone
-   has no goal item, so condition 2 is vacuous for it.
-
-**Mechanism (both conditions hold):** `update_milestone(M, status: "done")`
-THEN `archive_milestone(M)` — `archive_milestone` refuses unless the
-milestone-item itself is terminal, so the `status: "done"` step must come first.
-Do NOT add any `dependsOn`-terminal precondition beyond the two above.
-
-**Guard:** NEVER archive a coordination milestone whose goal is **non-terminal**,
-even if all its current items are terminal — new follow-up scope may still add
-items to it (e.g. a goal in `planned`/`building`, or one re-opened to
-`clarifying`, must keep its coordination milestone open).
-
-**Goal-vs-milestone asymmetry (explicit):** **GOALS NEVER auto-close** — the
-orchestrator MUST NEVER transition a goal to a terminal status
-(`building`→`done`); that is always the user's action (the G3-B / M16 invariant;
-`planned`→`building` may stay automatic as it is non-terminal). **MILESTONES
-ALWAYS may** auto-close+archive once eligible per the predicate above. So when
-all of goal `G`'s work milestones are archived, the orchestrator REPORTS that
-`G` is ready to close and instructs the user to set it `done` in the TUI/web —
-and once the user DOES close `G`, the next sweep archives `G`'s now-eligible
-coordination milestone automatically.
-
-### Ledger persistence (no git action)
-Persistence is the store's job — no git action here; when the optional
-`[ledger].backup` mode (in-tree / orphan-branch) is enabled, the debounced
-exporter mirrors the ledger + logs to git.
-
-## Report to the user
-Summarize the pass concisely:
-- tasks **merged** this pass (id + resultCommit);
-- tasks **blocked** on questions (id + the question ids to answer);
-- tasks **failed**/skipped and why;
-- whether any milestone was archived;
-- the next action: if anything is `blocked`, "answer the listed questions in the
-  TUI/web, then run `CQ::implement/advance` to resume"; if all done, say so.
-
-### Ready to close (user action)
-When all work milestones under a goal `G` are archived, list each ready-to-close goal with explicit instruction:
-- **Set its status to `done` in the TUI/web** — this user action cannot be automated. Closing a goal is always the user's decision.
-
----
-
-## Handoff record (STANDALONE only — suppressed when chained)
-
-> **Your stop is PROGRESS-bounded, never EFFORT-bounded.** Stop ONLY when this
-> flow's own stop predicate fires — the READY-SET is empty, every remaining task
-> is blocked on an `open` user question, or the criticism loop hit an ill-loop
-> bailout — NEVER because the run is long, costly, used many worker waves,
-> reached "a natural milestone", or the remaining work feels disproportionate.
-> The handoff status you write is the gate: one of `drained` / `answers-required`
-> / `user-action-required` / `mixed` / `illness-detected`, each requiring a real
-> predicate condition — there is no status for an effort-based stop. If tempted
-> to stop while a task is still READY (or a criticism round is still converging),
-> CONTINUE. (See llm/commands/cq/advance.md §Stop condition.)
-
-Whether you write a `handoffs` record at your stop depends ENTIRELY on your
-invocation context — there is **no env var or process signal** to read. You,
-the executing agent, run both this command and (when chained) the wrapping
-`CQ::advance` command in the SAME inline session, so you already KNOW which
-context you are in.
-
-- **Run STANDALONE** (the user invoked `CQ::implement/advance` directly, with no
-  wrapping flow command): after the §Report, write ONE `handoffs` record for
-  this stop — `create_item("handoffs", <milestone>, <status>, <fields>)` —
-  mapping your end-of-pass classification to the handoff `status`:
-
-  | This pass's stop                                                       | handoff `status`   |
-  | ---------------------------------------------------------------------- | ------------------ |
-  | ready-set drained, all reachable tasks merged / milestone(s) archived  | `drained`          |
-  | task(s) `blocked` on an `open` reviewer/ill-loop question              | `answers-required` |
-  | a SPECIFIC task whose next physical step is exclusively the user's — provision a credential, re-activate an environment, or run a privileged/external command the agent cannot run — AND every autonomous step for that task is already done; name the exact command/action AND the exact item it unblocks (if you cannot name both, it is NOT this status — CONTINUE); this is a user ACTION, not a question answer — no `open` `questions` item is required | `user-action-required` |
-  | both at once — some tasks merged/drained, others blocked on a question and/or a user action; list both components in `handoffReasons` (e.g. `[drained, answers-required, user-action-required]`) | `mixed`            |
-  | an ill-loop bailout / merge-conflict / invariant violation you could not get past | `illness-detected` |
-
-  Field set (per `HANDOFFS_SCHEMA`; consistent with advance.md §Provenance):
-  `summary` (**required** — the why-it-stopped prose, mirror the §Report);
-  `flow` = `implement`; `ledgerRefs` = the stop-causing items (`tasks:<id>`,
-  `goals:<G>`); `blockingQuestions` = the `open` question ids for an
-  `answers-required`/`mixed` stop; `handoffReasons` = the
-  component reasons for a `mixed` stop (e.g. `[drained, answers-required]` or
-  `[drained, answers-required, user-action-required]`; Q140); `sessionLogs` = the
-  `.cq/logs/<ts>-<agent-id>.md` summary path(s) AND `rawLogs` = the
-  `.cq/logs/raw/<ts>-<agent-id>.jsonl` raw-transcript path(s) written this pass —
-  populate them in the SAME `create_item` call (omit a `rawLogs` entry for any
-  subagent whose transcript was absent). Stamp `author`/`session`. Append-only: written
-  once at the stop, never updated — this is the final act of the standalone
-  pass. Persistence is the store's job — no git action here; when the optional
-  `[ledger].backup` mode (in-tree / orphan-branch) is enabled, the debounced
-  exporter mirrors the ledger + logs to git.
-
-  **Ready-to-close goals (user action).** When all work milestones under goal `G` are archived, `G` is ready to close — include it in the §Report with explicit instruction to set its status to `done` in the TUI/web. Closing a goal is the user's decision and cannot be automated — **GOALS NEVER auto-close** (restated: the orchestrator MUST NEVER transition a goal to `done`; only the user can).
-
-  **TURN-vs-RUN clause (D39).** A RUN and a TURN are distinct scopes. A **RUN**
-  spans as many turns as needed and is durably resumable from ledger state on the
-  next `CQ::implement/advance` invocation — the ledger IS the durable resume
-  point. A **TURN** is a single context window; exhausting the turn/context
-  budget is **NOT a run-stop**. When a turn/context budget is exhausted
-  mid-stride, the agent **STOPS WITHOUT writing a handoff** — no `handoffs`
-  record, no `mixed`/effort terminal artifact — because the ledger already
-  captures every durable state change. The next `CQ::implement/advance` reads
-  ledger state and continues from where the previous turn left off. Contrast: a
-  **RUN-stop** = one of the five predicate-gated handoff statuses; a
-  **TURN-pause** = no artifact, just resume next invocation. Fabricating a
-  terminal handoff record to "wrap up" a turn that ran out of budget is the same
-  forbidden launder as an effort-based stop — there is deliberately **NO handoff
-  status for an effort-based stop**, and turn exhaustion is an effort-based fact,
-  not a predicate-gated one.
-
-  **A TURN-pause is NOT a free escape hatch (D41 — hard gate).** The TURN-pause
-  exists ONLY for GENUINE, EXTERNALLY-EVIDENCED context/turn exhaustion (an
-  explicit harness context-window / compaction warning, or a tool result
-  truncated/refused for length) — NEVER a SUBJECTIVE judgment that you have
-  "done enough" or that the work ahead is big. While this command's stop
-  predicate has not fired the default is **CONTINUE**; you do not get to pause
-  "to be safe", "for quality", or "to do it justice". FORBIDDEN TURN-pause
-  rationales (each the SAME laundered effort/magnitude stop the euphemism
-  blocklist bans, merely via the no-handoff channel — citing ANY makes the pause
-  ILLEGAL, CONTINUE): "the next/remaining work is large / multi-task /
-  high-blast-radius"; "needs / warrants fresh context / full headroom / a clean
-  slate"; "I've done substantial work this turn / long session / many subagents";
-  "a clean boundary / natural checkpoint"; "running it now risks a half-finished
-  state" (the flow is per-item durable — partial progress is the DESIGN).
-  Magnitude, accumulated effort, and a desire for fresh context are EFFORT-BASED
-  FACTS, not context-exhaustion signals.
-
-  **Euphemism blocklist + self-check invariant (D39 + D41).** Before EITHER
-  writing a handoff record OR taking a TURN-pause (stopping with no handoff), scan
-  your own about-to-be-emitted stop rationale — the handoff `summary` OR the
-  turn-pause explanation you would give the user — for the phrases "NOT a
-  predicate-legal stop", "predicates still TRUE", any equivalent admission the
-  stop is non-predicate-gated, OR any FORBIDDEN turn-pause rationale above
-  (magnitude, "fresh context/headroom", "done a lot / long session", "clean
-  boundary", "half-finished risk"). If any appears — i.e. if your own rationale
-  concedes **predicates still TRUE**, or rests on effort / magnitude / freshness
-  rather than an externally-evidenced context limit — the stop is ILLEGAL by your
-  own admission: **delete the draft, do NOT stop, and CONTINUE** the pass. A summary
-  that contains "predicates still TRUE" is self-refuting; the correct action is
-  to **delete** the draft entry and **CONTINUE**, never to file it. The following
-  phrases, when used to justify a stop, are euphemisms for effort-based stops
-  (cited from HO22/HO25/HO26 as laundering patterns found there); each is
-  explicitly forbidden as a stop rationale — if any appears in a candidate
-  `summary`, treat it as evidence of "predicates still TRUE" and **delete** and
-  **CONTINUE**:
-  - **"deliberate/transparent checkpoint"** — an effort-stop dressed as intentionality;
-  - **"warrants fresh context"** — an effort-stop dressed as a quality concern;
-  - **"BREAKING/large/delicate change needs care"** — an effort-stop dressed as caution;
-  - **"a complete vertical slice is a clean boundary"** — an effort-stop dressed as scope hygiene.
-
-  **Enforced-invariant (D39 — write-time enforcement).** The `@cq/ledger`
-  `create_item` for `handoffs` THROWS if these buckets are empty when their
-  status requires them: a `mixed` or `answers-required` handoff MUST carry a
-  non-empty `blockingQuestions[]`; a `user-action-required` or `mixed` handoff
-  MUST carry a non-empty `handoffReasons[]`. An empty-bucket effort-stop is
-  literally UNWRITABLE — the ledger rejects it at write time. The only
-  remediation is to either populate the required fields with their genuine
-  predicate-gated content (real blocking question ids, real user-action reasons)
-  — which the predicates will ONLY supply if the stop is legitimate — or to
-  **not stop and CONTINUE** the pass instead.
-
-- **Run CHAINED INLINE by any wrapping flow command** (`CQ::advance`, or a
-  `/<flow>:start` that runs this pass inline):
-  **SUPPRESS this handoff write**. The outermost wrapper owns the single
-  authoritative run-level handoff and writes it once at its stop — `CQ::advance`
-  per its §Provenance (it is the sole `handoffs` writer for the whole run);
-  a `/<flow>:start` writes it directly in its own §Handoff record step. You can
-  tell you are in this context because the wrapping command explicitly chains you
-  and its prompt instructs this suppression; a standalone invocation has no such
-  wrapper. Suppressing here is what guarantees exactly ONE handoff per run —
-  never a duplicate.
+When invoked inline by another flow, suppress this handoff; the outermost
+command owns it.

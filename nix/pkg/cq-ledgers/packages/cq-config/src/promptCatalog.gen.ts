@@ -1263,6 +1263,33 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [
+              "cq-advance-active-"
+            ],
+            "pi": [
+              "cq-advance-active-"
+            ]
+          },
+          "fragment": "advance-run-guard",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Only the host with the CQ stop hook requires a session sentinel.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "surface-specific run guard lifecycle",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -1296,6 +1323,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "recursion-protocol",
           "reason": "Claude chains native commands, Codex follows skill references, and Pi loads nested prompts through fetch_prompt.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "tool-vocabulary",
+          "reason": "Only the host with the CQ stop hook requires a session sentinel.",
           "surfaces": [
             "claude",
             "codex",
@@ -3327,7 +3363,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "6a6efe91f705feede43edc3e92da593f8514d4c7f8d03c59e52461c807931e49",
+  "catalogMetadataHash": "de9504962f6255b8591ec081f59c606efaa814b50046ea805fb21a9b64b02732",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -3463,6 +3499,32 @@ export const PROMPT_CATALOG_PROJECTION = {
       "intentionalDifference": {
         "kind": "recursion-protocol",
         "reason": "Claude chains native commands, Codex follows skill references, and Pi loads nested prompts through fetch_prompt.",
+        "surfaces": [
+          "claude",
+          "codex",
+          "pi"
+        ]
+      },
+      "supportedSurfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    {
+      "forbiddenVocabulary": {
+        "claude": [],
+        "codex": [
+          "cq-advance-active-"
+        ],
+        "pi": [
+          "cq-advance-active-"
+        ]
+      },
+      "fragment": "advance-run-guard",
+      "intentionalDifference": {
+        "kind": "tool-vocabulary",
+        "reason": "Only the host with the CQ stop hook requires a session sentinel.",
         "surfaces": [
           "claude",
           "codex",

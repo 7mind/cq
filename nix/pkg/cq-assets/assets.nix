@@ -152,6 +152,20 @@ let
       };
     }
     {
+      fragment = "advance-run-guard";
+      supportedSurfaces = promptSurfaces;
+      forbiddenVocabulary = {
+        claude = [ ];
+        codex = [ "cq-advance-active-" ];
+        pi = [ "cq-advance-active-" ];
+      };
+      intentionalDifference = {
+        kind = "tool-vocabulary";
+        reason = "Only the host with the CQ stop hook requires a session sentinel.";
+        surfaces = promptSurfaces;
+      };
+    }
+    {
       fragment = "host-tool-vocabulary";
       supportedSurfaces = promptSurfaces;
       forbiddenVocabulary = {
@@ -204,6 +218,7 @@ let
     implement-dispatch-workflow = "implement worker, reviewer, and conflict-resolver catalog dispatch procedure";
     dispatch-input-delivery = "implement-worker child-side input retrieval procedure";
     inline-command-recursion = "inline chained-command execution instructions";
+    advance-run-guard = "surface-specific run guard lifecycle";
     host-tool-vocabulary = "frontmatter host tool and isolation capabilities";
     operational-tool-vocabulary = "body-level mapping from canonical operational tokens to callable host tools";
   };
@@ -340,6 +355,7 @@ let
   W = "implement-dispatch-workflow";
   X = "dispatch-input-delivery";
   R = "inline-command-recursion";
+  A = "advance-run-guard";
   T = "host-tool-vocabulary";
   O = "operational-tool-vocabulary";
 
@@ -360,7 +376,7 @@ let
       (recursion "research")
       (recursion "advance")
     ])
-    (mkCommand "advance" [ I T O R ] [
+    (mkCommand "advance" [ I T O R A ] [
       (recursion "investigate/advance")
       (recursion "plan/advance")
       (recursion "research/advance")

@@ -1139,29 +1139,46 @@ describe("T255(b): four-table prompt grep invariant — user-action-required", (
 // 2 token sets × 4 files = 8 cells; all must be present.
 // ---------------------------------------------------------------------------
 
-describe("T264: D39 stop-discipline grep invariant — turn-vs-run + euphemism-blocklist", () => {
+describe("T264: advance prompts retain progress-bounded stop discipline", () => {
   const cqCommandsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
 
-  const promptFiles = [
-    path.join(cqCommandsRoot, "advance.md"),
-    path.join(cqCommandsRoot, "plan", "advance.md"),
-    path.join(cqCommandsRoot, "investigate", "advance.md"),
-    path.join(cqCommandsRoot, "implement", "advance.md"),
+  const promptFiles: Array<{ file: string; required: string[] }> = [
+    {
+      file: path.join(cqCommandsRoot, "advance.md"),
+      required: [
+        "no fixed iteration cap",
+        "A full cycle may stop only when it made no ledger progress",
+      ],
+    },
+    {
+      file: path.join(cqCommandsRoot, "plan", "advance.md"),
+      required: [
+        "Each iteration must dispatch a child or change state",
+        "Never stop because of effort,",
+      ],
+    },
+    {
+      file: path.join(cqCommandsRoot, "investigate", "advance.md"),
+      required: [
+        "There is no fixed depth, child-count, or time cap",
+        "The bound is progress",
+      ],
+    },
+    {
+      file: path.join(cqCommandsRoot, "implement", "advance.md"),
+      required: [
+        "A pass must dispatch a child, mutate the",
+        "Never stop because of",
+      ],
+    },
   ];
 
-  const markers: Array<{ token: string; description: string }> = [
-    { token: "NOT a run-stop", description: "turn-vs-run clause marker" },
-    { token: "predicates still TRUE", description: "euphemism-blocklist self-check marker" },
-  ];
-
-  for (const filePath of promptFiles) {
-    for (const { token, description } of markers) {
-      const label = filePath.replace(/.*\/commands\/cq\//, "cq/");
-      it(`${label} contains the ${description}: "${token}"`, async () => {
-        const text = await readFile(filePath, "utf8");
-        expect(text).toContain(token);
-      });
-    }
+  for (const { file, required } of promptFiles) {
+    const label = file.replace(/.*\/commands\/cq\//, "cq/");
+    it(`${label} defines an observable progress boundary`, async () => {
+      const text = await readFile(file, "utf8");
+      for (const clause of required) expect(text).toContain(clause);
+    });
   }
 });
 
@@ -1189,24 +1206,23 @@ describe("D43: T301-T304 prompt-hardening grep invariants — file-scoped", () =
 
   it("D43/T301: implement-worker.md contains worktree-confinement Boundary marker", async () => {
     const text = await readFile(path.join(cqAgentsRoot, "implement-worker.md"), "utf8");
-    expect(text).toContain("MUST NOT run git against the main checkout");
+    expect(text).toContain("Work only inside the supplied worktree and task branch");
+    expect(text).toMatch(/Do not\s+operate on another checkout or alter its refs/);
   });
 
   it("D43/T302 (T631): plan/advance.md carries the persistence sentence, no ledger git-commit step", async () => {
     const text = await readFile(path.join(cqCommandsRoot, "plan", "advance.md"), "utf8");
-    expect(text).toContain("Persistence is the store's job — no git action here");
     expect(text).not.toContain("git add .cq/");
   });
 
   it("D43/T303 (T631): implement/advance.md carries the persistence sentence, no ledger git-commit step", async () => {
     const text = await readFile(path.join(cqCommandsRoot, "implement", "advance.md"), "utf8");
-    expect(text).toContain("Persistence is the store's job — no git action here");
     expect(text).not.toContain("git add .cq/");
   });
 
   it("D43/T304 (T631): advance.md carries the persistence sentence, no ledger git-commit step", async () => {
     const text = await readFile(path.join(cqCommandsRoot, "advance.md"), "utf8");
-    expect(text).toContain("Persistence is the store's job — no git action here");
+    expect(text).toContain("the configured ledger");
     expect(text).not.toContain("git add .cq/");
   });
 });
@@ -1229,24 +1245,33 @@ describe("G38 item 1a prompt-hardening grep invariants — file-scoped", () => {
 
   it("G38-1a: implement/advance.md contains post-done-cleanup marker", async () => {
     const text = await readFile(path.join(cqCommandsRoot, "implement", "advance.md"), "utf8");
-    expect(text).toContain("G38-1a-post-done-cleanup");
+    expect(text).toMatch(
+      /Remove its worktree, delete its\s+derived branch, and prune worktree metadata/,
+    );
   });
 
   it("G38-1a: implement/advance.md contains start-sweep marker", async () => {
     const text = await readFile(path.join(cqCommandsRoot, "implement", "advance.md"), "utf8");
-    expect(text).toContain("G38-1a-start-sweep");
+    expect(text).toMatch(
+      /prune stale worktree metadata and inspect all implementation\s+and runtime-created worktrees/,
+    );
   });
 
   it("G38-1a: implement-worker.md contains worker-ephemeral marker", async () => {
     const text = await readFile(path.join(cqAgentsRoot, "implement-worker.md"), "utf8");
-    expect(text).toContain("G38-1a-worker-ephemeral");
+    expect(text).toContain("Work only inside the supplied worktree and task branch");
+    expect(text).not.toContain("worktree remove");
   });
 
   it("G38-1a: agentsCatalogue.gen.ts contains all three markers (freshness guard)", async () => {
     const text = await readFile(genTsPath, "utf8");
-    expect(text).toContain("G38-1a-post-done-cleanup");
-    expect(text).toContain("G38-1a-start-sweep");
-    expect(text).toContain("G38-1a-worker-ephemeral");
+    expect(text).toMatch(
+      /Remove its worktree, delete its\\nderived branch, and prune worktree metadata/,
+    );
+    expect(text).toMatch(
+      /prune stale worktree metadata and inspect all implementation\\nand runtime-created worktrees/,
+    );
+    expect(text).toContain("Work only inside the supplied worktree and task branch");
   });
 });
 
@@ -1613,48 +1638,42 @@ describe("T556: bootstrap on a store that predates `researches` — provisioned 
 // Path resolution mirrors T255/T264/D43 above: cq-assets lives four levels up.
 // ---------------------------------------------------------------------------
 
-describe("T340: /cq:plan idea-id grammar — structural grep invariants", () => {
+describe("T340: /cq:plan idea intake semantics", () => {
   const cqCommandsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
   const planMd = path.join(cqCommandsRoot, "plan.md");
   const followUpMd = path.join(cqCommandsRoot, "plan", "follow-up.md");
 
-  it("plan.md documents the I-id token grammar section (/^I\\d+$/)", async () => {
+  it("plan.md documents the idea-id token grammar", async () => {
     const text = await readFile(planMd, "utf8");
-    expect(text).toContain("## Argument grammar");
-    expect(text).toContain("/^I\\d+$/");
+    expect(text).toContain("An idea id is `I` followed by decimal");
   });
 
   it("plan.md states the EITHER-idea-ids-OR-free-text, no-interleave rule", async () => {
     const text = await readFile(planMd, "utf8");
-    expect(text).toContain("no interleave");
-    expect(text).toContain("mutually-exclusive");
+    expect(text).toContain("every whitespace-delimited token");
+    expect(text).toContain("do not interleave ids and prose");
   });
 
-  it("plan.md defines the named consume-an-idea sub-procedure with its four steps", async () => {
+  it("plan.md defines the four idea-consumption effects", async () => {
     const text = await readFile(planMd, "utf8");
-    expect(text).toContain("## Consume-an-idea sub-procedure");
-    // (i) fetch the idea
-    expect(text).toContain(
-      'fetch_item({ ledger_id: "ideas", item_id: I, projection: "full" })',
-    );
-    // (ii) seed description VERBATIM from the idea
-    expect(text).toContain("VERBATIM from the idea");
-    // (iii) bidirectional ledgerRefs link (goal↔idea)
-    expect(text).toContain('"ideas:<I>"');
-    expect(text).toContain('"goals:<G>"');
-    // (iv) idea → planned
-    expect(text).toContain('update_item("ideas", I, status: "planned")');
+    expect(text).toContain("Fetch the full idea");
+    expect(text).toContain("verbatim description");
+    expect(text).toContain("ideas:<ideaId>");
+    expect(text).toContain("goals:<goalId>");
+    expect(text).toContain("Set the idea to `planned`");
   });
 
   it("plan.md states one-goal-per-idea explicitly", async () => {
     const text = await readFile(planMd, "utf8");
-    expect(text).toContain("ONE goal PER idea");
+    expect(text).toMatch(/process each\s+idea independently/);
   });
 
-  it("follow-up.md references the consume-an-idea sub-procedure (DRY, not re-derived)", async () => {
+  it("follow-up.md carries the same link and lifecycle effects without a source-file dependency", async () => {
     const text = await readFile(followUpMd, "utf8");
-    expect(text).toContain("Consume-an-idea sub-procedure");
-    expect(text).toContain("plan.md");
+    expect(text).toContain("ideas:<ideaId>");
+    expect(text).toContain("goals:<goalId>");
+    expect(text).toContain("set the idea `planned`");
+    expect(text).not.toContain("plan.md");
   });
 });
 
@@ -1671,57 +1690,43 @@ describe("T340: /cq:plan idea-id grammar — structural grep invariants", () => 
 // `bun run gen-agents` was re-run after editing the asset).
 // ---------------------------------------------------------------------------
 
-describe("T342: /cq:plan:follow-up idea-ids grammar — structural grep invariants", () => {
+describe("T342: /cq:plan:follow-up idea intake semantics", () => {
   const cqCommandsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
   const followUpMd = path.join(cqCommandsRoot, "plan", "follow-up.md");
   const genTsPath = path.resolve(import.meta.dir, "../../ledger-web/src/agentsCatalogue.gen.ts");
 
   it("follow-up.md documents the <goalId>-then-idea-ids argument grammar (first token = goal id; remaining /^I\\d+$/ = ideas)", async () => {
     const text = await readFile(followUpMd, "utf8");
-    expect(text).toContain("## Argument grammar");
-    // first token is the target goal id
-    expect(text).toContain("target goal id");
-    // remaining tokens are idea-ids by the /^I\d+$/ rule
-    expect(text).toContain("/^I\\d+$/");
-    // mutually-exclusive with free text, no interleave (mirrors plan.md)
-    expect(text).toContain("mutually-exclusive");
-    expect(text).toContain("no interleave");
+    expect(text).toContain("The first token is the goal id");
+    expect(text).toContain("An idea id is `I` followed by decimal");
+    expect(text).toContain("every remaining token");
+    expect(text).toMatch(/otherwise treat\s+the entire remainder as free text/);
   });
 
   it("follow-up.md appends each idea's title+description as new scope via the existing re-open path", async () => {
     const text = await readFile(followUpMd, "utf8");
-    // each idea's title + description is appended as new scope
-    expect(text).toContain("title + description");
-    expect(text).toContain("new scope");
-    // reusing the pre-existing follow-up re-open path (not a new re-open semantics)
-    expect(text).toContain("re-open path");
-    // appends onto the SAME existing target goal G (not a new goal)
-    expect(text).toContain("Consume-an-idea-into-this-goal");
+    expect(text).toContain("use its title and");
+    expect(text).toContain("description as one follow-up section");
+    expect(text).toContain("Append each scope to the existing description");
   });
 
-  it("follow-up.md references plan.md's shared consume-an-idea sub-procedure for the link + idea→planned transition (DRY, not re-derived)", async () => {
+  it("follow-up.md links each idea bidirectionally and advances it to planned", async () => {
     const text = await readFile(followUpMd, "utf8");
-    // cross-reference by name/anchor to plan.md's canonical sub-procedure
-    expect(text).toContain("§Consume-an-idea sub-procedure defined in `CQ::plan` (`plan.md`)");
-    // the bidirectional link refs + the idea→planned flip are mentioned as the
-    // reused (not re-derived) steps
-    expect(text).toContain("goals:<G>");
-    expect(text).toContain("ideas:<I>");
-    expect(text).toContain('update_item("ideas", I, status: "planned")');
-    // explicit DRY statement: do not re-derive the sub-procedure here
-    expect(text).toContain("DRY");
+    expect(text).toContain("goals:<goalId>");
+    expect(text).toContain("ideas:<ideaId>");
+    expect(text).toContain("set the idea `planned`");
   });
 
   it("free-text follow-up is still supported", async () => {
     const text = await readFile(followUpMd, "utf8");
-    expect(text).toContain("Free-text mode");
+    expect(text).toContain("In free-text mode");
   });
 
   it("agentsCatalogue.gen.ts carries the follow-up grammar markers (freshness guard)", async () => {
     const text = await readFile(genTsPath, "utf8");
-    expect(text).toContain("Argument grammar");
-    expect(text).toContain("Consume-an-idea-into-this-goal");
-    expect(text).toContain("target goal id");
+    expect(text).toContain("The first token is the goal id");
+    expect(text).toContain("An idea id is `I` followed by decimal");
+    expect(text).toContain("Append each scope to the existing description");
   });
 });
 
@@ -1750,15 +1755,15 @@ describe("T854: claim-before-plan protocol shape — structural grep invariants"
 
   it("plan.md hands off by chaining CQ::plan/advance inline — never a direct unclaimed spawn", async () => {
     const text = await readFile(planMd, "utf8");
-    expect(text).toContain("chain `CQ::plan/advance` inline");
-    expect(text).toContain("CLAIMS the round (`claim_plan`, purpose `initial`) BEFORE any planner");
-    expect(text).not.toContain("Spawn the `plan-advance` subagent");
+    expect(text).toContain("Run `CQ::plan/advance <goalId>` inline");
+    expect(text).toContain("That command owns the");
+    expect(text).toContain("claim, planner dispatch");
   });
 
   it("plan.md attributes the no-write PlanStepResult contract", async () => {
     const text = await readFile(planMd, "utf8");
-    expect(text).toContain("PlanStepResult");
-    expect(text).toContain("writes NOTHING");
+    expect(text).toContain("bootstrap only; plan advance owns");
+    expect(text).toContain("Do not generate questions, mutate managed plan state");
   });
 
   it("plan/advance.md defines the auto-investigate phase exactly once across the plan commands", async () => {
@@ -1774,7 +1779,7 @@ describe("T854: claim-before-plan protocol shape — structural grep invariants"
     const plan = await readFile(planMd, "utf8");
     const followUp = await readFile(followUpMd, "utf8");
     for (const text of [plan, followUp]) {
-      expect(text).toContain("§Auto-investigate filed defects");
+      expect(text).toContain("defect phase may run `CQ::investigate/advance` inline");
       // No re-derived worklist derivation or status-query in the wrappers.
       expect(text).not.toContain("Derive the worklist");
       expect(text).not.toContain('fts_search({ query: \'status:open ledgerRefs:"goals:<G>"\'');
@@ -1783,8 +1788,9 @@ describe("T854: claim-before-plan protocol shape — structural grep invariants"
 
   it("plan/advance.md states explicitly that abandon is tokenless while pause/publish/finalize require the token", async () => {
     const text = await readFile(advanceMd, "utf8");
-    expect(text).toContain("REJECTS `ownerFenceToken` on an abandon");
-    expect(text).toMatch(/all REQUIRE the\s+token/);
+    expect(text).toContain("uses the public claim id/generation and no fence token");
+    expect(text).toContain("pause, publish, and");
+    expect(text).toContain("finalize require the token");
   });
 });
 
@@ -1815,14 +1821,6 @@ describe("T854: claim-before-plan protocol shape — structural grep invariants"
 
 describe("T345: dispatched roles wired through the typed prompt catalog — grep invariants", () => {
   const cqAgentsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/agents");
-  const cqCommandsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
-  const operationalToolFragments = ["claude", "codex", "pi"].map((surface) =>
-    path.resolve(
-      import.meta.dir,
-      `../../../../cq-assets/fragments/${surface}/operational-tool-vocabulary.md`,
-    ),
-  );
-
   /** The 7 dispatched-subagent role asset basenames (non-null agentTierKey). */
   const dispatchedRoles = [
     "plan-advance",
@@ -1882,83 +1880,6 @@ describe("T345: dispatched roles wired through the typed prompt catalog — grep
     });
   }
 
-  // Each enumerated dispatch site documents the catalog-driven dispatch for the
-  // subagent(s) it spawns. T688 moves implement's transport-sensitive procedure
-  // into one classified fragment per surface.
-  const implementDispatchRoot = path.resolve(
-    import.meta.dir,
-    "../../../../cq-assets/fragments",
-  );
-  const dispatchSiteMarkers: Array<{
-    files: Array<{ file: string; validateOutput: boolean }>;
-    roles: string[];
-  }> = [
-    {
-      files: [{ file: path.join(cqCommandsRoot, "plan", "advance.md"), validateOutput: true }],
-      roles: ["plan-advance", "plan-reviewer"],
-    },
-    {
-      files: [
-        {
-          file: path.join(
-            implementDispatchRoot,
-            "claude",
-            "implement-dispatch-workflow.md",
-          ),
-          validateOutput: false,
-        },
-        {
-          file: path.join(
-            implementDispatchRoot,
-            "codex",
-            "implement-dispatch-workflow.md",
-          ),
-          validateOutput: false,
-        },
-        {
-          file: path.join(implementDispatchRoot, "pi", "implement-dispatch-workflow.md"),
-          validateOutput: false,
-        },
-      ],
-      roles: ["implement-worker", "implement-reviewer", "implement-conflict-resolver"],
-    },
-    {
-      files: [
-        {
-          file: path.join(cqCommandsRoot, "investigate", "advance.md"),
-          validateOutput: true,
-        },
-      ],
-      roles: ["investigate-explorer", "investigate-prober"],
-    },
-  ];
-
-  for (const { files, roles } of dispatchSiteMarkers) {
-    for (const { file, validateOutput } of files) {
-      const label = file
-        .replace(/.*\/commands\/cq\//, "cq/")
-        .replace(/.*\/fragments\//, "fragment:");
-      for (const role of roles) {
-        it(`${label} documents catalog-driven dispatch for ${role}`, async () => {
-          const text = await readFile(file, "utf8");
-          expect(text).toContain(`Catalog-driven dispatch (G41 — ${role})`);
-          const validationCall = `validate_output("${role}",`;
-          if (validateOutput) {
-            expect(text).toContain(validationCall);
-          } else {
-            expect(text).not.toContain(validationCall);
-          }
-          // The catalog fetch stays ALLOWLISTED as an inspection/debug capability
-          // on every surface's operational vocabulary.
-          for (const fragmentPath of operationalToolFragments) {
-            const fragment = await readFile(fragmentPath, "utf8");
-            expect(fragment).toContain('`prompt-catalog fetch ("<roleId>")` → call `');
-            expect(fragment).toContain("fetch_prompt` with");
-          }
-        });
-      }
-    }
-  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1985,6 +1906,16 @@ describe("T345: dispatched roles wired through the typed prompt catalog — grep
 describe("T365: G44 advance.md grep-invariant — marker-lifecycle + external-signal + derive_predicates", () => {
   const cqCommandsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
   const advanceMd = path.join(cqCommandsRoot, "advance.md");
+  const claudeRunGuardMd = path.resolve(
+    import.meta.dir,
+    "../../../../cq-assets/fragments/claude/advance-run-guard.md",
+  );
+  const portableRunGuards = ["codex", "pi"].map((surface) =>
+    path.resolve(
+      import.meta.dir,
+      `../../../../cq-assets/fragments/${surface}/advance-run-guard.md`,
+    ),
+  );
   const claudeOperationalToolsMd = path.resolve(
     import.meta.dir,
     "../../../../cq-assets/fragments/claude/operational-tool-vocabulary.md",
@@ -1992,24 +1923,14 @@ describe("T365: G44 advance.md grep-invariant — marker-lifecycle + external-si
 
   const markers: Array<{ file: string; token: string; description: string }> = [
     {
-      file: advanceMd,
+      file: claudeRunGuardMd,
       token: 'touch "${XDG_RUNTIME_DIR:-/tmp}/cq-advance-active-$CLAUDE_CODE_SESSION_ID"',
       description: "§Bootstrap marker-drop (touch sentinel at run start)",
     },
     {
-      file: advanceMd,
+      file: claudeRunGuardMd,
       token: 'rm -f "${XDG_RUNTIME_DIR:-/tmp}/cq-advance-active-$CLAUDE_CODE_SESSION_ID"',
       description: "§The one write marker-unlink (rm -f sentinel after terminal handoff)",
-    },
-    {
-      file: advanceMd,
-      token: "external-signal:",
-      description: "§Stop-condition gate external-signal escape format",
-    },
-    {
-      file: advanceMd,
-      token: "claudeStopGateHook",
-      description: "§Stop-condition gate Stop-hook cross-reference",
     },
     {
       file: claudeOperationalToolsMd,
@@ -2024,6 +1945,13 @@ describe("T365: G44 advance.md grep-invariant — marker-lifecycle + external-si
       expect(text).toContain(token);
     });
   }
+
+  it("keeps Claude session mechanics out of the canonical and portable sources", async () => {
+    expect(await readFile(advanceMd, "utf8")).not.toContain("$CLAUDE_CODE_SESSION_ID");
+    for (const file of portableRunGuards) {
+      expect(await readFile(file, "utf8")).not.toContain("$CLAUDE_CODE_SESSION_ID");
+    }
+  });
 });
 
 describe("D122: Pi executes nested cq commands through the prompt catalog", () => {

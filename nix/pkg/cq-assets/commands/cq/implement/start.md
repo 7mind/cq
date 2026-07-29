@@ -1,111 +1,35 @@
 ---
-description: "Start an implement-flow run — resolve the target milestones (default: all open ones), validate their task DAG, then hand off to the CQ::implement/advance loop."
-argument-hint: [milestoneId ...]   # optional; omit to target every open milestone
+description: Resolve implementation scope, validate the initial task DAG, and run the implementation advance loop.
+argument-hint: [milestoneId ...]
 # {{cq:fragment:host-tool-vocabulary}}
 ---
 
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:inline-command-recursion}}
 
-
 ## Catalogue
 ```yaml
 inputs:
-  - "optional milestone ids ($ARGUMENTS); empty = all open non-archived non-terminal milestones with non-terminal tasks"
+  - "optional milestone ids; empty selects every active milestone with non-terminal tasks"
 outputs:
-  - "scope report: target milestone ids, task counts, initial ready-set"
-  - "implement-flow advance pass run inline (full CQ::implement/advance output)"
-  - "handoffs item (this command is the outermost wrapper)"
+  - "scope/ready-set report, inline implementation run, and one outer handoff"
 ioSchema:
-  - "bootstrap only — scope resolution + DAG sanity check; CQ::implement/advance owns all execution"
-  - "ready-set: tasks with no unsatisfied dependsOn, not blocked, no open question"
-  - "handoffs item: CQ::implement/advance suppresses its own handoff when chained here"
-  - "run is resumable via CQ::implement/advance (no need to re-run CQ::implement/start)"
+  - "bootstrap only; implement advance owns execution and suppresses its nested handoff"
 ```
 
-You are **bootstrapping an implement-flow run**. The user's target milestones
-are:
+With explicit ids, validate that every milestone exists and is active. Without
+ids, select all active milestones containing non-terminal tasks. Do not ask for
+scope, branch, or cadence confirmation; the current branch is the integration
+target and the run continues until drained or genuinely blocked.
 
-> $ARGUMENTS
+Read tasks, task dependencies, milestone dependencies, and linked questions.
+Report target ids, task counts, and the initial ready set. A target with no
+ready task may remain included while other targets progress.
 
-This command does the one-time **scope resolution** only, then hands off to the
-`CQ::implement/advance` loop. It owns NO execution logic of its own — the entire
-pass (DAG-ready pickup, worktree dispatch, review, criticism loop, question
-registration, merge-back) lives in `CQ::implement/advance`, so that logic exists in
-exactly ONE place (exactly as `CQ::plan` does the goal bootstrap and hands the
-round to `plan-advance`).
+Run `CQ::implement/advance` inline for the resolved set. It owns worktrees,
+dispatch, review, correction, questions, verification, merge-back, logs, and
+the final execution report. Suppress its handoff because this wrapper writes
+one using the implement-advance mapping.
 
-## No confirmation checkpoints — just run (hard rule)
-This flow is **fully autonomous by default**. Do NOT pause to ask the user to
-confirm scope, branch, or "should I proceed?". The defaults are fixed and NOT up
-for confirmation:
-- **Scope** = the broadest applicable set. Empty `$ARGUMENTS` → ALL open
-  milestones; an explicit list → exactly that list. Never ask "all or a subset?".
-- **Integration target** = the **current branch** (merge-back lands here, per
-  `CQ::implement/advance`). Never ask "which branch / main or a feature branch?".
-- **Cadence** = run the whole `CQ::implement/advance` loop to completion (everything
-  done, or blocked on a genuine question). Never ask "one pass then pause?".
-
-A confirmation checkpoint is wasted latency and is forbidden. The ONLY legitimate
-way to surface a blocker is a `questions` ledger item that a subagent or the loop
-files for a genuine unknown (answered later in the TUI/web) — never an inline
-"do you want me to…?" prompt. When in doubt, take the broadest sensible default
-and proceed; the user can interrupt if they disagree.
-
-## Provenance (every ledger write)
-On any `create_item` / `update_item`, pass `author` = your OWN model class
-(derived from runtime identity, never hardcoded — Claude Opus 4.8 (1M) →
-`"opus-4.8[1m]"`; Codex GPT-5.x → e.g. `"gpt-5.5"`) and `session` =
-`$CLAUDE_CODE_SESSION_ID` (or the Codex equivalent; omit if unavailable).
-
-**Mutation response rule:** Every ledger mutation below that has an ack policy
-returns only its fixed acknowledgement (allocated id, current status,
-canonicalized reference fields, timestamps, and provenance), never a full
-entity. Use acknowledgement ids directly; issue an explicit full read only when
-later reasoning needs task, review, or handoff narrative fields.
-
-## Steps
-
-1. **Resolve the target milestone set.**
-   - If `$ARGUMENTS` lists milestone ids → those are the targets.
-     `fetch_milestone({ milestone_id: M, projection: "compact" })` for each to
-     VALIDATE it exists and is non-archived, non-terminal; abort with a clear
-     message on any unknown/archived id.
-   - If `$ARGUMENTS` is empty → target **ALL** open milestones: every
-     non-archived, non-terminal milestone in the `milestones` ledger that has at
-     least one non-terminal linked `tasks` item
-     (`list_milestone_items({ milestone_id: M, projection: "compact" })` to
-     check). This per-milestone read is structurally bounded to M. Skip
-     milestones whose tasks are all terminal (nothing to do).
-
-2. **Resolve and sanity-check the task DAG.** For each target, collect its
-   `tasks` and their `dependsOn` edges (and the milestones' own
-   `dependsOn`/`blockedBy`). Confirm there is at least one task that is ready to
-   start (no unsatisfied `dependsOn`, not `blocked`, no `open` question). If a
-   target has tasks but NONE are ready (e.g. all are blocked on open questions),
-   report that — the run can still proceed for the other targets.
-
-3. **Report the resolved scope.** State the target milestone ids, the count of
-   tasks per target, and the initial ready-set (the tasks the first pass will
-   pick up). No scope marker item is created — the ledger task states ARE the
-   durable scope; `CQ::implement/advance` re-derives everything from them.
-
-4. **Hand off to the advance loop.** Now execute the `CQ::implement/advance` pass
-   over the resolved target set — follow the full loop spec in
-   `llm/commands/cq/implement/advance.md` (READY-SET → dispatch workers → review →
-   criticism loop → questions → success gate → merge-back, plus its session-log
-   recording — ALL logs written via `cq log put` (summary `.md` to `logs/` →
-   `sessionLogs`, raw transcript to `logs/raw/` → `rawLogs`; never a direct
-   `Write` to `.cq/logs` and never `git add` of logs) — and provenance rules).
-   Do NOT restate or duplicate that logic here;
-   run it. Then produce `CQ::implement/advance`'s end-of-pass report.
-
-This command is the outermost wrapper for this invocation (the user ran
-`CQ::implement/start`), so the inline `CQ::implement/advance` pass **SUPPRESSES its
-own handoff write** (per implement/advance.md's CHAINED section — `/<flow>:start`
-is listed as a suppress-context), and **this command** writes the ONE `handoffs`
-record at the stop. Use the field schema from implement/advance.md's §Handoff
-record, STANDALONE branch (do not restate the mapping here).
-
-The run is resumable: after the user answers any registered questions, they
-re-run **`CQ::implement/advance`** (no need to re-run `CQ::implement/start`).
+After user answers unblock tasks, resume with implement advance directly; the
+bootstrap need not run again.

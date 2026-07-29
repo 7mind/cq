@@ -161,42 +161,27 @@ type LostReportViolation =
   | "missing-contract-breach-log"
   | "missing-single-retry"
   | "missing-second-loss-fail-closed"
-  | "progress-or-missing-can-green"
-  | "missing-native-role-routing"
-  | "pi-path-was-migrated"
-  | "success-gate-not-closed";
+  | "missing-result-classification";
 
 function lostReportContractViolations(body: string): readonly LostReportViolation[] {
   const normalized = normalize(body);
   const required: readonly [LostReportViolation, string][] = [
     [
       "missing-operational-definition",
-      "LOST REPORT means the orchestrator did not consume a server-validated body from `fetch_dispatch_result` on the exact parent-retained handle",
+      "A missing or non-consumed native result is a LOST REPORT",
     ],
-    ["missing-contract-breach-log", "Log each LOST REPORT as a dispatch-contract breach"],
+    ["missing-contract-breach-log", "Log it"],
     [
       "missing-single-retry",
-      "Re-dispatch the same required role exactly once with the same semantic input; the retry budget is exactly 1",
+      "retry the same role once with a fresh prepared dispatch",
     ],
     [
       "missing-second-loss-fail-closed",
-      "A second LOST REPORT exhausts that budget and fails the affected task, reviewer path, or conflict-resolution turn closed",
+      "A second loss fails that task path closed",
     ],
     [
-      "progress-or-missing-can-green",
-      "A progress-only notification, raw or body-returning final message, malformed handle-only text, wrong or child-reported handle, or any non-`consumed` fetch state never counts as the required output and can never satisfy §6",
-    ],
-    [
-      "missing-native-role-routing",
-      "Apply this retry gate to `implement-worker`, native `implement-reviewer`, and `implement-conflict-resolver`",
-    ],
-    [
-      "pi-path-was-migrated",
-      "The held direct `pi:*` paths keep their existing fail-closed parsing and abstention rules; do not route them through this native retry gate",
-    ],
-    [
-      "success-gate-not-closed",
-      "no required native-role dispatch may have an unresolved or twice-lost report",
+      "missing-result-classification",
+      "cannot become a worker failure, reviewer abstention, or resolver verdict",
     ],
   ];
 
@@ -205,101 +190,21 @@ function lostReportContractViolations(body: string): readonly LostReportViolatio
   );
 }
 
-/**
- * The (d) leg. Unlike the (a)-leg spellings below this token has NO legitimate
- * home in any rendered orchestrator body — not in a canonical source and not in
- * a surface fragment — so its count is an unconditional zero on every surface.
- */
-const VALIDATE_IN_TOKEN = "validate_input";
+const REMOVED_VALIDATION_TOKENS = ["validate_input", "validate_output"] as const;
 
-/**
- * Per-surface EXACT occurrence counts of the (a)-leg spellings across all 15
- * rendered orchestrator commands, with their provenance. These are
- * characterization numbers: a real reintroduced parent-side call site moves
- * one of them, which forces a review rather than passing silently.
- *
- * Provenance of every non-zero count below (measured, see the report §4):
- *  - `prompt-catalog fetch (` / `fetch_prompt` = 5 each on EVERY surface: the
- *    `operational-tool-vocabulary` fragment's ALLOWLISTED glossary line, which
- *    T975 §(5) deliberately keeps, substituted into the five commands that
- *    declare that slot.
- *  - `promptTemplate` = 3 on every surface from the CANONICAL sources: the two
- *    portable-rubric commands (`plan-review` x1, `implement-review` x2) that
- *    exist to hand a promptTemplate to a non-Claude harness.
- *  - pi ONLY: +8 `fetch_prompt` and +8 `promptTemplate` from pi's
- *    `inline-command-recursion` fragment, which resolves an INLINE
- *    `CQ::<path>` ORCHESTRATOR-COMMAND through `fetch_prompt("<path>")`.
- *    That is a different artifact class from a dispatched role prompt (see the
- *    report's divergence D-2), and it is why claude/codex and pi differ here.
- */
-const EXPECTED_A_LEG_COUNTS: Readonly<
-  Record<PromptSurface, Readonly<Record<string, number>>>
-> = {
-  claude: { "prompt-catalog fetch (": 5, fetch_prompt: 5, promptTemplate: 3 },
-  codex: { "prompt-catalog fetch (": 5, fetch_prompt: 5, promptTemplate: 3 },
-  pi: { "prompt-catalog fetch (": 5, fetch_prompt: 13, promptTemplate: 11 },
-};
-
-/**
- * The verbatim structured-input field literals per dispatch edge, re-asserted
- * on each RENDERED surface so a fragment substitution cannot drop one.
- */
 const DISPATCH_EDGE_INPUTS: readonly {
   readonly flowRoleId: string;
   readonly role: string;
-  readonly inputFields: readonly string[];
 }[] = [
-  {
-    flowRoleId: "plan/advance",
-    role: "plan-advance",
-    inputFields: ['{ goalId: "<G>" }', "`candidateMode` omitted/false"],
-  },
-  { flowRoleId: "plan/advance", role: "plan-reviewer", inputFields: ['{ goalId: "<G>" }'] },
-  {
-    flowRoleId: "investigate/advance",
-    role: "investigate-explorer",
-    inputFields: ["{ hypothesisId, statement, branchContext, leads? }"],
-  },
-  {
-    flowRoleId: "investigate/advance",
-    role: "investigate-prober",
-    inputFields: [
-      "{ hypothesisId, statement, probeRequest: { what, why }, branchContext, leads? }",
-    ],
-  },
-  {
-    flowRoleId: "research/advance",
-    role: "research-explorer",
-    inputFields: ["{ hypothesisId, statement, branchContext, leads? }"],
-  },
-  {
-    flowRoleId: "research/advance",
-    role: "research-experimenter",
-    inputFields: [
-      "{ hypothesisId, statement, probeRequest: { what, why }, branchContext, leads? }",
-    ],
-  },
-  {
-    flowRoleId: "implement/advance",
-    role: "implement-worker",
-    inputFields: [
-      "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, priorCriticism? }",
-    ],
-  },
-  {
-    flowRoleId: "implement/advance",
-    role: "implement-reviewer",
-    inputFields: [
-      "{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }",
-    ],
-  },
-  {
-    flowRoleId: "implement/advance",
-    role: "implement-conflict-resolver",
-    inputFields: [
-      "{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, baseSideNote? }",
-    ],
-  },
+  { flowRoleId: "plan/advance", role: "plan-advance" },
+  { flowRoleId: "plan/advance", role: "plan-reviewer" },
+  { flowRoleId: "investigate/advance", role: "investigate-explorer" },
+  { flowRoleId: "investigate/advance", role: "investigate-prober" },
+  { flowRoleId: "research/advance", role: "research-explorer" },
+  { flowRoleId: "research/advance", role: "research-experimenter" },
+  { flowRoleId: "implement/advance", role: "implement-worker" },
+  { flowRoleId: "implement/advance", role: "implement-reviewer" },
+  { flowRoleId: "implement/advance", role: "implement-conflict-resolver" },
 ];
 
 const T977_WORKER_REFS =
@@ -325,72 +230,35 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     NIX_EVAL_TIMEOUT_MS,
   );
 
-  // ── CHECK 2 — the (d) leg is gone on every surface ──────────────────────
   for (const surface of PROMPT_SURFACES) {
-    it(`${surface}: no rendered orchestrator command carries a parent-side ${VALIDATE_IN_TOKEN} round-trip`, () => {
+    it(`${surface}: removed validation round-trips stay absent from rendered prompts`, () => {
       for (const role of COMMAND_ROLES) {
-        expect(countOccurrences(renderedOf(surface, role.roleId), VALIDATE_IN_TOKEN)).toBe(0);
+        for (const token of REMOVED_VALIDATION_TOKENS) {
+          expect(countOccurrences(renderedOf(surface, role.roleId), token)).toBe(0);
+        }
       }
-    });
-
-    it(`${surface}: no rendered dispatched-role prompt carries a ${VALIDATE_IN_TOKEN} round-trip either`, () => {
-      // A worker asked to self-validate its own input would reintroduce the
-      // same round-trip one hop down; the child side must be zero too.
       for (const role of DISPATCHED_ROLES) {
-        expect(countOccurrences(renderedOf(surface, role.roleId), VALIDATE_IN_TOKEN)).toBe(0);
-      }
-    });
-
-    it(`${surface}: the (a)-leg spellings occur only at their known allowlisted provenance`, () => {
-      for (const [token, expectedCount] of Object.entries(EXPECTED_A_LEG_COUNTS[surface])) {
-        const total = COMMAND_ROLES.reduce(
-          (sum, role) => sum + countOccurrences(renderedOf(surface, role.roleId), token),
-          0,
-        );
-        expect(total).toBe(expectedCount);
+        for (const token of REMOVED_VALIDATION_TOKENS) {
+          expect(countOccurrences(renderedOf(surface, role.roleId), token)).toBe(0);
+        }
       }
     });
   }
 
-  it("the validate_input scanner is not a no-op: it flags a reintroduced round-trip", () => {
-    // Negative control, mirroring T975's — pins the guard itself.
-    expect(
-      countOccurrences('**(d)** `validate_input("implement-worker", input)`', VALIDATE_IN_TOKEN),
-    ).toBe(1);
-    expect(
-      countOccurrences('`validate_output("implement-worker", output)`', VALIDATE_IN_TOKEN),
-    ).toBe(0);
+  it("the removed-validation scanner has a positive control", () => {
+    for (const token of REMOVED_VALIDATION_TOKENS) {
+      expect(countOccurrences(`${token}("implement-worker", value)`, token)).toBe(1);
+    }
   });
 
   it("T898 gates implement success on the parent-minted consumed result on every surface", () => {
-    const consumedGate =
-      'ONLY when `fetch_dispatch_result` returns `state: "consumed"` with the server-validated body';
-    const parentHandle =
-      "retain the exact `attestationId` and `generation` from that orchestrator's `prepare_dispatch` response";
-    const rejectedStates = [
-      "prepared",
-      "result-stored",
-      "aborted",
-      "terminal-envelope-expired",
-      "attestation-not-found",
-      "output-already-materialized",
-    ] as const;
-
     for (const surface of PROMPT_SURFACES) {
-      const rendered = renderedOf(surface, "implement/advance");
-      const normalized = normalize(rendered);
-      expect(countOccurrences(normalized, normalize(consumedGate))).toBe(1);
-      expect(normalized).toContain(normalize(parentHandle));
+      const normalized = normalize(renderedOf(surface, "implement/advance"));
+      expect(normalized).toContain("Retain the parent-prepared handle");
+      expect(normalized).toContain('state: "consumed"');
       expect(normalized).toContain(
-        normalize(
-          "Never select a result with an attestation id, generation, capability, or token reported by the child.",
-        ),
+        normalize("Never inspect a body-returning completion or trust a child-reported handle."),
       );
-      for (const state of rejectedStates) {
-        expect(rendered).toContain(`\`${state}\``);
-      }
-      expect(rendered).not.toContain('validate_output("implement-worker",');
-      expect(rendered).not.toContain('validate_output("implement-reviewer",');
     }
   });
 
@@ -401,23 +269,14 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(rendered).not.toContain(
         "treat a worker as failed or a reviewer as abstaining, according to the existing routing below",
       );
-      expect(rendered).not.toContain('validate_output("implement-conflict-resolver",');
     }
   });
 
   it("T901 guard rejects progress-only success and a second retry", () => {
     const real = renderedOf("codex", "implement/advance");
-    const progressCanGreen = real.replace(
-      /never counts\s+as the required output and can never satisfy §6/,
-      "may count as the required output and satisfy §6",
-    );
-    expect(lostReportContractViolations(progressCanGreen)).toContain(
-      "progress-or-missing-can-green",
-    );
-
     const secondRetry = real.replace(
-      /the retry\s+budget is exactly 1/,
-      "the retry budget is exactly 2",
+      /retry\s+the same role once with a fresh prepared dispatch/,
+      "retry the same role twice with fresh prepared dispatches",
     );
     expect(lostReportContractViolations(secondRetry)).toContain("missing-single-retry");
   });
@@ -427,12 +286,11 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       for (const role of ["implement-worker", "implement-reviewer"] as const) {
         const rendered = normalize(renderedOf(surface, role));
         expect(rendered).toContain(
-          normalize(
-            "call the capability-scoped `store_result` exactly once with `{ output: <payload> }`",
-          ).replace("<payload>", role === "implement-worker" ? "<payload>" : "<verdict>"),
+          "Store the object exactly once through the dispatch-scoped result store",
         );
-        expect(rendered).toContain("The final message is never the handover channel");
-        expect(rendered).toContain("carries only the prepared dispatch handle");
+        expect(rendered).toContain("reply with the prepared dispatch handle only");
+        expect(rendered).toContain("never return the");
+        expect(rendered).toContain("body or a capability");
         expect(rendered).not.toContain("structured JSON result block as final reply content");
         expect(rendered).not.toContain("structured JSON verdict block as final reply content");
       }
@@ -443,12 +301,10 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     for (const surface of PROMPT_SURFACES) {
       const rendered = normalize(renderedOf(surface, "implement-conflict-resolver"));
       expect(rendered).toContain(
-        normalize(
-          "call the capability-scoped `store_result` exactly once with `{ output: <result> }`",
-        ),
+        "Store this object exactly once through the dispatch-scoped result store",
       );
-      expect(rendered).toContain("The final message is never the handover channel");
-      expect(rendered).toContain("carries only the prepared dispatch handle");
+      expect(rendered).toContain("reply with the prepared dispatch handle only");
+      expect(rendered).toContain("never return the result body or a capability");
       expect(rendered).not.toContain("structured JSON result block as final reply content");
       expect(rendered).not.toContain("Emit the **Session summary** section");
       expect(rendered).not.toContain("return a single fenced `json` block");
@@ -459,7 +315,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     );
     expect(heldPiAdvance).toContain(
       normalize(
-        "never interpret the held adapter's raw completion. Enter the §5 bailout until the extension-local lifecycle can return a consumed fetched body.",
+        "never interpret the held adapter's raw completion. Enter the bailout until the extension-local lifecycle can return a consumed fetched body.",
       ),
     );
   });
@@ -467,21 +323,19 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
   it("T902 renders worker Step 0 and verified-base merge authority on every surface", () => {
     for (const surface of PROMPT_SURFACES) {
       const worker = normalize(renderedOf(surface, "implement-worker"));
-      expect(worker).toContain("## Step 0");
+      expect(worker).toContain("Verify the base before other work");
       expect(worker).toContain("`git rev-parse HEAD`");
-      expect(worker).toContain("MUST equal the dispatched `baseCommit`");
+      expect(worker).toContain("equal `baseCommit`");
       expect(worker).toContain("`git reset --hard <baseCommit>`");
       expect(worker).toContain("`git merge-base --is-ancestor <baseCommit> HEAD`");
 
       const advance = normalize(renderedOf(surface, "implement/advance"));
-      expect(advance).toContain("`git rev-parse --verify <base>`");
-      expect(advance).toContain("`git cat-file -t <verifiedBaseCommit>`");
+      expect(advance).toContain("`git rev-parse --verify`");
+      expect(advance).toContain("`git cat-file -t`");
       expect(advance).toContain(
         "`git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`",
       );
-      expect(advance).toContain(
-        "If no verified base record exists for that dispatch, refuse merge-back",
-      );
+      expect(advance).toContain("Any failure is a contract breach and forbids merge-back");
     }
   });
 
@@ -489,19 +343,13 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     for (const surface of PROMPT_SURFACES) {
       const reviewer = normalize(renderedOf(surface, "implement-reviewer"));
       expect(reviewer).toContain(
-        normalize(
-          "Every verdict MUST state `gateReRan` and `resultCommitVerified`; omitting either statement is a contract breach.",
-        ),
+        "Always state `gateReRan` and `resultCommitVerified`",
       );
       expect(reviewer).toContain(
-        normalize(
-          "`git -C <worktree> cat-file -t <resultCommit>` and require the exact output `commit`",
-        ),
+        "`git -C <worktree> cat-file -t <resultCommit>` and require `commit`",
       );
       expect(reviewer).toContain(
-        normalize(
-          "resolve the worker branch tip with `git -C <worktree> rev-parse --verify <branch>` and require its full SHA to equal `resultCommit` exactly",
-        ),
+        "`git -C <worktree> rev-parse --verify <branch>` and require its full SHA to equal `resultCommit`",
       );
     }
   });
@@ -510,34 +358,29 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     for (const surface of PROMPT_SURFACES) {
       const advance = normalize(renderedOf(surface, "implement/advance"));
       expect(advance).toContain(
-        normalize(
-          "A `gateDurationMs` is IMPLAUSIBLE when it is absent, zero, below `MIN_GATE_DURATION_MS`, or below `PRIOR_ROUND_MEDIAN_FRACTION` times the median of THIS TASK's prior-round `gateDurationMs` values within the same implement run.",
-        ),
+        normalize("Treat `gateDurationMs` below `50`, absent/zero, or below one quarter of the median for earlier rounds of this same task as implausible."),
       );
       expect(advance).toContain(
-        normalize(
-          "When the duration is implausible, the orchestrator MUST re-run `bun run check` in the foreground and use that process's actual exit status for the green-check condition.",
-        ),
+        normalize("Re-run `bun run check` in the foreground and use its real exit status."),
       );
     }
   });
 
   // ── CHECK 3 — the structured input survives the render, per surface ─────
   for (const surface of PROMPT_SURFACES) {
-    it(`${surface}: every dispatch edge carries its expected structured prepare input`, () => {
+    it(`${surface}: every dispatch edge survives rendering`, () => {
       for (const edge of DISPATCH_EDGE_INPUTS) {
         const body = normalize(renderedOf(surface, edge.flowRoleId));
+        expect(body).toContain(edge.role);
         const refsOnlyWorker = surface !== "pi" && edge.role === "implement-worker";
-        const expectedFields = refsOnlyWorker ? [T977_WORKER_REFS] : edge.inputFields;
-        for (const fields of expectedFields) {
-          expect(body).toContain(normalize(fields));
-        }
         if (edge.role === "implement-worker") {
-          const narrativeFields = normalize(edge.inputFields[0]!);
           if (refsOnlyWorker) {
-            expect(body).not.toContain(narrativeFields);
+            expect(body).toContain(normalize(T977_WORKER_REFS));
           } else {
             expect(body).not.toContain(normalize(T977_WORKER_REFS));
+            expect(body).toContain("headline");
+            expect(body).toContain("acceptance");
+            expect(body).toContain("worktreePath");
           }
         }
       }

@@ -171,7 +171,7 @@ describe("packaged Pi prompt root", () => {
     expect(roles.get("begin")).not.toContain("You are the **top-level flow sequencer**.");
 
     const rendered = [...roles.values()].join("\n");
-    expect(rendered).toContain("$CLAUDE_CODE_SESSION_ID");
+    expect(rendered).not.toContain("$CLAUDE_CODE_SESSION_ID");
     expect(rendered).not.toContain("{{cq:fragment:");
     expect(rendered).not.toContain("CQ_HARNESS");
     expect(rendered).not.toContain("$cq-");

@@ -5,11 +5,11 @@ import YAML from "yaml";
 
 const CQ_COMMANDS_ROOT = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
 const FRONTMATTER = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
-const BEGIN_ARGUMENT_HINT = "<mixed request: features, bug reports, research questions>";
+const BEGIN_ARGUMENT_HINT = "<mixed request>";
 const BEGIN_DESCRIPTION =
-  "Universal intake splitter — segment a mixed request into plan-flow, investigate-flow, and research-flow intakes, then chain ONE CQ::advance sequencer pass over the whole batch.";
+  "Split a mixed request into plan, investigate, and research intakes, then run one sequencer pass.";
 const IMPLEMENT_START_DESCRIPTION =
-  "Start an implement-flow run — resolve the target milestones (default: all open ones), validate their task DAG, then hand off to the CQ::implement/advance loop.";
+  "Resolve implementation scope, validate the initial task DAG, and run the implementation advance loop.";
 
 interface DiscoveredCommand {
   readonly id: string;

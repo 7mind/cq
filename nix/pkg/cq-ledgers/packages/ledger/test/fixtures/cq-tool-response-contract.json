@@ -4,641 +4,87 @@
     {
       "source": "agents/implement-worker.md",
       "family": "implement",
-      "calls": [
-        "Boundaries (hard rules)::create_item#1|ack",
-        "Boundaries (hard rules)::update_item#1|ack"
-      ]
+      "calls": []
     },
     {
       "source": "agents/plan-advance.md",
       "family": "plan",
-      "calls": [
-        "No ledger writes (hard rule, both modes)::create_item#1|ack",
-        "No ledger writes (hard rule, both modes)::update_item#1|ack",
-        "No ledger writes (hard rule, both modes)::create_milestone#1|ack",
-        "No ledger writes (hard rule, both modes)::create_ledger#1|ack",
-        "No ledger writes (hard rule, both modes)::reopen_item#1|ack",
-        "No ledger writes (hard rule, both modes)::unarchive_item#1|ack",
-        "Read the state first::fetch_item#1|full",
-        "Read the state first::list_milestone_items#1|full",
-        "Read the state first::fts_search#1|compact",
-        "Read the state first::list_milestone_items#2|full",
-        "Decide the single action (match the FIRST applicable rule)::list_milestone_items#1|full",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json)::fetch_item#1|full",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json)::create_item#1|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json)::update_item#1|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json)::create_milestone#1|ack",
-        "CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json) / Candidate JSON contract (verbatim — the DAG schema configured planners retain)::create_milestone#1|ack"
-      ]
+      "calls": []
     },
     {
       "source": "agents/plan-reviewer.md",
       "family": "plan",
-      "calls": [
-        "Read everything::fetch_item#1|full",
-        "Read everything::list_milestone_items#1|full",
-        "Read everything::fts_search#1|full",
-        "Read everything::list_milestone_items#2|full",
-        "Read everything::list_milestone_items#3|full",
-        "Read everything::list_milestone_items#4|full",
-        "Provenance::create_item#1|ack",
-        "Provenance::create_item#2|ack",
-        "Deliver the verdict (MODE-GATED write, invariant structured return) / A. UNCONFIGURED single-reviewer fallback → WRITE once AND return the object::get_config#1|full-content",
-        "Deliver the verdict (MODE-GATED write, invariant structured return) / A. UNCONFIGURED single-reviewer fallback → WRITE once AND return the object::create_item#1|ack",
-        "Deliver the verdict (MODE-GATED write, invariant structured return) / A. UNCONFIGURED single-reviewer fallback → WRITE once AND return the object::create_item#2|ack",
-        "Deliver the verdict (MODE-GATED write, invariant structured return) / B. CONFIGURED multi-reviewer mode → RETURN the verdict json, WRITE NOTHING::get_config#1|full-content"
-      ]
+      "calls": []
     },
     {
       "source": "commands/cq/advance.md",
       "family": "advance",
-      "calls": [
-        "Catalogue::create_milestone#1|ack",
-        "Catalogue::create_item#1|ack",
-        "Catalogue::create_item#2|ack",
-        "Catalogue::create_milestone#2|ack",
-        "Catalogue::create_item#3|ack",
-        "Catalogue::fetch_ledger#1|compact",
-        "Catalogue::search_items#1|compact",
-        "Catalogue::fts_search#1|compact",
-        "Catalogue::fetch_item#1|compact",
-        "Provenance::create_milestone#1|ack",
-        "Provenance::create_item#1|ack",
-        "Provenance / The end-of-run write — the run-level handoff (Q83/Q84/Q85)::create_item#1|ack",
-        "Provenance / The end-of-run write — the run-level handoff (Q83/Q84/Q85)::create_item#2|ack",
-        "Provenance / The end-of-run write — the run-level handoff (Q83/Q84/Q85)::create_item#3|ack",
-        "Provenance / The end-of-run write — the run-level handoff (Q83/Q84/Q85)::create_item#4|ack",
-        "Provenance / The end-of-run write — the run-level handoff (Q83/Q84/Q85)::create_item#5|ack",
-        "Session logs::read_log#1|full-content",
-        "Bootstrap recipe (T156 / Q79 — derive_predicates-first start)::fetch_ledger#1|compact",
-        "Bootstrap recipe (T156 / Q79 — derive_predicates-first start)::fetch_ledger#2|compact",
-        "Bootstrap recipe (T156 / Q79 — derive_predicates-first start)::fetch_ledger#3|compact",
-        "Bootstrap recipe (T156 / Q79 — derive_predicates-first start)::fetch_ledger#4|compact",
-        "Bootstrap recipe (T156 / Q79 — derive_predicates-first start)::fetch_ledger#5|compact",
-        "Bootstrap recipe (T156 / Q79 — derive_predicates-first start)::fetch_item#1|compact",
-        "The cycle (Q56 — loop to quiescence, NO max-iteration cap) / Cycle order: investigate → seed → plan → research → implement, then RE-CHECK investigate::search_items#1|compact",
-        "The cycle (Q56 — loop to quiescence, NO max-iteration cap) / Cycle order: investigate → seed → plan → research → implement, then RE-CHECK investigate::fts_search#1|compact",
-        "The cycle (Q56 — loop to quiescence, NO max-iteration cap) / Cycle order: investigate → seed → plan → research → implement, then RE-CHECK investigate::create_milestone#1|ack",
-        "Milestone auto-close + archive sweep (end-of-run — placeholder, T128)::update_milestone#1|ack",
-        "End-of-run report (Q59 — DRAINED / BLOCKED-ON-QUESTIONS / BLOCKED-ON-USER-ACTION / MIXED)::create_item#1|ack",
-        "The cycle (Q56 — loop to quiescence, NO max-iteration cap) / Cycle order: investigate → seed → plan → research → implement, then RE-CHECK investigate::create_item#1|ack",
-        "The cycle (Q56 — loop to quiescence, NO max-iteration cap) / Cycle order: investigate → seed → plan → research → implement, then RE-CHECK investigate::update_item#1|ack"
-      ]
+      "calls": []
     },
     {
       "source": "commands/cq/begin.md",
       "family": "begin",
-      "calls": [
-        "Provenance (every ledger write)::create_item#1|ack",
-        "Provenance (every ledger write)::create_milestone#1|ack",
-        "Provenance (every ledger write)::update_item#1|ack",
-        "Steps / 3. DEDUP + ambiguity triage (Q300)::fts_search#1|compact",
-        "Steps / 3. DEDUP + ambiguity triage (Q300)::create_milestone#1|ack",
-        "Steps / 5. Chain ONE CQ::advance sequencer pass over the batch::read_log#1|full-content",
-        "Steps / 3. DEDUP + ambiguity triage (Q300)::create_item#1|ack"
-      ]
+      "calls": []
     },
     {
       "source": "commands/cq/implement/start.md",
       "family": "implement",
-      "calls": [
-        "Provenance (every ledger write)::create_item#1|ack",
-        "Provenance (every ledger write)::update_item#1|ack",
-        "Steps::fetch_milestone#1|compact",
-        "Steps::list_milestone_items#1|compact"
-      ]
+      "calls": []
     },
     {
       "source": "commands/cq/implement/advance.md",
       "family": "implement",
       "calls": [
-        "Conventions this command obeys (decision K4)::get_config#1|full-content",
-        "Conventions this command obeys (decision K4)::get_config#2|full-content",
-        "Conventions this command obeys (decision K4)::get_config#3|full-content",
-        "Conventions this command obeys (decision K4)::get_config#4|full-content",
-        "Conventions this command obeys (decision K4)::get_config#5|full-content",
-        "Provenance (every ledger write)::create_item#1|ack",
-        "Provenance (every ledger write)::update_item#1|ack",
-        "Session logs (after EVERY subagent returns)::read_log#1|full-content",
-        "The pass (repeat until no task is ready) / 1. Derive the READY-SET (purely from the ledger)::list_milestone_items#1|full",
-        "The pass (repeat until no task is ready) / 1. Derive the READY-SET (purely from the ledger)::update_item#1|ack",
-        "The pass (repeat until no task is ready) / 2. Dispatch workers (up to N concurrently)::update_item#1|ack",
-        "The pass (repeat until no task is ready) / 2. Dispatch workers (up to N concurrently)::get_config#1|full-content",
-        "The pass (repeat until no task is ready) / 2. Dispatch workers (up to N concurrently)::update_item#2|ack",
-        "The pass (repeat until no task is ready) / 3. Review each finished worker (multi-reviewer panel, reconciled)::get_config#1|full-content",
-        "The pass (repeat until no task is ready) / 3. Review each finished worker (multi-reviewer panel, reconciled)::get_config#2|full-content",
-        "The pass (repeat until no task is ready) / 7. Merge-back (sequential, DAG order, rebase-before-merge)::get_config#1|full-content",
-        "The pass (repeat until no task is ready) / 7. Merge-back (sequential, DAG order, rebase-before-merge)::update_item#1|ack",
-        "Record the terminal review (one per task)::create_item#1|ack",
-        "Milestone completion / Milestone auto-close+archive sweep (factored predicate)::update_milestone#1|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#1|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#2|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack",
-        "The pass (repeat until no task is ready) / 3. Review each finished worker (multi-reviewer panel, reconciled)::create_item#1|ack",
-        "The pass (repeat until no task is ready) / 5. Register questions (reviewer questions OR ill-loop bailout)::create_item#1|ack",
-        "The pass (repeat until no task is ready) / 5. Register questions (reviewer questions OR ill-loop bailout)::update_item#1|ack",
-        "The pass (repeat until no task is ready) / 7. Merge-back (sequential, DAG order, rebase-before-merge)::update_item#2|ack",
-        "The pass (repeat until no task is ready) / 7. Merge-back (sequential, DAG order, rebase-before-merge)::update_item#3|ack",
-        "Record the terminal review (one per task)::create_item#2|ack"
+        "Shared rules::get_config#1|full-content",
+        "Shared rules::get_config#2|full-content",
+        "7. Milestones and goals::update_milestone#1|ack"
       ]
     },
     {
       "source": "commands/cq/investigate.md",
       "family": "investigate",
-      "calls": [
-        "Provenance (every ledger write)::create_item#1|ack",
-        "Provenance (every ledger write)::update_item#1|ack",
-        "Steps / 2a. Intake path — create a new defect / 2a-1. Duplicate check::fts_search#1|compact",
-        "Steps / 2a. Intake path — create a new defect / 2a-4. Create the coordination milestone::create_milestone#1|ack",
-        "Steps / 2a. Intake path — create a new defect / 2a-5. Create the defect item::create_item#1|ack",
-        "Steps / 2b. Resume path — validate an existing defect::fetch_item#1|full"
-      ]
+      "calls": []
     },
     {
       "source": "commands/cq/investigate/advance.md",
       "family": "investigate",
       "calls": [
-        "Catalogue::create_item#1|ack",
-        "Catalogue::update_item#1|ack",
-        "Catalogue::create_item#2|ack",
-        "Conventions this command obeys (decision K8)::get_config#1|full-content",
-        "Conventions this command obeys (decision K8)::get_config#2|full-content",
-        "Conventions this command obeys (decision K8)::get_config#3|full-content",
-        "Conventions this command obeys (decision K8)::update_item#1|ack",
-        "Provenance (every ledger write)::create_item#1|ack",
-        "Provenance (every ledger write)::update_item#1|ack",
-        "Session logs (after EVERY subagent returns)::read_log#1|full-content",
-        "Session logs (after EVERY subagent returns)::update_item#1|ack",
-        "The research round (the six steps) / 1. READ state (purely from the ledger)::fetch_item#1|full",
-        "The research round (the six steps) / 1. READ state (purely from the ledger)::search_items#1|full",
-        "The research round (the six steps) / 1. READ state (purely from the ledger)::fts_search#1|full",
-        "The research round (the six steps) / 1. READ state (purely from the ledger)::update_item#1|ack",
-        "The research round (the six steps) / 3. DISPATCH read-only explorers::get_config#1|full-content",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::get_config#1|full-content",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#1|ack",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#2|ack",
-        "The research round (the six steps) / 5. CONFIRMED root cause → FILE-AND-DEFER handoff (NOT an inline plan loop)::update_item#1|ack",
-        "The research round (the six steps) / 5. CONFIRMED root cause → FILE-AND-DEFER handoff (NOT an inline plan loop)::create_milestone#1|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#1|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#2|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack",
-        "The research round (the six steps) / 1. READ state (purely from the ledger)::fetch_item#2|full",
-        "The research round (the six steps) / 2. FORM hypotheses (extend the tree)::create_item#1|ack",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#3|ack",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#4|ack",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#5|ack",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#6|ack",
-        "The research round (the six steps) / 5. CONFIRMED root cause → FILE-AND-DEFER handoff (NOT an inline plan loop)::update_item#2|ack",
-        "The research round (the six steps) / 5. CONFIRMED root cause → FILE-AND-DEFER handoff (NOT an inline plan loop)::create_item#1|ack",
-        "The research round (the six steps) / 5. CONFIRMED root cause → FILE-AND-DEFER handoff (NOT an inline plan loop)::create_item#2|ack",
-        "The research round (the six steps) / 6. NEEDS user input → file an open question and STOP (resumable)::create_item#1|ack",
-        "Research escalation — EMPIRICAL unknown → file a `researches` item and PARK the branch (Q301)::create_item#1|ack",
-        "Research escalation — EMPIRICAL unknown → file a `researches` item and PARK the branch (Q301)::update_item#1|ack"
+        "State and invariants::get_config#1|full-content"
       ]
     },
     {
       "source": "commands/cq/plan.md",
       "family": "plan",
-      "calls": [
-        "Catalogue::create_milestone#1|ack",
-        "Catalogue::create_item#1|ack",
-        "Provenance (every ledger write)::create_item#1|ack",
-        "Provenance (every ledger write)::create_milestone#1|ack",
-        "Consume-an-idea sub-procedure::fetch_item#1|full",
-        "Consume-an-idea sub-procedure::update_item#1|ack",
-        "Consume-an-idea sub-procedure::update_item#2|ack",
-        "Consume-an-idea sub-procedure::update_item#3|ack",
-        "Before you start::fts_search#1|compact",
-        "Steps::create_milestone#1|ack",
-        "Steps::create_item#1|ack",
-        "Steps::list_milestone_items#1|compact"
-      ]
+      "calls": []
     },
     {
       "source": "commands/cq/plan/advance.md",
       "family": "plan",
       "calls": [
-        "Catalogue::get_config#1|full-content",
-        "Catalogue::get_config#2|full-content",
-        "Select the target goal(s)::fetch_ledger#1|compact",
-        "Select the target goal(s)::create_item#1|ack",
-        "Select the target goal(s)::create_milestone#1|ack",
-        "The per-goal round (for one goal G)::fetch_item#1|full",
-        "The per-goal round (for one goal G)::get_config#1|full-content",
-        "The per-goal round (for one goal G)::get_config#2|full-content",
-        "The per-goal round (for one goal G)::get_config#3|full-content",
-        "The per-goal round (for one goal G)::get_config#4|full-content",
-        "The per-goal round (for one goal G)::get_config#5|full-content",
-        "The per-goal round (for one goal G)::get_config#6|full-content",
-        "The per-goal round (for one goal G)::get_config#7|full-content",
-        "The per-goal round (for one goal G)::get_config#8|full-content",
-        "The per-goal round (for one goal G)::list_milestone_items#1|compact",
-        "The per-goal round (for one goal G)::update_item#1|ack",
-        "The per-goal round (for one goal G)::update_item#2|ack",
-        "The per-goal round (for one goal G)::list_milestone_items#2|compact",
-        "The per-goal round (for one goal G)::list_milestone_items#3|full",
-        "The per-goal round (for one goal G)::update_item#3|ack",
-        "The per-goal round (for one goal G)::create_item#1|ack",
-        "Auto-investigate filed defects (after the per-goal round) / Worklist = LEDGER QUERY (authoritative — NOT prose-parse)::fts_search#1|compact",
-        "Auto-investigate filed defects (after the per-goal round) / Worklist = LEDGER QUERY (authoritative — NOT prose-parse)::search_items#1|compact",
-        "Auto-investigate filed defects (after the per-goal round) / Worklist = LEDGER QUERY (authoritative — NOT prose-parse)::fetch_item#1|full",
-        "Session logs (after EVERY subagent returns)::read_log#1|full-content",
-        "Session logs (after EVERY subagent returns)::update_item#1|ack",
-        "Session logs (after EVERY subagent returns)::update_item#2|ack",
-        "Report to the user::fetch_item#1|full",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#1|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#2|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack"
+        "Per-goal loop / 2. Resolve planners and dispatch::get_config#1|full-content",
+        "Per-goal loop / 3. Review a published draft::get_config#1|full-content"
       ]
     },
     {
       "source": "commands/cq/plan/follow-up.md",
       "family": "plan",
-      "calls": [
-        "Argument grammar — `<goalId>` then idea-ids OR free text (no interleave) / Consume-an-idea-into-this-goal (idea-ids mode)::fetch_item#1|full",
-        "Argument grammar — `<goalId>` then idea-ids OR free text (no interleave) / Consume-an-idea-into-this-goal (idea-ids mode)::update_item#1|ack",
-        "Provenance (every ledger write)::update_item#1|ack",
-        "Steps::fetch_item#1|full",
-        "Steps::update_item#1|ack",
-        "Steps::update_item#2|ack",
-        "Steps::update_item#3|ack",
-        "Steps::update_item#4|ack",
-        "Steps::update_item#5|ack",
-        "Steps::update_item#6|ack",
-        "Steps::list_milestone_items#1|compact"
-      ]
+      "calls": []
     },
     {
       "source": "commands/cq/research.md",
       "family": "research",
-      "calls": [
-        "Provenance (every ledger write)::create_item#1|ack",
-        "Provenance (every ledger write)::update_item#1|ack",
-        "Steps / 2a. Intake path — create a new research item / 2a-1. Duplicate check::fts_search#1|compact",
-        "Steps / 2a. Intake path — create a new research item / 2a-5. Create the coordination milestone::create_milestone#1|ack",
-        "Steps / 2a. Intake path — create a new research item / 2a-6. Create the research item::create_item#1|ack",
-        "Steps / 2b. Resume path — validate an existing research item::fetch_item#1|full"
-      ]
+      "calls": []
     },
     {
       "source": "commands/cq/research/advance.md",
       "family": "research",
       "calls": [
-        "Catalogue::create_item#1|ack",
-        "Catalogue::update_item#1|ack",
-        "Conventions this command obeys (decision Q264)::get_config#1|full-content",
-        "Conventions this command obeys (decision Q264)::get_config#2|full-content",
-        "Conventions this command obeys (decision Q264)::get_config#3|full-content",
-        "Conventions this command obeys (decision Q264)::update_item#1|ack",
-        "Provenance (every ledger write)::create_item#1|ack",
-        "Provenance (every ledger write)::update_item#1|ack",
-        "Session logs (after EVERY subagent returns)::update_item#1|ack",
-        "The research round (the six steps) / 1. READ state (purely from the ledger)::fetch_item#1|full",
-        "The research round (the six steps) / 1. READ state (purely from the ledger)::search_items#1|full",
-        "The research round (the six steps) / 1. READ state (purely from the ledger)::fts_search#1|full",
-        "The research round (the six steps) / 1. READ state (purely from the ledger)::update_item#1|ack",
-        "The research round (the six steps) / 3. DISPATCH read-only explorers::get_config#1|full-content",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::get_config#1|full-content",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#1|ack",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#2|ack",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#3|ack",
-        "The research round (the six steps) / 5. CONFIRMED answer → CONCLUDE (in-ledger; NO working-tree write — Q269)::update_item#1|ack",
-        "The research round (the six steps) / 5. CONFIRMED answer → CONCLUDE (in-ledger; NO working-tree write — Q269)::update_item#2|ack",
-        "The research round (the six steps) / 5. CONFIRMED answer → CONCLUDE (in-ledger; NO working-tree write — Q269)::update_item#3|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#1|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#2|ack",
-        "Handoff record (STANDALONE only — suppressed when chained)::create_item#3|ack",
-        "The research round (the six steps) / 2. FORM hypotheses (extend the tree)::create_item#1|ack",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#4|ack",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#5|ack",
-        "The research round (the six steps) / 4. VALIDATE citations + adjudicate (orchestrator-side)::update_item#6|ack",
-        "The research round (the six steps) / 5. CONFIRMED answer → CONCLUDE (in-ledger; NO working-tree write — Q269)::update_item#4|ack",
-        "The research round (the six steps) / 6. NEEDS user input → file an open question and STOP (resumable)::create_item#1|ack"
+        "Invariants::get_config#1|full-content"
       ]
     }
   ],
   "allowlist": {
-    "fullReads": [
-      {
-        "callSite": "agents/plan-advance.md::Read the state first::fetch_item#1",
-        "fields": [
-          "headline",
-          "description",
-          "grounding",
-          "status",
-          "milestones"
-        ]
-      },
-      {
-        "callSite": "agents/plan-advance.md::Read the state first::list_milestone_items#1",
-        "fields": [
-          "headline",
-          "description",
-          "acceptance",
-          "answer",
-          "criticism",
-          "dependsOn",
-          "blockedBy",
-          "status"
-        ]
-      },
-      {
-        "callSite": "agents/plan-advance.md::Read the state first::list_milestone_items#2",
-        "fields": [
-          "headline",
-          "description",
-          "acceptance",
-          "answer",
-          "criticism",
-          "dependsOn",
-          "blockedBy",
-          "status"
-        ]
-      },
-      {
-        "callSite": "agents/plan-advance.md::Decide the single action (match the FIRST applicable rule)::list_milestone_items#1",
-        "fields": [
-          "headline",
-          "description",
-          "acceptance",
-          "status",
-          "dependsOn",
-          "blockedBy",
-          "suggestedModel",
-          "sourceRefs",
-          "tags"
-        ]
-      },
-      {
-        "callSite": "agents/plan-advance.md::CANDIDATE mode (writes NOTHING — returns a candidate task-DAG json)::fetch_item#1",
-        "fields": [
-          "headline",
-          "description",
-          "grounding",
-          "status",
-          "milestones"
-        ]
-      },
-      {
-        "callSite": "agents/plan-reviewer.md::Read everything::fetch_item#1",
-        "fields": [
-          "headline",
-          "description",
-          "grounding",
-          "status",
-          "milestones"
-        ]
-      },
-      {
-        "callSite": "agents/plan-reviewer.md::Read everything::list_milestone_items#1",
-        "fields": [
-          "headline",
-          "description",
-          "acceptance",
-          "answer",
-          "criticism",
-          "dependsOn",
-          "blockedBy",
-          "status"
-        ]
-      },
-      {
-        "callSite": "agents/plan-reviewer.md::Read everything::fts_search#1",
-        "fields": [
-          "headline",
-          "description",
-          "acceptance",
-          "status"
-        ]
-      },
-      {
-        "callSite": "agents/plan-reviewer.md::Read everything::list_milestone_items#2",
-        "fields": [
-          "headline",
-          "description",
-          "acceptance",
-          "answer",
-          "criticism",
-          "dependsOn",
-          "blockedBy",
-          "status"
-        ]
-      },
-      {
-        "callSite": "agents/plan-reviewer.md::Read everything::list_milestone_items#3",
-        "fields": [
-          "headline",
-          "description",
-          "acceptance",
-          "answer",
-          "criticism",
-          "dependsOn",
-          "blockedBy",
-          "status"
-        ]
-      },
-      {
-        "callSite": "agents/plan-reviewer.md::Read everything::list_milestone_items#4",
-        "fields": [
-          "headline",
-          "description",
-          "acceptance",
-          "answer",
-          "criticism",
-          "dependsOn",
-          "blockedBy",
-          "status"
-        ]
-      },
-      {
-        "callSite": "commands/cq/implement/advance.md::The pass (repeat until no task is ready) / 1. Derive the READY-SET (purely from the ledger)::list_milestone_items#1",
-        "fields": [
-          "headline",
-          "description",
-          "acceptance",
-          "suggestedModel",
-          "dependsOn",
-          "blockedBy",
-          "status"
-        ]
-      },
-      {
-        "callSite": "commands/cq/investigate.md::Steps / 2b. Resume path — validate an existing defect::fetch_item#1",
-        "fields": [
-          "headline",
-          "description",
-          "reproduction",
-          "expected",
-          "actual",
-          "status",
-          "severity"
-        ]
-      },
-      {
-        "callSite": "commands/cq/investigate/advance.md::The research round (the six steps) / 1. READ state (purely from the ledger)::fetch_item#1",
-        "fields": [
-          "headline",
-          "description",
-          "reproduction",
-          "expected",
-          "actual",
-          "status",
-          "severity"
-        ]
-      },
-      {
-        "callSite": "commands/cq/investigate/advance.md::The research round (the six steps) / 1. READ state (purely from the ledger)::fetch_item#2",
-        "fields": [
-          "headline",
-          "question",
-          "scope",
-          "findings",
-          "conclusion",
-          "recommendation",
-          "status"
-        ]
-      },
-      {
-        "callSite": "commands/cq/investigate/advance.md::The research round (the six steps) / 1. READ state (purely from the ledger)::search_items#1",
-        "fields": [
-          "statement",
-          "evidence",
-          "citations",
-          "status",
-          "ledgerRefs"
-        ]
-      },
-      {
-        "callSite": "commands/cq/investigate/advance.md::The research round (the six steps) / 1. READ state (purely from the ledger)::fts_search#1",
-        "fields": [
-          "statement",
-          "evidence",
-          "citations",
-          "status",
-          "ledgerRefs"
-        ]
-      },
-      {
-        "callSite": "commands/cq/plan.md::Consume-an-idea sub-procedure::fetch_item#1",
-        "fields": [
-          "headline",
-          "description",
-          "grounding",
-          "status",
-          "milestones"
-        ]
-      },
-      {
-        "callSite": "commands/cq/plan/advance.md::The per-goal round (for one goal G)::fetch_item#1",
-        "fields": [
-          "status",
-          "waitingResearches",
-          "ledgerRefs"
-        ]
-      },
-      {
-        "callSite": "commands/cq/plan/advance.md::The per-goal round (for one goal G)::list_milestone_items#3",
-        "fields": [
-          "summary",
-          "new_questions",
-          "criticism",
-          "defects",
-          "ledgerRefs",
-          "status"
-        ]
-      },
-      {
-        "callSite": "commands/cq/plan/advance.md::Auto-investigate filed defects (after the per-goal round) / Worklist = LEDGER QUERY (authoritative — NOT prose-parse)::fetch_item#1",
-        "fields": [
-          "headline",
-          "description",
-          "grounding",
-          "status",
-          "milestones"
-        ]
-      },
-      {
-        "callSite": "commands/cq/plan/advance.md::Report to the user::fetch_item#1",
-        "fields": [
-          "headline",
-          "description",
-          "grounding",
-          "status",
-          "milestones"
-        ]
-      },
-      {
-        "callSite": "commands/cq/plan/follow-up.md::Argument grammar — `<goalId>` then idea-ids OR free text (no interleave) / Consume-an-idea-into-this-goal (idea-ids mode)::fetch_item#1",
-        "fields": [
-          "headline",
-          "description",
-          "grounding",
-          "status",
-          "milestones"
-        ]
-      },
-      {
-        "callSite": "commands/cq/plan/follow-up.md::Steps::fetch_item#1",
-        "fields": [
-          "headline",
-          "description",
-          "grounding",
-          "status",
-          "milestones"
-        ]
-      },
-      {
-        "callSite": "commands/cq/research.md::Steps / 2b. Resume path — validate an existing research item::fetch_item#1",
-        "fields": [
-          "headline",
-          "question",
-          "scope",
-          "findings",
-          "conclusion",
-          "recommendation",
-          "status"
-        ]
-      },
-      {
-        "callSite": "commands/cq/research/advance.md::The research round (the six steps) / 1. READ state (purely from the ledger)::fetch_item#1",
-        "fields": [
-          "headline",
-          "question",
-          "scope",
-          "findings",
-          "conclusion",
-          "recommendation",
-          "status"
-        ]
-      },
-      {
-        "callSite": "commands/cq/research/advance.md::The research round (the six steps) / 1. READ state (purely from the ledger)::search_items#1",
-        "fields": [
-          "statement",
-          "evidence",
-          "citations",
-          "status",
-          "ledgerRefs",
-          "probeRequest"
-        ]
-      },
-      {
-        "callSite": "commands/cq/research/advance.md::The research round (the six steps) / 1. READ state (purely from the ledger)::fts_search#1",
-        "fields": [
-          "statement",
-          "evidence",
-          "citations",
-          "status",
-          "ledgerRefs",
-          "probeRequest"
-        ]
-      }
-    ],
-    "unboundedFetchLedger": [
-      {
-        "callSite": "commands/cq/plan/advance.md::Select the target goal(s)::fetch_ledger#1",
-        "reason": "The current canonical call needs the complete active goals worklist for one coordinator decision; bounded pagination cannot preserve that single-read snapshot."
-      }
-    ]
+    "fullReads": [],
+    "unboundedFetchLedger": []
   }
 }

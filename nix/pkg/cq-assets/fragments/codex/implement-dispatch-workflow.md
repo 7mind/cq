@@ -1,4 +1,4 @@
-> **Catalog-driven dispatch (G41 — implement-worker).** In Codex, for each
+> **Implement-worker dispatch.** In Codex, for each
 > `implement-worker`,
 > compose refs only:
 > `{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }`,
@@ -11,10 +11,10 @@
 > handle-only final response after its capability-scoped `store_result`, confirm
 > the observed native completion, and call `fetch_dispatch_result` exactly once
 > with the exact handle retained from `prepare_dispatch`. Apply the blocking
-> consumed-only rule in §2 before interpreting the worker result; never key the
+> consumed-only rule before interpreting the worker result; never key the
 > fetch on any child-reported identifier.
 >
-> **Catalog-driven dispatch (G41 — implement-reviewer).** For each native
+> **Implement-reviewer dispatch.** For each native
 > `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`,
 > dispatch through `CQ_SUBAGENT`, require its capability-scoped `store_result`
 > plus handle-only final response, confirm native completion, and fetch once
@@ -22,9 +22,9 @@
 > verdict; every other outcome abstains. The `pi:*` panel members remain
 > external shellouts driving the shared `CQ::implement-review` rubric.
 >
-> **Catalog-driven dispatch (G41 — implement-conflict-resolver).** For
+> **Conflict-resolver dispatch.** For
 > `implement-conflict-resolver`, compose `{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, baseSideNote? }`, dispatch
-> with the §K4 FRONTIER model and `isolation: "worktree"`, require the same
+> with the frontier model and `isolation: "worktree"`, require the same
 > store/handle-only/confirm/fetch sequence, and accept only the consumed fetched
-> body. Every other lifecycle outcome enters the §5 bailout; never fall back to
+> body. Every other lifecycle outcome enters the command's bailout; never fall back to
 > a body-returning completion.

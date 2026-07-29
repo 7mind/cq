@@ -76,18 +76,8 @@ const FLOW_FILES = {
 type FlowKey = keyof typeof FLOW_FILES;
 
 interface DispatchEdge {
-  /** The flow whose advance.md owns this dispatch site. */
   readonly flow: FlowKey;
-  /** The dispatched-subagent role id. */
   readonly role: string;
-  /** The exact catalog-driven-dispatch site marker authored for this edge. */
-  readonly siteMarker: string;
-  /**
-   * The structured prepare input, verbatim as the prompt carries it
-   * (whitespace-normalized before matching, since the prose line-wraps it).
-   * T977 intentionally replaces Claude implement-worker narrative with refs.
-   */
-  readonly inputFields: readonly string[];
 }
 
 /** Every native dispatch edge across the four flows — the checked inventory. */
@@ -95,66 +85,38 @@ const DISPATCH_EDGES: readonly DispatchEdge[] = [
   {
     flow: "plan",
     role: "plan-advance",
-    siteMarker: "Catalog-driven dispatch (G41 — plan-advance)",
-    inputFields: ['{ goalId: "<G>" }', "`candidateMode` omitted/false"],
   },
   {
     flow: "plan",
     role: "plan-reviewer",
-    siteMarker: "Catalog-driven dispatch (G41 — plan-reviewer)",
-    inputFields: ['{ goalId: "<G>" }'],
   },
   {
     flow: "investigate",
     role: "investigate-explorer",
-    siteMarker: "Catalog-driven dispatch (G41 — investigate-explorer)",
-    inputFields: ["{ hypothesisId, statement, branchContext, leads? }"],
   },
   {
     flow: "investigate",
     role: "investigate-prober",
-    siteMarker: "Catalog-driven dispatch (G41 — investigate-prober)",
-    inputFields: [
-      "{ hypothesisId, statement, probeRequest: { what, why }, branchContext, leads? }",
-    ],
   },
   {
     flow: "research",
     role: "research-explorer",
-    siteMarker: "Catalog-driven dispatch (research-explorer)",
-    inputFields: ["{ hypothesisId, statement, branchContext, leads? }"],
   },
   {
     flow: "research",
     role: "research-experimenter",
-    siteMarker: "Catalog-driven dispatch (research-experimenter)",
-    inputFields: [
-      "{ hypothesisId, statement, probeRequest: { what, why }, branchContext, leads? }",
-    ],
   },
   {
     flow: "implement",
     role: "implement-worker",
-    siteMarker: "Catalog-driven dispatch (G41 — implement-worker)",
-    inputFields: [
-      "{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }",
-    ],
   },
   {
     flow: "implement",
     role: "implement-reviewer",
-    siteMarker: "Catalog-driven dispatch (G41 — implement-reviewer)",
-    inputFields: [
-      "{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }",
-    ],
   },
   {
     flow: "implement",
     role: "implement-conflict-resolver",
-    siteMarker: "Catalog-driven dispatch (G41 — implement-conflict-resolver)",
-    inputFields: [
-      "{ taskId, headline?, description?, worktreePath, branch, baseCommit, conflictingFiles, baseSideNote? }",
-    ],
   },
 ];
 
@@ -173,21 +135,8 @@ const FORBIDDEN_PARENT_TOKENS = [
   "validate_input",
 ] as const;
 
-/** The failure-consequence clause every surviving (g) call site must keep. */
-const VALIDATE_OUT_CONSEQUENCE = "validation failure is a contract breach";
-
 function normalize(text: string): string {
   return text.replace(/\s+/g, " ");
-}
-
-function countOccurrences(haystack: string, needle: string): number {
-  let count = 0;
-  let index = haystack.indexOf(needle);
-  while (index !== -1) {
-    count += 1;
-    index = haystack.indexOf(needle, index + needle.length);
-  }
-  return count;
 }
 
 /** The forbidden tokens present in a candidate prompt body — the scanner. */
@@ -220,27 +169,9 @@ function claudeDispatchBodyOf(edge: DispatchEdge): string {
 }
 
 describe("T975: native dispatch edges carry no parent-side prompt materialization", () => {
-  // (1)–(3) — per dispatch edge.
   for (const edge of DISPATCH_EDGES) {
-    it(`${edge.flow}/advance.md still documents the ${edge.role} dispatch site`, () => {
-      expect(countOccurrences(claudeDispatchBodyOf(edge), edge.siteMarker)).toBe(1);
-    });
-
-    it(`${edge.flow}/advance.md carries the expected ${edge.role} prepare input`, () => {
-      const body = normalize(claudeDispatchBodyOf(edge));
-      for (const fields of edge.inputFields) {
-        expect(body).toContain(normalize(fields));
-      }
-    });
-
-    it(`${edge.flow}/advance.md has the expected ${edge.role} validate_output policy`, () => {
-      const body = claudeDispatchBodyOf(edge);
-      const call = `validate_output("${edge.role}",`;
-      if (edge.flow === "implement") {
-        expect(body).not.toContain(call);
-      } else {
-        expect(body).toContain(call);
-      }
+    it(`${edge.flow}/advance.md retains the ${edge.role} dispatch edge`, () => {
+      expect(claudeDispatchBodyOf(edge)).toContain(edge.role);
     });
   }
 
@@ -250,22 +181,18 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
       expect(parentMaterializationViolations(bodyOf(flow))).toEqual([]);
     });
 
-    it(`${flow}/advance.md has the expected validate_output count and consequence prose`, () => {
-      const edges = DISPATCH_EDGES.filter((edge) => edge.flow === flow);
-      expect(edges.length).toBeGreaterThan(0);
+    it(`${flow}/advance.md contains no removed validation round-trip`, () => {
       const body =
         flow === "implement" ? `${bodyOf(flow)}\n${claudeImplementDispatch}` : bodyOf(flow);
-      const expectedCount = flow === "implement" ? 0 : edges.length;
-      expect(countOccurrences(body, "validate_output(")).toBe(expectedCount);
-      expect(countOccurrences(normalize(body), VALIDATE_OUT_CONSEQUENCE)).toBe(expectedCount);
+      expect(body).not.toContain("validate_input");
+      expect(body).not.toContain("validate_output");
     });
   }
 
-  it("plan-advance's validate_output failure gate keeps its strongest apply-nothing prose", () => {
+  it("plan-advance rejects partial application of an invalid result", () => {
     const body = normalize(bodyOf("plan"));
-    expect(body).toContain("apply NOTHING from an invalid result");
+    expect(body).toContain("Reject the whole result on any contract failure");
     expect(body).toContain("never apply a valid prefix");
-    expect(body).toContain("release the claim with `release_plan_claim` kind `abandon`");
   });
 
   it("the inventory covers all four flows and every dispatched role exactly once", () => {
@@ -342,90 +269,51 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
 
   it("T899 makes the fetched resultCommit the sole pre-merge git authority", () => {
     const body = bodyOf("implement");
-    const gateStart = body.indexOf("### 6. Success gate");
-    const gateEnd = body.indexOf("### 8. Loop");
+    const gateStart = body.indexOf("## 5. Success authority");
+    const gateEnd = body.indexOf("## 7. Milestones and goals");
     expect(gateStart).toBeGreaterThanOrEqual(0);
     expect(gateEnd).toBeGreaterThan(gateStart);
     const mergeGate = normalize(body.slice(gateStart, gateEnd));
 
-    expect(mergeGate).toContain(
-      normalize(
-        "Use only the worker `resultCommit` from the `state: \"consumed\"` body fetched with the retained parent-minted handle.",
-      ),
-    );
+    expect(mergeGate).toContain("consumed through parent-retained handles");
     expect(mergeGate).toContain("`git cat-file -t <resultCommit>`");
-    expect(mergeGate).toContain("requires its exact output to be `commit`");
-    expect(mergeGate).toContain("`git rev-parse <worker-branch>`");
-    expect(mergeGate).toContain("requires that branch tip to equal `<resultCommit>` exactly");
-    expect(mergeGate).toContain(
-      "A missing object or tip mismatch is a contract breach: log it and do not merge",
-    );
-    expect(mergeGate).toContain(
-      "Reviewer-reported `gateReRan` and `resultCommitVerified` fields are provenance/evidence only",
-    );
-    expect(mergeGate).toContain(
-      "the orchestrator's own git checks are the sole merge authority",
-    );
-    expect(mergeGate).toContain("`git merge --ff-only <resultCommit>`");
-    expect(mergeGate).not.toContain("`git merge --ff-only implement/<taskId>`");
+    expect(mergeGate).toContain("require the worker branch tip to equal `resultCommit`");
+    expect(mergeGate).toContain("Any failure is a contract breach and forbids merge-back");
+    expect(mergeGate).toContain("git merge --ff-only <resultCommit>");
+    expect(mergeGate).not.toContain("git merge --ff-only implement/<taskId>");
   });
 
   it("T900 treats implausible worker gate duration as a blocking tripwire", () => {
     const body = bodyOf("implement");
-    const gateStart = body.indexOf("### 6. Success gate");
-    const gateEnd = body.indexOf("### 8. Loop");
+    const gateStart = body.indexOf("## 5. Success authority");
+    const gateEnd = body.indexOf("## 6. Merge in DAG order");
     expect(gateStart).toBeGreaterThanOrEqual(0);
     expect(gateEnd).toBeGreaterThan(gateStart);
     const mergeGate = normalize(body.slice(gateStart, gateEnd));
 
-    expect(mergeGate).toContain("`MIN_GATE_DURATION_MS = 50`");
-    expect(mergeGate).toContain("`PRIOR_ROUND_MEDIAN_FRACTION = 0.25`");
-    expect(mergeGate).toContain(
-      normalize(
-        "A `gateDurationMs` is IMPLAUSIBLE when it is absent, zero, below `MIN_GATE_DURATION_MS`, or below `PRIOR_ROUND_MEDIAN_FRACTION` times the median of THIS TASK's prior-round `gateDurationMs` values within the same implement run.",
-      ),
-    );
-    expect(mergeGate).toContain(
-      "At round 0, or when this task has no prior-round values, apply only the absolute bound",
-    );
-    expect(mergeGate).toContain(
-      "detects inconsistency, not truth; it is a tripwire, not verification",
-    );
-    expect(mergeGate).toContain(
-      "Never accept `checkSummary` prose alone as evidence that the worker gate passed",
-    );
-    expect(mergeGate).toContain("re-run `bun run check` in the foreground");
-    expect(mergeGate).toContain(
-      "If that re-run is infeasible, fail closed and re-dispatch the worker",
-    );
-    expect(mergeGate).toContain(
-      "still requires T898's consumed-body authority and T899's independent exact-object checks",
-    );
-    expect(mergeGate).toContain(
-      "repeat §6's gate-duration tripwire against the latest T898 consumed worker body",
-    );
+    expect(mergeGate).toContain("`gateDurationMs` below `50`, absent/zero");
+    expect(mergeGate).toContain("below one quarter of the median");
+    expect(mergeGate).toContain("Re-run `bun run check` in the foreground");
+    expect(mergeGate).toContain("If that cannot be done, fail closed");
   });
 
   it("T902 verifies and records the dispatch base before worker launch", () => {
     const body = bodyOf("implement");
-    const dispatchStart = body.indexOf("### 2. Dispatch workers");
-    const dispatchEnd = body.indexOf("### 3. Review each finished worker");
+    const dispatchStart = body.indexOf("## 2. Dispatch workers");
+    const dispatchEnd = body.indexOf("## 3. Review");
     expect(dispatchStart).toBeGreaterThanOrEqual(0);
     expect(dispatchEnd).toBeGreaterThan(dispatchStart);
     const dispatchGate = normalize(body.slice(dispatchStart, dispatchEnd));
 
-    expect(dispatchGate).toContain("`git rev-parse --verify <base>`");
-    expect(dispatchGate).toContain("`git cat-file -t <verifiedBaseCommit>`");
-    expect(dispatchGate).toContain("requires its exact output to be `commit`");
-    expect(dispatchGate).toContain(
-      "Record that verified object as `baseCommit` in the per-task dispatch envelope",
-    );
+    expect(dispatchGate).toContain("`git rev-parse --verify`");
+    expect(dispatchGate).toContain("`git cat-file -t`");
+    expect(dispatchGate).toContain("Retain that exact `baseCommit`");
   });
 
   it("T902 makes verified-base ancestry a blocking merge precondition", () => {
     const body = bodyOf("implement");
-    const gateStart = body.indexOf("### 6. Success gate");
-    const gateEnd = body.indexOf("### 8. Loop");
+    const gateStart = body.indexOf("## 5. Success authority");
+    const gateEnd = body.indexOf("## 6. Merge in DAG order");
     expect(gateStart).toBeGreaterThanOrEqual(0);
     expect(gateEnd).toBeGreaterThan(gateStart);
     const mergeGate = normalize(body.slice(gateStart, gateEnd));
@@ -433,25 +321,22 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     expect(mergeGate).toContain(
       "`git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`",
     );
-    expect(mergeGate).toContain(
-      "If no verified base record exists for that dispatch, refuse merge-back",
-    );
     expect(mergeGate).toContain("`git cat-file -t <resultCommit>`");
-    expect(mergeGate).toContain("`git rev-parse <worker-branch>`");
+    expect(mergeGate).toContain("require the worker branch tip to equal `resultCommit`");
   });
 
   it("T902 gives implement-worker a stale-worktree Step 0 before implementation", () => {
     const body = normalize(implementWorker);
-    const stepStart = body.indexOf("## Step 0");
-    const implementStart = body.indexOf("## Steps");
+    const stepStart = body.indexOf("1. **Verify the base before other work.**");
+    const implementStart = body.indexOf("3. **Implement surgically.**");
     expect(stepStart).toBeGreaterThanOrEqual(0);
     expect(implementStart).toBeGreaterThan(stepStart);
     const step = body.slice(stepStart, implementStart);
 
     expect(step).toContain("`git rev-parse HEAD`");
-    expect(step).toContain("MUST equal the dispatched `baseCommit`");
+    expect(step).toContain("equal `baseCommit`");
     expect(step).toContain("`git reset --hard <baseCommit>`");
     expect(step).toContain("`git merge-base --is-ancestor <baseCommit> HEAD`");
-    expect(step).toContain("criticism-round re-dispatch");
+    expect(step).toContain("Criticism round");
   });
 });

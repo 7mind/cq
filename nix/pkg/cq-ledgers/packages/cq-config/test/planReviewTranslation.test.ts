@@ -588,46 +588,37 @@ describe("T844 executable plan-review reconciliation", () => {
 
 describe("T844 prompt and sidecar projection", () => {
   test("canonical prompts specify structured fallback normalization and preflight ordering", () => {
-    expect(reviewerPrompt).toContain("BOTH modes return the SAME structured verdict JSON");
+    expect(reviewerPrompt).toContain("return the identical structured");
     expect(reviewerPrompt).not.toContain(
       "Mode A (wrote the item): end with a single line pointing to the review",
     );
-    expect(advancePrompt).toContain("Snapshot the review frontier BEFORE dispatch");
-    expect(advancePrompt).toContain(
-      "Require exactly ONE new goal-linked review above the snapshot frontier",
-    );
-    expect(advancePrompt).toMatch(
-      /Reconstruct EVERY\s+returned defect object in exact T843 property order/,
-    );
-    expect(advancePrompt).toContain("reordered-returned-defect");
-    expect(reviewPrompt).toMatch(
-      /a\s+sidecar-valid reordered object must normalize rather than fail/,
+    expect(advancePrompt).toContain("Snapshot the highest goal-linked review id before dispatch");
+    expect(advancePrompt).toContain("require exactly one new goal-linked review above the snapshot");
+    expect(advancePrompt).toMatch(/canonical\s+serialized defect objects/);
+    expect(reviewPrompt).toContain(
+      "parse and canonically reconstruct the entire batch before side effects",
     );
     // T854: the planner no longer files defects itself — it RETURNS the
     // validated batch as `defectsToFile` and the orchestrator supplies it as
     // the SAME guarded operation's `reviewDefects`. Pin the new receipt-check
     // → preflight → include ordering invariants (the old planner-side
     // `create_item("defects"…)` filing path is gone).
-    expect(plannerPrompt).toContain("## Deriving `defectsToFile`");
-    expect(plannerPrompt).toContain("Receipt check first");
-    expect(plannerPrompt).toContain(
-      "preflight the ENTIRE batch before including ANY entry",
-    );
-    expect(plannerPrompt).toMatch(
-      /one bad entry means\s+ZERO defects are derived/,
-    );
+    expect(plannerPrompt).toContain("### Review defects");
+    expect(plannerPrompt).toContain("If any receipt exists, omit `defectsToFile`");
+    expect(plannerPrompt).toContain("parse the entire batch");
+    expect(plannerPrompt).toContain("One invalid entry");
     expect(plannerPrompt).not.toContain('create_item("defects"');
 
     const section = plannerPrompt.slice(
-      plannerPrompt.indexOf("## Deriving `defectsToFile`"),
-      plannerPrompt.indexOf("## Session summary"),
+      plannerPrompt.indexOf("### Review defects"),
+      plannerPrompt.indexOf("## Candidate mode"),
     );
-    expect(section.indexOf("Receipt check first")).toBeLessThan(
-      section.indexOf("preflight the ENTIRE batch before including ANY entry"),
+    expect(section.indexOf("If any receipt exists")).toBeLessThan(
+      section.indexOf("parse the entire batch"),
     );
     expect(
-      section.indexOf("preflight the ENTIRE batch before including ANY entry"),
-    ).toBeLessThan(section.indexOf("include `defectsToFile:"));
+      section.indexOf("parse the entire batch"),
+    ).toBeLessThan(section.indexOf("return `defectsToFile`"));
   });
 
   test("the catalog sidecar remains a structured-object verdict contract", () => {

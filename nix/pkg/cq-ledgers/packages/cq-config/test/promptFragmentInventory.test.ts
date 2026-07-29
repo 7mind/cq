@@ -58,9 +58,6 @@ describe("prompt fragment inventory closure", () => {
           );
         }
         expect(source).not.toContain("CQ_HARNESS");
-        if (slots.includes("cq-command-invocation")) {
-          expect(source).toContain("CQ::");
-        }
         if (slots.includes("subagent-dispatch")) {
           expect(source).toContain("{{cq:fragment:subagent-dispatch}}");
         }
@@ -77,9 +74,6 @@ describe("prompt fragment inventory closure", () => {
         }
         expect(source).not.toMatch(/^(?:allowed-tools|disallowedTools|isolation):/m);
         expect(source).not.toMatch(/\b(?:Claude|Codex|Pi)\b|\/cq:|\$cq-/);
-        if (slots.includes("cq-command-invocation")) {
-          expect(source).toContain("CQ::");
-        }
       }
       for (const edge of entry.dispatchEdges) {
         expect(AGENT_ROLE_TIERS.some((role) => role.id === edge.targetRoleId)).toBe(true);
@@ -120,7 +114,7 @@ describe("prompt fragment inventory schema and closure failures", () => {
     const contracts = cloneContracts() as Array<Record<string, unknown>>;
       contracts[0]!.fragment = "terminal-command";
       expect(() => validatePromptFragmentInventory(contracts, cloneSources())).toThrow(
-        "expected one of cq-command-invocation, subagent-dispatch, implement-dispatch-workflow, dispatch-input-delivery, inline-command-recursion, host-tool-vocabulary, operational-tool-vocabulary",
+        "expected one of cq-command-invocation, subagent-dispatch, implement-dispatch-workflow, dispatch-input-delivery, inline-command-recursion, advance-run-guard, host-tool-vocabulary, operational-tool-vocabulary",
       );
   });
 
