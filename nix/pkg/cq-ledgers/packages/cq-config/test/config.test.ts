@@ -37,13 +37,20 @@ import {
 } from "../src/index.js";
 
 let dir: string;
+const callerHarness = process.env["CQ_HARNESS"];
 
 beforeEach(() => {
+  delete process.env["CQ_HARNESS"];
   dir = mkdtempSync(path.join(tmpdir(), "cq-config-"));
 });
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+  if (callerHarness === undefined) {
+    delete process.env["CQ_HARNESS"];
+  } else {
+    process.env["CQ_HARNESS"] = callerHarness;
+  }
 });
 
 function writeCqToml(contents: string): void {

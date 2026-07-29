@@ -22,8 +22,10 @@ import type { AgentModelEntry } from "@cq/ledger";
 import { FsLedgerStore } from "@cq/ledger";
 
 let dir: string;
+const callerHarness = process.env["CQ_HARNESS"];
 
 beforeEach(async () => {
+  delete process.env["CQ_HARNESS"];
   dir = mkdtempSync(path.join(tmpdir(), "t232-"));
   const store = new FsLedgerStore({ root: dir });
   await store.init();
@@ -32,6 +34,11 @@ beforeEach(async () => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+  if (callerHarness === undefined) {
+    delete process.env["CQ_HARNESS"];
+  } else {
+    process.env["CQ_HARNESS"] = callerHarness;
+  }
 });
 
 function writeCqToml(contents: string): void {

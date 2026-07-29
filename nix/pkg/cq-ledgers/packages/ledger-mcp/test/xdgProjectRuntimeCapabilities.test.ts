@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { execFile } from "node:child_process";
 import {
@@ -34,6 +34,7 @@ const PROMPT_TEMPLATE = "Packaged prompt independent of repository provenance.\n
 const RUNTIME_LOG_PATH = "runtime-write.md";
 const RUNTIME_LOG_CONTENT = "runtime log write\n";
 const encoder = new TextEncoder();
+const callerHarness = process.env["CQ_HARNESS"];
 
 type RuntimeWithConfigRoot = XdgProjectRuntime & {
   readonly configRoot?: string;
@@ -49,6 +50,18 @@ interface ToolResult {
   readonly isError?: boolean;
   readonly content?: Array<{ readonly type: string; readonly text?: string }>;
 }
+
+beforeEach(() => {
+  delete process.env["CQ_HARNESS"];
+});
+
+afterEach(() => {
+  if (callerHarness === undefined) {
+    delete process.env["CQ_HARNESS"];
+  } else {
+    process.env["CQ_HARNESS"] = callerHarness;
+  }
+});
 
 afterAll(async () => {
   await Promise.all(

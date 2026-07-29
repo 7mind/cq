@@ -15,7 +15,7 @@
  * seed and server resolve the same store and nothing touches the host state.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -61,6 +61,19 @@ function childEnv(): Record<string, string> {
 
 let tmpRoot: string;
 let prevXdgStateHome: string | undefined;
+const callerHarness = process.env["CQ_HARNESS"];
+
+beforeEach(() => {
+  delete process.env["CQ_HARNESS"];
+});
+
+afterEach(() => {
+  if (callerHarness === undefined) {
+    delete process.env["CQ_HARNESS"];
+  } else {
+    process.env["CQ_HARNESS"] = callerHarness;
+  }
+});
 
 beforeAll(async () => {
   prevXdgStateHome = process.env["XDG_STATE_HOME"];

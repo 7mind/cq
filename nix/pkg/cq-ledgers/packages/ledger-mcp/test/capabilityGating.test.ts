@@ -17,7 +17,7 @@
  * the existing main.test.ts suite (regression guard for the fs path).
  */
 
-import { describe, it, expect, afterAll } from "bun:test";
+import { describe, it, expect, afterAll, afterEach, beforeEach } from "bun:test";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,6 +31,19 @@ import { buildServer } from "../src/main.js";
 const exec = promisify(execFile);
 const REF = "refs/heads/cq-ledger";
 const dirs: string[] = [];
+const callerHarness = process.env["CQ_HARNESS"];
+
+beforeEach(() => {
+  delete process.env["CQ_HARNESS"];
+});
+
+afterEach(() => {
+  if (callerHarness === undefined) {
+    delete process.env["CQ_HARNESS"];
+  } else {
+    process.env["CQ_HARNESS"] = callerHarness;
+  }
+});
 
 /**
  * Seed a `logs/<rel>` blob onto the orphan ref tip (mirrors how the FS read-log

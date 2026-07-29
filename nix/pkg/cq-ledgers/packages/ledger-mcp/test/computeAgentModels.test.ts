@@ -22,13 +22,20 @@ import { AGENT_ROLE_TIERS } from "@cq/config";
 import type { AgentModelEntry } from "@cq/ledger";
 
 let dir: string;
+const callerHarness = process.env["CQ_HARNESS"];
 
 beforeEach(() => {
+  delete process.env["CQ_HARNESS"];
   dir = mkdtempSync(path.join(tmpdir(), "t285-"));
 });
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+  if (callerHarness === undefined) {
+    delete process.env["CQ_HARNESS"];
+  } else {
+    process.env["CQ_HARNESS"] = callerHarness;
+  }
 });
 
 function writeCqToml(contents: string): void {
