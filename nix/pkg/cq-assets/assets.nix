@@ -114,6 +114,24 @@ let
       };
     }
     {
+      fragment = "dispatch-input-delivery";
+      supportedSurfaces = promptSurfaces;
+      forbiddenVocabulary = {
+        claude = [ "input delivered via dispatch prompt" ];
+        codex = [ "input delivered via dispatch prompt" ];
+        pi = [
+          "fetch_dispatch_input"
+          "inputCapability"
+          "prepare_dispatch"
+        ];
+      };
+      intentionalDifference = {
+        kind = "dispatch-protocol";
+        reason = "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.";
+        surfaces = promptSurfaces;
+      };
+    }
+    {
       fragment = "inline-command-recursion";
       supportedSurfaces = promptSurfaces;
       forbiddenVocabulary = {
@@ -184,6 +202,7 @@ let
     cq-command-invocation = "frontmatter and body CQ command references";
     subagent-dispatch = "subagent dispatch instructions and host transport branch";
     implement-dispatch-workflow = "implement worker, reviewer, and conflict-resolver catalog dispatch procedure";
+    dispatch-input-delivery = "implement-worker child-side input retrieval procedure";
     inline-command-recursion = "inline chained-command execution instructions";
     host-tool-vocabulary = "frontmatter host tool and isolation capabilities";
     operational-tool-vocabulary = "body-level mapping from canonical operational tokens to callable host tools";
@@ -319,6 +338,7 @@ let
   I = "cq-command-invocation";
   D = "subagent-dispatch";
   W = "implement-dispatch-workflow";
+  X = "dispatch-input-delivery";
   R = "inline-command-recursion";
   T = "host-tool-vocabulary";
   O = "operational-tool-vocabulary";
@@ -326,7 +346,7 @@ let
   authoredCatalog = [
     (mkAgent "plan-advance" [ I T ])
     (mkAgent "plan-reviewer" [ I T ])
-    (mkAgent "implement-worker" [ I T ])
+    (mkAgent "implement-worker" [ I T X ])
     (mkAgent "implement-reviewer" [ I T ])
     (mkAgent "implement-conflict-resolver" [ I T ])
     (mkAgent "investigate-explorer" [ I T ])
@@ -545,7 +565,9 @@ let
   catalogMetadataHash = builtins.hashString "sha256" catalogJson;
   promptFragmentSource =
     surface: role: binding:
-    if surface == "claude" && binding.fragment == T then
+    if binding.fragment == X then
+      "fragments/${surface}/agents/${role.roleId}/${binding.fragment}.md"
+    else if surface == "claude" && binding.fragment == T then
       if role.roleKind == "dispatched-subagent" then
         "fragments/${surface}/agents/${role.roleId}/${binding.fragment}.md"
       else

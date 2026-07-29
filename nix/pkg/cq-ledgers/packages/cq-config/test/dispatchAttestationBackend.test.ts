@@ -100,12 +100,15 @@ function envelope(overrides: Partial<AttestationEnvelope> = {}): AttestationEnve
       catalogHash: "d".repeat(64),
       inputDigest: "e".repeat(64),
     },
+    prepareRequestDigest: "1".repeat(64),
+    input: { taskId: "T977" },
     deadlines: {
       responseStoreNow: "2026-07-27T09:09:30.000Z",
       childCancelAt: "2026-07-27T09:10:00.000Z",
       launchDeadline: "2026-07-27T09:01:00.000Z",
     },
     expectedChild: { childId: "child", runId: "run" },
+    inputCapabilityHash: "f".repeat(64),
     resultCapabilityHash: CAP_A,
     createdAt: "2026-07-27T09:00:00.000Z",
     ...overrides,
@@ -547,6 +550,15 @@ describe("persisted row serialization", () => {
     expect(() => rehydrateAttestationRow(NAMESPACE, "{}", persisted.rowDigest)).toThrow(
       /has no "kind"/,
     );
+    const missingRequestDigest = JSON.parse(persisted.body) as Record<string, unknown>;
+    delete missingRequestDigest["prepareRequestDigest"];
+    expect(() =>
+      rehydrateAttestationRow(
+        NAMESPACE,
+        JSON.stringify(missingRequestDigest),
+        attestationRowDigest(missingRequestDigest as unknown as AttestationRow),
+      ),
+    ).toThrow(/envelope has no "prepareRequestDigest"/);
   });
 
   test("a stored body whose kind is an Object.prototype member is refused BY THE KIND CHECK", () => {

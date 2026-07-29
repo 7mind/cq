@@ -1,6 +1,7 @@
 /**
- * T343 — the typed prompt-catalog capability (fetch_prompt / validate_input /
- * validate_output), dual-tested.
+ * T343 — the typed prompt-catalog capability (fetchPrompt / validateInput /
+ * validateOutput), dual-tested. validateInput remains direct inspection/debug
+ * API and is intentionally absent from ordinary tools/list.
  *
  * ONE abstract suite ({@link runPromptCatalogSuite}) exercises the
  * `PromptCatalogCapability` contract, then runs against BOTH:
@@ -22,7 +23,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { getRoleSidecar } from "@cq/config";
+import { getRoleSidecar, isAllowlistedValidateInputCaller } from "@cq/config";
 import { UnknownRoleError, NoSchemaForRoleError, type PromptCatalogCapability } from "@cq/ledger";
 import { createPromptCatalogCapability } from "../src/promptCatalogCapability.js";
 import {
@@ -194,7 +195,8 @@ function runPromptCatalogSuite(label: string, make: () => PromptCatalogCapabilit
       expect(result.outputSchema?.["$schema"]).toBe("https://json-schema.org/draft/2020-12/schema");
     });
 
-    it("validate_input accepts a valid plan-advance input", () => {
+    it("an allowlisted debug caller reaches validateInput directly, outside tools/list", () => {
+      expect(isAllowlistedValidateInputCaller("agents-tab")).toBe(true);
       const cap = make();
       const result = cap.validateInput(DISPATCHED_ROLE, { goalId: "G41" });
       expect(result.ok).toBe(true);
@@ -334,7 +336,7 @@ describe("attested version pairing (T683)", () => {
 });
 
 /**
- * D60 regression: validate_input/validateOutput are called with a JSON STRING
+ * D60 regression: validateInput/validateOutput are called with a JSON STRING
  * when the Claude Code MCP client serializes a nested object arg on the wire.
  * The fix (T422) will add string-tolerance at the promptCatalogCapability
  * entrypoint. Cases (ii)–(iv) are `test.failing` until that fix lands.
@@ -342,7 +344,7 @@ describe("attested version pairing (T683)", () => {
  * Case (i) — genuine object — is a normal passing test that belongs here
  * alongside the failing cases so the full regression set is co-located.
  */
-describe("D60 regression — validate_input string-tolerance at MCP entrypoint", () => {
+describe("D60 regression — validateInput string-tolerance at the capability boundary", () => {
   // (i) Genuine object input — already passes today; stays a normal test.
   it("(i) genuine object {goalId:'G1'} → {ok:true}", () => {
     const cap = makeCapability();

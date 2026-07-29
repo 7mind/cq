@@ -158,6 +158,7 @@ const listProjects: ListProjectsCapability = () => PROJECTS_RESULT;
 
 const dispatchCapability: DispatchCapability = {
   prepare: async () => ({ operation: "prepare_dispatch" }) as never,
+  fetchInput: async () => ({ operation: "fetch_dispatch_input" }) as never,
   storeResult: async () => ({ operation: "store_result" }) as never,
   confirmCompletion: async () => ({ operation: "confirm_dispatch_completion" }) as never,
   abort: async () => ({ operation: "abort_dispatch" }) as never,
@@ -648,6 +649,17 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     {
+      name: "fetch_dispatch_input",
+      args: {
+        attestationId: `att_${"a".repeat(32)}`,
+        generation: 1,
+        inputCapability: {
+          scope: "fetch-input",
+          token: `cq_input_${"a".repeat(43)}`,
+        },
+      },
+    },
+    {
       name: "store_result",
       args: {
         resultCapability: {
@@ -693,10 +705,6 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     { name: "fetch_prompt", args: { roleId: PROMPT_RESULT.roleId } },
-    {
-      name: "validate_input",
-      args: { roleId: PROMPT_RESULT.roleId, input: { goalId: "G1" } },
-    },
     {
       name: "validate_output",
       args: { roleId: PROMPT_RESULT.roleId, output: {} },
@@ -902,7 +910,6 @@ function assertRepresentativeContracts(
   expect(responses.get("read_log")).toEqual(READ_LOG_RESULT);
   expect(responses.get("get_config")).toEqual(CONFIG_RESULT);
   expect(responses.get("fetch_prompt")).toEqual(PROMPT_RESULT);
-  expect(responses.get("validate_input")).toEqual({ ok: true });
   expect(responses.get("validate_output")).toMatchObject({ ok: false });
   expect(responses.get("list_projects")).toEqual(PROJECTS_RESULT);
 }
@@ -918,6 +925,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       try {
         const directDefinitionList = directDefinitions(direct);
         const expectedNames = LEDGER_TOOL_NAMES.map((name) => prefixed(prefix, name)).sort();
+        expect(expectedNames).not.toContain(prefixed(prefix, "validate_input"));
         expect(directDefinitionList.map((tool) => tool.name)).toEqual(expectedNames);
         expect(stdio.definitions).toEqual(directDefinitionList);
       } finally {

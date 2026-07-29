@@ -76,6 +76,7 @@ import {
   abortDispatch,
   confirmDispatchCompletion,
   fetchDispatchResult,
+  fetchDispatchInput,
   prepareDispatch,
   storeDispatchResult,
   sweepAttestations,
@@ -91,6 +92,7 @@ import {
   type DispatchNow,
   type DispatchRandomBytes,
   type FetchDispatchResultRequest,
+  type FetchDispatchInputRequest,
   type PrepareDispatchOutcome,
   type PrepareDispatchRequest,
   type StoreDispatchResultOutcome,
@@ -100,6 +102,7 @@ import type {
   AbortedDispatchResult,
   DispatchHandle,
   FetchDispatchResult,
+  MaterializedDispatchInput,
   StoreDispatchResult,
 } from "./compactDispatchProtocol.js";
 
@@ -787,6 +790,17 @@ export async function storeDispatchResultOn(
   );
 }
 
+/** One-shot child input retrieval, serialized with every other row mutation. */
+export async function fetchDispatchInputOn(
+  backend: AttestationBackend,
+  request: FetchDispatchInputRequest,
+  deps: AttestationBackendDeps,
+): Promise<MaterializedDispatchInput> {
+  return backend.transact(handleLoadScope(request), (store) =>
+    fetchDispatchInput(request, { store, now: deps.now }),
+  );
+}
+
 export async function confirmDispatchCompletionOn(
   backend: AttestationBackend,
   request: ConfirmDispatchCompletionRequest,
@@ -1045,6 +1059,7 @@ export function rehydrateAttestationRow(
 }
 
 const STORED_ROW_KINDS: ReadonlySet<string> = new Set(["envelope", "tombstone"]);
+const STORED_SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /**
  * Field names a stored body may NEVER carry as an OWN property. `JSON.parse`
@@ -1088,6 +1103,34 @@ function assertStoredRowShape(parsed: unknown): AttestationRow {
     throw new AttestationStorageError("stored attestation body has no namespace object");
   }
   assertAttestationNamespace(namespace as AttestationNamespace, "storedRow.namespace");
+  if (kind === "envelope") {
+    for (const field of [
+      "state",
+      "promptProvenance",
+      "prepareRequestDigest",
+      "input",
+      "deadlines",
+      "expectedChild",
+      "inputCapabilityHash",
+      "resultCapabilityHash",
+      "createdAt",
+    ]) {
+      if (!Object.hasOwn(record, field)) {
+        throw new AttestationStorageError(`stored attestation envelope has no "${field}"`);
+      }
+    }
+    for (const field of [
+      "prepareRequestDigest",
+      "inputCapabilityHash",
+      "resultCapabilityHash",
+    ]) {
+      if (typeof record[field] !== "string" || !STORED_SHA256_HEX.test(record[field])) {
+        throw new AttestationStorageError(
+          `stored attestation envelope has malformed "${field}"`,
+        );
+      }
+    }
+  }
   return Object.freeze(record) as unknown as AttestationRow;
 }
 

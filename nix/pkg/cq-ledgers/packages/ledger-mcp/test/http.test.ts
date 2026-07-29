@@ -68,6 +68,7 @@ describe("ledger-mcp Streamable HTTP", () => {
     await withClient(async (client) => {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
       expect(names).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
+      expect(names).not.toContain("validate_input");
     });
   });
 

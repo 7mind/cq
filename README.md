@@ -66,15 +66,15 @@ single command needs no separately-running server.
 `create_milestone`, `update_milestone`, `fetch_milestone`,
 `list_milestone_items`, `archive_milestone`, `snapshot`, `reopen_item`,
 `unarchive_item`, `read_log`, `derive_predicates`, `get_config`,
-`prepare_dispatch`, `store_result`, `confirm_dispatch_completion`,
-`abort_dispatch`, `fetch_dispatch_result`, `fetch_prompt`, `validate_input`,
-`validate_output`, `list_projects`, `claim_plan`, `publish_plan_draft`,
+`prepare_dispatch`, `fetch_dispatch_input`, `store_result`, `confirm_dispatch_completion`,
+`abort_dispatch`, `fetch_dispatch_result`, `fetch_prompt`, `validate_output`,
+`list_projects`, `claim_plan`, `publish_plan_draft`,
 `release_plan_claim`, `finalize_plan`.
 
-The five dispatch-lifecycle tools require both a supported durable backend
+The six dispatch-lifecycle tools require both a supported durable backend
 (`xdg`, `fs`, or PostgreSQL in its supported server construction) and an
 attested prompt surface. A server that cannot satisfy those prerequisites
-omits the five names during registration, exposing the remaining 28 tools
+omits the six names during registration, exposing the remaining 27 tools
 instead of advertising handlers that can only fail.
 
 The 33-tool ledger surface uses a single breaking wire-response contract:

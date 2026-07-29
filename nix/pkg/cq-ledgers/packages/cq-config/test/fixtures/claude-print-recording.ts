@@ -11,10 +11,16 @@ function value(flag: string): string {
 }
 
 const prompt = value("-p");
-const handle = JSON.parse(prompt) as Record<string, unknown>;
-if (Object.keys(handle).sort().join(",") !== "attestationId,generation") {
-  throw new Error("launch prompt was not handle-only");
+const reference = JSON.parse(prompt) as Record<string, unknown>;
+if (
+  Object.keys(reference).sort().join(",") !== "attestationId,generation,inputCapability"
+) {
+  throw new Error("launch prompt was not an input reference");
 }
+const handle = JSON.stringify({
+  attestationId: reference["attestationId"],
+  generation: reference["generation"],
+});
 const sessionId = value("--session-id");
 const model = value("--model");
 const outputSchema = JSON.parse(value("--json-schema")) as { readonly title?: string };
@@ -24,8 +30,11 @@ if (outputSchema.title !== "dispatch handle") {
 if (!value("--append-system-prompt").includes("T688-ROLE-PROMPT")) {
   throw new Error("wrong generated role prompt");
 }
-if (value("--allowedTools") !== "mcp__t688store__store_result") {
-  throw new Error("wrong scoped result tool");
+if (
+  value("--allowedTools") !==
+  "mcp__t688store__fetch_dispatch_input,mcp__t688store__store_result"
+) {
+  throw new Error("wrong scoped dispatch tools");
 }
 if (value("--tools") !== "") {
   throw new Error("unexpected inherited tools");
@@ -57,7 +66,7 @@ process.stdout.write(
     terminal_reason: "completed",
     session_id: sessionId,
     uuid: "recorded-tool-use-t688",
-    result: prompt,
+    result: handle,
     modelUsage: {
       [model]: { canonicalModel: `recorded-${model}` },
     },

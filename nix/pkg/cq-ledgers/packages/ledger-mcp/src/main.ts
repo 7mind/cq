@@ -67,6 +67,7 @@ import {
   type DispatchRuntime,
 } from "./dispatchCapability.js";
 export {
+  DISPATCH_RUNTIME_DEFERRAL_DISCHARGE,
   createDispatchCapability,
   createPostgresHubDispatchRuntime,
   createSingleProjectDispatchRuntime,
@@ -518,7 +519,7 @@ export function startLedgerCoherenceWatcher(
  * `McpServer` bound to one `store` (G45 / Q209).
  *
  * `toolPrefix` is OPTIONAL and defaults to `''`. The server registers the
- * full 33-tool surface when `dispatchCapability` exists and the 28-tool
+ * full 33-tool surface when `dispatchCapability` exists and the 27-tool
  * non-dispatch surface otherwise. A non-empty prefix renames every registered tool to its
  * `prefixToolName(prefix, name)` form and rewrites the matching tool names in
  * the server-level `instructions`. The prefix is validated by

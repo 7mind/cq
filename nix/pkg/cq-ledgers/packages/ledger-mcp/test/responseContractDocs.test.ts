@@ -20,6 +20,7 @@ const unavailable = async (): Promise<never> => {
 };
 const dispatchCapability: DispatchCapability = {
   prepare: unavailable,
+  fetchInput: unavailable,
   storeResult: unavailable,
   confirmCompletion: unavailable,
   abort: unavailable,

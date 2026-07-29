@@ -375,7 +375,13 @@ describe("T692 §1 — a Codex child's authority is bounded by types, not by pro
     expect([...authorized]).toEqual(["store_result"]);
     for (const operation of DISPATCH_PROTOCOL_OPERATIONS) {
       const scope = dispatchOperationScope(operation);
-      expect(scope).toBe(operation === "store_result" ? "result-capability" : "trusted-parent");
+      const expectedScope =
+        operation === "store_result"
+          ? "result-capability"
+          : operation === "fetch_dispatch_input"
+            ? "input-capability"
+            : "trusted-parent";
+      expect(scope).toBe(expectedScope);
       expect(DISPATCH_OPERATION_AUTHORIZATION.get(operation)).toBe(scope);
     }
     // Tool names a child might INVENT resolve nothing — not even a scope. The

@@ -265,6 +265,9 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   prepare_dispatch: purposeBuiltSmall(
     "`{ accepted, prepared, handle, executedStepOrder }` or a typed pre-launch rejection.",
   ),
+  fetch_dispatch_input: requestedFullContent(
+    "The prepare-bound typed input on its first capability-authorized retrieval.",
+  ),
   store_result: purposeBuiltSmall("A handle-only stored-result acknowledgement or typed abort."),
   confirm_dispatch_completion: purposeBuiltSmall(
     "A handle-only consumed acknowledgement or typed abort.",
@@ -276,7 +279,6 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   fetch_prompt: requestedFullContent(
     "Full typed prompt entry, including prompt text and schemas when available.",
   ),
-  validate_input: purposeBuiltSmall("`{ ok: true }` or `{ ok: false, errors }`."),
   validate_output: purposeBuiltSmall("`{ ok: true }` or `{ ok: false, errors }`."),
   list_projects: purposeBuiltSmall("`{ projects: [{ key, displayName, createdAt? }] }`."),
   claim_plan: purposeBuiltSmall(

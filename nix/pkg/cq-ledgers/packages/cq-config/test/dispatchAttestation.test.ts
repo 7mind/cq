@@ -34,7 +34,10 @@ import {
   FakeDispatchClock,
   IDEMPOTENCY_HORIZON_MS,
   InMemoryAttestationStore,
+  INPUT_CAPABILITY_ENTROPY_BYTES,
+  INPUT_CAPABILITY_OPERATIONS,
   LAUNCH_DEADLINE_MS,
+  MATERIALIZED_DISPATCH_INPUT_SCHEMA,
   RESPONSE_STORE_LEAD_MS,
   RESULT_CAPABILITY_ENTROPY_BYTES,
   RESULT_CAPABILITY_OPERATIONS,
@@ -58,12 +61,18 @@ import {
   dispatchOperationScope,
   dispatchPayloadDigest,
   fetchDispatchResult,
+  fetchDispatchInput,
   formatAttestationNamespace,
   invalidOutputDetailsOf,
+  inputCapabilityAuthorizes,
+  inputCapabilityHash,
+  inputCapabilityMatches,
   isAttestationTombstone,
   mintAttestationId,
+  mintInputCapability,
   mintResultCapability,
   prepareDispatch,
+  prepareDispatchRequestDigest,
   provenanceBindingOf,
   resultCapabilityAuthorizes,
   resultCapabilityHash,
@@ -81,6 +90,8 @@ import {
   type ConfirmDispatchCompletionRequest,
   type DispatchHandle,
   type FetchDispatchResultRequest,
+  type FetchDispatchInputRequest,
+  type InputCapability,
   type TrustedDispatchActor,
   type DispatchJSONValue,
   type DispatchNarrativeItem,
@@ -299,6 +310,18 @@ function fetchRequest(
   };
 }
 
+function fetchInputRequest(
+  p: DispatchPrepared,
+  capability: InputCapability = p.inputCapability,
+  namespace: AttestationNamespace = NAMESPACE,
+): FetchDispatchInputRequest {
+  return {
+    namespace,
+    ...handleOf(p),
+    inputCapability: capability,
+  };
+}
+
 function envelopeOf(h: Harness, p: DispatchPrepared): AttestationEnvelope {
   const row = h.store.rows().find((candidate) => candidate.attestationId === p.attestationId);
   if (row === undefined || isAttestationTombstone(row)) {
@@ -408,7 +431,11 @@ describe("distinct authorization scopes", () => {
   });
 
   test("every ordinary-flow operation has exactly one declared scope", () => {
-    expect(DISPATCH_AUTHORIZATION_SCOPES).toEqual(["result-capability", "trusted-parent"]);
+    expect(DISPATCH_AUTHORIZATION_SCOPES).toEqual([
+      "input-capability",
+      "result-capability",
+      "trusted-parent",
+    ]);
     expect(DISPATCH_OPERATION_AUTHORIZATION_COVERAGE).toEqual(
       [...DISPATCH_PROTOCOL_OPERATIONS].sort(),
     );
@@ -416,7 +443,10 @@ describe("distinct authorization scopes", () => {
       expect(DISPATCH_AUTHORIZATION_SCOPES, operation).toContain(dispatchOperationScope(operation));
     }
     expect(dispatchOperationScope("store_result")).toBe("result-capability");
-    for (const operation of DISPATCH_PROTOCOL_OPERATIONS.filter((o) => o !== "store_result")) {
+    expect(dispatchOperationScope("fetch_dispatch_input")).toBe("input-capability");
+    for (const operation of DISPATCH_PROTOCOL_OPERATIONS.filter(
+      (o) => o !== "store_result" && o !== "fetch_dispatch_input",
+    )) {
       expect(dispatchOperationScope(operation), operation).toBe("trusted-parent");
     }
   });
@@ -433,6 +463,22 @@ describe("distinct authorization scopes", () => {
       "",
     ]) {
       expect(resultCapabilityAuthorizes(operation), operation).toBe(false);
+    }
+  });
+
+  test("an input capability authorizes fetch_dispatch_input and NOTHING else", () => {
+    expect(INPUT_CAPABILITY_OPERATIONS).toEqual(["fetch_dispatch_input"]);
+    expect(inputCapabilityAuthorizes("fetch_dispatch_input")).toBe(true);
+    for (const operation of [
+      "store_result",
+      "confirm_dispatch_completion",
+      "abort_dispatch",
+      "fetch_dispatch_result",
+      "prepare_dispatch",
+      ...PROTOTYPE_NAMES,
+      "",
+    ]) {
+      expect(inputCapabilityAuthorizes(operation), operation).toBe(false);
     }
   });
 
@@ -652,6 +698,7 @@ describe("prepare validates role, input and timeout, then allocates", () => {
           "resolve-role-contract",
           "validate-role-input",
           "validate-declared-overlay-data",
+          "mint-input-capability",
           "mint-result-capability",
         ],
       }),
@@ -695,19 +742,28 @@ describe("prepare validates role, input and timeout, then allocates", () => {
     expect(h.store.rows()).toHaveLength(0);
   });
 
-  test("a minted capability is high-entropy, scoped, and stored ONLY as a hash", () => {
+  test("minted capabilities are high-entropy, distinctly scoped, and stored ONLY as hashes", () => {
     expect(RESULT_CAPABILITY_ENTROPY_BYTES).toBe(32);
+    expect(INPUT_CAPABILITY_ENTROPY_BYTES).toBe(32);
     expect(ATTESTATION_ID_ENTROPY_BYTES).toBe(24);
     const h = harness();
     const p = prepared(h);
+    expect(p.inputCapability.scope).toBe("fetch-input");
+    expect(p.inputCapability.token).toMatch(/^cq_input_[A-Za-z0-9_-]{43,}$/);
     expect(p.resultCapability.scope).toBe("store-result");
     expect(p.resultCapability.token).toMatch(/^cq_result_[A-Za-z0-9_-]{43,}$/);
+    expect(p.inputCapability.token).not.toBe(p.resultCapability.token);
     expect(p.attestationId).toMatch(/^att_[A-Za-z0-9_-]{32,}$/);
 
     const row = envelopeOf(h, p);
+    expect(row.prepareRequestDigest).toBe(prepareDispatchRequestDigest(prepareRequest()));
+    expect(row.prepareRequestDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(row.inputCapabilityHash).toBe(inputCapabilityHash(p.inputCapability.token));
+    expect(row.inputCapabilityHash).toMatch(/^[0-9a-f]{64}$/);
     expect(row.resultCapabilityHash).toBe(resultCapabilityHash(p.resultCapability.token));
     expect(row.resultCapabilityHash).toMatch(/^[0-9a-f]{64}$/);
-    // The raw token is NOWHERE in what the store persists.
+    // The raw tokens are NOWHERE in what the store persists.
+    expect(JSON.stringify(h.store.snapshot())).not.toContain(p.inputCapability.token);
     expect(JSON.stringify(h.store.snapshot())).not.toContain(p.resultCapability.token);
     // Nor in any lifecycle answer.
     expect(JSON.stringify(fetchDispatchResult(fetchRequest(p), h.deps))).not.toContain(
@@ -730,6 +786,10 @@ describe("prepare validates role, input and timeout, then allocates", () => {
     expect(() => mintResultCapability(short)).toThrow(
       `resultCapability.token: expected ${RESULT_CAPABILITY_ENTROPY_BYTES} bytes of entropy`,
     );
+    expect(() => mintInputCapability(short)).toThrow(
+      `inputCapability.token: expected ${INPUT_CAPABILITY_ENTROPY_BYTES} bytes of entropy`,
+    );
+    expect(() => mintInputCapability(() => "nope" as never)).toThrow(AttestationContractError);
     expect(() => mintResultCapability(() => "nope" as never)).toThrow(AttestationContractError);
     // The production source yields distinct, well-formed values.
     const first = mintResultCapability(defaultDispatchRandomBytes);
@@ -760,6 +820,79 @@ describe("prepare validates role, input and timeout, then allocates", () => {
       expect(resultCapabilityMatches(capability.token, stored), stored).toBe(false);
     }
     expect(() => resultCapabilityHash("nope")).toThrow(AttestationContractError);
+    const inputCapability = mintInputCapability(sequentialDispatchRandomBytes(11));
+    const inputHash = inputCapabilityHash(inputCapability.token);
+    expect(inputCapabilityMatches(inputCapability.token, inputHash)).toBe(true);
+    expect(inputCapabilityMatches("cq_input_short", inputHash)).toBe(false);
+    expect(inputCapabilityMatches(inputCapability.token, "nope")).toBe(false);
+    expect(() => inputCapabilityHash("nope")).toThrow(AttestationContractError);
+  });
+});
+
+describe("one-shot assembled-input retrieval", () => {
+  test("the first authorized fetch returns the exact prepare-bound input and records one marker", () => {
+    const h = harness();
+    const p = prepared(h);
+    h.clock.advance(1_000);
+    const fetched = fetchDispatchInput(fetchInputRequest(p), h.deps);
+    expect(fetched).toEqual({
+      state: "input-materialized",
+      ...handleOf(p),
+      input: INPUT,
+      promptProvenance: p.promptProvenance,
+      materializedAt: new Date(T0_MS + 1_000).toISOString(),
+    });
+    expect(validateAgainstSchema(MATERIALIZED_DISPATCH_INPUT_SCHEMA, fetched).ok).toBe(true);
+    expect(envelopeOf(h, p).state).toBe("prepared");
+    expect(envelopeOf(h, p).inputMaterializedAt).toBe(fetched.materializedAt);
+    expect(JSON.stringify(fetched)).not.toContain(p.inputCapability.token);
+  });
+
+  test("a second retrieval fails typed and leaves the durable row byte-equivalent", () => {
+    const h = harness();
+    const p = prepared(h);
+    fetchDispatchInput(fetchInputRequest(p), h.deps);
+    const before = attestationRowDigest(envelopeOf(h, p));
+    expect(() => fetchDispatchInput(fetchInputRequest(p), h.deps)).toThrow(
+      DispatchStateConflictError,
+    );
+    expect(() => fetchDispatchInput(fetchInputRequest(p), h.deps)).toThrow(
+      /already materialized/,
+    );
+    expect(attestationRowDigest(envelopeOf(h, p))).toBe(before);
+  });
+
+  test("a stolen, foreign, malformed, or wrong-scope capability returns no input and mutates nothing", () => {
+    const h = harness();
+    const first = prepared(h);
+    const second = prepared(h, { idempotencyKey: "T685-round-1" });
+    const before = h.store.snapshot().map(attestationRowDigest);
+    const attempts: FetchDispatchInputRequest[] = [
+      fetchInputRequest(first, second.inputCapability),
+      fetchInputRequest(first, { scope: "fetch-input", token: "cq_input_short" }),
+      fetchInputRequest(first, first.resultCapability as never),
+      fetchInputRequest(first, first.inputCapability, OTHER_PROJECT),
+    ];
+    for (const request of attempts) {
+      expect(() => fetchDispatchInput(request, h.deps)).toThrow(
+        request.namespace === OTHER_PROJECT
+          ? AttestationNamespaceError
+          : DispatchAuthorizationError,
+      );
+      expect(h.store.snapshot().map(attestationRowDigest)).toEqual(before);
+    }
+  });
+
+  test("the consumed marker survives restart and still prevents a second retrieval", () => {
+    const live = harness();
+    const p = prepared(live);
+    fetchDispatchInput(fetchInputRequest(p), live.deps);
+    const restarted = InMemoryAttestationStore.rehydrate(NAMESPACE, live.store.snapshot());
+    const deps: DispatchServiceDeps = { store: restarted, now: live.clock.now };
+    expect(() => fetchDispatchInput(fetchInputRequest(p), deps)).toThrow(
+      DispatchStateConflictError,
+    );
+    expect(JSON.stringify(restarted.snapshot())).not.toContain(p.inputCapability.token);
   });
 });
 
@@ -1499,6 +1632,7 @@ describe("namespace, auth, transport and storage errors stay explicit", () => {
       assertDispatchOperationAuthorization(
         DISPATCH_PROTOCOL_OPERATIONS,
         DISPATCH_OPERATION_AUTHORIZATION,
+        INPUT_CAPABILITY_OPERATIONS,
         RESULT_CAPABILITY_OPERATIONS,
       ),
     ).toEqual([...DISPATCH_PROTOCOL_OPERATIONS].sort());
@@ -1507,6 +1641,7 @@ describe("namespace, auth, transport and storage errors stay explicit", () => {
       assertDispatchOperationAuthorization(
         [...DISPATCH_PROTOCOL_OPERATIONS, "resume_dispatch"],
         DISPATCH_OPERATION_AUTHORIZATION,
+        INPUT_CAPABILITY_OPERATIONS,
         RESULT_CAPABILITY_OPERATIONS,
       ),
     ).toThrow("do not match the scoped operations");
@@ -1518,6 +1653,7 @@ describe("namespace, auth, transport and storage errors stay explicit", () => {
           ...DISPATCH_OPERATION_AUTHORIZATION,
           ["resume_dispatch", "trusted-parent"],
         ] as never),
+        INPUT_CAPABILITY_OPERATIONS,
         RESULT_CAPABILITY_OPERATIONS,
       ),
     ).toThrow("DISPATCH_OPERATION_AUTHORIZATION");
@@ -1529,6 +1665,7 @@ describe("namespace, auth, transport and storage errors stay explicit", () => {
           ...DISPATCH_OPERATION_AUTHORIZATION,
           ["abort_dispatch", "result-capability"],
         ] as never),
+        INPUT_CAPABILITY_OPERATIONS,
         RESULT_CAPABILITY_OPERATIONS,
       ),
     ).toThrow("do not match the declared capability operations");
@@ -1536,6 +1673,7 @@ describe("namespace, auth, transport and storage errors stay explicit", () => {
       assertDispatchOperationAuthorization(
         DISPATCH_PROTOCOL_OPERATIONS,
         DISPATCH_OPERATION_AUTHORIZATION,
+        INPUT_CAPABILITY_OPERATIONS,
         [],
       ),
     ).toThrow("RESULT_CAPABILITY_OPERATIONS");

@@ -273,7 +273,14 @@ interface BridgeBehaviour {
 
 function bridgeLauncher(h: Harness, behaviour: BridgeBehaviour = {}): ClaudeNativeLauncher {
   return (context) => {
-    const handle = JSON.parse(context.envelope.prompt) as DispatchHandle;
+    const reference = JSON.parse(context.envelope.prompt) as {
+      readonly attestationId: string;
+      readonly generation: number;
+    };
+    const handle: DispatchHandle = {
+      attestationId: reference.attestationId,
+      generation: reference.generation,
+    };
     const output = behaviour.output === undefined ? OUTPUT : behaviour.output;
     const submission =
       output === null
@@ -384,7 +391,12 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
       promptDigest: promptDigestOf(RECORDED_ROLE_PROMPT),
     });
     const handle = handleOf(prepared);
-    const launch = buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model: MODEL, handle });
+    const launch = buildClaudeCompactNativeLaunch({
+      roleId: ROLE_ID,
+      model: MODEL,
+      handle,
+      inputCapability: prepared.inputCapability,
+    });
     const launchCorrelation = correlation(sessionId);
     expect(launch.prompt).not.toContain(prepared.resultCapability.token);
     const launchReport = launchClaudePrint(
@@ -438,6 +450,7 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
             roleId: ROLE_ID,
             model: MODEL,
             handle: handleOf(prepared),
+            inputCapability: prepared.inputCapability,
           }),
           preparedProvenance: provenanceBindingOf(prepared),
           expectedCorrelation: correlation(sessionId),
@@ -479,7 +492,12 @@ describe("T689 recorded and opt-in live Claude process boundaries", () => {
       const model = process.env["CQ_T689_LIVE_MODEL"] ?? "haiku";
       const launchReport = launchClaudePrint(
         {
-          envelope: buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model, handle }),
+          envelope: buildClaudeCompactNativeLaunch({
+            roleId: ROLE_ID,
+            model,
+            handle,
+            inputCapability: prepared.inputCapability,
+          }),
           preparedProvenance: provenanceBindingOf(prepared),
           expectedCorrelation: correlation(sessionId),
           resultCapability: prepared.resultCapability,

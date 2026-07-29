@@ -9,7 +9,7 @@ description: Implement-flow worker. Implements EXACTLY ONE task end-to-end insid
 ## Catalogue
 ```yaml
 inputs:
-  - "task id + headline + description + acceptance (verbatim from dispatch prompt)"
+  - "task id + headline + description + acceptance (from the surface-specific dispatch input)"
   - "worktree path and branch name (implement/<taskId>)"
   - "base commit the worktree was cut from"
   - "prior-round criticism[] (optional, on re-dispatch after review)"
@@ -19,7 +19,7 @@ outputs:
   - "one git commit on branch implement/<taskId> (resultCommit)"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
-  - "input delivered via dispatch prompt; no ledger reads required"
+  - "surface-specific input delivery: see the dispatch-input-delivery fragment below"
   - "status=pass requires bun run check green AND a commit; anything else is status=fail"
 ```
 
@@ -33,8 +33,11 @@ the orchestrator reads it and owns all ledger state, review, and merge-back.
 > host-namespaced; if unavailable in your runtime, fall back to Read/Grep/Glob.
 > Use codegraph as the preferred, faster index when present.
 
-## Inputs (from the dispatch prompt)
-The orchestrator passes you, in the prompt:
+## Inputs
+
+{{cq:fragment:dispatch-input-delivery}}
+
+The resolved worker input contains:
 - **task id** and its `headline`, `description`, and `acceptance` (verbatim — you
   do NOT need to read the ledger; treat these as your spec);
 - the **resolved model** you are running at (informational);

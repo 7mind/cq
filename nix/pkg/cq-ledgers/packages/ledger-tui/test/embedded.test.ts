@@ -13,8 +13,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createLedgerStore } from "@cq/ledger";
+import {
+  createAttestationStoreForConstruction,
+  createLedgerStore,
+  resolveSingleProjectAttestationNamespace,
+} from "@cq/ledger";
 import { buildServer } from "@cq/ledger-mcp";
+import { assertDispatchConstructionConformance } from "../../ledger-mcp/test/dispatchConstructionConformance.js";
 import { McpLedgerClient, LedgerToolError } from "../src/mcpClient.js";
 
 let tmpRoot: string;
@@ -26,6 +31,7 @@ let promptRoot: string;
 let client: McpLedgerClient;
 let rawClient: Client;
 const PROMPT_BYTES = "tui codex {{cq:literal}} and $ARGUMENTS\n";
+const WORKER_PROMPT_BYTES = "tui codex implement-worker dispatch input\n";
 
 beforeAll(async () => {
   // The runtime store is the out-of-tree xdg primary (T505): point
@@ -53,6 +59,21 @@ beforeAll(async () => {
       intentionalDifferences: [],
       sidecar: { schemaRoleId: "plan-advance" },
     },
+    {
+      roleId: "implement-worker",
+      roleKind: "dispatched-subagent",
+      canonicalSource: "agents/implement-worker.md",
+      surfaces: ["claude", "codex", "pi"],
+      sharedSourceBlock: {
+        classification: "shared-prose",
+        sourceBlock: "all prose outside the classified surface-sensitive blocks",
+        targetFragment: null,
+      },
+      fragmentBindings: [],
+      dispatchRelations: [],
+      intentionalDifferences: [],
+      sidecar: { schemaRoleId: "implement-worker" },
+    },
   ]);
   const surfaceCore = {
     surface: "codex",
@@ -62,6 +83,11 @@ beforeAll(async () => {
         roleId: "plan-advance",
         version: 1,
         sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
+      },
+      {
+        roleId: "implement-worker",
+        version: 1,
+        sha256: createHash("sha256").update(WORKER_PROMPT_BYTES, "utf8").digest("hex"),
       },
     ],
   };
@@ -76,6 +102,7 @@ beforeAll(async () => {
   );
   await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
   await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);
+  await fs.writeFile(path.join(promptRoot, "roles", "implement-worker.md"), WORKER_PROMPT_BYTES);
   process.env["CQ_PROMPT_ROOT"] = promptRoot;
   process.env["CQ_PROMPT_SURFACE"] = "codex";
 
@@ -140,6 +167,33 @@ function decode<T>(result: unknown): T {
 }
 
 describe("McpLedgerClient.embedded (in-process, in-memory transport)", () => {
+  it("preserves the T977 dispatch contract through the production embedded TUI construction", async () => {
+    const embedded = client.embedded;
+    if (embedded === null) throw new Error("expected embedded ledger context");
+    const namespace = await resolveSingleProjectAttestationNamespace({
+      construction: "embedded",
+      backend: "xdg",
+      repoRoot: tmpRoot,
+      projectId: path.basename(tmpRoot),
+    });
+    const peer = await createAttestationStoreForConstruction({
+      backend: "xdg",
+      namespace,
+      env: { XDG_STATE_HOME: xdgHome },
+    });
+    try {
+      await assertDispatchConstructionConformance({
+        cell: "embedded-tui",
+        client: (client as unknown as { readonly client: Client }).client,
+        surface: "codex",
+        rows: async () =>
+          (await peer.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
+      });
+    } finally {
+      await peer.close();
+    }
+  });
+
   it("exposes the embedded context (store + cwd + resolved backend descriptor)", () => {
     expect(client.embedded).not.toBeNull();
     expect(client.embedded?.cwd).toBe(tmpRoot);

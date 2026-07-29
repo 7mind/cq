@@ -3,7 +3,7 @@
  *
  * Returns an array of `tool()` instances for
  * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
- * The canonical 33-tool surface is `LEDGER_TOOL_NAMES`; the five dispatch
+ * The canonical 33-tool surface is `LEDGER_TOOL_NAMES`; the six dispatch
  * handlers are omitted when no durable `DispatchCapability` is supplied.
  * the stdio counterpart is `registerLedgerStdioTools` (./stdioLedgerTools.ts).
  *
@@ -68,6 +68,7 @@ import type { DispatchCapability } from "./dispatchCapability.js";
 import {
   ABORT_DISPATCH_INPUT,
   CONFIRM_DISPATCH_COMPLETION_INPUT,
+  FETCH_DISPATCH_INPUT_INPUT,
   FETCH_DISPATCH_RESULT_INPUT,
   PREPARE_DISPATCH_INPUT,
   STORE_RESULT_INPUT,
@@ -611,20 +612,31 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const prepareDispatchTool = tool(
     "prepare_dispatch",
-    "Validate and durably prepare one typed dispatch, returning its handle, deadlines, provenance, and store-result capability.",
+    "Validate and durably prepare one typed dispatch, returning its handle, deadlines, provenance, and distinct input/result capabilities.",
     PREPARE_DISPATCH_INPUT,
     async (args) => {
       if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
       return jsonResult(
         await dispatchCapability.prepare({
-          roleId: args.roleId,
-          input: args.input,
+          ...(args.roleId === undefined ? {} : { roleId: args.roleId }),
+          ...(args.input === undefined ? {} : { input: args.input }),
+          ...(args.refs === undefined ? {} : { refs: args.refs }),
           idempotencyKey: args.idempotencyKey,
           timeoutMs: args.timeoutMs,
+          ...(args.overlays === undefined ? {} : { overlays: args.overlays }),
           expectedChild: args.expectedChild,
           ...(args.reprepareOf === undefined ? {} : { reprepareOf: args.reprepareOf }),
         }),
       );
+    },
+  );
+  const fetchDispatchInputTool = tool(
+    "fetch_dispatch_input",
+    "Materialize the prepare-bound typed child input exactly once using its distinct input capability.",
+    FETCH_DISPATCH_INPUT_INPUT,
+    async (args) => {
+      if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
+      return jsonResult(await dispatchCapability.fetchInput(args));
     },
   );
   const storeResultTool = tool(
@@ -671,7 +683,10 @@ ${QUERY_LANGUAGE_HELP}`,
     },
   );
 
-  // ---- Prompt-catalog capability (3) -------------------------------------
+  // ---- Ordinary prompt-catalog MCP surface (2) ---------------------------
+  // validateInput remains available on PromptCatalogCapability only for the
+  // explicitly allowlisted inspection/debug callers; ordinary tools/list must
+  // not advertise a model-visible validate_input operation.
 
   const fetchPrompt = tool(
     "fetch_prompt",
@@ -689,21 +704,6 @@ ${QUERY_LANGUAGE_HELP}`,
     async (args) => {
       if (promptCatalog === undefined) throw new PromptCatalogNotImplementedError();
       return jsonResult(promptCatalog.fetchPrompt(args.roleId));
-    },
-  );
-
-  const validateInput = tool(
-    "validate_input",
-    "Validate `input` against a dispatched role's inputSchema (Ajv, draft 2020-12). " +
-      "Returns { ok:true } or { ok:false, errors:[{ path, message, keyword, schemaPath, params }] } " +
-      "with every failing constraint (the failing JSON-Schema field path included). Fails fast on " +
-      "an unknown roleId, and on an orchestrator-command roleId (which has no input schema). Only " +
-      "available when the server has an asset-capable catalog root; otherwise returns a " +
-      "not-implemented error.",
-    { roleId: z.string(), input: z.unknown() } as const,
-    async (args) => {
-      if (promptCatalog === undefined) throw new PromptCatalogNotImplementedError();
-      return jsonResult(promptCatalog.validateInput(args.roleId, args.input));
     },
   );
 
@@ -754,6 +754,7 @@ ${QUERY_LANGUAGE_HELP}`,
       ? []
       : [
           prepareDispatchTool,
+          fetchDispatchInputTool,
           storeResultTool,
           confirmDispatchCompletionTool,
           abortDispatchTool,
@@ -782,7 +783,6 @@ ${QUERY_LANGUAGE_HELP}`,
     getConfig,
     ...dispatchTools,
     fetchPrompt,
-    validateInput,
     validateOutput,
     listProjectsTool,
     ...planLifecycleTools,
@@ -882,12 +882,12 @@ export const LEDGER_TOOL_NAMES = [
   "read_log",
   "get_config",
   "prepare_dispatch",
+  "fetch_dispatch_input",
   "store_result",
   "confirm_dispatch_completion",
   "abort_dispatch",
   "fetch_dispatch_result",
   "fetch_prompt",
-  "validate_input",
   "validate_output",
   "list_projects",
   ...PLAN_LIFECYCLE_TOOL_NAMES,
@@ -897,6 +897,7 @@ export type LedgerToolName = (typeof LEDGER_TOOL_NAMES)[number];
 
 export const DISPATCH_LIFECYCLE_TOOL_NAMES = [
   "prepare_dispatch",
+  "fetch_dispatch_input",
   "store_result",
   "confirm_dispatch_completion",
   "abort_dispatch",

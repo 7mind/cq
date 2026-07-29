@@ -49,6 +49,12 @@ export interface ResultCapability {
   readonly token: string;
 }
 
+/** The child-facing capability authorizes exactly one assembled-input retrieval. */
+export interface InputCapability {
+  readonly scope: "fetch-input";
+  readonly token: string;
+}
+
 /** Compact prompt identity returned by prepare without prompt or schema materialization. */
 export interface DispatchPromptProvenance {
   readonly roleId: DispatchedRoleId;
@@ -66,10 +72,24 @@ export interface DispatchDeadlines {
   readonly launchDeadline: string;
 }
 
-/** Successful prepare response, including the least-privilege result capability. */
+/** Successful prepare response, including separate least-privilege child capabilities. */
 export interface DispatchPrepared extends DispatchHandle, DispatchDeadlines {
   readonly promptProvenance: DispatchPromptProvenance;
+  readonly inputCapability: InputCapability;
   readonly resultCapability: ResultCapability;
+}
+
+/** One-shot, capability-bound child retrieval of the prepare-bound typed input. */
+export interface FetchDispatchInput extends DispatchHandle {
+  readonly inputCapability: InputCapability;
+}
+
+/** The only successful response from {@link FetchDispatchInput}. */
+export interface MaterializedDispatchInput extends DispatchHandle {
+  readonly state: "input-materialized";
+  readonly input: DispatchJSONValue;
+  readonly promptProvenance: DispatchPromptProvenance;
+  readonly materializedAt: string;
 }
 
 /** Capability-bound child result submission. */
@@ -186,6 +206,7 @@ export type FetchDispatchResult =
 /** The complete ordinary-flow operation vocabulary for the breaking cutover. */
 export const DISPATCH_PROTOCOL_OPERATIONS = [
   "prepare_dispatch",
+  "fetch_dispatch_input",
   "store_result",
   "confirm_dispatch_completion",
   "abort_dispatch",
@@ -199,6 +220,7 @@ const ISO_TIMESTAMP_PATTERN =
   "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$";
 const SHA256_PATTERN = "^[0-9a-f]{64}$";
 const ATTESTATION_ID_PATTERN = "^att_[A-Za-z0-9_-]{32,}$";
+const INPUT_CAPABILITY_PATTERN = "^cq_input_[A-Za-z0-9_-]{43,}$";
 const RESULT_CAPABILITY_PATTERN = "^cq_result_[A-Za-z0-9_-]{43,}$";
 
 const handleProperties = {
@@ -231,6 +253,16 @@ const resultCapabilitySchema = {
   properties: {
     scope: { type: "string", enum: ["store-result"] },
     token: { type: "string", pattern: RESULT_CAPABILITY_PATTERN },
+  },
+  required: ["scope", "token"],
+  additionalProperties: false,
+} as const;
+
+const inputCapabilitySchema = {
+  type: "object",
+  properties: {
+    scope: { type: "string", enum: ["fetch-input"] },
+    token: { type: "string", pattern: INPUT_CAPABILITY_PATTERN },
   },
   required: ["scope", "token"],
   additionalProperties: false,
@@ -320,6 +352,7 @@ export const DISPATCH_PREPARED_SCHEMA: JSONSchema = {
     ...handleProperties,
     ...deadlineProperties,
     promptProvenance: promptProvenanceSchema,
+    inputCapability: inputCapabilitySchema,
     resultCapability: resultCapabilitySchema,
   },
   required: [
@@ -329,7 +362,46 @@ export const DISPATCH_PREPARED_SCHEMA: JSONSchema = {
     "childCancelAt",
     "launchDeadline",
     "promptProvenance",
+    "inputCapability",
     "resultCapability",
+  ],
+  additionalProperties: false,
+};
+
+/** Child-facing one-shot assembled-input retrieval. */
+export const FETCH_DISPATCH_INPUT_SCHEMA: JSONSchema = {
+  $schema: DRAFT_2020_12,
+  $id: "cq:compact-dispatch/fetch-input",
+  title: "fetch dispatch input",
+  type: "object",
+  properties: {
+    ...handleProperties,
+    inputCapability: inputCapabilitySchema,
+  },
+  required: ["attestationId", "generation", "inputCapability"],
+  additionalProperties: false,
+};
+
+/** Successful assembled-input materialization. A second retrieval is an error. */
+export const MATERIALIZED_DISPATCH_INPUT_SCHEMA: JSONSchema = {
+  $schema: DRAFT_2020_12,
+  $id: "cq:compact-dispatch/materialized-input",
+  title: "materialized dispatch input",
+  type: "object",
+  properties: {
+    state: { type: "string", enum: ["input-materialized"] },
+    ...handleProperties,
+    input: {},
+    promptProvenance: promptProvenanceSchema,
+    materializedAt: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
+  },
+  required: [
+    "state",
+    "attestationId",
+    "generation",
+    "input",
+    "promptProvenance",
+    "materializedAt",
   ],
   additionalProperties: false,
 };

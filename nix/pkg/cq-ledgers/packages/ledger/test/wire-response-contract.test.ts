@@ -4,7 +4,7 @@ import type { ArchiveContent } from "../src/store/LedgerStore.js";
 import type { ReadLogResult } from "../src/mcp/readLog.js";
 import type { GetConfigResult } from "../src/mcp/configCapability.js";
 import type { FetchPromptResult } from "../src/mcp/promptCatalogCapability.js";
-import type { FetchDispatchResult } from "@cq/config";
+import type { FetchDispatchResult, MaterializedDispatchInput } from "@cq/config";
 import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
 import { LEDGER_TOOL_NAMES } from "../src/mcp/ledgerTools.js";
 import {
@@ -168,12 +168,12 @@ describe("ledger response contract matrix", () => {
       read_log: { kind: "requested-full-content" },
       get_config: { kind: "requested-full-content" },
       prepare_dispatch: { kind: "purpose-built-small" },
+      fetch_dispatch_input: { kind: "requested-full-content" },
       store_result: { kind: "purpose-built-small" },
       confirm_dispatch_completion: { kind: "purpose-built-small" },
       abort_dispatch: { kind: "purpose-built-small" },
       fetch_dispatch_result: { kind: "requested-full-content" },
       fetch_prompt: { kind: "requested-full-content" },
-      validate_input: { kind: "purpose-built-small" },
       validate_output: { kind: "purpose-built-small" },
       list_projects: { kind: "purpose-built-small" },
     });
@@ -589,6 +589,21 @@ describe("wire serialization", () => {
       fetch_ledger_archive: { archive },
       read_log: log,
       get_config: config,
+      fetch_dispatch_input: {
+        state: "input-materialized",
+        attestationId: `att_${"b".repeat(32)}`,
+        generation: 1,
+        input: { taskId: "T977" },
+        promptProvenance: {
+          roleId: "implement-worker",
+          version: 1,
+          surface: "codex",
+          promptDigest: "c".repeat(64),
+          catalogHash: "d".repeat(64),
+          inputDigest: "e".repeat(64),
+        },
+        materializedAt: "2026-07-29T12:00:00.000Z",
+      },
       fetch_dispatch_result: {
         state: "attestation-not-found",
         attestationId: `att_${"a".repeat(32)}`,
@@ -600,6 +615,7 @@ describe("wire serialization", () => {
       "fetch_ledger_archive",
       "read_log",
       "get_config",
+      "fetch_dispatch_input",
       "fetch_dispatch_result",
       "fetch_prompt",
     ] as const satisfies readonly RequestedFullToolName[];
@@ -632,6 +648,7 @@ interface RequestedFullPayloadByTool {
   fetch_ledger_archive: { archive: ArchiveContent };
   read_log: ReadLogResult;
   get_config: GetConfigResult;
+  fetch_dispatch_input: MaterializedDispatchInput;
   fetch_dispatch_result: FetchDispatchResult;
   fetch_prompt: FetchPromptResult;
 }

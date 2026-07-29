@@ -1,11 +1,15 @@
 > **Catalog-driven dispatch (G41 — implement-worker).** In Claude's ref-first
 > procedure, for each
-> `implement-worker`, compose `{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, priorCriticism? }` and call
-> `prepare_dispatch`, which binds the input to the generated role's
-> `inputSchema` and `outputSchema`. Retain only the returned handle and deadlines
-> in the orchestrator. Dispatch `CQ_SUBAGENT` with the worker role, the §K4
+> `implement-worker`, compose refs only:
+> `{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }`.
+> Call `prepare_dispatch`; the server reads the task/review narrative, assembles
+> it against the generated role's `inputSchema`, and returns a handle plus a
+> distinct `inputCapability`. Retain only the handle, input capability, and
+> deadlines in the orchestrator. Dispatch `CQ_SUBAGENT` with the worker role, the §K4
 > model, `isolation: "none"`, `run_in_background: false`, and the serialized
-> handle as its entire launch prompt. Require the bridge's handle-only
+> `{ attestationId, generation, inputCapability }` as its entire launch prompt.
+> The child calls `fetch_dispatch_input` exactly once before work; the parent
+> never reads or launches the task narrative. Require the bridge's handle-only
 > native-completion confirmation with actual child/run/model provenance, then
 > call `fetch_dispatch_result` exactly once to materialize the already-validated
 > worker result.

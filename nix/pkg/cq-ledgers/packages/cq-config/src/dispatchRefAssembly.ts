@@ -52,11 +52,10 @@
  * system boundary. A child-side prompt fetch would re-add exactly the cost T975
  * removed, so {@link assertNoRolePromptRetrieval} pins it.
  *
- * SCOPE. Contract level only, mirroring how T682/T683/T684/T976 landed:
- * `prepare_dispatch` does not exist yet (T695 exposes it over MCP; T977 owns
- * runtime wiring). This module builds no MCP tool, registers no server route,
- * and invents no attestation store. What that leaves out is recorded in
- * {@link DISPATCH_REF_ASSEMBLY_DEFERRED}.
+ * SCOPE. This module remains the contract-level assembler and imports no MCP
+ * or ledger implementation. T977's `@cq/ledger-mcp` runtime wires it into
+ * prepare and audits {@link DISPATCH_REF_ASSEMBLY_DEFERRED} against the live
+ * one-shot retrieval implementation.
  *
  * The ledger is reached through the {@link DispatchNarrativeSource} PORT, not by
  * importing `@cq/ledger` — `@cq/ledger` depends on `@cq/config`, so the reverse
@@ -955,9 +954,9 @@ export interface DispatchAssemblyContext {
  * cross-project ref, invalid parent guidance, or any T976 validation failure.
  * Nothing is allocated on any of those paths.
  *
- * One-shot child retrieval of the assembled input BY HANDLE, and the stolen /
- * foreign-capability and second-retrieval failures that guard it, are DEFERRED
- * to T977 ({@link DISPATCH_REF_ASSEMBLY_DEFERRED}).
+ * T977 supplies one-shot child retrieval of the assembled input BY HANDLE,
+ * including stolen/foreign-capability and second-retrieval failures. The exact
+ * historical handoff stays in {@link DISPATCH_REF_ASSEMBLY_DEFERRED}.
  */
 export function assembleDispatchInput(
   refs: unknown,
@@ -1075,16 +1074,16 @@ export function assertNoRolePromptRetrieval(label: string, operations: readonly 
 }
 
 // ---------------------------------------------------------------------------
-// Deferred
+// Runtime handoff (discharged by T977)
 // ---------------------------------------------------------------------------
 
-/** The task that owns the runtime half of this contract. */
+/** The task that discharged the runtime half of this contract. */
 export const DISPATCH_REF_ASSEMBLY_DEFERRED_TO = "T977" as const;
 
 /**
- * What this contract-level task deliberately does NOT cover, recorded so it is
- * not silently dropped. Each entry lands in
- * {@link DISPATCH_REF_ASSEMBLY_DEFERRED_TO}.
+ * What this contract-level task handed to
+ * {@link DISPATCH_REF_ASSEMBLY_DEFERRED_TO}. The runtime keeps an exact
+ * discharge map over these entries.
  */
 export const DISPATCH_REF_ASSEMBLY_DEFERRED = Object.freeze([
   "one-shot-child-retrieval-of-the-assembled-input-by-handle",

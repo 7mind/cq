@@ -93,6 +93,9 @@ import {
   type DispatchPromptProvenance,
   type DispatchProtocolOperation,
   type FetchDispatchResult,
+  type FetchDispatchInput,
+  type InputCapability,
+  type MaterializedDispatchInput,
   type NativeCompletionProof,
   type ResultCapability,
   type StoreDispatchResult,
@@ -100,6 +103,7 @@ import {
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const ATTESTATION_ID_RE = /^att_[A-Za-z0-9_-]{32,}$/;
+const INPUT_CAPABILITY_RE = /^cq_input_[A-Za-z0-9_-]{43,}$/;
 const RESULT_CAPABILITY_RE = /^cq_result_[A-Za-z0-9_-]{43,}$/;
 const PROJECT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const IDEMPOTENCY_KEY_MAX_LENGTH = 256;
@@ -366,11 +370,18 @@ export const ATTESTATION_ID_ENTROPY_BYTES = 24;
 /** Entropy behind a minted result capability token. */
 export const RESULT_CAPABILITY_ENTROPY_BYTES = 32;
 
+/** Entropy behind a minted assembled-input capability token. */
+export const INPUT_CAPABILITY_ENTROPY_BYTES = 32;
+
 // ---------------------------------------------------------------------------
 // Authorization scopes — the distinct privileges the operations require
 // ---------------------------------------------------------------------------
 
-export const DISPATCH_AUTHORIZATION_SCOPES = ["result-capability", "trusted-parent"] as const;
+export const DISPATCH_AUTHORIZATION_SCOPES = [
+  "input-capability",
+  "result-capability",
+  "trusted-parent",
+] as const;
 
 export type DispatchAuthorizationScope = (typeof DISPATCH_AUTHORIZATION_SCOPES)[number];
 
@@ -390,6 +401,7 @@ export const DISPATCH_OPERATION_AUTHORIZATION: ReadonlyMap<
   DispatchAuthorizationScope
 > = new Map([
   ["prepare_dispatch", "trusted-parent"],
+  ["fetch_dispatch_input", "input-capability"],
   ["store_result", "result-capability"],
   ["confirm_dispatch_completion", "trusted-parent"],
   ["abort_dispatch", "trusted-parent"],
@@ -404,6 +416,11 @@ export const RESULT_CAPABILITY_OPERATIONS = ["store_result"] as const;
 
 const RESULT_CAPABILITY_OPERATION_SET: ReadonlySet<string> = new Set(RESULT_CAPABILITY_OPERATIONS);
 
+/** The one operation an assembled-input capability authorizes. */
+export const INPUT_CAPABILITY_OPERATIONS = ["fetch_dispatch_input"] as const;
+
+const INPUT_CAPABILITY_OPERATION_SET: ReadonlySet<string> = new Set(INPUT_CAPABILITY_OPERATIONS);
+
 /**
  * Module-load invariant: every declared ordinary-flow operation has exactly one
  * authorization scope, and the capability-scoped operations are precisely those
@@ -414,6 +431,7 @@ const RESULT_CAPABILITY_OPERATION_SET: ReadonlySet<string> = new Set(RESULT_CAPA
 export function assertDispatchOperationAuthorization(
   operations: readonly string[],
   scopes: ReadonlyMap<string, DispatchAuthorizationScope>,
+  inputCapabilityOperations: readonly string[],
   capabilityOperations: readonly string[],
 ): readonly string[] {
   const declared = [...operations].sort();
@@ -435,6 +453,19 @@ export function assertDispatchOperationAuthorization(
         `capability operations [${[...capabilityOperations].join(", ")}]`,
     );
   }
+  const inputCapabilityScoped = [...scopes.entries()]
+    .filter(([, scope]) => scope === "input-capability")
+    .map(([operation]) => operation)
+    .sort();
+  if (
+    inputCapabilityScoped.join(",") !== [...inputCapabilityOperations].sort().join(",")
+  ) {
+    throw new AttestationContractError(
+      "INPUT_CAPABILITY_OPERATIONS",
+      `input-capability-scoped operations [${inputCapabilityScoped.join(", ")}] do not match the ` +
+        `declared input capability operations [${[...inputCapabilityOperations].join(", ")}]`,
+    );
+  }
   return Object.freeze(scoped);
 }
 
@@ -442,6 +473,7 @@ export const DISPATCH_OPERATION_AUTHORIZATION_COVERAGE: readonly string[] =
   assertDispatchOperationAuthorization(
     DISPATCH_PROTOCOL_OPERATIONS,
     DISPATCH_OPERATION_AUTHORIZATION,
+    INPUT_CAPABILITY_OPERATIONS,
     RESULT_CAPABILITY_OPERATIONS,
   );
 
@@ -460,6 +492,11 @@ export function dispatchOperationScope(operation: string): DispatchAuthorization
 /** Whether a result capability authorizes `operation`. Set-based. */
 export function resultCapabilityAuthorizes(operation: string): boolean {
   return typeof operation === "string" && RESULT_CAPABILITY_OPERATION_SET.has(operation);
+}
+
+/** Whether an input capability authorizes `operation`. Set-based. */
+export function inputCapabilityAuthorizes(operation: string): boolean {
+  return typeof operation === "string" && INPUT_CAPABILITY_OPERATION_SET.has(operation);
 }
 
 /**
@@ -512,6 +549,17 @@ export function resultCapabilityHash(token: string): string {
   return sha256Utf8(token);
 }
 
+/** The stored hash of an assembled-input capability. The raw token is never persisted. */
+export function inputCapabilityHash(token: string): string {
+  if (typeof token !== "string" || !INPUT_CAPABILITY_RE.test(token)) {
+    throw new AttestationContractError(
+      "inputCapability.token",
+      "expected a minted input capability token",
+    );
+  }
+  return sha256Utf8(token);
+}
+
 /**
  * Constant-time comparison of a presented capability against a STORED HASH
  * (Q273's pattern: hash first, then `timingSafeEqual` over two fixed 32-byte
@@ -522,6 +570,14 @@ export function resultCapabilityMatches(token: string, storedHash: string): bool
   // A malformed stored hash is refused BEFORE any comparison: `hexBytes` would
   // otherwise hand `timingSafeEqual` a short buffer and throw. A malformed TOKEN
   // needs no branch of its own — it simply digests to something else and loses.
+  if (typeof storedHash !== "string" || !SHA256_HEX.test(storedHash)) {
+    return false;
+  }
+  return timingSafeEqual(hexBytes(sha256Utf8(token)), hexBytes(storedHash));
+}
+
+/** Constant-time confirmation of a presented input capability against its stored hash. */
+export function inputCapabilityMatches(token: string, storedHash: string): boolean {
   if (typeof storedHash !== "string" || !SHA256_HEX.test(storedHash)) {
     return false;
   }
@@ -605,6 +661,20 @@ export function mintResultCapability(randomBytes: DispatchRandomBytes): ResultCa
   return Object.freeze({ scope: "store-result" as const, token });
 }
 
+/** Mint a fresh one-shot input capability, distinct from result submission. */
+export function mintInputCapability(randomBytes: DispatchRandomBytes): InputCapability {
+  const token = `cq_input_${base64url(
+    drawEntropy(randomBytes, INPUT_CAPABILITY_ENTROPY_BYTES, "inputCapability.token"),
+  )}`;
+  if (!INPUT_CAPABILITY_RE.test(token)) {
+    throw new AttestationContractError(
+      "inputCapability.token",
+      `minted a malformed capability "${token}"`,
+    );
+  }
+  return Object.freeze({ scope: "fetch-input" as const, token });
+}
+
 // ---------------------------------------------------------------------------
 // Rows: the live envelope and the collapsed tombstone
 // ---------------------------------------------------------------------------
@@ -653,8 +723,15 @@ export interface AttestationEnvelope {
   readonly idempotencyKey: string;
   readonly state: AttestationEnvelopeState;
   readonly promptProvenance: DispatchPromptProvenance;
+  /** Digest of the complete prepare request, excluding the executable registry. */
+  readonly prepareRequestDigest: string;
+  /** Prepare-bound typed input, materialized to the child exactly once. */
+  readonly input: DispatchJSONValue;
   readonly deadlines: DispatchDeadlines;
   readonly expectedChild: NativeChildIdentity;
+  /** HASH of the one-shot input capability. The token itself is never stored. */
+  readonly inputCapabilityHash: string;
+  readonly inputMaterializedAt?: string;
   /** The HASH of the minted capability. The token itself is never stored. */
   readonly resultCapabilityHash: string;
   readonly createdAt: string;
@@ -724,11 +801,15 @@ export const TOMBSTONE_FORBIDDEN_FIELDS = [
   "output",
   "outputDigest",
   "resultCapabilityHash",
+  "input",
+  "inputCapabilityHash",
+  "inputMaterializedAt",
   "nativeCompletion",
   "abortReason",
   "abortDetails",
   "abortDetailsDigest",
   "promptProvenance",
+  "prepareRequestDigest",
   "deadlines",
   "expectedChild",
   "state",
@@ -876,6 +957,39 @@ export interface PrepareDispatchRequest {
 }
 
 /**
+ * Canonical digest of every prepare field that can change the resulting
+ * dispatch. The executable overlay registry is excluded; validated overlay ids
+ * and data are included.
+ */
+export function prepareDispatchRequestDigest(request: PrepareDispatchRequest): string {
+  return dispatchPayloadDigest({
+    roleId: request.roleId,
+    surface: request.surface,
+    input: request.input,
+    idempotencyKey: request.idempotencyKey,
+    timeoutMs: request.timeoutMs,
+    overlays:
+      request.overlays?.map((overlay) => ({
+        overlayId: overlay.overlayId,
+        data: overlay.data,
+      })) ?? [],
+    promptDigest: request.promptDigest,
+    catalogHash: request.catalogHash,
+    expectedChild: {
+      childId: request.expectedChild.childId,
+      runId: request.expectedChild.runId,
+    },
+    reprepareOf:
+      request.reprepareOf === undefined
+        ? null
+        : {
+            attestationId: request.reprepareOf.attestationId,
+            generation: request.reprepareOf.generation,
+          },
+  });
+}
+
+/**
  * A successful prepare. `prepared` is exactly T682's
  * {@link DispatchPrepared} — the wire shape, unwidened — while the recorded
  * `executedStepOrder` is the operational proof that this call validated
@@ -1007,6 +1121,9 @@ export function prepareDispatch(
       ? mintAttestationId(deps.randomBytes)
       : request.reprepareOf.attestationId;
 
+  executed.push("mint-input-capability");
+  const inputCapability = mintInputCapability(deps.randomBytes);
+
   executed.push("mint-result-capability");
   const resultCapability = mintResultCapability(deps.randomBytes);
 
@@ -1028,6 +1145,7 @@ export function prepareDispatch(
     catalogHash,
     inputDigest,
   });
+  const prepareRequestDigest = prepareDispatchRequestDigest(request);
   // Drop the reclaimed rows BEFORE the insert: a durable store enforces the
   // idempotency horizon's other half with a UNIQUE (namespace, idempotency_key)
   // constraint, so an expired row still occupying the key would refuse an insert
@@ -1044,8 +1162,11 @@ export function prepareDispatch(
       idempotencyKey,
       state: "prepared" as const,
       promptProvenance,
+      prepareRequestDigest,
+      input: request.input,
       deadlines,
       expectedChild,
+      inputCapabilityHash: inputCapabilityHash(inputCapability.token),
       resultCapabilityHash: resultCapabilityHash(resultCapability.token),
       createdAt: at,
     }),
@@ -1057,6 +1178,7 @@ export function prepareDispatch(
       generation,
       ...deadlines,
       promptProvenance,
+      inputCapability,
       resultCapability,
     }),
     handle: Object.freeze({ attestationId, generation }),
@@ -1181,6 +1303,77 @@ function requireRow(handle: DispatchHandle, deps: Deps): AttestationRow {
 }
 
 // ---------------------------------------------------------------------------
+// fetch_dispatch_input — one-shot input-capability operation
+// ---------------------------------------------------------------------------
+
+export interface FetchDispatchInputRequest extends FetchDispatchInput {
+  readonly namespace: AttestationNamespace;
+}
+
+const FETCH_INPUT: DispatchProtocolOperation = "fetch_dispatch_input";
+
+/**
+ * Materialize the prepare-bound typed input exactly once. The handle narrows the
+ * durable row and the distinct input capability authorizes only this operation.
+ * A stolen, foreign, malformed, or already-consumed capability fails without
+ * returning input and without changing lifecycle state.
+ */
+export function fetchDispatchInput(
+  request: FetchDispatchInputRequest,
+  deps: DispatchServiceDeps,
+): MaterializedDispatchInput {
+  assertTrustedNamespace(request.namespace, deps, FETCH_INPUT);
+  const capability = request?.inputCapability;
+  if (capability?.scope !== "fetch-input") {
+    throw new DispatchAuthorizationError(
+      FETCH_INPUT,
+      `an input capability authorizes only ${[...INPUT_CAPABILITY_OPERATIONS].join(", ")}`,
+    );
+  }
+  const token: unknown = capability.token;
+  if (typeof token !== "string" || !INPUT_CAPABILITY_RE.test(token)) {
+    throw new DispatchAuthorizationError(FETCH_INPUT, "malformed input capability");
+  }
+  const handle = assertDispatchHandle(request);
+  const row = readRow(handle, deps);
+  if (
+    row === undefined ||
+    isAttestationTombstone(row) ||
+    !inputCapabilityMatches(token, row.inputCapabilityHash)
+  ) {
+    throw new DispatchAuthorizationError(FETCH_INPUT, "unknown or foreign input capability");
+  }
+  if (row.inputMaterializedAt !== undefined) {
+    throw new DispatchStateConflictError(
+      FETCH_INPUT,
+      row.state,
+      `input for attestation "${row.attestationId}" was already materialized at ${row.inputMaterializedAt}`,
+    );
+  }
+  if (row.state !== "prepared") {
+    throw new DispatchStateConflictError(
+      FETCH_INPUT,
+      row.state,
+      `input for attestation "${row.attestationId}" may only be materialized while prepared`,
+    );
+  }
+  const { at } = readNow(deps);
+  const next: AttestationEnvelope = Object.freeze({
+    ...row,
+    inputMaterializedAt: at,
+  });
+  deps.store.replace(row, next);
+  return Object.freeze({
+    state: "input-materialized" as const,
+    attestationId: row.attestationId,
+    generation: row.generation,
+    input: row.input,
+    promptProvenance: row.promptProvenance,
+    materializedAt: at,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Terminal transitions
 // ---------------------------------------------------------------------------
 
@@ -1267,8 +1460,14 @@ function writeAbort(
     idempotencyKey: row.idempotencyKey,
     state: "aborted" as const,
     promptProvenance: row.promptProvenance,
+    prepareRequestDigest: row.prepareRequestDigest,
+    input: row.input,
     deadlines: row.deadlines,
     expectedChild: row.expectedChild,
+    inputCapabilityHash: row.inputCapabilityHash,
+    ...(row.inputMaterializedAt === undefined
+      ? {}
+      : { inputMaterializedAt: row.inputMaterializedAt }),
     resultCapabilityHash: row.resultCapabilityHash,
     createdAt: row.createdAt,
     // A pre-abort stored result stays visible for the 24h envelope, but it is

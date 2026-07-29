@@ -19,6 +19,7 @@ import {
   FETCH_DISPATCH_RESULT_SCHEMA,
   PROMPT_SURFACES,
   RETAINED_NON_FLOW_MCP_VALIDATORS,
+  RETAINED_INSPECTION_VALIDATORS,
   VALIDATE_INPUT_INSPECTION_CALLERS,
   assertValidateThenAllocate,
   classifyDispatchOutcomeTag,
@@ -374,6 +375,7 @@ describe("validate-then-allocate ordering", () => {
       "validate-role-input",
       "validate-declared-overlay-data",
       "allocate-attestation",
+      "mint-input-capability",
       "mint-result-capability",
     ]);
     expect(() => assertValidateThenAllocate(DISPATCH_PREPARE_STEP_ORDER)).not.toThrow();
@@ -392,6 +394,7 @@ describe("validate-then-allocate ordering", () => {
       "resolve-role-contract",
       "validate-role-input",
       "validate-declared-overlay-data",
+      "mint-input-capability",
       "mint-result-capability",
     ];
     expect(() => assertValidateThenAllocate(allocateFirst)).toThrow(DispatchInputValidationError);
@@ -404,6 +407,7 @@ describe("validate-then-allocate ordering", () => {
         "validate-role-input",
         "allocate-attestation",
         "validate-declared-overlay-data",
+        "mint-input-capability",
         "mint-result-capability",
       ]),
     ).toThrow("allocation precedes validation");
@@ -412,16 +416,16 @@ describe("validate-then-allocate ordering", () => {
   test("rejects an unknown, duplicated, or missing prepare step", () => {
     expect(() =>
       assertValidateThenAllocate([...DISPATCH_PREPARE_STEP_ORDER, "sneak-in-a-launch"]),
-    ).toThrow('order[5]: unknown prepare step "sneak-in-a-launch"');
+    ).toThrow('order[6]: unknown prepare step "sneak-in-a-launch"');
     for (const step of PROTOTYPE_NAMES) {
       expect(() => assertValidateThenAllocate([...DISPATCH_PREPARE_STEP_ORDER, step])).toThrow(
-        `order[5]: unknown prepare step "${step}"`,
+        `order[6]: unknown prepare step "${step}"`,
       );
     }
     expect(() =>
       assertValidateThenAllocate([...DISPATCH_PREPARE_STEP_ORDER, "allocate-attestation"]),
-    ).toThrow('order[5]: duplicate prepare step "allocate-attestation"');
-    expect(() => assertValidateThenAllocate(DISPATCH_PREPARE_STEP_ORDER.slice(0, 4))).toThrow(
+    ).toThrow('order[6]: duplicate prepare step "allocate-attestation"');
+    expect(() => assertValidateThenAllocate(DISPATCH_PREPARE_STEP_ORDER.slice(0, 5))).toThrow(
       'order: missing prepare step "mint-result-capability"',
     );
     expect(() => assertValidateThenAllocate([...DISPATCH_PREPARE_VALIDATION_STEPS])).toThrow(
@@ -582,9 +586,13 @@ describe("the child-side-validation exception must be explicitly declared", () =
 });
 
 describe("the allowlisted inspection/debug validator stays representable", () => {
-  test("validate_input and validate_output remain on the MCP surface, outside the flow vocabulary", () => {
-    expect(RETAINED_NON_FLOW_MCP_VALIDATORS).toEqual(["validate_input", "validate_output"]);
+  test("only validate_output remains model-visible; validate_input is direct inspection only", () => {
+    expect(RETAINED_NON_FLOW_MCP_VALIDATORS).toEqual(["validate_output"]);
+    expect(RETAINED_INSPECTION_VALIDATORS).toEqual(["validate_input"]);
     for (const validator of RETAINED_NON_FLOW_MCP_VALIDATORS) {
+      expect(DISPATCH_PROTOCOL_OPERATIONS).not.toContain(validator);
+    }
+    for (const validator of RETAINED_INSPECTION_VALIDATORS) {
       expect(DISPATCH_PROTOCOL_OPERATIONS).not.toContain(validator);
     }
   });

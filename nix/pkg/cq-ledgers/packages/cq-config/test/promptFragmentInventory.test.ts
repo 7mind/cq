@@ -118,10 +118,10 @@ describe("prompt fragment inventory schema and closure failures", () => {
 
   test("rejects an unknown fragment declaration", () => {
     const contracts = cloneContracts() as Array<Record<string, unknown>>;
-    contracts[0]!.fragment = "terminal-command";
-    expect(() => validatePromptFragmentInventory(contracts, cloneSources())).toThrow(
-      "expected one of cq-command-invocation, subagent-dispatch, implement-dispatch-workflow, inline-command-recursion, host-tool-vocabulary, operational-tool-vocabulary",
-    );
+      contracts[0]!.fragment = "terminal-command";
+      expect(() => validatePromptFragmentInventory(contracts, cloneSources())).toThrow(
+        "expected one of cq-command-invocation, subagent-dispatch, implement-dispatch-workflow, dispatch-input-delivery, inline-command-recursion, host-tool-vocabulary, operational-tool-vocabulary",
+      );
   });
 
   test("rejects an unclassified source block", () => {

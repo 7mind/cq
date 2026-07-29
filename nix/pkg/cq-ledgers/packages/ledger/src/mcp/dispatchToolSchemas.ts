@@ -11,6 +11,11 @@ const resultCapability = z.object({
   token: z.string(),
 });
 
+const inputCapability = z.object({
+  scope: z.literal("fetch-input"),
+  token: z.string(),
+});
+
 const nativeCompletion = z.object({
   kind: z.literal("native-completion"),
   actor: z.enum(["trusted-parent", "trusted-extension"]),
@@ -20,15 +25,29 @@ const nativeCompletion = z.object({
 });
 
 export const PREPARE_DISPATCH_INPUT = {
-  roleId: z.string(),
-  input: z.json(),
+  roleId: z.string().optional(),
+  input: z.json().optional(),
+  refs: z.unknown().optional(),
   idempotencyKey: z.string().min(1).max(256),
   timeoutMs: z.number().int().positive(),
+  overlays: z
+    .array(
+      z.object({
+        overlayId: z.string(),
+        data: z.json(),
+      }),
+    )
+    .optional(),
   expectedChild: z.object({
     childId: z.string().min(1),
     runId: z.string().min(1),
   }),
   reprepareOf: z.object(handle).optional(),
+} as const;
+
+export const FETCH_DISPATCH_INPUT_INPUT = {
+  ...handle,
+  inputCapability,
 } as const;
 
 export const STORE_RESULT_INPUT = {

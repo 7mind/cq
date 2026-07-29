@@ -27,20 +27,15 @@
  *     ({@link assembleDispatchInput}) and retrieved by the child BY HANDLE —
  *     `childRetrievesAssembledInputByHandle`.
  *
- * So the only thing the parent must put in `prompt` is the HANDLE. That is what
- * {@link buildClaudeCompactNativeLaunch} produces, and the property is not
- * merely documented: the launch prompt is required to classify as
- * {@link classifyClaudeFinalMessage}'s `handle-only` against the very handle it
- * carries — the SAME predicate the child's reply must satisfy. A prompt with a
- * role-prompt copy, a task narrative, or any surplus key fails that check for
- * the same reason an echoing reply does.
+ * So the only thing the parent puts in `prompt` is the HANDLE plus the distinct
+ * input capability the child needs for one retrieval. That compact reference
+ * carries no role prompt or task narrative; the child's final reply remains
+ * handle-only.
  *
  * ## What this module does NOT own
  *
- * - The child-side one-shot retrieval of the assembled input
- *   ({@link DISPATCH_REF_ASSEMBLY_DEFERRED}, tasks:T977). The bridge names the
- *   handle the child retrieves BY; it does not implement the retrieval.
- *   {@link CLAUDE_BRIDGE_DEFERRED} records this.
+ * - Other surfaces' launcher/extension migrations. This module owns only the
+ *   Claude compact reference; the held Pi cutover remains outside T977.
  * - Fetch repeatability. defects:D188 owns the cross-surface divergence and
  *   goals:G123's tasks:T1142 makes the shared fetch one-shot. This module
  *   performs EXACTLY ONE fetch per dispatch and therefore does not depend on
@@ -54,7 +49,6 @@ import {
   CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT,
   assertClaudeChildCorrelation,
   assertSupportedClaudeDeliveryMode,
-  classifyClaudeFinalMessage,
   claudeExpectedChild,
   claudeLaunchGate,
   decideClaudeCompletion,
@@ -73,6 +67,7 @@ import {
   assertDispatchHandle,
   confirmDispatchCompletion,
   fetchDispatchResult,
+  inputCapabilityHash,
   prepareDispatch,
   provenanceBindingOf,
   type DispatchServiceDeps,
@@ -91,6 +86,8 @@ import type {
   DispatchHandle,
   DispatchJSONValue,
   DispatchPrepared,
+  FetchDispatchInput,
+  InputCapability,
   NativeCompletionProof,
   ResultCapability,
 } from "./compactDispatchProtocol.js";
@@ -124,8 +121,7 @@ export interface ClaudeNativeLaunchEnvelope {
    */
   readonly subagent_type: string;
   /**
-   * The compact ref launch: EXACTLY the dispatch handle, as JSON. Required to
-   * classify `handle-only`.
+   * The compact ref launch: exactly the handle plus input capability, as JSON.
    */
   readonly prompt: string;
   readonly model: string;
@@ -138,9 +134,9 @@ export interface ClaudeNativeLaunchEnvelope {
 /**
  * A hard upper bound on the compact launch prompt, in bytes.
  *
- * A handle is an attestation id plus a small integer, so its JSON is ~80 bytes;
- * 256 leaves room for a longer id without leaving room for narrative. The point
- * of a NUMERIC bound alongside the structural `handle-only` check is that the
+ * A handle plus input capability is below 200 bytes; 256 leaves room for a
+ * longer id without leaving room for narrative. The point of a NUMERIC bound
+ * alongside the structural closed-key check is that the
  * two fail on different mutations: a bound catches bulk that happens to be
  * valid JSON, and the structural check catches a small surplus key.
  *
@@ -157,15 +153,25 @@ export interface ClaudeCompactLaunchRequest {
   readonly model: string;
   /** The handle `prepare_dispatch` returned. */
   readonly handle: DispatchHandle;
+  /** The one-shot child input capability returned by the same prepare. */
+  readonly inputCapability: InputCapability;
 }
 
-/** Render the compact launch prompt: the handle, and nothing else. */
-export function claudeCompactLaunchPrompt(handle: DispatchHandle): string {
-  const resolved = assertDispatchHandle(handle, "handle");
+/** Render the compact launch prompt: handle plus input capability, and nothing else. */
+export function claudeCompactLaunchPrompt(reference: FetchDispatchInput): string {
+  const resolved = assertDispatchHandle(reference, "reference");
+  if (reference.inputCapability?.scope !== "fetch-input") {
+    throw new AttestationContractError(
+      "reference.inputCapability.scope",
+      'expected "fetch-input"',
+    );
+  }
+  inputCapabilityHash(reference.inputCapability.token);
   // Key order fixed and explicit so the rendering is stable across callers.
   return JSON.stringify({
     attestationId: resolved.attestationId,
     generation: resolved.generation,
+    inputCapability: reference.inputCapability,
   });
 }
 
@@ -194,8 +200,12 @@ export function buildClaudeCompactNativeLaunch(
     );
   }
   const handle = assertDispatchHandle(request.handle, "launch.handle");
-  const prompt = claudeCompactLaunchPrompt(handle);
-  assertCompactClaudeLaunchPrompt(prompt, handle);
+  const reference: FetchDispatchInput = Object.freeze({
+    ...handle,
+    inputCapability: request.inputCapability,
+  });
+  const prompt = claudeCompactLaunchPrompt(reference);
+  assertCompactClaudeLaunchPrompt(prompt, reference);
   return Object.freeze({
     subagent_type: roleId,
     prompt,
@@ -206,14 +216,16 @@ export function buildClaudeCompactNativeLaunch(
 }
 
 /**
- * Assert that a launch prompt carries EXACTLY the handle — the same predicate
- * the child's reply must satisfy, applied to the parent's own message.
+ * Assert that a launch prompt carries exactly the handle plus input capability.
  *
  * This is the detector behind "generated Claude artifacts contain no dispatched
  * prompt copy": a role prompt, a task narrative, or a `{handle, task}` envelope
  * each fail it, and each failure names which of the two bounds it broke.
  */
-export function assertCompactClaudeLaunchPrompt(prompt: string, handle: DispatchHandle): void {
+export function assertCompactClaudeLaunchPrompt(
+  prompt: string,
+  reference: FetchDispatchInput,
+): void {
   if (typeof prompt !== "string") {
     throw new AttestationContractError(
       "launch.prompt",
@@ -224,19 +236,34 @@ export function assertCompactClaudeLaunchPrompt(prompt: string, handle: Dispatch
   if (bytes > CLAUDE_COMPACT_LAUNCH_PROMPT_MAX_BYTES) {
     throw new AttestationContractError(
       "launch.prompt",
-      `a compact native launch carries the handle only, so its prompt must not exceed ` +
+      `a compact native launch carries only the input reference, so its prompt must not exceed ` +
         `${CLAUDE_COMPACT_LAUNCH_PROMPT_MAX_BYTES} bytes; got ${bytes} bytes — a dispatched prompt ` +
         "copy belongs at the child's own system boundary (gen-agents), not in the launch",
     );
   }
-  const verdict = classifyClaudeFinalMessage(prompt, handle);
-  if (verdict.verdict !== "handle-only") {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(prompt);
+  } catch {
     throw new AttestationContractError(
       "launch.prompt",
-      `a compact native launch prompt must carry exactly the dispatch handle, but classified as ` +
-        `"${verdict.verdict}"`,
+      "a compact native launch prompt must be the JSON input reference",
     );
   }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    Object.keys(parsed).sort().join(",") !==
+      "attestationId,generation,inputCapability" ||
+    JSON.stringify(parsed) !== JSON.stringify(reference)
+  ) {
+    throw new AttestationContractError(
+      "launch.prompt",
+      "a compact native launch prompt must carry exactly the bound handle and input capability",
+    );
+  }
+  claudeCompactLaunchPrompt(reference);
 }
 
 /**
@@ -449,6 +476,7 @@ export function launchClaudePrint(
   const boundRoleId = boundClaudePrintRole(context, options.rolePrompt);
   const serverName = assertObservedTransportString(options.storeServer.name, "storeServer.name");
   const toolName = `mcp__${serverName}__store_result`;
+  const fetchInputToolName = `mcp__${serverName}__fetch_dispatch_input`;
   const mcpConfig = JSON.stringify({
     mcpServers: {
       [serverName]: {
@@ -482,7 +510,7 @@ export function launchClaudePrint(
       "--tools",
       "",
       "--allowedTools",
-      toolName,
+      `${fetchInputToolName},${toolName}`,
       "--strict-mcp-config",
       "--mcp-config",
       mcpConfig,
@@ -777,6 +805,7 @@ export function runClaudeNativeDispatch(
         roleId: request.roleId,
         model: request.model,
         handle,
+        inputCapability: prepared.inputCapability,
       }),
       preparedProvenance: provenanceBindingOf(prepared),
       expectedCorrelation: correlation,
@@ -1059,15 +1088,15 @@ const CLAUDE_ARTIFACT_MARKERS: readonly ClaudeArtifactMarker[] = Object.freeze([
     marker: /\bthe prompt MUST carry\b/i,
     rationale:
       "An instruction to fold the task narrative into the launch. Under T978 the narrative is " +
-      "assembled server-side and retrieved by the child BY HANDLE, so the launch carries the " +
-      "handle and nothing else.",
+      "assembled server-side and retrieved by the child through a compact handle plus input " +
+      "capability, so the launch carries no narrative.",
   }),
   Object.freeze({
     violation: "dispatched-prompt-copy" as const,
     marker: /rendered into the prompt\b/i,
     rationale:
       "The composed INPUT rendered into the launch text — the same cost as a prompt copy, and the " +
-      "reason `buildClaudeCompactNativeLaunch` refuses anything but the handle.",
+      "reason `buildClaudeCompactNativeLaunch` refuses anything but the compact input reference.",
   }),
   Object.freeze({
     violation: "generic-launcher" as const,
@@ -1208,7 +1237,6 @@ export const CLAUDE_BRIDGE_FETCH_COUNT = 1;
  * assumed done.
  */
 export const CLAUDE_BRIDGE_DEFERRED = Object.freeze([
-  "child-side-one-shot-retrieval-of-the-assembled-input-by-handle-T977",
   "implement-worktree_manage-prepare-and-release",
   "consolidate-the-duplicated-launch-gate-into-the-shared-module",
 ] as const);

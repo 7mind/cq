@@ -1,9 +1,9 @@
 /**
  * Stdio MCP tool registration for the ledger surface.
  *
- * Registers the canonical ledger surface (`LEDGER_TOOL_NAMES`) on a raw
+ * Registers the canonical 33-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
  * `@modelcontextprotocol/sdk` `McpServer` via `registerTool`, backed by a
- * `LedgerStore`; the five dispatch handlers are omitted when no durable
+ * `LedgerStore`; the six dispatch handlers are omitted when no durable
  * capability is supplied. Stdio counterpart to `createLedgerMcpTools` (the in-process
  * Claude-SDK `tool()` factory in `./ledgerTools.ts`): identical operational
  * semantics, but this path takes raw Zod shapes through `registerTool` whereas
@@ -53,6 +53,7 @@ import type { DispatchCapability } from "./dispatchCapability.js";
 import {
   ABORT_DISPATCH_INPUT,
   CONFIRM_DISPATCH_COMPLETION_INPUT,
+  FETCH_DISPATCH_INPUT_INPUT,
   FETCH_DISPATCH_RESULT_INPUT,
   PREPARE_DISPATCH_INPUT,
   STORE_RESULT_INPUT,
@@ -160,10 +161,9 @@ function wireResult(value: ProducedWireDto<object>): {
  * throw `ConfigNotImplementedError`.
  *
  * `promptCatalog` is the injected typed prompt-catalog capability (T343),
- * constructed in `@cq/ledger-mcp` over `@cq/config` + the asset markdown. When
- * omitted (no asset-capable catalog root),
- * `fetch_prompt`/`validate_input`/`validate_output` throw
- * `PromptCatalogNotImplementedError`.
+ * constructed in `@cq/ledger-mcp` over `@cq/config` + the asset markdown. The
+ * ordinary MCP surface exposes fetch_prompt and validate_output; validateInput
+ * remains a direct inspection/debug capability and is not registered here.
  *
  * `toolPrefix` (T375 / G45) is a TRAILING optional tool-name prefix. It is a
  * pure name transform applied via `prefixToolName(toolPrefix, name)` on every
@@ -685,20 +685,31 @@ ${QUERY_LANGUAGE_HELP}`,
       "prepare_dispatch",
       {
         description:
-          "Validate and durably prepare one typed dispatch, returning its handle, deadlines, provenance, and store-result capability.",
+          "Validate and durably prepare one typed dispatch, returning its handle, deadlines, provenance, and distinct input/result capabilities.",
         inputSchema: PREPARE_DISPATCH_INPUT,
       },
       async (args) =>
         jsonResult(
           await dispatchCapability.prepare({
-            roleId: args.roleId,
-            input: args.input,
+            ...(args.roleId === undefined ? {} : { roleId: args.roleId }),
+            ...(args.input === undefined ? {} : { input: args.input }),
+            ...(args.refs === undefined ? {} : { refs: args.refs }),
             idempotencyKey: args.idempotencyKey,
             timeoutMs: args.timeoutMs,
+            ...(args.overlays === undefined ? {} : { overlays: args.overlays }),
             expectedChild: args.expectedChild,
             ...(args.reprepareOf === undefined ? {} : { reprepareOf: args.reprepareOf }),
           }),
         ),
+    );
+    reg(
+      "fetch_dispatch_input",
+      {
+        description:
+          "Materialize the prepare-bound typed child input exactly once using its distinct input capability.",
+        inputSchema: FETCH_DISPATCH_INPUT_INPUT,
+      },
+      async (args) => jsonResult(await dispatchCapability.fetchInput(args)),
     );
     reg(
       "store_result",
@@ -745,7 +756,7 @@ ${QUERY_LANGUAGE_HELP}`,
     );
   }
 
-  // ---- Prompt-catalog capability (3) -------------------------------------
+  // ---- Ordinary prompt-catalog MCP surface (2) ---------------------------
 
   reg(
     "fetch_prompt",
@@ -766,27 +777,6 @@ ${QUERY_LANGUAGE_HELP}`,
     (args) => {
       if (promptCatalog === undefined) throw new PromptCatalogNotImplementedError();
       return jsonResult(promptCatalog.fetchPrompt(args.roleId));
-    },
-  );
-
-  reg(
-    "validate_input",
-    {
-      description:
-        "Validate `input` against a dispatched role's inputSchema (Ajv, draft 2020-12). " +
-        "Returns { ok:true } or { ok:false, errors:[{ path, message, keyword, schemaPath, params }] } " +
-        "with every failing constraint (the failing JSON-Schema field path included). Fails fast on " +
-        "an unknown roleId, and on an orchestrator-command roleId (which has no input schema). Only " +
-        "available when the server has an asset-capable catalog root; otherwise returns a " +
-        "not-implemented error.",
-      inputSchema: {
-        roleId: z.string(),
-        input: z.unknown(),
-      },
-    },
-    (args) => {
-      if (promptCatalog === undefined) throw new PromptCatalogNotImplementedError();
-      return jsonResult(promptCatalog.validateInput(args.roleId, args.input));
     },
   );
 

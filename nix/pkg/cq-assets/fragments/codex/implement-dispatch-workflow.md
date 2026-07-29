@@ -1,8 +1,14 @@
 > **Catalog-driven dispatch (G41 — implement-worker).** In Codex, for each
 > `implement-worker`,
-> compose `{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, priorCriticism? }` against the role's typed `inputSchema`, dispatch
-> `CQ_SUBAGENT` with the composed input and `isolation: "worktree"`, await its
-> result, and call `validate_output("implement-worker", output)` against the
+> compose refs only:
+> `{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }`,
+> then call `prepare_dispatch`. The server reads the task/review narrative and
+> validates the assembled input against the role's typed `inputSchema`. Dispatch
+> `CQ_SUBAGENT` with only the returned
+> `{ attestationId, generation, inputCapability }` and
+> `isolation: "worktree"`; the child calls `fetch_dispatch_input` exactly once
+> before work, so no parent-rendered task narrative enters the launch. Await its
+> result and call `validate_output("implement-worker", output)` against the
 > role's `outputSchema`; a validation failure is a contract breach to surface.
 >
 > **Catalog-driven dispatch (G41 — implement-reviewer).** For each native

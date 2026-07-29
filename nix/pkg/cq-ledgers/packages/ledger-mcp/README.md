@@ -2,7 +2,7 @@
 
 Standalone MCP server exposing the 33 ledger tools backed by an xdg/sqlite,
 filesystem, or PostgreSQL ledger store. Speaks stdio (default) and Streamable
-HTTP (`--http`). The five dispatch-lifecycle tools use a separate durable,
+HTTP (`--http`). The six dispatch-lifecycle tools use a separate durable,
 namespaced attestation backend and appear only when the server has both a
 supported backend construction and an attested prompt surface.
 
@@ -98,8 +98,8 @@ process.once("SIGINT", () => void shutdown());
 
 With a supported backend and attested prompt surface, this registers all 33
 tools. Without a durable dispatch runtime, `createLedgerMcpServer` omits the
-five dispatch-lifecycle tools before registration and exposes the remaining
-28. The prefix applies to every tool that the server registers and to matching
+six dispatch-lifecycle tools before registration and exposes the remaining
+27. The prefix applies to every tool that the server registers and to matching
 references in its server-level `instructions`.
 
 ### 3. Discover prefixed tool names at runtime
@@ -224,12 +224,12 @@ measured savings without another batching schema.
 | `read_log` | `requested-full-content` | `{ path, content, truncated? }`. |
 | `get_config` | `requested-full-content` | The payload selected by `section`; no unrelated section is returned. |
 | `prepare_dispatch` | `purpose-built-small` | `{ accepted, prepared, handle, executedStepOrder }` or a typed pre-launch rejection. |
+| `fetch_dispatch_input` | `requested-full-content` | The prepare-bound typed input on its first capability-authorized retrieval. |
 | `store_result` | `purpose-built-small` | A handle-only stored-result acknowledgement or typed abort. |
 | `confirm_dispatch_completion` | `purpose-built-small` | A handle-only consumed acknowledgement or typed abort. |
 | `abort_dispatch` | `purpose-built-small` | A typed aborted acknowledgement. |
 | `fetch_dispatch_result` | `requested-full-content` | One typed fetch state; only the first consumed fetch can carry `output`. |
 | `fetch_prompt` | `requested-full-content` | Full typed prompt entry, including prompt text and schemas when available. |
-| `validate_input` | `purpose-built-small` | `{ ok: true }` or `{ ok: false, errors }`. |
 | `validate_output` | `purpose-built-small` | `{ ok: true }` or `{ ok: false, errors }`. |
 | `list_projects` | `purpose-built-small` | `{ projects: [{ key, displayName, createdAt? }] }`. |
 | `claim_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes `ownerFenceToken`, and only back to the winning or exactly-retried claimant — or `{ ok: false, conflict }` carrying public claim metadata only. |

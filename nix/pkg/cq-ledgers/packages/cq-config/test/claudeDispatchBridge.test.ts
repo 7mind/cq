@@ -47,7 +47,6 @@ import {
   claudeBridgeCorrelation,
   claudeCompactLaunchPrompt,
   claudeExpectedChild,
-  classifyClaudeFinalMessage,
   fetchDispatchResult,
   invalidOutputDetailsOf,
   launchClaudePrint,
@@ -68,6 +67,7 @@ import {
   type ClaudeSettleContext,
   type ClaudeTerminalSignal,
   type DispatchHandle,
+  type FetchDispatchInput,
   type DispatchJSONValue,
   type DispatchPrepared,
   type DispatchServiceDeps,
@@ -190,14 +190,33 @@ function handleOf(value: DispatchPrepared): DispatchHandle {
   return { attestationId: value.attestationId, generation: value.generation };
 }
 
+function referenceOf(value: DispatchPrepared): FetchDispatchInput {
+  return {
+    ...handleOf(value),
+    inputCapability: value.inputCapability,
+  };
+}
+
+function launchOf(
+  value: DispatchPrepared,
+  roleId: string = ROLE_ID,
+  model: string = MODEL,
+) {
+  return buildClaudeCompactNativeLaunch({
+    roleId,
+    model,
+    handle: handleOf(value),
+    inputCapability: value.inputCapability,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 1. The compact native launch envelope
 // ---------------------------------------------------------------------------
 
-describe("T688 §1 — the compact native launch carries the HANDLE, not a prompt copy", () => {
+describe("T688 §1 — the compact native launch carries the input reference, not a prompt copy", () => {
   test("the envelope pins all five Agent arguments, and the two T687 literals", () => {
-    const handle = handleOf(prepared());
-    const launch = buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model: MODEL, handle });
+    const launch = launchOf(prepared());
 
     // `subagent_type` is the ONLY role-instruction channel: the harness injects
     // the gen-agents-baked agents/<role>.md for the selected agent.
@@ -219,89 +238,95 @@ describe("T688 §1 — the compact native launch carries the HANDLE, not a promp
     ]);
   });
 
-  test("the launch prompt satisfies the SAME handle-only predicate as the child's reply", () => {
-    const handle = handleOf(prepared());
-    const launch = buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model: MODEL, handle });
-    // The parent's message and the child's are held to one standard. That is the
-    // whole content of "no dispatched prompt copy" — not a phrase ban.
-    const verdict = classifyClaudeFinalMessage(launch.prompt, handle);
-    expect(verdict.verdict).toBe("handle-only");
-    expect(JSON.parse(launch.prompt)).toEqual({
-      attestationId: handle.attestationId,
-      generation: handle.generation,
-    });
+  test("the launch prompt carries exactly the one-shot input reference", () => {
+    const dispatch = prepared();
+    const launch = launchOf(dispatch);
+    expect(JSON.parse(launch.prompt)).toEqual(referenceOf(dispatch));
   });
 
   test("the launch prompt is COMPACT by measurement, not by assertion", () => {
-    const handle = handleOf(prepared());
-    const prompt = claudeCompactLaunchPrompt(handle);
+    const prompt = claudeCompactLaunchPrompt(referenceOf(prepared()));
     const bytes = new TextEncoder().encode(prompt).length;
     expect(bytes).toBeLessThanOrEqual(CLAUDE_COMPACT_LAUNCH_PROMPT_MAX_BYTES);
     // Recorded so a regression in handle width is visible as a number, and so
     // the bound is seen to have real headroom rather than being fitted to it.
     expect(bytes).toBeGreaterThan(40);
-    expect(bytes).toBeLessThan(120);
+    expect(bytes).toBeLessThan(220);
   });
 
   test("NEGATIVE CONTROL: a dispatched ROLE PROMPT COPY in the launch is refused", () => {
-    const handle = handleOf(prepared());
+    const reference = referenceOf(prepared());
     // The REAL artifact this mutates is the REAL launch prompt the builder
     // produced, with a REAL role instruction body appended — the pre-T688
     // fragment's "pass the complete task prompt" behaviour.
-    const real = claudeCompactLaunchPrompt(handle);
+    const real = claudeCompactLaunchPrompt(reference);
     const withPromptCopy = `${real}\n\n${"You are the implement-flow worker. ".repeat(40)}`;
     expect(new TextEncoder().encode(withPromptCopy).length).toBeGreaterThan(
       CLAUDE_COMPACT_LAUNCH_PROMPT_MAX_BYTES,
     );
-    expect(() => assertCompactClaudeLaunchPrompt(withPromptCopy, handle)).toThrow(
+    expect(() => assertCompactClaudeLaunchPrompt(withPromptCopy, reference)).toThrow(
       /must not exceed 256 bytes/,
     );
   });
 
   test("NEGATIVE CONTROL: a SMALL surplus key is caught structurally, under the byte bound", () => {
-    const handle = handleOf(prepared());
+    const reference = referenceOf(prepared());
     // Under the numeric bound, so only the structural check can catch it. This
     // is why both checks exist: they fail on different mutations.
-    const smuggled = JSON.stringify({ ...handle, task: "T688" });
+    const smuggled = JSON.stringify({ ...reference, task: "T688" });
     expect(new TextEncoder().encode(smuggled).length).toBeLessThanOrEqual(
       CLAUDE_COMPACT_LAUNCH_PROMPT_MAX_BYTES,
     );
-    expect(() => assertCompactClaudeLaunchPrompt(smuggled, handle)).toThrow(
-      /must carry exactly the dispatch handle, but classified as "echo"/,
+    expect(() => assertCompactClaudeLaunchPrompt(smuggled, reference)).toThrow(
+      /must carry exactly the bound handle and input capability/,
     );
   });
 
   test("NEGATIVE CONTROL: a prompt bound to a DIFFERENT dispatch is refused", () => {
-    const handle = handleOf(prepared());
-    const other: DispatchHandle = { attestationId: handle.attestationId, generation: 9 };
-    expect(() => assertCompactClaudeLaunchPrompt(claudeCompactLaunchPrompt(other), handle)).toThrow(
-      /classified as "wrong-handle"/,
-    );
+    const reference = referenceOf(prepared());
+    const other: FetchDispatchInput = { ...reference, generation: 9 };
+    expect(() =>
+      assertCompactClaudeLaunchPrompt(claudeCompactLaunchPrompt(other), reference),
+    ).toThrow(/must carry exactly the bound handle and input capability/);
+  });
+
+  test("NEGATIVE CONTROL: a prompt bound to a DIFFERENT input capability is refused", () => {
+    const reference = referenceOf(prepared());
+    const other: FetchDispatchInput = {
+      ...reference,
+      inputCapability: {
+        scope: "fetch-input",
+        token: `${reference.inputCapability.token.slice(0, -1)}${
+          reference.inputCapability.token.endsWith("A") ? "B" : "A"
+        }`,
+      },
+    };
+    expect(() =>
+      assertCompactClaudeLaunchPrompt(claudeCompactLaunchPrompt(other), reference),
+    ).toThrow(/must carry exactly the bound handle and input capability/);
   });
 
   test("NEGATIVE CONTROL: free-text prose is refused as unparseable, not tolerated", () => {
-    const handle = handleOf(prepared());
+    const reference = referenceOf(prepared());
     expect(() =>
-      assertCompactClaudeLaunchPrompt("Implement T688 end to end in your worktree.", handle),
-    ).toThrow(/classified as "unparseable"/);
+      assertCompactClaudeLaunchPrompt("Implement T688 end to end in your worktree.", reference),
+    ).toThrow(/must be the JSON input reference/);
   });
 
   test("a missing role or model is refused BEFORE a child exists", () => {
-    const handle = handleOf(prepared());
-    expect(() => buildClaudeCompactNativeLaunch({ roleId: "", model: MODEL, handle })).toThrow(
-      AttestationContractError,
-    );
-    expect(() => buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model: "", handle })).toThrow(
-      AttestationContractError,
-    );
+    const dispatch = prepared();
+    expect(() => launchOf(dispatch, "", MODEL)).toThrow(AttestationContractError);
+    expect(() => launchOf(dispatch, ROLE_ID, "")).toThrow(AttestationContractError);
   });
 
   test("a malformed handle cannot become a launch", () => {
+    const dispatch = prepared();
     expect(() =>
       buildClaudeCompactNativeLaunch({
         roleId: ROLE_ID,
         model: MODEL,
         handle: { attestationId: "", generation: 1 },
+        inputCapability: dispatch.inputCapability,
       }),
     ).toThrow(AttestationContractError);
   });
@@ -336,7 +361,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
 
   test("the deferred set names its owners and does not claim T977's retrieval", () => {
     expect(CLAUDE_BRIDGE_FETCH_COUNT).toBe(1);
-    expect(CLAUDE_BRIDGE_DEFERRED).toContain(
+    expect(CLAUDE_BRIDGE_DEFERRED).not.toContain(
       "child-side-one-shot-retrieval-of-the-assembled-input-by-handle-T977",
     );
     expect(CLAUDE_BRIDGE_DEFERRED).not.toContain(
@@ -354,7 +379,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
     };
     const report = launchClaudePrint(
       {
-        envelope: buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model: MODEL, handle }),
+        envelope: launchOf(dispatch),
         preparedProvenance: provenanceBindingOf(dispatch),
         expectedCorrelation: correlation,
         resultCapability: dispatch.resultCapability,
@@ -403,6 +428,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
             roleId: REVIEWER_ROLE_ID,
             model: MODEL,
             handle,
+            inputCapability: dispatch.inputCapability,
           }),
           preparedProvenance: provenanceBindingOf(dispatch),
           expectedCorrelation: correlation,
@@ -431,10 +457,9 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
 
   test("a malformed claude -p terminal result becomes a typed transport failure", () => {
     const dispatch = prepared();
-    const handle = handleOf(dispatch);
     const report = launchClaudePrint(
       {
-        envelope: buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model: MODEL, handle }),
+        envelope: launchOf(dispatch),
         preparedProvenance: provenanceBindingOf(dispatch),
         expectedCorrelation: {
           roleId: ROLE_ID,
@@ -480,7 +505,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
       const model = process.env["CQ_T688_LIVE_MODEL"] ?? "haiku";
       const report = launchClaudePrint(
         {
-          envelope: buildClaudeCompactNativeLaunch({ roleId: ROLE_ID, model, handle }),
+          envelope: launchOf(dispatch, ROLE_ID, model),
           preparedProvenance: provenanceBindingOf(dispatch),
           expectedCorrelation: {
             roleId: ROLE_ID,
@@ -611,7 +636,11 @@ interface ChildBehaviour {
 function child(b: Bridge, behaviour: ChildBehaviour = {}): ClaudeNativeLauncher {
   return (context) => {
     b.launches.push(context);
-    const handle: DispatchHandle = JSON.parse(context.envelope.prompt) as DispatchHandle;
+    const reference = JSON.parse(context.envelope.prompt) as FetchDispatchInput;
+    const handle: DispatchHandle = {
+      attestationId: reference.attestationId,
+      generation: reference.generation,
+    };
     if (behaviour.submitAfterMs !== undefined) {
       b.clock.advance(behaviour.submitAfterMs);
     }

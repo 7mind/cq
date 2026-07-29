@@ -496,6 +496,7 @@ export function serveHub(
       const dispatchRuntime = await createPostgresHubDispatchRuntime({
         pool,
         trustedProjectKey: projectKey,
+        store,
         ...(promptArtifactStore === undefined ? {} : { promptArtifactStore }),
       });
       let firstInitialize = true;

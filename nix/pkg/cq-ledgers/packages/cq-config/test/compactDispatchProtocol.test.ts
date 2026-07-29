@@ -20,6 +20,7 @@ import {
   type DispatchJSONValue,
   type DispatchedRoleId,
   type FetchDispatchResult,
+  type InputCapability,
   type NativeCompletionProof,
   type ResultCapability,
   type StoreDispatchResult,
@@ -33,6 +34,10 @@ const HANDLE: DispatchHandle = {
 const RESULT_CAPABILITY: ResultCapability = {
   scope: "store-result",
   token: `cq_result_${"c".repeat(43)}`,
+};
+const INPUT_CAPABILITY: InputCapability = {
+  scope: "fetch-input",
+  token: `cq_input_${"d".repeat(43)}`,
 };
 const NATIVE_COMPLETION: NativeCompletionProof = {
   kind: "native-completion",
@@ -177,6 +182,7 @@ describe("ref-first handle, capability, and lifecycle operation contracts", () =
       ...HANDLE,
       ...DEADLINES,
       promptProvenance: PROMPT_PROVENANCE,
+      inputCapability: INPUT_CAPABILITY,
       resultCapability: RESULT_CAPABILITY,
     };
     accepts(DISPATCH_PREPARED_SCHEMA, prepared);
@@ -299,6 +305,7 @@ describe("typed fetch_dispatch_result outcomes", () => {
   test("defines only compact ref-first ordinary-flow operations", () => {
     expect(DISPATCH_PROTOCOL_OPERATIONS).toEqual([
       "prepare_dispatch",
+      "fetch_dispatch_input",
       "store_result",
       "confirm_dispatch_completion",
       "abort_dispatch",

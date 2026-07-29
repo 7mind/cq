@@ -19,19 +19,19 @@
  * asserts, per edge and per file:
  *
  *   (1) the dispatch site is still documented (its site marker survives);
- *   (2) the SAME structured input field set is still composed — the verbatim
- *       `inputSchema` field literal the prompt carried before the removal, so
- *       no input content was lost with the fetch;
+ *   (2) the same semantic input remains reachable — ordinarily through the
+ *       composed `inputSchema` field literal, and for T977's Claude worker edge
+ *       through refs from which the server assembles those fields;
  *   (3) `validate_output("<role>", …)` — the (g) leg — remains on the original
  *       flow edges. T688 retires it only for Claude's implement edges after
  *       validation moves inside the capability-scoped `store_result`;
  *   (4) ZERO parent-side prompt materialization and ZERO ordinary
  *       `validate_input` round-trips remain anywhere in the four files.
  *
- * `fetch_prompt` / `validate_input` stay on the MCP surface and in the catalog
- * as explicitly ALLOWLISTED inspection/debug capabilities (the Agents tab, and
- * non-native pi/codex harnesses); (5) below pins that allowlisted path so the
- * removal cannot be mistaken for a capability retirement.
+ * `fetch_prompt` / `validate_output` stay on the ordinary MCP surface.
+ * `validateInput` stays only in the catalog capability for explicitly
+ * allowlisted inspection/debug consumers (the Agents tab and external
+ * harnesses); (5) pins the model-visible boundary.
  *
  * Path resolution mirrors the T255/T264/D43/T340/T345 blocks in
  * canonical-ledgers.test.ts: cq-assets is four levels up from this directory.
@@ -50,6 +50,19 @@ const CLAUDE_IMPLEMENT_DISPATCH = path.join(
   "claude",
   "implement-dispatch-workflow.md",
 );
+const CODEX_IMPLEMENT_DISPATCH = path.join(
+  ASSETS_ROOT,
+  "fragments",
+  "codex",
+  "implement-dispatch-workflow.md",
+);
+const PI_IMPLEMENT_DISPATCH = path.join(
+  ASSETS_ROOT,
+  "fragments",
+  "pi",
+  "implement-dispatch-workflow.md",
+);
+const IMPLEMENT_WORKER = path.join(ASSETS_ROOT, "agents", "implement-worker.md");
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 
 /** The four flow orchestrator prompts that dispatch native Claude subagents. */
@@ -70,9 +83,9 @@ interface DispatchEdge {
   /** The exact catalog-driven-dispatch site marker authored for this edge. */
   readonly siteMarker: string;
   /**
-   * The composed structured-input field set, verbatim as the prompt carries it
+   * The structured prepare input, verbatim as the prompt carries it
    * (whitespace-normalized before matching, since the prose line-wraps it).
-   * Unchanged by T975 — removing the parent-side fetch must not drop a field.
+   * T977 intentionally replaces Claude implement-worker narrative with refs.
    */
   readonly inputFields: readonly string[];
 }
@@ -124,7 +137,7 @@ const DISPATCH_EDGES: readonly DispatchEdge[] = [
     role: "implement-worker",
     siteMarker: "Catalog-driven dispatch (G41 — implement-worker)",
     inputFields: [
-      "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, priorCriticism? }",
+      "{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }",
     ],
   },
   {
@@ -190,6 +203,9 @@ const flowBodies = new Map<FlowKey, string>(
   ),
 );
 const claudeImplementDispatch = await readFile(CLAUDE_IMPLEMENT_DISPATCH, "utf8");
+const codexImplementDispatch = await readFile(CODEX_IMPLEMENT_DISPATCH, "utf8");
+const piImplementDispatch = await readFile(PI_IMPLEMENT_DISPATCH, "utf8");
+const implementWorker = await readFile(IMPLEMENT_WORKER, "utf8");
 
 function bodyOf(flow: FlowKey): string {
   const body = flowBodies.get(flow);
@@ -210,7 +226,7 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
       expect(countOccurrences(claudeDispatchBodyOf(edge), edge.siteMarker)).toBe(1);
     });
 
-    it(`${edge.flow}/advance.md still composes the SAME ${edge.role} input field set`, () => {
+    it(`${edge.flow}/advance.md carries the expected ${edge.role} prepare input`, () => {
       const body = normalize(claudeDispatchBodyOf(edge));
       for (const fields of edge.inputFields) {
         expect(body).toContain(normalize(fields));
@@ -281,11 +297,12 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     ).toEqual([]);
   });
 
-  // (5) — the ALLOWLISTED inspection/debug path is untouched.
-  it("keeps fetch_prompt / validate_input / validate_output on the MCP tool surface", () => {
-    for (const tool of ["fetch_prompt", "validate_input", "validate_output"] as const) {
+  // (5) — only the still-model-visible catalog operations remain registered.
+  it("keeps fetch_prompt / validate_output and hides validate_input from ordinary tools/list", () => {
+    for (const tool of ["fetch_prompt", "validate_output"] as const) {
       expect(LEDGER_TOOL_NAMES).toContain(tool);
     }
+    expect(LEDGER_TOOL_NAMES).not.toContain("validate_input" as never);
   });
 
   for (const surface of PROMPT_SURFACES) {
@@ -298,4 +315,28 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
       expect(fragment).toContain("fetch_prompt` with");
     });
   }
+
+  it("pins the live T977 worker-input protocol without migrating the held Pi path", () => {
+    const narrativeCourier =
+      "{ taskId, headline, description, acceptance, worktreePath, branch, baseCommit, priorCriticism? }";
+    const refsOnly =
+      "{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }";
+
+    for (const body of [claudeImplementDispatch, codexImplementDispatch]) {
+      expect(normalize(body)).toContain(normalize(refsOnly));
+      expect(body).toContain("prepare_dispatch");
+      expect(body).toContain("inputCapability");
+      expect(body).toContain("fetch_dispatch_input");
+      expect(body).not.toContain(narrativeCourier);
+    }
+
+    expect(piImplementDispatch).toContain(narrativeCourier);
+    expect(piImplementDispatch).not.toContain("prepare_dispatch");
+    expect(piImplementDispatch).not.toContain("inputCapability");
+    expect(piImplementDispatch).not.toContain("fetch_dispatch_input");
+
+    expect(implementWorker).toContain("{{cq:fragment:dispatch-input-delivery}}");
+    expect(implementWorker).not.toContain("Inputs (from the dispatch prompt)");
+    expect(implementWorker).not.toContain("input delivered via dispatch prompt");
+  });
 });

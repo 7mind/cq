@@ -1,9 +1,11 @@
 /**
  * Prompt-catalog capability (T343, goal G41).
  *
- * The `fetch_prompt` / `validate_input` / `validate_output` MCP tools surface a
- * repo's TYPED prompt catalog: each role's prompt template plus — for dispatched
- * subagents — its input/output JSON Schemas, and a validator over them. Like the
+ * This capability supplies a repo's TYPED prompt catalog: each role's prompt
+ * template plus — for dispatched subagents — its input/output JSON Schemas and
+ * validators over them. Ordinary MCP exposes `fetch_prompt` and
+ * `validate_output`; `validateInput` remains direct inspection/debug API only.
+ * Like the
  * config capability (./configCapability.ts) and `read_log` (./readLog.ts), the
  * catalog read + JSON-Schema validation is a capability the OUTER package
  * supplies: `@cq/ledger` core stays free of `@cq/config` and the asset-markdown

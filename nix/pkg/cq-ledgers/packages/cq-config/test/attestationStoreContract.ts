@@ -65,7 +65,9 @@ import {
   defaultDispatchRandomBytes,
   dispatchOperationScope,
   dispatchPayloadDigest,
+  fetchDispatchInputOn,
   fetchDispatchResultOn,
+  inputCapabilityHash,
   invalidOutputDetailsOf,
   isAttestationTombstone,
   prepareDispatchOn,
@@ -82,6 +84,7 @@ import {
   type DispatchJSONValue,
   type DispatchPrepared,
   type FetchDispatchResultRequest,
+  type InputCapability,
   type LedgerBackend,
   type NativeCompletionProof,
   type PrepareDispatchOutcome,
@@ -161,11 +164,12 @@ const PROMPT_DIGEST = "a".repeat(64);
 const CATALOG_HASH = "b".repeat(64);
 const TIMEOUT_MS = 600_000;
 const CHILD = { childId: "child-t720", runId: "run-0001" } as const;
+const INPUT_MARKER = "input-marker-64bf13";
 
 const INPUT: DispatchJSONValue = {
   taskId: "T720",
   headline: "Implement namespaced production AttestationStore adapters",
-  description: "One shared adapter contract over three production stores.",
+  description: `One shared adapter contract over three production stores (${INPUT_MARKER}).`,
   acceptance: "The abstract suite passes against every backend.",
   worktreePath: "/tmp/wt-T720",
   branch: "implement/T720",
@@ -264,6 +268,22 @@ export class AttestationDriver {
     return storeDispatchResultOn(
       this.backend,
       { resultCapability: capability, output },
+      { now: this.clock.now },
+    );
+  }
+
+  fetchInput(
+    p: DispatchPrepared,
+    capability: InputCapability = p.inputCapability,
+    namespace: AttestationNamespace = this.namespace,
+  ) {
+    return fetchDispatchInputOn(
+      this.backend,
+      {
+        namespace,
+        ...handleOf(p),
+        inputCapability: capability,
+      },
       { now: this.clock.now },
     );
   }
@@ -511,6 +531,12 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         await expect(other.store(mine.resultCapability)).rejects.toThrow(
           DispatchAuthorizationError,
         );
+        await expect(driver.fetchInput(mine, theirs.inputCapability)).rejects.toThrow(
+          DispatchAuthorizationError,
+        );
+        await expect(other.fetchInput(theirs, mine.inputCapability)).rejects.toThrow(
+          DispatchAuthorizationError,
+        );
         // …and neither can even see the other's handle.
         expect((await driver.fetch(handleOf(theirs))).state).toBe("attestation-not-found");
         expect((await other.fetch(handleOf(mine))).state).toBe("attestation-not-found");
@@ -520,10 +546,32 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
       withCase(async ({ driver }) => {
         const first = await driver.prepare({ idempotencyKey: "key-first" });
         const second = await driver.prepare({ idempotencyKey: "key-second" });
+        await expect(driver.fetchInput(first, second.inputCapability)).rejects.toThrow(
+          DispatchAuthorizationError,
+        );
         await driver.store(second.resultCapability);
         // `first` is untouched: a capability resolves exactly ONE record.
         expect((await driver.fetch(handleOf(first))).state).toBe("prepared");
         expect((await driver.fetch(handleOf(second))).state).toBe("result-stored");
+      }));
+
+    test("assembled input materializes once across restart, then the durable marker refuses it", () =>
+      withCase(async ({ fixture, driver, clock }) => {
+        const p = await driver.prepare();
+        const afterPrepare = new AttestationDriver(await fixture.restart(), clock);
+        const first = await afterPrepare.fetchInput(p);
+        expect(first.input).toEqual(INPUT);
+        expect(first.promptProvenance).toEqual(p.promptProvenance);
+        expect(JSON.stringify(first)).toContain(INPUT_MARKER);
+        expect(JSON.stringify(first)).not.toContain(p.inputCapability.token);
+
+        const afterMaterialize = new AttestationDriver(await fixture.restart(), clock);
+        await expect(afterMaterialize.fetchInput(p)).rejects.toThrow(
+          DispatchStateConflictError,
+        );
+        const dump = await fixture.dump();
+        expect(dump).not.toContain(p.inputCapability.token);
+        expect(dump).toContain(inputCapabilityHash(p.inputCapability.token));
       }));
 
     test("a different-output retry conflicts; an identical retry is idempotent", () =>
@@ -654,7 +702,9 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
       withCase(async ({ fixture, driver }) => {
         const p = await driver.prepare();
         const token = p.resultCapability.token;
+        const inputToken = p.inputCapability.token;
 
+        const materializedInput = await driver.fetchInput(p);
         const stored = await driver.store(p.resultCapability);
         const beforeConfirm = await driver.fetch(handleOf(p));
         const confirmed = await driver.confirm(p);
@@ -662,14 +712,18 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         const report = await driver.sweep();
         const aborted = await settle(() => driver.abort(p));
 
-        // `prepared` is the ONE surface that legitimately carries the raw token:
-        // it is where the capability is minted and handed to the parent to pass
-        // on. Everything else must carry neither the token nor the body.
+        // `prepared` is the ONE surface that legitimately carries the raw
+        // capabilities: they are minted there and handed to the parent to pass
+        // on. Everything else must carry neither token.
         const preparedJson = JSON.stringify(p);
         expect(preparedJson.split(token)).toHaveLength(2);
+        expect(preparedJson.split(inputToken)).toHaveLength(2);
         expect(preparedJson).not.toContain(OUTPUT_MARKER);
+        expect(preparedJson).not.toContain(INPUT_MARKER);
+        expect(JSON.stringify(materializedInput)).toContain(INPUT_MARKER);
 
         const surfaces: Readonly<Record<string, unknown>> = {
+          materializedInput,
           storeAck: stored,
           fetchResultStored: beforeConfirm,
           confirmAck: confirmed,
@@ -683,6 +737,10 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
           expect(JSON.stringify(surface) ?? "", `${name} must not carry the token`).not.toContain(
             token,
           );
+          expect(
+            JSON.stringify(surface) ?? "",
+            `${name} must not carry the input token`,
+          ).not.toContain(inputToken);
         }
         // The ONE authorized read does carry it — and nothing else does.
         expect(JSON.stringify(afterConfirm)).toContain(OUTPUT_MARKER);
@@ -695,8 +753,11 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
         // token ever being persisted.
         const dump = await fixture.dump();
         expect(dump).not.toContain(token);
+        expect(dump).not.toContain(inputToken);
         expect(dump).toContain(resultCapabilityHash(token));
+        expect(dump).toContain(inputCapabilityHash(inputToken));
         expect(JSON.stringify(await fixture.rows())).not.toContain(token);
+        expect(JSON.stringify(await fixture.rows())).not.toContain(inputToken);
       }));
 
     // -- D174: every DECLARED trusted-parent scope is really enforced -------

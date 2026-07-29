@@ -39,17 +39,17 @@
  * exists yet to have a state, because validation precedes allocation
  * ({@link DISPATCH_PREPARE_STEP_ORDER}).
  *
- * The `validate_input` / `validate_output` MCP tools are NOT removed from the
- * MCP surface ({@link RETAINED_NON_FLOW_MCP_VALIDATORS}); they remain the
- * allowlisted inspection/debug validators used by the Agents tab and the
- * pi/codex harnesses ({@link VALIDATE_INPUT_INSPECTION_CALLERS}). What this
- * clause forbids is an ordinary FLOW requiring one.
+ * `validate_output` remains on the ordinary MCP surface until T898
+ * ({@link RETAINED_NON_FLOW_MCP_VALIDATORS}). `validate_input` remains only as
+ * a direct inspection/debug capability for the Agents tab and external
+ * harnesses ({@link RETAINED_INSPECTION_VALIDATORS},
+ * {@link VALIDATE_INPUT_INSPECTION_CALLERS}); ordinary tools/list does not
+ * advertise it.
  *
- * DEFERRED to T977 ({@link DISPATCH_INPUT_VALIDATION_DEFERRED}): this module is
- * contract level only — `prepare_dispatch` does not exist yet (T695 exposes it
- * over MCP). The live enforcement path, the
- * no-attestation-allocated-on-rejection assertion against a real store, and
- * per-surface claude/codex/pi conformance all land there.
+ * This module owns the contract-level validator. T977's `@cq/ledger-mcp`
+ * runtime calls it from `prepare_dispatch`; the historical handoff list
+ * ({@link DISPATCH_INPUT_VALIDATION_DEFERRED}) remains audited against that
+ * runtime's discharge map.
  *
  * This module calls {@link validateAgainstSchema} (Ajv) and is therefore NOT
  * browser-bundleable, like {@link ./validation} and {@link ./dispatchOverlays}.
@@ -199,6 +199,7 @@ export const DISPATCH_PREPARE_VALIDATION_STEPS = [
 /** The prepare steps that allocate. None may precede a validation step. */
 export const DISPATCH_PREPARE_ALLOCATION_STEPS = [
   "allocate-attestation",
+  "mint-input-capability",
   "mint-result-capability",
 ] as const;
 
@@ -262,13 +263,15 @@ export function assertValidateThenAllocate(order: readonly string[]): void {
 }
 
 /**
- * The MCP validators retained OUTSIDE the ordinary-flow operation vocabulary.
- * They stay on the MCP surface for inspection and debugging; the T682/T976
- * clauses only forbid an ordinary FLOW from requiring one.
+ * Model-visible MCP validators retained outside the dispatch vocabulary.
+ * validate_output remains until T898; validate_input is deliberately absent.
  */
-export const RETAINED_NON_FLOW_MCP_VALIDATORS = ["validate_input", "validate_output"] as const;
+export const RETAINED_NON_FLOW_MCP_VALIDATORS = ["validate_output"] as const;
 
-/** The allowlisted non-flow callers of the retained `validate_input` tool. */
+/** Direct inspection/debug validators deliberately absent from ordinary tools/list. */
+export const RETAINED_INSPECTION_VALIDATORS = ["validate_input"] as const;
+
+/** The allowlisted callers of the retained direct `validateInput` capability. */
 export const VALIDATE_INPUT_INSPECTION_CALLERS = [
   "agents-tab",
   "pi-harness",
@@ -280,8 +283,8 @@ export type ValidateInputInspectionCaller = (typeof VALIDATE_INPUT_INSPECTION_CA
 const INSPECTION_CALLER_SET: ReadonlySet<string> = new Set(VALIDATE_INPUT_INSPECTION_CALLERS);
 
 /**
- * Whether `caller` is an allowlisted inspection/debug consumer of the retained
- * `validate_input` tool. Set-based, so no `Object.prototype` name passes.
+ * Whether `caller` may consume the direct inspection/debug `validateInput`
+ * capability. Set-based, so no `Object.prototype` name passes.
  */
 export function isAllowlistedValidateInputCaller(caller: string): boolean {
   return typeof caller === "string" && INSPECTION_CALLER_SET.has(caller);
@@ -537,10 +540,10 @@ function describeErrors(errors: readonly ValidationError[]): string {
  * no result capability, because this step allocates nothing — or a typed
  * {@link DispatchPreLaunchRejection}, which is NOT a lifecycle state.
  *
- * The live `prepare_dispatch` enforcement path that calls this, the
- * no-attestation-allocated assertion against a real store, and per-surface
- * conformance are DEFERRED to T977
- * ({@link DISPATCH_INPUT_VALIDATION_DEFERRED}).
+ * T977's live `prepare_dispatch` runtime calls this before durable prepare; its
+ * tests cover zero allocation on rejection and claude/codex/pi conformance.
+ * {@link DISPATCH_INPUT_VALIDATION_DEFERRED} retains the exact historical
+ * handoff vocabulary for audited discharge.
  */
 export function validateDispatchInput(
   request: DispatchInputValidationRequest,
@@ -592,13 +595,13 @@ export function validateDispatchInput(
   });
 }
 
-/** The task that owns the runtime half of this contract. */
+/** The task that discharged the runtime half of this contract. */
 export const DISPATCH_INPUT_VALIDATION_DEFERRED_TO = "T977" as const;
 
 /**
- * What this contract-level task deliberately does NOT cover, recorded so it is
- * not silently dropped. Each entry lands in
- * {@link DISPATCH_INPUT_VALIDATION_DEFERRED_TO}.
+ * What this contract-level task handed to
+ * {@link DISPATCH_INPUT_VALIDATION_DEFERRED_TO}. The runtime keeps an exact
+ * discharge map over these entries.
  */
 export const DISPATCH_INPUT_VALIDATION_DEFERRED = Object.freeze([
   "live-prepare-dispatch-enforcement-path",

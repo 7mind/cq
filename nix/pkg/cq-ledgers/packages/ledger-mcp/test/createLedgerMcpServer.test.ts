@@ -43,6 +43,7 @@ async function registeredNames(toolPrefix?: string): Promise<string[]> {
   };
   const dispatchCapability: DispatchCapability = {
     prepare: unavailable,
+    fetchInput: unavailable,
     storeResult: unavailable,
     confirmCompletion: unavailable,
     abort: unavailable,
@@ -80,6 +81,7 @@ describe("createLedgerMcpServer — public builder", () => {
     const names = await registeredNames();
     expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
     expect(names.length).toBe(LEDGER_TOOL_NAMES.length);
+    expect(names).not.toContain("validate_input");
   });
 
   it("omits lifecycle tools before registration when no durable capability exists", async () => {
@@ -109,6 +111,7 @@ describe("createLedgerMcpServer — public builder", () => {
     };
     const dispatchCapability: DispatchCapability = {
       prepare: unavailable,
+      fetchInput: unavailable,
       storeResult: unavailable,
       confirmCompletion: unavailable,
       abort: unavailable,

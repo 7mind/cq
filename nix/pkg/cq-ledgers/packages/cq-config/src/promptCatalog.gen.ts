@@ -283,6 +283,37 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "input delivered via dispatch prompt"
+            ],
+            "codex": [
+              "input delivered via dispatch prompt"
+            ],
+            "pi": [
+              "fetch_dispatch_input",
+              "inputCapability",
+              "prepare_dispatch"
+            ]
+          },
+          "fragment": "dispatch-input-delivery",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "implement-worker child-side input retrieval procedure",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -298,6 +329,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
           "surfaces": [
             "claude",
             "codex",
@@ -3287,7 +3327,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "430e9cd07269e1982823ee6483ce83326313af5eaec96d0fe33392d6c4e627be",
+  "catalogMetadataHash": "6a6efe91f705feede43edc3e92da593f8514d4c7f8d03c59e52461c807931e49",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -3363,6 +3403,36 @@ export const PROMPT_CATALOG_PROJECTION = {
       "intentionalDifference": {
         "kind": "dispatch-protocol",
         "reason": "Claude uses the ref-first attested bridge while Codex and Pi retain their catalog-validator dispatch path until their own cutover.",
+        "surfaces": [
+          "claude",
+          "codex",
+          "pi"
+        ]
+      },
+      "supportedSurfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    {
+      "forbiddenVocabulary": {
+        "claude": [
+          "input delivered via dispatch prompt"
+        ],
+        "codex": [
+          "input delivered via dispatch prompt"
+        ],
+        "pi": [
+          "fetch_dispatch_input",
+          "inputCapability",
+          "prepare_dispatch"
+        ]
+      },
+      "fragment": "dispatch-input-delivery",
+      "intentionalDifference": {
+        "kind": "dispatch-protocol",
+        "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
         "surfaces": [
           "claude",
           "codex",

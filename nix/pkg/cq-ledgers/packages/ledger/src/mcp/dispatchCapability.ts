@@ -4,7 +4,10 @@ import type {
   ConfirmDispatchCompletionOutcome,
   DispatchHandle,
   DispatchJSONValue,
+  DispatchOverlayApplication,
   FetchDispatchResult,
+  InputCapability,
+  MaterializedDispatchInput,
   NativeChildIdentity,
   NativeCompletionProof,
   PrepareDispatchOutcome,
@@ -13,10 +16,12 @@ import type {
 } from "@cq/config";
 
 export interface PrepareDispatchToolInput {
-  readonly roleId: string;
-  readonly input: DispatchJSONValue;
+  readonly roleId?: string;
+  readonly input?: DispatchJSONValue;
+  readonly refs?: unknown;
   readonly idempotencyKey: string;
   readonly timeoutMs: number;
+  readonly overlays?: readonly DispatchOverlayApplication[];
   readonly expectedChild: NativeChildIdentity;
   readonly reprepareOf?: DispatchHandle;
 }
@@ -24,6 +29,10 @@ export interface PrepareDispatchToolInput {
 export interface StoreResultToolInput {
   readonly resultCapability: ResultCapability;
   readonly output: DispatchJSONValue;
+}
+
+export interface FetchDispatchInputToolInput extends DispatchHandle {
+  readonly inputCapability: InputCapability;
 }
 
 export interface ConfirmDispatchCompletionToolInput extends DispatchHandle {
@@ -41,6 +50,7 @@ export type FetchDispatchResultToolInput = DispatchHandle;
 
 export interface DispatchCapability {
   prepare(input: PrepareDispatchToolInput): Promise<PrepareDispatchOutcome>;
+  fetchInput(input: FetchDispatchInputToolInput): Promise<MaterializedDispatchInput>;
   storeResult(input: StoreResultToolInput): Promise<StoreDispatchResultOutcome>;
   confirmCompletion(
     input: ConfirmDispatchCompletionToolInput,

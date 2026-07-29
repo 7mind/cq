@@ -9,17 +9,28 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import {
+  createAttestationStoreForConstruction,
+  resolveSingleProjectAttestationNamespace,
+} from "@cq/ledger";
+import { assertDispatchConstructionConformance } from "./dispatchConstructionConformance.js";
 
 const here = new URL(".", import.meta.url).pathname;
 const mainPath = path.resolve(here, "..", "src", "main.ts");
 const SURFACES = ["claude", "codex", "pi"] as const;
 type PromptSurface = (typeof SURFACES)[number];
 const DISPATCHED_ROLE_ID = "plan-advance";
+const WORKER_ROLE_ID = "implement-worker";
 const ORCHESTRATOR_ROLE_ID = "advance";
 const PROMPT_BYTES: Readonly<Record<PromptSurface, string>> = {
   claude: "standalone claude Agent and $ARGUMENTS\n",
   codex: "standalone codex collaboration and $ARGUMENTS\n",
   pi: "standalone pi dispatch_agent and $ARGUMENTS\n",
+};
+const WORKER_PROMPT_BYTES: Readonly<Record<PromptSurface, string>> = {
+  claude: "standalone claude implement-worker input retrieval\n",
+  codex: "standalone codex implement-worker input retrieval\n",
+  pi: "standalone pi implement-worker direct input\n",
 };
 
 const INTENTIONAL_DIFFERENCE = {
@@ -55,6 +66,21 @@ const CATALOG = [
     dispatchRelations: [],
     intentionalDifferences: [INTENTIONAL_DIFFERENCE],
     sidecar: { schemaRoleId: DISPATCHED_ROLE_ID },
+  },
+  {
+    roleId: WORKER_ROLE_ID,
+    roleKind: "dispatched-subagent",
+    canonicalSource: `agents/${WORKER_ROLE_ID}.md`,
+    surfaces: SURFACES,
+    sharedSourceBlock: {
+      classification: "shared-prose",
+      sourceBlock: "all prose outside the classified surface-sensitive blocks",
+      targetFragment: null,
+    },
+    fragmentBindings: [],
+    dispatchRelations: [],
+    intentionalDifferences: [],
+    sidecar: { schemaRoleId: WORKER_ROLE_ID },
   },
   {
     roleId: ORCHESTRATOR_ROLE_ID,
@@ -238,6 +264,13 @@ beforeAll(async () => {
           version: null,
           sha256: createHash("sha256").update(orchestratorBytes, "utf8").digest("hex"),
         },
+        {
+          roleId: WORKER_ROLE_ID,
+          version: 1,
+          sha256: createHash("sha256")
+            .update(WORKER_PROMPT_BYTES[surface], "utf8")
+            .digest("hex"),
+        },
       ],
     };
     await fs.writeFile(
@@ -255,6 +288,10 @@ beforeAll(async () => {
       path.join(surfaceRoot, "roles", `${ORCHESTRATOR_ROLE_ID}.md`),
       orchestratorBytes,
     );
+    await fs.writeFile(
+      path.join(surfaceRoot, "roles", `${WORKER_ROLE_ID}.md`),
+      WORKER_PROMPT_BYTES[surface],
+    );
   }
 });
 
@@ -265,6 +302,110 @@ afterAll(async () => {
 });
 
 describe("standalone prompt-surface transports", () => {
+  test("stdio preserves the T977 dispatch contract through its production construction", async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [
+        "run",
+        mainPath,
+        "--cwd",
+        tmpRoot,
+        "--prompt-surface",
+        "codex",
+        "--prompt-root",
+        surfaceRoots.codex,
+      ],
+      env: childEnv({}),
+      stderr: "pipe",
+    });
+    const client = new Client(
+      { name: "dispatch-stdio-construction-test", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    const namespace = await resolveSingleProjectAttestationNamespace({
+      construction: "stdio",
+      backend: "xdg",
+      repoRoot: tmpRoot,
+      projectId: path.basename(tmpRoot),
+    });
+    const peer = await createAttestationStoreForConstruction({
+      backend: "xdg",
+      namespace,
+      env: { XDG_STATE_HOME: xdgHome },
+    });
+    try {
+      await client.connect(transport);
+      await assertDispatchConstructionConformance({
+        cell: "stdio",
+        client,
+        surface: "codex",
+        rows: async () =>
+          (await peer.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
+      });
+    } finally {
+      await client.close();
+      await peer.close();
+    }
+  });
+
+  test("HTTP preserves the T977 dispatch contract through its production construction", async () => {
+    const port = await freePort();
+    const processHandle: Subprocess = bunSpawn({
+      cmd: [
+        process.execPath,
+        "run",
+        mainPath,
+        "--cwd",
+        tmpRoot,
+        "--http",
+        `127.0.0.1:${String(port)}`,
+      ],
+      env: childEnv({
+        CQ_PROMPT_SURFACE: "claude",
+        CQ_PROMPT_ROOT: surfaceRoots.claude,
+      }),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const namespace = await resolveSingleProjectAttestationNamespace({
+      construction: "http-single-project",
+      backend: "xdg",
+      repoRoot: tmpRoot,
+      projectId: path.basename(tmpRoot),
+    });
+    const peer = await createAttestationStoreForConstruction({
+      backend: "xdg",
+      namespace,
+      env: { XDG_STATE_HOME: xdgHome },
+    });
+    try {
+      await waitForPort(port);
+      const transport = new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${String(port)}/mcp`),
+      );
+      const client = new Client(
+        { name: "dispatch-http-construction-test", version: "0.0.1" },
+        { capabilities: {} },
+      );
+      await client.connect(transport as unknown as Transport);
+      try {
+        await assertDispatchConstructionConformance({
+          cell: "http-single-project",
+          client,
+          surface: "claude",
+          rows: async () =>
+            (await peer.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
+        });
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await peer.close();
+      processHandle.kill();
+      await processHandle.exited;
+    }
+  });
+
   test("stdio rejects a selected surface that does not match the built root", async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,

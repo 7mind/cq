@@ -164,9 +164,12 @@ describe("the in-memory reference backend is not a production adapter", () => {
       generation: 1,
       state: "prepared" as const,
       promptProvenance: PROBE_PROVENANCE,
+      prepareRequestDigest: "3".repeat(64),
+      input: { taskId: "T977" },
       deadlines: PROBE_DEADLINES,
       expectedChild: { childId: "c", runId: "r" },
       createdAt: "2026-07-27T09:00:00.000Z",
+      inputCapabilityHash: "2".repeat(64),
       resultCapabilityHash: "1".repeat(64),
     };
     await expect(
@@ -191,9 +194,12 @@ describe("the in-memory reference backend is not a production adapter", () => {
       generation: 1,
       state: "prepared" as const,
       promptProvenance: PROBE_PROVENANCE,
+      prepareRequestDigest: "6".repeat(64),
+      input: { taskId: "T977" },
       deadlines: PROBE_DEADLINES,
       expectedChild: { childId: "c", runId: "r" },
       createdAt: "2026-07-27T09:00:00.000Z",
+      inputCapabilityHash: "7".repeat(64),
       resultCapabilityHash: "9".repeat(64),
     };
     store.insert({ ...base, attestationId: `att_${"a".repeat(32)}`, idempotencyKey: "ka" });

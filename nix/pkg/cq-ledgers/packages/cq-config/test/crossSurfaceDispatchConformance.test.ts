@@ -24,8 +24,10 @@
  *   CHECK 2 — no ordinary parent-side `validate_input` round-trip survives on
  *     any surface's dispatch path. Pinned as an exact zero on all three
  *     RENDERED surfaces, with a negative control on the scanner.
- *   CHECK 3 — the same structured input field set still reaches the child.
- *     Pinned per dispatch edge on all three RENDERED surfaces.
+ *   CHECK 3 — the same semantic input still reaches the child. Pinned per
+ *     dispatch edge on all three RENDERED surfaces; T977's Claude/Codex worker
+ *     edge carries refs from which the server assembles the narrative, while
+ *     the held Pi edge retains direct typed input.
  *   CHECK 1 — the role prompt is injected once at the CHILD boundary and does
  *     not enter parent context. Only the STATIC substrate is pinnable here: the
  *     identical dispatched-role set per surface, and the per-surface injection
@@ -190,10 +192,8 @@ const EXPECTED_A_LEG_COUNTS: Readonly<
 };
 
 /**
- * The verbatim structured-input field literals per dispatch edge — the same
- * literals `cq-parent-dispatch-inventory.test.ts` pins on the CANONICAL
- * sources, re-asserted on each RENDERED surface so a fragment substitution
- * cannot drop one.
+ * The verbatim structured-input field literals per dispatch edge, re-asserted
+ * on each RENDERED surface so a fragment substitution cannot drop one.
  */
 const DISPATCH_EDGE_INPUTS: readonly {
   readonly flowRoleId: string;
@@ -252,6 +252,9 @@ const DISPATCH_EDGE_INPUTS: readonly {
     ],
   },
 ];
+
+const T977_WORKER_REFS =
+  "{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }";
 
 describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () => {
   it(
@@ -328,15 +331,38 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
 
   // ── CHECK 3 — the structured input survives the render, per surface ─────
   for (const surface of PROMPT_SURFACES) {
-    it(`${surface}: every dispatch edge still composes its full structured input field set`, () => {
+    it(`${surface}: every dispatch edge carries its expected structured prepare input`, () => {
       for (const edge of DISPATCH_EDGE_INPUTS) {
         const body = normalize(renderedOf(surface, edge.flowRoleId));
-        for (const fields of edge.inputFields) {
+        const refsOnlyWorker = surface !== "pi" && edge.role === "implement-worker";
+        const expectedFields = refsOnlyWorker ? [T977_WORKER_REFS] : edge.inputFields;
+        for (const fields of expectedFields) {
           expect(body).toContain(normalize(fields));
+        }
+        if (edge.role === "implement-worker") {
+          const narrativeFields = normalize(edge.inputFields[0]!);
+          if (refsOnlyWorker) {
+            expect(body).not.toContain(narrativeFields);
+          } else {
+            expect(body).not.toContain(normalize(T977_WORKER_REFS));
+          }
         }
       }
     });
   }
+
+  it("T977 renders one-shot fetch for Claude/Codex and direct delivery for the held Pi worker", () => {
+    for (const surface of ["claude", "codex"] as const) {
+      const worker = renderedOf(surface, "implement-worker");
+      expect(countOccurrences(worker, "fetch_dispatch_input")).toBe(1);
+      expect(worker).toContain("exactly once");
+      expect(worker).not.toContain("passes the complete typed worker input directly");
+    }
+    const piWorker = renderedOf("pi", "implement-worker");
+    expect(countOccurrences(piWorker, "fetch_dispatch_input")).toBe(0);
+    expect(piWorker).toContain("passes the complete typed worker input directly");
+    expect(piWorker).not.toContain("exactly once");
+  });
 
   // ── CHECK 1 — the per-surface child-boundary injection MECHANISM ────────
   it("pi injects a dispatched role at the child boundary, by NAME, from extension code", () => {

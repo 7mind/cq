@@ -269,6 +269,7 @@ export {
   prefixedToolNames,
 } from "./mcp/ledgerTools.js";
 export type { LedgerToolName } from "./mcp/ledgerTools.js";
+export { createDispatchNarrativeSource } from "./mcp/dispatchNarrativeSource.js";
 export {
   COMPACT_ITEM_FIELD_NAMES,
   GET_PLANNERS_SECTION_RESPONSE_DESCRIPTION,
@@ -330,6 +331,7 @@ export type {
   AbortDispatchToolInput,
   ConfirmDispatchCompletionToolInput,
   DispatchCapability,
+  FetchDispatchInputToolInput,
   FetchDispatchResultToolInput,
   PrepareDispatchToolInput,
   StoreResultToolInput,

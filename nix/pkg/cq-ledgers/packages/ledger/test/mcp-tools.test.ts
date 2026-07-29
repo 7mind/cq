@@ -96,7 +96,7 @@ function expectedMilestoneAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("exports 33 canonical names and omits unwired dispatch handlers", async () => {
+  it("exports 33 canonical names, hides validate_input, and omits unwired dispatch handlers", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
     expect(tools.map((t) => t.name).sort()).toEqual(
@@ -114,12 +114,13 @@ describe("ledger MCP tools", () => {
     expect(LEDGER_TOOL_NAMES).not.toContain("get_planners");
     expect(LEDGER_TOOL_NAMES).not.toContain("get_agent_models");
     expect(LEDGER_TOOL_NAMES).toContain("prepare_dispatch");
+    expect(LEDGER_TOOL_NAMES).toContain("fetch_dispatch_input");
     expect(LEDGER_TOOL_NAMES).toContain("store_result");
     expect(LEDGER_TOOL_NAMES).toContain("confirm_dispatch_completion");
     expect(LEDGER_TOOL_NAMES).toContain("abort_dispatch");
     expect(LEDGER_TOOL_NAMES).toContain("fetch_dispatch_result");
     expect(LEDGER_TOOL_NAMES).toContain("fetch_prompt");
-    expect(LEDGER_TOOL_NAMES).toContain("validate_input");
+    expect(LEDGER_TOOL_NAMES).not.toContain("validate_input" as never);
     expect(LEDGER_TOOL_NAMES).toContain("validate_output");
     expect(LEDGER_TOOL_NAMES).toContain("list_projects");
     expect(LEDGER_TOOL_NAMES).toContain("claim_plan");
@@ -172,7 +173,7 @@ describe("ledger MCP tools", () => {
     ]);
   });
 
-  it("fetch_prompt/validate_input/validate_output without a catalog capability throw not-implemented", async () => {
+  it("fetch_prompt/validate_output without a catalog capability throw not-implemented", async () => {
     const store = await buildStore();
     // No promptCatalog capability supplied -> the in-memory wiring has no catalog.
     const tools = createLedgerMcpTools(store);
@@ -180,14 +181,11 @@ describe("ledger MCP tools", () => {
       /not implemented/i,
     );
     await expect(
-      callTool(tools, "validate_input", { roleId: "plan-advance", input: {} }),
-    ).rejects.toThrow(/not implemented/i);
-    await expect(
       callTool(tools, "validate_output", { roleId: "plan-advance", output: {} }),
     ).rejects.toThrow(/not implemented/i);
   });
 
-  it("fetch_prompt/validate_input/validate_output dispatch to an injected catalog capability", async () => {
+  it("ordinary MCP dispatches fetch_prompt/validate_output while validateInput stays direct", async () => {
     const store = await buildStore();
     const calls: string[] = [];
     const promptCatalog: PromptCatalogCapability = {
@@ -223,9 +221,8 @@ describe("ledger MCP tools", () => {
     expect(fetched.roleId).toBe("plan-advance");
     expect(fetched.dispatched).toBe(true);
 
-    const vin = decode<{ ok: boolean }>(
-      await callTool(tools, "validate_input", { roleId: "plan-advance", input: { goalId: "G1" } }),
-    );
+    expect(tools.map((tool) => tool.name)).not.toContain("validate_input");
+    const vin = promptCatalog.validateInput("plan-advance", { goalId: "G1" });
     expect(vin.ok).toBe(true);
 
     const vout = decode<{ ok: boolean; errors: { path: string }[] }>(
@@ -1273,7 +1270,7 @@ describe("ledger MCP tools", () => {
     );
   });
 
-  it("routes all five dispatch tools through the scoped capability with handle-only fetch", async () => {
+  it("routes all six dispatch tools through the scoped capability with handle-only result fetch", async () => {
     const store = await buildStore();
     const calls: Array<{ operation: string; input: unknown }> = [];
     const record = (operation: string, input: unknown): never => {
@@ -1282,6 +1279,7 @@ describe("ledger MCP tools", () => {
     };
     const dispatchCapability: DispatchCapability = {
       prepare: async (input) => record("prepare_dispatch", input),
+      fetchInput: async (input) => record("fetch_dispatch_input", input),
       storeResult: async (input) => record("store_result", input),
       confirmCompletion: async (input) => record("confirm_dispatch_completion", input),
       abort: async (input) => record("abort_dispatch", input),
@@ -1306,6 +1304,14 @@ describe("ledger MCP tools", () => {
       idempotencyKey: "T695-r1",
       timeoutMs: 120_000,
       expectedChild: { childId: "child-1", runId: "run-1" },
+      overlays: [{ overlayId: "fixture-focus", data: { note: "validate before allocate" } }],
+    });
+    await callTool(tools, "fetch_dispatch_input", {
+      ...handle,
+      inputCapability: {
+        scope: "fetch-input",
+        token: `cq_input_${"c".repeat(43)}`,
+      },
     });
     await callTool(tools, "store_result", {
       resultCapability: {
@@ -1335,18 +1341,27 @@ describe("ledger MCP tools", () => {
 
     expect(calls.map((entry) => entry.operation)).toEqual([
       "prepare_dispatch",
+      "fetch_dispatch_input",
       "store_result",
       "confirm_dispatch_completion",
       "abort_dispatch",
       "fetch_dispatch_result",
     ]);
-    expect(calls[1]!.input).toEqual({
+    expect(calls[0]!.input).toEqual({
+      roleId: "implement-worker",
+      input: { taskId: "T695" },
+      idempotencyKey: "T695-r1",
+      timeoutMs: 120_000,
+      expectedChild: { childId: "child-1", runId: "run-1" },
+      overlays: [{ overlayId: "fixture-focus", data: { note: "validate before allocate" } }],
+    });
+    expect(calls[2]!.input).toEqual({
       resultCapability: {
         scope: "store-result",
         token: `cq_result_${"b".repeat(43)}`,
       },
       output: { status: "pass" },
     });
-    expect(calls[4]!.input).toEqual(handle);
+    expect(calls[5]!.input).toEqual(handle);
   });
 });

@@ -22,7 +22,13 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { createLedgerStore, LEDGER_TOOL_NAMES } from "@cq/ledger";
+import {
+  createAttestationStoreForConstruction,
+  createLedgerStore,
+  LEDGER_TOOL_NAMES,
+  resolveSingleProjectAttestationNamespace,
+} from "@cq/ledger";
+import { assertDispatchConstructionConformance } from "../../ledger-mcp/test/dispatchConstructionConformance.js";
 
 const here = new URL(".", import.meta.url).pathname;
 const webMain = path.resolve(here, "..", "src", "serve.ts");
@@ -63,6 +69,7 @@ let promptRoot: string;
 let web: Subprocess;
 let webPort: number;
 const PROMPT_BYTES = "embedded web pi {{cq:literal}} and $ARGUMENTS\n";
+const WORKER_PROMPT_BYTES = "embedded web pi implement-worker direct input\n";
 
 beforeAll(async () => {
   // The runtime store is the out-of-tree xdg primary (T505): pin the backend
@@ -98,6 +105,11 @@ beforeAll(async () => {
       roleKind: "dispatched-subagent",
       sidecar: { schemaRoleId: "plan-advance" },
     },
+    {
+      roleId: "implement-worker",
+      roleKind: "dispatched-subagent",
+      sidecar: { schemaRoleId: "implement-worker" },
+    },
   ]);
   const surfaceCore = {
     surface: "pi",
@@ -107,6 +119,11 @@ beforeAll(async () => {
         roleId: "plan-advance",
         version: 1,
         sha256: createHash("sha256").update(PROMPT_BYTES, "utf8").digest("hex"),
+      },
+      {
+        roleId: "implement-worker",
+        version: 1,
+        sha256: createHash("sha256").update(WORKER_PROMPT_BYTES, "utf8").digest("hex"),
       },
     ],
   };
@@ -121,6 +138,7 @@ beforeAll(async () => {
   );
   await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
   await fs.writeFile(path.join(promptRoot, "roles", "plan-advance.md"), PROMPT_BYTES);
+  await fs.writeFile(path.join(promptRoot, "roles", "implement-worker.md"), WORKER_PROMPT_BYTES);
   webPort = await freePort();
   // No --mcp-url ⇒ embedded MCP rooted at --cwd.
   web = bunSpawn({
@@ -151,6 +169,38 @@ afterAll(async () => {
 const base = (): string => `http://127.0.0.1:${webPort}`;
 
 describe("ledger-web embedded MCP (same-origin /mcp, no upstream process)", () => {
+  it("preserves the T977 dispatch contract through the production embedded web construction", async () => {
+    const namespace = await resolveSingleProjectAttestationNamespace({
+      construction: "embedded",
+      backend: "xdg",
+      repoRoot: tmpRoot,
+      projectId: path.basename(tmpRoot),
+    });
+    const peer = await createAttestationStoreForConstruction({
+      backend: "xdg",
+      namespace,
+      env: { XDG_STATE_HOME: xdgHome },
+    });
+    const transport = new StreamableHTTPClientTransport(new URL(`${base()}/mcp`));
+    const client = new Client(
+      { name: "embedded-web-dispatch-contract-test", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    try {
+      await client.connect(transport as unknown as Transport);
+      await assertDispatchConstructionConformance({
+        cell: "embedded-web",
+        client,
+        surface: "pi",
+        rows: async () =>
+          (await peer.transact({ kind: "namespace" }, (store) => store.rows())) ?? [],
+      });
+    } finally {
+      await client.close();
+      await peer.close();
+    }
+  });
+
   it("serves index.html pointing the browser at the same-origin /mcp", async () => {
     const html = await (await fetch(base() + "/")).text();
     expect(html).toContain('window.__LEDGER_MCP_URL__ = "/mcp"');
