@@ -8,7 +8,7 @@
  * assert:
  *  - a non-empty `toolPrefix` registers exactly `prefixedToolNames(prefix)`;
  *  - an omitted `toolPrefix` registers exactly the unprefixed `LEDGER_TOOL_NAMES`
- *    (the 31-tool surface), matching the legacy `buildServer` default.
+ *    (the 33-tool surface), matching the legacy `buildServer` default.
  */
 
 import { describe, it, expect } from "bun:test";
@@ -17,7 +17,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
   prefixedToolNames,
+  type DispatchCapability,
   type LedgerStore,
 } from "@cq/ledger";
 import { createLedgerMcpServer, InMemoryPromptArtifactStore } from "../src/main.js";
@@ -36,10 +38,20 @@ async function buildStore(): Promise<LedgerStore> {
  */
 async function registeredNames(toolPrefix?: string): Promise<string[]> {
   const store = await buildStore();
+  const unavailable = async (): Promise<never> => {
+    throw new Error("unexpected dispatch operation");
+  };
+  const dispatchCapability: DispatchCapability = {
+    prepare: unavailable,
+    storeResult: unavailable,
+    confirmCompletion: unavailable,
+    abort: unavailable,
+    fetch: unavailable,
+  };
   const server = createLedgerMcpServer(
     toolPrefix === undefined
-      ? { store, displayName: "demo" }
-      : { store, displayName: "demo", toolPrefix },
+      ? { store, displayName: "demo", dispatchCapability }
+      : { store, displayName: "demo", toolPrefix, dispatchCapability },
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -64,10 +76,73 @@ describe("createLedgerMcpServer — public builder", () => {
     expect(names.every((n) => n.startsWith("myproj_"))).toBe(true);
   });
 
-  it("registers the unprefixed LEDGER_TOOL_NAMES (27) when toolPrefix is omitted", async () => {
+  it("registers the unprefixed LEDGER_TOOL_NAMES (33) when toolPrefix is omitted", async () => {
     const names = await registeredNames();
     expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
     expect(names.length).toBe(LEDGER_TOOL_NAMES.length);
+  });
+
+  it("omits lifecycle tools before registration when no durable capability exists", async () => {
+    const store = await buildStore();
+    const server = createLedgerMcpServer({ store, displayName: "unsupported" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client(
+      { name: "create-server-unsupported-client", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    await client.connect(clientTransport);
+    try {
+      const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
+      expect(names).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
+      expect(names).not.toContain("prepare_dispatch");
+      expect(names).not.toContain("fetch_dispatch_result");
+    } finally {
+      await client.close();
+      await store.dispose();
+    }
+  });
+
+  it("threads the server-scoped dispatch capability into the registered handlers", async () => {
+    const unavailable = async (): Promise<never> => {
+      throw new Error("unexpected dispatch operation");
+    };
+    const dispatchCapability: DispatchCapability = {
+      prepare: unavailable,
+      storeResult: unavailable,
+      confirmCompletion: unavailable,
+      abort: unavailable,
+      fetch: async (handle) => ({ state: "attestation-not-found", ...handle }),
+    };
+    const store = await buildStore();
+    const server = createLedgerMcpServer({
+      store,
+      displayName: "demo",
+      dispatchCapability,
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client(
+      { name: "create-server-dispatch-test-client", version: "0.0.1" },
+      { capabilities: {} },
+    );
+    await client.connect(clientTransport);
+    try {
+      const result = (await client.callTool({
+        name: "fetch_dispatch_result",
+        arguments: { attestationId: "attestation-1", generation: 1 },
+      })) as {
+        content: Array<{ type: string; text?: string }>;
+      };
+      expect(JSON.parse(result.content[0]?.text ?? "")).toEqual({
+        state: "attestation-not-found",
+        attestationId: "attestation-1",
+        generation: 1,
+      });
+    } finally {
+      await client.close();
+      await store.dispose();
+    }
   });
 
   it("serves exact prompt bytes from the injected artifact store without a config root", async () => {

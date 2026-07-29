@@ -140,7 +140,7 @@ verdict. The prompt-catalog sidecar also remains structured; serialized strings
 exist only in the `reviews.fields.defects` persistence representation.
 
 ### A. UNCONFIGURED single-reviewer fallback → WRITE once AND return the object
-When you are the SOLE reviewer (no `cq.toml` reviewer config / `get_reviewers`
+When you are the SOLE reviewer (no `cq.toml` reviewer config / `get_config({"section":"reviewers"})`
 reports `configured: false`), you ARE the round's single review, so you write it
 directly. Translate only the verdict object's `defects` bucket to the T843
 storage representation before the write:
@@ -175,7 +175,7 @@ fixed acknowledgement for your session summary, but NEVER replace the returned
 structured verdict with that id or a pointer line.
 
 ### B. CONFIGURED multi-reviewer mode → RETURN the verdict json, WRITE NOTHING
-When you are dispatched as ONE OF SEVERAL configured reviewers (`get_reviewers`
+When you are dispatched as ONE OF SEVERAL configured reviewers (`get_config({"section":"reviewers"})`
 reports `configured: true`), you must NOT write the `reviews` ledger — writing it
 yourself would produce more than one reviews item per round and violate the
 single-aggregated-item invariant. RETURN the same structured verdict object as

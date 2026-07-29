@@ -1,8 +1,10 @@
 # @cq/ledger-mcp
 
-Standalone MCP server exposing the 31 ledger tools backed by a file-system
-(`FsLedgerStore`) or git-object store.  Speaks stdio (default) and Streamable
-HTTP (`--http`).
+Standalone MCP server exposing the 33 ledger tools backed by an xdg/sqlite,
+filesystem, or PostgreSQL ledger store. Speaks stdio (default) and Streamable
+HTTP (`--http`). The five dispatch-lifecycle tools use a separate durable,
+namespaced attestation backend and appear only when the server has both a
+supported backend construction and an attested prompt surface.
 
 ## Quick start — standalone binary
 
@@ -16,7 +18,7 @@ cq mcp --cwd /path/to/project
 # Streamable HTTP on 127.0.0.1:7777
 cq mcp --cwd /path/to/project --http 7777
 
-# Prefix all 31 tool names with "myproj_"
+# Prefix all 33 tool names with "myproj_"
 cq mcp --cwd /path/to/project --tool-prefix myproj
 ```
 
@@ -40,36 +42,65 @@ bun add @cq/ledger-mcp @cq/ledger @modelcontextprotocol/sdk
 ```ts
 import path from "node:path";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createLedgerMcpServer } from "@cq/ledger-mcp";
+import {
+  createLedgerMcpServer,
+  createSingleProjectDispatchRuntime,
+  resolvePromptSurface,
+} from "@cq/ledger-mcp";
 import { createLedgerStore } from "@cq/ledger";
 
-// Build the store.  createLedgerStore honours cq.toml's [ledger] backend
-// (fs or git-object); defaults to FsLedgerStore when no cq.toml is present.
-// Pass your own absolute directory — nothing from cq's layout is assumed.
+// Build the ledger store and the installed attested prompt surface.
 const root = path.resolve("/path/to/your/project");
-const { store } = await createLedgerStore(root);
+const resolved = await createLedgerStore(root);
+const promptSurface = resolvePromptSurface({
+  promptSurface: undefined,
+  promptRoot: undefined,
+  environment: process.env,
+});
+const dispatchRuntime = await createSingleProjectDispatchRuntime({
+  construction: "direct",
+  resolved,
+  ...(promptSurface === undefined
+    ? {}
+    : { promptArtifactStore: promptSurface.store }),
+  environment: process.env,
+});
 
 // Create the McpServer.
 // - displayName  surfaces as serverInfo.title (clients show it in the UI).
 // - toolPrefix   renames every tool to "<prefix>_<name>" so this server's
 //                tools don't clash with another cq mcp instance in the
 //                same session.  Omit (or pass "") for the default unprefixed
-//                31-tool surface.
+//                tool surface.
 const server = createLedgerMcpServer({
-  store,
+  store: resolved.store,
   displayName: "my-project",
   toolPrefix: "myproj", // tools become myproj_enumerate_ledgers, myproj_create_item, …
+  configRoot: resolved.configRoot,
+  ...(resolved.projectKey === undefined ? {} : { projectKey: resolved.projectKey }),
+  ...(promptSurface === undefined ? {} : { promptArtifactStore: promptSurface.store }),
+  ...(dispatchRuntime.kind === "available"
+    ? { dispatchCapability: dispatchRuntime.capability }
+    : {}),
 });
 
 // Connect a transport and serve.
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+const shutdown = async (): Promise<void> => {
+  await dispatchRuntime.close();
+  await resolved.store.dispose();
+};
+process.once("SIGTERM", () => void shutdown());
+process.once("SIGINT", () => void shutdown());
 ```
 
-That is the complete setup: `createLedgerMcpServer` registers all 31 ledger
-tools on the returned `McpServer`, applies the prefix to both tool names and the
-server-level `instructions` text, and the process is ready to receive MCP
-requests.
+With a supported backend and attested prompt surface, this registers all 33
+tools. Without a durable dispatch runtime, `createLedgerMcpServer` omits the
+five dispatch-lifecycle tools before registration and exposes the remaining
+28. The prefix applies to every tool that the server registers and to matching
+references in its server-level `instructions`.
 
 ### 3. Discover prefixed tool names at runtime
 
@@ -102,6 +133,10 @@ const server = createLedgerMcpServer({
   toolPrefix: "myproj",
 });
 ```
+
+This lower-level form has no attestation namespace or prompt surface, so it
+registers the 28 non-dispatch tools. Use the resolved-store construction above
+when dispatch lifecycle support is required.
 
 ### 5. No-code prefixed server via the CLI
 
@@ -187,10 +222,12 @@ measured savings without another batching schema.
 | `reopen_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `unarchive_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `read_log` | `requested-full-content` | `{ path, content, truncated? }`. |
-| `get_reviewers` | `purpose-built-small` | `{ configured, reviewers: [{ harness, model, provider, alias, effort }] }`. |
-| `get_planners` | `purpose-built-small` | `{ configured, planners: [{ harness, model, provider, alias, effort }] }`. |
-| `get_config` | `requested-full-content` | `{ configured, aliases, reviewers, planners, tiers, agentTiers, agentEfforts }`. |
-| `get_agent_models` | `purpose-built-small` | `{ configured, agents: [{ id, status, modelClass, modelMappings }] }`. |
+| `get_config` | `requested-full-content` | The payload selected by `section`; no unrelated section is returned. |
+| `prepare_dispatch` | `purpose-built-small` | `{ accepted, prepared, handle, executedStepOrder }` or a typed pre-launch rejection. |
+| `store_result` | `purpose-built-small` | A handle-only stored-result acknowledgement or typed abort. |
+| `confirm_dispatch_completion` | `purpose-built-small` | A handle-only consumed acknowledgement or typed abort. |
+| `abort_dispatch` | `purpose-built-small` | A typed aborted acknowledgement. |
+| `fetch_dispatch_result` | `requested-full-content` | One typed fetch state; only the first consumed fetch can carry `output`. |
 | `fetch_prompt` | `requested-full-content` | Full typed prompt entry, including prompt text and schemas when available. |
 | `validate_input` | `purpose-built-small` | `{ ok: true }` or `{ ok: false, errors }`. |
 | `validate_output` | `purpose-built-small` | `{ ok: true }` or `{ ok: false, errors }`. |
@@ -292,7 +329,7 @@ not sent as a tool argument.
 
 ## Client development and migration
 
-Treat response decoding as a closed 31-tool matrix, not as a generic
+Treat response decoding as a closed 33-tool matrix, not as a generic
 full-entity decoder. Require callers to choose a projection for the six
 item-bearing read tools, model the three acknowledgement DTOs independently
 from full items, and retain pagination metadata until `nextOffset` becomes

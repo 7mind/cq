@@ -92,11 +92,11 @@ harnesses via a `[aliases]` table and top-level `reviewers` and `planners`
 lists. See `cq.toml.example` for the schema (alias names resolve to
 `<harness>:<model>` tokens; absence of `cq.toml` means the native Claude
 reviewer only). The `cq.toml` is parsed by the `@cq/config` parser package
-and surfaced by the **ledger MCP server**, which exposes `get_reviewers`,
-`get_config`, and `get_planners` as `mcp__ledger__*` tools over the `.mcp.json`
-interface so orchestrator flows can dispatch parallel reviewers and planners
-at review and plan gates. Planners mirror reviewers, resolving through the
-same shared `[aliases]` table (see `cq.toml.example`).
+and surfaced by the **ledger MCP server** through one sectioned `get_config`
+tool (`section: "reviewers" | "planners" | "agent_models" | "tiers" | …`)
+over the `.mcp.json` interface, so orchestrator flows can request only the
+configuration they need. Planners mirror reviewers, resolving through the same
+shared `[aliases]` table (see `cq.toml.example`).
 
 ## Session logs — subagent handover convention
 

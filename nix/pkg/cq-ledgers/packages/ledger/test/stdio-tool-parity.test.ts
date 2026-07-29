@@ -11,6 +11,7 @@ import {
   MILESTONES_AMBIENT_ID,
   registerLedgerStdioTools,
   type ConfigCapability,
+  type DispatchCapability,
   type LedgerStore,
   type LedgerToolName,
   type ListProjectsCapability,
@@ -155,6 +156,14 @@ const promptCatalog: PromptCatalogCapability = {
 
 const listProjects: ListProjectsCapability = () => PROJECTS_RESULT;
 
+const dispatchCapability: DispatchCapability = {
+  prepare: async () => ({ operation: "prepare_dispatch" }) as never,
+  storeResult: async () => ({ operation: "store_result" }) as never,
+  confirmCompletion: async () => ({ operation: "confirm_dispatch_completion" }) as never,
+  abort: async () => ({ operation: "abort_dispatch" }) as never,
+  fetch: async () => ({ operation: "fetch_dispatch_result" }) as never,
+};
+
 type DirectTools = ReturnType<typeof createLedgerMcpTools>;
 
 interface ToolCapabilities {
@@ -162,6 +171,7 @@ interface ToolCapabilities {
   config: ConfigCapability | undefined;
   promptCatalog: PromptCatalogCapability | undefined;
   listProjects: ListProjectsCapability | undefined;
+  dispatch: DispatchCapability | undefined;
 }
 
 const AVAILABLE_CAPABILITIES: ToolCapabilities = {
@@ -169,6 +179,7 @@ const AVAILABLE_CAPABILITIES: ToolCapabilities = {
   config: configCapability,
   promptCatalog,
   listProjects,
+  dispatch: dispatchCapability,
 };
 
 const UNAVAILABLE_CAPABILITIES: ToolCapabilities = {
@@ -176,6 +187,7 @@ const UNAVAILABLE_CAPABILITIES: ToolCapabilities = {
   config: undefined,
   promptCatalog: undefined,
   listProjects: undefined,
+  dispatch: undefined,
 };
 
 interface TextToolResult {
@@ -187,9 +199,7 @@ type ToolOutcome =
   | { kind: "success"; payload: unknown }
   | {
       kind: "error";
-      error:
-        | { category: "validation"; issues: unknown }
-        | { category: "handler"; message: string };
+      error: { category: "validation"; issues: unknown } | { category: "handler"; message: string };
     };
 
 interface ComparableToolDefinition {
@@ -309,6 +319,7 @@ function directTools(
     capabilities.promptCatalog,
     prefix,
     capabilities.listProjects,
+    capabilities.dispatch,
   );
 }
 
@@ -333,9 +344,7 @@ function normalizeJson(value: unknown): unknown {
     normalized["additionalProperties"] = false;
   }
   return Object.fromEntries(
-    Object.entries(normalized).sort(([left], [right]) =>
-      left.localeCompare(right),
-    ),
+    Object.entries(normalized).sort(([left], [right]) => left.localeCompare(right)),
   );
 }
 
@@ -354,10 +363,9 @@ function comparableDefinition(
 function directDefinitions(tools: DirectTools): ComparableToolDefinition[] {
   return tools
     .map((tool) => {
-      const schema = z.toJSONSchema(
-        z.object(tool.inputSchema as Record<string, z.ZodType>),
-        { target: "draft-7" },
-      );
+      const schema = z.toJSONSchema(z.object(tool.inputSchema as Record<string, z.ZodType>), {
+        target: "draft-7",
+      });
       return comparableDefinition(tool.name, tool.description, schema);
     })
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -380,9 +388,9 @@ async function connectStdio(
     capabilities.promptCatalog,
     prefix,
     capabilities.listProjects,
+    capabilities.dispatch,
   );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client(
     { name: "stdio-parity-client", version: "0.0.1" },
@@ -391,13 +399,7 @@ async function connectStdio(
   await client.connect(clientTransport);
   const listed = await client.listTools();
   const definitions = listed.tools
-    .map((tool) =>
-      comparableDefinition(
-        tool.name,
-        tool.description ?? "",
-        tool.inputSchema,
-      ),
-    )
+    .map((tool) => comparableDefinition(tool.name, tool.description ?? "", tool.inputSchema))
     .sort((left, right) => left.name.localeCompare(right.name));
   return {
     client,
@@ -465,10 +467,7 @@ async function invokeDirect(
     return normalizedValidationError(parsed.error.issues);
   }
   try {
-    const result = await (tool.handler(
-      parsed.data as never,
-      null,
-    ) as Promise<TextToolResult>);
+    const result = await (tool.handler(parsed.data as never, null) as Promise<TextToolResult>);
     return normalizeResult(result);
   } catch (error: unknown) {
     if (!(error instanceof Error)) throw error;
@@ -637,10 +636,62 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
       },
     },
     { name: "read_log", args: { path: READ_LOG_RESULT.path } },
-    { name: "get_reviewers", args: {} },
-    { name: "get_planners", args: {} },
-    { name: "get_config", args: {} },
-    { name: "get_agent_models", args: {} },
+    { name: "get_config", args: { section: "all" } },
+    {
+      name: "prepare_dispatch",
+      args: {
+        roleId: "implement-worker",
+        input: { taskId: "T695" },
+        idempotencyKey: "T695-parity",
+        timeoutMs: 120000,
+        expectedChild: { childId: "child-1", runId: "run-1" },
+      },
+    },
+    {
+      name: "store_result",
+      args: {
+        resultCapability: {
+          scope: "store-result",
+          token: `cq_result_${"a".repeat(43)}`,
+        },
+        output: { status: "pass" },
+      },
+    },
+    {
+      name: "confirm_dispatch_completion",
+      args: {
+        attestationId: `att_${"a".repeat(32)}`,
+        generation: 1,
+        nativeCompletion: {
+          kind: "native-completion",
+          actor: "trusted-parent",
+          childId: "child-1",
+          runId: "run-1",
+          completedAt: FIXED_NOW,
+        },
+        expectedProvenance: {
+          roleId: "implement-worker",
+          version: 1,
+          promptDigest: "a".repeat(64),
+          inputDigest: "b".repeat(64),
+        },
+      },
+    },
+    {
+      name: "abort_dispatch",
+      args: {
+        attestationId: `att_${"a".repeat(32)}`,
+        generation: 1,
+        reason: "cancelled",
+      },
+    },
+    {
+      name: "fetch_dispatch_result",
+      args: {
+        attestationId: `att_${"a".repeat(32)}`,
+        generation: 1,
+      },
+    },
     { name: "fetch_prompt", args: { roleId: PROMPT_RESULT.roleId } },
     {
       name: "validate_input",
@@ -761,10 +812,7 @@ function assertRepresentativeContracts(
     ["unarchive_item", "item"],
   ] as const;
   for (const [toolName, envelope] of fixedAcknowledgements) {
-    const response = responses.get(toolName) as Record<
-      string,
-      { fields: Record<string, unknown> }
-    >;
+    const response = responses.get(toolName) as Record<string, { fields: Record<string, unknown> }>;
     expect(response[envelope]?.fields, toolName).toBeDefined();
     expect(response[envelope]?.fields, toolName).not.toHaveProperty("headline");
     expect(response[envelope]?.fields, toolName).not.toHaveProperty("description");
@@ -789,10 +837,7 @@ function assertRepresentativeContracts(
       },
     },
   });
-  const predicates = responses.get("derive_predicates") as Record<
-    string,
-    unknown
-  >;
+  const predicates = responses.get("derive_predicates") as Record<string, unknown>;
   expect(Object.keys(predicates).sort()).toEqual(
     [
       "belowFloor",
@@ -847,14 +892,8 @@ function assertRepresentativeContracts(
     ok: true,
     acknowledgement: { kind: "abandon", goalPhase: "planning" },
   });
-  for (const toolName of [
-    "publish_plan_draft",
-    "release_plan_claim",
-    "finalize_plan",
-  ] as const) {
-    expect(JSON.stringify(responses.get(toolName)), toolName).not.toContain(
-      "ownerFenceToken",
-    );
+  for (const toolName of ["publish_plan_draft", "release_plan_claim", "finalize_plan"] as const) {
+    expect(JSON.stringify(responses.get(toolName)), toolName).not.toContain("ownerFenceToken");
     expect(JSON.stringify(responses.get(toolName)), toolName).not.toContain(
       PARITY_OWNER_FENCE_TOKEN,
     );
@@ -868,27 +907,17 @@ function assertRepresentativeContracts(
   expect(responses.get("list_projects")).toEqual(PROJECTS_RESULT);
 }
 
-// BG, specified-origin: both public registrations expose one 31-tool contract.
+// BG, specified-origin: both public registrations expose one 33-tool contract.
 describe("stdio/direct ledger tool differential contract", () => {
   for (const prefix of PREFIXES) {
     it(`matches complete definitions for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
-      const direct = directTools(
-        directFixture.store,
-        prefix,
-        AVAILABLE_CAPABILITIES,
-      );
-      const stdio = await connectStdio(
-        stdioFixture.store,
-        prefix,
-        AVAILABLE_CAPABILITIES,
-      );
+      const direct = directTools(directFixture.store, prefix, AVAILABLE_CAPABILITIES);
+      const stdio = await connectStdio(stdioFixture.store, prefix, AVAILABLE_CAPABILITIES);
       try {
         const directDefinitionList = directDefinitions(direct);
-        const expectedNames = LEDGER_TOOL_NAMES
-          .map((name) => prefixed(prefix, name))
-          .sort();
+        const expectedNames = LEDGER_TOOL_NAMES.map((name) => prefixed(prefix, name)).sort();
         expect(directDefinitionList.map((tool) => tool.name)).toEqual(expectedNames);
         expect(stdio.definitions).toEqual(directDefinitionList);
       } finally {
@@ -898,42 +927,26 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 31 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 33 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);
       expect(directFixture.ids).toEqual(stdioFixture.ids);
       expect(directFixture.store.snapshot()).toEqual(stdioFixture.store.snapshot());
 
-      const direct = directTools(
-        directFixture.store,
-        prefix,
-        AVAILABLE_CAPABILITIES,
-      );
-      const stdio = await connectStdio(
-        stdioFixture.store,
-        prefix,
-        AVAILABLE_CAPABILITIES,
-      );
+      const direct = directTools(directFixture.store, prefix, AVAILABLE_CAPABILITIES);
+      const stdio = await connectStdio(stdioFixture.store, prefix, AVAILABLE_CAPABILITIES);
       const invocations = invocationMatrix(directFixture);
-      expect(
-        invocations.map((invocation) => invocation.name).sort(),
-      ).toEqual([...LEDGER_TOOL_NAMES].sort());
+      expect(invocations.map((invocation) => invocation.name).sort()).toEqual(
+        [...LEDGER_TOOL_NAMES].sort(),
+      );
 
       const responses = new Map<LedgerToolName, unknown>();
       try {
         for (const invocation of invocations) {
           const name = prefixed(prefix, invocation.name);
-          const directOutcome = await invokeDirect(
-            direct,
-            name,
-            invocation.args,
-          );
-          const stdioOutcome = await invokeStdio(
-            stdio.client,
-            name,
-            invocation.args,
-          );
+          const directOutcome = await invokeDirect(direct, name, invocation.args);
+          const stdioOutcome = await invokeStdio(stdio.client, name, invocation.args);
           expect(stdioOutcome, invocation.name).toEqual(directOutcome);
           expect(directOutcome.kind, invocation.name).toBe("success");
           responses.set(invocation.name, decode(directOutcome));
@@ -955,16 +968,8 @@ describe("stdio/direct ledger tool differential contract", () => {
           prefixed(prefix, "fetch_item"),
           compactArgs,
         );
-        const fullDirect = await invokeDirect(
-          direct,
-          prefixed(prefix, "fetch_item"),
-          fullArgs,
-        );
-        const fullStdio = await invokeStdio(
-          stdio.client,
-          prefixed(prefix, "fetch_item"),
-          fullArgs,
-        );
+        const fullDirect = await invokeDirect(direct, prefixed(prefix, "fetch_item"), fullArgs);
+        const fullStdio = await invokeStdio(stdio.client, prefixed(prefix, "fetch_item"), fullArgs);
         expect(compactStdio).toEqual(compactDirect);
         expect(fullStdio).toEqual(fullDirect);
         const compact = decode(compactDirect) as {
@@ -974,9 +979,7 @@ describe("stdio/direct ledger tool differential contract", () => {
           item: { fields: Record<string, unknown> };
         };
         expect(compact.item.fields).not.toHaveProperty("description");
-        expect(full.item.fields["description"]).toBe(
-          "transport-parity-needle full narrative",
-        );
+        expect(full.item.fields["description"]).toBe("transport-parity-needle full narrative");
 
         assertRepresentativeContracts(responses, directFixture);
         expect(directFixture.store.snapshot()).toEqual(stdioFixture.store.snapshot());
@@ -992,16 +995,8 @@ describe("stdio/direct ledger tool differential contract", () => {
     it(`normalizes validation, handler, and unavailable-capability failures for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
-      const direct = directTools(
-        directFixture.store,
-        prefix,
-        UNAVAILABLE_CAPABILITIES,
-      );
-      const stdio = await connectStdio(
-        stdioFixture.store,
-        prefix,
-        UNAVAILABLE_CAPABILITIES,
-      );
+      const direct = directTools(directFixture.store, prefix, UNAVAILABLE_CAPABILITIES);
+      const stdio = await connectStdio(stdioFixture.store, prefix, UNAVAILABLE_CAPABILITIES);
       const failures: Invocation[] = [
         {
           name: "fetch_item",
@@ -1027,7 +1022,7 @@ describe("stdio/direct ledger tool differential contract", () => {
           },
         },
         { name: "read_log", args: { path: READ_LOG_RESULT.path } },
-        { name: "get_config", args: {} },
+        { name: "get_config", args: { section: "all" } },
         { name: "fetch_prompt", args: { roleId: PROMPT_RESULT.roleId } },
         { name: "list_projects", args: {} },
       ];
@@ -1035,16 +1030,8 @@ describe("stdio/direct ledger tool differential contract", () => {
       try {
         for (const failure of failures) {
           const name = prefixed(prefix, failure.name);
-          const directOutcome = await invokeDirect(
-            direct,
-            name,
-            failure.args,
-          );
-          const stdioOutcome = await invokeStdio(
-            stdio.client,
-            name,
-            failure.args,
-          );
+          const directOutcome = await invokeDirect(direct, name, failure.args);
+          const stdioOutcome = await invokeStdio(stdio.client, name, failure.args);
           expect(stdioOutcome, failure.name).toEqual(directOutcome);
           expect(directOutcome.kind, failure.name).toBe("error");
         }

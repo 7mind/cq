@@ -662,6 +662,8 @@ export interface AttestationEnvelope {
   readonly output?: DispatchJSONValue;
   readonly outputDigest?: string;
   readonly consumedAt?: string;
+  /** Persisted one-shot marker written by the first successful fetch CAS. */
+  readonly outputMaterializedAt?: string;
   readonly nativeCompletion?: NativeCompletionProof;
   readonly abortedAt?: string;
   readonly abortReason?: DispatchAbortReason;
@@ -732,6 +734,7 @@ export const TOMBSTONE_FORBIDDEN_FIELDS = [
   "state",
   "storedAt",
   "consumedAt",
+  "outputMaterializedAt",
   "abortedAt",
 ] as const;
 
@@ -1210,11 +1213,7 @@ function abortedResultOf(row: AttestationEnvelope): AbortedDispatchResult {
  * a code path that could reintroduce the body here.
  */
 function confirmedViewOf(row: AttestationEnvelope): ConfirmedDispatchResultView {
-  if (
-    row.state !== "consumed" ||
-    row.consumedAt === undefined ||
-    row.outputDigest === undefined
-  ) {
+  if (row.state !== "consumed" || row.consumedAt === undefined || row.outputDigest === undefined) {
     throw new AttestationContractError("row", `expected a consumed envelope, got "${row.state}"`);
   }
   return Object.freeze({
@@ -1786,9 +1785,10 @@ export interface FetchDispatchResultRequest extends DispatchHandle {
 const FETCH: DispatchProtocolOperation = "fetch_dispatch_result";
 
 /**
- * THE typed lookup (T685). It is a PURE READ: it never mutates, never launches,
- * and never interprets absence as a child failure — an unknown well-formed
- * handle is `attestation-not-found`, a distinct lifecycle answer from any abort.
+ * THE typed one-shot lookup (T685/D188). It never launches and never interprets
+ * absence as a child failure. The first fetch of a consumed envelope persists
+ * `outputMaterializedAt` with a compare-and-set before returning the body; a
+ * repeat fetch returns `output-already-materialized` without the body.
  *
  * The two retention boundaries are visible here BEFORE a sweep runs: a terminal
  * record more than {@link TERMINAL_ENVELOPE_RETENTION_MS} old answers
@@ -1812,7 +1812,7 @@ export function fetchDispatchResult(
     throw new DispatchAuthorizationError(FETCH, `untrusted fetch actor "${String(actor)}"`);
   }
   const resolved = assertDispatchHandle(request);
-  const { atMs } = readNow(deps);
+  const { at, atMs } = readNow(deps);
   const row = readRow(resolved, deps);
   if (row === undefined) {
     return Object.freeze({ state: "attestation-not-found" as const, ...resolved });
@@ -1860,8 +1860,18 @@ export function fetchDispatchResult(
         storedAt: row.storedAt,
         promptProvenance: row.promptProvenance,
       });
-    case "consumed":
-      return consumedResultOf(row);
+    case "consumed": {
+      if (row.outputMaterializedAt !== undefined) {
+        return Object.freeze({
+          state: "output-already-materialized" as const,
+          ...resolved,
+          materializedAt: row.outputMaterializedAt,
+        });
+      }
+      const consumed = consumedResultOf(row);
+      deps.store.replace(row, Object.freeze({ ...row, outputMaterializedAt: at }));
+      return consumed;
+    }
     case "aborted":
       return abortedResultOf(row);
   }

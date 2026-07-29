@@ -7,6 +7,7 @@ import { describe, it, expect } from "bun:test";
 import {
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
   assertToolPrefix,
   createLedgerMcpTools,
   prefixToolName,
@@ -124,14 +125,18 @@ describe("createLedgerMcpTools toolPrefix (T374)", () => {
   it("with the default (no prefix arg) keeps every registered name byte-identical", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    expect(tools.map((t) => t.name).sort()).toEqual([...LEDGER_TOOL_NAMES].sort());
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      [...NON_DISPATCH_LEDGER_TOOL_NAMES].sort(),
+    );
   });
 
   it("with a trailing prefix registers every tool under '<prefix>_<name>'", async () => {
     const store = await buildStore();
     // toolPrefix is the LAST param: all earlier optionals stay undefined.
     const tools = createLedgerMcpTools(store, undefined, undefined, undefined, "myproj");
-    expect(tools.map((t) => t.name).sort()).toEqual(prefixedToolNames("myproj").sort());
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `myproj_${name}`).sort(),
+    );
   });
 
   it("a prefixed create_item handler still round-trips (handlers unchanged)", async () => {

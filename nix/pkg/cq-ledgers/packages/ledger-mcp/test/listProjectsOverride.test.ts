@@ -6,7 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   InMemoryLedgerStore,
-  LEDGER_TOOL_NAMES,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
   type LedgerStore,
   type ListProjectsCapability,
 } from "@cq/ledger";
@@ -151,7 +151,7 @@ describe("shared list_projects capability override", () => {
 
     expect(resultText(alpha.result)).toBe(JSON.stringify(SHARED_PROJECTS));
     expect(resultText(beta.result)).toBe(resultText(alpha.result));
-    expect(alpha.toolNames).toEqual([...LEDGER_TOOL_NAMES].sort());
+    expect(alpha.toolNames).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
     expect(beta.toolNames).toEqual(alpha.toolNames);
     expect(resultText(alpha.result)).not.toContain(process.cwd());
   });
@@ -163,7 +163,7 @@ describe("shared list_projects capability override", () => {
 
     expect(resultText(alpha.result)).toBe(JSON.stringify(SHARED_PROJECTS));
     expect(resultText(beta.result)).toBe(resultText(alpha.result));
-    expect(alpha.toolNames).toEqual([...LEDGER_TOOL_NAMES].sort());
+    expect(alpha.toolNames).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
     expect(beta.toolNames).toEqual(alpha.toolNames);
     expect(resultText(alpha.result)).not.toContain(process.cwd());
   });

@@ -13,7 +13,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { buildServer, createEmbeddedStore, resolvePromptSurface } from "@cq/ledger-mcp";
+import {
+  buildServer,
+  createEmbeddedStore,
+  createSingleProjectDispatchRuntime,
+  resolvePromptSurface,
+  type DispatchRuntime,
+} from "@cq/ledger-mcp";
 import type { LedgerStore, ResolvedLedgerStore } from "@cq/ledger";
 import type {
   ArchiveContent,
@@ -60,6 +66,8 @@ export interface EmbeddedContext {
    * embedded path (ledger-web/src/serve.ts). Fixes D51.
    */
   readonly resolved: ResolvedLedgerStore;
+  /** The durable dispatch backend owned by this embedded server. */
+  readonly dispatchRuntime: DispatchRuntime;
 }
 
 export class McpLedgerClient implements LedgerClient {
@@ -129,12 +137,19 @@ export class McpLedgerClient implements LedgerClient {
     });
     const resolved = await createEmbeddedStore(cwd);
     const store = resolved.store;
+    const dispatchRuntime = await createSingleProjectDispatchRuntime({
+      construction: "embedded",
+      resolved,
+      ...(promptSurface === undefined ? {} : { promptArtifactStore: promptSurface.store }),
+      environment: process.env,
+    });
     const server = buildServer(
       store,
       path.basename(cwd),
       resolved.configRoot,
       resolved.projectKey,
       promptSurface?.store,
+      dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined,
     );
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -143,7 +158,7 @@ export class McpLedgerClient implements LedgerClient {
       { capabilities: {} },
     );
     await client.connect(clientTransport);
-    return new McpLedgerClient(client, { store, cwd, resolved });
+    return new McpLedgerClient(client, { store, cwd, resolved, dispatchRuntime });
   }
 
   /** The in-process context when running embedded, else null (HTTP mode). */
@@ -325,6 +340,7 @@ export class McpLedgerClient implements LedgerClient {
     // Embedded mode owns the in-process store; dispose it so its watcher /
     // lockfile are released. HTTP mode owns no store here.
     if (this.embeddedCtx !== null) {
+      await this.embeddedCtx.dispatchRuntime.close();
       await this.embeddedCtx.store.dispose();
     }
   }

@@ -1,5 +1,5 @@
 ---
-description: Session-only reviewer-set override — parse a natural-language reviewer instruction (e.g. "use grok and opus only") into canonical harness:model tokens via the cq.toml [aliases] table (from the ledger MCP get_reviewers/get_config) plus a documented fallback map; echo the resolved active set; confirm the override is SESSION-ONLY and reverts on the next fresh run.
+description: Session-only reviewer-set override — parse a natural-language reviewer instruction (e.g. "use grok and opus only") into canonical harness:model tokens via the cq.toml [aliases] table (from the ledger MCP get_config aliases section) plus a documented fallback map; echo the resolved active set; confirm the override is SESSION-ONLY and reverts on the next fresh run.
 argument-hint: <natural-language reviewer instruction>  # e.g. "use grok and opus only"
 # {{cq:fragment:host-tool-vocabulary}}
 ---
@@ -18,7 +18,7 @@ ioSchema:
   - "canonical token form: harness:model (e.g. claude:opus-4.8[1m], pi:grok-build)"
   - "SESSION-ONLY: override lives in conversation context of current chained run only"
   - "reverts to cq.toml default (or single native Claude reviewer) on next fresh CQ::plan/advance or CQ::implement/advance"
-  - "symmetric to CQ::planners but targets the reviewer set (get_reviewers)"
+  - 'symmetric to CQ::planners but targets the reviewer set (get_config({"section":"reviewers"}))'
   - "unrecognised aliases reported as error; no silent drops"
 ```
 
@@ -45,18 +45,20 @@ The Write tool is not in your allowed-tools and must not be used.
 
 ## Step 1 — Query the ledger MCP for the configured alias table
 
-Call `get_config` (from the ledger MCP server) to retrieve the repo's
-`cq.toml` aliases and reviewer list. The result shape is:
+Call `get_config({"section":"aliases"})` (from the ledger MCP server) to
+retrieve the repo's `cq.toml` aliases. The result shape is:
 
 ```json
 {
   "configured": true | false,
-  "aliases": { "<alias>": { "harness": "claude" | "pi", "model": "<model>" } },
-  "reviewers": ["<alias>", "..."]
+  "aliases": { "<alias>": { "harness": "claude" | "pi", "model": "<model>" } }
 }
 ```
 
-If `configured: false` (no parseable `cq.toml` is present in the repo — D81: `configured` reflects only cq.toml presence, NOT whether the `[reviewers]` list is populated), the alias table is empty; use ONLY the built-in fallback map below. When `configured: true`, the `aliases` table is the parsed cq.toml `[aliases]`, and the built-in fallback map applies only to alias names NOT declared there.
+If `configured: false`, the alias table is absent or empty; use ONLY the
+built-in fallback map below. When `configured: true`, `aliases` contains the
+parsed cq.toml `[aliases]` table, and the built-in fallback map applies only to
+alias names NOT declared there.
 
 If the ledger MCP server is not available (tool call fails), treat the result
 as `configured: false` and continue with the fallback map — do not abort.
@@ -138,7 +140,7 @@ current chained run**:
 - Those orchestrators READ the stated active set from the run context when
   deciding which reviewers to dispatch.
 - When NO override has been stated in the current run context, those
-  orchestrators fall back to `get_reviewers` (the cq.toml default, or the
+  orchestrators fall back to `get_config({"section":"reviewers"})` (the cq.toml default, or the
   single native Claude reviewer if unconfigured).
 
 This means:
@@ -157,9 +159,9 @@ select reviewers as follows when T175/T176 are live:
 
 > **Session override present?** If the user stated a reviewer set in this run
 > (via `CQ::reviewers …`), use the canonical tokens the user confirmed. The
-> stated tokens take precedence over `get_reviewers`.
+> stated tokens take precedence over `get_config({"section":"reviewers"})`.
 >
-> **No session override?** Call `get_reviewers` (ledger MCP). If
+> **No session override?** Call `get_config({"section":"reviewers"})` (ledger MCP). If
 > `configured: true`, use the returned resolved set. If `configured: false`,
 > fall back to the single native Claude reviewer.
 

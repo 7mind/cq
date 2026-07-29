@@ -14,8 +14,8 @@ argument-hint: [goalId]
 inputs:
   - "optional goal id G ($ARGUMENTS); empty = advance all unlocked goals (clarifying/planning)"
   - "ledger state for each target goal: phase, Q&A history, latest review, work-milestone tasks"
-  - "get_planners result: configured: bool, planners[] (harness/model/alias)"
-  - "get_reviewers result: configured: bool, reviewers[] (harness/model/alias)"
+  - 'get_config({"section":"planners"}) result: configured: bool, planners[] (harness/model/alias)'
+  - 'get_config({"section":"reviewers"}) result: configured: bool, reviewers[] (harness/model/alias)'
 outputs:
   - "one guarded claim per planning round (claim_plan), released by the round's terminal operation"
   - "default planner: typed PlanStepResult applied by the ORCHESTRATOR via the matching guarded mutation (release_plan_claim pause/abandon, publish_plan_draft, finalize_plan), with defectsToFile supplied as the SAME operation's reviewDefects"
@@ -156,10 +156,10 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
    through the ONE matching guarded plan mutation. The step yields the SAME
    single status token regardless of path; the loop reads that token below.
 
-   1. **Resolve the active planner set.** Call the ledger MCP `get_planners`
+   1. **Resolve the active planner set.** Call the ledger MCP `get_config({"section":"planners"})`
       tool (registered in `.mcp.json`; returns
       `{ configured: boolean, planners: [{ harness, model, alias }] }`,
-      `harness` ∈ {`claude`, `pi`} — mirrors `get_reviewers`).
+      `harness` ∈ {`claude`, `pi`} — mirrors `get_config({"section":"reviewers"})`).
       - If the tool is **absent** (server not registered) or it returns
         `configured: false` (no `cq.toml`, or an empty `[planners]` list), take
         the **single-planner fallback** (sub-step 1a).
@@ -167,7 +167,7 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         (sub-step 1b), AND honor any **session-only planner override** the user
         stated this run via `CQ::planners` (T16): an in-memory override
         supersedes the `cq.toml` default for THIS run only (it is never
-        persisted) — use the overridden active set in place of `get_planners`'
+        persisted) — use the overridden active set in place of `get_config({"section":"planners"})`'
         `planners` when one is in effect (exactly as `CQ::reviewers` overrides the
         reviewer set for step 2).
 
@@ -271,8 +271,8 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
 
       **Degrade gracefully when the catalog output validator is absent** (an
       older or embedded ledger-mcp server that predates T343 does not advertise
-      it) — exactly like the `get_agent_models` / `get_planners` /
-      `get_reviewers` tool-absence paths: when that tool is unavailable, SKIP
+      it) — exactly like the `get_config({"section":"agent_models"})` / `get_config({"section":"planners"})` /
+      `get_config({"section":"reviewers"})` tool-absence paths: when that tool is unavailable, SKIP
       step (g) and fall straight through to the bare `CQ_SUBAGENT` dispatch
       (step (e)) on the prompt as authored, applying the SAME closed contract by
       hand: an object with
@@ -516,7 +516,7 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
    reviewers run, run them, reconcile, then continue the loop.
 
    1. **Resolve the active reviewer set.** Call the
-      `ledger::get_reviewers` MCP tool (registered in `.mcp.json`; returns
+      `ledger::get_config({"section":"reviewers"})` MCP tool (registered in `.mcp.json`; returns
       `{ configured: boolean, reviewers: [{ harness, model, alias }] }`,
       `harness` ∈ {`claude`, `pi`}).
       - If the tool is **absent** (server not registered) or it returns
@@ -526,7 +526,7 @@ axis, by the **concrete stop predicates** in the auto-investigate phase (cite
         (sub-step 2b), AND honor any **session-only reviewer override** the user
         stated this run via `CQ::reviewers` (T177): an in-memory override
         supersedes the `cq.toml` default for THIS run only (it is never
-        persisted) — use the overridden active set in place of `get_reviewers`'
+        persisted) — use the overridden active set in place of `get_config({"section":"reviewers"})`'
         `reviewers` when one is in effect.
 
    2a. **Single-reviewer fallback** (unconfigured / tool absent — UNCHANGED

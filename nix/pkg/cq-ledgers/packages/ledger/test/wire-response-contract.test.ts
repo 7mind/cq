@@ -4,6 +4,7 @@ import type { ArchiveContent } from "../src/store/LedgerStore.js";
 import type { ReadLogResult } from "../src/mcp/readLog.js";
 import type { GetConfigResult } from "../src/mcp/configCapability.js";
 import type { FetchPromptResult } from "../src/mcp/promptCatalogCapability.js";
+import type { FetchDispatchResult } from "@cq/config";
 import { InMemoryLedgerStore } from "../src/store/InMemoryLedgerStore.js";
 import { LEDGER_TOOL_NAMES } from "../src/mcp/ledgerTools.js";
 import {
@@ -105,9 +106,7 @@ async function initializedStore(): Promise<InMemoryLedgerStore> {
 
 describe("ledger response contract matrix", () => {
   it("covers all 31 tools exactly and classifies every response", () => {
-    expect(Object.keys(LEDGER_RESPONSE_CONTRACTS)).toEqual([
-      ...LEDGER_TOOL_NAMES,
-    ]);
+    expect(Object.keys(LEDGER_RESPONSE_CONTRACTS)).toEqual([...LEDGER_TOOL_NAMES]);
     expect(LEDGER_RESPONSE_CONTRACTS).toMatchObject({
       enumerate_ledgers: { kind: "purpose-built-small" },
       fetch_ledger: {
@@ -167,10 +166,12 @@ describe("ledger response contract matrix", () => {
         acknowledgement: "item",
       },
       read_log: { kind: "requested-full-content" },
-      get_reviewers: { kind: "purpose-built-small" },
-      get_planners: { kind: "purpose-built-small" },
       get_config: { kind: "requested-full-content" },
-      get_agent_models: { kind: "purpose-built-small" },
+      prepare_dispatch: { kind: "purpose-built-small" },
+      store_result: { kind: "purpose-built-small" },
+      confirm_dispatch_completion: { kind: "purpose-built-small" },
+      abort_dispatch: { kind: "purpose-built-small" },
+      fetch_dispatch_result: { kind: "requested-full-content" },
       fetch_prompt: { kind: "requested-full-content" },
       validate_input: { kind: "purpose-built-small" },
       validate_output: { kind: "purpose-built-small" },
@@ -250,9 +251,7 @@ describe("item wire projections", () => {
     };
     const { milestones, ...ledgerMetadata } = ledger;
 
-    expect(
-      reloadWire(projectFetchedLedgerDto(ledger, "compact")),
-    ).toEqual({
+    expect(reloadWire(projectFetchedLedgerDto(ledger, "compact"))).toEqual({
       ...ledger,
       milestones: [
         {
@@ -387,20 +386,14 @@ describe("mutation acknowledgement projections", () => {
     const authoritativeUpdated = store.fetchItem("tasks", created.id);
     const updatedAck = projectItemMutationAckDto(updated);
 
-    expect(reloadWire(updatedAck)).toEqual(
-      expectedItemAck(authoritativeUpdated),
-    );
+    expect(reloadWire(updatedAck)).toEqual(expectedItemAck(authoritativeUpdated));
     expect(updatedAck.status).toBe("wip");
     expect(updatedAck.updatedAt).toBe(authoritativeUpdated.updatedAt);
-    expect(updatedAck.fields.dependsOn).toEqual([
-      `tasks:${dependency.id}`,
-    ]);
+    expect(updatedAck.fields.dependsOn).toEqual([`tasks:${dependency.id}`]);
     expect(updatedAck.author).toBe("user");
     expect(updatedAck.session).toBe("session-update");
 
-    const dependencyAck = projectItemMutationAckDto(
-      store.fetchItem("tasks", dependency.id),
-    );
+    const dependencyAck = projectItemMutationAckDto(store.fetchItem("tasks", dependency.id));
     expect(Object.hasOwn(dependencyAck, "author")).toBe(false);
     expect(Object.hasOwn(dependencyAck, "session")).toBe(false);
   });
@@ -414,14 +407,10 @@ describe("mutation acknowledgement projections", () => {
       author: "gpt-5.6",
       session: "session-recovery",
     });
-    const withoutProvenance = await store.createItem(
-      "tasks",
-      milestone.id,
-      {
-        status: "planned",
-        fields: { headline: "Unattributed" },
-      },
-    );
+    const withoutProvenance = await store.createItem("tasks", milestone.id, {
+      status: "planned",
+      fields: { headline: "Unattributed" },
+    });
 
     for (const source of [withProvenance, withoutProvenance]) {
       await store.updateItem("tasks", source.id, { status: "wip" });
@@ -440,25 +429,15 @@ describe("mutation acknowledgement projections", () => {
     await store.archiveMilestone(milestone.id, "recovery fixture");
 
     for (const source of [withProvenance, withoutProvenance]) {
-      const unarchived = await store.unarchiveItem(
-        "tasks",
-        milestone.id,
-        source.id,
-      );
+      const unarchived = await store.unarchiveItem("tasks", milestone.id, source.id);
       const authoritative = store.fetchItem("tasks", source.id);
       const acknowledgement = projectItemMutationAckDto(unarchived);
-      expect(reloadWire(acknowledgement)).toEqual(
-        expectedItemAck(authoritative),
-      );
+      expect(reloadWire(acknowledgement)).toEqual(expectedItemAck(authoritative));
       expect(acknowledgement.updatedAt).toBe(authoritative.updatedAt);
     }
 
-    const presentAck = projectItemMutationAckDto(
-      store.fetchItem("tasks", withProvenance.id),
-    );
-    const absentAck = projectItemMutationAckDto(
-      store.fetchItem("tasks", withoutProvenance.id),
-    );
+    const presentAck = projectItemMutationAckDto(store.fetchItem("tasks", withProvenance.id));
+    const absentAck = projectItemMutationAckDto(store.fetchItem("tasks", withoutProvenance.id));
     expect(presentAck.author).toBe("gpt-5.6");
     expect(presentAck.session).toBe("session-recovery");
     expect(Object.hasOwn(absentAck, "author")).toBe(false);
@@ -476,16 +455,12 @@ describe("mutation acknowledgement projections", () => {
     });
 
     expect(created.id).toMatch(/^M\d+$/);
-    expect(created.fields.dependsOn).toEqual([
-      `milestones:${dependency.id}`,
-    ]);
+    expect(created.fields.dependsOn).toEqual([`milestones:${dependency.id}`]);
     const authoritativeCreated = store.fetchItem("milestones", created.id);
     expect(reloadWire(projectMilestoneMutationAckDto(created))).toEqual(
       expectedMilestoneAck(authoritativeCreated),
     );
-    expect(Object.hasOwn(projectMilestoneMutationAckDto(created), "author")).toBe(
-      false,
-    );
+    expect(Object.hasOwn(projectMilestoneMutationAckDto(created), "author")).toBe(false);
 
     await store.updateItem("milestones", created.id, {
       author: "gpt-5.6",
@@ -504,9 +479,9 @@ describe("mutation acknowledgement projections", () => {
     expect(updated.updatedAt).toBe(authoritativeUpdated.updatedAt);
     expect(authoritativeUpdated.author).toBe("gpt-5.6");
     expect(authoritativeUpdated.session).toBe("session-milestone");
-    expect(
-      reloadWire(projectMilestoneMutationAckDto(authoritativeUpdated)),
-    ).toEqual(expectedMilestoneAck(authoritativeUpdated));
+    expect(reloadWire(projectMilestoneMutationAckDto(authoritativeUpdated))).toEqual(
+      expectedMilestoneAck(authoritativeUpdated),
+    );
   });
 
   it("projects the actual createLedger FetchedLedger result without invented provenance", async () => {
@@ -531,26 +506,22 @@ describe("mutation acknowledgement projections", () => {
 
 describe("wire serialization", () => {
   it("uses minified JSON", () => {
-    expect(
-      serializeWireDto(produceWireDto({ id: "T1", status: "wip" })),
-    ).toBe('{"id":"T1","status":"wip"}');
+    expect(serializeWireDto(produceWireDto({ id: "T1", status: "wip" }))).toBe(
+      '{"id":"T1","status":"wip"}',
+    );
   });
 
   it("requires a produced marker and omits it from serialized JSON", () => {
     const projected = projectCompactItemDto(item());
 
     expect(isProducedWireDto(projected)).toBe(true);
-    expect(
-      Reflect.ownKeys(projected).some((key) => typeof key === "symbol"),
-    ).toBe(true);
+    expect(Reflect.ownKeys(projected).some((key) => typeof key === "symbol")).toBe(true);
     const reloaded = JSON.parse(serializeWireDto(projected));
     expect(isProducedWireDto(reloaded)).toBe(false);
-    expect(
-      Reflect.ownKeys(reloaded).some((key) => typeof key === "symbol"),
-    ).toBe(false);
-    expect(() =>
-      Reflect.apply(serializeWireDto, undefined, [{ id: "T1" }]),
-    ).toThrow("serializeWireDto requires a produced wire DTO");
+    expect(Reflect.ownKeys(reloaded).some((key) => typeof key === "symbol")).toBe(false);
+    expect(() => Reflect.apply(serializeWireDto, undefined, [{ id: "T1" }])).toThrow(
+      "serializeWireDto requires a produced wire DTO",
+    );
   });
 
   it("preserves every requested-full-content response exactly once", () => {
@@ -618,26 +589,26 @@ describe("wire serialization", () => {
       fetch_ledger_archive: { archive },
       read_log: log,
       get_config: config,
+      fetch_dispatch_result: {
+        state: "attestation-not-found",
+        attestationId: `att_${"a".repeat(32)}`,
+        generation: 1,
+      },
       fetch_prompt: prompt,
     } satisfies RequestedFullPayloads;
     const requestedFullToolNames = [
       "fetch_ledger_archive",
       "read_log",
       "get_config",
+      "fetch_dispatch_result",
       "fetch_prompt",
     ] as const satisfies readonly RequestedFullToolName[];
-    const matrixRequestedFullToolNames = Object.entries(
-      LEDGER_RESPONSE_CONTRACTS,
-    )
+    const matrixRequestedFullToolNames = Object.entries(LEDGER_RESPONSE_CONTRACTS)
       .filter(([, contract]) => contract.kind === "requested-full-content")
       .map(([toolName]) => toolName);
 
-    expect(matrixRequestedFullToolNames).toEqual([
-      ...requestedFullToolNames,
-    ]);
-    expect(new Set(requestedFullToolNames).size).toBe(
-      requestedFullToolNames.length,
-    );
+    expect(matrixRequestedFullToolNames).toEqual([...requestedFullToolNames]);
+    expect(new Set(requestedFullToolNames).size).toBe(requestedFullToolNames.length);
     for (const toolName of requestedFullToolNames) {
       const payload = payloads[toolName];
       const serialized = serializeWireDto(produceWireDto(payload));
@@ -648,33 +619,32 @@ describe("wire serialization", () => {
 });
 
 type RequestedFullToolName = {
-  [ToolName in keyof typeof LEDGER_RESPONSE_CONTRACTS]:
-    (typeof LEDGER_RESPONSE_CONTRACTS)[ToolName] extends {
-      kind: "requested-full-content";
-    }
-      ? ToolName
-      : never;
+  [
+    ToolName in keyof typeof LEDGER_RESPONSE_CONTRACTS
+  ]: (typeof LEDGER_RESPONSE_CONTRACTS)[ToolName] extends {
+    kind: "requested-full-content";
+  }
+    ? ToolName
+    : never;
 }[keyof typeof LEDGER_RESPONSE_CONTRACTS];
 
 interface RequestedFullPayloadByTool {
   fetch_ledger_archive: { archive: ArchiveContent };
   read_log: ReadLogResult;
   get_config: GetConfigResult;
+  fetch_dispatch_result: FetchDispatchResult;
   fetch_prompt: FetchPromptResult;
 }
 
 type RequestedFullPayloads = {
-  [ToolName in RequestedFullToolName]:
-    RequestedFullPayloadByTool[ToolName];
+  [ToolName in RequestedFullToolName]: RequestedFullPayloadByTool[ToolName];
 };
 
 type Exact<Expected, Actual extends Expected> = Actual &
   Record<Exclude<keyof Actual, keyof Expected>, never>;
 
 function exact<Expected>() {
-  return <Actual extends Expected>(
-    value: Exact<Expected, Actual>,
-  ): Expected => value;
+  return <Actual extends Expected>(value: Exact<Expected, Actual>): Expected => value;
 }
 
 const structuralCompactDto = {
@@ -725,13 +695,9 @@ void structuralMilestoneAck;
 
 const widenedFullItem: Item = item();
 // @ts-expect-error full Items have not passed through the compact projector
-const invalidCompactProduction: ReturnType<
-  typeof projectCompactItemDto
-> = widenedFullItem;
+const invalidCompactProduction: ReturnType<typeof projectCompactItemDto> = widenedFullItem;
 // @ts-expect-error full Items have not passed through the item acknowledgement projector
-const invalidItemAckProduction: ReturnType<
-  typeof projectItemMutationAckDto
-> = widenedFullItem;
+const invalidItemAckProduction: ReturnType<typeof projectItemMutationAckDto> = widenedFullItem;
 void invalidCompactProduction;
 void invalidItemAckProduction;
 
@@ -747,9 +713,8 @@ const widenedFetchedLedger: FetchedLedger = {
   archivePointers: [],
 };
 // @ts-expect-error fetched ledgers have not passed through the ledger acknowledgement projector
-const invalidLedgerAckProduction: ReturnType<
-  typeof projectLedgerMutationAckDto
-> = widenedFetchedLedger;
+const invalidLedgerAckProduction: ReturnType<typeof projectLedgerMutationAckDto> =
+  widenedFetchedLedger;
 void invalidLedgerAckProduction;
 
 // @ts-expect-error mandatory item reads accept only compact or full

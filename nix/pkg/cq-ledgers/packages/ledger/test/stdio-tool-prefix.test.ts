@@ -4,8 +4,8 @@
  * Threads the trailing optional `toolPrefix` through `registerLedgerStdioTools`
  * and asserts — via a real `@modelcontextprotocol/sdk` `McpServer` round-tripped
  * over an in-memory transport with a `Client.listTools()` call — that:
- *  - a non-empty prefix registers exactly `prefixedToolNames(prefix)`;
- *  - the default `''` (and an omitted arg) registers exactly `LEDGER_TOOL_NAMES`.
+ *  - a non-empty prefix renames every tool that has a wired capability;
+ *  - without dispatch wiring, the default surface omits lifecycle tools.
  *
  * The prefix is a PURE NAME TRANSFORM: only the registered names change; config
  * (description/inputSchema) and handler behaviour are untouched.
@@ -18,8 +18,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   InMemoryLedgerStore,
   registerLedgerStdioTools,
-  LEDGER_TOOL_NAMES,
-  prefixedToolNames,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
   type LedgerStore,
 } from "../src/index.js";
 
@@ -100,25 +99,27 @@ async function withRegisteredClient(
 }
 
 describe("registerLedgerStdioTools — trailing toolPrefix", () => {
-  it("registers prefixedToolNames(prefix) for a non-empty prefix", async () => {
+  it("prefixes every registered non-dispatch tool", async () => {
     const store = await buildStore();
     const names = await registeredNames(store, undefined, undefined, undefined, "myproj");
-    expect(names).toEqual([...prefixedToolNames("myproj")].sort());
+    expect(names).toEqual(
+      NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `myproj_${name}`).sort(),
+    );
     // Every registered name carries the prefix; the count is preserved.
-    expect(names.length).toBe(LEDGER_TOOL_NAMES.length);
+    expect(names.length).toBe(NON_DISPATCH_LEDGER_TOOL_NAMES.length);
     expect(names.every((n) => n.startsWith("myproj_"))).toBe(true);
   });
 
-  it("registers exactly LEDGER_TOOL_NAMES for prefix ''", async () => {
+  it("registers the non-dispatch surface for prefix ''", async () => {
     const store = await buildStore();
     const names = await registeredNames(store, undefined, undefined, undefined, "");
-    expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
+    expect(names).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
   });
 
-  it("registers exactly LEDGER_TOOL_NAMES when toolPrefix is omitted (default '')", async () => {
+  it("registers the non-dispatch surface when toolPrefix is omitted", async () => {
     const store = await buildStore();
     const names = await registeredNames(store);
-    expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
+    expect(names).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
   });
 
   it("preserves ack, compact, and full contracts with and without a prefix", async () => {

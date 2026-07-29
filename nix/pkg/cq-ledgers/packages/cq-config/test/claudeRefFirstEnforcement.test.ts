@@ -931,14 +931,15 @@ describe("T689 lifecycle precedence, races, and malformed evidence", () => {
         ),
       ),
     ).toBeInstanceOf(AttestationNamespaceError);
-    for (const actor of TRUSTED_DISPATCH_ACTORS) {
-      expect(
-        fetchDispatchResult(
-          { namespace: NAMESPACE, actor, ...handleOf(prepared) },
-          h.service,
-        ).state,
-      ).toBe("consumed");
-    }
+    expect(
+      TRUSTED_DISPATCH_ACTORS.map(
+        (actor) =>
+          fetchDispatchResult(
+            { namespace: NAMESPACE, actor, ...handleOf(prepared) },
+            h.service,
+          ).state,
+      ),
+    ).toEqual(["consumed", "output-already-materialized"]);
   });
 });
 

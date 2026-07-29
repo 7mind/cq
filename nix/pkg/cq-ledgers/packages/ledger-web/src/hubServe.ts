@@ -64,10 +64,12 @@ import {
 import {
   attachMcpHttp,
   changedFrame,
+  createPostgresHubDispatchRuntime,
   resolvePromptSurface,
   wsHeartbeat,
   type McpHttpHandlers,
   type PromptArtifactStore,
+  type DispatchRuntime,
 } from "@cq/ledger-mcp";
 import { hubTopic, matchProjectRoute } from "./projectRoutes.js";
 import { prepare, serveStatic, scanForPort, DEFAULT_OUTDIR } from "./serve.js";
@@ -328,6 +330,7 @@ interface HubWsData {
 interface ProjectRuntime {
   store: PostgresLedgerStore;
   handlers: McpHttpHandlers;
+  dispatchRuntime: DispatchRuntime;
 }
 
 /** Resolved options for {@link serveHub}, after DSN resolution + argv parsing. */
@@ -490,6 +493,11 @@ export function serveHub(
         },
       });
       await store.init();
+      const dispatchRuntime = await createPostgresHubDispatchRuntime({
+        pool,
+        trustedProjectKey: projectKey,
+        ...(promptArtifactStore === undefined ? {} : { promptArtifactStore }),
+      });
       let firstInitialize = true;
       const handlers = attachMcpHttp(
         store,
@@ -509,8 +517,10 @@ export function serveHub(
         undefined,
         projectKey,
         promptArtifactStore,
+        undefined,
+        dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined,
       );
-      return { store, handlers };
+      return { store, handlers, dispatchRuntime };
     })();
     runtimes.set(projectKey, built);
     // Do not cache a negative/failed result: evict so a tenant registered later
@@ -597,6 +607,23 @@ export function serveHub(
       },
     }),
   );
+
+  const originalStop = server.stop.bind(server);
+  let closeDispatchRuntimes: Promise<void> | null = null;
+  server.stop = async (closeActiveConnections?: boolean): Promise<void> => {
+    await originalStop(closeActiveConnections);
+    closeDispatchRuntimes ??= (async () => {
+      const settled = await Promise.allSettled(runtimes.values());
+      await Promise.all(
+        settled.flatMap((result) =>
+          result.status === "fulfilled" && result.value !== null
+            ? [result.value.dispatchRuntime.close()]
+            : [],
+        ),
+      );
+    })();
+    await closeDispatchRuntimes;
+  };
 
   return server;
 }

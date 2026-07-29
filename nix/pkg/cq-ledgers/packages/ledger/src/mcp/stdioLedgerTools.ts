@@ -1,9 +1,10 @@
 /**
  * Stdio MCP tool registration for the ledger surface.
  *
- * Registers the 31-tool ledger surface (`LEDGER_TOOL_NAMES`) on a raw
+ * Registers the canonical ledger surface (`LEDGER_TOOL_NAMES`) on a raw
  * `@modelcontextprotocol/sdk` `McpServer` via `registerTool`, backed by a
- * `LedgerStore`. Stdio counterpart to `createLedgerMcpTools` (the in-process
+ * `LedgerStore`; the five dispatch handlers are omitted when no durable
+ * capability is supplied. Stdio counterpart to `createLedgerMcpTools` (the in-process
  * Claude-SDK `tool()` factory in `./ledgerTools.ts`): identical operational
  * semantics, but this path takes raw Zod shapes through `registerTool` whereas
  * the Claude path builds `SdkMcpToolDefinition` objects.
@@ -23,8 +24,6 @@ import { derivePredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
 import {
   appendLedgerResponseDescription,
-  GET_PLANNERS_RESPONSE_DESCRIPTION,
-  GET_REVIEWERS_RESPONSE_DESCRIPTION,
   ITEM_MUTATION_ACK_DESCRIPTION,
   ITEM_PROJECTION_DESCRIPTION,
   LEDGER_RESPONSE_CONTRACTS,
@@ -43,27 +42,27 @@ import {
   serializeWireDto,
   type ProducedWireDto,
 } from "./wireResponseContract.js";
+import { ReadLogNotImplementedError, type ReadLogCapability } from "./readLog.js";
 import {
-  ReadLogNotImplementedError,
-  type ReadLogCapability,
-} from "./readLog.js";
-import {
+  CONFIG_SECTIONS,
   ConfigNotImplementedError,
+  computeConfigSection,
   type ConfigCapability,
 } from "./configCapability.js";
+import type { DispatchCapability } from "./dispatchCapability.js";
+import {
+  ABORT_DISPATCH_INPUT,
+  CONFIRM_DISPATCH_COMPLETION_INPUT,
+  FETCH_DISPATCH_RESULT_INPUT,
+  PREPARE_DISPATCH_INPUT,
+  STORE_RESULT_INPUT,
+} from "./dispatchToolSchemas.js";
 import {
   PromptCatalogNotImplementedError,
   type PromptCatalogCapability,
 } from "./promptCatalogCapability.js";
-import {
-  ListProjectsNotImplementedError,
-  type ListProjectsCapability,
-} from "./listProjects.js";
-import {
-  assertToolPrefix,
-  prefixToolName,
-  type LedgerToolName,
-} from "./ledgerTools.js";
+import { ListProjectsNotImplementedError, type ListProjectsCapability } from "./listProjects.js";
+import { assertToolPrefix, prefixToolName, type LedgerToolName } from "./ledgerTools.js";
 import { PLAN_LIFECYCLE_TOOL_SPECS } from "./planLifecycleTools.js";
 
 // ---------------------------------------------------------------------------
@@ -80,18 +79,12 @@ const fieldSpecSchema = z.object({
 const statusValueSchema = z
   .string()
   .min(1)
-  .regex(
-    /^[A-Za-z0-9 _-]+$/,
-    "status value may only contain A-Za-z0-9, space, dash, underscore",
-  );
+  .regex(/^[A-Za-z0-9 _-]+$/, "status value may only contain A-Za-z0-9, space, dash, underscore");
 
 const RESERVED_FIELD_NAMES_ZOD = ["createdAt", "updatedAt", "author", "session"];
 const fieldNameSchema = z
   .string()
-  .regex(
-    /^[A-Za-z_][A-Za-z0-9_]*$/,
-    "field name must match /^[A-Za-z_][A-Za-z0-9_]*$/",
-  )
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "field name must match /^[A-Za-z_][A-Za-z0-9_]*$/")
   .refine((n) => !RESERVED_FIELD_NAMES_ZOD.includes(n), {
     message: "field name is reserved (createdAt/updatedAt/author/session)",
   });
@@ -120,25 +113,18 @@ const schemaSchema = z
     idPrefix: idPrefixSchema.optional(),
     transitions: z.record(z.string(), z.array(z.string())).optional(),
   })
-  .refine(
-    (s) => s.terminalStatuses.every((t) => s.statusValues.includes(t)),
-    {
-      message: "every terminalStatuses entry must be in statusValues",
-      path: ["terminalStatuses"],
-    },
-  );
+  .refine((s) => s.terminalStatuses.every((t) => s.statusValues.includes(t)), {
+    message: "every terminalStatuses entry must be in statusValues",
+    path: ["terminalStatuses"],
+  });
 
 const fieldValueSchema = z.union([z.string(), z.array(z.string())]);
 
 const fieldsSchema = z.record(z.string(), fieldValueSchema);
 
-const projectionSchema = z
-  .enum(["compact", "full"])
-  .describe(ITEM_PROJECTION_DESCRIPTION);
+const projectionSchema = z.enum(["compact", "full"]).describe(ITEM_PROJECTION_DESCRIPTION);
 
-const safeIdSchema = z
-  .string()
-  .regex(/^[A-Za-z0-9_-]+$/, "id may only contain A-Za-z0-9_-");
+const safeIdSchema = z.string().regex(/^[A-Za-z0-9_-]+$/, "id may only contain A-Za-z0-9_-");
 
 // ---------------------------------------------------------------------------
 // Tool registration
@@ -161,7 +147,7 @@ function wireResult(value: ProducedWireDto<object>): {
 }
 
 /**
- * Register the 31 ledger tools on the given MCP server. Identical
+ * Register the 33 ledger tools on the given MCP server. Identical
  * semantics to the Claude-side factory in `./ledgerTools.ts`.
  *
  * `readLog` is the explicit, FS-store-backed `read_log` capability (Q87 /
@@ -170,7 +156,7 @@ function wireResult(value: ProducedWireDto<object>): {
  *
  * `configCapability` is the injected cq.toml config capability (R193 / G18),
  * constructed in `@cq/ledger-mcp` over `@cq/config` (T2/T13). When omitted (no
- * cq.toml-capable config root), `get_reviewers`/`get_planners`/`get_config`
+ * cq.toml-capable config root), sectioned `get_config`
  * throw `ConfigNotImplementedError`.
  *
  * `promptCatalog` is the injected typed prompt-catalog capability (T343),
@@ -200,6 +186,7 @@ export function registerLedgerStdioTools(
   promptCatalog?: PromptCatalogCapability,
   toolPrefix: string = "",
   listProjects?: ListProjectsCapability,
+  dispatchCapability?: DispatchCapability,
 ): void {
   assertToolPrefix(toolPrefix);
 
@@ -218,10 +205,7 @@ export function registerLedgerStdioTools(
       prefixToolName(toolPrefix, toolName),
       {
         ...config,
-        description: appendLedgerResponseDescription(
-          toolName,
-          config.description,
-        ),
+        description: appendLedgerResponseDescription(toolName, config.description),
       },
       handler,
     );
@@ -263,27 +247,19 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
           .min(0)
           .optional()
           .describe("zero-based start index for pagination"),
-        limit: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .describe("max items to return per page"),
+        limit: z.number().int().positive().optional().describe("max items to return per page"),
       },
     },
     async (args) => {
       const fetched = store.fetch(args.ledger_id);
-      const usePagination =
-        args.offset !== undefined || args.limit !== undefined;
+      const usePagination = args.offset !== undefined || args.limit !== undefined;
 
       if (usePagination) {
         const allItems = fetched.milestones.flatMap((group) => group.items);
         const offset = args.offset ?? 0;
         const { items, total } = paginate(allItems, offset, args.limit);
         const nextOffset =
-          args.limit !== undefined && offset + items.length < total
-            ? offset + items.length
-            : null;
+          args.limit !== undefined && offset + items.length < total ? offset + items.length : null;
         const { milestones: _omit, ...ledgerMeta } = fetched;
         void _omit;
         return wireResult(
@@ -326,8 +302,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
   reg(
     "fetch_item",
     {
-      description:
-        `Fetch a single item by id from a specific ledger using the ${ITEM_PROJECTION_DESCRIPTION}.`,
+      description: `Fetch a single item by id from a specific ledger using the ${ITEM_PROJECTION_DESCRIPTION}.`,
       inputSchema: {
         ledger_id: z.string(),
         item_id: z.string(),
@@ -337,10 +312,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
     async (args) =>
       wireResult(
         produceWireDto({
-          item: projectItemDto(
-            store.fetchItem(args.ledger_id, args.item_id),
-            args.projection,
-          ),
+          item: projectItemDto(store.fetchItem(args.ledger_id, args.item_id), args.projection),
         }),
       ),
   );
@@ -348,8 +320,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
   reg(
     "update_item",
     {
-      description:
-        `Update an item's status and/or fields. Provided fields replace existing values; omitted fields are preserved. Pass author/session to record who made this edit. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
+      description: `Update an item's status and/or fields. Provided fields replace existing values; omitted fields are preserved. Pass author/session to record who made this edit. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
       inputSchema: {
         ledger_id: z.string(),
         item_id: z.string(),
@@ -366,17 +337,14 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
       if (args.author !== undefined) patch.author = args.author;
       if (args.session !== undefined) patch.session = args.session;
       const item = await store.updateItem(args.ledger_id, args.item_id, patch);
-      return wireResult(
-        produceWireDto({ item: projectItemMutationAckDto(item) }),
-      );
+      return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
 
   reg(
     "create_item",
     {
-      description:
-        `Create a new item under a milestone in a ledger. milestone_id must resolve to an active (non-archived, non-terminal) milestone in the milestones ledger. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match). Auto-creates the depth-2 group on first reference. Pass author/session to record who created the item. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
+      description: `Create a new item under a milestone in a ledger. milestone_id must resolve to an active (non-archived, non-terminal) milestone in the milestones ledger. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match). Auto-creates the depth-2 group on first reference. Pass author/session to record who created the item. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
       inputSchema: {
         ledger_id: z.string(),
         milestone_id: safeIdSchema,
@@ -396,17 +364,14 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
       if (args.author !== undefined) init.author = args.author;
       if (args.session !== undefined) init.session = args.session;
       const item = await store.createItem(args.ledger_id, args.milestone_id, init);
-      return wireResult(
-        produceWireDto({ item: projectItemMutationAckDto(item) }),
-      );
+      return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
 
   reg(
     "create_ledger",
     {
-      description:
-        `Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries. The name \`milestones\` is reserved. ${LEDGER_MUTATION_ACK_DESCRIPTION}`,
+      description: `Create a new ledger. Schema specifies allowed statuses, which subset is terminal, and the typed fields each item carries. The name \`milestones\` is reserved. ${LEDGER_MUTATION_ACK_DESCRIPTION}`,
       inputSchema: {
         name: z.string(),
         schema: schemaSchema,
@@ -414,17 +379,14 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
     },
     async (args) => {
       const ledger = await store.createLedger(args.name, args.schema as LedgerSchema);
-      return wireResult(
-        produceWireDto({ ledger: projectLedgerMutationAckDto(ledger) }),
-      );
+      return wireResult(produceWireDto({ ledger: projectLedgerMutationAckDto(ledger) }));
     },
   );
 
   reg(
     "search_items",
     {
-      description:
-        `Substring search across status and field values within a single ledger using the ${ITEM_PROJECTION_DESCRIPTION}.`,
+      description: `Substring search across status and field values within a single ledger using the ${ITEM_PROJECTION_DESCRIPTION}.`,
       inputSchema: {
         ledger_id: z.string(),
         query: z.string(),
@@ -505,8 +467,7 @@ ${QUERY_LANGUAGE_HELP}`,
   reg(
     "create_milestone",
     {
-      description:
-        `Create a new milestone in the milestones ledger. Allocates an M<n> id from the milestones ledger's own item counter. The blockedBy/dependsOn arrays are advisory cross-references (no FK enforcement). ${MILESTONE_MUTATION_ACK_DESCRIPTION}`,
+      description: `Create a new milestone in the milestones ledger. Allocates an M<n> id from the milestones ledger's own item counter. The blockedBy/dependsOn arrays are advisory cross-references (no FK enforcement). ${MILESTONE_MUTATION_ACK_DESCRIPTION}`,
       inputSchema: {
         title: z.string(),
         description: z.string().optional(),
@@ -539,8 +500,7 @@ ${QUERY_LANGUAGE_HELP}`,
   reg(
     "update_milestone",
     {
-      description:
-        `Update a milestone in the milestones ledger. status must be one of open/done/postponed/blocked. ${MILESTONE_MUTATION_ACK_DESCRIPTION}`,
+      description: `Update a milestone in the milestones ledger. status must be one of open/done/postponed/blocked. ${MILESTONE_MUTATION_ACK_DESCRIPTION}`,
       inputSchema: {
         milestone_id: safeIdSchema,
         status: z.string().optional(),
@@ -575,8 +535,7 @@ ${QUERY_LANGUAGE_HELP}`,
   reg(
     "fetch_milestone",
     {
-      description:
-        `Fetch a milestone item from the milestones ledger using the ${ITEM_PROJECTION_DESCRIPTION}, plus resolved metadata and per-ledger active reference counts.`,
+      description: `Fetch a milestone item from the milestones ledger using the ${ITEM_PROJECTION_DESCRIPTION}, plus resolved metadata and per-ledger active reference counts.`,
       inputSchema: {
         milestone_id: safeIdSchema,
         projection: projectionSchema,
@@ -584,10 +543,7 @@ ${QUERY_LANGUAGE_HELP}`,
     },
     async (args) =>
       wireResult(
-        projectFetchedMilestoneDto(
-          store.fetchMilestone(args.milestone_id),
-          args.projection,
-        ),
+        projectFetchedMilestoneDto(store.fetchMilestone(args.milestone_id), args.projection),
       ),
   );
 
@@ -610,8 +566,7 @@ ${QUERY_LANGUAGE_HELP}`,
   reg(
     "list_milestone_items",
     {
-      description:
-        `Return all active items grouped by ledger that reference this milestone using the ${ITEM_PROJECTION_DESCRIPTION}.`,
+      description: `Return all active items grouped by ledger that reference this milestone using the ${ITEM_PROJECTION_DESCRIPTION}.`,
       inputSchema: {
         milestone_id: safeIdSchema,
         projection: projectionSchema,
@@ -633,8 +588,7 @@ ${QUERY_LANGUAGE_HELP}`,
   reg(
     "reopen_item",
     {
-      description:
-        `Recover an item accidentally set to a terminal status by moving it to a chosen non-terminal status. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
+      description: `Recover an item accidentally set to a terminal status by moving it to a chosen non-terminal status. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
       inputSchema: {
         ledger_id: z.string(),
         item_id: z.string(),
@@ -643,17 +597,14 @@ ${QUERY_LANGUAGE_HELP}`,
     },
     async (args) => {
       const item = await store.reopenItem(args.ledger_id, args.item_id, args.to_status);
-      return wireResult(
-        produceWireDto({ item: projectItemMutationAckDto(item) }),
-      );
+      return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
 
   reg(
     "unarchive_item",
     {
-      description:
-        `Restore a single item that was swept into its milestone-group archive (./.cq/archive/<ledger>/<milestoneId>.md) back to the active ledger; pass the archived item's milestone id. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
+      description: `Restore a single item that was swept into its milestone-group archive (./.cq/archive/<ledger>/<milestoneId>.md) back to the active ledger; pass the archived item's milestone id. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
       inputSchema: {
         ledger_id: z.string(),
         milestone_id: safeIdSchema,
@@ -662,9 +613,7 @@ ${QUERY_LANGUAGE_HELP}`,
     },
     async (args) => {
       const item = await store.unarchiveItem(args.ledger_id, args.milestone_id, args.item_id);
-      return wireResult(
-        produceWireDto({ item: projectItemMutationAckDto(item) }),
-      );
+      return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
 
@@ -701,7 +650,7 @@ ${QUERY_LANGUAGE_HELP}`,
     "read_log",
     {
       description:
-        "Read a log file under the ledger's <root>/.cq/logs/ directory and return its text content. `path` is repo-relative to .cq/logs (e.g. \"20260101-1200-session.md\"); absolute paths and any path escaping .cq/logs (e.g. `..` traversal) are rejected. Oversized files are truncated (truncated:true). Returns { path, content, truncated? }. Only available when the server is filesystem-backed; against an in-memory store it returns a not-implemented error.",
+        'Read a log file under the ledger\'s <root>/.cq/logs/ directory and return its text content. `path` is repo-relative to .cq/logs (e.g. "20260101-1200-session.md"); absolute paths and any path escaping .cq/logs (e.g. `..` traversal) are rejected. Oversized files are truncated (truncated:true). Returns { path, content, truncated? }. Only available when the server is filesystem-backed; against an in-memory store it returns a not-implemented error.',
       inputSchema: {
         path: z.string().describe("repo-relative path under .cq/logs/"),
       },
@@ -712,83 +661,89 @@ ${QUERY_LANGUAGE_HELP}`,
     },
   );
 
-  // ---- Config capability (3) ---------------------------------------------
-
-  reg(
-    "get_reviewers",
-    {
-      description:
-        "Resolve the reviewer set from the repo's cq.toml. Returns " +
-        `${GET_REVIEWERS_RESPONSE_DESCRIPTION}. ` +
-        "configured=false (no cq.toml or empty list) => use the single native " +
-        "Claude reviewer. Only available when the server has a cq.toml-capable " +
-        "config root; otherwise returns a not-implemented error.",
-      inputSchema: {},
-    },
-    () => {
-      if (configCapability === undefined) throw new ConfigNotImplementedError();
-      return jsonResult(configCapability.computeReviewers());
-    },
-  );
-
-  reg(
-    "get_planners",
-    {
-      description:
-        "Resolve the planner set from the repo's cq.toml. Returns " +
-        `${GET_PLANNERS_RESPONSE_DESCRIPTION}. ` +
-        "configured=false (no cq.toml or empty list) => use the single native " +
-        "Claude planner. Only available when the server has a cq.toml-capable " +
-        "config root; otherwise returns a not-implemented error.",
-      inputSchema: {},
-    },
-    () => {
-      if (configCapability === undefined) throw new ConfigNotImplementedError();
-      return jsonResult(configCapability.computePlanners());
-    },
-  );
+  // ---- Config capability (1) ---------------------------------------------
 
   reg(
     "get_config",
     {
       description:
-        "Return the full parsed cq.toml: { configured, aliases, reviewers, " +
-        "planners, tiers, agentTiers, agentEfforts }. reviewers/planners are " +
-        "the raw alias-name lists; tiers is the per-harness resolved fast/" +
-        "standard/frontier slots (each { harness, model, provider, effort } " +
-        "or null); agentTiers maps agent-name to tier (or null); agentEfforts " +
-        "maps agent-name to its per-agent effort override ({} when absent). " +
-        "configured=false when no cq.toml is present. Only available when the " +
-        "server has a cq.toml-capable config root; otherwise returns a " +
-        "not-implemented error.",
-      inputSchema: {},
+        "Return one independently-fallbacked cq.toml section. reviewers and planners " +
+        "preserve their former resolved payloads; agent_models preserves its former " +
+        "per-role overlay; all preserves the former full get_config payload.",
+      inputSchema: {
+        section: z.enum(CONFIG_SECTIONS),
+      },
     },
-    () => {
+    (args) => {
       if (configCapability === undefined) throw new ConfigNotImplementedError();
-      return jsonResult(configCapability.computeConfig());
+      return jsonResult(computeConfigSection(configCapability, args.section));
     },
   );
 
-  reg(
-    "get_agent_models",
-    {
-      description:
-        "Return the per-role model overlay for every agent in the 24-role roster. " +
-        "Returns { configured, agents: [{ id, status, modelClass, modelMappings }] }. " +
-        "Four status variants: " +
-        "'resolved' — a live token was found for the role's tier class; " +
-        "'not-configured' — no cq.toml is present; " +
-        "'no-live-token' — cq.toml is present but the role's tier has no live token; " +
-        "'not-model-configurable' — the role has no agentTierKey (orchestrator commands). " +
-        "Only available when the server has a cq.toml-capable config root; " +
-        "otherwise returns a not-implemented error.",
-      inputSchema: {},
-    },
-    () => {
-      if (configCapability === undefined) throw new ConfigNotImplementedError();
-      return jsonResult(configCapability.computeAgentModels());
-    },
-  );
+  if (dispatchCapability !== undefined) {
+    reg(
+      "prepare_dispatch",
+      {
+        description:
+          "Validate and durably prepare one typed dispatch, returning its handle, deadlines, provenance, and store-result capability.",
+        inputSchema: PREPARE_DISPATCH_INPUT,
+      },
+      async (args) =>
+        jsonResult(
+          await dispatchCapability.prepare({
+            roleId: args.roleId,
+            input: args.input,
+            idempotencyKey: args.idempotencyKey,
+            timeoutMs: args.timeoutMs,
+            expectedChild: args.expectedChild,
+            ...(args.reprepareOf === undefined ? {} : { reprepareOf: args.reprepareOf }),
+          }),
+        ),
+    );
+    reg(
+      "store_result",
+      {
+        description:
+          "Store a typed child result using the capability that authorizes only this operation.",
+        inputSchema: STORE_RESULT_INPUT,
+      },
+      async (args) => jsonResult(await dispatchCapability.storeResult(args)),
+    );
+    reg(
+      "confirm_dispatch_completion",
+      {
+        description:
+          "Confirm observed native completion and promote a stored result to consumed without returning its body.",
+        inputSchema: CONFIRM_DISPATCH_COMPLETION_INPUT,
+      },
+      async (args) => jsonResult(await dispatchCapability.confirmCompletion(args)),
+    );
+    reg(
+      "abort_dispatch",
+      {
+        description: "Abort a prepared dispatch with a typed terminal reason.",
+        inputSchema: ABORT_DISPATCH_INPUT,
+      },
+      async (args) =>
+        jsonResult(
+          await dispatchCapability.abort({
+            attestationId: args.attestationId,
+            generation: args.generation,
+            reason: args.reason,
+            ...(args.details === undefined ? {} : { details: args.details }),
+          }),
+        ),
+    );
+    reg(
+      "fetch_dispatch_result",
+      {
+        description:
+          "Materialize a consumed dispatch result exactly once. Input is the dispatch handle only.",
+        inputSchema: FETCH_DISPATCH_RESULT_INPUT,
+      },
+      async (args) => jsonResult(await dispatchCapability.fetch(args)),
+    );
+  }
 
   // ---- Prompt-catalog capability (3) -------------------------------------
 

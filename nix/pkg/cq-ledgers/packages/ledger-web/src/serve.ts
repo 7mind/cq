@@ -31,6 +31,7 @@ import {
   attachMcpHttp,
   changedFrame,
   createEmbeddedStore,
+  createSingleProjectDispatchRuntime,
   LEDGER_TOPIC,
   resolvePromptSurface,
   startLedgerCoherenceWatcher,
@@ -349,6 +350,12 @@ async function serveEmbedded(
   });
   const resolved = await createEmbeddedStore(opts.cwd);
   const store = resolved.store;
+  const dispatchRuntime = await createSingleProjectDispatchRuntime({
+    construction: "embedded",
+    resolved,
+    ...(promptSurface === undefined ? {} : { promptArtifactStore: promptSurface.store }),
+    environment: process.env,
+  });
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
     store,
     path.basename(opts.cwd),
@@ -356,6 +363,8 @@ async function serveEmbedded(
     resolved.configRoot,
     resolved.projectKey,
     promptSurface?.store,
+    undefined,
+    dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined,
   );
 
   const server = scanForPort(opts.port, (p) =>
@@ -392,10 +401,11 @@ async function serveEmbedded(
   // Tear down the embedded resources when the server stops (main()/tests call
   // server.stop(true)); the return type stays the Bun server.
   const origStop = server.stop.bind(server);
-  server.stop = (closeActiveConnections?: boolean): Promise<void> => {
+  server.stop = async (closeActiveConnections?: boolean): Promise<void> => {
     watcher.close();
-    void store.dispose();
-    return origStop(closeActiveConnections);
+    await origStop(closeActiveConnections);
+    await dispatchRuntime.close();
+    await store.dispose();
   };
 
   return server;

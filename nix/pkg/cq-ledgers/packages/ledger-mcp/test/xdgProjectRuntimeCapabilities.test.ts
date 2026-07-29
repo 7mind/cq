@@ -314,7 +314,7 @@ describe("explicit XDG runtime repository provenance capabilities", () => {
       await withRuntimeClient(runtime, async (client) => {
         const result = (await client.callTool({
           name: "get_config",
-          arguments: {},
+          arguments: { section: "all" },
         })) as ToolResult;
         expect(result.isError ?? false).toBe(false);
         const config = JSON.parse(textOf(result)) as {
@@ -352,7 +352,7 @@ describe("explicit XDG runtime repository provenance capabilities", () => {
       await withRuntimeClient(runtime, async (client) => {
         const result = (await client.callTool({
           name: "get_config",
-          arguments: {},
+          arguments: { section: "all" },
         })) as ToolResult;
         expect(result.isError ?? false).toBe(false);
         const config = JSON.parse(textOf(result)) as {
@@ -436,7 +436,7 @@ describe("explicit XDG runtime repository provenance capabilities", () => {
         await withRuntimeClient(runtime, async (client) => {
           const result = (await client.callTool({
             name: "get_config",
-            arguments: {},
+            arguments: { section: "all" },
           })) as ToolResult;
           expect(result.isError).toBe(true);
           const text = textOf(result);

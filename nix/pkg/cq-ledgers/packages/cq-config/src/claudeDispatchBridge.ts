@@ -344,9 +344,7 @@ export interface ClaudeNativeLaunchReport {
   readonly submission?: StoreDispatchResultOutcome;
 }
 
-export type ClaudeNativeLauncher = (
-  context: ClaudeNativeLaunchContext,
-) => ClaudeNativeLaunchReport;
+export type ClaudeNativeLauncher = (context: ClaudeNativeLaunchContext) => ClaudeNativeLaunchReport;
 
 export interface ClaudePrintStoreServer {
   readonly name: string;
@@ -368,15 +366,9 @@ export interface ClaudePrintLaunchOptions {
   readonly storeServer: ClaudePrintStoreServer;
 }
 
-function boundClaudePrintRole(
-  context: ClaudeNativeLaunchContext,
-  rolePrompt: string,
-): string {
+function boundClaudePrintRole(context: ClaudeNativeLaunchContext, rolePrompt: string): string {
   const roleId = context.preparedProvenance.roleId;
-  if (
-    context.envelope.subagent_type !== roleId ||
-    context.expectedCorrelation.roleId !== roleId
-  ) {
+  if (context.envelope.subagent_type !== roleId || context.expectedCorrelation.roleId !== roleId) {
     throw new AttestationContractError(
       "launch.rolePrompt.roleId",
       `prepared role "${roleId}" does not match requested role ` +
@@ -384,9 +376,7 @@ function boundClaudePrintRole(
         `"${context.expectedCorrelation.roleId}"`,
     );
   }
-  const observedPromptDigest = new Bun.CryptoHasher("sha256")
-    .update(rolePrompt)
-    .digest("hex");
+  const observedPromptDigest = new Bun.CryptoHasher("sha256").update(rolePrompt).digest("hex");
   if (observedPromptDigest !== context.preparedProvenance.promptDigest) {
     throw new AttestationContractError(
       "launch.rolePrompt.promptDigest",
@@ -656,9 +646,7 @@ export interface ClaudeDispatchConsumed {
 }
 
 export type ClaudeDispatchRun =
-  | ClaudeDispatchRejected
-  | ClaudeDispatchAborted
-  | ClaudeDispatchConsumed;
+  ClaudeDispatchRejected | ClaudeDispatchAborted | ClaudeDispatchConsumed;
 
 // ---------------------------------------------------------------------------
 // 4. The sequencer
@@ -937,9 +925,7 @@ function assertSubmissionMatchesHandle(
   }
 }
 
-function claudeTransportProvenanceOf(
-  report: ClaudeNativeLaunchReport,
-): ClaudeTransportProvenance {
+function claudeTransportProvenanceOf(report: ClaudeNativeLaunchReport): ClaudeTransportProvenance {
   return Object.freeze({
     agentId: assertObservedTransportString(report.agentId, "report.agentId"),
     parentToolUseId: assertObservedTransportString(
@@ -1089,7 +1075,7 @@ const CLAUDE_ARTIFACT_MARKERS: readonly ClaudeArtifactMarker[] = Object.freeze([
     rationale:
       'defects:D119\'s root cause. `isolation: "worktree"` makes the HARNESS allocate-or-REUSE a ' +
       "tree at whatever commit it was left; questions:Q363 abolished that in favour of an " +
-      "orchestrator-prepared fresh tree, so T687 pins the argument to `\"none\"`.",
+      'orchestrator-prepared fresh tree, so T687 pins the argument to `"none"`.',
   }),
   Object.freeze({
     violation: "generic-launcher" as const,
@@ -1213,8 +1199,7 @@ export const CLAUDE_BRIDGE_PROVEN_BY = "T689" as const;
 /**
  * Exactly how many times one dispatch's body crosses into the parent. ONE, on
  * fetch. Pinned as a number so the sequencer's fetch count is asserted rather
- * than reviewed, and so this bridge is independent of defects:D188's
- * repeatability ruling.
+ * than reviewed.
  */
 export const CLAUDE_BRIDGE_FETCH_COUNT = 1;
 
@@ -1226,5 +1211,4 @@ export const CLAUDE_BRIDGE_DEFERRED = Object.freeze([
   "child-side-one-shot-retrieval-of-the-assembled-input-by-handle-T977",
   "implement-worktree_manage-prepare-and-release",
   "consolidate-the-duplicated-launch-gate-into-the-shared-module",
-  "decide-defects-D188s-fetch-repeatability-divergence-T1142",
 ] as const);

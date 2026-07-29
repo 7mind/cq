@@ -7,8 +7,7 @@
  *
  * Proves that the tool-prefix mechanism delivers process-level co-residency:
  *  (1) the two tools/list name sets are DISJOINT — zero collision;
- *  (2) the unprefixed set === `LEDGER_TOOL_NAMES` (27), the prefixed set ===
- *      `prefixedToolNames('myproj')`;
+ *  (2) each server exposes its prefixed or unprefixed non-dispatch surface;
  *  (3) BOTH servers are functional end-to-end — a real `create_milestone` +
  *      `create_item` ack plus compact and full `fetch_item` round-trips on
  *      EACH (the prefixed one via `myproj_*` names) return correct, non-error
@@ -24,8 +23,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   InMemoryLedgerStore,
-  LEDGER_TOOL_NAMES,
-  prefixedToolNames,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
   type LedgerStore,
 } from "@cq/ledger";
 import { createLedgerMcpServer } from "../src/main.js";
@@ -163,12 +161,13 @@ describe("two prefixed ledger-MCP servers in one process (T380 / Q211)", () => {
       const intersection = ppNames.filter((n) => cqSet.has(n));
       expect(intersection).toEqual([]);
 
-      // (2) Exact surfaces: unprefixed === LEDGER_TOOL_NAMES (27),
-      //     prefixed === prefixedToolNames('myproj').
-      expect(cqNames).toEqual([...LEDGER_TOOL_NAMES].sort());
-      expect(cqNames.length).toBe(LEDGER_TOOL_NAMES.length);
-      expect(ppNames).toEqual([...prefixedToolNames(MYPROJ_PREFIX)].sort());
-      expect(ppNames.length).toBe(LEDGER_TOOL_NAMES.length);
+      // (2) Exact surfaces: neither direct test server owns dispatch state.
+      expect(cqNames).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
+      expect(cqNames.length).toBe(NON_DISPATCH_LEDGER_TOOL_NAMES.length);
+      expect(ppNames).toEqual(
+        NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `${MYPROJ_PREFIX}_${name}`).sort(),
+      );
+      expect(ppNames.length).toBe(NON_DISPATCH_LEDGER_TOOL_NAMES.length);
       expect(ppNames.every((n) => n.startsWith(`${MYPROJ_PREFIX}_`))).toBe(true);
 
       // (3) Both functional end-to-end: a real create/create/fetch round-trip

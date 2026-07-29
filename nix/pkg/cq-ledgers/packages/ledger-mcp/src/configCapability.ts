@@ -35,10 +35,12 @@ import type {
   ResolvedPlanner,
   AgentModelsResult,
   AgentModelEntry,
+  ConfigSection,
+  ConfigSectionResult,
 } from "@cq/ledger";
 
 /**
- * Compute the `get_reviewers` payload for `repoRoot`.
+ * Compute the `reviewers` section payload for `repoRoot`.
  *
  * Loads `cq.toml` (null when absent → `configured:false`), then resolves each
  * `reviewers` alias through `[aliases]` into a `{ harness, model, alias }`.
@@ -63,7 +65,7 @@ export function computeReviewers(repoRoot: string): GetReviewersResult {
 }
 
 /**
- * Compute the `get_planners` payload for `repoRoot`.
+ * Compute the `planners` section payload for `repoRoot`.
  *
  * Loads `cq.toml` (null when absent → `configured:false`), then resolves each
  * `planners` alias through `[aliases]` into a `{ harness, model, alias }`.
@@ -92,7 +94,7 @@ export function computePlanners(repoRoot: string): GetPlannersResult {
  *
  * Projects the DISPATCH PANELS (`reviewers` / `planners` / `[tiers]`), so it
  * fails closed on the active selector's recorded violation (T861) exactly like
- * `get_reviewers` / `get_planners` / `get_agent_models` — a Codex host must
+ * the `reviewers` / `planners` / `agent_models` sections — a Codex host must
  * never be handed a Claude panel it cannot invoke.
  */
 export function computeConfig(repoRoot: string): GetConfigResult {
@@ -171,14 +173,12 @@ function projectConfig(config: CqConfig): GetConfigResult {
  * rendering) and sorted for deterministic output. A pi token is rendered
  * `<provider>/<model>`; a claude token (provider null) is rendered bare. When
  * `token.effort` is present (non-null), a `:<effort>` suffix is appended so
- * `get_agent_models` can show which effort a mapping runs at (D79); an
+ * the `agent_models` section can show which effort a mapping runs at (D79); an
  * effortless token renders unchanged, with no trailing colon.
  *
  * Returns `{}` when no token maps to any harness (the `no-live-token` case).
  */
-function groupByHarness(
-  tokens: readonly ReviewerToken[],
-): AgentModelEntry["modelMappings"] {
+function groupByHarness(tokens: readonly ReviewerToken[]): AgentModelEntry["modelMappings"] {
   const byHarness: Record<Harness, Set<string>> = {
     claude: new Set(),
     pi: new Set(),
@@ -186,9 +186,7 @@ function groupByHarness(
   for (const t of tokens) {
     const base = t.provider === null ? t.model : `${t.provider}/${t.model}`;
     byHarness[t.harness].add(
-      t.effort === null || t.effort === undefined
-        ? base
-        : `${base}:${t.effort}`,
+      t.effort === null || t.effort === undefined ? base : `${base}:${t.effort}`,
     );
   }
   const mappings: { claude?: readonly string[]; pi?: readonly string[] } = {};
@@ -202,7 +200,7 @@ function groupByHarness(
 }
 
 /**
- * Compute the `get_agent_models` payload for `repoRoot` (Q156–Q158).
+ * Compute the `agent_models` section payload for `repoRoot` (Q156–Q158).
  *
  * Re-reads `cq.toml` per call (no caching), like the other compute* methods.
  * Walks the fixed {@link AGENT_ROLE_TIERS} 24-role roster (the SHARED anti-drift
@@ -246,14 +244,9 @@ export function computeAgentModels(repoRoot: string): AgentModelsResult {
     // Q254: apply the [agent_efforts] per-agent effort override on top of the
     // tier token, so the effort-aware modelMappings (D79) reflect it.
     const effective =
-      token === undefined
-        ? undefined
-        : applyAgentEffort(config, role.agentTierKey, token);
-    const modelMappings = groupByHarness(
-      effective === undefined ? [] : [effective],
-    );
-    const hasLiveToken =
-      modelMappings.claude !== undefined || modelMappings.pi !== undefined;
+      token === undefined ? undefined : applyAgentEffort(config, role.agentTierKey, token);
+    const modelMappings = groupByHarness(effective === undefined ? [] : [effective]);
+    const hasLiveToken = modelMappings.claude !== undefined || modelMappings.pi !== undefined;
     return {
       id: role.id,
       status: hasLiveToken ? "resolved" : "no-live-token",
@@ -275,5 +268,57 @@ export function createConfigCapability(repoRoot: string): ConfigCapability {
     computePlanners: () => computePlanners(repoRoot),
     computeConfig: () => computeConfig(repoRoot),
     computeAgentModels: () => computeAgentModels(repoRoot),
+    computeSection: (section) => computeSection(repoRoot, section),
   };
+}
+
+export function computeSection(repoRoot: string, section: ConfigSection): ConfigSectionResult {
+  switch (section) {
+    case "reviewers":
+      return computeReviewers(repoRoot);
+    case "planners":
+      return computePlanners(repoRoot);
+    case "agent_models":
+      return computeAgentModels(repoRoot);
+    case "all":
+      return computeConfig(repoRoot);
+  }
+  const config = loadConfig(repoRoot);
+  if (config === null) {
+    switch (section) {
+      case "aliases":
+        return { configured: false, aliases: {} };
+      case "tiers":
+        return { configured: false, tiers: null };
+      case "agent_tiers":
+        return { configured: false, agentTiers: null };
+      case "agent_efforts":
+        return { configured: false, agentEfforts: {} };
+    }
+  }
+  const projected = projectConfig(config);
+  switch (section) {
+    case "aliases":
+      return {
+        configured: Object.keys(projected.aliases).length > 0,
+        aliases: projected.aliases,
+      };
+    case "tiers": {
+      const populated = projected.tiers !== null && Object.keys(projected.tiers).length > 0;
+      return { configured: populated, tiers: populated ? projected.tiers : null };
+    }
+    case "agent_tiers": {
+      const populated =
+        projected.agentTiers !== null && Object.keys(projected.agentTiers).length > 0;
+      return {
+        configured: populated,
+        agentTiers: populated ? projected.agentTiers : null,
+      };
+    }
+    case "agent_efforts":
+      return {
+        configured: Object.keys(projected.agentEfforts).length > 0,
+        agentEfforts: projected.agentEfforts,
+      };
+  }
 }

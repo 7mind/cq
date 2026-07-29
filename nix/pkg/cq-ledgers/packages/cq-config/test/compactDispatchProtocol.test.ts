@@ -6,6 +6,7 @@ import {
   DISPATCH_ABORT_REASONS,
   DISPATCH_HANDLE_SCHEMA,
   DISPATCH_LIFECYCLE_STATES,
+  FETCH_DISPATCH_RESULT_STATES,
   DISPATCH_PREPARED_SCHEMA,
   DISPATCH_PROTOCOL_OPERATIONS,
   FETCH_DISPATCH_RESULT_SCHEMA,
@@ -275,8 +276,14 @@ describe("typed fetch_dispatch_result outcomes", () => {
         state: "attestation-not-found",
         ...HANDLE,
       },
+      {
+        state: "output-already-materialized",
+        ...HANDLE,
+        materializedAt: "2026-07-25T09:30:02.000Z",
+      },
     ];
-    expect(variants.map((variant) => variant.state)).toEqual([...DISPATCH_LIFECYCLE_STATES]);
+    expect(variants.map((variant) => variant.state)).toEqual([...FETCH_DISPATCH_RESULT_STATES]);
+    expect(DISPATCH_LIFECYCLE_STATES).toHaveLength(6);
     for (const variant of variants) {
       accepts(FETCH_DISPATCH_RESULT_SCHEMA, variant);
     }

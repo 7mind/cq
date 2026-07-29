@@ -3,13 +3,14 @@
  *
  * Returns an array of `tool()` instances for
  * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
- * The 31-tool surface is `LEDGER_TOOL_NAMES` (see the section dividers below);
+ * The canonical 33-tool surface is `LEDGER_TOOL_NAMES`; the five dispatch
+ * handlers are omitted when no durable `DispatchCapability` is supplied.
  * the stdio counterpart is `registerLedgerStdioTools` (./stdioLedgerTools.ts).
  *
  * Capability-gated tools:
  *  - read_log requires an explicit FS-store `readLog` capability (Q87 / R137 #6);
  *    over an in-memory store it throws `ReadLogNotImplementedError`.
- *  - get_reviewers / get_planners / get_config require an injected
+ *  - sectioned get_config requires an injected
  *    `configCapability` (constructed in @cq/ledger-mcp over @cq/config, R193/G18);
  *    absent it they throw `ConfigNotImplementedError`.
  *  - the four guarded plan-lifecycle tools (T852, ./planLifecycleTools.ts)
@@ -39,8 +40,6 @@ import { derivePredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
 import {
   appendLedgerResponseDescription,
-  GET_PLANNERS_RESPONSE_DESCRIPTION,
-  GET_REVIEWERS_RESPONSE_DESCRIPTION,
   ITEM_MUTATION_ACK_DESCRIPTION,
   ITEM_PROJECTION_DESCRIPTION,
   LEDGER_MUTATION_ACK_DESCRIPTION,
@@ -58,26 +57,27 @@ import {
   serializeWireDto,
   type ProducedWireDto,
 } from "./wireResponseContract.js";
+import { ReadLogNotImplementedError, type ReadLogCapability } from "./readLog.js";
 import {
-  ReadLogNotImplementedError,
-  type ReadLogCapability,
-} from "./readLog.js";
-import {
+  CONFIG_SECTIONS,
   ConfigNotImplementedError,
+  computeConfigSection,
   type ConfigCapability,
 } from "./configCapability.js";
+import type { DispatchCapability } from "./dispatchCapability.js";
+import {
+  ABORT_DISPATCH_INPUT,
+  CONFIRM_DISPATCH_COMPLETION_INPUT,
+  FETCH_DISPATCH_RESULT_INPUT,
+  PREPARE_DISPATCH_INPUT,
+  STORE_RESULT_INPUT,
+} from "./dispatchToolSchemas.js";
 import {
   PromptCatalogNotImplementedError,
   type PromptCatalogCapability,
 } from "./promptCatalogCapability.js";
-import {
-  ListProjectsNotImplementedError,
-  type ListProjectsCapability,
-} from "./listProjects.js";
-import {
-  PLAN_LIFECYCLE_TOOL_NAMES,
-  PLAN_LIFECYCLE_TOOL_SPECS,
-} from "./planLifecycleTools.js";
+import { ListProjectsNotImplementedError, type ListProjectsCapability } from "./listProjects.js";
+import { PLAN_LIFECYCLE_TOOL_NAMES, PLAN_LIFECYCLE_TOOL_SPECS } from "./planLifecycleTools.js";
 
 /**
  * The SDK's `tools?:` field on createSdkMcpServer is typed as
@@ -119,20 +119,14 @@ const fieldSpecSchema = z.object({
 const statusValueSchema = z
   .string()
   .min(1)
-  .regex(
-    /^[A-Za-z0-9 _-]+$/,
-    "status value may only contain A-Za-z0-9, space, dash, underscore",
-  );
+  .regex(/^[A-Za-z0-9 _-]+$/, "status value may only contain A-Za-z0-9, space, dash, underscore");
 
 // D-LED-02: field names become YAML keys; restrict to identifier-style
 // names and forbid the intrinsic Item field names.
 const RESERVED_FIELD_NAMES_ZOD = ["createdAt", "updatedAt", "author", "session"];
 const fieldNameSchema = z
   .string()
-  .regex(
-    /^[A-Za-z_][A-Za-z0-9_]*$/,
-    "field name must match /^[A-Za-z_][A-Za-z0-9_]*$/",
-  )
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "field name must match /^[A-Za-z_][A-Za-z0-9_]*$/")
   .refine((n) => !RESERVED_FIELD_NAMES_ZOD.includes(n), {
     message: "field name is reserved (createdAt/updatedAt/author/session)",
   });
@@ -162,13 +156,10 @@ const schemaSchema = z
     idPrefix: idPrefixSchema.optional(),
     transitions: z.record(z.string(), z.array(z.string())).optional(),
   })
-  .refine(
-    (s) => s.terminalStatuses.every((t) => s.statusValues.includes(t)),
-    {
-      message: "every terminalStatuses entry must be in statusValues",
-      path: ["terminalStatuses"],
-    },
-  );
+  .refine((s) => s.terminalStatuses.every((t) => s.statusValues.includes(t)), {
+    message: "every terminalStatuses entry must be in statusValues",
+    path: ["terminalStatuses"],
+  });
 
 /**
  * Field values may be string or string[]. Timestamps are ISO 8601
@@ -178,18 +169,14 @@ const fieldValueSchema = z.union([z.string(), z.array(z.string())]);
 
 const fieldsSchema = z.record(z.string(), fieldValueSchema);
 
-const projectionSchema = z
-  .enum(["compact", "full"])
-  .describe(ITEM_PROJECTION_DESCRIPTION);
+const projectionSchema = z.enum(["compact", "full"]).describe(ITEM_PROJECTION_DESCRIPTION);
 
 /**
  * D-LED-01: caller-supplied milestone/item ids cannot contain `/`, `.`, or
  * whitespace — anything that could escape the filesystem path
  * `FsLedgerStore` derives from them.
  */
-const safeIdSchema = z
-  .string()
-  .regex(/^[A-Za-z0-9_-]+$/, "id may only contain A-Za-z0-9_-");
+const safeIdSchema = z.string().regex(/^[A-Za-z0-9_-]+$/, "id may only contain A-Za-z0-9_-");
 
 // ---------------------------------------------------------------------------
 // Tool builders
@@ -202,6 +189,7 @@ export function createLedgerMcpTools(
   promptCatalog?: PromptCatalogCapability,
   toolPrefix: string = "",
   listProjects?: ListProjectsCapability,
+  dispatchCapability?: DispatchCapability,
 ): AnyTool[] {
   // Fail fast on an invalid prefix at the system boundary (Q205 / T373).
   assertToolPrefix(toolPrefix);
@@ -243,9 +231,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
         const offset = args.offset ?? 0;
         const { items, total } = paginate(allItems, offset, args.limit);
         const nextOffset =
-          args.limit !== undefined && offset + items.length < total
-            ? offset + items.length
-            : null;
+          args.limit !== undefined && offset + items.length < total ? offset + items.length : null;
         const { milestones: _omit, ...ledgerMeta } = fetched;
         void _omit;
         return wireResult(
@@ -293,10 +279,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
     async (args) =>
       wireResult(
         produceWireDto({
-          item: projectItemDto(
-            store.fetchItem(args.ledger_id, args.item_id),
-            args.projection,
-          ),
+          item: projectItemDto(store.fetchItem(args.ledger_id, args.item_id), args.projection),
         }),
       ),
   );
@@ -319,9 +302,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
       if (args.author !== undefined) patch.author = args.author;
       if (args.session !== undefined) patch.session = args.session;
       const item = await store.updateItem(args.ledger_id, args.item_id, patch);
-      return wireResult(
-        produceWireDto({ item: projectItemMutationAckDto(item) }),
-      );
+      return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
 
@@ -346,9 +327,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
       if (args.author !== undefined) init.author = args.author;
       if (args.session !== undefined) init.session = args.session;
       const item = await store.createItem(args.ledger_id, args.milestone_id, init);
-      return wireResult(
-        produceWireDto({ item: projectItemMutationAckDto(item) }),
-      );
+      return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
 
@@ -362,9 +341,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
     async (args) => {
       const schema = args.schema as LedgerSchema;
       const ledger = await store.createLedger(args.name, schema);
-      return wireResult(
-        produceWireDto({ ledger: projectLedgerMutationAckDto(ledger) }),
-      );
+      return wireResult(produceWireDto({ ledger: projectLedgerMutationAckDto(ledger) }));
     },
   );
 
@@ -518,10 +495,7 @@ ${QUERY_LANGUAGE_HELP}`,
     } as const,
     async (args) =>
       wireResult(
-        projectFetchedMilestoneDto(
-          store.fetchMilestone(args.milestone_id),
-          args.projection,
-        ),
+        projectFetchedMilestoneDto(store.fetchMilestone(args.milestone_id), args.projection),
       ),
   );
 
@@ -568,9 +542,7 @@ ${QUERY_LANGUAGE_HELP}`,
     } as const,
     async (args) => {
       const item = await store.reopenItem(args.ledger_id, args.item_id, args.to_status);
-      return wireResult(
-        produceWireDto({ item: projectItemMutationAckDto(item) }),
-      );
+      return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
 
@@ -584,9 +556,7 @@ ${QUERY_LANGUAGE_HELP}`,
     } as const,
     async (args) => {
       const item = await store.unarchiveItem(args.ledger_id, args.milestone_id, args.item_id);
-      return wireResult(
-        produceWireDto({ item: projectItemMutationAckDto(item) }),
-      );
+      return wireResult(produceWireDto({ item: projectItemMutationAckDto(item) }));
     },
   );
 
@@ -615,7 +585,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const readLogTool = tool(
     "read_log",
-    "Read a log file under the ledger's <root>/.cq/logs/ directory and return its text content. `path` is repo-relative to .cq/logs (e.g. \"20260101-1200-session.md\"); absolute paths and any path escaping .cq/logs (e.g. `..` traversal) are rejected. Oversized files are truncated (truncated:true). Returns { path, content, truncated? }. Only available when the server is filesystem-backed; against an in-memory store it returns a not-implemented error.",
+    'Read a log file under the ledger\'s <root>/.cq/logs/ directory and return its text content. `path` is repo-relative to .cq/logs (e.g. "20260101-1200-session.md"); absolute paths and any path escaping .cq/logs (e.g. `..` traversal) are rejected. Oversized files are truncated (truncated:true). Returns { path, content, truncated? }. Only available when the server is filesystem-backed; against an in-memory store it returns a not-implemented error.',
     {
       path: z.string().describe("repo-relative path under .cq/logs/"),
     } as const,
@@ -625,69 +595,79 @@ ${QUERY_LANGUAGE_HELP}`,
     },
   );
 
-  // ---- Config capability (3) ---------------------------------------------
-
-  const getReviewers = tool(
-    "get_reviewers",
-    "Resolve the reviewer set from the repo's cq.toml. Returns " +
-      `${GET_REVIEWERS_RESPONSE_DESCRIPTION}. ` +
-      "configured=false (no cq.toml or empty list) => use the single native " +
-      "Claude reviewer. Only available when the server has a cq.toml-capable " +
-      "config root; otherwise returns a not-implemented error.",
-    {} as Record<string, never>,
-    async () => {
-      if (configCapability === undefined) throw new ConfigNotImplementedError();
-      return jsonResult(configCapability.computeReviewers());
-    },
-  );
-
-  const getPlanners = tool(
-    "get_planners",
-    "Resolve the planner set from the repo's cq.toml. Returns " +
-      `${GET_PLANNERS_RESPONSE_DESCRIPTION}. ` +
-      "configured=false (no cq.toml or empty list) => use the single native " +
-      "Claude planner. Only available when the server has a cq.toml-capable " +
-      "config root; otherwise returns a not-implemented error.",
-    {} as Record<string, never>,
-    async () => {
-      if (configCapability === undefined) throw new ConfigNotImplementedError();
-      return jsonResult(configCapability.computePlanners());
-    },
-  );
+  // ---- Config capability (1) ---------------------------------------------
 
   const getConfig = tool(
     "get_config",
-    "Return the full parsed cq.toml: { configured, aliases, reviewers, " +
-      "planners, tiers, agentTiers, agentEfforts }. reviewers/planners are " +
-      "the raw alias-name lists; tiers is the per-harness resolved fast/" +
-      "standard/frontier slots (each { harness, model, provider, effort } " +
-      "or null); agentTiers maps agent-name to tier (or null); agentEfforts " +
-      "maps agent-name to its per-agent effort override ({} when absent). " +
-      "configured=false when no cq.toml is present. Only available when the " +
-      "server has a cq.toml-capable config root; otherwise returns a " +
-      "not-implemented error.",
-    {} as Record<string, never>,
-    async () => {
+    "Return one independently-fallbacked cq.toml section. reviewers and planners " +
+      "preserve their former resolved payloads; agent_models preserves its former " +
+      "per-role overlay; all preserves the former full get_config payload.",
+    { section: z.enum(CONFIG_SECTIONS) } as const,
+    async (args) => {
       if (configCapability === undefined) throw new ConfigNotImplementedError();
-      return jsonResult(configCapability.computeConfig());
+      return jsonResult(computeConfigSection(configCapability, args.section));
     },
   );
 
-  const getAgentModels = tool(
-    "get_agent_models",
-    "Return the per-role model overlay for every agent in the 24-role roster. " +
-      "Returns { configured, agents: [{ id, status, modelClass, modelMappings }] }. " +
-      "Four status variants: " +
-      "'resolved' — a live token was found for the role's tier class; " +
-      "'not-configured' — no cq.toml is present; " +
-      "'no-live-token' — cq.toml is present but the role's tier has no live token; " +
-      "'not-model-configurable' — the role has no agentTierKey (orchestrator commands). " +
-      "Only available when the server has a cq.toml-capable config root; " +
-      "otherwise returns a not-implemented error.",
-    {} as Record<string, never>,
-    async () => {
-      if (configCapability === undefined) throw new ConfigNotImplementedError();
-      return jsonResult(configCapability.computeAgentModels());
+  const prepareDispatchTool = tool(
+    "prepare_dispatch",
+    "Validate and durably prepare one typed dispatch, returning its handle, deadlines, provenance, and store-result capability.",
+    PREPARE_DISPATCH_INPUT,
+    async (args) => {
+      if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
+      return jsonResult(
+        await dispatchCapability.prepare({
+          roleId: args.roleId,
+          input: args.input,
+          idempotencyKey: args.idempotencyKey,
+          timeoutMs: args.timeoutMs,
+          expectedChild: args.expectedChild,
+          ...(args.reprepareOf === undefined ? {} : { reprepareOf: args.reprepareOf }),
+        }),
+      );
+    },
+  );
+  const storeResultTool = tool(
+    "store_result",
+    "Store a typed child result using the capability that authorizes only this operation.",
+    STORE_RESULT_INPUT,
+    async (args) => {
+      if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
+      return jsonResult(await dispatchCapability.storeResult(args));
+    },
+  );
+  const confirmDispatchCompletionTool = tool(
+    "confirm_dispatch_completion",
+    "Confirm observed native completion and promote a stored result to consumed without returning its body.",
+    CONFIRM_DISPATCH_COMPLETION_INPUT,
+    async (args) => {
+      if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
+      return jsonResult(await dispatchCapability.confirmCompletion(args));
+    },
+  );
+  const abortDispatchTool = tool(
+    "abort_dispatch",
+    "Abort a prepared dispatch with a typed terminal reason.",
+    ABORT_DISPATCH_INPUT,
+    async (args) => {
+      if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
+      return jsonResult(
+        await dispatchCapability.abort({
+          attestationId: args.attestationId,
+          generation: args.generation,
+          reason: args.reason,
+          ...(args.details === undefined ? {} : { details: args.details }),
+        }),
+      );
+    },
+  );
+  const fetchDispatchResultTool = tool(
+    "fetch_dispatch_result",
+    "Materialize a consumed dispatch result exactly once. Input is the dispatch handle only.",
+    FETCH_DISPATCH_RESULT_INPUT,
+    async (args) => {
+      if (dispatchCapability === undefined) throw new Error("unreachable dispatch tool");
+      return jsonResult(await dispatchCapability.fetch(args));
     },
   );
 
@@ -764,14 +744,21 @@ ${QUERY_LANGUAGE_HELP}`,
   // Built from the SHARED specs so the stdio registration cannot drift: one
   // description, one Zod shape, one handler per guarded mutation (T852).
   const planLifecycleTools = PLAN_LIFECYCLE_TOOL_SPECS.map((spec) =>
-    tool(
-      spec.name,
-      spec.description,
-      spec.inputSchema,
-      async (args: unknown) => wireResult(await spec.run(store, args)),
+    tool(spec.name, spec.description, spec.inputSchema, async (args: unknown) =>
+      wireResult(await spec.run(store, args)),
     ),
   );
 
+  const dispatchTools =
+    dispatchCapability === undefined
+      ? []
+      : [
+          prepareDispatchTool,
+          storeResultTool,
+          confirmDispatchCompletionTool,
+          abortDispatchTool,
+          fetchDispatchResultTool,
+        ];
   const tools = [
     enumerateLedgers,
     fetchLedger,
@@ -792,10 +779,8 @@ ${QUERY_LANGUAGE_HELP}`,
     reopenItem,
     unarchiveItem,
     readLogTool,
-    getReviewers,
-    getPlanners,
     getConfig,
-    getAgentModels,
+    ...dispatchTools,
     fetchPrompt,
     validateInput,
     validateOutput,
@@ -803,19 +788,16 @@ ${QUERY_LANGUAGE_HELP}`,
     ...planLifecycleTools,
   ] as unknown as AnyTool[];
 
+  const registeredToolNames =
+    dispatchCapability === undefined ? NON_DISPATCH_LEDGER_TOOL_NAMES : LEDGER_TOOL_NAMES;
   const describedTools = tools.map((ledgerTool, index) => {
-    const toolName = LEDGER_TOOL_NAMES[index];
+    const toolName = registeredToolNames[index];
     if (toolName === undefined || ledgerTool.name !== toolName) {
-      throw new Error(
-        `Ledger tool response-description order drift at ${ledgerTool.name}`,
-      );
+      throw new Error(`Ledger tool response-description order drift at ${ledgerTool.name}`);
     }
     return {
       ...ledgerTool,
-      description: appendLedgerResponseDescription(
-        toolName,
-        ledgerTool.description,
-      ),
+      description: appendLedgerResponseDescription(toolName, ledgerTool.description),
     };
   });
 
@@ -898,10 +880,12 @@ export const LEDGER_TOOL_NAMES = [
   "reopen_item",
   "unarchive_item",
   "read_log",
-  "get_reviewers",
-  "get_planners",
   "get_config",
-  "get_agent_models",
+  "prepare_dispatch",
+  "store_result",
+  "confirm_dispatch_completion",
+  "abort_dispatch",
+  "fetch_dispatch_result",
   "fetch_prompt",
   "validate_input",
   "validate_output",
@@ -910,3 +894,20 @@ export const LEDGER_TOOL_NAMES = [
 ] as const;
 
 export type LedgerToolName = (typeof LEDGER_TOOL_NAMES)[number];
+
+export const DISPATCH_LIFECYCLE_TOOL_NAMES = [
+  "prepare_dispatch",
+  "store_result",
+  "confirm_dispatch_completion",
+  "abort_dispatch",
+  "fetch_dispatch_result",
+] as const satisfies readonly LedgerToolName[];
+
+const DISPATCH_LIFECYCLE_TOOL_NAME_SET: ReadonlySet<string> = new Set(
+  DISPATCH_LIFECYCLE_TOOL_NAMES,
+);
+
+/** The surface registered when no durable dispatch capability exists. */
+export const NON_DISPATCH_LEDGER_TOOL_NAMES = LEDGER_TOOL_NAMES.filter(
+  (name) => !DISPATCH_LIFECYCLE_TOOL_NAME_SET.has(name),
+);

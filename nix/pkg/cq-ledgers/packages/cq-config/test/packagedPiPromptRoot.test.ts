@@ -136,9 +136,7 @@ describe("packaged Pi prompt root", () => {
     expect(catalog).toHaveLength(24);
     expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles", "surface.json"]);
     expect(readFileSync(path.join(output, "catalog.json"), "utf8")).toBe(catalogJson);
-    const manifest = JSON.parse(
-      readFileSync(path.join(output, "surface.json"), "utf8"),
-    ) as {
+    const manifest = JSON.parse(readFileSync(path.join(output, "surface.json"), "utf8")) as {
       readonly surface: string;
       readonly roles: readonly { readonly version: number | null }[];
     };
@@ -164,8 +162,7 @@ describe("packaged Pi prompt root", () => {
     );
     for (const call of [
       "derive_predicates({})",
-      "get_config({})",
-      "get_reviewers({})",
+      'get_config({"section":"<section>"})',
       'call `fetch_prompt` with `{ "roleId": "<roleId>" }`',
     ]) {
       expect(roles.get("advance")).toContain(call);

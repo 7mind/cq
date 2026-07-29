@@ -16,13 +16,19 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createLedgerStore, CANONICAL_LEDGERS, LEDGER_TOOL_NAMES } from "@cq/ledger";
+import {
+  createLedgerStore,
+  CANONICAL_LEDGERS,
+  LEDGER_TOOL_NAMES,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
+} from "@cq/ledger";
 import { buildServer, projectInstructionLine } from "../src/main.js";
 
 const BOOTSTRAPPED = CANONICAL_LEDGERS.map((c) => c.name);
@@ -60,6 +66,7 @@ function childEnv(): Record<string, string> {
 }
 
 let tmpRoot: string;
+let dispatchPromptRoot: string;
 let prevXdgStateHome: string | undefined;
 const callerHarness = process.env["CQ_HARNESS"];
 
@@ -77,16 +84,43 @@ afterEach(() => {
 
 beforeAll(async () => {
   prevXdgStateHome = process.env["XDG_STATE_HOME"];
-  process.env["XDG_STATE_HOME"] = await fs.mkdtemp(
-    path.join(os.tmpdir(), "ledger-mcp-xdg-home-"),
-  );
+  process.env["XDG_STATE_HOME"] = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-xdg-home-"));
 
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-"));
+  dispatchPromptRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-dispatch-prompts-"));
+  const roleId = "implement-worker";
+  const roleBytes = "Perform the requested implementation task.\n";
+  const catalogJson = JSON.stringify([
+    {
+      roleId,
+      roleKind: "dispatched-subagent",
+      sidecar: { schemaRoleId: roleId },
+    },
+  ]);
+  const surfaceCore = {
+    surface: "claude",
+    catalogMetadataHash: createHash("sha256").update(catalogJson, "utf8").digest("hex"),
+    roles: [
+      {
+        roleId,
+        version: 2,
+        sha256: createHash("sha256").update(roleBytes, "utf8").digest("hex"),
+      },
+    ],
+  };
+  await fs.mkdir(path.join(dispatchPromptRoot, "roles"), { recursive: true });
+  await fs.writeFile(path.join(dispatchPromptRoot, "catalog.json"), catalogJson);
   await fs.writeFile(
-    path.join(tmpRoot, "cq.toml"),
-    xdgLedgerToml(path.basename(tmpRoot)),
-    "utf8",
+    path.join(dispatchPromptRoot, "surface.json"),
+    JSON.stringify({
+      ...surfaceCore,
+      surfaceDigest: createHash("sha256")
+        .update(JSON.stringify(surfaceCore), "utf8")
+        .digest("hex"),
+    }),
   );
+  await fs.writeFile(path.join(dispatchPromptRoot, "roles", `${roleId}.md`), roleBytes);
+  await fs.writeFile(path.join(tmpRoot, "cq.toml"), xdgLedgerToml(path.basename(tmpRoot)), "utf8");
   const { store } = await createLedgerStore(tmpRoot);
   await store.createLedger("xenos", {
     statusValues: ["open", "done"],
@@ -101,21 +135,22 @@ afterAll(async () => {
   if (prevXdgStateHome === undefined) delete process.env["XDG_STATE_HOME"];
   else process.env["XDG_STATE_HOME"] = prevXdgStateHome;
   if (xdgHome !== undefined) await fs.rm(xdgHome, { recursive: true, force: true });
+  await fs.rm(dispatchPromptRoot, { recursive: true, force: true });
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
 
-async function withClient(fn: (client: Client) => Promise<void>): Promise<void> {
+async function withClient(
+  fn: (client: Client) => Promise<void>,
+  envOverrides: Readonly<Record<string, string>> = {},
+): Promise<void> {
   const { command, args } = resolveBinPath();
   const transport = new StdioClientTransport({
     command,
     args: [...args, "--cwd", tmpRoot],
-    env: childEnv(),
+    env: { ...childEnv(), ...envOverrides },
     stderr: "inherit",
   });
-  const client = new Client(
-    { name: "ledger-mcp-test", version: "0.0.1" },
-    { capabilities: {} },
-  );
+  const client = new Client({ name: "ledger-mcp-test", version: "0.0.1" }, { capabilities: {} });
   await client.connect(transport);
   try {
     await fn(client);
@@ -125,21 +160,30 @@ async function withClient(fn: (client: Client) => Promise<void>): Promise<void> 
 }
 
 function decode<T>(result: unknown): T {
-  const content = (result as { content: Array<{ type: string; text: string }> })
-    .content;
+  const decodedResult = result as {
+    content: Array<{ type: string; text: string }>;
+    isError?: boolean;
+  };
+  const content = decodedResult.content;
   const first = content[0];
   if (first === undefined || first.type !== "text") {
     throw new Error("expected single text content block");
   }
+  if (decodedResult.isError === true) throw new Error(first.text);
   return JSON.parse(first.text) as T;
 }
 
 describe("ledger-mcp stdio binary", () => {
-  it("lists exactly the 31 ledger tools (no cq ask/submit tools)", async () => {
+  it("omits dispatch tools when no attested prompt surface is configured", async () => {
     await withClient(async (client) => {
       const list = await client.listTools();
       const names = list.tools.map((t) => t.name).sort();
-      expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
+      expect(names).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
+      expect(names).not.toContain("prepare_dispatch");
+      expect(names).not.toContain("fetch_dispatch_result");
+      expect(names).not.toEqual(
+        expect.arrayContaining(["get_reviewers", "get_planners", "get_agent_models"]),
+      );
       expect(names).not.toContain("ask_user_question");
       expect(names).not.toContain("submit_workflow_phase");
     });
@@ -151,6 +195,111 @@ describe("ledger-mcp stdio binary", () => {
       const decoded = decode<{ ledgers: string[] }>(result);
       expect(decoded.ledgers).toEqual([...BOOTSTRAPPED, "xenos"].sort());
     });
+  });
+
+  it("runs the durable one-shot dispatch lifecycle through the production stdio process", async () => {
+    await withClient(async (client) => {
+      expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(
+        [...LEDGER_TOOL_NAMES].sort(),
+      );
+      const expectedChild = { childId: "child-t695", runId: "run-t695" };
+      const prepared = decode<{
+        accepted: true;
+        prepared: {
+          attestationId: string;
+          generation: number;
+          resultCapability: { scope: "store-result"; token: string };
+          promptProvenance: {
+            roleId: string;
+            version: number;
+            promptDigest: string;
+            inputDigest: string;
+          };
+        };
+      }>(
+        await client.callTool({
+          name: "prepare_dispatch",
+          arguments: {
+            roleId: "implement-worker",
+            input: {
+              taskId: "T695",
+              acceptance: "Exercise the production stdio lifecycle.",
+              worktreePath: "/tmp/wt-T695",
+              branch: "implement/T695",
+              baseCommit: "33a9f1fc",
+            },
+            idempotencyKey: "T695-production-stdio",
+            timeoutMs: 120_000,
+            expectedChild,
+          },
+        }),
+      );
+      expect(prepared.accepted).toBe(true);
+      const handle = {
+        attestationId: prepared.prepared.attestationId,
+        generation: prepared.prepared.generation,
+      };
+
+      const stored = decode<{ state: string }>(
+        await client.callTool({
+          name: "store_result",
+          arguments: {
+            resultCapability: prepared.prepared.resultCapability,
+            output: {
+              taskId: "T695",
+              status: "pass",
+              resultCommit: "a".repeat(40),
+              branch: "implement/T695",
+              filesTouched: ["packages/ledger-mcp/src/main.ts"],
+              checkSummary: "production stdio lifecycle passed",
+              summary: "Wired the durable production dispatch backend.",
+              gateDurationMs: 1,
+            },
+          },
+        }),
+      );
+      expect(stored.state).toBe("result-stored");
+
+      const confirmed = decode<{ state: string }>(
+        await client.callTool({
+          name: "confirm_dispatch_completion",
+          arguments: {
+            ...handle,
+            nativeCompletion: {
+              kind: "native-completion",
+              actor: "trusted-parent",
+              ...expectedChild,
+              completedAt: new Date().toISOString(),
+            },
+            expectedProvenance: {
+              roleId: prepared.prepared.promptProvenance.roleId,
+              version: prepared.prepared.promptProvenance.version,
+              promptDigest: prepared.prepared.promptProvenance.promptDigest,
+              inputDigest: prepared.prepared.promptProvenance.inputDigest,
+            },
+          },
+        }),
+      );
+      expect(confirmed.state).toBe("consumed");
+
+      const firstFetch = decode<{ state: string; output?: unknown }>(
+        await client.callTool({
+          name: "fetch_dispatch_result",
+          arguments: handle,
+        }),
+      );
+      expect(firstFetch.state).toBe("consumed");
+      expect(firstFetch.output).toBeDefined();
+
+      const repeatedFetch = decode<{ state: string; output?: unknown }>(
+        await client.callTool({
+          name: "fetch_dispatch_result",
+          arguments: handle,
+        }),
+      );
+      expect(repeatedFetch.state).toBe("output-already-materialized");
+      expect(repeatedFetch.output).toBeUndefined();
+    }, { CQ_PROMPT_ROOT: dispatchPromptRoot });
   });
 
   it("supports ack, compact, and full round-trips that persist", async () => {
@@ -248,10 +397,7 @@ describe("buildServer project display name", () => {
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client(
-      { name: "ledger-mcp-test", version: "0.0.1" },
-      { capabilities: {} },
-    );
+    const client = new Client({ name: "ledger-mcp-test", version: "0.0.1" }, { capabilities: {} });
     await client.connect(clientTransport);
     try {
       // Primary carrier: serverInfo.title, read via getServerVersion().
@@ -291,10 +437,7 @@ async function withClientAtRoot(
     env: childEnv(),
     stderr: "inherit",
   });
-  const client = new Client(
-    { name: "ledger-mcp-test", version: "0.0.1" },
-    { capabilities: {} },
-  );
+  const client = new Client({ name: "ledger-mcp-test", version: "0.0.1" }, { capabilities: {} });
   await client.connect(transport);
   try {
     await fn(client);
@@ -352,10 +495,7 @@ async function withClientAtRootHarness(
     env: childEnv,
     stderr: "inherit",
   });
-  const client = new Client(
-    { name: "ledger-mcp-test", version: "0.0.1" },
-    { capabilities: {} },
-  );
+  const client = new Client({ name: "ledger-mcp-test", version: "0.0.1" }, { capabilities: {} });
   await client.connect(transport);
   try {
     await fn(client);
@@ -422,7 +562,7 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
             alias: string;
             effort: string | null;
           }>;
-        }>(await client.callTool({ name: "get_planners", arguments: {} }));
+        }>(await client.callTool({ name: "get_config", arguments: { section: "planners" } }));
         expect(planners.configured).toBe(true);
         expect(planners.planners).toEqual([
           {
@@ -441,7 +581,7 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
             modelClass: string | null;
             modelMappings: Record<string, string[] | undefined>;
           }>;
-        }>(await client.callTool({ name: "get_agent_models", arguments: {} }));
+        }>(await client.callTool({ name: "get_config", arguments: { section: "agent_models" } }));
         const planAdvance = agents.agents.find((a) => a.id === "plan-advance");
         expect(planAdvance).toBeDefined();
         expect(planAdvance!.status).toBe("resolved");
@@ -467,7 +607,7 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
             alias: string;
             effort: string | null;
           }>;
-        }>(await client.callTool({ name: "get_planners", arguments: {} }));
+        }>(await client.callTool({ name: "get_config", arguments: { section: "planners" } }));
         expect(planners.configured).toBe(true);
         expect(planners.planners).toEqual([
           {
@@ -486,7 +626,7 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
             modelClass: string | null;
             modelMappings: Record<string, string[] | undefined>;
           }>;
-        }>(await client.callTool({ name: "get_agent_models", arguments: {} }));
+        }>(await client.callTool({ name: "get_config", arguments: { section: "agent_models" } }));
         const planAdvance = agents.agents.find((a) => a.id === "plan-advance");
         expect(planAdvance).toBeDefined();
         expect(planAdvance!.status).toBe("resolved");
@@ -505,7 +645,7 @@ describe("ledger-mcp stdio CQ_HARNESS env-inheritance chain (T487)", () => {
         const planners = decode<{
           configured: boolean;
           planners: Array<{ harness: string; alias: string }>;
-        }>(await client.callTool({ name: "get_planners", arguments: {} }));
+        }>(await client.callTool({ name: "get_config", arguments: { section: "planners" } }));
         expect(planners.configured).toBe(true);
         expect(planners.planners[0]!.harness).toBe("claude");
         expect((planners.planners[0]! as { alias: string }).alias).toBe("opus");
@@ -521,15 +661,16 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
   // now keys off `ResolvedLedgerStore.configRoot` rather than the xdg-blind
   // `rootDirOf(store)` duck-type.
 
-  it("surfaces get_reviewers + get_planners + get_config + get_agent_models on the stdio binary", async () => {
-    // The default tmpRoot has no cq.toml, so the tools are still listed.
+  it("surfaces sectioned get_config without advertising unwired dispatch tools", async () => {
     await withClientAtRoot(tmpRoot, async (client) => {
       const list = await client.listTools();
       const names = list.tools.map((t) => t.name);
-      expect(names).toContain("get_reviewers");
-      expect(names).toContain("get_planners");
       expect(names).toContain("get_config");
-      expect(names).toContain("get_agent_models");
+      expect(names).not.toContain("get_reviewers");
+      expect(names).not.toContain("get_planners");
+      expect(names).not.toContain("get_agent_models");
+      expect(names).not.toContain("prepare_dispatch");
+      expect(names).not.toContain("fetch_dispatch_result");
     });
   });
 
@@ -549,13 +690,13 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
       );
       await withClientAtRoot(noCfgRoot, async (client) => {
         const reviewers = decode<{ configured: boolean; reviewers: unknown[] }>(
-          await client.callTool({ name: "get_reviewers", arguments: {} }),
+          await client.callTool({ name: "get_config", arguments: { section: "reviewers" } }),
         );
         expect(reviewers.configured).toBe(false);
         expect(reviewers.reviewers).toEqual([]);
 
         const planners = decode<{ configured: boolean; planners: unknown[] }>(
-          await client.callTool({ name: "get_planners", arguments: {} }),
+          await client.callTool({ name: "get_config", arguments: { section: "planners" } }),
         );
         expect(planners.configured).toBe(false);
         expect(planners.planners).toEqual([]);
@@ -565,7 +706,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
           aliases: object;
           reviewers: unknown[];
           planners: unknown[];
-        }>(await client.callTool({ name: "get_config", arguments: {} }));
+        }>(await client.callTool({ name: "get_config", arguments: { section: "all" } }));
         expect(config.configured).toBe(true);
         expect(config.aliases).toEqual({});
         expect(config.reviewers).toEqual([]);
@@ -597,18 +738,36 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
       await withClientAtRoot(cfgRoot, async (client) => {
         const reviewers = decode<{
           configured: boolean;
-          reviewers: Array<{ harness: string; model: string; provider: string | null; alias: string; effort: string | null }>;
-        }>(await client.callTool({ name: "get_reviewers", arguments: {} }));
+          reviewers: Array<{
+            harness: string;
+            model: string;
+            provider: string | null;
+            alias: string;
+            effort: string | null;
+          }>;
+        }>(await client.callTool({ name: "get_config", arguments: { section: "reviewers" } }));
         expect(reviewers.configured).toBe(true);
         expect(reviewers.reviewers).toEqual([
-          { harness: "pi", model: "grok-build", provider: "grok-build", alias: "codex", effort: null },
+          {
+            harness: "pi",
+            model: "grok-build",
+            provider: "grok-build",
+            alias: "codex",
+            effort: null,
+          },
           { harness: "claude", model: "opus-4.8[1m]", provider: null, alias: "opus", effort: null },
         ]);
 
         const planners = decode<{
           configured: boolean;
-          planners: Array<{ harness: string; model: string; provider: string | null; alias: string; effort: string | null }>;
-        }>(await client.callTool({ name: "get_planners", arguments: {} }));
+          planners: Array<{
+            harness: string;
+            model: string;
+            provider: string | null;
+            alias: string;
+            effort: string | null;
+          }>;
+        }>(await client.callTool({ name: "get_config", arguments: { section: "planners" } }));
         expect(planners.configured).toBe(true);
         expect(planners.planners).toEqual([
           { harness: "claude", model: "opus-4.8[1m]", provider: null, alias: "opus", effort: null },
@@ -616,10 +775,13 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
 
         const config = decode<{
           configured: boolean;
-          aliases: Record<string, { harness: string; model: string; provider: string | null; effort: string | null }>;
+          aliases: Record<
+            string,
+            { harness: string; model: string; provider: string | null; effort: string | null }
+          >;
           reviewers: string[];
           planners: string[];
-        }>(await client.callTool({ name: "get_config", arguments: {} }));
+        }>(await client.callTool({ name: "get_config", arguments: { section: "all" } }));
         expect(config.configured).toBe(true);
         expect(config.reviewers).toEqual(["codex", "opus"]);
         expect(config.planners).toEqual(["opus"]);
@@ -641,7 +803,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
    *  - without a cq.toml: returns configured:false with 24 entries (not-configured
    *    for model-configurable roles, not-model-configurable for command roles).
    */
-  it("get_agent_models returns 24 agent entries with a fixture cq.toml (T287)", async () => {
+  it("get_config(agent_models) returns 24 agent entries with a fixture cq.toml (T287)", async () => {
     const agentRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-agents-"));
     try {
       await fs.writeFile(
@@ -669,16 +831,19 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
             modelClass: string | null;
             modelMappings: Record<string, unknown>;
           }>;
-        }>(await client.callTool({ name: "get_agent_models", arguments: {} }));
+        }>(await client.callTool({ name: "get_config", arguments: { section: "agent_models" } }));
         expect(result.configured).toBe(true);
         // The fixed roster has exactly 24 roles.
         expect(result.agents).toHaveLength(24);
         // Every entry has the required fields.
         for (const agent of result.agents) {
           expect(typeof agent.id).toBe("string");
-          expect(["resolved", "not-configured", "no-live-token", "not-model-configurable"]).toContain(
-            agent.status,
-          );
+          expect([
+            "resolved",
+            "not-configured",
+            "no-live-token",
+            "not-model-configurable",
+          ]).toContain(agent.status);
           expect(typeof agent.modelMappings).toBe("object");
         }
       });
@@ -687,7 +852,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
     }
   });
 
-  it("get_agent_models returns 24 unresolved entries when cq.toml carries no aliases ([ledger]-only) (T287)", async () => {
+  it("get_config(agent_models) returns 24 unresolved entries when cq.toml carries no aliases ([ledger]-only) (T287)", async () => {
     // T505: a runnable root always carries a cq.toml, so the leanest spawnable
     // root is [ledger]-only. `configured` (= a parseable cq.toml is present) is
     // true; computeAgentModels only emits `not-configured` when NO cq.toml is
@@ -710,7 +875,7 @@ describe("ledger-mcp stdio config capability (cq.toml)", () => {
         const result = decode<{
           configured: boolean;
           agents: Array<{ id: string; status: string }>;
-        }>(await client.callTool({ name: "get_agent_models", arguments: {} }));
+        }>(await client.callTool({ name: "get_config", arguments: { section: "agent_models" } }));
         expect(result.configured).toBe(true);
         expect(result.agents).toHaveLength(24);
         for (const agent of result.agents) {

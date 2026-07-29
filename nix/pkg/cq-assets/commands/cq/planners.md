@@ -1,5 +1,5 @@
 ---
-description: Session-only planner-set override — parse a natural-language planner instruction (e.g. "use grok and opus only") into canonical harness:model tokens via the cq.toml [aliases] table (from the ledger MCP get_planners/get_config) plus a documented fallback map; echo the resolved active set; confirm the override is SESSION-ONLY and reverts on the next fresh run.
+description: Session-only planner-set override — parse a natural-language planner instruction (e.g. "use grok and opus only") into canonical harness:model tokens via the cq.toml [aliases] table (from the ledger MCP get_config aliases section) plus a documented fallback map; echo the resolved active set; confirm the override is SESSION-ONLY and reverts on the next fresh run.
 argument-hint: <natural-language planner instruction>  # e.g. "use grok and opus only"
 # {{cq:fragment:host-tool-vocabulary}}
 ---
@@ -44,18 +44,20 @@ The Write tool is not in your allowed-tools and must not be used.
 
 ## Step 1 — Query the ledger MCP for the configured alias table
 
-Call `get_config` (from the ledger MCP server) to retrieve the repo's
-`cq.toml` aliases and planner list. The result shape is:
+Call `get_config({"section":"aliases"})` (from the ledger MCP server) to
+retrieve the repo's `cq.toml` aliases. The result shape is:
 
 ```json
 {
   "configured": true | false,
-  "aliases": { "<alias>": { "harness": "claude" | "pi", "model": "<model>" } },
-  "planners": ["<alias>", "..."]
+  "aliases": { "<alias>": { "harness": "claude" | "pi", "model": "<model>" } }
 }
 ```
 
-If `configured: false` (no parseable `cq.toml` is present in the repo — D81: `configured` reflects only cq.toml presence, NOT whether the `[planners]` list is populated), the alias table is empty; use ONLY the built-in fallback map below. When `configured: true`, the `aliases` table is the parsed cq.toml `[aliases]`, and the built-in fallback map applies only to alias names NOT declared there.
+If `configured: false`, the alias table is absent or empty; use ONLY the
+built-in fallback map below. When `configured: true`, `aliases` contains the
+parsed cq.toml `[aliases]` table, and the built-in fallback map applies only to
+alias names NOT declared there.
 
 If the ledger MCP server is not available (tool call fails), treat the result
 as `configured: false` and continue with the fallback map — do not abort.
@@ -136,7 +138,7 @@ override lives **in the conversation context of the current chained run**:
 - The orchestrator READS the stated active set from the run context when
   deciding which planners to dispatch.
 - When NO override has been stated in the current run context, the orchestrator
-  falls back to `get_planners` (the cq.toml default, or the single native
+  falls back to `get_config({"section":"planners"})` (the cq.toml default, or the single native
   Claude planner if unconfigured).
 
 This means:
@@ -155,9 +157,9 @@ the planner-set override is live:
 
 > **Session override present?** If the user stated a planner set in this run
 > (via `CQ::planners …`), use the canonical tokens the user confirmed. The
-> stated tokens take precedence over `get_planners`.
+> stated tokens take precedence over `get_config({"section":"planners"})`.
 >
-> **No session override?** Call `get_planners` (ledger MCP). If
+> **No session override?** Call `get_config({"section":"planners"})` (ledger MCP). If
 > `configured: true`, use the returned resolved set. If `configured: false`,
 > fall back to the single native Claude planner.
 

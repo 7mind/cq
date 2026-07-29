@@ -570,7 +570,12 @@ describe("T687 §2 — correlation is parent-minted, and its provenance differs 
   });
 
   test("a weak nonce and a NON-UUID session id are refused", () => {
-    for (const launchNonce of ["", "short", "a".repeat(31), "has spaces in it and is long enough"]) {
+    for (const launchNonce of [
+      "",
+      "short",
+      "a".repeat(31),
+      "has spaces in it and is long enough",
+    ]) {
       expect(() => assertClaudeChildCorrelation({ ...CORRELATION, launchNonce })).toThrow(
         AttestationContractError,
       );
@@ -804,7 +809,9 @@ describe("T687 §3b — the launch gate must NOT diverge from the Codex surface'
 
   test("both surfaces return IDENTICAL verdicts over the whole witness matrix", () => {
     expect(compare(claudeLaunchGate)).toEqual(
-      compare(codexLaunchGate as unknown as (d: DispatchDeadlines, at: string) => ClaudeLaunchVerdict),
+      compare(
+        codexLaunchGate as unknown as (d: DispatchDeadlines, at: string) => ClaudeLaunchVerdict,
+      ),
     );
     // And the matrix is not trivially all-approve or all-refuse: it must actually
     // exercise both branches, or the equality above would prove nothing.
@@ -830,7 +837,10 @@ describe("T687 §3b — the launch gate must NOT diverge from the Codex surface'
     const skewTolerant = (d: DispatchDeadlines, at: string): ClaudeLaunchVerdict => {
       const verdict = claudeLaunchGate(d, at);
       return !verdict.launch && verdict.refusal === "clock-skew"
-        ? claudeLaunchGate(d, new Date(Date.parse(d.launchDeadline) - LAUNCH_DEADLINE_MS).toISOString())
+        ? claudeLaunchGate(
+            d,
+            new Date(Date.parse(d.launchDeadline) - LAUNCH_DEADLINE_MS).toISOString(),
+          )
         : verdict;
     };
     expect(compare(skewTolerant)).not.toEqual(baseline);
@@ -950,14 +960,10 @@ describe("T687 §4 — the parent-side handle-only check", () => {
 describe("T687 §4b — the completion decision", () => {
   test("the outcome and corroboration vocabularies are closed", () => {
     expect([...CLAUDE_CHILD_OUTCOMES]).toEqual(["completed", "cancelled", "transport-failed"]);
-    expect([...CLAUDE_EXIT_CORROBORATIONS]).toEqual([
-      "corroborates",
-      "contradicts",
-      "unavailable",
-    ]);
+    expect([...CLAUDE_EXIT_CORROBORATIONS]).toEqual(["corroborates", "contradicts", "unavailable"]);
   });
 
-  test("T722 §7.1 #4: `subtype:\"success\"` with `is_error:true` is a FAILURE", () => {
+  test('T722 §7.1 #4: `subtype:"success"` with `is_error:true` is a FAILURE', () => {
     // The measured shape, verbatim from the probe. A bridge keying on `subtype`
     // would call this a successful dispatch.
     expect(TERMINAL_API_ERROR.subtype).toBe("success");
@@ -1010,9 +1016,9 @@ describe("T687 §4b — the completion decision", () => {
     const handle: DispatchHandle = { attestationId: "att_" + "z".repeat(32), generation: 1 };
     for (const mode of MODES) {
       expect(claudeChildOutcome(observation(mode, handle))).toBe("completed");
-      expect(
-        claudeChildOutcome(observation(mode, handle, { terminal: TERMINAL_API_ERROR })),
-      ).toBe("transport-failed");
+      expect(claudeChildOutcome(observation(mode, handle, { terminal: TERMINAL_API_ERROR }))).toBe(
+        "transport-failed",
+      );
       // Cancelled wins even when the turn itself reported success: cancellation
       // is a parent-observed fact about the RUN, not a verdict on the payload.
       expect(claudeChildOutcome(observation(mode, handle, { cancelled: true }))).toBe("cancelled");
@@ -1287,9 +1293,7 @@ for (const mode of MODES) {
       }
       expect(JSON.stringify(fetched)).toContain(BODY_SENTINEL);
       // And the handle-only responses really are small next to the body.
-      expect(JSON.stringify(confirmed).length).toBeLessThan(
-        JSON.stringify(fetched).length / 4,
-      );
+      expect(JSON.stringify(confirmed).length).toBeLessThan(JSON.stringify(fetched).length / 4);
     });
 
     test("RESULT-STORED BEFORE COMPLETION is the normal order, and fetch shows it", () => {
@@ -1800,7 +1804,7 @@ for (const mode of MODES) {
       expect(drop.rowsRemaining).toBe(0);
     });
 
-    test("all SIX typed fetch states are reachable on this mode", () => {
+    test("all SEVEN typed fetch states are reachable on this mode", () => {
       const seen = new Set<string>();
 
       const live = harness({ seed: 257 });
@@ -1809,6 +1813,7 @@ for (const mode of MODES) {
       storeVia(live, p1);
       seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
       confirmVia(live, p1, mode);
+      seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
       seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
       live.clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
       seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
@@ -1827,29 +1832,25 @@ for (const mode of MODES) {
         "aborted",
         "attestation-not-found",
         "consumed",
+        "output-already-materialized",
         "prepared",
         "result-stored",
         "terminal-envelope-expired",
       ]);
     });
 
-    test("REPEAT fetch re-renders the body — the ASSUMED defects:D188 reading, not a ruling", () => {
-      // Pinned as a CHARACTERIZATION of the shared service, and named as an OPEN
-      // cross-surface divergence rather than settled: tasks:T693's pi extension
-      // materialises the body EXACTLY ONCE and answers
-      // `output-already-materialized` on a repeat, whereas the shared
-      // `fetchDispatchResult` this surface uses is a pure, repeatable read. Both
-      // satisfy defects:D173. Which is right is defects:D188's to decide, and
-      // T687 does not decide it — it records which reading it assumed.
-      expect(CLAUDE_FETCH_SEMANTICS_ASSUMED).toBe("repeatable-read");
+    test("REPEAT fetch returns output-already-materialized — the shared defects:D188 ruling", () => {
+      expect(CLAUDE_FETCH_SEMANTICS_ASSUMED).toBe("one-shot-materialization");
       const h = harness({ seed: 261 });
       const prepared = prepareClaude(h);
       storeVia(h, prepared);
       confirmVia(h, prepared, mode);
       const first = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps);
       const second = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps);
-      expect(second).toEqual(first);
-      expect(JSON.stringify(second)).toContain(BODY_SENTINEL);
+      expect(first.state).toBe("consumed");
+      expect(JSON.stringify(first)).toContain(BODY_SENTINEL);
+      expect(second.state).toBe("output-already-materialized");
+      expect(JSON.stringify(second)).not.toContain(BODY_SENTINEL);
     });
   });
 }
@@ -2025,9 +2026,7 @@ describe("T687 §7 — what this DEFINITION task deliberately does not do", () =
     expect(CLAUDE_DISPATCH_DEFERRED).toContain(
       "consolidate-the-duplicated-launch-gate-into-the-shared-module",
     );
-    expect(CLAUDE_DISPATCH_DEFERRED).toContain(
-      "decide-defects-D188s-fetch-repeatability-divergence",
-    );
+    expect(CLAUDE_DISPATCH_DEFERRED.join(" ")).not.toContain("D188");
   });
 
   test("this module is INERT: it spawns nothing and renders no asset", () => {
@@ -2035,9 +2034,7 @@ describe("T687 §7 — what this DEFINITION task deliberately does not do", () =
     // export surface is data and pure functions over data. If it ever needed a
     // process or a filesystem, this suite could not run it on a fault store that
     // throws on every operation — which §4/§4b already do.
-    const source = Bun.file(
-      new URL("../src/claudeDispatchProtocol.ts", import.meta.url).pathname,
-    );
+    const source = Bun.file(new URL("../src/claudeDispatchProtocol.ts", import.meta.url).pathname);
     const text = source.text();
     return text.then((body) => {
       for (const forbidden of ["node:fs", "node:child_process", "Bun.spawn", "execSync"]) {

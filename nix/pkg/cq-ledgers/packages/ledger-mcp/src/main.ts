@@ -1,6 +1,6 @@
 #!/usr/bin/env -S bun run
 /**
- * ledger-mcp — standalone MCP server exposing the 31 ledger tools.
+ * ledger-mcp — standalone MCP server exposing the 33 ledger tools.
  *
  * This is the cq-free ledger MCP server: it serves the tool surface backed
  * by the store `createLedgerStore` resolves for the supplied `--cwd` directory
@@ -45,6 +45,7 @@ import {
   type LedgerStore,
   type ReadLogCapability,
   type ConfigCapability,
+  type DispatchCapability,
   type PromptCatalogCapability,
   type ListProjectsCapability,
   type ResolvedLedgerStore,
@@ -61,6 +62,21 @@ import {
   prefixToolName,
 } from "@cq/ledger";
 import { createConfigCapability } from "./configCapability.js";
+import {
+  createSingleProjectDispatchRuntime,
+  type DispatchRuntime,
+} from "./dispatchCapability.js";
+export {
+  createDispatchCapability,
+  createPostgresHubDispatchRuntime,
+  createSingleProjectDispatchRuntime,
+  refuseDispatchRuntime,
+} from "./dispatchCapability.js";
+export type {
+  DispatchRuntime,
+  PostgresHubDispatchRuntimeOptions,
+  SingleProjectDispatchRuntimeOptions,
+} from "./dispatchCapability.js";
 import {
   createLegacySourcePromptCatalogCapability,
   createPromptCatalogCapability,
@@ -375,7 +391,7 @@ export function projectInstructionLine(displayName: string): string {
 }
 
 /**
- * Build a fresh McpServer with the 31 ledger tools (LEDGER_TOOL_NAMES) bound to
+ * Build a fresh McpServer with the 33 ledger tools (LEDGER_TOOL_NAMES) bound to
  * `store`. read_log is wired only when `store` is filesystem-backed.
  *
  * `displayName` is the basename of the resolved `--cwd` (the project directory
@@ -471,10 +487,7 @@ export function startLedgerCoherenceWatcher(
   onChange?: (ledgerId: string | null) => void,
 ): LedgerWatcher | XdgCoherenceWatcher | PostgresCoherenceWatcher {
   if (resolved.backend === "remote") {
-    throw new RemoteLedgerClientNotWiredError(
-      "startLedgerCoherenceWatcher",
-      root,
-    );
+    throw new RemoteLedgerClientNotWiredError("startLedgerCoherenceWatcher", root);
   }
   if (resolved.backend === "git-object") {
     return startLedgerRefWatcher(resolved.store, resolved.branch, nodeGitRunner(root), onChange);
@@ -504,8 +517,9 @@ export function startLedgerCoherenceWatcher(
  * Options for {@link createLedgerMcpServer}, the public builder for an
  * `McpServer` bound to one `store` (G45 / Q209).
  *
- * `toolPrefix` is OPTIONAL and defaults to `''` (the unprefixed 31-tool
- * surface). A non-empty prefix renames every registered tool to its
+ * `toolPrefix` is OPTIONAL and defaults to `''`. The server registers the
+ * full 33-tool surface when `dispatchCapability` exists and the 28-tool
+ * non-dispatch surface otherwise. A non-empty prefix renames every registered tool to its
  * `prefixToolName(prefix, name)` form and rewrites the matching tool names in
  * the server-level `instructions`. The prefix is validated by
  * {@link assertToolPrefix} (via `buildServerInstructions` + the threaded
@@ -547,6 +561,8 @@ export interface CreateLedgerMcpServerOptions {
    * single-project fallback.
    */
   listProjects?: ListProjectsCapability;
+  /** Durable, server-scoped dispatch lifecycle capability. */
+  dispatchCapability?: DispatchCapability;
 }
 
 /**
@@ -556,8 +572,8 @@ export interface CreateLedgerMcpServerOptions {
  * through; {@link buildServer} is a thin unprefixed wrapper over it.
  *
  * With `toolPrefix` omitted or `''` the behaviour is BYTE-IDENTICAL to the
- * historical `buildServer` (serverInfo, instructions, capability gating, and the
- * registered 31-tool names are all unchanged). A non-empty prefix renames the
+ * historical `buildServer` (serverInfo, instructions, and capability gating).
+ * A non-empty prefix renames the
  * tools and the instruction references via the shared
  * {@link buildServerInstructions} / {@link registerLedgerStdioTools} prefix path.
  */
@@ -613,6 +629,7 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
     promptCatalog,
     toolPrefix,
     listProjects,
+    opts.dispatchCapability,
   );
   return server;
 }
@@ -620,8 +637,7 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
 /**
  * Thin unprefixed wrapper over {@link createLedgerMcpServer} (G45 / Q209). Kept
  * BYTE-IDENTICAL in behaviour to its historical form for both call sites — the
- * stdio `main()` path and `attachMcpHttp` — so cq frontends/commands that rely
- * on the unprefixed 31-tool surface are unaffected.
+ * stdio `main()` path and `attachMcpHttp`.
  */
 export function buildServer(
   store: LedgerStore,
@@ -629,6 +645,7 @@ export function buildServer(
   configRoot?: string,
   projectKey?: string,
   promptArtifactStore?: PromptArtifactStore,
+  dispatchCapability?: DispatchCapability,
 ): McpServer {
   return createLedgerMcpServer({
     store,
@@ -636,6 +653,7 @@ export function buildServer(
     ...(configRoot !== undefined ? { configRoot } : {}),
     ...(projectKey !== undefined ? { projectKey } : {}),
     ...(promptArtifactStore !== undefined ? { promptArtifactStore } : {}),
+    ...(dispatchCapability !== undefined ? { dispatchCapability } : {}),
   });
 }
 
@@ -672,9 +690,7 @@ export interface McpHttpHandlers {
   onWsMessage(ws: ServerWebSocket<undefined>, raw: string | Buffer): void;
 }
 
-export type McpSessionDisplayName =
-  | string
-  | ((req: Request) => Promise<string> | string);
+export type McpSessionDisplayName = string | ((req: Request) => Promise<string> | string);
 
 export function attachMcpHttp(
   store: LedgerStore,
@@ -684,6 +700,7 @@ export function attachMcpHttp(
   projectKey?: string,
   promptArtifactStore?: PromptArtifactStore,
   listProjects?: ListProjectsCapability,
+  dispatchCapability?: DispatchCapability,
 ): McpHttpHandlers {
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
@@ -730,6 +747,7 @@ export function attachMcpHttp(
       ...(projectKey !== undefined ? { projectKey } : {}),
       ...(promptArtifactStore !== undefined ? { promptArtifactStore } : {}),
       ...(listProjects !== undefined ? { listProjects } : {}),
+      ...(dispatchCapability !== undefined ? { dispatchCapability } : {}),
     });
     await server.connect(transport);
     // Body already consumed above; hand it back so the transport doesn't
@@ -791,6 +809,7 @@ export function serveHttp(
   configRoot?: string,
   projectKey?: string,
   promptArtifactStore?: PromptArtifactStore,
+  dispatchCapability?: DispatchCapability,
 ): ReturnType<typeof Bun.serve> {
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
     store,
@@ -799,6 +818,8 @@ export function serveHttp(
     configRoot,
     projectKey,
     promptArtifactStore,
+    undefined,
+    dispatchCapability,
   );
 
   return Bun.serve({
@@ -857,6 +878,16 @@ export async function main(argv: readonly string[]): Promise<void> {
   // sees the channel close and treats the server as unhealthy.
   const resolved = await createLedgerStore(cwd);
   const store = resolved.store;
+  const dispatchRuntime: DispatchRuntime = await createSingleProjectDispatchRuntime({
+    construction: http === null ? "stdio" : "http-single-project",
+    resolved,
+    ...(resolvedPromptSurface === undefined
+      ? {}
+      : { promptArtifactStore: resolvedPromptSurface.store }),
+    environment: process.env,
+  });
+  const dispatchCapability =
+    dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined;
 
   if (http !== null) {
     const server = serveHttp(
@@ -867,6 +898,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       resolved.configRoot,
       resolved.projectKey,
       resolvedPromptSurface?.store,
+      dispatchCapability,
     );
     // Watch the ledger for out-of-process advances; push a `changed` frame to
     // subscribed UIs on any change. The watcher is selected by backend (file
@@ -876,8 +908,11 @@ export async function main(argv: readonly string[]): Promise<void> {
     });
     const shutdown = (): void => {
       watcher.close();
-      server.stop(true);
-      process.exit(0);
+      void (async () => {
+        await server.stop(true);
+        await dispatchRuntime.close();
+        process.exit(0);
+      })();
     };
     process.on("SIGTERM", shutdown);
     process.on("SIGINT", shutdown);
@@ -896,6 +931,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     ...(resolvedPromptSurface !== undefined
       ? { promptArtifactStore: resolvedPromptSurface.store }
       : {}),
+    ...(dispatchCapability === undefined ? {} : { dispatchCapability }),
   });
   // Even on stdio, watch the ledger so this server's cache stays fresh when
   // another process writes the same ledgers (file watch for fs, ref-sha poll
@@ -905,7 +941,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   // Graceful shutdown on SIGTERM / SIGINT.
   const shutdown = (): void => {
     watcher.close();
-    process.exit(0);
+    void dispatchRuntime.close().finally(() => process.exit(0));
   };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);

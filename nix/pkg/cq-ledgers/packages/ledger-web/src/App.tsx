@@ -2812,7 +2812,7 @@ function AgentModelCell({ view }: { view: AgentModelView }): React.ReactElement 
     case "not-model-configurable":
       return <span className="lw-agent-model-na">N/A</span>;
     case "unavailable":
-      return <span className="lw-agent-model-unavailable">model overlay unavailable — server predates get_agent_models; rebuild + restart ledger-web/ledger-mcp</span>;
+      return <span className="lw-agent-model-unavailable">model overlay unavailable — server predates get_config(agent_models); rebuild + restart ledger-web/ledger-mcp</span>;
   }
 }
 

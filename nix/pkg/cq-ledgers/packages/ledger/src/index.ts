@@ -55,7 +55,11 @@ export type {
   UpdateMilestoneItemPatch,
 } from "./store/LedgerStore.js";
 export type { LedgerPersistence } from "./store/LedgerPersistence.js";
-export { AbstractLedgerStore, schemasEqual, schemaCompatible } from "./store/AbstractLedgerStore.js";
+export {
+  AbstractLedgerStore,
+  schemasEqual,
+  schemaCompatible,
+} from "./store/AbstractLedgerStore.js";
 export { FsPersistence } from "./store/FsPersistence.js";
 export type { FsPersistenceLayout } from "./store/FsPersistence.js";
 export { FsLedgerStore } from "./store/FsLedgerStore.js";
@@ -78,7 +82,12 @@ export {
 } from "./store/restoreImporter.js";
 export type { RestoreSummary, ParsedDump } from "./store/restoreImporter.js";
 export { atomicWrite } from "./store/fsAtomic.js";
-export { GitPlumbing, StaleRefError, GitCommandError, nodeGitRunner } from "./store/git/GitPlumbing.js";
+export {
+  GitPlumbing,
+  StaleRefError,
+  GitCommandError,
+  nodeGitRunner,
+} from "./store/git/GitPlumbing.js";
 export type { TreeEntry, GitResult, GitRunOpts, GitRunner } from "./store/git/GitPlumbing.js";
 export { GitPersistence } from "./store/git/GitPersistence.js";
 export { GitObjectLedgerBackend } from "./store/git/GitObjectLedgerBackend.js";
@@ -156,10 +165,7 @@ export { startPostgresCoherenceWatcher } from "./store/postgres/coherenceWatcher
 export type { PostgresCoherenceWatcher } from "./store/postgres/coherenceWatcher.js";
 export { startPostgresHubCoherenceWatcher } from "./store/postgres/coherenceWatcher.js";
 export type { PostgresHubWatcherCallbacks } from "./store/postgres/coherenceWatcher.js";
-export {
-  restoreDumpToPostgres,
-  isPostgresTenantEmpty,
-} from "./store/postgres/restoreImporter.js";
+export { restoreDumpToPostgres, isPostgresTenantEmpty } from "./store/postgres/restoreImporter.js";
 export {
   createLedgerStore,
   openLegacyLedgerStore,
@@ -254,7 +260,9 @@ export {
 export type { LedgerArtifacts, RemoveLedgerArtifactsResult } from "./store/ledgerArtifacts.js";
 export {
   createLedgerMcpTools,
+  DISPATCH_LIFECYCLE_TOOL_NAMES,
   LEDGER_TOOL_NAMES,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
   TOOL_PREFIX_RE,
   assertToolPrefix,
   prefixToolName,
@@ -263,8 +271,8 @@ export {
 export type { LedgerToolName } from "./mcp/ledgerTools.js";
 export {
   COMPACT_ITEM_FIELD_NAMES,
-  GET_PLANNERS_RESPONSE_DESCRIPTION,
-  GET_REVIEWERS_RESPONSE_DESCRIPTION,
+  GET_PLANNERS_SECTION_RESPONSE_DESCRIPTION,
+  GET_REVIEWERS_SECTION_RESPONSE_DESCRIPTION,
   LEDGER_RESPONSE_CONTRACTS,
   isProducedWireDto,
   produceWireDto,
@@ -314,20 +322,33 @@ export {
   assertPlanLifecycleTokenExposure,
   isPlanLifecycleStore,
 } from "./mcp/planLifecycleTools.js";
-export type {
-  PlanLifecycleToolName,
-  PlanLifecycleToolSpec,
-} from "./mcp/planLifecycleTools.js";
-export {
-  MAX_READ_LOG_BYTES,
-  ReadLogNotImplementedError,
-} from "./mcp/readLog.js";
+export type { PlanLifecycleToolName, PlanLifecycleToolSpec } from "./mcp/planLifecycleTools.js";
+export { MAX_READ_LOG_BYTES, ReadLogNotImplementedError } from "./mcp/readLog.js";
 export type { ReadLogCapability, ReadLogResult } from "./mcp/readLog.js";
+export { DispatchNotImplementedError } from "./mcp/dispatchCapability.js";
+export type {
+  AbortDispatchToolInput,
+  ConfirmDispatchCompletionToolInput,
+  DispatchCapability,
+  FetchDispatchResultToolInput,
+  PrepareDispatchToolInput,
+  StoreResultToolInput,
+} from "./mcp/dispatchCapability.js";
 export { ListProjectsNotImplementedError } from "./mcp/listProjects.js";
-export type { ListProjectsCapability, ListProjectsResult, ProjectEntry } from "./mcp/listProjects.js";
-export { ConfigNotImplementedError } from "./mcp/configCapability.js";
+export type {
+  ListProjectsCapability,
+  ListProjectsResult,
+  ProjectEntry,
+} from "./mcp/listProjects.js";
+export {
+  CONFIG_SECTIONS,
+  ConfigNotImplementedError,
+  computeConfigSection,
+} from "./mcp/configCapability.js";
 export type {
   ConfigCapability,
+  ConfigSection,
+  ConfigSectionResult,
   ResolvedReviewer,
   GetReviewersResult,
   ResolvedPlanner,
@@ -383,13 +404,13 @@ export {
 export type { PaginateResult } from "./projection.js";
 export { summarize, fieldToString } from "./summarize.js";
 export { buildSnapshot } from "./snapshot.js";
-export type {
-  LedgerSnapshot,
-  SnapshotItemStub,
-  SnapshotStatusBucket,
-} from "./snapshot.js";
+export type { LedgerSnapshot, SnapshotItemStub, SnapshotStatusBucket } from "./snapshot.js";
 export { validateJsonl } from "./store/jsonlLog.js";
-export type { JsonlValidationResult, JsonlValidationOk, JsonlValidationError } from "./store/jsonlLog.js";
+export type {
+  JsonlValidationResult,
+  JsonlValidationOk,
+  JsonlValidationError,
+} from "./store/jsonlLog.js";
 export {
   resolveStateDirBase,
   resolveStateDir,
@@ -401,8 +422,5 @@ export { resolveProjectKey, ProjectKeyResolutionError } from "./projectKey.js";
 export type { ResolveProjectKeyOpts } from "./projectKey.js";
 export { parseRef, buildPrefixRegistry, canonicalizeRef, RefParseError } from "./refs.js";
 export type { ParsedRef } from "./refs.js";
-export {
-  FINALIZE_PRESENTATION,
-  describeFinalizeEmptyPlan,
-} from "./finalizePresentation.js";
+export { FINALIZE_PRESENTATION, describeFinalizeEmptyPlan } from "./finalizePresentation.js";
 export type { FinalizePresentation, FinalizeScope } from "./finalizePresentation.js";

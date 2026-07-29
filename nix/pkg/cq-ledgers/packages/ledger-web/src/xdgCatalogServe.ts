@@ -9,6 +9,7 @@ import {
 import {
   attachMcpHttp,
   changedFrame,
+  refuseDispatchRuntime,
   wsHeartbeat,
   type McpHttpHandlers,
   type PromptArtifactStore,
@@ -125,6 +126,7 @@ export function serveXdgCatalog(
   if (aliasProject === undefined) {
     throw new Error(`XDG alias project is absent from catalog: ${opts.aliasProjectKey}`);
   }
+  const dispatchRuntime = refuseDispatchRuntime("xdg-catalog-hub", "xdg");
 
   const listedProjects = opts.catalog.projects.map((project) => ({
     key: project.key,
@@ -154,6 +156,7 @@ export function serveXdgCatalog(
         project.key,
         opts.promptArtifactStore,
         listProjects,
+        dispatchRuntime.kind === "available" ? dispatchRuntime.capability : undefined,
       );
       return { runtime, handlers };
     })();
@@ -238,6 +241,7 @@ export function serveXdgCatalog(
       );
     })();
     await disposeRuntimes;
+    await dispatchRuntime.close();
   };
   return server;
 }

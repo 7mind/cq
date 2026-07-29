@@ -121,6 +121,13 @@ export const DISPATCH_LIFECYCLE_STATES = [
 
 export type DispatchLifecycleState = (typeof DISPATCH_LIFECYCLE_STATES)[number];
 
+export const FETCH_DISPATCH_RESULT_STATES = [
+  ...DISPATCH_LIFECYCLE_STATES,
+  "output-already-materialized",
+] as const;
+
+export type FetchDispatchResultState = (typeof FETCH_DISPATCH_RESULT_STATES)[number];
+
 export interface PreparedDispatchResult extends DispatchHandle, DispatchDeadlines {
   readonly state: "prepared";
   readonly promptProvenance: DispatchPromptProvenance;
@@ -157,6 +164,11 @@ export interface AttestationNotFoundDispatchResult extends DispatchHandle {
   readonly state: "attestation-not-found";
 }
 
+export interface OutputAlreadyMaterializedDispatchResult extends DispatchHandle {
+  readonly state: "output-already-materialized";
+  readonly materializedAt: string;
+}
+
 /**
  * A lookup reports only lifecycle states. Authorization, transport, and storage
  * failures remain errors at their respective boundary and cannot masquerade as
@@ -168,7 +180,8 @@ export type FetchDispatchResult =
   | ConsumedDispatchResult
   | AbortedDispatchResult
   | TerminalEnvelopeExpiredDispatchResult
-  | AttestationNotFoundDispatchResult;
+  | AttestationNotFoundDispatchResult
+  | OutputAlreadyMaterializedDispatchResult;
 
 /** The complete ordinary-flow operation vocabulary for the breaking cutover. */
 export const DISPATCH_PROTOCOL_OPERATIONS = [
@@ -283,9 +296,8 @@ export function compactDispatchLaunchSchemaFor(registry: DispatchOverlayRegistry
  * (T684 — no concrete runtime-overlay use case exists), so only an absent or
  * empty `overlays` list can pass.
  */
-export const COMPACT_DISPATCH_LAUNCH_SCHEMA: JSONSchema = compactDispatchLaunchSchemaFor(
-  DISPATCH_OVERLAY_REGISTRY,
-);
+export const COMPACT_DISPATCH_LAUNCH_SCHEMA: JSONSchema =
+  compactDispatchLaunchSchemaFor(DISPATCH_OVERLAY_REGISTRY);
 
 /** Handle-only ordinary launch completion. */
 export const DISPATCH_HANDLE_SCHEMA: JSONSchema = {
@@ -366,7 +378,7 @@ export const ABORT_DISPATCH_SCHEMA: JSONSchema = {
 };
 
 function fetchVariant(
-  state: DispatchLifecycleState,
+  state: FetchDispatchResultState,
   properties: Readonly<Record<string, JSONSchema>>,
   required: readonly string[],
 ): JSONSchema {
@@ -435,5 +447,12 @@ export const FETCH_DISPATCH_RESULT_SCHEMA: JSONSchema = {
       ["terminalKind", "reuseAfter"],
     ),
     fetchVariant("attestation-not-found", {}, []),
+    fetchVariant(
+      "output-already-materialized",
+      {
+        materializedAt: { type: "string", pattern: ISO_TIMESTAMP_PATTERN },
+      },
+      ["materializedAt"],
+    ),
   ],
 };

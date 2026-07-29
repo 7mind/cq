@@ -19,7 +19,7 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { createLedgerStore, LEDGER_TOOL_NAMES } from "@cq/ledger";
+import { createLedgerStore, NON_DISPATCH_LEDGER_TOOL_NAMES } from "@cq/ledger";
 import { serve, proxyToMcp } from "../src/serve.js";
 
 const here = new URL(".", import.meta.url).pathname;
@@ -154,7 +154,7 @@ describe("ledger-web /mcp reverse proxy", () => {
     await client.connect(transport as unknown as Transport);
     try {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
-      expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
+      expect(names).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
 
       const res = await client.callTool({ name: "enumerate_ledgers", arguments: {} });
       const text = (res.content as Array<{ type: string; text: string }>)[0]!.text;

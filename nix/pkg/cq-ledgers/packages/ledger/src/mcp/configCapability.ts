@@ -1,8 +1,8 @@
 /**
  * config capability (T1 / T13 / R193 / G18).
  *
- * The `get_reviewers` / `get_planners` / `get_config` MCP tools surface a repo's
- * resolved cq.toml reviewer/planner config. Like `read_log` (./readLog.ts), the
+ * The sectioned `get_config` MCP tool surfaces a repo's resolved cq.toml
+ * configuration. Like `read_log` (./readLog.ts), the
  * config parsing is a capability the OUTER package supplies: `@cq/ledger` core
  * stays config-agnostic and must NOT import `@cq/config` — the loadConfig /
  * resolveReviewers / resolvePlanners calls live only in the `@cq/ledger-mcp`
@@ -13,7 +13,7 @@
  */
 
 /**
- * A single resolved reviewer, as returned by `get_reviewers`: the parsed
+ * A single resolved reviewer, as returned by the `reviewers` section: the parsed
  * harness + model PLUS the `alias` name it was declared under in `cq.toml`
  * (so the orchestrators can echo a human-meaningful label).
  */
@@ -31,7 +31,7 @@ export interface ResolvedReviewer {
 }
 
 /**
- * The `get_reviewers` payload. `configured` is true only when a `cq.toml`
+ * The `reviewers` section payload. `configured` is true only when a `cq.toml`
  * exists AND declares a non-empty `reviewers` list; otherwise the caller falls
  * back to a single native Claude reviewer.
  */
@@ -41,7 +41,7 @@ export interface GetReviewersResult {
 }
 
 /**
- * A single resolved planner, as returned by `get_planners`: the parsed
+ * A single resolved planner, as returned by the `planners` section: the parsed
  * harness + model PLUS the `alias` name it was declared under in `cq.toml`
  * (so the orchestrators can echo a human-meaningful label). Mirrors
  * {@link ResolvedReviewer}.
@@ -60,7 +60,7 @@ export interface ResolvedPlanner {
 }
 
 /**
- * The `get_planners` payload. `configured` is true only when a `cq.toml`
+ * The `planners` section payload. `configured` is true only when a `cq.toml`
  * exists AND declares a non-empty `planners` list; otherwise the caller falls
  * back to a single native Claude planner. Mirrors {@link GetReviewersResult}.
  */
@@ -70,7 +70,7 @@ export interface GetPlannersResult {
 }
 
 /**
- * The `get_config` payload: the full parsed config (or `configured:false`).
+ * The `all` section payload: the full parsed config (or `configured:false`).
  *
  * `configured` means 'a parseable cq.toml is present' (`config !== null`) —
  * D81. It is INDEPENDENT of whether `reviewers`/`planners`/`tiers` are
@@ -136,7 +136,7 @@ export interface GetConfigResult {
 }
 
 /**
- * The per-role model-resolution status, as returned by `get_agent_models`
+ * The per-role model-resolution status, as returned by the `agent_models` section
  * (Q157+Q158). Exactly four variants:
  *
  * - `'resolved'`            — a live token (or tokens) was found for the role's
@@ -155,13 +155,10 @@ export interface GetConfigResult {
  * type identity, is the source of truth for what the user sees.
  */
 export type AgentModelStatus =
-  | "resolved"
-  | "not-configured"
-  | "no-live-token"
-  | "not-model-configurable";
+  "resolved" | "not-configured" | "no-live-token" | "not-model-configurable";
 
 /**
- * One agent role's resolved model overlay, as returned by `get_agent_models`.
+ * One agent role's resolved model overlay, as returned by the `agent_models` section.
  * `id` is the `AgentRole.id` / `[agent_tiers]` key — the Q158 join key the web
  * client overlays onto its agent catalogue with no remapping. `modelClass` is
  * the resolved tier class, or null when no class applies (e.g.
@@ -179,7 +176,7 @@ export interface AgentModelEntry {
 }
 
 /**
- * The `get_agent_models` payload: `configured` is true only when a `cq.toml`
+ * The `agent_models` section payload: `configured` is true only when a `cq.toml`
  * is present, and `agents` is the per-role overlay keyed by `AgentRole.id`.
  */
 export interface AgentModelsResult {
@@ -187,9 +184,32 @@ export interface AgentModelsResult {
   readonly agents: readonly AgentModelEntry[];
 }
 
+export const CONFIG_SECTIONS = [
+  "all",
+  "reviewers",
+  "planners",
+  "agent_models",
+  "aliases",
+  "tiers",
+  "agent_tiers",
+  "agent_efforts",
+] as const;
+
+export type ConfigSection = (typeof CONFIG_SECTIONS)[number];
+
+export type ConfigSectionResult =
+  | GetConfigResult
+  | GetReviewersResult
+  | GetPlannersResult
+  | AgentModelsResult
+  | { readonly configured: boolean; readonly aliases: GetConfigResult["aliases"] }
+  | { readonly configured: boolean; readonly tiers: GetConfigResult["tiers"] }
+  | { readonly configured: boolean; readonly agentTiers: GetConfigResult["agentTiers"] }
+  | { readonly configured: boolean; readonly agentEfforts: GetConfigResult["agentEfforts"] };
+
 /**
- * The injected config capability: computes the `get_reviewers` / `get_config` /
- * `get_agent_models` payloads against a config root the OUTER package bound it
+ * The injected config capability computes section payloads against a config
+ * root the OUTER package bound it
  * to. Supplied by the ledger-mcp layer (over `@cq/config`); absent for
  * config-agnostic factories (e.g. an in-memory store with no cq.toml-capable
  * root).
@@ -199,17 +219,62 @@ export interface ConfigCapability {
   computePlanners(): GetPlannersResult;
   computeConfig(): GetConfigResult;
   computeAgentModels(): AgentModelsResult;
+  computeSection?(section: ConfigSection): ConfigSectionResult;
+}
+
+export function computeConfigSection(
+  capability: ConfigCapability,
+  section: ConfigSection,
+): ConfigSectionResult {
+  if (capability.computeSection !== undefined) {
+    return capability.computeSection(section);
+  }
+  switch (section) {
+    case "reviewers":
+      return capability.computeReviewers();
+    case "planners":
+      return capability.computePlanners();
+    case "agent_models":
+      return capability.computeAgentModels();
+    case "all":
+      return capability.computeConfig();
+    case "aliases": {
+      const config = capability.computeConfig();
+      return { configured: Object.keys(config.aliases).length > 0, aliases: config.aliases };
+    }
+    case "tiers": {
+      const config = capability.computeConfig();
+      return {
+        configured: config.tiers !== null && Object.keys(config.tiers).length > 0,
+        tiers: config.tiers,
+      };
+    }
+    case "agent_tiers": {
+      const config = capability.computeConfig();
+      return {
+        configured: config.agentTiers !== null && Object.keys(config.agentTiers).length > 0,
+        agentTiers: config.agentTiers,
+      };
+    }
+    case "agent_efforts": {
+      const config = capability.computeConfig();
+      return {
+        configured: Object.keys(config.agentEfforts).length > 0,
+        agentEfforts: config.agentEfforts,
+      };
+    }
+  }
 }
 
 /**
- * Thrown when `get_reviewers` / `get_planners` / `get_config` is invoked on a
+ * Thrown when `get_config` is invoked on a
  * factory wired WITHOUT a config capability (no cq.toml-capable root). Mirrors
  * `ReadLogNotImplementedError`: the OTHER tools remain unaffected.
  */
 export class ConfigNotImplementedError extends Error {
   constructor() {
     super(
-      "get_reviewers/get_planners/get_config is not implemented for this " +
+      "get_config is not implemented for this " +
         "store: no cq.toml-capable config root is available (config " +
         "capability absent)",
     );

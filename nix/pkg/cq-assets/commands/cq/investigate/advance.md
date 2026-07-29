@@ -80,9 +80,10 @@ durable ledger state left off. **ONE invocation = ONE research round.**
   native or prepared manually. The worktree is ALWAYS removed after the evidence
   is harvested — harvest-then-discard.
 - **Explorer & prober always run at the FRONTIER tier resolved from CONFIG,
-  never a hardcoded model.** ONCE per round, call the `ledger::get_config`
-  MCP tool (an MCP-tool call, NOT a `Bash` shellout — same server as
-  `get_reviewers`) and read `tiers.frontier` — a resolved token `{ harness,
+  never a hardcoded model.** ONCE per round, call the
+  `ledger::get_config({"section":"tiers"})` MCP tool (an MCP-tool call, NOT a
+  `Bash` shellout — same server as
+  `get_config({"section":"reviewers"})`) and read `tiers.frontier` — a resolved token `{ harness,
   model, provider, effort }` from the ACTIVE harness's `[harness.<h>.tiers]`
   map in `cq.toml` (most-capable == frontier, Q253). Dispatch every
   `investigate-explorer`/`investigate-prober` `CQ_SUBAGENT` with `model:
@@ -93,16 +94,13 @@ durable ledger state left off. **ONE invocation = ONE research round.**
   `CQ_SUBAGENT` dispatch** — the CQ_SUBAGENT tool exposes no per-dispatch effort/reasoning
   param (T510; `effort` exists only as subagent-definition frontmatter) —
   record it for provenance/display only, never as an CQ_SUBAGENT argument. **Degrade
-  gracefully** when the `get_config` tool is ABSENT, or `tiers: null`, or the
+  gracefully** when the `get_config` tool is ABSENT, `configured: false`,
+  `tiers: null`, or the
   `frontier` slot is missing: fall back to your OWN class using the surface's
   native inheritance mechanism
-  — never invent a model literal. Do NOT key this degrade on `configured`:
-  get_config's `configured` means only 'a parseable cq.toml is present' (D81)
-  — it is INDEPENDENT of whether `tiers` itself is populated, so a valid
-  `[harness.<h>.tiers]` map coexists with `configured: true` regardless of the
-  reviewers list, and degrading on `configured` would DISCARD the user's
-  valid tiers (anti-D78). Decide the tiers-degrade purely on tool-absence /
-  `tiers: null` / missing slot.
+  — never invent a model literal. This section-scoped `configured` reports
+  whether `tiers` itself is populated; it remains independent of the reviewers
+  list, so valid tiers remain active when reviewers are empty (anti-D78).
 - **The defect LIFECYCLE lives on the defect's STATUS, not on free-text
   markers.** The `defects` ledger status is `open → wip → {root-caused |
   inconclusive} → resolved | wontfix` (T116; terminal: `resolved`/`wontfix`;
@@ -266,7 +264,8 @@ parallel).
 For each frontier hypothesis H to advance this round, dispatch an
 `investigate-explorer` via `CQ_SUBAGENT` (`role: "investigate-explorer"`,
 `model` = the §K8 FRONTIER token's bare-alias `model` (resolved from
-`get_config`), verbatim — the token's `effort` is N/A at `CQ_SUBAGENT` dispatch per
+`get_config({"section":"tiers"})`), verbatim — the token's `effort` is N/A at
+`CQ_SUBAGENT` dispatch per
 T510, provenance/display only; NO worktree, it changes nothing). The prompt MUST
 carry: H's id + statement (verbatim), the branch context (the defect, parent
 hypothesis, sibling findings already validated, what to confirm or rule out), and
@@ -313,7 +312,8 @@ citation yourself:
   show`/`git blame` RUN) **and you judge running it warranted for adjudicating H**,
   dispatch an `investigate-prober` via `CQ_SUBAGENT` (`role:
   "investigate-prober"`, `isolation: "worktree"`, `model` = the §K8 FRONTIER
-  token's bare-alias `model` (resolved from `get_config`), verbatim — the
+  token's bare-alias `model` (resolved from
+  `get_config({"section":"tiers"})`), verbatim — the
   token's `effort` is N/A at `CQ_SUBAGENT` dispatch per T510, provenance/display
   only). The surface adapter prepares the required throwaway worktree before
   dispatch and removes it after harvest. The prompt MUST carry: the `probeRequest

@@ -11,10 +11,7 @@ import {
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..", "..", "..");
 const ASSETS_ROOT = path.join(REPO_ROOT, "nix", "pkg", "cq-assets");
-const LEDGER_TOOLS_MODULE = path.resolve(
-  import.meta.dir,
-  "../../ledger/src/mcp/ledgerTools.ts",
-);
+const LEDGER_TOOLS_MODULE = path.resolve(import.meta.dir, "../../ledger/src/mcp/ledgerTools.ts");
 const { LEDGER_TOOL_NAMES } = (await import(LEDGER_TOOLS_MODULE)) as {
   readonly LEDGER_TOOL_NAMES: readonly string[];
 };
@@ -26,15 +23,9 @@ const OPERATIONAL_TOOL_SPECS = [
     roleIdArgument: false,
   },
   {
-    neutral: "ledger::get_config",
-    source: "ledger::get_config",
+    neutral: 'ledger::get_config("<section>")',
+    source: "ledger::get_config(",
     candidate: "get_config",
-    roleIdArgument: false,
-  },
-  {
-    neutral: "ledger::get_reviewers",
-    source: "ledger::get_reviewers",
-    candidate: "get_reviewers",
     roleIdArgument: false,
   },
   {
@@ -97,6 +88,9 @@ function expectedOperationalToolMapping(
   spec: (typeof OPERATIONAL_TOOL_SPECS)[number],
 ): string {
   const target = surfaceToolName(surface, registeredToolName(spec.candidate));
+  if (spec.candidate === "get_config") {
+    return `- \`${spec.neutral}\` → \`${target}({"section":"<section>"})\``;
+  }
   if (!spec.roleIdArgument) {
     return `- \`${spec.neutral}\` → \`${target}({})\``;
   }
@@ -199,9 +193,7 @@ describe("orchestrator command prompt sources", () => {
       path: path.join(ASSETS_ROOT, role.canonicalSource),
     }));
     const roleIds = new Set(catalog.map(({ roleId }) => roleId));
-    const commandFragmentSources = fragmentSources.filter(({ roleId }) =>
-      roleIds.has(roleId),
-    );
+    const commandFragmentSources = fragmentSources.filter(({ roleId }) => roleIds.has(roleId));
 
     expect(catalog.some(({ roleId }) => roleId === "begin")).toBe(true);
     expect(commandFragmentSources).toHaveLength(
@@ -250,9 +242,7 @@ describe("orchestrator command prompt sources", () => {
           source.includes(spec.source),
         );
         expect(
-          role.fragmentBindings.some(
-            ({ fragment }) => fragment === "operational-tool-vocabulary",
-          ),
+          role.fragmentBindings.some(({ fragment }) => fragment === "operational-tool-vocabulary"),
         ).toBe(usesNeutralOperationalToken);
         if (usesNeutralOperationalToken) {
           assertOperationalToolMappings(surface, content);
@@ -298,9 +288,7 @@ describe("orchestrator command prompt sources", () => {
         fragmentPaths: missing,
         roleVersions: {},
       }),
-    ).toThrow(
-      'fragments.begin.cq-command-invocation: missing slot input for surface "codex"',
-    );
+    ).toThrow('fragments.begin.cq-command-invocation: missing slot input for surface "codex"');
 
     const root = mkdtempSync(path.join(tmpdir(), "cq-command-source-"));
     try {
@@ -315,9 +303,7 @@ describe("orchestrator command prompt sources", () => {
         ),
       );
       const copiedPaths = sourcePaths.map((entry) =>
-        entry.canonicalSource === begin!.canonicalSource
-          ? { ...entry, path: copiedSource }
-          : entry,
+        entry.canonicalSource === begin!.canonicalSource ? { ...entry, path: copiedSource } : entry,
       );
       expect(() =>
         renderPromptSurfaceTree({

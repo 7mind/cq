@@ -77,18 +77,8 @@
  * live child and tasks:T689 proves it. {@link CLAUDE_DISPATCH_DEFERRED} lists
  * what is deliberately NOT done here so none of it is silently assumed done.
  *
- * ## What this module ASSUMES about a question it does not own (defects:D188)
- *
- * defects:D188 holds the open cross-surface divergence on FETCH SEMANTICS: the
- * shared `fetchDispatchResult` this surface uses is a repeatable read, whereas
- * tasks:T693's pi extension materialises the body exactly once and answers
- * `output-already-materialized` on a repeat. Both satisfy defects:D173 ("the
- * body reaches the parent on fetch and on no other surface"). T687 does NOT
- * resolve that — picking a side would change every surface at once, and it is
- * D188's to decide. Where this definition needs a fetch reading it ASSUMES the
- * shared repeatable read, because that is what the shared service it binds to
- * actually does; {@link CLAUDE_FETCH_SEMANTICS_ASSUMED} records the assumption
- * so a later D188 ruling can find it.
+ * Shared FETCH semantics follow defects:D188: the body materializes exactly
+ * once, and a repeat answers `output-already-materialized`.
  */
 
 import {
@@ -246,7 +236,7 @@ const MODE_VERDICTS: readonly ClaudeDeliveryModeVerdict[] = Object.freeze([
       "capability path by execution: a FOREGROUND `Agent` subagent declared with an inline " +
       "`mcpServers` entry holding the per-dispatch capability in that server's own `env` had " +
       "`mcp__…__store_result` in ITS tool set with `parent_tool_use_id` set, while the PARENT's " +
-      "`init` reported `mcp=[]`, `tools=[\"Task\"]`, `hasStoreTool=false`; `--strict-mcp-config` " +
+      '`init` reported `mcp=[]`, `tools=["Task"]`, `hasStoreTool=false`; `--strict-mcp-config` ' +
       "did NOT filter it out, and the child stored a 2,513-byte payload verified by an " +
       "independent read. What it CANNOT do is constrain or intercept the child's final message " +
       "(§5.3), which is why handleOnlyOutput is prompt-best-effort — a residual decisions:K170 " +
@@ -466,7 +456,7 @@ export const CLAUDE_NATIVE_ENFORCEMENT_GAP = Object.freeze({
     "to a subagent; the subagent frontmatter field table — description, tools, disallowedTools, " +
     "model, permissionMode, maxTurns, skills, mcpServers, hooks, memory, background, effort, " +
     "isolation, color, initialPrompt — contains NO output-schema field (tasks:T722 §8.1b, " +
-    "grepped for `json-schema` / `outputSchema` / \"structured output\").",
+    'grepped for `json-schema` / `outputSchema` / "structured output").',
   flipCondition:
     "If Claude Code adds a per-subagent output schema, re-test tasks:T722 §5.3: " +
     "`native-subagent.handleOnlyOutput` becomes structural and this residual disappears.",
@@ -1387,7 +1377,8 @@ export const CLAUDE_WORKTREE_RECONCILIATION = Object.freeze({
    * travel through the dispatch input, which is the one channel the `Agent` tool
    * does have. What cannot travel is ENFORCEMENT.
    */
-  loadBearingAgreement: "worktree_manage(prepare) returns a path, and a path is transportable input",
+  loadBearingAgreement:
+    "worktree_manage(prepare) returns a path, and a path is transportable input",
 });
 
 /**
@@ -1411,10 +1402,9 @@ export const CLAUDE_WORKTREE_RESUME_IS_BY_HANDLE = true;
 // ---------------------------------------------------------------------------
 
 /**
- * The fetch reading this definition ASSUMES where it needs one, without
- * resolving defects:D188. See the module header.
+ * The shared fetch reading this definition binds to.
  */
-export const CLAUDE_FETCH_SEMANTICS_ASSUMED = "repeatable-read" as const;
+export const CLAUDE_FETCH_SEMANTICS_ASSUMED = "one-shot-materialization" as const;
 
 /** The task that implements this protocol against a live Claude child. */
 export const CLAUDE_DISPATCH_DEFERRED_TO = "T688" as const;
@@ -1432,5 +1422,4 @@ export const CLAUDE_DISPATCH_DEFERRED = Object.freeze([
   "implement-worktree_manage-prepare-and-release",
   "consolidate-the-duplicated-launch-gate-into-the-shared-module",
   "migrate-the-claude-dispatch-fragment-to-the-new-call-shape",
-  "decide-defects-D188s-fetch-repeatability-divergence",
 ] as const);

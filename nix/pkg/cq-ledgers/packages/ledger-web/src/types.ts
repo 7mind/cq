@@ -27,7 +27,28 @@ import type {
 } from "@cq/ledger";
 import type { ArchiveContent } from "@cq/ledger";
 
-export type { Item, FieldValue, FetchedLedger, FetchedMilestoneGroup, LedgerSummary, ResolvedMilestone, LedgerSchema, ArchiveContent, AgentModelsResult, AgentModelEntry, AgentModelStatus, ListProjectsResult, ProjectEntry, ArchivePointer, ItemMutationAckDto, ItemProjection, MilestoneMutationAckDto, DerivedPredicates, PredicateVerdict, FetchPromptResult };
+export type {
+  Item,
+  FieldValue,
+  FetchedLedger,
+  FetchedMilestoneGroup,
+  LedgerSummary,
+  ResolvedMilestone,
+  LedgerSchema,
+  ArchiveContent,
+  AgentModelsResult,
+  AgentModelEntry,
+  AgentModelStatus,
+  ListProjectsResult,
+  ProjectEntry,
+  ArchivePointer,
+  ItemMutationAckDto,
+  ItemProjection,
+  MilestoneMutationAckDto,
+  DerivedPredicates,
+  PredicateVerdict,
+  FetchPromptResult,
+};
 
 export interface FtsHit {
   ledgerId: string;
@@ -93,8 +114,16 @@ export interface LedgerClient {
   fetchPromptResult?(roleId: string): Promise<FetchPromptResult>;
   createItem(ledgerId: string, milestoneId: string, init: ItemInit): Promise<ItemMutationAckDto>;
   updateItem(ledgerId: string, itemId: string, patch: ItemPatch): Promise<ItemMutationAckDto>;
-  ftsSearch(query: string, projection: ItemProjection, opts?: { ledger?: string }): Promise<FtsHit[]>;
-  createMilestone(init: { title: string; description?: string; id?: string }): Promise<MilestoneMutationAckDto>;
+  ftsSearch(
+    query: string,
+    projection: ItemProjection,
+    opts?: { ledger?: string },
+  ): Promise<FtsHit[]>;
+  createMilestone(init: {
+    title: string;
+    description?: string;
+    id?: string;
+  }): Promise<MilestoneMutationAckDto>;
   updateMilestone(milestoneId: string, patch: MilestonePatch): Promise<MilestoneMutationAckDto>;
   /**
    * Archive a milestone globally (archive_milestone MCP tool): sweeps every
@@ -105,7 +134,7 @@ export interface LedgerClient {
   archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer>;
   /** Read a log file under docs/logs/ via the read_log MCP tool. */
   readLog(path: string): Promise<ReadLogResult>;
-  /** Retrieve per-agent resolved model overlays via the get_agent_models MCP tool. */
+  /** Retrieve per-agent resolved model overlays via get_config(agent_models). */
   getAgentModels(): Promise<AgentModelsResult>;
   /**
    * Enumerate every project this server knows about (list_projects MCP tool,

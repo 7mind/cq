@@ -1140,7 +1140,10 @@ describe("mismatches fail typed and cannot consume", () => {
     const p = prepared(h);
     storeOne(h, p);
     const stale: DispatchHandle = { attestationId: p.attestationId, generation: 2 };
-    expect(fetchDispatchResult({ ...stale, namespace: NAMESPACE, actor: "trusted-parent" }, h.deps).state).toBe("attestation-not-found");
+    expect(
+      fetchDispatchResult({ ...stale, namespace: NAMESPACE, actor: "trusted-parent" }, h.deps)
+        .state,
+    ).toBe("attestation-not-found");
     expect(() => confirmDispatchCompletion(confirmation(p, { generation: 2 }), h.deps)).toThrow(
       AttestationNotFoundError,
     );
@@ -1154,7 +1157,16 @@ describe("mismatches fail typed and cannot consume", () => {
     const h = harness();
     for (const attestationId of [...PROTOTYPE_NAMES, "", "att_short", "T685", 7, null]) {
       expect(
-        () => fetchDispatchResult({ attestationId, generation: 1, namespace: NAMESPACE, actor: "trusted-parent" } as never, h.deps),
+        () =>
+          fetchDispatchResult(
+            {
+              attestationId,
+              generation: 1,
+              namespace: NAMESPACE,
+              actor: "trusted-parent",
+            } as never,
+            h.deps,
+          ),
         String(attestationId),
       ).toThrow(AttestationContractError);
     }
@@ -1175,7 +1187,9 @@ describe("mismatches fail typed and cannot consume", () => {
     }
     // A WELL-FORMED unknown handle IS the lifecycle answer.
     const unknown = { attestationId: `att_${"y".repeat(32)}`, generation: 1 };
-    expect(fetchDispatchResult({ ...unknown, namespace: NAMESPACE, actor: "trusted-parent" }, h.deps)).toEqual({
+    expect(
+      fetchDispatchResult({ ...unknown, namespace: NAMESPACE, actor: "trusted-parent" }, h.deps),
+    ).toEqual({
       state: "attestation-not-found",
       ...unknown,
     });
@@ -1386,6 +1400,23 @@ describe("fetch distinguishes every lifecycle state", () => {
 });
 
 describe("namespace, auth, transport and storage errors stay explicit", () => {
+  test("a fetch-path replace fault remains AttestationStorageError, not a lifecycle state", () => {
+    let failFetchReplace = false;
+    const h = harness({
+      fault: (operation) => {
+        if (failFetchReplace && operation === "replace") {
+          throw new AttestationStorageError("injected fetch replace failure");
+        }
+      },
+    });
+    const p = prepared(h);
+    storeOne(h, p);
+    confirmDispatchCompletion(confirmation(p), h.deps);
+    failFetchReplace = true;
+    expect(() => fetchDispatchResult(fetchRequest(p), h.deps)).toThrow(AttestationStorageError);
+    expect(h.store.read(handleOf(p))).not.toHaveProperty("outputMaterializedAt");
+  });
+
   test("a namespace mismatch is an explicit error on every trusted operation", () => {
     const h = harness();
     const p = prepared(h);
@@ -1674,9 +1705,9 @@ describe("namespace, auth, transport and storage errors stay explicit", () => {
     // A free key at a free handle but the SAME capability hash is refused too:
     // T720 gave the dummy the production adapters' unique capability-hash guard,
     // so two live rows can never be resolvable by ONE capability here either.
-    expect(() =>
-      h.store.insert({ ...sameKeyOtherHandle, idempotencyKey: "T685-round-1" }),
-    ).toThrow(`capability hash is already held by "${p.attestationId}#1"`);
+    expect(() => h.store.insert({ ...sameKeyOtherHandle, idempotencyKey: "T685-round-1" })).toThrow(
+      `capability hash is already held by "${p.attestationId}#1"`,
+    );
     // A different key, handle AND capability is accepted, and nothing was lost.
     h.store.insert({
       ...sameKeyOtherHandle,
@@ -2046,12 +2077,45 @@ describe("the 24h envelope, the 30d tombstone, and exact boundaries", () => {
     // The three live ones are untouched.
     for (const [index, handle] of handles.entries()) {
       const expected = index % 2 === 0 ? "attestation-not-found" : "prepared";
-      expect(fetchDispatchResult({ ...handle, namespace: NAMESPACE, actor: "trusted-parent" }, h.deps).state, String(index)).toBe(expected);
+      expect(
+        fetchDispatchResult({ ...handle, namespace: NAMESPACE, actor: "trusted-parent" }, h.deps)
+          .state,
+        String(index),
+      ).toBe(expected);
     }
   });
 });
 
 describe("restart-equivalent rehydration", () => {
+  test("the persisted marker survives restart, while clearing it rematerializes once", () => {
+    const live = harness();
+    const p = prepared(live);
+    storeOne(live, p);
+    confirmDispatchCompletion(confirmation(p), live.deps);
+    const first = fetchDispatchResult(fetchRequest(p), live.deps);
+    expect(first.state).toBe("consumed");
+
+    const restarted = InMemoryAttestationStore.rehydrate(NAMESPACE, live.store.snapshot());
+    const clock = new FakeDispatchClock(live.clock.peek());
+    const deps: DispatchServiceDeps = { store: restarted, now: clock.now };
+    expect(fetchDispatchResult(fetchRequest(p), deps).state).toBe("output-already-materialized");
+
+    const clearedRows = restarted.snapshot().map((row): AttestationRow => {
+      if (isAttestationTombstone(row) || row.outputMaterializedAt === undefined) return row;
+      const { outputMaterializedAt: _cleared, ...cleared } = row;
+      return cleared;
+    });
+    const markerCleared = InMemoryAttestationStore.rehydrate(NAMESPACE, clearedRows);
+    const clearedDeps: DispatchServiceDeps = { store: markerCleared, now: clock.now };
+    const rematerialized = fetchDispatchResult(fetchRequest(p), clearedDeps);
+    expect(rematerialized.state).toBe("consumed");
+    if (rematerialized.state !== "consumed") throw new Error("unreachable");
+    expect(rematerialized.output).toEqual(OUTPUT);
+    expect(fetchDispatchResult(fetchRequest(p), clearedDeps).state).toBe(
+      "output-already-materialized",
+    );
+  });
+
   test("a rehydrated store answers identically and still authorizes the capability", () => {
     const live = harness();
     const p = prepared(live);

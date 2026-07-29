@@ -9,11 +9,22 @@ import {
   InMemoryLedgerStore,
   LEDGER_RESPONSE_CONTRACTS,
   LEDGER_TOOL_NAMES,
+  type DispatchCapability,
 } from "@cq/ledger";
 import { createLedgerMcpServer } from "../src/main.js";
 
 const repoRoot = path.resolve(import.meta.dir, "../../../../../..");
 const packageReadmePath = path.resolve(import.meta.dir, "../README.md");
+const unavailable = async (): Promise<never> => {
+  throw new Error("documentation test does not invoke dispatch tools");
+};
+const dispatchCapability: DispatchCapability = {
+  prepare: unavailable,
+  storeResult: unavailable,
+  confirmCompletion: unavailable,
+  abort: unavailable,
+  fetch: unavailable,
+};
 
 function section(markdown: string, name: string): string {
   const start = `<!-- ${name}:start -->`;
@@ -92,10 +103,7 @@ function authoritativeResponseDescription(description: string): string {
   return description.slice(markerIndex + RESPONSE_DESCRIPTION_MARKER.length);
 }
 
-function assertAuthoritativeResponseDescription(
-  description: string,
-  expected: string,
-): void {
+function assertAuthoritativeResponseDescription(description: string, expected: string): void {
   expect(authoritativeResponseDescription(description)).toBe(expected);
 }
 
@@ -123,32 +131,28 @@ describe("public MCP response-contract documentation", () => {
     const readme = await packageReadme();
     assertCanonicalResponseMatrix(readme);
 
-    const compactFields = [...section(readme, "compact-item-fields").matchAll(/`([^`]+)`/g)]
-      .map((match) => match[1]);
+    const compactFields = [...section(readme, "compact-item-fields").matchAll(/`([^`]+)`/g)].map(
+      (match) => match[1],
+    );
     expect(compactFields).toEqual([...COMPACT_ITEM_FIELD_NAMES]);
   });
 
   // Regression: T678 review round 2 — field-level documentation drift must fail.
   it("rejects retained-field mutations in matrix cells and live descriptions", async () => {
     const readme = await packageReadme();
-    const matrixMutation = mutateResponseCell(
-      readme,
-      "enumerate_ledgers",
-      ", progressTotal",
-    );
+    const matrixMutation = mutateResponseCell(readme, "enumerate_ledgers", ", progressTotal");
     expect(matrixMutation).not.toBe(readme);
     expect(() => assertCanonicalResponseMatrix(matrixMutation)).toThrow();
 
     const acknowledgement = LEDGER_RESPONSE_CONTRACTS.update_item;
-    const liveDescription =
-      `${RESPONSE_DESCRIPTION_MARKER}${acknowledgement.responseDescription}`;
+    const liveDescription = `${RESPONSE_DESCRIPTION_MARKER}${acknowledgement.responseDescription}`;
     const descriptionMutation = liveDescription.replace(", updatedAt", "");
     expect(descriptionMutation).not.toBe(liveDescription);
     expect(() =>
       assertAuthoritativeResponseDescription(
         descriptionMutation,
         acknowledgement.responseDescription,
-      )
+      ),
     ).toThrow();
   });
 
@@ -159,7 +163,7 @@ describe("public MCP response-contract documentation", () => {
       readFile(path.join(repoRoot, "CLAUDE.md"), "utf8"),
     ]);
 
-    expect(rootReadme).toContain("31-tool ledger surface");
+    expect(rootReadme).toContain("33-tool ledger surface");
     expect(readme).toContain("single breaking cutover");
     expect(readme).toContain("No legacy peer is supported");
     expect(readme).toContain("There is no compatibility flag");
@@ -186,7 +190,11 @@ describe("public MCP response-contract documentation", () => {
     expect(milestone.id).toBe("M1");
     expect(item.id).toBe("T1");
 
-    const server = createLedgerMcpServer({ store, displayName: "docs-test" });
+    const server = createLedgerMcpServer({
+      store,
+      displayName: "docs-test",
+      dispatchCapability,
+    });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     const client = new Client(
@@ -199,7 +207,15 @@ describe("public MCP response-contract documentation", () => {
       const tools = await client.listTools();
       const toolByName = new Map(tools.tools.map((tool) => [tool.name, tool]));
       const directToolByName = new Map(
-        createLedgerMcpTools(store).map((tool) => [tool.name, tool]),
+        createLedgerMcpTools(
+          store,
+          undefined,
+          undefined,
+          undefined,
+          "",
+          undefined,
+          dispatchCapability,
+        ).map((tool) => [tool.name, tool]),
       );
       for (const toolName of LEDGER_TOOL_NAMES) {
         const tool = toolByName.get(toolName);

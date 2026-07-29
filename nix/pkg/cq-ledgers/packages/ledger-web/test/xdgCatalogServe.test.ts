@@ -331,6 +331,9 @@ describe("explicit XDG catalog HTTP/WS host", () => {
       connectMcp(base, "/p/alpha/mcp", "alpha-two"),
     ]);
     expect(observed.opens.get("alpha")).toBe(1);
+    const names = (await alphaOne.listTools()).tools.map((tool) => tool.name);
+    expect(names).not.toContain("prepare_dispatch");
+    expect(names).not.toContain("fetch_dispatch_result");
 
     const expectedListing = JSON.stringify({ projects });
     const listingOne = textOf(

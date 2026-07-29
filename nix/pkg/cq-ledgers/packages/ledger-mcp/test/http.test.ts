@@ -3,7 +3,7 @@
  *
  * Starts the server's `serveHttp` over Bun.serve on an ephemeral port,
  * connects a real `@modelcontextprotocol/sdk` Client through the
- * StreamableHTTPClientTransport, and asserts the 31-tool surface plus a
+ * StreamableHTTPClientTransport, and asserts the non-dispatch surface plus a
  * mutation-ack plus compact/full read round-trips work over HTTP and persist
  * to disk.
  */
@@ -15,7 +15,7 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { FsLedgerStore, LEDGER_TOOL_NAMES, prefixedToolNames } from "@cq/ledger";
+import { FsLedgerStore, NON_DISPATCH_LEDGER_TOOL_NAMES } from "@cq/ledger";
 import { serveHttp, attachMcpHttp, MCP_HTTP_PATH } from "../src/main.js";
 
 let tmpRoot: string;
@@ -64,10 +64,10 @@ function decode<T>(result: unknown): T {
 }
 
 describe("ledger-mcp Streamable HTTP", () => {
-  it("lists the 31 ledger tools over HTTP", async () => {
+  it("omits unwired dispatch tools over HTTP", async () => {
     await withClient(async (client) => {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
-      expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
+      expect(names).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
     });
   });
 
@@ -196,7 +196,7 @@ describe("ledger-mcp Streamable HTTP", () => {
  * T379: --tool-prefix end-to-end HTTP path.
  *
  * A server stood up via serveHttp/attachMcpHttp with toolPrefix='myproj'
- * must register prefixedToolNames('myproj') — NOT the unprefixed names.
+ * must prefix every registered non-dispatch tool.
  */
 describe("ledger-mcp HTTP --tool-prefix end-to-end (T379)", () => {
   const PREFIX = "myproj";
@@ -209,7 +209,12 @@ describe("ledger-mcp HTTP --tool-prefix end-to-end (T379)", () => {
     prefixedRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ledger-mcp-http-prefix-"));
     prefixedStore = new FsLedgerStore({ root: prefixedRoot });
     await prefixedStore.init();
-    prefixedServer = serveHttp(prefixedStore, { host: "127.0.0.1", port: 0 }, "prefix-test", PREFIX);
+    prefixedServer = serveHttp(
+      prefixedStore,
+      { host: "127.0.0.1", port: 0 },
+      "prefix-test",
+      PREFIX,
+    );
     prefixedBaseUrl = new URL(`http://127.0.0.1:${prefixedServer.port}${MCP_HTTP_PATH}`);
   });
 
@@ -230,10 +235,12 @@ describe("ledger-mcp HTTP --tool-prefix end-to-end (T379)", () => {
     }
   }
 
-  it("registers prefixedToolNames('myproj') — NOT the unprefixed names", async () => {
+  it("prefixes every registered non-dispatch tool", async () => {
     await withPrefixedClient(async (client) => {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
-      const expected = prefixedToolNames(PREFIX).sort();
+      const expected = NON_DISPATCH_LEDGER_TOOL_NAMES.map(
+        (name) => `${PREFIX}_${name}`,
+      ).sort();
       expect(names).toEqual(expected);
       // Spot-check: unprefixed names must not appear.
       expect(names).not.toContain("enumerate_ledgers");
@@ -257,11 +264,16 @@ describe("ledger-mcp HTTP --tool-prefix end-to-end (T379)", () => {
     });
     const url = new URL(`http://127.0.0.1:${attachServer.port}/`);
     const transport2 = new StreamableHTTPClientTransport(url);
-    const client2 = new Client({ name: "attach-prefix-test", version: "0.0.1" }, { capabilities: {} });
+    const client2 = new Client(
+      { name: "attach-prefix-test", version: "0.0.1" },
+      { capabilities: {} },
+    );
     await client2.connect(transport2 as unknown as Transport);
     try {
       const names = (await client2.listTools()).tools.map((t) => t.name).sort();
-      expect(names).toEqual(prefixedToolNames(PREFIX).sort());
+      expect(names).toEqual(
+        NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `${PREFIX}_${name}`).sort(),
+      );
       expect(names).not.toContain("enumerate_ledgers");
     } finally {
       await client2.close();

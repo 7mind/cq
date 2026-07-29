@@ -634,11 +634,11 @@ describe("T692 §1 — a Codex child's authority is bounded by types, not by pro
     expect(resultCapabilityAuthorizes("fetch_dispatch_result")).toBe(false);
     // Both REAL actors do materialise it, so the check above is a filter and not a
     // blanket refusal.
-    for (const actor of TRUSTED_DISPATCH_ACTORS) {
-      expect(fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps).state).toBe(
-        "consumed",
-      );
-    }
+    expect(
+      TRUSTED_DISPATCH_ACTORS.map(
+        (actor) => fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps).state,
+      ),
+    ).toEqual(["consumed", "output-already-materialized"]);
   });
 
   test("UNKNOWN FETCH: a well-formed unknown handle is a state, a malformed one is not", () => {
@@ -1772,7 +1772,7 @@ describe("T692 §8 — the body is materialised on one surface, and named for th
     expect(naming).toEqual(["fetch_dispatch_result response"]);
     // ...and within the fetch union, exactly the `consumed` variant.
     const variants = FETCH_DISPATCH_RESULT_SCHEMA.oneOf ?? [];
-    expect(variants.length).toBe(6);
+    expect(variants.length).toBe(7);
     const bodyBearing = variants.filter((variant) =>
       Object.hasOwn(variant.properties ?? {}, "output"),
     );
@@ -1854,45 +1854,29 @@ describe("T692 §8 — the body is materialised on one surface, and named for th
     });
   }
 
-  test("defects:D188: which 'exactly once' this suite asserts, and which it does not", () => {
-    // Two readings of "raw output becomes model-visible exactly once":
-    //
-    //  (a) SURFACE sense — exactly one operation in the protocol can render the
-    //      body, and every other response is handle/digest-only. That is what §8
-    //      asserts above, it holds today, and it is what defects:D173 required.
-    //  (b) REPEAT-COUNT sense — a SECOND fetch of the same consumed record does not
-    //      render the body again. The shared `fetchDispatchResult` is a REPEATABLE
-    //      pure read, so (b) does NOT hold on this surface, while tasks:T693's pi
-    //      extension makes fetch a one-shot CAS. That divergence is defects:D188,
-    //      scheduled under goals:G123 with a decided direction (make the shared
-    //      fetch one-shot).
-    //
-    // This task assumes reading (a) and CHANGES NOTHING. The characterization below
-    // pins the current repeatable behaviour so that when D188 lands, this
-    // assertion fails loudly and is INVERTED deliberately rather than silently
-    // drifting.
+  test("defects:D188: shared fetch materializes the output body exactly once", () => {
     const h = harness({ seed: 903 });
     const prepared = prepareCodex(h);
     expect(storeVia(h, prepared).state).toBe("result-stored");
     expect(confirmVia(h, prepared, CODEX_NATIVE_DELIVERY_MODE).state).toBe("consumed");
-    const reads = [1, 2, 3].map(() =>
+    const first = fetchDispatchResult(
+      fetchRequest(handleOf(prepared), "trusted-parent"),
+      h.deps,
+    );
+    const afterFirst = storeDigest(h);
+    const repeats = [1, 2].map(() =>
       fetchDispatchResult(fetchRequest(handleOf(prepared), "trusted-parent"), h.deps),
     );
-    expect(reads[1]).toEqual(reads[0]);
-    expect(reads[2]).toEqual(reads[0]);
-    for (const read of reads) {
-      expect(JSON.stringify(read)).toContain(BODY_SENTINEL);
-    }
-    // Reading (a) survives repetition regardless: repeating the ONE body-bearing
-    // surface does not add a second one.
+    expect(first.state).toBe("consumed");
+    expect(JSON.stringify(first)).toContain(BODY_SENTINEL);
+    expect(repeats[0]?.state).toBe("output-already-materialized");
+    expect(repeats[1]).toEqual(repeats[0]);
+    expect(JSON.stringify(repeats)).not.toContain(BODY_SENTINEL);
     expect(
       RESPONSE_SCHEMAS.filter(([, schema]) => schemaPropertyNames(schema).has("output")),
     ).toHaveLength(1);
-    // And the repeated reads are PURE: nothing was written, so the current
-    // behaviour is a read and not an undeclared mutation.
-    const before = storeDigest(h);
     fetchDispatchResult(fetchRequest(handleOf(prepared), "trusted-parent"), h.deps);
-    expect(storeDigest(h)).toBe(before);
+    expect(storeDigest(h)).toBe(afterFirst);
   });
 });
 
@@ -1900,7 +1884,7 @@ describe("T692 §8 — the body is materialised on one surface, and named for th
 // 9. Identical retries return the SAVED typed state
 // ---------------------------------------------------------------------------
 
-describe("T692 §9 — an identical retry returns the saved state and writes nothing", () => {
+describe("T692 §9 — lifecycle retries are stable after one-shot materialization", () => {
   for (const mode of MODES) {
     test(`[${mode}] store, confirm, abort and fetch are each idempotent, provably`, () => {
       // tasks:T690 asserted retry equality. What is added here is the STORE digest
@@ -1929,8 +1913,16 @@ describe("T692 §9 — an identical retry returns the saved state and writes not
         fetchRequest(handleOf(prepared), codexCompletionActor(mode)),
         h.deps,
       );
-      expect(fetchedTwice).toEqual(fetchedOnce);
-      expect(storeDigest(h)).toBe(afterConfirm);
+      const afterFirstFetch = storeDigest(h);
+      const fetchedThrice = fetchDispatchResult(
+        fetchRequest(handleOf(prepared), codexCompletionActor(mode)),
+        h.deps,
+      );
+      expect(fetchedOnce.state).toBe("consumed");
+      expect(fetchedTwice.state).toBe("output-already-materialized");
+      expect(fetchedThrice).toEqual(fetchedTwice);
+      expect(afterFirstFetch).not.toBe(afterConfirm);
+      expect(storeDigest(h)).toBe(afterFirstFetch);
       expect(h.store.snapshot()).toHaveLength(1);
 
       // The abort leg, on its own record: an identical abort is idempotent too.

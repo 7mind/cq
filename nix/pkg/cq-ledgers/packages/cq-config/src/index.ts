@@ -66,13 +66,7 @@ export {
   CQ_HARNESS_ENV,
   CLAUDE_CODE_SESSION_ID_ENV,
 } from "./activeHarness.js";
-export type {
-  RawToml,
-  RawWebui,
-  RawLedger,
-  RawProject,
-  RawHarnessOverride,
-} from "./toml.js";
+export type { RawToml, RawWebui, RawLedger, RawProject, RawHarnessOverride } from "./toml.js";
 export { parseToml } from "./toml.js";
 export {
   CQ_LEDGER_REMOTE_TOKEN_ENV,
@@ -184,18 +178,21 @@ export type {
   DispatchAbortReason,
   AbortDispatch,
   DispatchLifecycleState,
+  FetchDispatchResultState,
   PreparedDispatchResult,
   ResultStoredDispatchResult,
   ConsumedDispatchResult,
   AbortedDispatchResult,
   TerminalEnvelopeExpiredDispatchResult,
   AttestationNotFoundDispatchResult,
+  OutputAlreadyMaterializedDispatchResult,
   FetchDispatchResult,
   DispatchProtocolOperation,
 } from "./compactDispatchProtocol.js";
 export {
   DISPATCH_ABORT_REASONS,
   DISPATCH_LIFECYCLE_STATES,
+  FETCH_DISPATCH_RESULT_STATES,
   DISPATCH_PROTOCOL_OPERATIONS,
   COMPACT_DISPATCH_LAUNCH_SCHEMA,
   compactDispatchLaunchSchemaFor,
@@ -569,7 +566,10 @@ export {
   CLAUDE_BRIDGE_DEFERRED,
 } from "./claudeDispatchBridge.js";
 
-export type { AttestationStoreOperation, AttestationStoreFault } from "./dispatchAttestationDummy.js";
+export type {
+  AttestationStoreOperation,
+  AttestationStoreFault,
+} from "./dispatchAttestationDummy.js";
 export {
   ATTESTATION_STORE_OPERATIONS,
   InMemoryAttestationStore,

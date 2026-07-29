@@ -24,7 +24,7 @@ const ORIGINAL_SERVER_INSTRUCTIONS = [
   "  reflects reality; record findings as hypothesis/decision/question items.",
   "- Before acting: fts_search / fetch_ledger to see what already exists; do not",
   "  duplicate an existing item. fts_search accepts filters, e.g.",
-  '  `status:wip ledger:tasks`, `(status:done OR status:wip)`, `author:user`.',
+  "  `status:wip ledger:tasks`, `(status:done OR status:wip)`, `author:user`.",
   "- On completion: mark items terminal and archive_milestone once all its items",
   "  are terminal.",
   "",
@@ -99,7 +99,7 @@ describe("buildServerInstructions", () => {
     // prefixedToolNames produces exactly one entry per LEDGER_TOOL_NAMES member.
     expect(allowed.size).toBe(LEDGER_TOOL_NAMES.length);
     // Pin the total registered tool count so any accidental addition/removal fails here.
-    expect(LEDGER_TOOL_NAMES.length).toBe(31);
+    expect(LEDGER_TOOL_NAMES.length).toBe(33);
     for (const tok of emitted) {
       expect(allowed.has(tok)).toBe(true);
     }

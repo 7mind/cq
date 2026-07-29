@@ -266,9 +266,9 @@ describe("T690 §1 — which Codex delivery modes can satisfy the contract", () 
       "no-tools-exec",
       "raw-exec-stdout",
     ]);
-    expect(
-      SUPPORTED_CODEX_DELIVERY_MODES.length + UNSUPPORTED_CODEX_DELIVERY_MODES.length,
-    ).toBe(CODEX_DELIVERY_MODE_IDS.length);
+    expect(SUPPORTED_CODEX_DELIVERY_MODES.length + UNSUPPORTED_CODEX_DELIVERY_MODES.length).toBe(
+      CODEX_DELIVERY_MODE_IDS.length,
+    );
   });
 
   test("every mode's verdict cites the measurement or upstream defect that decided it", () => {
@@ -350,15 +350,11 @@ describe("T690 §2 — correlation is parent-minted and transport-read", () => {
     const id = mintCodexCorrelationId(sequentialDispatchRandomBytes(3));
     expect(CODEX_CORRELATION_ENTROPY_BYTES).toBe(24);
     expect(id).toMatch(/^[A-Za-z0-9_-]{32,}$/);
-    expect(() =>
-      assertCodexChildCorrelation({ ...CORRELATION, correlationId: id }),
-    ).not.toThrow();
+    expect(() => assertCodexChildCorrelation({ ...CORRELATION, correlationId: id })).not.toThrow();
   });
 
   test("a short-changed entropy source is refused rather than producing a weak nonce", () => {
-    expect(() => mintCodexCorrelationId(() => new Uint8Array(4))).toThrow(
-      AttestationContractError,
-    );
+    expect(() => mintCodexCorrelationId(() => new Uint8Array(4))).toThrow(AttestationContractError);
   });
 
   test("an unknown agentType is refused HERE — the structural answer to T713's fail-open --profile", () => {
@@ -398,9 +394,9 @@ describe("T690 §2 — correlation is parent-minted and transport-read", () => {
     });
     expect(sibling.childId).not.toBe(child.childId);
     // ...and so are two roles sharing a nonce.
-    expect(codexExpectedChild({ ...CORRELATION, agentType: "implement-reviewer" }).childId).not.toBe(
-      child.childId,
-    );
+    expect(
+      codexExpectedChild({ ...CORRELATION, agentType: "implement-reviewer" }).childId,
+    ).not.toBe(child.childId);
   });
 });
 
@@ -439,9 +435,9 @@ describe("T690 §3 — the launch gate", () => {
     expect(verdict.refusal).toBe("launch-budget-lapsed");
     expect(verdict.abortReason).toBe("deadline-exceeded");
     // Exactly AT the deadline already refuses — the boundary is inclusive.
-    expect(codexLaunchGate(prepared, new Date(T0_MS + LAUNCH_DEADLINE_MS - 1).toISOString()).launch).toBe(
-      true,
-    );
+    expect(
+      codexLaunchGate(prepared, new Date(T0_MS + LAUNCH_DEADLINE_MS - 1).toISOString()).launch,
+    ).toBe(true);
   });
 
   test("a launch instant PRECEDING the prepare instant is clock-skew, not a bigger window", () => {
@@ -470,7 +466,10 @@ describe("T690 §3 — the launch gate", () => {
     // Minimum timeout: responseStoreNow and launchDeadline coincide at +30s/+60s,
     // so there is a real interval in which launching is pointless.
     const short = harness({ seed: 21 });
-    const p = prepareCodex(short, { timeoutMs: DISPATCH_TIMEOUT_MIN_MS, idempotencyKey: "T690-min" });
+    const p = prepareCodex(short, {
+      timeoutMs: DISPATCH_TIMEOUT_MIN_MS,
+      idempotencyKey: "T690-min",
+    });
     const atMs = T0_MS + DISPATCH_TIMEOUT_MIN_MS - RESPONSE_STORE_LEAD_MS;
     const verdict = codexLaunchGate(p, new Date(atMs).toISOString());
     expect(verdict.launch).toBe(false);
@@ -547,10 +546,12 @@ describe("T690 §3 — the launch gate", () => {
     const before = h.store.snapshot().length;
     codexLaunchGate(prepared, new Date(T0_MS + LAUNCH_DEADLINE_MS).toISOString());
     expect(h.store.snapshot().length).toBe(before);
-    expect(fetchDispatchResult(
-      { ...handleOf(prepared), namespace: NAMESPACE, actor: "trusted-parent" },
-      h.deps,
-    ).state).toBe("prepared");
+    expect(
+      fetchDispatchResult(
+        { ...handleOf(prepared), namespace: NAMESPACE, actor: "trusted-parent" },
+        h.deps,
+      ).state,
+    ).toBe("prepared");
   });
 });
 
@@ -642,11 +643,7 @@ describe("T690 §4 — the parent-side handle-only check", () => {
 describe("T690 §4b — the completion decision keys on evidence, never on exit status", () => {
   test("the outcome and corroboration vocabularies are closed", () => {
     expect([...CODEX_CHILD_OUTCOMES]).toEqual(["completed", "cancelled", "transport-failed"]);
-    expect([...CODEX_EXIT_CORROBORATIONS]).toEqual([
-      "corroborates",
-      "contradicts",
-      "unavailable",
-    ]);
+    expect([...CODEX_EXIT_CORROBORATIONS]).toEqual(["corroborates", "contradicts", "unavailable"]);
     expect(codexExitCorroboration(undefined)).toBe("unavailable");
     expect(codexExitCorroboration(0)).toBe("corroborates");
     expect(codexExitCorroboration(1)).toBe("contradicts");
@@ -1198,9 +1195,9 @@ for (const mode of MODES) {
       const prepared = prepareCodex(h);
       expect(storeVia(h, prepared).state).toBe("result-stored");
       // A different body under the same capability.
-      expect(() => storeVia(h, prepared, { ...(OUTPUT as object), status: "fail" } as DispatchJSONValue)).toThrow(
-        DispatchStateConflictError,
-      );
+      expect(() =>
+        storeVia(h, prepared, { ...(OUTPUT as object), status: "fail" } as DispatchJSONValue),
+      ).toThrow(DispatchStateConflictError);
       expect(confirmVia(h, prepared, mode).state).toBe("consumed");
       // A different completion proof for an already-consumed record.
       expect(() =>
@@ -1381,7 +1378,7 @@ for (const mode of MODES) {
       expect(drop.rowsRemaining).toBe(0);
     });
 
-    test("all SIX fetch states are reachable on this mode", () => {
+    test("all SEVEN fetch states are reachable on this mode", () => {
       const seen = new Set<string>();
 
       const live = harness({ seed: 145 });
@@ -1390,6 +1387,7 @@ for (const mode of MODES) {
       storeVia(live, p1);
       seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
       confirmVia(live, p1, mode);
+      seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
       seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
       live.clock.advance(TERMINAL_ENVELOPE_RETENTION_MS);
       seen.add(fetchDispatchResult(fetchRequest(handleOf(p1), actor), live.deps).state);
@@ -1408,29 +1406,24 @@ for (const mode of MODES) {
         "aborted",
         "attestation-not-found",
         "consumed",
+        "output-already-materialized",
         "prepared",
         "result-stored",
         "terminal-envelope-expired",
       ]);
     });
 
-    test("REPEAT fetch of a consumed record re-renders the body — the shared service is idempotent", () => {
-      // Pinned as a CHARACTERIZATION, and named as a cross-surface DIVERGENCE:
-      // tasks:T693's pi extension materialises the body EXACTLY ONCE and answers
-      // `output-already-materialized` on a repeat, whereas the shared
-      // `fetchDispatchResult` this surface uses is a pure, repeatable read. Both
-      // satisfy "the body reaches the parent on FETCH and on no other surface",
-      // which is what defects:D173 required; they differ on repeat-fetch. That
-      // difference is recorded here rather than silently assumed either way,
-      // because changing it would change every surface at once.
+    test("REPEAT fetch of a consumed record returns output-already-materialized without the body", () => {
       const h = harness({ seed: 149 });
       const prepared = prepareCodex(h);
       storeVia(h, prepared);
       confirmVia(h, prepared, mode);
       const first = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps);
       const second = fetchDispatchResult(fetchRequest(handleOf(prepared), actor), h.deps);
-      expect(second).toEqual(first);
-      expect(JSON.stringify(second)).toContain(BODY_SENTINEL);
+      expect(first.state).toBe("consumed");
+      expect(JSON.stringify(first)).toContain(BODY_SENTINEL);
+      expect(second.state).toBe("output-already-materialized");
+      expect(JSON.stringify(second)).not.toContain(BODY_SENTINEL);
     });
   });
 }
@@ -1500,11 +1493,7 @@ function stripLineComments(text: string): string {
 }
 
 /** Offsets at which `key` is BOUND by `separator`, rather than merely mentioned. */
-function declarationKeyOffsets(
-  text: string,
-  key: string,
-  separator: string,
-): readonly number[] {
+function declarationKeyOffsets(text: string, key: string, separator: string): readonly number[] {
   const binding = new RegExp(String.raw`(?:^|[\s{,([])${key}[ \t]*${separator}`, "gm");
   const offsets: number[] = [];
   for (let match = binding.exec(text); match !== null; match = binding.exec(text)) {
@@ -1713,9 +1702,7 @@ describe("T690 §6 — the two-part role-delivery prerequisite must stay atomic"
     // stops the generated skill's own `name:` / `description:` frontmatter from
     // combining with a stray `developer_instructions =` elsewhere in the surface.
     expect(
-      detectNativeAgentDeclarations(
-        'name: "a"\ndescription: "b"\ndeveloper_instructions = "c"',
-      ),
+      detectNativeAgentDeclarations('name: "a"\ndescription: "b"\ndeveloper_instructions = "c"'),
     ).toBe(false);
     // Nor are keys scattered beyond one declaration's span.
     const scattered = [

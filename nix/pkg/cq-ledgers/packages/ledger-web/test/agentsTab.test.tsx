@@ -249,7 +249,7 @@ describe("Agents tab — live model overlay (T297)", () => {
     const text = cell!.textContent ?? "";
     expect(text).toContain("overlay unavailable");
     expect(text).toContain("rebuild");
-    expect(text).toContain("get_agent_models");
+    expect(text).toContain("get_config(agent_models)");
     // Must be distinct from the genuine not-configured label.
     expect(text).not.toContain("not configured (no cq.toml)");
   });

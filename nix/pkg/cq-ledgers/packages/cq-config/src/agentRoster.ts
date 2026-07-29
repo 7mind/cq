@@ -4,8 +4,8 @@
  *
  * Two consumers must agree on the SAME 24 roles and which of them carry an
  * `[agent_tiers]` key:
- *  - the ledger-mcp `computeAgentModels` capability (the `get_agent_models`
- *    server payload), and
+ *  - the ledger-mcp `computeAgentModels` capability (the `agent_models`
+ *    section of the `get_config` server payload), and
  *  - the ledger-web `gen-agents-catalogue.ts` codegen (the committed
  *    `AGENT_ROLES` catalogue).
  *
@@ -35,8 +35,9 @@ export interface AgentRoleTier {
  * The Q148 roles in canonical Nix-catalog order. Dispatched roles remain
  * model-configurable by their role id; orchestrator commands remain null.
  */
-export const AGENT_ROLE_TIERS: readonly AgentRoleTier[] =
-  PROMPT_CATALOG_PROJECTION.catalog.map((role) => ({
+export const AGENT_ROLE_TIERS: readonly AgentRoleTier[] = PROMPT_CATALOG_PROJECTION.catalog.map(
+  (role) => ({
     id: role.roleId,
     agentTierKey: role.roleKind === "dispatched-subagent" ? role.roleId : null,
-  }));
+  }),
+);

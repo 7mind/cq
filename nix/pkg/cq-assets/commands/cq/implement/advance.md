@@ -53,8 +53,9 @@ exactly where it left off.
 
 ## Conventions this command obeys (decision K4)
 - **Model tiers** (`tasks.suggestedModel`): tier→model comes from CONFIG, never
-  a hardcoded table. ONCE per pass, call the `ledger::get_config` MCP tool
-  (an MCP-tool call, NOT a `Bash` shellout — same server as `get_reviewers`)
+  a hardcoded table. ONCE per pass, call the
+  `ledger::get_config({"section":"tiers"})` MCP tool
+  (an MCP-tool call, NOT a `Bash` shellout — same server as `get_config({"section":"reviewers"})`)
   and read its `tiers` slots: `tiers.{fast,standard,frontier}`, each a resolved
   token `{ harness, model, provider, effort }` from the ACTIVE harness's
   `[harness.<h>.tiers]` map in `cq.toml` for the active surface. Resolve a
@@ -62,18 +63,16 @@ exactly where it left off.
   `suggestedModel` is unset → default to your OWN class through the surface's
   native inheritance mechanism AND
   print a `WARNING: task <id> has no suggestedModel` line. **Degrade
-  gracefully** when the `get_config` tool is ABSENT, or `tiers: null`, or the
+  gracefully** when the `get_config` tool is ABSENT, `configured: false`,
+  `tiers: null`, or the
   task's tier slot is missing: same inherit-your-own-class default + the
-  WARNING line (mirroring the `get_reviewers`-absence pattern in §3a) — never
-  invent a model literal. Do NOT key this degrade on `configured`: get_config's
-  `configured` means only 'a parseable cq.toml is present' (D81) — it is
-  INDEPENDENT of whether `tiers` itself is populated, so a valid
-  `[harness.<h>.tiers]` map coexists with `configured: true` regardless of the
-  reviewers list, and degrading on `configured` would DISCARD the user's valid
-  tiers (anti-D78). Decide the tiers-degrade purely on tool-absence /
-  `tiers: null` / missing slot.
+  WARNING line (mirroring the `get_config({"section":"reviewers"})`-absence pattern in §3a) — never
+  invent a model literal. This section-scoped `configured` reports whether
+  `tiers` itself is populated; it remains independent of the reviewers list, so
+  valid tiers remain active when reviewers are empty (anti-D78).
 - **Reviewer & conflict-resolver** always run at the FRONTIER tier resolved
-  from `get_config` (`tiers.frontier` — most-capable == frontier, Q253),
+  from `get_config({"section":"tiers"})` (`tiers.frontier` —
+  most-capable == frontier, Q253),
   regardless of the task's tier.
 - **Worktrees**: the surface-specific implement dispatch procedure defines
   whether the adapter prepares the tree before dispatch or the transport
@@ -244,7 +243,8 @@ restated in that same paragraph, "**GOALS NEVER auto-close**" — unchanged by
 this instruction): this write NEVER performs, and must never be conflated
 with, that terminal edge.
 
-Take up to N ready tasks. For each, resolve its model via `get_config` (§K4), set
+Take up to N ready tasks. For each, resolve its model via
+`get_config({"section":"tiers"})` (§K4), set
 `update_item("tasks", <id>, status: "wip")`, prepare or select its worktree
 through the surface adapter as prescribed by the surface-specific procedure,
 and dispatch an `implement-worker` via `CQ_SUBAGENT` (`role:
@@ -272,7 +272,7 @@ goes straight to the criticism loop (its `blockedReason` is treated as round-0
 criticism).
 
 **3a. Resolve the reviewer panel (T172).** ONCE per pass, query
-the ledger's reviewer list by calling the `ledger::get_reviewers` MCP
+the ledger's reviewer list by calling the `ledger::get_config({"section":"reviewers"})` MCP
 tool (the ledger MCP server is registered in `.mcp.json` as `ledger`;
 it has no stdout-printing CLI, so this is an MCP-tool call, NOT a `Bash`
 shellout). It returns `{ configured, reviewers: [{ harness, model, alias }] }`.
@@ -456,7 +456,8 @@ after every task in its `dependsOn` has merged). For each:
    merge-backs from this pass): `git rebase <base> implement/<taskId>` (run from
    its worktree, or fetch the branch into the main checkout).
 2. **On conflict** → dispatch `implement-conflict-resolver` (the §K4 FRONTIER
-   tier resolved from `get_config` — most-capable == frontier, Q253; the token's
+   tier resolved from `get_config({"section":"tiers"})` — most-capable ==
+   frontier, Q253; the token's
    `effort` is N/A at `CQ_SUBAGENT` dispatch per T510 — provenance/display only, never
    an CQ_SUBAGENT argument)
    with the worktree, branch, base, and conflicting files. On its `pass`,

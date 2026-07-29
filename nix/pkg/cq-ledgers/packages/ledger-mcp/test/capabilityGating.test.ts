@@ -155,7 +155,7 @@ describe("buildServer capability gating — git-object backend", () => {
     await withGitBackendClient(async (client) => {
       const result = (await client.callTool({
         name: "get_config",
-        arguments: {},
+        arguments: { section: "all" },
       })) as { isError?: boolean; content?: Array<{ type: string; text?: string }> };
       // The capability is WIRED for the git backend: get_config runs loadConfig
       // and returns a structured payload (with a `configured` boolean) — NOT the

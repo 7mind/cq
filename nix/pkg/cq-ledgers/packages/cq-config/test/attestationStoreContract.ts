@@ -626,7 +626,7 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
       }));
 
     // -- one-copy fetch ----------------------------------------------------
-    test("a fetch hands out one frozen copy that cannot be written back", () =>
+    test("a fetch hands out one frozen copy, then only the materialization marker", () =>
       withCase(async ({ fixture, driver }) => {
         const p = await driver.prepare();
         await driver.store(p.resultCapability);
@@ -642,8 +642,8 @@ export function runAttestationStoreContract(factory: AttestationContractFactory)
           // A frozen result refuses the write outright.
         }
         const second = await driver.fetch(handleOf(p));
-        if (second.state !== "consumed") throw new Error("unreachable");
-        expect(second.output).toEqual(OUTPUT);
+        expect(second.state).toBe("output-already-materialized");
+        expect(JSON.stringify(second)).not.toContain(OUTPUT_MARKER);
         // Exactly ONE copy of the output is persisted, in the attestation row.
         const dump = await fixture.dump();
         expect(dump.split(OUTPUT_MARKER)).toHaveLength(2);

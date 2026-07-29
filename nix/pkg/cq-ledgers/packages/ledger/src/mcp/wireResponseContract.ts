@@ -1,8 +1,4 @@
-import type {
-  FieldValue,
-  FetchedLedger,
-  Item,
-} from "../types.js";
+import type { FieldValue, FetchedLedger, Item } from "../types.js";
 import type { FtsSearchHit } from "../search/LedgerSearchIndex.js";
 import type { FetchedMilestoneItem } from "../store/LedgerStore.js";
 import type { LedgerToolName } from "./ledgerTools.js";
@@ -41,18 +37,15 @@ export const MILESTONE_MUTATION_ACK_DESCRIPTION =
 export const LEDGER_MUTATION_ACK_DESCRIPTION =
   "Returns fixed acknowledgement { ledger: { id } }; the schema and items are not returned.";
 
-export const GET_REVIEWERS_RESPONSE_DESCRIPTION =
+export const GET_REVIEWERS_SECTION_RESPONSE_DESCRIPTION =
   "{ configured, reviewers: [{ harness, model, provider, alias, effort }] }";
 
-export const GET_PLANNERS_RESPONSE_DESCRIPTION =
+export const GET_PLANNERS_SECTION_RESPONSE_DESCRIPTION =
   "{ configured, planners: [{ harness, model, provider, alias, effort }] }";
 
-export type CompactItemFieldName =
-  (typeof COMPACT_ITEM_FIELD_NAMES)[number];
+export type CompactItemFieldName = (typeof COMPACT_ITEM_FIELD_NAMES)[number];
 
-export type CompactItemFieldsDto = Partial<
-  Record<CompactItemFieldName, FieldValue>
->;
+export type CompactItemFieldsDto = Partial<Record<CompactItemFieldName, FieldValue>>;
 
 export interface CompactItemDto {
   id: string;
@@ -90,10 +83,7 @@ export type FtsSearchResultDto = Omit<FtsSearchHit, "item"> & {
   item: ItemDto;
 };
 
-export type FetchedMilestoneDto = Omit<
-  FetchedMilestoneItem,
-  "milestone"
-> & {
+export type FetchedMilestoneDto = Omit<FetchedMilestoneItem, "milestone"> & {
   milestone: ItemDto;
 };
 
@@ -167,9 +157,7 @@ export type LedgerResponseContract =
   | PurposeBuiltSmallContract
   | RequestedFullContentContract;
 
-function mandatoryItemProjection(
-  responseCell: string,
-): MandatoryItemProjectionContract {
+function mandatoryItemProjection(responseCell: string): MandatoryItemProjectionContract {
   return {
     kind: "mandatory-item-projection",
     projections: ["compact", "full"],
@@ -191,9 +179,7 @@ function fixedAcknowledgement(
   };
 }
 
-function purposeBuiltSmall(
-  responseCell: string,
-): PurposeBuiltSmallContract {
+function purposeBuiltSmall(responseCell: string): PurposeBuiltSmallContract {
   return {
     kind: "purpose-built-small",
     responseDescription: responseCell,
@@ -201,9 +187,7 @@ function purposeBuiltSmall(
   };
 }
 
-function requestedFullContent(
-  responseCell: string,
-): RequestedFullContentContract {
+function requestedFullContent(responseCell: string): RequestedFullContentContract {
   return {
     kind: "requested-full-content",
     responseDescription: responseCell,
@@ -221,9 +205,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   fetch_ledger_archive: requestedFullContent(
     "`{ archive }` with the requested archived item or milestone group in full.",
   ),
-  fetch_item: mandatoryItemProjection(
-    "`{ item }` using the requested projection.",
-  ),
+  fetch_item: mandatoryItemProjection("`{ item }` using the requested projection."),
   update_item: fixedAcknowledgement(
     "item",
     ITEM_MUTATION_ACK_DESCRIPTION,
@@ -239,9 +221,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     LEDGER_MUTATION_ACK_DESCRIPTION,
     "`{ ledger: { id } }`.",
   ),
-  search_items: mandatoryItemProjection(
-    "`{ items }` using the requested projection.",
-  ),
+  search_items: mandatoryItemProjection("`{ items }` using the requested projection."),
   fts_search: mandatoryItemProjection(
     "`{ results: [{ ledgerId, item, score, matchedFields }] }`; each item uses the requested projection.",
   ),
@@ -258,9 +238,7 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   fetch_milestone: mandatoryItemProjection(
     "`{ milestone, resolved, references }`; milestone uses the requested projection.",
   ),
-  archive_milestone: purposeBuiltSmall(
-    "`{ pointer }` for the archived milestone.",
-  ),
+  archive_milestone: purposeBuiltSmall("`{ pointer }` for the archived milestone."),
   list_milestone_items: mandatoryItemProjection(
     "`{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection.",
   ),
@@ -281,30 +259,26 @@ export const LEDGER_RESPONSE_CONTRACTS = {
     "`{ item: ItemAcknowledgement }`.",
   ),
   read_log: requestedFullContent("`{ path, content, truncated? }`."),
-  get_reviewers: purposeBuiltSmall(
-    `\`${GET_REVIEWERS_RESPONSE_DESCRIPTION}\`.`,
-  ),
-  get_planners: purposeBuiltSmall(
-    `\`${GET_PLANNERS_RESPONSE_DESCRIPTION}\`.`,
-  ),
   get_config: requestedFullContent(
-    "`{ configured, aliases, reviewers, planners, tiers, agentTiers, agentEfforts }`.",
+    "The payload selected by `section`; no unrelated section is returned.",
   ),
-  get_agent_models: purposeBuiltSmall(
-    "`{ configured, agents: [{ id, status, modelClass, modelMappings }] }`.",
+  prepare_dispatch: purposeBuiltSmall(
+    "`{ accepted, prepared, handle, executedStepOrder }` or a typed pre-launch rejection.",
+  ),
+  store_result: purposeBuiltSmall("A handle-only stored-result acknowledgement or typed abort."),
+  confirm_dispatch_completion: purposeBuiltSmall(
+    "A handle-only consumed acknowledgement or typed abort.",
+  ),
+  abort_dispatch: purposeBuiltSmall("A typed aborted acknowledgement."),
+  fetch_dispatch_result: requestedFullContent(
+    "One typed fetch state; only the first consumed fetch can carry `output`.",
   ),
   fetch_prompt: requestedFullContent(
     "Full typed prompt entry, including prompt text and schemas when available.",
   ),
-  validate_input: purposeBuiltSmall(
-    "`{ ok: true }` or `{ ok: false, errors }`.",
-  ),
-  validate_output: purposeBuiltSmall(
-    "`{ ok: true }` or `{ ok: false, errors }`.",
-  ),
-  list_projects: purposeBuiltSmall(
-    "`{ projects: [{ key, displayName, createdAt? }] }`.",
-  ),
+  validate_input: purposeBuiltSmall("`{ ok: true }` or `{ ok: false, errors }`."),
+  validate_output: purposeBuiltSmall("`{ ok: true }` or `{ ok: false, errors }`."),
+  list_projects: purposeBuiltSmall("`{ projects: [{ key, displayName, createdAt? }] }`."),
   claim_plan: purposeBuiltSmall(
     "`{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes " +
       "`ownerFenceToken`, and only back to the winning or exactly-retried " +
@@ -334,16 +308,9 @@ export function appendLedgerResponseDescription(
   return `${description}\n\nAuthoritative response: ${LEDGER_RESPONSE_CONTRACTS[toolName].responseDescription}`;
 }
 
-const ITEM_REFERENCE_FIELD_NAMES = [
-  "dependsOn",
-  "blockedBy",
-  "ledgerRefs",
-] as const;
+const ITEM_REFERENCE_FIELD_NAMES = ["dependsOn", "blockedBy", "ledgerRefs"] as const;
 
-const MILESTONE_REFERENCE_FIELD_NAMES = [
-  "dependsOn",
-  "blockedBy",
-] as const;
+const MILESTONE_REFERENCE_FIELD_NAMES = ["dependsOn", "blockedBy"] as const;
 
 function markProduced<T extends object>(value: T): ProducedWireDto<T> {
   Object.defineProperty(value, PRODUCED_WIRE_DTO, {
@@ -355,19 +322,13 @@ function markProduced<T extends object>(value: T): ProducedWireDto<T> {
   return value as ProducedWireDto<T>;
 }
 
-export function isProducedWireDto(
-  value: unknown,
-): value is ProducedWireDto<object> {
+export function isProducedWireDto(value: unknown): value is ProducedWireDto<object> {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    Reflect.get(value, PRODUCED_WIRE_DTO) === true
+    typeof value === "object" && value !== null && Reflect.get(value, PRODUCED_WIRE_DTO) === true
   );
 }
 
-export function produceWireDto<T extends object>(
-  value: T,
-): ProducedWireDto<T> {
+export function produceWireDto<T extends object>(value: T): ProducedWireDto<T> {
   const copy = Array.isArray(value) ? [...value] : { ...value };
   return markProduced(copy as T);
 }
@@ -389,9 +350,7 @@ function projectIntrinsicItem(
   return markProduced(projected);
 }
 
-export function projectCompactItemDto(
-  item: Item,
-): ProducedWireDto<CompactItemDto> {
+export function projectCompactItemDto(item: Item): ProducedWireDto<CompactItemDto> {
   const fields: CompactItemFieldsDto = {};
   for (const name of COMPACT_ITEM_FIELD_NAMES) {
     const value = item.fields[name];
@@ -400,9 +359,7 @@ export function projectCompactItemDto(
   return projectIntrinsicItem(item, fields);
 }
 
-export function projectFullItemDto(
-  item: Item,
-): ProducedWireDto<FullItemDto> {
+export function projectFullItemDto(item: Item): ProducedWireDto<FullItemDto> {
   return markProduced({
     ...item,
     fields: { ...item.fields },
@@ -412,9 +369,7 @@ export function projectFullItemDto(
 export function projectItemDto(
   item: Item,
   projection: ItemProjection,
-):
-  | ProducedWireDto<CompactItemDto>
-  | ProducedWireDto<FullItemDto> {
+): ProducedWireDto<CompactItemDto> | ProducedWireDto<FullItemDto> {
   switch (projection) {
     case "compact":
       return projectCompactItemDto(item);
@@ -507,9 +462,7 @@ function projectReferenceFields(
   return fields;
 }
 
-export function projectItemMutationAckDto(
-  item: Item,
-): ProducedWireDto<ItemMutationAckDto> {
+export function projectItemMutationAckDto(item: Item): ProducedWireDto<ItemMutationAckDto> {
   const projected: ItemMutationAckDto = {
     id: item.id,
     milestoneId: item.milestoneId,
@@ -535,10 +488,7 @@ export function projectMilestoneMutationAckDto(
   const projected: MilestoneMutationAckDto = {
     id: milestone.id,
     status: milestone.status,
-    fields: projectReferenceFields(
-      milestone,
-      MILESTONE_REFERENCE_FIELD_NAMES,
-    ),
+    fields: projectReferenceFields(milestone, MILESTONE_REFERENCE_FIELD_NAMES),
     createdAt: milestone.createdAt,
     updatedAt: milestone.updatedAt,
   };
@@ -547,9 +497,7 @@ export function projectMilestoneMutationAckDto(
   return markProduced(projected);
 }
 
-export function serializeWireDto(
-  value: ProducedWireDto<object>,
-): string {
+export function serializeWireDto(value: ProducedWireDto<object>): string {
   if (!isProducedWireDto(value)) {
     throw new TypeError("serializeWireDto requires a produced wire DTO");
   }

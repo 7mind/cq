@@ -94,10 +94,7 @@ function childEnv(harness: string): Record<string, string> {
  * Spawn the real stdio server (`src/main.ts`, the entrypoint `cq mcp` delegates
  * to and `.mcp.json` launches) under `CQ_HARNESS=<harness>`.
  */
-async function withHarness(
-  harness: string,
-  fn: (client: Client) => Promise<void>,
-): Promise<void> {
+async function withHarness(harness: string, fn: (client: Client) => Promise<void>): Promise<void> {
   const root = await fixtureRoot();
   const main = path.resolve(import.meta.dir, "..", "src", "main.ts");
   const transport = new StdioClientTransport({
@@ -158,10 +155,10 @@ async function panels(
   client: Client,
 ): Promise<{ reviewers: PanelEntry[]; planners: PanelEntry[] }> {
   const reviewers = decode<{ configured: boolean; reviewers: PanelEntry[] }>(
-    await client.callTool({ name: "get_reviewers", arguments: {} }),
+    await client.callTool({ name: "get_config", arguments: { section: "reviewers" } }),
   );
   const planners = decode<{ configured: boolean; planners: PanelEntry[] }>(
-    await client.callTool({ name: "get_planners", arguments: {} }),
+    await client.callTool({ name: "get_config", arguments: { section: "planners" } }),
   );
   expect(reviewers.configured).toBe(true);
   expect(planners.configured).toBe(true);
@@ -170,7 +167,7 @@ async function panels(
 
 async function agentModels(client: Client): Promise<AgentEntry[]> {
   const result = decode<{ configured: boolean; agents: AgentEntry[] }>(
-    await client.callTool({ name: "get_agent_models", arguments: {} }),
+    await client.callTool({ name: "get_config", arguments: { section: "agent_models" } }),
   );
   expect(result.configured).toBe(true);
   return result.agents;
@@ -201,7 +198,7 @@ describe("ledger-mcp stdio under a packaged CQ_HARNESS=codex environment (T865)"
       expect(planners).toEqual([SOL]);
 
       const config = decode<ConfigPayload>(
-        await client.callTool({ name: "get_config", arguments: {} }),
+        await client.callTool({ name: "get_config", arguments: { section: "all" } }),
       );
       expect(config.configured).toBe(true);
       // The ACTIVE panels are [harness.codex]'s, not the claude/pi ones.
@@ -209,8 +206,18 @@ describe("ledger-mcp stdio under a packaged CQ_HARNESS=codex environment (T865)"
       expect(config.planners).toEqual(["codex"]);
       // [harness.codex.tiers] wholly replaces [harness.claude.tiers].
       expect(config.tiers).toEqual({
-        frontier: { harness: "pi", model: "gpt-5.6-sol", provider: "openai-codex", effort: "xhigh" },
-        standard: { harness: "pi", model: "gpt-5.6-terra", provider: "openai-codex", effort: "high" },
+        frontier: {
+          harness: "pi",
+          model: "gpt-5.6-sol",
+          provider: "openai-codex",
+          effort: "xhigh",
+        },
+        standard: {
+          harness: "pi",
+          model: "gpt-5.6-terra",
+          provider: "openai-codex",
+          effort: "high",
+        },
         fast: { harness: "pi", model: "gpt-5.6-luna", provider: "openai-codex", effort: "low" },
       });
       // Acceptance: get_config.aliases MAY retain the shared Claude definitions

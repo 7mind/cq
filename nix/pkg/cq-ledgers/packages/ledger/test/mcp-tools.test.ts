@@ -11,11 +11,12 @@ import { z } from "zod";
 import {
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
   CANONICAL_LEDGERS,
   createLedgerMcpTools,
-  prefixedToolNames,
   derivePredicates,
   type DerivedPredicates,
+  type DispatchCapability,
   type Item,
   type LedgerSchema,
   type PromptCatalogCapability,
@@ -95,21 +96,28 @@ function expectedMilestoneAcknowledgement(item: Item): Record<string, unknown> {
 }
 
 describe("ledger MCP tools", () => {
-  it("exports the expected tool names (31 tools)", async () => {
+  it("exports 33 canonical names and omits unwired dispatch handlers", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    expect(tools.map((t) => t.name).sort()).toEqual([...LEDGER_TOOL_NAMES].sort());
-    expect(LEDGER_TOOL_NAMES.length).toBe(31);
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      [...NON_DISPATCH_LEDGER_TOOL_NAMES].sort(),
+    );
+    expect(LEDGER_TOOL_NAMES.length).toBe(33);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
     expect(LEDGER_TOOL_NAMES).toContain("reopen_item");
     expect(LEDGER_TOOL_NAMES).toContain("unarchive_item");
     expect(LEDGER_TOOL_NAMES).toContain("read_log");
-    expect(LEDGER_TOOL_NAMES).toContain("get_reviewers");
-    expect(LEDGER_TOOL_NAMES).toContain("get_planners");
     expect(LEDGER_TOOL_NAMES).toContain("get_config");
-    expect(LEDGER_TOOL_NAMES).toContain("get_agent_models");
+    expect(LEDGER_TOOL_NAMES).not.toContain("get_reviewers");
+    expect(LEDGER_TOOL_NAMES).not.toContain("get_planners");
+    expect(LEDGER_TOOL_NAMES).not.toContain("get_agent_models");
+    expect(LEDGER_TOOL_NAMES).toContain("prepare_dispatch");
+    expect(LEDGER_TOOL_NAMES).toContain("store_result");
+    expect(LEDGER_TOOL_NAMES).toContain("confirm_dispatch_completion");
+    expect(LEDGER_TOOL_NAMES).toContain("abort_dispatch");
+    expect(LEDGER_TOOL_NAMES).toContain("fetch_dispatch_result");
     expect(LEDGER_TOOL_NAMES).toContain("fetch_prompt");
     expect(LEDGER_TOOL_NAMES).toContain("validate_input");
     expect(LEDGER_TOOL_NAMES).toContain("validate_output");
@@ -120,20 +128,22 @@ describe("ledger MCP tools", () => {
     expect(LEDGER_TOOL_NAMES).toContain("finalize_plan");
   });
 
-  it("prefixed factory names equal prefixedToolNames(prefix) — drift guard", async () => {
+  it("prefixes every registered non-dispatch tool", async () => {
     const store = await buildStore();
     const prefix = "myproj";
     const tools = createLedgerMcpTools(store, undefined, undefined, undefined, prefix);
-    expect(tools.map((t) => t.name).sort()).toEqual(prefixedToolNames(prefix).sort());
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `${prefix}_${name}`).sort(),
+    );
   });
 
   it("read_log against the in-memory store throws the documented not-implemented error", async () => {
     const store = await buildStore();
     // No readLog capability supplied -> the in-memory dummy has no filesystem.
     const tools = createLedgerMcpTools(store);
-    await expect(
-      callTool(tools, "read_log", { path: "anything.md" }),
-    ).rejects.toThrow(/not implemented/i);
+    await expect(callTool(tools, "read_log", { path: "anything.md" })).rejects.toThrow(
+      /not implemented/i,
+    );
   });
 
   it("list_projects with no capability supplied throws the documented not-implemented error", async () => {
@@ -142,29 +152,20 @@ describe("ledger MCP tools", () => {
     // documented not-implemented error (the public createLedgerMcpServer
     // builder never leaves it undefined; see listProjects.ts's doc).
     const tools = createLedgerMcpTools(store);
-    await expect(
-      callTool(tools, "list_projects", {}),
-    ).rejects.toThrow(/not implemented/i);
+    await expect(callTool(tools, "list_projects", {})).rejects.toThrow(/not implemented/i);
   });
 
   it("list_projects dispatches to an injected capability (multi-tenant shape)", async () => {
     const store = await buildStore();
-    const tools = createLedgerMcpTools(
-      store,
-      undefined,
-      undefined,
-      undefined,
-      "",
-      () => ({
-        projects: [
-          { key: "proj-a", displayName: "Project A", createdAt: "2026-01-01T00:00:00.000Z" },
-          { key: "proj-b", displayName: "Project B" },
-        ],
-      }),
-    );
-    const result = decode<{ projects: Array<{ key: string; displayName: string; createdAt?: string }> }>(
-      await callTool(tools, "list_projects", {}),
-    );
+    const tools = createLedgerMcpTools(store, undefined, undefined, undefined, "", () => ({
+      projects: [
+        { key: "proj-a", displayName: "Project A", createdAt: "2026-01-01T00:00:00.000Z" },
+        { key: "proj-b", displayName: "Project B" },
+      ],
+    }));
+    const result = decode<{
+      projects: Array<{ key: string; displayName: string; createdAt?: string }>;
+    }>(await callTool(tools, "list_projects", {}));
     expect(result.projects).toEqual([
       { key: "proj-a", displayName: "Project A", createdAt: "2026-01-01T00:00:00.000Z" },
       { key: "proj-b", displayName: "Project B" },
@@ -175,9 +176,9 @@ describe("ledger MCP tools", () => {
     const store = await buildStore();
     // No promptCatalog capability supplied -> the in-memory wiring has no catalog.
     const tools = createLedgerMcpTools(store);
-    await expect(
-      callTool(tools, "fetch_prompt", { roleId: "plan-advance" }),
-    ).rejects.toThrow(/not implemented/i);
+    await expect(callTool(tools, "fetch_prompt", { roleId: "plan-advance" })).rejects.toThrow(
+      /not implemented/i,
+    );
     await expect(
       callTool(tools, "validate_input", { roleId: "plan-advance", input: {} }),
     ).rejects.toThrow(/not implemented/i);
@@ -208,7 +209,10 @@ describe("ledger MCP tools", () => {
       },
       validateOutput: (roleId) => {
         calls.push(`vout:${roleId}`);
-        return { ok: false, errors: [{ path: "/x", message: "bad", keyword: "type", schemaPath: "#/x", params: {} }] };
+        return {
+          ok: false,
+          errors: [{ path: "/x", message: "bad", keyword: "type", schemaPath: "#/x", params: {} }],
+        };
       },
     };
     const tools = createLedgerMcpTools(store, undefined, undefined, promptCatalog);
@@ -237,9 +241,7 @@ describe("ledger MCP tools", () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    const enum1 = decode<{ ledgers: string[] }>(
-      await callTool(tools, "enumerate_ledgers", {}),
-    );
+    const enum1 = decode<{ ledgers: string[] }>(await callTool(tools, "enumerate_ledgers", {}));
     expect(enum1.ledgers).toEqual([...BOOTSTRAPPED, "xenos"].sort());
 
     await callTool(tools, "create_ledger", {
@@ -250,9 +252,7 @@ describe("ledger MCP tools", () => {
         fields: { tag: { type: "string", required: false } },
       },
     });
-    const enum2 = decode<{ ledgers: string[] }>(
-      await callTool(tools, "enumerate_ledgers", {}),
-    );
+    const enum2 = decode<{ ledgers: string[] }>(await callTool(tools, "enumerate_ledgers", {}));
     expect(enum2.ledgers).toEqual([...BOOTSTRAPPED, "alpha", "xenos"].sort());
 
     const fetched = decode<{
@@ -516,13 +516,8 @@ describe("ledger MCP tools", () => {
       status: "planned",
       fields: { headline: "No provenance" },
     });
-    const absentResponse = decode<{ item: Record<string, unknown> }>(
-      absentResult,
-    );
-    const absentCreated = store.fetchItem(
-      "tasks",
-      absentResponse.item["id"] as string,
-    );
+    const absentResponse = decode<{ item: Record<string, unknown> }>(absentResult);
+    const absentCreated = store.fetchItem("tasks", absentResponse.item["id"] as string);
     expect(absentResponse).toEqual({
       item: expectedItemAcknowledgement(absentCreated),
     });
@@ -534,9 +529,7 @@ describe("ledger MCP tools", () => {
       item_id: absentCreated.id,
       status: "wip",
     });
-    const absentUpdateResponse = decode<{ item: Record<string, unknown> }>(
-      absentUpdateResult,
-    );
+    const absentUpdateResponse = decode<{ item: Record<string, unknown> }>(absentUpdateResult);
     const absentUpdated = store.fetchItem("tasks", absentCreated.id);
     expect(absentUpdateResponse).toEqual({
       item: expectedItemAcknowledgement(absentUpdated),
@@ -572,13 +565,8 @@ describe("ledger MCP tools", () => {
       dependsOn: ["M1"],
       blockedBy: ["M1"],
     });
-    const createResponse = decode<{ milestone: Record<string, unknown> }>(
-      createResult,
-    );
-    const created = store.fetchItem(
-      "milestones",
-      createResponse.milestone["id"] as string,
-    );
+    const createResponse = decode<{ milestone: Record<string, unknown> }>(createResult);
+    const created = store.fetchItem("milestones", createResponse.milestone["id"] as string);
 
     expect(createResponse).toEqual({
       milestone: expectedMilestoneAcknowledgement(created),
@@ -599,9 +587,7 @@ describe("ledger MCP tools", () => {
       dependsOn: ["M1"],
       blockedBy: ["M1"],
     });
-    const updateResponse = decode<{ milestone: Record<string, unknown> }>(
-      updateResult,
-    );
+    const updateResponse = decode<{ milestone: Record<string, unknown> }>(updateResult);
     const updated = store.fetchItem("milestones", created.id);
 
     expect(updateResponse).toEqual({
@@ -633,9 +619,7 @@ describe("ledger MCP tools", () => {
       item_id: authoredCreate.item.id,
       to_status: "planned",
     });
-    const reopenResponse = decode<{ item: Record<string, unknown> }>(
-      reopenResult,
-    );
+    const reopenResponse = decode<{ item: Record<string, unknown> }>(reopenResult);
     const reopened = store.fetchItem("tasks", authoredCreate.item.id);
     expect(reopenResponse).toEqual({
       item: expectedItemAcknowledgement(reopened),
@@ -659,19 +643,12 @@ describe("ledger MCP tools", () => {
     const unattributedReopenResponse = decode<{
       item: Record<string, unknown>;
     }>(unattributedReopenResult);
-    const unattributedReopened = store.fetchItem(
-      "tasks",
-      unattributedReopenCreate.item.id,
-    );
+    const unattributedReopened = store.fetchItem("tasks", unattributedReopenCreate.item.id);
     expect(unattributedReopenResponse).toEqual({
       item: expectedItemAcknowledgement(unattributedReopened),
     });
-    expect(Object.hasOwn(unattributedReopenResponse.item, "author")).toBe(
-      false,
-    );
-    expect(Object.hasOwn(unattributedReopenResponse.item, "session")).toBe(
-      false,
-    );
+    expect(Object.hasOwn(unattributedReopenResponse.item, "author")).toBe(false);
+    expect(Object.hasOwn(unattributedReopenResponse.item, "session")).toBe(false);
 
     await callTool(tools, "create_milestone", { title: "Unarchive" });
     const attributed = decode<{ item: { id: string } }>(
@@ -715,12 +692,8 @@ describe("ledger MCP tools", () => {
       expect(response).toEqual({
         item: expectedItemAcknowledgement(authoritative),
       });
-      expect(Object.hasOwn(response.item, "author")).toBe(
-        Object.hasOwn(expected, "author"),
-      );
-      expect(Object.hasOwn(response.item, "session")).toBe(
-        Object.hasOwn(expected, "session"),
-      );
+      expect(Object.hasOwn(response.item, "author")).toBe(Object.hasOwn(expected, "author"));
+      expect(Object.hasOwn(response.item, "session")).toBe(Object.hasOwn(expected, "session"));
       expect(result.content[0]?.text).toBe(JSON.stringify(response));
     }
   });
@@ -829,9 +802,7 @@ describe("ledger MCP tools", () => {
         title: string;
         status: string;
       };
-    }>(
-      archiveResult,
-    );
+    }>(archiveResult);
     expect(ptr).toEqual({
       pointer: {
         id: "M1",
@@ -986,9 +957,7 @@ describe("ledger MCP tools", () => {
       const store = await buildStore();
       const tools = createLedgerMcpTools(store);
       for (const badId of badIds) {
-        expect(
-          parseInput(tools, "update_milestone", { milestone_id: badId }).success,
-        ).toBe(false);
+        expect(parseInput(tools, "update_milestone", { milestone_id: badId }).success).toBe(false);
         expect(
           parseInput(tools, "archive_milestone", {
             milestone_id: badId,
@@ -1122,7 +1091,10 @@ describe("ledger MCP tools", () => {
     const out = decode<{
       ledger: Record<
         string,
-        Record<string, { count: number; items: Array<{ id: string; status: string; summary: string }> }>
+        Record<
+          string,
+          { count: number; items: Array<{ id: string; status: string; summary: string }> }
+        >
       >;
     }>(await callTool(tools, "snapshot", {}));
 
@@ -1183,9 +1155,7 @@ describe("ledger MCP tools", () => {
 
     // The tool's output must equal the shared derivePredicates(store) directly.
     const expected = derivePredicates(store);
-    const actual = decode<DerivedPredicates>(
-      await callTool(tools, "derive_predicates", {}),
-    );
+    const actual = decode<DerivedPredicates>(await callTool(tools, "derive_predicates", {}));
     expect(actual).toEqual(expected);
 
     // And the seeded task makes pImplement TRUE, naming that task id.
@@ -1255,9 +1225,7 @@ describe("ledger MCP tools", () => {
     await callTool(tools, "archive_milestone", { milestone_id: "M1", summary: "archived" });
 
     // Item is gone from active ledger after archiving.
-    const snap = decode<{ ledger: Record<string, unknown> }>(
-      await callTool(tools, "snapshot", {}),
-    );
+    const snap = decode<{ ledger: Record<string, unknown> }>(await callTool(tools, "snapshot", {}));
     expect(snap.ledger["xenos"]).toBeUndefined();
 
     const restored = decode<{ item: { id: string; status: string } }>(
@@ -1300,8 +1268,85 @@ describe("ledger MCP tools", () => {
     const store = await buildStore();
     // No configCapability supplied -> the in-memory store has no cq.toml-capable root.
     const tools = createLedgerMcpTools(store);
-    await expect(
-      callTool(tools, "get_agent_models", {}),
-    ).rejects.toThrow(/not implemented/i);
+    await expect(callTool(tools, "get_config", { section: "agent_models" })).rejects.toThrow(
+      /not implemented/i,
+    );
+  });
+
+  it("routes all five dispatch tools through the scoped capability with handle-only fetch", async () => {
+    const store = await buildStore();
+    const calls: Array<{ operation: string; input: unknown }> = [];
+    const record = (operation: string, input: unknown): never => {
+      calls.push({ operation, input });
+      return { operation } as never;
+    };
+    const dispatchCapability: DispatchCapability = {
+      prepare: async (input) => record("prepare_dispatch", input),
+      storeResult: async (input) => record("store_result", input),
+      confirmCompletion: async (input) => record("confirm_dispatch_completion", input),
+      abort: async (input) => record("abort_dispatch", input),
+      fetch: async (input) => record("fetch_dispatch_result", input),
+    };
+    const tools = createLedgerMcpTools(
+      store,
+      undefined,
+      undefined,
+      undefined,
+      "",
+      undefined,
+      dispatchCapability,
+    );
+    const handle = {
+      attestationId: `att_${"a".repeat(32)}`,
+      generation: 1,
+    };
+    await callTool(tools, "prepare_dispatch", {
+      roleId: "implement-worker",
+      input: { taskId: "T695" },
+      idempotencyKey: "T695-r1",
+      timeoutMs: 120_000,
+      expectedChild: { childId: "child-1", runId: "run-1" },
+    });
+    await callTool(tools, "store_result", {
+      resultCapability: {
+        scope: "store-result",
+        token: `cq_result_${"b".repeat(43)}`,
+      },
+      output: { status: "pass" },
+    });
+    await callTool(tools, "confirm_dispatch_completion", {
+      ...handle,
+      nativeCompletion: {
+        kind: "native-completion",
+        actor: "trusted-parent",
+        childId: "child-1",
+        runId: "run-1",
+        completedAt: "2026-07-29T12:00:00.000Z",
+      },
+      expectedProvenance: {
+        roleId: "implement-worker",
+        version: 1,
+        promptDigest: "a".repeat(64),
+        inputDigest: "b".repeat(64),
+      },
+    });
+    await callTool(tools, "abort_dispatch", { ...handle, reason: "cancelled" });
+    await callTool(tools, "fetch_dispatch_result", handle);
+
+    expect(calls.map((entry) => entry.operation)).toEqual([
+      "prepare_dispatch",
+      "store_result",
+      "confirm_dispatch_completion",
+      "abort_dispatch",
+      "fetch_dispatch_result",
+    ]);
+    expect(calls[1]!.input).toEqual({
+      resultCapability: {
+        scope: "store-result",
+        token: `cq_result_${"b".repeat(43)}`,
+      },
+      output: { status: "pass" },
+    });
+    expect(calls[4]!.input).toEqual(handle);
   });
 });

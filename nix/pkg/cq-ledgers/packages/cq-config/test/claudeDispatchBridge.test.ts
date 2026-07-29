@@ -179,7 +179,9 @@ function preparedReviewer(): DispatchPrepared {
     },
   );
   if (!outcome.accepted) {
-    throw new Error(`expected a prepared reviewer dispatch, got ${outcome.reason}: ${outcome.detail}`);
+    throw new Error(
+      `expected a prepared reviewer dispatch, got ${outcome.reason}: ${outcome.detail}`,
+    );
   }
   return outcome.prepared;
 }
@@ -337,7 +339,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
     expect(CLAUDE_BRIDGE_DEFERRED).toContain(
       "child-side-one-shot-retrieval-of-the-assembled-input-by-handle-T977",
     );
-    expect(CLAUDE_BRIDGE_DEFERRED).toContain(
+    expect(CLAUDE_BRIDGE_DEFERRED).not.toContain(
       "decide-defects-D188s-fetch-repeatability-divergence-T1142",
     );
   });
@@ -360,9 +362,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
       },
       {
         claudeExecutable: "bun",
-        claudeArgsPrefix: [
-          path.join(import.meta.dir, "fixtures", "claude-print-recording.ts"),
-        ],
+        claudeArgsPrefix: [path.join(import.meta.dir, "fixtures", "claude-print-recording.ts")],
         cwd: import.meta.dir,
         rolePrompt: ROLE_PROMPT,
         storeServer: {
@@ -411,9 +411,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
         },
         {
           claudeExecutable: "bun",
-          claudeArgsPrefix: [
-            path.join(import.meta.dir, "fixtures", "claude-print-recording.ts"),
-          ],
+          claudeArgsPrefix: [path.join(import.meta.dir, "fixtures", "claude-print-recording.ts")],
           cwd: import.meta.dir,
           rolePrompt: ROLE_PROMPT,
           storeServer: {
@@ -426,7 +424,9 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
           },
         },
       ),
-    ).toThrow(/generated role prompt for "implement-reviewer" has digest .* not the prepared digest/);
+    ).toThrow(
+      /generated role prompt for "implement-reviewer" has digest .* not the prepared digest/,
+    );
   });
 
   test("a malformed claude -p terminal result becomes a typed transport failure", () => {
@@ -498,9 +498,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
           storeServer: {
             name: "t688store",
             command: "bun",
-            args: [
-              path.join(import.meta.dir, "fixtures", "claude-print-store-server.ts"),
-            ],
+            args: [path.join(import.meta.dir, "fixtures", "claude-print-store-server.ts")],
             cwd: scratch,
             env: {
               T688_HANDLE: JSON.stringify(handle),
@@ -621,10 +619,7 @@ function child(b: Bridge, behaviour: ChildBehaviour = {}): ClaudeNativeLauncher 
     const submission =
       output === null
         ? undefined
-        : storeDispatchResult(
-            { resultCapability: context.resultCapability, output },
-            b.service,
-          );
+        : storeDispatchResult({ resultCapability: context.resultCapability, output }, b.service);
     return {
       cancelled: behaviour.cancelled ?? false,
       terminal: behaviour.terminal ?? TERMINAL_OK,
@@ -642,9 +637,7 @@ function child(b: Bridge, behaviour: ChildBehaviour = {}): ClaudeNativeLauncher 
   };
 }
 
-function dispatchRequest(
-  overrides: Partial<ClaudeDispatchRequest> = {},
-): ClaudeDispatchRequest {
+function dispatchRequest(overrides: Partial<ClaudeDispatchRequest> = {}): ClaudeDispatchRequest {
   return {
     namespace: NAMESPACE,
     roleId: ROLE_ID,
@@ -776,9 +769,7 @@ describe("T688 §2b — every failure is routed to a TYPED terminal state", () =
     expect(JSON.stringify(result.abort.details)).toContain("echo");
     // The process-boundary bridge consumes the raw child stream before the
     // orchestrator sees it, so this abort preserves containment.
-    expect(JSON.stringify(result.abort.details)).toContain(
-      '"containedBeforeParentContext":true',
-    );
+    expect(JSON.stringify(result.abort.details)).toContain('"containedBeforeParentContext":true');
   });
 
   test("INVALID OUTPUT aborts `invalid-output`, decided atomically by the store", () => {
@@ -883,11 +874,7 @@ describe("T688 §2b — every failure is routed to a TYPED terminal state", () =
   test("every declared run outcome is REACHABLE, and the abort reasons are the service's", () => {
     // A closed vocabulary that some input cannot produce is defects:D186's dead
     // declaration, so each is witnessed above and re-asserted as a set here.
-    expect([...CLAUDE_DISPATCH_RUN_OUTCOMES].sort()).toEqual([
-      "aborted",
-      "consumed",
-      "rejected",
-    ]);
+    expect([...CLAUDE_DISPATCH_RUN_OUTCOMES].sort()).toEqual(["aborted", "consumed", "rejected"]);
     const b = bridge();
     expect(run(b).outcome).toBe("consumed");
     expect(run(bridge(), { cancelled: true }).outcome).toBe("aborted");
@@ -1121,8 +1108,8 @@ Then await its result and \`validate_output("implement-worker", output)\`.
   });
 
   test("a non-string artifact body is refused rather than scanned as empty", () => {
-    expect(() =>
-      scanClaudeRefFirstArtifact("bogus", undefined as unknown as string),
-    ).toThrow(AttestationContractError);
+    expect(() => scanClaudeRefFirstArtifact("bogus", undefined as unknown as string)).toThrow(
+      AttestationContractError,
+    );
   });
 });
