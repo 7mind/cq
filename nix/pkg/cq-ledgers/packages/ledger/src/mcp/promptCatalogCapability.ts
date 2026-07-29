@@ -41,6 +41,8 @@ export type PromptSurface = "claude" | "codex" | "pi";
 export type PromptRendererCapability =
   | "cq-command-invocation"
   | "subagent-dispatch"
+  | "implement-dispatch-workflow"
+  | "dispatch-input-delivery"
   | "inline-command-recursion"
   | "host-tool-vocabulary"
   | "operational-tool-vocabulary";

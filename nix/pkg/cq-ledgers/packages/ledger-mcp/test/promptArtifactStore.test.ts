@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { PROMPT_FRAGMENT_SLOTS } from "@cq/config";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -524,4 +525,28 @@ test("the filesystem adapter requires an explicit absolute root", () => {
   expect(() => new FileSystemPromptArtifactStore(PROMPT_SURFACE, "relative/root")).toThrow(
     "root: expected an absolute path",
   );
+});
+
+// Regression: the packaged MCP must accept every fragment emitted by the generated catalog.
+test("the production adapter accepts the generated prompt-fragment vocabulary", () => {
+  const generatedRole = {
+    ...role("implement-worker", "dispatched-subagent"),
+    fragmentBindings: PROMPT_FRAGMENT_SLOTS.map((fragment) => ({
+      ...FRAGMENT_BINDING,
+      fragment,
+    })),
+  };
+  const generatedVocabulary = fixture(
+    [generatedRole],
+    [{ roleId: "implement-worker", bytes: encoder.encode("body") }],
+  );
+
+  const handle = filesystemAdapter().create(generatedVocabulary);
+  try {
+    expect(handle.store.readManifest().roles[0]?.requiredCapabilities).toEqual(
+      PROMPT_FRAGMENT_SLOTS,
+    );
+  } finally {
+    handle.cleanup();
+  }
 });

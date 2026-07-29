@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import * as path from "node:path";
+import { PROMPT_FRAGMENT_SLOTS } from "@cq/config";
 import type {
   PromptFragmentBinding,
   PromptIntentionalDifference,
@@ -24,13 +25,8 @@ const SURFACE_MANIFEST_FIELDS = [
 const SURFACE_ROLE_FIELDS = ["roleId", "version", "sha256"] as const;
 const ROLE_ARTIFACTS_DIRECTORY = "roles";
 const PROMPT_SURFACES = ["claude", "codex", "pi"] as const;
-const PROMPT_RENDERER_CAPABILITIES = [
-  "cq-command-invocation",
-  "subagent-dispatch",
-  "inline-command-recursion",
-  "host-tool-vocabulary",
-  "operational-tool-vocabulary",
-] as const;
+const PROMPT_RENDERER_CAPABILITIES =
+  PROMPT_FRAGMENT_SLOTS satisfies readonly PromptRendererCapability[];
 const INTENTIONAL_DIFFERENCE_KINDS = [
   "invocation-syntax",
   "dispatch-protocol",
