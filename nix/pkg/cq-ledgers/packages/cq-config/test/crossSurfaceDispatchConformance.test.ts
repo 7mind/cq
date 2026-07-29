@@ -485,6 +485,43 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
+  it("T903 pins reviewer evidence as blocking and independently verifies commit object plus tip", () => {
+    for (const surface of PROMPT_SURFACES) {
+      const reviewer = normalize(renderedOf(surface, "implement-reviewer"));
+      expect(reviewer).toContain(
+        normalize(
+          "Every verdict MUST state `gateReRan` and `resultCommitVerified`; omitting either statement is a contract breach.",
+        ),
+      );
+      expect(reviewer).toContain(
+        normalize(
+          "`git -C <worktree> cat-file -t <resultCommit>` and require the exact output `commit`",
+        ),
+      );
+      expect(reviewer).toContain(
+        normalize(
+          "resolve the worker branch tip with `git -C <worktree> rev-parse --verify <branch>` and require its full SHA to equal `resultCommit` exactly",
+        ),
+      );
+    }
+  });
+
+  it("T903 pins the implausible-duration classification and foreground-rerun response", () => {
+    for (const surface of PROMPT_SURFACES) {
+      const advance = normalize(renderedOf(surface, "implement/advance"));
+      expect(advance).toContain(
+        normalize(
+          "A `gateDurationMs` is IMPLAUSIBLE when it is absent, zero, below `MIN_GATE_DURATION_MS`, or below `PRIOR_ROUND_MEDIAN_FRACTION` times the median of THIS TASK's prior-round `gateDurationMs` values within the same implement run.",
+        ),
+      );
+      expect(advance).toContain(
+        normalize(
+          "When the duration is implausible, the orchestrator MUST re-run `bun run check` in the foreground and use that process's actual exit status for the green-check condition.",
+        ),
+      );
+    }
+  });
+
   // ── CHECK 3 — the structured input survives the render, per surface ─────
   for (const surface of PROMPT_SURFACES) {
     it(`${surface}: every dispatch edge carries its expected structured prepare input`, () => {

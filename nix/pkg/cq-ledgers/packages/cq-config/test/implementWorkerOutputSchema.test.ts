@@ -102,6 +102,14 @@ describe("T894 implement-worker outputSchema", () => {
     }
   });
 
+  test("(b) a positive gateDurationMs below 50ms remains schema-accepted so T900 can surface it", () => {
+    const result = validateAgainstSchema(
+      implementWorkerSidecar.outputSchema,
+      basePassPayload({ gateDurationMs: 1 }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
   // --- (c) test/guard path without mutationTable fails ------------------------
 
   test.each([

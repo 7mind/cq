@@ -63,9 +63,10 @@ describe("T895 implement-reviewer outputSchema", () => {
 
   // --- gateDurationMs required iff gateReRan=true ------------------------------
 
-  test("gateReRan=true without gateDurationMs fails Ajv", () => {
+  test("gateReRan=true without gateDurationMs and no gateReRanReason fails Ajv", () => {
     const payload = baseVerdictPayload();
     delete payload.gateDurationMs;
+    expect("gateReRanReason" in payload).toBe(false);
     const result = validateAgainstSchema(implementReviewerSidecar.outputSchema, payload);
     expect(result.ok).toBe(false);
     if (!result.ok) {
