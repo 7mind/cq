@@ -339,4 +339,34 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     expect(implementWorker).not.toContain("Inputs (from the dispatch prompt)");
     expect(implementWorker).not.toContain("input delivered via dispatch prompt");
   });
+
+  it("T899 makes the fetched resultCommit the sole pre-merge git authority", () => {
+    const body = bodyOf("implement");
+    const gateStart = body.indexOf("### 6. Success gate");
+    const gateEnd = body.indexOf("### 8. Loop");
+    expect(gateStart).toBeGreaterThanOrEqual(0);
+    expect(gateEnd).toBeGreaterThan(gateStart);
+    const mergeGate = normalize(body.slice(gateStart, gateEnd));
+
+    expect(mergeGate).toContain(
+      normalize(
+        "Use only the worker `resultCommit` from the `state: \"consumed\"` body fetched with the retained parent-minted handle.",
+      ),
+    );
+    expect(mergeGate).toContain("`git cat-file -t <resultCommit>`");
+    expect(mergeGate).toContain("requires its exact output to be `commit`");
+    expect(mergeGate).toContain("`git rev-parse <worker-branch>`");
+    expect(mergeGate).toContain("requires that branch tip to equal `<resultCommit>` exactly");
+    expect(mergeGate).toContain(
+      "A missing object or tip mismatch is a contract breach: log it and do not merge",
+    );
+    expect(mergeGate).toContain(
+      "Reviewer-reported `gateReRan` and `resultCommitVerified` fields are provenance/evidence only",
+    );
+    expect(mergeGate).toContain(
+      "the orchestrator's own git checks are the sole merge authority",
+    );
+    expect(mergeGate).toContain("`git merge --ff-only <resultCommit>`");
+    expect(mergeGate).not.toContain("`git merge --ff-only implement/<taskId>`");
+  });
 });

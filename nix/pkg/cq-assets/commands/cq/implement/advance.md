@@ -468,12 +468,30 @@ this means EVERY active reviewer approved AND the check is green
 dispatch result keeps the task out of merge-back. Only succeeded tasks proceed
 to merge-back.
 
+**Independent git authority (D156/T899 — blocking).** Use only the worker
+`resultCommit` from the `state: "consumed"` body fetched with the retained
+parent-minted handle. Before any rebase and again immediately before merge, the
+orchestrator ITSELF runs `git cat-file -t <resultCommit>` and requires its exact
+output to be `commit`; it also runs `git rev-parse <worker-branch>` (where
+`<worker-branch>` is the selected `implement/<taskId>` branch) and requires that
+branch tip to equal `<resultCommit>` exactly. A missing object or tip mismatch
+is a contract breach: log it and do not merge. Reviewer-reported `gateReRan`
+and `resultCommitVerified` fields are provenance/evidence only; the
+orchestrator's own git checks are the sole merge authority. The branch ref
+alone never authorizes merge-back.
+
 ### 7. Merge-back (sequential, DAG order, rebase-before-merge)
 Process succeeded tasks ONE AT A TIME, in dependency order (a task merges only
 after every task in its `dependsOn` has merged). For each:
 1. Rebase its branch onto the CURRENT base (which now includes earlier
    merge-backs from this pass): `git rebase <base> implement/<taskId>` (run from
-   its worktree, or fetch the branch into the main checkout).
+   its worktree, or fetch the branch into the main checkout). If the rebase
+   changes the branch tip, the previously fetched `resultCommit` loses merge
+   authority: re-dispatch the worker in the rebased worktree to re-run its gate
+   and report the new tip, accept only its newly fetched `state: "consumed"`
+   body through the retained parent-minted handle, re-run review, and return
+   through §6 before merge. Never carry the pre-rebase `resultCommit` across a
+   rewritten branch.
 2. **On conflict** → dispatch `implement-conflict-resolver` (the §K4 FRONTIER
    tier resolved from `get_config({"section":"tiers"})` — most-capable ==
    frontier, Q253; the token's
@@ -483,9 +501,16 @@ after every task in its `dependsOn` has merged). For each:
    continue; on its `fail`, treat like a question bailout (§5: register a
    `questions` item, set the task `blocked`, leave the worktree) and SKIP merging
    this task (and transitively anything depending on it) this pass.
-3. On a clean rebase (or resolved conflict) → fast-forward merge into the base,
+3. On a clean rebase (or resolved conflict), and after any tip-changing rebase
+   or resolver commit has completed the worker/reviewer re-gate above, repeat
+   §6's independent `git cat-file -t <resultCommit>` and
+   `git rev-parse <worker-branch>` checks immediately before merge. Then
+   fast-forward the exact verified object into the base with
+   `git merge --ff-only <resultCommit>` — never merge
+   `implement/<taskId>` by branch ref alone. A failed fast-forward is also a
+   contract breach: log it and do not merge. After the exact object lands,
    set `update_item("tasks", <id>, status: "done", fields: { resultCommit:
-   "<merged sha>", completion: "<1-line: what landed>", sessionLogs:
+   "<resultCommit>", completion: "<1-line: what landed>", sessionLogs:
    [".cq/logs/<ts>-<worker-agent-id>.md", ...], rawLogs:
    [".cq/logs/raw/<ts>-<worker-agent-id>.jsonl", ...] })` — include ALL
    summary-log paths (`sessionLogs`) AND all raw-transcript paths (`rawLogs`)
