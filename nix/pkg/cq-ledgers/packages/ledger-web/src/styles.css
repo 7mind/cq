@@ -49,6 +49,85 @@ body {
   font-weight: 700;
   color: var(--accent);
 }
+/* Project title + dropdown (merged former brand span + <select>). */
+.lw-project-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+.lw-project-menu-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 8px 2px 4px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--accent);
+  cursor: pointer;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lw-project-menu-btn:hover:not(:disabled),
+.lw-project-menu-btn[aria-expanded="true"] {
+  border-color: var(--line);
+  background: var(--bg);
+}
+.lw-project-menu-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+/* Caret via CSS so the button's textContent stays the bare project name. */
+.lw-project-menu-btn::after {
+  content: " ▾";
+  font-weight: 400;
+  color: var(--dim);
+}
+.lw-project-menu-list {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  min-width: 100%;
+  max-width: 36ch;
+  max-height: 50vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.lw-project-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--fg);
+  font: inherit;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lw-project-menu-item:hover {
+  background: var(--bg);
+  color: var(--accent);
+}
+.lw-project-menu-item-active {
+  color: var(--accent);
+  font-weight: 700;
+}
+.lw-project-menu-item-active::before {
+  content: "✓ ";
+  color: var(--ok);
+}
 .lw-conn-connected {
   color: var(--ok);
 }
@@ -82,14 +161,7 @@ body {
 .lw-urlform input {
   width: 280px;
 }
-.lw-project-selector {
-  background: var(--panel);
-  color: var(--fg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font: inherit;
-}
+
 /* Right-aligned header cluster: progress bars + help (?) + settings (⚙). */
 .lw-header-right {
   margin-left: auto;

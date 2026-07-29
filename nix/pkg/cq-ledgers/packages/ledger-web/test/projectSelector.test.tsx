@@ -8,9 +8,8 @@
  *    LedgerClient to `/p/<key>/mcp` and re-points the live-updates WS to
  *    `/p/<key>/ws`, tearing down the old subscription.
  *
- * The `<select>` is CONTROLLED (fine under happy-dom per the project's
- * uncontrolled-input convention, which applies to TEXT inputs only — no text
- * input is introduced here).
+ * The switcher is a custom dropdown (title button + menu), not a native
+ * <select> — open via app-title, pick via project-option-<key>.
  */
 
 import { registerDom } from "./helpers/dom";
@@ -42,17 +41,23 @@ function click(el: Element | null): void {
     (el as HTMLElement).click();
   });
 }
-/** Drive a controlled <select> the same way app.test.tsx does. */
-function setValue(el: Element | null, value: string): void {
-  if (el === null) throw new Error("setValue: element not found");
-  act(() => {
-    const node = el as HTMLSelectElement;
-    node.focus();
-    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), "value");
-    desc?.set?.call(node, value);
-    node.dispatchEvent(new Event("input", { bubbles: true }));
-    node.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+/** Open the project dropdown and pick the option for `key`. */
+function pickProject(key: string): void {
+  click(testid("app-title"));
+  click(testid(`project-option-${key}`));
+}
+
+function activeProject(): string | null {
+  return testid("project-selector")?.getAttribute("data-active-project") ?? null;
+}
+
+function projectLabels(): string[] {
+  click(testid("app-title")); // open menu
+  const menu = testid("project-menu");
+  if (menu === null) return [];
+  return Array.from(menu.querySelectorAll("[data-testid^='project-option-']")).map(
+    (el) => el.textContent ?? "",
+  );
 }
 
 /** Minimal fake WebSocket the tests drive (mirrors app.test.tsx's FakeWS). */
@@ -107,16 +112,16 @@ describe("project selector — embedded/xdg single-project mode", () => {
     });
     await flush();
 
-    const select = testid("project-selector") as HTMLSelectElement | null;
-    expect(select).not.toBeNull();
-    const options = Array.from(select!.querySelectorAll("option"));
-    expect(options).toHaveLength(1);
-    expect(options[0]!.textContent).toBe("cq1");
-    expect(select!.value).toBe("cq1");
+    expect(testid("project-selector")).not.toBeNull();
+    expect(testid("app-title")?.textContent).toBe("cq1");
+    expect(activeProject()).toBe("cq1");
+    expect(projectLabels()).toEqual(["cq1"]);
+    // Close menu (click title again) so the next pick starts clean.
+    click(testid("app-title"));
 
     // "Switching" to the already-active (only) entry must not reconnect.
     expect(connectedUrls).toHaveLength(1);
-    setValue(select, "cq1");
+    pickProject("cq1");
     await flush();
     expect(connectedUrls).toHaveLength(1);
   });
@@ -160,11 +165,11 @@ describe("project selector — multi-project hub", () => {
     // Boots against p1: one connect call, the selector lists both projects,
     // active = p1, and one live ws opened against p1's topic.
     expect(connectedUrls).toEqual(["http://x/p/p1/mcp"]);
-    const select = testid("project-selector") as HTMLSelectElement | null;
-    expect(select).not.toBeNull();
-    const options = Array.from(select!.querySelectorAll("option")).map((o) => o.textContent);
-    expect(options).toEqual(["Project One", "Project Two"]);
-    expect(select!.value).toBe("p1");
+    expect(testid("project-selector")).not.toBeNull();
+    expect(testid("app-title")?.textContent).toBe("Project One");
+    expect(activeProject()).toBe("p1");
+    expect(projectLabels()).toEqual(["Project One", "Project Two"]);
+    click(testid("app-title")); // close menu
     expect(FakeWS.instances).toHaveLength(1);
     expect(FakeWS.instances[0]!.url).toBe("ws://x/p/p1/ws");
     act(() => FakeWS.instances[0]!.open());
@@ -175,8 +180,8 @@ describe("project selector — multi-project hub", () => {
     await flush();
     expect(text()).not.toContain("only in project two");
 
-    // Switch to p2 via the selector.
-    setValue(select, "p2");
+    // Switch to p2 via the dropdown.
+    pickProject("p2");
     await flush();
 
     // A new MCP connect was issued to /p/p2/mcp, and a new ws opened to /p/p2/ws
@@ -186,7 +191,8 @@ describe("project selector — multi-project hub", () => {
     expect(connectedUrls).toEqual(["http://x/p/p1/mcp", "http://x/p/p2/mcp"]);
     expect(FakeWS.instances).toHaveLength(2);
     expect(FakeWS.instances[1]!.url).toBe("ws://x/p/p2/ws");
-    expect(select!.value).toBe("p2");
+    expect(activeProject()).toBe("p2");
+    expect(testid("app-title")?.textContent).toBe("Project Two");
     // The URL persists the choice (?project=<key>) for reloads/shared links.
     expect(window.location.search).toContain("project=p2");
 
@@ -237,8 +243,7 @@ describe("project selector — multi-project hub", () => {
     expect(FakeWS.instances[0]!.url).toBe("ws://x/p/p1/ws?token=s3cr%20t");
 
     // Switch to p2.
-    const select = testid("project-selector") as HTMLSelectElement | null;
-    setValue(select, "p2");
+    pickProject("p2");
     await flush();
 
     // The new MCP connect went through the token-bound closure with the

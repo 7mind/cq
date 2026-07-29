@@ -239,9 +239,9 @@ describe("T837 Behavioral-Active: deep-link bootstrap makes zero wrong-project r
     // The selector reflects p2 as active (matched against the FULL catalog
     // returned by list_projects on the already-correct connection), with no
     // additional connect triggered by that match.
-    const select = testid("project-selector") as HTMLSelectElement | null;
+    const select = testid("project-selector");
     expect(select).not.toBeNull();
-    expect(select!.value).toBe("p2");
+    expect(select!.getAttribute("data-active-project")).toBe("p2");
     expect(connectedUrls).toHaveLength(1);
 
     // Views render p2's data (proves the live connection is really p2's).
@@ -352,10 +352,10 @@ describe("T837 Behavioral-Active: deep-link bootstrap makes zero wrong-project r
     // The page recovers instead of bricking: conn is "connected" and the
     // selector is enabled over the real (alias) catalog, not disabled over
     // an empty one.
-    const select = testid("project-selector") as HTMLSelectElement | null;
+    const select = testid("project-selector");
     expect(select).not.toBeNull();
-    expect(select!.disabled).toBe(false);
-    expect(select!.value).toBe("cq1");
+    expect((testid("app-title") as HTMLButtonElement | null)?.disabled).toBe(false);
+    expect(select!.getAttribute("data-active-project")).toBe("cq1");
   });
 
   it("a ?url= override failure surfaces as a genuine error — no fallback, exactly one connect (pinning an already-correct scoping)", async () => {
@@ -479,31 +479,19 @@ describe("T837 Behavioral-Active: deep-link bootstrap makes zero wrong-project r
     // serving p2's stale data under a `p1` label. After the fix this must
     // render a genuine conn-error with exactly ONE additional connect (to
     // p1) — no third connect to the alias.
-    const select = testid("project-selector") as HTMLSelectElement | null;
-    expect(select).not.toBeNull();
-    setValue(select, "p1");
+    expect(testid("project-selector")).not.toBeNull();
+    // Open dropdown and pick p1.
+    click(testid("app-title"));
+    click(testid("project-option-p1"));
     await flush();
 
     expect(connectedUrls).toEqual([`${ORIGIN}/p/p2/mcp`, `${ORIGIN}/p/p1/mcp`]);
     expect(testid("conn-status")?.textContent).toBe("✕ error");
     expect(testid("conn-error")?.textContent ?? "").toContain("503: p1 runtime unavailable");
-    expect(select!.value).toBe("p1");
+    expect(testid("project-selector")?.getAttribute("data-active-project")).toBe("p1");
     expect(window.location.search).toContain("project=p1");
   });
 });
-
-/** Drive a controlled <select> the same way projectSelector.test.tsx does. */
-function setValue(el: Element | null, value: string): void {
-  if (el === null) throw new Error("setValue: element not found");
-  act(() => {
-    const node = el as HTMLSelectElement;
-    node.focus();
-    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), "value");
-    desc?.set?.call(node, value);
-    node.dispatchEvent(new Event("input", { bubbles: true }));
-    node.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-}
 
 function click(el: Element | null): void {
   if (el === null) throw new Error("click: element not found");

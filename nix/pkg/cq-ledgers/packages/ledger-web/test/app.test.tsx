@@ -161,14 +161,15 @@ describe("ledger-web App", () => {
     expect(testid("ledger-milestones")).not.toBeNull();
   });
 
-  it("sets document.title and header to [<dir>] LLM ledgers after connect (T67)", async () => {
+  it("sets document.title and header to the project display name after connect (T67)", async () => {
     fake = new FakeClient("cq1");
     await act(async () => {
       root.render(createElement(App, { connect: async () => fake, initialUrl: "http://x/mcp" }));
     });
     await flush();
-    expect(document.title).toBe("[cq1] LLM ledgers");
-    expect(testid("app-title")?.textContent).toBe("[cq1] LLM ledgers");
+    expect(document.title).toBe("cq1");
+    expect(testid("app-title")?.textContent).toBe("cq1");
+    expect(testid("project-selector")?.getAttribute("data-active-project")).toBe("cq1");
   });
 
   it("shows each ledger's item count in the sidebar", async () => {

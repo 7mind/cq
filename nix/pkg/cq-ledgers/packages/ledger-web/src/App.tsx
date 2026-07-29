@@ -548,8 +548,14 @@ export function App({
     setColumnMenuOpen(false);
   }, [ledger]);
 
-  // Set document.title and derive the header label from displayName once connected.
-  const appTitle = client !== null ? `[${client.displayName()}] LLM ledgers` : "LLM ledgers";
+  // Header / document title = active project's display name (no product brand).
+  // Prefer list_projects' entry so a multi-project hub shows the human label
+  // even when client.displayName() is the raw key; fall back to the MCP
+  // displayName while connecting / if the list is empty.
+  const activeProject = projects.find((p) => p.key === activeProjectKey);
+  const appTitle =
+    activeProject?.displayName ??
+    (client !== null ? client.displayName() : "…");
   useEffect(() => {
     document.title = appTitle;
   }, [appTitle]);
@@ -1466,29 +1472,19 @@ export function App({
   return (
     <div className="lw-root">
       <header className="lw-header">
-        <span className="lw-title" data-testid="app-title">{appTitle}</span>
+        {/* Project title + switcher merged into one dropdown (replaces the old
+            "[dir] LLM ledgers" brand span + native <select>). Always visible
+            (T589 / Q276): one entry in embedded/xdg, N on a hub. */}
+        <ProjectMenu
+          projects={projects}
+          activeKey={activeProjectKey}
+          label={appTitle}
+          disabled={client === null}
+          onSelect={switchProject}
+        />
         <span className={`lw-conn lw-conn-${conn}`} data-testid="conn-status">
           {conn === "connected" ? "● connected" : conn === "connecting" ? "○ connecting…" : "✕ error"}
         </span>
-        {/* Always-visible project selector (T589 / Q276, supersedes Q284's
-            hide-when-single recommendation): one entry in embedded/xdg
-            single-project mode (switch is then a no-op), N entries against a
-            multi-project `cq serve` hub. Controlled <select> — fine under
-            happy-dom per the uncontrolled-input convention (text inputs only). */}
-        <select
-          className="lw-project-selector"
-          data-testid="project-selector"
-          aria-label="active project"
-          disabled={client === null}
-          value={activeProjectKey ?? ""}
-          onChange={(e) => switchProject(e.target.value)}
-        >
-          {projects.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.displayName}
-            </option>
-          ))}
-        </select>
         {activeLiveUrl !== null && <LiveIndicator stats={live} />}
         <SearchBar onSearch={(q) => void runSearch(q)} disabled={client === null} />
         <button
@@ -2976,6 +2972,87 @@ function FlowLegend(): React.ReactElement {
           {kind}
         </span>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Header project switcher: the former brand title + native select collapsed
+ * into one dropdown. The closed button shows the active project's display name
+ * (caret via CSS ::after so textContent stays the bare name for tests/a11y).
+ * Opens a menu of every list_projects entry; picking one calls onSelect(key).
+ */
+function ProjectMenu({
+  projects,
+  activeKey,
+  label,
+  disabled,
+  onSelect,
+}: {
+  projects: readonly ProjectEntry[];
+  activeKey: string | null;
+  label: string;
+  disabled: boolean;
+  onSelect: (key: string) => void;
+}): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  // Close on outside pointerdown (same pattern as settings/column popups).
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent): void => {
+      if (rootRef.current !== null && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onDoc);
+    return () => document.removeEventListener("pointerdown", onDoc);
+  }, [open]);
+  return (
+    <div
+      className="lw-project-menu"
+      ref={rootRef}
+      data-testid="project-selector"
+      data-active-project={activeKey ?? ""}
+    >
+      <button
+        type="button"
+        className="lw-title lw-project-menu-btn"
+        data-testid="app-title"
+        aria-label="active project"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        disabled={disabled || projects.length === 0}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {label}
+      </button>
+      {open && (
+        <ul className="lw-project-menu-list" role="listbox" data-testid="project-menu">
+          {projects.map((p) => {
+            const active = p.key === activeKey;
+            return (
+              <li key={p.key} role="option" aria-selected={active}>
+                <button
+                  type="button"
+                  className={
+                    active
+                      ? "lw-project-menu-item lw-project-menu-item-active"
+                      : "lw-project-menu-item"
+                  }
+                  data-testid={`project-option-${p.key}`}
+                  onClick={() => {
+                    setOpen(false);
+                    onSelect(p.key);
+                  }}
+                >
+                  {p.displayName}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
