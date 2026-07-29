@@ -116,15 +116,14 @@ const UI_AUTHOR = "user";
  * Canonical sidebar group order (T193). Each inner array is one group;
  * ledgers render in this order with <hr> splitters between non-empty groups.
  * Any ledger not named here falls into the trailing "custom" group.
- * The Q&A button is appended inline after the questions ledger (group 0).
+ * The Q&A button is appended inline after the questions ledger (wherever it
+ * sits — currently group 0 with ideas).
  */
 const SIDEBAR_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
-  ["questions"],
-  ["ideas"],
+  ["ideas", "questions"],
   ["goals", "milestones"],
-  ["defects", "tasks"],
-  ["handoffs"],
-  ["decisions", "hypothesis", "reviews"],
+  ["defects", "tasks", "upstream", "researches"],
+  ["handoffs", "reviews", "decisions", "hypothesis"],
 ] as const;
 
 /** Debounce for as-you-type search (ms). */

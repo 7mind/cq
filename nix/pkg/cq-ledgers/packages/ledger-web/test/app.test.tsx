@@ -1181,20 +1181,25 @@ describe("ledger-web sidebar layout (T4)", () => {
     const questionsBtn = testid("ledger-questions");
     const batchBtn = testid("batch-open");
     const divider = testid("sidebar-divider");
+    const milestonesBtn = testid("ledger-milestones");
     const bugsBtn = testid("ledger-bugs");
 
     // All elements are present.
     expect(questionsBtn).not.toBeNull();
     expect(batchBtn).not.toBeNull();
     expect(divider).not.toBeNull();
+    expect(milestonesBtn).not.toBeNull();
     expect(bugsBtn).not.toBeNull();
 
-    // Document order: questions → batch-open → divider → bugs (and other non-questions ledgers).
+    // Document order (SIDEBAR_GROUPS): questions → Q&A → divider → milestones … → bugs.
+    // FakeClient has no ideas/goals/defects/… so group 0 is just questions+Q&A,
+    // group 1 starts at milestones, custom group ends with bugs/plain.
     const follows = (a: Element | null, b: Element | null): boolean =>
       (a!.compareDocumentPosition(b!) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
     expect(follows(questionsBtn, batchBtn)).toBe(true);
     expect(follows(batchBtn, divider)).toBe(true);
-    expect(follows(divider, bugsBtn)).toBe(true);
+    expect(follows(divider, milestonesBtn)).toBe(true);
+    expect(follows(milestonesBtn, bugsBtn)).toBe(true);
 
     // Q&A button label is exactly "Q&A".
     expect(batchBtn!.textContent).toBe("Q&A");
@@ -1351,7 +1356,8 @@ describe("ledger-web keyboard navigation", () => {
     const dialog = q(".lw-batch");
     expect(dialog).not.toBeNull();
     expect(dialog?.classList.contains("lw-batch")).toBe(true);
-    expect(testid("batch-progress")?.textContent).toBe("open question 1 of 3");
+    expect(testid("batch-progress")?.textContent).toBe("Q1 · open question 1 of 3");
+    expect(testid("batch-question-id")?.textContent).toBe("Q1");
     expect(testid("batch-field-question")?.textContent).toContain("Ship on Friday?");
     // Step to Q2 to assert the suggestions render as a <ul> list.
     click(testid("batch-next"));
@@ -1364,19 +1370,19 @@ describe("ledger-web keyboard navigation", () => {
     await mount();
     click(testid("batch-open"));
     await flush();
-    expect(testid("batch-progress")?.textContent).toBe("open question 1 of 3");
+    expect(testid("batch-progress")?.textContent).toBe("Q1 · open question 1 of 3");
     click(testid("batch-next"));
     await flush();
-    expect(testid("batch-progress")?.textContent).toBe("open question 2 of 3");
+    expect(testid("batch-progress")?.textContent).toBe("Q2 · open question 2 of 3");
     pressCtrl("]");
     await flush();
-    expect(testid("batch-progress")?.textContent).toBe("open question 3 of 3");
+    expect(testid("batch-progress")?.textContent).toBe("Q3 · open question 3 of 3");
     pressCtrl("[");
     await flush();
-    expect(testid("batch-progress")?.textContent).toBe("open question 2 of 3");
+    expect(testid("batch-progress")?.textContent).toBe("Q2 · open question 2 of 3");
     click(testid("batch-prev"));
     await flush();
-    expect(testid("batch-progress")?.textContent).toBe("open question 1 of 3");
+    expect(testid("batch-progress")?.textContent).toBe("Q1 · open question 1 of 3");
   });
 
   it("'save & mark answered' writes the answer + answered status and advances", async () => {
@@ -1389,7 +1395,7 @@ describe("ledger-web keyboard navigation", () => {
     expect(q1.status).toBe("answered");
     expect(q1.fields["answer"]).toBe("ship it");
     // Advanced to the next open question.
-    expect(testid("batch-progress")?.textContent).toBe("open question 2 of 3");
+    expect(testid("batch-progress")?.textContent).toBe("Q2 · open question 2 of 3");
   });
 
   it("'as recommended' writes the canned AS_RECOMMENDED_ANSWER", async () => {
