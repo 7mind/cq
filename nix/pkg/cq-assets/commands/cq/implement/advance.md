@@ -266,19 +266,48 @@ calls in ONE message so they run concurrently. Record each worker's session log
 on return via `cq log put` (§Session logs).
 
 **Parent-minted dispatch-result gate (T898, blocking).** For every
-`implement-worker` and native `implement-reviewer`, retain the exact
+`implement-worker`, native `implement-reviewer`, and
+`implement-conflict-resolver`, retain the exact
 `attestationId` and `generation` from that orchestrator's `prepare_dispatch`
 response before launch. The role's structured result is eligible for the
 interpretation below ONLY when `fetch_dispatch_result` returns `state:
 "consumed"` with the server-validated body for that exact retained handle.
 `prepared`, `result-stored`, `aborted`, `terminal-envelope-expired`,
 `attestation-not-found`, and `output-already-materialized` are all blocking
-non-results: treat a worker as failed or a reviewer as abstaining, according to
-the existing routing below, and never inspect or salvage any child final-message
-body. Never select a result with an attestation id, generation, capability, or
-token reported by the child. A child-reported identifier has no authority even
-when it matches the expected format; the orchestrator already holds the only
-handle it may fetch.
+non-results. Never inspect or salvage any child final-message body. Never select
+a result with an attestation id, generation, capability, or token reported by
+the child. A child-reported identifier has no authority even when it matches
+the expected format; the orchestrator already holds the only handle it may
+fetch.
+
+**LOST REPORT retry gate (T901, native roles only).** LOST REPORT means the
+orchestrator did not consume a server-validated body from
+`fetch_dispatch_result` on the exact parent-retained handle. A progress-only
+notification, raw or body-returning final message, malformed handle-only text,
+wrong or child-reported handle, or any non-`consumed` fetch state never counts
+as the required output and can never satisfy §6. This classification includes
+the blocking states listed above and a missing final reply; none may be
+reinterpreted as a valid worker `fail`, reviewer abstention, or resolver `fail`.
+
+Log each LOST REPORT as a dispatch-contract breach through §Session logs,
+including the native role, retained attestation id and generation, observed
+final-message classification or fetch state, and attempt number. Re-dispatch
+the same required role exactly once with the same semantic input; the retry
+budget is exactly 1. The retry uses a fresh parent-prepared dispatch and its
+fresh retained handle, then follows the same store / handle-only / confirm /
+one-shot-fetch protocol. A second LOST REPORT exhausts that budget and fails
+the affected task, reviewer path, or conflict-resolution turn closed: stop
+processing that task before review, reconciliation, question synthesis,
+success, or merge-back; leave its task non-terminal and its worktree intact;
+and report the operational failure. Do not send a twice-lost worker through the
+criticism loop, drop a twice-lost native reviewer as an abstainer, invoke the
+all-abstain fallback for it, or treat a twice-lost resolver as a structured
+`fail`. Apply this retry gate to `implement-worker`, native
+`implement-reviewer`, and `implement-conflict-resolver`. The held direct
+`pi:*` paths keep their existing fail-closed parsing and abstention rules; do
+not route them through this native retry gate. Server validation at the
+store/fetch boundary is authoritative: do not restore Session-summary or
+result-body parsing, and do not add an ordinary `validate_output` call.
 
 ### 3. Review each finished worker (multi-reviewer panel, reconciled)
 For every worker that returned `status: "pass"`, run the **reviewer panel** for
@@ -298,8 +327,9 @@ Apply any session-only override already in effect. Then:
   native `implement-reviewer` CQ_SUBAGENT, exactly as before (`role:
   "implement-reviewer"`, `model` = the §K4 FRONTIER token's bare-alias `model`,
   verbatim; §K4's graceful degradation applies when `get_config` too is
-  absent). It already returns the
-  terminal json the orchestrator records; nothing else changes. Skip 3b/3c.
+  absent). Its terminal json is available only as the consumed,
+  server-validated body under the T898/T901 gate; nothing else changes. Skip
+  3b/3c.
 - **`configured` is true** → the panel is the listed active reviewers; run them
   in PARALLEL per task (3b) and RECONCILE their verdicts (3c).
 
@@ -310,8 +340,9 @@ concurrently, keyed by `harness`:
   "implement-reviewer"`, model from the reviewer's `model` — a bare alias,
   verbatim — else the §K4 FRONTIER token's `model`). The reviewer token's
   `effort` is N/A at `CQ_SUBAGENT` dispatch (T510, §2) — provenance/display only.
-  It returns its structured json (the contract below) and writes
-  nothing to the ledger.
+  Its structured json (the contract below) is stored server-side and consumed
+  through the parent-retained handle under the T898/T901 gate; its final reply
+  carries only that handle. It writes nothing to the ledger.
 - **`pi:*`** → `Bash` shellout to the `pi` CLI (T169 invocation, decision K30):
   `env -u CODEX_COMPANION_SESSION_ID -u CLAUDE_PLUGIN_DATA pi -p --no-tools --no-session --provider <P> --model <M> '<prompt>' </dev/null`
   (grok-build → `--provider grok-build --model grok-build`; gpt-5.5 →
@@ -336,18 +367,19 @@ Every reviewer — native `implement-reviewer` and the shared `CQ::implement-rev
 rubric driving `pi` — returns the SAME byte-identical contract: `{ taskId,
 verdict: "approve" | "disapprove", criticism: [], questions: [], defects: [...],
 rationale, summary }`. Tag each parsed result with its source reviewer
-(`harness:model`/`alias`) for the reconciliation step. **A reviewer that fails
-to return a usable verdict ABSTAINS** — a `pi` shellout that exits non-zero,
-emits empty stdout, or yields stdout that does not parse (after fence-strip)
-into the verdict contract, OR a native `claude:*` reviewer that returns no /
-garbled json — is DROPPED from the panel for this task: it is NOT counted as
-`approve` and NOT counted as `disapprove` (an abstention is a panel-membership
-change, not a vote). Log its raw stdout + the abstention reason (alias + cause)
-per §Session logs, and proceed to reconcile over the reviewers that DID return a
-usable verdict. **No wall-clock timeout is imposed** (decision: abstention keys
-ONLY on a RETURNED failure — non-zero exit, empty, or unparseable; a genuinely
-hung shellout surfaces as an operational stall to handle directly, never a
-silent abstention). A quota-exhausted / unauthorized / unavailable reviewer
+(`harness:model`/`alias`) for the reconciliation step. **A direct `pi:*`
+reviewer that fails to return a usable verdict ABSTAINS** — a shellout that
+exits non-zero, emits empty stdout, or yields stdout that does not parse (after
+fence-strip) into the verdict contract is DROPPED from the panel for this task:
+it is NOT counted as `approve` and NOT counted as `disapprove` (an abstention is
+a panel-membership change, not a vote). A native reviewer's absent body follows
+the T901 LOST REPORT retry gate instead and can never become an abstention. Log
+a Pi reviewer's raw stdout + the abstention reason (alias + cause) per §Session
+logs, and proceed to reconcile over the reviewers that DID return a usable
+verdict. **No wall-clock timeout is imposed** (decision: Pi abstention keys ONLY
+on a RETURNED failure — non-zero exit, empty, or unparseable; a genuinely hung
+shellout surfaces as an operational stall to handle directly, never a silent
+abstention). A quota-exhausted / unauthorized / unavailable Pi reviewer
 therefore drops out and the available reviewers still gate the task — it does
 NOT block a task the rest of the panel approved.
 
@@ -365,8 +397,10 @@ per-reviewer json into ONE reconciled verdict that drives the criticism loop
   dispatch per T510 — provenance/display only, never an CQ_SUBAGENT argument) —
   the always-available default — and use its verdict as the reconciled result;
   REPORT that the configured panel was unavailable this pass (which aliases
-  abstained + why). The flow NEVER blocks on an unavailable panel and NEVER
-  approves with zero successful reviewers.
+  abstained + why). This native fallback is itself subject to the T901
+  one-retry LOST REPORT gate; a twice-lost fallback fails the reviewer path
+  closed rather than approving or abstaining. The flow NEVER approves with zero
+  successful reviewers.
 - **Off-enum verdict ⇒ ABSTENTION (fail-loud, BEFORE reconcile).** After
   parsing the verdict contract, VALIDATE the `verdict` string against the
   closed implement-review enum `{approve, disapprove}` (the literal enum in
@@ -466,7 +500,10 @@ accepted the worker and every native reviewer result; the worker's last
 this means EVERY active reviewer approved AND the check is green
 (strictest-wins); a single dissenting `disapprove` or any non-`consumed`
 dispatch result keeps the task out of merge-back. Only succeeded tasks proceed
-to merge-back.
+to merge-back. In addition, no required native-role dispatch may have an
+unresolved or twice-lost report; after a first LOST REPORT, the T901 retry must
+produce a consumed server-validated body before that role can contribute to
+success or merge-back.
 
 **Independent git authority (D156/T899 — blocking).** Use only the worker
 `resultCommit` from the `state: "consumed"` body fetched with the retained
@@ -497,10 +534,13 @@ after every task in its `dependsOn` has merged). For each:
    frontier, Q253; the token's
    `effort` is N/A at `CQ_SUBAGENT` dispatch per T510 — provenance/display only, never
    an CQ_SUBAGENT argument)
-   with the worktree, branch, base, and conflicting files. On its `pass`,
-   continue; on its `fail`, treat like a question bailout (§5: register a
-   `questions` item, set the task `blocked`, leave the worktree) and SKIP merging
-   this task (and transitively anything depending on it) this pass.
+   with the worktree, branch, base, and conflicting files. Only a consumed
+   server-validated body under the T898/T901 gate can supply its `pass` or
+   `fail`. On its `pass`, continue; on its `fail`, treat like a question bailout
+   (§5: register a `questions` item, set the task `blocked`, leave the worktree)
+   and SKIP merging this task (and transitively anything depending on it) this
+   pass. A LOST REPORT follows the distinct one-retry/fail-closed route and
+   never synthesizes either verdict.
 3. On a clean rebase (or resolved conflict), and after any tip-changing rebase
    or resolver commit has completed the worker/reviewer re-gate above, repeat
    §6's independent `git cat-file -t <resultCommit>` and

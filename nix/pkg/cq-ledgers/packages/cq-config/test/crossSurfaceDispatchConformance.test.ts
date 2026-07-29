@@ -156,6 +156,55 @@ function countOccurrences(haystack: string, needle: string): number {
 
 const normalize = (text: string): string => text.replace(/\s+/g, " ");
 
+type LostReportViolation =
+  | "missing-operational-definition"
+  | "missing-contract-breach-log"
+  | "missing-single-retry"
+  | "missing-second-loss-fail-closed"
+  | "progress-or-missing-can-green"
+  | "missing-native-role-routing"
+  | "pi-path-was-migrated"
+  | "success-gate-not-closed";
+
+function lostReportContractViolations(body: string): readonly LostReportViolation[] {
+  const normalized = normalize(body);
+  const required: readonly [LostReportViolation, string][] = [
+    [
+      "missing-operational-definition",
+      "LOST REPORT means the orchestrator did not consume a server-validated body from `fetch_dispatch_result` on the exact parent-retained handle",
+    ],
+    ["missing-contract-breach-log", "Log each LOST REPORT as a dispatch-contract breach"],
+    [
+      "missing-single-retry",
+      "Re-dispatch the same required role exactly once with the same semantic input; the retry budget is exactly 1",
+    ],
+    [
+      "missing-second-loss-fail-closed",
+      "A second LOST REPORT exhausts that budget and fails the affected task, reviewer path, or conflict-resolution turn closed",
+    ],
+    [
+      "progress-or-missing-can-green",
+      "A progress-only notification, raw or body-returning final message, malformed handle-only text, wrong or child-reported handle, or any non-`consumed` fetch state never counts as the required output and can never satisfy §6",
+    ],
+    [
+      "missing-native-role-routing",
+      "Apply this retry gate to `implement-worker`, native `implement-reviewer`, and `implement-conflict-resolver`",
+    ],
+    [
+      "pi-path-was-migrated",
+      "The held direct `pi:*` paths keep their existing fail-closed parsing and abstention rules; do not route them through this native retry gate",
+    ],
+    [
+      "success-gate-not-closed",
+      "no required native-role dispatch may have an unresolved or twice-lost report",
+    ],
+  ];
+
+  return required.flatMap(([violation, needle]) =>
+    normalized.includes(normalize(needle)) ? [] : [violation],
+  );
+}
+
 /**
  * The (d) leg. Unlike the (a)-leg spellings below this token has NO legitimate
  * home in any rendered orchestrator body — not in a canonical source and not in
@@ -345,6 +394,34 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     }
   });
 
+  it("T901 retries a missing required native report once, then fails closed", () => {
+    for (const surface of PROMPT_SURFACES) {
+      const rendered = renderedOf(surface, "implement/advance");
+      expect(lostReportContractViolations(rendered)).toEqual([]);
+      expect(rendered).not.toContain(
+        "treat a worker as failed or a reviewer as abstaining, according to the existing routing below",
+      );
+      expect(rendered).not.toContain('validate_output("implement-conflict-resolver",');
+    }
+  });
+
+  it("T901 guard rejects progress-only success and a second retry", () => {
+    const real = renderedOf("codex", "implement/advance");
+    const progressCanGreen = real.replace(
+      /never counts\s+as the required output and can never satisfy §6/,
+      "may count as the required output and satisfy §6",
+    );
+    expect(lostReportContractViolations(progressCanGreen)).toContain(
+      "progress-or-missing-can-green",
+    );
+
+    const secondRetry = real.replace(
+      /the retry\s+budget is exactly 1/,
+      "the retry budget is exactly 2",
+    );
+    expect(lostReportContractViolations(secondRetry)).toContain("missing-single-retry");
+  });
+
   it("T898 makes worker and reviewer bodies store-only with handle-only completion", () => {
     for (const surface of PROMPT_SURFACES) {
       for (const role of ["implement-worker", "implement-reviewer"] as const) {
@@ -360,6 +437,31 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
         expect(rendered).not.toContain("structured JSON verdict block as final reply content");
       }
     }
+  });
+
+  it("T901 makes the conflict-resolver result store-only with handle-only completion", () => {
+    for (const surface of PROMPT_SURFACES) {
+      const rendered = normalize(renderedOf(surface, "implement-conflict-resolver"));
+      expect(rendered).toContain(
+        normalize(
+          "call the capability-scoped `store_result` exactly once with `{ output: <result> }`",
+        ),
+      );
+      expect(rendered).toContain("The final message is never the handover channel");
+      expect(rendered).toContain("carries only the prepared dispatch handle");
+      expect(rendered).not.toContain("structured JSON result block as final reply content");
+      expect(rendered).not.toContain("Emit the **Session summary** section");
+      expect(rendered).not.toContain("return a single fenced `json` block");
+    }
+
+    const heldPiAdvance = normalize(
+      renderedOf("pi", "implement/advance").replace(/^>\s?/gm, ""),
+    );
+    expect(heldPiAdvance).toContain(
+      normalize(
+        "never interpret the held adapter's raw completion. Enter the §5 bailout until the extension-local lifecycle can return a consumed fetched body.",
+      ),
+    );
   });
 
   // ── CHECK 3 — the structured input survives the render, per surface ─────
