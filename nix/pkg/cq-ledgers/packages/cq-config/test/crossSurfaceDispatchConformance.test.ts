@@ -464,6 +464,27 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     );
   });
 
+  it("T902 renders worker Step 0 and verified-base merge authority on every surface", () => {
+    for (const surface of PROMPT_SURFACES) {
+      const worker = normalize(renderedOf(surface, "implement-worker"));
+      expect(worker).toContain("## Step 0");
+      expect(worker).toContain("`git rev-parse HEAD`");
+      expect(worker).toContain("MUST equal the dispatched `baseCommit`");
+      expect(worker).toContain("`git reset --hard <baseCommit>`");
+      expect(worker).toContain("`git merge-base --is-ancestor <baseCommit> HEAD`");
+
+      const advance = normalize(renderedOf(surface, "implement/advance"));
+      expect(advance).toContain("`git rev-parse --verify <base>`");
+      expect(advance).toContain("`git cat-file -t <verifiedBaseCommit>`");
+      expect(advance).toContain(
+        "`git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`",
+      );
+      expect(advance).toContain(
+        "If no verified base record exists for that dispatch, refuse merge-back",
+      );
+    }
+  });
+
   // ── CHECK 3 — the structured input survives the render, per surface ─────
   for (const surface of PROMPT_SURFACES) {
     it(`${surface}: every dispatch edge carries its expected structured prepare input`, () => {

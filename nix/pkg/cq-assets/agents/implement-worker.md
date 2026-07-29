@@ -87,6 +87,23 @@ narrative needed for the work.
 - **Scope = this task only.** Don't fix unrelated code or touch other tasks'
   files. Surgical changes; match surrounding style (see CLAUDE.md).
 
+## Step 0 — verify the dispatched base before implementation
+Run this check before dependency installation, repository reads, or edits. On an
+initial dispatch (no `priorCriticism`), run `git rev-parse HEAD`; its exact
+stdout MUST equal the dispatched `baseCommit`. If it differs, the only
+sanctioned repair is `git reset --hard <baseCommit>` inside your own worktree.
+Then rerun `git rev-parse HEAD` and require exact equality; if either command
+fails or equality still does not hold, report `status: "fail"` without
+implementing.
+
+On a criticism-round re-dispatch (`priorCriticism` present), prior task commits
+make exact HEAD equality inappropriate. Use the merge-base variant instead:
+run `git merge-base --is-ancestor <baseCommit> HEAD` and require exit zero
+before implementation. A non-zero result identifies a stale reused worktree
+that does not descend from the dispatched base; report `status: "fail"` rather
+than resetting away the prior round's work. Never infer or substitute the base
+from a branch ref.
+
 ## Steps
 1. **Ensure deps.** A fresh worktree has no `node_modules` — run `bun install`
    so `bun run check` can execute. Do NOT trust a pre-existing `node_modules`

@@ -245,6 +245,18 @@ restated in that same paragraph, "**GOALS NEVER auto-close**" — unchanged by
 this instruction): this write NEVER performs, and must never be conflated
 with, that terminal edge.
 
+**Verified dispatch base (D119/T902 — blocking).** Before preparing or
+selecting a worktree and before every initial or criticism-round worker
+dispatch, resolve the intended current base with
+`git rev-parse --verify <base>` and copy that command's exact stdout to
+`<verifiedBaseCommit>`. Then run
+`git cat-file -t <verifiedBaseCommit>`; this check requires its exact output to
+be `commit`. Record that verified object as `baseCommit` in the per-task
+dispatch envelope and in the orchestrator's authority record for that exact
+dispatch, and carry the same value in the worker's structured input. If either
+check fails, do not dispatch and leave the task non-terminal. Never reconstruct
+this record from a child report or substitute a later branch tip for it.
+
 Take up to N ready tasks. For each, resolve its model via
 `get_config({"section":"tiers"})` (§K4), set
 `update_item("tasks", <id>, status: "wip")`, prepare or select its worktree
@@ -537,6 +549,14 @@ is a contract breach: log it and do not merge. Reviewer-reported `gateReRan`
 and `resultCommitVerified` fields are provenance/evidence only; the
 orchestrator's own git checks are the sole merge authority. The branch ref
 alone never authorizes merge-back.
+
+The consumed `resultCommit` must also descend from the base verified for that
+exact worker dispatch. The orchestrator runs
+`git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>` and requires
+exit zero before any rebase and again immediately before merge. If no verified
+base record exists for that dispatch, refuse merge-back; do not reconstruct one
+from the current branch or worktree. A non-ancestor result is a contract breach:
+log it and do not merge.
 
 ### 7. Merge-back (sequential, DAG order, rebase-before-merge)
 Process succeeded tasks ONE AT A TIME, in dependency order (a task merges only

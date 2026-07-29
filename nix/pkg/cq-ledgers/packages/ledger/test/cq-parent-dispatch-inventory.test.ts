@@ -405,4 +405,53 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
       "repeat §6's gate-duration tripwire against the latest T898 consumed worker body",
     );
   });
+
+  it("T902 verifies and records the dispatch base before worker launch", () => {
+    const body = bodyOf("implement");
+    const dispatchStart = body.indexOf("### 2. Dispatch workers");
+    const dispatchEnd = body.indexOf("### 3. Review each finished worker");
+    expect(dispatchStart).toBeGreaterThanOrEqual(0);
+    expect(dispatchEnd).toBeGreaterThan(dispatchStart);
+    const dispatchGate = normalize(body.slice(dispatchStart, dispatchEnd));
+
+    expect(dispatchGate).toContain("`git rev-parse --verify <base>`");
+    expect(dispatchGate).toContain("`git cat-file -t <verifiedBaseCommit>`");
+    expect(dispatchGate).toContain("requires its exact output to be `commit`");
+    expect(dispatchGate).toContain(
+      "Record that verified object as `baseCommit` in the per-task dispatch envelope",
+    );
+  });
+
+  it("T902 makes verified-base ancestry a blocking merge precondition", () => {
+    const body = bodyOf("implement");
+    const gateStart = body.indexOf("### 6. Success gate");
+    const gateEnd = body.indexOf("### 8. Loop");
+    expect(gateStart).toBeGreaterThanOrEqual(0);
+    expect(gateEnd).toBeGreaterThan(gateStart);
+    const mergeGate = normalize(body.slice(gateStart, gateEnd));
+
+    expect(mergeGate).toContain(
+      "`git merge-base --is-ancestor <verifiedBaseCommit> <resultCommit>`",
+    );
+    expect(mergeGate).toContain(
+      "If no verified base record exists for that dispatch, refuse merge-back",
+    );
+    expect(mergeGate).toContain("`git cat-file -t <resultCommit>`");
+    expect(mergeGate).toContain("`git rev-parse <worker-branch>`");
+  });
+
+  it("T902 gives implement-worker a stale-worktree Step 0 before implementation", () => {
+    const body = normalize(implementWorker);
+    const stepStart = body.indexOf("## Step 0");
+    const implementStart = body.indexOf("## Steps");
+    expect(stepStart).toBeGreaterThanOrEqual(0);
+    expect(implementStart).toBeGreaterThan(stepStart);
+    const step = body.slice(stepStart, implementStart);
+
+    expect(step).toContain("`git rev-parse HEAD`");
+    expect(step).toContain("MUST equal the dispatched `baseCommit`");
+    expect(step).toContain("`git reset --hard <baseCommit>`");
+    expect(step).toContain("`git merge-base --is-ancestor <baseCommit> HEAD`");
+    expect(step).toContain("criticism-round re-dispatch");
+  });
 });
