@@ -1,0 +1,10 @@
+name: flake-upgrade
+description: >-
+  Audit a Nix flake for upgrade opportunities: local/vendored packages,
+  overlay patches, and external flake inputs. Check version bumps, obsolete
+  patches, and external alternatives. Produce a table report; apply changes
+  ONLY after the user reviews and asks. Invoke ONLY when the user explicitly
+  references this skill by name (e.g. "/flake-upgrade", "use the flake-upgrade
+  skill", "audit this flake for upgrades"). Do NOT auto-invoke based on topic
+  match (editing flake.nix, nixpkgs bumps, or package.nix work alone is NOT a
+  trigger).

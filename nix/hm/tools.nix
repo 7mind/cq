@@ -158,6 +158,42 @@ in
       '';
     };
 
+    # End-user escape hatch for custom skills. `assetBundles` is the
+    # module/flake contribution idiom (append a full bundle); this option is
+    # the ergonomic path when a host just wants to drop one or more SKILL.md
+    # bodies onto every skill-aware agent without constructing a bundle.
+    # Wired as a late asset bundle so user names win on collision with the
+    # in-repo / ledger skill sets.
+    smind.hm.dev.llm.extraSkills = lib.mkOption {
+      type = lib.types.attrsOf lib.types.lines;
+      default = { };
+      example = {
+        my-domain = ''
+          ---
+          name: my-domain
+          description: >-
+            Domain rules for our internal widgets. Invoke ONLY when the user
+            references this skill by name (e.g. "/my-domain").
+          ---
+
+          # My domain skill
+
+          …
+        '';
+      };
+      description = ''
+        Extra user-defined skills merged into every skill-aware agent
+        (Claude / Codex / Pi). Each attribute name is the skill directory
+        name; each value is a full SKILL.md body
+        (`---\n<meta.yaml fields>---\n\n<content>`).
+
+        Prefer this over appending a one-off entry to `assetBundles` when you
+        only need skills. Values may be inline strings or
+        `builtins.readFile ./path/to/SKILL.md`. On name collision with an
+        in-repo or ledger skill, the entry here wins.
+      '';
+    };
+
     smind.hm.dev.llm.coAuthored.enable = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -187,6 +223,16 @@ in
       # In-repo prompts first (base), ledger after (may override on key
       # collisions). External modules append further bundles elsewhere.
       smind.hm.dev.llm.assetBundles = lib.mkBefore [ llmPromptsBundle ledgerAssets ];
+    }
+    # User extraSkills last so host-local names win on collision. Separate
+    # mkMerge arm: two assignments to the same attr in one set are illegal
+    # even with mkBefore/mkAfter. Only emit the bundle when non-empty.
+    {
+      smind.hm.dev.llm.assetBundles = lib.mkAfter (
+        lib.optional (config.smind.hm.dev.llm.extraSkills != { }) {
+          skills = config.smind.hm.dev.llm.extraSkills;
+        }
+      );
     }
     (lib.mkIf config.smind.hm.dev.llm.enable {
       # commandKeyToStem ("/"→":") is injective only while no two bundle keys

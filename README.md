@@ -185,6 +185,7 @@ consumer wires from its own system config:
 | `smind.hm.dev.llm.llmSshKeyPath` | Linux SSH-key bind plus an agent prompt fragment. |
 | `smind.hm.dev.llm.pi.mcpDirectTools` | Expose selected MCP servers directly in Pi instead of only through its proxy. |
 | `smind.hm.dev.llm.{memorySections,assetBundles}` | Append memory text or asset bundles. |
+| `smind.hm.dev.llm.extraSkills` | Add user-defined skills (`name → SKILL.md` body) to every skill-aware agent; wins on name collision. |
 
 Other modules can append their own `assetBundles` (same shape as
 `cq.llmAssets`); the merged result is exposed read-only at
