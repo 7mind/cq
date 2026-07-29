@@ -505,6 +505,27 @@ unresolved or twice-lost report; after a first LOST REPORT, the T901 retry must
 produce a consumed server-validated body before that role can contribute to
 success or merge-back.
 
+**Worker gate-duration tripwire (D156/T900 — blocking).** Apply the two named
+constants `MIN_GATE_DURATION_MS = 50` and
+`PRIOR_ROUND_MEDIAN_FRACTION = 0.25` to the `gateDurationMs` in the same T898
+server-validated consumed worker body. Never accept `checkSummary` prose alone
+as evidence that the worker gate passed. A `gateDurationMs` is IMPLAUSIBLE when
+it is absent, zero, below `MIN_GATE_DURATION_MS`, or below
+`PRIOR_ROUND_MEDIAN_FRACTION` times the median of THIS TASK's prior-round
+`gateDurationMs` values within the same implement run. Compute the ordinary
+median over that per-task series (average the two middle values for an even
+count); never use another task's history. At round 0, or when this task has no
+prior-round values, apply only the absolute bound. The relative comparison
+compares the current self-report with prior self-reports and therefore detects
+inconsistency, not truth; it is a tripwire, not verification.
+
+When the duration is implausible, the orchestrator MUST re-run `bun run check`
+in the foreground and use that process's actual exit status for the green-check
+condition. If that re-run is infeasible, fail closed and re-dispatch the worker
+through the T898 parent-minted consumed-result path; never merge on the
+implausible report. Regardless of duration plausibility, success still requires
+T898's consumed-body authority and T899's independent exact-object checks.
+
 **Independent git authority (D156/T899 — blocking).** Use only the worker
 `resultCommit` from the `state: "consumed"` body fetched with the retained
 parent-minted handle. Before any rebase and again immediately before merge, the
@@ -543,7 +564,9 @@ after every task in its `dependsOn` has merged). For each:
    never synthesizes either verdict.
 3. On a clean rebase (or resolved conflict), and after any tip-changing rebase
    or resolver commit has completed the worker/reviewer re-gate above, repeat
-   §6's independent `git cat-file -t <resultCommit>` and
+   §6's gate-duration tripwire against the latest T898 consumed worker body and
+   complete any required foreground re-run. Then repeat §6's independent
+   `git cat-file -t <resultCommit>` and
    `git rev-parse <worker-branch>` checks immediately before merge. Then
    fast-forward the exact verified object into the base with
    `git merge --ff-only <resultCommit>` — never merge

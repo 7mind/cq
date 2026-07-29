@@ -369,4 +369,40 @@ describe("T975: native dispatch edges carry no parent-side prompt materializatio
     expect(mergeGate).toContain("`git merge --ff-only <resultCommit>`");
     expect(mergeGate).not.toContain("`git merge --ff-only implement/<taskId>`");
   });
+
+  it("T900 treats implausible worker gate duration as a blocking tripwire", () => {
+    const body = bodyOf("implement");
+    const gateStart = body.indexOf("### 6. Success gate");
+    const gateEnd = body.indexOf("### 8. Loop");
+    expect(gateStart).toBeGreaterThanOrEqual(0);
+    expect(gateEnd).toBeGreaterThan(gateStart);
+    const mergeGate = normalize(body.slice(gateStart, gateEnd));
+
+    expect(mergeGate).toContain("`MIN_GATE_DURATION_MS = 50`");
+    expect(mergeGate).toContain("`PRIOR_ROUND_MEDIAN_FRACTION = 0.25`");
+    expect(mergeGate).toContain(
+      normalize(
+        "A `gateDurationMs` is IMPLAUSIBLE when it is absent, zero, below `MIN_GATE_DURATION_MS`, or below `PRIOR_ROUND_MEDIAN_FRACTION` times the median of THIS TASK's prior-round `gateDurationMs` values within the same implement run.",
+      ),
+    );
+    expect(mergeGate).toContain(
+      "At round 0, or when this task has no prior-round values, apply only the absolute bound",
+    );
+    expect(mergeGate).toContain(
+      "detects inconsistency, not truth; it is a tripwire, not verification",
+    );
+    expect(mergeGate).toContain(
+      "Never accept `checkSummary` prose alone as evidence that the worker gate passed",
+    );
+    expect(mergeGate).toContain("re-run `bun run check` in the foreground");
+    expect(mergeGate).toContain(
+      "If that re-run is infeasible, fail closed and re-dispatch the worker",
+    );
+    expect(mergeGate).toContain(
+      "still requires T898's consumed-body authority and T899's independent exact-object checks",
+    );
+    expect(mergeGate).toContain(
+      "repeat §6's gate-duration tripwire against the latest T898 consumed worker body",
+    );
+  });
 });
