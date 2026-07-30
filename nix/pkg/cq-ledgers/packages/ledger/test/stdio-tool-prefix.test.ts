@@ -35,12 +35,7 @@ async function buildStore(): Promise<LedgerStore> {
  */
 async function registeredNames(
   store: LedgerStore,
-  ...trailing: [
-    readLog?: undefined,
-    configCapability?: undefined,
-    promptCatalog?: undefined,
-    toolPrefix?: string,
-  ]
+  ...trailing: [readLog?: undefined, configCapability?: undefined, promptCatalog?: undefined, toolPrefix?: string]
 ): Promise<string[]> {
   const server = new McpServer(
     { name: "stdio-prefix-test", version: "0.0.1" },
@@ -49,10 +44,7 @@ async function registeredNames(
   registerLedgerStdioTools(server, store, ...trailing);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client(
-    { name: "stdio-prefix-test-client", version: "0.0.1" },
-    { capabilities: {} },
-  );
+  const client = new Client({ name: "stdio-prefix-test-client", version: "0.0.1" }, { capabilities: {} });
   await client.connect(clientTransport);
   try {
     const { tools } = await client.listTools();
@@ -84,7 +76,14 @@ async function withRegisteredClient(
     { name: "stdio-prefix-contract-test", version: "0.0.1" },
     { capabilities: { tools: {} } },
   );
-  registerLedgerStdioTools(server, store, undefined, undefined, undefined, toolPrefix);
+  registerLedgerStdioTools(
+    server,
+    store,
+    undefined,
+    undefined,
+    undefined,
+    toolPrefix,
+  );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client(
@@ -103,7 +102,9 @@ describe("registerLedgerStdioTools — trailing toolPrefix", () => {
   it("prefixes every registered non-dispatch tool", async () => {
     const store = await buildStore();
     const names = await registeredNames(store, undefined, undefined, undefined, "myproj");
-    expect(names).toEqual(NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `myproj_${name}`).sort());
+    expect(names).toEqual(
+      NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `myproj_${name}`).sort(),
+    );
     // Every registered name carries the prefix; the count is preserved.
     expect(names.length).toBe(NON_DISPATCH_LEDGER_TOOL_NAMES.length);
     expect(names.every((n) => n.startsWith("myproj_"))).toBe(true);

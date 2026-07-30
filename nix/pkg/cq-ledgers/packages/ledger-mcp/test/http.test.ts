@@ -244,7 +244,9 @@ describe("ledger-mcp HTTP --tool-prefix end-to-end (T379)", () => {
   it("prefixes every registered non-dispatch tool", async () => {
     await withPrefixedClient(async (client) => {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
-      const expected = NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `${PREFIX}_${name}`).sort();
+      const expected = NON_DISPATCH_LEDGER_TOOL_NAMES.map(
+        (name) => `${PREFIX}_${name}`,
+      ).sort();
       expect(names).toEqual(expected);
       // Spot-check: unprefixed names must not appear.
       expect(names).not.toContain("enumerate_ledgers");

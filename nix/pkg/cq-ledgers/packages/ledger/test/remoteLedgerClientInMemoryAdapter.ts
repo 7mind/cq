@@ -161,10 +161,7 @@ function milestoneOf(tenant: DummyTenant, milestoneId: string): Item {
   return milestone;
 }
 
-function resolvedMilestone(
-  tenant: DummyTenant,
-  milestoneId: string,
-): {
+function resolvedMilestone(tenant: DummyTenant, milestoneId: string): {
   id: string;
   status: string;
   title: string;
@@ -345,7 +342,9 @@ const fetchLedger: ToolHandler = (tenant, args) => {
     const start = offset ?? 0;
     const items = limit !== undefined ? all.slice(start, start + limit) : all.slice(start);
     const nextOffset =
-      limit !== undefined && start + items.length < all.length ? start + items.length : null;
+      limit !== undefined && start + items.length < all.length
+        ? start + items.length
+        : null;
     return {
       ledger: meta,
       items,
@@ -401,14 +400,7 @@ const createItem: ToolHandler = (tenant, args) => {
   assertRequiredFields(ledgerId, fields);
   const timestamp = nowIso();
   const id = optStr(args, "id") ?? allocateItemId(tenant, ledgerId);
-  const item: Item = {
-    id,
-    milestoneId,
-    status,
-    fields,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
+  const item: Item = { id, milestoneId, status, fields, createdAt: timestamp, updatedAt: timestamp };
   const author = optStr(args, "author");
   const session = optStr(args, "session");
   if (author !== undefined) item.author = author;
@@ -465,12 +457,7 @@ const ftsSearch: ToolHandler = (tenant, args) => {
     .toLowerCase()
     .split(/\s+/)
     .filter((term) => term.length > 0 && !term.includes(":"));
-  const results: Array<{
-    ledgerId: string;
-    item: unknown;
-    score: number;
-    matchedFields: string[];
-  }> = [];
+  const results: Array<{ ledgerId: string; item: unknown; score: number; matchedFields: string[] }> = [];
   for (const { name } of CANONICAL_LEDGERS) {
     if (ledger !== undefined && name !== ledger) continue;
     const active =
@@ -479,7 +466,9 @@ const ftsSearch: ToolHandler = (tenant, args) => {
       let score = 0;
       const matchedFields: string[] = [];
       for (const [fieldName, value] of Object.entries(item.fields)) {
-        const haystack = (Array.isArray(value) ? value.join(" ") : String(value)).toLowerCase();
+        const haystack = (
+          Array.isArray(value) ? value.join(" ") : String(value)
+        ).toLowerCase();
         if (terms.some((term) => haystack.includes(term))) {
           matchedFields.push(fieldName);
           score += fieldName === "headline" || fieldName === "title" ? 3 : 1;
@@ -545,7 +534,9 @@ const fetchRoot: ToolHandler = (tenant, args) => {
   const references: Record<string, number> = {};
   for (const { name } of CANONICAL_LEDGERS) {
     if (name === MILESTONES_LEDGER) continue;
-    const count = ledgerOf(tenant, name).filter((item) => item.milestoneId === milestoneId).length;
+    const count = ledgerOf(tenant, name).filter(
+      (item) => item.milestoneId === milestoneId,
+    ).length;
     if (count > 0) references[name] = count;
   }
   return {
@@ -572,10 +563,7 @@ const archiveMilestone: ToolHandler = (tenant, args) => {
     }
   }
   const milestoneSchema = SCHEMAS.get(MILESTONES_LEDGER);
-  if (
-    milestoneSchema === undefined ||
-    !milestoneSchema.terminalStatuses.includes(milestone.status)
-  ) {
+  if (milestoneSchema === undefined || !milestoneSchema.terminalStatuses.includes(milestone.status)) {
     throw new DummyToolError(`milestone ${milestoneId} has non-terminal items`);
   }
   const title = milestone.fields["title"];
@@ -687,7 +675,12 @@ function rpcResult(id: unknown, result: unknown, headers: Record<string, string>
   });
 }
 
-function rpcError(id: unknown, code: number, message: string, status = 200): Response {
+function rpcError(
+  id: unknown,
+  code: number,
+  message: string,
+  status = 200,
+): Response {
   return new Response(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }), {
     status,
     headers: { "content-type": "application/json" },
@@ -845,7 +838,8 @@ export class InMemoryMcpService {
             title: displayName,
           },
           instructions:
-            `Project: ${displayName}\n\n` + "Hand-written in-memory MCP contract service (T727).",
+            `Project: ${displayName}\n\n` +
+            "Hand-written in-memory MCP contract service (T727).",
         },
         { "mcp-session-id": sessionId },
       );
@@ -897,7 +891,8 @@ export class InMemoryMcpService {
       return new Response("unknown project", { status: 404 });
     }
     const args =
-      typeof message.params?.["arguments"] === "object" && message.params["arguments"] !== null
+      typeof message.params?.["arguments"] === "object" &&
+      message.params["arguments"] !== null
         ? (message.params["arguments"] as Record<string, unknown>)
         : {};
     try {

@@ -247,10 +247,7 @@ describe("fetch_ledger — projection:compact", () => {
   });
 
   it("non-compact goals response overflows (control: confirms the problem compact solves)", async () => {
-    const result = await callTool(tools, "fetch_ledger", {
-      ledger_id: "goals",
-      projection: "full",
-    });
+    const result = await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "full" });
     const responseBytes = result.content[0]!.text.length;
     // With 52 KB * 2 items the full response must be > 32 KB.
     expect(responseBytes).toBeGreaterThan(TOOL_OUTPUT_LIMIT_BYTES);
@@ -362,12 +359,7 @@ describe("fetch_ledger — offset/limit pagination", () => {
 
   it("ledger meta in paginated response retains schema/counters/archivePointers", async () => {
     const result = decode<{ ledger: Record<string, unknown> }>(
-      await callTool(tools, "fetch_ledger", {
-        ledger_id: "goals",
-        projection: "full",
-        offset: 0,
-        limit: 1,
-      }),
+      await callTool(tools, "fetch_ledger", { ledger_id: "goals", projection: "full", offset: 0, limit: 1 }),
     );
     expect(result.ledger["schema"]).toBeDefined();
     expect(result.ledger["counters"]).toBeDefined();

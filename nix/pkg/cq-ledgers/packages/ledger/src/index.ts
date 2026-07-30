@@ -265,6 +265,7 @@ export {
   FULL_LEDGER_TOOL_PROFILE,
   LEDGER_TOOL_NAMES,
   ledgerToolInputJsonSchema,
+  ledgerToolListDefinitions,
   ledgerToolNamesForProfile,
   NON_DISPATCH_LEDGER_TOOL_NAMES,
   selectLedgerMcpToolSpecifications,
@@ -274,10 +275,13 @@ export {
   prefixedToolNames,
 } from "./mcp/ledgerTools.js";
 export type {
+  LedgerToolListDefinition,
   LedgerToolName,
   LedgerToolProfileName,
   LedgerToolSpecification,
 } from "./mcp/ledgerTools.js";
+export { createLedgerSdkMcpServer } from "./mcp/directLedgerTools.js";
+export type { CreateLedgerSdkMcpServerOptions } from "./mcp/directLedgerTools.js";
 export { createDispatchNarrativeSource } from "./mcp/dispatchNarrativeSource.js";
 export {
   COMPACT_ITEM_FIELD_NAMES,

@@ -179,17 +179,19 @@ function prePlanLifecycleSchema(ledgerName: string, schema: LedgerSchema): Ledge
 describe("frozen pre-upstream MCP client compatibility", () => {
   it("ignores additive response fields and continues to fetch every known ledger", async () => {
     const fixture = JSON.parse(
-      await readFile(new URL("./fixtures/pre-upstream-client.json", import.meta.url), "utf8"),
+      await readFile(
+        new URL("./fixtures/pre-upstream-client.json", import.meta.url),
+        "utf8",
+      ),
     ) as FrozenClientFixture;
     const store = new InMemoryLedgerStore({});
     await store.init();
     try {
       expect(fixture.version).toBe(1);
       const tools = createLedgerMcpTools(store);
-      const currentResponse = decode(await callTool(tools, "enumerate_ledgers", {})) as Record<
-        string,
-        unknown
-      >;
+      const currentResponse = decode(
+        await callTool(tools, "enumerate_ledgers", {}),
+      ) as Record<string, unknown>;
       expect(currentResponse["ledgerSummaries"]).toBeArray();
 
       const frozenView = currentResponse as unknown as FrozenEnumerateResponse;

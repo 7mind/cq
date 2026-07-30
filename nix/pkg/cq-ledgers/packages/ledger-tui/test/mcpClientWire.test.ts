@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { ArchivePointer, ItemMutationAckDto, MilestoneMutationAckDto } from "@cq/ledger";
+import type {
+  ArchivePointer,
+  ItemMutationAckDto,
+  MilestoneMutationAckDto,
+} from "@cq/ledger";
 import { McpLedgerClient } from "../src/mcpClient.js";
 
 interface RecordedCall {
@@ -8,10 +12,9 @@ interface RecordedCall {
   arguments: Record<string, unknown>;
 }
 
-function stubClient(responses: Record<string, unknown | unknown[]>): {
-  client: McpLedgerClient;
-  calls: RecordedCall[];
-} {
+function stubClient(
+  responses: Record<string, unknown | unknown[]>,
+): { client: McpLedgerClient; calls: RecordedCall[] } {
   const calls: RecordedCall[] = [];
   const responseIndexes = new Map<string, number>();
   const sdk = {

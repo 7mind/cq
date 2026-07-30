@@ -123,7 +123,9 @@ describe("createLedgerMcpTools toolPrefix (T374)", () => {
   it("with the default (no prefix arg) keeps every registered name byte-identical", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    expect(tools.map((t) => t.name).sort()).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      [...NON_DISPATCH_LEDGER_TOOL_NAMES].sort(),
+    );
   });
 
   it("with a trailing prefix registers every tool under '<prefix>_<name>'", async () => {

@@ -58,6 +58,7 @@ import {
   nodeGitRunner,
   createLedgerMcpToolSpecifications,
   FULL_LEDGER_TOOL_PROFILE,
+  LEDGER_TOOL_NAMES,
   ledgerToolNamesForProfile,
   registerLedgerStdioToolSpecifications,
   selectLedgerMcpToolSpecifications,
@@ -67,7 +68,10 @@ import {
   type LedgerToolProfileName,
 } from "@cq/ledger";
 import { createConfigCapability } from "./configCapability.js";
-import { createSingleProjectDispatchRuntime, type DispatchRuntime } from "./dispatchCapability.js";
+import {
+  createSingleProjectDispatchRuntime,
+  type DispatchRuntime,
+} from "./dispatchCapability.js";
 export {
   DISPATCH_RUNTIME_DEFERRAL_DISCHARGE,
   createDispatchCapability,
@@ -321,14 +325,25 @@ export function buildServerInstructions(
   availableToolNames: readonly LedgerToolName[] = ledgerToolNamesForProfile(profileName),
 ): string {
   assertToolPrefix(toolPrefix);
-  if (toolPrefix === "") return SERVER_INSTRUCTIONS_TEMPLATE;
-  const names = [...availableToolNames].sort((a, b) => b.length - a.length);
-  let text = SERVER_INSTRUCTIONS_TEMPLATE;
-  for (const name of names) {
-    const pattern = new RegExp(`\\b${escapeRegExp(name)}\\b`, "g");
-    text = text.replace(pattern, prefixToolName(toolPrefix, name));
+  if (profileName === FULL_LEDGER_TOOL_PROFILE) {
+    if (toolPrefix === "") return SERVER_INSTRUCTIONS_TEMPLATE;
+    const names = [...LEDGER_TOOL_NAMES].sort((a, b) => b.length - a.length);
+    let text = SERVER_INSTRUCTIONS_TEMPLATE;
+    for (const name of names) {
+      const pattern = new RegExp(`\\b${escapeRegExp(name)}\\b`, "g");
+      text = text.replace(pattern, prefixToolName(toolPrefix, name));
+    }
+    return text;
   }
-  return text;
+
+  const profileTools = availableToolNames.map((name) => prefixToolName(toolPrefix, name));
+  if (profileTools.length === 0) {
+    return `Ledger tool profile ${JSON.stringify(profileName)} exposes no tools.`;
+  }
+  return [
+    `Ledger tool profile ${JSON.stringify(profileName)} exposes only:`,
+    ...profileTools.map((name) => `- ${name}`),
+  ].join("\n");
 }
 
 /**

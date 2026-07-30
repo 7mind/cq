@@ -5,18 +5,18 @@ single source of truth shared with Claude Code (`.claude/commands/plan/*`,
 `.claude/agents/*`) and the `llmAssets` flake output. Edit the files under
 `llm/`; never edit the symlinks. See `llm/README.md` for the full layout.
 
-| Codex prompt file                | Source (`llm/`)                         | Claude location                                 | Role                                                      |
-| -------------------------------- | --------------------------------------- | ----------------------------------------------- | --------------------------------------------------------- |
-| `plan-start.md`                  | `commands/plan/start.md`                | `.claude/commands/plan/start.md`                | slash command — start a goal, file first questions        |
-| `plan-advance.md`                | `commands/plan/advance.md`              | `.claude/commands/plan/advance.md`              | slash command — thin planner↔reviewer loop                |
-| `plan-follow-up.md`              | `commands/plan/follow-up.md`            | `.claude/commands/plan/follow-up.md`            | slash command — add scope to an existing goal, re-clarify |
-| `plan-advance-agent.md`          | `agents/plan-advance.md`                | `.claude/agents/plan-advance.md`                | subagent — the planner (one state step)                   |
-| `plan-reviewer.md`               | `agents/plan-reviewer.md`               | `.claude/agents/plan-reviewer.md`               | subagent — the adversarial reviewer                       |
-| `implement-start.md`             | `commands/implement/start.md`           | `.claude/commands/implement/start.md`           | slash command — resolve scope, hand to advance loop       |
-| `implement-advance.md`           | `commands/implement/advance.md`         | `.claude/commands/implement/advance.md`         | slash command — the implement orchestrator loop           |
-| `implement-worker.md`            | `agents/implement-worker.md`            | `.claude/agents/implement-worker.md`            | subagent — implements one task in an isolated worktree    |
-| `implement-reviewer.md`          | `agents/implement-reviewer.md`          | `.claude/agents/implement-reviewer.md`          | subagent — adversarial per-task reviewer                  |
-| `implement-conflict-resolver.md` | `agents/implement-conflict-resolver.md` | `.claude/agents/implement-conflict-resolver.md` | subagent — resolves rebase conflicts on merge-back        |
+| Codex prompt file              | Source (`llm/`)                  | Claude location                      | Role |
+|--------------------------------|----------------------------------|--------------------------------------|------|
+| `plan-start.md`                | `commands/plan/start.md`         | `.claude/commands/plan/start.md`     | slash command — start a goal, file first questions |
+| `plan-advance.md`              | `commands/plan/advance.md`       | `.claude/commands/plan/advance.md`   | slash command — thin planner↔reviewer loop |
+| `plan-follow-up.md`            | `commands/plan/follow-up.md`     | `.claude/commands/plan/follow-up.md` | slash command — add scope to an existing goal, re-clarify |
+| `plan-advance-agent.md`        | `agents/plan-advance.md`         | `.claude/agents/plan-advance.md`     | subagent — the planner (one state step) |
+| `plan-reviewer.md`             | `agents/plan-reviewer.md`        | `.claude/agents/plan-reviewer.md`    | subagent — the adversarial reviewer |
+| `implement-start.md`           | `commands/implement/start.md`    | `.claude/commands/implement/start.md`   | slash command — resolve scope, hand to advance loop |
+| `implement-advance.md`         | `commands/implement/advance.md`  | `.claude/commands/implement/advance.md` | slash command — the implement orchestrator loop |
+| `implement-worker.md`          | `agents/implement-worker.md`     | `.claude/agents/implement-worker.md`    | subagent — implements one task in an isolated worktree |
+| `implement-reviewer.md`        | `agents/implement-reviewer.md`   | `.claude/agents/implement-reviewer.md`  | subagent — adversarial per-task reviewer |
+| `implement-conflict-resolver.md` | `agents/implement-conflict-resolver.md` | `.claude/agents/implement-conflict-resolver.md` | subagent — resolves rebase conflicts on merge-back |
 
 ## How Codex consumes these
 
@@ -71,6 +71,6 @@ and performs that write. This keeps sub-agents read-only and is concurrency-safe
   Fields: `new_questions` (string[]), `criticism` (string[]), `ledgerRefs`.
 - Cross-ledger link: `fields.ledgerRefs: ["goals:<G>"]`.
 - MCP tools (server name `ledger`): `create_item(ledger_id,
-milestone_id?, status, fields, author?, session?)`, `update_item(ledger_id,
-item_id, status?, fields?, author?, session?)`, `fetch_item`, `fetch_ledger`,
+  milestone_id?, status, fields, author?, session?)`, `update_item(ledger_id,
+  item_id, status?, fields?, author?, session?)`, `fetch_item`, `fetch_ledger`,
   `fts_search`, `list_milestone_items`, `enumerate_ledgers`.

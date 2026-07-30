@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { exposedLedgerToolsForRole } from "@cq/config";
 import {
   createLedgerMcpTools,
+  createLedgerSdkMcpServer,
   GOALS_LEDGER,
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
@@ -437,6 +438,52 @@ async function connectStdio(
     close: async () => {
       await client.close();
       await server.close();
+    },
+  };
+}
+
+async function connectAnthropicDirect(
+  store: LedgerStore,
+  prefix: string,
+  capabilities: ToolCapabilities,
+  profileName: LedgerToolProfileName = "full",
+): Promise<StdioConnection> {
+  const server = createLedgerSdkMcpServer({
+    name: "direct-parity-test",
+    store,
+    toolPrefix: prefix,
+    profileName,
+    ...(capabilities.readLog === undefined ? {} : { readLog: capabilities.readLog }),
+    ...(capabilities.config === undefined
+      ? {}
+      : { configCapability: capabilities.config }),
+    ...(capabilities.promptCatalog === undefined
+      ? {}
+      : { promptCatalog: capabilities.promptCatalog }),
+    ...(capabilities.listProjects === undefined
+      ? {}
+      : { listProjects: capabilities.listProjects }),
+    ...(capabilities.dispatch === undefined
+      ? {}
+      : { dispatchCapability: capabilities.dispatch }),
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.instance.connect(serverTransport);
+  const client = new Client(
+    { name: "direct-parity-client", version: "0.0.1" },
+    { capabilities: {} },
+  );
+  await client.connect(clientTransport);
+  const listed = await client.listTools();
+  const definitions = listed.tools
+    .map((tool) => comparableDefinition(tool.name, tool.description ?? "", tool.inputSchema))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    client,
+    definitions,
+    close: async () => {
+      await client.close();
+      await server.instance.close();
     },
   };
 }
@@ -907,6 +954,49 @@ function assertRepresentativeContracts(
 
 // BG, specified-origin: both registrations expose one canonical contract per profile.
 describe("stdio/direct ledger tool differential contract", () => {
+  it("matches the actual Anthropic direct-server tools/list wire to stdio", async () => {
+    const cases: Array<{ prefix: string; profileName: LedgerToolProfileName }> = [
+      { prefix: "", profileName: "full" },
+      { prefix: "mirror", profileName: "full" },
+      { prefix: "planner", profileName: "plan-advance" },
+    ];
+    for (const { prefix, profileName } of cases) {
+      const directFixture = await buildFixture();
+      const stdioFixture = await buildFixture();
+      const direct = await connectAnthropicDirect(
+        directFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+        profileName,
+      );
+      const stdio = await connectStdio(
+        stdioFixture.store,
+        prefix,
+        AVAILABLE_CAPABILITIES,
+        profileName,
+      );
+      try {
+        expect(direct.definitions, `${profileName}:${prefix}`).toEqual(stdio.definitions);
+        const invalid = await direct.client.callTool({
+          name: prefixed(prefix, "fetch_item"),
+          arguments: {
+            ledger_id: "tasks",
+            item_id: directFixture.ids.targetItem,
+          },
+        });
+        expect(invalid.isError, `${profileName}:${prefix}`).toBe(true);
+        expect(resultText(invalid as TextToolResult), `${profileName}:${prefix}`).toContain(
+          "Input validation error",
+        );
+      } finally {
+        await direct.close();
+        await stdio.close();
+        await directFixture.store.dispose();
+        await stdioFixture.store.dispose();
+      }
+    }
+  });
+
   it("publishes minimal schemas with explicit generic-root conditions", async () => {
     const fixture = await buildFixture();
     try {
@@ -946,7 +1036,12 @@ describe("stdio/direct ledger tool differential contract", () => {
     const stdioFixture = await buildFixture();
     const profileName = "plan-advance";
     const prefix = "planner";
-    const direct = directTools(directFixture.store, prefix, AVAILABLE_CAPABILITIES, profileName);
+    const direct = directTools(
+      directFixture.store,
+      prefix,
+      AVAILABLE_CAPABILITIES,
+      profileName,
+    );
     const stdio = await connectStdio(
       stdioFixture.store,
       prefix,

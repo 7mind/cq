@@ -24,14 +24,14 @@ under `nix/` (see `nix/hm/dev-llm.nix`, `nix/pkg/{yolo,codex,claude-code,…}`).
 - Surgical changes; match surrounding style; no unrelated refactors.
 - Reproduce a defect (failing test or documented repro) before fixing it.
 - Frontends are pure MCP clients — they never read the ledger files directly.
-  This holds in _embedded_ mode too (TUI/web with no `--mcp-url`): the frontend
+  This holds in *embedded* mode too (TUI/web with no `--mcp-url`): the frontend
   co-locates the MCP server in its own process (in-memory transport for the TUI,
   co-hosted `/mcp` + `/ws` for the web) and still talks to it over MCP — it does
   not read the ledger store directly.
 - `--cwd` for `cq mcp` must be absolute (or relative, resolved vs CWD);
   it defaults to the process CWD.
 - Tests: `ink-testing-library` for the TUI, happy-dom for the web; controlled
-  _text_ inputs don't fire onChange under happy-dom, so use uncontrolled
+  *text* inputs don't fire onChange under happy-dom, so use uncontrolled
   inputs (refs) — selects are fine controlled.
 
 ## Track work in the ledger (dogfooding)
@@ -97,8 +97,8 @@ work, instead of inline TODOs or scratch files.
 
 ### Flows and research-driven investigation
 
-The ledger-suite harness runs four cooperating **flows**: _investigate_, _plan_, _research_,
-and _implement_, chained by the `/cq:advance` sequencer (which runs them to quiescence).
+The ledger-suite harness runs four cooperating **flows**: *investigate*, *plan*, *research*,
+and *implement*, chained by the `/cq:advance` sequencer (which runs them to quiescence).
 Plan-flow owns a defect-to-fix path; investigate-flow roots causes; research-flow answers
 empirical research questions; implement-flow executes task DAGs. Each flow is driven by
 `/cq:*:advance` and dispatches domain-specific subagents. `/cq:research` +

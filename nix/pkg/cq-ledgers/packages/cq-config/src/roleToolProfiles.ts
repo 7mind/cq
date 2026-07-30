@@ -169,22 +169,14 @@ function profileForCatalogRole({
     );
   }
   if (roleId === "plan-review" || roleId === "implement-review") {
-    return role(
-      roleId,
-      roleKind,
-      ["no-domain-ledger"],
-      [],
-      [`commands/cq/${roleId}.md: write nothing`],
-    );
+    return role(roleId, roleKind, ["no-domain-ledger"], [], [
+      `commands/cq/${roleId}.md: write nothing`,
+    ]);
   }
   if (roleId === "planners" || roleId === "reviewers") {
-    return role(
-      roleId,
-      roleKind,
-      ["config-read"],
-      ["get_config"],
-      [`commands/cq/${roleId}.md and Claude allowed-tools frontmatter`],
-    );
+    return role(roleId, roleKind, ["config-read"], ["get_config"], [
+      `commands/cq/${roleId}.md and Claude allowed-tools frontmatter`,
+    ]);
   }
   return role(roleId, roleKind, ["full-parent-access"], [], FULL_PARENT_EVIDENCE);
 }
@@ -193,7 +185,9 @@ const entries = PROMPT_CATALOG_PROJECTION.catalog.map(profileForCatalogRole);
 
 /** One total, fail-closed role-to-capability matrix for the 24-role prompt catalogue. */
 export const ROLE_TOOL_CAPABILITY_MATRIX: Readonly<Record<string, RoleToolCapabilityProfile>> =
-  Object.freeze(Object.fromEntries(entries.map((entry) => [entry.roleId, entry])));
+  Object.freeze(
+    Object.fromEntries(entries.map((entry) => [entry.roleId, entry])),
+  );
 
 export function exposedLedgerToolsForRole(roleId: string): readonly LedgerCapabilityToolName[] {
   const profile = ROLE_TOOL_CAPABILITY_MATRIX[roleId];

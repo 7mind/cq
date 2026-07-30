@@ -14,7 +14,10 @@
 import { describe, it, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { exposedLedgerToolsForRole, ROLE_TOOL_CAPABILITY_MATRIX } from "@cq/config";
+import {
+  exposedLedgerToolsForRole,
+  ROLE_TOOL_CAPABILITY_MATRIX,
+} from "@cq/config";
 import {
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
@@ -50,13 +53,15 @@ async function registeredNames(toolPrefix?: string, toolProfile?: string): Promi
     abort: unavailable,
     fetch: unavailable,
   };
-  const server = createLedgerMcpServer({
-    store,
-    displayName: "demo",
-    dispatchCapability,
-    ...(toolPrefix === undefined ? {} : { toolPrefix }),
-    ...(toolProfile === undefined ? {} : { toolProfile }),
-  });
+  const server = createLedgerMcpServer(
+    {
+      store,
+      displayName: "demo",
+      dispatchCapability,
+      ...(toolPrefix === undefined ? {} : { toolPrefix }),
+      ...(toolProfile === undefined ? {} : { toolProfile }),
+    },
+  );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client(

@@ -23,7 +23,7 @@ cq mcp --cwd /path/to/project --tool-prefix myproj
 ```
 
 Tool-name prefix rules: a prefix must match `^[a-zA-Z0-9]+$` (letters and
-digits only). The cq default is the empty string — tool names are unchanged.
+digits only).  The cq default is the empty string — tool names are unchanged.
 
 ## Building your own prefixed ledger MCP
 
@@ -60,7 +60,9 @@ const promptSurface = resolvePromptSurface({
 const dispatchRuntime = await createSingleProjectDispatchRuntime({
   construction: "direct",
   resolved,
-  ...(promptSurface === undefined ? {} : { promptArtifactStore: promptSurface.store }),
+  ...(promptSurface === undefined
+    ? {}
+    : { promptArtifactStore: promptSurface.store }),
   environment: process.env,
 });
 
@@ -96,13 +98,14 @@ process.once("SIGINT", () => void shutdown());
 
 With a supported backend and attested prompt surface, this registers all 29
 tools. Without a durable dispatch runtime, `createLedgerMcpServer` omits the
-six dispatch-lifecycle tools before registration and exposes the remaining 23. The prefix applies to every tool that the server registers and to matching
+six dispatch-lifecycle tools before registration and exposes the remaining
+23. The prefix applies to every tool that the server registers and to matching
 references in its server-level `instructions`.
 
 ### 3. Discover prefixed tool names at runtime
 
 MCP clients enumerate available tools via the standard `tools/list` protocol
-call — the server returns the prefixed names automatically. For compile-time
+call — the server returns the prefixed names automatically.  For compile-time
 assertions (e.g. in tests) `@cq/ledger` exports a helper:
 
 ```ts
@@ -160,7 +163,6 @@ Item-bearing reads require `projection: "compact"` or `projection: "full"`:
   allowlist:
 
 <!-- compact-item-fields:start -->
-
 `headline`, `title`, `question`, `summary`, `severity`, `suggestedModel`,
 `tags`, `sourceRefs`, `dependsOn`, `blockedBy`, `ledgerRefs`
 <!-- compact-item-fields:end -->
@@ -174,10 +176,10 @@ Item-bearing reads require `projection: "compact"` or `projection: "full"`:
 Mutations return fixed acknowledgements, never full entities:
 
 - Item acknowledgement: `{ id, milestoneId, status, fields:
-{ dependsOn?, blockedBy?, ledgerRefs? }, createdAt, updatedAt, author?,
-session? }`.
+  { dependsOn?, blockedBy?, ledgerRefs? }, createdAt, updatedAt, author?,
+  session? }`.
 - Milestone acknowledgement: `{ id, status, fields: { dependsOn?, blockedBy? },
-createdAt, updatedAt, author?, session? }`.
+  createdAt, updatedAt, author?, session? }`.
 - Ledger acknowledgement: `{ id }`.
 
 Use acknowledgement ids, canonicalized reference fields, status, timestamps,
@@ -199,39 +201,37 @@ compact reads plus the existing purpose-built list/search tools provide the
 measured savings without another batching schema.
 
 <!-- ledger-response-contract:start -->
-
-| Tool                          | Category                    | Authoritative response                                                                                                                                                                                                    |
-| ----------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enumerate_ledgers`           | `purpose-built-small`       | `{ ledgers, counts, ledgerSummaries: [{ name, itemCount, statusCounts, completedCount, progressTotal }] }`                                                                                                                |
-| `fetch_ledger`                | `mandatory-item-projection` | Grouped `{ ledger }`, or paginated `{ ledger, items, total, offset, limit, nextOffset }`; every item uses the requested projection.                                                                                       |
-| `fetch_ledger_archive`        | `requested-full-content`    | `{ archive }` with the requested archived item or milestone group in full.                                                                                                                                                |
-| `fetch_item`                  | `mandatory-item-projection` | `{ item }` using the requested projection.                                                                                                                                                                                |
-| `update_item`                 | `fixed-acknowledgement`     | `{ item: ItemAcknowledgement }`.                                                                                                                                                                                          |
-| `create_item`                 | `fixed-acknowledgement`     | `{ item: ItemAcknowledgement }`.                                                                                                                                                                                          |
-| `create_ledger`               | `fixed-acknowledgement`     | `{ ledger: { id } }`.                                                                                                                                                                                                     |
-| `search_items`                | `mandatory-item-projection` | `{ items }` using the requested projection.                                                                                                                                                                               |
-| `fts_search`                  | `mandatory-item-projection` | `{ results: [{ ledgerId, item, score, matchedFields }] }`; each item uses the requested projection.                                                                                                                       |
-| `archive_milestone`           | `purpose-built-small`       | `{ pointer }` for the archived milestone.                                                                                                                                                                                 |
-| `list_milestone_items`        | `mandatory-item-projection` | `{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection.                                                                                                                                          |
-| `snapshot`                    | `purpose-built-small`       | `{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`.                                                                                                                              |
-| `derive_predicates`           | `purpose-built-small`       | Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`.                                                     |
-| `reopen_item`                 | `fixed-acknowledgement`     | `{ item: ItemAcknowledgement }`.                                                                                                                                                                                          |
-| `unarchive_item`              | `fixed-acknowledgement`     | `{ item: ItemAcknowledgement }`.                                                                                                                                                                                          |
-| `read_log`                    | `requested-full-content`    | `{ path, content, truncated? }`.                                                                                                                                                                                          |
-| `get_config`                  | `requested-full-content`    | The payload selected by `section`; no unrelated section is returned.                                                                                                                                                      |
-| `prepare_dispatch`            | `purpose-built-small`       | `{ accepted, prepared, handle, executedStepOrder }` or a typed pre-launch rejection.                                                                                                                                      |
-| `fetch_dispatch_input`        | `requested-full-content`    | The prepare-bound typed input on its first capability-authorized retrieval.                                                                                                                                               |
-| `store_result`                | `purpose-built-small`       | A handle-only stored-result acknowledgement or typed abort.                                                                                                                                                               |
-| `confirm_dispatch_completion` | `purpose-built-small`       | A handle-only consumed acknowledgement or typed abort.                                                                                                                                                                    |
-| `abort_dispatch`              | `purpose-built-small`       | A typed aborted acknowledgement.                                                                                                                                                                                          |
-| `fetch_dispatch_result`       | `requested-full-content`    | One typed fetch state; only the first consumed fetch can carry `output`.                                                                                                                                                  |
-| `fetch_prompt`                | `requested-full-content`    | Full typed prompt entry, including prompt text and schemas when available.                                                                                                                                                |
-| `list_projects`               | `purpose-built-small`       | `{ projects: [{ key, displayName, createdAt? }] }`.                                                                                                                                                                       |
-| `claim_plan`                  | `purpose-built-small`       | `{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes `ownerFenceToken`, and only back to the winning or exactly-retried claimant — or `{ ok: false, conflict }` carrying public claim metadata only. |
-| `publish_plan_draft`          | `purpose-built-small`       | `{ ok: true, replayed, acknowledgement: { …operation key, manifest, replacedManifest, reviewDefects } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`.                                                   |
-| `release_plan_claim`          | `purpose-built-small`       | `{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, researches, waitingResearches, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`.                    |
-| `finalize_plan`               | `purpose-built-small`       | `{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, decisionId, manifest, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`.                             |
-
+| Tool | Category | Authoritative response |
+|---|---|---|
+| `enumerate_ledgers` | `purpose-built-small` | `{ ledgers, counts, ledgerSummaries: [{ name, itemCount, statusCounts, completedCount, progressTotal }] }` |
+| `fetch_ledger` | `mandatory-item-projection` | Grouped `{ ledger }`, or paginated `{ ledger, items, total, offset, limit, nextOffset }`; every item uses the requested projection. |
+| `fetch_ledger_archive` | `requested-full-content` | `{ archive }` with the requested archived item or milestone group in full. |
+| `fetch_item` | `mandatory-item-projection` | `{ item }` using the requested projection. |
+| `update_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
+| `create_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
+| `create_ledger` | `fixed-acknowledgement` | `{ ledger: { id } }`. |
+| `search_items` | `mandatory-item-projection` | `{ items }` using the requested projection. |
+| `fts_search` | `mandatory-item-projection` | `{ results: [{ ledgerId, item, score, matchedFields }] }`; each item uses the requested projection. |
+| `archive_milestone` | `purpose-built-small` | `{ pointer }` for the archived milestone. |
+| `list_milestone_items` | `mandatory-item-projection` | `{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection. |
+| `snapshot` | `purpose-built-small` | `{ ledger: Record<ledgerId, Record<status, { count, items: [{ id, status, summary }] }>> }`. |
+| `derive_predicates` | `purpose-built-small` | Predicate verdicts `{ value, items }` for `pInvestigate`, `pSeed`, `pPlan`, `pResearch`, `pImplement`, `openQuestionGate`, `belowFloor`, `planBusy`, and `goalDrift`. |
+| `reopen_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
+| `unarchive_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
+| `read_log` | `requested-full-content` | `{ path, content, truncated? }`. |
+| `get_config` | `requested-full-content` | The payload selected by `section`; no unrelated section is returned. |
+| `prepare_dispatch` | `purpose-built-small` | `{ accepted, prepared, handle, executedStepOrder }` or a typed pre-launch rejection. |
+| `fetch_dispatch_input` | `requested-full-content` | The prepare-bound typed input on its first capability-authorized retrieval. |
+| `store_result` | `purpose-built-small` | A handle-only stored-result acknowledgement or typed abort. |
+| `confirm_dispatch_completion` | `purpose-built-small` | A handle-only consumed acknowledgement or typed abort. |
+| `abort_dispatch` | `purpose-built-small` | A typed aborted acknowledgement. |
+| `fetch_dispatch_result` | `requested-full-content` | One typed fetch state; only the first consumed fetch can carry `output`. |
+| `fetch_prompt` | `requested-full-content` | Full typed prompt entry, including prompt text and schemas when available. |
+| `list_projects` | `purpose-built-small` | `{ projects: [{ key, displayName, createdAt? }] }`. |
+| `claim_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement }` — the ONLY response that echoes `ownerFenceToken`, and only back to the winning or exactly-retried claimant — or `{ ok: false, conflict }` carrying public claim metadata only. |
+| `publish_plan_draft` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, manifest, replacedManifest, reviewDefects } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
+| `release_plan_claim` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { kind, …operation key, questions, researches, waitingResearches, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
+| `finalize_plan` | `purpose-built-small` | `{ ok: true, replayed, acknowledgement: { …operation key, reviewId, draft, decisionId, manifest, reviewDefects, goalPhase } }` or `{ ok: false, conflict }`; never carries `ownerFenceToken`. |
 <!-- ledger-response-contract:end -->
 
 ### Schema-checked request examples
@@ -241,7 +241,6 @@ server. `consume` documents the acknowledgement field the client uses; it is
 not sent as a tool argument.
 
 <!-- ledger-response-examples:start -->
-
 ```json
 [
   {
@@ -327,7 +326,6 @@ not sent as a tool argument.
   }
 ]
 ```
-
 <!-- ledger-response-examples:end -->
 
 ## Client development and migration
@@ -342,15 +340,15 @@ interoperate with this cutover and must be upgraded with the server.
 
 ## Exported API
 
-| Export                                             | Description                                     |
-| -------------------------------------------------- | ----------------------------------------------- |
-| `createLedgerMcpServer(opts)`                      | Main builder — returns a configured `McpServer` |
-| `CreateLedgerMcpServerOptions`                     | Options interface for `createLedgerMcpServer`   |
-| `buildServer(store, displayName)`                  | Thin unprefixed wrapper                         |
-| `attachMcpHttp(store, displayName, toolPrefix?)`   | HTTP transport handlers for `Bun.serve` hosts   |
-| `serveHttp(store, opts, displayName, toolPrefix?)` | Launch a Streamable HTTP server                 |
-| `startLedgerWatcher` / `startLedgerRefWatcher`     | Coherence watchers for live-reload UIs          |
-| `MCP_HTTP_PATH` / `WS_PATH` / `LEDGER_TOPIC`       | Well-known path/topic constants                 |
+| Export | Description |
+|---|---|
+| `createLedgerMcpServer(opts)` | Main builder — returns a configured `McpServer` |
+| `CreateLedgerMcpServerOptions` | Options interface for `createLedgerMcpServer` |
+| `buildServer(store, displayName)` | Thin unprefixed wrapper |
+| `attachMcpHttp(store, displayName, toolPrefix?)` | HTTP transport handlers for `Bun.serve` hosts |
+| `serveHttp(store, opts, displayName, toolPrefix?)` | Launch a Streamable HTTP server |
+| `startLedgerWatcher` / `startLedgerRefWatcher` | Coherence watchers for live-reload UIs |
+| `MCP_HTTP_PATH` / `WS_PATH` / `LEDGER_TOPIC` | Well-known path/topic constants |
 
 `createLedgerMcpServer` signature:
 

@@ -52,12 +52,33 @@ describe("buildServerInstructions", () => {
     }
   });
 
-  test("narrow role instructions retain the concise operational contract", () => {
+  test("narrow role instructions name only available tools, with or without a prefix", () => {
     const roleId = "implement-worker";
     const available = new Set(exposedLedgerToolsForRole(roleId));
-    const text = buildServerInstructions("worker", roleId);
     expect(available).toEqual(new Set(["fetch_dispatch_input", "store_result"]));
-    expect(text).toBe(ORIGINAL_SERVER_INSTRUCTIONS);
+    expect(buildServerInstructions("", roleId)).toBe(
+      [
+        'Ledger tool profile "implement-worker" exposes only:',
+        "- fetch_dispatch_input",
+        "- store_result",
+      ].join("\n"),
+    );
+    expect(buildServerInstructions("worker", roleId)).toBe(
+      [
+        'Ledger tool profile "implement-worker" exposes only:',
+        "- worker_fetch_dispatch_input",
+        "- worker_store_result",
+      ].join("\n"),
+    );
+  });
+
+  test("an empty profile emits no unavailable tool name", () => {
+    expect(exposedLedgerToolsForRole("plan-review")).toEqual([]);
+    const text = buildServerInstructions("", "plan-review");
+    expect(text).toBe('Ledger tool profile "plan-review" exposes no tools.');
+    for (const name of LEDGER_TOOL_NAMES) {
+      expect(new RegExp(`\\b${name}\\b`).test(text)).toBe(false);
+    }
   });
 
   test("unknown role instructions fail closed", () => {

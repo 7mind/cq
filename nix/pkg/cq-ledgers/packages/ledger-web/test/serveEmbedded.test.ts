@@ -131,7 +131,9 @@ beforeAll(async () => {
     path.join(promptRoot, "surface.json"),
     JSON.stringify({
       ...surfaceCore,
-      surfaceDigest: createHash("sha256").update(JSON.stringify(surfaceCore), "utf8").digest("hex"),
+      surfaceDigest: createHash("sha256")
+        .update(JSON.stringify(surfaceCore), "utf8")
+        .digest("hex"),
     }),
   );
   await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
@@ -232,12 +234,7 @@ describe("ledger-web embedded MCP (same-origin /mcp, no upstream process)", () =
       });
       const res = await client.callTool({
         name: "create_item",
-        arguments: {
-          ledger_id: "bugs",
-          milestone_id: "M40",
-          status: "open",
-          fields: { headline: "flux desync" },
-        },
+        arguments: { ledger_id: "bugs", milestone_id: "M40", status: "open", fields: { headline: "flux desync" } },
       });
       const created = JSON.parse((res.content as Array<{ text: string }>)[0]!.text).item as {
         id: string;

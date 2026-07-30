@@ -123,7 +123,9 @@ function connect(
     overrides.displayName === undefined
       ? service.displayName
       : (overrides.displayName ?? undefined);
-  return RemoteLedgerClient.connect(displayName === undefined ? base : { ...base, displayName });
+  return RemoteLedgerClient.connect(
+    displayName === undefined ? base : { ...base, displayName },
+  );
 }
 
 /** Seed one milestone + one planned task with a distinctive headline. */
@@ -153,7 +155,9 @@ const PREDICATE_KEYS = [
   "goalDrift",
 ] as const;
 
-export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContractFactory): void {
+export function runRemoteLedgerClientContract(
+  factory: RemoteLedgerClientContractFactory,
+): void {
   const contractDescribe = factory.skip === true ? describe.skip : describe;
   contractDescribe(
     `RemoteLedgerClient contract — ${factory.name} (${factory.classification})`,
@@ -174,7 +178,9 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
             try {
               expect(client.protocolVersion()).toBe(LATEST_PROTOCOL_VERSION);
               expect(client.displayName()).toBe(service.displayName);
-              expect(client.url).toContain(`/p/${encodeURIComponent(service.projectKey)}/mcp`);
+              expect(client.url).toContain(
+                `/p/${encodeURIComponent(service.projectKey)}/mcp`,
+              );
             } finally {
               await client.close();
             }
@@ -221,9 +227,9 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
           try {
             // 257 UTF-8 bytes (128 two-byte chars + 1) — rejected client-side
             // BEFORE any request is issued.
-            await expect(connect(service, { displayName: `${"é".repeat(128)}x` })).rejects.toThrow(
-              RemoteDisplayNameError,
-            );
+            await expect(
+              connect(service, { displayName: `${"é".repeat(128)}x` }),
+            ).rejects.toThrow(RemoteDisplayNameError);
             // Exactly 256 bytes — accepted and echoed verbatim. (ASCII on
             // purpose: header bytes are Latin-1 over the wire, so a multibyte
             // value would arrive as mojibake at ANY HTTP server — a transport
@@ -290,13 +296,19 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
                 title: "Renamed milestone",
               });
               expect(renamed.id).toBe(milestone.id);
-              const fetchedMilestone = await client.fetchMilestone(milestone.id, "compact");
+              const fetchedMilestone = await client.fetchMilestone(
+                milestone.id,
+                "compact",
+              );
               expect(fetchedMilestone.milestone.id).toBe(milestone.id);
               expect(fetchedMilestone.resolved.title).toBe("Renamed milestone");
               expect(fetchedMilestone.references["tasks"]).toBe(1);
 
               // list_milestone_items groups the task under its ledger.
-              const groups = await client.listMilestoneItems(milestone.id, "compact");
+              const groups = await client.listMilestoneItems(
+                milestone.id,
+                "compact",
+              );
               expect(groups["tasks"]?.map((item) => item.id)).toEqual([task.id]);
 
               // archive_milestone requires every item terminal first.
@@ -311,13 +323,21 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
               expect(pointer.status).toBe("done");
 
               // The group archive (tasks) and the milestone-item archive both read back.
-              const group = await client.fetchLedgerArchive("tasks", milestone.id);
+              const group = await client.fetchLedgerArchive(
+                "tasks",
+                milestone.id,
+              );
               expect(group.kind).toBe("group");
               if (group.kind === "group") {
                 expect(group.milestone.id).toBe(milestone.id);
-                expect(group.milestone.items.map((item) => item.id)).toEqual([task.id]);
+                expect(group.milestone.items.map((item) => item.id)).toEqual([
+                  task.id,
+                ]);
               }
-              const archived = await client.fetchLedgerArchive("milestones", milestone.id);
+              const archived = await client.fetchLedgerArchive(
+                "milestones",
+                milestone.id,
+              );
               expect(archived.kind).toBe("item");
               if (archived.kind === "item") {
                 expect(archived.item.id).toBe(milestone.id);
@@ -325,8 +345,12 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
 
               // fetch_ledger now surfaces the archive pointer and no active group.
               const after = await client.fetchLedger("tasks", "compact");
-              expect(after.archivePointers.map((p) => p.id)).toContain(milestone.id);
-              expect(after.milestones.some((g) => g.id === milestone.id)).toBe(false);
+              expect(after.archivePointers.map((p) => p.id)).toContain(
+                milestone.id,
+              );
+              expect(
+                after.milestones.some((g) => g.id === milestone.id),
+              ).toBe(false);
             } finally {
               await client.close();
             }
@@ -351,7 +375,9 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
               const enumerated = await client.enumerateLedgers();
               expect(enumerated.ledgers).toContain("tasks");
               expect(enumerated.counts["tasks"]).toBe(1);
-              const summary = enumerated.ledgerSummaries.find((s) => s.name === "tasks");
+              const summary = enumerated.ledgerSummaries.find(
+                (s) => s.name === "tasks",
+              );
               expect(summary?.itemCount).toBe(1);
               expect(summary?.statusCounts?.["planned"]).toBe(1);
 
@@ -373,9 +399,9 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
               // search_items: hit + miss.
               const hits = await client.searchItems("tasks", "quixotic", "compact");
               expect(hits.map((item) => item.id)).toEqual([taskId]);
-              expect(await client.searchItems("tasks", "zzz-no-such-fragment", "compact")).toEqual(
-                [],
-              );
+              expect(
+                await client.searchItems("tasks", "zzz-no-such-fragment", "compact"),
+              ).toEqual([]);
 
               // fts_search: the task is the top (only) hit.
               const ftsHits = await client.ftsSearch("quixotic", "compact");
@@ -388,7 +414,9 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
               const snapshot = await client.snapshot();
               const bucket = snapshot["tasks"]?.["planned"];
               expect(bucket?.count).toBe(1);
-              expect(bucket?.items).toEqual([{ id: taskId, status: "planned", summary: headline }]);
+              expect(bucket?.items).toEqual([
+                { id: taskId, status: "planned", summary: headline },
+              ]);
 
               // derive_predicates: a lone planned task with no owning goal is
               // actionable under NO predicate — every verdict is false/empty.
@@ -412,7 +440,10 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
               expect(page1.total).toBe(3);
               expect(page1.offset).toBe(0);
               expect(page1.limit).toBe(2);
-              expect(page1.items.map((item) => item.id)).toEqual([taskId, second.id]);
+              expect(page1.items.map((item) => item.id)).toEqual([
+                taskId,
+                second.id,
+              ]);
               expect(page1.nextOffset).toBe(2);
               const page2 = await client.fetchLedgerPage("tasks", "compact", {
                 offset: page1.nextOffset ?? 0,
@@ -569,9 +600,13 @@ export function runRemoteLedgerClientContract(factory: RemoteLedgerClientContrac
             const client = await connect(service);
             try {
               service.respondMalformedOnce?.("non-text-block");
-              await expect(client.enumerateLedgers()).rejects.toThrow(RemoteMalformedResponseError);
+              await expect(client.enumerateLedgers()).rejects.toThrow(
+                RemoteMalformedResponseError,
+              );
               service.respondMalformedOnce?.("invalid-json");
-              await expect(client.enumerateLedgers()).rejects.toThrow(RemoteMalformedResponseError);
+              await expect(client.enumerateLedgers()).rejects.toThrow(
+                RemoteMalformedResponseError,
+              );
               // One-shot knobs: the very next call is well-formed again.
               expect((await client.enumerateLedgers()).ledgers).toContain("tasks");
             } finally {

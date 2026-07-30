@@ -94,7 +94,12 @@ async function buildFixture(
   });
   return {
     store,
-    tools: createLedgerMcpTools(store, readLog, undefined, promptCatalog),
+    tools: createLedgerMcpTools(
+      store,
+      readLog,
+      undefined,
+      promptCatalog,
+    ),
     milestone,
     first,
     second,
@@ -107,7 +112,11 @@ function findTool(tools: Tools, name: string) {
   return found;
 }
 
-function callTool(tools: Tools, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+function callTool(
+  tools: Tools,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
   return findTool(tools, name).handler(args as never, null) as Promise<ToolResult>;
 }
 
@@ -366,7 +375,10 @@ describe("createLedgerMcpTools mandatory read projections", () => {
       validateInput: () => ({ ok: true }),
       validateOutput: () => ({ ok: true }),
     };
-    const { store, tools } = await buildFixture(async () => logPayload, promptCatalog);
+    const { store, tools } = await buildFixture(
+      async () => logPayload,
+      promptCatalog,
+    );
 
     const cases = [
       {
@@ -388,8 +400,12 @@ describe("createLedgerMcpTools mandatory read projections", () => {
 
     for (const testCase of cases) {
       const result = await callTool(tools, testCase.name, testCase.args);
-      expect(result.content[0]?.text, testCase.name).toBe(JSON.stringify(testCase.expected));
-      expect(result.content[0]?.text.includes("\n"), testCase.name).toBe(false);
+      expect(result.content[0]?.text, testCase.name).toBe(
+        JSON.stringify(testCase.expected),
+      );
+      expect(result.content[0]?.text.includes("\n"), testCase.name).toBe(
+        false,
+      );
     }
   });
 });

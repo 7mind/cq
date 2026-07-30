@@ -143,7 +143,9 @@ export function validateSchema(schema: {
   const svSet = new Set(schema.statusValues);
   for (const t of schema.terminalStatuses) {
     if (!svSet.has(t)) {
-      throw new SchemaValidationError(`terminalStatuses entry "${t}" is not in statusValues`);
+      throw new SchemaValidationError(
+        `terminalStatuses entry "${t}" is not in statusValues`,
+      );
     }
   }
   // D98 (G80): a declared `satisfiesDependencyStatuses` must be a SUBSET of
@@ -168,7 +170,9 @@ export function validateSchema(schema: {
       );
     }
     if (!FIELD_NAME_RE.test(name)) {
-      throw new SchemaValidationError(`field name "${name}" must match /^[A-Za-z_][A-Za-z0-9_]*$/`);
+      throw new SchemaValidationError(
+        `field name "${name}" must match /^[A-Za-z_][A-Za-z0-9_]*$/`,
+      );
     }
   }
   // F1: every from-status and to-status referenced by the transition guard
@@ -179,7 +183,9 @@ export function validateSchema(schema: {
     const terminalSet = new Set(schema.terminalStatuses);
     for (const [from, tos] of Object.entries(schema.transitions)) {
       if (!svSet.has(from)) {
-        throw new SchemaValidationError(`transitions key "${from}" is not in statusValues`);
+        throw new SchemaValidationError(
+          `transitions key "${from}" is not in statusValues`,
+        );
       }
       for (const to of tos) {
         if (!svSet.has(to)) {
@@ -832,7 +838,9 @@ export function resolveMilestoneView(
       `resolveMilestoneView expects the milestones ledger, got ${milestonesLedger.id}`,
     );
   }
-  const group = milestonesLedger.milestones.find((m) => m.id === MILESTONES_ACTIVE_GROUP_ID);
+  const group = milestonesLedger.milestones.find(
+    (m) => m.id === MILESTONES_ACTIVE_GROUP_ID,
+  );
   if (group === undefined) return null;
   const item = group.items.find((it) => it.id === milestoneId);
   if (item === undefined) return null;
@@ -912,7 +920,10 @@ export function assertQuestionAnswerPrecondition(
   toStatus: string,
   effectiveAnswer: FieldValue | undefined,
 ): void {
-  if (toStatus === QUESTIONS_ANSWERED_STATUS && fromStatus !== QUESTIONS_ANSWERED_STATUS) {
+  if (
+    toStatus === QUESTIONS_ANSWERED_STATUS &&
+    fromStatus !== QUESTIONS_ANSWERED_STATUS
+  ) {
     if (typeof effectiveAnswer !== "string" || effectiveAnswer.trim() === "") {
       throw new SchemaValidationError(
         `question ${itemId} cannot enter "${QUESTIONS_ANSWERED_STATUS}" without a non-empty answer`,
@@ -1070,7 +1081,12 @@ function assertStatusAllowed(ledger: Ledger, status: string): void {
  * A from-status with no entry in the map has no permitted outgoing
  * transitions. Callers must only invoke this when `from !== to`.
  */
-function assertTransitionAllowed(ledger: Ledger, itemId: string, from: string, to: string): void {
+function assertTransitionAllowed(
+  ledger: Ledger,
+  itemId: string,
+  from: string,
+  to: string,
+): void {
   const transitions = ledger.schema.transitions;
   if (transitions === undefined) return;
   const allowed = transitions[from] ?? [];

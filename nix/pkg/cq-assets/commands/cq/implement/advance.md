@@ -8,7 +8,6 @@ argument-hint: [milestoneId ...]
 {{cq:fragment:operational-tool-vocabulary}}
 
 ## Catalogue
-
 ```yaml
 inputs:
   - "optional milestone ids; empty resumes all active milestones with non-terminal tasks"

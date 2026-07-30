@@ -95,7 +95,9 @@ beforeAll(async () => {
     path.join(promptRoot, "surface.json"),
     JSON.stringify({
       ...surfaceCore,
-      surfaceDigest: createHash("sha256").update(JSON.stringify(surfaceCore), "utf8").digest("hex"),
+      surfaceDigest: createHash("sha256")
+        .update(JSON.stringify(surfaceCore), "utf8")
+        .digest("hex"),
     }),
   );
   await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);

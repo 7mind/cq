@@ -419,7 +419,10 @@ export class RemoteLedgerClient {
     return await this.call<LedgerSummariesResult>("enumerate_ledgers", {});
   }
 
-  async fetchLedger(ledgerId: string, projection: ItemProjection): Promise<FetchedLedgerDto> {
+  async fetchLedger(
+    ledgerId: string,
+    projection: ItemProjection,
+  ): Promise<FetchedLedgerDto> {
     return (
       await this.call<{ ledger: FetchedLedgerDto }>("fetch_ledger", {
         ledger_id: ledgerId,
@@ -439,7 +442,10 @@ export class RemoteLedgerClient {
     return await this.call<PaginatedLedgerDto>("fetch_ledger", args);
   }
 
-  async fetchLedgerArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
+  async fetchLedgerArchive(
+    ledgerId: string,
+    archiveId: string,
+  ): Promise<ArchiveContent> {
     return (
       await this.call<{ archive: ArchiveContent }>("fetch_ledger_archive", {
         ledger_id: ledgerId,
@@ -448,7 +454,11 @@ export class RemoteLedgerClient {
     ).archive;
   }
 
-  async fetchItem(ledgerId: string, itemId: string, projection: ItemProjection): Promise<ItemDto> {
+  async fetchItem(
+    ledgerId: string,
+    itemId: string,
+    projection: ItemProjection,
+  ): Promise<ItemDto> {
     return (
       await this.call<{ item: ItemDto }>("fetch_item", {
         ledger_id: ledgerId,
@@ -486,7 +496,9 @@ export class RemoteLedgerClient {
     if (opts?.includeArchived !== undefined) {
       args["include_archived"] = opts.includeArchived;
     }
-    return (await this.call<{ results: FtsSearchResultDto[] }>("fts_search", args)).results;
+    return (
+      await this.call<{ results: FtsSearchResultDto[] }>("fts_search", args)
+    ).results;
   }
 
   async snapshot(): Promise<LedgerSnapshot> {
@@ -522,10 +534,10 @@ export class RemoteLedgerClient {
     projection: ItemProjection,
   ): Promise<MilestoneItemGroupsDto> {
     return (
-      await this.call<{ items: MilestoneItemGroupsDto }>("list_milestone_items", {
-        milestone_id: milestoneId,
-        projection,
-      })
+      await this.call<{ items: MilestoneItemGroupsDto }>(
+        "list_milestone_items",
+        { milestone_id: milestoneId, projection },
+      )
     ).items;
   }
 
@@ -553,7 +565,9 @@ export class RemoteLedgerClient {
     if (init.id !== undefined) args["id"] = init.id;
     if (init.author !== undefined) args["author"] = init.author;
     if (init.session !== undefined) args["session"] = init.session;
-    return (await this.call<{ item: ItemMutationAckDto }>("create_item", args)).item;
+    return (
+      await this.call<{ item: ItemMutationAckDto }>("create_item", args)
+    ).item;
   }
 
   async updateItem(
@@ -569,7 +583,9 @@ export class RemoteLedgerClient {
     if (patch.fields !== undefined) args["fields"] = patch.fields;
     if (patch.author !== undefined) args["author"] = patch.author;
     if (patch.session !== undefined) args["session"] = patch.session;
-    return (await this.call<{ item: ItemMutationAckDto }>("update_item", args)).item;
+    return (
+      await this.call<{ item: ItemMutationAckDto }>("update_item", args)
+    ).item;
   }
 
   async createMilestone(init: RemoteMilestoneInit): Promise<MilestoneMutationAckDto> {
@@ -608,7 +624,10 @@ export class RemoteLedgerClient {
     return (await this.call<{ item: ItemMutationAckDto }>("update_item", args)).item;
   }
 
-  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
+  async archiveMilestone(
+    milestoneId: string,
+    summary: string,
+  ): Promise<ArchivePointer> {
     return (
       await this.call<{ pointer: ArchivePointer }>("archive_milestone", {
         milestone_id: milestoneId,

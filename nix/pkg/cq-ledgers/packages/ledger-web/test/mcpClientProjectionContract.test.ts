@@ -7,14 +7,19 @@ interface ToolCall {
   args: unknown;
 }
 
-function stubClient(responses: Record<string, unknown | unknown[]>): {
-  client: Client;
-  calls: ToolCall[];
-} {
+function stubClient(
+  responses: Record<string, unknown | unknown[]>,
+): { client: Client; calls: ToolCall[] } {
   const calls: ToolCall[] = [];
   const responseIndexes = new Map<string, number>();
   const stub = {
-    callTool: async ({ name, arguments: args }: { name: string; arguments: unknown }) => {
+    callTool: async ({
+      name,
+      arguments: args,
+    }: {
+      name: string;
+      arguments: unknown;
+    }) => {
       calls.push({ name, args });
       const configured = responses[name];
       const response = Array.isArray(configured)
@@ -70,14 +75,15 @@ describe("McpLedgerClient projection and acknowledgement contract", () => {
 
     expect(await client.fetchLedger("tasks", "compact")).toEqual(ledger);
     expect(await client.fetchItem("tasks", "T1", "full")).toEqual(item);
-    expect(await client.ftsSearch("Task", "compact", { ledger: "tasks" })).toEqual([
-      {
-        ledgerId: "tasks",
-        item,
-        score: 1,
-        matchedFields: ["headline"],
-      },
-    ]);
+    expect(await client.ftsSearch("Task", "compact", { ledger: "tasks" }))
+      .toEqual([
+        {
+          ledgerId: "tasks",
+          item,
+          score: 1,
+          matchedFields: ["headline"],
+        },
+      ]);
     expect(calls).toEqual([
       {
         name: "fetch_ledger",
@@ -150,11 +156,10 @@ describe("McpLedgerClient projection and acknowledgement contract", () => {
         fields: { description: "also not returned" },
       }),
     ).toEqual(updated);
-    expect(await client.createMilestone({ title: "Milestone" })).toEqual(milestone);
-    expect(await client.updateMilestone("M42", { status: "done" })).toEqual({
-      ...milestone,
-      status: "done",
-    });
+    expect(await client.createMilestone({ title: "Milestone" }))
+      .toEqual(milestone);
+    expect(await client.updateMilestone("M42", { status: "done" }))
+      .toEqual({ ...milestone, status: "done" });
     expect(await client.archiveMilestone("M42", "finished")).toEqual(pointer);
     expect(calls).toEqual([
       {

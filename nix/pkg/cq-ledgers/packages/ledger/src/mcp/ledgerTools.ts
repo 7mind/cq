@@ -1,8 +1,10 @@
 /**
  * Ledger MCP tool factory (msunify cycle).
  *
- * Returns an array of `tool()` instances for
- * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
+ * Returns a compatibility array of `tool()` instances for direct invocation
+ * and composition. Anthropic in-process MCP hosts should use
+ * `createLedgerSdkMcpServer`, which preserves these Zod handlers while
+ * publishing the compact public tools/list schemas.
  * The canonical typed specifications feed both this direct factory and
  * `registerLedgerStdioTools` (./stdioLedgerTools.ts). The full compatibility
  * surface is `LEDGER_TOOL_NAMES`; the six dispatch handlers are omitted when
@@ -202,6 +204,38 @@ export function ledgerToolInputJsonSchema(
     ];
   }
   return schema;
+}
+
+export interface LedgerToolListDefinition {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Record<string, unknown>;
+  readonly annotations?: LedgerToolSpecification["annotations"];
+  readonly _meta?: Record<string, unknown>;
+}
+
+/** Build the compact public tools/list definitions shared by both transports. */
+export function ledgerToolListDefinitions(
+  specifications: readonly LedgerToolSpecification[],
+  toolPrefix: string,
+  alwaysLoad: boolean = false,
+): LedgerToolListDefinition[] {
+  assertToolPrefix(toolPrefix);
+  return specifications.map((specification) => {
+    const meta = {
+      ...specification._meta,
+      ...(alwaysLoad ? { "anthropic/alwaysLoad": true } : {}),
+    };
+    return {
+      name: prefixToolName(toolPrefix, specification.name),
+      description: specification.description,
+      inputSchema: ledgerToolInputJsonSchema(specification),
+      ...(specification.annotations === undefined
+        ? {}
+        : { annotations: specification.annotations }),
+      ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

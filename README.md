@@ -2,7 +2,7 @@
 
 One flake, two products:
 
-1. **ledger-suite** — markdown-backed _ledgers_: an MCP server plus terminal
+1. **ledger-suite** — markdown-backed *ledgers*: an MCP server plus terminal
    and browser frontends for browsing and editing them.
 2. **LLM coding-agent harness** — a portable home-manager module
    (`homeManagerModules.dev-llm`) that configures Claude Code, Codex and Pi,
@@ -38,7 +38,7 @@ docs/                         # this repo's own dogfooding ledger
 
 # ledger-suite
 
-A _ledger_ is an ordered set of milestones; each milestone holds typed _items_
+A *ledger* is an ordered set of milestones; each milestone holds typed *items*
 (tasks, defects, hypotheses, questions, decisions, goals, …). Everything is
 stored as human-readable Markdown under a `docs/` tree, so the data is
 diffable and git-friendly. Milestones form a dependency DAG via their
@@ -46,11 +46,11 @@ diffable and git-friendly. Milestones form a dependency DAG via their
 
 ## Packages
 
-| Package          | What it is                                                                                                                                                                                                         |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `@cq/ledger`     | The library: parser, `FsLedgerStore`, schema/registry, FTS index, and the MCP tool definitions.                                                                                                                    |
-| `@cq/ledger-mcp` | Standalone MCP server exposing the 29-tool ledger surface over **stdio** or **Streamable HTTP**.                                                                                                                   |
-| `@cq/ledger-tui` | Ink terminal UI — a pure MCP client. Runs against a remote `cq mcp --http` (`--mcp-url`) or, by default, with the MCP server **embedded in-process** (`--cwd`).                                                    |
+| Package | What it is |
+|---|---|
+| `@cq/ledger` | The library: parser, `FsLedgerStore`, schema/registry, FTS index, and the MCP tool definitions. |
+| `@cq/ledger-mcp` | Standalone MCP server exposing the 29-tool ledger surface over **stdio** or **Streamable HTTP**. |
+| `@cq/ledger-tui` | Ink terminal UI — a pure MCP client. Runs against a remote `cq mcp --http` (`--mcp-url`) or, by default, with the MCP server **embedded in-process** (`--cwd`). |
 | `@cq/ledger-web` | Browser explorer/editor + milestone **DAG view** — a pure MCP client served as a static bundle. Reverse-proxies to a remote `cq mcp` (`--mcp-url`) or, by default, **embeds the MCP server in-process** (`--cwd`). |
 
 The two frontends never read the ledger files directly — they always speak the
@@ -81,6 +81,11 @@ item-bearing reads require an explicit compact/full projection and eligible
 mutations return acknowledgements rather than full entities. See the
 [`@cq/ledger-mcp` response matrix](nix/pkg/cq-ledgers/packages/ledger-mcp/README.md#wire-response-contract)
 for every tool, retained field, pagination rule, and schema-checked example.
+
+Anthropic SDK in-process hosts use `createLedgerSdkMcpServer` from
+`@cq/ledger`. It retains Zod handler validation while publishing the same
+compact `tools/list` definitions as stdio. `createLedgerMcpTools` remains the
+compatibility object factory for direct invocation and composition.
 
 ## Quick start (Nix)
 
@@ -175,16 +180,16 @@ smind.hm.dev.llm.enable = true;
 Host/hardware facts the module cannot infer are surfaced as plain options the
 consumer wires from its own system config:
 
-| Option                                                                            | Purpose                                                                                              |
-| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `smind.hm.dev.llm.yolo.promptExtensions`                                          | Add tagged agent prompt fragments; works on Linux and macOS.                                         |
-| `smind.hm.dev.llm.yolo.{extraReadOnlyPaths,extraReadWritePaths,extraDevicePaths}` | Linux bubblewrap binds and device passthrough.                                                       |
-| `smind.hm.dev.llm.yolo.{packages,sessionVariables,secretSessionVariables,hooks}`  | Linux-only sandbox packages, environment, secret files, and pre-start hooks.                         |
-| `smind.hm.dev.llm.podman.{socketPath,socketUri}`                                  | Linux rootless-Podman socket for container access.                                                   |
-| `smind.hm.dev.llm.llmSshKeyPath`                                                  | Linux SSH-key bind plus an agent prompt fragment.                                                    |
-| `smind.hm.dev.llm.pi.mcpDirectTools`                                              | Expose selected MCP servers directly in Pi instead of only through its proxy.                        |
-| `smind.hm.dev.llm.{memorySections,assetBundles}`                                  | Append memory text or asset bundles.                                                                 |
-| `smind.hm.dev.llm.extraSkills`                                                    | Add user-defined skills (`name → SKILL.md` body) to every skill-aware agent; wins on name collision. |
+| Option | Purpose |
+|---|---|
+| `smind.hm.dev.llm.yolo.promptExtensions` | Add tagged agent prompt fragments; works on Linux and macOS. |
+| `smind.hm.dev.llm.yolo.{extraReadOnlyPaths,extraReadWritePaths,extraDevicePaths}` | Linux bubblewrap binds and device passthrough. |
+| `smind.hm.dev.llm.yolo.{packages,sessionVariables,secretSessionVariables,hooks}` | Linux-only sandbox packages, environment, secret files, and pre-start hooks. |
+| `smind.hm.dev.llm.podman.{socketPath,socketUri}` | Linux rootless-Podman socket for container access. |
+| `smind.hm.dev.llm.llmSshKeyPath` | Linux SSH-key bind plus an agent prompt fragment. |
+| `smind.hm.dev.llm.pi.mcpDirectTools` | Expose selected MCP servers directly in Pi instead of only through its proxy. |
+| `smind.hm.dev.llm.{memorySections,assetBundles}` | Append memory text or asset bundles. |
+| `smind.hm.dev.llm.extraSkills` | Add user-defined skills (`name → SKILL.md` body) to every skill-aware agent; wins on name collision. |
 
 Other modules can append their own `assetBundles` (same shape as
 `cq.llmAssets`); the merged result is exposed read-only at
@@ -249,7 +254,6 @@ dependencies. After changing dependencies (and `bun.lock`), refresh its
 `nix build .#node-modules`, and paste the `got:` hash back.
 
 Outputs:
-
 - `packages.{cq,node-modules}` + `apps.{default,cq}` (default is `cq mcp`).
 - `packages.{claude-code,codex,pi-coding-agent,codegraph,llm-skills,llm-contexts,llm-context-with-env}` plus platform-specific Linux `yolo`/`reattach-llm` or macOS `yolo-darwin` — harness building blocks.
 - `homeManagerModules.dev-llm` — the coding-agent harness module.

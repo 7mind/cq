@@ -21,7 +21,11 @@
 import { describe, it, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { InMemoryLedgerStore, NON_DISPATCH_LEDGER_TOOL_NAMES, type LedgerStore } from "@cq/ledger";
+import {
+  InMemoryLedgerStore,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
+  type LedgerStore,
+} from "@cq/ledger";
 import { createLedgerMcpServer } from "../src/main.js";
 
 const MYPROJ_PREFIX = "myproj";
@@ -150,8 +154,12 @@ describe("two prefixed ledger-MCP servers in one process (T380 / Q211)", () => {
       toolPrefix: MYPROJ_PREFIX,
     });
     try {
-      const cqNames = (await cqlike.client.listTools()).tools.map((t) => t.name).sort();
-      const ppNames = (await thirdparty.client.listTools()).tools.map((t) => t.name).sort();
+      const cqNames = (await cqlike.client.listTools()).tools
+        .map((t) => t.name)
+        .sort();
+      const ppNames = (await thirdparty.client.listTools()).tools
+        .map((t) => t.name)
+        .sort();
 
       // (1) Zero collision: the two name sets are disjoint.
       const cqSet = new Set(cqNames);
