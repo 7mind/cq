@@ -2119,22 +2119,21 @@
       "callShape": "create_item({ledger_id:\"milestones\",status:\"open\",fields:{title,description?,blockedBy?,dependsOn?},id?,author?,session?})",
       "response": "The generic item acknowledgement carries the allocated M<n> id. ledger_id=milestones omits milestone_id, requires status=open and fields.title, and validates the milestone DAG.",
       "coverage": {
-        "scannedRoots": [
-          "README.md",
-          "nix/pkg/cq-assets",
-          "nix/pkg/cq-ledgers/packages"
-        ],
-        "excludedHistoricalOrTargetEvidence": [
-          "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
-          "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts"
-        ],
+        "scanScope": "Every git-tracked and non-ignored untracked regular repository file, including root and hidden guidance.",
         "matchedPaths": [
+          ".codex/prompts/README.md",
+          "CLAUDE.md",
           "README.md",
-          "nix/pkg/cq-ledgers/packages/cq-config/dist/src/roleToolProfiles.d.ts",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/corpus-remeasurement.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-current.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-rs3.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/twin-server-probe.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/remeasure.ts",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/twin-server-probe.ts",
+          "docs/drafts/20260725-2130-t679-rs3-remeasurement.md",
+          "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
           "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md",
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/dist/test/two-prefixed-servers.test.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/claude/plan-advance.json",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/codex/plan-advance.json",
@@ -2153,10 +2152,6 @@
           "nix/pkg/cq-ledgers/packages/ledger-web/test/serveEmbedded.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/test/wholeStoreStartup.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/test/xdgCatalogServe.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/ledgerTools.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/wireResponseContract.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/store/remote/RemoteLedgerClient.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/test/toolSurfaceTarget.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
@@ -2169,29 +2164,82 @@
           "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-parity.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-prefix.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/tool-prefix.test.ts",
+          "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
+          "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/upstream-ledger.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts"
+          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts",
+          "nix/pkg/cq-ledgers/scripts/baselines/g129-tool-surface.json",
+          "nix/pkg/cq-ledgers/scripts/baselines/t1326-tool-surface-target.json"
+        ],
+        "historicalEvidence": [
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/corpus-remeasurement.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-current.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-rs3.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/twin-server-probe.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/remeasure.ts",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/twin-server-probe.ts",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasurement.md",
+            "justification": "Frozen T679/RS3 measurement report retained as evidence of the earlier response-contract cutover, not current tool guidance."
+          },
+          {
+            "path": "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
+            "justification": "Frozen observed-call corpus used as measurement evidence by T1325/T1326; its counts record historical calls and are not executable guidance."
+          },
+          {
+            "path": "nix/pkg/cq-ledgers/scripts/baselines/g129-tool-surface.json",
+            "justification": "Immutable pre-target serialization baseline required to reproduce measured token deltas; its tool names describe the historical public surface."
+          }
+        ],
+        "targetEvidence": [
+          {
+            "path": "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
+            "justification": "Target completeness guard names removals only to assert required live-guidance coverage; it is not a migration caller."
+          },
+          {
+            "path": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
+            "justification": "Target-definition source must name each removal and replacement in order to measure and inventory the cutover; it is not a caller."
+          },
+          {
+            "path": "nix/pkg/cq-ledgers/scripts/baselines/t1326-tool-surface-target.json",
+            "justification": "Generated T1326 target records the migration itself and must be excluded from its own recursively computed caller inventory."
+          }
         ],
         "callers": [
-          "nix/pkg/cq-ledgers/packages/cq-config/dist/src/roleToolProfiles.d.ts",
           "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
           "nix/pkg/cq-ledgers/packages/ledger-tui/src/mcpClient.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/ledgerTools.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/wireResponseContract.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/store/remote/RemoteLedgerClient.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts"
         ],
         "documentation": [
+          ".codex/prompts/README.md",
+          "CLAUDE.md",
           "README.md",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md"
         ],
         "contractTests": [
-          "nix/pkg/cq-ledgers/packages/ledger-mcp/dist/test/two-prefixed-servers.test.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/claude/plan-advance.json",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/codex/plan-advance.json",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t681/fetch-prompt/pi/plan-advance.json",
@@ -2207,7 +2255,6 @@
           "nix/pkg/cq-ledgers/packages/ledger-web/test/serveEmbedded.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/test/wholeStoreStartup.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/test/xdgCatalogServe.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/test/toolSurfaceTarget.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/enumerate-ledgers-summary.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/fetch-ledger-compact.test.ts",
@@ -2228,20 +2275,17 @@
       "callShape": "update_item({ledger_id:\"milestones\",item_id:milestone_id,status?,fields:{title?,description?,blockedBy?,dependsOn?},author?,session?})",
       "response": "The generic item acknowledgement replaces the milestone acknowledgement; milestone status and dependency-DAG invariants remain ledger-specific.",
       "coverage": {
-        "scannedRoots": [
-          "README.md",
-          "nix/pkg/cq-assets",
-          "nix/pkg/cq-ledgers/packages"
-        ],
-        "excludedHistoricalOrTargetEvidence": [
-          "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
-          "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts"
-        ],
+        "scanScope": "Every git-tracked and non-ignored untracked regular repository file, including root and hidden guidance.",
         "matchedPaths": [
           "README.md",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/README.md",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-current.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-rs3.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/twin-server-probe.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/remeasure.ts",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/twin-server-probe.ts",
+          "docs/drafts/20260725-2130-t679-rs3-remeasurement.md",
           "nix/pkg/cq-assets/commands/cq/implement/advance.md",
-          "nix/pkg/cq-ledgers/packages/cq-config/dist/src/roleToolProfiles.d.ts",
           "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
@@ -2252,10 +2296,6 @@
           "nix/pkg/cq-ledgers/packages/ledger-web/src/agentsCatalogue.gen.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/test/mcpClientProjectionContract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/ledgerTools.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/wireResponseContract.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/store/remote/RemoteLedgerClient.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/test/toolSurfaceTarget.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
@@ -2266,18 +2306,61 @@
           "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientContract.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientInMemoryAdapter.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-parity.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts"
+          "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
+          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts",
+          "nix/pkg/cq-ledgers/scripts/baselines/g129-tool-surface.json",
+          "nix/pkg/cq-ledgers/scripts/baselines/t1326-tool-surface-target.json"
+        ],
+        "historicalEvidence": [
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/README.md",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-current.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-rs3.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/twin-server-probe.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/remeasure.ts",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/twin-server-probe.ts",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasurement.md",
+            "justification": "Frozen T679/RS3 measurement report retained as evidence of the earlier response-contract cutover, not current tool guidance."
+          },
+          {
+            "path": "nix/pkg/cq-ledgers/scripts/baselines/g129-tool-surface.json",
+            "justification": "Immutable pre-target serialization baseline required to reproduce measured token deltas; its tool names describe the historical public surface."
+          }
+        ],
+        "targetEvidence": [
+          {
+            "path": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
+            "justification": "Target-definition source must name each removal and replacement in order to measure and inventory the cutover; it is not a caller."
+          },
+          {
+            "path": "nix/pkg/cq-ledgers/scripts/baselines/t1326-tool-surface-target.json",
+            "justification": "Generated T1326 target records the migration itself and must be excluded from its own recursively computed caller inventory."
+          }
         ],
         "callers": [
-          "nix/pkg/cq-ledgers/packages/cq-config/dist/src/roleToolProfiles.d.ts",
           "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
           "nix/pkg/cq-ledgers/packages/ledger-tui/src/mcpClient.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/src/App.tsx",
           "nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/ledgerTools.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/wireResponseContract.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/store/remote/RemoteLedgerClient.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
@@ -2292,7 +2375,6 @@
           "nix/pkg/cq-ledgers/packages/ledger-mcp/test/serverInstructions.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger-tui/test/mcpClientWire.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/test/mcpClientProjectionContract.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/test/toolSurfaceTarget.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/fixtures/cq-tool-response-contract.json",
           "nix/pkg/cq-ledgers/packages/ledger/test/mcp-tools.test.ts",
@@ -2312,26 +2394,22 @@
       "callShape": "fetch_item({ledger_id:\"milestones\",item_id:milestone_id,projection:\"compact\"|\"full\"})",
       "response": "For ledger_id=milestones the generic response remains {item,resolved,references}, preserving resolved metadata and active reference counts.",
       "coverage": {
-        "scannedRoots": [
-          "README.md",
-          "nix/pkg/cq-assets",
-          "nix/pkg/cq-ledgers/packages"
-        ],
-        "excludedHistoricalOrTargetEvidence": [
-          "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
-          "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts"
-        ],
+        "scanScope": "Every git-tracked and non-ignored untracked regular repository file, including root and hidden guidance.",
         "matchedPaths": [
+          "CLAUDE.md",
           "README.md",
-          "nix/pkg/cq-ledgers/packages/cq-config/dist/src/roleToolProfiles.d.ts",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/corpus-remeasurement.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-current.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-rs3.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/out/twin-server-probe.json",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/remeasure.ts",
+          "docs/drafts/20260725-2130-t679-rs3-remeasure/twin-server-probe.ts",
+          "docs/drafts/20260725-2130-t679-rs3-remeasurement.md",
+          "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
           "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/test/serverInstructions.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/ledgerTools.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/wireResponseContract.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/test/toolSurfaceTarget.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
@@ -2341,26 +2419,79 @@
           "nix/pkg/cq-ledgers/packages/ledger/test/mcp-tools.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/remoteLedgerClientInMemoryAdapter.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/stdio-tool-parity.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts"
+          "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
+          "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
+          "nix/pkg/cq-ledgers/packages/ledger/test/wire-response-contract.test.ts",
+          "nix/pkg/cq-ledgers/scripts/baselines/g129-tool-surface.json",
+          "nix/pkg/cq-ledgers/scripts/baselines/t1326-tool-surface-target.json"
+        ],
+        "historicalEvidence": [
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/corpus-remeasurement.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-current.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/schema-rs3.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/out/twin-server-probe.json",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/remeasure.ts",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/twin-server-probe.ts",
+            "justification": "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server."
+          },
+          {
+            "path": "docs/drafts/20260725-2130-t679-rs3-remeasurement.md",
+            "justification": "Frozen T679/RS3 measurement report retained as evidence of the earlier response-contract cutover, not current tool guidance."
+          },
+          {
+            "path": "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
+            "justification": "Frozen observed-call corpus used as measurement evidence by T1325/T1326; its counts record historical calls and are not executable guidance."
+          },
+          {
+            "path": "nix/pkg/cq-ledgers/scripts/baselines/g129-tool-surface.json",
+            "justification": "Immutable pre-target serialization baseline required to reproduce measured token deltas; its tool names describe the historical public surface."
+          }
+        ],
+        "targetEvidence": [
+          {
+            "path": "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
+            "justification": "Target completeness guard names removals only to assert required live-guidance coverage; it is not a migration caller."
+          },
+          {
+            "path": "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
+            "justification": "Target-definition source must name each removal and replacement in order to measure and inventory the cutover; it is not a caller."
+          },
+          {
+            "path": "nix/pkg/cq-ledgers/scripts/baselines/t1326-tool-surface-target.json",
+            "justification": "Generated T1326 target records the migration itself and must be excluded from its own recursively computed caller inventory."
+          }
         ],
         "callers": [
-          "nix/pkg/cq-ledgers/packages/cq-config/dist/src/roleToolProfiles.d.ts",
           "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/ledgerTools.d.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/src/mcp/wireResponseContract.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts"
         ],
         "documentation": [
+          "CLAUDE.md",
           "README.md",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/README.md"
         ],
         "contractTests": [
           "nix/pkg/cq-ledgers/packages/ledger-mcp/test/serverInstructions.test.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/dist/test/toolSurfaceTarget.d.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/direct-read-projection.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/mcp-tools.test.ts",

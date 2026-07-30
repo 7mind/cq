@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import {
   ROLE_TOOL_CAPABILITY_MATRIX,
@@ -98,16 +99,58 @@ const REPLACEMENT_TOOL = Object.freeze({
   fetch_milestone: "fetch_item",
 } as const);
 
-const MIGRATION_SCAN_ROOTS = [
-  "README.md",
-  "nix/pkg/cq-assets",
-  "nix/pkg/cq-ledgers/packages",
-] as const;
+interface MigrationEvidenceRule {
+  path: string;
+  recursive: boolean;
+  justification: string;
+}
 
-const MIGRATION_SCAN_EXCLUSIONS = [
-  "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
-  "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
-  "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
+const HISTORICAL_MIGRATION_EVIDENCE = [
+  {
+    path: "docs/drafts/20260725-2130-t679-rs3-remeasure",
+    recursive: true,
+    justification:
+      "Frozen T679/RS3 measurement package. Its executable probes intentionally replay the superseded surface and its reports preserve observed results; neither guides nor calls the current server.",
+  },
+  {
+    path: "docs/drafts/20260725-2130-t679-rs3-remeasurement.md",
+    recursive: false,
+    justification:
+      "Frozen T679/RS3 measurement report retained as evidence of the earlier response-contract cutover, not current tool guidance.",
+  },
+  {
+    path: "nix/pkg/cq-ledgers/packages/cq-config/evidence/role-tool-corpus.json",
+    recursive: false,
+    justification:
+      "Frozen observed-call corpus used as measurement evidence by T1325/T1326; its counts record historical calls and are not executable guidance.",
+  },
+  {
+    path: "nix/pkg/cq-ledgers/scripts/baselines/g129-tool-surface.json",
+    recursive: false,
+    justification:
+      "Immutable pre-target serialization baseline required to reproduce measured token deltas; its tool names describe the historical public surface.",
+  },
+] as const satisfies readonly MigrationEvidenceRule[];
+
+const TARGET_MIGRATION_EVIDENCE = [
+  {
+    path: "nix/pkg/cq-ledgers/packages/ledger/test/toolSurfaceTarget.ts",
+    recursive: false,
+    justification:
+      "Target-definition source must name each removal and replacement in order to measure and inventory the cutover; it is not a caller.",
+  },
+  {
+    path: "nix/pkg/cq-ledgers/packages/ledger/test/tool-surface-target.test.ts",
+    recursive: false,
+    justification:
+      "Target completeness guard names removals only to assert required live-guidance coverage; it is not a migration caller.",
+  },
+  {
+    path: "nix/pkg/cq-ledgers/scripts/baselines/t1326-tool-surface-target.json",
+    recursive: false,
+    justification:
+      "Generated T1326 target records the migration itself and must be excluded from its own recursively computed caller inventory.",
+  },
 ] as const;
 
 const MIGRATION_RULES = Object.freeze({
@@ -460,39 +503,68 @@ function migrationCategory(
   return "callers";
 }
 
+function evidenceRuleFor(
+  path: string,
+  rules: readonly MigrationEvidenceRule[],
+): MigrationEvidenceRule | undefined {
+  return rules.find(
+    (rule) => path === rule.path || (rule.recursive && path.startsWith(`${rule.path}/`)),
+  );
+}
+
+function repositoryMigrationCandidatePaths(): string[] {
+  return execFileSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  )
+    .split("\0")
+    .filter((path) => path.length > 0)
+    .sort();
+}
+
 async function migrationMentions(toolName: string) {
   const matches: string[] = [];
-  const glob = new Bun.Glob("**/*.{ts,tsx,md,json}");
-  for await (const absolutePath of glob.scan({
-    cwd: REPO_ROOT,
-    absolute: true,
-    onlyFiles: true,
-    followSymlinks: false,
-  })) {
-    const path = relative(REPO_ROOT, absolutePath);
-    const inScope = MIGRATION_SCAN_ROOTS.some(
-      (root) => path === root || path.startsWith(`${root}/`),
-    );
+  for (const path of repositoryMigrationCandidatePaths()) {
+    const absolutePath = resolve(REPO_ROOT, path);
     if (
-      inScope &&
-      !(MIGRATION_SCAN_EXCLUSIONS as readonly string[]).includes(path) &&
+      !lstatSync(absolutePath).isSymbolicLink() &&
       readFileSync(absolutePath, "utf8").includes(toolName)
     ) {
       matches.push(path);
     }
   }
-  matches.sort();
   const categorized = {
     callers: [] as string[],
     documentation: [] as string[],
     contractTests: [] as string[],
     generatedArtifacts: [] as string[],
   };
-  for (const path of matches) categorized[migrationCategory(path)].push(path);
+  const historicalEvidence: { path: string; justification: string }[] = [];
+  const targetEvidence: { path: string; justification: string }[] = [];
+  for (const path of matches) {
+    const historicalRule = evidenceRuleFor(path, HISTORICAL_MIGRATION_EVIDENCE);
+    if (historicalRule !== undefined) {
+      historicalEvidence.push({ path, justification: historicalRule.justification });
+      continue;
+    }
+    const targetRule = evidenceRuleFor(path, TARGET_MIGRATION_EVIDENCE);
+    if (targetRule !== undefined) {
+      targetEvidence.push({ path, justification: targetRule.justification });
+      continue;
+    }
+    categorized[migrationCategory(path)].push(path);
+  }
   return {
-    scannedRoots: [...MIGRATION_SCAN_ROOTS],
-    excludedHistoricalOrTargetEvidence: [...MIGRATION_SCAN_EXCLUSIONS],
+    scanScope:
+      "Every git-tracked and non-ignored untracked regular repository file, including root and hidden guidance.",
     matchedPaths: matches,
+    historicalEvidence,
+    targetEvidence,
     ...categorized,
   };
 }

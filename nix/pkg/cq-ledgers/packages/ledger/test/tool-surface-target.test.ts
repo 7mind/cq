@@ -25,14 +25,32 @@ test("the measured breaking-surface target is complete", async () => {
       ...coverage.documentation,
       ...coverage.contractTests,
       ...coverage.generatedArtifacts,
+      ...coverage.historicalEvidence.map(({ path }) => path),
+      ...coverage.targetEvidence.map(({ path }) => path),
     ].sort();
     return (
       coverage.callers.length > 0 &&
       coverage.documentation.length > 0 &&
+      coverage.scanScope ===
+        "Every git-tracked and non-ignored untracked regular repository file, including root and hidden guidance." &&
+      [...coverage.historicalEvidence, ...coverage.targetEvidence].every(
+        ({ justification }) => justification.length > 0,
+      ) &&
       new Set(categorized).size === categorized.length &&
       JSON.stringify(categorized) === JSON.stringify(coverage.matchedPaths)
     );
   });
+  const liveGuidanceIsInventoried =
+    target.migrationMap.some(
+      ({ removedTool, coverage }) =>
+        removedTool === "create_milestone" &&
+        coverage.documentation.includes("CLAUDE.md") &&
+        coverage.documentation.includes(".codex/prompts/README.md"),
+    ) &&
+    target.migrationMap.some(
+      ({ removedTool, coverage }) =>
+        removedTool === "fetch_milestone" && coverage.documentation.includes("CLAUDE.md"),
+    );
   const contract = {
     matchesCheckedInTarget: serializeToolSurfaceTarget(measured) === targetBytes,
     selectedChangesReduceWholeSerializations: target.selected.every(
@@ -68,6 +86,7 @@ test("the measured breaking-surface target is complete", async () => {
       JSON.stringify(migrationNames) ===
         JSON.stringify([...target.target.removedPublicTools].sort()) &&
       mappedPathsAreComplete &&
+      liveGuidanceIsInventoried &&
       target.migrationMap.every(({ replacement }) => targetInventory.has(replacement)),
     everyRenameHasOneCompleteMigration: target.target.renamedPublicTools.length === 0,
     combinedTargetReducesWholeSurface:
