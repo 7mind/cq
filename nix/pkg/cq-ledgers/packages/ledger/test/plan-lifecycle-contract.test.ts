@@ -346,7 +346,7 @@ describe("T846 r1 contract reproductions", () => {
   it("enforces initial and follow-up phase transitions and exposes the result", () => {
     expect(PLAN_CLAIM_PHASE_TRANSITIONS).toEqual({
       initial: { allowed: ["clarifying", "planning"], resulting: "planning" },
-      "follow-up": { allowed: ["planned"], resulting: "planning" },
+      "follow-up": { allowed: ["planned", "building"], resulting: "planning" },
     });
     expect(resolvePlanClaimPhase("G99", "initial", "clarifying")).toEqual({
       ok: true,
@@ -363,13 +363,18 @@ describe("T846 r1 contract reproductions", () => {
       previousGoalPhase: "planned",
       goalPhase: "planning",
     });
+    expect(resolvePlanClaimPhase("G99", "follow-up", "building")).toEqual({
+      ok: true,
+      previousGoalPhase: "building",
+      goalPhase: "planning",
+    });
     expect(resolvePlanClaimPhase("G99", "follow-up", "clarifying")).toEqual({
       ok: false,
       conflict: {
         code: "goal-phase-conflict",
         goalId: "G99",
         status: "clarifying",
-        allowed: ["planned"],
+        allowed: ["planned", "building"],
       },
     });
     expect(resolvePlanClaimPhase("G99", "initial", "done")).toEqual({
@@ -410,6 +415,17 @@ describe("T846 r1 contract reproductions", () => {
         },
       }).success,
     ).toBe(false);
+
+    expect(
+      PlanClaimResultSchema.safeParse({
+        ok: true,
+        replayed: false,
+        acknowledgement: {
+          ...followUpAcknowledgement,
+          previousGoalPhase: "building",
+        },
+      }).success,
+    ).toBe(true);
   });
 
   it("binds finalization to the exact reviewed draft identity", () => {
@@ -1143,6 +1159,9 @@ describe("executable lifecycle semantics", () => {
     ]);
     expect(PLAN_OPERATION_CONTRACTS.finalize.postconditions).toContain(
       "only-finalized-current-manifest-is-executable",
+    );
+    expect(PLAN_OPERATION_CONTRACTS.claim.preconditions).toContain(
+      "follow-up-goal-phase-is-planned-or-building",
     );
 
     const declaredConflicts = new Set(

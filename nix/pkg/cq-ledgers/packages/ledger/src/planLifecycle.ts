@@ -40,7 +40,12 @@ export const PLAN_LIFECYCLE_CONTRACT_VERSION = 1 as const;
 export const PlanClaimPurposeSchema = z.enum(["initial", "follow-up"]);
 export type PlanClaimPurpose = z.infer<typeof PlanClaimPurposeSchema>;
 
-export const PlanClaimGoalPhaseSchema = z.enum(["clarifying", "planning", "planned"]);
+export const PlanClaimGoalPhaseSchema = z.enum([
+  "clarifying",
+  "planning",
+  "planned",
+  "building",
+]);
 export type PlanClaimGoalPhase = z.infer<typeof PlanClaimGoalPhaseSchema>;
 
 export const PlanReviewDefectSeveritySchema = z.enum([
@@ -73,7 +78,7 @@ export const PLAN_CLAIM_PHASE_TRANSITIONS = {
     resulting: "planning",
   },
   "follow-up": {
-    allowed: ["planned"],
+    allowed: ["planned", "building"],
     resulting: "planning",
   },
 } as const satisfies Record<
@@ -1283,7 +1288,7 @@ export const PLAN_OPERATION_CONTRACTS = {
     preconditions: [
       "goal-exists-and-is-nonterminal",
       "initial-goal-phase-is-clarifying-or-planning",
-      "follow-up-goal-phase-is-planned",
+      "follow-up-goal-phase-is-planned-or-building",
       "expected-generation-matches",
       "no-different-active-claim",
       "no-active-research-wait",

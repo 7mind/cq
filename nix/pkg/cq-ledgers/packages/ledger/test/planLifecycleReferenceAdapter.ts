@@ -166,11 +166,20 @@ export interface SeedReviewOptions {
   readonly provenance: PlanWriteProvenance;
 }
 
+export interface SeedDecisionOptions {
+  readonly decisionId: string;
+  readonly goalId: string;
+  readonly reviewId: string;
+  readonly headline: string;
+  readonly provenance: PlanWriteProvenance;
+}
+
 export interface PlanLifecycleContractFixture {
   readonly lifecycle: PlanLifecycleStore;
   seedGoal(options: SeedGoalOptions): Promise<void>;
   seedWork(goalId: string, options: SeedWorkOptions): Promise<void>;
   seedReview(options: SeedReviewOptions): Promise<void>;
+  seedDecision(options: SeedDecisionOptions): Promise<void>;
   setResearchStatus(
     researchId: string,
     status: "open" | "wip" | "inconclusive" | "concluded" | "abandoned",
@@ -640,6 +649,22 @@ export class ReferencePlanLifecycleAdapter
         goalId: options.goalId,
         status: options.status,
         draft: clone(options.draft),
+        provenance: clone(options.provenance),
+      });
+    });
+  }
+
+  async seedDecision(options: SeedDecisionOptions): Promise<void> {
+    await this.backend.mutex.run(() => {
+      this.requireGoal(options.goalId);
+      this.backend.decisions.set(options.decisionId, {
+        id: options.decisionId,
+        goalId: options.goalId,
+        reviewId: options.reviewId,
+        status: "locked",
+        text: options.headline,
+        rationale: null,
+        alternatives: null,
         provenance: clone(options.provenance),
       });
     });

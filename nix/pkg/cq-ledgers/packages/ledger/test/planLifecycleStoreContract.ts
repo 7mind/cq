@@ -159,7 +159,7 @@ function jsonHasAuthorityMaterial(
 
 async function buildGoal(
   factory: PlanLifecycleContractFactory,
-  phase: "clarifying" | "planning" | "planned",
+  phase: "clarifying" | "planning" | "planned" | "building",
   generation: number | null,
 ): Promise<PlanLifecycleContractFixture> {
   const fixture = await factory.build();
@@ -523,6 +523,151 @@ export function runPlanLifecycleStoreContract(
           expect(state.questions.map(({ status }) => status)).toEqual(["withdrawn"]);
         } finally {
           await followUp.dispose();
+        }
+      }, timeout);
+
+      // regression: D198 — building remains a follow-up entry phase after
+      // implementation has drained, with the same replacement fence as planned.
+      it("advances one building follow-up and preserves terminal work plus history", async () => {
+        const fixture = await buildGoal(factory, "building", 5);
+        try {
+          await fixture.seedWork(GOAL_ID, {
+            taskStatuses: ["planned", "done", "abandoned"],
+            openQuestionCount: 1,
+            legacy: false,
+          });
+          const seeded = await fixture.observe(GOAL_ID);
+          if (seeded.currentDraft === null) throw new Error("seeded draft missing");
+          await fixture.seedReview({
+            reviewId: "R20",
+            goalId: GOAL_ID,
+            status: "go-ahead",
+            draft: seeded.currentDraft,
+            provenance: PROVENANCE_B,
+          });
+          await fixture.seedDecision({
+            decisionId: "K20",
+            goalId: GOAL_ID,
+            reviewId: "R20",
+            headline: "Preserve the prior planning decision",
+            provenance: PROVENANCE_B,
+          });
+          const before = await fixture.observe(GOAL_ID);
+
+          const results = await Promise.all([
+            fixture.lifecycle.claimPlan(
+              claimInput("follow-up", "building-a", OWNER_TOKEN_A, 5, PROVENANCE_A),
+            ),
+            fixture.lifecycle.claimPlan(
+              claimInput("follow-up", "building-b", OWNER_TOKEN_B, 5, PROVENANCE_B),
+            ),
+          ]);
+          const winners = results.filter((result) => result.ok);
+          const losers = results.filter((result) => !result.ok);
+          expect(winners).toHaveLength(1);
+          expect(losers).toHaveLength(1);
+          if (winners[0] === undefined || !winners[0].ok) {
+            throw new Error("building follow-up winner missing");
+          }
+          if (losers[0] === undefined || losers[0].ok) {
+            throw new Error("building follow-up loser missing");
+          }
+          expect(winners[0].acknowledgement).toMatchObject({
+            generation: 6,
+            previousGoalPhase: "building",
+            goalPhase: "planning",
+          });
+          expect(losers[0].conflict.code).toBe("claim-active");
+
+          const after = await fixture.observe(GOAL_ID);
+          expect(after.generation).toBe(6);
+          expect(after.phase).toBe("planning");
+          expect(after.tasks.map(({ status }) => status)).toEqual([
+            "abandoned",
+            "done",
+            "abandoned",
+          ]);
+          expect(after.milestones.map(({ status }) => status)).toEqual(["postponed"]);
+          expect(after.questions.map(({ status }) => status)).toEqual(["withdrawn"]);
+          expect(after.reviews).toEqual(before.reviews);
+          expect(after.decisions).toEqual(before.decisions);
+        } finally {
+          await fixture.dispose();
+        }
+      }, timeout);
+
+      // regression: D198 — each rejected building follow-up must leave the
+      // complete public state byte-identical.
+      it("rejects terminal, stale, and implementation-active building follow-ups without mutation", async () => {
+        const terminal = await factory.build();
+        try {
+          await terminal.seedGoal({ goalId: GOAL_ID, phase: "done", generation: 5 });
+          const before = await terminal.observe(GOAL_ID);
+          expect(
+            await terminal.lifecycle.claimPlan(
+              claimInput("follow-up", "building-terminal", OWNER_TOKEN_A, 5, PROVENANCE_A),
+            ),
+          ).toEqual({
+            ok: false,
+            conflict: { code: "goal-terminal", goalId: GOAL_ID, status: "done" },
+          });
+          expect(await terminal.observe(GOAL_ID)).toEqual(before);
+        } finally {
+          await terminal.dispose();
+        }
+
+        const stale = await buildGoal(factory, "building", 5);
+        try {
+          await stale.seedWork(GOAL_ID, {
+            taskStatuses: ["planned"],
+            openQuestionCount: 1,
+            legacy: false,
+          });
+          const before = await stale.observe(GOAL_ID);
+          expect(
+            await stale.lifecycle.claimPlan(
+              claimInput("follow-up", "building-stale", OWNER_TOKEN_A, 4, PROVENANCE_A),
+            ),
+          ).toEqual({
+            ok: false,
+            conflict: {
+              code: "stale-generation",
+              goalId: GOAL_ID,
+              expectedGeneration: 4,
+              currentGeneration: 5,
+            },
+          });
+          expect(await stale.observe(GOAL_ID)).toEqual(before);
+        } finally {
+          await stale.dispose();
+        }
+
+        const active = await buildGoal(factory, "building", 5);
+        try {
+          await active.seedWork(GOAL_ID, {
+            taskStatuses: ["wip", "blocked"],
+            openQuestionCount: 1,
+            legacy: false,
+          });
+          const before = await active.observe(GOAL_ID);
+          expect(
+            await active.lifecycle.claimPlan(
+              claimInput("follow-up", "building-active", OWNER_TOKEN_A, 5, PROVENANCE_A),
+            ),
+          ).toEqual({
+            ok: false,
+            conflict: {
+              code: "implementation-active",
+              goalId: GOAL_ID,
+              tasks: [
+                { taskId: before.tasks[0]!.id, status: "wip" },
+                { taskId: before.tasks[1]!.id, status: "blocked" },
+              ],
+            },
+          });
+          expect(await active.observe(GOAL_ID)).toEqual(before);
+        } finally {
+          await active.dispose();
         }
       }, timeout);
 

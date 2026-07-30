@@ -34,6 +34,7 @@ import type {
   ReferencePublicResearch,
   ReferencePublicReview,
   ReferencePublicTask,
+  SeedDecisionOptions,
   SeedGoalOptions,
   SeedReviewOptions,
   SeedWorkOptions,
@@ -236,6 +237,24 @@ export abstract class LedgerStorePlanLifecycleFixture<
         [PLAN_REVIEW_DRAFT_FIELD]: JSON.stringify(options.draft),
         ledgerRefs: [`${GOALS_LEDGER}:${options.goalId}`],
         ...(defectIds.length === 0 ? {} : { defects: defectIds }),
+      },
+      author: options.provenance.author,
+      ...(options.provenance.session === undefined
+        ? {}
+        : { session: options.provenance.session }),
+    });
+  }
+
+  async seedDecision(options: SeedDecisionOptions): Promise<void> {
+    await this.store.createItem(DECISIONS_LEDGER, MILESTONES_AMBIENT_ID, {
+      id: options.decisionId,
+      status: "locked",
+      fields: {
+        headline: options.headline,
+        ledgerRefs: [
+          `${GOALS_LEDGER}:${options.goalId}`,
+          `${REVIEWS_LEDGER}:${options.reviewId}`,
+        ],
       },
       author: options.provenance.author,
       ...(options.provenance.session === undefined
