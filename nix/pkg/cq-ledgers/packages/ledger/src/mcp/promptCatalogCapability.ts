@@ -77,7 +77,7 @@ export interface PromptFragmentBinding {
   readonly sourceBlock: string;
   readonly supportedSurfaces: readonly PromptSurface[];
   readonly forbiddenVocabulary: Readonly<Record<PromptSurface, readonly string[]>>;
-  readonly intentionalDifference: PromptIntentionalDifference;
+  readonly intentionalDifference?: PromptIntentionalDifference;
 }
 
 /**

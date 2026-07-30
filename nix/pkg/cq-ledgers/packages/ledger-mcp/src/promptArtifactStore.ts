@@ -448,10 +448,14 @@ function parseFragmentBinding(value: unknown, pathLabel: string): PromptFragment
     sourceBlock: parseNonEmptyString(value.sourceBlock, `${pathLabel}.sourceBlock`),
     supportedSurfaces,
     forbiddenVocabulary,
-    intentionalDifference: parseIntentionalDifference(
-      value.intentionalDifference,
-      `${pathLabel}.intentionalDifference`,
-    ),
+    ...(value.intentionalDifference === undefined
+      ? {}
+      : {
+          intentionalDifference: parseIntentionalDifference(
+            value.intentionalDifference,
+            `${pathLabel}.intentionalDifference`,
+          ),
+        }),
   });
 }
 

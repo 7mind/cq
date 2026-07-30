@@ -529,12 +529,22 @@ test("the filesystem adapter requires an explicit absolute root", () => {
 
 // Regression: the packaged MCP must accept every fragment emitted by the generated catalog.
 test("the production adapter accepts the generated prompt-fragment vocabulary", () => {
+  const sharedFragmentBinding = {
+    fragment: "ledger-response-contract",
+    sourceBlock: FRAGMENT_BINDING.sourceBlock,
+    supportedSurfaces: FRAGMENT_BINDING.supportedSurfaces,
+    forbiddenVocabulary: FRAGMENT_BINDING.forbiddenVocabulary,
+  };
   const generatedRole = {
     ...role("implement-worker", "dispatched-subagent"),
-    fragmentBindings: PROMPT_FRAGMENT_SLOTS.map((fragment) => ({
-      ...FRAGMENT_BINDING,
-      fragment,
-    })),
+    fragmentBindings: PROMPT_FRAGMENT_SLOTS.map((fragment) =>
+      fragment === sharedFragmentBinding.fragment
+        ? sharedFragmentBinding
+        : {
+            ...FRAGMENT_BINDING,
+            fragment,
+          },
+    ),
   };
   const generatedVocabulary = fixture(
     [generatedRole],
@@ -546,6 +556,14 @@ test("the production adapter accepts the generated prompt-fragment vocabulary", 
     expect(handle.store.readManifest().roles[0]?.requiredCapabilities).toEqual(
       PROMPT_FRAGMENT_SLOTS,
     );
+    const sharedBinding =
+      handle.store
+        .readManifest()
+        .roles[0]?.renderer?.fragmentBindings.find(
+          ({ fragment }) => fragment === sharedFragmentBinding.fragment,
+        );
+    expect(sharedBinding).toBeDefined();
+    expect(sharedBinding).not.toHaveProperty("intentionalDifference");
   } finally {
     handle.cleanup();
   }

@@ -45,7 +45,7 @@ interface FragmentBinding {
   readonly fragment: string;
   readonly supportedSurfaces: readonly PromptSurface[];
   readonly forbiddenVocabulary: Readonly<Record<PromptSurface, readonly string[]>>;
-  readonly intentionalDifference: DifferenceDeclaration;
+  readonly intentionalDifference?: DifferenceDeclaration;
 }
 
 interface DispatchRelation {
@@ -167,10 +167,12 @@ function assertCatalogStructure(
         binding.supportedSurfaces,
         `${path}.fragmentBindings.${binding.fragment}.supportedSurfaces`,
       );
-      assertSupportedSurfaces(
-        binding.intentionalDifference.surfaces,
-        `${path}.fragmentBindings.${binding.fragment}.intentionalDifference.surfaces`,
-      );
+      if (binding.intentionalDifference !== undefined) {
+        assertSupportedSurfaces(
+          binding.intentionalDifference.surfaces,
+          `${path}.fragmentBindings.${binding.fragment}.intentionalDifference.surfaces`,
+        );
+      }
     }
   }
 
@@ -243,18 +245,26 @@ function assertCatalogStructure(
     const boundDeclarationKeys = new Set<string>();
     for (const binding of role.fragmentBindings) {
       const contract = contractsByFragment.get(binding.fragment);
+      const contractDeclarationKey =
+        contract?.intentionalDifference === undefined
+          ? undefined
+          : differenceKey(contract.intentionalDifference);
+      const bindingDeclarationKey =
+        binding.intentionalDifference === undefined
+          ? undefined
+          : differenceKey(binding.intentionalDifference);
       if (
         contract === undefined ||
-        differenceKey(contract.intentionalDifference) !==
-          differenceKey(binding.intentionalDifference)
+        contractDeclarationKey !== bindingDeclarationKey
       ) {
         fail(
           `catalog.${role.roleId}.fragmentBindings.${binding.fragment}`,
           "unknown fragment difference declaration",
         );
       }
-      const declarationKey = differenceKey(binding.intentionalDifference);
-      boundDeclarationKeys.add(declarationKey);
+      if (bindingDeclarationKey !== undefined) {
+        boundDeclarationKeys.add(bindingDeclarationKey);
+      }
     }
     for (const declaration of role.intentionalDifferences) {
       if (!boundDeclarationKeys.has(differenceKey(declaration))) {
@@ -544,9 +554,9 @@ function assertDifferenceDeclarations(
       const observedDifference =
         new Set(PROMPT_SURFACES.map((surface) => observation.contents[surface]))
           .size > 1;
-      const declared = declarations.has(
-        differenceKey(binding.intentionalDifference),
-      );
+      const declared =
+        binding.intentionalDifference !== undefined &&
+        declarations.has(differenceKey(binding.intentionalDifference));
       if (observedDifference && !declared) {
         fail(
           `catalog.${role.roleId}.intentionalDifferences`,

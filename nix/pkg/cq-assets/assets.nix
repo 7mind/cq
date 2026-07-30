@@ -218,11 +218,6 @@ let
         codex = [ ];
         pi = [ ];
       };
-      intentionalDifference = {
-        kind = "tool-vocabulary";
-        reason = "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.";
-        surfaces = promptSurfaces;
-      };
     }
   ];
 
@@ -247,15 +242,25 @@ let
     index: contract:
     let
       contractPath = "fragmentContracts[${toString index}]";
+      contractFields = builtins.attrNames contract;
     in
     if !builtins.isAttrs contract then
       fail contractPath "expected an attribute set"
-    else if builtins.attrNames contract != [
-      "forbiddenVocabulary"
-      "fragment"
-      "intentionalDifference"
-      "supportedSurfaces"
-    ] then
+    else if
+      !(builtins.elem contractFields [
+        [
+          "forbiddenVocabulary"
+          "fragment"
+          "supportedSurfaces"
+        ]
+        [
+          "forbiddenVocabulary"
+          "fragment"
+          "intentionalDifference"
+          "supportedSurfaces"
+        ]
+      ])
+    then
       fail contractPath "unexpected fragment-contract shape"
     else if !builtins.isString contract.fragment || !(builtins.hasAttr contract.fragment sourceBlockByFragment) then
       fail "${contractPath}.fragment" "unknown fragment"
@@ -275,7 +280,7 @@ let
       fail "${contractPath}.forbiddenVocabulary" "expected one non-empty-token array per prompt surface"
     else
       contract
-      // {
+      // lib.optionalAttrs (contract ? intentionalDifference) {
         intentionalDifference = promptSurfaceSchema.validateIntentionalDifference contract.intentionalDifference;
       };
 
@@ -298,8 +303,10 @@ let
       inherit (contract)
         supportedSurfaces
         forbiddenVocabulary
-        intentionalDifference
         ;
+    }
+    // lib.optionalAttrs (contract ? intentionalDifference) {
+      inherit (contract) intentionalDifference;
     };
 
   dispatch = targetRoleId: {
@@ -323,7 +330,7 @@ let
     let
       fragmentBindings = map mkFragmentBinding fragments;
       differenceBindings = lib.filter (
-        binding: binding.fragment != "ledger-response-contract"
+        binding: binding ? intentionalDifference
       ) fragmentBindings;
     in
     {
@@ -450,16 +457,29 @@ let
 
   validateBinding =
     rolePath: binding:
+    let
+      bindingFields = builtins.attrNames binding;
+    in
     if !builtins.isAttrs binding then
       fail rolePath "expected an attribute set"
-    else if builtins.attrNames binding != [
-      "forbiddenVocabulary"
-      "fragment"
-      "intentionalDifference"
-      "sourceBlock"
-      "supportedSurfaces"
-    ] then
-      fail rolePath "expected exactly fragment, sourceBlock, supportedSurfaces, forbiddenVocabulary, and intentionalDifference"
+    else if
+      !(builtins.elem bindingFields [
+        [
+          "forbiddenVocabulary"
+          "fragment"
+          "sourceBlock"
+          "supportedSurfaces"
+        ]
+        [
+          "forbiddenVocabulary"
+          "fragment"
+          "intentionalDifference"
+          "sourceBlock"
+          "supportedSurfaces"
+        ]
+      ])
+    then
+      fail rolePath "unexpected fragment-binding shape"
     else if !builtins.isString binding.fragment || !(builtins.hasAttr binding.fragment fragmentContractsById) then
       fail "${rolePath}.fragment" "unknown fragment reference"
     else if binding != mkFragmentBinding binding.fragment then
@@ -493,7 +513,7 @@ let
       expectedDifferences = unique (
         map (binding: binding.intentionalDifference) (
           lib.filter (
-            binding: binding.fragment != "ledger-response-contract"
+            binding: binding ? intentionalDifference
           ) validatedBindings
         )
       );

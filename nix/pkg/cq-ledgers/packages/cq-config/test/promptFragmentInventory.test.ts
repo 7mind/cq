@@ -94,10 +94,20 @@ describe("prompt fragment inventory closure", () => {
     expect(new Set(PROMPT_FRAGMENT_INVENTORY.map((entry) => entry.targetFragment))).toEqual(
       new Set(PROMPT_FRAGMENT_SLOTS),
     );
+    const sharedContract = PROMPT_FRAGMENT_SLOT_CONTRACTS.find(
+      (contract) => contract.fragment === "ledger-response-contract",
+    );
+    expect(sharedContract).toBeDefined();
+    expect(sharedContract).not.toHaveProperty("intentionalDifference");
     for (const entry of PROMPT_FRAGMENT_INVENTORY) {
       expect(entry.supportedSurfaces).toEqual(["claude", "codex", "pi"]);
       expect(Object.keys(entry.forbiddenVocabulary)).toEqual(["claude", "codex", "pi"]);
-      expect(entry.intentionalDifference.reason.trim().length).toBeGreaterThan(0);
+      if (entry.targetFragment === "ledger-response-contract") {
+        expect(entry).not.toHaveProperty("intentionalDifference");
+      } else {
+        expect(entry.intentionalDifference).toBeDefined();
+        expect(entry.intentionalDifference!.reason.trim().length).toBeGreaterThan(0);
+      }
     }
   });
 });

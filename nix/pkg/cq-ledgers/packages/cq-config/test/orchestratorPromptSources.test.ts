@@ -52,11 +52,19 @@ interface CatalogRole {
   readonly roleId: string;
   readonly roleKind: "dispatched-subagent" | "orchestrator-command";
   readonly canonicalSource: string;
-  readonly fragmentBindings: readonly { readonly fragment: string }[];
+  readonly fragmentBindings: readonly {
+    readonly fragment: string;
+    readonly intentionalDifference?: unknown;
+  }[];
   readonly dispatchRelations: readonly {
     readonly kind: "dispatch" | "recursion";
     readonly targetRoleId: string;
   }[];
+}
+
+interface FragmentContract {
+  readonly fragment: string;
+  readonly intentionalDifference?: unknown;
 }
 
 interface FragmentSource {
@@ -76,6 +84,18 @@ function evaluateNixJson(attribute: string): string {
     throw new Error(new TextDecoder().decode(result.stderr));
   }
   return new TextDecoder().decode(result.stdout);
+}
+
+function evaluateNixValue<Value>(attribute: string): Value {
+  const result = Bun.spawnSync(["nix", "eval", "--json", `.#llmAssets.${attribute}`], {
+    cwd: REPO_ROOT,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(new TextDecoder().decode(result.stderr));
+  }
+  return JSON.parse(new TextDecoder().decode(result.stdout)) as Value;
 }
 
 function registeredToolName(candidate: string): string {
@@ -175,6 +195,47 @@ describe("orchestrator command prompt sources", () => {
       expect(LEDGER_TOOL_NAMES).toContain(spec.candidate);
       expect(registeredToolName(spec.candidate)).toBe(spec.candidate);
     }
+  });
+
+  test("keeps the shared ledger response fragment byte-identical without difference metadata", () => {
+    const fragmentContracts =
+      evaluateNixValue<readonly FragmentContract[]>("fragmentContracts");
+    const sharedContract = fragmentContracts.find(
+      ({ fragment }) => fragment === LEDGER_RESPONSE_CONTRACT_FRAGMENT,
+    );
+    expect(sharedContract).toBeDefined();
+    expect(sharedContract).not.toHaveProperty("intentionalDifference");
+
+    const catalog = JSON.parse(evaluateNixJson("catalogJson")) as readonly CatalogRole[];
+    const sharedBindings = catalog.flatMap((role) =>
+      role.fragmentBindings.filter(
+        ({ fragment }) => fragment === LEDGER_RESPONSE_CONTRACT_FRAGMENT,
+      ),
+    );
+    expect(sharedBindings).toHaveLength(LEDGER_RESPONSE_CONTRACT_ROLES.size);
+    for (const binding of sharedBindings) {
+      expect(binding).not.toHaveProperty("intentionalDifference");
+    }
+
+    const fragmentSources = JSON.parse(
+      evaluateNixJson("promptFragmentSourcesJson"),
+    ) as readonly FragmentSource[];
+    const renderedBytes = PROMPT_SURFACES.map((surface) => {
+      const entries = fragmentSources.filter(
+        (entry) =>
+          entry.surface === surface &&
+          entry.fragment === LEDGER_RESPONSE_CONTRACT_FRAGMENT,
+      );
+      expect(entries).toHaveLength(LEDGER_RESPONSE_CONTRACT_ROLES.size);
+      const surfaceBytes = new Set(
+        entries.map((entry) =>
+          readFileSync(path.join(ASSETS_ROOT, entry.source)).toString("hex"),
+        ),
+      );
+      expect(surfaceBytes.size).toBe(1);
+      return [...surfaceBytes][0]!;
+    });
+    expect(new Set(renderedBytes).size).toBe(1);
   });
 
   test("renders cq:begin from the canonical source and explicit typed fragments", () => {

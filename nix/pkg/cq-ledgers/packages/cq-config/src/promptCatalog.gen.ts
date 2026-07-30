@@ -1080,15 +1080,6 @@ export const PROMPT_CATALOG_PROJECTION = {
             "pi": []
           },
           "fragment": "ledger-response-contract",
-          "intentionalDifference": {
-            "kind": "tool-vocabulary",
-            "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
-            "surfaces": [
-              "claude",
-              "codex",
-              "pi"
-            ]
-          },
           "sourceBlock": "ledger item-read projection and mutation response contract",
           "supportedSurfaces": [
             "claude",
@@ -1521,15 +1512,6 @@ export const PROMPT_CATALOG_PROJECTION = {
             "pi": []
           },
           "fragment": "ledger-response-contract",
-          "intentionalDifference": {
-            "kind": "tool-vocabulary",
-            "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
-            "surfaces": [
-              "claude",
-              "codex",
-              "pi"
-            ]
-          },
           "sourceBlock": "ledger item-read projection and mutation response contract",
           "supportedSurfaces": [
             "claude",
@@ -1770,15 +1752,6 @@ export const PROMPT_CATALOG_PROJECTION = {
             "pi": []
           },
           "fragment": "ledger-response-contract",
-          "intentionalDifference": {
-            "kind": "tool-vocabulary",
-            "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
-            "surfaces": [
-              "claude",
-              "codex",
-              "pi"
-            ]
-          },
           "sourceBlock": "ledger item-read projection and mutation response contract",
           "supportedSurfaces": [
             "claude",
@@ -2489,15 +2462,6 @@ export const PROMPT_CATALOG_PROJECTION = {
             "pi": []
           },
           "fragment": "ledger-response-contract",
-          "intentionalDifference": {
-            "kind": "tool-vocabulary",
-            "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
-            "surfaces": [
-              "claude",
-              "codex",
-              "pi"
-            ]
-          },
           "sourceBlock": "ledger item-read projection and mutation response contract",
           "supportedSurfaces": [
             "claude",
@@ -2694,15 +2658,6 @@ export const PROMPT_CATALOG_PROJECTION = {
             "pi": []
           },
           "fragment": "ledger-response-contract",
-          "intentionalDifference": {
-            "kind": "tool-vocabulary",
-            "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
-            "surfaces": [
-              "claude",
-              "codex",
-              "pi"
-            ]
-          },
           "sourceBlock": "ledger item-read projection and mutation response contract",
           "supportedSurfaces": [
             "claude",
@@ -3478,7 +3433,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "2523c8f67badc4fd27dcb4394aae7b40918b6023a7a09d19a4f31d49c3cb86b8",
+  "catalogMetadataHash": "0be090117ba27b3615ec2d9e181bba39fb3386042949f31dc42489eb123f2a42",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -3722,15 +3677,6 @@ export const PROMPT_CATALOG_PROJECTION = {
         "pi": []
       },
       "fragment": "ledger-response-contract",
-      "intentionalDifference": {
-        "kind": "tool-vocabulary",
-        "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
-        "surfaces": [
-          "claude",
-          "codex",
-          "pi"
-        ]
-      },
       "supportedSurfaces": [
         "claude",
         "codex",

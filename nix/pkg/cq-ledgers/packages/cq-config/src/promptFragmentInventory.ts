@@ -52,7 +52,7 @@ export interface PromptFragmentSlotContract {
   readonly fragment: PromptFragmentSlot;
   readonly supportedSurfaces: readonly PromptSurface[];
   readonly forbiddenVocabulary: Readonly<Record<PromptSurface, readonly string[]>>;
-  readonly intentionalDifference: IntentionalDifferenceDeclaration;
+  readonly intentionalDifference?: IntentionalDifferenceDeclaration;
 }
 
 /** A fragment-bearing block joined to its single typed slot contract. */
@@ -65,7 +65,7 @@ export interface ResolvedPromptFragmentInventoryEntry {
   readonly supportedSurfaces: readonly PromptSurface[];
   readonly forbiddenVocabulary: Readonly<Record<PromptSurface, readonly string[]>>;
   readonly dispatchEdges: readonly PromptDispatchEdge[];
-  readonly intentionalDifference: IntentionalDifferenceDeclaration;
+  readonly intentionalDifference?: IntentionalDifferenceDeclaration;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -124,7 +124,13 @@ function parseContract(value: unknown, index: number): PromptFragmentSlotContrac
     forbiddenVocabulary: vocabulary as unknown as Readonly<
       Record<PromptSurface, readonly string[]>
     >,
-    intentionalDifference: parseIntentionalDifferenceDeclaration(value.intentionalDifference),
+    ...(value.intentionalDifference === undefined
+      ? {}
+      : {
+          intentionalDifference: parseIntentionalDifferenceDeclaration(
+            value.intentionalDifference,
+          ),
+        }),
   };
 }
 
@@ -313,7 +319,9 @@ export function validatePromptFragmentInventory(
         supportedSurfaces: contract.supportedSurfaces,
         forbiddenVocabulary: contract.forbiddenVocabulary,
         dispatchEdges: entry.dispatchEdges,
-        intentionalDifference: contract.intentionalDifference,
+        ...(contract.intentionalDifference === undefined
+          ? {}
+          : { intentionalDifference: contract.intentionalDifference }),
       });
     }
   }
