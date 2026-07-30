@@ -8,6 +8,7 @@ import {
   PLAN_FOLLOW_UP_TASK_DISPOSITION,
   PLAN_LEGACY_ADOPTION,
   PLAN_LIFECYCLE_CONTRACT_VERSION,
+  PLAN_LIFECYCLE_TOOL_SPECS,
   PLAN_MANAGED_MUTATION_OWNERS,
   PLAN_OPERATION_CONTRACTS,
   PLAN_RESEARCH_WAIT_DISPOSITION,
@@ -426,6 +427,16 @@ describe("T846 r1 contract reproductions", () => {
         },
       }).success,
     ).toBe(true);
+  });
+
+  it("documents every follow-up claim phase on the public MCP surface", () => {
+    const claimTool = PLAN_LIFECYCLE_TOOL_SPECS.find(
+      ({ name }) => name === "claim_plan",
+    );
+
+    expect(claimTool?.description).toContain(
+      "purpose=follow-up claims a planned|building goal",
+    );
   });
 
   it("binds finalization to the exact reviewed draft identity", () => {

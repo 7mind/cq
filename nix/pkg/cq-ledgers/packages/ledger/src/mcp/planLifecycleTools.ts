@@ -256,7 +256,7 @@ const CLAIM_DESCRIPTION =
   "claimRequestId + token and the identical acknowledgement returns with " +
   "replayed:true, including after a restart. A retry that CHANGES any other " +
   "request field conflicts with claim-request-reused. purpose=initial claims " +
-  "a clarifying/planning goal; purpose=follow-up claims a planned one and " +
+  "a clarifying/planning goal; purpose=follow-up claims a planned|building goal and " +
   "atomically supersedes its replaceable planned work. expectedGeneration is " +
   "the compare-and-set fence (null = the goal carries no plan generation yet).";
 
