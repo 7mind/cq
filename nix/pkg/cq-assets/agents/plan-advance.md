@@ -182,6 +182,7 @@ the goal still needs clarification, return empty arrays and explain why in
 
 ```json
 {
+  "mode": "candidate",
   "milestones": [
     {
       "title": "<work milestone>",
@@ -193,7 +194,7 @@ the goal still needs clarification, return empty arrays and explain why in
       "headline": "<imperative task>",
       "description": "<implementation scope>",
       "acceptance": "<observable verification>",
-      "suggestedModel": "frontier | standard | fast",
+      "suggestedModel": "standard",
       "milestone": "<milestone title>",
       "dependsOn": ["<other task headline>", "<persisted ledger ref>"],
       "ledgerRefs": ["<relevant ledger ref>"]
