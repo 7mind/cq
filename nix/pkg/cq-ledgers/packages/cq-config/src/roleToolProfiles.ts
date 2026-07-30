@@ -230,7 +230,8 @@ function corpusRole(
 
 /**
  * T679's pinned 357-transcript corpus, re-aggregated by the raw record's single
- * `attributionAgent`. All 357 carried exactly one role identity.
+ * `attributionAgent` and native `mcp__ledger__*` tool-use blocks. All 357
+ * carried exactly one role identity.
  */
 export const ROLE_IDENTIFIED_CORPUS = Object.freeze({
   manifest: "docs/drafts/20260725-2130-t679-rs3-remeasure/corpus-manifest.json",
@@ -306,9 +307,9 @@ export const ROLE_IDENTIFIED_CORPUS = Object.freeze({
     "implement-reviewer": corpusRole(
       {
         transcripts: 142,
-        zeroLedgerTranscripts: 66,
+        zeroLedgerTranscripts: 68,
         currentLedgerCalls: {
-          fetch_item: 113,
+          fetch_item: 108,
           fts_search: 6,
           get_config: 2,
           fetch_milestone: 13,

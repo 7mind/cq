@@ -23,6 +23,23 @@ const CODEX_PROBE = path.join(
   "scripts",
   "probe-codex-role-tool-profile.ts",
 );
+const CORPUS_AGGREGATOR = path.join(
+  REPO_ROOT,
+  "nix",
+  "pkg",
+  "cq-ledgers",
+  "packages",
+  "cq-config",
+  "scripts",
+  "aggregate-role-tool-corpus.ts",
+);
+const CORPUS_MANIFEST = path.join(
+  REPO_ROOT,
+  "docs",
+  "drafts",
+  "20260725-2130-t679-rs3-remeasure",
+  "corpus-manifest.json",
+);
 
 describe("T1325 role tool capability matrix", () => {
   test("covers every prompt-catalogue command and dispatched role exactly once", () => {
@@ -80,6 +97,48 @@ describe("T1325 role tool capability matrix", () => {
       }
     }
   });
+
+  test("re-aggregates every role and native ledger call from the manifest-pinned corpus", () => {
+    expect(existsSync(CORPUS_AGGREGATOR)).toBe(true);
+    expect(existsSync(CORPUS_MANIFEST)).toBe(true);
+    const aggregate = Bun.spawnSync(
+      [process.execPath, CORPUS_AGGREGATOR, "--manifest", CORPUS_MANIFEST],
+      {
+        cwd: path.join(REPO_ROOT, "nix", "pkg", "cq-ledgers"),
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    expect(aggregate.exitCode, aggregate.stderr.toString()).toBe(0);
+    const observed = JSON.parse(aggregate.stdout.toString()) as {
+      readonly transcripts: number;
+      readonly unclassifiedTranscripts: number;
+      readonly roles: Readonly<
+        Record<
+          string,
+          {
+            readonly transcripts: number;
+            readonly zeroLedgerTranscripts: number;
+            readonly ledgerCalls: Readonly<Record<string, number>>;
+          }
+        >
+      >;
+    };
+    expect(observed.transcripts).toBe(ROLE_IDENTIFIED_CORPUS.transcripts);
+    expect(observed.unclassifiedTranscripts).toBe(
+      ROLE_IDENTIFIED_CORPUS.unclassifiedTranscripts,
+    );
+    expect(Object.keys(observed.roles).sort()).toEqual(
+      Object.keys(ROLE_IDENTIFIED_CORPUS.roles).sort(),
+    );
+    for (const [roleId, declared] of Object.entries(ROLE_IDENTIFIED_CORPUS.roles)) {
+      expect(observed.roles[roleId], roleId).toEqual({
+        transcripts: declared.transcripts,
+        zeroLedgerTranscripts: declared.zeroLedgerTranscripts,
+        ledgerCalls: { ...declared.currentLedgerCalls, ...declared.retiredCalls },
+      });
+    }
+  }, 10_000);
 
   test("records pre-context enforcement seams for Claude, Pi, and Codex", () => {
     expect(HARNESS_ROLE_TOOL_ENFORCEMENT.claude).toMatchObject({
