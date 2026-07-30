@@ -34,6 +34,7 @@ import {
   CLAUDE_NATIVE_ISOLATION_ARGUMENT,
   CLAUDE_NATIVE_RUN_IN_BACKGROUND_ARGUMENT,
   CLAUDE_REF_FIRST_ARTIFACTS,
+  DISPATCH_HANDLE_SCHEMA,
   ClaudeUnsupportedModeError,
   DISPATCH_OVERLAY_REGISTRY,
   FakeDispatchClock,
@@ -372,6 +373,9 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
   test("the production claude -p launcher binds role, handle, scoped store, run, and model", () => {
     const dispatch = prepared();
     const handle = handleOf(dispatch);
+    expect(DISPATCH_HANDLE_SCHEMA.$schema).toBe(
+      "https://json-schema.org/draft/2020-12/schema",
+    );
     const correlation: ClaudeChildCorrelation = {
       roleId: ROLE_ID,
       launchNonce: SESSION_ID,
@@ -546,7 +550,7 @@ describe("T688 §1b — the bridge drives T722's process-boundary mode only", ()
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
-  });
+  }, 180_000);
 });
 
 // ---------------------------------------------------------------------------

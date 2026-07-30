@@ -79,6 +79,7 @@ import type { AttestationNamespace } from "./dispatchAttestation.js";
 import type { DispatchOverlayRegistry } from "./dispatchOverlays.js";
 import type { DispatchPreLaunchRejection } from "./dispatchInputValidation.js";
 import { DISPATCH_HANDLE_SCHEMA } from "./compactDispatchProtocol.js";
+import type { JSONSchema } from "./promptCatalog.js";
 import type {
   AbortedDispatchResult,
   DispatchAbortReason,
@@ -425,6 +426,13 @@ interface ClaudePrintResult {
   readonly modelUsage: Readonly<Record<string, { readonly canonicalModel?: string }>>;
 }
 
+function claudeCliArgumentSchema(schema: JSONSchema): JSONSchema {
+  const { $schema: _omit, ...argumentSchema } = schema;
+  return argumentSchema;
+}
+
+const CLAUDE_DISPATCH_HANDLE_SCHEMA = claudeCliArgumentSchema(DISPATCH_HANDLE_SCHEMA);
+
 function parseClaudePrintResult(value: unknown): ClaudePrintResult | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const result = value as Readonly<Record<string, unknown>>;
@@ -504,7 +512,7 @@ export function launchClaudePrint(
       "--output-format",
       "json",
       "--json-schema",
-      JSON.stringify(DISPATCH_HANDLE_SCHEMA),
+      JSON.stringify(CLAUDE_DISPATCH_HANDLE_SCHEMA),
       "--append-system-prompt",
       options.rolePrompt,
       "--tools",

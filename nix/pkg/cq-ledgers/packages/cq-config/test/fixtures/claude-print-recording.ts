@@ -23,7 +23,17 @@ const handle = JSON.stringify({
 });
 const sessionId = value("--session-id");
 const model = value("--model");
-const outputSchema = JSON.parse(value("--json-schema")) as { readonly title?: string };
+const outputSchema = JSON.parse(value("--json-schema")) as {
+  readonly $schema?: string;
+  readonly $id?: string;
+  readonly title?: string;
+};
+if ("$schema" in outputSchema) {
+  throw new Error("Claude CLI output schema retained the unsupported $schema annotation");
+}
+if (outputSchema.$id !== "cq:compact-dispatch/handle") {
+  throw new Error("Claude CLI output schema lost its authoritative $id");
+}
 if (outputSchema.title !== "dispatch handle") {
   throw new Error("wrong output schema");
 }
