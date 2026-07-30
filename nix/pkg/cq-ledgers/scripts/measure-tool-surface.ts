@@ -1,0 +1,517 @@
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { encode } from "gpt-tokenizer/encoding/o200k_base";
+import {
+  InMemoryLedgerStore,
+  LEDGER_TOOL_NAMES,
+  NON_DISPATCH_LEDGER_TOOL_NAMES,
+  type DispatchCapability,
+} from "../packages/ledger/src/index.js";
+import {
+  ITEM_PROJECTION_DESCRIPTION,
+  ITEM_MUTATION_ACK_DESCRIPTION,
+  MILESTONE_MUTATION_ACK_DESCRIPTION,
+  LEDGER_MUTATION_ACK_DESCRIPTION,
+} from "../packages/ledger/src/mcp/wireResponseContract.js";
+import { createLedgerMcpServer } from "../packages/ledger-mcp/src/main.js";
+
+export const PROFILE_NAMES = ["full", "non-dispatch"] as const;
+export type ToolSurfaceProfileName = (typeof PROFILE_NAMES)[number];
+
+interface ToolDefinition extends Record<string, unknown> {
+  name: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+}
+
+export interface MinifiedJsonMeasurement {
+  serialization: string;
+  utf8Bytes: number;
+  tokens: number;
+}
+
+interface JsonCost {
+  utf8Bytes: number;
+  tokens: number;
+}
+
+interface MarginalMeasurement extends JsonCost {
+  marginalUtf8Bytes: number;
+  marginalTokens: number;
+  counterfactualToolUtf8Bytes: number;
+  counterfactualToolTokens: number;
+}
+
+export interface ToolSurfaceToolMeasurement {
+  name: string;
+  whole: JsonCost;
+  components: {
+    name: MarginalMeasurement;
+    description: MarginalMeasurement;
+    inputSchema: MarginalMeasurement;
+  };
+  schemaPaths: Array<{
+    path: string;
+    measurement: JsonCost;
+    marginalUtf8Bytes: number;
+    marginalTokens: number;
+    counterfactualToolUtf8Bytes: number;
+    counterfactualToolTokens: number;
+  }>;
+}
+
+export interface ToolSurfaceProfileMeasurement {
+  inventorySource: "LEDGER_TOOL_NAMES" | "NON_DISPATCH_LEDGER_TOOL_NAMES";
+  inventory: string[];
+  toolCount: number;
+  initialize: {
+    instructions: MinifiedJsonMeasurement;
+  };
+  toolsList: MinifiedJsonMeasurement;
+  responseContractCounterfactual: {
+    projectionTokens: number;
+    acknowledgementSentenceTokens: number;
+    authoritativeResponseTokens: number;
+    allTokens: number;
+    deltasAreAdditive: false;
+  };
+  tools: ToolSurfaceToolMeasurement[];
+}
+
+export interface ToolSurfaceMeasurement {
+  formatVersion: 1;
+  tokenizer: {
+    package: "gpt-tokenizer";
+    version: "3.4.0";
+    encoding: "o200k_base";
+  };
+  method: {
+    serialization: "JSON.stringify";
+    toolOrder: "name ascending";
+    schemaPath: "RFC 6901 JSON Pointer; empty string denotes the inputSchema root";
+    marginalTokens: string;
+    marginalTokensAreAdditive: false;
+  };
+  profiles: Record<string, ToolSurfaceProfileMeasurement>;
+  g129Context: {
+    historicalG93AttributableDelta: {
+      tokens: 2214;
+      meaning: string;
+    };
+    currentComparison: null | {
+      currentG93AttributableDeltaTokens: number;
+      durableDispatchMinusNonDispatchTokens: number;
+      nonDispatchToolsListTokens: number;
+      meaning: string;
+    };
+  };
+}
+
+interface ProfileDefinition {
+  inventorySource: "LEDGER_TOOL_NAMES" | "NON_DISPATCH_LEDGER_TOOL_NAMES";
+  expectedInventory: readonly string[];
+  dispatchCapability?: DispatchCapability;
+}
+
+interface SchemaPathValue {
+  path: string;
+  segments: Array<string | number>;
+  value: unknown;
+}
+
+const unavailableDispatchOperation = async (): Promise<never> => {
+  throw new Error("the tool-surface profiler never invokes dispatch handlers");
+};
+
+const DURABLE_DISPATCH_CAPABILITY: DispatchCapability = {
+  prepare: unavailableDispatchOperation,
+  fetchInput: unavailableDispatchOperation,
+  storeResult: unavailableDispatchOperation,
+  confirmCompletion: unavailableDispatchOperation,
+  abort: unavailableDispatchOperation,
+  fetch: unavailableDispatchOperation,
+};
+
+const PROFILE_DEFINITIONS: Record<ToolSurfaceProfileName, ProfileDefinition> = {
+  full: {
+    inventorySource: "LEDGER_TOOL_NAMES",
+    expectedInventory: LEDGER_TOOL_NAMES,
+    dispatchCapability: DURABLE_DISPATCH_CAPABILITY,
+  },
+  "non-dispatch": {
+    inventorySource: "NON_DISPATCH_LEDGER_TOOL_NAMES",
+    expectedInventory: NON_DISPATCH_LEDGER_TOOL_NAMES,
+  },
+};
+
+const PROFILE_DISPLAY_NAME = "tool-surface-profiler";
+
+function measureMinifiedJson(value: unknown): MinifiedJsonMeasurement {
+  const serialization = JSON.stringify(value);
+  if (serialization === undefined) {
+    throw new Error("cannot measure a value that JSON.stringify omits");
+  }
+  return {
+    serialization,
+    utf8Bytes: Buffer.byteLength(serialization, "utf8"),
+    tokens: encode(serialization).length,
+  };
+}
+
+function withoutToolField(
+  tool: ToolDefinition,
+  field: "name" | "description" | "inputSchema",
+): ToolDefinition {
+  const counterfactual = structuredClone(tool);
+  delete counterfactual[field];
+  return counterfactual;
+}
+
+function measureComponent(
+  tool: ToolDefinition,
+  field: "name" | "description" | "inputSchema",
+  whole: MinifiedJsonMeasurement,
+): MarginalMeasurement {
+  const value = tool[field] ?? null;
+  const measurement = measureMinifiedJson(value);
+  const counterfactual = measureMinifiedJson(withoutToolField(tool, field));
+  return {
+    utf8Bytes: measurement.utf8Bytes,
+    tokens: measurement.tokens,
+    marginalUtf8Bytes: whole.utf8Bytes - counterfactual.utf8Bytes,
+    marginalTokens: whole.tokens - counterfactual.tokens,
+    counterfactualToolUtf8Bytes: counterfactual.utf8Bytes,
+    counterfactualToolTokens: counterfactual.tokens,
+  };
+}
+
+function stripProjection(tool: ToolDefinition): ToolDefinition {
+  const stripped = structuredClone(tool);
+  const schema = stripped.inputSchema as {
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
+  if (schema.properties !== undefined) delete schema.properties["projection"];
+  if (schema.required !== undefined) {
+    schema.required = schema.required.filter((name) => name !== "projection");
+    if (schema.required.length === 0) delete schema.required;
+  }
+  if (stripped.description !== undefined) {
+    stripped.description = stripped.description.split(ITEM_PROJECTION_DESCRIPTION).join("");
+  }
+  return stripped;
+}
+
+function stripDescriptionSentences(
+  tool: ToolDefinition,
+  sentences: readonly string[],
+): ToolDefinition {
+  const stripped = structuredClone(tool);
+  if (stripped.description === undefined) return stripped;
+  for (const sentence of sentences) {
+    stripped.description = stripped.description.split(sentence).join("");
+  }
+  return stripped;
+}
+
+function stripAuthoritativeResponse(tool: ToolDefinition): ToolDefinition {
+  const stripped = structuredClone(tool);
+  if (stripped.description === undefined) return stripped;
+  const marker = "\n\nAuthoritative response:";
+  const markerIndex = stripped.description.indexOf(marker);
+  if (markerIndex !== -1) {
+    stripped.description = stripped.description.slice(0, markerIndex);
+  }
+  return stripped;
+}
+
+function measureResponseContractCounterfactual(
+  tools: ToolDefinition[],
+): ToolSurfaceProfileMeasurement["responseContractCounterfactual"] {
+  const acknowledgementSentences = [
+    ITEM_MUTATION_ACK_DESCRIPTION,
+    MILESTONE_MUTATION_ACK_DESCRIPTION,
+    LEDGER_MUTATION_ACK_DESCRIPTION,
+  ];
+  const wholeTokens = measureMinifiedJson(tools).tokens;
+  const withoutProjection = tools.map(stripProjection);
+  const withoutAcknowledgements = tools.map((tool) =>
+    stripDescriptionSentences(tool, acknowledgementSentences),
+  );
+  const withoutAuthoritative = tools.map(stripAuthoritativeResponse);
+  const withoutAll = withoutProjection
+    .map((tool) => stripDescriptionSentences(tool, acknowledgementSentences))
+    .map(stripAuthoritativeResponse);
+  return {
+    projectionTokens: wholeTokens - measureMinifiedJson(withoutProjection).tokens,
+    acknowledgementSentenceTokens:
+      wholeTokens - measureMinifiedJson(withoutAcknowledgements).tokens,
+    authoritativeResponseTokens: wholeTokens - measureMinifiedJson(withoutAuthoritative).tokens,
+    allTokens: wholeTokens - measureMinifiedJson(withoutAll).tokens,
+    deltasAreAdditive: false,
+  };
+}
+
+function escapeJsonPointerSegment(segment: string): string {
+  return segment.replaceAll("~", "~0").replaceAll("/", "~1");
+}
+
+function enumerateSchemaPaths(
+  value: unknown,
+  path: string,
+  segments: Array<string | number>,
+): SchemaPathValue[] {
+  const paths: SchemaPathValue[] = [{ path, segments, value }];
+  if (Array.isArray(value)) {
+    for (const [index, child] of value.entries()) {
+      paths.push(...enumerateSchemaPaths(child, `${path}/${index}`, [...segments, index]));
+    }
+    return paths;
+  }
+  if (value === null || typeof value !== "object") return paths;
+  const object = value as Record<string, unknown>;
+  for (const key of Object.keys(object).sort()) {
+    paths.push(
+      ...enumerateSchemaPaths(object[key], `${path}/${escapeJsonPointerSegment(key)}`, [
+        ...segments,
+        key,
+      ]),
+    );
+  }
+  return paths;
+}
+
+function removeSchemaPath(tool: ToolDefinition, segments: Array<string | number>): ToolDefinition {
+  const counterfactual = structuredClone(tool);
+  if (segments.length === 0) {
+    delete counterfactual.inputSchema;
+    return counterfactual;
+  }
+
+  let parent: unknown = counterfactual.inputSchema;
+  for (const segment of segments.slice(0, -1)) {
+    parent = (parent as Record<string | number, unknown>)[segment];
+  }
+  const leaf = segments[segments.length - 1] as string | number;
+  if (Array.isArray(parent)) {
+    parent.splice(leaf as number, 1);
+  } else {
+    delete (parent as Record<string, unknown>)[leaf as string];
+  }
+  return counterfactual;
+}
+
+function measureTool(tool: ToolDefinition): ToolSurfaceToolMeasurement {
+  const whole = measureMinifiedJson(tool);
+  const schemaPaths = enumerateSchemaPaths(tool.inputSchema, "", []);
+  return {
+    name: tool.name,
+    whole: {
+      utf8Bytes: whole.utf8Bytes,
+      tokens: whole.tokens,
+    },
+    components: {
+      name: measureComponent(tool, "name", whole),
+      description: measureComponent(tool, "description", whole),
+      inputSchema: measureComponent(tool, "inputSchema", whole),
+    },
+    schemaPaths: schemaPaths.map((entry) => {
+      const counterfactual = measureMinifiedJson(removeSchemaPath(tool, entry.segments));
+      const measurement = measureMinifiedJson(entry.value);
+      return {
+        path: entry.path,
+        measurement: {
+          utf8Bytes: measurement.utf8Bytes,
+          tokens: measurement.tokens,
+        },
+        marginalUtf8Bytes: whole.utf8Bytes - counterfactual.utf8Bytes,
+        marginalTokens: whole.tokens - counterfactual.tokens,
+        counterfactualToolUtf8Bytes: counterfactual.utf8Bytes,
+        counterfactualToolTokens: counterfactual.tokens,
+      };
+    }),
+  };
+}
+
+async function measureProfile(
+  definition: ProfileDefinition,
+): Promise<ToolSurfaceProfileMeasurement> {
+  const { Client } = await import(
+    Bun.resolveSync(
+      "@modelcontextprotocol/sdk/client/index.js",
+      resolve(import.meta.dir, "../packages/ledger-mcp"),
+    )
+  );
+  const { InMemoryTransport } = await import(
+    Bun.resolveSync(
+      "@modelcontextprotocol/sdk/inMemory.js",
+      resolve(import.meta.dir, "../packages/ledger-mcp"),
+    )
+  );
+  const store = new InMemoryLedgerStore();
+  await store.init();
+  const server = createLedgerMcpServer({
+    store,
+    displayName: PROFILE_DISPLAY_NAME,
+    dispatchCapability: definition.dispatchCapability,
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client(
+    { name: "tool-surface-profiler-client", version: "0.0.1" },
+    { capabilities: {} },
+  );
+
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const listed = (await client.listTools()) as {
+      tools: ToolDefinition[];
+    };
+    const tools = [...listed.tools].sort((left, right) => left.name.localeCompare(right.name));
+    const inventory = tools.map((tool) => tool.name);
+    const expectedInventory = [...definition.expectedInventory].sort();
+    if (JSON.stringify(inventory) !== JSON.stringify(expectedInventory)) {
+      throw new Error(
+        `${definition.inventorySource} drift: expected ${JSON.stringify(expectedInventory)}, received ${JSON.stringify(inventory)}`,
+      );
+    }
+    const instructions = client.getInstructions();
+    if (instructions === undefined) {
+      throw new Error("initialize did not include server instructions");
+    }
+    return {
+      inventorySource: definition.inventorySource,
+      inventory,
+      toolCount: tools.length,
+      initialize: {
+        instructions: measureMinifiedJson(instructions),
+      },
+      toolsList: measureMinifiedJson(tools),
+      responseContractCounterfactual: measureResponseContractCounterfactual(tools),
+      tools: tools.map(measureTool),
+    };
+  } finally {
+    await client.close();
+    await server.close();
+    await store.dispose();
+  }
+}
+
+export async function measureToolSurfaces(
+  profileNames: readonly ToolSurfaceProfileName[],
+): Promise<ToolSurfaceMeasurement> {
+  const profiles: Record<string, ToolSurfaceProfileMeasurement> = {};
+  for (const profileName of profileNames) {
+    profiles[profileName] = await measureProfile(PROFILE_DEFINITIONS[profileName]);
+  }
+  const durableDispatch = profiles["full"];
+  const nonDispatch = profiles["non-dispatch"];
+  const currentComparison =
+    durableDispatch === undefined || nonDispatch === undefined
+      ? null
+      : {
+          currentG93AttributableDeltaTokens: nonDispatch.responseContractCounterfactual.allTokens,
+          durableDispatchMinusNonDispatchTokens:
+            durableDispatch.toolsList.tokens - nonDispatch.toolsList.tokens,
+          nonDispatchToolsListTokens: nonDispatch.toolsList.tokens,
+          meaning:
+            "The current G93-attributable value applies the historical mechanical response-contract strip to today's 26-tool surface. The inventory delta separately compares the live 32-tool durable-dispatch and 26-tool non-dispatch profiles. The tools/list total is the complete current 26-tool serialization.",
+        };
+  return {
+    formatVersion: 1,
+    tokenizer: {
+      package: "gpt-tokenizer",
+      version: "3.4.0",
+      encoding: "o200k_base",
+    },
+    method: {
+      serialization: "JSON.stringify",
+      toolOrder: "name ascending",
+      schemaPath: "RFC 6901 JSON Pointer; empty string denotes the inputSchema root",
+      marginalTokens:
+        "For each component or schema path, whole-tool tokens minus tokens for an independently serialized whole-tool counterfactual with that field or path removed.",
+      marginalTokensAreAdditive: false,
+    },
+    profiles,
+    g129Context: {
+      historicalG93AttributableDelta: {
+        tokens: 2214,
+        meaning:
+          "Historical G93 response-contract attribution: a mechanical strip of three overlapping response-contract artefacts from the then-current 27-tool surface, not a full-versus-non-dispatch inventory comparison.",
+      },
+      currentComparison,
+    },
+  };
+}
+
+export function serializeToolSurfaceMeasurement(result: ToolSurfaceMeasurement): string {
+  return `${JSON.stringify(result, null, 2)}\n`;
+}
+
+function parseProfileName(value: string): ToolSurfaceProfileName {
+  if ((PROFILE_NAMES as readonly string[]).includes(value)) {
+    return value as ToolSurfaceProfileName;
+  }
+  throw new Error(`unknown profile ${JSON.stringify(value)}; choose ${PROFILE_NAMES.join(", ")}`);
+}
+
+function usage(): string {
+  return [
+    "Usage: bun run measure:tool-surface (--all-profiles | --profile <name>) [--json <path>]",
+    "",
+    `Named profiles: ${PROFILE_NAMES.join(", ")}`,
+  ].join("\n");
+}
+
+function parseCliArgs(argv: string[]): {
+  profileNames: ToolSurfaceProfileName[];
+  jsonPath: string | null;
+} {
+  const profileNames: ToolSurfaceProfileName[] = [];
+  let allProfiles = false;
+  let jsonPath: string | null = null;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--all-profiles") {
+      allProfiles = true;
+      continue;
+    }
+    if (argument === "--profile") {
+      const value = argv[index + 1];
+      if (value === undefined) throw new Error("--profile needs a value");
+      profileNames.push(parseProfileName(value));
+      index += 1;
+      continue;
+    }
+    if (argument === "--json") {
+      const value = argv[index + 1];
+      if (value === undefined) throw new Error("--json needs a path");
+      jsonPath = resolve(value);
+      index += 1;
+      continue;
+    }
+    if (argument === "--help" || argument === "-h") {
+      console.log(usage());
+      process.exit(0);
+    }
+    throw new Error(`unknown argument ${JSON.stringify(argument)}\n${usage()}`);
+  }
+  if (allProfiles && profileNames.length > 0) {
+    throw new Error("--all-profiles and --profile are mutually exclusive");
+  }
+  if (!allProfiles && profileNames.length === 0) {
+    throw new Error(`select --all-profiles or --profile <name>\n${usage()}`);
+  }
+  return {
+    profileNames: allProfiles ? [...PROFILE_NAMES] : profileNames,
+    jsonPath,
+  };
+}
+
+if (import.meta.main) {
+  const options = parseCliArgs(process.argv.slice(2));
+  const result = await measureToolSurfaces(options.profileNames);
+  const json = serializeToolSurfaceMeasurement(result);
+  if (options.jsonPath !== null) writeFileSync(options.jsonPath, json);
+  console.log(json.trimEnd());
+}
