@@ -78,6 +78,8 @@
           promptRoot = codexPromptRoot;
         };
         codexHarnessEnv = import ./nix/lib/codex-harness-env.nix { lib = pkgs.lib; };
+        codexLedgerMcpRegistration =
+          import ./nix/lib/codex-ledger-mcp-registration.nix { lib = pkgs.lib; };
         # T691 / defects:D178 half (b): parse one rendered native-agent declaration
         # and check it against the role body it must carry. A FILE rather than a
         # `python3 -c` string: the assertions need both quote characters, which no
@@ -623,6 +625,71 @@
                 (codexHarnessEnv.exportsCodexHarness codexCommandSkillsTest.package.buildCommand)
                 "the packaged Codex wrapper does not export exactly CQ_HARNESS=codex";
               pkgs.runCommand "codex-harness-env" { } "touch $out";
+            codex-mcp-harness-selection =
+              let
+                registration = codexLedgerMcpRegistration {
+                  command = "${cqCli}/bin/cq";
+                  args = [ "mcp" ];
+                };
+                registrationJson = pkgs.writeText
+                  "codex-ledger-mcp-registration.json"
+                  (builtins.toJSON registration);
+                registrationEnvArgs = pkgs.lib.mapAttrsToList
+                  (name: value: "${name}=${value}")
+                  (registration.env or { });
+              in
+              pkgs.runCommand "codex-mcp-harness-selection"
+                {
+                  nativeBuildInputs = [ pkgs.jq pkgs.coreutils ];
+                }
+                ''
+                  set -eu
+                  root="$NIX_BUILD_TOP/project"
+                  state="$NIX_BUILD_TOP/state"
+                  mkdir -p "$root" "$state"
+                  cp ${./nix/pkg/cq-ledgers/packages/ledger-mcp/test/fixtures/t865/codex-selection.cq.toml} \
+                    "$root/cq.toml"
+                  chmod u+w "$root/cq.toml"
+                  cat >> "$root/cq.toml" <<'EOF'
+
+                  [ledger]
+                  backend = "xdg"
+                  projectId = "codex-mcp-harness-selection"
+                  EOF
+
+                  {
+                    printf '%s\n' \
+                      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"codex-mcp-harness-selection","version":"1"}}}' \
+                      '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_config","arguments":{"section":"planners"}}}'
+                  } | env -i \
+                    HOME="$NIX_BUILD_TOP/home" \
+                    XDG_STATE_HOME="$state" \
+                    ${pkgs.lib.escapeShellArgs registrationEnvArgs} \
+                    ${registration.command} ${pkgs.lib.escapeShellArgs registration.args} --cwd "$root" \
+                    > responses.jsonl
+
+                  planner_payload="$(
+                    ${pkgs.jq}/bin/jq -r '
+                      select(.id == 2)
+                      | .result.content[0].text
+                    ' responses.jsonl
+                  )"
+                  ${pkgs.jq}/bin/jq -e '
+                    .command == ${builtins.toJSON registration.command}
+                    and .args == ["mcp"]
+                    and .env == {"CQ_HARNESS":"codex"}
+                  ' ${registrationJson} >/dev/null || {
+                    echo "materialized registration omitted exact CQ_HARNESS=codex" >&2
+                    printf '%s\n' "$planner_payload" >&2
+                    exit 1
+                  }
+                  printf '%s\n' "$planner_payload" | tee /dev/stderr | ${pkgs.jq}/bin/jq -e '
+                    .configured == true
+                    and ([.planners[].alias] == ["codex"])
+                    and ([.planners[] | select(.alias == "opus" or .harness == "claude")] | length == 0)
+                  ' >/dev/null
+                  touch "$out"
+                '';
             codex-cq-skills =
               assert codexCommandSkillsTest.passed;
               pkgs.runCommand "codex-cq-skills" { } ''

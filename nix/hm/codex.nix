@@ -17,6 +17,8 @@ let
 
   assets = import ../pkg/cq-assets/assets.nix { inherit lib; };
   codexHarnessEnv = import ../lib/codex-harness-env.nix { inherit lib; };
+  codexLedgerMcpRegistration =
+    import ../lib/codex-ledger-mcp-registration.nix { inherit lib; };
   codexPromptRoot = import ../pkg/cq-assets/render-prompt-surface.nix {
     inherit pkgs lib;
     surface = "codex";
@@ -146,6 +148,7 @@ in
           features.multi_agent = true;
           features.fast_mode = false;
           features.steer = true;
+          mcp_servers.ledger = codexLedgerMcpRegistration { };
         };
       };
 
