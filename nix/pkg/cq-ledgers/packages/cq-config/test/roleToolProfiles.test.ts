@@ -67,6 +67,7 @@ describe("T1325 role tool capability matrix", () => {
     expect(ROLE_IDENTIFIED_CORPUS.unclassifiedTranscripts).toBe(0);
     expect(ROLE_IDENTIFIED_CORPUS.roles["plan-advance"]?.transcripts).toBe(51);
     expect(ROLE_IDENTIFIED_CORPUS.roles["implement-worker"]?.zeroLedgerTranscripts).toBe(66);
+    expect(ROLE_IDENTIFIED_CORPUS.roles["investigate-explorer"]?.zeroLedgerTranscripts).toBe(20);
     expect(ROLE_IDENTIFIED_CORPUS.roles["investigate-prober"]?.zeroLedgerTranscripts).toBe(2);
 
     for (const [roleId, observation] of Object.entries(ROLE_IDENTIFIED_CORPUS.roles)) {

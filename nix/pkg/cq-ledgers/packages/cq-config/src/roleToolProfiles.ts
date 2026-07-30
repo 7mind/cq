@@ -329,7 +329,7 @@ export const ROLE_IDENTIFIED_CORPUS = Object.freeze({
     "investigate-explorer": corpusRole(
       {
         transcripts: 23,
-        zeroLedgerTranscripts: 2,
+        zeroLedgerTranscripts: 20,
         currentLedgerCalls: { fts_search: 5, fetch_item: 4, get_config: 1 },
         retiredCalls: { get_agent_models: 1 },
       },
