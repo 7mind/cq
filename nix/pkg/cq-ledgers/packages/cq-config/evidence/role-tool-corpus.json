@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "path": "docs/drafts/20260725-2130-t679-rs3-remeasure/corpus-manifest.json",
+    "sha256": "68e7c59946e07ac74d1fddf8eb3f1572def3ee47c86100bba7caaae65f8e3afa",
+    "fileCount": 357,
+    "totalBytes": 95152796
+  },
+  "transcripts": 357,
+  "unclassifiedTranscripts": 0,
+  "roles": {
+    "plan-advance": {
+      "transcripts": 51,
+      "zeroLedgerTranscripts": 3,
+      "ledgerCalls": {
+        "fetch_item": 99,
+        "list_milestone_items": 19,
+        "create_item": 67,
+        "derive_predicates": 1,
+        "update_item": 26,
+        "get_config": 1,
+        "get_agent_models": 1,
+        "create_milestone": 4,
+        "fts_search": 4,
+        "fetch_milestone": 1
+      }
+    },
+    "plan-reviewer": {
+      "transcripts": 42,
+      "zeroLedgerTranscripts": 0,
+      "ledgerCalls": {
+        "fetch_item": 107,
+        "get_reviewers": 21,
+        "list_milestone_items": 130,
+        "derive_predicates": 1,
+        "fetch_milestone": 10,
+        "fts_search": 3,
+        "fetch_prompt": 1
+      }
+    },
+    "implement-worker": {
+      "transcripts": 97,
+      "zeroLedgerTranscripts": 66,
+      "ledgerCalls": {
+        "derive_predicates": 1,
+        "fetch_item": 48,
+        "fts_search": 3,
+        "get_config": 1,
+        "enumerate_ledgers": 1,
+        "create_item": 3,
+        "fetch_ledger": 4,
+        "fetch_milestone": 2,
+        "fetch_ledger_archive": 2,
+        "list_milestone_items": 4
+      }
+    },
+    "implement-reviewer": {
+      "transcripts": 142,
+      "zeroLedgerTranscripts": 68,
+      "ledgerCalls": {
+        "fts_search": 6,
+        "fetch_item": 108,
+        "get_config": 2,
+        "get_reviewers": 1,
+        "fetch_milestone": 13,
+        "fetch_ledger": 2,
+        "list_milestone_items": 2
+      }
+    },
+    "investigate-explorer": {
+      "transcripts": 23,
+      "zeroLedgerTranscripts": 20,
+      "ledgerCalls": {
+        "fts_search": 5,
+        "fetch_item": 4,
+        "get_config": 1,
+        "get_agent_models": 1
+      }
+    },
+    "investigate-prober": {
+      "transcripts": 2,
+      "zeroLedgerTranscripts": 2,
+      "ledgerCalls": {}
+    }
+  }
+}

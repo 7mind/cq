@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import {
@@ -33,6 +34,16 @@ const CORPUS_AGGREGATOR = path.join(
   "scripts",
   "aggregate-role-tool-corpus.ts",
 );
+const CORPUS_EVIDENCE = path.join(
+  REPO_ROOT,
+  "nix",
+  "pkg",
+  "cq-ledgers",
+  "packages",
+  "cq-config",
+  "evidence",
+  "role-tool-corpus.json",
+);
 const CORPUS_MANIFEST = path.join(
   REPO_ROOT,
   "docs",
@@ -40,6 +51,34 @@ const CORPUS_MANIFEST = path.join(
   "20260725-2130-t679-rs3-remeasure",
   "corpus-manifest.json",
 );
+
+interface RoleCorpusEvidence {
+  readonly schemaVersion: 1;
+  readonly manifest: {
+    readonly path: string;
+    readonly sha256: string;
+    readonly fileCount: number;
+    readonly totalBytes: number;
+  };
+  readonly transcripts: number;
+  readonly unclassifiedTranscripts: number;
+  readonly roles: Readonly<
+    Record<
+      string,
+      {
+        readonly transcripts: number;
+        readonly zeroLedgerTranscripts: number;
+        readonly ledgerCalls: Readonly<Record<string, number>>;
+      }
+    >
+  >;
+}
+
+const roleCorpusEvidence = JSON.parse(
+  readFileSync(CORPUS_EVIDENCE, "utf8"),
+) as RoleCorpusEvidence;
+const verifyRawCorpus =
+  process.env["CQ_T1325_VERIFY_RAW_CORPUS"] === "1" ? test : test.skip;
 
 describe("T1325 role tool capability matrix", () => {
   test("covers every prompt-catalogue command and dispatched role exactly once", () => {
@@ -79,30 +118,55 @@ describe("T1325 role tool capability matrix", () => {
     }
   });
 
-  test("maps the role-identified 357-transcript corpus without treating retired behavior as authority", () => {
-    expect(ROLE_IDENTIFIED_CORPUS.transcripts).toBe(357);
-    expect(ROLE_IDENTIFIED_CORPUS.unclassifiedTranscripts).toBe(0);
-    expect(ROLE_IDENTIFIED_CORPUS.roles["plan-advance"]?.transcripts).toBe(51);
-    expect(ROLE_IDENTIFIED_CORPUS.roles["implement-worker"]?.zeroLedgerTranscripts).toBe(66);
-    expect(ROLE_IDENTIFIED_CORPUS.roles["investigate-explorer"]?.zeroLedgerTranscripts).toBe(20);
-    expect(ROLE_IDENTIFIED_CORPUS.roles["investigate-prober"]?.zeroLedgerTranscripts).toBe(2);
+  test("maps checked-in, manifest-bound corpus evidence without treating retired behavior as authority", () => {
+    const manifestBytes = readFileSync(CORPUS_MANIFEST);
+    expect(roleCorpusEvidence.schemaVersion).toBe(1);
+    expect(roleCorpusEvidence.manifest).toEqual({
+      path: ROLE_IDENTIFIED_CORPUS.manifest,
+      sha256: createHash("sha256").update(manifestBytes).digest("hex"),
+      fileCount: ROLE_IDENTIFIED_CORPUS.transcripts,
+      totalBytes: 95_152_796,
+    });
+    expect(roleCorpusEvidence.transcripts).toBe(roleCorpusEvidence.manifest.fileCount);
+    expect(roleCorpusEvidence.transcripts).toBe(ROLE_IDENTIFIED_CORPUS.transcripts);
+    expect(roleCorpusEvidence.unclassifiedTranscripts).toBe(
+      ROLE_IDENTIFIED_CORPUS.unclassifiedTranscripts,
+    );
+    expect(Object.keys(roleCorpusEvidence.roles).sort()).toEqual(
+      Object.keys(ROLE_IDENTIFIED_CORPUS.roles).sort(),
+    );
 
-    for (const [roleId, observation] of Object.entries(ROLE_IDENTIFIED_CORPUS.roles)) {
+    for (const [roleId, declared] of Object.entries(ROLE_IDENTIFIED_CORPUS.roles)) {
+      const observation = roleCorpusEvidence.roles[roleId];
+      expect(observation, roleId).toBeDefined();
+      if (observation === undefined) {
+        throw new Error(`missing checked-in corpus role "${roleId}"`);
+      }
+      expect(observation).toEqual({
+        transcripts: declared.transcripts,
+        zeroLedgerTranscripts: declared.zeroLedgerTranscripts,
+        ledgerCalls: { ...declared.currentLedgerCalls, ...declared.retiredCalls },
+      });
       const exposed = new Set<string>(exposedLedgerToolsForRole(roleId));
-      for (const tool of Object.keys(observation.currentLedgerCalls)) {
+      for (const tool of Object.keys(observation.ledgerCalls)) {
         expect(
-          exposed.has(tool) || observation.supersededCalls.includes(tool),
+          exposed.has(tool) ||
+            declared.supersededCalls.includes(tool) ||
+            Object.hasOwn(declared.retiredCalls, tool),
           `${roleId} observed ${tool} without an exposure or supersession decision`,
         ).toBe(true);
       }
     }
   });
 
-  test("re-aggregates every role and native ledger call from the manifest-pinned corpus", () => {
+  verifyRawCorpus("ON-DEMAND: raw corpus regenerates the checked-in evidence exactly", () => {
     expect(existsSync(CORPUS_AGGREGATOR)).toBe(true);
     expect(existsSync(CORPUS_MANIFEST)).toBe(true);
+    const args = [process.execPath, CORPUS_AGGREGATOR, "--manifest", CORPUS_MANIFEST];
+    const corpusRoot = process.env["CQ_T1325_CORPUS_ROOT"];
+    if (corpusRoot !== undefined) args.push("--corpus-root", corpusRoot);
     const aggregate = Bun.spawnSync(
-      [process.execPath, CORPUS_AGGREGATOR, "--manifest", CORPUS_MANIFEST],
+      args,
       {
         cwd: path.join(REPO_ROOT, "nix", "pkg", "cq-ledgers"),
         stdout: "pipe",
@@ -110,34 +174,8 @@ describe("T1325 role tool capability matrix", () => {
       },
     );
     expect(aggregate.exitCode, aggregate.stderr.toString()).toBe(0);
-    const observed = JSON.parse(aggregate.stdout.toString()) as {
-      readonly transcripts: number;
-      readonly unclassifiedTranscripts: number;
-      readonly roles: Readonly<
-        Record<
-          string,
-          {
-            readonly transcripts: number;
-            readonly zeroLedgerTranscripts: number;
-            readonly ledgerCalls: Readonly<Record<string, number>>;
-          }
-        >
-      >;
-    };
-    expect(observed.transcripts).toBe(ROLE_IDENTIFIED_CORPUS.transcripts);
-    expect(observed.unclassifiedTranscripts).toBe(
-      ROLE_IDENTIFIED_CORPUS.unclassifiedTranscripts,
-    );
-    expect(Object.keys(observed.roles).sort()).toEqual(
-      Object.keys(ROLE_IDENTIFIED_CORPUS.roles).sort(),
-    );
-    for (const [roleId, declared] of Object.entries(ROLE_IDENTIFIED_CORPUS.roles)) {
-      expect(observed.roles[roleId], roleId).toEqual({
-        transcripts: declared.transcripts,
-        zeroLedgerTranscripts: declared.zeroLedgerTranscripts,
-        ledgerCalls: { ...declared.currentLedgerCalls, ...declared.retiredCalls },
-      });
-    }
+    const observed = JSON.parse(aggregate.stdout.toString()) as RoleCorpusEvidence;
+    expect(observed).toEqual(roleCorpusEvidence);
   }, 10_000);
 
   test("records pre-context enforcement seams for Claude, Pi, and Codex", () => {

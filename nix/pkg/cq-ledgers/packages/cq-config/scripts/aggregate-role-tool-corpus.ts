@@ -29,16 +29,21 @@ interface RoleAggregation {
 }
 
 interface CorpusAggregation {
-  readonly manifest: string;
-  readonly corpusRoot: string;
+  readonly schemaVersion: 1;
+  readonly manifest: {
+    readonly path: string;
+    readonly sha256: string;
+    readonly fileCount: number;
+    readonly totalBytes: number;
+  };
   readonly transcripts: number;
   readonly unclassifiedTranscripts: number;
   readonly roles: Readonly<Record<string, RoleAggregation>>;
 }
 
+const REPO_ROOT = path.resolve(import.meta.dir, "../../../../../..");
 const DEFAULT_MANIFEST = path.resolve(
-  import.meta.dir,
-  "../../../../../..",
+  REPO_ROOT,
   "docs/drafts/20260725-2130-t679-rs3-remeasure/corpus-manifest.json",
 );
 const TOOL_NAME_RE = /^mcp__(.+?)__(.+)$/;
@@ -110,7 +115,8 @@ function aggregateCorpus(
   manifestPath: string,
   corpusRootOverride: string | undefined,
 ): CorpusAggregation {
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as CorpusManifest;
+  const manifestBytes = readFileSync(manifestPath);
+  const manifest = JSON.parse(manifestBytes.toString("utf8")) as CorpusManifest;
   if (manifest.files.length !== manifest.fileCount) {
     throw new Error(
       `manifest declares ${manifest.fileCount} files but contains ${manifest.files.length}`,
@@ -154,8 +160,13 @@ function aggregateCorpus(
     );
   }
   return {
-    manifest: path.resolve(manifestPath),
-    corpusRoot,
+    schemaVersion: 1,
+    manifest: {
+      path: path.relative(REPO_ROOT, manifestPath),
+      sha256: createHash("sha256").update(manifestBytes).digest("hex"),
+      fileCount: manifest.fileCount,
+      totalBytes: manifest.totalBytes,
+    },
     transcripts: manifest.files.length,
     unclassifiedTranscripts,
     roles,
