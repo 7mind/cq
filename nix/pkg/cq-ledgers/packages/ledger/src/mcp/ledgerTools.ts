@@ -140,12 +140,28 @@ export type LedgerToolSpecification = AnyTool & {
   readonly description: string;
 };
 
-function simplifyInputSchemaNode(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(simplifyInputSchemaNode);
+const JSON_SCHEMA_MAP_KEYS = new Set([
+  "$defs",
+  "definitions",
+  "dependencies",
+  "dependentRequired",
+  "dependentSchemas",
+  "patternProperties",
+  "properties",
+]);
+
+function simplifyInputSchemaNode(value: unknown, preserveKeys: boolean = false): unknown {
+  if (Array.isArray(value)) return value.map((child) => simplifyInputSchemaNode(child));
   if (value === null || typeof value !== "object") return value;
   const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([key]) => key !== "$schema" && key !== "description")
-    .map(([key, child]) => [key, simplifyInputSchemaNode(child)] as const);
+    .filter(([key]) => key !== "$schema" && (preserveKeys || key !== "description"))
+    .map(
+      ([key, child]) =>
+        [
+          key,
+          simplifyInputSchemaNode(child, !preserveKeys && JSON_SCHEMA_MAP_KEYS.has(key)),
+        ] as const,
+    );
   const simplified = Object.fromEntries(entries) as Record<string, unknown>;
   const allOf = simplified["allOf"];
   if (Object.keys(simplified).length === 1 && Array.isArray(allOf) && allOf.length === 1) {

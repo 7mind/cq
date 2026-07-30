@@ -205,7 +205,9 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   fetch_ledger_archive: requestedFullContent(
     "`{ archive }` with the requested archived item or milestone group in full.",
   ),
-  fetch_item: mandatoryItemProjection("`{ item }` using the requested projection."),
+  fetch_item: mandatoryItemProjection(
+    "Ordinary ledgers return `{ item }`; the `milestones` ledger returns `{ item, resolved, references }`. `item` uses the requested projection.",
+  ),
   update_item: fixedAcknowledgement(
     "item",
     ITEM_MUTATION_ACK_DESCRIPTION,

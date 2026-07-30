@@ -172,14 +172,16 @@ Item-bearing reads require `projection: "compact"` or `projection: "full"`:
 - Choose `compact` for discovery, status/reference checks, lists, and routing.
   Choose `full` only when the caller needs narrative or another field excluded
   from the compact allowlist. Omitting `projection` fails input validation.
+- `fetch_item` returns `{ item }` for ordinary ledgers. For the `milestones`
+  ledger it returns `{ item, resolved, references }`, with `item` projected as
+  requested.
 
 Mutations return fixed acknowledgements, never full entities:
 
 - Item acknowledgement: `{ id, milestoneId, status, fields:
   { dependsOn?, blockedBy?, ledgerRefs? }, createdAt, updatedAt, author?,
-  session? }`.
-- Milestone acknowledgement: `{ id, status, fields: { dependsOn?, blockedBy? },
-  createdAt, updatedAt, author?, session? }`.
+  session? }`. Milestone-root `create_item` and `update_item` use this same
+  acknowledgement.
 - Ledger acknowledgement: `{ id }`.
 
 Use acknowledgement ids, canonicalized reference fields, status, timestamps,
@@ -206,7 +208,7 @@ measured savings without another batching schema.
 | `enumerate_ledgers` | `purpose-built-small` | `{ ledgers, counts, ledgerSummaries: [{ name, itemCount, statusCounts, completedCount, progressTotal }] }` |
 | `fetch_ledger` | `mandatory-item-projection` | Grouped `{ ledger }`, or paginated `{ ledger, items, total, offset, limit, nextOffset }`; every item uses the requested projection. |
 | `fetch_ledger_archive` | `requested-full-content` | `{ archive }` with the requested archived item or milestone group in full. |
-| `fetch_item` | `mandatory-item-projection` | `{ item }` using the requested projection. |
+| `fetch_item` | `mandatory-item-projection` | Ordinary ledgers return `{ item }`; the `milestones` ledger returns `{ item, resolved, references }`. `item` uses the requested projection. |
 | `update_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `create_item` | `fixed-acknowledgement` | `{ item: ItemAcknowledgement }`. |
 | `create_ledger` | `fixed-acknowledgement` | `{ ledger: { id } }`. |

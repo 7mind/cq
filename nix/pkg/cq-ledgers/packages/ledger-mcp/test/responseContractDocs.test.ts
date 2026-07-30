@@ -169,6 +169,7 @@ describe("public MCP response-contract documentation", () => {
     expect(readme).toContain("nextOffset");
     expect(readme).toContain("Markdown responses were rejected");
     expect(readme).toContain("The general `fetch_items` alternative was rejected");
+    expect(readme).not.toContain("Milestone acknowledgement");
     expect(projectGuidance).toContain('projection: "compact"');
     expect(projectGuidance).toContain('projection: "full"');
     expect(projectGuidance).toContain("mutation acknowledgement");

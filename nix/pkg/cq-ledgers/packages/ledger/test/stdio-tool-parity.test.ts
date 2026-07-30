@@ -400,6 +400,33 @@ function refOnlyAllOfWrapperCount(value: unknown): number {
   );
 }
 
+function schemaDescriptionAnnotationCount(
+  value: unknown,
+  propertyMap: boolean = false,
+): number {
+  if (Array.isArray(value)) {
+    return value.reduce(
+      (count, nested) => count + schemaDescriptionAnnotationCount(nested),
+      0,
+    );
+  }
+  if (value === null || typeof value !== "object") return 0;
+  let count = 0;
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "description" && !propertyMap) count += 1;
+    count += schemaDescriptionAnnotationCount(
+      nested,
+      !propertyMap &&
+        (key === "properties" ||
+          key === "$defs" ||
+          key === "definitions" ||
+          key === "patternProperties" ||
+          key === "dependentSchemas"),
+    );
+  }
+  return count;
+}
+
 async function connectStdio(
   store: LedgerStore,
   prefix: string,
@@ -977,6 +1004,28 @@ describe("stdio/direct ledger tool differential contract", () => {
       );
       try {
         expect(direct.definitions, `${profileName}:${prefix}`).toEqual(stdio.definitions);
+        if (profileName === "full") {
+          const publishPlan = direct.definitions.find(
+            ({ name }) => name === prefixed(prefix, "publish_plan_draft"),
+          );
+          expect(publishPlan?.schema, `${profileName}:${prefix}:description property`).toMatchObject(
+            {
+              properties: {
+                manifest: {
+                  properties: {
+                    milestones: {
+                      items: {
+                        properties: {
+                          description: { type: "string" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          );
+        }
         const invalid = await direct.client.callTool({
           name: prefixed(prefix, "fetch_item"),
           arguments: {
@@ -1003,7 +1052,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       const definitions = directDefinitions(directTools(fixture.store, "", AVAILABLE_CAPABILITIES));
       const serializedSchemas = JSON.stringify(definitions.map(({ schema }) => schema));
       expect(serializedSchemas).not.toContain('"$schema"');
-      expect(serializedSchemas).not.toContain('"description"');
+      expect(schemaDescriptionAnnotationCount(definitions.map(({ schema }) => schema))).toBe(0);
       expect(refOnlyAllOfWrapperCount(definitions.map(({ schema }) => schema))).toBe(0);
 
       const createItem = definitions.find(({ name }) => name === "create_item");
