@@ -45,6 +45,12 @@ Each iteration must dispatch a child or change state. Stop after a terminal
 token or two consecutive read-only passes. Terminal tokens are
 `awaiting-answers`, `awaiting-research`, `completed`, and `noop`.
 
+When `CQ::plan/follow-up` transfers an acknowledged active follow-up claim,
+retain its claim id, generation, and fence token and resume at **§2. Resolve
+planners and dispatch** with that claim. Do not run §1 or mint an initial claim.
+Only this explicit in-memory transfer bypasses §1; every normal invocation
+starts at the pre-claim gate.
+
 ### 1. Pre-claim gate and claim
 
 Read the goal and exact goal-linked questions/research waits.

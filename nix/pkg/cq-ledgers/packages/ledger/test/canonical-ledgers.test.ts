@@ -1794,6 +1794,61 @@ describe("T854: claim-before-plan protocol shape — structural grep invariants"
   });
 });
 
+// Regression T1319: managed follow-up intake must acquire authority before any
+// user-visible mutation, then transfer that authority into planner dispatch.
+describe("T1319: managed follow-up claim ordering and planner resume", () => {
+  const cqCommandsRoot = path.resolve(import.meta.dir, "../../../../cq-assets/commands/cq");
+  const advanceMd = path.join(cqCommandsRoot, "plan", "advance.md");
+  const followUpMd = path.join(cqCommandsRoot, "plan", "follow-up.md");
+
+  it("claims before appending the description or mutating idea links and status", async () => {
+    const text = await readFile(followUpMd, "utf8");
+    const claim = text.indexOf('claim_plan(purpose: "follow-up")');
+    const descriptionMutation = text.indexOf(
+      "Append each scope to the existing description",
+    );
+    const ideaMutation = text.indexOf("For each idea, preserve refs while adding");
+
+    expect(claim).toBeGreaterThanOrEqual(0);
+    expect(descriptionMutation).toBeGreaterThan(claim);
+    expect(ideaMutation).toBeGreaterThan(claim);
+  });
+
+  it("exits every rejected managed claim before appending scope", async () => {
+    const text = await readFile(followUpMd, "utf8");
+    expect(text).toMatch(
+      /Any rejected claim result exits\s+before appending scope or mutating the goal or ideas/,
+    );
+  });
+
+  it("transfers an acknowledged follow-up claim directly into planner dispatch", async () => {
+    const followUp = await readFile(followUpMd, "utf8");
+    const advance = await readFile(advanceMd, "utf8");
+    expect(followUp).toMatch(
+      /enter `CQ::plan\/advance` at\s+\*\*§2\. Resolve planners and dispatch\*\*/,
+    );
+    expect(followUp).toMatch(
+      /Do not run its §1 pre-claim gate or request a\s+second `purpose: "initial"` claim/,
+    );
+    expect(advance).toMatch(
+      /When `CQ::plan\/follow-up` transfers an acknowledged active follow-up claim/,
+    );
+    expect(advance).toMatch(
+      /resume at \*\*§2\. Resolve\s+planners and dispatch\*\* with that claim/,
+    );
+  });
+
+  it("preserves the unmanaged reopen path and normal inline advance entry", async () => {
+    const text = await readFile(followUpMd, "utf8");
+    expect(text).toMatch(
+      /For an unmanaged goal, move `planned` or `building` through `planning` to\s+`clarifying`/,
+    );
+    expect(text).toMatch(
+      /For an unmanaged goal now in `clarifying`, run\s+`CQ::plan\/advance <goalId>` inline/,
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // T345 — every DISPATCHED-SUBAGENT role is wired through the typed prompt
 // catalog (G41). Two structural grep-invariants over the cq-assets markdown:

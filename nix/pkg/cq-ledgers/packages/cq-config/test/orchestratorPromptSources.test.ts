@@ -123,6 +123,42 @@ function assertOperationalToolMappings(
   }
 }
 
+function assertFollowUpPlannerResumeWorkflow(
+  followUp: string,
+  advance: string,
+): void {
+  const claim = followUp.indexOf('claim_plan(purpose: "follow-up")');
+  const descriptionMutation = followUp.indexOf(
+    "Append each scope to the existing description",
+  );
+  const ideaMutation = followUp.indexOf("For each idea, preserve refs while adding");
+
+  expect(claim).toBeGreaterThanOrEqual(0);
+  expect(descriptionMutation).toBeGreaterThan(claim);
+  expect(ideaMutation).toBeGreaterThan(claim);
+  expect(followUp).toMatch(
+    /Any rejected claim result exits\s+before appending scope or mutating the goal or ideas/,
+  );
+  expect(followUp).toMatch(
+    /enter `CQ::plan\/advance` at\s+\*\*§2\. Resolve planners and dispatch\*\*/,
+  );
+  expect(followUp).toMatch(
+    /Do not run its §1 pre-claim gate or request a\s+second `purpose: "initial"` claim/,
+  );
+  expect(advance).toMatch(
+    /When `CQ::plan\/follow-up` transfers an acknowledged active follow-up claim/,
+  );
+  expect(advance).toMatch(
+    /resume at \*\*§2\. Resolve\s+planners and dispatch\*\* with that claim/,
+  );
+  expect(followUp).toMatch(
+    /For an unmanaged goal, move `planned` or `building` through `planning` to\s+`clarifying`/,
+  );
+  expect(followUp).toMatch(
+    /For an unmanaged goal now in `clarifying`, run\s+`CQ::plan\/advance <goalId>` inline/,
+  );
+}
+
 describe("orchestrator command prompt sources", () => {
   test("derives every operational mapping target from the registered ledger tool surface", () => {
     for (const spec of OPERATIONAL_TOOL_SPECS) {
@@ -258,6 +294,15 @@ describe("orchestrator command prompt sources", () => {
           expect(content).toContain(relation.targetRoleId);
         }
       }
+
+      const followUpIndex = catalog.findIndex(({ roleId }) => roleId === "plan/follow-up");
+      const advanceIndex = catalog.findIndex(({ roleId }) => roleId === "plan/advance");
+      expect(followUpIndex).toBeGreaterThanOrEqual(0);
+      expect(advanceIndex).toBeGreaterThanOrEqual(0);
+      assertFollowUpPlannerResumeWorkflow(
+        first.artifacts[followUpIndex + 2]!.content,
+        first.artifacts[advanceIndex + 2]!.content,
+      );
     }
   });
 
