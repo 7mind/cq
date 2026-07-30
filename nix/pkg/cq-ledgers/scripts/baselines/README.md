@@ -18,7 +18,7 @@ The three G129 figures answer different questions:
 - **2,309 tokens** applies the same mechanical G93 response-contract strip to
   the current 26-tool surface. It reflects current descriptions and schemas,
   so it does not replace or revise the historical 2,214-token observation.
-- **9,518 tokens** is the current total for the complete serialized 26-tool
+- **9,520 tokens** is the current total for the complete serialized 26-tool
   non-dispatch `tools/list` inventory, not a delta.
 
 The current 32-tool versus 26-tool inventory difference is reported separately
