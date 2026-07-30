@@ -15,6 +15,10 @@ import { describe, it, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
+  exposedLedgerToolsForRole,
+  ROLE_TOOL_CAPABILITY_MATRIX,
+} from "@cq/config";
+import {
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
   NON_DISPATCH_LEDGER_TOOL_NAMES,
@@ -36,7 +40,7 @@ async function buildStore(): Promise<LedgerStore> {
  * Build the server via the public factory, round-trip a Client over an
  * in-memory transport, and return the sorted list of registered tool names.
  */
-async function registeredNames(toolPrefix?: string): Promise<string[]> {
+async function registeredNames(toolPrefix?: string, toolProfile?: string): Promise<string[]> {
   const store = await buildStore();
   const unavailable = async (): Promise<never> => {
     throw new Error("unexpected dispatch operation");
@@ -50,9 +54,13 @@ async function registeredNames(toolPrefix?: string): Promise<string[]> {
     fetch: unavailable,
   };
   const server = createLedgerMcpServer(
-    toolPrefix === undefined
-      ? { store, displayName: "demo", dispatchCapability }
-      : { store, displayName: "demo", toolPrefix, dispatchCapability },
+    {
+      store,
+      displayName: "demo",
+      dispatchCapability,
+      ...(toolPrefix === undefined ? {} : { toolPrefix }),
+      ...(toolProfile === undefined ? {} : { toolProfile }),
+    },
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -82,6 +90,46 @@ describe("createLedgerMcpServer — public builder", () => {
     expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
     expect(names.length).toBe(LEDGER_TOOL_NAMES.length);
     expect(names).not.toContain("validate_input");
+  });
+
+  it("filters every narrower named role profile before tools/list serialization", async () => {
+    for (const roleId of Object.keys(ROLE_TOOL_CAPABILITY_MATRIX)) {
+      const expected = [...exposedLedgerToolsForRole(roleId)].sort();
+      if (expected.length === LEDGER_TOOL_NAMES.length) continue;
+      expect(await registeredNames(undefined, roleId), roleId).toEqual(expected);
+    }
+  });
+
+  it("fails closed on an unknown tool profile before constructing a server", async () => {
+    const store = await buildStore();
+    expect(() =>
+      createLedgerMcpServer({
+        store,
+        displayName: "demo",
+        dispatchCapability: {
+          prepare: async () => {
+            throw new Error("unexpected dispatch operation");
+          },
+          fetchInput: async () => {
+            throw new Error("unexpected dispatch operation");
+          },
+          storeResult: async () => {
+            throw new Error("unexpected dispatch operation");
+          },
+          confirmCompletion: async () => {
+            throw new Error("unexpected dispatch operation");
+          },
+          abort: async () => {
+            throw new Error("unexpected dispatch operation");
+          },
+          fetch: async () => {
+            throw new Error("unexpected dispatch operation");
+          },
+        },
+        toolProfile: "unknown-profile",
+      }),
+    ).toThrow('unknown role tool profile "unknown-profile"');
+    await store.dispose();
   });
 
   it("omits lifecycle tools before registration when no durable capability exists", async () => {

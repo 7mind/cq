@@ -259,16 +259,24 @@ export {
 } from "./store/ledgerArtifacts.js";
 export type { LedgerArtifacts, RemoveLedgerArtifactsResult } from "./store/ledgerArtifacts.js";
 export {
+  createLedgerMcpToolSpecifications,
   createLedgerMcpTools,
   DISPATCH_LIFECYCLE_TOOL_NAMES,
+  FULL_LEDGER_TOOL_PROFILE,
   LEDGER_TOOL_NAMES,
+  ledgerToolNamesForProfile,
   NON_DISPATCH_LEDGER_TOOL_NAMES,
+  selectLedgerMcpToolSpecifications,
   TOOL_PREFIX_RE,
   assertToolPrefix,
   prefixToolName,
   prefixedToolNames,
 } from "./mcp/ledgerTools.js";
-export type { LedgerToolName } from "./mcp/ledgerTools.js";
+export type {
+  LedgerToolName,
+  LedgerToolProfileName,
+  LedgerToolSpecification,
+} from "./mcp/ledgerTools.js";
 export { createDispatchNarrativeSource } from "./mcp/dispatchNarrativeSource.js";
 export {
   COMPACT_ITEM_FIELD_NAMES,
@@ -314,7 +322,10 @@ export type {
   RequestedFullContentContract,
   LedgerResponseContract,
 } from "./mcp/wireResponseContract.js";
-export { registerLedgerStdioTools } from "./mcp/stdioLedgerTools.js";
+export {
+  registerLedgerStdioToolSpecifications,
+  registerLedgerStdioTools,
+} from "./mcp/stdioLedgerTools.js";
 export {
   PLAN_CLAIM_TOKEN_ECHO_PATH,
   PLAN_LIFECYCLE_TOOL_NAMES,

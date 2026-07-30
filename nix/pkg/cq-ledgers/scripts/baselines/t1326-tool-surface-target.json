@@ -2153,7 +2153,6 @@
           "nix/pkg/cq-ledgers/packages/ledger-web/test/wholeStoreStartup.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/test/xdgCatalogServe.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
@@ -2229,7 +2228,6 @@
           "nix/pkg/cq-ledgers/packages/ledger-tui/src/mcpClient.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts"
         ],
@@ -2297,7 +2295,6 @@
           "nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts",
           "nix/pkg/cq-ledgers/packages/ledger-web/test/mcpClientProjectionContract.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
@@ -2367,7 +2364,6 @@
           "nix/pkg/cq-ledgers/packages/ledger-web/src/App.tsx",
           "nix/pkg/cq-ledgers/packages/ledger-web/src/mcpClient.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts"
         ],
@@ -2416,7 +2412,6 @@
           "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/test/serverInstructions.test.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts",
           "nix/pkg/cq-ledgers/packages/ledger/test/cq-tool-response-contract.test.ts",
@@ -2486,7 +2481,6 @@
           "nix/pkg/cq-ledgers/packages/cq-config/src/roleToolProfiles.ts",
           "nix/pkg/cq-ledgers/packages/ledger-mcp/src/main.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/ledgerTools.ts",
-          "nix/pkg/cq-ledgers/packages/ledger/src/mcp/stdioLedgerTools.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/mcp/wireResponseContract.ts",
           "nix/pkg/cq-ledgers/packages/ledger/src/store/remote/RemoteLedgerClient.ts"
         ],

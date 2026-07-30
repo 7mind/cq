@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { exposedLedgerToolsForRole } from "@cq/config";
 import {
   createLedgerMcpTools,
   GOALS_LEDGER,
@@ -13,6 +14,7 @@ import {
   type ConfigCapability,
   type DispatchCapability,
   type LedgerStore,
+  type LedgerToolProfileName,
   type LedgerToolName,
   type ListProjectsCapability,
   type PromptCatalogCapability,
@@ -312,6 +314,7 @@ function directTools(
   store: LedgerStore,
   prefix: string,
   capabilities: ToolCapabilities,
+  profileName: LedgerToolProfileName = "full",
 ): DirectTools {
   return createLedgerMcpTools(
     store,
@@ -321,6 +324,7 @@ function directTools(
     prefix,
     capabilities.listProjects,
     capabilities.dispatch,
+    profileName,
   );
 }
 
@@ -376,6 +380,7 @@ async function connectStdio(
   store: LedgerStore,
   prefix: string,
   capabilities: ToolCapabilities,
+  profileName: LedgerToolProfileName = "full",
 ): Promise<StdioConnection> {
   const server = new McpServer(
     { name: "stdio-parity-test", version: "0.0.1" },
@@ -390,6 +395,7 @@ async function connectStdio(
     prefix,
     capabilities.listProjects,
     capabilities.dispatch,
+    profileName,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -909,8 +915,38 @@ function assertRepresentativeContracts(
   expect(responses.get("list_projects")).toEqual(PROJECTS_RESULT);
 }
 
-// BG, specified-origin: both public registrations expose one 32-tool contract.
+// BG, specified-origin: both registrations expose one canonical contract per profile.
 describe("stdio/direct ledger tool differential contract", () => {
+  it("derives profiled definitions from the same canonical specifications", async () => {
+    const directFixture = await buildFixture();
+    const stdioFixture = await buildFixture();
+    const profileName = "plan-advance";
+    const prefix = "planner";
+    const direct = directTools(
+      directFixture.store,
+      prefix,
+      AVAILABLE_CAPABILITIES,
+      profileName,
+    );
+    const stdio = await connectStdio(
+      stdioFixture.store,
+      prefix,
+      AVAILABLE_CAPABILITIES,
+      profileName,
+    );
+    try {
+      const expectedNames = exposedLedgerToolsForRole(profileName)
+        .map((name) => prefixed(prefix, name))
+        .sort();
+      expect(direct.map((tool) => tool.name).sort()).toEqual(expectedNames);
+      expect(stdio.definitions).toEqual(directDefinitions(direct));
+    } finally {
+      await stdio.close();
+      await directFixture.store.dispose();
+      await stdioFixture.store.dispose();
+    }
+  });
+
   for (const prefix of PREFIXES) {
     it(`matches complete definitions for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();

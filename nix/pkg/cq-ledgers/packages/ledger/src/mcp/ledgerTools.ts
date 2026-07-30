@@ -3,9 +3,11 @@
  *
  * Returns an array of `tool()` instances for
  * `createSdkMcpServer({ name: 'cq', tools: [...askTools, ...ledgerTools] })`.
- * The canonical 32-tool surface is `LEDGER_TOOL_NAMES`; the six dispatch
- * handlers are omitted when no durable `DispatchCapability` is supplied.
- * the stdio counterpart is `registerLedgerStdioTools` (./stdioLedgerTools.ts).
+ * The canonical typed specifications feed both this direct factory and
+ * `registerLedgerStdioTools` (./stdioLedgerTools.ts). The full compatibility
+ * surface is `LEDGER_TOOL_NAMES`; the six dispatch handlers are omitted when
+ * no durable `DispatchCapability` is supplied, and named role profiles are
+ * intersected before either transport serializes `tools/list`.
  *
  * Capability-gated tools:
  *  - read_log requires an explicit FS-store `readLog` capability (Q87 / R137 #6);
@@ -32,6 +34,11 @@
 import { z } from "zod";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
+import {
+  exposedLedgerToolsForRole,
+  LEDGER_CAPABILITY_TOOL_NAMES,
+  type LedgerCapabilityToolName,
+} from "@cq/config";
 import type { LedgerStore, CreateItemInit, UpdateItemPatch } from "../store/LedgerStore.js";
 import { QUERY_LANGUAGE_HELP } from "../search/query.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
@@ -78,7 +85,36 @@ import {
   type PromptCatalogCapability,
 } from "./promptCatalogCapability.js";
 import { ListProjectsNotImplementedError, type ListProjectsCapability } from "./listProjects.js";
-import { PLAN_LIFECYCLE_TOOL_NAMES, PLAN_LIFECYCLE_TOOL_SPECS } from "./planLifecycleTools.js";
+import { PLAN_LIFECYCLE_TOOL_SPECS } from "./planLifecycleTools.js";
+
+/** The compatibility profile: every capability-gated tool specification. */
+export const FULL_LEDGER_TOOL_PROFILE = "full";
+
+/** A named tool profile. Role ids resolve through T1325's authoritative matrix. */
+export type LedgerToolProfileName = string;
+
+/** Canonical tool-name order, owned by the T1325 capability inventory. */
+export const LEDGER_TOOL_NAMES = LEDGER_CAPABILITY_TOOL_NAMES;
+
+export type LedgerToolName = LedgerCapabilityToolName;
+
+export const DISPATCH_LIFECYCLE_TOOL_NAMES = [
+  "prepare_dispatch",
+  "fetch_dispatch_input",
+  "store_result",
+  "confirm_dispatch_completion",
+  "abort_dispatch",
+  "fetch_dispatch_result",
+] as const satisfies readonly LedgerToolName[];
+
+const DISPATCH_LIFECYCLE_TOOL_NAME_SET: ReadonlySet<string> = new Set(
+  DISPATCH_LIFECYCLE_TOOL_NAMES,
+);
+
+/** The surface registered when no durable dispatch capability exists. */
+export const NON_DISPATCH_LEDGER_TOOL_NAMES = LEDGER_TOOL_NAMES.filter(
+  (name) => !DISPATCH_LIFECYCLE_TOOL_NAME_SET.has(name),
+);
 
 /**
  * The SDK's `tools?:` field on createSdkMcpServer is typed as
@@ -87,6 +123,15 @@ import { PLAN_LIFECYCLE_TOOL_NAMES, PLAN_LIFECYCLE_TOOL_SPECS } from "./planLife
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyTool = SdkMcpToolDefinition<any>;
+
+/**
+ * One transport-independent ledger tool specification. Direct Claude tools
+ * and raw MCP SDK registrations both derive from this shape.
+ */
+export type LedgerToolSpecification = AnyTool & {
+  readonly name: LedgerToolName;
+  readonly description: string;
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -183,17 +228,14 @@ const safeIdSchema = z.string().regex(/^[A-Za-z0-9_-]+$/, "id may only contain A
 // Tool builders
 // ---------------------------------------------------------------------------
 
-export function createLedgerMcpTools(
+export function createLedgerMcpToolSpecifications(
   store: LedgerStore,
   readLog?: ReadLogCapability,
   configCapability?: ConfigCapability,
   promptCatalog?: PromptCatalogCapability,
-  toolPrefix: string = "",
   listProjects?: ListProjectsCapability,
   dispatchCapability?: DispatchCapability,
-): AnyTool[] {
-  // Fail fast on an invalid prefix at the system boundary (Q205 / T373).
-  assertToolPrefix(toolPrefix);
+): LedgerToolSpecification[] {
   // ---- Item / ledger surface (9) -----------------------------------------
 
   const enumerateLedgers = tool(
@@ -773,7 +815,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const registeredToolNames =
     dispatchCapability === undefined ? NON_DISPATCH_LEDGER_TOOL_NAMES : LEDGER_TOOL_NAMES;
-  const describedTools = tools.map((ledgerTool, index) => {
+  return tools.map((ledgerTool, index) => {
     const toolName = registeredToolNames[index];
     if (toolName === undefined || ledgerTool.name !== toolName) {
       throw new Error(`Ledger tool response-description order drift at ${ledgerTool.name}`);
@@ -781,16 +823,57 @@ ${QUERY_LANGUAGE_HELP}`,
     return {
       ...ledgerTool,
       description: appendLedgerResponseDescription(toolName, ledgerTool.description),
-    };
+    } as LedgerToolSpecification;
   });
+}
 
-  // Pure name transform (Q208): register each tool under its prefixed name.
-  // Default `''` leaves every name byte-identical; handler bodies and Zod input
-  // schemas are untouched. Derived ONCE here rather than at each tool() literal.
-  if (toolPrefix === "") return describedTools;
-  return describedTools.map((ledgerTool) => ({
-    ...ledgerTool,
-    name: prefixToolName(toolPrefix, ledgerTool.name),
+/** Resolve a fail-closed named profile through the T1325 role matrix. */
+export function ledgerToolNamesForProfile(
+  profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
+): readonly LedgerToolName[] {
+  if (profileName === FULL_LEDGER_TOOL_PROFILE) return LEDGER_TOOL_NAMES;
+  return exposedLedgerToolsForRole(profileName);
+}
+
+/**
+ * Filter canonical specifications before either transport can serialize
+ * `tools/list`. Capability gating has already removed unavailable dispatch
+ * specifications before this profile intersection runs.
+ */
+export function selectLedgerMcpToolSpecifications(
+  specifications: readonly LedgerToolSpecification[],
+  profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
+): LedgerToolSpecification[] {
+  const selectedNames = new Set<LedgerToolName>(ledgerToolNamesForProfile(profileName));
+  return specifications.filter((specification) => selectedNames.has(specification.name));
+}
+
+export function createLedgerMcpTools(
+  store: LedgerStore,
+  readLog?: ReadLogCapability,
+  configCapability?: ConfigCapability,
+  promptCatalog?: PromptCatalogCapability,
+  toolPrefix: string = "",
+  listProjects?: ListProjectsCapability,
+  dispatchCapability?: DispatchCapability,
+  profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
+): AnyTool[] {
+  assertToolPrefix(toolPrefix);
+  const specifications = selectLedgerMcpToolSpecifications(
+    createLedgerMcpToolSpecifications(
+      store,
+      readLog,
+      configCapability,
+      promptCatalog,
+      listProjects,
+      dispatchCapability,
+    ),
+    profileName,
+  );
+  if (toolPrefix === "") return specifications;
+  return specifications.map((specification) => ({
+    ...specification,
+    name: prefixToolName(toolPrefix, specification.name),
   }));
 }
 
@@ -841,56 +924,3 @@ export function prefixedToolNames(prefix: string): string[] {
   if (prefix === "") return [...LEDGER_TOOL_NAMES];
   return LEDGER_TOOL_NAMES.map((name) => `${prefix}_${name}`);
 }
-
-// Helpful for tests that want to enumerate the tool names without running them.
-export const LEDGER_TOOL_NAMES = [
-  "enumerate_ledgers",
-  "fetch_ledger",
-  "fetch_ledger_archive",
-  "fetch_item",
-  "update_item",
-  "create_item",
-  "create_ledger",
-  "search_items",
-  "fts_search",
-  "create_milestone",
-  "update_milestone",
-  "fetch_milestone",
-  "archive_milestone",
-  "list_milestone_items",
-  "snapshot",
-  "derive_predicates",
-  "reopen_item",
-  "unarchive_item",
-  "read_log",
-  "get_config",
-  "prepare_dispatch",
-  "fetch_dispatch_input",
-  "store_result",
-  "confirm_dispatch_completion",
-  "abort_dispatch",
-  "fetch_dispatch_result",
-  "fetch_prompt",
-  "list_projects",
-  ...PLAN_LIFECYCLE_TOOL_NAMES,
-] as const;
-
-export type LedgerToolName = (typeof LEDGER_TOOL_NAMES)[number];
-
-export const DISPATCH_LIFECYCLE_TOOL_NAMES = [
-  "prepare_dispatch",
-  "fetch_dispatch_input",
-  "store_result",
-  "confirm_dispatch_completion",
-  "abort_dispatch",
-  "fetch_dispatch_result",
-] as const satisfies readonly LedgerToolName[];
-
-const DISPATCH_LIFECYCLE_TOOL_NAME_SET: ReadonlySet<string> = new Set(
-  DISPATCH_LIFECYCLE_TOOL_NAMES,
-);
-
-/** The surface registered when no durable dispatch capability exists. */
-export const NON_DISPATCH_LEDGER_TOOL_NAMES = LEDGER_TOOL_NAMES.filter(
-  (name) => !DISPATCH_LIFECYCLE_TOOL_NAME_SET.has(name),
-);

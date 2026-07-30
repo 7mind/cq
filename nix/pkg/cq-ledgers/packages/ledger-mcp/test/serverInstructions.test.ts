@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { exposedLedgerToolsForRole } from "@cq/config";
 import { LEDGER_TOOL_NAMES, prefixedToolNames } from "@cq/ledger";
 import { buildServerInstructions } from "../src/main.js";
 
@@ -103,5 +104,21 @@ describe("buildServerInstructions", () => {
     for (const tok of emitted) {
       expect(allowed.has(tok)).toBe(true);
     }
+  });
+
+  test("narrow role instructions name only tools available in that profile", () => {
+    const roleId = "implement-worker";
+    const available = new Set(exposedLedgerToolsForRole(roleId));
+    const text = buildServerInstructions("worker", roleId);
+    for (const name of LEDGER_TOOL_NAMES) {
+      const emittedName = `worker_${name}`;
+      expect(text.includes(emittedName), emittedName).toBe(available.has(name));
+    }
+  });
+
+  test("unknown role instructions fail closed", () => {
+    expect(() => buildServerInstructions("", "unknown-profile")).toThrow(
+      'unknown role tool profile "unknown-profile"',
+    );
   });
 });

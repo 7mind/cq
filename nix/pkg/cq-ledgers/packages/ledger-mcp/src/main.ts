@@ -56,10 +56,16 @@ import {
   startXdgCoherenceWatcher,
   startPostgresCoherenceWatcher,
   nodeGitRunner,
-  registerLedgerStdioTools,
+  createLedgerMcpToolSpecifications,
+  FULL_LEDGER_TOOL_PROFILE,
   LEDGER_TOOL_NAMES,
+  ledgerToolNamesForProfile,
+  registerLedgerStdioToolSpecifications,
+  selectLedgerMcpToolSpecifications,
   assertToolPrefix,
   prefixToolName,
+  type LedgerToolName,
+  type LedgerToolProfileName,
 } from "@cq/ledger";
 import { createConfigCapability } from "./configCapability.js";
 import {
@@ -353,10 +359,11 @@ function escapeRegExp(literal: string): string {
  * Build the server-level usage guidance, optionally renaming each referenced
  * ledger tool to its prefixed form (T377 / G45).
  *
- * `buildServerInstructions('')` returns {@link SERVER_INSTRUCTIONS_TEMPLATE}
- * BYTE-IDENTICALLY (prefixToolName('', name) === name, so every substitution is
- * a no-op). For a non-empty prefix, every WHOLE-WORD occurrence of a registered
- * tool name is rewritten to `prefixToolName(prefix, name)`.
+ * `buildServerInstructions('')` for the full compatibility profile returns
+ * {@link SERVER_INSTRUCTIONS_TEMPLATE} BYTE-IDENTICALLY. For a non-empty
+ * prefix, every WHOLE-WORD occurrence of a registered full-profile tool name
+ * is rewritten to `prefixToolName(prefix, name)`. Narrow role profiles receive
+ * a generated inventory containing only their already-filtered tools.
  *
  * Drift-free by construction: the set of names rewritten is the live
  * {@link LEDGER_TOOL_NAMES}, and the prefixed form is derived via the shared
@@ -366,18 +373,33 @@ function escapeRegExp(literal: string): string {
  * partially rewritten; `\b` boundaries (underscore is a word char) keep each
  * substitution to a whole token.
  */
-export function buildServerInstructions(toolPrefix: string): string {
+export function buildServerInstructions(
+  toolPrefix: string,
+  profileName: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
+  availableToolNames: readonly LedgerToolName[] = ledgerToolNamesForProfile(profileName),
+): string {
   assertToolPrefix(toolPrefix);
-  if (toolPrefix === "") return SERVER_INSTRUCTIONS_TEMPLATE;
-  // Longest names first so a shorter name that is a leading substring of a
-  // longer one does not consume the longer name's token.
-  const names = [...LEDGER_TOOL_NAMES].sort((a, b) => b.length - a.length);
-  let text = SERVER_INSTRUCTIONS_TEMPLATE;
-  for (const name of names) {
-    const pattern = new RegExp(`\\b${escapeRegExp(name)}\\b`, "g");
-    text = text.replace(pattern, prefixToolName(toolPrefix, name));
+  if (profileName === FULL_LEDGER_TOOL_PROFILE) {
+    if (toolPrefix === "") return SERVER_INSTRUCTIONS_TEMPLATE;
+    // Longest names first so a shorter name that is a leading substring of a
+    // longer one does not consume the longer name's token.
+    const names = [...LEDGER_TOOL_NAMES].sort((a, b) => b.length - a.length);
+    let text = SERVER_INSTRUCTIONS_TEMPLATE;
+    for (const name of names) {
+      const pattern = new RegExp(`\\b${escapeRegExp(name)}\\b`, "g");
+      text = text.replace(pattern, prefixToolName(toolPrefix, name));
+    }
+    return text;
   }
-  return text;
+
+  const profileTools = availableToolNames.map((name) => prefixToolName(toolPrefix, name));
+  if (profileTools.length === 0) {
+    return `Ledger tool profile ${JSON.stringify(profileName)} exposes no tools.`;
+  }
+  return [
+    `Ledger tool profile ${JSON.stringify(profileName)} exposes only:`,
+    ...profileTools.map((name) => `- ${name}`),
+  ].join("\n");
 }
 
 /**
@@ -518,13 +540,12 @@ export function startLedgerCoherenceWatcher(
  * Options for {@link createLedgerMcpServer}, the public builder for an
  * `McpServer` bound to one `store` (G45 / Q209).
  *
- * `toolPrefix` is OPTIONAL and defaults to `''`. The server registers the
- * full 32-tool surface when `dispatchCapability` exists and the 26-tool
- * non-dispatch surface otherwise. A non-empty prefix renames every registered tool to its
+ * `toolPrefix` is OPTIONAL and defaults to `''`. `toolProfile` defaults to the
+ * full compatibility surface; a role id selects its T1325 capability subset.
+ * Durable dispatch availability is intersected before that profile. A
+ * non-empty prefix renames every registered tool to its
  * `prefixToolName(prefix, name)` form and rewrites the matching tool names in
- * the server-level `instructions`. The prefix is validated by
- * {@link assertToolPrefix} (via `buildServerInstructions` + the threaded
- * `registerLedgerStdioTools` argument).
+ * the server-level `instructions`.
  */
 export interface CreateLedgerMcpServerOptions {
   /** The ledger store the tools are bound to. */
@@ -533,6 +554,8 @@ export interface CreateLedgerMcpServerOptions {
   displayName: string;
   /** Optional ledger-tool name prefix (default `''` = unprefixed). */
   toolPrefix?: string;
+  /** `full` compatibility surface or a fail-closed T1325 prompt-catalog role id. */
+  toolProfile?: LedgerToolProfileName;
   /**
    * The cq.toml CONFIG ROOT (D93) — `ResolvedLedgerStore.configRoot` from
    * `createLedgerStore`. Takes precedence over the duck-typed `rootDirOf(store)`
@@ -572,23 +595,20 @@ export interface CreateLedgerMcpServerOptions {
  * single factory both the standalone stdio host and `attachMcpHttp` route
  * through; {@link buildServer} is a thin unprefixed wrapper over it.
  *
- * With `toolPrefix` omitted or `''` the behaviour is BYTE-IDENTICAL to the
- * historical `buildServer` (serverInfo, instructions, and capability gating).
- * A non-empty prefix renames the
- * tools and the instruction references via the shared
- * {@link buildServerInstructions} / {@link registerLedgerStdioTools} prefix path.
+ * With `toolProfile` omitted and `toolPrefix` omitted or `''`, behaviour is
+ * BYTE-IDENTICAL to the historical `buildServer` (serverInfo, instructions,
+ * definitions, handlers, and capability gating). Named profiles filter the
+ * canonical specifications before registration and instruction generation.
  */
 export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpServer {
   const { store, displayName } = opts;
   const configRoot = opts.configRoot;
   const toolPrefix = opts.toolPrefix ?? "";
+  const toolProfile = opts.toolProfile ?? FULL_LEDGER_TOOL_PROFILE;
   assertToolPrefix(toolPrefix);
-  const serverInfo = { ...SERVER_INFO, title: displayName };
-  const instructions = `${projectInstructionLine(displayName)}\n\n${buildServerInstructions(toolPrefix)}`;
-  const server = new McpServer(serverInfo, {
-    capabilities: { tools: {} },
-    instructions,
-  });
+  // Resolve before constructing the server so unknown profiles fail before any
+  // `tools/list` serializer or transport can observe a partial surface.
+  ledgerToolNamesForProfile(toolProfile);
   // read_log (Q87 / R137 #6 / T408) is BACKEND-AWARE: the FS store tails the
   // on-disk per-ledger log under <root>/.cq/logs, and the git-object backend
   // resolves the SAME `logs/<rel>` from the orphan ref tip (same confinement +
@@ -622,16 +642,28 @@ export function createLedgerMcpServer(opts: CreateLedgerMcpServerOptions): McpSe
       key: opts.projectKey ?? displayName,
       displayName,
     });
-  registerLedgerStdioTools(
-    server,
-    store,
-    readLog,
-    configCapability,
-    promptCatalog,
-    toolPrefix,
-    listProjects,
-    opts.dispatchCapability,
+  const specifications = selectLedgerMcpToolSpecifications(
+    createLedgerMcpToolSpecifications(
+      store,
+      readLog,
+      configCapability,
+      promptCatalog,
+      listProjects,
+      opts.dispatchCapability,
+    ),
+    toolProfile,
   );
+  const serverInfo = { ...SERVER_INFO, title: displayName };
+  const instructions = `${projectInstructionLine(displayName)}\n\n${buildServerInstructions(
+    toolPrefix,
+    toolProfile,
+    specifications.map((specification) => specification.name),
+  )}`;
+  const server = new McpServer(serverInfo, {
+    capabilities: { tools: {} },
+    instructions,
+  });
+  registerLedgerStdioToolSpecifications(server, specifications, toolPrefix);
   return server;
 }
 
