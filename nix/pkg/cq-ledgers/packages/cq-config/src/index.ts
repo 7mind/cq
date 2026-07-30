@@ -99,6 +99,24 @@ export {
   serializeIntentionalDifferenceDeclaration,
 } from "./promptCatalog.js";
 export type {
+  LedgerCapabilityToolName,
+  RoleCapabilityClass,
+  RoleToolCapabilityProfile,
+  RoleCorpusObservation,
+} from "./roleToolProfiles.js";
+export {
+  LEDGER_CAPABILITY_TOOL_NAMES,
+  DISPATCH_RESULT_PLUMBING_TOOL_NAMES,
+  DOMAIN_LEDGER_TOOL_NAMES,
+  ROLE_CAPABILITY_CLASSES,
+  ROLE_CAPABILITY_TOOLS,
+  ROLE_TOOL_CAPABILITY_MATRIX,
+  exposedLedgerToolsForRole,
+  ROLE_IDENTIFIED_CORPUS,
+  HARNESS_ROLE_TOOL_ENFORCEMENT,
+  CODEX_ROLE_TOOL_PROFILE_PROBE,
+} from "./roleToolProfiles.js";
+export type {
   PromptFragmentSlot,
   PromptBlockClassification,
   PromptDispatchEdgeKind,

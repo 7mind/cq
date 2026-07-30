@@ -16,6 +16,7 @@
     "link-prompts": "bun run scripts/link-prompts.ts",
     "gen-prompt-catalog": "bun run packages/cq-config/scripts/gen-prompt-catalog.ts",
     "gen-agents": "bun run packages/ledger-web/scripts/gen-agents-catalogue.ts",
+    "probe:codex-role-tools": "bun run packages/cq-config/scripts/probe-codex-role-tool-profile.ts",
     "verify-packaged-prompt-surfaces": "bun run packages/ledger-mcp/scripts/verify-packaged-prompt-surfaces.ts"
   },
   "devDependencies": {
