@@ -616,6 +616,37 @@ export function runPlanLifecycleStoreContract(
           await terminal.dispose();
         }
 
+        const abandoned = await factory.build();
+        try {
+          await abandoned.seedGoal({
+            goalId: GOAL_ID,
+            phase: "abandoned",
+            generation: 5,
+          });
+          const before = await abandoned.observe(GOAL_ID);
+          expect(
+            await abandoned.lifecycle.claimPlan(
+              claimInput(
+                "follow-up",
+                "building-abandoned",
+                OWNER_TOKEN_A,
+                5,
+                PROVENANCE_A,
+              ),
+            ),
+          ).toEqual({
+            ok: false,
+            conflict: {
+              code: "goal-terminal",
+              goalId: GOAL_ID,
+              status: "abandoned",
+            },
+          });
+          expect(await abandoned.observe(GOAL_ID)).toEqual(before);
+        } finally {
+          await abandoned.dispose();
+        }
+
         const stale = await buildGoal(factory, "building", 5);
         try {
           await stale.seedWork(GOAL_ID, {
