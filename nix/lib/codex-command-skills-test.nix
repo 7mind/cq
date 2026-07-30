@@ -5,6 +5,7 @@
   commands,
   promptRoot,
   mkCodexCommandSkills,
+  ledgerMcpRegistration,
 }:
 let
   command =
@@ -154,7 +155,19 @@ let
               default = [ ];
             };
             programs.codex = lib.mkOption {
-              type = lib.types.attrs;
+              type = lib.types.submodule {
+                options = {
+                  enable = lib.mkOption { type = lib.types.bool; };
+                  enableMcpIntegration = lib.mkOption { type = lib.types.bool; };
+                  package = lib.mkOption { type = lib.types.package; };
+                  skills = lib.mkOption { type = lib.types.anything; };
+                  context = lib.mkOption { type = lib.types.anything; };
+                  settings = lib.mkOption {
+                    type = (pkgs.formats.toml { }).type;
+                    default = { };
+                  };
+                };
+              };
               default = { };
             };
             smind.hm.dev.llm = lib.mkOption {
@@ -164,6 +177,7 @@ let
           };
           config = {
             home.homeDirectory = "/home/test";
+            programs.codex.settings.mcp_servers.ledger = ledgerMcpRegistration;
             smind.hm.dev.llm = {
               enable = true;
               merged = {
@@ -181,9 +195,12 @@ let
   };
   codexHomeFiles = evaluatedCodexModule.config.home.file;
   codexPackage = evaluatedCodexModule.config.programs.codex.package;
+  codexMcpRegistration =
+    evaluatedCodexModule.config.programs.codex.settings.mcp_servers.ledger;
 in
 {
   package = codexPackage;
+  mcpRegistration = codexMcpRegistration;
   # The RENDERED global native-agent declarations (defects:D178 half (b)), keyed by
   # agent name. Surfaced so a flake check can build and inspect the actual TOML:
   # evaluation alone only instantiates these derivations, and the writer's quoting

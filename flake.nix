@@ -76,10 +76,12 @@
           catalog = llmAssets.catalog;
           commands = llmAssets.commands;
           promptRoot = codexPromptRoot;
+          ledgerMcpRegistration = {
+            command = "${cqCli}/bin/cq";
+            args = [ "mcp" ];
+          };
         };
         codexHarnessEnv = import ./nix/lib/codex-harness-env.nix { lib = pkgs.lib; };
-        codexLedgerMcpRegistration =
-          import ./nix/lib/codex-ledger-mcp-registration.nix { lib = pkgs.lib; };
         # T691 / defects:D178 half (b): parse one rendered native-agent declaration
         # and check it against the role body it must carry. A FILE rather than a
         # `python3 -c` string: the assertions need both quote characters, which no
@@ -627,10 +629,7 @@
               pkgs.runCommand "codex-harness-env" { } "touch $out";
             codex-mcp-harness-selection =
               let
-                registration = codexLedgerMcpRegistration {
-                  command = "${cqCli}/bin/cq";
-                  args = [ "mcp" ];
-                };
+                registration = codexCommandSkillsTest.mcpRegistration;
                 registrationJson = pkgs.writeText
                   "codex-ledger-mcp-registration.json"
                   (builtins.toJSON registration);
