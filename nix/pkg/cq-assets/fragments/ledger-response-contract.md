@@ -1,0 +1,1 @@
+Item reads require an explicit projection: use `projection: "compact"` for discovery, status, and reference work, and `projection: "full"` only when narrative fields are required. Mutations return fixed acknowledgements, never full entities; issue an explicit full read only when later reasoning needs omitted narrative.

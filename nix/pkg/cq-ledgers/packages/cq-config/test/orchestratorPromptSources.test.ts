@@ -37,6 +37,16 @@ const OPERATIONAL_TOOL_SPECS = [
 ] as const;
 const CLAUDE_LEDGER_TOOL_PREFIX = "mcp__ledger__";
 const OPERATIONAL_TOOL_SECTION_HEADING = "## Operational tool vocabulary\n";
+const LEDGER_RESPONSE_CONTRACT_FRAGMENT = "ledger-response-contract";
+const LEDGER_RESPONSE_CONTRACT_ROLES = new Set([
+  "begin",
+  "plan",
+  "plan/advance",
+  "research",
+  "research/advance",
+]);
+const LEDGER_RESPONSE_CONTRACT =
+  'Item reads require an explicit projection: use `projection: "compact"` for discovery, status, and reference work, and `projection: "full"` only when narrative fields are required. Mutations return fixed acknowledgements, never full entities; issue an explicit full read only when later reasoning needs omitted narrative.';
 
 interface CatalogRole {
   readonly roleId: string;
@@ -289,6 +299,13 @@ describe("orchestrator command prompt sources", () => {
           } else {
             expect(content).not.toMatch(/^allowed-tools:/m);
           }
+        }
+        const hasLedgerResponseContract = role.fragmentBindings.some(
+          ({ fragment }) => fragment === LEDGER_RESPONSE_CONTRACT_FRAGMENT,
+        );
+        expect(hasLedgerResponseContract).toBe(LEDGER_RESPONSE_CONTRACT_ROLES.has(role.roleId));
+        if (hasLedgerResponseContract) {
+          expect(content).toContain(LEDGER_RESPONSE_CONTRACT);
         }
         for (const relation of role.dispatchRelations) {
           expect(content).toContain(relation.targetRoleId);

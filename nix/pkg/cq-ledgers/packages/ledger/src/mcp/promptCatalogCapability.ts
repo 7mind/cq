@@ -46,7 +46,8 @@ export type PromptRendererCapability =
   | "inline-command-recursion"
   | "host-tool-vocabulary"
   | "operational-tool-vocabulary"
-  | "advance-run-guard";
+  | "advance-run-guard"
+  | "ledger-response-contract";
 
 export type PromptIntentionalDifferenceKind =
   | "invocation-syntax"

@@ -37,6 +37,7 @@ describe("prompt fragment inventory closure", () => {
       "cq-command-invocation",
       "host-tool-vocabulary",
       "inline-command-recursion",
+      "ledger-response-contract",
     ]);
     expect(begin!.dispatchEdges).toContainEqual({
       kind: "recursion",
@@ -114,7 +115,7 @@ describe("prompt fragment inventory schema and closure failures", () => {
     const contracts = cloneContracts() as Array<Record<string, unknown>>;
       contracts[0]!.fragment = "terminal-command";
       expect(() => validatePromptFragmentInventory(contracts, cloneSources())).toThrow(
-        "expected one of cq-command-invocation, subagent-dispatch, implement-dispatch-workflow, dispatch-input-delivery, inline-command-recursion, advance-run-guard, host-tool-vocabulary, operational-tool-vocabulary",
+        "expected one of cq-command-invocation, subagent-dispatch, implement-dispatch-workflow, dispatch-input-delivery, inline-command-recursion, advance-run-guard, host-tool-vocabulary, operational-tool-vocabulary, ledger-response-contract",
       );
   });
 

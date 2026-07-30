@@ -210,6 +210,20 @@ let
         surfaces = promptSurfaces;
       };
     }
+    {
+      fragment = "ledger-response-contract";
+      supportedSurfaces = promptSurfaces;
+      forbiddenVocabulary = {
+        claude = [ ];
+        codex = [ ];
+        pi = [ ];
+      };
+      intentionalDifference = {
+        kind = "tool-vocabulary";
+        reason = "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.";
+        surfaces = promptSurfaces;
+      };
+    }
   ];
 
   sourceBlockByFragment = {
@@ -221,6 +235,7 @@ let
     advance-run-guard = "surface-specific run guard lifecycle";
     host-tool-vocabulary = "frontmatter host tool and isolation capabilities";
     operational-tool-vocabulary = "body-level mapping from canonical operational tokens to callable host tools";
+    ledger-response-contract = "ledger item-read projection and mutation response contract";
   };
   sharedSourceBlock = {
     sourceBlock = "all prose outside the classified surface-sensitive blocks";
@@ -307,6 +322,9 @@ let
     }:
     let
       fragmentBindings = map mkFragmentBinding fragments;
+      differenceBindings = lib.filter (
+        binding: binding.fragment != "ledger-response-contract"
+      ) fragmentBindings;
     in
     {
       inherit
@@ -329,7 +347,7 @@ let
         else
           null;
       intentionalDifferences = unique (
-        map (binding: binding.intentionalDifference) fragmentBindings
+        map (binding: binding.intentionalDifference) differenceBindings
       );
     };
 
@@ -358,6 +376,7 @@ let
   A = "advance-run-guard";
   T = "host-tool-vocabulary";
   O = "operational-tool-vocabulary";
+  C = "ledger-response-contract";
 
   authoredCatalog = [
     (mkAgent "plan-advance" [ I T ])
@@ -369,7 +388,7 @@ let
     (mkAgent "investigate-prober" [ I T ])
     (mkAgent "research-explorer" [ I T ])
     (mkAgent "research-experimenter" [ T ])
-    (mkCommand "begin" [ I T R ] [
+    (mkCommand "begin" [ I T R C ] [
       (recursion "plan")
       (recursion "plan/follow-up")
       (recursion "investigate")
@@ -382,11 +401,11 @@ let
       (recursion "research/advance")
       (recursion "implement/advance")
     ])
-    (mkCommand "plan" [ I T D R ] [
+    (mkCommand "plan" [ I T D R C ] [
       (dispatch "plan-advance")
       (recursion "investigate/advance")
     ])
-    (mkCommand "plan/advance" [ I T O D R ] [
+    (mkCommand "plan/advance" [ I T O D R C ] [
       (dispatch "plan-advance")
       (dispatch "plan-reviewer")
       (recursion "investigate/advance")
@@ -402,10 +421,10 @@ let
       (dispatch "investigate-explorer")
       (dispatch "investigate-prober")
     ])
-    (mkCommand "research" [ I T R ] [
+    (mkCommand "research" [ I T R C ] [
       (recursion "research/advance")
     ])
-    (mkCommand "research/advance" [ I T O D ] [
+    (mkCommand "research/advance" [ I T O D C ] [
       (dispatch "research-explorer")
       (dispatch "research-experimenter")
     ])
@@ -472,7 +491,11 @@ let
       ) role.fragmentBindings;
       bindingFragments = map (binding: binding.fragment) validatedBindings;
       expectedDifferences = unique (
-        map (binding: binding.intentionalDifference) validatedBindings
+        map (binding: binding.intentionalDifference) (
+          lib.filter (
+            binding: binding.fragment != "ledger-response-contract"
+          ) validatedBindings
+        )
       );
     in
     if !builtins.isAttrs role then
@@ -581,7 +604,9 @@ let
   catalogMetadataHash = builtins.hashString "sha256" catalogJson;
   promptFragmentSource =
     surface: role: binding:
-    if binding.fragment == X then
+    if binding.fragment == C then
+      "fragments/${binding.fragment}.md"
+    else if binding.fragment == X then
       "fragments/${surface}/agents/${role.roleId}/${binding.fragment}.md"
     else if surface == "claude" && binding.fragment == T then
       if role.roleKind == "dispatched-subagent" then

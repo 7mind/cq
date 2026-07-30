@@ -1072,6 +1072,29 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "ledger-response-contract",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "ledger item-read projection and mutation response contract",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -1490,6 +1513,29 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "ledger-response-contract",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "ledger item-read projection and mutation response contract",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -1711,6 +1757,29 @@ export const PROMPT_CATALOG_PROJECTION = {
             ]
           },
           "sourceBlock": "inline chained-command execution instructions",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "ledger-response-contract",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "ledger item-read projection and mutation response contract",
           "supportedSurfaces": [
             "claude",
             "codex",
@@ -2412,6 +2481,29 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "ledger-response-contract",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "ledger item-read projection and mutation response contract",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -2589,6 +2681,29 @@ export const PROMPT_CATALOG_PROJECTION = {
             ]
           },
           "sourceBlock": "subagent dispatch instructions and host transport branch",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [],
+            "codex": [],
+            "pi": []
+          },
+          "fragment": "ledger-response-contract",
+          "intentionalDifference": {
+            "kind": "tool-vocabulary",
+            "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "ledger item-read projection and mutation response contract",
           "supportedSurfaces": [
             "claude",
             "codex",
@@ -3363,7 +3478,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "de9504962f6255b8591ec081f59c606efaa814b50046ea805fb21a9b64b02732",
+  "catalogMetadataHash": "2523c8f67badc4fd27dcb4394aae7b40918b6023a7a09d19a4f31d49c3cb86b8",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -3588,6 +3703,28 @@ export const PROMPT_CATALOG_PROJECTION = {
       "intentionalDifference": {
         "kind": "tool-vocabulary",
         "reason": "Claude exposes ledger MCP calls through server-qualified names while Codex and Pi expose the callable tool names directly.",
+        "surfaces": [
+          "claude",
+          "codex",
+          "pi"
+        ]
+      },
+      "supportedSurfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    {
+      "forbiddenVocabulary": {
+        "claude": [],
+        "codex": [],
+        "pi": []
+      },
+      "fragment": "ledger-response-contract",
+      "intentionalDifference": {
+        "kind": "tool-vocabulary",
+        "reason": "Ledger read and mutation response rules use each host's surfaced ledger tools while preserving one operational contract.",
         "surfaces": [
           "claude",
           "codex",

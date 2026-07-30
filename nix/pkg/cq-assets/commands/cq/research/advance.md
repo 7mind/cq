@@ -6,6 +6,7 @@ argument-hint: <researchId>
 
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:operational-tool-vocabulary}}
+{{cq:fragment:ledger-response-contract}}
 
 ## Catalogue
 ```yaml

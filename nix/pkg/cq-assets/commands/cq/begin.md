@@ -6,6 +6,7 @@ argument-hint: "<mixed request>"
 
 {{cq:fragment:cq-command-invocation}}
 {{cq:fragment:inline-command-recursion}}
+{{cq:fragment:ledger-response-contract}}
 
 ## Catalogue
 ```yaml
