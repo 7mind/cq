@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "bun:test";
 import { LEDGER_CAPABILITY_TOOL_NAMES } from "../../cq-config/src/index.js";
@@ -8,6 +8,7 @@ const TARGET_PATH = resolve(
   import.meta.dir,
   "../../../scripts/baselines/t1326-tool-surface-target.json",
 );
+const REPO_ROOT = resolve(import.meta.dir, "../../../../../..");
 
 function sortedUnique(values: readonly string[]): string[] {
   return [...new Set(values)].sort();
@@ -32,7 +33,7 @@ test("the measured breaking-surface target is complete", async () => {
       coverage.callers.length > 0 &&
       coverage.documentation.length > 0 &&
       coverage.scanScope ===
-        "Every git-tracked and non-ignored untracked regular repository file, including root and hidden guidance." &&
+        "Every git-tracked regular repository file, including root and hidden guidance." &&
       [...coverage.historicalEvidence, ...coverage.targetEvidence].every(
         ({ justification }) => justification.length > 0,
       ) &&
@@ -40,17 +41,19 @@ test("the measured breaking-surface target is complete", async () => {
       JSON.stringify(categorized) === JSON.stringify(coverage.matchedPaths)
     );
   });
-  const liveGuidanceIsInventoried =
-    target.migrationMap.some(
-      ({ removedTool, coverage }) =>
-        removedTool === "create_milestone" &&
-        coverage.documentation.includes("CLAUDE.md") &&
-        coverage.documentation.includes(".codex/prompts/README.md"),
-    ) &&
-    target.migrationMap.some(
-      ({ removedTool, coverage }) =>
-        removedTool === "fetch_milestone" && coverage.documentation.includes("CLAUDE.md"),
-    );
+  const liveGuidanceIsInventoried = [target, measured].every(
+    ({ migrationMap }) =>
+      migrationMap.some(
+        ({ removedTool, coverage }) =>
+          removedTool === "create_milestone" &&
+          coverage.documentation.includes("CLAUDE.md") &&
+          coverage.documentation.includes(".codex/prompts/README.md"),
+      ) &&
+      migrationMap.some(
+        ({ removedTool, coverage }) =>
+          removedTool === "fetch_milestone" && coverage.documentation.includes("CLAUDE.md"),
+      ),
+  );
   const contract = {
     matchesCheckedInTarget: serializeToolSurfaceTarget(measured) === targetBytes,
     selectedChangesReduceWholeSerializations: target.selected.every(
@@ -105,4 +108,22 @@ test("the measured breaking-surface target is complete", async () => {
     everyRenameHasOneCompleteMigration: true,
     combinedTargetReducesWholeSurface: true,
   });
+});
+
+test("an unrelated untracked mention cannot change the checked-in target", async () => {
+  const targetBytes = readFileSync(TARGET_PATH, "utf8");
+  const untrackedPath = resolve(
+    REPO_ROOT,
+    `.t1326-untracked-migration-mention-${process.pid}.md`,
+  );
+  writeFileSync(
+    untrackedPath,
+    "Unrelated notes: create_milestone update_milestone fetch_milestone.\n",
+    { flag: "wx" },
+  );
+  try {
+    expect(serializeToolSurfaceTarget(await measureToolSurfaceTarget())).toBe(targetBytes);
+  } finally {
+    unlinkSync(untrackedPath);
+  }
 });

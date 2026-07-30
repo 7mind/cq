@@ -515,7 +515,7 @@ function evidenceRuleFor(
 function repositoryMigrationCandidatePaths(): string[] {
   return execFileSync(
     "git",
-    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+    ["ls-files", "--cached", "-z"],
     {
       cwd: REPO_ROOT,
       encoding: "utf8",
@@ -561,7 +561,7 @@ async function migrationMentions(toolName: string) {
   }
   return {
     scanScope:
-      "Every git-tracked and non-ignored untracked regular repository file, including root and hidden guidance.",
+      "Every git-tracked regular repository file, including root and hidden guidance.",
     matchedPaths: matches,
     historicalEvidence,
     targetEvidence,
