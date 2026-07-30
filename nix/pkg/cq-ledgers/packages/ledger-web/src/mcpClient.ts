@@ -26,6 +26,7 @@ import type {
   DerivedPredicates,
   FetchedLedger,
   FetchPromptResult,
+  FieldValue,
   FtsHit,
   Item,
   ItemInit,
@@ -224,25 +225,35 @@ export class McpLedgerClient implements LedgerClient {
     description?: string;
     id?: string;
   }): Promise<MilestoneMutationAckDto> {
-    const args: Record<string, unknown> = { title: init.title };
-    if (init.description !== undefined) args["description"] = init.description;
+    const fields: Record<string, FieldValue> = { title: init.title };
+    if (init.description !== undefined) fields["description"] = init.description;
+    const args: Record<string, unknown> = {
+      ledger_id: "milestones",
+      status: "open",
+      fields,
+      author: "user",
+    };
     if (init.id !== undefined) args["id"] = init.id;
-    return (await this.call<{ milestone: MilestoneMutationAckDto }>("create_milestone", args))
-      .milestone;
+    return (await this.call<{ item: ItemMutationAckDto }>("create_item", args)).item;
   }
 
   async updateMilestone(
     milestoneId: string,
     patch: MilestonePatch,
   ): Promise<MilestoneMutationAckDto> {
-    const args: Record<string, unknown> = { milestone_id: milestoneId };
+    const fields: Record<string, FieldValue> = {};
+    const args: Record<string, unknown> = {
+      ledger_id: "milestones",
+      item_id: milestoneId,
+      author: "user",
+    };
     if (patch.status !== undefined) args["status"] = patch.status;
-    if (patch.title !== undefined) args["title"] = patch.title;
-    if (patch.description !== undefined) args["description"] = patch.description;
-    if (patch.blockedBy !== undefined) args["blockedBy"] = patch.blockedBy;
-    if (patch.dependsOn !== undefined) args["dependsOn"] = patch.dependsOn;
-    return (await this.call<{ milestone: MilestoneMutationAckDto }>("update_milestone", args))
-      .milestone;
+    if (patch.title !== undefined) fields["title"] = patch.title;
+    if (patch.description !== undefined) fields["description"] = patch.description;
+    if (patch.blockedBy !== undefined) fields["blockedBy"] = patch.blockedBy;
+    if (patch.dependsOn !== undefined) fields["dependsOn"] = patch.dependsOn;
+    if (Object.keys(fields).length > 0) args["fields"] = fields;
+    return (await this.call<{ item: ItemMutationAckDto }>("update_item", args)).item;
   }
 
   async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {

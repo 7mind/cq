@@ -41,7 +41,9 @@ const dirs: string[] = [];
 const CQ_MAIN = path.resolve(import.meta.dir, "../../cq-cli/src/main.ts");
 
 afterAll(async () => {
-  await Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }).catch(() => undefined)));
+  await Promise.all(
+    dirs.map((d) => rm(d, { recursive: true, force: true }).catch(() => undefined)),
+  );
 });
 
 /** A throwaway initialised git repo (stable projectKey) with cq.toml selecting postgres. */
@@ -55,7 +57,11 @@ async function postgresRepo(): Promise<string> {
   await writeFile(path.join(dir, "README.md"), `# repo ${randomUUID()}\n`, "utf8");
   await exec("git", ["add", "README.md"], { cwd: dir });
   await exec("git", ["commit", "-q", "-m", "init"], { cwd: dir });
-  await writeFile(path.join(dir, "cq.toml"), '[ledger]\nbackend = "postgres"\nbackup = "none"\n', "utf8");
+  await writeFile(
+    path.join(dir, "cq.toml"),
+    '[ledger]\nbackend = "postgres"\nbackup = "none"\n',
+    "utf8",
+  );
   return dir;
 }
 
@@ -116,9 +122,11 @@ async function spawnMcpHttp(dir: string): Promise<McpHttpProc> {
 }
 
 function decode<T>(result: unknown): T {
-  const content = (result as { content: Array<{ type: string; text: string }>; isError?: boolean }).content;
+  const content = (result as { content: Array<{ type: string; text: string }>; isError?: boolean })
+    .content;
   const first = content[0];
-  if (first === undefined || first.type !== "text") throw new Error("expected single text content block");
+  if (first === undefined || first.type !== "text")
+    throw new Error("expected single text content block");
   return JSON.parse(first.text) as T;
 }
 
@@ -128,66 +136,67 @@ if (PG_URL === undefined || PG_URL.length === 0) {
   });
 } else {
   describe("cq mcp --http over backend='postgres' (T579)", () => {
-    it(
-      "a create_item over process A's --http session fires a changedFrame on process B's /ws",
-      async () => {
-        const dir = await postgresRepo();
-        const a = await spawnMcpHttp(dir);
-        const b = await spawnMcpHttp(dir);
+    it("a create_item over process A's --http session fires a changedFrame on process B's /ws", async () => {
+      const dir = await postgresRepo();
+      const a = await spawnMcpHttp(dir);
+      const b = await spawnMcpHttp(dir);
+      try {
+        const changed: string[] = [];
+        const ws = new WebSocket(`ws://127.0.0.1:${b.port}/ws`);
+        await new Promise<void>((resolve, reject) => {
+          ws.addEventListener("open", () => resolve());
+          ws.addEventListener("error", () => reject(new Error("process B ws failed to open")));
+        });
+        ws.addEventListener("message", (ev) => changed.push(String(ev.data)));
+
+        const transport = new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${a.port}/mcp`),
+        );
+        const client = new Client({ name: "t579-e2e", version: "0.0.1" }, { capabilities: {} });
+        await client.connect(transport as unknown as Transport);
         try {
-          const changed: string[] = [];
-          const ws = new WebSocket(`ws://127.0.0.1:${b.port}/ws`);
-          await new Promise<void>((resolve, reject) => {
-            ws.addEventListener("open", () => resolve());
-            ws.addEventListener("error", () => reject(new Error("process B ws failed to open")));
-          });
-          ws.addEventListener("message", (ev) => changed.push(String(ev.data)));
-
-          const transport = new StreamableHTTPClientTransport(
-            new URL(`http://127.0.0.1:${a.port}/mcp`),
+          const msId = `M${Math.floor(Math.random() * 1_000_000) + 10_000}`;
+          const ms = decode<{ item: { id: string } }>(
+            await client.callTool({
+              name: "create_item",
+              arguments: {
+                ledger_id: "milestones",
+                id: msId,
+                status: "open",
+                fields: { title: "T579 postgres http e2e" },
+              },
+            }),
           );
-          const client = new Client({ name: "t579-e2e", version: "0.0.1" }, { capabilities: {} });
-          await client.connect(transport as unknown as Transport);
-          try {
-            const msId = `M${Math.floor(Math.random() * 1_000_000) + 10_000}`;
-            const ms = decode<{ milestone: { id: string } }>(
-              await client.callTool({
-                name: "create_milestone",
-                arguments: { id: msId, title: "T579 postgres http e2e" },
-              }),
-            );
-            expect(ms.milestone.id).toBe(msId);
+          expect(ms.item.id).toBe(msId);
 
-            const created = decode<{ item: { id: string } }>(
-              await client.callTool({
-                name: "create_item",
-                arguments: {
-                  ledger_id: "tasks",
-                  milestone_id: msId,
-                  status: "planned",
-                  fields: { headline: "e2e task" },
-                },
-              }),
-            );
-            expect(created.item.id).toMatch(/^T\d+$/);
-          } finally {
-            await client.close();
-          }
-
-          const start = Date.now();
-          while (changed.length === 0 && Date.now() - start < 5_000) {
-            await new Promise((r) => setTimeout(r, 20));
-          }
-          ws.close();
-
-          expect(changed.length).toBeGreaterThan(0);
-          expect(JSON.parse(changed[0] ?? "{}")).toEqual({ type: "changed" });
+          const created = decode<{ item: { id: string } }>(
+            await client.callTool({
+              name: "create_item",
+              arguments: {
+                ledger_id: "tasks",
+                milestone_id: msId,
+                status: "planned",
+                fields: { headline: "e2e task" },
+              },
+            }),
+          );
+          expect(created.item.id).toMatch(/^T\d+$/);
         } finally {
-          a.stop();
-          b.stop();
+          await client.close();
         }
-      },
-      15_000,
-    );
+
+        const start = Date.now();
+        while (changed.length === 0 && Date.now() - start < 5_000) {
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        ws.close();
+
+        expect(changed.length).toBeGreaterThan(0);
+        expect(JSON.parse(changed[0] ?? "{}")).toEqual({ type: "changed" });
+      } finally {
+        a.stop();
+        b.stop();
+      }
+    }, 15_000);
   });
 }

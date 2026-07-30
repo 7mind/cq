@@ -50,9 +50,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await Promise.all(
-    temporaryRoots.map((root) => fs.rm(root, { recursive: true, force: true })),
-  );
+  await Promise.all(temporaryRoots.map((root) => fs.rm(root, { recursive: true, force: true })));
 });
 
 async function makeDirectory(prefix: string): Promise<string> {
@@ -248,9 +246,7 @@ async function spawnWeb(
   const timeout = new Promise<never>((_, reject) =>
     setTimeout(
       () =>
-        reject(
-          new Error(`serve.ts did not emit a URL within 30s; stderr: ${stderrBuf.join("")}`),
-        ),
+        reject(new Error(`serve.ts did not emit a URL within 30s; stderr: ${stderrBuf.join("")}`)),
       30_000,
     ),
   );
@@ -331,18 +327,15 @@ describe("cq web whole-store startup composition (T838)", () => {
       const xdgHome = await makeDirectory("ledger-web-whole-xdg-");
       const outdir = await makeDirectory("ledger-web-whole-out-");
 
-      const web = await spawnWeb(
-        ["--backend=xdg", "--store", storeRoot, "--cwd", hintRepo],
-        {
-          XDG_STATE_HOME: xdgHome,
-          LEDGER_WEB_OUTDIR: outdir,
-          // Poisoned auth/PostgreSQL environment: any read of these would
-          // challenge or fail the startup — startup must succeed regardless.
-          CQ_SERVE_TOKEN: "must-not-be-read",
-          CQ_LEDGER_PG_URL: "postgres://must-not-be-read.invalid/env",
-          DATABASE_URL: "postgres://must-not-be-read.invalid/database",
-        },
-      );
+      const web = await spawnWeb(["--backend=xdg", "--store", storeRoot, "--cwd", hintRepo], {
+        XDG_STATE_HOME: xdgHome,
+        LEDGER_WEB_OUTDIR: outdir,
+        // Poisoned auth/PostgreSQL environment: any read of these would
+        // challenge or fail the startup — startup must succeed regardless.
+        CQ_SERVE_TOKEN: "must-not-be-read",
+        CQ_LEDGER_PG_URL: "postgres://must-not-be-read.invalid/env",
+        DATABASE_URL: "postgres://must-not-be-read.invalid/database",
+      });
       expect(web.url).toBe(`http://127.0.0.1:${WHOLE_STORE_PORT}/`);
 
       // No auth challenge on the MCP surface (Q335: no authentication, as in
@@ -371,8 +364,13 @@ describe("cq web whole-store startup composition (T838)", () => {
       const hinted = await connectMcp(web.url, "/p/zzz-hint/mcp", "hinted");
       try {
         await hinted.callTool({
-          name: "create_milestone",
-          arguments: { id: "M900", title: "via whole-store" },
+          name: "create_item",
+          arguments: {
+            ledger_id: "milestones",
+            id: "M900",
+            status: "open",
+            fields: { title: "via whole-store" },
+          },
         });
         const ledgers = decode<{ ledgers: string[] }>(
           await hinted.callTool({ name: "enumerate_ledgers", arguments: {} }),
@@ -397,9 +395,7 @@ describe("cq web whole-store startup composition (T838)", () => {
       expect(stderr).toContain(
         "ledger-web: serving 2 project(s): aaa-other (alpha-first), zzz-hint (omega-hint)",
       );
-      expect(stderr).toContain(
-        `→ XDG store ${storeRoot} (initial project: zzz-hint (omega-hint))`,
-      );
+      expect(stderr).toContain(`→ XDG store ${storeRoot} (initial project: zzz-hint (omega-hint))`);
     },
     PROCESS_TIMEOUT_MS,
   );
@@ -419,10 +415,10 @@ describe("cq web whole-store startup composition (T838)", () => {
       const outdir = await makeDirectory("ledger-web-implicit-out-");
       const port = await freePort();
 
-      const web = await spawnWeb(
-        ["--cwd", cwd, "--port", String(port)],
-        { XDG_STATE_HOME: xdgHome, LEDGER_WEB_OUTDIR: outdir },
-      );
+      const web = await spawnWeb(["--cwd", cwd, "--port", String(port)], {
+        XDG_STATE_HOME: xdgHome,
+        LEDGER_WEB_OUTDIR: outdir,
+      });
       expect(web.url).toBe(`http://127.0.0.1:${port}/`);
 
       const client = await connectMcp(web.url, "/mcp", "implicit");
@@ -468,10 +464,10 @@ describe("cq web whole-store startup composition (T838)", () => {
         fetch: () => new Response("occupied"),
       });
       try {
-        const web = await spawnWeb(
-          ["--backend=xdg", "--store", projectsRoot, "--cwd", cwd],
-          { XDG_STATE_HOME: xdgHome, LEDGER_WEB_OUTDIR: outdir },
-        );
+        const web = await spawnWeb(["--backend=xdg", "--store", projectsRoot, "--cwd", cwd], {
+          XDG_STATE_HOME: xdgHome,
+          LEDGER_WEB_OUTDIR: outdir,
+        });
         expect(web.url).toBe(`http://127.0.0.1:${WHOLE_STORE_PORT + 1}/`);
         web.proc.kill();
         await web.proc.exited;
@@ -507,15 +503,7 @@ describe("cq web whole-store startup composition (T838)", () => {
       }
       try {
         const result = await spawnExpectFailure(
-          [
-            "--backend=xdg",
-            "--store",
-            projectsRoot,
-            "--cwd",
-            cwd,
-            "--port",
-            String(basePort),
-          ],
+          ["--backend=xdg", "--store", projectsRoot, "--cwd", cwd, "--port", String(basePort)],
           { XDG_STATE_HOME: xdgHome, LEDGER_WEB_OUTDIR: outdir },
         );
         expect(result.code).toBe(1);
@@ -599,10 +587,10 @@ describe("cq web whole-store startup composition (T838)", () => {
       const xdgHome = await makeDirectory("ledger-web-embedded-xdg-");
       const outdir = await makeDirectory("ledger-web-embedded-out-");
       const port = await freePort();
-      const web = await spawnWeb(
-        ["--cwd", repo, "--port", String(port)],
-        { XDG_STATE_HOME: xdgHome, LEDGER_WEB_OUTDIR: outdir },
-      );
+      const web = await spawnWeb(["--cwd", repo, "--port", String(port)], {
+        XDG_STATE_HOME: xdgHome,
+        LEDGER_WEB_OUTDIR: outdir,
+      });
       expect(web.url).toBe(`http://127.0.0.1:${port}/`);
       const index = await fetch(web.url);
       expect(index.status).toBe(200);
@@ -622,10 +610,9 @@ describe("cq web whole-store startup composition (T838)", () => {
       const port = await freePort();
       const upstreamPort = await freePort(); // nothing listens: proxy must 502
       const upstream = `http://127.0.0.1:${upstreamPort}/mcp`;
-      const web = await spawnWeb(
-        ["--mcp-url", upstream, "--cwd", repo, "--port", String(port)],
-        { LEDGER_WEB_OUTDIR: outdir },
-      );
+      const web = await spawnWeb(["--mcp-url", upstream, "--cwd", repo, "--port", String(port)], {
+        LEDGER_WEB_OUTDIR: outdir,
+      });
       expect(web.url).toBe(`http://127.0.0.1:${port}/`);
       const index = await fetch(web.url);
       expect(index.status).toBe(200);

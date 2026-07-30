@@ -1,6 +1,6 @@
 #!/usr/bin/env -S bun run
 /**
- * ledger-mcp — standalone MCP server exposing the 32 ledger tools.
+ * ledger-mcp — standalone MCP server exposing the 29 ledger tools.
  *
  * This is the cq-free ledger MCP server: it serves the tool surface backed
  * by the store `createLedgerStore` resolves for the supplied `--cwd` directory
@@ -58,7 +58,6 @@ import {
   nodeGitRunner,
   createLedgerMcpToolSpecifications,
   FULL_LEDGER_TOOL_PROFILE,
-  LEDGER_TOOL_NAMES,
   ledgerToolNamesForProfile,
   registerLedgerStdioToolSpecifications,
   selectLedgerMcpToolSpecifications,
@@ -68,10 +67,7 @@ import {
   type LedgerToolProfileName,
 } from "@cq/ledger";
 import { createConfigCapability } from "./configCapability.js";
-import {
-  createSingleProjectDispatchRuntime,
-  type DispatchRuntime,
-} from "./dispatchCapability.js";
+import { createSingleProjectDispatchRuntime, type DispatchRuntime } from "./dispatchCapability.js";
 export {
   DISPATCH_RUNTIME_DEFERRAL_DISCHARGE,
   createDispatchCapability,
@@ -289,65 +285,11 @@ export const TOP_LEVEL_USAGE = [
  * instructions (e.g. CLAUDE.md).
  */
 const SERVER_INSTRUCTIONS_TEMPLATE = [
-  "This server is a markdown-backed planning ledger. Use it to track work as",
-  "structured items instead of scratch notes or ad-hoc TODO files.",
+  "Markdown-backed typed ledgers. Milestones form dependency DAGs; other items attach to milestones. Discover schemas with enumerate_ledgers. Write schema-valid items with author/session provenance; recognized ledger references are canonicalized on write.",
   "",
-  "Model: a `milestones` ledger holds milestones (which form a DAG via",
-  "dependsOn/blockedBy); other ledgers (tasks, defects, hypothesis, questions,",
-  "decisions, goals, researches) hold typed items, each attached to a milestone.",
+  "Reads require compact or full projection. Paginate fetch_ledger until nextOffset is null. fts_search spans active ledgers by default and accepts field qualifiers; terminal items remain active until archive_milestone sweeps a fully terminal milestone.",
   "",
-  "When to use it:",
-  "- At the start of multi-step work: create a milestone, then create_item the",
-  "  tasks/defects/etc. under it.",
-  "- As work proceeds: update_item status (e.g. planned→wip→done) so the ledger",
-  "  reflects reality; record findings as hypothesis/decision/question items.",
-  "- Before acting: fts_search / fetch_ledger to see what already exists; do not",
-  "  duplicate an existing item. fts_search accepts filters, e.g.",
-  "  `status:wip ledger:tasks`, `(status:done OR status:wip)`, `author:user`.",
-  "- On completion: mark items terminal and archive_milestone once all its items",
-  "  are terminal.",
-  "",
-  "Conventions: keep one item per discrete unit of work; put detail in the",
-  "item's fields (markdown is supported); use enumerate_ledgers to discover",
-  "ledgers and their schemas before creating items.",
-  "",
-  "Provenance: on every create_item / update_item, set `author` to your model",
-  'class (e.g. "opus-4.8[1m]") and `session` to your CLAUDE_CODE_SESSION_ID so',
-  "the ledger records who wrote each item. Human edits via the TUI/web editor",
-  'set author to "user". These are optional intrinsic fields — not schema',
-  "fields — so they apply to every ledger and never need a schema change.",
-  "",
-  "Response contract:",
-  "- fetch_ledger, fetch_item, search_items, fts_search, fetch_milestone, and",
-  "  list_milestone_items require projection:compact or projection:full.",
-  "  Compact is for discovery/status/reference work; full is for narrative.",
-  "- create_item, update_item, create_ledger, create_milestone,",
-  "  update_milestone, reopen_item, and unarchive_item return fixed",
-  "  acknowledgements, not full entities. Use their ids/status/canonical refs;",
-  "  fetch explicitly with projection:full only when narrative is needed.",
-  "- Paginate fetch_ledger with offset/limit and follow nextOffset until null.",
-  "  This is a breaking contract with no default projection or legacy mode.",
-  "",
-  "fts_search query notes:",
-  "- Two paths for status filtering: (a) dedicated `status` param — a single",
-  "  exact value pre-filtered before ranking; (b) inline status: qualifier in",
-  "  the query string. Combine freely: status='wip' + query='ledger:tasks auth'.",
-  "- OR-of-qualifiers work: '(status:open OR status:wip)' uses the structured",
-  "  evaluator (not the MiniSearch fast path) and returns all matching items.",
-  "- Active vs archived: fts_search covers active items by default; pass",
-  "  include_archived:true to also search milestone-group archives.",
-  "- Terminal vs active: terminalStatuses (done/resolved/abandoned etc.) are",
-  "  still active (searchable, editable) until archive_milestone is called.",
-  "  Use -status:done to exclude terminal items from results.",
-  "",
-  "Quick overview tools:",
-  "- snapshot() — compact {id,status,summary} cross-ledger state in one call.",
-  "- derive_predicates() — the /cq:advance flow-detection predicates",
-  "  { pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate,",
-  "  belowFloor, planBusy, goalDrift } in one call; read these instead of hand-deriving",
-  "  actionability from snapshot.",
-  '- fetch_ledger with projection:"compact" — strips long narrative fields to avoid',
-  "  token-overflow on large ledgers. Combine with offset/limit for pagination.",
+  "Use snapshot and derive_predicates for CQ flow state. Dispatch and plan-lifecycle tools retain their capability, generation, fence, recovery, and idempotency contracts; preserve exact identifiers returned by those tools.",
 ].join("\n");
 
 /** Escape a string for safe use as a literal inside a RegExp. */
@@ -379,27 +321,14 @@ export function buildServerInstructions(
   availableToolNames: readonly LedgerToolName[] = ledgerToolNamesForProfile(profileName),
 ): string {
   assertToolPrefix(toolPrefix);
-  if (profileName === FULL_LEDGER_TOOL_PROFILE) {
-    if (toolPrefix === "") return SERVER_INSTRUCTIONS_TEMPLATE;
-    // Longest names first so a shorter name that is a leading substring of a
-    // longer one does not consume the longer name's token.
-    const names = [...LEDGER_TOOL_NAMES].sort((a, b) => b.length - a.length);
-    let text = SERVER_INSTRUCTIONS_TEMPLATE;
-    for (const name of names) {
-      const pattern = new RegExp(`\\b${escapeRegExp(name)}\\b`, "g");
-      text = text.replace(pattern, prefixToolName(toolPrefix, name));
-    }
-    return text;
+  if (toolPrefix === "") return SERVER_INSTRUCTIONS_TEMPLATE;
+  const names = [...availableToolNames].sort((a, b) => b.length - a.length);
+  let text = SERVER_INSTRUCTIONS_TEMPLATE;
+  for (const name of names) {
+    const pattern = new RegExp(`\\b${escapeRegExp(name)}\\b`, "g");
+    text = text.replace(pattern, prefixToolName(toolPrefix, name));
   }
-
-  const profileTools = availableToolNames.map((name) => prefixToolName(toolPrefix, name));
-  if (profileTools.length === 0) {
-    return `Ledger tool profile ${JSON.stringify(profileName)} exposes no tools.`;
-  }
-  return [
-    `Ledger tool profile ${JSON.stringify(profileName)} exposes only:`,
-    ...profileTools.map((name) => `- ${name}`),
-  ].join("\n");
+  return text;
 }
 
 /**
@@ -414,7 +343,7 @@ export function projectInstructionLine(displayName: string): string {
 }
 
 /**
- * Build a fresh McpServer with the 32 ledger tools (LEDGER_TOOL_NAMES) bound to
+ * Build a fresh McpServer with the 29 ledger tools bound to
  * `store`. read_log is wired only when `store` is filesystem-backed.
  *
  * `displayName` is the basename of the resolved `--cwd` (the project directory

@@ -8,8 +8,8 @@
  * Proves that the tool-prefix mechanism delivers process-level co-residency:
  *  (1) the two tools/list name sets are DISJOINT — zero collision;
  *  (2) each server exposes its prefixed or unprefixed non-dispatch surface;
- *  (3) BOTH servers are functional end-to-end — a real `create_milestone` +
- *      `create_item` ack plus compact and full `fetch_item` round-trips on
+ *  (3) BOTH servers are functional end-to-end — generic root and ordinary
+ *      `create_item` acks plus compact and full `fetch_item` round-trips on
  *      EACH (the prefixed one via `myproj_*` names) return correct, non-error
  *      results, proving the
  *      prefixed server's handlers — not just its registrations — still work.
@@ -21,11 +21,7 @@
 import { describe, it, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import {
-  InMemoryLedgerStore,
-  NON_DISPATCH_LEDGER_TOOL_NAMES,
-  type LedgerStore,
-} from "@cq/ledger";
+import { InMemoryLedgerStore, NON_DISPATCH_LEDGER_TOOL_NAMES, type LedgerStore } from "@cq/ledger";
 import { createLedgerMcpServer } from "../src/main.js";
 
 const MYPROJ_PREFIX = "myproj";
@@ -86,13 +82,18 @@ function toolName(prefix: string, bare: string): string {
  * live and their projection contract survives the name transform.
  */
 async function exerciseRoundTrip(client: Client, prefix: string): Promise<void> {
-  const ms = decode<{ milestone: { id: string } }>(
+  const ms = decode<{ item: { id: string } }>(
     await client.callTool({
-      name: toolName(prefix, "create_milestone"),
-      arguments: { id: "M1", title: "co-resident round-trip" },
+      name: toolName(prefix, "create_item"),
+      arguments: {
+        ledger_id: "milestones",
+        id: "M1",
+        status: "open",
+        fields: { title: "co-resident round-trip" },
+      },
     }),
   );
-  expect(ms.milestone.id).toBe("M1");
+  expect(ms.item.id).toBe("M1");
 
   const created = decode<{
     item: { id: string; status: string; fields: Record<string, never> };
@@ -149,12 +150,8 @@ describe("two prefixed ledger-MCP servers in one process (T380 / Q211)", () => {
       toolPrefix: MYPROJ_PREFIX,
     });
     try {
-      const cqNames = (await cqlike.client.listTools()).tools
-        .map((t) => t.name)
-        .sort();
-      const ppNames = (await thirdparty.client.listTools()).tools
-        .map((t) => t.name)
-        .sort();
+      const cqNames = (await cqlike.client.listTools()).tools.map((t) => t.name).sort();
+      const ppNames = (await thirdparty.client.listTools()).tools.map((t) => t.name).sort();
 
       // (1) Zero collision: the two name sets are disjoint.
       const cqSet = new Set(cqNames);

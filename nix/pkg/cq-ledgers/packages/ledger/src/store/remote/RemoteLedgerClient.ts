@@ -207,22 +207,26 @@ export interface RemoteItemPatch {
   readonly session?: string;
 }
 
-/** `create_milestone` input (mirrors the tool schema). */
+/** Root-milestone creation input for the generic item tool. */
 export interface RemoteMilestoneInit {
   readonly title: string;
   readonly description?: string;
   readonly blockedBy?: string[];
   readonly dependsOn?: string[];
   readonly id?: string;
+  readonly author?: string;
+  readonly session?: string;
 }
 
-/** `update_milestone` patch (mirrors the tool schema). */
+/** Root-milestone update patch for the generic item tool. */
 export interface RemoteMilestonePatch {
   readonly status?: string;
   readonly title?: string;
   readonly description?: string;
   readonly blockedBy?: string[];
   readonly dependsOn?: string[];
+  readonly author?: string;
+  readonly session?: string;
 }
 
 /** `fts_search` optional params (mirrors the tool schema). */
@@ -415,10 +419,7 @@ export class RemoteLedgerClient {
     return await this.call<LedgerSummariesResult>("enumerate_ledgers", {});
   }
 
-  async fetchLedger(
-    ledgerId: string,
-    projection: ItemProjection,
-  ): Promise<FetchedLedgerDto> {
+  async fetchLedger(ledgerId: string, projection: ItemProjection): Promise<FetchedLedgerDto> {
     return (
       await this.call<{ ledger: FetchedLedgerDto }>("fetch_ledger", {
         ledger_id: ledgerId,
@@ -438,10 +439,7 @@ export class RemoteLedgerClient {
     return await this.call<PaginatedLedgerDto>("fetch_ledger", args);
   }
 
-  async fetchLedgerArchive(
-    ledgerId: string,
-    archiveId: string,
-  ): Promise<ArchiveContent> {
+  async fetchLedgerArchive(ledgerId: string, archiveId: string): Promise<ArchiveContent> {
     return (
       await this.call<{ archive: ArchiveContent }>("fetch_ledger_archive", {
         ledger_id: ledgerId,
@@ -450,11 +448,7 @@ export class RemoteLedgerClient {
     ).archive;
   }
 
-  async fetchItem(
-    ledgerId: string,
-    itemId: string,
-    projection: ItemProjection,
-  ): Promise<ItemDto> {
+  async fetchItem(ledgerId: string, itemId: string, projection: ItemProjection): Promise<ItemDto> {
     return (
       await this.call<{ item: ItemDto }>("fetch_item", {
         ledger_id: ledgerId,
@@ -492,9 +486,7 @@ export class RemoteLedgerClient {
     if (opts?.includeArchived !== undefined) {
       args["include_archived"] = opts.includeArchived;
     }
-    return (
-      await this.call<{ results: FtsSearchResultDto[] }>("fts_search", args)
-    ).results;
+    return (await this.call<{ results: FtsSearchResultDto[] }>("fts_search", args)).results;
   }
 
   async snapshot(): Promise<LedgerSnapshot> {
@@ -509,10 +501,20 @@ export class RemoteLedgerClient {
     milestoneId: string,
     projection: ItemProjection,
   ): Promise<FetchedMilestoneDto> {
-    return await this.call<FetchedMilestoneDto>("fetch_milestone", {
-      milestone_id: milestoneId,
+    const fetched = await this.call<{
+      item: FetchedMilestoneDto["milestone"];
+      resolved: FetchedMilestoneDto["resolved"];
+      references: FetchedMilestoneDto["references"];
+    }>("fetch_item", {
+      ledger_id: "milestones",
+      item_id: milestoneId,
       projection,
     });
+    return {
+      milestone: fetched.item,
+      resolved: fetched.resolved,
+      references: fetched.references,
+    };
   }
 
   async listMilestoneItems(
@@ -520,10 +522,10 @@ export class RemoteLedgerClient {
     projection: ItemProjection,
   ): Promise<MilestoneItemGroupsDto> {
     return (
-      await this.call<{ items: MilestoneItemGroupsDto }>(
-        "list_milestone_items",
-        { milestone_id: milestoneId, projection },
-      )
+      await this.call<{ items: MilestoneItemGroupsDto }>("list_milestone_items", {
+        milestone_id: milestoneId,
+        projection,
+      })
     ).items;
   }
 
@@ -551,9 +553,7 @@ export class RemoteLedgerClient {
     if (init.id !== undefined) args["id"] = init.id;
     if (init.author !== undefined) args["author"] = init.author;
     if (init.session !== undefined) args["session"] = init.session;
-    return (
-      await this.call<{ item: ItemMutationAckDto }>("create_item", args)
-    ).item;
+    return (await this.call<{ item: ItemMutationAckDto }>("create_item", args)).item;
   }
 
   async updateItem(
@@ -569,49 +569,46 @@ export class RemoteLedgerClient {
     if (patch.fields !== undefined) args["fields"] = patch.fields;
     if (patch.author !== undefined) args["author"] = patch.author;
     if (patch.session !== undefined) args["session"] = patch.session;
-    return (
-      await this.call<{ item: ItemMutationAckDto }>("update_item", args)
-    ).item;
+    return (await this.call<{ item: ItemMutationAckDto }>("update_item", args)).item;
   }
 
-  async createMilestone(
-    init: RemoteMilestoneInit,
-  ): Promise<MilestoneMutationAckDto> {
-    const args: Record<string, unknown> = { title: init.title };
-    if (init.description !== undefined) args["description"] = init.description;
-    if (init.blockedBy !== undefined) args["blockedBy"] = init.blockedBy;
-    if (init.dependsOn !== undefined) args["dependsOn"] = init.dependsOn;
+  async createMilestone(init: RemoteMilestoneInit): Promise<MilestoneMutationAckDto> {
+    const fields: Record<string, FieldValue> = { title: init.title };
+    if (init.description !== undefined) fields["description"] = init.description;
+    if (init.blockedBy !== undefined) fields["blockedBy"] = init.blockedBy;
+    if (init.dependsOn !== undefined) fields["dependsOn"] = init.dependsOn;
+    const args: Record<string, unknown> = {
+      ledger_id: "milestones",
+      status: "open",
+      fields,
+    };
     if (init.id !== undefined) args["id"] = init.id;
-    return (
-      await this.call<{ milestone: MilestoneMutationAckDto }>(
-        "create_milestone",
-        args,
-      )
-    ).milestone;
+    if (init.author !== undefined) args["author"] = init.author;
+    if (init.session !== undefined) args["session"] = init.session;
+    return (await this.call<{ item: ItemMutationAckDto }>("create_item", args)).item;
   }
 
   async updateMilestone(
     milestoneId: string,
     patch: RemoteMilestonePatch,
   ): Promise<MilestoneMutationAckDto> {
-    const args: Record<string, unknown> = { milestone_id: milestoneId };
+    const fields: Record<string, FieldValue> = {};
+    const args: Record<string, unknown> = {
+      ledger_id: "milestones",
+      item_id: milestoneId,
+    };
     if (patch.status !== undefined) args["status"] = patch.status;
-    if (patch.title !== undefined) args["title"] = patch.title;
-    if (patch.description !== undefined) args["description"] = patch.description;
-    if (patch.blockedBy !== undefined) args["blockedBy"] = patch.blockedBy;
-    if (patch.dependsOn !== undefined) args["dependsOn"] = patch.dependsOn;
-    return (
-      await this.call<{ milestone: MilestoneMutationAckDto }>(
-        "update_milestone",
-        args,
-      )
-    ).milestone;
+    if (patch.title !== undefined) fields["title"] = patch.title;
+    if (patch.description !== undefined) fields["description"] = patch.description;
+    if (patch.blockedBy !== undefined) fields["blockedBy"] = patch.blockedBy;
+    if (patch.dependsOn !== undefined) fields["dependsOn"] = patch.dependsOn;
+    if (Object.keys(fields).length > 0) args["fields"] = fields;
+    if (patch.author !== undefined) args["author"] = patch.author;
+    if (patch.session !== undefined) args["session"] = patch.session;
+    return (await this.call<{ item: ItemMutationAckDto }>("update_item", args)).item;
   }
 
-  async archiveMilestone(
-    milestoneId: string,
-    summary: string,
-  ): Promise<ArchivePointer> {
+  async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {
     return (
       await this.call<{ pointer: ArchivePointer }>("archive_milestone", {
         milestone_id: milestoneId,

@@ -54,9 +54,7 @@ export type { FtsSearchHit, FtsSearchOpts } from "../search/LedgerSearchIndex.js
  *  - `"group"` — a whole milestone-group archive (non-milestones ledgers).
  *  - `"item"`  — a single milestone-item archive (milestones ledger).
  */
-export type ArchiveContent =
-  | { kind: "group"; milestone: Milestone }
-  | { kind: "item"; item: Item };
+export type ArchiveContent = { kind: "group"; milestone: Milestone } | { kind: "item"; item: Item };
 
 /**
  * Operation that triggered a mutation. Used by the `onMutation` hook
@@ -104,6 +102,8 @@ export interface CreateMilestoneItemInit {
   description?: string;
   blockedBy?: string[];
   dependsOn?: string[];
+  author?: string;
+  session?: string;
 }
 
 /**
@@ -117,6 +117,8 @@ export interface UpdateMilestoneItemPatch {
   description?: string;
   blockedBy?: string[];
   dependsOn?: string[];
+  author?: string;
+  session?: string;
 }
 
 /**
@@ -197,16 +199,9 @@ export interface LedgerStore {
    * Update a milestone-item in the milestones ledger.
    * Holds the `__milestones__` global lock.
    */
-  updateMilestone(
-    milestoneId: string,
-    patch: UpdateMilestoneItemPatch,
-  ): Promise<Item>;
+  updateMilestone(milestoneId: string, patch: UpdateMilestoneItemPatch): Promise<Item>;
 
-  updateItem(
-    ledgerId: string,
-    itemId: string,
-    patch: UpdateItemPatch,
-  ): Promise<Item>;
+  updateItem(ledgerId: string, itemId: string, patch: UpdateItemPatch): Promise<Item>;
 
   /**
    * Create an item in `ledgerId` under depth-2 group `milestoneId`.
@@ -216,11 +211,7 @@ export interface LedgerStore {
    * Holds the `__milestones__` global lock AND the per-ledger lock for
    * `ledgerId` (alphabetic order after `__milestones__`).
    */
-  createItem(
-    ledgerId: string,
-    milestoneId: string,
-    init: CreateItemInit,
-  ): Promise<Item>;
+  createItem(ledgerId: string, milestoneId: string, init: CreateItemInit): Promise<Item>;
 
   /**
    * Create a new milestone-item in the milestones ledger.
@@ -245,11 +236,7 @@ export interface LedgerStore {
    *
    * Holds the per-ledger lock for `ledgerId`.
    */
-  reopenItem(
-    ledgerId: string,
-    itemId: string,
-    toStatus: string,
-  ): Promise<Item>;
+  reopenItem(ledgerId: string, itemId: string, toStatus: string): Promise<Item>;
 
   /**
    * Un-archive a single item out of an archived milestone-GROUP (Q78).
@@ -275,11 +262,7 @@ export interface LedgerStore {
    *
    * Holds the per-ledger lock for `ledgerId`.
    */
-  unarchiveItem(
-    ledgerId: string,
-    milestoneId: string,
-    itemId: string,
-  ): Promise<Item>;
+  unarchiveItem(ledgerId: string, milestoneId: string, itemId: string): Promise<Item>;
 
   /**
    * Archive a milestone across all ledgers (Q6 — two-level atomic):

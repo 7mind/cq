@@ -30,11 +30,7 @@ import { openPgPool, ensureSchema, PostgresLedgerStore } from "@cq/ledger";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import {
-  matchProjectRoute,
-  hubTopic,
-  PROJECT_DISPLAY_NAME_HEADER,
-} from "../src/hubServe.js";
+import { matchProjectRoute, hubTopic, PROJECT_DISPLAY_NAME_HEADER } from "../src/hubServe.js";
 
 describe("matchProjectRoute", () => {
   it("parses /p/<key>/mcp and /p/<key>/ws", () => {
@@ -47,7 +43,15 @@ describe("matchProjectRoute", () => {
   });
 
   it("returns null for non-per-project paths", () => {
-    for (const p of ["/", "/api/projects", "/p/abc", "/p/abc/", "/p//mcp", "/p/abc/other", "/p/abc/mcp/x"]) {
+    for (const p of [
+      "/",
+      "/api/projects",
+      "/p/abc",
+      "/p/abc/",
+      "/p//mcp",
+      "/p/abc/other",
+      "/p/abc/mcp/x",
+    ]) {
       expect(matchProjectRoute(p)).toBeNull();
     }
   });
@@ -68,7 +72,8 @@ const hubMain = path.resolve(here, "..", "src", "hubServe.ts");
 function decode<T>(result: unknown): T {
   const content = (result as { content: Array<{ type: string; text: string }> }).content;
   const first = content[0];
-  if (first === undefined || first.type !== "text") throw new Error("expected single text content block");
+  if (first === undefined || first.type !== "text")
+    throw new Error("expected single text content block");
   return JSON.parse(first.text) as T;
 }
 
@@ -87,7 +92,9 @@ async function registerTenant(key: string, displayName: string): Promise<void> {
 
 /** Connect an MCP client to a per-project endpoint `http://host:port/p/<key>/mcp`. */
 async function connectMcp(base: string, key: string, name: string): Promise<Client> {
-  const transport = new StreamableHTTPClientTransport(new URL(`${base}/p/${encodeURIComponent(key)}/mcp`));
+  const transport = new StreamableHTTPClientTransport(
+    new URL(`${base}/p/${encodeURIComponent(key)}/mcp`),
+  );
   const client = new Client({ name, version: "0.0.1" }, { capabilities: {} });
   await client.connect(transport as unknown as Transport);
   return client;
@@ -132,7 +139,17 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
     await registerTenant(keyB, `Tenant B ${tag}`);
 
     const p = bunSpawn({
-      cmd: [process.execPath, "run", hubMain, "--pg-url", PG_URL!, "--host", "127.0.0.1", "--port", "0"],
+      cmd: [
+        process.execPath,
+        "run",
+        hubMain,
+        "--pg-url",
+        PG_URL!,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "0",
+      ],
       cwd: os.tmpdir(),
       env: { ...process.env, LEDGER_WEB_OUTDIR: outdir },
       stdout: "pipe",
@@ -174,8 +191,16 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
     let itemId: string;
     try {
       const msId = `M${Math.floor(Math.random() * 1_000_000) + 10_000}`;
-      decode<{ milestone: { id: string } }>(
-        await s1.callTool({ name: "create_milestone", arguments: { id: msId, title: "T587 isolation" } }),
+      decode<{ item: { id: string } }>(
+        await s1.callTool({
+          name: "create_item",
+          arguments: {
+            ledger_id: "milestones",
+            id: msId,
+            status: "open",
+            fields: { title: "T587 isolation" },
+          },
+        }),
       );
       const created = decode<{
         item: { id: string; fields: Record<string, never> };
@@ -259,8 +284,16 @@ describe.skipIf(!PG_URL)("cq serve — per-project routing over live Postgres (T
     const s1 = await connectMcp(base, keyA, "t726-a1");
     const s2 = await connectMcp(base, keyA, "t726-a2");
     const msId = `M${Math.floor(Math.random() * 1_000_000) + 10_000}`;
-    decode<{ milestone: { id: string } }>(
-      await s1.callTool({ name: "create_milestone", arguments: { id: msId, title: "T726 publish" } }),
+    decode<{ item: { id: string } }>(
+      await s1.callTool({
+        name: "create_item",
+        arguments: {
+          ledger_id: "milestones",
+          id: msId,
+          status: "open",
+          fields: { title: "T726 publish" },
+        },
+      }),
     );
     const created = decode<{ item: { id: string } }>(
       await s1.callTool({
@@ -407,10 +440,14 @@ describe.skipIf(!PG_URL)("cq serve — bearer-token auth over live Postgres (T58
     expect(noAuth.status).toBe(401);
     expect(await noAuth.text()).not.toContain(TOKEN);
 
-    const wrongAuth = await fetch(`${base}/api/projects`, { headers: { authorization: "Bearer wrong-token" } });
+    const wrongAuth = await fetch(`${base}/api/projects`, {
+      headers: { authorization: "Bearer wrong-token" },
+    });
     expect(wrongAuth.status).toBe(401);
 
-    const rightAuth = await fetch(`${base}/api/projects`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    const rightAuth = await fetch(`${base}/api/projects`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
     expect(rightAuth.status).toBe(200);
   });
 
@@ -433,17 +470,28 @@ describe.skipIf(!PG_URL)("cq serve — bearer-token auth over live Postgres (T58
     // Authenticated: a full MCP session over the SDK client, carrying the
     // bearer header via requestInit — proves the auth gate lets a real session
     // through, not merely that SOME 200 is returned.
-    const transport = new StreamableHTTPClientTransport(new URL(`${base}/p/${encodeURIComponent(key)}/mcp`), {
-      requestInit: { headers: { authorization: `Bearer ${TOKEN}` } },
-    });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`${base}/p/${encodeURIComponent(key)}/mcp`),
+      {
+        requestInit: { headers: { authorization: `Bearer ${TOKEN}` } },
+      },
+    );
     const client = new Client({ name: "t588-auth", version: "0.0.1" }, { capabilities: {} });
     await client.connect(transport as unknown as Transport);
     try {
       const msId = `M${Math.floor(Math.random() * 1_000_000) + 10_000}`;
-      const created = decode<{ milestone: { id: string } }>(
-        await client.callTool({ name: "create_milestone", arguments: { id: msId, title: "T588 auth" } }),
+      const created = decode<{ item: { id: string } }>(
+        await client.callTool({
+          name: "create_item",
+          arguments: {
+            ledger_id: "milestones",
+            id: msId,
+            status: "open",
+            fields: { title: "T588 auth" },
+          },
+        }),
       );
-      expect(created.milestone.id).toBe(msId);
+      expect(created.item.id).toBe(msId);
     } finally {
       await client.close();
     }
@@ -587,9 +635,7 @@ describe.skipIf(!PG_URL)(
         connectClient(projectKey, "t725-second", initialName),
       ]);
       try {
-        const registeredRows = await control<
-          Array<{ count: string; display_name: string }>
-        >`
+        const registeredRows = await control<Array<{ count: string; display_name: string }>>`
           SELECT count(*)::text AS count, min(display_name) AS display_name
           FROM projects
           WHERE project_key = ${projectKey}
@@ -617,26 +663,23 @@ describe.skipIf(!PG_URL)(
             changedName,
           );
 
-          const rejectedRename = await fetch(
-            `${base}/p/${encodeURIComponent(projectKey)}/mcp`,
-            {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                [PROJECT_DISPLAY_NAME_HEADER]: "unauthenticated rename",
-              },
-              body: JSON.stringify({
-                jsonrpc: "2.0",
-                id: 2,
-                method: "initialize",
-                params: {
-                  protocolVersion: "2025-06-18",
-                  capabilities: {},
-                  clientInfo: { name: "unauthenticated", version: "0.0.1" },
-                },
-              }),
+          const rejectedRename = await fetch(`${base}/p/${encodeURIComponent(projectKey)}/mcp`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              [PROJECT_DISPLAY_NAME_HEADER]: "unauthenticated rename",
             },
-          );
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 2,
+              method: "initialize",
+              params: {
+                protocolVersion: "2025-06-18",
+                capabilities: {},
+                clientInfo: { name: "unauthenticated", version: "0.0.1" },
+              },
+            }),
+          });
           expect(rejectedRename.status).toBe(401);
           expect(await rejectedRename.text()).toBe("unauthorized");
           const unchangedRows = await control<Array<{ display_name: string }>>`

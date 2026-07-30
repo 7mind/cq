@@ -908,7 +908,7 @@ export function App({
   );
 
   // Execute the previewed plan through the shared executor with ops backed by
-  // this client (updateMilestone / updateItem / archiveMilestone — LedgerClient
+  // this client (milestone/item updates and archiveMilestone — LedgerClient
   // satisfies FinalizeOps structurally), then swap the modal body to the
   // per-id results step and refresh the visible ledger views.
   const executeFinalize = useCallback(
@@ -965,7 +965,7 @@ export function App({
 
   /**
    * Persist an edited item: status + all fields in one call. Milestones route
-   * through update_milestone (mapping title/description/blockedBy/dependsOn);
+   * through the generic item update (mapping title/description/blockedBy/dependsOn);
    * every other ledger through update_item.
    */
   const saveEdit = useCallback(

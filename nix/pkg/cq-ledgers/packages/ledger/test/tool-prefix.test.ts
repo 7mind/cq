@@ -31,9 +31,7 @@ async function buildStore(): Promise<InMemoryLedgerStore> {
   return store;
 }
 
-function decode<T>(result: {
-  content: Array<{ type: string; text: string }>;
-}): T {
+function decode<T>(result: { content: Array<{ type: string; text: string }> }): T {
   const first = result.content[0];
   if (first === undefined || first.type !== "text") {
     throw new Error("expected single text content block");
@@ -125,9 +123,7 @@ describe("createLedgerMcpTools toolPrefix (T374)", () => {
   it("with the default (no prefix arg) keeps every registered name byte-identical", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    expect(tools.map((t) => t.name).sort()).toEqual(
-      [...NON_DISPATCH_LEDGER_TOOL_NAMES].sort(),
-    );
+    expect(tools.map((t) => t.name).sort()).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
   });
 
   it("with a trailing prefix registers every tool under '<prefix>_<name>'", async () => {
@@ -154,11 +150,15 @@ describe("createLedgerMcpTools toolPrefix (T374)", () => {
       }>;
     };
 
-    // A milestone must exist before create_item; the milestone tool is prefixed too.
-    const m = decode<{ milestone: { id: string } }>(
-      await callTool("myproj_create_milestone", { title: "first" }),
+    // A root milestone must exist before an ordinary item; its generic tool is prefixed too.
+    const m = decode<{ item: { id: string } }>(
+      await callTool("myproj_create_item", {
+        ledger_id: "milestones",
+        status: "open",
+        fields: { title: "first" },
+      }),
     );
-    expect(m.milestone.id).toBe("M1");
+    expect(m.item.id).toBe("M1");
 
     const created = decode<{ item: { id: string; status: string; milestoneId: string } }>(
       await callTool("myproj_create_item", {

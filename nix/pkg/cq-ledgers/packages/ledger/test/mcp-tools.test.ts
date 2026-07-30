@@ -50,6 +50,71 @@ function callTool(
   }>;
 }
 
+function createRoot(
+  tools: ReturnType<typeof createLedgerMcpTools>,
+  init: {
+    title: string;
+    description?: string;
+    blockedBy?: string[];
+    dependsOn?: string[];
+    id?: string;
+    author?: string;
+    session?: string;
+  },
+) {
+  const fields: Record<string, string | string[]> = { title: init.title };
+  if (init.description !== undefined) fields["description"] = init.description;
+  if (init.blockedBy !== undefined) fields["blockedBy"] = init.blockedBy;
+  if (init.dependsOn !== undefined) fields["dependsOn"] = init.dependsOn;
+  return callTool(tools, "create_item", {
+    ledger_id: "milestones",
+    status: "open",
+    fields,
+    ...(init.id === undefined ? {} : { id: init.id }),
+    ...(init.author === undefined ? {} : { author: init.author }),
+    ...(init.session === undefined ? {} : { session: init.session }),
+  });
+}
+
+function updateRoot(
+  tools: ReturnType<typeof createLedgerMcpTools>,
+  patch: {
+    milestone_id: string;
+    status?: string;
+    title?: string;
+    description?: string;
+    blockedBy?: string[];
+    dependsOn?: string[];
+    author?: string;
+    session?: string;
+  },
+) {
+  const fields: Record<string, string | string[]> = {};
+  if (patch.title !== undefined) fields["title"] = patch.title;
+  if (patch.description !== undefined) fields["description"] = patch.description;
+  if (patch.blockedBy !== undefined) fields["blockedBy"] = patch.blockedBy;
+  if (patch.dependsOn !== undefined) fields["dependsOn"] = patch.dependsOn;
+  return callTool(tools, "update_item", {
+    ledger_id: "milestones",
+    item_id: patch.milestone_id,
+    ...(patch.status === undefined ? {} : { status: patch.status }),
+    ...(Object.keys(fields).length === 0 ? {} : { fields }),
+    ...(patch.author === undefined ? {} : { author: patch.author }),
+    ...(patch.session === undefined ? {} : { session: patch.session }),
+  });
+}
+
+function fetchRoot(
+  tools: ReturnType<typeof createLedgerMcpTools>,
+  input: { milestone_id: string; projection: "compact" | "full" },
+) {
+  return callTool(tools, "fetch_item", {
+    ledger_id: "milestones",
+    item_id: input.milestone_id,
+    projection: input.projection,
+  });
+}
+
 function decode<T>(result: { content: Array<{ type: string; text: string }> }): T {
   const first = result.content[0];
   if (first === undefined || first.type !== "text") {
@@ -77,32 +142,12 @@ function expectedItemAcknowledgement(item: Item): Record<string, unknown> {
   return acknowledgement;
 }
 
-function expectedMilestoneAcknowledgement(item: Item): Record<string, unknown> {
-  const fields: Record<string, string[]> = {};
-  for (const name of ["dependsOn", "blockedBy"] as const) {
-    const value = item.fields[name];
-    if (Array.isArray(value)) fields[name] = value;
-  }
-  const acknowledgement: Record<string, unknown> = {
-    id: item.id,
-    status: item.status,
-    fields,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-  };
-  if (item.author !== undefined) acknowledgement["author"] = item.author;
-  if (item.session !== undefined) acknowledgement["session"] = item.session;
-  return acknowledgement;
-}
-
 describe("ledger MCP tools", () => {
-  it("exports 32 canonical names, hides both validators, and omits unwired dispatch handlers", async () => {
+  it("exports 29 canonical names, hides both validators, and omits unwired dispatch handlers", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    expect(tools.map((t) => t.name).sort()).toEqual(
-      [...NON_DISPATCH_LEDGER_TOOL_NAMES].sort(),
-    );
-    expect(LEDGER_TOOL_NAMES.length).toBe(32);
+    expect(tools.map((t) => t.name).sort()).toEqual([...NON_DISPATCH_LEDGER_TOOL_NAMES].sort());
+    expect(LEDGER_TOOL_NAMES.length).toBe(29);
     expect(LEDGER_TOOL_NAMES).toContain("fts_search");
     expect(LEDGER_TOOL_NAMES).toContain("snapshot");
     expect(LEDGER_TOOL_NAMES).toContain("derive_predicates");
@@ -261,18 +306,18 @@ describe("ledger MCP tools", () => {
     expect(fetched.ledger.counters).toEqual({ milestone: 0, item: 0 });
   });
 
-  it("create_milestone + create_item + fetch_item + update_item flow", async () => {
+  it("generic root creation + ordinary item flow", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    const m = decode<{ milestone: { id: string; fields: Record<string, unknown> } }>(
-      await callTool(tools, "create_milestone", {
+    const m = decode<{ item: { id: string; fields: Record<string, unknown> } }>(
+      await createRoot(tools, {
         title: "first",
         description: "the first milestone",
       }),
     );
-    expect(m.milestone.id).toBe("M1");
-    expect(m.milestone.fields).toEqual({});
+    expect(m.item.id).toBe("M1");
+    expect(m.item.fields).toEqual({});
 
     const it = decode<{ item: { id: string; status: string; milestoneId: string } }>(
       await callTool(tools, "create_item", {
@@ -329,7 +374,7 @@ describe("ledger MCP tools", () => {
   it("create_item accepts an empty serialized defects list for reviews", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    await callTool(tools, "create_milestone", { title: "review schema" });
+    await createRoot(tools, { title: "review schema" });
 
     const created = decode<{ item: { id: string } }>(
       await callTool(tools, "create_item", {
@@ -353,7 +398,7 @@ describe("ledger MCP tools", () => {
   it("create_item round-trips serialized review defects byte-for-byte", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    await callTool(tools, "create_milestone", { title: "serialized defects" });
+    await createRoot(tools, { title: "serialized defects" });
     const serialized = [
       JSON.stringify({
         headline: "Both optionals",
@@ -400,7 +445,7 @@ describe("ledger MCP tools", () => {
   it("create_item rejects object arrays for reviews.defects", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    await callTool(tools, "create_milestone", { title: "invalid defects" });
+    await createRoot(tools, { title: "invalid defects" });
 
     await expect(
       callTool(tools, "create_item", {
@@ -417,7 +462,7 @@ describe("ledger MCP tools", () => {
   it("create_item / update_item thread author + session provenance", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    await callTool(tools, "create_milestone", { title: "first" });
+    await createRoot(tools, { title: "first" });
 
     const created = decode<{ item: { id: string; author?: string; session?: string } }>(
       await callTool(tools, "create_item", {
@@ -449,7 +494,7 @@ describe("ledger MCP tools", () => {
   it("create_item and update_item emit authoritative fixed acknowledgements", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    await callTool(tools, "create_milestone", { title: "acknowledgement" });
+    await createRoot(tools, { title: "acknowledgement" });
     await callTool(tools, "create_item", {
       ledger_id: "tasks",
       milestone_id: "M1",
@@ -552,43 +597,43 @@ describe("ledger MCP tools", () => {
     expect(Object.hasOwn(ledgerResponse.ledger, "session")).toBe(false);
     expect(ledgerResult.content[0]?.text).toBe(JSON.stringify(ledgerResponse));
 
-    await callTool(tools, "create_milestone", { title: "Dependency" });
-    const createResult = await callTool(tools, "create_milestone", {
+    await createRoot(tools, { title: "Dependency" });
+    const createResult = await createRoot(tools, {
       title: "Acknowledged milestone",
       description: "narrative must be omitted",
       dependsOn: ["M1"],
       blockedBy: ["M1"],
     });
-    const createResponse = decode<{ milestone: Record<string, unknown> }>(createResult);
-    const created = store.fetchItem("milestones", createResponse.milestone["id"] as string);
+    const createResponse = decode<{ item: Record<string, unknown> }>(createResult);
+    const created = store.fetchItem("milestones", createResponse.item["id"] as string);
 
     expect(createResponse).toEqual({
-      milestone: expectedMilestoneAcknowledgement(created),
+      item: expectedItemAcknowledgement(created),
     });
     expect(created.fields["dependsOn"]).toEqual(["milestones:M1"]);
     expect(created.fields["blockedBy"]).toEqual(["milestones:M1"]);
-    expect(Object.hasOwn(createResponse.milestone, "author")).toBe(false);
-    expect(Object.hasOwn(createResponse.milestone, "session")).toBe(false);
+    expect(Object.hasOwn(createResponse.item, "author")).toBe(false);
+    expect(Object.hasOwn(createResponse.item, "session")).toBe(false);
 
     await store.updateItem("milestones", created.id, {
       author: "gpt-5.6",
       session: "session-milestone",
     });
-    const updateResult = await callTool(tools, "update_milestone", {
+    const updateResult = await updateRoot(tools, {
       milestone_id: created.id,
       status: "blocked",
       title: "updated narrative must be omitted",
       dependsOn: ["M1"],
       blockedBy: ["M1"],
     });
-    const updateResponse = decode<{ milestone: Record<string, unknown> }>(updateResult);
+    const updateResponse = decode<{ item: Record<string, unknown> }>(updateResult);
     const updated = store.fetchItem("milestones", created.id);
 
     expect(updateResponse).toEqual({
-      milestone: expectedMilestoneAcknowledgement(updated),
+      item: expectedItemAcknowledgement(updated),
     });
-    expect(updateResponse.milestone["author"]).toBe("gpt-5.6");
-    expect(updateResponse.milestone["session"]).toBe("session-milestone");
+    expect(updateResponse.item["author"]).toBe("gpt-5.6");
+    expect(updateResponse.item["session"]).toBe("session-milestone");
     expect(updateResult.content[0]?.text).toBe(JSON.stringify(updateResponse));
   });
 
@@ -597,7 +642,7 @@ describe("ledger MCP tools", () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    await callTool(tools, "create_milestone", { title: "Reopen" });
+    await createRoot(tools, { title: "Reopen" });
     const authoredCreate = decode<{ item: { id: string } }>(
       await callTool(tools, "create_item", {
         ledger_id: "tasks",
@@ -644,7 +689,7 @@ describe("ledger MCP tools", () => {
     expect(Object.hasOwn(unattributedReopenResponse.item, "author")).toBe(false);
     expect(Object.hasOwn(unattributedReopenResponse.item, "session")).toBe(false);
 
-    await callTool(tools, "create_milestone", { title: "Unarchive" });
+    await createRoot(tools, { title: "Unarchive" });
     const attributed = decode<{ item: { id: string } }>(
       await callTool(tools, "create_item", {
         ledger_id: "xenos",
@@ -663,7 +708,7 @@ describe("ledger MCP tools", () => {
         fields: { note: "unattributed narrative" },
       }),
     );
-    await callTool(tools, "update_milestone", {
+    await updateRoot(tools, {
       milestone_id: "M2",
       status: "done",
     });
@@ -705,8 +750,8 @@ describe("ledger MCP tools", () => {
       }),
     ).rejects.toThrow(/does not exist/);
 
-    await callTool(tools, "create_milestone", { title: "done-already" });
-    await callTool(tools, "update_milestone", { milestone_id: "M1", status: "done" });
+    await createRoot(tools, { title: "done-already" });
+    await updateRoot(tools, { milestone_id: "M1", status: "done" });
     await expect(
       callTool(tools, "create_item", {
         ledger_id: "xenos",
@@ -717,11 +762,11 @@ describe("ledger MCP tools", () => {
     ).rejects.toThrow(/terminal status/);
   });
 
-  it("update_milestone + fetch_milestone + list_milestone_items", async () => {
+  it("generic root update and fetch plus list_milestone_items", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    await callTool(tools, "create_milestone", { title: "x", description: "the x" });
+    await createRoot(tools, { title: "x", description: "the x" });
     await callTool(tools, "create_item", {
       ledger_id: "xenos",
       milestone_id: "M1",
@@ -730,25 +775,25 @@ describe("ledger MCP tools", () => {
     });
 
     const fm = decode<{
-      milestone: { id: string };
+      item: { id: string };
       resolved: { id: string; title: string };
       references: Record<string, number>;
     }>(
-      await callTool(tools, "fetch_milestone", {
+      await fetchRoot(tools, {
         milestone_id: "M1",
         projection: "full",
       }),
     );
-    expect(fm.milestone.id).toBe("M1");
+    expect(fm.item.id).toBe("M1");
     expect(fm.resolved.title).toBe("x");
     expect(fm.references).toEqual({ xenos: 1 });
 
-    await callTool(tools, "update_milestone", {
+    await updateRoot(tools, {
       milestone_id: "M1",
       title: "renamed",
     });
     const fm2 = decode<{ resolved: { title: string } }>(
-      await callTool(tools, "fetch_milestone", {
+      await fetchRoot(tools, {
         milestone_id: "M1",
         projection: "full",
       }),
@@ -768,7 +813,7 @@ describe("ledger MCP tools", () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    await callTool(tools, "create_milestone", { title: "x" });
+    await createRoot(tools, { title: "x" });
     await callTool(tools, "create_item", {
       ledger_id: "xenos",
       milestone_id: "M1",
@@ -783,7 +828,7 @@ describe("ledger MCP tools", () => {
       item_id: "X1",
       status: "done",
     });
-    await callTool(tools, "update_milestone", { milestone_id: "M1", status: "done" });
+    await updateRoot(tools, { milestone_id: "M1", status: "done" });
     const archiveResult = await callTool(tools, "archive_milestone", {
       milestone_id: "M1",
       summary: "done!",
@@ -913,12 +958,14 @@ describe("ledger MCP tools", () => {
       return z.object(t.inputSchema).safeParse(args);
     }
 
-    it("create_milestone rejects unsafe explicit ids at the Zod boundary", async () => {
+    it("generic root creation rejects unsafe explicit ids at the Zod boundary", async () => {
       const store = await buildStore();
       const tools = createLedgerMcpTools(store);
       for (const badId of badIds) {
-        const r = parseInput(tools, "create_milestone", {
-          title: "x",
+        const r = parseInput(tools, "create_item", {
+          ledger_id: "milestones",
+          status: "open",
+          fields: { title: "x" },
           id: badId,
         });
         expect(r.success).toBe(false);
@@ -947,11 +994,10 @@ describe("ledger MCP tools", () => {
       }
     });
 
-    it("update_milestone and archive_milestone reject unsafe milestone_id", async () => {
+    it("archive_milestone rejects unsafe milestone_id", async () => {
       const store = await buildStore();
       const tools = createLedgerMcpTools(store);
       for (const badId of badIds) {
-        expect(parseInput(tools, "update_milestone", { milestone_id: badId }).success).toBe(false);
         expect(
           parseInput(tools, "archive_milestone", {
             milestone_id: badId,
@@ -964,8 +1010,10 @@ describe("ledger MCP tools", () => {
     it("safe ids parse cleanly (positive control)", async () => {
       const store = await buildStore();
       const tools = createLedgerMcpTools(store);
-      const r = parseInput(tools, "create_milestone", {
-        title: "x",
+      const r = parseInput(tools, "create_item", {
+        ledger_id: "milestones",
+        status: "open",
+        fields: { title: "x" },
         id: "M-ok_1",
       });
       expect(r.success).toBe(true);
@@ -975,7 +1023,7 @@ describe("ledger MCP tools", () => {
   it("search_items returns items matching fields", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    await callTool(tools, "create_milestone", { title: "x" });
+    await createRoot(tools, { title: "x" });
     await callTool(tools, "create_item", {
       ledger_id: "xenos",
       milestone_id: "M1",
@@ -1001,7 +1049,7 @@ describe("ledger MCP tools", () => {
   it("fts_search returns the documented ranked JSON shape", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    await callTool(tools, "create_milestone", { title: "x" });
+    await createRoot(tools, { title: "x" });
     await callTool(tools, "create_item", {
       ledger_id: "xenos",
       milestone_id: "M1",
@@ -1038,14 +1086,14 @@ describe("ledger MCP tools", () => {
   it("fts_search includes archived items only when include_archived=true", async () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
-    await callTool(tools, "create_milestone", { title: "x" });
+    await createRoot(tools, { title: "x" });
     await callTool(tools, "create_item", {
       ledger_id: "xenos",
       milestone_id: "M1",
       status: "done",
       fields: { note: "quokka note" },
     });
-    await callTool(tools, "update_milestone", { milestone_id: "M1", status: "done" });
+    await updateRoot(tools, { milestone_id: "M1", status: "done" });
     await callTool(tools, "archive_milestone", { milestone_id: "M1", summary: "s" });
     const def = decode<{ results: unknown[] }>(
       await callTool(tools, "fts_search", {
@@ -1068,7 +1116,7 @@ describe("ledger MCP tools", () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    await callTool(tools, "create_milestone", { title: "snap-test" });
+    await createRoot(tools, { title: "snap-test" });
     await callTool(tools, "create_item", {
       ledger_id: "xenos",
       milestone_id: "M1",
@@ -1122,7 +1170,7 @@ describe("ledger MCP tools", () => {
 
     // Seed a goal in `building` plus a DAG-ready `planned` task linked to it,
     // so pImplement is TRUE-and-unblocked (a non-trivial verdict to compare).
-    await callTool(tools, "create_milestone", { title: "pred-test" });
+    await createRoot(tools, { title: "pred-test" });
     const goal = decode<{ item: { id: string } }>(
       await callTool(tools, "create_item", {
         ledger_id: "goals",
@@ -1164,7 +1212,7 @@ describe("ledger MCP tools", () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    await callTool(tools, "create_milestone", { title: "r" });
+    await createRoot(tools, { title: "r" });
     await callTool(tools, "create_item", {
       ledger_id: "xenos",
       milestone_id: "M1",
@@ -1187,7 +1235,7 @@ describe("ledger MCP tools", () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    await callTool(tools, "create_milestone", { title: "r" });
+    await createRoot(tools, { title: "r" });
     await callTool(tools, "create_item", {
       ledger_id: "xenos",
       milestone_id: "M1",
@@ -1208,14 +1256,14 @@ describe("ledger MCP tools", () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    await callTool(tools, "create_milestone", { title: "arch" });
+    await createRoot(tools, { title: "arch" });
     await callTool(tools, "create_item", {
       ledger_id: "xenos",
       milestone_id: "M1",
       status: "done",
       fields: { note: "to be archived" },
     });
-    await callTool(tools, "update_milestone", { milestone_id: "M1", status: "done" });
+    await updateRoot(tools, { milestone_id: "M1", status: "done" });
     await callTool(tools, "archive_milestone", { milestone_id: "M1", summary: "archived" });
 
     // Item is gone from active ledger after archiving.

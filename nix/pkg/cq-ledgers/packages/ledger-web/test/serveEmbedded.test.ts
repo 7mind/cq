@@ -131,9 +131,7 @@ beforeAll(async () => {
     path.join(promptRoot, "surface.json"),
     JSON.stringify({
       ...surfaceCore,
-      surfaceDigest: createHash("sha256")
-        .update(JSON.stringify(surfaceCore), "utf8")
-        .digest("hex"),
+      surfaceDigest: createHash("sha256").update(JSON.stringify(surfaceCore), "utf8").digest("hex"),
     }),
   );
   await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
@@ -218,17 +216,32 @@ describe("ledger-web embedded MCP (same-origin /mcp, no upstream process)", () =
         name: "fetch_prompt",
         arguments: { roleId: "plan-advance" },
       });
-      const prompt = JSON.parse(
-        (promptResult.content as Array<{ text: string }>)[0]!.text,
-      ) as { promptTemplate: string };
+      const prompt = JSON.parse((promptResult.content as Array<{ text: string }>)[0]!.text) as {
+        promptTemplate: string;
+      };
       expect(prompt.promptTemplate).toBe(PROMPT_BYTES);
 
-      await client.callTool({ name: "create_milestone", arguments: { id: "M40", title: "embedded web" } });
+      await client.callTool({
+        name: "create_item",
+        arguments: {
+          ledger_id: "milestones",
+          id: "M40",
+          status: "open",
+          fields: { title: "embedded web" },
+        },
+      });
       const res = await client.callTool({
         name: "create_item",
-        arguments: { ledger_id: "bugs", milestone_id: "M40", status: "open", fields: { headline: "flux desync" } },
+        arguments: {
+          ledger_id: "bugs",
+          milestone_id: "M40",
+          status: "open",
+          fields: { headline: "flux desync" },
+        },
       });
-      const created = JSON.parse((res.content as Array<{ text: string }>)[0]!.text).item as { id: string };
+      const created = JSON.parse((res.content as Array<{ text: string }>)[0]!.text).item as {
+        id: string;
+      };
       const fetched = await client.callTool({
         name: "fetch_item",
         arguments: {

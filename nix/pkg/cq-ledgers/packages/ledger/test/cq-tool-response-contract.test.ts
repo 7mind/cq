@@ -8,15 +8,12 @@ const PROJECTION_TOOLS = [
   "fetch_item",
   "search_items",
   "fts_search",
-  "fetch_milestone",
   "list_milestone_items",
 ] as const;
 const ACK_TOOLS = [
   "update_item",
   "create_item",
   "create_ledger",
-  "create_milestone",
-  "update_milestone",
   "reopen_item",
   "unarchive_item",
 ] as const;
@@ -26,21 +23,11 @@ const FULL_CONTENT_TOOLS = [
   "get_config",
   "fetch_prompt",
 ] as const;
-const AFFECTED_TOOLS = [
-  ...PROJECTION_TOOLS,
-  ...ACK_TOOLS,
-  ...FULL_CONTENT_TOOLS,
-] as const;
+const AFFECTED_TOOLS = [...PROJECTION_TOOLS, ...ACK_TOOLS, ...FULL_CONTENT_TOOLS] as const;
 
 type InventoryPolicy = (typeof INVENTORY_POLICIES)[number];
 type AffectedTool = (typeof AFFECTED_TOOLS)[number];
-type WorkflowFamily =
-  | "advance"
-  | "begin"
-  | "implement"
-  | "investigate"
-  | "plan"
-  | "research";
+type WorkflowFamily = "advance" | "begin" | "implement" | "investigate" | "plan" | "research";
 
 interface InventorySource {
   source: string;
@@ -77,9 +64,7 @@ interface DiscoveredCall {
 }
 
 const inventory = JSON.parse(
-  await Bun.file(
-    path.join(import.meta.dir, "fixtures/cq-tool-response-contract.json"),
-  ).text(),
+  await Bun.file(path.join(import.meta.dir, "fixtures/cq-tool-response-contract.json")).text(),
 ) as ResponsePolicyInventory;
 const CANONICAL_SOURCES: Omit<InventorySource, "calls">[] = [
   { source: "agents/implement-worker.md", family: "implement" },
@@ -127,17 +112,11 @@ function isAffectedTool(value: string): value is AffectedTool {
 }
 
 function headingPath(headings: string[]): string {
-  const visibleHeadings = headings.filter(
-    (heading) => !heading.startsWith("{{cq:fragment:"),
-  );
+  const visibleHeadings = headings.filter((heading) => !heading.startsWith("{{cq:fragment:"));
   return visibleHeadings.length > 0 ? visibleHeadings.join(" / ") : "(document)";
 }
 
-function inlineCodeRegions(
-  line: string,
-  headings: string[],
-  state: InlineCodeState,
-): CodeRegion[] {
+function inlineCodeRegions(line: string, headings: string[], state: InlineCodeState): CodeRegion[] {
   const regions: CodeRegion[] = [];
   let cursor = 0;
   for (const match of line.matchAll(/`+/g)) {
@@ -199,10 +178,7 @@ function parseInvocationArguments(suffix: string): string | undefined {
   return undefined;
 }
 
-function discoverCalls(
-  source: InventorySource,
-  markdown: string,
-): DiscoveredCall[] {
+function discoverCalls(source: InventorySource, markdown: string): DiscoveredCall[] {
   const headings: string[] = [];
   const ordinalByLocation = new Map<string, number>();
   const calls: DiscoveredCall[] = [];
@@ -214,10 +190,7 @@ function discoverCalls(
   let insideFence = false;
 
   for (const line of markdown.split("\n")) {
-    const fence =
-      inlineState.delimiterLength === undefined
-        ? line.match(/^\s*```/)
-        : null;
+    const fence = inlineState.delimiterLength === undefined ? line.match(/^\s*```/) : null;
     if (fence !== null) {
       insideFence = !insideFence;
       continue;
@@ -241,10 +214,7 @@ function discoverCalls(
       ? [{ code: line, heading: headingPath(headings) }]
       : inlineCodeRegions(line, headings, inlineState);
     for (const region of regions) {
-      const toolPattern = new RegExp(
-        `\\b(${AFFECTED_TOOLS.join("|")})\\b`,
-        "g",
-      );
+      const toolPattern = new RegExp(`\\b(${AFFECTED_TOOLS.join("|")})\\b`, "g");
       for (const match of region.code.matchAll(toolPattern)) {
         const tool = match[1];
         if (tool === undefined || !isAffectedTool(tool)) {
@@ -284,10 +254,7 @@ function findDuplicates(values: string[]): string[] {
   return [...duplicates].sort();
 }
 
-function expandInventoryCalls(
-  sources: InventorySource[],
-  errors: string[],
-): InventoryCall[] {
+function expandInventoryCalls(sources: InventorySource[], errors: string[]): InventoryCall[] {
   const calls: InventoryCall[] = [];
   for (const source of sources) {
     for (const encoded of source.calls) {
@@ -322,9 +289,7 @@ async function validateInventory(
   readSource: SourceReader,
 ): Promise<string[]> {
   const errors: string[] = [];
-  const sourceKeys = candidate.sources.map(
-    (source) => `${source.source}::${source.family}`,
-  );
+  const sourceKeys = candidate.sources.map((source) => `${source.source}::${source.family}`);
   const duplicateSources = findDuplicates(sourceKeys);
   if (duplicateSources.length > 0) {
     errors.push(`Duplicate sources: ${duplicateSources.join(", ")}`);
@@ -344,16 +309,10 @@ async function validateInventory(
       }),
     )
   ).flat();
-  const discoveredById = new Map(
-    discovered.map((call) => [call.callSite, call]),
-  );
+  const discoveredById = new Map(discovered.map((call) => [call.callSite, call]));
   const calls = expandInventoryCalls(candidate.sources, errors);
-  const inventoryById = new Map(
-    calls.map((call) => [call.callSite, call]),
-  );
-  const duplicateCalls = findDuplicates(
-    calls.map((call) => call.callSite),
-  );
+  const inventoryById = new Map(calls.map((call) => [call.callSite, call]));
+  const duplicateCalls = findDuplicates(calls.map((call) => call.callSite));
   if (duplicateCalls.length > 0) {
     errors.push(`Duplicate calls: ${duplicateCalls.join(", ")}`);
   }
@@ -371,16 +330,11 @@ async function validateInventory(
     const found = discoveredById.get(call.callSite);
     if (
       found !== undefined &&
-      (call.source !== found.source ||
-        call.family !== found.family ||
-        call.tool !== found.tool)
+      (call.source !== found.source || call.family !== found.family || call.tool !== found.tool)
     ) {
       errors.push(`Mismatched call metadata: ${call.callSite}`);
     }
-    if (
-      (ACK_TOOLS as readonly string[]).includes(call.tool) &&
-      call.policy !== "ack"
-    ) {
+    if ((ACK_TOOLS as readonly string[]).includes(call.tool) && call.policy !== "ack") {
       errors.push(`Mutation must use ack policy: ${call.callSite}`);
     }
     if (
@@ -388,9 +342,7 @@ async function validateInventory(
       call.policy !== "compact" &&
       call.policy !== "full"
     ) {
-      errors.push(
-        `Projection must use compact or full policy: ${call.callSite}`,
-      );
+      errors.push(`Projection must use compact or full policy: ${call.callSite}`);
     }
     if (
       (FULL_CONTENT_TOOLS as readonly string[]).includes(call.tool) &&
@@ -400,9 +352,7 @@ async function validateInventory(
     }
   }
 
-  const fullReadIds = candidate.allowlist.fullReads.map(
-    (entry) => entry.callSite,
-  );
+  const fullReadIds = candidate.allowlist.fullReads.map((entry) => entry.callSite);
   const duplicateFullReads = findDuplicates(fullReadIds);
   if (duplicateFullReads.length > 0) {
     errors.push(`Duplicate full-read allowlist entries: ${duplicateFullReads.join(", ")}`);
@@ -410,9 +360,7 @@ async function validateInventory(
   const fullReadById = new Map(
     candidate.allowlist.fullReads.map((entry) => [entry.callSite, entry]),
   );
-  for (const call of calls.filter(
-    (entry) => entry.policy === "full",
-  )) {
+  for (const call of calls.filter((entry) => entry.policy === "full")) {
     const allowed = fullReadById.get(call.callSite);
     if (allowed === undefined) {
       errors.push(`Full read lacks allowlist entry: ${call.callSite}`);
@@ -430,31 +378,20 @@ async function validateInventory(
     }
   }
 
-  const unboundedIds = candidate.allowlist.unboundedFetchLedger.map(
-    (entry) => entry.callSite,
-  );
+  const unboundedIds = candidate.allowlist.unboundedFetchLedger.map((entry) => entry.callSite);
   const duplicateUnbounded = findDuplicates(unboundedIds);
   if (duplicateUnbounded.length > 0) {
-    errors.push(
-      `Duplicate unbounded-fetch allowlist entries: ${duplicateUnbounded.join(", ")}`,
-    );
+    errors.push(`Duplicate unbounded-fetch allowlist entries: ${duplicateUnbounded.join(", ")}`);
   }
   const unboundedById = new Map(
-    candidate.allowlist.unboundedFetchLedger.map((entry) => [
-      entry.callSite,
-      entry,
-    ]),
+    candidate.allowlist.unboundedFetchLedger.map((entry) => [entry.callSite, entry]),
   );
-  for (const call of discovered.filter(
-    (entry) => entry.unboundedFetchLedger,
-  )) {
+  for (const call of discovered.filter((entry) => entry.unboundedFetchLedger)) {
     const allowed = unboundedById.get(call.callSite);
     if (allowed === undefined) {
       errors.push(`Unbounded fetch_ledger lacks allowlist entry: ${call.callSite}`);
     } else if (allowed.reason.trim().length === 0) {
-      errors.push(
-        `Unbounded-fetch allowlist lacks pagination justification: ${call.callSite}`,
-      );
+      errors.push(`Unbounded-fetch allowlist lacks pagination justification: ${call.callSite}`);
     }
   }
   for (const entry of candidate.allowlist.unboundedFetchLedger) {
@@ -471,15 +408,11 @@ async function readCanonicalSource(source: string): Promise<string> {
   return Bun.file(path.join(ASSETS_ROOT, source)).text();
 }
 
-async function validateCanonicalInventory(
-  candidate: ResponsePolicyInventory,
-): Promise<string[]> {
+async function validateCanonicalInventory(candidate: ResponsePolicyInventory): Promise<string[]> {
   return validateInventory(candidate, readCanonicalSource);
 }
 
-function cloneInventory(
-  candidate: ResponsePolicyInventory,
-): ResponsePolicyInventory {
+function cloneInventory(candidate: ResponsePolicyInventory): ResponsePolicyInventory {
   return structuredClone(candidate);
 }
 
@@ -500,36 +433,24 @@ describe("CQ tool response-policy inventory", () => {
     expect(missingSource).toBeDefined();
     if (missingSource === undefined) throw new Error("Inventory has no call to remove");
     missingSource.calls.splice(0, 1);
-    expect((await validateCanonicalInventory(missing)).join("\n")).toContain(
-      "Missing calls:",
-    );
+    expect((await validateCanonicalInventory(missing)).join("\n")).toContain("Missing calls:");
 
     const duplicate = cloneInventory(inventory);
     const duplicateSource = duplicate.sources.find((source) => source.calls.length > 0);
     expect(duplicateSource).toBeDefined();
     if (duplicateSource === undefined) throw new Error("Inventory has no call to duplicate");
-    duplicateSource.calls.push(
-      requiredAt(duplicateSource.calls, 0, "inventory call"),
-    );
-    expect((await validateCanonicalInventory(duplicate)).join("\n")).toContain(
-      "Duplicate calls:",
-    );
+    duplicateSource.calls.push(requiredAt(duplicateSource.calls, 0, "inventory call"));
+    expect((await validateCanonicalInventory(duplicate)).join("\n")).toContain("Duplicate calls:");
 
     const stale = cloneInventory(inventory);
     const staleSource = stale.sources.find((source) => source.calls.length > 0);
     expect(staleSource).toBeDefined();
     if (staleSource === undefined) throw new Error("Inventory has no call to stale");
-    staleSource.calls[0] = requiredAt(
-      staleSource.calls,
-      0,
-      "inventory call",
-    ).replace(
+    staleSource.calls[0] = requiredAt(staleSource.calls, 0, "inventory call").replace(
       "Shared rules",
       "Shared rule",
     );
-    expect((await validateCanonicalInventory(stale)).join("\n")).toContain(
-      "Stale calls:",
-    );
+    expect((await validateCanonicalInventory(stale)).join("\n")).toContain("Stale calls:");
   });
 
   test("rejects a wrapped inline-code invocation rename", async () => {
@@ -553,15 +474,13 @@ describe("CQ tool response-policy inventory", () => {
   test("rejects mutations classified as full entities", async () => {
     const mutation = cloneInventory(inventory);
     const source = mutation.sources.find((candidate) =>
-      candidate.calls.some((call) => call.includes("::update_milestone#")),
+      candidate.calls.some((call) => call.includes("::update_item#")),
     );
     expect(source).toBeDefined();
     if (source === undefined) {
       throw new Error("Inventory has no mutation to exercise");
     }
-    const index = source.calls.findIndex((call) =>
-      call.includes("::update_milestone#"),
-    );
+    const index = source.calls.findIndex((call) => call.includes("::update_item#"));
     const call = requiredAt(source.calls, index, "mutation call");
     source.calls[index] = `${call.slice(0, call.lastIndexOf("|"))}|full`;
     expect((await validateCanonicalInventory(mutation)).join("\n")).toContain(

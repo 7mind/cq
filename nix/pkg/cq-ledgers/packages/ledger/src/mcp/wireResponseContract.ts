@@ -225,19 +225,6 @@ export const LEDGER_RESPONSE_CONTRACTS = {
   fts_search: mandatoryItemProjection(
     "`{ results: [{ ledgerId, item, score, matchedFields }] }`; each item uses the requested projection.",
   ),
-  create_milestone: fixedAcknowledgement(
-    "milestone",
-    MILESTONE_MUTATION_ACK_DESCRIPTION,
-    "`{ milestone: MilestoneAcknowledgement }`.",
-  ),
-  update_milestone: fixedAcknowledgement(
-    "milestone",
-    MILESTONE_MUTATION_ACK_DESCRIPTION,
-    "`{ milestone: MilestoneAcknowledgement }`.",
-  ),
-  fetch_milestone: mandatoryItemProjection(
-    "`{ milestone, resolved, references }`; milestone uses the requested projection.",
-  ),
   archive_milestone: purposeBuiltSmall("`{ pointer }` for the archived milestone."),
   list_milestone_items: mandatoryItemProjection(
     "`{ items: Record<ledgerId, Item[]> }`; every item uses the requested projection.",

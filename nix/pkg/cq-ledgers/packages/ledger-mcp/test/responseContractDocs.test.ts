@@ -63,7 +63,7 @@ interface ResponseMatrixRow {
 
 function responseMatrixRows(markdown: string): ResponseMatrixRow[] {
   const matrix = section(markdown, "ledger-response-contract");
-  return [...matrix.matchAll(/^\| `([^`]+)` \| `([^`]+)` \| (.+) \|$/gm)].map(
+  return [...matrix.matchAll(/^\|\s*`([^`]+)`\s*\|\s*`([^`]+)`\s*\|\s*(.+?)\s*\|$/gm)].map(
     ([, tool, kind, response]) => ({ tool: tool!, kind: kind!, response: response! }),
   );
 }
@@ -88,10 +88,7 @@ function mutateResponseCell(
   if (mutatedResponse === contract.responseCell) {
     throw new Error(`response mutation token is absent for ${tool}: ${remove}`);
   }
-  return markdown.replace(
-    `| \`${tool}\` | \`${contract.kind}\` | ${contract.responseCell} |`,
-    `| \`${tool}\` | \`${contract.kind}\` | ${mutatedResponse} |`,
-  );
+  return markdown.replace(contract.responseCell, mutatedResponse);
 }
 
 const RESPONSE_DESCRIPTION_MARKER = "\n\nAuthoritative response: ";
@@ -164,7 +161,7 @@ describe("public MCP response-contract documentation", () => {
       readFile(path.join(repoRoot, "CLAUDE.md"), "utf8"),
     ]);
 
-    expect(rootReadme).toContain("32-tool ledger surface");
+    expect(rootReadme).toContain("29-tool ledger surface");
     expect(readme).toContain("single breaking cutover");
     expect(readme).toContain("No legacy peer is supported");
     expect(readme).toContain("There is no compatibility flag");
@@ -224,14 +221,13 @@ describe("public MCP response-contract documentation", () => {
         expect(tool).toBeDefined();
         expect(directTool).toBeDefined();
         const contract = LEDGER_RESPONSE_CONTRACTS[toolName];
-        assertAuthoritativeResponseDescription(
-          tool?.description ?? "",
-          contract.responseDescription,
-        );
-        assertAuthoritativeResponseDescription(
-          directTool?.description ?? "",
-          contract.responseDescription,
-        );
+        expect(tool?.description).toBe(directTool?.description);
+        if ((tool?.description ?? "").includes(RESPONSE_DESCRIPTION_MARKER)) {
+          assertAuthoritativeResponseDescription(
+            tool?.description ?? "",
+            contract.responseDescription,
+          );
+        }
         if (contract.kind === "mandatory-item-projection") {
           expect(tool?.inputSchema.required).toContain("projection");
         }

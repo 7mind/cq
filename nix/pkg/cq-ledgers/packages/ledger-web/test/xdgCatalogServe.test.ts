@@ -62,7 +62,7 @@ async function makeHostFixture(): Promise<{
   await mkdir(projectsRoot);
   await mkdir(outdir);
   const indexPath = path.join(outdir, "index.html");
-  await writeFile(indexPath, "<!doctype html><div id=\"root\"></div>\n", "utf8");
+  await writeFile(indexPath, '<!doctype html><div id="root"></div>\n', "utf8");
   return { projectsRoot, outdir, indexPath };
 }
 
@@ -77,9 +77,7 @@ async function seedProject(projectsRoot: string, projectKey: string): Promise<vo
   await store.dispose();
 }
 
-function observeRuntimes(
-  delegate: XdgRuntimeOpener = openXdgProjectRuntime,
-): RuntimeObserver {
+function observeRuntimes(delegate: XdgRuntimeOpener = openXdgProjectRuntime): RuntimeObserver {
   const opens = new Map<string, number>();
   const disposals = new Map<string, number>();
   const opener: XdgRuntimeOpener = async (
@@ -93,10 +91,7 @@ function observeRuntimes(
       async dispose(): Promise<void> {
         if (!disposed) {
           disposed = true;
-          disposals.set(
-            options.projectKey,
-            (disposals.get(options.projectKey) ?? 0) + 1,
-          );
+          disposals.set(options.projectKey, (disposals.get(options.projectKey) ?? 0) + 1);
         }
         await runtime.dispose();
       },
@@ -127,11 +122,7 @@ function startHost(
   return { server, base: `http://127.0.0.1:${String(server.port)}` };
 }
 
-async function connectMcp(
-  base: string,
-  route: string,
-  name: string,
-): Promise<Client> {
+async function connectMcp(base: string, route: string, name: string): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL(`${base}${route}`));
   const client = new Client({ name, version: "0.0.1" }, { capabilities: {} });
   await client.connect(transport as unknown as Transport);
@@ -240,9 +231,7 @@ function importSpecifiersOf(source: string): string[] {
     /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
     /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
   ];
-  return patterns.flatMap((pattern) =>
-    [...source.matchAll(pattern)].map((match) => match[1]!),
-  );
+  return patterns.flatMap((pattern) => [...source.matchAll(pattern)].map((match) => match[1]!));
 }
 
 function couplingViolationsOf(source: string): CouplingViolation[] {
@@ -307,8 +296,7 @@ describe("architecture guard self-check", () => {
   });
 
   test("accepts the allowed import forms with no forbidden token", () => {
-    expect(couplingViolationsOf('import { hubTopic } from "./projectRoutes.js";'))
-      .toEqual([]);
+    expect(couplingViolationsOf('import { hubTopic } from "./projectRoutes.js";')).toEqual([]);
   });
 });
 
@@ -336,12 +324,8 @@ describe("explicit XDG catalog HTTP/WS host", () => {
     expect(names).not.toContain("fetch_dispatch_result");
 
     const expectedListing = JSON.stringify({ projects });
-    const listingOne = textOf(
-      await alphaOne.callTool({ name: "list_projects", arguments: {} }),
-    );
-    const listingTwo = textOf(
-      await alphaTwo.callTool({ name: "list_projects", arguments: {} }),
-    );
+    const listingOne = textOf(await alphaOne.callTool({ name: "list_projects", arguments: {} }));
+    const listingTwo = textOf(await alphaTwo.callTool({ name: "list_projects", arguments: {} }));
     expect(listingOne).toBe(expectedListing);
     expect(listingTwo).toBe(listingOne);
     // Discovery (list_projects) must not eagerly construct dormant runtimes —
@@ -350,15 +334,21 @@ describe("explicit XDG catalog HTTP/WS host", () => {
     expect(observed.opens.has("beta team")).toBe(false);
 
     const alias = await connectMcp(base, "/mcp", "alias");
-    expect(textOf(await alias.callTool({ name: "list_projects", arguments: {} })))
-      .toBe(expectedListing);
+    expect(textOf(await alias.callTool({ name: "list_projects", arguments: {} }))).toBe(
+      expectedListing,
+    );
     expect(observed.opens.get("alpha")).toBe(1);
     expect(observed.opens.has("beta team")).toBe(false);
 
     decode(
       await alphaOne.callTool({
-        name: "create_milestone",
-        arguments: { id: "M900", title: "Alpha only" },
+        name: "create_item",
+        arguments: {
+          ledger_id: "milestones",
+          id: "M900",
+          status: "open",
+          fields: { title: "Alpha only" },
+        },
       }),
     );
     const created = decode<{ item: { id: string } }>(
@@ -377,25 +367,26 @@ describe("explicit XDG catalog HTTP/WS host", () => {
     expect(observed.opens.get("beta team")).toBe(1);
     expect(
       (
-        await beta.callTool({
+        (await beta.callTool({
           name: "fetch_item",
           arguments: {
             ledger_id: "tasks",
             item_id: created.item.id,
             projection: "full",
           },
-        }) as ToolResult
+        })) as ToolResult
       ).isError,
     ).toBe(true);
-    expect(textOf(await beta.callTool({ name: "list_projects", arguments: {} })))
-      .toBe(expectedListing);
+    expect(textOf(await beta.callTool({ name: "list_projects", arguments: {} }))).toBe(
+      expectedListing,
+    );
 
     const alphaWs = await openWs(base, "/p/alpha/ws");
     const betaWs = await openWs(base, "/p/beta%20team/ws");
     const aliasWs = await openWs(base, "/ws");
     betaWs.socket.send(JSON.stringify({ type: "ping", nonce: "beta", ts: 1 }));
     await waitFor(
-      () => betaWs.frames.some((frame) => frame.includes("\"pong\"")),
+      () => betaWs.frames.some((frame) => frame.includes('"pong"')),
       "beta heartbeat did not return a pong",
     );
 
@@ -408,32 +399,25 @@ describe("explicit XDG catalog HTTP/WS host", () => {
       },
     });
     await waitFor(
-      () =>
-        changedFrames(alphaWs.frames).length > 0 &&
-        changedFrames(aliasWs.frames).length > 0,
+      () => changedFrames(alphaWs.frames).length > 0 && changedFrames(aliasWs.frames).length > 0,
       "alpha-scoped sockets did not receive the committed change",
     );
     expect(changedFrames(betaWs.frames)).toEqual([]);
 
-    await Promise.all([
-      alphaOne.close(),
-      alphaTwo.close(),
-      beta.close(),
-      alias.close(),
-    ]);
+    await Promise.all([alphaOne.close(), alphaTwo.close(), beta.close(), alias.close()]);
     await server.stop(true);
-    expect(observed.disposals).toEqual(new Map([
-      ["alpha", 1],
-      ["beta team", 1],
-    ]));
+    expect(observed.disposals).toEqual(
+      new Map([
+        ["alpha", 1],
+        ["beta team", 1],
+      ]),
+    );
   });
 
   test("a lingering stop() does not block a later stop(true) from disposing every runtime", async () => {
     const fixture = await makeHostFixture();
     await seedProject(fixture.projectsRoot, "alpha");
-    const catalog = createStaticXdgHostCatalog([
-      { key: "alpha", displayName: "Alpha" },
-    ]);
+    const catalog = createStaticXdgHostCatalog([{ key: "alpha", displayName: "Alpha" }]);
     const observed = observeRuntimes();
     const { server, base } = startHost(fixture, catalog, observed.opener);
 
@@ -463,9 +447,7 @@ describe("explicit XDG catalog HTTP/WS host", () => {
 
   test("rejects malformed and unsafe encoded keys before catalog lookup or runtime construction", async () => {
     const fixture = await makeHostFixture();
-    const baseCatalog = createStaticXdgHostCatalog([
-      { key: "alpha", displayName: "Alpha" },
-    ]);
+    const baseCatalog = createStaticXdgHostCatalog([{ key: "alpha", displayName: "Alpha" }]);
     let lookups = 0;
     const catalog: XdgHostCatalog = {
       projects: baseCatalog.projects,
@@ -509,9 +491,7 @@ describe("explicit XDG catalog HTTP/WS host", () => {
   test("evicts a failed runtime construction so the next request retries", async () => {
     const fixture = await makeHostFixture();
     await seedProject(fixture.projectsRoot, "alpha");
-    const catalog = createStaticXdgHostCatalog([
-      { key: "alpha", displayName: "Alpha" },
-    ]);
+    const catalog = createStaticXdgHostCatalog([{ key: "alpha", displayName: "Alpha" }]);
     let attempts = 0;
     const observed = observeRuntimes(async (options) => {
       attempts += 1;
@@ -525,19 +505,17 @@ describe("explicit XDG catalog HTTP/WS host", () => {
     expect(await failed.text()).toBe("project runtime unavailable");
 
     const retried = await connectMcp(base, "/p/alpha/mcp", "retry");
-    expect(textOf(await retried.callTool({ name: "list_projects", arguments: {} })))
-      .toBe(JSON.stringify({
+    expect(textOf(await retried.callTool({ name: "list_projects", arguments: {} }))).toBe(
+      JSON.stringify({
         projects: [{ key: "alpha", displayName: "Alpha" }],
-      }));
+      }),
+    );
     expect(attempts).toBe(2);
     await retried.close();
   });
 
   test("reuses neutral T587 routing/topics without cq-serve/PostgreSQL coupling", async () => {
-    const source = await readFile(
-      new URL("../src/xdgCatalogServe.ts", import.meta.url),
-      "utf8",
-    );
+    const source = await readFile(new URL("../src/xdgCatalogServe.ts", import.meta.url), "utf8");
     expect(source).toContain("matchProjectRoute");
     expect(source).toContain("hubTopic");
     expect(source).toContain("attachMcpHttp");

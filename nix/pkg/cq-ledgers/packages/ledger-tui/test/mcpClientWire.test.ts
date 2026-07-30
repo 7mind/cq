@@ -1,10 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type {
-  ArchivePointer,
-  ItemMutationAckDto,
-  MilestoneMutationAckDto,
-} from "@cq/ledger";
+import type { ArchivePointer, ItemMutationAckDto, MilestoneMutationAckDto } from "@cq/ledger";
 import { McpLedgerClient } from "../src/mcpClient.js";
 
 interface RecordedCall {
@@ -12,18 +8,25 @@ interface RecordedCall {
   arguments: Record<string, unknown>;
 }
 
-function stubClient(
-  responses: Record<string, unknown>,
-): { client: McpLedgerClient; calls: RecordedCall[] } {
+function stubClient(responses: Record<string, unknown | unknown[]>): {
+  client: McpLedgerClient;
+  calls: RecordedCall[];
+} {
   const calls: RecordedCall[] = [];
+  const responseIndexes = new Map<string, number>();
   const sdk = {
     callTool: async (request: RecordedCall) => {
       calls.push(request);
+      const configured = responses[request.name];
+      const response = Array.isArray(configured)
+        ? configured[responseIndexes.get(request.name) ?? 0]
+        : configured;
+      responseIndexes.set(request.name, (responseIndexes.get(request.name) ?? 0) + 1);
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(responses[request.name]),
+            text: JSON.stringify(response),
           },
         ],
       };
@@ -143,10 +146,8 @@ describe("McpLedgerClient projected read wire contract", () => {
 describe("McpLedgerClient fixed mutation acknowledgement contract", () => {
   it("returns allocated ids and canonical references from every exposed mutation", async () => {
     const { client, calls } = stubClient({
-      create_item: { item: itemAck },
-      update_item: { item: itemAck },
-      create_milestone: { milestone: milestoneAck },
-      update_milestone: { milestone: milestoneAck },
+      create_item: [{ item: itemAck }, { item: milestoneAck }],
+      update_item: [{ item: itemAck }, { item: milestoneAck }],
     });
 
     expect(
@@ -194,18 +195,25 @@ describe("McpLedgerClient fixed mutation acknowledgement contract", () => {
         },
       },
       {
-        name: "create_milestone",
+        name: "create_item",
         arguments: {
-          title: "input title",
-          description: "input narrative",
+          ledger_id: "milestones",
+          status: "open",
+          fields: {
+            title: "input title",
+            description: "input narrative",
+          },
+          author: "user",
         },
       },
       {
-        name: "update_milestone",
+        name: "update_item",
         arguments: {
-          milestone_id: "M9",
+          ledger_id: "milestones",
+          item_id: "M9",
           status: "open",
-          title: "updated title",
+          fields: { title: "updated title" },
+          author: "user",
         },
       },
     ]);

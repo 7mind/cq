@@ -24,14 +24,14 @@ under `nix/` (see `nix/hm/dev-llm.nix`, `nix/pkg/{yolo,codex,claude-code,…}`).
 - Surgical changes; match surrounding style; no unrelated refactors.
 - Reproduce a defect (failing test or documented repro) before fixing it.
 - Frontends are pure MCP clients — they never read the ledger files directly.
-  This holds in *embedded* mode too (TUI/web with no `--mcp-url`): the frontend
+  This holds in _embedded_ mode too (TUI/web with no `--mcp-url`): the frontend
   co-locates the MCP server in its own process (in-memory transport for the TUI,
   co-hosted `/mcp` + `/ws` for the web) and still talks to it over MCP — it does
   not read the ledger store directly.
 - `--cwd` for `cq mcp` must be absolute (or relative, resolved vs CWD);
   it defaults to the process CWD.
 - Tests: `ink-testing-library` for the TUI, happy-dom for the web; controlled
-  *text* inputs don't fire onChange under happy-dom, so use uncontrolled
+  _text_ inputs don't fire onChange under happy-dom, so use uncontrolled
   inputs (refs) — selects are fine controlled.
 
 ## Track work in the ledger (dogfooding)
@@ -42,8 +42,10 @@ work, instead of inline TODOs or scratch files.
 
 - **Before starting**: `fts_search` (or `fetch_ledger`) for the topic; if an
   item already exists, work against it — don't duplicate.
-- **Starting multi-step work**: `create_milestone`, then `create_item` under it
-  in the right ledger:
+- **Starting multi-step work**: create the root with
+  `create_item(ledger_id:"milestones", status:"open", fields:{title,...})`,
+  then use its allocated id as `milestone_id` for `create_item` in the right
+  ledger:
   - `tasks` — units of work (status: planned → wip → done)
   - `defects` — bugs (severity required; open → wip → resolved)
   - `hypothesis` — things to confirm; `decisions` — locked choices;
@@ -75,7 +77,7 @@ work, instead of inline TODOs or scratch files.
 ### MCP response contract
 
 - Item-bearing reads (`fetch_ledger`, `fetch_item`, `search_items`,
-  `fts_search`, `fetch_milestone`, `list_milestone_items`) require an explicit
+  `fts_search`, `list_milestone_items`) require an explicit
   `projection: "compact"` or `projection: "full"`; there is no default.
   Use compact for discovery/status/reference work. Use full only when the next
   operation needs narrative or another field outside the compact allowlist.
@@ -95,8 +97,8 @@ work, instead of inline TODOs or scratch files.
 
 ### Flows and research-driven investigation
 
-The ledger-suite harness runs four cooperating **flows**: *investigate*, *plan*, *research*,
-and *implement*, chained by the `/cq:advance` sequencer (which runs them to quiescence).
+The ledger-suite harness runs four cooperating **flows**: _investigate_, _plan_, _research_,
+and _implement_, chained by the `/cq:advance` sequencer (which runs them to quiescence).
 Plan-flow owns a defect-to-fix path; investigate-flow roots causes; research-flow answers
 empirical research questions; implement-flow executes task DAGs. Each flow is driven by
 `/cq:*:advance` and dispatches domain-specific subagents. `/cq:research` +

@@ -54,6 +54,14 @@ function callTool(
   }>;
 }
 
+function createRoot(tools: ReturnType<typeof createLedgerMcpTools>, init: { title: string }) {
+  return callTool(tools, "create_item", {
+    ledger_id: "milestones",
+    status: "open",
+    fields: { title: init.title },
+  });
+}
+
 function decode<T>(result: { content: Array<{ type: string; text: string }> }): T {
   const first = result.content[0];
   if (first === undefined || first.type !== "text") {
@@ -67,7 +75,7 @@ describe("enumerate_ledgers — statusCounts and completedCount (T1)", () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    await callTool(tools, "create_milestone", { title: "T1 seed milestone" });
+    await createRoot(tools, { title: "T1 seed milestone" });
 
     // questions: 2 answered + 1 open + 1 withdrawn
     await callTool(tools, "create_item", {
@@ -159,7 +167,7 @@ describe("enumerate_ledgers — statusCounts and completedCount (T1)", () => {
     const store = await buildStore();
     const tools = createLedgerMcpTools(store);
 
-    await callTool(tools, "create_milestone", { title: "multi-terminal" });
+    await createRoot(tools, { title: "multi-terminal" });
 
     // tasks: done=2, wip=1, planned=1
     await callTool(tools, "create_item", {

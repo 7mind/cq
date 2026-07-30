@@ -415,7 +415,7 @@ export async function measureToolSurfaces(
             durableDispatch.toolsList.tokens - nonDispatch.toolsList.tokens,
           nonDispatchToolsListTokens: nonDispatch.toolsList.tokens,
           meaning:
-            "The current G93-attributable value applies the historical mechanical response-contract strip to today's 26-tool surface. The inventory delta separately compares the live 32-tool durable-dispatch and 26-tool non-dispatch profiles. The tools/list total is the complete current 26-tool serialization.",
+            "The current G93-attributable value applies the historical mechanical response-contract strip to today's 23-tool surface. The inventory delta separately compares the live 29-tool durable-dispatch and 23-tool non-dispatch profiles. The tools/list total is the complete current 23-tool serialization.",
         };
   return {
     formatVersion: 1,

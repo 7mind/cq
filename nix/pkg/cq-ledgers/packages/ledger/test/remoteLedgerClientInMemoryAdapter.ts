@@ -55,7 +55,6 @@ import {
   PROJECT_DISPLAY_NAME_MAX_BYTES,
   projectItemDto,
   projectItemMutationAckDto,
-  projectMilestoneMutationAckDto,
   summarize,
   type ArchivePointer,
   type FieldValue,
@@ -162,7 +161,10 @@ function milestoneOf(tenant: DummyTenant, milestoneId: string): Item {
   return milestone;
 }
 
-function resolvedMilestone(tenant: DummyTenant, milestoneId: string): {
+function resolvedMilestone(
+  tenant: DummyTenant,
+  milestoneId: string,
+): {
   id: string;
   status: string;
   title: string;
@@ -343,9 +345,7 @@ const fetchLedger: ToolHandler = (tenant, args) => {
     const start = offset ?? 0;
     const items = limit !== undefined ? all.slice(start, start + limit) : all.slice(start);
     const nextOffset =
-      limit !== undefined && start + items.length < all.length
-        ? start + items.length
-        : null;
+      limit !== undefined && start + items.length < all.length ? start + items.length : null;
     return {
       ledger: meta,
       items,
@@ -380,15 +380,19 @@ const fetchLedgerArchive: ToolHandler = (tenant, args) => {
   };
 };
 
-const fetchItem: ToolHandler = (tenant, args) => ({
-  item: project(
-    findItem(tenant, str(args, "ledger_id"), str(args, "item_id")),
-    projectionOf(args),
-  ),
-});
+const fetchItem: ToolHandler = (tenant, args) =>
+  str(args, "ledger_id") === MILESTONES_LEDGER
+    ? fetchRoot(tenant, args)
+    : {
+        item: project(
+          findItem(tenant, str(args, "ledger_id"), str(args, "item_id")),
+          projectionOf(args),
+        ),
+      };
 
 const createItem: ToolHandler = (tenant, args) => {
   const ledgerId = str(args, "ledger_id");
+  if (ledgerId === MILESTONES_LEDGER) return createRoot(tenant, args);
   const milestoneId = str(args, "milestone_id");
   const status = str(args, "status");
   const fields = fieldsOf(args);
@@ -397,7 +401,14 @@ const createItem: ToolHandler = (tenant, args) => {
   assertRequiredFields(ledgerId, fields);
   const timestamp = nowIso();
   const id = optStr(args, "id") ?? allocateItemId(tenant, ledgerId);
-  const item: Item = { id, milestoneId, status, fields, createdAt: timestamp, updatedAt: timestamp };
+  const item: Item = {
+    id,
+    milestoneId,
+    status,
+    fields,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
   const author = optStr(args, "author");
   const session = optStr(args, "session");
   if (author !== undefined) item.author = author;
@@ -410,6 +421,7 @@ const createItem: ToolHandler = (tenant, args) => {
 
 const updateItem: ToolHandler = (tenant, args) => {
   const ledgerId = str(args, "ledger_id");
+  if (ledgerId === MILESTONES_LEDGER) return updateRoot(tenant, args);
   const item = findItem(tenant, ledgerId, str(args, "item_id"));
   const status = optStr(args, "status");
   if (status !== undefined) {
@@ -453,7 +465,12 @@ const ftsSearch: ToolHandler = (tenant, args) => {
     .toLowerCase()
     .split(/\s+/)
     .filter((term) => term.length > 0 && !term.includes(":"));
-  const results: Array<{ ledgerId: string; item: unknown; score: number; matchedFields: string[] }> = [];
+  const results: Array<{
+    ledgerId: string;
+    item: unknown;
+    score: number;
+    matchedFields: string[];
+  }> = [];
   for (const { name } of CANONICAL_LEDGERS) {
     if (ledger !== undefined && name !== ledger) continue;
     const active =
@@ -462,9 +479,7 @@ const ftsSearch: ToolHandler = (tenant, args) => {
       let score = 0;
       const matchedFields: string[] = [];
       for (const [fieldName, value] of Object.entries(item.fields)) {
-        const haystack = (
-          Array.isArray(value) ? value.join(" ") : String(value)
-        ).toLowerCase();
+        const haystack = (Array.isArray(value) ? value.join(" ") : String(value)).toLowerCase();
         if (terms.some((term) => haystack.includes(term))) {
           matchedFields.push(fieldName);
           score += fieldName === "headline" || fieldName === "title" ? 3 : 1;
@@ -483,13 +498,12 @@ const ftsSearch: ToolHandler = (tenant, args) => {
   return { results };
 };
 
-const createMilestone: ToolHandler = (tenant, args) => {
+const createRoot: ToolHandler = (tenant, args) => {
   const timestamp = nowIso();
   const id = optStr(args, "id") ?? `M${String(++tenant.milestoneCounter)}`;
-  const fields: Record<string, FieldValue> = { title: str(args, "title") };
-  for (const name of ["description", "blockedBy", "dependsOn"] as const) {
-    const value = args[name];
-    if (value !== undefined) fields[name] = value as FieldValue;
+  const fields = fieldsOf(args);
+  if (typeof fields["title"] !== "string") {
+    throw new DummyToolError("milestones title is required");
   }
   const milestone: Item = {
     id,
@@ -499,36 +513,43 @@ const createMilestone: ToolHandler = (tenant, args) => {
     createdAt: timestamp,
     updatedAt: timestamp,
   };
+  const author = optStr(args, "author");
+  const session = optStr(args, "session");
+  if (author !== undefined) milestone.author = author;
+  if (session !== undefined) milestone.session = session;
   tenant.milestones.set(id, milestone);
-  return { milestone: projectMilestoneMutationAckDto(milestone) };
+  return { item: projectItemMutationAckDto(milestone) };
 };
 
-const updateMilestone: ToolHandler = (tenant, args) => {
-  const milestone = milestoneOf(tenant, str(args, "milestone_id"));
+const updateRoot: ToolHandler = (tenant, args) => {
+  const milestone = milestoneOf(tenant, str(args, "item_id"));
   const status = optStr(args, "status");
   if (status !== undefined) assertStatus(MILESTONES_LEDGER, status);
   if (status !== undefined) milestone.status = status;
-  for (const name of ["title", "description", "blockedBy", "dependsOn"] as const) {
-    const value = args[name];
-    if (value !== undefined) milestone.fields[name] = value as FieldValue;
+  if (args["fields"] !== undefined) {
+    for (const [name, value] of Object.entries(fieldsOf(args))) {
+      milestone.fields[name] = value;
+    }
   }
+  const author = optStr(args, "author");
+  const session = optStr(args, "session");
+  if (author !== undefined) milestone.author = author;
+  if (session !== undefined) milestone.session = session;
   milestone.updatedAt = nowIso();
-  return { milestone: projectMilestoneMutationAckDto(milestone) };
+  return { item: projectItemMutationAckDto(milestone) };
 };
 
-const fetchMilestone: ToolHandler = (tenant, args) => {
-  const milestoneId = str(args, "milestone_id");
+const fetchRoot: ToolHandler = (tenant, args) => {
+  const milestoneId = str(args, "item_id");
   const milestone = milestoneOf(tenant, milestoneId);
   const references: Record<string, number> = {};
   for (const { name } of CANONICAL_LEDGERS) {
     if (name === MILESTONES_LEDGER) continue;
-    const count = ledgerOf(tenant, name).filter(
-      (item) => item.milestoneId === milestoneId,
-    ).length;
+    const count = ledgerOf(tenant, name).filter((item) => item.milestoneId === milestoneId).length;
     if (count > 0) references[name] = count;
   }
   return {
-    milestone: project(milestone, projectionOf(args)),
+    item: project(milestone, projectionOf(args)),
     resolved: resolvedMilestone(tenant, milestoneId),
     references,
   };
@@ -551,7 +572,10 @@ const archiveMilestone: ToolHandler = (tenant, args) => {
     }
   }
   const milestoneSchema = SCHEMAS.get(MILESTONES_LEDGER);
-  if (milestoneSchema === undefined || !milestoneSchema.terminalStatuses.includes(milestone.status)) {
+  if (
+    milestoneSchema === undefined ||
+    !milestoneSchema.terminalStatuses.includes(milestone.status)
+  ) {
     throw new DummyToolError(`milestone ${milestoneId} has non-terminal items`);
   }
   const title = milestone.fields["title"];
@@ -663,12 +687,7 @@ function rpcResult(id: unknown, result: unknown, headers: Record<string, string>
   });
 }
 
-function rpcError(
-  id: unknown,
-  code: number,
-  message: string,
-  status = 200,
-): Response {
+function rpcError(id: unknown, code: number, message: string, status = 200): Response {
   return new Response(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }), {
     status,
     headers: { "content-type": "application/json" },
@@ -826,8 +845,7 @@ export class InMemoryMcpService {
             title: displayName,
           },
           instructions:
-            `Project: ${displayName}\n\n` +
-            "Hand-written in-memory MCP contract service (T727).",
+            `Project: ${displayName}\n\n` + "Hand-written in-memory MCP contract service (T727).",
         },
         { "mcp-session-id": sessionId },
       );
@@ -879,8 +897,7 @@ export class InMemoryMcpService {
       return new Response("unknown project", { status: 404 });
     }
     const args =
-      typeof message.params?.["arguments"] === "object" &&
-      message.params["arguments"] !== null
+      typeof message.params?.["arguments"] === "object" && message.params["arguments"] !== null
         ? (message.params["arguments"] as Record<string, unknown>)
         : {};
     try {
@@ -907,9 +924,6 @@ export class InMemoryMcpService {
       update_item: updateItem,
       search_items: searchItems,
       fts_search: ftsSearch,
-      create_milestone: createMilestone,
-      update_milestone: updateMilestone,
-      fetch_milestone: fetchMilestone,
       archive_milestone: archiveMilestone,
       list_milestone_items: listMilestoneItems,
       snapshot: snapshotTool,

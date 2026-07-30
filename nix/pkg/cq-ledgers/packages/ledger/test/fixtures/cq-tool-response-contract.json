@@ -37,7 +37,7 @@
       "calls": [
         "Shared rules::get_config#1|full-content",
         "Shared rules::get_config#2|full-content",
-        "7. Milestones and goals::update_milestone#1|ack"
+        "7. Milestones and goals::update_item#1|ack"
       ]
     },
     {

@@ -17,7 +17,7 @@ const DISPATCHED_ROLES = [
   "research-experimenter",
 ] as const;
 const SURFACES = ["claude", "codex", "pi"] as const;
-const PROMPT_RECORDS_SHA256 = "d38c7c846374b0a55f4fb942da8dcbf8c1471b40712486e2e8c2c539db7e4889";
+const PROMPT_RECORDS_SHA256 = "ac9c355f95c129558c9629fb6f86b8e404aea920ee65636b55833bb7958a5a16";
 const PROMPT_TYPED_INPUTS_SHA256 =
   "c45b977797cc8709aad2c8adee6fba57d1ba1a675e5f6e7d349562e5224cec07";
 const PROMPT_UNAVAILABLE = {

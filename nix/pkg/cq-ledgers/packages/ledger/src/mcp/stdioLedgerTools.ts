@@ -4,6 +4,7 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { LedgerStore } from "../store/LedgerStore.js";
 import type { ConfigCapability } from "./configCapability.js";
 import type { DispatchCapability } from "./dispatchCapability.js";
@@ -11,6 +12,7 @@ import {
   assertToolPrefix,
   createLedgerMcpToolSpecifications,
   FULL_LEDGER_TOOL_PROFILE,
+  ledgerToolInputJsonSchema,
   prefixToolName,
   selectLedgerMcpToolSpecifications,
   type LedgerToolProfileName,
@@ -38,18 +40,29 @@ export function registerLedgerStdioToolSpecifications(
       async () => ({ content: [{ type: "text" as const, text: "{}" }] }),
     );
     sentinel.remove();
-    return;
+  } else {
+    for (const specification of specifications) {
+      server.registerTool(
+        prefixToolName(toolPrefix, specification.name),
+        {
+          description: specification.description,
+          inputSchema: specification.inputSchema,
+        },
+        specification.handler,
+      );
+    }
   }
-  for (const specification of specifications) {
-    server.registerTool(
-      prefixToolName(toolPrefix, specification.name),
-      {
-        description: specification.description,
-        inputSchema: specification.inputSchema,
-      },
-      specification.handler,
-    );
-  }
+  server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: specifications.map((specification) => ({
+      name: prefixToolName(toolPrefix, specification.name),
+      description: specification.description,
+      inputSchema: ledgerToolInputJsonSchema(specification),
+      ...(specification.annotations === undefined
+        ? {}
+        : { annotations: specification.annotations }),
+      ...(specification._meta === undefined ? {} : { _meta: specification._meta }),
+    })),
+  }));
 }
 
 /**

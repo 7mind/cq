@@ -7,20 +7,20 @@ interface ToolCall {
   args: unknown;
 }
 
-function stubClient(
-  responses: Record<string, unknown>,
-): { client: Client; calls: ToolCall[] } {
+function stubClient(responses: Record<string, unknown | unknown[]>): {
+  client: Client;
+  calls: ToolCall[];
+} {
   const calls: ToolCall[] = [];
+  const responseIndexes = new Map<string, number>();
   const stub = {
-    callTool: async ({
-      name,
-      arguments: args,
-    }: {
-      name: string;
-      arguments: unknown;
-    }) => {
+    callTool: async ({ name, arguments: args }: { name: string; arguments: unknown }) => {
       calls.push({ name, args });
-      const response = responses[name];
+      const configured = responses[name];
+      const response = Array.isArray(configured)
+        ? configured[responseIndexes.get(name) ?? 0]
+        : configured;
+      responseIndexes.set(name, (responseIndexes.get(name) ?? 0) + 1);
       if (response === undefined) throw new Error(`unexpected tool ${name}`);
       return {
         content: [{ type: "text", text: JSON.stringify(response) }],
@@ -70,15 +70,14 @@ describe("McpLedgerClient projection and acknowledgement contract", () => {
 
     expect(await client.fetchLedger("tasks", "compact")).toEqual(ledger);
     expect(await client.fetchItem("tasks", "T1", "full")).toEqual(item);
-    expect(await client.ftsSearch("Task", "compact", { ledger: "tasks" }))
-      .toEqual([
-        {
-          ledgerId: "tasks",
-          item,
-          score: 1,
-          matchedFields: ["headline"],
-        },
-      ]);
+    expect(await client.ftsSearch("Task", "compact", { ledger: "tasks" })).toEqual([
+      {
+        ledgerId: "tasks",
+        item,
+        score: 1,
+        matchedFields: ["headline"],
+      },
+    ]);
     expect(calls).toEqual([
       {
         name: "fetch_ledger",
@@ -133,10 +132,8 @@ describe("McpLedgerClient projection and acknowledgement contract", () => {
       status: "done",
     };
     const { client: stub, calls } = stubClient({
-      create_item: { item: created },
-      update_item: { item: updated },
-      create_milestone: { milestone },
-      update_milestone: { milestone: { ...milestone, status: "done" } },
+      create_item: [{ item: created }, { item: milestone }],
+      update_item: [{ item: updated }, { item: { ...milestone, status: "done" } }],
       archive_milestone: { pointer },
     });
     const client = new McpLedgerClient(stub);
@@ -153,10 +150,11 @@ describe("McpLedgerClient projection and acknowledgement contract", () => {
         fields: { description: "also not returned" },
       }),
     ).toEqual(updated);
-    expect(await client.createMilestone({ title: "Milestone" }))
-      .toEqual(milestone);
-    expect(await client.updateMilestone("M42", { status: "done" }))
-      .toEqual({ ...milestone, status: "done" });
+    expect(await client.createMilestone({ title: "Milestone" })).toEqual(milestone);
+    expect(await client.updateMilestone("M42", { status: "done" })).toEqual({
+      ...milestone,
+      status: "done",
+    });
     expect(await client.archiveMilestone("M42", "finished")).toEqual(pointer);
     expect(calls).toEqual([
       {
@@ -178,12 +176,22 @@ describe("McpLedgerClient projection and acknowledgement contract", () => {
         },
       },
       {
-        name: "create_milestone",
-        args: { title: "Milestone" },
+        name: "create_item",
+        args: {
+          ledger_id: "milestones",
+          status: "open",
+          fields: { title: "Milestone" },
+          author: "user",
+        },
       },
       {
-        name: "update_milestone",
-        args: { milestone_id: "M42", status: "done" },
+        name: "update_item",
+        args: {
+          ledger_id: "milestones",
+          item_id: "M42",
+          status: "done",
+          author: "user",
+        },
       },
       {
         name: "archive_milestone",

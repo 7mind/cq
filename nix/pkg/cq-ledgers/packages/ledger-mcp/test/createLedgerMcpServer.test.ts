@@ -8,16 +8,13 @@
  * assert:
  *  - a non-empty `toolPrefix` registers exactly `prefixedToolNames(prefix)`;
  *  - an omitted `toolPrefix` registers exactly the unprefixed `LEDGER_TOOL_NAMES`
- *    (the 32-tool surface), matching the legacy `buildServer` default.
+ *    (the 29-tool surface), matching the legacy `buildServer` default.
  */
 
 import { describe, it, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import {
-  exposedLedgerToolsForRole,
-  ROLE_TOOL_CAPABILITY_MATRIX,
-} from "@cq/config";
+import { exposedLedgerToolsForRole, ROLE_TOOL_CAPABILITY_MATRIX } from "@cq/config";
 import {
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
@@ -53,15 +50,13 @@ async function registeredNames(toolPrefix?: string, toolProfile?: string): Promi
     abort: unavailable,
     fetch: unavailable,
   };
-  const server = createLedgerMcpServer(
-    {
-      store,
-      displayName: "demo",
-      dispatchCapability,
-      ...(toolPrefix === undefined ? {} : { toolPrefix }),
-      ...(toolProfile === undefined ? {} : { toolProfile }),
-    },
-  );
+  const server = createLedgerMcpServer({
+    store,
+    displayName: "demo",
+    dispatchCapability,
+    ...(toolPrefix === undefined ? {} : { toolPrefix }),
+    ...(toolProfile === undefined ? {} : { toolProfile }),
+  });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client(
@@ -85,7 +80,7 @@ describe("createLedgerMcpServer — public builder", () => {
     expect(names.every((n) => n.startsWith("myproj_"))).toBe(true);
   });
 
-  it("registers the unprefixed LEDGER_TOOL_NAMES (32) when toolPrefix is omitted", async () => {
+  it("registers the unprefixed LEDGER_TOOL_NAMES (29) when toolPrefix is omitted", async () => {
     const names = await registeredNames();
     expect(names).toEqual([...LEDGER_TOOL_NAMES].sort());
     expect(names.length).toBe(LEDGER_TOOL_NAMES.length);

@@ -6,7 +6,7 @@ import { PROMPT_CATALOG_PROJECTION } from "./promptCatalog.gen.js";
  *
  * `@cq/config` cannot import `@cq/ledger` because the dependency runs in the
  * other direction. `roleToolProfiles.test.ts` therefore guards this inventory
- * against the prompt catalogue and the maintained 32-tool surface. T1327 owns
+ * against the prompt catalogue and the maintained 29-tool surface. T1327 owns
  * moving tool specifications behind one canonical filtered registry.
  */
 export const LEDGER_CAPABILITY_TOOL_NAMES = [
@@ -19,9 +19,6 @@ export const LEDGER_CAPABILITY_TOOL_NAMES = [
   "create_ledger",
   "search_items",
   "fts_search",
-  "create_milestone",
-  "update_milestone",
-  "fetch_milestone",
   "archive_milestone",
   "list_milestone_items",
   "snapshot",
@@ -83,7 +80,6 @@ export type RoleCapabilityClass = (typeof ROLE_CAPABILITY_CLASSES)[number];
 const PLANNING_READ_TOOL_NAMES = [
   "fetch_item",
   "fts_search",
-  "fetch_milestone",
   "list_milestone_items",
 ] as const satisfies readonly LedgerCapabilityToolName[];
 
@@ -173,14 +169,22 @@ function profileForCatalogRole({
     );
   }
   if (roleId === "plan-review" || roleId === "implement-review") {
-    return role(roleId, roleKind, ["no-domain-ledger"], [], [
-      `commands/cq/${roleId}.md: write nothing`,
-    ]);
+    return role(
+      roleId,
+      roleKind,
+      ["no-domain-ledger"],
+      [],
+      [`commands/cq/${roleId}.md: write nothing`],
+    );
   }
   if (roleId === "planners" || roleId === "reviewers") {
-    return role(roleId, roleKind, ["config-read"], ["get_config"], [
-      `commands/cq/${roleId}.md and Claude allowed-tools frontmatter`,
-    ]);
+    return role(
+      roleId,
+      roleKind,
+      ["config-read"],
+      ["get_config"],
+      [`commands/cq/${roleId}.md and Claude allowed-tools frontmatter`],
+    );
   }
   return role(roleId, roleKind, ["full-parent-access"], [], FULL_PARENT_EVIDENCE);
 }
@@ -189,9 +193,7 @@ const entries = PROMPT_CATALOG_PROJECTION.catalog.map(profileForCatalogRole);
 
 /** One total, fail-closed role-to-capability matrix for the 24-role prompt catalogue. */
 export const ROLE_TOOL_CAPABILITY_MATRIX: Readonly<Record<string, RoleToolCapabilityProfile>> =
-  Object.freeze(
-    Object.fromEntries(entries.map((entry) => [entry.roleId, entry])),
-  );
+  Object.freeze(Object.fromEntries(entries.map((entry) => [entry.roleId, entry])));
 
 export function exposedLedgerToolsForRole(roleId: string): readonly LedgerCapabilityToolName[] {
   const profile = ROLE_TOOL_CAPABILITY_MATRIX[roleId];
@@ -243,29 +245,26 @@ export const ROLE_IDENTIFIED_CORPUS = Object.freeze({
         transcripts: 51,
         zeroLedgerTranscripts: 3,
         currentLedgerCalls: {
-          fetch_item: 99,
+          fetch_item: 100,
           list_milestone_items: 19,
-          create_item: 67,
+          create_item: 71,
           derive_predicates: 1,
           update_item: 26,
           get_config: 1,
-          create_milestone: 4,
           fts_search: 4,
-          fetch_milestone: 1,
         },
         retiredCalls: { get_agent_models: 1 },
       },
-      ["create_item", "derive_predicates", "update_item", "get_config", "create_milestone"],
+      ["create_item", "derive_predicates", "update_item", "get_config"],
     ),
     "plan-reviewer": corpusRole(
       {
         transcripts: 42,
         zeroLedgerTranscripts: 0,
         currentLedgerCalls: {
-          fetch_item: 107,
+          fetch_item: 117,
           list_milestone_items: 130,
           derive_predicates: 1,
-          fetch_milestone: 10,
           fts_search: 3,
           fetch_prompt: 1,
         },
@@ -279,13 +278,12 @@ export const ROLE_IDENTIFIED_CORPUS = Object.freeze({
         zeroLedgerTranscripts: 66,
         currentLedgerCalls: {
           derive_predicates: 1,
-          fetch_item: 48,
+          fetch_item: 50,
           fts_search: 3,
           get_config: 1,
           enumerate_ledgers: 1,
           create_item: 3,
           fetch_ledger: 4,
-          fetch_milestone: 2,
           fetch_ledger_archive: 2,
           list_milestone_items: 4,
         },
@@ -299,7 +297,6 @@ export const ROLE_IDENTIFIED_CORPUS = Object.freeze({
         "enumerate_ledgers",
         "create_item",
         "fetch_ledger",
-        "fetch_milestone",
         "fetch_ledger_archive",
         "list_milestone_items",
       ],
@@ -309,23 +306,15 @@ export const ROLE_IDENTIFIED_CORPUS = Object.freeze({
         transcripts: 142,
         zeroLedgerTranscripts: 68,
         currentLedgerCalls: {
-          fetch_item: 108,
+          fetch_item: 121,
           fts_search: 6,
           get_config: 2,
-          fetch_milestone: 13,
           fetch_ledger: 2,
           list_milestone_items: 2,
         },
         retiredCalls: { get_reviewers: 1 },
       },
-      [
-        "fetch_item",
-        "fts_search",
-        "get_config",
-        "fetch_milestone",
-        "fetch_ledger",
-        "list_milestone_items",
-      ],
+      ["fetch_item", "fts_search", "get_config", "fetch_ledger", "list_milestone_items"],
     ),
     "investigate-explorer": corpusRole(
       {

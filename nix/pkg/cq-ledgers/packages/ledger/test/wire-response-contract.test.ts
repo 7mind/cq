@@ -138,18 +138,6 @@ describe("ledger response contract matrix", () => {
         kind: "mandatory-item-projection",
         projections: ["compact", "full"],
       },
-      create_milestone: {
-        kind: "fixed-acknowledgement",
-        acknowledgement: "milestone",
-      },
-      update_milestone: {
-        kind: "fixed-acknowledgement",
-        acknowledgement: "milestone",
-      },
-      fetch_milestone: {
-        kind: "mandatory-item-projection",
-        projections: ["compact", "full"],
-      },
       archive_milestone: { kind: "purpose-built-small" },
       list_milestone_items: {
         kind: "mandatory-item-projection",

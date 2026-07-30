@@ -19,6 +19,9 @@ test("the measured breaking-surface target is complete", async () => {
   const target = JSON.parse(targetBytes) as Awaited<ReturnType<typeof measureToolSurfaceTarget>>;
   const measured = await measureToolSurfaceTarget();
   const targetInventory = new Set(target.target.publicToolInventory);
+  const replacementByRemovedTool = new Map<string, string>(
+    target.migrationMap.map(({ removedTool, replacement }) => [removedTool, replacement]),
+  );
   const migrationNames = target.migrationMap.map(({ removedTool }) => removedTool).sort();
   const mappedPathsAreComplete = target.migrationMap.every(({ coverage }) => {
     const categorized = [
@@ -41,21 +44,15 @@ test("the measured breaking-surface target is complete", async () => {
       JSON.stringify(categorized) === JSON.stringify(coverage.matchedPaths)
     );
   });
-  const liveGuidanceIsInventoried = [target, measured].every(
-    ({ migrationMap }) =>
-      migrationMap.some(
-        ({ removedTool, coverage }) =>
-          removedTool === "create_milestone" &&
-          coverage.documentation.includes("CLAUDE.md") &&
-          coverage.documentation.includes(".codex/prompts/README.md"),
-      ) &&
-      migrationMap.some(
-        ({ removedTool, coverage }) =>
-          removedTool === "fetch_milestone" && coverage.documentation.includes("CLAUDE.md"),
-      ),
+  const removedNamesRemainOnlyAsEvidence = measured.migrationMap.every(
+    ({ coverage }) =>
+      coverage.callers.length === 0 &&
+      coverage.documentation.length === 0 &&
+      coverage.contractTests.length === 0 &&
+      coverage.generatedArtifacts.length === 0,
   );
   const contract = {
-    matchesCheckedInTarget: serializeToolSurfaceTarget(measured) === targetBytes,
+    checkedInTargetIsCanonicalJson: serializeToolSurfaceTarget(target) === targetBytes,
     selectedChangesReduceWholeSerializations: target.selected.every(
       ({ measurement }) =>
         measurement.method === "independent whole-value JSON.stringify with o200k_base" &&
@@ -73,8 +70,8 @@ test("the measured breaking-surface target is complete", async () => {
     roleCapabilityUnionPreserved:
       JSON.stringify(
         sortedUnique(
-          Object.values(target.target.roleProfiles).flatMap(
-            ({ preservedCapabilities }) => preservedCapabilities,
+          Object.values(target.target.roleProfiles).flatMap(({ preservedCapabilities }) =>
+            preservedCapabilities.map((tool) => replacementByRemovedTool.get(tool) ?? tool),
           ),
         ),
       ) === JSON.stringify([...LEDGER_CAPABILITY_TOOL_NAMES].sort()),
@@ -89,8 +86,8 @@ test("the measured breaking-surface target is complete", async () => {
       JSON.stringify(migrationNames) ===
         JSON.stringify([...target.target.removedPublicTools].sort()) &&
       mappedPathsAreComplete &&
-      liveGuidanceIsInventoried &&
       target.migrationMap.every(({ replacement }) => targetInventory.has(replacement)),
+    removedNamesRemainOnlyAsEvidence,
     everyRenameHasOneCompleteMigration: target.target.renamedPublicTools.length === 0,
     combinedTargetReducesWholeSurface:
       target.target.fullToolsListMeasurement.deltaTokens > 0 &&
@@ -98,31 +95,40 @@ test("the measured breaking-surface target is complete", async () => {
   };
 
   expect(contract).toEqual({
-    matchesCheckedInTarget: true,
+    checkedInTargetIsCanonicalJson: true,
     selectedChangesReduceWholeSerializations: true,
     rejectedConsolidationsRecordMeasuredReasons: true,
     roleCapabilityUnionPreserved: true,
     targetRoleToolUnionMatchesInventory: true,
     requiredCapabilitiesRemainPublic: true,
     everyRemovalHasOneCompleteMigration: true,
+    removedNamesRemainOnlyAsEvidence: true,
     everyRenameHasOneCompleteMigration: true,
     combinedTargetReducesWholeSurface: true,
   });
 });
 
-test("an unrelated untracked mention cannot change the checked-in target", async () => {
-  const targetBytes = readFileSync(TARGET_PATH, "utf8");
-  const untrackedPath = resolve(
-    REPO_ROOT,
-    `.t1326-untracked-migration-mention-${process.pid}.md`,
+test("the implemented public inventory matches the measured target", () => {
+  const target = JSON.parse(readFileSync(TARGET_PATH, "utf8")) as Awaited<
+    ReturnType<typeof measureToolSurfaceTarget>
+  >;
+
+  expect(JSON.stringify([...LEDGER_CAPABILITY_TOOL_NAMES].sort())).toBe(
+    JSON.stringify([...target.target.publicToolInventory].sort()),
   );
+});
+
+test("an unrelated untracked mention cannot change the checked-in target", async () => {
+  const before = serializeToolSurfaceTarget(await measureToolSurfaceTarget());
+  const untrackedPath = resolve(REPO_ROOT, `.t1326-untracked-migration-mention-${process.pid}.md`);
   writeFileSync(
     untrackedPath,
     "Unrelated notes: create_milestone update_milestone fetch_milestone.\n",
     { flag: "wx" },
   );
   try {
-    expect(serializeToolSurfaceTarget(await measureToolSurfaceTarget())).toBe(targetBytes);
+    const after = serializeToolSurfaceTarget(await measureToolSurfaceTarget());
+    expect(after).toBe(before);
   } finally {
     unlinkSync(untrackedPath);
   }

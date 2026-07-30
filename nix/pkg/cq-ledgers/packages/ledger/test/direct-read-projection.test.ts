@@ -94,12 +94,7 @@ async function buildFixture(
   });
   return {
     store,
-    tools: createLedgerMcpTools(
-      store,
-      readLog,
-      undefined,
-      promptCatalog,
-    ),
+    tools: createLedgerMcpTools(store, readLog, undefined, promptCatalog),
     milestone,
     first,
     second,
@@ -112,11 +107,7 @@ function findTool(tools: Tools, name: string) {
   return found;
 }
 
-function callTool(
-  tools: Tools,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<ToolResult> {
+function callTool(tools: Tools, name: string, args: Record<string, unknown>): Promise<ToolResult> {
   return findTool(tools, name).handler(args as never, null) as Promise<ToolResult>;
 }
 
@@ -172,33 +163,25 @@ const READ_INPUTS = {
   fetch_item: { ledger_id: "xenos", item_id: "X1" },
   search_items: { ledger_id: "xenos", query: "Needle" },
   fts_search: { query: "needle", ledger: "xenos" },
-  fetch_milestone: { milestone_id: "M1" },
   list_milestone_items: { milestone_id: "M1" },
 } as const;
 
 describe("createLedgerMcpTools mandatory read projections", () => {
-  it("rejects omitted and invalid projections for all six item-bearing reads", async () => {
+  it("rejects omitted and invalid projections for all five item-bearing reads", async () => {
     const { tools } = await buildFixture();
 
     for (const [name, args] of Object.entries(READ_INPUTS)) {
       const tool = findTool(tools, name);
       const input = z.object(tool.inputSchema);
       expect(input.safeParse(args).success, `${name}: omitted`).toBe(false);
-      expect(
-        input.safeParse({ ...args, projection: "summary" }).success,
-        `${name}: invalid`,
-      ).toBe(false);
-      expect(
-        input.safeParse({ ...args, projection: "compact" }).success,
-        `${name}: compact`,
-      ).toBe(true);
-      expect(
-        input.safeParse({ ...args, projection: "full" }).success,
-        `${name}: full`,
-      ).toBe(true);
-      expect("compact" in tool.inputSchema, `${name}: obsolete compact`).toBe(
+      expect(input.safeParse({ ...args, projection: "summary" }).success, `${name}: invalid`).toBe(
         false,
       );
+      expect(input.safeParse({ ...args, projection: "compact" }).success, `${name}: compact`).toBe(
+        true,
+      );
+      expect(input.safeParse({ ...args, projection: "full" }).success, `${name}: full`).toBe(true);
+      expect("compact" in tool.inputSchema, `${name}: obsolete compact`).toBe(false);
     }
   });
 
@@ -265,19 +248,24 @@ describe("createLedgerMcpTools mandatory read projections", () => {
       });
 
       const fetchedMilestone = store.fetchMilestone(milestone.id);
-      expect(
-        fetchedMilestone.milestone.fields["note"],
-        "fetch_milestone source precondition",
-      ).toBe(MILESTONE_NOTE);
-      const milestoneResponse = decode<{ milestone: Item }>(
-        await callTool(tools, "fetch_milestone", {
-          milestone_id: milestone.id,
+      expect(fetchedMilestone.milestone.fields["note"], "root fetch source precondition").toBe(
+        MILESTONE_NOTE,
+      );
+      const milestoneResponse = decode<{
+        item: Item;
+        resolved: typeof fetchedMilestone.resolved;
+        references: typeof fetchedMilestone.references;
+      }>(
+        await callTool(tools, "fetch_item", {
+          ledger_id: "milestones",
+          item_id: milestone.id,
           projection,
         }),
       );
-      expect(milestoneResponse, "fetch_milestone").toEqual({
-        ...fetchedMilestone,
-        milestone: expectedItem(fetchedMilestone.milestone, projection),
+      expect(milestoneResponse, "root fetch").toEqual({
+        item: expectedItem(fetchedMilestone.milestone, projection),
+        resolved: fetchedMilestone.resolved,
+        references: fetchedMilestone.references,
       });
 
       const milestoneItems = store.listMilestoneItems(milestone.id);
@@ -309,9 +297,7 @@ describe("createLedgerMcpTools mandatory read projections", () => {
           "fts_search",
           ftsResponse.results.map((result) => result.item),
         );
-        expectNoteOmitted("fetch_milestone", [
-          milestoneResponse.milestone,
-        ]);
+        expectNoteOmitted("root fetch", [milestoneResponse.item]);
         expectNoteOmitted(
           "list_milestone_items",
           Object.values(milestoneItemsResponse.items).flat(),
@@ -380,10 +366,7 @@ describe("createLedgerMcpTools mandatory read projections", () => {
       validateInput: () => ({ ok: true }),
       validateOutput: () => ({ ok: true }),
     };
-    const { store, tools } = await buildFixture(
-      async () => logPayload,
-      promptCatalog,
-    );
+    const { store, tools } = await buildFixture(async () => logPayload, promptCatalog);
 
     const cases = [
       {
@@ -405,12 +388,8 @@ describe("createLedgerMcpTools mandatory read projections", () => {
 
     for (const testCase of cases) {
       const result = await callTool(tools, testCase.name, testCase.args);
-      expect(result.content[0]?.text, testCase.name).toBe(
-        JSON.stringify(testCase.expected),
-      );
-      expect(result.content[0]?.text.includes("\n"), testCase.name).toBe(
-        false,
-      );
+      expect(result.content[0]?.text, testCase.name).toBe(JSON.stringify(testCase.expected));
+      expect(result.content[0]?.text.includes("\n"), testCase.name).toBe(false);
     }
   });
 });

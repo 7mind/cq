@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { expect, test } from "bun:test";
@@ -9,13 +10,19 @@ import {
 } from "./measure-tool-surface.js";
 
 const BASELINE_PATH = resolve(import.meta.dir, "baselines/g129-tool-surface.json");
+const TARGET_PATH = resolve(import.meta.dir, "baselines/t1326-tool-surface-target.json");
 
-test("the profiler matches the deterministic G129 baseline contract", async () => {
+test("the profiler preserves G129 evidence and matches the T1326 target", async () => {
+  const baseline = readFileSync(BASELINE_PATH);
+  const target = JSON.parse(readFileSync(TARGET_PATH, "utf8")) as {
+    basedOn: { baselineSha256: string };
+    target: { publicToolInventory: string[]; publicToolCount: number };
+  };
   const first = await measureToolSurfaces(PROFILE_NAMES);
   const second = await measureToolSurfaces(PROFILE_NAMES);
   const firstJson = serializeToolSurfaceMeasurement(first);
   const contract = {
-    matchesCheckedInBaseline: firstJson === readFileSync(BASELINE_PATH, "utf8"),
+    historicalBaselineSha256: createHash("sha256").update(baseline).digest("hex"),
     repeatIsByteIdentical: firstJson === serializeToolSurfaceMeasurement(second),
     profiles: Object.keys(first.profiles),
     durableDispatchInventory: first.profiles.full.inventory,
@@ -42,13 +49,15 @@ test("the profiler matches the deterministic G129 baseline contract", async () =
   };
 
   expect(contract).toEqual({
-    matchesCheckedInBaseline: true,
+    historicalBaselineSha256: target.basedOn.baselineSha256,
     repeatIsByteIdentical: true,
     profiles: [...PROFILE_NAMES],
-    durableDispatchInventory: [...LEDGER_TOOL_NAMES].sort(),
+    durableDispatchInventory: [...target.target.publicToolInventory].sort(),
     nonDispatchInventory: [...NON_DISPATCH_LEDGER_TOOL_NAMES].sort(),
     initializeInstructionsIncluded: true,
     toolsListSerializationIncluded: true,
     everyToolDecomposed: true,
   });
+  expect(first.profiles.full.toolCount).toBe(target.target.publicToolCount);
+  expect(LEDGER_TOOL_NAMES).toHaveLength(target.target.publicToolCount);
 });

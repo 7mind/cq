@@ -9,12 +9,14 @@ import {
   GOALS_LEDGER,
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
+  ledgerToolInputJsonSchema,
   MILESTONES_AMBIENT_ID,
   registerLedgerStdioTools,
   type ConfigCapability,
   type DispatchCapability,
   type LedgerStore,
   type LedgerToolProfileName,
+  type LedgerToolSpecification,
   type LedgerToolName,
   type ListProjectsCapability,
   type PromptCatalogCapability,
@@ -368,12 +370,33 @@ function comparableDefinition(
 function directDefinitions(tools: DirectTools): ComparableToolDefinition[] {
   return tools
     .map((tool) => {
-      const schema = z.toJSONSchema(z.object(tool.inputSchema as Record<string, z.ZodType>), {
-        target: "draft-7",
-      });
+      const schema = ledgerToolInputJsonSchema(tool as LedgerToolSpecification);
       return comparableDefinition(tool.name, tool.description, schema);
     })
     .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function refOnlyAllOfWrapperCount(value: unknown): number {
+  if (Array.isArray(value)) {
+    return value.reduce((count, nested) => count + refOnlyAllOfWrapperCount(nested), 0);
+  }
+  if (value === null || typeof value !== "object") return 0;
+  const object = value as Record<string, unknown>;
+  const allOf = object["allOf"];
+  const current =
+    Object.keys(object).length === 1 &&
+    Array.isArray(allOf) &&
+    allOf.length === 1 &&
+    typeof (allOf[0] as Record<string, unknown> | undefined)?.["$ref"] === "string"
+      ? 1
+      : 0;
+  return (
+    current +
+    Object.values(object).reduce<number>(
+      (count, nested) => count + refOnlyAllOfWrapperCount(nested),
+      0,
+    )
+  );
 }
 
 async function connectStdio(
@@ -525,8 +548,8 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
     {
       name: "fetch_item",
       args: {
-        ledger_id: "tasks",
-        item_id: ids.targetItem,
+        ledger_id: "milestones",
+        item_id: ids.activeMilestone,
         projection: "compact",
       },
     },
@@ -548,12 +571,11 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
     {
       name: "create_item",
       args: {
-        ledger_id: "tasks",
-        milestone_id: ids.activeMilestone,
-        status: "planned",
+        ledger_id: "milestones",
+        status: "open",
         fields: {
-          headline: "Created through tool",
-          description: "created full narrative",
+          title: "Created through tool",
+          description: "created root narrative",
         },
       },
     },
@@ -586,28 +608,6 @@ function invocationMatrix(fixture: Fixture): Invocation[] {
         ledger: "tasks",
         projection: "compact",
         limit: 5,
-      },
-    },
-    {
-      name: "create_milestone",
-      args: {
-        title: "Created through tool",
-        description: "milestone full narrative",
-      },
-    },
-    {
-      name: "update_milestone",
-      args: {
-        milestone_id: ids.activeMilestone,
-        description: "updated full milestone narrative",
-        dependsOn: [ids.archivableMilestone],
-      },
-    },
-    {
-      name: "fetch_milestone",
-      args: {
-        milestone_id: ids.activeMilestone,
-        projection: "full",
       },
     },
     {
@@ -816,8 +816,6 @@ function assertRepresentativeContracts(
 
   const fixedAcknowledgements = [
     ["create_item", "item"],
-    ["create_milestone", "milestone"],
-    ["update_milestone", "milestone"],
     ["reopen_item", "item"],
     ["unarchive_item", "item"],
   ] as const;
@@ -830,18 +828,10 @@ function assertRepresentativeContracts(
   expect(responses.get("create_ledger")).toEqual({
     ledger: { id: "widgets" },
   });
-  expect(responses.get("update_milestone")).toMatchObject({
-    milestone: {
-      fields: {
-        dependsOn: [`milestones:${fixture.ids.archivableMilestone}`],
-      },
-    },
-  });
-
   expect(responses.get("snapshot")).toMatchObject({
     ledger: {
       tasks: {
-        planned: { count: 2 },
+        planned: { count: 1 },
         wip: { count: 1 },
         done: { count: 1 },
       },
@@ -917,17 +907,46 @@ function assertRepresentativeContracts(
 
 // BG, specified-origin: both registrations expose one canonical contract per profile.
 describe("stdio/direct ledger tool differential contract", () => {
+  it("publishes minimal schemas with explicit generic-root conditions", async () => {
+    const fixture = await buildFixture();
+    try {
+      const definitions = directDefinitions(directTools(fixture.store, "", AVAILABLE_CAPABILITIES));
+      const serializedSchemas = JSON.stringify(definitions.map(({ schema }) => schema));
+      expect(serializedSchemas).not.toContain('"$schema"');
+      expect(serializedSchemas).not.toContain('"description"');
+      expect(refOnlyAllOfWrapperCount(definitions.map(({ schema }) => schema))).toBe(0);
+
+      const createItem = definitions.find(({ name }) => name === "create_item");
+      expect(createItem?.schema).toMatchObject({
+        required: ["ledger_id", "status", "fields"],
+        allOf: [
+          {
+            if: {
+              properties: { ledger_id: { const: "milestones" } },
+              required: ["ledger_id"],
+            },
+            then: {
+              not: { required: ["milestone_id"] },
+              properties: {
+                status: { const: "open" },
+                fields: { required: ["title"] },
+              },
+            },
+            else: { required: ["milestone_id"] },
+          },
+        ],
+      });
+    } finally {
+      await fixture.store.dispose();
+    }
+  });
+
   it("derives profiled definitions from the same canonical specifications", async () => {
     const directFixture = await buildFixture();
     const stdioFixture = await buildFixture();
     const profileName = "plan-advance";
     const prefix = "planner";
-    const direct = directTools(
-      directFixture.store,
-      prefix,
-      AVAILABLE_CAPABILITIES,
-      profileName,
-    );
+    const direct = directTools(directFixture.store, prefix, AVAILABLE_CAPABILITIES, profileName);
     const stdio = await connectStdio(
       stdioFixture.store,
       prefix,
@@ -966,7 +985,7 @@ describe("stdio/direct ledger tool differential contract", () => {
       }
     });
 
-    it(`invokes all 32 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
+    it(`invokes all 29 tools against independent stores for prefix ${JSON.stringify(prefix)}`, async () => {
       const directFixture = await buildFixture();
       const stdioFixture = await buildFixture();
       expect(directFixture.store).not.toBe(stdioFixture.store);

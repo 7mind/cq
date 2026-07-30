@@ -39,9 +39,16 @@ import {
   LEDGER_CAPABILITY_TOOL_NAMES,
   type LedgerCapabilityToolName,
 } from "@cq/config";
-import type { LedgerStore, CreateItemInit, UpdateItemPatch } from "../store/LedgerStore.js";
-import { QUERY_LANGUAGE_HELP } from "../search/query.js";
+import type {
+  LedgerStore,
+  CreateItemInit,
+  CreateMilestoneItemInit,
+  UpdateItemPatch,
+  UpdateMilestoneItemPatch,
+} from "../store/LedgerStore.js";
+import { MILESTONES_LEDGER } from "../constants.js";
 import type { FieldValue, LedgerSchema } from "../types.js";
+import { LedgerError } from "../types.js";
 import { paginate } from "../projection.js";
 import { derivePredicates } from "../store/predicates.js";
 import { computeLedgerSummaries } from "../summaries.js";
@@ -50,7 +57,6 @@ import {
   ITEM_MUTATION_ACK_DESCRIPTION,
   ITEM_PROJECTION_DESCRIPTION,
   LEDGER_MUTATION_ACK_DESCRIPTION,
-  MILESTONE_MUTATION_ACK_DESCRIPTION,
   produceWireDto,
   projectFetchedLedgerDto,
   projectFetchedMilestoneDto,
@@ -59,7 +65,6 @@ import {
   projectItemMutationAckDto,
   projectLedgerMutationAckDto,
   projectMilestoneItemGroupsDto,
-  projectMilestoneMutationAckDto,
   projectPaginatedLedgerDto,
   serializeWireDto,
   type ProducedWireDto,
@@ -132,6 +137,72 @@ export type LedgerToolSpecification = AnyTool & {
   readonly name: LedgerToolName;
   readonly description: string;
 };
+
+function simplifyInputSchemaNode(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(simplifyInputSchemaNode);
+  if (value === null || typeof value !== "object") return value;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => key !== "$schema" && key !== "description")
+    .map(([key, child]) => [key, simplifyInputSchemaNode(child)] as const);
+  const simplified = Object.fromEntries(entries) as Record<string, unknown>;
+  const allOf = simplified["allOf"];
+  if (Object.keys(simplified).length === 1 && Array.isArray(allOf) && allOf.length === 1) {
+    const only = allOf[0];
+    if (
+      only !== null &&
+      typeof only === "object" &&
+      Object.keys(only as Record<string, unknown>).length === 1 &&
+      typeof (only as Record<string, unknown>)["$ref"] === "string"
+    ) {
+      return only;
+    }
+  }
+  return simplified;
+}
+
+/** Serialize the validating Zod shape to the deliberately minimal public JSON Schema. */
+export function ledgerToolInputJsonSchema(
+  specification: LedgerToolSpecification,
+): Record<string, unknown> {
+  const converted = z.toJSONSchema(
+    z.object(specification.inputSchema as Record<string, z.ZodType>),
+    { target: "draft-7", unrepresentable: "any" },
+  );
+  const schema = simplifyInputSchemaNode(converted) as Record<string, unknown>;
+  if (specification.name === "create_item" || specification.name.endsWith("_create_item")) {
+    schema["allOf"] = [
+      {
+        if: {
+          properties: { ledger_id: { const: MILESTONES_LEDGER } },
+          required: ["ledger_id"],
+        },
+        then: {
+          not: { required: ["milestone_id"] },
+          properties: {
+            status: { const: "open" },
+            fields: { required: ["title"] },
+          },
+        },
+        else: { required: ["milestone_id"] },
+      },
+    ];
+  } else if (specification.name === "update_item" || specification.name.endsWith("_update_item")) {
+    schema["allOf"] = [
+      {
+        if: {
+          properties: { ledger_id: { const: MILESTONES_LEDGER } },
+          required: ["ledger_id"],
+        },
+        then: {
+          properties: {
+            status: { enum: ["open", "done", "postponed", "blocked"] },
+          },
+        },
+      },
+    ];
+  }
+  return schema;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -224,6 +295,50 @@ const projectionSchema = z.enum(["compact", "full"]).describe(ITEM_PROJECTION_DE
  */
 const safeIdSchema = z.string().regex(/^[A-Za-z0-9_-]+$/, "id may only contain A-Za-z0-9_-");
 
+const COMPLETE_DESCRIPTION_TOOL_NAMES: ReadonlySet<LedgerToolName> = new Set([
+  "fetch_ledger",
+  "fetch_item",
+  "update_item",
+  "create_item",
+  "search_items",
+  "fts_search",
+  "list_milestone_items",
+  "snapshot",
+  "derive_predicates",
+]);
+
+function optionalMilestoneString(
+  fields: Record<string, FieldValue>,
+  name: "title" | "description",
+): string | undefined {
+  const value = fields[name];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new LedgerError(`milestones field "${name}" must be a string`);
+  }
+  return value;
+}
+
+function optionalMilestoneReferences(
+  fields: Record<string, FieldValue>,
+  name: "blockedBy" | "dependsOn",
+): string[] | undefined {
+  const value = fields[name];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new LedgerError(`milestones field "${name}" must be a string[]`);
+  }
+  return value;
+}
+
+function assertOnlyMilestoneFields(fields: Record<string, FieldValue>): void {
+  const allowed = new Set(["title", "description", "blockedBy", "dependsOn"]);
+  const unsupported = Object.keys(fields).find((name) => !allowed.has(name));
+  if (unsupported !== undefined) {
+    throw new LedgerError(`unknown milestones field "${unsupported}"`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tool builders
 // ---------------------------------------------------------------------------
@@ -247,18 +362,7 @@ export function createLedgerMcpToolSpecifications(
 
   const fetchLedger = tool(
     "fetch_ledger",
-    `Fetch a ledger: schema, active milestone groups (each expanded with resolved milestone metadata { id, status, title, description }), and archive pointers.
-
-Required params:
-- projection ("compact" | "full"): ${ITEM_PROJECTION_DESCRIPTION}.
-
-Optional pagination params:
-- offset (integer, ≥0): zero-based index of the first item to return across the flattened item list. Enables pagination.
-- limit (integer, >0): maximum number of items to return.
-
-When offset or limit are provided the response shape changes to { ledger: { id, schema, counters, archivePointers }, items, total, offset, limit, nextOffset }. The milestone grouping is omitted; items are flattened across all milestone groups in their natural order. nextOffset is null when no next page remains.
-
-Without pagination the response is { ledger: FetchedLedger } with every item projected as requested.`,
+    "Fetch a ledger's schema, active milestone groups with resolved milestone metadata, and archive pointers. projection is required: compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field. Without pagination returns grouped {ledger}; offset/limit returns flattened {ledger,items,total,offset,limit,nextOffset}. Follow nextOffset until null.",
     {
       ledger_id: z.string(),
       projection: projectionSchema,
@@ -313,23 +417,37 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
 
   const fetchItem = tool(
     "fetch_item",
-    `Fetch a single item by id from a specific ledger using the ${ITEM_PROJECTION_DESCRIPTION}.`,
+    "Fetch one active item. For ledger_id=milestones, item_id is the milestone id and the response is {item,resolved,references}, preserving resolved metadata and per-ledger active reference counts; other ledgers return {item}. projection is required: compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field.",
     {
       ledger_id: z.string(),
       item_id: z.string(),
       projection: projectionSchema,
     } as const,
-    async (args) =>
-      wireResult(
+    async (args) => {
+      if (args.ledger_id === MILESTONES_LEDGER) {
+        const fetched = projectFetchedMilestoneDto(
+          store.fetchMilestone(args.item_id),
+          args.projection,
+        );
+        return wireResult(
+          produceWireDto({
+            item: fetched.milestone,
+            resolved: fetched.resolved,
+            references: fetched.references,
+          }),
+        );
+      }
+      return wireResult(
         produceWireDto({
           item: projectItemDto(store.fetchItem(args.ledger_id, args.item_id), args.projection),
         }),
-      ),
+      );
+    },
   );
 
   const updateItem = tool(
     "update_item",
-    `Update an item's status and/or fields. Provided fields replace existing values; omitted fields are preserved. Pass author/session to record who made this edit. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
+    "Update one item while preserving omitted values. For ledger_id=milestones, item_id is the milestone id and milestone status plus dependency-DAG invariants remain explicit. All writes validate the ledger schema, canonicalize recognized references, reject newly added dangling known-ledger refs, and record optional author/session provenance. Returns the generic item acknowledgement.",
     {
       ledger_id: z.string(),
       item_id: z.string(),
@@ -339,6 +457,24 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
       session: sessionParam,
     } as const,
     async (args) => {
+      if (args.ledger_id === MILESTONES_LEDGER) {
+        const fields = (args.fields ?? {}) as Record<string, FieldValue>;
+        assertOnlyMilestoneFields(fields);
+        const patch: UpdateMilestoneItemPatch = {};
+        if (args.status !== undefined) patch.status = args.status;
+        const title = optionalMilestoneString(fields, "title");
+        if (title !== undefined) patch.title = title;
+        const description = optionalMilestoneString(fields, "description");
+        if (description !== undefined) patch.description = description;
+        const blockedBy = optionalMilestoneReferences(fields, "blockedBy");
+        if (blockedBy !== undefined) patch.blockedBy = blockedBy;
+        const dependsOn = optionalMilestoneReferences(fields, "dependsOn");
+        if (dependsOn !== undefined) patch.dependsOn = dependsOn;
+        if (args.author !== undefined) patch.author = args.author;
+        if (args.session !== undefined) patch.session = args.session;
+        const milestone = await store.updateMilestone(args.item_id, patch);
+        return wireResult(produceWireDto({ item: projectItemMutationAckDto(milestone) }));
+      }
       const patch: UpdateItemPatch = {};
       if (args.status !== undefined) patch.status = args.status;
       if (args.fields !== undefined) patch.fields = args.fields as Record<string, FieldValue>;
@@ -351,10 +487,10 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
 
   const createItem = tool(
     "create_item",
-    `Create a new item under a milestone in a ledger. milestone_id must resolve to an active (non-archived, non-terminal) milestone in the milestones ledger. Status must be in the schema's statusValues. Fields must satisfy the schema (required fields present, types match). Auto-creates the depth-2 group on first reference. Pass author/session to record who created the item. ${ITEM_MUTATION_ACK_DESCRIPTION}`,
+    "Create an item. For ledger_id=milestones, omit milestone_id, require status=open and fields.title, allocate the root M<n> counter, validate dependency-DAG fields, and return the generic item acknowledgement. Every other ledger requires an active nonterminal milestone_id. All writes validate the ledger schema, canonicalize recognized references, reject newly added dangling known-ledger refs, and record optional author/session provenance.",
     {
       ledger_id: z.string(),
-      milestone_id: safeIdSchema,
+      milestone_id: safeIdSchema.optional(),
       status: z.string(),
       fields: fieldsSchema,
       id: safeIdSchema.optional(),
@@ -362,6 +498,33 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
       session: sessionParam,
     } as const,
     async (args) => {
+      if (args.ledger_id === MILESTONES_LEDGER) {
+        if (args.milestone_id !== undefined) {
+          throw new LedgerError("milestone_id must be omitted for the milestones ledger");
+        }
+        if (args.status !== "open") {
+          throw new LedgerError('milestones items must be created with status "open"');
+        }
+        const fields = args.fields as Record<string, FieldValue>;
+        assertOnlyMilestoneFields(fields);
+        const title = optionalMilestoneString(fields, "title");
+        if (title === undefined) throw new LedgerError('milestones field "title" is required');
+        const init: CreateMilestoneItemInit = { title };
+        const description = optionalMilestoneString(fields, "description");
+        if (description !== undefined) init.description = description;
+        const blockedBy = optionalMilestoneReferences(fields, "blockedBy");
+        if (blockedBy !== undefined) init.blockedBy = blockedBy;
+        const dependsOn = optionalMilestoneReferences(fields, "dependsOn");
+        if (dependsOn !== undefined) init.dependsOn = dependsOn;
+        if (args.id !== undefined) init.id = args.id;
+        if (args.author !== undefined) init.author = args.author;
+        if (args.session !== undefined) init.session = args.session;
+        const milestone = await store.createMilestone(init);
+        return wireResult(produceWireDto({ item: projectItemMutationAckDto(milestone) }));
+      }
+      if (args.milestone_id === undefined) {
+        throw new LedgerError("milestone_id is required outside the milestones ledger");
+      }
       const init: CreateItemInit = {
         status: args.status,
         fields: args.fields as Record<string, FieldValue>,
@@ -390,7 +553,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
 
   const searchItems = tool(
     "search_items",
-    `Substring search across status and field values within a single ledger using the ${ITEM_PROJECTION_DESCRIPTION}.`,
+    "Substring-search status and fields within one ledger. projection is required: compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field. Returns {items}.",
     {
       ledger_id: z.string(),
       query: z.string(),
@@ -408,17 +571,7 @@ Without pagination the response is { ledger: FetchedLedger } with every item pro
 
   const ftsSearch = tool(
     "fts_search",
-    `Ranked full-text search across ledger items, with a filter query language. Cross-ledger by default (pass \`ledger\` to restrict to one). Results are ranked by relevance (descending); field boosts favour headline/title/question over description/rationale over status. Each result carries the requested item projection, its score, and the fields that matched. Use this for discovery; use search_items for precise single-ledger substring matching.
-
-Params:
-- projection ("compact" | "full"): ${ITEM_PROJECTION_DESCRIPTION}.
-- status (string): dedicated pre-filter — applied before text ranking, accepts a single exact status value. Combine with inline status: qualifiers in query for multi-status OR: use query='(status:open OR status:wip)' (qualifier-only OR uses the structured evaluator, works correctly).
-- include_archived (boolean): when false (default) covers only active (non-archived) items; set true to also search items in milestone-group archives.
-- fuzzy / prefix (boolean): enable fuzzy matching or prefix matching on free-text terms.
-
-Status semantics: terminalStatuses (e.g. done, resolved, abandoned per the ledger schema) are still active — searchable and editable — until archive_milestone is called. Use -status:done style negation to exclude them.
-
-${QUERY_LANGUAGE_HELP}`,
+    "Ranked cross-ledger search with optional ledger/status prefilters, archived coverage, fuzzy matching, and prefixes. query accepts free text; field:value qualifiers for status, ledger, milestone, author, session, and item fields; quoted values; implicit AND; uppercase OR; NOT or leading -; and parentheses. The status prefilter composes with query. Terminal items remain active until archive_milestone. Returns ranked {ledgerId,item,score,matchedFields} results; compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field.",
     {
       query: z.string(),
       projection: projectionSchema,
@@ -463,85 +616,6 @@ ${QUERY_LANGUAGE_HELP}`,
     },
   );
 
-  // ---- Milestone surface (5) ---------------------------------------------
-
-  const createMilestone = tool(
-    "create_milestone",
-    `Create a new milestone in the milestones ledger. Allocates an M<n> id from the milestones ledger's own item counter. The blockedBy/dependsOn arrays are advisory cross-references (no FK enforcement). ${MILESTONE_MUTATION_ACK_DESCRIPTION}`,
-    {
-      title: z.string(),
-      description: z.string().optional(),
-      blockedBy: z.array(z.string()).optional(),
-      dependsOn: z.array(z.string()).optional(),
-      id: safeIdSchema.optional(),
-    } as const,
-    async (args) => {
-      const init: {
-        id?: string;
-        title: string;
-        description?: string;
-        blockedBy?: string[];
-        dependsOn?: string[];
-      } = { title: args.title };
-      if (args.description !== undefined) init.description = args.description;
-      if (args.blockedBy !== undefined) init.blockedBy = args.blockedBy;
-      if (args.dependsOn !== undefined) init.dependsOn = args.dependsOn;
-      if (args.id !== undefined) init.id = args.id;
-      const milestone = await store.createMilestone(init);
-      return wireResult(
-        produceWireDto({
-          milestone: projectMilestoneMutationAckDto(milestone),
-        }),
-      );
-    },
-  );
-
-  const updateMilestone = tool(
-    "update_milestone",
-    `Update a milestone in the milestones ledger. status must be one of open/done/postponed/blocked. ${MILESTONE_MUTATION_ACK_DESCRIPTION}`,
-    {
-      milestone_id: safeIdSchema,
-      status: z.string().optional(),
-      title: z.string().optional(),
-      description: z.string().optional(),
-      blockedBy: z.array(z.string()).optional(),
-      dependsOn: z.array(z.string()).optional(),
-    } as const,
-    async (args) => {
-      const patch: {
-        status?: string;
-        title?: string;
-        description?: string;
-        blockedBy?: string[];
-        dependsOn?: string[];
-      } = {};
-      if (args.status !== undefined) patch.status = args.status;
-      if (args.title !== undefined) patch.title = args.title;
-      if (args.description !== undefined) patch.description = args.description;
-      if (args.blockedBy !== undefined) patch.blockedBy = args.blockedBy;
-      if (args.dependsOn !== undefined) patch.dependsOn = args.dependsOn;
-      const milestone = await store.updateMilestone(args.milestone_id, patch);
-      return wireResult(
-        produceWireDto({
-          milestone: projectMilestoneMutationAckDto(milestone),
-        }),
-      );
-    },
-  );
-
-  const fetchMilestone = tool(
-    "fetch_milestone",
-    `Fetch a milestone item from the milestones ledger using the ${ITEM_PROJECTION_DESCRIPTION}, plus resolved metadata and per-ledger active reference counts.`,
-    {
-      milestone_id: safeIdSchema,
-      projection: projectionSchema,
-    } as const,
-    async (args) =>
-      wireResult(
-        projectFetchedMilestoneDto(store.fetchMilestone(args.milestone_id), args.projection),
-      ),
-  );
-
   const archiveMilestone = tool(
     "archive_milestone",
     "Archive a milestone globally (2-level): sweeps every ledger's group with this id into ./archive/<ledger>/<id>.md, then moves the milestone-item itself to ./archive/milestones/<id>.md. Refused if any item in any ledger is non-terminal.",
@@ -557,7 +631,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const listMilestoneItems = tool(
     "list_milestone_items",
-    `Return all active items grouped by ledger that reference this milestone using the ${ITEM_PROJECTION_DESCRIPTION}.`,
+    "Return active items grouped by ledger that reference one milestone. projection is required: compact returns identity, status, timestamps, provenance, summary fields, and references; full returns every item field.",
     {
       milestone_id: safeIdSchema,
       projection: projectionSchema,
@@ -607,7 +681,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const snapshotTool = tool(
     "snapshot",
-    "One-call cross-ledger actionable-state overview; compact {id,status,summary} stubs grouped by ledger x status; flow-agnostic (compose /cq:advance predicates from this). Returns { ledger: { [ledgerId]: { [status]: { count, items: {id,status,summary}[] } } } } for every active ledger that has at least one active item. No long narrative fields — stays well under token-overflow thresholds. include_archived is accepted but currently a no-op (snapshot() covers active ledgers only; archived coverage is a future extension).",
+    "Return active items as compact {id,status,summary} stubs grouped by ledger and status. The include_archived parameter remains reserved and has no effect.",
     {
       include_archived: z
         .boolean()
@@ -619,7 +693,7 @@ ${QUERY_LANGUAGE_HELP}`,
 
   const derivePredicatesTool = tool(
     "derive_predicates",
-    "Derive the /cq:advance flow-detection predicates from the current ledger state in one call (the SINGLE SOURCE OF TRUTH shared with @cq/cli — read these instead of hand-deriving them). Returns { pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate, belowFloor, planBusy, goalDrift }, each a verdict { value: boolean, items: string[] } where items names the ids that make the predicate TRUE-and-unblocked (pSeed = a root-caused defect at/above the critical/high severity floor owned by no live goal and un-gated; pResearch = an actionable item in the researches ledger; openQuestionGate.items lists the open questions gating the others; planBusy lists goals carrying an ACTIVE plan claim, which suppresses them from pPlan; belowFloor, planBusy, and goalDrift are INFORMATIONAL companions and gate nothing). Pure over active-ledger reads; no params.",
+    "Return the authoritative /cq:advance verdicts pInvestigate, pSeed, pPlan, pResearch, pImplement, openQuestionGate, belowFloor, planBusy, and goalDrift as {value,items}. The first five are actionable flows; openQuestionGate suppresses gated work; belowFloor, planBusy, and goalDrift are informational.",
     {} as Record<string, never>,
     async () => jsonResult(derivePredicates(store)),
   );
@@ -796,9 +870,6 @@ ${QUERY_LANGUAGE_HELP}`,
     createLedger,
     searchItems,
     ftsSearch,
-    createMilestone,
-    updateMilestone,
-    fetchMilestone,
     archiveMilestone,
     listMilestoneItems,
     snapshotTool,
@@ -822,7 +893,9 @@ ${QUERY_LANGUAGE_HELP}`,
     }
     return {
       ...ledgerTool,
-      description: appendLedgerResponseDescription(toolName, ledgerTool.description),
+      description: COMPLETE_DESCRIPTION_TOOL_NAMES.has(toolName)
+        ? ledgerTool.description
+        : appendLedgerResponseDescription(toolName, ledgerTool.description),
     } as LedgerToolSpecification;
   });
 }

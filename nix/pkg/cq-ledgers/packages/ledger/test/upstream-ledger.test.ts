@@ -155,6 +155,14 @@ function callTool(
   }>;
 }
 
+function createRoot(tools: ReturnType<typeof createLedgerMcpTools>, init: { title: string }) {
+  return callTool(tools, "create_item", {
+    ledger_id: "milestones",
+    status: "open",
+    fields: { title: init.title },
+  });
+}
+
 function schemaSha256(schema: LedgerSchema): string {
   return createHash("sha256").update(JSON.stringify(schema)).digest("hex");
 }
@@ -171,19 +179,17 @@ function prePlanLifecycleSchema(ledgerName: string, schema: LedgerSchema): Ledge
 describe("frozen pre-upstream MCP client compatibility", () => {
   it("ignores additive response fields and continues to fetch every known ledger", async () => {
     const fixture = JSON.parse(
-      await readFile(
-        new URL("./fixtures/pre-upstream-client.json", import.meta.url),
-        "utf8",
-      ),
+      await readFile(new URL("./fixtures/pre-upstream-client.json", import.meta.url), "utf8"),
     ) as FrozenClientFixture;
     const store = new InMemoryLedgerStore({});
     await store.init();
     try {
       expect(fixture.version).toBe(1);
       const tools = createLedgerMcpTools(store);
-      const currentResponse = decode(
-        await callTool(tools, "enumerate_ledgers", {}),
-      ) as Record<string, unknown>;
+      const currentResponse = decode(await callTool(tools, "enumerate_ledgers", {})) as Record<
+        string,
+        unknown
+      >;
       expect(currentResponse["ledgerSummaries"]).toBeArray();
 
       const frozenView = currentResponse as unknown as FrozenEnumerateResponse;
@@ -202,13 +208,13 @@ describe("frozen pre-upstream MCP client compatibility", () => {
         );
       }
 
-      const milestoneResponse = decode(
-        await callTool(tools, "create_milestone", { title: "frozen client" }),
-      ) as { milestone: { id: string } };
+      const milestoneResponse = decode(await createRoot(tools, { title: "frozen client" })) as {
+        item: { id: string };
+      };
       const taskResponse = decode(
         await callTool(tools, "create_item", {
           ledger_id: TASKS_LEDGER,
-          milestone_id: milestoneResponse.milestone.id,
+          milestone_id: milestoneResponse.item.id,
           status: "planned",
           fields: { headline: "Old-client task" },
         }),

@@ -95,9 +95,7 @@ beforeAll(async () => {
     path.join(promptRoot, "surface.json"),
     JSON.stringify({
       ...surfaceCore,
-      surfaceDigest: createHash("sha256")
-        .update(JSON.stringify(surfaceCore), "utf8")
-        .digest("hex"),
+      surfaceDigest: createHash("sha256").update(JSON.stringify(surfaceCore), "utf8").digest("hex"),
     }),
   );
   await fs.writeFile(path.join(promptRoot, "catalog.json"), catalogJson);
@@ -218,10 +216,15 @@ describe("McpLedgerClient.embedded (in-process, in-memory transport)", () => {
   });
 
   it("round-trips fixed acks plus compact and full reads — no subprocess", async () => {
-    decode<{ milestone: { id: string } }>(
+    decode<{ item: { id: string } }>(
       await rawClient.callTool({
-        name: "create_milestone",
-        arguments: { id: "M30", title: "embedded coverage" },
+        name: "create_item",
+        arguments: {
+          ledger_id: "milestones",
+          id: "M30",
+          status: "open",
+          fields: { title: "embedded coverage" },
+        },
       }),
     );
     const dependency = decode<{

@@ -110,10 +110,7 @@ export class McpLedgerClient implements LedgerClient {
   /** Connect to a `ledger-mcp --http` server at `url` (e.g. http://127.0.0.1:7777/mcp). */
   static async connect(url: string): Promise<McpLedgerClient> {
     const transport = new StreamableHTTPClientTransport(new URL(url));
-    const client = new Client(
-      { name: "ledger-tui", version: "0.0.1" },
-      { capabilities: {} },
-    );
+    const client = new Client({ name: "ledger-tui", version: "0.0.1" }, { capabilities: {} });
     // The SDK's StreamableHTTPClientTransport declares `sessionId?: string`
     // (string | undefined), which trips exactOptionalPropertyTypes against the
     // Transport interface's `sessionId?: string`. The shapes are behaviourally
@@ -153,10 +150,7 @@ export class McpLedgerClient implements LedgerClient {
     );
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client(
-      { name: "ledger-tui", version: "0.0.1" },
-      { capabilities: {} },
-    );
+    const client = new Client({ name: "ledger-tui", version: "0.0.1" }, { capabilities: {} });
     await client.connect(clientTransport);
     return new McpLedgerClient(client, { store, cwd, resolved, dispatchRuntime });
   }
@@ -197,9 +191,7 @@ export class McpLedgerClient implements LedgerClient {
     // compatibility with a server build that predates them — fall back
     // gracefully rather than dereferencing undefined.
     const counts = r.counts ?? {};
-    const summaryMap = new Map(
-      (r.ledgerSummaries ?? []).map((s) => [s.name, s]),
-    );
+    const summaryMap = new Map((r.ledgerSummaries ?? []).map((s) => [s.name, s]));
     return r.ledgers.map((name) => {
       const extra = summaryMap.get(name);
       const summary: LedgerSummary = { name, itemCount: counts[name] ?? 0 };
@@ -209,10 +201,7 @@ export class McpLedgerClient implements LedgerClient {
     });
   }
 
-  async fetchLedger(
-    ledgerId: string,
-    projection: ItemProjection,
-  ): Promise<FetchedLedger> {
+  async fetchLedger(ledgerId: string, projection: ItemProjection): Promise<FetchedLedger> {
     return (
       await this.call<{ ledger: FetchedLedger }>("fetch_ledger", {
         ledger_id: ledgerId,
@@ -230,11 +219,7 @@ export class McpLedgerClient implements LedgerClient {
     ).archive;
   }
 
-  async fetchItem(
-    ledgerId: string,
-    itemId: string,
-    projection: ItemProjection,
-  ): Promise<Item> {
+  async fetchItem(ledgerId: string, itemId: string, projection: ItemProjection): Promise<Item> {
     return (
       await this.call<{ item: Item }>("fetch_item", {
         ledger_id: ledgerId,
@@ -266,9 +251,7 @@ export class McpLedgerClient implements LedgerClient {
     if (init.id !== undefined) args["id"] = init.id;
     if (init.author !== undefined) args["author"] = init.author;
     if (init.session !== undefined) args["session"] = init.session;
-    return (
-      await this.call<{ item: ItemMutationAckDto }>("create_item", args)
-    ).item;
+    return (await this.call<{ item: ItemMutationAckDto }>("create_item", args)).item;
   }
 
   async updateItem(
@@ -281,9 +264,7 @@ export class McpLedgerClient implements LedgerClient {
     if (patch.fields !== undefined) args["fields"] = patch.fields;
     if (patch.author !== undefined) args["author"] = patch.author;
     if (patch.session !== undefined) args["session"] = patch.session;
-    return (
-      await this.call<{ item: ItemMutationAckDto }>("update_item", args)
-    ).item;
+    return (await this.call<{ item: ItemMutationAckDto }>("update_item", args)).item;
   }
 
   async ftsSearch(
@@ -296,34 +277,38 @@ export class McpLedgerClient implements LedgerClient {
     return (await this.call<{ results: FtsHit[] }>("fts_search", args)).results;
   }
 
-  async createMilestone(
-    init: { title: string; description?: string; id?: string },
-  ): Promise<MilestoneMutationAckDto> {
-    const args: Record<string, unknown> = { title: init.title };
-    if (init.description !== undefined) args["description"] = init.description;
+  async createMilestone(init: {
+    title: string;
+    description?: string;
+    id?: string;
+  }): Promise<MilestoneMutationAckDto> {
+    const fields: Record<string, FieldValue> = { title: init.title };
+    if (init.description !== undefined) fields["description"] = init.description;
+    const args: Record<string, unknown> = {
+      ledger_id: "milestones",
+      status: "open",
+      fields,
+      author: "user",
+    };
     if (init.id !== undefined) args["id"] = init.id;
-    return (
-      await this.call<{ milestone: MilestoneMutationAckDto }>(
-        "create_milestone",
-        args,
-      )
-    ).milestone;
+    return (await this.call<{ item: ItemMutationAckDto }>("create_item", args)).item;
   }
 
   async updateMilestone(
     milestoneId: string,
     patch: MilestonePatch,
   ): Promise<MilestoneMutationAckDto> {
-    const args: Record<string, unknown> = { milestone_id: milestoneId };
+    const fields: Record<string, FieldValue> = {};
+    const args: Record<string, unknown> = {
+      ledger_id: "milestones",
+      item_id: milestoneId,
+      author: "user",
+    };
     if (patch.status !== undefined) args["status"] = patch.status;
-    if (patch.title !== undefined) args["title"] = patch.title;
-    if (patch.description !== undefined) args["description"] = patch.description;
-    return (
-      await this.call<{ milestone: MilestoneMutationAckDto }>(
-        "update_milestone",
-        args,
-      )
-    ).milestone;
+    if (patch.title !== undefined) fields["title"] = patch.title;
+    if (patch.description !== undefined) fields["description"] = patch.description;
+    if (Object.keys(fields).length > 0) args["fields"] = fields;
+    return (await this.call<{ item: ItemMutationAckDto }>("update_item", args)).item;
   }
 
   async archiveMilestone(milestoneId: string, summary: string): Promise<ArchivePointer> {

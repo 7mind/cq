@@ -75,8 +75,8 @@ describe("ledger-mcp Streamable HTTP", () => {
   it("advertises usage instructions on initialize", async () => {
     await withClient(async (client) => {
       const instr = client.getInstructions() ?? "";
-      expect(instr).toContain("planning ledger");
-      expect(instr).toContain("create_item");
+      expect(instr).toContain("Markdown-backed typed ledgers");
+      expect(instr).toContain("derive_predicates");
     });
   });
 
@@ -109,13 +109,18 @@ describe("ledger-mcp Streamable HTTP", () => {
   it("supports ack, compact, and full round-trips over HTTP", async () => {
     let itemId = "";
     await withClient(async (client) => {
-      const ms = decode<{ milestone: { id: string } }>(
+      const ms = decode<{ item: { id: string } }>(
         await client.callTool({
-          name: "create_milestone",
-          arguments: { id: "M11", title: "http round-trip" },
+          name: "create_item",
+          arguments: {
+            ledger_id: "milestones",
+            id: "M11",
+            status: "open",
+            fields: { title: "http round-trip" },
+          },
         }),
       );
-      expect(ms.milestone.id).toBe("M11");
+      expect(ms.item.id).toBe("M11");
 
       const created = decode<{
         item: { id: string; status: string; fields: Record<string, never> };
@@ -239,9 +244,7 @@ describe("ledger-mcp HTTP --tool-prefix end-to-end (T379)", () => {
   it("prefixes every registered non-dispatch tool", async () => {
     await withPrefixedClient(async (client) => {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
-      const expected = NON_DISPATCH_LEDGER_TOOL_NAMES.map(
-        (name) => `${PREFIX}_${name}`,
-      ).sort();
+      const expected = NON_DISPATCH_LEDGER_TOOL_NAMES.map((name) => `${PREFIX}_${name}`).sort();
       expect(names).toEqual(expected);
       // Spot-check: unprefixed names must not appear.
       expect(names).not.toContain("enumerate_ledgers");

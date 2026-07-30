@@ -264,6 +264,7 @@ export {
   DISPATCH_LIFECYCLE_TOOL_NAMES,
   FULL_LEDGER_TOOL_PROFILE,
   LEDGER_TOOL_NAMES,
+  ledgerToolInputJsonSchema,
   ledgerToolNamesForProfile,
   NON_DISPATCH_LEDGER_TOOL_NAMES,
   selectLedgerMcpToolSpecifications,

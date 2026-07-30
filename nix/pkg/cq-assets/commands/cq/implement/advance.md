@@ -8,6 +8,7 @@ argument-hint: [milestoneId ...]
 {{cq:fragment:operational-tool-vocabulary}}
 
 ## Catalogue
+
 ```yaml
 inputs:
   - "optional milestone ids; empty resumes all active milestones with non-terminal tasks"
@@ -201,7 +202,7 @@ Re-derive the ready set after every merge and continue until drained.
 
 For each touched milestone, close and archive it only when every contained item
 is terminal and, for a coordination milestone, its goal is also terminal.
-Perform `update_milestone(..., status: "done")` before
+Perform `update_item(ledger_id: "milestones", ..., status: "done")` before
 `archive_milestone(...)`.
 
 Never auto-close a goal. When all of a goal's work milestones are archived,
