@@ -387,6 +387,32 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     });
   }
 
+  it("T1491 sends the complete private Codex boundary request on every parent edge", () => {
+    for (const edge of DISPATCH_EDGE_INPUTS) {
+      const body = normalize(renderedOf("codex", edge.flowRoleId));
+      for (const field of [
+        "roleId",
+        "handle:{attestationId,generation}",
+        "inputCapability",
+        "resultCapability",
+        "cwd",
+        "ledgerCwd",
+        "model",
+        "reasoningEffort",
+        "sandboxMode",
+        "timeoutMs",
+      ] as const) {
+        expect(body).toContain(field);
+      }
+      expect(body).toContain("stdin");
+      expect(body).toContain("parent project");
+      expect(body).toContain("child execution worktree");
+      expect(body).toContain("capabilities off");
+      expect(body).toContain("argv");
+      expect(body).not.toContain("{ attestationId, generation, inputCapability }");
+    }
+  });
+
   it("T977 renders one-shot fetch for Claude/Codex and direct delivery for the held Pi worker", () => {
     for (const surface of ["claude", "codex"] as const) {
       const worker = renderedOf(surface, "implement-worker");

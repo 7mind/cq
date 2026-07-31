@@ -4,15 +4,17 @@
 > `{ roleId, surface, projectKey, taskId, coordinates, round?, priorReviewId?, guidance?, resolvedModel? }`,
 > then call `prepare_dispatch`. The server reads the task/review narrative and
 > validates the assembled input against the role's typed `inputSchema`. Dispatch
-> `CQ_SUBAGENT` with only the returned
-> `{ attestationId, generation, inputCapability }` and
-> `isolation: "worktree"`; the child calls `fetch_dispatch_input` exactly once
-> before work, so no parent-rendered task narrative enters the launch. Await its
+> `CQ_SUBAGENT` by writing the complete private request described above to the
+> adapter's stdin. Retain the prepared handle, input capability, and result
+> capability; set `cwd` to the child execution worktree and `ledgerCwd` to the
+> parent project. The child calls `fetch_dispatch_input` exactly once before
+> work, so no parent-rendered task narrative enters the launch. Await its
 > handle-only final response after its capability-scoped `store_result`, confirm
 > the observed native completion, and call `fetch_dispatch_result` exactly once
 > with the exact handle retained from `prepare_dispatch`. Apply the blocking
 > consumed-only rule before interpreting the worker result; never key the
-> fetch on any child-reported identifier.
+> fetch on any child-reported identifier. Never put the input body or either
+> capability in argv.
 >
 > **Implement-reviewer dispatch.** For each process-boundary
 > `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`,
