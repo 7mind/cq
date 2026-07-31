@@ -176,6 +176,7 @@ export function createCodexRoleBoundaryPlan(
   const argv = Object.freeze([
     resolved.codexExecutable,
     "exec",
+    "--ignore-user-config",
     "--strict-config",
     "--ephemeral",
     "--json",

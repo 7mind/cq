@@ -118,6 +118,7 @@ describe("T1330 Codex role process boundary", () => {
           plan.argv.includes("frontier-model") &&
           plan.argv.includes(`model_reasoning_effort=${JSON.stringify("high")}`),
         worktreeSelected: plan.argv.includes("/worktrees/task"),
+        ignoresUserConfig: plan.argv.includes("--ignore-user-config"),
         profileConfigParses: true,
         handleOnlyIntercepted:
           plan.interceptStdout &&
@@ -178,6 +179,7 @@ describe("T1330 Codex role process boundary", () => {
         roleInstructionsNative: true,
         modelSelected: true,
         worktreeSelected: true,
+        ignoresUserConfig: true,
         profileConfigParses: true,
         handleOnlyIntercepted: true,
         childDispatchDisabled: true,
