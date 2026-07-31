@@ -16,6 +16,15 @@ const INPUT_CAPABILITY = {
   scope: "fetch-input",
   token: "cq_input_0123456789abcdefghijklmnopqrstuvwxyz",
 } as const;
+const RESULT_CAPABILITY = {
+  scope: "store-result",
+  token: "cq_result_0123456789abcdefghijklmnopqrstuvwxyz",
+} as const;
+const BOUNDARY_CONTEXTS = {
+  cwd: "/worktrees/task",
+  ledgerCwd: "/projects/cq",
+  resultCapability: RESULT_CAPABILITY,
+} as const;
 const PLANNING_TOOLS = [
   "fetch_item",
   "fts_search",
@@ -43,7 +52,7 @@ describe("T1330 Codex role process boundary", () => {
         roleInstructions: "must not launch",
         handle: HANDLE,
         inputCapability: INPUT_CAPABILITY,
-        cwd: "/worktrees/task",
+        ...BOUNDARY_CONTEXTS,
         model: "frontier-model",
         reasoningEffort: "high",
         sandboxMode: "read-only",
@@ -76,7 +85,7 @@ describe("T1330 Codex role process boundary", () => {
         roleInstructions: `instructions:${roleId}`,
         handle: HANDLE,
         inputCapability: INPUT_CAPABILITY,
-        cwd: "/worktrees/task",
+        ...BOUNDARY_CONTEXTS,
         model: "frontier-model",
         reasoningEffort: "high",
         sandboxMode: roleId.includes("worker") ? "danger-full-access" : "read-only",
@@ -88,7 +97,16 @@ describe("T1330 Codex role process boundary", () => {
       const profile = ROLE_TOOL_CAPABILITY_MATRIX[roleId]!;
       const mcpOverride = plan.argv.find((arg) => arg.startsWith("mcp_servers.ledger="));
       if (mcpOverride === undefined) throw new Error(`${roleId}: missing MCP override`);
-      parseToml(mcpOverride);
+      const parsedMcpOverride = parseToml(mcpOverride) as {
+        mcp_servers: {
+          ledger: {
+            default_tools_approval_mode?: string;
+          };
+        };
+      };
+      const launch = JSON.parse(plan.stdin) as {
+        resultCapability?: typeof RESULT_CAPABILITY;
+      };
       const intercepted = interceptCodexRoleBoundaryResult(
         [
           JSON.stringify({ type: "thread.started", thread_id: "child-thread" }),
@@ -117,7 +135,22 @@ describe("T1330 Codex role process boundary", () => {
         modelSelected:
           plan.argv.includes("frontier-model") &&
           plan.argv.includes(`model_reasoning_effort=${JSON.stringify("high")}`),
-        worktreeSelected: plan.argv.includes("/worktrees/task"),
+        worktreeSelected: plan.cwd === "/worktrees/task" && plan.argv.includes("/worktrees/task"),
+        ledgerProjectSelected:
+          plan.ledgerMcp.args.includes("/projects/cq") &&
+          !plan.ledgerMcp.args.includes("/worktrees/task"),
+        unattendedMcpApproved:
+          parsedMcpOverride.mcp_servers.ledger.default_tools_approval_mode === "approve",
+        resultCapabilityDelivered:
+          JSON.stringify(launch.resultCapability) === JSON.stringify(RESULT_CAPABILITY),
+        launchEnvelopeExact:
+          JSON.stringify(Object.keys(launch).sort()) ===
+          JSON.stringify(
+            ["attestationId", "generation", "inputCapability", "resultCapability"].sort(),
+          ),
+        capabilitiesAbsentFromArgv:
+          !plan.argv.join("\n").includes(INPUT_CAPABILITY.token) &&
+          !plan.argv.join("\n").includes(RESULT_CAPABILITY.token),
         ignoresUserConfig: plan.argv.includes("--ignore-user-config"),
         profileConfigParses: true,
         handleOnlyIntercepted:
@@ -179,6 +212,11 @@ describe("T1330 Codex role process boundary", () => {
         roleInstructionsNative: true,
         modelSelected: true,
         worktreeSelected: true,
+        ledgerProjectSelected: true,
+        unattendedMcpApproved: true,
+        resultCapabilityDelivered: true,
+        launchEnvelopeExact: true,
+        capabilitiesAbsentFromArgv: true,
         ignoresUserConfig: true,
         profileConfigParses: true,
         handleOnlyIntercepted: true,
@@ -187,5 +225,45 @@ describe("T1330 Codex role process boundary", () => {
       unknownRoleRejected: true,
       echoedBodyRejected: true,
     });
+  });
+
+  test("rejects a relative ledger project directory before launch", () => {
+    expect(() =>
+      createCodexRoleBoundaryPlan({
+        roleId: "implement-worker",
+        roleInstructions: "implement the task",
+        handle: HANDLE,
+        inputCapability: INPUT_CAPABILITY,
+        ...BOUNDARY_CONTEXTS,
+        ledgerCwd: "relative/project",
+        model: "frontier-model",
+        reasoningEffort: "high",
+        sandboxMode: "workspace-write",
+        timeoutMs: 120_000,
+        promptRoot: "/nix/store/codex-prompt-root",
+        ledgerCommand: "/nix/store/cq/bin/cq",
+        codexExecutable: "/nix/store/codex/bin/codex",
+      }),
+    ).toThrow("ledgerCwd must be absolute");
+  });
+
+  test("rejects an empty result capability before launch", () => {
+    expect(() =>
+      createCodexRoleBoundaryPlan({
+        roleId: "implement-worker",
+        roleInstructions: "implement the task",
+        handle: HANDLE,
+        inputCapability: INPUT_CAPABILITY,
+        ...BOUNDARY_CONTEXTS,
+        resultCapability: { scope: "store-result", token: "" },
+        model: "frontier-model",
+        reasoningEffort: "high",
+        sandboxMode: "workspace-write",
+        timeoutMs: 120_000,
+        promptRoot: "/nix/store/codex-prompt-root",
+        ledgerCommand: "/nix/store/cq/bin/cq",
+        codexExecutable: "/nix/store/codex/bin/codex",
+      }),
+    ).toThrow('resultCapability must contain scope "store-result" and a non-empty token');
   });
 });

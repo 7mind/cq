@@ -1,5 +1,9 @@
 import * as path from "node:path";
-import type { DispatchHandle, InputCapability } from "./compactDispatchProtocol.js";
+import type {
+  DispatchHandle,
+  InputCapability,
+  ResultCapability,
+} from "./compactDispatchProtocol.js";
 import { classifyCodexFinalMessage } from "./codexDispatchProtocol.js";
 import { DISPATCHED_ROLE_IDS } from "./promptCatalogStore.js";
 import {
@@ -20,7 +24,9 @@ export interface CodexRoleBoundaryRequest {
   readonly roleInstructions: string;
   readonly handle: DispatchHandle;
   readonly inputCapability: InputCapability;
+  readonly resultCapability: ResultCapability;
   readonly cwd: string;
+  readonly ledgerCwd: string;
   readonly model: string;
   readonly reasoningEffort: string;
   readonly sandboxMode: CodexRoleSandboxMode;
@@ -40,6 +46,7 @@ export interface CodexRoleLedgerMcpConfiguration {
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
   readonly enabledTools: readonly LedgerCapabilityToolName[];
+  readonly defaultToolsApprovalMode: "approve";
   readonly required: true;
 }
 
@@ -93,6 +100,9 @@ function assertBoundaryRequest(request: CodexRoleBoundaryRequest): CodexRoleBoun
   if (!path.isAbsolute(request.cwd)) {
     throw new CodexRoleBoundaryError("cwd must be absolute");
   }
+  if (!path.isAbsolute(request.ledgerCwd)) {
+    throw new CodexRoleBoundaryError("ledgerCwd must be absolute");
+  }
   if (!SANDBOX_MODE_SET.has(request.sandboxMode)) {
     throw new CodexRoleBoundaryError(
       `sandboxMode must be one of ${CODEX_ROLE_SANDBOX_MODES.join(", ")}`,
@@ -119,6 +129,15 @@ function assertBoundaryRequest(request: CodexRoleBoundaryRequest): CodexRoleBoun
       'inputCapability must contain scope "fetch-input" and a non-empty token',
     );
   }
+  if (
+    request.resultCapability?.scope !== "store-result" ||
+    typeof request.resultCapability.token !== "string" ||
+    request.resultCapability.token.trim() === ""
+  ) {
+    throw new CodexRoleBoundaryError(
+      'resultCapability must contain scope "store-result" and a non-empty token',
+    );
+  }
   return request;
 }
 
@@ -131,6 +150,7 @@ function renderLedgerMcpOverride(config: CodexRoleLedgerMcpConfiguration): strin
     `args=${JSON.stringify(config.args)}`,
     `env={${environment}}`,
     `enabled_tools=${JSON.stringify(config.enabledTools)}`,
+    `default_tools_approval_mode=${JSON.stringify(config.defaultToolsApprovalMode)}`,
     "required=true",
   ];
   return `mcp_servers.ledger={${fields.join(",")}}`;
@@ -152,7 +172,7 @@ export function createCodexRoleBoundaryPlan(
     args: Object.freeze([
       "mcp",
       "--cwd",
-      resolved.cwd,
+      resolved.ledgerCwd,
       "--prompt-surface",
       "codex",
       "--prompt-root",
@@ -166,12 +186,14 @@ export function createCodexRoleBoundaryPlan(
       CQ_PROMPT_SURFACE: "codex",
     }),
     enabledTools,
+    defaultToolsApprovalMode: "approve" as const,
     required: true as const,
   });
   const launch = {
     attestationId: resolved.handle.attestationId,
     generation: resolved.handle.generation,
     inputCapability: resolved.inputCapability,
+    resultCapability: resolved.resultCapability,
   };
   const argv = Object.freeze([
     resolved.codexExecutable,
