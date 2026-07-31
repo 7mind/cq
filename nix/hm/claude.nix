@@ -149,7 +149,7 @@ in
         includeCoAuthoredBy = cfg.coAuthored.enable;
         attribution = lib.mkIf (!cfg.coAuthored.enable) { commit = ""; pr = ""; };
         effortLevel = "high";
-        model = "claude-opus-4-8[1m]";
+        model = "claude-opus-5[1m]";
         spinnerVerbs = {
           mode = "replace";
           verbs = [ "Working" ];
