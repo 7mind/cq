@@ -59,6 +59,7 @@ import { Type } from "typebox";
 // cannot import @cq/config.
 
 const DISPATCH_TOOL_NAME = "dispatch_agent";
+const LEDGER_DIRECT_TOOL_PREFIX = "ledger_";
 
 // T222: the directory the cq agent markdowns are projected to. Pinned on
 // piWrapped in nix/hm/dev-llm.nix; default mirrors that wiring.
@@ -682,8 +683,27 @@ function buildExcludeTools(disallowedTools: string[], excludedLedgerTools: strin
   for (const cqName of disallowedTools) {
     excluded.add(CQ_TO_PI_TOOL[cqName] ?? cqName);
   }
-  for (const ledgerTool of excludedLedgerTools) excluded.add(ledgerTool);
+  for (const ledgerTool of excludedLedgerTools) {
+    excluded.add(`${LEDGER_DIRECT_TOOL_PREFIX}${ledgerTool}`);
+  }
   return [...excluded];
+}
+
+function assertActiveLedgerToolDecisions(
+  activeToolNames: readonly string[],
+  roleTools: readonly string[],
+  transportTools: readonly string[],
+  excludedLedgerTools: readonly string[],
+): void {
+  const decidedTools = new Set([...roleTools, ...transportTools, ...excludedLedgerTools]);
+  const undecidedTool = activeToolNames.find(
+    (toolName) =>
+      toolName.startsWith(LEDGER_DIRECT_TOOL_PREFIX) &&
+      !decidedTools.has(toolName.slice(LEDGER_DIRECT_TOOL_PREFIX.length)),
+  );
+  if (undecidedTool !== undefined) {
+    throw new Error(`active registered ledger tool "${undecidedTool}" lacks a profile decision`);
+  }
 }
 
 function writePromptToTempFile(agentName: string, prompt: string): { dir: string; filePath: string } {
@@ -809,6 +829,12 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         );
       }
 
+      assertActiveLedgerToolDecisions(
+        pi.getActiveTools(),
+        agent.roleTools,
+        agent.transportTools,
+        agent.excludedLedgerTools,
+      );
       const excludeTools = buildExcludeTools(agent.disallowedTools, agent.excludedLedgerTools);
 
       // ── Resolve the child model (T225) ──────────────────────────────────
