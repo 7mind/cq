@@ -148,8 +148,11 @@ in
           features.multi_agent = true;
           features.fast_mode = false;
           features.steer = true;
-          mcp_servers.ledger =
-            codexLedgerMcpRegistration config.programs.mcp.servers.ledger;
+          mcp_servers.ledger = codexLedgerMcpRegistration (
+            lib.hm.mcp.transformMcpServer {
+              server = config.programs.mcp.servers.ledger;
+            }
+          );
         };
       };
 
