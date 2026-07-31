@@ -206,20 +206,18 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
     }
     inFlight = true;
     try {
-      let status: string;
+      let text: string;
       try {
         const stdout = await runCounts(ctx.cwd);
-        status = formatStatus(parseCounts(stdout));
+        text = formatStatus(parseCounts(stdout));
       } catch (err) {
         onError?.(err, "counts");
-        setStatus(ctx, FAILURE_MARKER);
-        return;
+        text = FAILURE_MARKER;
       }
       try {
-        setStatus(ctx, status);
+        setStatus(ctx, text);
       } catch (err) {
         onError?.(err, "paint");
-        setStatus(ctx, FAILURE_MARKER);
       }
     } finally {
       inFlight = false;

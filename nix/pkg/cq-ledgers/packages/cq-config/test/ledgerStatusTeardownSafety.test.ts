@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "bun:test";
 
@@ -105,8 +106,8 @@ const SCENARIOS: Scenario[] = [
     hasUI: true,
     outcome: "fulfilled",
     alwaysThrow: true,
-    expectedPhases: { counts: 0, paint: 1, terminal: 1 },
-    expectedUiCalls: 2,
+    expectedPhases: { counts: 0, paint: 1, terminal: 0 },
+    expectedUiCalls: 1,
     expectedLiveUiCallsAfterShutdown: 0,
   },
   {
@@ -146,7 +147,7 @@ const SCENARIOS: Scenario[] = [
     hasUI: true,
     outcome: "rejected",
     alwaysThrow: true,
-    expectedPhases: { counts: 1, paint: 0, terminal: 1 },
+    expectedPhases: { counts: 1, paint: 1, terminal: 0 },
     expectedUiCalls: 1,
     expectedLiveUiCallsAfterShutdown: 0,
   },
@@ -230,6 +231,17 @@ async function observeScenario(scenario: Scenario): Promise<ScenarioObservation>
 }
 
 describe("ledger-status teardown safety Arm A: in-process seams", () => {
+  test("refresh has one shared paint site outside its catch blocks", () => {
+    const source = readFileSync(EXTENSION_PATH, "utf8");
+    const refresh = source.slice(
+      source.indexOf("  async function refresh"),
+      source.indexOf("\n\n  // Chosen event names"),
+    );
+
+    expect(Array.from(refresh.matchAll(/\bsetStatus\(ctx, /g))).toHaveLength(1);
+    expect(refresh).not.toMatch(/catch\s*\([^)]*\)\s*\{[^}]*\bsetStatus\(/s);
+  });
+
   test.each(SCENARIOS)("$name", async (scenario) => {
     const observation = await observeScenario(scenario);
     expect(observation.phases).toEqual(scenario.expectedPhases);
@@ -247,7 +259,7 @@ describe("ledger-status teardown safety Arm A: in-process seams", () => {
     }
   });
 
-  test("poll reports a marker repaint rejection through its terminal catch", async () => {
+  test("poll reports a marker paint rejection without a terminal catch", async () => {
     const { registerLedgerStatus } = await importLedgerStatus();
     const handlers = new Map<EventName, Handler>();
     let poll: (() => void) | undefined;
@@ -291,7 +303,7 @@ describe("ledger-status teardown safety Arm A: in-process seams", () => {
     await flush();
     await flush();
 
-    expect(phases).toEqual({ counts: 0, paint: 1, terminal: 1 });
+    expect(phases).toEqual({ counts: 0, paint: 1, terminal: 0 });
   });
 });
 
