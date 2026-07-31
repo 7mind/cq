@@ -5,6 +5,8 @@ import * as path from "node:path";
 import {
   DISPATCHED_ROLE_SIDECARS,
   getRoleSidecar,
+  PI_ROLE_TOOL_PROFILE_MANIFEST_PATH,
+  serializePiRoleToolProfileManifest,
   verifyPromptCatalog,
   type PromptSurface,
   type PromptVerificationRoot,
@@ -238,6 +240,14 @@ function independentlyRenderRoot(
           .digest("hex"),
       }),
     },
+    ...(surface === "pi"
+      ? [
+          {
+            path: PI_ROLE_TOOL_PROFILE_MANIFEST_PATH,
+            content: serializePiRoleToolProfileManifest(),
+          },
+        ]
+      : []),
     ...roleArtifacts,
   ]);
 }

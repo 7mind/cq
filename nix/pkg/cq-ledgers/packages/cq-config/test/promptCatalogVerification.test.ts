@@ -247,6 +247,23 @@ describe("prompt-catalog centralized verification mutation fixtures", () => {
     expect(() => verifyPromptCatalog(input)).toThrow("missing role artifact");
   });
 
+  test("accepts a declared surface-specific artifact and rejects byte drift", () => {
+    // Regression origin: T1329 added an authoritative Pi-only tool-profile artifact.
+    const input = mutableFixture();
+    const artifactPath = "role-tool-profiles.json";
+    (input.expectedRoots.pi.artifacts as Record<string, string>)[artifactPath] =
+      '{"schemaVersion":1}';
+    (input.packagedRoots.pi.artifacts as Record<string, string>)[artifactPath] =
+      '{"schemaVersion":1}';
+    expect(() => verifyPromptCatalog(input)).not.toThrow();
+
+    (input.packagedRoots.pi.artifacts as Record<string, string>)[artifactPath] =
+      '{"schemaVersion":2}';
+    expect(() => verifyPromptCatalog(input)).toThrow(
+      `${artifactPath}: source drift from deterministic rendering`,
+    );
+  });
+
   test("rejects unsupported surfaces, source drift, and sidecar drift", () => {
     const unsupported = mutableFixture();
     const catalog = (

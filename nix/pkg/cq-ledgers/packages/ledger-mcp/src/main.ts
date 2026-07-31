@@ -172,7 +172,7 @@ export interface ParsedArgs {
   http: HttpOpts | null;
   /** Optional ledger-tool name prefix (default `''` = unprefixed). */
   toolPrefix: string;
-  /** `full` or one fail-closed prompt-catalog role profile. */
+  /** Full compatibility surface or one fail-closed prompt-catalog role profile. */
   toolProfile: LedgerToolProfileName;
   promptSurface: PromptSurface | undefined;
   promptRoot: string | undefined;

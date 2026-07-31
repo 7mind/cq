@@ -5,6 +5,7 @@ import {
   type PromptCatalogFileInput,
   type PromptFragmentFileInput,
 } from "../src/promptRenderer.js";
+import { serializePiRoleToolProfileManifest } from "../src/roleToolProfiles.js";
 // The per-role schema sidecars supply the contract versions stamped into the
 // attested surface manifest. This list MIRRORS
 // `promptCatalogStore.DISPATCHED_ROLE_SIDECARS`: the Nix renderer derivation
@@ -78,6 +79,7 @@ const tree = renderPromptSurfaceTree({
     "fragment-paths-json",
   ),
   roleVersions: DISPATCHED_ROLE_VERSIONS,
+  ...(surface === "pi" ? { roleToolProfilesJson: serializePiRoleToolProfileManifest() } : {}),
 });
 const writtenPaths = new Set<string>();
 for (const artifact of tree.artifacts) {

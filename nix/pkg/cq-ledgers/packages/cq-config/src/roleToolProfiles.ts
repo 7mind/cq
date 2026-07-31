@@ -199,6 +199,71 @@ export function exposedLedgerToolsForRole(roleId: string): readonly LedgerCapabi
   return Object.freeze(LEDGER_CAPABILITY_TOOL_NAMES.filter((tool) => exposed.has(tool)));
 }
 
+export type LedgerToolProfileDecision = "exposed" | "excluded";
+
+/** Resolve one role/tool cell of the total matrix, rejecting either unknown axis. */
+export function ledgerToolDecisionForRole(
+  roleId: string,
+  toolName: string,
+): LedgerToolProfileDecision {
+  const exposed = exposedLedgerToolsForRole(roleId);
+  if (!(LEDGER_CAPABILITY_TOOL_NAMES as readonly string[]).includes(toolName)) {
+    throw new Error(`unknown ledger capability tool "${toolName}"`);
+  }
+  return exposed.includes(toolName as LedgerCapabilityToolName) ? "exposed" : "excluded";
+}
+
+/** The complement sent to deny-list based child launchers such as Pi. */
+export function excludedLedgerToolsForRole(roleId: string): readonly LedgerCapabilityToolName[] {
+  return Object.freeze(
+    LEDGER_CAPABILITY_TOOL_NAMES.filter(
+      (tool) => ledgerToolDecisionForRole(roleId, tool) === "excluded",
+    ),
+  );
+}
+
+export const PI_ROLE_TOOL_PROFILE_MANIFEST_PATH = "role-tool-profiles.json";
+
+export interface PiRoleToolDecision {
+  /** Role-specific ledger tools, excluding dispatch input/result transport. */
+  readonly roleTools: readonly LedgerCapabilityToolName[];
+  /** Process-boundary transport tools reported separately from domain access. */
+  readonly transportTools: readonly LedgerCapabilityToolName[];
+  /** The complete complement removed before Pi constructs the child prompt. */
+  readonly excludedTools: readonly LedgerCapabilityToolName[];
+}
+
+export interface PiRoleToolProfileManifest {
+  readonly schemaVersion: 1;
+  readonly ledgerToolNames: readonly LedgerCapabilityToolName[];
+  readonly roles: Readonly<Record<string, PiRoleToolDecision>>;
+}
+
+/** Build the Pi process-boundary manifest from the authoritative role matrix. */
+export function buildPiRoleToolProfileManifest(): PiRoleToolProfileManifest {
+  const transportTools = new Set<LedgerCapabilityToolName>(DISPATCH_RESULT_PLUMBING_TOOL_NAMES);
+  const roleEntries = Object.values(ROLE_TOOL_CAPABILITY_MATRIX)
+    .filter(({ roleKind }) => roleKind === "dispatched-subagent")
+    .map(({ roleId }) => {
+      const exposed = exposedLedgerToolsForRole(roleId);
+      const decision: PiRoleToolDecision = Object.freeze({
+        roleTools: Object.freeze(exposed.filter((tool) => !transportTools.has(tool))),
+        transportTools: Object.freeze(exposed.filter((tool) => transportTools.has(tool))),
+        excludedTools: excludedLedgerToolsForRole(roleId),
+      });
+      return [roleId, decision] as const;
+    });
+  return Object.freeze({
+    schemaVersion: 1 as const,
+    ledgerToolNames: LEDGER_CAPABILITY_TOOL_NAMES,
+    roles: Object.freeze(Object.fromEntries(roleEntries)),
+  });
+}
+
+export function serializePiRoleToolProfileManifest(): string {
+  return JSON.stringify(buildPiRoleToolProfileManifest());
+}
+
 export interface RoleCorpusObservation {
   readonly transcripts: number;
   readonly zeroLedgerTranscripts: number;
@@ -338,7 +403,7 @@ export const HARNESS_ROLE_TOOL_ENFORCEMENT = Object.freeze({
     filteringStage: "before-model-context",
     mechanism: "strict-per-dispatch-mcp",
     evidence:
-      "claudeDispatchBridge.test.ts records --tools '', --allowedTools, --strict-mcp-config, and the one-server --mcp-config at the spawned child boundary",
+      "claudeDispatchBridge.test.ts records --tools '', role-derived --allowedTools, --strict-mcp-config, and the role-profiled one-server --mcp-config at the spawned child boundary",
   }),
   pi: Object.freeze({
     measuredVersion: "0.82.1",
@@ -346,7 +411,7 @@ export const HARNESS_ROLE_TOOL_ENFORCEMENT = Object.freeze({
     filteringStage: "before-model-context",
     mechanism: "--exclude-tools",
     evidence:
-      "packagedPiPromptRoot.test.ts records the spawned pi argv; pi --help states --exclude-tools disables built-in, extension, and custom tools",
+      "packagedPiPromptRoot.test.ts captures the spawned child's initialize/tool list after applying the generated authoritative profile complement through --exclude-tools",
   }),
   codex: Object.freeze({
     measuredVersion: "0.146.0",

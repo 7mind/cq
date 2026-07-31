@@ -80,6 +80,7 @@ import type { DispatchOverlayRegistry } from "./dispatchOverlays.js";
 import type { DispatchPreLaunchRejection } from "./dispatchInputValidation.js";
 import { DISPATCH_HANDLE_SCHEMA } from "./compactDispatchProtocol.js";
 import type { JSONSchema } from "./promptCatalog.js";
+import { exposedLedgerToolsForRole } from "./roleToolProfiles.js";
 import type {
   AbortedDispatchResult,
   DispatchAbortReason,
@@ -483,14 +484,15 @@ export function launchClaudePrint(
 ): ClaudeNativeLaunchReport {
   const boundRoleId = boundClaudePrintRole(context, options.rolePrompt);
   const serverName = assertObservedTransportString(options.storeServer.name, "storeServer.name");
-  const toolName = `mcp__${serverName}__store_result`;
-  const fetchInputToolName = `mcp__${serverName}__fetch_dispatch_input`;
+  const allowedToolNames = exposedLedgerToolsForRole(boundRoleId).map(
+    (toolName) => `mcp__${serverName}__${toolName}`,
+  );
   const mcpConfig = JSON.stringify({
     mcpServers: {
       [serverName]: {
         type: "stdio",
         command: options.storeServer.command,
-        args: [...options.storeServer.args],
+        args: [...options.storeServer.args, "--tool-profile", boundRoleId],
         cwd: options.storeServer.cwd,
         env: {
           ...options.storeServer.env,
@@ -518,7 +520,7 @@ export function launchClaudePrint(
       "--tools",
       "",
       "--allowedTools",
-      `${fetchInputToolName},${toolName}`,
+      allowedToolNames.join(","),
       "--strict-mcp-config",
       "--mcp-config",
       mcpConfig,

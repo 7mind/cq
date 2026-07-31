@@ -55,12 +55,17 @@ if (!args.includes("--strict-mcp-config") || args.includes("--setting-sources"))
 const config = JSON.parse(value("--mcp-config")) as {
   readonly mcpServers: {
     readonly t688store: {
+      readonly args: readonly string[];
       readonly env: Readonly<Record<string, string>>;
     };
   };
 };
 if (!config.mcpServers.t688store.env["T688_CAPABILITY"]?.startsWith("cq_result_")) {
   throw new Error("result capability missing from scoped server environment");
+}
+// Regression origin: tasks:T1329 acceptance (2026-07-31).
+if (config.mcpServers.t688store.args.slice(-2).join(",") !== "--tool-profile,implement-worker") {
+  throw new Error("scoped server did not receive the assigned role tool profile");
 }
 
 if (args.includes("--emit-malformed")) {

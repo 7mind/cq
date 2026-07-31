@@ -80,9 +80,30 @@ interface AgentDefinition {
   description: string;
   /** pi tool names the child is NOT allowed to use (denylist for --exclude-tools). */
   disallowedTools: string[];
+  /** Role-specific ledger tools that remain visible to the child. */
+  roleTools: string[];
+  /** Dispatch input/result tools kept separate from role domain access. */
+  transportTools: string[];
+  /** Ledger tool complement removed before child prompt construction. */
+  excludedLedgerTools: string[];
   /** The markdown body, injected as the child's appended system prompt. */
   systemPrompt: string;
   filePath: string;
+}
+
+interface RoleToolProfileManifest {
+  readonly schemaVersion: 1;
+  readonly ledgerToolNames: readonly string[];
+  readonly roles: Readonly<
+    Record<
+      string,
+      {
+        readonly roleTools: readonly string[];
+        readonly transportTools: readonly string[];
+        readonly excludedTools: readonly string[];
+      }
+    >
+  >;
 }
 
 interface DispatchDetails {
@@ -112,6 +133,8 @@ interface DispatchDetails {
   childModel: string | null;
   exitCode: number;
   excludedTools: string[];
+  roleTools: string[];
+  transportTools: string[];
   cqConfigPath: string;
   stderr: string;
 }
@@ -493,6 +516,101 @@ function parseFlatFrontmatter(content: string): { frontmatter: Record<string, st
   return { frontmatter, body };
 }
 
+function stringArray(value: unknown, pathLabel: string): readonly string[] {
+  if (
+    !Array.isArray(value) ||
+    value.some((entry) => typeof entry !== "string" || entry.length === 0)
+  ) {
+    throw new Error(`${pathLabel}: expected an array of non-empty tool names`);
+  }
+  if (new Set(value).size !== value.length) {
+    throw new Error(`${pathLabel}: duplicate tool decision`);
+  }
+  return value as readonly string[];
+}
+
+function loadRoleToolDecision(
+  agentsDir: string,
+  roleId: string,
+): {
+  readonly roleTools: string[];
+  readonly transportTools: string[];
+  readonly excludedTools: string[];
+} {
+  const manifestPath = path.join(
+    path.dirname(path.resolve(agentsDir)),
+    "role-tool-profiles.json",
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as unknown;
+  } catch {
+    throw new Error(
+      `role tool profile manifest is unavailable or invalid: ${manifestPath}`,
+    );
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${manifestPath}: expected a role tool profile object`);
+  }
+  const manifest = parsed as Partial<RoleToolProfileManifest>;
+  if (manifest.schemaVersion !== 1) {
+    throw new Error(`${manifestPath}: unsupported role tool profile schema`);
+  }
+  const inventory = stringArray(
+    manifest.ledgerToolNames,
+    `${manifestPath}.ledgerToolNames`,
+  );
+  if (
+    typeof manifest.roles !== "object" ||
+    manifest.roles === null ||
+    Array.isArray(manifest.roles)
+  ) {
+    throw new Error(`${manifestPath}.roles: expected a role decision map`);
+  }
+  const decision = manifest.roles[roleId];
+  if (decision === undefined) {
+    throw new Error(
+      `${manifestPath}: no tool profile decision for role "${roleId}"`,
+    );
+  }
+  const roleTools = stringArray(
+    decision.roleTools,
+    `${manifestPath}.roles.${roleId}.roleTools`,
+  );
+  const transportTools = stringArray(
+    decision.transportTools,
+    `${manifestPath}.roles.${roleId}.transportTools`,
+  );
+  const excludedTools = stringArray(
+    decision.excludedTools,
+    `${manifestPath}.roles.${roleId}.excludedTools`,
+  );
+  const decisions = [...roleTools, ...transportTools, ...excludedTools];
+  const decisionSet = new Set(decisions);
+  const inventorySet = new Set(inventory);
+  const unknownTool = decisions.find((tool) => !inventorySet.has(tool));
+  const undecidedTool = inventory.find((tool) => !decisionSet.has(tool));
+  if (
+    unknownTool !== undefined ||
+    undecidedTool !== undefined ||
+    decisionSet.size !== decisions.length ||
+    decisionSet.size !== inventorySet.size
+  ) {
+    const detail =
+      unknownTool !== undefined
+        ? `unknown tool "${unknownTool}"`
+        : undecidedTool !== undefined
+          ? `tool "${undecidedTool}" lacks a profile decision`
+          : "one tool has multiple profile decisions";
+    throw new Error(`${manifestPath}.roles.${roleId}: ${detail}`);
+  }
+  return {
+    roleTools: [...roleTools],
+    transportTools: [...transportTools],
+    excludedTools: [...excludedTools],
+  };
+}
+
 function loadAgent(agentsDir: string, agentName: string): AgentDefinition | null {
   // Path-traversal guard: `agentName` is caller-controlled (an LLM tool arg), so
   // it must be a bare filename — no path separators, no "..", no leading dot —
@@ -518,10 +636,20 @@ function loadAgent(agentsDir: string, agentName: string): AgentDefinition | null
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
+  const roleId = frontmatter.name ?? agentName;
+  if (roleId !== agentName) {
+    throw new Error(
+      `agent frontmatter name "${roleId}" does not match assigned role "${agentName}"`,
+    );
+  }
+  const toolDecision = loadRoleToolDecision(agentsDir, roleId);
   return {
-    name: frontmatter.name ?? agentName,
+    name: roleId,
     description: frontmatter.description ?? "",
     disallowedTools,
+    roleTools: toolDecision.roleTools,
+    transportTools: toolDecision.transportTools,
+    excludedLedgerTools: toolDecision.excludedTools,
     systemPrompt: body,
     filePath,
   };
@@ -549,11 +677,12 @@ const CQ_TO_PI_TOOL: Record<string, string> = {
  * Build the child's --exclude-tools denylist from the agent's disallowedTools,
  * always including DISPATCH_TOOL_NAME so the child cannot re-dispatch.
  */
-function buildExcludeTools(disallowedTools: string[]): string[] {
+function buildExcludeTools(disallowedTools: string[], excludedLedgerTools: string[]): string[] {
   const excluded = new Set<string>([DISPATCH_TOOL_NAME]);
   for (const cqName of disallowedTools) {
     excluded.add(CQ_TO_PI_TOOL[cqName] ?? cqName);
   }
+  for (const ledgerTool of excludedLedgerTools) excluded.add(ledgerTool);
   return [...excluded];
 }
 
@@ -666,6 +795,8 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         childModel: null,
         exitCode: 0,
         excludedTools: [],
+        roleTools: [],
+        transportTools: [],
         cqConfigPath,
         stderr: "",
       };
@@ -678,7 +809,7 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         );
       }
 
-      const excludeTools = buildExcludeTools(agent.disallowedTools);
+      const excludeTools = buildExcludeTools(agent.disallowedTools, agent.excludedLedgerTools);
 
       // ── Resolve the child model (T225) ──────────────────────────────────
       // Precedence: explicit `model` arg > agent tier ([agent_tiers]->[tiers])
@@ -782,6 +913,8 @@ export default function cqSubagentDispatch(pi: ExtensionAPI): void {
         childEffort,
         resolvedTier,
         excludedTools: excludeTools,
+        roleTools: agent.roleTools,
+        transportTools: agent.transportTools,
       };
 
       const messages: ChildMessage[] = [];

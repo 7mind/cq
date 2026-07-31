@@ -34,6 +34,11 @@ export interface RenderPromptSurfaceTreeInput {
    * version; orchestrator-command roles carry none and extra keys fail.
    */
   readonly roleVersions: Readonly<Record<string, number>>;
+  /**
+   * Pi-only, authoritative role/tool decision manifest. Production rendering
+   * supplies it; generic renderer fixtures may omit it.
+   */
+  readonly roleToolProfilesJson?: string;
 }
 
 export interface RenderedPromptArtifact {
@@ -83,7 +88,7 @@ export function serializePromptSurfaceManifest(
 
 export interface RenderedPromptSurfaceTree {
   readonly surface: PromptSurface;
-  /** `catalog.json`, `surface.json`, then role artifacts in canonical catalog order. */
+  /** Root metadata, optional surface artifacts, then roles in canonical catalog order. */
   readonly artifacts: readonly RenderedPromptArtifact[];
 }
 
@@ -586,6 +591,23 @@ export function renderPromptSurfaceTree(
       content: serializePromptSurfaceManifest(surface, sha256Hex(input.catalogJson), attestation),
     },
   ];
+  if (input.roleToolProfilesJson !== undefined) {
+    if (surface !== "pi") {
+      throw new PromptRendererError(
+        "roleToolProfilesJson",
+        "role tool profiles are supported only on the pi surface",
+      );
+    }
+    try {
+      JSON.parse(input.roleToolProfilesJson);
+    } catch {
+      throw new PromptRendererError("roleToolProfilesJson", "invalid JSON");
+    }
+    artifacts.push({
+      path: "role-tool-profiles.json",
+      content: input.roleToolProfilesJson,
+    });
+  }
   for (const { role, content } of renderedRoles) {
     artifacts.push({
       path: nodePath.posix.join("roles", `${role.roleId}.md`),

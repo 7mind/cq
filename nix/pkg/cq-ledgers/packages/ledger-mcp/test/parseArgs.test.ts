@@ -90,6 +90,25 @@ describe("parseArgs --tool-prefix (T379)", () => {
   });
 });
 
+// Regression origin: tasks:T1329 acceptance (2026-07-31).
+describe("parseArgs --tool-profile (T1329)", () => {
+  it("defaults to the full compatibility profile", () => {
+    expect(parseArgs([]).toolProfile).toBe("full");
+  });
+
+  it("parses the assigned role in space and equals forms", () => {
+    expect(parseArgs(["--tool-profile", "plan-advance"]).toolProfile).toBe("plan-advance");
+    expect(parseArgs(["--tool-profile=implement-worker"]).toolProfile).toBe("implement-worker");
+  });
+
+  it("fails before server construction for a missing or unknown profile", () => {
+    expect(() => parseArgs(["--tool-profile"])).toThrow("--tool-profile requires a value");
+    expect(() => parseArgs(["--tool-profile=unprofiled-role"])).toThrow(
+      'unknown role tool profile "unprofiled-role"',
+    );
+  });
+});
+
 describe("parseArgs prompt surface selection (T655)", () => {
   it("parses explicit surface and root in space form", () => {
     const args = parseArgs(["--prompt-surface", "codex", "--prompt-root", "/nix/store/codex-root"]);

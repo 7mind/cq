@@ -2,7 +2,15 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { DISPATCHED_ROLE_VERSIONS } from "@cq/config";
+import {
+  DISPATCHED_ROLE_VERSIONS,
+  DISPATCH_RESULT_PLUMBING_TOOL_NAMES,
+  LEDGER_CAPABILITY_TOOL_NAMES,
+  PI_ROLE_TOOL_PROFILE_MANIFEST_PATH,
+  excludedLedgerToolsForRole,
+  exposedLedgerToolsForRole,
+  serializePiRoleToolProfileManifest,
+} from "@cq/config";
 import {
   renderPromptSurfaceTree,
   type PromptCatalogFileInput,
@@ -111,6 +119,7 @@ function directPiTree(catalogJson: string): ReturnType<typeof renderPromptSurfac
     sourcePaths,
     fragmentPaths,
     roleVersions: DISPATCHED_ROLE_VERSIONS,
+    roleToolProfilesJson: serializePiRoleToolProfileManifest(),
   });
 }
 
@@ -134,7 +143,12 @@ describe("packaged Pi prompt root", () => {
     const direct = directPiTree(catalogJson);
 
     expect(catalog).toHaveLength(24);
-    expect(readdirSync(output).sort()).toEqual(["catalog.json", "roles", "surface.json"]);
+    expect(readdirSync(output).sort()).toEqual([
+      "catalog.json",
+      PI_ROLE_TOOL_PROFILE_MANIFEST_PATH,
+      "roles",
+      "surface.json",
+    ]);
     expect(readFileSync(path.join(output, "catalog.json"), "utf8")).toBe(catalogJson);
     const manifest = JSON.parse(readFileSync(path.join(output, "surface.json"), "utf8")) as {
       readonly surface: string;
@@ -142,6 +156,37 @@ describe("packaged Pi prompt root", () => {
     };
     expect(manifest.surface).toBe("pi");
     expect(manifest.roles).toHaveLength(catalog.length);
+    const profiles = JSON.parse(
+      readFileSync(path.join(output, PI_ROLE_TOOL_PROFILE_MANIFEST_PATH), "utf8"),
+    ) as {
+      readonly ledgerToolNames: readonly string[];
+      readonly roles: Readonly<
+        Record<
+          string,
+          {
+            readonly roleTools: readonly string[];
+            readonly transportTools: readonly string[];
+            readonly excludedTools: readonly string[];
+          }
+        >
+      >;
+    };
+    expect(profiles.ledgerToolNames).toEqual(LEDGER_CAPABILITY_TOOL_NAMES);
+    expect(profiles.roles["implement-worker"]?.roleTools).toEqual([]);
+    expect(profiles.roles["plan-advance"]?.roleTools).toEqual([
+      "fetch_item",
+      "fts_search",
+      "list_milestone_items",
+    ]);
+    expect(profiles.roles["plan-reviewer"]?.roleTools).toEqual([
+      "fetch_item",
+      "create_item",
+      "fts_search",
+      "list_milestone_items",
+    ]);
+    expect(profiles.roles["plan-advance"]?.transportTools).toEqual(
+      DISPATCH_RESULT_PLUMBING_TOOL_NAMES,
+    );
     expect(
       [...new Bun.Glob("**/*.md").scanSync({ cwd: path.join(output, "roles") })].sort(),
     ).toEqual(catalog.map(({ roleId }) => `${roleId}.md`).sort());
@@ -206,8 +251,10 @@ describe("packaged Pi prompt root", () => {
       [...new Bun.Glob("**/*").scanSync({ cwd: rendererSource!, onlyFiles: true })].sort(),
     ).toEqual([
       "scripts/render-prompt-surface.ts",
+      "src/promptCatalog.gen.ts",
       "src/promptCatalog.ts",
       "src/promptRenderer.ts",
+      "src/roleToolProfiles.ts",
       // The schema sidecars stamp the per-role contract versions into the
       // attested surface manifest (T683).
       "src/schemas/implement-conflict-resolver.ts",
@@ -227,6 +274,7 @@ describe("packaged Pi prompt root", () => {
     expect(context).not.toContain("You are the **top-level flow sequencer**.");
   }, 30_000);
 
+  // Regression origin: tasks:T1329 acceptance (2026-07-31).
   test("dispatches rendered roles with exact Pi deny lists and no child re-dispatch", async () => {
     const output = buildPiPromptRoot();
     const directory = path.join(tmpdir(), `cq-pi-runtime-${process.pid}-${crypto.randomUUID()}`);
@@ -241,7 +289,10 @@ describe("packaged Pi prompt root", () => {
         "const args = process.argv.slice(2);",
         'const promptIndex = args.indexOf("--append-system-prompt");',
         'const prompt = readFileSync(args[promptIndex + 1], "utf8");',
-        `writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ args, prompt }));`,
+        'const excludedIndex = args.indexOf("--exclude-tools");',
+        'const excluded = new Set(args[excludedIndex + 1].split(","));',
+        `const toolList = ${JSON.stringify(LEDGER_CAPABILITY_TOOL_NAMES)}.filter((name) => !excluded.has(name));`,
+        `writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ args, prompt, initialize: { capabilities: { tools: {} } }, toolsList: toolList }));`,
         'console.log(JSON.stringify({ type: "message_end", message: { role: "assistant", provider: "openai-codex", model: "gpt-5.6-sol", content: [{ type: "text", text: "runtime-child-ok" }] } }));',
       ].join("\n"),
     );
@@ -257,7 +308,7 @@ describe("packaged Pi prompt root", () => {
     } as never);
 
     expect(registered?.name).toBe("dispatch_agent");
-    const expectedExclusions: Readonly<Record<string, readonly string[]>> = {
+    const expectedBuiltInExclusions: Readonly<Record<string, readonly string[]>> = {
       "plan-advance": ["dispatch_agent", "write", "edit", "bash"],
       "plan-reviewer": ["dispatch_agent", "write", "edit", "bash"],
       "implement-worker": ["dispatch_agent"],
@@ -269,7 +320,8 @@ describe("packaged Pi prompt root", () => {
       "research-experimenter": ["dispatch_agent"],
     };
 
-    for (const [agent, exclusions] of Object.entries(expectedExclusions)) {
+    for (const [agent, builtInExclusions] of Object.entries(expectedBuiltInExclusions)) {
+      const exclusions = [...builtInExclusions, ...excludedLedgerToolsForRole(agent)];
       const task = `runtime argument for ${agent}`;
       const result = await registered!.execute(
         `call-${agent}`,
@@ -284,6 +336,10 @@ describe("packaged Pi prompt root", () => {
       const capture = JSON.parse(readFileSync(capturePath, "utf8")) as {
         readonly args: readonly string[];
         readonly prompt: string;
+        readonly initialize: {
+          readonly capabilities: { readonly tools: Readonly<Record<string, never>> };
+        };
+        readonly toolsList: readonly string[];
       };
       const excludeIndex = capture.args.indexOf("--exclude-tools");
 
@@ -291,9 +347,57 @@ describe("packaged Pi prompt root", () => {
       expect(result.details.isolation).toBe("worktree");
       expect(capture.args.at(-1)).toBe(task);
       expect(excludeIndex).toBeGreaterThan(-1);
-      expect(capture.args[excludeIndex + 1]?.split(",")).toEqual([...exclusions]);
+      expect(capture.args[excludeIndex + 1]?.split(",")).toEqual(exclusions);
+      expect(capture.initialize).toEqual({ capabilities: { tools: {} } });
+      expect(capture.toolsList).toEqual(exposedLedgerToolsForRole(agent));
+      expect(result.details.roleTools).toEqual(
+        exposedLedgerToolsForRole(agent).filter(
+          (tool) => !DISPATCH_RESULT_PLUMBING_TOOL_NAMES.includes(tool as never),
+        ),
+      );
+      expect(result.details.transportTools).toEqual(DISPATCH_RESULT_PLUMBING_TOOL_NAMES);
       expect(capture.prompt).not.toContain("{{cq:fragment:");
       expect(capture.prompt).not.toContain("dispatch_agent(");
     }
+
+    const invalidRoot = path.join(directory, "invalid-profile-root");
+    const invalidRoles = path.join(invalidRoot, "roles");
+    mkdirSync(invalidRoles, { recursive: true });
+    writeFileSync(
+      path.join(invalidRoles, "implement-worker.md"),
+      readFileSync(path.join(output, "roles", "implement-worker.md"), "utf8"),
+    );
+    const invalidManifest = JSON.parse(
+      readFileSync(path.join(output, PI_ROLE_TOOL_PROFILE_MANIFEST_PATH), "utf8"),
+    ) as {
+      roles: Record<
+        string,
+        {
+          roleTools: string[];
+          transportTools: string[];
+          excludedTools: string[];
+        }
+      >;
+    };
+    invalidManifest.roles["implement-worker"]!.excludedTools = invalidManifest.roles[
+      "implement-worker"
+    ]!.excludedTools.filter((tool) => tool !== "enumerate_ledgers");
+    writeFileSync(
+      path.join(invalidRoot, PI_ROLE_TOOL_PROFILE_MANIFEST_PATH),
+      JSON.stringify(invalidManifest),
+    );
+    process.env.CQ_AGENTS_DIR = invalidRoles;
+    expect(
+      registered!.execute(
+        "call-missing-decision",
+        { agent: "implement-worker", task: "must fail before prompt construction" },
+        undefined,
+        undefined,
+        {
+          cwd: REPO_ROOT,
+          model: { id: "gpt-5.6-sol", provider: "openai-codex" },
+        },
+      ),
+    ).rejects.toThrow('tool "enumerate_ledgers" lacks a profile decision');
   }, 30_000);
 });

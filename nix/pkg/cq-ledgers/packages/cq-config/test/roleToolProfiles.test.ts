@@ -4,12 +4,18 @@ import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import {
   CODEX_ROLE_TOOL_PROFILE_PROBE,
+  DISPATCH_RESULT_PLUMBING_TOOL_NAMES,
   DOMAIN_LEDGER_TOOL_NAMES,
   HARNESS_ROLE_TOOL_ENFORCEMENT,
   LEDGER_CAPABILITY_TOOL_NAMES,
+  PI_ROLE_TOOL_PROFILE_MANIFEST_PATH,
   ROLE_IDENTIFIED_CORPUS,
   ROLE_TOOL_CAPABILITY_MATRIX,
+  buildPiRoleToolProfileManifest,
+  excludedLedgerToolsForRole,
   exposedLedgerToolsForRole,
+  ledgerToolDecisionForRole,
+  serializePiRoleToolProfileManifest,
 } from "@cq/config";
 import { PROMPT_CATALOG_PROJECTION } from "../src/promptCatalog.gen.js";
 
@@ -116,6 +122,69 @@ describe("T1325 role tool capability matrix", () => {
         }
       }
     }
+  });
+
+  // Regression origin: tasks:T1329 acceptance (2026-07-31).
+  test("every catalog role makes one fail-closed decision for every ledger tool", () => {
+    for (const profile of Object.values(ROLE_TOOL_CAPABILITY_MATRIX)) {
+      const exposed = exposedLedgerToolsForRole(profile.roleId);
+      const excluded = excludedLedgerToolsForRole(profile.roleId);
+      expect([...exposed, ...excluded].sort(), profile.roleId).toEqual(
+        [...LEDGER_CAPABILITY_TOOL_NAMES].sort(),
+      );
+      expect(
+        exposed.filter((tool) => excluded.includes(tool)),
+        profile.roleId,
+      ).toEqual([]);
+      for (const tool of LEDGER_CAPABILITY_TOOL_NAMES) {
+        expect(ledgerToolDecisionForRole(profile.roleId, tool), `${profile.roleId}:${tool}`).toBe(
+          exposed.includes(tool) ? "exposed" : "excluded",
+        );
+      }
+    }
+
+    expect(() => ledgerToolDecisionForRole("unprofiled-role", "fetch_item")).toThrow(
+      'unknown role tool profile "unprofiled-role"',
+    );
+    expect(() => ledgerToolDecisionForRole("plan-advance", "unprofiled_tool")).toThrow(
+      'unknown ledger capability tool "unprofiled_tool"',
+    );
+  });
+
+  // Regression origin: tasks:T1329 acceptance (2026-07-31).
+  test("serializes Pi dispatched-role decisions with transport tools reported separately", () => {
+    expect(PI_ROLE_TOOL_PROFILE_MANIFEST_PATH).toBe("role-tool-profiles.json");
+    const manifest = buildPiRoleToolProfileManifest();
+    expect(JSON.parse(serializePiRoleToolProfileManifest())).toEqual(manifest);
+    expect(manifest.ledgerToolNames).toEqual(LEDGER_CAPABILITY_TOOL_NAMES);
+    expect(Object.keys(manifest.roles).sort()).toEqual(
+      Object.values(ROLE_TOOL_CAPABILITY_MATRIX)
+        .filter(({ roleKind }) => roleKind === "dispatched-subagent")
+        .map(({ roleId }) => roleId)
+        .sort(),
+    );
+
+    for (const [roleId, decision] of Object.entries(manifest.roles)) {
+      expect(decision.transportTools, roleId).toEqual(DISPATCH_RESULT_PLUMBING_TOOL_NAMES);
+      expect(decision.roleTools, roleId).toEqual(
+        exposedLedgerToolsForRole(roleId).filter(
+          (tool) => !DISPATCH_RESULT_PLUMBING_TOOL_NAMES.includes(tool as never),
+        ),
+      );
+      expect(decision.excludedTools, roleId).toEqual(excludedLedgerToolsForRole(roleId));
+    }
+    expect(manifest.roles["implement-worker"]?.roleTools).toEqual([]);
+    expect(manifest.roles["plan-advance"]?.roleTools).toEqual([
+      "fetch_item",
+      "fts_search",
+      "list_milestone_items",
+    ]);
+    expect(manifest.roles["plan-reviewer"]?.roleTools).toEqual([
+      "fetch_item",
+      "create_item",
+      "fts_search",
+      "list_milestone_items",
+    ]);
   });
 
   test("maps checked-in, manifest-bound corpus evidence without treating retired behavior as authority", () => {

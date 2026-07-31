@@ -708,11 +708,15 @@ function assertRoot(
   if (root.surface !== expected.surface) {
     fail(`${path}.surface`, `expected "${expected.surface}"`);
   }
-  const expectedArtifactPaths = [
+  const requiredArtifactPaths = [
     "catalog.json",
     "surface.json",
     ...roles.map((role) => `roles/${role.roleId}.md`),
-  ].sort();
+  ];
+  const additionalArtifactPaths = Object.keys(expected.artifacts).filter(
+    (artifactPath) => !requiredArtifactPaths.includes(artifactPath),
+  );
+  const expectedArtifactPaths = [...requiredArtifactPaths, ...additionalArtifactPaths].sort();
   const actualArtifactPaths = Object.keys(root.artifacts).sort();
   const missingArtifact = expectedArtifactPaths.find(
     (artifactPath) => !actualArtifactPaths.includes(artifactPath),
@@ -763,6 +767,11 @@ function assertRoot(
       fail(`${path}.${artifactPath}`, "runtime placeholder sequence changed");
     }
     if (actual !== expectedContent) {
+      fail(`${path}.${artifactPath}`, "source drift from deterministic rendering");
+    }
+  }
+  for (const artifactPath of additionalArtifactPaths) {
+    if (root.artifacts[artifactPath] !== expected.artifacts[artifactPath]) {
       fail(`${path}.${artifactPath}`, "source drift from deterministic rendering");
     }
   }

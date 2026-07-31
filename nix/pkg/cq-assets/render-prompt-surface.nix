@@ -30,7 +30,9 @@ let
     fileset = lib.fileset.unions [
       (configRoot + "/scripts/render-prompt-surface.ts")
       (configRoot + "/src/promptCatalog.ts")
+      (configRoot + "/src/promptCatalog.gen.ts")
       (configRoot + "/src/promptRenderer.ts")
+      (configRoot + "/src/roleToolProfiles.ts")
       # The schema sidecars stamp the per-role contract versions into the
       # attested surface manifest (T683); keep this closure in sync with the
       # render script's sidecar imports.
@@ -70,7 +72,7 @@ pkgs.runCommand "cq-${validatedSurface}-prompt-root"
     passthru.promptCatalog = assets.catalog;
   }
   ''
-    test "$(find ${rendererSource} -type f | wc -l)" -eq 13
+    test "$(find ${rendererSource} -type f | wc -l)" -eq 15
     test "$(find ${filteredAssets} -type f | wc -l)" -eq ${toString expectedAssetFileCount}
     bun run ${rendererSource}/scripts/render-prompt-surface.ts \
       ${lib.escapeShellArg validatedSurface} \

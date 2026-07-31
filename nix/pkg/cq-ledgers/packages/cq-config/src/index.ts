@@ -103,6 +103,9 @@ export type {
   RoleCapabilityClass,
   RoleToolCapabilityProfile,
   RoleCorpusObservation,
+  LedgerToolProfileDecision,
+  PiRoleToolDecision,
+  PiRoleToolProfileManifest,
 } from "./roleToolProfiles.js";
 export {
   LEDGER_CAPABILITY_TOOL_NAMES,
@@ -112,6 +115,11 @@ export {
   ROLE_CAPABILITY_TOOLS,
   ROLE_TOOL_CAPABILITY_MATRIX,
   exposedLedgerToolsForRole,
+  ledgerToolDecisionForRole,
+  excludedLedgerToolsForRole,
+  PI_ROLE_TOOL_PROFILE_MANIFEST_PATH,
+  buildPiRoleToolProfileManifest,
+  serializePiRoleToolProfileManifest,
   ROLE_IDENTIFIED_CORPUS,
   HARNESS_ROLE_TOOL_ENFORCEMENT,
   CODEX_ROLE_TOOL_PROFILE_PROBE,
