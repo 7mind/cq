@@ -14,7 +14,7 @@
 > consumed-only rule before interpreting the worker result; never key the
 > fetch on any child-reported identifier.
 >
-> **Implement-reviewer dispatch.** For each native
+> **Implement-reviewer dispatch.** For each process-boundary
 > `implement-reviewer`, compose `{ taskId, acceptance, worktreePath, branch, baseCommit, workerResult, round, priorCriticism? }`,
 > dispatch through `CQ_SUBAGENT`, require its capability-scoped `store_result`
 > plus handle-only final response, confirm native completion, and fetch once

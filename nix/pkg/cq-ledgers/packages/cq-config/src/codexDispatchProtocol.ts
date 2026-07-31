@@ -882,8 +882,8 @@ export function codexExitCorroboration(exitStatus: number | undefined): CodexExi
 // Deferred
 // ---------------------------------------------------------------------------
 
-/** The task that implements this protocol against a live Codex child. */
-export const CODEX_DISPATCH_DEFERRED_TO = CODEX_ROLE_DELIVERY_MIGRATION_OWNER;
+/** The task that wires this protocol through the enforced process boundary. */
+export const CODEX_DISPATCH_DEFERRED_TO = "T1330" as const;
 
 /**
  * What is STILL outstanding, recorded so none of it is silently assumed done.
@@ -895,12 +895,10 @@ export const CODEX_DISPATCH_DEFERRED_TO = CODEX_ROLE_DELIVERY_MIGRATION_OWNER;
  * TOGETHER (see {@link CODEX_ROLE_DELIVERY_PREREQUISITES_APPLIED}); they are gone
  * from here because a reader consults this list to learn what is unfinished.
  *
- * The three below OUTLIVE {@link CODEX_DISPATCH_DEFERRED_TO}: applying the pair
- * changed the ASSETS a child is delivered by, and left the live-spawn wiring and
- * the call-shape migration for the follow-on work.
+ * T1330 removes the live-spawn and call-shape entries after routing CQ children
+ * through the profile-specific process adapter. The model-behaviour
+ * remeasurement remains independent of that enforcement mechanism.
  */
 export const CODEX_DISPATCH_DEFERRED = Object.freeze([
-  "spawn-and-intercept-a-real-codex-child",
-  "migrate-the-codex-dispatch-fragment-to-the-new-call-shape",
   "frontier-model-read-batching-remeasurement",
 ] as const);

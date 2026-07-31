@@ -22,6 +22,7 @@
  *   ledger-mcp --http 0.0.0.0:7777                  # HTTP, root = CWD
  *   ledger-mcp --tool-prefix myproj                 # prefix all tool names with "myproj_"
  *   ledger-mcp --tool-prefix myproj --http 7777     # prefix + HTTP
+ *   ledger-mcp --tool-profile implement-worker      # fail-closed role tool surface
  *
  * The ledger lifecycle ops (init, backup+reinit, erase, backup/restore,
  * migrate) live in the `cq` CLI.
@@ -171,6 +172,8 @@ export interface ParsedArgs {
   http: HttpOpts | null;
   /** Optional ledger-tool name prefix (default `''` = unprefixed). */
   toolPrefix: string;
+  /** `full` or one fail-closed prompt-catalog role profile. */
+  toolProfile: LedgerToolProfileName;
   promptSurface: PromptSurface | undefined;
   promptRoot: string | undefined;
 }
@@ -210,6 +213,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   let cwd: string | undefined;
   let http: HttpOpts | null = null;
   let toolPrefix = "";
+  let toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE;
   let promptSurface: PromptSurface | undefined;
   let promptRoot: string | undefined;
   for (let i = 0; i < argv.length; i++) {
@@ -241,6 +245,15 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       toolPrefix = v;
     } else if (a !== undefined && a.startsWith("--tool-prefix=")) {
       toolPrefix = a.slice("--tool-prefix=".length);
+    } else if (a === "--tool-profile") {
+      i += 1;
+      const v = argv[i];
+      if (v === undefined) {
+        throw new Error("ledger-mcp: --tool-profile requires a value");
+      }
+      toolProfile = v;
+    } else if (a !== undefined && a.startsWith("--tool-profile=")) {
+      toolProfile = a.slice("--tool-profile=".length);
     } else if (a === "--prompt-surface") {
       i += 1;
       const v = argv[i];
@@ -264,9 +277,12 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   // Validate the prefix at parse time so a malformed value fails before the
   // server starts (fast-fail, per T379).
   assertToolPrefix(toolPrefix);
+  // Resolve before constructing the store or transport. Unknown role names
+  // cannot fall through to the compatibility surface.
+  ledgerToolNamesForProfile(toolProfile);
   // Ledger root precedence: --cwd > $LEDGER_ROOT > process CWD; a relative
   // value resolves against the CWD. (See file header for the rationale.)
-  return { cwd: resolveRoot(cwd), http, toolPrefix, promptSurface, promptRoot };
+  return { cwd: resolveRoot(cwd), http, toolPrefix, toolProfile, promptSurface, promptRoot };
 }
 
 /** Top-level CLI usage text (mirrors the file-header JSDoc; printed by --help/-h). */
@@ -277,6 +293,7 @@ export const TOP_LEVEL_USAGE = [
   "  --cwd <path>          Ledger root (default: $LEDGER_ROOT or current working directory)",
   "  --http [host:]port    Serve Streamable HTTP instead of stdio (default host: 127.0.0.1)",
   '  --tool-prefix <p>     Prefix all tool names with "<p>_"',
+  "  --tool-profile <role> Expose only the named role's ledger capability profile",
   "  --prompt-surface <s>  Select claude, codex, or pi (default: $CQ_PROMPT_SURFACE or claude)",
   "  --prompt-root <path>  Use an explicit built prompt-artifact root",
   "  -h, --help            Print this usage and exit",
@@ -678,6 +695,7 @@ export function attachMcpHttp(
   promptArtifactStore?: PromptArtifactStore,
   listProjects?: ListProjectsCapability,
   dispatchCapability?: DispatchCapability,
+  toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
 ): McpHttpHandlers {
   const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
@@ -725,6 +743,7 @@ export function attachMcpHttp(
       ...(promptArtifactStore !== undefined ? { promptArtifactStore } : {}),
       ...(listProjects !== undefined ? { listProjects } : {}),
       ...(dispatchCapability !== undefined ? { dispatchCapability } : {}),
+      toolProfile,
     });
     await server.connect(transport);
     // Body already consumed above; hand it back so the transport doesn't
@@ -787,6 +806,7 @@ export function serveHttp(
   projectKey?: string,
   promptArtifactStore?: PromptArtifactStore,
   dispatchCapability?: DispatchCapability,
+  toolProfile: LedgerToolProfileName = FULL_LEDGER_TOOL_PROFILE,
 ): ReturnType<typeof Bun.serve> {
   const { handle, onWsOpen, onWsMessage } = attachMcpHttp(
     store,
@@ -797,6 +817,7 @@ export function serveHttp(
     promptArtifactStore,
     undefined,
     dispatchCapability,
+    toolProfile,
   );
 
   return Bun.serve({
@@ -839,7 +860,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const { cwd, http, toolPrefix, promptSurface, promptRoot } = parseArgs(argv);
+  const { cwd, http, toolPrefix, toolProfile, promptSurface, promptRoot } = parseArgs(argv);
   const displayName = path.basename(cwd);
   const resolvedPromptSurface = resolvePromptSurface({
     promptSurface,
@@ -876,6 +897,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       resolved.projectKey,
       resolvedPromptSurface?.store,
       dispatchCapability,
+      toolProfile,
     );
     // Watch the ledger for out-of-process advances; push a `changed` frame to
     // subscribed UIs on any change. The watcher is selected by backend (file
@@ -909,6 +931,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       ? { promptArtifactStore: resolvedPromptSurface.store }
       : {}),
     ...(dispatchCapability === undefined ? {} : { dispatchCapability }),
+    toolProfile,
   });
   // Even on stdio, watch the ledger so this server's cache stays fresh when
   // another process writes the same ledgers (file watch for fs, ref-sha poll

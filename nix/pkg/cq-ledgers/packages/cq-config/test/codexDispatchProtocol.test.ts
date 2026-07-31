@@ -1788,12 +1788,10 @@ describe("T690 §6 — the two-part role-delivery prerequisite must stay atomic"
     expect(CODEX_ROLE_DELIVERY_PREREQUISITES_APPLIED).toBe(
       suppressedReferenceLines && declaresNativeAgents,
     );
-    expect(CODEX_DISPATCH_DEFERRED_TO).toBe(CODEX_ROLE_DELIVERY_MIGRATION_OWNER);
-    // The two asset halves are GONE from the outstanding list; what remains is
-    // what genuinely outlives T691.
+    expect(CODEX_DISPATCH_DEFERRED_TO).toBe("T1330");
+    // T1330 discharges live process interception and call-shape migration; the
+    // model-behaviour remeasurement remains independent.
     expect([...CODEX_DISPATCH_DEFERRED]).toEqual([
-      "spawn-and-intercept-a-real-codex-child",
-      "migrate-the-codex-dispatch-fragment-to-the-new-call-shape",
       "frontier-model-read-batching-remeasurement",
     ]);
     for (const applied of [

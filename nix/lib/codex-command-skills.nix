@@ -199,12 +199,13 @@ let
         read that reference completely and execute it in this session before
         resuming the caller. Preserve arguments following the token.
 
-        Every `CQ_SUBAGENT` role in the workflow is a globally declared Codex
-        collaboration agent whose id is the role id. Dispatch it with
-        `spawn_agent` and pass only its task input; the transport delivers that
-        role's instructions to the child directly. Its body is deliberately NOT
-        readable from this skill, and you must not reconstruct, summarise, or
-        inline it — dispatch the agent by id instead.
+        Every `CQ_SUBAGENT` role in the workflow crosses the repository-owned
+        `cq-codex-role` process boundary. Follow the workflow's Codex dispatch
+        fragment exactly; never use native `spawn_agent` for a CQ child. The
+        adapter delivers the packaged role body as developer instructions and
+        filters ledger definitions before child context construction. Its body
+        is deliberately NOT readable from this skill, and you must not
+        reconstruct, summarise, or inline it.
 
         ## Workflow references
 

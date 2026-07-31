@@ -355,7 +355,9 @@ export const HARNESS_ROLE_TOOL_ENFORCEMENT = Object.freeze({
     mechanism: "mcp-server-enabled-tools",
     nativePerAgentFiltering: false,
     evidence:
-      "the executable probe captures the real Codex Responses request after MCP discovery and asserts the denied tool definition never reaches its tools array",
+      "the executable probe captures the real Codex Responses request after MCP discovery and " +
+      "asserts the denied definition never reaches its tools array, native role instructions do " +
+      "reach model context, and child dispatch tools stay absent",
   }),
 });
 

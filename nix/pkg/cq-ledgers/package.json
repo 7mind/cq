@@ -19,6 +19,7 @@
     "aggregate:role-tool-corpus": "bun run packages/cq-config/scripts/aggregate-role-tool-corpus.ts",
     "verify:role-tool-corpus": "CQ_T1325_VERIFY_RAW_CORPUS=1 bun test packages/cq-config/test/roleToolProfiles.test.ts",
     "probe:codex-role-tools": "bun run packages/cq-config/scripts/probe-codex-role-tool-profile.ts",
+    "dispatch:codex-role": "bun run packages/cq-config/scripts/codex-role-dispatch.ts",
     "verify-packaged-prompt-surfaces": "bun run packages/ledger-mcp/scripts/verify-packaged-prompt-surfaces.ts"
   },
   "devDependencies": {

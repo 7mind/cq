@@ -1,0 +1,57 @@
+#!/usr/bin/env -S bun run
+
+import { readFile } from "node:fs/promises";
+import * as path from "node:path";
+import {
+  assertCodexDispatchedRoleId,
+  createCodexRoleBoundaryPlan,
+  executeCodexRoleBoundary,
+  type CodexRoleBoundaryInvocation,
+} from "../src/index.js";
+
+const PROMPT_ROOT_ENV = "CQ_PROMPT_ROOT";
+const LEDGER_COMMAND_ENV = "CQ_CODEX_LEDGER_COMMAND";
+const CODEX_EXECUTABLE_ENV = "CQ_CODEX_EXECUTABLE";
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function requiredEnvironment(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value.trim() === "") {
+    throw new Error(`codex-role-dispatch: ${name} must name the packaged Codex prompt root`);
+  }
+  return value;
+}
+
+export async function main(): Promise<void> {
+  const invocation = JSON.parse(await readStdin()) as CodexRoleBoundaryInvocation;
+  const roleId = assertCodexDispatchedRoleId(invocation.roleId);
+  const promptRoot = requiredEnvironment(PROMPT_ROOT_ENV);
+  const roleInstructions = await readFile(
+    path.join(promptRoot, "roles", `${roleId}.md`),
+    "utf8",
+  );
+  const plan = createCodexRoleBoundaryPlan({
+    ...invocation,
+    roleId,
+    roleInstructions,
+    promptRoot,
+    ledgerCommand: process.env[LEDGER_COMMAND_ENV] ?? "cq",
+    codexExecutable: process.env[CODEX_EXECUTABLE_ENV] ?? "codex",
+  });
+  const handle = await executeCodexRoleBoundary(plan);
+  process.stdout.write(`${JSON.stringify(handle)}\n`);
+}
+
+const meta = import.meta as unknown as { main?: boolean };
+if (meta.main === true) {
+  void main().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exit(1);
+  });
+}

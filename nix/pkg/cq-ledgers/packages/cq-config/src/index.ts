@@ -474,6 +474,21 @@ export {
   CODEX_DISPATCH_DEFERRED_TO,
   CODEX_DISPATCH_DEFERRED,
 } from "./codexDispatchProtocol.js";
+export type {
+  CodexRoleSandboxMode,
+  CodexRoleBoundaryRequest,
+  CodexRoleBoundaryInvocation,
+  CodexRoleLedgerMcpConfiguration,
+  CodexRoleBoundaryPlan,
+} from "./codexRoleBoundary.js";
+export {
+  CODEX_ROLE_SANDBOX_MODES,
+  CodexRoleBoundaryError,
+  assertCodexDispatchedRoleId,
+  createCodexRoleBoundaryPlan,
+  interceptCodexRoleBoundaryResult,
+  executeCodexRoleBoundary,
+} from "./codexRoleBoundary.js";
 
 export type {
   ClaudeDeliveryMode,

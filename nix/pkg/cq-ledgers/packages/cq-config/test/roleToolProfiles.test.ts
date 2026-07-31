@@ -235,10 +235,14 @@ describe("T1325 role tool capability matrix", () => {
       readonly deniedName: string;
       readonly capturedModelTools: readonly string[];
       readonly deniedDefinitionReachedModelContext: boolean;
+      readonly nativeRoleInstructionsReachedModelContext: boolean;
+      readonly childDispatchTools: readonly string[];
     };
     expect(observation.boundary).toBe("codex-exec-process");
     expect(observation.capturedModelTools).toContain(observation.allowedName);
     expect(observation.capturedModelTools).not.toContain(observation.deniedName);
     expect(observation.deniedDefinitionReachedModelContext).toBe(false);
+    expect(observation.nativeRoleInstructionsReachedModelContext).toBe(true);
+    expect(observation.childDispatchTools).toEqual([]);
   });
 });

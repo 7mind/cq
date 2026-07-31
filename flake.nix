@@ -480,6 +480,11 @@
               --run 'export LEDGER_WEB_OUTDIR="''${LEDGER_WEB_OUTDIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/ledger-web/dist}"' \
               --set-default CQ_PROMPT_SURFACES_ROOT "$WORKSPACE/prompt-surfaces" \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
+            makeWrapper ${pkgs.bun}/bin/bun $out/bin/cq-codex-role \
+              --add-flags "run $WORKSPACE/packages/cq-config/scripts/codex-role-dispatch.ts --" \
+              --set-default CQ_PROMPT_ROOT "$WORKSPACE/prompt-surfaces/codex" \
+              --set-default CQ_CODEX_LEDGER_COMMAND "$out/bin/cq" \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.bun pkgs.nodejs_22 ]}
 
             runHook postInstall
           '';

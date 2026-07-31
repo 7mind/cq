@@ -6,6 +6,7 @@ const ALLOW_TOOL = "fetch_item";
 const DENY_TOOL = "create_item";
 const SERVER_NAME = "cq_profile";
 const PROBE_TIMEOUT_MS = 30_000;
+const ROLE_INSTRUCTION_SENTINEL = "T1330 native role-instruction sentinel";
 
 interface JsonRpcRequest {
   readonly jsonrpc: "2.0";
@@ -60,6 +61,8 @@ function runProbeMcpServer(): void {
 }
 
 interface ResponsesRequest {
+  readonly instructions?: string;
+  readonly input?: unknown;
   readonly tools?: readonly {
     readonly name?: string;
     readonly type?: string;
@@ -108,6 +111,14 @@ async function runCodexBoundaryProbe(): Promise<void> {
       `model_providers.t1325={name="T1325 local capture",base_url=${JSON.stringify(baseUrl)},env_key="T1325_PROBE_KEY",wire_api="responses"}`,
       "-c",
       `mcp_servers.${SERVER_NAME}={command=${JSON.stringify(process.execPath)},args=[${JSON.stringify(mcpScript)},"--mcp-server"],enabled_tools=["${ALLOW_TOOL}"],required=true}`,
+      "-c",
+      `developer_instructions=${JSON.stringify(ROLE_INSTRUCTION_SENTINEL)}`,
+      "-c",
+      `model_reasoning_effort=${JSON.stringify("high")}`,
+      "-c",
+      'approval_policy="never"',
+      "-c",
+      "features.multi_agent=false",
       "Return the word probe without calling tools.",
     ],
     {
@@ -159,6 +170,17 @@ async function runCodexBoundaryProbe(): Promise<void> {
     if (capturedModelTools.includes(deniedName)) {
       throw new Error(`denied tool "${deniedName}" reached the model request`);
     }
+    if (!JSON.stringify(request).includes(ROLE_INSTRUCTION_SENTINEL)) {
+      throw new Error("native developer instructions did not reach the model request");
+    }
+    const childDispatchTools = capturedModelTools.filter((name) =>
+      /(?:^|__)spawn_agent$|(?:^|__)followup_task$/.test(name),
+    );
+    if (childDispatchTools.length !== 0) {
+      throw new Error(
+        `child dispatch tools reached the model request: ${JSON.stringify(childDispatchTools)}`,
+      );
+    }
     const version = Bun.spawnSync([codexExecutable, "--version"], {
       stdout: "pipe",
       stderr: "pipe",
@@ -173,6 +195,8 @@ async function runCodexBoundaryProbe(): Promise<void> {
         allowedName,
         deniedName,
         deniedDefinitionReachedModelContext: false,
+        nativeRoleInstructionsReachedModelContext: true,
+        childDispatchTools,
       })}\n`,
     );
   } finally {

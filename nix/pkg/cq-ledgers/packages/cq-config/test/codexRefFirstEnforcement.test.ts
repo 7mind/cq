@@ -1980,7 +1980,7 @@ function normalizeProse(text: string): string {
 
 /** The forbid-reconstruction instruction, as one normalized line. */
 const FORBID_RECONSTRUCTION_PROSE =
-  "you must not reconstruct, summarise, or inline it — dispatch the agent by id instead";
+  "you must not reconstruct, summarise, or inline it";
 
 /** The `advertisedRoles` filter, as one normalized line. */
 const ADVERTISED_ROLES_FILTER =
@@ -2069,7 +2069,7 @@ describe("T692 §10 — re-advertising a dispatched role is unrepresentable, not
     // (ii) Soften the forbid-reconstruction prose: the child would be free to
     //      rebuild the body from whatever it can reach.
     const unforbidden = projection.replace(
-      /you must not reconstruct, summarise, or\s+inline it — dispatch the agent by id instead/,
+      /you must not\s+reconstruct, summarise, or inline it/,
       "you may summarise it if convenient",
     );
     expect(unforbidden).not.toBe(projection);
