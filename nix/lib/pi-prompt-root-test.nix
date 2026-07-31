@@ -94,6 +94,7 @@ let
   externalCommand = files."/home/test/.pi/agent/prompts/other:example.md";
   agent = files.".pi/agent/cq-agents/plan-reviewer.md";
   externalAgent = files.".pi/agent/cq-agents/external-agent.md";
+  roleToolProfiles = files.".pi/agent/role-tool-profiles.json";
   appendSystem = files."/home/test/.pi/agent/APPEND_SYSTEM.md";
   mcpJson = files.".pi/agent/mcp.json".source;
   mcpParsed = builtins.fromJSON (builtins.readFile mcpJson);
@@ -107,6 +108,7 @@ in
     assert externalCommand.text == "external command";
     assert agent.source == "${piPromptRoot}/roles/plan-reviewer.md";
     assert externalAgent.text == "external agent";
+    assert roleToolProfiles.source == "${piPromptRoot}/role-tool-profiles.json";
     assert piPackage.promptSurface == "pi";
     assert piPackage.promptRoot == piPromptRoot;
     assert lib.hasInfix ''fetch_prompt("investigate/advance")'' appendSystem.text;

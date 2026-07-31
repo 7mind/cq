@@ -521,6 +521,9 @@ in
       # Declarative pi-search-hub config (see searchHubConfig). RO store symlink,
       # like mcp.json above.
       home.file.".pi/agent/extensions/search.json".source = searchHubConfig;
+
+      home.file.".pi/agent/role-tool-profiles.json".source =
+        "${piPromptRoot}/role-tool-profiles.json";
     }
     {
       # Project individual cq agent markdowns to ~/.pi/agent/cq-agents/<name>.md
