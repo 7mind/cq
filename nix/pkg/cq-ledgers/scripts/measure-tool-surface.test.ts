@@ -17,6 +17,7 @@ const EVIDENCE_DIR = resolve(
 const BASELINE_PATH = resolve(EVIDENCE_DIR, "baseline.json");
 const AFTER_PATH = resolve(EVIDENCE_DIR, "after.json");
 const TARGET_PATH = resolve(import.meta.dir, "baselines/t1326-tool-surface-target.json");
+const T1331_COUNTERFACTUAL_TIMEOUT_MS = 10_000;
 type HistoricalMeasurement = Parameters<typeof buildNormalizedAfterArtifact>[1];
 
 function historicalMeasurement(): HistoricalMeasurement {
@@ -160,4 +161,6 @@ test("every T1331 budget detector rejects its own counterfactual drift", async (
     zeroDomainProfilesHaveZeroDomainSchemaTokens: false,
     g93BelowCorpusMedian: false,
   });
-});
+  // The profiler's synchronous work must yield for Bun to observe this timeout.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}, T1331_COUNTERFACTUAL_TIMEOUT_MS);
