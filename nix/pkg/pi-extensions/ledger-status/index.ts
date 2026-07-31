@@ -186,7 +186,13 @@ export function registerLedgerStatus(api: StatusRegistrationApi, options?: Ledge
   let lastCtx: StatusContext | undefined;
 
   function setStatus(ctx: StatusContext, text: string): void {
-    if (ctx.hasUI) {
+    let hasUI: boolean;
+    try {
+      hasUI = ctx.hasUI;
+    } catch {
+      return;
+    }
+    if (hasUI) {
       ctx.ui.setStatus(SLOT_KEY, text);
     }
   }

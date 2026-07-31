@@ -60,11 +60,16 @@ async function runScenario(registerLedgerStatus: (api: RegistrationApi, options:
   };
   const context: StatusContext = {
     cwd: process.cwd(),
-    hasUI: scenario.hasUI,
+    get hasUI(): boolean {
+      if (scenario.stale) {
+        throw new Error(`${scenario.name}: stale or torn-down UI`);
+      }
+      return scenario.hasUI;
+    },
     ui: {
       setStatus(): void {
         if (shutdown && !scenario.stale) uiCallsAfterShutdown += 1;
-        if (scenario.alwaysThrow || scenario.stale) {
+        if (scenario.alwaysThrow) {
           throw new Error(`${scenario.name}: stale or torn-down UI`);
         }
       },

@@ -76,8 +76,8 @@ const SCENARIOS: Scenario[] = [
     hasUI: true,
     outcome: "fulfilled",
     stale: true,
-    expectedPhases: { counts: 0, paint: 1, terminal: 1 },
-    expectedUiCalls: 2,
+    expectedPhases: { counts: 0, paint: 0, terminal: 0 },
+    expectedUiCalls: 0,
     expectedLiveUiCallsAfterShutdown: 0,
   },
   {
@@ -86,8 +86,8 @@ const SCENARIOS: Scenario[] = [
     hasUI: true,
     outcome: "rejected",
     stale: true,
-    expectedPhases: { counts: 1, paint: 0, terminal: 1 },
-    expectedUiCalls: 1,
+    expectedPhases: { counts: 1, paint: 0, terminal: 0 },
+    expectedUiCalls: 0,
     expectedLiveUiCallsAfterShutdown: 0,
   },
   {
@@ -126,8 +126,8 @@ const SCENARIOS: Scenario[] = [
     outcome: "fulfilled",
     stale: true,
     shutdownBeforeSettlement: true,
-    expectedPhases: { counts: 0, paint: 1, terminal: 1 },
-    expectedUiCalls: 2,
+    expectedPhases: { counts: 0, paint: 0, terminal: 0 },
+    expectedUiCalls: 0,
     expectedLiveUiCallsAfterShutdown: 0,
   },
   {
@@ -175,12 +175,17 @@ async function observeScenario(scenario: Scenario): Promise<ScenarioObservation>
   const phaseMessages: Record<ErrorPhase, string[]> = { counts: [], paint: [], terminal: [] };
   const context: StatusContext = {
     cwd: REPO_ROOT,
-    hasUI: scenario.hasUI,
+    get hasUI(): boolean {
+      if (scenario.stale) {
+        throw new Error(`${scenario.name}: stale or torn-down UI`);
+      }
+      return scenario.hasUI;
+    },
     ui: {
       setStatus(): void {
         uiCalls += 1;
         if (shutdown && !scenario.stale) liveUiCallsAfterShutdown += 1;
-        if (scenario.alwaysThrow || scenario.stale) {
+        if (scenario.alwaysThrow) {
           throw new Error(`${scenario.name}: stale or torn-down UI`);
         }
       },
