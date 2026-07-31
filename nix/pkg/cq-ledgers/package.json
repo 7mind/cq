@@ -2,7 +2,15 @@
   "name": "ledger-suite",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/cq-cli", "packages/cq-config", "packages/ledger", "packages/ledger-live", "packages/ledger-mcp", "packages/ledger-tui", "packages/ledger-web"],
+  "workspaces": [
+    "packages/cq-cli",
+    "packages/cq-config",
+    "packages/ledger",
+    "packages/ledger-live",
+    "packages/ledger-mcp",
+    "packages/ledger-tui",
+    "packages/ledger-web"
+  ],
   "scripts": {
     "check": "tsc -b && eslint . && bun test",
     "typecheck": "tsc -b",
@@ -19,6 +27,7 @@
     "aggregate:role-tool-corpus": "bun run packages/cq-config/scripts/aggregate-role-tool-corpus.ts",
     "verify:role-tool-corpus": "CQ_T1325_VERIFY_RAW_CORPUS=1 bun test packages/cq-config/test/roleToolProfiles.test.ts",
     "probe:codex-role-tools": "bun run packages/cq-config/scripts/probe-codex-role-tool-profile.ts",
+    "probe:codex-role-dispatch": "bun run packages/cq-config/scripts/probe-codex-role-dispatch.ts",
     "dispatch:codex-role": "bun run packages/cq-config/scripts/codex-role-dispatch.ts",
     "verify-packaged-prompt-surfaces": "bun run packages/ledger-mcp/scripts/verify-packaged-prompt-surfaces.ts"
   },
@@ -33,5 +42,7 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.65.0"
   },
-  "trustedDependencies": ["node-pty"]
+  "trustedDependencies": [
+    "node-pty"
+  ]
 }

@@ -137,7 +137,31 @@ let
   sentinelPromptPath = ".codex/prompts/other:sentinel.md";
   sentinelPromptBody = "Unrelated legacy prompt.\n";
 
-  evaluatedCodexModule = lib.evalModules {
+  homeManagerTestLib = lib.extend (_: _: {
+    hm.mcp.transformMcpServer =
+      { server }:
+      let
+        withType =
+          server
+          // {
+            type =
+              if server ? type then
+                server.type
+              else if (server.url or null) != null then
+                "http"
+              else
+                "stdio";
+          };
+      in
+      lib.filterAttrs (_: value: value != null && value != [ ] && value != { }) (
+        removeAttrs withType [
+          "disabled"
+          "serverUrl"
+        ]
+      );
+  });
+
+  evaluatedCodexModule = homeManagerTestLib.evalModules {
     specialArgs = { inherit pkgs; };
     modules = [
       ../hm/codex.nix

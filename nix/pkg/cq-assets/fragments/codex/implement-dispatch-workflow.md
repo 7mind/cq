@@ -5,8 +5,8 @@
 > then call `prepare_dispatch`. The server reads the task/review narrative and
 > validates the assembled input against the role's typed `inputSchema`. Dispatch
 > `CQ_SUBAGENT` by writing the complete private request described above to the
-> adapter's stdin. Retain the prepared handle, input capability, and result
-> capability; set `cwd` to the child execution worktree and `ledgerCwd` to the
+> adapter's stdin. Retain the prepared handle, `inputCapability`, and
+> `resultCapability`; set `cwd` to the child execution worktree and `ledgerCwd` to the
 > parent project. The child calls `fetch_dispatch_input` exactly once before
 > work, so no parent-rendered task narrative enters the launch. Await its
 > handle-only final response after its capability-scoped `store_result`, confirm
