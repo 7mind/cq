@@ -267,7 +267,7 @@ describe("T1330 Codex role process boundary", () => {
     ).toThrow('resultCapability must contain scope "store-result" and a non-empty token');
   });
 
-  test("D227 projects the exact result-stored acknowledgement to the dispatch handle", () => {
+  test("D227/D228 project exact result-stored acknowledgements to the dispatch handle", () => {
     const intercepted = interceptCodexRoleBoundaryResult(
       JSON.stringify({
         type: "item.completed",
@@ -280,11 +280,59 @@ describe("T1330 Codex role process boundary", () => {
     );
 
     expect(intercepted).toEqual(HANDLE);
+    expect(
+      interceptCodexRoleBoundaryResult(
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "agent_message",
+            text: JSON.stringify({
+              state: "result-stored",
+              result: {
+                state: "result-stored",
+                ...HANDLE,
+                storedAt: "2026-07-31T16:55:00.000Z",
+                outputDigest: "sha256:d228",
+              },
+            }),
+          },
+        }),
+        HANDLE,
+      ),
+    ).toEqual(HANDLE);
 
     for (const rejected of [
       { state: "prepared", ...HANDLE },
       { state: "result-stored", ...HANDLE, output: { leaked: true } },
       { state: "result-stored", ...HANDLE, generation: HANDLE.generation + 1 },
+      {
+        state: "result-stored",
+        result: {
+          state: "result-stored",
+          ...HANDLE,
+          storedAt: "2026-07-31T16:55:00.000Z",
+          outputDigest: "sha256:d228",
+          output: { leaked: true },
+        },
+      },
+      {
+        state: "result-stored",
+        result: {
+          state: "prepared",
+          ...HANDLE,
+          storedAt: "2026-07-31T16:55:00.000Z",
+          outputDigest: "sha256:d228",
+        },
+      },
+      {
+        state: "result-stored",
+        result: {
+          state: "result-stored",
+          ...HANDLE,
+          storedAt: "",
+          outputDigest: "sha256:d228",
+        },
+      },
     ]) {
       expect(() =>
         interceptCodexRoleBoundaryResult(

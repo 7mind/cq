@@ -531,10 +531,9 @@ function functionCallResponse(requestIndex: number, toolName: string, args: unkn
   ]);
 }
 
-function finalMessageResponse(handle: RoleInvocation["handle"]): Response {
+function finalMessageResponse(text: string): Response {
   const responseId = "resp_t1493_final";
   const itemId = "msg_t1493_final";
-  const text = serialized({ state: "result-stored", ...handle });
   const content = { type: "output_text", annotations: [], logprobs: [], text };
   const item = {
     id: itemId,
@@ -703,7 +702,7 @@ function createModelController(
           evidence.conflictingStoreRejected = /different result|conflict|already stored/i.test(
             output,
           );
-          return finalMessageResponse(invocation.handle);
+          return finalMessageResponse(evidence.firstStoreAcknowledgement);
         }
         throw new Error(`unexpected model request ${String(requestIndex + 1)}`);
       } catch (error: unknown) {

@@ -275,18 +275,46 @@ function resultStoredAcknowledgementHandle(
     return undefined;
   }
   const record = parsed as Record<string, unknown>;
+  const hasExactKeys = (candidate: Record<string, unknown>, keys: readonly string[]): boolean =>
+    Object.keys(candidate).length === keys.length && keys.every((key) => Object.hasOwn(candidate, key));
+  const matchesHandle = (candidate: Record<string, unknown>): boolean =>
+    candidate.attestationId === expected.attestationId &&
+    candidate.generation === expected.generation;
   if (
-    Object.keys(record).length !== 3 ||
-    !Object.hasOwn(record, "state") ||
-    !Object.hasOwn(record, "attestationId") ||
-    !Object.hasOwn(record, "generation") ||
-    record.state !== "result-stored" ||
-    record.attestationId !== expected.attestationId ||
-    record.generation !== expected.generation
+    hasExactKeys(record, ["state", "attestationId", "generation"]) &&
+    record.state === "result-stored" &&
+    matchesHandle(record)
   ) {
-    return undefined;
+    return expected;
   }
-  return expected;
+  const result = record.result;
+  if (
+    hasExactKeys(record, ["state", "result"]) &&
+    record.state === "result-stored" &&
+    result !== null &&
+    typeof result === "object" &&
+    !Array.isArray(result)
+  ) {
+    const nested = result as Record<string, unknown>;
+    if (
+      hasExactKeys(nested, [
+        "state",
+        "attestationId",
+        "generation",
+        "storedAt",
+        "outputDigest",
+      ]) &&
+      nested.state === "result-stored" &&
+      matchesHandle(nested) &&
+      typeof nested.storedAt === "string" &&
+      nested.storedAt.trim() !== "" &&
+      typeof nested.outputDigest === "string" &&
+      nested.outputDigest.trim() !== ""
+    ) {
+      return expected;
+    }
+  }
+  return undefined;
 }
 
 /**
