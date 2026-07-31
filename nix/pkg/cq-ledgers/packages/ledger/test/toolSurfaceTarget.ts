@@ -130,6 +130,12 @@ const HISTORICAL_MIGRATION_EVIDENCE = [
     justification:
       "Immutable pre-target serialization baseline required to reproduce measured token deltas; its tool names describe the historical public surface.",
   },
+  {
+    path: "nix/pkg/cq-ledgers/docs/drafts/20260731-0216-g129-tool-surface/baseline.json",
+    recursive: false,
+    justification:
+      "Frozen T1331 baseline records the superseded public surface for the final before/after comparison; it is measurement evidence, not a current caller.",
+  },
 ] as const satisfies readonly MigrationEvidenceRule[];
 
 const TARGET_MIGRATION_EVIDENCE = [
@@ -150,6 +156,12 @@ const TARGET_MIGRATION_EVIDENCE = [
     recursive: false,
     justification:
       "Generated T1326 target records the migration itself and must be excluded from its own recursively computed caller inventory.",
+  },
+  {
+    path: "nix/pkg/cq-ledgers/docs/drafts/20260731-0216-g129-tool-surface/after.json",
+    recursive: false,
+    justification:
+      "Frozen T1331 target measurement retains removed names only to report before/after deltas and migration checks; it is not a caller.",
   },
 ] as const;
 
