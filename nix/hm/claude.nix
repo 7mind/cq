@@ -102,6 +102,10 @@ let
   };
 in
 {
+  options.smind.hm.dev.llm.openaiCodexPlugin.enable =
+    lib.mkEnableOption "the OpenAI Codex plugin for Claude Code"
+    // { default = true; };
+
   config = lib.mkIf cfg.enable {
     programs.claude-code = sharedAgentWiring // {
       # Bake DISABLE_AUTOUPDATER into the wrapper so it survives downstream
@@ -123,7 +127,7 @@ in
             --set CQ_PROMPT_ROOT ${claudePromptRoot}
         '';
       };
-      plugins = [ "${codexPluginCc}/plugins/codex" ];
+      plugins = lib.optionals cfg.openaiCodexPlugin.enable [ "${codexPluginCc}/plugins/codex" ];
       settings = {
         alwaysThinkingEnabled = true;
         theme = "dark";

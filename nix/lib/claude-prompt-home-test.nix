@@ -21,7 +21,7 @@ let
   settingsFile = pkgs.writeText "claude-settings-fixture.json" "{}\n";
   contextFile = pkgs.writeText "claude-context-fixture.md" "fixture context\n";
 
-  evaluated = lib.evalModules {
+  evaluate = extraModule: lib.evalModules {
     specialArgs = { inherit pkgs; };
     modules = [
       claudeModule
@@ -37,9 +37,17 @@ let
               type = lib.types.attrs;
               default = { };
             };
-            smind.hm.dev.llm = lib.mkOption {
+            smind.hm.dev.llm.enable = lib.mkOption {
+              type = lib.types.bool;
+            };
+            smind.hm.dev.llm.merged = lib.mkOption {
               type = lib.types.attrs;
-              default = { };
+            };
+            smind.hm.dev.llm.coAuthored.enable = lib.mkOption {
+              type = lib.types.bool;
+            };
+            smind.hm.dev.llm.fullscreenTui.enable = lib.mkOption {
+              type = lib.types.bool;
             };
           };
           config = {
@@ -66,11 +74,18 @@ let
           };
         }
       )
+      extraModule
     ];
+  };
+
+  evaluated = evaluate { };
+  disabledEvaluation = evaluate {
+    config.smind.hm.dev.llm.openaiCodexPlugin.enable = false;
   };
 
   homeFiles = evaluated.config.home.file;
   claudeConfig = evaluated.config.programs.claude-code;
+  disabledClaudeConfig = disabledEvaluation.config.programs.claude-code;
   roleTarget =
     role:
     if role.roleKind == "dispatched-subagent" then
@@ -119,6 +134,8 @@ pkgs.runCommand "claude-prompt-home-check"
     test ${toString agentCount} -eq 9
     test ${lib.escapeShellArg claudeConfig.package.promptSurface} = claude
     test ${lib.escapeShellArg (toString claudeConfig.package.promptRoot)} = ${lib.escapeShellArg (toString claudePromptRoot)}
+    test ${toString (builtins.length claudeConfig.plugins)} -eq 1
+    test ${toString (builtins.length disabledClaudeConfig.plugins)} -eq 0
     rg -q 'CQ_PROMPT_SURFACE.*claude' ${claudeConfig.package}/bin/claude
     rg -q ${lib.escapeShellArg (toString claudePromptRoot)} ${claudeConfig.package}/bin/claude
     test "$(find "$out/home/${lib.removePrefix "${homeDirectory}/" configDir}/commands/cq" -type f -name '*.md' | wc -l)" -eq ${toString commandCount}
