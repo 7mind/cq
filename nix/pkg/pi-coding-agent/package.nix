@@ -21,6 +21,14 @@ buildNpmPackage (finalAttrs: {
     hash = "sha256-LESpgd/KUoNqdBfnd1oyMN8coKm0Odbo9GYkUDry8Zk=";
   };
 
+  # D201 / earendil-works/pi#7319 (+ PR #7324, auto-closed pending lgtm):
+  # OAuth force-refresh + single pre-content 401 retry in Models.stream.
+  # Scoped to oauth credentials only — static api_key / MCP 401 fail-fast unchanged.
+  # Drop when a released pi version includes the equivalent upstream fix.
+  patches = [
+    ./patches/oauth-refresh-on-401.patch
+  ];
+
   npmDepsHash = "sha256-5pHRwxpKg95/phOcYHeWdvPJNtSOhiw7PRoVxsuh0RM=";
 
   npmWorkspace = "packages/coding-agent";

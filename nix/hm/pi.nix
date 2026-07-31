@@ -493,6 +493,10 @@ in
             # child `pi -p` turn that cannot itself re-dispatch. See the
             # extension header for the Route-A subprocess mechanism (T221/T224).
             "${../pkg/pi-extensions/cq-subagent-dispatch.ts}"
+            # D201 / earendil-works/pi#7319: bounded turn re-drive when Kimi
+            # coding returns soft 401 authentication_error (core excludes 401
+            # from both retry classifiers and does not refresh OAuth on 401).
+            "${../pkg/pi-extensions/kimi-401-retry.ts}"
             # cq auto-driver: registers /cq:advance:auto, /cq:plan:auto,
             # /cq:investigate:auto, and /cq:implement:auto — drive-and-await
             # loops that re-run the underlying cq:* command until its terminal
