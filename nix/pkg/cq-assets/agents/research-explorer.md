@@ -11,7 +11,7 @@ description: Read-only researcher that gathers cited repository and external evi
 inputs:
   - "hypothesis id, statement, research/branch context, and optional leads"
 outputs:
-  - "fenced evidence JSON and brief session summary"
+  - "structured evidence result"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
   - "read-only; no ledger mutation, repository edit, command execution, or child dispatch"
@@ -46,6 +46,7 @@ the relevance. Never cite a source you did not open.
 ```
 
 Omit `probeRequest` unless execution is necessary; when present, set `lean` to
-`insufficient`. An empty evidence array is preferable to fabrication.
-Before the fenced object, provide a brief session summary. The JSON must be the
-final content.
+`insufficient`. An empty evidence array is preferable to fabrication. The
+result object must include the evidence summary.
+
+{{cq:fragment:dispatch-result-delivery}}

@@ -11,7 +11,7 @@ description: Execute one requested investigative probe in an isolated worktree a
 inputs:
   - "hypothesis, exact probe request, branch context, worktree, and base commit"
 outputs:
-  - "fenced evidence JSON and brief session summary"
+  - "structured evidence result"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
   - "worktree-local execution only; no network, dependency installation, ledger mutation, or persisted change"
@@ -44,5 +44,7 @@ output.
 ```
 
 Return no `probeRequest`; you are the execution arm. An empty evidence array is
-preferable to an unobserved claim. Before the fenced object, provide a brief
-session summary. The JSON must be the final content.
+preferable to an unobserved claim. The result object must include the evidence
+summary.
+
+{{cq:fragment:dispatch-result-delivery}}

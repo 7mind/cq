@@ -43,6 +43,7 @@ export type PromptRendererCapability =
   | "subagent-dispatch"
   | "implement-dispatch-workflow"
   | "dispatch-input-delivery"
+  | "dispatch-result-delivery"
   | "inline-command-recursion"
   | "host-tool-vocabulary"
   | "operational-tool-vocabulary"

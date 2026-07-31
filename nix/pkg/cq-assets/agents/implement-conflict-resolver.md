@@ -6,6 +6,8 @@ description: Resolve one rebase conflict in an implementation worktree, preserve
 
 {{cq:fragment:cq-command-invocation}}
 
+{{cq:fragment:dispatch-input-delivery}}
+
 ## Catalogue
 ```yaml
 inputs:
@@ -38,6 +40,6 @@ precise reason.
 }
 ```
 
-Store this object exactly once through the dispatch-scoped result store. Only a
+Store this object exactly once through the dispatch-scoped `store_result` tool. Only a
 `result-stored` acknowledgement permits the final response. Then reply with the
 prepared dispatch handle only; never return the result body or a capability.

@@ -6,6 +6,8 @@ description: Adversarial implementation reviewer that verifies one task and stor
 
 {{cq:fragment:cq-command-invocation}}
 
+{{cq:fragment:dispatch-input-delivery}}
+
 ## Catalogue
 ```yaml
 inputs:
@@ -64,6 +66,6 @@ Always state `gateReRan` and `resultCommitVerified`. Include
 and verified result commit. Disapproval requires criticism or questions.
 Defects do not control the verdict.
 
-Store the object exactly once through the dispatch-scoped result store. Only a
+Store the object exactly once through the dispatch-scoped `store_result` tool. Only a
 `result-stored` acknowledgement permits the final response. Then reply with the
 prepared dispatch handle only; never return the verdict body or a capability.

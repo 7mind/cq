@@ -285,9 +285,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
     for (const surface of PROMPT_SURFACES) {
       for (const role of ["implement-worker", "implement-reviewer"] as const) {
         const rendered = normalize(renderedOf(surface, role));
-        expect(rendered).toContain(
-          "Store the object exactly once through the dispatch-scoped result store",
-        );
+        expect(rendered).toContain("dispatch-scoped `store_result` tool");
         expect(rendered).toContain("reply with the prepared dispatch handle only");
         expect(rendered).toContain("never return the");
         expect(rendered).toContain("body or a capability");
@@ -300,9 +298,7 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
   it("T901 makes the conflict-resolver result store-only with handle-only completion", () => {
     for (const surface of PROMPT_SURFACES) {
       const rendered = normalize(renderedOf(surface, "implement-conflict-resolver"));
-      expect(rendered).toContain(
-        "Store this object exactly once through the dispatch-scoped result store",
-      );
+      expect(rendered).toContain("dispatch-scoped `store_result` tool");
       expect(rendered).toContain("reply with the prepared dispatch handle only");
       expect(rendered).toContain("never return the result body or a capability");
       expect(rendered).not.toContain("structured JSON result block as final reply content");
@@ -410,6 +406,22 @@ describe("T979: the compact-dispatch sub-graph across claude / codex / pi", () =
       expect(body).toContain("capabilities off");
       expect(body).toContain("argv");
       expect(body).not.toContain("{ attestationId, generation, inputCapability }");
+    }
+  });
+
+  it("T1492 gives every dispatched Codex role one complete result-delivery contract", () => {
+    expect(DISPATCHED_ROLES.map(({ roleId }) => roleId)).toHaveLength(9);
+    for (const { roleId } of DISPATCHED_ROLES) {
+      const body = normalize(renderedOf("codex", roleId));
+      expect(countOccurrences(body, "fetch_dispatch_input")).toBe(1);
+      expect(body).toContain("exactly once");
+      expect(body).toContain("store_result");
+      expect(body).toContain("result-stored");
+      expect(body).toContain("prepared dispatch handle only");
+      expect(body).not.toContain("final fenced");
+      expect(body).not.toContain("final reply content");
+      expect(body).not.toContain("writes nothing");
+      expect(body).not.toContain("write nothing");
     }
   });
 

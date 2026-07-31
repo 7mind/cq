@@ -73,6 +73,36 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "store_result"
+            ],
+            "codex": [
+              "fenced object",
+              "final content"
+            ],
+            "pi": [
+              "store_result"
+            ]
+          },
+          "fragment": "dispatch-result-delivery",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "dispatched child input retrieval and structured-result transport",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -88,6 +118,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
           "surfaces": [
             "claude",
             "codex",
@@ -178,6 +217,36 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "store_result"
+            ],
+            "codex": [
+              "fenced object",
+              "final content"
+            ],
+            "pi": [
+              "store_result"
+            ]
+          },
+          "fragment": "dispatch-result-delivery",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "dispatched child input retrieval and structured-result transport",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -193,6 +262,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
           "surfaces": [
             "claude",
             "codex",
@@ -308,7 +386,7 @@ export const PROMPT_CATALOG_PROJECTION = {
               "pi"
             ]
           },
-          "sourceBlock": "implement-worker child-side input retrieval procedure",
+          "sourceBlock": "implementation child-side input retrieval procedure",
           "supportedSurfaces": [
             "claude",
             "codex",
@@ -428,6 +506,37 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "input delivered via dispatch prompt"
+            ],
+            "codex": [
+              "input delivered via dispatch prompt"
+            ],
+            "pi": [
+              "fetch_dispatch_input",
+              "inputCapability",
+              "prepare_dispatch"
+            ]
+          },
+          "fragment": "dispatch-input-delivery",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "implementation child-side input retrieval procedure",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -443,6 +552,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
           "surfaces": [
             "claude",
             "codex",
@@ -533,6 +651,37 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "input delivered via dispatch prompt"
+            ],
+            "codex": [
+              "input delivered via dispatch prompt"
+            ],
+            "pi": [
+              "fetch_dispatch_input",
+              "inputCapability",
+              "prepare_dispatch"
+            ]
+          },
+          "fragment": "dispatch-input-delivery",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "implementation child-side input retrieval procedure",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -548,6 +697,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
           "surfaces": [
             "claude",
             "codex",
@@ -638,6 +796,36 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "store_result"
+            ],
+            "codex": [
+              "fenced object",
+              "final content"
+            ],
+            "pi": [
+              "store_result"
+            ]
+          },
+          "fragment": "dispatch-result-delivery",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "dispatched child input retrieval and structured-result transport",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -653,6 +841,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
           "surfaces": [
             "claude",
             "codex",
@@ -743,6 +940,36 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "store_result"
+            ],
+            "codex": [
+              "fenced object",
+              "final content"
+            ],
+            "pi": [
+              "store_result"
+            ]
+          },
+          "fragment": "dispatch-result-delivery",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "dispatched child input retrieval and structured-result transport",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -758,6 +985,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
           "surfaces": [
             "claude",
             "codex",
@@ -848,6 +1084,36 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "store_result"
+            ],
+            "codex": [
+              "fenced object",
+              "final content"
+            ],
+            "pi": [
+              "store_result"
+            ]
+          },
+          "fragment": "dispatch-result-delivery",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "dispatched child input retrieval and structured-result transport",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
@@ -863,6 +1129,15 @@ export const PROMPT_CATALOG_PROJECTION = {
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
           "surfaces": [
             "claude",
             "codex",
@@ -924,12 +1199,51 @@ export const PROMPT_CATALOG_PROJECTION = {
             "codex",
             "pi"
           ]
+        },
+        {
+          "forbiddenVocabulary": {
+            "claude": [
+              "store_result"
+            ],
+            "codex": [
+              "fenced object",
+              "final content"
+            ],
+            "pi": [
+              "store_result"
+            ]
+          },
+          "fragment": "dispatch-result-delivery",
+          "intentionalDifference": {
+            "kind": "dispatch-protocol",
+            "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
+            "surfaces": [
+              "claude",
+              "codex",
+              "pi"
+            ]
+          },
+          "sourceBlock": "dispatched child input retrieval and structured-result transport",
+          "supportedSurfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
         }
       ],
       "intentionalDifferences": [
         {
           "kind": "tool-vocabulary",
           "reason": "Claude frontmatter, Codex skills, and Pi extensions expose different tool names and capability declarations.",
+          "surfaces": [
+            "claude",
+            "codex",
+            "pi"
+          ]
+        },
+        {
+          "kind": "dispatch-protocol",
+          "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
           "surfaces": [
             "claude",
             "codex",
@@ -3433,7 +3747,7 @@ export const PROMPT_CATALOG_PROJECTION = {
       ]
     }
   ],
-  "catalogMetadataHash": "0be090117ba27b3615ec2d9e181bba39fb3386042949f31dc42489eb123f2a42",
+  "catalogMetadataHash": "e4d3451fcff0d5872dfbd42eea084ef5712c53502db078e6b9c9e589bce6a2f2",
   "fragmentContracts": [
     {
       "forbiddenVocabulary": {
@@ -3539,6 +3853,35 @@ export const PROMPT_CATALOG_PROJECTION = {
       "intentionalDifference": {
         "kind": "dispatch-protocol",
         "reason": "Claude and Codex retrieve prepare-bound worker input through the one-shot capability, while Pi retains its held direct-prompt protocol until the coordinated extension migration.",
+        "surfaces": [
+          "claude",
+          "codex",
+          "pi"
+        ]
+      },
+      "supportedSurfaces": [
+        "claude",
+        "codex",
+        "pi"
+      ]
+    },
+    {
+      "forbiddenVocabulary": {
+        "claude": [
+          "store_result"
+        ],
+        "codex": [
+          "fenced object",
+          "final content"
+        ],
+        "pi": [
+          "store_result"
+        ]
+      },
+      "fragment": "dispatch-result-delivery",
+      "intentionalDifference": {
+        "kind": "dispatch-protocol",
+        "reason": "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.",
         "surfaces": [
           "claude",
           "codex",

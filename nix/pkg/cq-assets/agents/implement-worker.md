@@ -94,6 +94,6 @@ The prompt-catalog schema is authoritative, including any conditional
 evidence where required, a verified commit object, a clean tree, and base
 ancestry.
 
-Store the object exactly once through the dispatch-scoped result store. Only a
+Store the object exactly once through the dispatch-scoped `store_result` tool. Only a
 `result-stored` acknowledgement permits the final response. Then reply with the
 prepared dispatch handle only; never return the result body or a capability.

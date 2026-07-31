@@ -9,7 +9,7 @@ description: Execute one research probe in a discardable worktree, with network 
 inputs:
   - "hypothesis, exact probe request, branch context, worktree, and base commit"
 outputs:
-  - "fenced evidence JSON and brief session summary"
+  - "structured evidence result"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
   - "network and worktree-local installs allowed; no ledger mutation, main-checkout change, commit, or child dispatch"
@@ -42,5 +42,6 @@ observed benchmark values and relevant environment details.
 
 Return no `probeRequest`; report inconclusive execution with
 `lean: "insufficient"`. An empty evidence array is preferable to an unobserved
-claim. Before the fenced object, provide a brief session summary. The JSON must
-be the final content.
+claim. The result object must include the evidence summary.
+
+{{cq:fragment:dispatch-result-delivery}}

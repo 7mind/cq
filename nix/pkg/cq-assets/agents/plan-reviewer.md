@@ -11,7 +11,7 @@ description: Adversarial plan reviewer. Returns a structured go-ahead/revise ver
 inputs:
   - "goal, full answered-question history, grounding, current draft, and prior reviews"
 outputs:
-  - "fenced structured verdict; in fallback mode, one matching review item"
+  - "structured verdict; in fallback mode, one matching review item"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
   - "go-ahead requires empty question/criticism buckets; revise requires at least one"
@@ -50,7 +50,7 @@ Do not turn discoverable facts or fix-disposition choices into questions.
 `go-ahead` requires empty `new_questions` and `criticism`; `revise` requires at
 least one. `defects` never controls the verdict.
 
-In configured panel mode, return the verdict and write nothing. In
+In configured panel mode, return the verdict without creating a review item. In
 unconfigured single-reviewer mode, write exactly one goal-linked `reviews`
 item with the verdict status and buckets, then return the identical structured
 object. Persist each defect as compact canonical JSON with property order
@@ -58,5 +58,6 @@ object. Persist each defect as compact canonical JSON with property order
 returned objects structured. Never return a review-id pointer instead of the
 object.
 
-Before the fenced object, provide a brief session summary with mode, verdict,
-and finding counts. The JSON must be the final content.
+The result object must include the mode, verdict, and finding counts.
+
+{{cq:fragment:dispatch-result-delivery}}

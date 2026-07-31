@@ -132,6 +132,23 @@ let
       };
     }
     {
+      fragment = "dispatch-result-delivery";
+      supportedSurfaces = promptSurfaces;
+      forbiddenVocabulary = {
+        claude = [ "store_result" ];
+        codex = [
+          "fenced object"
+          "final content"
+        ];
+        pi = [ "store_result" ];
+      };
+      intentionalDifference = {
+        kind = "dispatch-protocol";
+        reason = "Codex uses the prepared result capability and handle-only completion while Claude and Pi retain their native structured-result transport.";
+        surfaces = promptSurfaces;
+      };
+    }
+    {
       fragment = "inline-command-recursion";
       supportedSurfaces = promptSurfaces;
       forbiddenVocabulary = {
@@ -225,7 +242,8 @@ let
     cq-command-invocation = "frontmatter and body CQ command references";
     subagent-dispatch = "subagent dispatch instructions and host transport branch";
     implement-dispatch-workflow = "implement worker, reviewer, and conflict-resolver catalog dispatch procedure";
-    dispatch-input-delivery = "implement-worker child-side input retrieval procedure";
+    dispatch-input-delivery = "implementation child-side input retrieval procedure";
+    dispatch-result-delivery = "dispatched child input retrieval and structured-result transport";
     inline-command-recursion = "inline chained-command execution instructions";
     advance-run-guard = "surface-specific run guard lifecycle";
     host-tool-vocabulary = "frontmatter host tool and isolation capabilities";
@@ -379,6 +397,7 @@ let
   D = "subagent-dispatch";
   W = "implement-dispatch-workflow";
   X = "dispatch-input-delivery";
+  Y = "dispatch-result-delivery";
   R = "inline-command-recursion";
   A = "advance-run-guard";
   T = "host-tool-vocabulary";
@@ -386,15 +405,15 @@ let
   C = "ledger-response-contract";
 
   authoredCatalog = [
-    (mkAgent "plan-advance" [ I T ])
-    (mkAgent "plan-reviewer" [ I T ])
+    (mkAgent "plan-advance" [ I T Y ])
+    (mkAgent "plan-reviewer" [ I T Y ])
     (mkAgent "implement-worker" [ I T X ])
-    (mkAgent "implement-reviewer" [ I T ])
-    (mkAgent "implement-conflict-resolver" [ I T ])
-    (mkAgent "investigate-explorer" [ I T ])
-    (mkAgent "investigate-prober" [ I T ])
-    (mkAgent "research-explorer" [ I T ])
-    (mkAgent "research-experimenter" [ T ])
+    (mkAgent "implement-reviewer" [ I T X ])
+    (mkAgent "implement-conflict-resolver" [ I T X ])
+    (mkAgent "investigate-explorer" [ I T Y ])
+    (mkAgent "investigate-prober" [ I T Y ])
+    (mkAgent "research-explorer" [ I T Y ])
+    (mkAgent "research-experimenter" [ T Y ])
     (mkCommand "begin" [ I T R C ] [
       (recursion "plan")
       (recursion "plan/follow-up")

@@ -13,16 +13,16 @@ inputs:
   - "full goal, answered questions, latest review, current draft, and repository context"
   - "explicit candidate-mode request when participating in a planner panel"
 outputs:
-  - "default: one fenced PlanStepResult JSON object"
-  - "candidate: one fenced candidate DAG JSON object"
+  - "default: one schema-valid PlanStepResult object"
+  - "candidate: one schema-valid candidate DAG object"
 ioSchema:
   - "typed input/output contract: see the role's inputSchema/outputSchema in the prompt catalog (@cq/config sidecar)"
   - "no ledger writes in either mode"
 ```
 
-You plan one goal. Read the ledger and repository, but write nothing and never
-spawn a child. End with exactly one fenced JSON object matching the selected
-mode.
+You plan one goal. Read the ledger and repository without mutating domain
+ledgers, and never spawn a child. Produce exactly one structured object matching
+the selected mode.
 
 ## Read state
 
@@ -210,6 +210,7 @@ extra fields.
 
 ## Output
 
-Before the JSON, provide a brief session summary covering the decision,
-evidence, and blockers. The fenced object must be the final content. The
-orchestrator validates and persists it; you write nothing.
+The result object must cover the decision, evidence, and blockers. The
+orchestrator validates and persists it; do not mutate domain ledgers.
+
+{{cq:fragment:dispatch-result-delivery}}
