@@ -170,6 +170,10 @@ let
               };
               default = { };
             };
+            programs.mcp.servers = lib.mkOption {
+              type = lib.types.attrsOf lib.types.anything;
+              default = { };
+            };
             smind.hm.dev.llm = lib.mkOption {
               type = lib.types.attrs;
               default = { };
@@ -177,7 +181,7 @@ let
           };
           config = {
             home.homeDirectory = "/home/test";
-            programs.codex.settings.mcp_servers.ledger = ledgerMcpRegistration;
+            programs.mcp.servers.ledger = ledgerMcpRegistration;
             smind.hm.dev.llm = {
               enable = true;
               merged = {
@@ -272,6 +276,11 @@ in
     assert codexHomeFiles.${sentinelPromptPath}.text == sentinelPromptBody;
     assert codexPackage.promptSurface == "codex";
     assert codexPackage.promptRoot == promptRoot;
+    # Regression: exercise the production programs.mcp registry boundary rather
+    # than injecting a complete transport directly into Codex's destination.
+    assert codexMcpRegistration.command == ledgerMcpRegistration.command;
+    assert codexMcpRegistration.args == [ "mcp" ];
+    assert codexMcpRegistration.env.CQ_HARNESS == "codex";
     assert lib.all (entry: entry.assertion) evaluatedCodexModule.config.assertions;
     true;
 }
