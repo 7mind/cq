@@ -2,7 +2,7 @@
 # dev-llm.nix. Configures the (downstream-provided) `programs.claude-code`
 # module; the shared skill/context bundles / MCP registry / merged views come
 # from the sibling tools.nix via `smind.hm.dev.llm.{enable,merged.*,…}`.
-{ self }:
+{ inputs, self }:
 { config
 , lib
 , pkgs
@@ -29,12 +29,7 @@ let
     ) claudePromptCatalog
   );
 
-  codexPluginCc = pkgs.fetchFromGitHub {
-    owner = "openai";
-    repo = "codex-plugin-cc";
-    rev = "db52e28f4d9ded852ab3942cea316258ae4ef346";
-    hash = "sha256-S/R4kHTcIHBcG0TRX063C7ILXZZm0oMqunchPGg6ToU=";
-  };
+  codexPluginCc = inputs.openai-codex-plugin;
 
   # claude-code pinned to the local native-tarball build (../pkg/claude-code),
   # built directly so the module does not depend on a consumer overlay. The

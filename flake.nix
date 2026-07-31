@@ -16,6 +16,10 @@
       url = "github:colbymchenry/codegraph";
       flake = false;
     };
+    openai-codex-plugin = {
+      url = "github:openai/codex-plugin-cc";
+      flake = false;
+    };
     # Darwin sandbox wrapper for claude-code (Linux uses the bubblewrap yolo).
     claude-code-sandbox.url = "github:neko-kai/claude-code-sandbox";
   };
@@ -115,7 +119,7 @@
         claudePromptHomeTest = import ./nix/lib/claude-prompt-home-test.nix {
           lib = pkgs.lib;
           inherit pkgs claudePromptRoot;
-          claudeModule = import ./nix/hm/claude.nix { inherit self; };
+          claudeModule = import ./nix/hm/claude.nix { inherit inputs self; };
         };
         piPromptRoot = import ./nix/pkg/cq-assets/render-prompt-surface.nix {
           inherit pkgs;
