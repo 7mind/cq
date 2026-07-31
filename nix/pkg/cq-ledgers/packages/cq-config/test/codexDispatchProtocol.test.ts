@@ -585,6 +585,23 @@ describe("T690 §4 — the parent-side handle-only check", () => {
     }
   });
 
+  test("T1536 accepts only the exact bare prepared attestation id", () => {
+    const verdict = classifyCodexFinalMessage(handle.attestationId, handle);
+    expect(verdict.verdict).toBe("handle-only");
+    if (verdict.verdict !== "handle-only") throw new Error("unreachable");
+    expect(verdict.handle).toEqual(handle);
+
+    for (const rejected of [
+      `att_${"B".repeat(32)}`,
+      ` ${handle.attestationId}`,
+      `${handle.attestationId}\n`,
+      `${handle.attestationId} surplus`,
+      "",
+    ]) {
+      expect(classifyCodexFinalMessage(rejected, handle).verdict).toBe("unparseable");
+    }
+  });
+
   test("ECHO: any surplus key is the echo, and the surplus keys are named", () => {
     // The defects:D175 gap: the store sees a valid submission and has NO
     // visibility into what the child additionally said, so this check has to

@@ -345,4 +345,34 @@ describe("T1330 Codex role process boundary", () => {
       ).toThrow("handle-only contract");
     }
   });
+
+  test("T1536 projects only the exact bare prepared attestation id to its handle", () => {
+    expect(
+      interceptCodexRoleBoundaryResult(
+        JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", text: HANDLE.attestationId },
+        }),
+        HANDLE,
+      ),
+    ).toEqual(HANDLE);
+
+    for (const rejected of [
+      "att_wrong",
+      ` ${HANDLE.attestationId}`,
+      `${HANDLE.attestationId}\n`,
+      `${HANDLE.attestationId} surplus`,
+      "",
+    ]) {
+      expect(() =>
+        interceptCodexRoleBoundaryResult(
+          JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: rejected },
+          }),
+          HANDLE,
+        ),
+      ).toThrow("handle-only contract");
+    }
+  });
 });

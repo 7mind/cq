@@ -702,7 +702,7 @@ function createModelController(
           evidence.conflictingStoreRejected = /different result|conflict|already stored/i.test(
             output,
           );
-          return finalMessageResponse(evidence.firstStoreAcknowledgement);
+          return finalMessageResponse(invocation.handle.attestationId);
         }
         throw new Error(`unexpected model request ${String(requestIndex + 1)}`);
       } catch (error: unknown) {
@@ -1073,7 +1073,7 @@ async function main(): Promise<void> {
         firstStore: "result-stored",
         identicalRetry: "same-acknowledgement-no-second-write",
         differentOutput: "conflict",
-        finalMessage: "result-stored-acknowledgement-normalized-to-handle",
+        finalMessage: "bare-attestation-id-normalized-to-handle",
         confirmation: "consumed",
         storeAfterTerminalization: "rejected",
         firstParentFetch: { state: "consumed", output: EXPECTED_RESULT },

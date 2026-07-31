@@ -610,6 +610,15 @@ export function classifyCodexFinalMessage(
       detail: `expected a final message string, got "${String(message)}"`,
     });
   }
+  if (message === expected.attestationId) {
+    return Object.freeze({
+      verdict: "handle-only" as const,
+      handle: Object.freeze({
+        attestationId: expected.attestationId,
+        generation: expected.generation,
+      }),
+    });
+  }
   const trimmed = message.trim();
   const fenced = FENCE_RE.exec(trimmed);
   const body = (fenced === null ? trimmed : fenced[1]!).trim();
