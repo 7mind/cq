@@ -5,12 +5,23 @@ import { expect, test } from "bun:test";
 import { LEDGER_TOOL_NAMES, NON_DISPATCH_LEDGER_TOOL_NAMES } from "../packages/ledger/src/index.js";
 import {
   PROFILE_NAMES,
+  buildNormalizedAfterArtifact,
   measureToolSurfaces,
   serializeToolSurfaceMeasurement,
 } from "./measure-tool-surface.js";
 
-const BASELINE_PATH = resolve(import.meta.dir, "baselines/g129-tool-surface.json");
+const EVIDENCE_DIR = resolve(
+  import.meta.dir,
+  "../docs/drafts/20260731-0216-g129-tool-surface",
+);
+const BASELINE_PATH = resolve(EVIDENCE_DIR, "baseline.json");
+const AFTER_PATH = resolve(EVIDENCE_DIR, "after.json");
 const TARGET_PATH = resolve(import.meta.dir, "baselines/t1326-tool-surface-target.json");
+type HistoricalMeasurement = Parameters<typeof buildNormalizedAfterArtifact>[1];
+
+function historicalMeasurement(): HistoricalMeasurement {
+  return JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as HistoricalMeasurement;
+}
 
 test("the profiler preserves G129 evidence and matches the T1326 target", async () => {
   const baseline = readFileSync(BASELINE_PATH);
@@ -21,6 +32,12 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
   const first = await measureToolSurfaces(PROFILE_NAMES);
   const second = await measureToolSurfaces(PROFILE_NAMES);
   const firstJson = serializeToolSurfaceMeasurement(first);
+  const normalized = buildNormalizedAfterArtifact(
+    first,
+    historicalMeasurement(),
+    "docs/drafts/20260731-0216-g129-tool-surface/baseline.json",
+  );
+  const normalizedJson = `${JSON.stringify(normalized, null, 2)}\n`;
   const contract = {
     historicalBaselineSha256: createHash("sha256").update(baseline).digest("hex"),
     repeatIsByteIdentical: firstJson === serializeToolSurfaceMeasurement(second),
@@ -31,7 +48,8 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
       (profile) => profile.initialize.instructions.serialization.length > 2,
     ),
     toolsListSerializationIncluded: Object.values(first.profiles).every(
-      (profile) => profile.toolsList.serialization.length > 2,
+      (profile) =>
+        (JSON.parse(profile.toolsList.serialization) as unknown[]).length === profile.toolCount,
     ),
     everyToolDecomposed: Object.values(first.profiles).every((profile) =>
       profile.tools.every(
@@ -46,6 +64,21 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
           ),
       ),
     ),
+    normalizedArtifactIsCurrent: normalizedJson === readFileSync(AFTER_PATH, "utf8"),
+    budgets: normalized.budgets,
+    measuredProfiles: Object.keys(normalized.profiles).length,
+    corpusTranscripts: normalized.roleWeightedExposure.transcripts,
+    maximumRemainingG93AttributableTokens:
+      normalized.g93.maximumRemainingG93AttributableTokens,
+    corpusMedianResponseSavingTokens: normalized.g93.corpusMedianResponseSavingTokens,
+    transportTools: normalized.transportOnlyOverhead.tools,
+    everyToolHasFieldDeltas: normalized.perToolAndFieldDeltas.every((tool) =>
+      ["name", "description", "inputSchema"].every((field) =>
+        Number.isInteger(
+          tool.fields[field as keyof typeof tool.fields].delta.serializedTokens,
+        ),
+      ),
+    ),
   };
 
   expect(contract).toEqual({
@@ -57,7 +90,74 @@ test("the profiler preserves G129 evidence and matches the T1326 target", async 
     initializeInstructionsIncluded: true,
     toolsListSerializationIncluded: true,
     everyToolDecomposed: true,
+    normalizedArtifactIsCurrent: true,
+    budgets: {
+      tokenizerMatches: true,
+      methodMatches: true,
+      allSurfacesSmaller: true,
+      allRequiredCallsCovered: true,
+      zeroDomainProfilesHaveZeroDomainSchemaTokens: true,
+      g93BelowCorpusMedian: true,
+      passed: true,
+      failures: [],
+    },
+    measuredProfiles: 26,
+    corpusTranscripts: 357,
+    maximumRemainingG93AttributableTokens: 780,
+    corpusMedianResponseSavingTokens: 1461,
+    transportTools: ["fetch_dispatch_input", "store_result"],
+    everyToolHasFieldDeltas: true,
   });
   expect(first.profiles.full.toolCount).toBe(target.target.publicToolCount);
   expect(LEDGER_TOOL_NAMES).toHaveLength(target.target.publicToolCount);
+});
+
+test("every T1331 budget detector rejects its own counterfactual drift", async () => {
+  const measured = await measureToolSurfaces(PROFILE_NAMES);
+  const baseline = historicalMeasurement();
+  const artifact = (
+    current: typeof measured,
+    historical: HistoricalMeasurement = baseline,
+  ) =>
+    buildNormalizedAfterArtifact(
+      current,
+      historical,
+      "docs/drafts/20260731-0216-g129-tool-surface/baseline.json",
+    );
+
+  const tokenizerDrift = artifact(measured, {
+    ...baseline,
+    tokenizer: { ...baseline.tokenizer, version: "3.4.0-mutated" },
+  } as HistoricalMeasurement);
+  const methodDrift = artifact(measured, {
+    ...baseline,
+    method: { ...baseline.method, serialization: "mutated" },
+  } as HistoricalMeasurement);
+  const surfaceDrift = structuredClone(measured);
+  surfaceDrift.profiles.full.toolsList.tokens =
+    baseline.profiles.full.initialize.instructions.tokens +
+    baseline.profiles.full.toolsList.tokens;
+  const requiredCallDrift = structuredClone(measured);
+  requiredCallDrift.profiles["plan-advance"].requiredCallInventoryCovered = false;
+  const zeroDomainDrift = structuredClone(measured);
+  zeroDomainDrift.profiles["implement-worker"].domainInputSchemaTokens = 1;
+  const g93Drift = structuredClone(measured);
+  g93Drift.profiles.full.responseContractCounterfactual.allTokens = 1461;
+
+  expect({
+    tokenizerMatches: tokenizerDrift.budgets.tokenizerMatches,
+    methodMatches: methodDrift.budgets.methodMatches,
+    allSurfacesSmaller: artifact(surfaceDrift).budgets.allSurfacesSmaller,
+    allRequiredCallsCovered: artifact(requiredCallDrift).budgets.allRequiredCallsCovered,
+    zeroDomainProfilesHaveZeroDomainSchemaTokens:
+      artifact(zeroDomainDrift).budgets.zeroDomainProfilesHaveZeroDomainSchemaTokens,
+    g93BelowCorpusMedian: artifact(g93Drift).budgets.g93BelowCorpusMedian,
+  }).toEqual({
+    tokenizerMatches: false,
+    methodMatches: false,
+    allSurfacesSmaller: false,
+    allRequiredCallsCovered: false,
+    zeroDomainProfilesHaveZeroDomainSchemaTokens: false,
+    g93BelowCorpusMedian: false,
+  });
 });

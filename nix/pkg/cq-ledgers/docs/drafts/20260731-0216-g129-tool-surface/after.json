@@ -1,0 +1,3325 @@
+{
+  "formatVersion": 2,
+  "taskId": "T1331",
+  "sourceMeasurementFormatVersion": 1,
+  "tokenizer": {
+    "package": "gpt-tokenizer",
+    "version": "3.4.0",
+    "encoding": "o200k_base"
+  },
+  "method": {
+    "serialization": "JSON.stringify",
+    "toolOrder": "name ascending",
+    "schemaPath": "RFC 6901 JSON Pointer; empty string denotes the inputSchema root",
+    "marginalTokens": "For each component or schema path, whole-tool tokens minus tokens for an independently serialized whole-tool counterfactual with that field or path removed.",
+    "marginalTokensAreAdditive": false
+  },
+  "baseline": {
+    "path": "docs/drafts/20260731-0216-g129-tool-surface/baseline.json",
+    "sha256": "b05edac5f763f734d6735007fc47d6044eeea96d523c16a36c38de2445ad43b0"
+  },
+  "profiles": {
+    "full": {
+      "inventorySource": "LEDGER_TOOL_NAMES",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 766,
+        "tokens": 147,
+        "sha256": "b03f085cf0fa36b2dc273e3d1e4497e44c4eab265bed38dc3f1feb7833784862"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7691,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4091,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "non-dispatch": {
+      "inventorySource": "NON_DISPATCH_LEDGER_TOOL_NAMES",
+      "inventory": [
+        "archive_milestone",
+        "claim_plan",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 23,
+      "baselineProfile": "non-dispatch",
+      "initialize": {
+        "utf8Bytes": 766,
+        "tokens": 147,
+        "sha256": "b03f085cf0fa36b2dc273e3d1e4497e44c4eab265bed38dc3f1feb7833784862"
+      },
+      "toolsList": {
+        "utf8Bytes": 26328,
+        "tokens": 6229,
+        "sha256": "08b9cbbbe6e560ec561ef7d5c708055bcdfc7a1ff9622ba09ba384360e788c4d"
+      },
+      "surfaceTokens": 6376,
+      "baselineSurfaceTokens": 10386,
+      "deltaTokens": -4010,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 489,
+        "allTokens": 672,
+        "deltasAreAdditive": false
+      }
+    },
+    "advance": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:advance",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 612,
+        "tokens": 154,
+        "sha256": "eae3d4c3621212c1f98a31c598c89903cfd1c69b683f197ca3db54eab6f5ecb1"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7698,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4084,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "begin": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:begin",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 610,
+        "tokens": 154,
+        "sha256": "205c988984495ccec92b3dd7c14d600ec25737237d3d8d3b800fb5d6c056f90a"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7698,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4084,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "implement-conflict-resolver": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:implement-conflict-resolver",
+      "inventory": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "toolCount": 2,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 141,
+        "tokens": 33,
+        "sha256": "f62139f29da80f8cc2cc53e86683dbbdc0b05bc432ed0a63947c94f83943e5d2"
+      },
+      "toolsList": {
+        "utf8Bytes": 1513,
+        "tokens": 323,
+        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+      },
+      "surfaceTokens": 356,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11426,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 35,
+        "allTokens": 35,
+        "deltasAreAdditive": false
+      }
+    },
+    "implement-review": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:implement-review",
+      "inventory": [],
+      "toolCount": 0,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 94,
+        "tokens": 21,
+        "sha256": "9a01f8d8ecadeb5cebecb31388845937d43e252f2c59e6e098ce5651f100ba4a"
+      },
+      "toolsList": {
+        "utf8Bytes": 2,
+        "tokens": 1,
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "surfaceTokens": 22,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11760,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 0,
+        "allTokens": 0,
+        "deltasAreAdditive": false
+      }
+    },
+    "implement-reviewer": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:implement-reviewer",
+      "inventory": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "toolCount": 2,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 132,
+        "tokens": 31,
+        "sha256": "bd1af5a0129f0131f8dde225d5a1f90aa1b018e9ff3c0fba51087c169d4e0683"
+      },
+      "toolsList": {
+        "utf8Bytes": 1513,
+        "tokens": 323,
+        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+      },
+      "surfaceTokens": 354,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11428,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 35,
+        "allTokens": 35,
+        "deltasAreAdditive": false
+      }
+    },
+    "implement-worker": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:implement-worker",
+      "inventory": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "toolCount": 2,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 130,
+        "tokens": 30,
+        "sha256": "c81df1a34fd00132884ee857e1a64d38769ecc88ea6957a03862ff634e998ed8"
+      },
+      "toolsList": {
+        "utf8Bytes": 1513,
+        "tokens": 323,
+        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+      },
+      "surfaceTokens": 353,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11429,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 35,
+        "allTokens": 35,
+        "deltasAreAdditive": false
+      }
+    },
+    "implement/advance": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:implement/advance",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 622,
+        "tokens": 156,
+        "sha256": "bdf96d26c54174ede47de8f6891ee7c88d86b79b757f7fa355fbccce3c52dc8c"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7700,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4082,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "implement/start": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:implement/start",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 620,
+        "tokens": 155,
+        "sha256": "ac52f83e6d1fa80396ea7846eef47b7ff02e820b7d19248cab40f7330ffe156e"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7699,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4083,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "investigate": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:investigate",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 616,
+        "tokens": 155,
+        "sha256": "c650366d6cef13703399df62066286a34b2cb0b526ac7ddfa3ef8e0d66658b48"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7699,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4083,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "investigate-explorer": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:investigate-explorer",
+      "inventory": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "toolCount": 2,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 134,
+        "tokens": 32,
+        "sha256": "d5f5f57624f7f1b95ce56a0ea0791e636a1ceccc4819cad29c30c74164fad792"
+      },
+      "toolsList": {
+        "utf8Bytes": 1513,
+        "tokens": 323,
+        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+      },
+      "surfaceTokens": 355,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11427,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 35,
+        "allTokens": 35,
+        "deltasAreAdditive": false
+      }
+    },
+    "investigate-prober": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:investigate-prober",
+      "inventory": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "toolCount": 2,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 132,
+        "tokens": 32,
+        "sha256": "d2eea83ad71bf8a628b1a8aeb3f8ed4f1829b31423c6f5017c23ac25ddaf1bc6"
+      },
+      "toolsList": {
+        "utf8Bytes": 1513,
+        "tokens": 323,
+        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+      },
+      "surfaceTokens": 355,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11427,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 35,
+        "allTokens": 35,
+        "deltasAreAdditive": false
+      }
+    },
+    "investigate/advance": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:investigate/advance",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 624,
+        "tokens": 157,
+        "sha256": "6d9370ef298b973b68c4b3b3828e31f88d225a87036b9fd491c98905c93fddbb"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7701,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4081,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "plan": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:plan",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 609,
+        "tokens": 154,
+        "sha256": "523a5d8e4fcd6248c4eeb524f784fb177403803d0a92ef63c0abe5374c761316"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7698,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4084,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "plan-advance": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:plan-advance",
+      "inventory": [
+        "fetch_dispatch_input",
+        "fetch_item",
+        "fts_search",
+        "list_milestone_items",
+        "store_result"
+      ],
+      "toolCount": 5,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 178,
+        "tokens": 47,
+        "sha256": "14da64cb2f35ae50a2b39775480defcccd39d731ec9d78360f757db03b899ab3"
+      },
+      "toolsList": {
+        "utf8Bytes": 3692,
+        "tokens": 790,
+        "sha256": "27aea763239ed3c7a8a89751ed054ab17056ec8b23d68c63fb9f9e0e554d1959"
+      },
+      "surfaceTokens": 837,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -10945,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "fetch_item",
+        "list_milestone_items",
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 207,
+      "responseContractCounterfactual": {
+        "projectionTokens": 47,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 35,
+        "allTokens": 82,
+        "deltasAreAdditive": false
+      }
+    },
+    "plan-review": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:plan-review",
+      "inventory": [],
+      "toolCount": 0,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 89,
+        "tokens": 21,
+        "sha256": "a674b0796cc9adc0b16ad3bbce619152c5fad63055db05a467283af6970e6d13"
+      },
+      "toolsList": {
+        "utf8Bytes": 2,
+        "tokens": 1,
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "surfaceTokens": 22,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11760,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 0,
+        "allTokens": 0,
+        "deltasAreAdditive": false
+      }
+    },
+    "plan-reviewer": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:plan-reviewer",
+      "inventory": [
+        "create_item",
+        "fetch_dispatch_input",
+        "fetch_item",
+        "fts_search",
+        "list_milestone_items",
+        "store_result"
+      ],
+      "toolCount": 6,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 194,
+        "tokens": 51,
+        "sha256": "68145eb0176b564b5a0493a6bd4ce7c3f7b93672f5bde9633eb92b8a266d485a"
+      },
+      "toolsList": {
+        "utf8Bytes": 4923,
+        "tokens": 1074,
+        "sha256": "16b69f508c75f96e3b278e757334e3102a492eb02e823ce93f315fe7fd47be37"
+      },
+      "surfaceTokens": 1125,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -10657,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "create_item",
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 399,
+      "responseContractCounterfactual": {
+        "projectionTokens": 47,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 35,
+        "allTokens": 82,
+        "deltasAreAdditive": false
+      }
+    },
+    "plan/advance": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:plan/advance",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 617,
+        "tokens": 156,
+        "sha256": "962c8bf5ffb07601d347aedb00a42822ad1500404d7cf0ad5595db571b5675b9"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7700,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4082,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "plan/follow-up": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:plan/follow-up",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 619,
+        "tokens": 157,
+        "sha256": "20ec086e2d918997f6703c7e7d535c442262f6aa09e210c62e72688ad7b34c85"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7701,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4081,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "planners": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:planners",
+      "inventory": [
+        "get_config"
+      ],
+      "toolCount": 1,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 96,
+        "tokens": 25,
+        "sha256": "0e113aca5282b94649b1d907d2e4bce537639f24f15f5482bb363f008669f06e"
+      },
+      "toolsList": {
+        "utf8Bytes": 582,
+        "tokens": 120,
+        "sha256": "10a03ea531252f2119e1821dea7181510096030c9615fc9a0601d72b6cfe5a06"
+      },
+      "surfaceTokens": 145,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11637,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "get_config"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 19,
+        "allTokens": 19,
+        "deltasAreAdditive": false
+      }
+    },
+    "research": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:research",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 613,
+        "tokens": 154,
+        "sha256": "00b76a532497d1004980fa7d3eed1294dd903192dbf28bebf1e37c2de382290b"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7698,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4084,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "research-experimenter": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:research-experimenter",
+      "inventory": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "toolCount": 2,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 135,
+        "tokens": 32,
+        "sha256": "b3866e278a6516c908c6e2e5d63c248864ee3f94a9edfa987a5ec280acca93aa"
+      },
+      "toolsList": {
+        "utf8Bytes": 1513,
+        "tokens": 323,
+        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+      },
+      "surfaceTokens": 355,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11427,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 35,
+        "allTokens": 35,
+        "deltasAreAdditive": false
+      }
+    },
+    "research-explorer": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:research-explorer",
+      "inventory": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "toolCount": 2,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 131,
+        "tokens": 31,
+        "sha256": "c06a6f8524a73582b04a273a8dd0aa1682e17846ce3c48c5bf0d603b1be12928"
+      },
+      "toolsList": {
+        "utf8Bytes": 1513,
+        "tokens": 323,
+        "sha256": "9a2e683c561fa57bbd0e89867b689face918f9bceca163af4fee94aece3549f7"
+      },
+      "surfaceTokens": 354,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11428,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "fetch_dispatch_input",
+        "store_result"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 35,
+        "allTokens": 35,
+        "deltasAreAdditive": false
+      }
+    },
+    "research/advance": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:research/advance",
+      "inventory": [
+        "abort_dispatch",
+        "archive_milestone",
+        "claim_plan",
+        "confirm_dispatch_completion",
+        "create_item",
+        "create_ledger",
+        "derive_predicates",
+        "enumerate_ledgers",
+        "fetch_dispatch_input",
+        "fetch_dispatch_result",
+        "fetch_item",
+        "fetch_ledger",
+        "fetch_ledger_archive",
+        "fetch_prompt",
+        "finalize_plan",
+        "fts_search",
+        "get_config",
+        "list_milestone_items",
+        "list_projects",
+        "prepare_dispatch",
+        "publish_plan_draft",
+        "read_log",
+        "release_plan_claim",
+        "reopen_item",
+        "search_items",
+        "snapshot",
+        "store_result",
+        "unarchive_item",
+        "update_item"
+      ],
+      "toolCount": 29,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 621,
+        "tokens": 156,
+        "sha256": "74ce20a5f8ef8da4120ba6c0a5e5031bd7b758b84726fc2f063c4dd26cd55178"
+      },
+      "toolsList": {
+        "utf8Bytes": 32167,
+        "tokens": 7544,
+        "sha256": "d00f355a5548e13e581fd945c2b63bf1365ca0458d6b22badf41f6a1a8aab340"
+      },
+      "surfaceTokens": 7700,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -4082,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": false,
+      "domainInputSchemaTokens": 3587,
+      "responseContractCounterfactual": {
+        "projectionTokens": 78,
+        "acknowledgementSentenceTokens": 210,
+        "authoritativeResponseTokens": 597,
+        "allTokens": 780,
+        "deltasAreAdditive": false
+      }
+    },
+    "reviewers": {
+      "inventorySource": "ROLE_TOOL_CAPABILITY_MATRIX:reviewers",
+      "inventory": [
+        "get_config"
+      ],
+      "toolCount": 1,
+      "baselineProfile": "full",
+      "initialize": {
+        "utf8Bytes": 97,
+        "tokens": 25,
+        "sha256": "794a14a74537d29b023905322700a1aa563254bd664193f2a5da6c16cde7ec57"
+      },
+      "toolsList": {
+        "utf8Bytes": 582,
+        "tokens": 120,
+        "sha256": "10a03ea531252f2119e1821dea7181510096030c9615fc9a0601d72b6cfe5a06"
+      },
+      "surfaceTokens": 145,
+      "baselineSurfaceTokens": 11782,
+      "deltaTokens": -11637,
+      "smallerThanBaseline": true,
+      "contractRequiredTools": [
+        "get_config"
+      ],
+      "requiredCallInventoryCovered": true,
+      "zeroDomainCalls": true,
+      "domainInputSchemaTokens": 0,
+      "responseContractCounterfactual": {
+        "projectionTokens": 0,
+        "acknowledgementSentenceTokens": 0,
+        "authoritativeResponseTokens": 19,
+        "allTokens": 19,
+        "deltasAreAdditive": false
+      }
+    }
+  },
+  "perToolAndFieldDeltas": [
+    {
+      "name": "abort_dispatch",
+      "whole": {
+        "baselineTokens": 221,
+        "afterTokens": 198,
+        "deltaTokens": -23
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 22,
+            "marginalTokens": 23
+          },
+          "after": {
+            "serializedTokens": 22,
+            "marginalTokens": 23
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 182,
+            "marginalTokens": 184
+          },
+          "after": {
+            "serializedTokens": 167,
+            "marginalTokens": 168
+          },
+          "delta": {
+            "serializedTokens": -15,
+            "marginalTokens": -16
+          }
+        }
+      }
+    },
+    {
+      "name": "archive_milestone",
+      "whole": {
+        "baselineTokens": 151,
+        "afterTokens": 133,
+        "deltaTokens": -18
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "after": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 72,
+            "marginalTokens": 73
+          },
+          "after": {
+            "serializedTokens": 72,
+            "marginalTokens": 73
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 59,
+            "marginalTokens": 62
+          },
+          "after": {
+            "serializedTokens": 50,
+            "marginalTokens": 51
+          },
+          "delta": {
+            "serializedTokens": -9,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "claim_plan",
+      "whole": {
+        "baselineTokens": 415,
+        "afterTokens": 397,
+        "deltaTokens": -18
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 225,
+            "marginalTokens": 226
+          },
+          "after": {
+            "serializedTokens": 225,
+            "marginalTokens": 226
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 172,
+            "marginalTokens": 175
+          },
+          "after": {
+            "serializedTokens": 163,
+            "marginalTokens": 164
+          },
+          "delta": {
+            "serializedTokens": -9,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "confirm_dispatch_completion",
+      "whole": {
+        "baselineTokens": 271,
+        "afterTokens": 263,
+        "deltaTokens": -8
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 32,
+            "marginalTokens": 33
+          },
+          "after": {
+            "serializedTokens": 32,
+            "marginalTokens": 33
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 220,
+            "marginalTokens": 223
+          },
+          "after": {
+            "serializedTokens": 221,
+            "marginalTokens": 222
+          },
+          "delta": {
+            "serializedTokens": 1,
+            "marginalTokens": -1
+          }
+        }
+      }
+    },
+    {
+      "name": "create_item",
+      "whole": {
+        "baselineTokens": 384,
+        "afterTokens": 285,
+        "deltaTokens": -99
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 175,
+            "marginalTokens": 176
+          },
+          "after": {
+            "serializedTokens": 83,
+            "marginalTokens": 84
+          },
+          "delta": {
+            "serializedTokens": -92,
+            "marginalTokens": -92
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 191,
+            "marginalTokens": 194
+          },
+          "after": {
+            "serializedTokens": 192,
+            "marginalTokens": 194
+          },
+          "delta": {
+            "serializedTokens": 1,
+            "marginalTokens": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "create_ledger",
+      "whole": {
+        "baselineTokens": 332,
+        "afterTokens": 324,
+        "deltaTokens": -8
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 75,
+            "marginalTokens": 76
+          },
+          "after": {
+            "serializedTokens": 75,
+            "marginalTokens": 76
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 238,
+            "marginalTokens": 241
+          },
+          "after": {
+            "serializedTokens": 239,
+            "marginalTokens": 240
+          },
+          "delta": {
+            "serializedTokens": 1,
+            "marginalTokens": -1
+          }
+        }
+      }
+    },
+    {
+      "name": "create_milestone",
+      "whole": {
+        "baselineTokens": 237,
+        "afterTokens": 0,
+        "deltaTokens": -237
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "after": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "delta": {
+            "serializedTokens": -6,
+            "marginalTokens": -7
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 129,
+            "marginalTokens": 130
+          },
+          "after": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "delta": {
+            "serializedTokens": -129,
+            "marginalTokens": -130
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 88,
+            "marginalTokens": 91
+          },
+          "after": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "delta": {
+            "serializedTokens": -88,
+            "marginalTokens": -91
+          }
+        }
+      }
+    },
+    {
+      "name": "derive_predicates",
+      "whole": {
+        "baselineTokens": 298,
+        "afterTokens": 98,
+        "deltaTokens": -200
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 255,
+            "marginalTokens": 256
+          },
+          "after": {
+            "serializedTokens": 74,
+            "marginalTokens": 75
+          },
+          "delta": {
+            "serializedTokens": -181,
+            "marginalTokens": -181
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 24,
+            "marginalTokens": 27
+          },
+          "after": {
+            "serializedTokens": 14,
+            "marginalTokens": 15
+          },
+          "delta": {
+            "serializedTokens": -10,
+            "marginalTokens": -12
+          }
+        }
+      }
+    },
+    {
+      "name": "enumerate_ledgers",
+      "whole": {
+        "baselineTokens": 99,
+        "afterTokens": 80,
+        "deltaTokens": -19
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "after": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 55,
+            "marginalTokens": 56
+          },
+          "after": {
+            "serializedTokens": 55,
+            "marginalTokens": 56
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 24,
+            "marginalTokens": 27
+          },
+          "after": {
+            "serializedTokens": 14,
+            "marginalTokens": 16
+          },
+          "delta": {
+            "serializedTokens": -10,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "fetch_dispatch_input",
+      "whole": {
+        "baselineTokens": 152,
+        "afterTokens": 139,
+        "deltaTokens": -13
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 36,
+            "marginalTokens": 37
+          },
+          "after": {
+            "serializedTokens": 36,
+            "marginalTokens": 37
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 97,
+            "marginalTokens": 100
+          },
+          "after": {
+            "serializedTokens": 93,
+            "marginalTokens": 94
+          },
+          "delta": {
+            "serializedTokens": -4,
+            "marginalTokens": -6
+          }
+        }
+      }
+    },
+    {
+      "name": "fetch_dispatch_result",
+      "whole": {
+        "baselineTokens": 117,
+        "afterTokens": 99,
+        "deltaTokens": -18
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 39,
+            "marginalTokens": 40
+          },
+          "after": {
+            "serializedTokens": 39,
+            "marginalTokens": 40
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 59,
+            "marginalTokens": 62
+          },
+          "after": {
+            "serializedTokens": 50,
+            "marginalTokens": 51
+          },
+          "delta": {
+            "serializedTokens": -9,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "fetch_item",
+      "whole": {
+        "baselineTokens": 281,
+        "afterTokens": 136,
+        "deltaTokens": -145
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 142,
+            "marginalTokens": 143
+          },
+          "after": {
+            "serializedTokens": 74,
+            "marginalTokens": 75
+          },
+          "delta": {
+            "serializedTokens": -68,
+            "marginalTokens": -68
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 121,
+            "marginalTokens": 124
+          },
+          "after": {
+            "serializedTokens": 53,
+            "marginalTokens": 54
+          },
+          "delta": {
+            "serializedTokens": -68,
+            "marginalTokens": -70
+          }
+        }
+      }
+    },
+    {
+      "name": "fetch_ledger",
+      "whole": {
+        "baselineTokens": 520,
+        "afterTokens": 166,
+        "deltaTokens": -354
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 333,
+            "marginalTokens": 334
+          },
+          "after": {
+            "serializedTokens": 75,
+            "marginalTokens": 76
+          },
+          "delta": {
+            "serializedTokens": -258,
+            "marginalTokens": -258
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 168,
+            "marginalTokens": 171
+          },
+          "after": {
+            "serializedTokens": 81,
+            "marginalTokens": 82
+          },
+          "delta": {
+            "serializedTokens": -87,
+            "marginalTokens": -89
+          }
+        }
+      }
+    },
+    {
+      "name": "fetch_ledger_archive",
+      "whole": {
+        "baselineTokens": 110,
+        "afterTokens": 92,
+        "deltaTokens": -18
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "after": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 44,
+            "marginalTokens": 45
+          },
+          "after": {
+            "serializedTokens": 44,
+            "marginalTokens": 45
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 46,
+            "marginalTokens": 49
+          },
+          "after": {
+            "serializedTokens": 37,
+            "marginalTokens": 38
+          },
+          "delta": {
+            "serializedTokens": -9,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "fetch_milestone",
+      "whole": {
+        "baselineTokens": 301,
+        "afterTokens": 0,
+        "deltaTokens": -301
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "after": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "delta": {
+            "serializedTokens": -6,
+            "marginalTokens": -7
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 156,
+            "marginalTokens": 157
+          },
+          "after": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "delta": {
+            "serializedTokens": -156,
+            "marginalTokens": -157
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 125,
+            "marginalTokens": 128
+          },
+          "after": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "delta": {
+            "serializedTokens": -125,
+            "marginalTokens": -128
+          }
+        }
+      }
+    },
+    {
+      "name": "fetch_prompt",
+      "whole": {
+        "baselineTokens": 208,
+        "afterTokens": 190,
+        "deltaTokens": -18
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 155,
+            "marginalTokens": 156
+          },
+          "after": {
+            "serializedTokens": 155,
+            "marginalTokens": 156
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 35,
+            "marginalTokens": 38
+          },
+          "after": {
+            "serializedTokens": 26,
+            "marginalTokens": 27
+          },
+          "delta": {
+            "serializedTokens": -9,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "finalize_plan",
+      "whole": {
+        "baselineTokens": 625,
+        "afterTokens": 607,
+        "deltaTokens": -18
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 172,
+            "marginalTokens": 173
+          },
+          "after": {
+            "serializedTokens": 172,
+            "marginalTokens": 173
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 434,
+            "marginalTokens": 437
+          },
+          "after": {
+            "serializedTokens": 425,
+            "marginalTokens": 426
+          },
+          "delta": {
+            "serializedTokens": -9,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "fts_search",
+      "whole": {
+        "baselineTokens": 1011,
+        "afterTokens": 224,
+        "deltaTokens": -787
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 773,
+            "marginalTokens": 774
+          },
+          "after": {
+            "serializedTokens": 118,
+            "marginalTokens": 119
+          },
+          "delta": {
+            "serializedTokens": -655,
+            "marginalTokens": -655
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 220,
+            "marginalTokens": 223
+          },
+          "after": {
+            "serializedTokens": 97,
+            "marginalTokens": 98
+          },
+          "delta": {
+            "serializedTokens": -123,
+            "marginalTokens": -125
+          }
+        }
+      }
+    },
+    {
+      "name": "get_config",
+      "whole": {
+        "baselineTokens": 136,
+        "afterTokens": 118,
+        "deltaTokens": -18
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 59,
+            "marginalTokens": 60
+          },
+          "after": {
+            "serializedTokens": 59,
+            "marginalTokens": 60
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 59,
+            "marginalTokens": 62
+          },
+          "after": {
+            "serializedTokens": 50,
+            "marginalTokens": 51
+          },
+          "delta": {
+            "serializedTokens": -9,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "list_milestone_items",
+      "whole": {
+        "baselineTokens": 299,
+        "afterTokens": 107,
+        "deltaTokens": -192
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 7,
+            "marginalTokens": 8
+          },
+          "after": {
+            "serializedTokens": 7,
+            "marginalTokens": 8
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 153,
+            "marginalTokens": 154
+          },
+          "after": {
+            "serializedTokens": 38,
+            "marginalTokens": 39
+          },
+          "delta": {
+            "serializedTokens": -115,
+            "marginalTokens": -115
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 125,
+            "marginalTokens": 128
+          },
+          "after": {
+            "serializedTokens": 57,
+            "marginalTokens": 58
+          },
+          "delta": {
+            "serializedTokens": -68,
+            "marginalTokens": -70
+          }
+        }
+      }
+    },
+    {
+      "name": "list_projects",
+      "whole": {
+        "baselineTokens": 143,
+        "afterTokens": 124,
+        "deltaTokens": -19
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 101,
+            "marginalTokens": 102
+          },
+          "after": {
+            "serializedTokens": 101,
+            "marginalTokens": 102
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 24,
+            "marginalTokens": 27
+          },
+          "after": {
+            "serializedTokens": 14,
+            "marginalTokens": 15
+          },
+          "delta": {
+            "serializedTokens": -10,
+            "marginalTokens": -12
+          }
+        }
+      }
+    },
+    {
+      "name": "prepare_dispatch",
+      "whole": {
+        "baselineTokens": 441,
+        "afterTokens": 434,
+        "deltaTokens": -7
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 49,
+            "marginalTokens": 50
+          },
+          "after": {
+            "serializedTokens": 49,
+            "marginalTokens": 50
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 375,
+            "marginalTokens": 377
+          },
+          "after": {
+            "serializedTokens": 376,
+            "marginalTokens": 377
+          },
+          "delta": {
+            "serializedTokens": 1,
+            "marginalTokens": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "publish_plan_draft",
+      "whole": {
+        "baselineTokens": 1440,
+        "afterTokens": 1422,
+        "deltaTokens": -18
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "after": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 166,
+            "marginalTokens": 167
+          },
+          "after": {
+            "serializedTokens": 166,
+            "marginalTokens": 167
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 1254,
+            "marginalTokens": 1257
+          },
+          "after": {
+            "serializedTokens": 1245,
+            "marginalTokens": 1246
+          },
+          "delta": {
+            "serializedTokens": -9,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "read_log",
+      "whole": {
+        "baselineTokens": 192,
+        "afterTokens": 162,
+        "deltaTokens": -30
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 129,
+            "marginalTokens": 130
+          },
+          "after": {
+            "serializedTokens": 129,
+            "marginalTokens": 130
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 45,
+            "marginalTokens": 48
+          },
+          "after": {
+            "serializedTokens": 24,
+            "marginalTokens": 25
+          },
+          "delta": {
+            "serializedTokens": -21,
+            "marginalTokens": -23
+          }
+        }
+      }
+    },
+    {
+      "name": "release_plan_claim",
+      "whole": {
+        "baselineTokens": 896,
+        "afterTokens": 800,
+        "deltaTokens": -96
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 193,
+            "marginalTokens": 194
+          },
+          "after": {
+            "serializedTokens": 193,
+            "marginalTokens": 194
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 684,
+            "marginalTokens": 687
+          },
+          "after": {
+            "serializedTokens": 597,
+            "marginalTokens": 598
+          },
+          "delta": {
+            "serializedTokens": -87,
+            "marginalTokens": -89
+          }
+        }
+      }
+    },
+    {
+      "name": "reopen_item",
+      "whole": {
+        "baselineTokens": 192,
+        "afterTokens": 174,
+        "deltaTokens": -18
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 116,
+            "marginalTokens": 117
+          },
+          "after": {
+            "serializedTokens": 116,
+            "marginalTokens": 117
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 57,
+            "marginalTokens": 60
+          },
+          "after": {
+            "serializedTokens": 48,
+            "marginalTokens": 49
+          },
+          "delta": {
+            "serializedTokens": -9,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "search_items",
+      "whole": {
+        "baselineTokens": 280,
+        "afterTokens": 101,
+        "deltaTokens": -179
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 143,
+            "marginalTokens": 144
+          },
+          "after": {
+            "serializedTokens": 41,
+            "marginalTokens": 42
+          },
+          "delta": {
+            "serializedTokens": -102,
+            "marginalTokens": -102
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 119,
+            "marginalTokens": 122
+          },
+          "after": {
+            "serializedTokens": 51,
+            "marginalTokens": 52
+          },
+          "delta": {
+            "serializedTokens": -68,
+            "marginalTokens": -70
+          }
+        }
+      }
+    },
+    {
+      "name": "snapshot",
+      "whole": {
+        "baselineTokens": 217,
+        "afterTokens": 61,
+        "deltaTokens": -156
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 3,
+            "marginalTokens": 4
+          },
+          "after": {
+            "serializedTokens": 3,
+            "marginalTokens": 4
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 154,
+            "marginalTokens": 155
+          },
+          "after": {
+            "serializedTokens": 32,
+            "marginalTokens": 33
+          },
+          "delta": {
+            "serializedTokens": -122,
+            "marginalTokens": -122
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 46,
+            "marginalTokens": 49
+          },
+          "after": {
+            "serializedTokens": 21,
+            "marginalTokens": 22
+          },
+          "delta": {
+            "serializedTokens": -25,
+            "marginalTokens": -27
+          }
+        }
+      }
+    },
+    {
+      "name": "store_result",
+      "whole": {
+        "baselineTokens": 194,
+        "afterTokens": 182,
+        "deltaTokens": -12
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 32,
+            "marginalTokens": 33
+          },
+          "after": {
+            "serializedTokens": 32,
+            "marginalTokens": 33
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 145,
+            "marginalTokens": 147
+          },
+          "after": {
+            "serializedTokens": 141,
+            "marginalTokens": 142
+          },
+          "delta": {
+            "serializedTokens": -4,
+            "marginalTokens": -5
+          }
+        }
+      }
+    },
+    {
+      "name": "unarchive_item",
+      "whole": {
+        "baselineTokens": 227,
+        "afterTokens": 209,
+        "deltaTokens": -18
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "after": {
+            "serializedTokens": 5,
+            "marginalTokens": 6
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 136,
+            "marginalTokens": 137
+          },
+          "after": {
+            "serializedTokens": 136,
+            "marginalTokens": 137
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 72,
+            "marginalTokens": 75
+          },
+          "after": {
+            "serializedTokens": 63,
+            "marginalTokens": 64
+          },
+          "delta": {
+            "serializedTokens": -9,
+            "marginalTokens": -11
+          }
+        }
+      }
+    },
+    {
+      "name": "update_item",
+      "whole": {
+        "baselineTokens": 296,
+        "afterTokens": 218,
+        "deltaTokens": -78
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "after": {
+            "serializedTokens": 4,
+            "marginalTokens": 5
+          },
+          "delta": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 126,
+            "marginalTokens": 127
+          },
+          "after": {
+            "serializedTokens": 68,
+            "marginalTokens": 69
+          },
+          "delta": {
+            "serializedTokens": -58,
+            "marginalTokens": -58
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 152,
+            "marginalTokens": 155
+          },
+          "after": {
+            "serializedTokens": 140,
+            "marginalTokens": 142
+          },
+          "delta": {
+            "serializedTokens": -12,
+            "marginalTokens": -13
+          }
+        }
+      }
+    },
+    {
+      "name": "update_milestone",
+      "whole": {
+        "baselineTokens": 228,
+        "afterTokens": 0,
+        "deltaTokens": -228
+      },
+      "fields": {
+        "name": {
+          "baseline": {
+            "serializedTokens": 6,
+            "marginalTokens": 7
+          },
+          "after": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "delta": {
+            "serializedTokens": -6,
+            "marginalTokens": -7
+          }
+        },
+        "description": {
+          "baseline": {
+            "serializedTokens": 109,
+            "marginalTokens": 110
+          },
+          "after": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "delta": {
+            "serializedTokens": -109,
+            "marginalTokens": -110
+          }
+        },
+        "inputSchema": {
+          "baseline": {
+            "serializedTokens": 99,
+            "marginalTokens": 102
+          },
+          "after": {
+            "serializedTokens": 0,
+            "marginalTokens": 0
+          },
+          "delta": {
+            "serializedTokens": -99,
+            "marginalTokens": -102
+          }
+        }
+      }
+    }
+  ],
+  "roleWeightedExposure": {
+    "corpus": "docs/drafts/20260725-2130-t679-rs3-remeasure/corpus-manifest.json",
+    "transcripts": 357,
+    "roles": [
+      {
+        "roleId": "plan-advance",
+        "transcripts": 51,
+        "currentTokensPerTranscript": 837,
+        "baselineTokensPerTranscript": 11782,
+        "savingTokensPerTranscript": 10945,
+        "currentWeightedTokens": 42687,
+        "baselineWeightedTokens": 600882
+      },
+      {
+        "roleId": "plan-reviewer",
+        "transcripts": 42,
+        "currentTokensPerTranscript": 1125,
+        "baselineTokensPerTranscript": 11782,
+        "savingTokensPerTranscript": 10657,
+        "currentWeightedTokens": 47250,
+        "baselineWeightedTokens": 494844
+      },
+      {
+        "roleId": "implement-worker",
+        "transcripts": 97,
+        "currentTokensPerTranscript": 353,
+        "baselineTokensPerTranscript": 11782,
+        "savingTokensPerTranscript": 11429,
+        "currentWeightedTokens": 34241,
+        "baselineWeightedTokens": 1142854
+      },
+      {
+        "roleId": "implement-reviewer",
+        "transcripts": 142,
+        "currentTokensPerTranscript": 354,
+        "baselineTokensPerTranscript": 11782,
+        "savingTokensPerTranscript": 11428,
+        "currentWeightedTokens": 50268,
+        "baselineWeightedTokens": 1673044
+      },
+      {
+        "roleId": "investigate-explorer",
+        "transcripts": 23,
+        "currentTokensPerTranscript": 355,
+        "baselineTokensPerTranscript": 11782,
+        "savingTokensPerTranscript": 11427,
+        "currentWeightedTokens": 8165,
+        "baselineWeightedTokens": 270986
+      },
+      {
+        "roleId": "investigate-prober",
+        "transcripts": 2,
+        "currentTokensPerTranscript": 355,
+        "baselineTokensPerTranscript": 11782,
+        "savingTokensPerTranscript": 11427,
+        "currentWeightedTokens": 710,
+        "baselineWeightedTokens": 23564
+      }
+    ],
+    "currentWeightedTokens": 183321,
+    "baselineWeightedTokens": 4206174,
+    "savingWeightedTokens": 4022853,
+    "currentMeanTokensPerTranscript": 513.5042016806723,
+    "baselineMeanTokensPerTranscript": 11782
+  },
+  "transportOnlyOverhead": {
+    "tools": [
+      "fetch_dispatch_input",
+      "store_result"
+    ],
+    "byRole": {
+      "advance": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "begin": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "implement-conflict-resolver": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "implement-review": {
+        "inventory": [],
+        "toolsListTokens": 1,
+        "inputSchemaTokens": 0
+      },
+      "implement-reviewer": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "implement-worker": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "implement/advance": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "implement/start": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "investigate": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "investigate-explorer": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "investigate-prober": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "investigate/advance": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "plan": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "plan-advance": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "plan-review": {
+        "inventory": [],
+        "toolsListTokens": 1,
+        "inputSchemaTokens": 0
+      },
+      "plan-reviewer": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "plan/advance": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "plan/follow-up": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "planners": {
+        "inventory": [],
+        "toolsListTokens": 1,
+        "inputSchemaTokens": 0
+      },
+      "research": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "research-experimenter": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "research-explorer": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "research/advance": {
+        "inventory": [
+          "fetch_dispatch_input",
+          "store_result"
+        ],
+        "toolsListTokens": 323,
+        "inputSchemaTokens": 234
+      },
+      "reviewers": {
+        "inventory": [],
+        "toolsListTokens": 1,
+        "inputSchemaTokens": 0
+      }
+    },
+    "weightedToolsListTokens": 115311,
+    "meanToolsListTokensPerTranscript": 323
+  },
+  "g93": {
+    "historicalColdSchemaChargeTokens": 2214,
+    "corpusMedianResponseSavingTokens": 1461,
+    "strongestPerturbationUpperBoundTokens": 1485.5,
+    "evidence": {
+      "decision": "decisions:K145",
+      "defect": "defects:D155",
+      "report": "docs/drafts/20260725-2130-t679-rs3-remeasurement.md"
+    },
+    "ledgerCallingProfiles": [
+      {
+        "profileName": "full",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "non-dispatch",
+        "remainingG93AttributableTokens": 672
+      },
+      {
+        "profileName": "advance",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "begin",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "implement-conflict-resolver",
+        "remainingG93AttributableTokens": 35
+      },
+      {
+        "profileName": "implement-reviewer",
+        "remainingG93AttributableTokens": 35
+      },
+      {
+        "profileName": "implement-worker",
+        "remainingG93AttributableTokens": 35
+      },
+      {
+        "profileName": "implement/advance",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "implement/start",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "investigate",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "investigate-explorer",
+        "remainingG93AttributableTokens": 35
+      },
+      {
+        "profileName": "investigate-prober",
+        "remainingG93AttributableTokens": 35
+      },
+      {
+        "profileName": "investigate/advance",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "plan",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "plan-advance",
+        "remainingG93AttributableTokens": 82
+      },
+      {
+        "profileName": "plan-reviewer",
+        "remainingG93AttributableTokens": 82
+      },
+      {
+        "profileName": "plan/advance",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "plan/follow-up",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "planners",
+        "remainingG93AttributableTokens": 19
+      },
+      {
+        "profileName": "research",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "research-experimenter",
+        "remainingG93AttributableTokens": 35
+      },
+      {
+        "profileName": "research-explorer",
+        "remainingG93AttributableTokens": 35
+      },
+      {
+        "profileName": "research/advance",
+        "remainingG93AttributableTokens": 780
+      },
+      {
+        "profileName": "reviewers",
+        "remainingG93AttributableTokens": 19
+      }
+    ],
+    "maximumRemainingG93AttributableTokens": 780
+  },
+  "budgets": {
+    "tokenizerMatches": true,
+    "methodMatches": true,
+    "allSurfacesSmaller": true,
+    "allRequiredCallsCovered": true,
+    "zeroDomainProfilesHaveZeroDomainSchemaTokens": true,
+    "g93BelowCorpusMedian": true,
+    "passed": true,
+    "failures": []
+  }
+}

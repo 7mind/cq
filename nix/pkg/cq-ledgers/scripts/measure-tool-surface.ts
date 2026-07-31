@@ -1,6 +1,14 @@
-import { writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { encode } from "gpt-tokenizer/encoding/o200k_base";
+import {
+  DISPATCH_RESULT_PLUMBING_TOOL_NAMES,
+  DOMAIN_LEDGER_TOOL_NAMES,
+  ROLE_IDENTIFIED_CORPUS,
+  ROLE_TOOL_CAPABILITY_MATRIX,
+  exposedLedgerToolsForRole,
+} from "../packages/cq-config/src/index.js";
 import {
   InMemoryLedgerStore,
   LEDGER_TOOL_NAMES,
@@ -15,8 +23,13 @@ import {
 } from "../packages/ledger/src/mcp/wireResponseContract.js";
 import { createLedgerMcpServer } from "../packages/ledger-mcp/src/main.js";
 
-export const PROFILE_NAMES = ["full", "non-dispatch"] as const;
-export type ToolSurfaceProfileName = (typeof PROFILE_NAMES)[number];
+const CANONICAL_PROFILE_NAMES = ["full", "non-dispatch"] as const;
+const ROLE_PROFILE_NAMES = Object.keys(ROLE_TOOL_CAPABILITY_MATRIX).sort();
+export const PROFILE_NAMES: readonly string[] = Object.freeze([
+  ...CANONICAL_PROFILE_NAMES,
+  ...ROLE_PROFILE_NAMES,
+]);
+export type ToolSurfaceProfileName = string;
 
 interface ToolDefinition extends Record<string, unknown> {
   name: string;
@@ -61,7 +74,7 @@ export interface ToolSurfaceToolMeasurement {
 }
 
 export interface ToolSurfaceProfileMeasurement {
-  inventorySource: "LEDGER_TOOL_NAMES" | "NON_DISPATCH_LEDGER_TOOL_NAMES";
+  inventorySource: string;
   inventory: string[];
   toolCount: number;
   initialize: {
@@ -76,6 +89,15 @@ export interface ToolSurfaceProfileMeasurement {
     deltasAreAdditive: false;
   };
   tools: ToolSurfaceToolMeasurement[];
+  contractRequiredTools: string[];
+  requiredCallInventoryCovered: boolean;
+  zeroDomainCalls: boolean;
+  domainInputSchemaTokens: number;
+  transportOnly: {
+    inventory: string[];
+    toolsList: MinifiedJsonMeasurement;
+    inputSchemaTokens: number;
+  };
 }
 
 export interface ToolSurfaceMeasurement {
@@ -108,9 +130,12 @@ export interface ToolSurfaceMeasurement {
 }
 
 interface ProfileDefinition {
-  inventorySource: "LEDGER_TOOL_NAMES" | "NON_DISPATCH_LEDGER_TOOL_NAMES";
+  inventorySource: string;
   expectedInventory: readonly string[];
   dispatchCapability?: DispatchCapability;
+  toolProfile?: string;
+  contractRequiredTools: readonly string[];
+  zeroDomainCalls: boolean;
 }
 
 interface SchemaPathValue {
@@ -137,11 +162,31 @@ const PROFILE_DEFINITIONS: Record<ToolSurfaceProfileName, ProfileDefinition> = {
     inventorySource: "LEDGER_TOOL_NAMES",
     expectedInventory: LEDGER_TOOL_NAMES,
     dispatchCapability: DURABLE_DISPATCH_CAPABILITY,
+    contractRequiredTools: [],
+    zeroDomainCalls: false,
   },
   "non-dispatch": {
     inventorySource: "NON_DISPATCH_LEDGER_TOOL_NAMES",
     expectedInventory: NON_DISPATCH_LEDGER_TOOL_NAMES,
+    contractRequiredTools: [],
+    zeroDomainCalls: false,
   },
+  ...Object.fromEntries(
+    ROLE_PROFILE_NAMES.map((roleId) => {
+      const profile = ROLE_TOOL_CAPABILITY_MATRIX[roleId]!;
+      return [
+        roleId,
+        {
+          inventorySource: `ROLE_TOOL_CAPABILITY_MATRIX:${roleId}`,
+          expectedInventory: exposedLedgerToolsForRole(roleId),
+          dispatchCapability: DURABLE_DISPATCH_CAPABILITY,
+          toolProfile: roleId,
+          contractRequiredTools: profile.contractRequiredTools,
+          zeroDomainCalls: profile.zeroDomainCalls,
+        },
+      ];
+    }),
+  ),
 };
 
 const PROFILE_DISPLAY_NAME = "tool-surface-profiler";
@@ -354,6 +399,7 @@ async function measureProfile(
     store,
     displayName: PROFILE_DISPLAY_NAME,
     dispatchCapability: definition.dispatchCapability,
+    toolProfile: definition.toolProfile,
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client(
@@ -379,6 +425,10 @@ async function measureProfile(
     if (instructions === undefined) {
       throw new Error("initialize did not include server instructions");
     }
+    const domainToolNames = new Set<string>(DOMAIN_LEDGER_TOOL_NAMES);
+    const transportToolNames = new Set<string>(DISPATCH_RESULT_PLUMBING_TOOL_NAMES);
+    const measuredTools = tools.map(measureTool);
+    const transportTools = tools.filter((tool) => transportToolNames.has(tool.name));
     return {
       inventorySource: definition.inventorySource,
       inventory,
@@ -388,7 +438,22 @@ async function measureProfile(
       },
       toolsList: measureMinifiedJson(tools),
       responseContractCounterfactual: measureResponseContractCounterfactual(tools),
-      tools: tools.map(measureTool),
+      tools: measuredTools,
+      contractRequiredTools: [...definition.contractRequiredTools],
+      requiredCallInventoryCovered: definition.contractRequiredTools.every((tool) =>
+        inventory.includes(tool),
+      ),
+      zeroDomainCalls: definition.zeroDomainCalls,
+      domainInputSchemaTokens: measuredTools
+        .filter((tool) => domainToolNames.has(tool.name))
+        .reduce((sum, tool) => sum + tool.components.inputSchema.tokens, 0),
+      transportOnly: {
+        inventory: transportTools.map((tool) => tool.name),
+        toolsList: measureMinifiedJson(transportTools),
+        inputSchemaTokens: measuredTools
+          .filter((tool) => transportToolNames.has(tool.name))
+          .reduce((sum, tool) => sum + tool.components.inputSchema.tokens, 0),
+      },
     };
   } finally {
     await client.close();
@@ -448,6 +513,292 @@ export function serializeToolSurfaceMeasurement(result: ToolSurfaceMeasurement):
   return `${JSON.stringify(result, null, 2)}\n`;
 }
 
+const G93_MEDIAN_RESPONSE_SAVING_TOKENS = 1461;
+const G93_EVIDENCE_PATH = "docs/drafts/20260725-2130-t679-rs3-remeasurement.md";
+
+interface HistoricalToolSurfaceMeasurement {
+  readonly formatVersion: 1;
+  readonly tokenizer: ToolSurfaceMeasurement["tokenizer"];
+  readonly method: ToolSurfaceMeasurement["method"];
+  readonly profiles: Record<string, ToolSurfaceProfileMeasurement>;
+}
+
+interface TokenCell {
+  readonly serializedTokens: number;
+  readonly marginalTokens: number;
+}
+
+function digest(serialization: string): string {
+  return createHash("sha256").update(serialization).digest("hex");
+}
+
+function profileTotalTokens(profile: ToolSurfaceProfileMeasurement): number {
+  return profile.initialize.instructions.tokens + profile.toolsList.tokens;
+}
+
+function tokenCell(
+  tool: ToolSurfaceToolMeasurement | undefined,
+  field: "name" | "description" | "inputSchema",
+): TokenCell {
+  if (tool === undefined) return { serializedTokens: 0, marginalTokens: 0 };
+  return {
+    serializedTokens: tool.components[field].tokens,
+    marginalTokens: tool.components[field].marginalTokens,
+  };
+}
+
+function deltaCell(after: TokenCell, baseline: TokenCell) {
+  return {
+    baseline,
+    after,
+    delta: {
+      serializedTokens: after.serializedTokens - baseline.serializedTokens,
+      marginalTokens: after.marginalTokens - baseline.marginalTokens,
+    },
+  };
+}
+
+function failBudget(name: string, failures: string[], condition: boolean): boolean {
+  if (!condition) failures.push(name);
+  return condition;
+}
+
+export function buildNormalizedAfterArtifact(
+  current: ToolSurfaceMeasurement,
+  baseline: HistoricalToolSurfaceMeasurement,
+  baselinePath: string,
+) {
+  const failures: string[] = [];
+  const tokenizerMatches = failBudget(
+    "tokenizer drifted from the baseline",
+    failures,
+    JSON.stringify(current.tokenizer) === JSON.stringify(baseline.tokenizer),
+  );
+  const methodMatches = failBudget(
+    "measurement method drifted from the baseline",
+    failures,
+    JSON.stringify(current.method) === JSON.stringify(baseline.method),
+  );
+
+  const profiles = Object.fromEntries(
+    PROFILE_NAMES.map((profileName) => {
+      const after = current.profiles[profileName];
+      if (after === undefined) throw new Error(`missing measured profile ${profileName}`);
+      const baselineProfileName = profileName === "non-dispatch" ? "non-dispatch" : "full";
+      const before = baseline.profiles[baselineProfileName];
+      if (before === undefined) throw new Error(`baseline missing profile ${baselineProfileName}`);
+      const baselineTokens = profileTotalTokens(before);
+      const afterTokens = profileTotalTokens(after);
+      return [
+        profileName,
+        {
+          inventorySource: after.inventorySource,
+          inventory: after.inventory,
+          toolCount: after.toolCount,
+          baselineProfile: baselineProfileName,
+          initialize: {
+            utf8Bytes: after.initialize.instructions.utf8Bytes,
+            tokens: after.initialize.instructions.tokens,
+            sha256: digest(after.initialize.instructions.serialization),
+          },
+          toolsList: {
+            utf8Bytes: after.toolsList.utf8Bytes,
+            tokens: after.toolsList.tokens,
+            sha256: digest(after.toolsList.serialization),
+          },
+          surfaceTokens: afterTokens,
+          baselineSurfaceTokens: baselineTokens,
+          deltaTokens: afterTokens - baselineTokens,
+          smallerThanBaseline: afterTokens < baselineTokens,
+          contractRequiredTools: after.contractRequiredTools,
+          requiredCallInventoryCovered: after.requiredCallInventoryCovered,
+          zeroDomainCalls: after.zeroDomainCalls,
+          domainInputSchemaTokens: after.domainInputSchemaTokens,
+          responseContractCounterfactual: after.responseContractCounterfactual,
+        },
+      ];
+    }),
+  );
+
+  const baselineTools = new Map(
+    baseline.profiles.full.tools.map((tool) => [tool.name, tool] as const),
+  );
+  const afterTools = new Map(current.profiles.full.tools.map((tool) => [tool.name, tool] as const));
+  const toolNames = [...new Set([...baselineTools.keys(), ...afterTools.keys()])].sort();
+  const perToolAndFieldDeltas = toolNames.map((name) => {
+    const before = baselineTools.get(name);
+    const after = afterTools.get(name);
+    const baselineWholeTokens = before?.whole.tokens ?? 0;
+    const afterWholeTokens = after?.whole.tokens ?? 0;
+    return {
+      name,
+      whole: {
+        baselineTokens: baselineWholeTokens,
+        afterTokens: afterWholeTokens,
+        deltaTokens: afterWholeTokens - baselineWholeTokens,
+      },
+      fields: {
+        name: deltaCell(tokenCell(after, "name"), tokenCell(before, "name")),
+        description: deltaCell(
+          tokenCell(after, "description"),
+          tokenCell(before, "description"),
+        ),
+        inputSchema: deltaCell(
+          tokenCell(after, "inputSchema"),
+          tokenCell(before, "inputSchema"),
+        ),
+      },
+    };
+  });
+
+  const corpusRows = Object.entries(ROLE_IDENTIFIED_CORPUS.roles).map(
+    ([roleId, observation]) => {
+      const profile = current.profiles[roleId];
+      if (profile === undefined) throw new Error(`missing corpus role profile ${roleId}`);
+      const currentTokens = profileTotalTokens(profile);
+      const baselineTokens = profileTotalTokens(baseline.profiles.full);
+      return {
+        roleId,
+        transcripts: observation.transcripts,
+        currentTokensPerTranscript: currentTokens,
+        baselineTokensPerTranscript: baselineTokens,
+        savingTokensPerTranscript: baselineTokens - currentTokens,
+        currentWeightedTokens: observation.transcripts * currentTokens,
+        baselineWeightedTokens: observation.transcripts * baselineTokens,
+      };
+    },
+  );
+  const corpusTranscripts = corpusRows.reduce((sum, row) => sum + row.transcripts, 0);
+  const currentWeightedTokens = corpusRows.reduce(
+    (sum, row) => sum + row.currentWeightedTokens,
+    0,
+  );
+  const baselineWeightedTokens = corpusRows.reduce(
+    (sum, row) => sum + row.baselineWeightedTokens,
+    0,
+  );
+  if (corpusTranscripts !== ROLE_IDENTIFIED_CORPUS.transcripts) {
+    throw new Error(
+      `corpus weights cover ${corpusTranscripts}, expected ${ROLE_IDENTIFIED_CORPUS.transcripts}`,
+    );
+  }
+
+  const transportByRole = Object.fromEntries(
+    ROLE_PROFILE_NAMES.map((roleId) => {
+      const transport = current.profiles[roleId]!.transportOnly;
+      return [
+        roleId,
+        {
+          inventory: transport.inventory,
+          toolsListTokens: transport.toolsList.tokens,
+          inputSchemaTokens: transport.inputSchemaTokens,
+        },
+      ];
+    }),
+  );
+  const weightedTransportToolsListTokens = corpusRows.reduce(
+    (sum, row) =>
+      sum +
+      row.transcripts *
+        (current.profiles[row.roleId]?.transportOnly.toolsList.tokens ??
+          (() => {
+            throw new Error(`missing transport measurement for ${row.roleId}`);
+          })()),
+    0,
+  );
+
+  const ledgerCallingProfiles = PROFILE_NAMES.filter(
+    (profileName) => current.profiles[profileName]!.toolCount > 0,
+  ).map((profileName) => ({
+    profileName,
+    remainingG93AttributableTokens:
+      current.profiles[profileName]!.responseContractCounterfactual.allTokens,
+  }));
+  const maximumRemainingG93AttributableTokens = Math.max(
+    ...ledgerCallingProfiles.map((profile) => profile.remainingG93AttributableTokens),
+  );
+
+  const allSurfacesSmaller = failBudget(
+    "one or more serialized instructions-plus-tools/list surfaces did not shrink",
+    failures,
+    Object.values(profiles).every((profile) => profile.smallerThanBaseline),
+  );
+  const allRequiredCallsCovered = failBudget(
+    "one or more role profiles omit a contract-required tool",
+    failures,
+    ROLE_PROFILE_NAMES.every(
+      (profileName) => current.profiles[profileName]!.requiredCallInventoryCovered,
+    ),
+  );
+  const zeroDomainProfilesHaveZeroDomainSchemaTokens = failBudget(
+    "a zero-domain role exposes domain-ledger input schema tokens",
+    failures,
+    ROLE_PROFILE_NAMES.every((profileName) => {
+      const profile = current.profiles[profileName]!;
+      return !profile.zeroDomainCalls || profile.domainInputSchemaTokens === 0;
+    }),
+  );
+  const g93BelowCorpusMedian = failBudget(
+    "remaining G93-attributable charge is not below the corpus median response saving",
+    failures,
+    maximumRemainingG93AttributableTokens < G93_MEDIAN_RESPONSE_SAVING_TOKENS,
+  );
+
+  return {
+    formatVersion: 2,
+    taskId: "T1331",
+    sourceMeasurementFormatVersion: current.formatVersion,
+    tokenizer: current.tokenizer,
+    method: current.method,
+    baseline: {
+      path: baselinePath,
+      sha256: createHash("sha256")
+        .update(`${JSON.stringify(baseline, null, 2)}\n`)
+        .digest("hex"),
+    },
+    profiles,
+    perToolAndFieldDeltas,
+    roleWeightedExposure: {
+      corpus: ROLE_IDENTIFIED_CORPUS.manifest,
+      transcripts: corpusTranscripts,
+      roles: corpusRows,
+      currentWeightedTokens,
+      baselineWeightedTokens,
+      savingWeightedTokens: baselineWeightedTokens - currentWeightedTokens,
+      currentMeanTokensPerTranscript: currentWeightedTokens / corpusTranscripts,
+      baselineMeanTokensPerTranscript: baselineWeightedTokens / corpusTranscripts,
+    },
+    transportOnlyOverhead: {
+      tools: [...DISPATCH_RESULT_PLUMBING_TOOL_NAMES],
+      byRole: transportByRole,
+      weightedToolsListTokens: weightedTransportToolsListTokens,
+      meanToolsListTokensPerTranscript: weightedTransportToolsListTokens / corpusTranscripts,
+    },
+    g93: {
+      historicalColdSchemaChargeTokens: 2214,
+      corpusMedianResponseSavingTokens: G93_MEDIAN_RESPONSE_SAVING_TOKENS,
+      strongestPerturbationUpperBoundTokens: 1485.5,
+      evidence: {
+        decision: "decisions:K145",
+        defect: "defects:D155",
+        report: G93_EVIDENCE_PATH,
+      },
+      ledgerCallingProfiles,
+      maximumRemainingG93AttributableTokens,
+    },
+    budgets: {
+      tokenizerMatches,
+      methodMatches,
+      allSurfacesSmaller,
+      allRequiredCallsCovered,
+      zeroDomainProfilesHaveZeroDomainSchemaTokens,
+      g93BelowCorpusMedian,
+      passed: failures.length === 0,
+      failures,
+    },
+  };
+}
+
 function parseProfileName(value: string): ToolSurfaceProfileName {
   if ((PROFILE_NAMES as readonly string[]).includes(value)) {
     return value as ToolSurfaceProfileName;
@@ -457,7 +808,7 @@ function parseProfileName(value: string): ToolSurfaceProfileName {
 
 function usage(): string {
   return [
-    "Usage: bun run measure:tool-surface (--all-profiles | --profile <name>) [--json <path>]",
+    "Usage: bun run measure:tool-surface (--all-profiles | --profile <name>) [--compare <baseline.json>] [--assert-budgets] [--json <path>]",
     "",
     `Named profiles: ${PROFILE_NAMES.join(", ")}`,
   ].join("\n");
@@ -466,10 +817,14 @@ function usage(): string {
 function parseCliArgs(argv: string[]): {
   profileNames: ToolSurfaceProfileName[];
   jsonPath: string | null;
+  comparePath: string | null;
+  assertBudgets: boolean;
 } {
   const profileNames: ToolSurfaceProfileName[] = [];
   let allProfiles = false;
   let jsonPath: string | null = null;
+  let comparePath: string | null = null;
+  let assertBudgets = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--all-profiles") {
@@ -490,6 +845,17 @@ function parseCliArgs(argv: string[]): {
       index += 1;
       continue;
     }
+    if (argument === "--compare") {
+      const value = argv[index + 1];
+      if (value === undefined) throw new Error("--compare needs a value");
+      comparePath = resolve(value);
+      index += 1;
+      continue;
+    }
+    if (argument === "--assert-budgets") {
+      assertBudgets = true;
+      continue;
+    }
     if (argument === "--help" || argument === "-h") {
       console.log(usage());
       process.exit(0);
@@ -502,16 +868,36 @@ function parseCliArgs(argv: string[]): {
   if (!allProfiles && profileNames.length === 0) {
     throw new Error(`select --all-profiles or --profile <name>\n${usage()}`);
   }
+  if (assertBudgets && comparePath === null) {
+    throw new Error("--assert-budgets requires --compare <baseline.json>");
+  }
   return {
     profileNames: allProfiles ? [...PROFILE_NAMES] : profileNames,
     jsonPath,
+    comparePath,
+    assertBudgets,
   };
 }
 
 if (import.meta.main) {
   const options = parseCliArgs(process.argv.slice(2));
   const result = await measureToolSurfaces(options.profileNames);
-  const json = serializeToolSurfaceMeasurement(result);
+  const artifact =
+    options.comparePath === null
+      ? result
+      : buildNormalizedAfterArtifact(
+          result,
+          JSON.parse(readFileSync(options.comparePath, "utf8")) as HistoricalToolSurfaceMeasurement,
+          relative(process.cwd(), options.comparePath),
+        );
+  if (
+    options.assertBudgets &&
+    "budgets" in artifact &&
+    !artifact.budgets.passed
+  ) {
+    throw new Error(`tool-surface budget failures: ${artifact.budgets.failures.join("; ")}`);
+  }
+  const json = `${JSON.stringify(artifact, null, 2)}\n`;
   if (options.jsonPath !== null) writeFileSync(options.jsonPath, json);
   console.log(json.trimEnd());
 }
