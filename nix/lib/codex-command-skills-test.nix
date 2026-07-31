@@ -181,7 +181,15 @@ let
           };
           config = {
             home.homeDirectory = "/home/test";
-            programs.mcp.servers.ledger = ledgerMcpRegistration;
+            # Mirror programs.mcp server-submodule defaults so the explicit
+            # Codex override must cross the same null/empty normalization
+            # boundary as the production Home Manager configuration.
+            programs.mcp.servers.ledger = ledgerMcpRegistration // {
+              enabled = null;
+              url = null;
+              env = { };
+              headers = { };
+            };
             smind.hm.dev.llm = {
               enable = true;
               merged = {
